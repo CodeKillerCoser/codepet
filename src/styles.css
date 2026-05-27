@@ -158,7 +158,8 @@ input:focus-visible {
 .icon-button,
 .power-button,
 .data-directory button,
-.pet-list button,
+.pet-select-button,
+.pet-delete-button,
 .row-actions button,
 .segmented button {
   display: inline-flex;
@@ -175,7 +176,7 @@ input:focus-visible {
 }
 
 .tabs button.active,
-.pet-list button.active,
+.pet-item.active,
 .segmented button.active,
 .power-button.enabled {
   border-color: var(--app-good);
@@ -186,7 +187,8 @@ input:focus-visible {
 .icon-button:hover,
 .power-button:hover,
 .data-directory button:hover,
-.pet-list button:hover,
+.pet-select-button:hover,
+.pet-delete-button:hover,
 .row-actions button:hover,
 .segmented button:hover {
   transform: translateY(-1px);
@@ -564,20 +566,48 @@ input:focus-visible {
   gap: 8px;
 }
 
-.pet-list button {
+.pet-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  gap: 8px;
+  align-items: stretch;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-surface-soft);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.pet-item.active {
+  border-color: var(--app-good);
+  background: color-mix(in srgb, var(--app-good) 18%, var(--app-surface-soft));
+}
+
+.pet-select-button {
   display: grid;
   grid-template-columns: 50px 1fr 18px;
+  border: 0;
   min-height: 62px;
   justify-content: start;
   padding: 8px;
+  background: transparent;
   text-align: left;
 }
 
-.pet-list button:not(.active) {
+.pet-delete-button {
+  width: 44px;
+  min-height: 62px;
+  border: 0;
+  border-left: 1px solid var(--app-border);
+  border-radius: 0 8px 8px 0;
+  color: var(--app-danger);
+  background: transparent;
+}
+
+.pet-item:not(.active) {
   border-color: var(--app-border);
 }
 
-.pet-list button span:nth-child(2) {
+.pet-select-button span:nth-child(2) {
   display: grid;
   min-width: 0;
   gap: 3px;

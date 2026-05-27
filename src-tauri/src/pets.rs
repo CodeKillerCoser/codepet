@@ -55,6 +55,28 @@ pub fn select_pet(settings: &mut AppSettings, pet_id: &str) -> Result<(), String
     Ok(())
 }
 
+pub fn delete_pet(settings: &mut AppSettings, pet_id: &str) -> Result<(), String> {
+    if pet_id == "default" {
+        return Err("default pet cannot be deleted".to_string());
+    }
+
+    settings.pet_library.pets = ensure_profiles(settings.pet_library.pets.clone());
+    let original_len = settings.pet_library.pets.len();
+    settings.pet_library.pets.retain(|pet| pet.id != pet_id);
+    if settings.pet_library.pets.len() == original_len {
+        return Err(format!("pet not found: {pet_id}"));
+    }
+
+    if !settings.pet_library.deleted_pet_ids.iter().any(|id| id == pet_id) {
+        settings.pet_library.deleted_pet_ids.push(pet_id.to_string());
+    }
+
+    if settings.pet_library.selected_pet_id == pet_id || settings.pet.selected_pet_id == pet_id {
+        select_pet(settings, "default")?;
+    }
+    Ok(())
+}
+
 pub fn pixelate_image(source: &Path, output: &Path, max_side: u32) -> io::Result<()> {
     let image = image::open(source).map_err(io::Error::other)?.to_rgba8();
     let image = cut_out_flat_background(image);
@@ -270,6 +292,26 @@ pub fn switch_pet(pet_id: String) -> Result<PetLibraryView, String> {
     Ok(pet_library_view(&settings))
 }
 
+pub fn remove_pet_from_library(pet_id: String) -> Result<PetLibraryView, String> {
+    let mut settings = load_app_settings().map_err(|error| error.to_string())?;
+    normalize_pet_selection(&mut settings)?;
+    let pet = settings
+        .pet_library
+        .pets
+        .iter()
+        .find(|candidate| candidate.id == pet_id)
+        .cloned()
+        .ok_or_else(|| format!("pet not found: {pet_id}"))?;
+    let removable_dir = managed_pet_directory(&settings, &pet);
+
+    delete_pet(&mut settings, &pet_id)?;
+    save_app_settings(&settings).map_err(|error| error.to_string())?;
+    if let Some(path) = removable_dir {
+        let _ = fs::remove_dir_all(path);
+    }
+    Ok(pet_library_view(&settings))
+}
+
 pub fn import_pet_image(source_path: String, name: Option<String>) -> Result<PetLibraryView, String> {
     let mut settings = load_app_settings().map_err(|error| error.to_string())?;
     normalize_pet_selection(&mut settings)?;
@@ -351,7 +393,11 @@ fn add_discovered_codex_pets(settings: &mut AppSettings) {
         }
     }
 
-    for pet in roots.iter().flat_map(|root| discover_codex_pet_packages(root)) {
+    for pet in roots
+        .iter()
+        .flat_map(|root| discover_codex_pet_packages(root))
+        .filter(|pet| !settings.pet_library.deleted_pet_ids.iter().any(|id| id == &pet.id))
+    {
         if let Some(existing) = settings
             .pet_library
             .pets
@@ -363,6 +409,19 @@ fn add_discovered_codex_pets(settings: &mut AppSettings) {
             settings.pet_library.pets.push(pet);
         }
     }
+}
+
+fn managed_pet_directory(settings: &AppSettings, pet: &ConfiguredPet) -> Option<PathBuf> {
+    if pet.kind != PetKind::Image {
+        return None;
+    }
+    let data_dir = pet_data_directory(settings);
+    pet.image_path
+        .as_deref()
+        .or(pet.source_path.as_deref())
+        .map(PathBuf::from)
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .filter(|path| path.starts_with(data_dir))
 }
 
 fn ensure_profiles(mut pets: Vec<ConfiguredPet>) -> Vec<ConfiguredPet> {

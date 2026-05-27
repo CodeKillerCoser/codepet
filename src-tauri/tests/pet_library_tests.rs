@@ -1,5 +1,5 @@
 use code_pet_lib::pets::{
-    discover_codex_pet_packages, pet_data_directory, pixelate_image, select_pet, ConfiguredPet, PetKind,
+    delete_pet, discover_codex_pet_packages, pet_data_directory, pixelate_image, select_pet, ConfiguredPet, PetKind,
 };
 use code_pet_lib::settings::{AppSettings, PixelPetSprite};
 use image::RgbaImage;
@@ -60,6 +60,54 @@ fn selecting_a_codex_atlas_pet_preserves_its_spritesheet_path() {
     assert_eq!(settings.pet.selected_pet_id, "codex:deidara-clay-blast");
     assert_eq!(settings.pet.kind, PetKind::CodexAtlas);
     assert_eq!(settings.pet.image_path.as_deref(), Some("/tmp/codex-pet/spritesheet.webp"));
+}
+
+#[test]
+fn deleting_a_custom_pet_removes_it_from_the_library() {
+    let mut settings = AppSettings::default();
+    settings.pet_library.pets.push(ConfiguredPet {
+        id: "custom".to_string(),
+        name: "Custom".to_string(),
+        kind: PetKind::Palette,
+        sprite: None,
+        image_path: None,
+        source_path: None,
+        created_at: "2026-05-26T00:00:00Z".to_string(),
+    });
+
+    delete_pet(&mut settings, "custom").unwrap();
+
+    assert!(!settings.pet_library.pets.iter().any(|pet| pet.id == "custom"));
+    assert!(settings.pet_library.deleted_pet_ids.contains(&"custom".to_string()));
+}
+
+#[test]
+fn deleting_the_active_pet_falls_back_to_default() {
+    let mut settings = AppSettings::default();
+    settings.pet_library.pets.push(ConfiguredPet {
+        id: "custom".to_string(),
+        name: "Custom".to_string(),
+        kind: PetKind::Palette,
+        sprite: None,
+        image_path: None,
+        source_path: None,
+        created_at: "2026-05-26T00:00:00Z".to_string(),
+    });
+    select_pet(&mut settings, "custom").unwrap();
+
+    delete_pet(&mut settings, "custom").unwrap();
+
+    assert_eq!(settings.pet_library.selected_pet_id, "default");
+    assert_eq!(settings.pet.selected_pet_id, "default");
+}
+
+#[test]
+fn default_pet_cannot_be_deleted() {
+    let mut settings = AppSettings::default();
+
+    let error = delete_pet(&mut settings, "default").unwrap_err();
+
+    assert!(error.contains("default pet cannot be deleted"));
 }
 
 #[test]

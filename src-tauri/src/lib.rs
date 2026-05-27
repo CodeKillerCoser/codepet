@@ -62,6 +62,15 @@ fn select_pet(app: AppHandle, pet_id: String) -> Result<PetLibraryView, String> 
 }
 
 #[tauri::command]
+fn delete_pet(app: AppHandle, pet_id: String) -> Result<PetLibraryView, String> {
+    let view = pets::remove_pet_from_library(pet_id)?;
+    if let Ok(settings) = load_app_settings() {
+        let _ = app.emit("settings-updated", settings);
+    }
+    Ok(view)
+}
+
+#[tauri::command]
 fn set_pet_data_directory(app: AppHandle, path: String) -> Result<PetLibraryView, String> {
     let view = pets::update_pet_data_directory(path)?;
     if let Ok(settings) = load_app_settings() {
@@ -216,6 +225,7 @@ pub fn run() {
             update_app_settings,
             list_pets,
             select_pet,
+            delete_pet,
             set_pet_data_directory,
             import_pet_image,
             recent_events,

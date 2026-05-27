@@ -64,6 +64,8 @@ pub struct PetLibrarySettings {
     pub selected_pet_id: String,
     #[serde(default = "default_pet_profiles")]
     pub pets: Vec<ConfiguredPet>,
+    #[serde(default)]
+    pub deleted_pet_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -159,6 +161,7 @@ impl Default for PetLibrarySettings {
             data_directory: None,
             selected_pet_id: default_pet_id(),
             pets: default_pet_profiles(),
+            deleted_pet_ids: Vec::new(),
         }
     }
 }

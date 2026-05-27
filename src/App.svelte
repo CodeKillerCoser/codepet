@@ -18,10 +18,11 @@
     Power,
     ShieldAlert,
     Sun,
+    Trash2,
     Volume2,
   } from "@lucide/svelte";
   import { onMount } from "svelte";
-  import { collectorEndpoint, getAppSettings, importPetImage, listAgents, listPets, recentEvents, selectPet, setAgentEnabled, setPetDataDirectory, updateAppSettings } from "./lib/api";
+  import { collectorEndpoint, deletePet, getAppSettings, importPetImage, listAgents, listPets, recentEvents, selectPet, setAgentEnabled, setPetDataDirectory, updateAppSettings } from "./lib/api";
   import { mergeEventFeed } from "./lib/eventFeed";
   import PetAvatar from "./lib/PetAvatar.svelte";
   import { playNotificationSound } from "./lib/sound";
@@ -208,6 +209,22 @@
     }
   }
 
+  async function removePet(event: MouseEvent, petId: string) {
+    event.stopPropagation();
+    if (petId === "default" || !window.confirm("删除这个宠物？")) return;
+
+    busyPet = `delete:${petId}`;
+    error = "";
+    try {
+      petLibrary = await deletePet(petId);
+      settings = await getAppSettings();
+    } catch (currentError) {
+      error = String(currentError);
+    } finally {
+      busyPet = "";
+    }
+  }
+
   function syncSelectedPetProfile() {
     if (!settings) return;
     settings.petLibrary.selectedPetId = settings.pet.selectedPetId;
@@ -384,50 +401,41 @@
             </div>
             <div class="pet-list" aria-label="已配置宠物">
               {#each petLibrary?.pets ?? settings.petLibrary.pets as pet}
-                <button
-                  class:active={(petLibrary?.selectedPetId ?? settings.pet.selectedPetId) === pet.id}
-                  disabled={busyPet === pet.id}
-                  on:click={() => activatePet(pet.id)}
-                >
-                  <span class="pet-thumb">
-                    <PetAvatar
-                      sprite={pet.sprite ?? settings.pet.sprite}
-                      kind={pet.kind}
-                      imagePath={pet.imagePath}
-                      status="idle"
-                      scale={2}
-                      label={pet.name}
-                    />
-                  </span>
-                  <span>
-                    <strong>{pet.name}</strong>
-                    <em>{pet.kind === "codex-atlas" ? "Codex 宠物" : pet.kind === "image" ? "导入图片" : "调色板"}</em>
-                  </span>
-                  {#if (petLibrary?.selectedPetId ?? settings.pet.selectedPetId) === pet.id}
-                    <Check size={17} />
+                {@const isActivePet = (petLibrary?.selectedPetId ?? settings.pet.selectedPetId) === pet.id}
+                <article class="pet-item" class:active={isActivePet}>
+                  <button class="pet-select-button" disabled={busyPet === pet.id} on:click={() => activatePet(pet.id)}>
+                    <span class="pet-thumb">
+                      <PetAvatar
+                        sprite={pet.sprite ?? settings.pet.sprite}
+                        kind={pet.kind}
+                        imagePath={pet.imagePath}
+                        status="idle"
+                        scale={2}
+                        label={pet.name}
+                      />
+                    </span>
+                    <span>
+                      <strong>{pet.name}</strong>
+                      <em>{pet.kind === "codex-atlas" ? "Codex 宠物" : pet.kind === "image" ? "导入图片" : "调色板"}</em>
+                    </span>
+                    {#if isActivePet}
+                      <Check size={17} />
+                    {/if}
+                  </button>
+                  {#if pet.id !== "default"}
+                    <button
+                      class="pet-delete-button"
+                      disabled={busyPet === `delete:${pet.id}`}
+                      on:click={(event) => removePet(event, pet.id)}
+                      aria-label={`删除 ${pet.name}`}
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   {/if}
-                </button>
+                </article>
               {/each}
             </div>
           </section>
-          <div class="swatch-grid">
-            <label>
-              头发
-              <input type="color" bind:value={settings.pet.sprite.body} on:change={saveSettings} />
-            </label>
-            <label>
-              衣装
-              <input type="color" bind:value={settings.pet.sprite.accent} on:change={saveSettings} />
-            </label>
-            <label>
-              眼睛
-              <input type="color" bind:value={settings.pet.sprite.eyes} on:change={saveSettings} />
-            </label>
-          </div>
-          <label>
-            缩放
-            <input type="range" min="2" max="4" bind:value={settings.pet.scale} on:change={saveSettings} />
-          </label>
         </section>
 
         <div class="personal-side">

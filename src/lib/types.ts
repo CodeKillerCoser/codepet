@@ -66,6 +66,7 @@ export interface AppSettings {
     dataDirectory?: string | null;
     selectedPetId: string;
     pets: ConfiguredPet[];
+    deletedPetIds?: string[];
   };
   notifications: {
     sound: "blip" | "chime" | "bell" | "custom" | "silent";

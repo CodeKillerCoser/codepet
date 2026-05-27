@@ -25,6 +25,10 @@ export async function selectPet(petId: string): Promise<PetLibraryView> {
   return invoke<PetLibraryView>("select_pet", { petId });
 }
 
+export async function deletePet(petId: string): Promise<PetLibraryView> {
+  return invoke<PetLibraryView>("delete_pet", { petId });
+}
+
 export async function setPetDataDirectory(path: string): Promise<PetLibraryView> {
   return invoke<PetLibraryView>("set_pet_data_directory", { path });
 }

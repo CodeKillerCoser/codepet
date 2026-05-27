@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { recentEvents } from "./api";
+import { deletePet, recentEvents } from "./api";
 import type { PetEvent } from "./types";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -100,5 +100,20 @@ describe("recentEvents", () => {
 
     await expect(result).resolves.toEqual(events);
     expect(fetch).toHaveBeenCalledWith("http://127.0.0.1:47621/events");
+  });
+});
+
+describe("deletePet", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("invokes the desktop command with the selected pet id", async () => {
+    const view = { dataDirectory: "/pets", selectedPetId: "default", pets: [] };
+    vi.mocked(invoke).mockResolvedValue(view);
+
+    await expect(deletePet("image-custom")).resolves.toEqual(view);
+
+    expect(invoke).toHaveBeenCalledWith("delete_pet", { petId: "image-custom" });
   });
 });
