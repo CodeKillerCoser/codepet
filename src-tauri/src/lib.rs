@@ -227,8 +227,24 @@ pub fn run() {
             open_main_window,
             pet_asset_data_url
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Code Pet");
+        .build(tauri::generate_context!())
+        .expect("failed to build Code Pet")
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } = event
+            {
+                if should_restore_main_on_reopen(has_visible_windows) {
+                    let _ = open_main_window(app.clone());
+                }
+            }
+        });
+}
+
+fn should_restore_main_on_reopen(_has_visible_windows: bool) -> bool {
+    true
 }
 
 fn raise_existing_windows(app: &AppHandle) {
@@ -238,5 +254,16 @@ fn raise_existing_windows(app: &AppHandle) {
             let _ = window.unminimize();
             let _ = window.set_focus();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_restore_main_on_reopen;
+
+    #[test]
+    fn dock_reopen_restores_main_even_when_pet_window_is_visible() {
+        assert!(should_restore_main_on_reopen(false));
+        assert!(should_restore_main_on_reopen(true));
     }
 }
