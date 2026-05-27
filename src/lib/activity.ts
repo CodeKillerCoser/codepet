@@ -35,6 +35,9 @@ export function updateActivityList(current: PetEvent[], incoming: PetEvent[], di
 
 function applyActivityEvent(activities: Map<string, PetEvent>, event: PetEvent, dismissedKeys: Set<string> | undefined, nowMs: number) {
   const key = activityKey(event);
+  if (isLifecycleOnlySessionStart(event)) {
+    return;
+  }
   if (inactiveStatuses.has(event.status) || isStaleActivity(event, nowMs)) {
     activities.delete(key);
     return;
@@ -72,6 +75,15 @@ function shouldRefreshActivitySort(previous: PetEvent | undefined, event: PetEve
 
 function isTranscriptPath(value: string): boolean {
   return /\/\.(codex|claude)\/.+\.jsonl$/.test(value);
+}
+
+function isLifecycleOnlySessionStart(event: PetEvent): boolean {
+  if (event.provider !== "codex" || event.kind !== "task-started" || event.status !== "thinking") {
+    return false;
+  }
+  const title = event.title.trim();
+  const message = event.message.trim();
+  return title === "SessionStart" || message === "SessionStart" || isTranscriptPath(message);
 }
 
 function isStaleActivity(event: PetEvent, nowMs: number): boolean {

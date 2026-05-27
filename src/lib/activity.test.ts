@@ -62,6 +62,75 @@ describe("activeActivities", () => {
     expect(activities[0].message).toBe("已修复并跑完真实验证");
   });
 
+  it("does not create a pet task for Codex background sessions that only emit lifecycle events", () => {
+    const activities = activeActivities(
+      [
+        event({
+          id: "background-start",
+          provider: "codex",
+          sessionId: "background-session",
+          title: "任务开始",
+          message: "SessionStart",
+          status: "thinking",
+          createdAt: "2026-05-26T06:00:00.000Z",
+        }),
+        event({
+          id: "background-done",
+          provider: "codex",
+          sessionId: "background-session",
+          kind: "task-completed",
+          title: "任务完成",
+          message: "已完成增量 consolidation，主要更新了 [MEMORY.md]。",
+          status: "done",
+          createdAt: "2026-05-26T06:01:00.000Z",
+        }),
+      ],
+      4,
+      new Date("2026-05-26T06:02:00.000Z"),
+    );
+
+    expect(activities).toEqual([]);
+  });
+
+  it("does not create a pet task for Codex internal title-generation sessions", () => {
+    const activities = activeActivities(
+      [
+        event({
+          id: "title-start",
+          provider: "codex",
+          sessionId: "title-session",
+          title: "任务开始",
+          message: "SessionStart",
+          status: "thinking",
+          createdAt: "2026-05-26T06:00:00.000Z",
+        }),
+        event({
+          id: "title-prompt",
+          provider: "codex",
+          sessionId: "title-session",
+          title: "SessionStart",
+          message: "You are a helpful assistant. You will be presented with a user prompt, and your job is to provide a short title for a task that will be created from that prompt.",
+          status: "thinking",
+          createdAt: "2026-05-26T06:00:01.000Z",
+        }),
+        event({
+          id: "title-done",
+          provider: "codex",
+          sessionId: "title-session",
+          kind: "task-completed",
+          title: "SessionStart",
+          message: "{\"title\":\"生成熊猫烧香4K壁纸\"}",
+          status: "done",
+          createdAt: "2026-05-26T06:00:08.000Z",
+        }),
+      ],
+      4,
+      new Date("2026-05-26T06:01:00.000Z"),
+    );
+
+    expect(activities).toEqual([]);
+  });
+
   it("drops stale thinking and running events but keeps attention states", () => {
     const activities = activeActivities(
       [
