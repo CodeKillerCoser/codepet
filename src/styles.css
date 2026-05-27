@@ -11,14 +11,22 @@
 }
 
 html {
+  height: 100%;
   background: transparent;
 }
 
 body {
   margin: 0;
   min-width: 320px;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   background: transparent;
+}
+
+#app {
+  height: 100%;
+  min-height: 0;
 }
 
 button,
@@ -40,7 +48,9 @@ input:focus-visible {
 .app-shell {
   display: grid;
   grid-template-columns: 220px 1fr;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
   color: var(--app-text);
   background:
     linear-gradient(90deg, var(--pixel-grid) 1px, transparent 1px),
@@ -96,7 +106,9 @@ input:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0;
   padding: 24px 16px;
+  overflow-y: auto;
   border-width: 0 1px 0 0;
   border-radius: 0;
 }
@@ -228,6 +240,7 @@ input:focus-visible {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 16px;
+  min-height: 0;
   padding: 24px 30px;
   overflow-x: hidden;
   overflow-y: auto;
