@@ -1,0 +1,242 @@
+pub mod activity_actions;
+pub mod agent_control;
+pub mod agents;
+pub mod cli;
+pub mod claude_transcript;
+pub mod codex_app_server;
+pub mod codex_audit;
+pub mod collector;
+pub mod events;
+pub mod hooks;
+pub mod pets;
+pub mod settings;
+pub mod state;
+pub mod title_resolver;
+
+use agents::{AgentId, AgentView};
+use base64::Engine;
+use events::PetEvent;
+use pets::PetLibraryView;
+use settings::{load_app_settings, save_app_settings, AppSettings};
+use state::{ApprovalBehavior, ApprovalDecision, SharedState, COLLECTOR_PORT};
+use std::str::FromStr;
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, Size, WebviewUrl, WebviewWindowBuilder};
+
+#[tauri::command]
+fn list_agents(state: tauri::State<'_, SharedState>) -> Result<Vec<AgentView>, String> {
+    let views = agent_control::list_agent_views().map_err(|error| error.to_string())?;
+    state.set_agents(views.clone());
+    Ok(views)
+}
+
+#[tauri::command]
+fn set_agent_enabled(agent_id: String, enabled: bool) -> Result<Vec<AgentView>, String> {
+    let id = AgentId::from_str(&agent_id)?;
+    agent_control::set_agent_enabled(id, enabled).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_app_settings() -> Result<AppSettings, String> {
+    load_app_settings().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn update_app_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, String> {
+    save_app_settings(&settings).map_err(|error| error.to_string())?;
+    let _ = app.emit("settings-updated", settings.clone());
+    Ok(settings)
+}
+
+#[tauri::command]
+fn list_pets() -> Result<PetLibraryView, String> {
+    pets::list_pet_library()
+}
+
+#[tauri::command]
+fn select_pet(app: AppHandle, pet_id: String) -> Result<PetLibraryView, String> {
+    let view = pets::switch_pet(pet_id)?;
+    if let Ok(settings) = load_app_settings() {
+        let _ = app.emit("settings-updated", settings);
+    }
+    Ok(view)
+}
+
+#[tauri::command]
+fn set_pet_data_directory(app: AppHandle, path: String) -> Result<PetLibraryView, String> {
+    let view = pets::update_pet_data_directory(path)?;
+    if let Ok(settings) = load_app_settings() {
+        let _ = app.emit("settings-updated", settings);
+    }
+    Ok(view)
+}
+
+#[tauri::command]
+fn import_pet_image(app: AppHandle, source_path: String, name: Option<String>) -> Result<PetLibraryView, String> {
+    let view = pets::import_pet_image(source_path, name)?;
+    if let Ok(settings) = load_app_settings() {
+        let _ = app.emit("settings-updated", settings);
+    }
+    Ok(view)
+}
+
+#[tauri::command]
+fn recent_events(state: tauri::State<'_, SharedState>) -> Vec<PetEvent> {
+    state.recent_events()
+}
+
+#[tauri::command]
+fn activate_activity(state: tauri::State<'_, SharedState>, event_id: String) -> Result<(), String> {
+    let event = state
+        .event_by_id(&event_id)
+        .ok_or_else(|| format!("activity not found: {event_id}"))?;
+    activity_actions::activate_event(&event)
+}
+
+#[tauri::command]
+fn send_activity_reply(
+    state: tauri::State<'_, SharedState>,
+    event_id: String,
+    message: String,
+) -> Result<(), String> {
+    if message.trim().is_empty() {
+        return Err("reply message is empty".to_string());
+    }
+    let event = state
+        .event_by_id(&event_id)
+        .ok_or_else(|| format!("activity not found: {event_id}"))?;
+    activity_actions::send_reply_to_event(&event, message.trim())
+}
+
+#[tauri::command]
+fn resolve_activity_approval(
+    state: tauri::State<'_, SharedState>,
+    event_id: String,
+    behavior: ApprovalBehavior,
+    message: Option<String>,
+) -> Result<(), String> {
+    if state.resolve_approval(&event_id, ApprovalDecision { behavior, message }) {
+        Ok(())
+    } else {
+        Err(format!("approval not found: {event_id}"))
+    }
+}
+
+#[tauri::command]
+fn collector_endpoint() -> String {
+    format!("http://127.0.0.1:{COLLECTOR_PORT}/hook")
+}
+
+#[tauri::command]
+fn resize_pet_window(app: AppHandle, height: f64) -> Result<(), String> {
+    let Some(window) = app.get_webview_window("pet") else {
+        return Ok(());
+    };
+    window
+        .set_size(Size::Logical(LogicalSize {
+            width: 360.0,
+            height,
+        }))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_main_window(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.show().map_err(|error| error.to_string())?;
+        window.unminimize().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    let window = WebviewWindowBuilder::new(&app, "main", WebviewUrl::App("index.html".into()))
+        .title("Code Pet")
+        .inner_size(980.0, 700.0)
+        .min_inner_size(820.0, 600.0)
+        .resizable(true)
+        .build()
+        .map_err(|error| error.to_string())?;
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn pet_asset_data_url(path: String) -> Result<String, String> {
+    let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+    let mime = match std::path::Path::new(&path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("webp") => "image/webp",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        _ => return Err(format!("unsupported pet asset type: {path}")),
+    };
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(format!("data:{mime};base64,{encoded}"))
+}
+
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            raise_existing_windows(app);
+            let _ = app.emit("single-instance", serde_json::json!({ "args": args, "cwd": cwd }));
+        }))
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
+        .manage(SharedState::default())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let state = app.state::<SharedState>().inner().clone();
+            if let Err(error) = collector::replay_default_spooled_events(&state) {
+                let _ = handle.emit("collector-error", error.to_string());
+            }
+            if let Err(error) = codex_audit::replay_default_codex_audit_events(&state) {
+                let _ = handle.emit("collector-error", error.to_string());
+            }
+            let audit_handle = handle.clone();
+            let audit_state = state.clone();
+            tauri::async_runtime::spawn(async move {
+                codex_audit::watch_default_codex_audit(audit_state, audit_handle).await;
+            });
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = collector::run_collector(state, handle.clone()).await {
+                    let _ = handle.emit("collector-error", error.to_string());
+                    handle.exit(1);
+                }
+            });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            list_agents,
+            set_agent_enabled,
+            get_app_settings,
+            update_app_settings,
+            list_pets,
+            select_pet,
+            set_pet_data_directory,
+            import_pet_image,
+            recent_events,
+            activate_activity,
+            send_activity_reply,
+            resolve_activity_approval,
+            collector_endpoint,
+            resize_pet_window,
+            open_main_window,
+            pet_asset_data_url
+        ])
+        .run(tauri::generate_context!())
+        .expect("failed to run Code Pet");
+}
+
+fn raise_existing_windows(app: &AppHandle) {
+    for label in ["main", "pet"] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }
+}

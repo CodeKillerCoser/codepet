@@ -1,0 +1,10 @@
+node_modules/
+dist/
+src-tauri/target/
+custom-pet-data/
+__pycache__/
+*.pyc
+.DS_Store
+npm-debug.log*
+pnpm-lock.yaml
+pnpm-workspace.yaml

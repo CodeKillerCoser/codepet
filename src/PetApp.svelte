@@ -1,0 +1,468 @@
+<script lang="ts">
+  import { listen } from "@tauri-apps/api/event";
+  import { LogicalPosition, LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
+  import { availableMonitors, getCurrentWindow, primaryMonitor } from "@tauri-apps/api/window";
+  import { onMount } from "svelte";
+  import { activateActivity, getAppSettings, openMainWindow, recentEvents, resolveActivityApproval, sendActivityReply } from "./lib/api";
+  import { activityCapabilities, activityKey, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
+  import PetAvatar from "./lib/PetAvatar.svelte";
+  import { playNotificationSound, shouldRing } from "./lib/sound";
+  import type { AppSettings, PetEvent } from "./lib/types";
+
+  let settings: AppSettings | null = null;
+  let activities: PetEvent[] = [];
+  let repeatTimer: number | null = null;
+  let pollTimer: number | null = null;
+  let lastEventId: string | null = null;
+  let seenEventIds = new Set<string>();
+  let dismissedActivityKeys = new Set<string>();
+  let systemDark = false;
+  let tasksCollapsed = false;
+  let activityStack: HTMLElement | null = null;
+  let lastTopActivityId: string | null = null;
+  let ready = false;
+  let lastWindowHeight = 0;
+  let frameSyncToken = 0;
+  let replyingToId: string | null = null;
+  let replyText = "";
+  let actionNotice = "";
+
+  const petWindowWidth = 360;
+  const activityCardHeight = 78;
+  const activityGap = 8;
+  const activityPetGap = 8;
+  const maxVisibleActivities = 4;
+
+  $: themeClass = settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "theme-dark" : "theme-light";
+  $: primary = primaryActivity(activities);
+  $: hasActivities = activities.length > 0;
+  $: showActivities = hasActivities && !tasksCollapsed;
+  $: visibleActivityCount = showActivities ? Math.min(activities.length, maxVisibleActivities) : 0;
+  $: visibleActivities = showActivities ? activities.slice(0, maxVisibleActivities) : [];
+  $: activityExtraHeight = visibleActivities.some((activity) => activity.id === replyingToId) ? 32 : 0;
+  $: petScale = Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4);
+  $: petVisualHeight = settings?.pet.kind === "codex-atlas" ? Math.round(32 * petScale * (208 / 192)) : 30 * petScale;
+  $: petStageHeight = Math.max(104, petVisualHeight);
+  $: desiredWindowHeight = petWindowHeight(visibleActivityCount, petStageHeight, activityExtraHeight);
+  $: topActivityId = showActivities ? activities[0]?.id ?? null : null;
+  $: if (!hasActivities && tasksCollapsed) {
+    tasksCollapsed = false;
+  }
+  $: if (ready) {
+    void syncWindowFrame(desiredWindowHeight);
+  }
+  $: if (activityStack && topActivityId && topActivityId !== lastTopActivityId) {
+    lastTopActivityId = topActivityId;
+    requestAnimationFrame(() => {
+      if (activityStack) {
+        activityStack.scrollTop = 0;
+      }
+    });
+  }
+
+  onMount(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    systemDark = media.matches;
+    const syncTheme = () => {
+      systemDark = media.matches;
+    };
+    media.addEventListener("change", syncTheme);
+
+    let disposed = false;
+    let unlistenPetEvent: (() => void) | null = null;
+    let unlistenSettings: (() => void) | null = null;
+
+    void listen<PetEvent>("pet-event", async (event) => {
+      applyIncomingEvents([event.payload]);
+      lastEventId = event.payload.id;
+      await handleRing(event.payload);
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        unlistenPetEvent = unlisten;
+      }
+    }).catch((error) => {
+      console.error("failed to listen pet events", error);
+    });
+
+    void listen<AppSettings>("settings-updated", (event) => {
+      settings = event.payload;
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        unlistenSettings = unlisten;
+      }
+    }).catch((error) => {
+      console.error("failed to listen settings updates", error);
+    });
+
+    void (async () => {
+      try {
+        settings = await getAppSettings();
+      } catch (error) {
+        console.error("failed to load pet settings", error);
+      }
+      if (disposed) {
+        return;
+      }
+
+      ready = true;
+      void syncLatestFromRecent(false).catch((error) => {
+        console.error("failed to load recent pet events", error);
+      });
+      void syncWindowFrame(petWindowHeight(Math.min(activities.length, maxVisibleActivities), petStageHeight, activityExtraHeight));
+      pollTimer = window.setInterval(() => {
+        void syncLatestFromRecent(true).catch((error) => {
+          console.error("failed to sync recent pet events", error);
+        });
+      }, 1000);
+    })();
+
+    return () => {
+      disposed = true;
+      media.removeEventListener("change", syncTheme);
+      unlistenPetEvent?.();
+      unlistenSettings?.();
+      clearRepeat();
+      clearPoll();
+    };
+  });
+
+  async function syncLatestFromRecent(ringOnNewEvent: boolean) {
+    const nextEvents = await recentEvents();
+    const unseenEvents = nextEvents.filter((event) => !seenEventIds.has(event.id));
+    applyIncomingEvents(unseenEvents);
+    const next = nextEvents.at(-1) ?? null;
+    if (!next) {
+      lastEventId = null;
+      return;
+    }
+
+    if (next.id !== lastEventId) {
+      lastEventId = next.id;
+      if (ringOnNewEvent) {
+        await handleRing(next);
+      }
+    }
+  }
+
+  function applyIncomingEvents(incoming: PetEvent[]) {
+    if (incoming.length === 0) {
+      return;
+    }
+    for (const event of incoming) {
+      seenEventIds.add(event.id);
+    }
+    seenEventIds = new Set(seenEventIds);
+    activities = updateActivityList(activities, incoming, dismissedActivityKeys);
+  }
+
+  async function handleRing(event: PetEvent) {
+    if (!settings || !shouldRing(settings, event)) {
+      clearRepeat();
+      return;
+    }
+
+    await playNotificationSound(settings);
+    clearRepeat();
+    if (event.status === "waiting-approval" && settings.notifications.repeatSeconds > 0) {
+      repeatTimer = window.setInterval(() => {
+        if (settings) {
+          void playNotificationSound(settings);
+        }
+      }, settings.notifications.repeatSeconds * 1000);
+    }
+  }
+
+  function clearRepeat() {
+    if (repeatTimer) {
+      window.clearInterval(repeatTimer);
+      repeatTimer = null;
+    }
+  }
+
+  function clearPoll() {
+    if (pollTimer) {
+      window.clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  async function dockToLowerRight() {
+    const appWindow = getCurrentWindow();
+    const [monitors, fallbackMonitor, size] = await Promise.all([availableMonitors(), primaryMonitor(), appWindow.innerSize()]);
+    const visibleMonitors = monitors.filter((monitor) => monitor.workArea.position.y >= 0);
+    const monitor = (visibleMonitors.length > 0 ? visibleMonitors : monitors)
+      .sort((first, second) => second.workArea.size.width * second.workArea.size.height - first.workArea.size.width * first.workArea.size.height)
+      .at(0) ?? fallbackMonitor;
+    if (!monitor) {
+      return;
+    }
+
+    const margin = 42;
+    const x = monitor.workArea.position.x + monitor.workArea.size.width - size.width - margin;
+    const y = monitor.workArea.position.y + monitor.workArea.size.height - size.height - margin;
+    await appWindow.setPosition(new PhysicalPosition(Math.max(x, monitor.workArea.position.x), Math.max(y, monitor.workArea.position.y)));
+
+    const position = await appWindow.outerPosition();
+    if (position.y < 0) {
+      const fallbackX = Math.max(42, Math.round(window.screen.availLeft + window.screen.availWidth - 402));
+      const fallbackY = Math.max(42, Math.round(window.screen.availTop + window.screen.availHeight - 362));
+      await appWindow.setPosition(new LogicalPosition(fallbackX, fallbackY));
+    }
+  }
+
+  async function syncWindowFrame(height: number) {
+    const roundedHeight = Math.round(height);
+    const appWindow = getCurrentWindow();
+    const currentSize = await withTimeout(appWindow.innerSize(), 700).catch(() => null);
+    if (currentSize && roundedHeight === lastWindowHeight && Math.abs(currentSize.height - roundedHeight) <= 1) {
+      return;
+    }
+
+    const token = ++frameSyncToken;
+    try {
+      await withTimeout(appWindow.setSize(new LogicalSize(petWindowWidth, roundedHeight)), 900);
+      lastWindowHeight = roundedHeight;
+      if (token === frameSyncToken) {
+        void withTimeout(dockToLowerRight(), 1200).catch((error) => {
+          console.error("failed to dock pet window", error);
+        });
+      }
+    } catch (error) {
+      console.error("failed to sync pet window frame", error);
+    }
+  }
+
+  function petWindowHeight(visibleCount: number, stageHeight: number, extraHeight = 0) {
+    const petBaseHeight = 22 + stageHeight;
+    if (visibleCount <= 0) {
+      return petBaseHeight;
+    }
+    return petBaseHeight + activityPetGap + visibleCount * activityCardHeight + (visibleCount - 1) * activityGap + extraHeight;
+  }
+
+  function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error(`operation timed out after ${timeoutMs}ms`)), timeoutMs);
+      promise.then(
+        (value) => {
+          window.clearTimeout(timeout);
+          resolve(value);
+        },
+        (error) => {
+          window.clearTimeout(timeout);
+          reject(error);
+        },
+      );
+    });
+  }
+
+  async function dragWindow(event: MouseEvent) {
+    if (event.button !== 0) {
+      return;
+    }
+    await getCurrentWindow().startDragging();
+  }
+
+  function toggleTasks(event: MouseEvent) {
+    event.stopPropagation();
+    tasksCollapsed = !tasksCollapsed;
+  }
+
+  function dismissActivity(event: MouseEvent, activity: PetEvent) {
+    event.stopPropagation();
+    dismissedActivityKeys.add(activityKey(activity));
+    dismissedActivityKeys = new Set(dismissedActivityKeys);
+    activities = activities.filter((candidate) => activityKey(candidate) !== activityKey(activity));
+    if (replyingToId === activity.id) {
+      replyingToId = null;
+      replyText = "";
+    }
+  }
+
+  async function activate(activity: PetEvent) {
+    try {
+      await activateActivity(activity.id);
+      actionNotice = "已打开来源窗口";
+    } catch (error) {
+      actionNotice = String(error);
+    }
+  }
+
+  async function openMain(event: MouseEvent) {
+    event.stopPropagation();
+    try {
+      await openMainWindow();
+      actionNotice = "已打开主窗口";
+    } catch (error) {
+      actionNotice = String(error);
+    }
+  }
+
+  function toggleReply(event: MouseEvent, activity: PetEvent) {
+    event.stopPropagation();
+    if (!activityCapabilities(activity).canReply) {
+      actionNotice = "当前来源不支持可靠回复";
+      return;
+    }
+    replyingToId = replyingToId === activity.id ? null : activity.id;
+    replyText = "";
+  }
+
+  async function submitReply(event: SubmitEvent, activity: PetEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    await sendReply(activity);
+  }
+
+  async function sendReply(activity: PetEvent) {
+    const message = replyText.trim();
+    if (!message) {
+      return;
+    }
+    try {
+      await sendActivityReply(activity.id, message);
+      replyText = "";
+      replyingToId = null;
+      actionNotice = "已发送回复";
+    } catch (error) {
+      actionNotice = String(error);
+    }
+  }
+
+  function handleReplyKeydown(event: KeyboardEvent, activity: PetEvent) {
+    event.stopPropagation();
+    if (event.key === "Enter" && !event.isComposing) {
+      event.preventDefault();
+      void sendReply(activity);
+    }
+  }
+
+  async function approve(event: MouseEvent, activity: PetEvent, behavior: "allow" | "deny") {
+    event.stopPropagation();
+    try {
+      await resolveActivityApproval(activity.id, behavior, behavior === "deny" ? "已在 Code Pet 中拒绝" : undefined);
+      clearRepeat();
+      actionNotice = behavior === "allow" ? "已允许" : "已拒绝";
+    } catch (error) {
+      actionNotice = String(error);
+    }
+  }
+</script>
+
+<main
+  class={`pet-window ${themeClass}`}
+  data-tauri-drag-region
+>
+  <button class="drag-layer" type="button" aria-label="拖动移动桌宠" data-tauri-drag-region on:mousedown={dragWindow}></button>
+  {#if showActivities}
+    <section class="activity-stack" bind:this={activityStack} aria-live="polite">
+      {#each activities as activity (activity.id)}
+        {@const capabilities = activityCapabilities(activity)}
+        <article
+          class="status-pill"
+          class:active-status={activity.status === "thinking" || activity.status === "running"}
+          class:urgent={activity.status === "waiting-approval"}
+          class:failed={activity.status === "failed"}
+          class:done={activity.status === "done"}
+          class:replying={replyingToId === activity.id}
+          title={`${cardTitle(activity)}\n${cardMessage(activity)}\n${cardMeta(activity)}`}
+        >
+          <div class="status-content">
+            <div class="status-title-row">
+              <button class="status-open title-open" type="button" aria-label={`打开 ${cardTitle(activity)}`} title={cardTitle(activity)} on:click={() => activate(activity)}>
+                <span>{cardTitle(activity)}</span>
+              </button>
+              {#if activity.status === "done"}
+                <i class="inline-done-mark" aria-hidden="true"></i>
+              {/if}
+              {#if activity.status === "done" || activity.status === "failed"}
+                <button class="dismiss-button inline-dismiss" type="button" aria-label="从列表移除" on:click={(event) => dismissActivity(event, activity)}></button>
+              {/if}
+            </div>
+            <button class="status-open" type="button" aria-label={`打开 ${cardTitle(activity)}`} title={cardMessage(activity)} on:click={() => activate(activity)}>
+              <span class="status-message">{cardMessage(activity)}</span>
+            </button>
+            {#if replyingToId === activity.id}
+              <form class="reply-row" on:submit={(event) => submitReply(event, activity)}>
+                <input
+                  bind:value={replyText}
+                  aria-label="回复"
+                  placeholder="回复"
+                  on:click={(event) => event.stopPropagation()}
+                  on:keydown={(event) => handleReplyKeydown(event, activity)}
+                />
+                <button
+                  type="button"
+                  on:click={(event) => {
+                    event.stopPropagation();
+                    void sendReply(activity);
+                  }}
+                >回复</button>
+              </form>
+            {/if}
+            <div class="status-footer" class:with-actions={capabilities.canApprove || capabilities.canReply}>
+              <span class="status-meta" title={cardMeta(activity)}>
+                <span class="status-agent">{activity.provider}</span>
+                <span class="status-separator"> · </span>
+                <span class={`status-state status-${activity.status}`}>{statusLabel(activity.status)}</span>
+              </span>
+              {#if capabilities.canApprove || capabilities.canReply}
+                <div class="status-actions" class:approval-mode={capabilities.canApprove} aria-label="任务操作">
+                  {#if capabilities.canApprove}
+                    <button class="approval-button allow" type="button" aria-label="同意" on:click={(event) => approve(event, activity, "allow")}>
+                      <span>同意</span>
+                    </button>
+                    <button class="approval-button deny" type="button" aria-label="拒绝" on:click={(event) => approve(event, activity, "deny")}>
+                      <span>拒绝</span>
+                    </button>
+                  {/if}
+                  {#if capabilities.canReply}
+                    <button class="reply-button" type="button" on:click={(event) => toggleReply(event, activity)}>回复</button>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+          </div>
+        </article>
+      {/each}
+    </section>
+  {/if}
+
+  <section class="pet-stage" aria-label="拖动移动桌宠" data-tauri-drag-region>
+    <button
+      class="main-window-button"
+      type="button"
+      aria-label="打开主窗口"
+      on:mousedown={(event) => event.stopPropagation()}
+      on:click={openMain}
+    >
+      <span aria-hidden="true"></span>
+    </button>
+    <PetAvatar
+      sprite={settings?.pet.sprite ?? { body: "#22c55e", accent: "#facc15", eyes: "#0f172a" }}
+      kind={settings?.pet.kind}
+      imagePath={settings?.pet.imagePath}
+      status={primary?.status ?? "idle"}
+      scale={Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4)}
+    />
+    {#if hasActivities}
+      <button
+        class="fold-button"
+        class:collapsed={tasksCollapsed}
+        type="button"
+        aria-label={tasksCollapsed ? "展开任务列表" : "收起任务列表"}
+        on:mousedown={(event) => event.stopPropagation()}
+        on:click={toggleTasks}
+      >
+        <span aria-hidden="true"></span>
+      </button>
+    {/if}
+    {#if actionNotice}
+      <span class="pet-notice">{actionNotice}</span>
+    {/if}
+  </section>
+</main>

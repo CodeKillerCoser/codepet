@@ -1,0 +1,92 @@
+import { invoke } from "@tauri-apps/api/core";
+import type { AgentView, AppSettings, PetEvent, PetLibraryView } from "./types";
+
+export async function listAgents(): Promise<AgentView[]> {
+  return invoke<AgentView[]>("list_agents");
+}
+
+export async function setAgentEnabled(agentId: string, enabled: boolean): Promise<AgentView[]> {
+  return invoke<AgentView[]>("set_agent_enabled", { agentId, enabled });
+}
+
+export async function getAppSettings(): Promise<AppSettings> {
+  return invoke<AppSettings>("get_app_settings");
+}
+
+export async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
+  return invoke<AppSettings>("update_app_settings", { settings });
+}
+
+export async function listPets(): Promise<PetLibraryView> {
+  return invoke<PetLibraryView>("list_pets");
+}
+
+export async function selectPet(petId: string): Promise<PetLibraryView> {
+  return invoke<PetLibraryView>("select_pet", { petId });
+}
+
+export async function setPetDataDirectory(path: string): Promise<PetLibraryView> {
+  return invoke<PetLibraryView>("set_pet_data_directory", { path });
+}
+
+export async function importPetImage(sourcePath: string, name?: string): Promise<PetLibraryView> {
+  return invoke<PetLibraryView>("import_pet_image", { sourcePath, name });
+}
+
+export async function recentEvents(): Promise<PetEvent[]> {
+  let ipcEvents: PetEvent[] | null = null;
+  try {
+    ipcEvents = await withTimeout(invoke<PetEvent[]>("recent_events"), 1200);
+    if (ipcEvents.length > 0) {
+      return ipcEvents;
+    }
+  } catch {
+    // Browser preview cannot use Tauri IPC, so fall back to the local collector HTTP endpoint.
+  }
+
+  try {
+    const response = await withTimeout(fetch("http://127.0.0.1:47621/events"), 1200);
+    if (response.ok) {
+      return (await response.json()) as PetEvent[];
+    }
+  } catch {
+    // The collector may still be starting.
+  }
+  return ipcEvents ?? [];
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = globalThis.setTimeout(() => reject(new Error(`operation timed out after ${timeoutMs}ms`)), timeoutMs);
+    promise.then(
+      (value) => {
+        globalThis.clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        globalThis.clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
+export async function collectorEndpoint(): Promise<string> {
+  return invoke<string>("collector_endpoint");
+}
+
+export async function activateActivity(eventId: string): Promise<void> {
+  return invoke<void>("activate_activity", { eventId });
+}
+
+export async function openMainWindow(): Promise<void> {
+  return invoke<void>("open_main_window");
+}
+
+export async function sendActivityReply(eventId: string, message: string): Promise<void> {
+  return invoke<void>("send_activity_reply", { eventId, message });
+}
+
+export async function resolveActivityApproval(eventId: string, behavior: "allow" | "deny", message?: string): Promise<void> {
+  return invoke<void>("resolve_activity_approval", { eventId, behavior, message });
+}
