@@ -100,6 +100,115 @@ fn replay_codex_audit_keeps_prompt_title_for_later_tool_events() {
 }
 
 #[test]
+fn replay_codex_audit_does_not_store_session_start_as_title() {
+    let temp = tempfile::tempdir().unwrap();
+    let audit_path = temp.path().join("audit.jsonl");
+    std::fs::write(
+        &audit_path,
+        [
+            serde_json::to_string(&json!({
+                "platform": "codex",
+                "hook_event_name": "SessionStart",
+                "session_id": "codex-session",
+                "cwd": "/workspace/project",
+                "_timestamp": "2026-05-26 17:41:59"
+            }))
+            .unwrap(),
+            serde_json::to_string(&json!({
+                "platform": "codex",
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "codex-session",
+                "cwd": "/workspace/project",
+                "prompt": "当前活跃的对话列表上还有一个SessionStart，这是从哪里来的？",
+                "_timestamp": "2026-05-26 17:42:00"
+            }))
+            .unwrap(),
+            serde_json::to_string(&json!({
+                "platform": "codex",
+                "hook_event_name": "PreToolUse",
+                "session_id": "codex-session",
+                "cwd": "/workspace/project",
+                "transcript_path": "/Users/wangxin/.codex/sessions/2026/05/26/rollout.jsonl",
+                "tool_name": "Bash",
+                "_timestamp": "2026-05-26 17:43:00"
+            }))
+            .unwrap(),
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let state = SharedState::default();
+
+    replay_recent_codex_audit_events(&state, &audit_path, 20).unwrap();
+
+    let events = state.recent_events();
+    assert_eq!(events[1].title, "任务开始");
+    assert_eq!(
+        events[1].message,
+        "当前活跃的对话列表上还有一个SessionStart，这是从哪里来的？"
+    );
+    assert_eq!(
+        events[2].message,
+        "当前活跃的对话列表上还有一个SessionStart，这是从哪里来的？"
+    );
+}
+
+#[test]
+fn replay_codex_audit_skips_internal_suggestion_session_after_marker() {
+    let temp = tempfile::tempdir().unwrap();
+    let audit_path = temp.path().join("audit.jsonl");
+    std::fs::write(
+        &audit_path,
+        [
+            serde_json::to_string(&json!({
+                "platform": "codex",
+                "hook_event_name": "SessionStart",
+                "session_id": "suggestion-session",
+                "cwd": "/workspace/project",
+                "_timestamp": "2026-05-26 17:41:59"
+            }))
+            .unwrap(),
+            serde_json::to_string(&json!({
+                "platform": "codex",
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "suggestion-session",
+                "cwd": "/workspace/project",
+                "prompt": "# Overview\n\nGenerate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex in this local project: /workspace/project\n\nRecent Codex threads in this project:\n- 评审 agent token统计实现\n\n# Response format\nEach suggestion must include: title, description, prompt, appId",
+                "_timestamp": "2026-05-26 17:42:00"
+            }))
+            .unwrap(),
+            serde_json::to_string(&json!({
+                "platform": "codex",
+                "hook_event_name": "PreToolUse",
+                "session_id": "suggestion-session",
+                "cwd": "/workspace/project",
+                "tool_name": "Bash",
+                "_timestamp": "2026-05-26 17:43:00"
+            }))
+            .unwrap(),
+            serde_json::to_string(&json!({
+                "platform": "codex",
+                "hook_event_name": "Stop",
+                "session_id": "suggestion-session",
+                "cwd": "/workspace/project",
+                "_timestamp": "2026-05-26 17:44:00"
+            }))
+            .unwrap(),
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let state = SharedState::default();
+
+    let imported = replay_recent_codex_audit_events(&state, &audit_path, 20).unwrap();
+
+    let events = state.recent_events();
+    assert_eq!(imported, 1);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].message, "SessionStart");
+}
+
+#[test]
 fn replay_codex_audit_uses_session_index_thread_name_as_title() {
     let temp = tempfile::tempdir().unwrap();
     let audit_path = temp.path().join("audit.jsonl");

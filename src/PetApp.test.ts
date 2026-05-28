@@ -10,4 +10,12 @@ describe("PetApp activity helpers", () => {
       expect.arrayContaining(["cardMeta"]),
     );
   });
+
+  it("auto-hides transient pet notices after showing them", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+
+    expect(source).toContain("function showNotice");
+    expect(source).toContain("window.setTimeout");
+    expect(source).toContain("clearNoticeTimer");
+  });
 });

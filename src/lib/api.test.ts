@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { deletePet, recentEvents } from "./api";
+import { deletePet, getLaunchAtLoginEnabled, recentEvents, setLaunchAtLoginEnabled, tokenUsageSummary } from "./api";
 import type { PetEvent } from "./types";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -115,5 +115,42 @@ describe("deletePet", () => {
     await expect(deletePet("image-custom")).resolves.toEqual(view);
 
     expect(invoke).toHaveBeenCalledWith("delete_pet", { petId: "image-custom" });
+  });
+});
+
+describe("tokenUsageSummary", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("invokes the desktop token usage summary command", async () => {
+    const summary = {
+      total: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 2, reasoningOutputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, totalTokens: 12 },
+      byProvider: [],
+      byDay: [],
+      byBucket: [],
+      sessions: [],
+    };
+    vi.mocked(invoke).mockResolvedValue(summary);
+
+    await expect(tokenUsageSummary()).resolves.toEqual(summary);
+
+    expect(invoke).toHaveBeenCalledWith("token_usage_summary");
+  });
+});
+
+describe("launchAtLogin", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("reads and updates the desktop launch at login command", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+
+    await expect(getLaunchAtLoginEnabled()).resolves.toBe(false);
+    await expect(setLaunchAtLoginEnabled(true)).resolves.toBe(true);
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "get_launch_at_login_enabled");
+    expect(invoke).toHaveBeenNthCalledWith(2, "set_launch_at_login_enabled", { enabled: true });
   });
 });

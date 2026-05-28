@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AgentView, AppSettings, PetEvent, PetLibraryView } from "./types";
+import type { AgentView, AppSettings, PetEvent, PetLibraryView, TokenUsageSummary } from "./types";
 
 export async function listAgents(): Promise<AgentView[]> {
   return invoke<AgentView[]>("list_agents");
@@ -15,6 +15,14 @@ export async function getAppSettings(): Promise<AppSettings> {
 
 export async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   return invoke<AppSettings>("update_app_settings", { settings });
+}
+
+export async function getLaunchAtLoginEnabled(): Promise<boolean> {
+  return invoke<boolean>("get_launch_at_login_enabled");
+}
+
+export async function setLaunchAtLoginEnabled(enabled: boolean): Promise<boolean> {
+  return invoke<boolean>("set_launch_at_login_enabled", { enabled });
 }
 
 export async function listPets(): Promise<PetLibraryView> {
@@ -57,6 +65,10 @@ export async function recentEvents(): Promise<PetEvent[]> {
     // The collector may still be starting.
   }
   return ipcEvents ?? [];
+}
+
+export async function tokenUsageSummary(): Promise<TokenUsageSummary> {
+  return invoke<TokenUsageSummary>("token_usage_summary");
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

@@ -147,7 +147,7 @@ pub fn normalize_hook_payload(provider: AgentId, raw: Value) -> Result<PetEvent,
         "Stop" | "SessionEnd" | "Notification" => (
             PetEventKind::TaskCompleted,
             TaskStatus::Done,
-            false,
+            true,
             "任务完成",
         ),
         _ => (

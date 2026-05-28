@@ -108,6 +108,8 @@ pub struct NotificationSettings {
     pub ring_on_permission: bool,
     #[serde(default = "default_true")]
     pub ring_on_failure: bool,
+    #[serde(default = "default_true")]
+    pub ring_on_done: bool,
     #[serde(default = "default_repeat_seconds")]
     pub repeat_seconds: u16,
     #[serde(default)]
@@ -173,6 +175,7 @@ impl Default for NotificationSettings {
             custom_sound_path: None,
             ring_on_permission: true,
             ring_on_failure: true,
+            ring_on_done: true,
             repeat_seconds: default_repeat_seconds(),
             quiet_hours_enabled: false,
             quiet_hours_start: default_quiet_start(),

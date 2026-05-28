@@ -1,6 +1,7 @@
 pub mod activity_actions;
 pub mod agent_control;
 pub mod agents;
+pub mod autostart;
 pub mod cli;
 pub mod claude_transcript;
 pub mod codex_app_server;
@@ -12,6 +13,7 @@ pub mod pets;
 pub mod settings;
 pub mod state;
 pub mod title_resolver;
+pub mod token_usage;
 
 use agents::{AgentId, AgentView};
 use base64::Engine;
@@ -19,6 +21,7 @@ use events::PetEvent;
 use pets::PetLibraryView;
 use settings::{load_app_settings, save_app_settings, AppSettings};
 use state::{ApprovalBehavior, ApprovalDecision, SharedState, COLLECTOR_PORT};
+use token_usage::TokenUsageSummary;
 use std::str::FromStr;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, Size, WebviewUrl, WebviewWindowBuilder};
 
@@ -45,6 +48,16 @@ fn update_app_settings(app: AppHandle, settings: AppSettings) -> Result<AppSetti
     save_app_settings(&settings).map_err(|error| error.to_string())?;
     let _ = app.emit("settings-updated", settings.clone());
     Ok(settings)
+}
+
+#[tauri::command]
+fn get_launch_at_login_enabled() -> bool {
+    autostart::launch_agent_enabled()
+}
+
+#[tauri::command]
+fn set_launch_at_login_enabled(enabled: bool) -> Result<bool, String> {
+    autostart::set_launch_agent_enabled(enabled).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -91,6 +104,11 @@ fn import_pet_image(app: AppHandle, source_path: String, name: Option<String>) -
 #[tauri::command]
 fn recent_events(state: tauri::State<'_, SharedState>) -> Vec<PetEvent> {
     state.recent_events()
+}
+
+#[tauri::command]
+fn token_usage_summary() -> Result<TokenUsageSummary, String> {
+    token_usage::load_default_usage_summary().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -205,6 +223,15 @@ pub fn run() {
             if let Err(error) = codex_audit::replay_default_codex_audit_events(&state) {
                 let _ = handle.emit("collector-error", error.to_string());
             }
+            let usage_handle = handle.clone();
+            tauri::async_runtime::spawn_blocking(move || match token_usage::refresh_default_usage_summary() {
+                Ok(summary) => {
+                    let _ = usage_handle.emit("token-usage-updated", summary);
+                }
+                Err(error) => {
+                    let _ = usage_handle.emit("collector-error", error.to_string());
+                }
+            });
             let audit_handle = handle.clone();
             let audit_state = state.clone();
             tauri::async_runtime::spawn(async move {
@@ -223,12 +250,15 @@ pub fn run() {
             set_agent_enabled,
             get_app_settings,
             update_app_settings,
+            get_launch_at_login_enabled,
+            set_launch_at_login_enabled,
             list_pets,
             select_pet,
             delete_pet,
             set_pet_data_directory,
             import_pet_image,
             recent_events,
+            token_usage_summary,
             activate_activity,
             send_activity_reply,
             resolve_activity_approval,

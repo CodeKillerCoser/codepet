@@ -21,6 +21,7 @@ fn settings_keep_existing_values_when_theme_field_is_missing() {
             "customSoundPath": null,
             "ringOnPermission": true,
             "ringOnFailure": false,
+            "ringOnDone": false,
             "repeatSeconds": 45,
             "quietHoursEnabled": false,
             "quietHoursStart": "22:00",
@@ -34,4 +35,21 @@ fn settings_keep_existing_values_when_theme_field_is_missing() {
     assert_eq!(settings.pet.scale, 4);
     assert_eq!(settings.pet.sprite.body, "#111111");
     assert!(!settings.notifications.ring_on_failure);
+    assert!(!settings.notifications.ring_on_done);
+}
+
+#[test]
+fn settings_enable_done_ringing_when_field_is_missing() {
+    let settings: AppSettings = serde_json::from_str(
+        r##"{
+          "notifications": {
+            "sound": "bell",
+            "ringOnPermission": true,
+            "ringOnFailure": true
+          }
+        }"##,
+    )
+    .unwrap();
+
+    assert!(settings.notifications.ring_on_done);
 }

@@ -83,7 +83,7 @@ pub fn event_from_claude_outcome(fallback: &PetEvent, outcome: ClaudeTranscriptO
         return None;
     }
 
-    let should_ring = status == TaskStatus::Failed;
+    let should_ring = matches!(status, TaskStatus::Failed | TaskStatus::Done);
 
     Some(PetEvent {
         id: Uuid::new_v4().to_string(),

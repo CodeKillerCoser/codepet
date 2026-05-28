@@ -131,6 +131,56 @@ describe("activeActivities", () => {
     expect(activities).toEqual([]);
   });
 
+  it("does not create a pet task for Codex hyperpersonalized suggestion sessions", () => {
+    const activities = activeActivities(
+      [
+        event({
+          id: "suggestion-start",
+          provider: "codex",
+          sessionId: "suggestion-session",
+          title: "任务开始",
+          message: "SessionStart",
+          status: "thinking",
+          createdAt: "2026-05-26T06:00:00.000Z",
+        }),
+        event({
+          id: "suggestion-prompt",
+          provider: "codex",
+          sessionId: "suggestion-session",
+          title: "SessionStart",
+          message:
+            "# Overview\n\nGenerate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex in this local project: /Users/wangxin/Developer/Work/wukong-studio\n\nRecent Codex threads in this project:\n- 评审 agent token统计实现\n\n# Response format\nEach suggestion must include: title, description, prompt, appId",
+          status: "thinking",
+          createdAt: "2026-05-26T06:00:01.000Z",
+        }),
+        event({
+          id: "suggestion-tool",
+          provider: "codex",
+          sessionId: "suggestion-session",
+          kind: "tool-started",
+          title: "SessionStart",
+          message: "python3 - <<'PY'\nprint('scan')\nPY",
+          status: "running",
+          createdAt: "2026-05-26T06:00:02.000Z",
+        }),
+        event({
+          id: "suggestion-done",
+          provider: "codex",
+          sessionId: "suggestion-session",
+          kind: "task-completed",
+          title: "SessionStart",
+          message: "已完成增量 consolidation，主要更新了 [MEMORY.md]。",
+          status: "done",
+          createdAt: "2026-05-26T06:00:08.000Z",
+        }),
+      ],
+      4,
+      new Date("2026-05-26T06:01:00.000Z"),
+    );
+
+    expect(activities).toEqual([]);
+  });
+
   it("drops stale thinking and running events but keeps attention states", () => {
     const activities = activeActivities(
       [
@@ -268,6 +318,37 @@ describe("updateActivityList", () => {
     expect(afterDismissedDone).toEqual([]);
     expect(restarted.map((activity) => activity.id)).toEqual(["codex-restart"]);
     expect(dismissedKeys.has(activityKey(started))).toBe(false);
+  });
+
+  it("keeps Codex internal sessions hidden across incremental event batches", () => {
+    const hiddenInternalKeys = new Set<string>();
+    const prompt = event({
+      id: "suggestion-prompt",
+      provider: "codex",
+      sessionId: "suggestion-session",
+      title: "SessionStart",
+      message:
+        "# Overview\n\nGenerate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex in this local project: /Users/wangxin/Developer/Work/wukong-studio",
+      status: "thinking",
+      createdAt: "2026-05-26T06:00:01.000Z",
+    });
+    const tool = event({
+      id: "suggestion-tool",
+      provider: "codex",
+      sessionId: "suggestion-session",
+      kind: "tool-started",
+      title: "SessionStart",
+      message: "python3 - <<'PY'\nprint('scan')\nPY",
+      status: "running",
+      createdAt: "2026-05-26T06:00:02.000Z",
+    });
+
+    const afterPrompt = updateActivityList([], [prompt], new Set<string>(), new Date("2026-05-26T06:00:01.000Z"), hiddenInternalKeys);
+    const afterTool = updateActivityList(afterPrompt, [tool], new Set<string>(), new Date("2026-05-26T06:00:02.000Z"), hiddenInternalKeys);
+
+    expect(afterPrompt).toEqual([]);
+    expect(afterTool).toEqual([]);
+    expect(hiddenInternalKeys.has(activityKey(prompt))).toBe(true);
   });
 });
 

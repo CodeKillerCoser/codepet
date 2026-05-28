@@ -16,6 +16,7 @@
   let lastEventId: string | null = null;
   let seenEventIds = new Set<string>();
   let dismissedActivityKeys = new Set<string>();
+  let hiddenInternalActivityKeys = new Set<string>();
   let systemDark = false;
   let tasksCollapsed = false;
   let activityStack: HTMLElement | null = null;
@@ -26,12 +27,14 @@
   let replyingToId: string | null = null;
   let replyText = "";
   let actionNotice = "";
+  let noticeTimer: number | null = null;
 
   const petWindowWidth = 360;
   const activityCardHeight = 78;
   const activityGap = 8;
   const activityPetGap = 8;
   const maxVisibleActivities = 4;
+  const noticeVisibleMs = 2500;
 
   $: themeClass = settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "theme-dark" : "theme-light";
   $: primary = primaryActivity(activities);
@@ -127,6 +130,7 @@
       unlistenSettings?.();
       clearRepeat();
       clearPoll();
+      clearNoticeTimer();
     };
   });
 
@@ -156,7 +160,7 @@
       seenEventIds.add(event.id);
     }
     seenEventIds = new Set(seenEventIds);
-    activities = updateActivityList(activities, incoming, dismissedActivityKeys);
+    activities = updateActivityList(activities, incoming, dismissedActivityKeys, new Date(), hiddenInternalActivityKeys);
   }
 
   async function handleRing(event: PetEvent) {
@@ -187,6 +191,22 @@
     if (pollTimer) {
       window.clearInterval(pollTimer);
       pollTimer = null;
+    }
+  }
+
+  function showNotice(message: string) {
+    actionNotice = message;
+    clearNoticeTimer();
+    noticeTimer = window.setTimeout(() => {
+      actionNotice = "";
+      noticeTimer = null;
+    }, noticeVisibleMs);
+  }
+
+  function clearNoticeTimer() {
+    if (noticeTimer) {
+      window.clearTimeout(noticeTimer);
+      noticeTimer = null;
     }
   }
 
@@ -286,9 +306,9 @@
   async function activate(activity: PetEvent) {
     try {
       await activateActivity(activity.id);
-      actionNotice = "已打开来源窗口";
+      showNotice("已打开来源窗口");
     } catch (error) {
-      actionNotice = String(error);
+      showNotice(String(error));
     }
   }
 
@@ -296,16 +316,16 @@
     event.stopPropagation();
     try {
       await openMainWindow();
-      actionNotice = "已打开主窗口";
+      showNotice("已打开主窗口");
     } catch (error) {
-      actionNotice = String(error);
+      showNotice(String(error));
     }
   }
 
   function toggleReply(event: MouseEvent, activity: PetEvent) {
     event.stopPropagation();
     if (!activityCapabilities(activity).canReply) {
-      actionNotice = "当前来源不支持可靠回复";
+      showNotice("当前来源不支持可靠回复");
       return;
     }
     replyingToId = replyingToId === activity.id ? null : activity.id;
@@ -327,9 +347,9 @@
       await sendActivityReply(activity.id, message);
       replyText = "";
       replyingToId = null;
-      actionNotice = "已发送回复";
+      showNotice("已发送回复");
     } catch (error) {
-      actionNotice = String(error);
+      showNotice(String(error));
     }
   }
 
@@ -346,9 +366,9 @@
     try {
       await resolveActivityApproval(activity.id, behavior, behavior === "deny" ? "已在 Code Pet 中拒绝" : undefined);
       clearRepeat();
-      actionNotice = behavior === "allow" ? "已允许" : "已拒绝";
+      showNotice(behavior === "allow" ? "已允许" : "已拒绝");
     } catch (error) {
-      actionNotice = String(error);
+      showNotice(String(error));
     }
   }
 </script>

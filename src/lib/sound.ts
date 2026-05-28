@@ -14,6 +14,9 @@ export function shouldRing(settings: AppSettings, event: PetEvent): boolean {
   if (event.status === "failed") {
     return settings.notifications.ringOnFailure;
   }
+  if (event.status === "done") {
+    return settings.notifications.ringOnDone;
+  }
   return false;
 }
 

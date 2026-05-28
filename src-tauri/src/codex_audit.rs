@@ -3,7 +3,7 @@ use crate::events::{frontend_event, normalize_hook_payload, PetEvent, PetEventKi
 use crate::state::SharedState;
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -94,9 +94,13 @@ fn replay_recent_codex_audit_events_with_titles(
     lines.reverse();
 
     let mut imported = 0;
+    let mut hidden_internal_sessions = HashSet::new();
     let mut transcript_cache = HashMap::new();
     for line in lines {
         if let Some(event) = parse_codex_audit_line_with_transcript_cache(line, Some(&mut transcript_cache)) {
+            if should_skip_internal_session(&mut hidden_internal_sessions, &event) {
+                continue;
+            }
             let event = apply_session_title(&mut session_titles, event);
             app_state.push_event(event);
             imported += 1;
@@ -112,6 +116,7 @@ pub async fn watch_default_codex_audit(app_state: SharedState, app_handle: AppHa
 async fn watch_codex_audit(app_state: SharedState, app_handle: AppHandle, audit_path: PathBuf) {
     let mut offset = file_len(&audit_path).unwrap_or(0);
     let mut session_titles = HashMap::new();
+    let mut hidden_internal_sessions = HashSet::new();
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         let Ok(len) = file_len(&audit_path) else {
@@ -141,12 +146,25 @@ async fn watch_codex_audit(app_state: SharedState, app_handle: AppHandle, audit_
         }
         for line in chunk.lines() {
             if let Some(event) = parse_codex_audit_line(line) {
+                if should_skip_internal_session(&mut hidden_internal_sessions, &event) {
+                    continue;
+                }
                 let event = apply_session_title(&mut session_titles, event);
                 app_state.push_event(event.clone());
                 let _ = app_handle.emit("pet-event", &frontend_event(&event));
+                refresh_token_usage_if_needed(&app_handle, event);
             }
         }
     }
+}
+
+fn refresh_token_usage_if_needed(app_handle: &AppHandle, event: PetEvent) {
+    let app_handle = app_handle.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Ok(Some(summary)) = crate::token_usage::refresh_usage_for_event(&event) {
+            let _ = app_handle.emit("token-usage-updated", summary);
+        }
+    });
 }
 
 fn apply_session_title(session_titles: &mut HashMap<String, String>, event: PetEvent) -> PetEvent {
@@ -155,8 +173,15 @@ fn apply_session_title(session_titles: &mut HashMap<String, String>, event: PetE
     };
     let indexed_title = session_titles.get(&session_id).cloned();
 
-    if !is_transcript_path(&event.message) && matches!(event.kind, crate::events::PetEventKind::TaskStarted) {
+    if is_storable_session_title(&event) {
         session_titles.entry(session_id).or_insert_with(|| event.message.clone());
+        if let Some(title) = indexed_title {
+            return PetEvent { title, ..event };
+        }
+        return event;
+    }
+
+    if matches!(event.kind, crate::events::PetEventKind::TaskStarted) {
         if let Some(title) = indexed_title {
             return PetEvent { title, ..event };
         }
@@ -176,6 +201,36 @@ fn apply_session_title(session_titles: &mut HashMap<String, String>, event: PetE
         return PetEvent { title, ..event };
     }
     event
+}
+
+fn should_skip_internal_session(hidden_internal_sessions: &mut HashSet<String>, event: &PetEvent) -> bool {
+    let Some(session_id) = event.session_id.as_deref() else {
+        return false;
+    };
+    if hidden_internal_sessions.contains(session_id) {
+        return true;
+    }
+    if is_codex_internal_background_event(event) {
+        hidden_internal_sessions.insert(session_id.to_string());
+        return true;
+    }
+    false
+}
+
+fn is_storable_session_title(event: &PetEvent) -> bool {
+    matches!(event.kind, crate::events::PetEventKind::TaskStarted)
+        && !is_transcript_path(&event.message)
+        && event.message.trim() != "SessionStart"
+        && !is_codex_internal_background_event(event)
+}
+
+fn is_codex_internal_background_event(event: &PetEvent) -> bool {
+    let text = format!("{}\n{}", event.title, event.message);
+    text.contains("Generate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex")
+        || text.contains("Recent Codex threads in this project:")
+        || text.contains("Avoid repeating these previously dismissed suggestions:")
+        || text.contains("Each suggestion must include: title, description, prompt, appId")
+        || text.contains("You will be presented with a user prompt, and your job is to provide a short title for a task")
 }
 
 fn load_session_index_titles(path: &Path) -> io::Result<HashMap<String, String>> {

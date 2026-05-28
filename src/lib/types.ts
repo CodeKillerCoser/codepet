@@ -73,6 +73,7 @@ export interface AppSettings {
     customSoundPath?: string | null;
     ringOnPermission: boolean;
     ringOnFailure: boolean;
+    ringOnDone: boolean;
     repeatSeconds: number;
     quietHoursEnabled: boolean;
     quietHoursStart: string;
@@ -94,6 +95,43 @@ export interface PetEvent {
   createdAt: string;
   raw: unknown;
   source?: ActivitySource | null;
+}
+
+export interface TokenUsage {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  totalTokens: number;
+}
+
+export interface TokenUsageSummary {
+  total: TokenUsage;
+  byProvider: Array<{
+    provider: AgentId;
+    sessions: number;
+    total: TokenUsage;
+  }>;
+  byDay: Array<{
+    day: string;
+    sessions: number;
+    total: TokenUsage;
+  }>;
+  byBucket: Array<{
+    provider: AgentId;
+    bucketStart: string;
+    sessions: number;
+    total: TokenUsage;
+  }>;
+  sessions: Array<{
+    provider: AgentId;
+    sessionId: string;
+    day: string;
+    models: string[];
+    usage: TokenUsage;
+  }>;
 }
 
 export interface ActivitySource {

@@ -11,10 +11,11 @@ export function activityKey(event: PetEvent): string {
 
 export function activeActivities(events: PetEvent[], maxItems?: number, now = new Date()): PetEvent[] {
   const activities = new Map<string, PetEvent>();
+  const hiddenInternalKeys = new Set<string>();
   const nowMs = now.getTime();
 
   for (const event of events) {
-    applyActivityEvent(activities, event, undefined, nowMs);
+    applyActivityEvent(activities, event, undefined, hiddenInternalKeys, nowMs);
   }
 
   const sorted = sortActivities(Array.from(activities.values()));
@@ -24,17 +25,38 @@ export function activeActivities(events: PetEvent[], maxItems?: number, now = ne
   return sorted;
 }
 
-export function updateActivityList(current: PetEvent[], incoming: PetEvent[], dismissedKeys = new Set<string>(), now = new Date()): PetEvent[] {
+export function updateActivityList(
+  current: PetEvent[],
+  incoming: PetEvent[],
+  dismissedKeys = new Set<string>(),
+  now = new Date(),
+  hiddenInternalKeys = new Set<string>(),
+): PetEvent[] {
   const activities = new Map(current.map((event) => [activityKey(event), event]));
   const nowMs = now.getTime();
   for (const event of incoming) {
-    applyActivityEvent(activities, event, dismissedKeys, nowMs);
+    applyActivityEvent(activities, event, dismissedKeys, hiddenInternalKeys, nowMs);
   }
   return sortActivities(Array.from(activities.values()));
 }
 
-function applyActivityEvent(activities: Map<string, PetEvent>, event: PetEvent, dismissedKeys: Set<string> | undefined, nowMs: number) {
+function applyActivityEvent(
+  activities: Map<string, PetEvent>,
+  event: PetEvent,
+  dismissedKeys: Set<string> | undefined,
+  hiddenInternalKeys: Set<string>,
+  nowMs: number,
+) {
   const key = activityKey(event);
+  if (hiddenInternalKeys.has(key)) {
+    activities.delete(key);
+    return;
+  }
+  if (isCodexInternalBackgroundEvent(event)) {
+    hiddenInternalKeys.add(key);
+    activities.delete(key);
+    return;
+  }
   if (isLifecycleOnlySessionStart(event)) {
     return;
   }
@@ -84,6 +106,20 @@ function isLifecycleOnlySessionStart(event: PetEvent): boolean {
   const title = event.title.trim();
   const message = event.message.trim();
   return title === "SessionStart" || message === "SessionStart" || isTranscriptPath(message);
+}
+
+function isCodexInternalBackgroundEvent(event: PetEvent): boolean {
+  if (event.provider !== "codex") {
+    return false;
+  }
+  const text = `${event.title}\n${event.message}`;
+  return (
+    text.includes("Generate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex") ||
+    text.includes("Recent Codex threads in this project:") ||
+    text.includes("Avoid repeating these previously dismissed suggestions:") ||
+    text.includes("Each suggestion must include: title, description, prompt, appId") ||
+    text.includes("You will be presented with a user prompt, and your job is to provide a short title for a task")
+  );
 }
 
 function isStaleActivity(event: PetEvent, nowMs: number): boolean {

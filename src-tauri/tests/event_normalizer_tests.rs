@@ -49,7 +49,7 @@ fn codex_stop_hook_payload_becomes_completed_update() {
 
     assert_eq!(event.kind, PetEventKind::TaskCompleted);
     assert_eq!(event.status, TaskStatus::Done);
-    assert!(!event.should_ring);
+    assert!(event.should_ring);
     assert_eq!(event.provider, AgentId::Codex);
 }
 

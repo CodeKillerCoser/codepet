@@ -104,8 +104,18 @@ async fn receive_hook(
     state.app_state.push_event(event.clone());
     let frontend_event = frontend_event(&event);
     let _ = state.app_handle.emit("pet-event", &frontend_event);
+    refresh_token_usage_if_needed(&state.app_handle, event.clone());
     watch_claude_transcript_if_needed(&state, &event);
     Ok(Json(frontend_event))
+}
+
+fn refresh_token_usage_if_needed(app_handle: &AppHandle, event: PetEvent) {
+    let app_handle = app_handle.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Ok(Some(summary)) = crate::token_usage::refresh_usage_for_event(&event) {
+            let _ = app_handle.emit("token-usage-updated", summary);
+        }
+    });
 }
 
 fn watch_claude_transcript_if_needed(state: &CollectorState, event: &PetEvent) {
