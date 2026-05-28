@@ -187,7 +187,7 @@ export function activityCapabilities(event: PetEvent): ActivityCapabilities {
   return {
     canActivate: true,
     canReply,
-    canApprove: event.status === "waiting-approval",
+    canApprove: event.status === "waiting-approval" && event.provider !== "codex",
     replyReason: canReply ? undefined : "来源不支持可靠回复",
   };
 }

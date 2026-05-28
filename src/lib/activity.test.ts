@@ -432,7 +432,16 @@ describe("activityCapabilities", () => {
   });
 
   it("exposes approval controls only for active permission requests", () => {
-    expect(activityCapabilities(event({ status: "waiting-approval" })).canApprove).toBe(true);
-    expect(activityCapabilities(event({ status: "running" })).canApprove).toBe(false);
+    expect(activityCapabilities(event({ provider: "qoder", status: "waiting-approval" })).canApprove).toBe(true);
+    expect(activityCapabilities(event({ provider: "qoder", status: "running" })).canApprove).toBe(false);
+  });
+
+  it("does not expose approval controls for Codex permission requests", () => {
+    const activity = event({
+      provider: "codex",
+      status: "waiting-approval",
+    });
+
+    expect(activityCapabilities(activity).canApprove).toBe(false);
   });
 });
