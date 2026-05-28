@@ -19,7 +19,25 @@ pub struct AppSettings {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppearanceSettings {
+    #[serde(default)]
     pub theme: ThemeChoice,
+    #[serde(default)]
+    pub running_bubble: RunningBubbleSettings,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunningBubbleSettings {
+    #[serde(default = "default_true")]
+    pub background_breathing: bool,
+    #[serde(default)]
+    pub border_marquee: bool,
+    #[serde(default = "default_running_bubble_background")]
+    pub background_color: String,
+    #[serde(default = "default_running_bubble_border")]
+    pub border_color: String,
+    #[serde(default = "default_running_bubble_animation_ms")]
+    pub animation_ms: u16,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -134,6 +152,7 @@ impl Default for AppearanceSettings {
     fn default() -> Self {
         Self {
             theme: ThemeChoice::System,
+            running_bubble: RunningBubbleSettings::default(),
         }
     }
 }
@@ -141,6 +160,18 @@ impl Default for AppearanceSettings {
 impl Default for ThemeChoice {
     fn default() -> Self {
         Self::System
+    }
+}
+
+impl Default for RunningBubbleSettings {
+    fn default() -> Self {
+        Self {
+            background_breathing: true,
+            border_marquee: false,
+            background_color: default_running_bubble_background(),
+            border_color: default_running_bubble_border(),
+            animation_ms: default_running_bubble_animation_ms(),
+        }
     }
 }
 
@@ -235,6 +266,18 @@ fn default_always_on_top() -> bool {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_running_bubble_background() -> String {
+    "#e8f2ff".to_string()
+}
+
+fn default_running_bubble_border() -> String {
+    "#3d73d8".to_string()
+}
+
+fn default_running_bubble_animation_ms() -> u16 {
+    1800
 }
 
 fn default_repeat_seconds() -> u16 {

@@ -35,10 +35,30 @@
   const activityPetGap = 8;
   const maxVisibleActivities = 4;
   const noticeVisibleMs = 2500;
+  const fallbackRunningBubble: AppSettings["appearance"]["runningBubble"] = {
+    backgroundBreathing: true,
+    borderMarquee: false,
+    backgroundColor: "#e8f2ff",
+    borderColor: "#3d73d8",
+    animationMs: 1800,
+  };
 
   $: themeClass = settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "theme-dark" : "theme-light";
+  $: runningBubble = settings?.appearance.runningBubble ?? fallbackRunningBubble;
+  $: runningBubbleStyle = [
+    `--pet-running-bubble-bg: ${runningBubble.backgroundColor}`,
+    `--pet-running-bubble-bg-dim: color-mix(in srgb, ${runningBubble.backgroundColor} 88%, ${runningBubble.borderColor})`,
+    `--pet-running-bubble-bg-peak: color-mix(in srgb, ${runningBubble.backgroundColor} 76%, white)`,
+    `--pet-running-bubble-border: ${runningBubble.borderColor}`,
+    `--pet-running-bubble-border-cool: color-mix(in srgb, ${runningBubble.borderColor} 50%, #2dd4ff)`,
+    `--pet-running-bubble-border-light: color-mix(in srgb, ${runningBubble.borderColor} 12%, white)`,
+    `--pet-running-bubble-border-hot: color-mix(in srgb, ${runningBubble.borderColor} 42%, #ff4fd8)`,
+    `--pet-running-bubble-border-warm: color-mix(in srgb, ${runningBubble.borderColor} 46%, #facc15)`,
+    `--pet-running-bubble-duration: ${runningBubble.animationMs}ms`,
+  ].join("; ");
   $: primary = primaryActivity(activities);
   $: hasActivities = activities.length > 0;
+  $: hasLiveActivities = activities.some((activity) => activity.status === "thinking" || activity.status === "running" || activity.status === "waiting-approval");
   $: showActivities = hasActivities && !tasksCollapsed;
   $: visibleActivityCount = showActivities ? Math.min(activities.length, maxVisibleActivities) : 0;
   $: visibleActivities = showActivities ? activities.slice(0, maxVisibleActivities) : [];
@@ -49,6 +69,9 @@
   $: desiredWindowHeight = petWindowHeight(visibleActivityCount, petStageHeight, activityExtraHeight);
   $: topActivityId = showActivities ? activities[0]?.id ?? null : null;
   $: if (!hasActivities && tasksCollapsed) {
+    tasksCollapsed = false;
+  }
+  $: if (hasLiveActivities && tasksCollapsed) {
     tasksCollapsed = false;
   }
   $: if (ready) {
@@ -175,6 +198,10 @@
     }
     seenEventIds = new Set(seenEventIds);
     activities = updateActivityList(activities, incoming, dismissedActivityKeys, new Date(), hiddenInternalActivityKeys);
+  }
+
+  function isActiveActivity(activity: PetEvent) {
+    return activity.status === "thinking" || activity.status === "running";
   }
 
   function removeActivitiesForAgent(agentId: string) {
@@ -407,13 +434,17 @@
     <section class="activity-stack" bind:this={activityStack} aria-live="polite">
       {#each activities as activity (activity.id)}
         {@const capabilities = activityCapabilities(activity)}
+        {@const activeActivity = isActiveActivity(activity)}
         <article
           class="status-pill"
-          class:active-status={activity.status === "thinking" || activity.status === "running"}
+          class:active-status={activeActivity}
+          class:active-breath={activeActivity && runningBubble.backgroundBreathing}
+          class:active-marquee={activeActivity && runningBubble.borderMarquee}
           class:urgent={activity.status === "waiting-approval"}
           class:failed={activity.status === "failed"}
           class:done={activity.status === "done"}
           class:replying={replyingToId === activity.id}
+          style={activeActivity ? runningBubbleStyle : undefined}
           title={`${cardTitle(activity)}\n${cardMessage(activity)}\n${cardMeta(activity)}`}
         >
           <div class="status-content">

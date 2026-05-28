@@ -62,6 +62,13 @@
     { value: "12h", label: "12小时" },
     { value: "24h", label: "24小时" },
   ];
+  const runningBubbleDefaults: AppSettings["appearance"]["runningBubble"] = {
+    backgroundBreathing: true,
+    borderMarquee: false,
+    backgroundColor: "#e8f2ff",
+    borderColor: "#3d73d8",
+    animationMs: 1800,
+  };
 
   onMount(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -136,7 +143,7 @@
       petLibrary = nextPetLibrary;
       usage = nextUsage;
       launchAtLogin = nextLaunchAtLogin;
-      settings = await getAppSettings();
+      settings = normalizeSettings(await getAppSettings());
     } catch (currentError) {
       error = String(currentError);
     }
@@ -171,6 +178,7 @@
 
   async function saveSettings() {
     if (!settings) return;
+    normalizeSettings(settings);
     syncSelectedPetProfile();
     settings = await updateAppSettings(settings);
     petLibrary = {
@@ -223,7 +231,7 @@
     try {
       const filename = selected.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "Imported Pet";
       petLibrary = await importPetImage(selected, filename);
-      settings = await getAppSettings();
+      settings = normalizeSettings(await getAppSettings());
     } catch (currentError) {
       error = String(currentError);
     } finally {
@@ -239,7 +247,7 @@
     error = "";
     try {
       petLibrary = await setPetDataDirectory(selected);
-      settings = await getAppSettings();
+      settings = normalizeSettings(await getAppSettings());
     } catch (currentError) {
       error = String(currentError);
     } finally {
@@ -252,7 +260,7 @@
     error = "";
     try {
       petLibrary = await selectPet(petId);
-      settings = await getAppSettings();
+      settings = normalizeSettings(await getAppSettings());
     } catch (currentError) {
       error = String(currentError);
     } finally {
@@ -268,7 +276,7 @@
     error = "";
     try {
       petLibrary = await deletePet(petId);
-      settings = await getAppSettings();
+      settings = normalizeSettings(await getAppSettings());
     } catch (currentError) {
       error = String(currentError);
     } finally {
@@ -283,6 +291,29 @@
     if (!selected) return;
     selected.sprite = settings.pet.sprite;
     selected.imagePath = settings.pet.imagePath;
+  }
+
+  function normalizeSettings(nextSettings: AppSettings) {
+    nextSettings.appearance.runningBubble = {
+      ...runningBubbleDefaults,
+      ...(nextSettings.appearance.runningBubble ?? {}),
+    };
+    nextSettings.appearance.runningBubble.animationMs = clampRunningBubbleAnimationMs(nextSettings.appearance.runningBubble.animationMs);
+    return nextSettings;
+  }
+
+  function clampRunningBubbleAnimationMs(value: number) {
+    return Math.min(4000, Math.max(600, Math.round(value || runningBubbleDefaults.animationMs)));
+  }
+
+  function runningBubbleSpeedLabel(value: number) {
+    return `${(clampRunningBubbleAnimationMs(value) / 1000).toFixed(1)}s`;
+  }
+
+  async function saveRunningBubbleSettings() {
+    if (!settings) return;
+    settings.appearance.runningBubble.animationMs = clampRunningBubbleAnimationMs(settings.appearance.runningBubble.animationMs);
+    await saveSettings();
   }
 
   function statusLabel(status: PetEvent["status"]) {
@@ -657,6 +688,43 @@
                 Auto
               </button>
             </section>
+          </section>
+
+          <section class="bubble-editor pixel-panel">
+            <header class="panel-head">
+              <h3>任务气泡</h3>
+            </header>
+            <div class="bubble-toggle-grid">
+              <label class="check">
+                <input type="checkbox" bind:checked={settings.appearance.runningBubble.backgroundBreathing} on:change={saveRunningBubbleSettings} />
+                背景色呼吸灯
+              </label>
+              <label class="check">
+                <input type="checkbox" bind:checked={settings.appearance.runningBubble.borderMarquee} on:change={saveRunningBubbleSettings} />
+                边框跑马灯
+              </label>
+            </div>
+            <div class="bubble-color-grid">
+              <label>
+                背景色
+                <input type="color" bind:value={settings.appearance.runningBubble.backgroundColor} on:input={saveRunningBubbleSettings} />
+              </label>
+              <label>
+                边框色
+                <input type="color" bind:value={settings.appearance.runningBubble.borderColor} on:input={saveRunningBubbleSettings} />
+              </label>
+            </div>
+            <label>
+              动画速率 <strong>{runningBubbleSpeedLabel(settings.appearance.runningBubble.animationMs)}</strong>
+              <input
+                type="range"
+                min="600"
+                max="4000"
+                step="100"
+                bind:value={settings.appearance.runningBubble.animationMs}
+                on:change={saveRunningBubbleSettings}
+              />
+            </label>
           </section>
 
           <section class="appearance-editor pixel-panel">

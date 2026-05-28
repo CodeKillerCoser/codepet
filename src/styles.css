@@ -46,6 +46,18 @@ select:focus-visible {
   outline-offset: 2px;
 }
 
+@property --pet-marquee-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@property --pet-running-bubble-surface {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #e8f2ff;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 220px 1fr;
@@ -366,6 +378,7 @@ select:focus-visible {
 .agent-card,
 .pet-editor,
 .appearance-editor,
+.bubble-editor,
 .sound-editor,
 .event-log {
   border-radius: 8px;
@@ -791,6 +804,7 @@ select:focus-visible {
 
 .pet-editor,
 .appearance-editor,
+.bubble-editor,
 .sound-editor {
   display: grid;
   gap: 16px;
@@ -1130,6 +1144,20 @@ input[type="time"] {
   background: color-mix(in srgb, var(--app-accent) 14%, var(--app-surface-soft));
 }
 
+.bubble-toggle-grid,
+.bubble-color-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.bubble-editor label strong {
+  justify-self: end;
+  color: var(--app-text);
+  font-size: 13px;
+  font-weight: 640;
+}
+
 .row-actions button {
   padding: 0 14px;
 }
@@ -1308,6 +1336,7 @@ input[type="time"] {
 
 .status-pill {
   position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   width: 264px;
@@ -1346,6 +1375,8 @@ input[type="time"] {
 }
 
 .status-content {
+  position: relative;
+  z-index: 1;
   display: grid;
   min-width: 0;
   align-self: center;
@@ -1719,14 +1750,38 @@ input[type="time"] {
 }
 
 .status-pill.active-status {
-  border-color: var(--pet-active-border);
-  background: var(--pet-active-bg);
+  border-color: var(--pet-running-bubble-border, var(--pet-active-border));
+  background: var(--pet-running-bubble-bg, var(--pet-active-bg));
   box-shadow:
-    0 8px 18px var(--pet-shadow),
-    0 0 0 1px var(--pet-active-ring),
-    0 0 18px var(--pet-active-shadow),
+    0 6px 13px var(--pet-shadow),
     inset 0 1px 0 var(--pet-highlight);
-  animation: pet-pill-breathe 1800ms ease-in-out infinite;
+}
+
+.status-pill.active-breath {
+  background: var(--pet-running-bubble-surface, var(--pet-running-bubble-bg, var(--pet-active-bg)));
+  animation: pet-pill-breathe var(--pet-running-bubble-duration, 1800ms) ease-in-out infinite;
+}
+
+.status-pill.active-marquee {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--pet-running-bubble-surface, var(--pet-running-bubble-bg, var(--pet-active-bg))) 0 0) padding-box,
+    conic-gradient(
+      from var(--pet-marquee-angle),
+      var(--pet-running-bubble-border, var(--pet-active-border)) 0deg,
+      var(--pet-running-bubble-border-cool, color-mix(in srgb, var(--pet-running-bubble-border, var(--pet-active-border)) 50%, #2dd4ff)) 72deg,
+      var(--pet-running-bubble-border-light, color-mix(in srgb, var(--pet-running-bubble-border, var(--pet-active-border)) 12%, white)) 144deg,
+      var(--pet-running-bubble-border-hot, color-mix(in srgb, var(--pet-running-bubble-border, var(--pet-active-border)) 42%, #ff4fd8)) 216deg,
+      var(--pet-running-bubble-border-warm, color-mix(in srgb, var(--pet-running-bubble-border, var(--pet-active-border)) 46%, #facc15)) 288deg,
+      var(--pet-running-bubble-border, var(--pet-active-border)) 360deg
+    ) border-box;
+  animation: pet-pill-border-marquee var(--pet-running-bubble-duration, 1800ms) linear infinite;
+}
+
+.status-pill.active-breath.active-marquee {
+  animation:
+    pet-pill-breathe var(--pet-running-bubble-duration, 1800ms) ease-in-out infinite,
+    pet-pill-border-marquee var(--pet-running-bubble-duration, 1800ms) linear infinite;
 }
 
 .status-pill.done {
@@ -1925,20 +1980,17 @@ input[type="time"] {
 @keyframes pet-pill-breathe {
   0%,
   100% {
-    background: var(--pet-pill-bg);
-    box-shadow:
-      0 6px 13px var(--pet-shadow),
-      inset 0 1px 0 var(--pet-highlight);
+    --pet-running-bubble-surface: var(--pet-running-bubble-bg-dim, var(--pet-running-bubble-bg, var(--pet-active-bg)));
   }
 
   50% {
-    border-color: var(--pet-active-border);
-    background: var(--pet-active-bg-peak);
-    box-shadow:
-      0 10px 24px var(--pet-shadow),
-      0 0 0 2px var(--pet-active-ring),
-      0 0 30px var(--pet-active-glow),
-      inset 0 1px 0 var(--pet-highlight);
+    --pet-running-bubble-surface: var(--pet-running-bubble-bg-peak, color-mix(in srgb, var(--pet-running-bubble-bg, var(--pet-active-bg-peak)) 34%, white));
+  }
+}
+
+@keyframes pet-pill-border-marquee {
+  to {
+    --pet-marquee-angle: 360deg;
   }
 }
 
@@ -1950,6 +2002,8 @@ input[type="time"] {
   .pet-image.running,
   .pet-image.alerting,
   .status-pill.active-status,
+  .status-pill.active-breath,
+  .status-pill.active-marquee,
   .tabs button,
   .icon-button,
   .power-button,

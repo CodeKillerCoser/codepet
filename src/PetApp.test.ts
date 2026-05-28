@@ -18,4 +18,13 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain("window.setTimeout");
     expect(source).toContain("clearNoticeTimer");
   });
+
+  it("auto-expands the task list while live activities are present", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+
+    expect(source).toContain("hasLiveActivities");
+    expect(source).toContain('activity.status === "running"');
+    expect(source).toContain("hasLiveActivities && tasksCollapsed");
+    expect(source).toContain("tasksCollapsed = false");
+  });
 });

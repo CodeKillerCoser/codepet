@@ -53,6 +53,13 @@ export interface PetLibraryView {
 export interface AppSettings {
   appearance: {
     theme: "system" | "light" | "dark";
+    runningBubble: {
+      backgroundBreathing: boolean;
+      borderMarquee: boolean;
+      backgroundColor: string;
+      borderColor: string;
+      animationMs: number;
+    };
   };
   pet: {
     selectedPetId: string;
