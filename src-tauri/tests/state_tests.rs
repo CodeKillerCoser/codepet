@@ -76,6 +76,28 @@ fn recent_events_returns_a_bounded_frontend_snapshot() {
     );
 }
 
+#[test]
+fn remove_events_for_agent_clears_existing_provider_events() {
+    let state = SharedState::default();
+    state.push_event(PetEvent {
+        id: "codex-1".to_string(),
+        provider: AgentId::Codex,
+        ..permission_event("codex-1")
+    });
+    state.push_event(PetEvent {
+        id: "qoder-1".to_string(),
+        provider: AgentId::Qoder,
+        ..permission_event("qoder-1")
+    });
+
+    state.remove_events_for_agent(AgentId::Codex);
+
+    let events = state.recent_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].provider, AgentId::Qoder);
+    assert!(state.event_by_id("codex-1").is_none());
+}
+
 #[tokio::test]
 async fn approval_waiter_resolves_when_user_decides() {
     let state = SharedState::default();

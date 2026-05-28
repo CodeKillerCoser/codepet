@@ -47,7 +47,7 @@
   let eventPollTimer: number | null = null;
   let usageRange: UsageRange = "7d";
   let usageBucketSize: UsageBucketSize = "30m";
-  const agentOrder: AgentView["id"][] = ["codex", "claude", "qoder"];
+  const agentOrder: AgentView["id"][] = ["codex", "claude", "qoder", "cursor"];
   const usageRanges: Array<{ value: UsageRange; label: string }> = [
     { value: "24h", label: "24小时" },
     { value: "7d", label: "7天" },
@@ -74,6 +74,7 @@
     let disposed = false;
     let unlistenPetEvent: (() => void) | null = null;
     let unlistenTokenUsage: (() => void) | null = null;
+    let unlistenAgentDisabled: (() => void) | null = null;
     void (async () => {
       await keepWindowVisible();
       unlistenPetEvent = await listen<PetEvent>("pet-event", (event) => {
@@ -82,9 +83,13 @@
       unlistenTokenUsage = await listen<TokenUsageSummary>("token-usage-updated", (event) => {
         usage = event.payload;
       });
+      unlistenAgentDisabled = await listen<string>("agent-disabled", (event) => {
+        events = events.filter((activity) => activity.provider !== event.payload);
+      });
       if (disposed) {
         unlistenPetEvent();
         unlistenTokenUsage();
+        unlistenAgentDisabled();
         return;
       }
 
@@ -99,6 +104,7 @@
       media.removeEventListener("change", syncTheme);
       unlistenPetEvent?.();
       unlistenTokenUsage?.();
+      unlistenAgentDisabled?.();
       clearEventPoll();
     };
   });
@@ -327,6 +333,7 @@
       codex: "Codex",
       claude: "Claude Code",
       qoder: "Qoder",
+      cursor: "Cursor",
     }[agentId];
   }
 
@@ -541,12 +548,13 @@
               <span><i class="usage-dot codex"></i> Codex</span>
               <span><i class="usage-dot claude"></i> Claude Code</span>
               <span><i class="usage-dot qoder"></i> Qoder</span>
+              <span><i class="usage-dot cursor"></i> Cursor</span>
             </div>
           {:else}
             <div class="empty-state">
               <BarChart3 size={20} />
               <strong>还没有用量数据</strong>
-              <p>收到 Codex、Claude Code 或 Qoder 的 transcript 后，这里会按选择的时间范围展示 token 用量。</p>
+              <p>收到 Codex、Claude Code、Qoder 或 Cursor 的 transcript 后，这里会按选择的时间范围展示 token 用量。</p>
             </div>
           {/if}
         </section>
@@ -562,7 +570,7 @@
               <div class="usage-row">
                 <span>{formatBucketLabel(bucket.bucketStart)}</span>
                 <strong>{compactNumber(bucket.total.totalTokens)}</strong>
-                <em>Codex {compactNumber(bucket.agents.codex?.totalTokens)} · Claude {compactNumber(bucket.agents.claude?.totalTokens)} · Qoder {compactNumber(bucket.agents.qoder?.totalTokens)}</em>
+                <em>Codex {compactNumber(bucket.agents.codex?.totalTokens)} · Claude {compactNumber(bucket.agents.claude?.totalTokens)} · Qoder {compactNumber(bucket.agents.qoder?.totalTokens)} · Cursor {compactNumber(bucket.agents.cursor?.totalTokens)}</em>
               </div>
             {/each}
           </section>

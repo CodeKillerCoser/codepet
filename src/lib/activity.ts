@@ -166,7 +166,7 @@ export function cardMessage(event: PetEvent): string {
 }
 
 export function cardMeta(event: PetEvent): string {
-  return `${event.provider} · ${statusLabel(event.status)}`;
+  return `${activitySourceLabel(event)} · ${statusLabel(event.status)}`;
 }
 
 export function cardSubtitle(event: PetEvent): string {
@@ -213,6 +213,24 @@ function activityPriority(event: PetEvent): number {
 
 function isSupportedReplyTerminal(program: string): boolean {
   return ["Apple_Terminal", "Terminal", "Terminal.app", "iTerm.app", "iTerm2", "iTerm2.app"].includes(program);
+}
+
+function activitySourceLabel(event: PetEvent): string {
+  return isTerminalSource(event) ? `${event.provider} cli` : event.provider;
+}
+
+function isTerminalSource(event: PetEvent): boolean {
+  const source = event.source;
+  if (!source) {
+    return false;
+  }
+  return Boolean(
+    source.terminalProgram ||
+      source.ttyPath ||
+      source.tmuxPane ||
+      source.weztermPane ||
+      source.kittyWindowId,
+  );
 }
 
 function taskTitleFor(event: PetEvent): string {

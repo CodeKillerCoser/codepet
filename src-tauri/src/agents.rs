@@ -8,6 +8,7 @@ pub enum AgentId {
     Codex,
     Claude,
     Qoder,
+    Cursor,
 }
 
 impl AgentId {
@@ -16,6 +17,7 @@ impl AgentId {
             Self::Codex => "codex",
             Self::Claude => "claude",
             Self::Qoder => "qoder",
+            Self::Cursor => "cursor",
         }
     }
 }
@@ -28,6 +30,7 @@ impl FromStr for AgentId {
             "codex" => Ok(Self::Codex),
             "claude" => Ok(Self::Claude),
             "qoder" => Ok(Self::Qoder),
+            "cursor" => Ok(Self::Cursor),
             other => Err(format!("unsupported agent id: {other}")),
         }
     }
@@ -119,6 +122,24 @@ pub fn agent_specs() -> Vec<AgentSpec> {
                 "Stop",
             ],
         },
+        AgentSpec {
+            id: AgentId::Cursor,
+            name: "Cursor",
+            description: "接入 Cursor hooks.json 的 session、prompt、tool、file edit、shell、MCP 与 stop 事件。",
+            config_format: ConfigFormat::JsonHooks,
+            hook_events: &[
+                "sessionStart",
+                "beforeSubmitPrompt",
+                "preToolUse",
+                "postToolUse",
+                "beforeShellExecution",
+                "afterShellExecution",
+                "beforeMCPExecution",
+                "afterMCPExecution",
+                "afterFileEdit",
+                "stop",
+            ],
+        },
     ]
 }
 
@@ -128,5 +149,6 @@ pub fn resolve_agent_config_path(agent_id: AgentId) -> PathBuf {
         AgentId::Codex => home.join(".codex").join("hooks.json"),
         AgentId::Claude => home.join(".claude").join("settings.json"),
         AgentId::Qoder => home.join(".qoder").join("settings.json"),
+        AgentId::Cursor => home.join(".cursor").join("hooks.json"),
     }
 }

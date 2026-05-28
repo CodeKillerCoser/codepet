@@ -78,7 +78,7 @@ pub fn frontend_event(event: &PetEvent) -> PetEvent {
 }
 
 pub fn normalize_hook_payload(provider: AgentId, raw: Value) -> Result<PetEvent, String> {
-    let hook_event = first_string(
+    let raw_hook_event = first_string(
         &raw,
         &[
             "hook_event_name",
@@ -96,9 +96,10 @@ pub fn normalize_hook_payload(provider: AgentId, raw: Value) -> Result<PetEvent,
         }
     })
     .ok_or_else(|| "hook payload missing event name".to_string())?;
-    let tool_name = first_string(&raw, &["tool_name", "toolName", "tool", "matcher"]);
-    let session_id = first_string(&raw, &["session_id", "sessionId", "conversation_id"]);
-    let cwd = first_string(&raw, &["cwd", "workspace", "project_dir", "projectDir"]);
+    let hook_event = canonical_hook_event(provider, &raw_hook_event).to_string();
+    let tool_name = tool_name_from_payload(provider, &raw, &raw_hook_event, &hook_event);
+    let session_id = first_string(&raw, &["session_id", "sessionId", "conversation_id", "generation_id"]);
+    let cwd = first_string(&raw, &["cwd", "workspace", "project_dir", "projectDir"]).or_else(|| workspace_root_from_payload(&raw));
     let message = message_from_payload(&raw, &hook_event, tool_name.as_deref());
     let payload_title = title_from_payload(&raw);
     let source = source_from_payload(&raw);
@@ -174,6 +175,43 @@ pub fn normalize_hook_payload(provider: AgentId, raw: Value) -> Result<PetEvent,
         raw,
         source,
     })
+}
+
+fn canonical_hook_event(provider: AgentId, hook_event: &str) -> &str {
+    if provider != AgentId::Cursor {
+        return hook_event;
+    }
+
+    match hook_event {
+        "sessionStart" | "beforeSubmitPrompt" => "UserPromptSubmit",
+        "preToolUse" | "beforeShellExecution" | "beforeMCPExecution" => "PreToolUse",
+        "postToolUse" | "afterShellExecution" | "afterMCPExecution" | "afterFileEdit" => "PostToolUse",
+        "stop" | "sessionEnd" => "Stop",
+        _ => hook_event,
+    }
+}
+
+fn tool_name_from_payload(provider: AgentId, raw: &Value, raw_hook_event: &str, hook_event: &str) -> Option<String> {
+    first_string(raw, &["tool_name", "toolName", "tool", "matcher"]).or_else(|| {
+        if provider != AgentId::Cursor {
+            return None;
+        }
+        match raw_hook_event {
+            "beforeShellExecution" | "afterShellExecution" => Some("Shell".to_string()),
+            "beforeMCPExecution" | "afterMCPExecution" => Some("MCP".to_string()),
+            "afterFileEdit" => Some("Edit".to_string()),
+            "preToolUse" | "postToolUse" if matches!(hook_event, "PreToolUse" | "PostToolUse") => Some("Tool".to_string()),
+            _ => None,
+        }
+    })
+}
+
+fn workspace_root_from_payload(raw: &Value) -> Option<String> {
+    raw.get("workspace_roots")
+        .or_else(|| raw.get("workspaceRoots"))
+        .and_then(Value::as_array)
+        .and_then(|roots| roots.iter().find_map(Value::as_str))
+        .map(ToString::to_string)
 }
 
 fn payload_indicates_failure(raw: &Value, message: &str) -> bool {
@@ -260,6 +298,14 @@ fn message_from_payload(raw: &Value, hook_event: &str, tool_name: Option<&str>) 
 }
 
 fn tool_message_from_payload(raw: &Value, tool_name: Option<&str>) -> Option<String> {
+    if let Some(command) = first_string(raw, &["command", "cmd", "script"]) {
+        return Some(compact_line(&command));
+    }
+    if let Some(path) = first_string(raw, &["file_path", "filePath", "path"]) {
+        let label = tool_name.unwrap_or("文件");
+        return Some(format!("{label} · {}", compact_path(&path)));
+    }
+
     let input = ["tool_input", "toolInput", "input", "parameters", "args"]
         .iter()
         .find_map(|key| raw.get(*key).filter(|value| value.is_object()))?;

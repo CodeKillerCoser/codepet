@@ -135,6 +135,13 @@ function hookDecisionOutput(eventName, decision) {
   };
 }
 
+function cursorAllowOutput() {
+  return {
+    continue: true,
+    permission: "allow",
+  };
+}
+
 function forwardToPrevious(stdinText) {
   const encoded = argValue("--forward");
   if (!encoded) {
@@ -168,4 +175,6 @@ if (payload.hook_event_name === "PermissionRequest" && event?.id) {
   if (decision) {
     process.stdout.write(`${JSON.stringify(hookDecisionOutput(payload.hook_event_name, decision))}\n`);
   }
+} else if (agent === "cursor") {
+  process.stdout.write(`${JSON.stringify(cursorAllowOutput())}\n`);
 }

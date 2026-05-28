@@ -11,12 +11,41 @@ pub enum ActivationTarget {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ActivationStrategy {
+    Target(ActivationTarget),
+    TerminalSession(String),
+    ITermSession(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReplyStrategy {
     CodexAppServer,
     Terminal,
     ITerm,
     AccessibilityPaste,
     Unsupported,
+}
+
+pub fn activation_strategy_for_event(event: &PetEvent) -> ActivationStrategy {
+    match event
+        .source
+        .as_ref()
+        .and_then(|source| source.terminal_program.as_deref())
+    {
+        Some("Apple_Terminal" | "Terminal" | "Terminal.app") => {
+            if let Some(tty) = source_tty(event) {
+                return ActivationStrategy::TerminalSession(tty.to_string());
+            }
+        }
+        Some("iTerm.app" | "iTerm2" | "iTerm2.app") => {
+            if let Some(tty) = source_tty(event) {
+                return ActivationStrategy::ITermSession(tty.to_string());
+            }
+        }
+        _ => {}
+    }
+
+    ActivationStrategy::Target(activation_target_for_event(event))
 }
 
 pub fn activation_target_for_event(event: &PetEvent) -> ActivationTarget {
@@ -34,6 +63,7 @@ pub fn activation_target_for_event(event: &PetEvent) -> ActivationTarget {
     match event.provider {
         AgentId::Codex => ActivationTarget::AppName("Codex".to_string()),
         AgentId::Qoder => ActivationTarget::AppName("Qoder".to_string()),
+        AgentId::Cursor => ActivationTarget::AppName("Cursor".to_string()),
         AgentId::Claude => event
             .cwd
             .clone()
@@ -43,7 +73,7 @@ pub fn activation_target_for_event(event: &PetEvent) -> ActivationTarget {
 }
 
 pub fn reply_strategy_for_event(event: &PetEvent) -> ReplyStrategy {
-    if matches!(event.provider, AgentId::Codex | AgentId::Claude) {
+    if matches!(event.provider, AgentId::Codex | AgentId::Claude | AgentId::Cursor) {
         return ReplyStrategy::Unsupported;
     }
 
@@ -59,7 +89,11 @@ pub fn reply_strategy_for_event(event: &PetEvent) -> ReplyStrategy {
 }
 
 pub fn activate_event(event: &PetEvent) -> Result<(), String> {
-    activate_target(&activation_target_for_event(event))
+    match activation_strategy_for_event(event) {
+        ActivationStrategy::Target(target) => activate_target(&target),
+        ActivationStrategy::TerminalSession(tty) => activate_terminal_session(&tty),
+        ActivationStrategy::ITermSession(tty) => activate_iterm_session(&tty),
+    }
 }
 
 pub fn send_reply_to_event(event: &PetEvent, message: &str) -> Result<(), String> {
@@ -101,6 +135,51 @@ fn activate_target(target: &ActivationTarget) -> Result<(), String> {
         ]),
         ActivationTarget::Path(path) => run_command("open", &[path]),
     }
+}
+
+fn activate_terminal_session(tty: &str) -> Result<(), String> {
+    let script = format!(
+        r#"tell application "Terminal"
+  activate
+  repeat with terminalWindow in windows
+    repeat with terminalTab in tabs of terminalWindow
+      if tty of terminalTab is "{}" then
+        set selected tab of terminalWindow to terminalTab
+        set index of terminalWindow to 1
+        return
+      end if
+    end repeat
+  end repeat
+end tell
+error "Terminal tab not found for tty {}""#,
+        escape_applescript(tty),
+        escape_applescript(tty)
+    );
+    run_osascript(&[script])
+}
+
+fn activate_iterm_session(tty: &str) -> Result<(), String> {
+    let script = format!(
+        r#"tell application "iTerm2"
+  activate
+  repeat with terminalWindow in windows
+    repeat with terminalTab in tabs of terminalWindow
+      repeat with terminalSession in sessions of terminalTab
+        if tty of terminalSession is "{}" then
+          select terminalWindow
+          select terminalTab
+          select terminalSession
+          return
+        end if
+      end repeat
+    end repeat
+  end repeat
+end tell
+error "iTerm session not found for tty {}""#,
+        escape_applescript(tty),
+        escape_applescript(tty)
+    );
+    run_osascript(&[script])
 }
 
 fn paste_and_submit(message: &str) -> Result<(), String> {

@@ -85,6 +85,9 @@ fn replay_recent_codex_audit_events_with_titles(
     max_lines: usize,
     mut session_titles: HashMap<String, String>,
 ) -> io::Result<usize> {
+    if !app_state.agent_enabled(AgentId::Codex) {
+        return Ok(0);
+    }
     if !audit_path.exists() {
         return Ok(0);
     }
@@ -122,6 +125,10 @@ async fn watch_codex_audit(app_state: SharedState, app_handle: AppHandle, audit_
         let Ok(len) = file_len(&audit_path) else {
             continue;
         };
+        if !app_state.agent_enabled(AgentId::Codex) {
+            offset = len;
+            continue;
+        }
         if len < offset {
             offset = 0;
         }

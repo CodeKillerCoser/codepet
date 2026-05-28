@@ -385,6 +385,32 @@ describe("card display", () => {
     expect(cardTitle(activity)).toBe("hello一下");
     expect(cardMessage(activity)).toBe("hello一下");
   });
+
+  it("marks terminal-sourced agent cards as cli in the footer", () => {
+    const activity = event({
+      provider: "cursor",
+      status: "running",
+      source: {
+        terminalProgram: "Apple_Terminal",
+        ttyPath: "/dev/ttys018",
+        appBundleId: "com.apple.Terminal",
+      },
+    });
+
+    expect(cardMeta(activity)).toBe("cursor cli · 正在执行");
+  });
+
+  it("keeps app-sourced agent cards using the current provider footer", () => {
+    const activity = event({
+      provider: "codex",
+      status: "running",
+      source: {
+        appBundleId: "com.openai.codex",
+      },
+    });
+
+    expect(cardMeta(activity)).toBe("codex · 正在执行");
+  });
 });
 
 describe("activityCapabilities", () => {

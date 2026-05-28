@@ -1,7 +1,7 @@
-use crate::agents::AgentView;
+use crate::agents::{AgentId, AgentView};
 use crate::events::{frontend_event, PetEvent, TaskStatus};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::Notify;
@@ -49,6 +49,20 @@ impl SharedState {
         }
     }
 
+    pub fn agent_enabled(&self, agent_id: AgentId) -> bool {
+        self.inner
+            .lock()
+            .map(|state| {
+                state
+                    .agents
+                    .iter()
+                    .find(|agent| agent.id == agent_id)
+                    .map(|agent| agent.enabled)
+                    .unwrap_or(true)
+            })
+            .unwrap_or(true)
+    }
+
     pub fn push_event(&self, event: PetEvent) {
         if let Ok(mut state) = self.inner.lock() {
             if event.status == TaskStatus::WaitingApproval {
@@ -65,6 +79,19 @@ impl SharedState {
                 let overflow = state.events.len() - MAX_EVENTS;
                 state.events.drain(0..overflow);
             }
+        }
+    }
+
+    pub fn remove_events_for_agent(&self, agent_id: AgentId) {
+        if let Ok(mut state) = self.inner.lock() {
+            state.events.retain(|event| event.provider != agent_id);
+            let approval_event_ids = state
+                .events
+                .iter()
+                .filter(|event| event.status == TaskStatus::WaitingApproval)
+                .map(|event| event.id.clone())
+                .collect::<HashSet<_>>();
+            state.approvals.retain(|event_id, _| approval_event_ids.contains(event_id));
         }
     }
 

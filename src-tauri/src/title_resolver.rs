@@ -20,7 +20,7 @@ pub fn resolve_external_title(provider: AgentId, session_id: &str) -> Option<Str
     match provider {
         AgentId::Claude => resolve_claude_title_from_projects(&home.join(".claude").join("projects"), session_id),
         AgentId::Qoder => resolve_qoder_title_from_projects(&home.join(".qoder").join("projects"), session_id),
-        AgentId::Codex => None,
+        AgentId::Codex | AgentId::Cursor => None,
     }
 }
 

@@ -640,6 +640,11 @@ select:focus-visible {
   background: #16a34a;
 }
 
+.usage-segment.cursor,
+.usage-dot.cursor {
+  background: #7c3aed;
+}
+
 .usage-axis-label {
   color: var(--app-subtle);
   font-size: 11px;

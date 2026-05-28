@@ -23,9 +23,10 @@ fn agent_statuses_report_all_enabled_after_installing_each_agent() {
 
     let statuses = agent_statuses_for_paths(&specs, &paths, &script_path).unwrap();
 
-    assert_eq!(statuses.len(), 3);
+    assert_eq!(statuses.len(), 4);
     assert!(statuses.iter().all(|status| status.enabled));
     assert!(statuses.iter().any(|status| status.id == AgentId::Codex));
     assert!(statuses.iter().any(|status| status.id == AgentId::Claude));
     assert!(statuses.iter().any(|status| status.id == AgentId::Qoder));
+    assert!(statuses.iter().any(|status| status.id == AgentId::Cursor));
 }

@@ -1,4 +1,4 @@
-export type AgentId = "codex" | "claude" | "qoder";
+export type AgentId = "codex" | "claude" | "qoder" | "cursor";
 
 export type TaskStatus =
   | "idle"

@@ -66,6 +66,9 @@ pub fn replay_spooled_events(app_state: &SharedState, spool_path: &Path) -> Resu
         let Ok(agent) = AgentId::from_str(&incoming.agent) else {
             continue;
         };
+        if !app_state.agent_enabled(agent) {
+            continue;
+        }
         let Ok(event) = normalize_hook_payload(agent, incoming.payload) else {
             continue;
         };
@@ -95,9 +98,12 @@ async fn recent_events(State(state): State<CollectorState>) -> impl IntoResponse
 async fn receive_hook(
     State(state): State<CollectorState>,
     Json(incoming): Json<IncomingHook>,
-) -> Result<Json<PetEvent>, (StatusCode, String)> {
+) -> Result<Json<Option<PetEvent>>, (StatusCode, String)> {
     let agent = AgentId::from_str(&incoming.agent)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+    if !state.app_state.agent_enabled(agent) {
+        return Ok(Json(None));
+    }
     let event = normalize_hook_payload(agent, incoming.payload)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
     let event = enrich_event_title(event);
@@ -106,7 +112,7 @@ async fn receive_hook(
     let _ = state.app_handle.emit("pet-event", &frontend_event);
     refresh_token_usage_if_needed(&state.app_handle, event.clone());
     watch_claude_transcript_if_needed(&state, &event);
-    Ok(Json(frontend_event))
+    Ok(Json(Some(frontend_event)))
 }
 
 fn refresh_token_usage_if_needed(app_handle: &AppHandle, event: PetEvent) {

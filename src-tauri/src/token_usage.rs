@@ -268,7 +268,7 @@ fn parse_transcript_usage(
 ) -> io::Result<Option<TokenUsageSession>> {
     match provider {
         AgentId::Codex => parse_codex_usage(path, session_id_hint, fingerprint),
-        AgentId::Claude | AgentId::Qoder => parse_assistant_message_usage(provider, path, session_id_hint, fingerprint),
+        AgentId::Claude | AgentId::Qoder | AgentId::Cursor => parse_assistant_message_usage(provider, path, session_id_hint, fingerprint),
     }
 }
 

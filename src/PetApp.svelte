@@ -74,6 +74,7 @@
     let disposed = false;
     let unlistenPetEvent: (() => void) | null = null;
     let unlistenSettings: (() => void) | null = null;
+    let unlistenAgentDisabled: (() => void) | null = null;
 
     void listen<PetEvent>("pet-event", async (event) => {
       applyIncomingEvents([event.payload]);
@@ -99,6 +100,18 @@
       }
     }).catch((error) => {
       console.error("failed to listen settings updates", error);
+    });
+
+    void listen<string>("agent-disabled", (event) => {
+      removeActivitiesForAgent(event.payload);
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        unlistenAgentDisabled = unlisten;
+      }
+    }).catch((error) => {
+      console.error("failed to listen agent disabled events", error);
     });
 
     void (async () => {
@@ -128,6 +141,7 @@
       media.removeEventListener("change", syncTheme);
       unlistenPetEvent?.();
       unlistenSettings?.();
+      unlistenAgentDisabled?.();
       clearRepeat();
       clearPoll();
       clearNoticeTimer();
@@ -161,6 +175,17 @@
     }
     seenEventIds = new Set(seenEventIds);
     activities = updateActivityList(activities, incoming, dismissedActivityKeys, new Date(), hiddenInternalActivityKeys);
+  }
+
+  function removeActivitiesForAgent(agentId: string) {
+    activities = activities.filter((activity) => activity.provider !== agentId);
+    dismissedActivityKeys = new Set(Array.from(dismissedActivityKeys).filter((key) => !key.startsWith(`${agentId}:`)));
+    hiddenInternalActivityKeys = new Set(Array.from(hiddenInternalActivityKeys).filter((key) => !key.startsWith(`${agentId}:`)));
+    if (replyingToId && !activities.some((activity) => activity.id === replyingToId)) {
+      replyingToId = null;
+      replyText = "";
+    }
+    clearRepeat();
   }
 
   async function handleRing(event: PetEvent) {

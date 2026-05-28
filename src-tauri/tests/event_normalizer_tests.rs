@@ -177,3 +177,47 @@ fn tool_event_uses_file_path_as_message_when_present() {
 
     assert_eq!(event.message, "Read · src/styles.css");
 }
+
+#[test]
+fn cursor_hook_events_are_mapped_to_task_lifecycle() {
+    let start = normalize_hook_payload(
+        AgentId::Cursor,
+        json!({
+            "hook_event_name": "sessionStart",
+            "conversation_id": "cursor-session",
+            "workspace_roots": ["/tmp/cursor-project"]
+        }),
+    )
+    .unwrap();
+    assert_eq!(start.kind, PetEventKind::TaskStarted);
+    assert_eq!(start.status, TaskStatus::Thinking);
+    assert_eq!(start.session_id.as_deref(), Some("cursor-session"));
+    assert_eq!(start.cwd.as_deref(), Some("/tmp/cursor-project"));
+
+    let tool = normalize_hook_payload(
+        AgentId::Cursor,
+        json!({
+            "hook_event_name": "beforeShellExecution",
+            "conversation_id": "cursor-session",
+            "command": "npm test"
+        }),
+    )
+    .unwrap();
+    assert_eq!(tool.kind, PetEventKind::ToolStarted);
+    assert_eq!(tool.status, TaskStatus::Running);
+    assert_eq!(tool.tool_name.as_deref(), Some("Shell"));
+    assert_eq!(tool.message, "npm test");
+
+    let stop = normalize_hook_payload(
+        AgentId::Cursor,
+        json!({
+            "hook_event_name": "stop",
+            "conversation_id": "cursor-session",
+            "message": "done"
+        }),
+    )
+    .unwrap();
+    assert_eq!(stop.kind, PetEventKind::TaskCompleted);
+    assert_eq!(stop.status, TaskStatus::Done);
+    assert!(stop.should_ring);
+}

@@ -1,4 +1,5 @@
 use code_pet_lib::codex_audit::{parse_codex_audit_line, replay_recent_codex_audit_events, replay_recent_codex_audit_events_with_session_index};
+use code_pet_lib::agents::{AgentView, AgentId};
 use code_pet_lib::events::TaskStatus;
 use code_pet_lib::state::SharedState;
 use serde_json::json;
@@ -60,6 +61,32 @@ fn replay_recent_codex_audit_events_imports_only_codex_hook_lines() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].status, TaskStatus::Running);
     assert_eq!(events[0].tool_name.as_deref(), Some("Bash"));
+}
+
+#[test]
+fn replay_codex_audit_skips_events_when_codex_is_disabled() {
+    let temp = tempfile::tempdir().unwrap();
+    let audit_path = temp.path().join("audit.jsonl");
+    std::fs::write(
+        &audit_path,
+        serde_json::to_string(&json!({
+            "platform": "codex",
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "codex-session",
+            "cwd": "/workspace/project",
+            "prompt": "关闭后不应出现",
+            "_timestamp": "2026-05-26 17:43:00"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let state = SharedState::default();
+    state.set_agents(vec![agent_view(AgentId::Codex, false)]);
+
+    let imported = replay_recent_codex_audit_events(&state, &audit_path, 20).unwrap();
+
+    assert_eq!(imported, 0);
+    assert!(state.recent_events().is_empty());
 }
 
 #[test]
@@ -292,4 +319,15 @@ fn replay_codex_audit_marks_escalated_tool_call_without_output_as_waiting_approv
 
     let latest = state.recent_events().last().unwrap().clone();
     assert_eq!(latest.status, TaskStatus::WaitingApproval);
+}
+
+fn agent_view(id: AgentId, enabled: bool) -> AgentView {
+    AgentView {
+        id,
+        name: id.as_str().to_string(),
+        description: String::new(),
+        enabled,
+        config_path: String::new(),
+        hook_events: Vec::new(),
+    }
 }

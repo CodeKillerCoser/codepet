@@ -33,9 +33,20 @@ fn list_agents(state: tauri::State<'_, SharedState>) -> Result<Vec<AgentView>, S
 }
 
 #[tauri::command]
-fn set_agent_enabled(agent_id: String, enabled: bool) -> Result<Vec<AgentView>, String> {
+fn set_agent_enabled(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+    agent_id: String,
+    enabled: bool,
+) -> Result<Vec<AgentView>, String> {
     let id = AgentId::from_str(&agent_id)?;
-    agent_control::set_agent_enabled(id, enabled).map_err(|error| error.to_string())
+    let views = agent_control::set_agent_enabled(id, enabled).map_err(|error| error.to_string())?;
+    state.set_agents(views.clone());
+    if !enabled {
+        state.remove_events_for_agent(id);
+        let _ = app.emit("agent-disabled", id.as_str());
+    }
+    Ok(views)
 }
 
 #[tauri::command]
@@ -217,6 +228,12 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let state = app.state::<SharedState>().inner().clone();
+            match agent_control::list_agent_views() {
+                Ok(views) => state.set_agents(views),
+                Err(error) => {
+                    let _ = handle.emit("collector-error", error.to_string());
+                }
+            }
             if let Err(error) = collector::replay_default_spooled_events(&state) {
                 let _ = handle.emit("collector-error", error.to_string());
             }

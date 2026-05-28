@@ -1,4 +1,5 @@
 use code_pet_lib::collector::replay_spooled_events;
+use code_pet_lib::agents::{AgentId, AgentView};
 use code_pet_lib::events::TaskStatus;
 use code_pet_lib::state::SharedState;
 use serde_json::json;
@@ -47,4 +48,43 @@ fn replay_spooled_events_imports_hook_events_and_clears_file() {
     assert_eq!(events[0].created_at.to_rfc3339(), "2026-05-26T05:43:30.484+00:00");
     assert_eq!(events[1].status, TaskStatus::WaitingApproval);
     assert!(!spool_path.exists());
+}
+
+#[test]
+fn replay_spooled_events_skips_disabled_agents() {
+    let temp = tempfile::tempdir().unwrap();
+    let spool_path = temp.path().join("events.jsonl");
+    std::fs::write(
+        &spool_path,
+        serde_json::to_string(&json!({
+            "agent": "qoder",
+            "payload": {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "qoder-session",
+                "cwd": "/workspace/project",
+                "message": "关闭后不应出现"
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let state = SharedState::default();
+    state.set_agents(vec![agent_view(AgentId::Qoder, false)]);
+
+    let imported = replay_spooled_events(&state, &spool_path).unwrap();
+
+    assert_eq!(imported, 0);
+    assert!(state.recent_events().is_empty());
+    assert!(!spool_path.exists());
+}
+
+fn agent_view(id: AgentId, enabled: bool) -> AgentView {
+    AgentView {
+        id,
+        name: id.as_str().to_string(),
+        description: String::new(),
+        enabled,
+        config_path: String::new(),
+        hook_events: Vec::new(),
+    }
 }

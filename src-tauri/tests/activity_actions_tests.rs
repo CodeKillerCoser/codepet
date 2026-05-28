@@ -1,5 +1,5 @@
 use chrono::Utc;
-use code_pet_lib::activity_actions::{activation_target_for_event, reply_strategy_for_event, ActivationTarget, ReplyStrategy};
+use code_pet_lib::activity_actions::{activation_strategy_for_event, activation_target_for_event, reply_strategy_for_event, ActivationStrategy, ActivationTarget, ReplyStrategy};
 use code_pet_lib::events::{ActivitySource, AgentId, PetEvent, PetEventKind, TaskStatus};
 use serde_json::json;
 
@@ -42,6 +42,47 @@ fn activation_prefers_source_bundle_id() {
 }
 
 #[test]
+fn activation_targets_live_terminal_session_by_tty() {
+    let terminal_event = event(
+        AgentId::Claude,
+        Some(ActivitySource {
+            pid: Some(1234),
+            ppid: None,
+            terminal_program: Some("Apple_Terminal".to_string()),
+            term_session_id: None,
+            tty_path: Some("/dev/ttys018".to_string()),
+            tmux_pane: None,
+            wezterm_pane: None,
+            kitty_window_id: None,
+            app_bundle_id: Some("com.apple.Terminal".to_string()),
+        }),
+    );
+    let iterm_event = event(
+        AgentId::Qoder,
+        Some(ActivitySource {
+            pid: Some(2234),
+            ppid: None,
+            terminal_program: Some("iTerm.app".to_string()),
+            term_session_id: None,
+            tty_path: Some("/dev/ttys019".to_string()),
+            tmux_pane: None,
+            wezterm_pane: None,
+            kitty_window_id: None,
+            app_bundle_id: Some("com.googlecode.iterm2".to_string()),
+        }),
+    );
+
+    assert_eq!(
+        activation_strategy_for_event(&terminal_event),
+        ActivationStrategy::TerminalSession("/dev/ttys018".to_string())
+    );
+    assert_eq!(
+        activation_strategy_for_event(&iterm_event),
+        ActivationStrategy::ITermSession("/dev/ttys019".to_string())
+    );
+}
+
+#[test]
 fn activation_falls_back_to_provider_app_or_cwd() {
     assert_eq!(
         activation_target_for_event(&event(AgentId::Codex, None)),
@@ -50,6 +91,10 @@ fn activation_falls_back_to_provider_app_or_cwd() {
     assert_eq!(
         activation_target_for_event(&event(AgentId::Claude, None)),
         ActivationTarget::Path("/tmp/project".to_string())
+    );
+    assert_eq!(
+        activation_target_for_event(&event(AgentId::Cursor, None)),
+        ActivationTarget::AppName("Cursor".to_string())
     );
 }
 

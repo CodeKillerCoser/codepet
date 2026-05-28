@@ -72,6 +72,9 @@ fn enable_json_hooks(
     if root.get("hooks").and_then(Value::as_object).is_none() {
         root["hooks"] = json!({});
     }
+    if spec.id == AgentId::Cursor && root.get("version").is_none() {
+        root["version"] = json!(1);
+    }
 
     for event in spec.hook_events {
         if root["hooks"].get(*event).and_then(Value::as_array).is_none() {
@@ -101,6 +104,10 @@ fn disable_json_hooks(
     config_path: &Path,
     script_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if !config_path.exists() {
+        return Ok(());
+    }
+
     let mut root = read_json_config(config_path)?;
     if let Some(hooks) = root.get_mut("hooks").and_then(Value::as_object_mut) {
         for event in spec.hook_events {
@@ -133,6 +140,18 @@ fn write_json_config(config_path: &Path, root: &Value) -> io::Result<()> {
 
 fn is_managed_json_entry(entry: &Value, script_path: &Path) -> bool {
     let script_path = script_path_to_str(script_path);
+    if entry
+        .get("command")
+        .and_then(Value::as_str)
+        .is_some_and(|command| {
+            command.contains(MANAGED_MARKER)
+                || command.contains(SCRIPT_NAME)
+                || command.contains(&script_path)
+        })
+    {
+        return true;
+    }
+
     entry
         .get("hooks")
         .and_then(Value::as_array)
@@ -174,6 +193,13 @@ fn managed_command(
 }
 
 fn managed_json_entry(agent_id: AgentId, script_path: &Path, event: &str) -> Value {
+    if agent_id == AgentId::Cursor {
+        return json!({
+            "command": managed_command(agent_id.as_str(), script_path, Some(event), None),
+            "timeout": hook_timeout_seconds(event)
+        });
+    }
+
     let mut hook = json!({
         "type": "command",
         "command": managed_command(agent_id.as_str(), script_path, Some(event), None)

@@ -70,6 +70,21 @@ fn disable_json_agent_hook_removes_only_managed_entries() {
 }
 
 #[test]
+fn disabling_missing_agent_config_does_not_create_file() {
+    let temp = tempfile::tempdir().unwrap();
+    let script_path = temp.path().join("code-pet-hook.mjs");
+    let settings_path = temp.path().join("missing-settings.json");
+    let spec = agent_specs()
+        .into_iter()
+        .find(|agent| agent.id == AgentId::Claude)
+        .unwrap();
+
+    disable_agent_hook(&spec, &settings_path, &script_path).unwrap();
+
+    assert!(!settings_path.exists());
+}
+
+#[test]
 fn json_agent_hook_is_not_enabled_when_only_one_event_is_managed() {
     let temp = tempfile::tempdir().unwrap();
     let script_path = temp.path().join("code-pet-hook.mjs");
@@ -170,6 +185,57 @@ fn codex_json_hooks_use_timeout_ms_schema() {
     assert_eq!(managed_hook["timeout_ms"], 5000);
     assert!(managed_hook.get("timeout").is_none());
     assert!(updated["hooks"]["UserPromptSubmit"][0].get("matcher").is_none());
+}
+
+#[test]
+fn cursor_json_hooks_use_flat_hooks_schema() {
+    let temp = tempfile::tempdir().unwrap();
+    let script_path = temp.path().join("code-pet-hook.mjs");
+    let config_path = temp.path().join("hooks.json");
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&json!({
+            "version": 1,
+            "hooks": {
+                "beforeShellExecution": [
+                    { "command": "~/.cursor/hooks/guard-shell.sh", "timeout": 10 }
+                ]
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let spec = agent_specs()
+        .into_iter()
+        .find(|agent| agent.id == AgentId::Cursor)
+        .unwrap();
+
+    enable_agent_hook(&spec, &config_path, &script_path).unwrap();
+    enable_agent_hook(&spec, &config_path, &script_path).unwrap();
+
+    let updated: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert_eq!(updated["version"], 1);
+    assert!(updated["hooks"]["beforeShellExecution"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry["command"] == "~/.cursor/hooks/guard-shell.sh"));
+    assert_eq!(
+        updated["hooks"]["beforeShellExecution"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["command"]
+                .as_str()
+                .is_some_and(|command| command.contains("CODE_PET_AGENT='cursor'")))
+            .count(),
+        1
+    );
+    assert_eq!(updated["hooks"]["sessionStart"][0]["timeout"], 5);
+    assert!(updated["hooks"]["sessionStart"][0].get("hooks").is_none());
+    assert!(is_agent_hook_enabled(&spec, &config_path, &script_path).unwrap());
 }
 
 #[test]
