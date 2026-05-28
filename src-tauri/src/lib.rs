@@ -9,6 +9,8 @@ pub mod codex_audit;
 pub mod collector;
 pub mod events;
 pub mod hooks;
+#[cfg(target_os = "macos")]
+pub mod macos_window;
 pub mod pets;
 pub mod settings;
 pub mod state;
@@ -174,7 +176,9 @@ fn resize_pet_window(app: AppHandle, height: f64) -> Result<(), String> {
             width: 360.0,
             height,
         }))
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    configure_pet_overlay_window(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -221,6 +225,7 @@ pub fn run() {
             raise_existing_windows(app);
             let _ = app.emit("single-instance", serde_json::json!({ "args": args, "cwd": cwd }));
         }))
+        .plugin(tauri_nspanel::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
@@ -228,6 +233,7 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let state = app.state::<SharedState>().inner().clone();
+            configure_pet_overlay_window(&handle);
             match agent_control::list_agent_views() {
                 Ok(views) => state.set_agents(views),
                 Err(error) => {
@@ -299,6 +305,16 @@ pub fn run() {
             }
         });
 }
+
+#[cfg(target_os = "macos")]
+fn configure_pet_overlay_window(app: &AppHandle) {
+    if let Err(error) = macos_window::configure_pet_overlay_window(app) {
+        let _ = app.emit("collector-error", error);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn configure_pet_overlay_window(_app: &AppHandle) {}
 
 fn should_restore_main_on_reopen(_has_visible_windows: bool) -> bool {
     true
