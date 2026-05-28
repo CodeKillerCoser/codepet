@@ -135,3 +135,52 @@ fn replay_codex_audit_uses_session_index_thread_name_as_title() {
     assert_eq!(latest.title, "评审 agent token统计实现");
     assert_eq!(latest.message, "先改观测台，任务状态按automation.status判定");
 }
+
+#[test]
+fn replay_codex_audit_marks_escalated_tool_call_without_output_as_waiting_approval() {
+    let temp = tempfile::tempdir().unwrap();
+    let audit_path = temp.path().join("audit.jsonl");
+    let transcript_path = temp.path().join("rollout.jsonl");
+    std::fs::write(
+        &transcript_path,
+        serde_json::to_string(&json!({
+            "timestamp": "2026-05-28T06:27:02.015Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "call_id": "call-approval",
+                "arguments": serde_json::to_string(&json!({
+                    "cmd": "python3 organize_downloads.py --apply",
+                    "sandbox_permissions": "require_escalated",
+                    "justification": "是否允许移动 Downloads 文件？"
+                })).unwrap()
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        &audit_path,
+        serde_json::to_string(&json!({
+            "platform": "codex",
+            "hook_event_name": "PreToolUse",
+            "session_id": "codex-session",
+            "transcript_path": transcript_path,
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": "python3 organize_downloads.py --apply"
+            },
+            "tool_use_id": "call-approval",
+            "_timestamp": "2026-05-28 14:27:02"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let state = SharedState::default();
+
+    replay_recent_codex_audit_events(&state, &audit_path, 20).unwrap();
+
+    let latest = state.recent_events().last().unwrap().clone();
+    assert_eq!(latest.status, TaskStatus::WaitingApproval);
+}

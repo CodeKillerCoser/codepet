@@ -1,5 +1,5 @@
 use crate::agents::AgentId;
-use crate::events::{frontend_event, normalize_hook_payload, PetEvent};
+use crate::events::{frontend_event, normalize_hook_payload, PetEvent, PetEventKind, TaskStatus};
 use crate::state::SharedState;
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
 use serde_json::Value;
@@ -27,6 +27,13 @@ pub fn default_codex_session_index_path() -> PathBuf {
 }
 
 pub fn parse_codex_audit_line(line: &str) -> Option<PetEvent> {
+    parse_codex_audit_line_with_transcript_cache(line, None)
+}
+
+fn parse_codex_audit_line_with_transcript_cache(
+    line: &str,
+    transcript_cache: Option<&mut HashMap<PathBuf, String>>,
+) -> Option<PetEvent> {
     let raw = serde_json::from_str::<Value>(line).ok()?;
     if raw.get("platform").and_then(Value::as_str) != Some("codex") {
         return None;
@@ -34,6 +41,12 @@ pub fn parse_codex_audit_line(line: &str) -> Option<PetEvent> {
     raw.get("hook_event_name").and_then(Value::as_str)?;
 
     let mut event = normalize_hook_payload(AgentId::Codex, raw.clone()).ok()?;
+    if audit_line_waits_for_escalated_approval(&raw, transcript_cache) {
+        event.kind = PetEventKind::PermissionRequested;
+        event.status = TaskStatus::WaitingApproval;
+        event.should_ring = true;
+        event.title = "等待授权".to_string();
+    }
     if let Some(created_at) = parse_audit_timestamp(&raw) {
         event.created_at = created_at;
     }
@@ -81,8 +94,9 @@ fn replay_recent_codex_audit_events_with_titles(
     lines.reverse();
 
     let mut imported = 0;
+    let mut transcript_cache = HashMap::new();
     for line in lines {
-        if let Some(event) = parse_codex_audit_line(line) {
+        if let Some(event) = parse_codex_audit_line_with_transcript_cache(line, Some(&mut transcript_cache)) {
             let event = apply_session_title(&mut session_titles, event);
             app_state.push_event(event);
             imported += 1;
@@ -186,6 +200,77 @@ fn load_session_index_titles(path: &Path) -> io::Result<HashMap<String, String>>
         }
     }
     Ok(titles)
+}
+
+fn audit_line_waits_for_escalated_approval(raw: &Value, transcript_cache: Option<&mut HashMap<PathBuf, String>>) -> bool {
+    if raw.get("hook_event_name").and_then(Value::as_str) != Some("PreToolUse") {
+        return false;
+    }
+    let Some(call_id) = raw.get("tool_use_id").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(transcript_path) = raw.get("transcript_path").and_then(Value::as_str) else {
+        return false;
+    };
+
+    if let Some(cache) = transcript_cache {
+        let text = cache
+            .entry(PathBuf::from(transcript_path))
+            .or_insert_with(|| fs::read_to_string(transcript_path).unwrap_or_default());
+        return transcript_text_waits_for_escalated_approval(text, call_id);
+    };
+
+    let Ok(text) = fs::read_to_string(transcript_path) else {
+        return false;
+    };
+    transcript_text_waits_for_escalated_approval(&text, call_id)
+}
+
+fn transcript_text_waits_for_escalated_approval(text: &str, call_id: &str) -> bool {
+    let mut requires_approval = false;
+    let mut has_output = false;
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let Ok(raw_line) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(payload) = raw_line.get("payload") else {
+            continue;
+        };
+        if payload.get("call_id").and_then(Value::as_str) != Some(call_id) {
+            continue;
+        }
+        match payload.get("type").and_then(Value::as_str) {
+            Some("function_call") | Some("custom_tool_call") => {
+                requires_approval = tool_call_requires_escalation(payload);
+            }
+            Some("function_call_output") | Some("custom_tool_call_output") => {
+                has_output = true;
+            }
+            _ => {}
+        }
+    }
+    requires_approval && !has_output
+}
+
+fn tool_call_requires_escalation(payload: &Value) -> bool {
+    argument_value(payload.get("arguments"))
+        .or_else(|| argument_value(payload.get("input")))
+        .and_then(|arguments| {
+            arguments
+                .get("sandbox_permissions")
+                .or_else(|| arguments.get("sandboxPermissions"))
+                .and_then(Value::as_str)
+                .map(|value| value == "require_escalated")
+        })
+        .unwrap_or(false)
+}
+
+fn argument_value(value: Option<&Value>) -> Option<Value> {
+    match value? {
+        Value::String(text) => serde_json::from_str::<Value>(text).ok(),
+        Value::Object(_) => value.cloned(),
+        _ => None,
+    }
 }
 
 fn is_transcript_path(value: &str) -> bool {
