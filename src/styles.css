@@ -999,6 +999,28 @@ select:focus-visible {
   border-color: var(--app-border-strong);
 }
 
+.image-pixel-control {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--app-surface-soft);
+}
+
+.image-pixel-control > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.image-pixel-control strong {
+  color: var(--app-text);
+  font-size: 13px;
+  font-weight: 680;
+}
+
 .preview-pill {
   display: grid;
   justify-self: stretch;
@@ -1151,6 +1173,89 @@ input[type="time"] {
   gap: 10px;
 }
 
+.gradient-editor {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--app-surface-soft);
+}
+
+.gradient-editor-head {
+  display: flex;
+  min-height: 26px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.gradient-editor-head strong {
+  color: var(--app-text);
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.color-band-preview {
+  display: block;
+  width: 100%;
+  height: 42px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.color-stop-editor {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-stop {
+  position: relative;
+  flex: 0 0 auto;
+  display: block;
+  width: 34px;
+  height: 34px;
+}
+
+.color-stop-editor > button:not(.add-color-stop):not(.remove-color-stop) {
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+}
+
+.color-stop-editor > span {
+  color: var(--app-muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.color-stop input[type="color"] {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 2px;
+  background: var(--app-surface-strong);
+}
+
+.add-color-stop {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.remove-color-stop {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
 .bubble-editor label strong {
   justify-self: end;
   color: var(--app-text);
@@ -1282,6 +1387,11 @@ input[type="time"] {
   user-select: none;
 }
 
+.pet-window.dev-mode {
+  border: 1px dashed rgba(61, 115, 216, 0.42);
+  background: rgba(232, 242, 255, 0.72);
+}
+
 .pet-window:active {
   cursor: grabbing;
 }
@@ -1307,14 +1417,16 @@ input[type="time"] {
 .activity-stack {
   position: relative;
   z-index: 3;
+  flex: 0 0 auto;
   display: grid;
   width: 284px;
+  height: var(--pet-activity-stack-height);
   max-height: calc(78px * 4 + 8px * 3 + 32px);
   gap: 8px;
   margin: 0 0 8px 28px;
   padding-right: 10px;
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: hidden;
   overscroll-behavior: contain;
   pointer-events: auto;
   scrollbar-color: var(--pet-scrollbar) transparent;
@@ -1353,7 +1465,7 @@ input[type="time"] {
   backdrop-filter: blur(18px) saturate(1.15);
   cursor: pointer;
   pointer-events: auto;
-  transition: transform 140ms ease, border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
 }
 
 .status-pill.urgent {
@@ -1366,7 +1478,7 @@ input[type="time"] {
 }
 
 .status-pill:hover {
-  transform: translateY(-1px);
+  background: var(--pet-pill-hover-bg);
 }
 
 .status-pill.replying {
@@ -1474,7 +1586,8 @@ input[type="time"] {
 }
 
 .status-agent,
-.status-separator {
+.status-separator,
+.status-ended-at {
   color: var(--pet-agent);
 }
 
@@ -1758,14 +1871,15 @@ input[type="time"] {
 }
 
 .status-pill.active-breath {
-  background: var(--pet-running-bubble-surface, var(--pet-running-bubble-bg, var(--pet-active-bg)));
+  background: var(--pet-running-bubble-surface-layer, var(--pet-running-bubble-bg-layer, linear-gradient(var(--pet-running-bubble-surface, var(--pet-running-bubble-bg, var(--pet-active-bg))) 0 0)));
   animation: pet-pill-breathe var(--pet-running-bubble-duration, 1800ms) ease-in-out infinite;
 }
 
 .status-pill.active-marquee {
   border-color: transparent;
+  border-width: var(--pet-running-bubble-border-width, 1px);
   background:
-    linear-gradient(var(--pet-running-bubble-surface, var(--pet-running-bubble-bg, var(--pet-active-bg))) 0 0) padding-box,
+    var(--pet-running-bubble-surface-layer, var(--pet-running-bubble-bg-layer, linear-gradient(var(--pet-running-bubble-surface, var(--pet-running-bubble-bg, var(--pet-active-bg))) 0 0))) padding-box,
     conic-gradient(
       from var(--pet-marquee-angle),
       var(--pet-running-bubble-border, var(--pet-active-border)) 0deg,
@@ -1787,6 +1901,18 @@ input[type="time"] {
 .status-pill.done {
   border-color: rgba(34, 197, 94, 0.32);
   background: var(--pet-done-bg);
+}
+
+.status-pill.urgent:hover {
+  background: var(--pet-urgent-hover-bg);
+}
+
+.status-pill.failed:hover {
+  background: var(--pet-failed-hover-bg);
+}
+
+.status-pill.done:hover {
+  background: var(--pet-done-hover-bg);
 }
 
 .inline-done-mark {
@@ -1888,6 +2014,7 @@ input[type="time"] {
 
 .pet-window.theme-light {
   --pet-pill-bg: rgba(252, 253, 255, 0.9);
+  --pet-pill-hover-bg: rgba(244, 248, 255, 0.96);
   --pet-button-bg: rgba(241, 245, 249, 0.78);
   --pet-input-bg: rgba(255, 255, 255, 0.86);
   --pet-border: rgba(148, 163, 184, 0.26);
@@ -1904,8 +2031,11 @@ input[type="time"] {
   --pet-scrollbar: rgba(95, 104, 129, 0.32);
   --pet-shadow: rgba(15, 23, 42, 0.1);
   --pet-urgent-bg: rgba(255, 248, 250, 0.94);
+  --pet-urgent-hover-bg: rgba(255, 241, 245, 0.96);
   --pet-failed-bg: rgba(255, 246, 246, 0.94);
+  --pet-failed-hover-bg: rgba(255, 239, 239, 0.96);
   --pet-done-bg: rgba(249, 253, 251, 0.94);
+  --pet-done-hover-bg: rgba(240, 253, 247, 0.96);
   --pet-active-border: rgba(37, 99, 235, 0.56);
   --pet-active-bg: rgba(232, 242, 255, 0.96);
   --pet-active-bg-peak: rgba(219, 234, 254, 0.98);
@@ -1916,6 +2046,7 @@ input[type="time"] {
 
 .pet-window.theme-dark {
   --pet-pill-bg: rgba(24, 29, 39, 0.78);
+  --pet-pill-hover-bg: rgba(35, 43, 58, 0.86);
   --pet-button-bg: rgba(31, 41, 55, 0.78);
   --pet-input-bg: rgba(15, 23, 42, 0.78);
   --pet-border: rgba(148, 163, 184, 0.22);
@@ -1932,8 +2063,11 @@ input[type="time"] {
   --pet-scrollbar: rgba(203, 210, 223, 0.32);
   --pet-shadow: rgba(0, 0, 0, 0.28);
   --pet-urgent-bg: rgba(63, 32, 42, 0.84);
+  --pet-urgent-hover-bg: rgba(76, 38, 50, 0.9);
   --pet-failed-bg: rgba(64, 28, 32, 0.84);
+  --pet-failed-hover-bg: rgba(78, 34, 38, 0.9);
   --pet-done-bg: rgba(22, 54, 38, 0.84);
+  --pet-done-hover-bg: rgba(28, 68, 48, 0.9);
   --pet-active-border: rgba(96, 165, 250, 0.62);
   --pet-active-bg: rgba(28, 46, 74, 0.92);
   --pet-active-bg-peak: rgba(37, 64, 104, 0.96);
@@ -1981,10 +2115,12 @@ input[type="time"] {
   0%,
   100% {
     --pet-running-bubble-surface: var(--pet-running-bubble-bg-dim, var(--pet-running-bubble-bg, var(--pet-active-bg)));
+    --pet-running-bubble-surface-layer: var(--pet-running-bubble-bg-dim-layer, linear-gradient(var(--pet-running-bubble-surface, var(--pet-running-bubble-bg, var(--pet-active-bg))) 0 0));
   }
 
   50% {
     --pet-running-bubble-surface: var(--pet-running-bubble-bg-peak, color-mix(in srgb, var(--pet-running-bubble-bg, var(--pet-active-bg-peak)) 34%, white));
+    --pet-running-bubble-surface-layer: var(--pet-running-bubble-bg-peak-layer, linear-gradient(var(--pet-running-bubble-surface, var(--pet-running-bubble-bg, var(--pet-active-bg-peak))) 0 0));
   }
 }
 

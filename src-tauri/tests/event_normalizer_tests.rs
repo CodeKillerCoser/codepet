@@ -54,6 +54,21 @@ fn codex_stop_hook_payload_becomes_completed_update() {
 }
 
 #[test]
+fn codex_notification_hook_is_not_task_completion() {
+    let payload = json!({
+        "hook_event_name": "Notification",
+        "message": "background note",
+        "cwd": "/tmp/codex"
+    });
+
+    let event = normalize_hook_payload(AgentId::Codex, payload).unwrap();
+
+    assert_eq!(event.kind, PetEventKind::Message);
+    assert_eq!(event.status, TaskStatus::Running);
+    assert!(!event.should_ring);
+}
+
+#[test]
 fn codex_stop_uses_last_assistant_message_as_completion_summary() {
     let payload = json!({
         "hook_event_name": "Stop",

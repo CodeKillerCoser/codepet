@@ -1,5 +1,6 @@
 use code_pet_lib::pets::{
-    delete_pet, discover_codex_pet_packages, pet_data_directory, pixelate_image, select_pet, ConfiguredPet, PetKind,
+    clamp_image_pixel_size, delete_pet, discover_codex_pet_packages, pet_data_directory, pixelate_image, select_pet,
+    ConfiguredPet, PetKind,
 };
 use code_pet_lib::settings::{AppSettings, PixelPetSprite};
 use image::RgbaImage;
@@ -154,6 +155,13 @@ fn pixelate_image_writes_a_small_png_for_pixel_rendering() {
     let pixelated = image::open(&output).unwrap();
     assert!(pixelated.width() <= 48);
     assert!(pixelated.height() <= 48);
+}
+
+#[test]
+fn image_pet_pixel_size_is_clamped_to_editable_bounds() {
+    assert_eq!(clamp_image_pixel_size(4), 16);
+    assert_eq!(clamp_image_pixel_size(72), 72);
+    assert_eq!(clamp_image_pixel_size(512), 128);
 }
 
 #[test]

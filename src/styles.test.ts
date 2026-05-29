@@ -3,7 +3,9 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 
 const styles = readFileSync(resolve(__dirname, "styles.css"), "utf8");
+const appSource = readFileSync(resolve(__dirname, "App.svelte"), "utf8");
 const petAppSource = readFileSync(resolve(__dirname, "PetApp.svelte"), "utf8");
+const gradientColorSource = readFileSync(resolve(__dirname, "lib/gradientColor.ts"), "utf8");
 
 function blockFor(selector: string) {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -32,6 +34,102 @@ describe("main app scrolling layout", () => {
 });
 
 describe("pet message bubble activity", () => {
+  test("shows a dev-only background on the pet window", () => {
+    const devWindow = blockFor(".pet-window.dev-mode");
+
+    expect(devWindow).toContain("background:");
+    expect(devWindow).toContain("border:");
+  });
+
+  test("keeps the pet activity stack at the measured visible height", () => {
+    const stack = blockFor(".activity-stack");
+
+    expect(stack).toContain("flex: 0 0 auto");
+    expect(stack).toContain("height: var(--pet-activity-stack-height)");
+    expect(stack).toContain("overflow-y: hidden");
+    expect(stack).not.toContain("overflow-y: auto");
+  });
+
+  test("exposes a marquee border width control", () => {
+    const bubbleEditor = appSource.slice(appSource.indexOf('<section class="bubble-editor'), appSource.indexOf('<section class="appearance-editor', appSource.indexOf('<section class="bubble-editor')));
+
+    expect(bubbleEditor).toContain("边框宽度");
+    expect(bubbleEditor).toContain("runningBubbleBorderWidthLabel");
+    expect(bubbleEditor).toContain("bind:value={settings.appearance.runningBubble.borderWidth}");
+  });
+
+  test("uses background-only hover styling for pet task cards", () => {
+    const hover = blockFor(".status-pill:hover");
+
+    expect(hover).toContain("background:");
+    expect(hover).not.toContain("transform");
+  });
+
+  test("uses native color inputs as color stops for task bubble color bands", () => {
+    const bubbleEditor = appSource.slice(appSource.indexOf('<section class="bubble-editor'), appSource.indexOf('<section class="appearance-editor', appSource.indexOf('<section class="bubble-editor')));
+
+    expect(bubbleEditor).toContain("color-band-preview");
+    expect(bubbleEditor).toContain("selectBubbleColorStopFromBand");
+    expect(bubbleEditor).toContain('type="color"');
+    expect(bubbleEditor).not.toContain("ColorPalette");
+  });
+
+  test("edits only one color stop at a time under the preview band", () => {
+    const bubbleEditor = appSource.slice(appSource.indexOf('<section class="bubble-editor'), appSource.indexOf('<section class="appearance-editor', appSource.indexOf('<section class="bubble-editor')));
+    const stopEditor = blockFor(".color-stop-editor");
+    const stop = blockFor(".color-stop");
+    const add = blockFor(".add-color-stop");
+
+    expect(bubbleEditor).toContain("gradientSegmentCss");
+    expect(bubbleEditor).toContain("selectedColorIndex");
+    expect(bubbleEditor).toContain("{#key `${colorConfig.key}-${selectedColorIndex}-${editor.colors[selectedColorIndex]}`}");
+    expect(blockFor(".color-band-preview")).toContain("cursor: pointer");
+    expect(stopEditor).toContain("align-items: center");
+    expect(stopEditor).toContain("flex-wrap: nowrap");
+    expect(stop).toContain("width: 34px");
+    expect(stop).toContain("height: 34px");
+    expect(add).toContain("flex: 0 0 auto");
+  });
+
+  test("updates the background angle while the slider is moving", () => {
+    const bubbleEditor = appSource.slice(appSource.indexOf('<section class="bubble-editor'), appSource.indexOf('<section class="appearance-editor', appSource.indexOf('<section class="bubble-editor')));
+
+    expect(bubbleEditor).toContain("on:input={(event) => updateBubbleColor");
+    expect(bubbleEditor).not.toContain("on:change={(event) => updateBubbleColor");
+  });
+
+  test("reassigns settings when task bubble colors change", () => {
+    const bubbleEditorScript = appSource.slice(appSource.indexOf("function updateBubbleColor("), appSource.indexOf("function updateBubbleColorStop("));
+
+    expect(bubbleEditorScript).toContain("settings = updateRunningBubbleColorSetting");
+    expect(bubbleEditorScript).not.toContain("settings.appearance.runningBubble[key] =");
+  });
+
+  test("keeps newer bubble edits from being overwritten by older saves", () => {
+    const saveScript = appSource.slice(appSource.indexOf("async function saveRunningBubbleSettings()"), appSource.indexOf("async function savePetImagePixelSize()"));
+
+    expect(saveScript).toContain("runningBubbleSaveToken");
+    expect(saveScript).toContain("saveToken !== runningBubbleSaveToken");
+    expect(saveScript).not.toContain("await saveSettings()");
+  });
+
+  test("debounces bubble color saves so angle drags do not emit stale settings", () => {
+    const updateScript = appSource.slice(appSource.indexOf("function updateBubbleColor("), appSource.indexOf("function updateBubbleColorStop("));
+    const scheduleScript = appSource.slice(appSource.indexOf("function scheduleRunningBubbleSettingsSave()"), appSource.indexOf("async function saveRunningBubbleSettings()"));
+
+    expect(updateScript).toContain("scheduleRunningBubbleSettingsSave()");
+    expect(updateScript).not.toContain("void saveRunningBubbleSettings()");
+    expect(scheduleScript).toContain("window.clearTimeout");
+    expect(scheduleScript).toContain("window.setTimeout");
+  });
+
+  test("exposes settings and selected color stop dependencies directly in the template", () => {
+    const bubbleEditor = appSource.slice(appSource.indexOf('<section class="bubble-editor'), appSource.indexOf('<section class="appearance-editor', appSource.indexOf('<section class="bubble-editor')));
+
+    expect(bubbleEditor).toContain("settings.appearance.runningBubble[colorConfig.key]");
+    expect(bubbleEditor).toContain("selectedBubbleColorStop[colorConfig.key]");
+  });
+
   test("separates active bubble breathing and marquee animations", () => {
     expect(blockFor(".status-pill.active-breath")).toContain("pet-pill-breathe");
     expect(blockFor(".status-pill.active-marquee")).toContain("pet-pill-border-marquee");
@@ -60,6 +158,7 @@ describe("pet message bubble activity", () => {
     const marquee = blockFor(".status-pill.active-marquee");
 
     expect(petAppSource).not.toContain("status-marquee");
+    expect(marquee).toContain("border-width: var(--pet-running-bubble-border-width");
     expect(marquee).toContain("padding-box");
     expect(marquee).toContain("border-box");
     expect(marquee).toContain("conic-gradient");
@@ -73,9 +172,9 @@ describe("pet message bubble activity", () => {
   test("uses a multi-stop gradient palette for marquee borders", () => {
     const marquee = blockFor(".status-pill.active-marquee");
 
-    expect(petAppSource).toContain("--pet-running-bubble-border-hot");
-    expect(petAppSource).toContain("--pet-running-bubble-border-cool");
-    expect(petAppSource).toContain("--pet-running-bubble-border-light");
+    expect(gradientColorSource).toContain("--pet-running-bubble-border-hot");
+    expect(gradientColorSource).toContain("--pet-running-bubble-border-cool");
+    expect(gradientColorSource).toContain("--pet-running-bubble-border-light");
     expect(marquee).toContain("--pet-running-bubble-border-hot");
     expect(marquee).toContain("--pet-running-bubble-border-cool");
     expect(marquee).toContain("--pet-running-bubble-border-light");
@@ -88,14 +187,14 @@ describe("pet message bubble activity", () => {
   test("uses distinct dim and peak colors for background breathing", () => {
     const keyframes = keyframesFor("pet-pill-breathe");
 
-    expect(petAppSource).toContain("--pet-running-bubble-bg-dim");
-    expect(petAppSource).toContain("--pet-running-bubble-bg-peak");
-    expect(petAppSource).toContain("color-mix(in srgb, ${runningBubble.backgroundColor} 88%, ${runningBubble.borderColor})");
-    expect(petAppSource).toContain("color-mix(in srgb, ${runningBubble.backgroundColor} 76%, white)");
+    expect(gradientColorSource).toContain("--pet-running-bubble-bg-dim");
+    expect(gradientColorSource).toContain("--pet-running-bubble-bg-peak");
+    expect(gradientColorSource).toContain("88%, ${backgroundBorderColor}");
+    expect(gradientColorSource).toContain("76%, white");
     expect(keyframes).toContain("--pet-running-bubble-bg-dim");
     expect(keyframes).toContain("--pet-running-bubble-bg-peak");
-    expect(petAppSource).not.toContain("72%, ${runningBubble.borderColor}");
-    expect(petAppSource).not.toContain("34%, white");
+    expect(gradientColorSource).not.toContain("72%, ${runningBubble.borderColor}");
+    expect(gradientColorSource).not.toContain("34%, white");
     expect(keyframes).not.toContain("78%, white");
   });
 

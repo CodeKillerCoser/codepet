@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { deletePet, getLaunchAtLoginEnabled, recentEvents, setLaunchAtLoginEnabled, tokenUsageSummary } from "./api";
+import {
+  cutOutImageSubject,
+  deletePet,
+  getLaunchAtLoginEnabled,
+  importPetImage,
+  recentEvents,
+  setLaunchAtLoginEnabled,
+  tokenUsageSummary,
+  updatePetImagePixelSize,
+} from "./api";
 import type { PetEvent } from "./types";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -115,6 +124,62 @@ describe("deletePet", () => {
     await expect(deletePet("image-custom")).resolves.toEqual(view);
 
     expect(invoke).toHaveBeenCalledWith("delete_pet", { petId: "image-custom" });
+  });
+});
+
+describe("cutOutImageSubject", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("invokes the generic desktop subject cutout command", async () => {
+    const result = {
+      sourcePath: "/tmp/photo.jpg",
+      outputPath: "/tmp/photo-subject.png",
+      width: 320,
+      height: 240,
+      mimeType: "image/png",
+    };
+    vi.mocked(invoke).mockResolvedValue(result);
+
+    await expect(cutOutImageSubject("/tmp/photo.jpg", "/tmp/photo-subject.png")).resolves.toEqual(result);
+
+    expect(invoke).toHaveBeenCalledWith("cut_out_image_subject", {
+      sourcePath: "/tmp/photo.jpg",
+      outputPath: "/tmp/photo-subject.png",
+    });
+  });
+});
+
+describe("importPetImage", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("passes the requested pixel size to the desktop import command", async () => {
+    vi.mocked(invoke).mockResolvedValue({ dataDirectory: "/tmp/pets", selectedPetId: "custom", pets: [] });
+
+    await importPetImage("/tmp/photo.png", "Photo", 72);
+
+    expect(invoke).toHaveBeenCalledWith("import_pet_image", {
+      sourcePath: "/tmp/photo.png",
+      name: "Photo",
+      pixelSize: 72,
+    });
+  });
+});
+
+describe("updatePetImagePixelSize", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("invokes the desktop command for the active image pet", async () => {
+    vi.mocked(invoke).mockResolvedValue({ dataDirectory: "/tmp/pets", selectedPetId: "custom", pets: [] });
+
+    await updatePetImagePixelSize(64);
+
+    expect(invoke).toHaveBeenCalledWith("update_pet_image_pixel_size", { pixelSize: 64 });
   });
 });
 

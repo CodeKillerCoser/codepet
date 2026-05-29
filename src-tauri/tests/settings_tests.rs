@@ -8,6 +8,8 @@ fn settings_default_to_system_theme() {
     assert!(settings.appearance.running_bubble.background_breathing);
     assert!(!settings.appearance.running_bubble.border_marquee);
     assert_eq!(settings.appearance.running_bubble.animation_ms, 1800);
+    assert_eq!(settings.appearance.running_bubble.border_width, 1);
+    assert_eq!(settings.pet.image_pixel_size, 48);
 }
 
 #[test]
@@ -37,7 +39,9 @@ fn settings_keep_existing_values_when_theme_field_is_missing() {
     assert_eq!(settings.appearance.theme, ThemeChoice::System);
     assert!(settings.appearance.running_bubble.background_breathing);
     assert!(!settings.appearance.running_bubble.border_marquee);
+    assert_eq!(settings.appearance.running_bubble.border_width, 1);
     assert_eq!(settings.pet.scale, 4);
+    assert_eq!(settings.pet.image_pixel_size, 48);
     assert_eq!(settings.pet.sprite.body, "#111111");
     assert!(!settings.notifications.ring_on_failure);
     assert!(!settings.notifications.ring_on_done);
@@ -54,6 +58,7 @@ fn settings_read_running_bubble_personalization() {
               "borderMarquee": true,
               "backgroundColor": "#102a43",
               "borderColor": "#f59e0b",
+              "borderWidth": 4,
               "animationMs": 950
             }
           }
@@ -65,6 +70,7 @@ fn settings_read_running_bubble_personalization() {
     assert!(settings.appearance.running_bubble.border_marquee);
     assert_eq!(settings.appearance.running_bubble.background_color, "#102a43");
     assert_eq!(settings.appearance.running_bubble.border_color, "#f59e0b");
+    assert_eq!(settings.appearance.running_bubble.border_width, 4);
     assert_eq!(settings.appearance.running_bubble.animation_ms, 950);
 }
 

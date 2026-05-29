@@ -2,6 +2,7 @@ import type { PetEvent, TaskStatus } from "./types";
 
 const inactiveStatuses = new Set<TaskStatus>(["idle"]);
 const staleActivityStatuses = new Set<TaskStatus>(["thinking", "running"]);
+const terminalActivityStatuses = new Set<TaskStatus>(["done", "failed"]);
 const activeActivityStaleMs = 30 * 60 * 1000;
 const genericActivityTitles = new Set(["任务开始", "收到消息", "正在执行工具", "工具执行完成", "任务完成"]);
 
@@ -85,7 +86,8 @@ function displayEventForUpdate(previous: PetEvent | undefined, event: PetEvent):
   const title = authoritativeTitle(event) ?? previous?.title ?? taskTitleFor(event);
   const message = previous && isTranscriptPath(event.message) && !isTranscriptPath(previous.message) ? previous.message : event.message;
   const createdAt = shouldRefreshActivitySort(previous, event) ? event.createdAt : previous.createdAt;
-  return { ...event, title, message, createdAt };
+  const endedAt = terminalActivityStatuses.has(event.status) ? event.createdAt : null;
+  return { ...event, title, message, createdAt, endedAt };
 }
 
 function shouldRefreshActivitySort(previous: PetEvent | undefined, event: PetEvent): boolean {
@@ -166,11 +168,27 @@ export function cardMessage(event: PetEvent): string {
 }
 
 export function cardMeta(event: PetEvent): string {
-  return `${activitySourceLabel(event)} · ${statusLabel(event.status)}`;
+  return [activitySourceLabel(event), statusLabel(event.status), cardEndTime(event)].filter(Boolean).join(" · ");
 }
 
 export function cardSubtitle(event: PetEvent): string {
   return cardMeta(event);
+}
+
+export function cardEndTime(event: PetEvent): string {
+  if (!terminalActivityStatuses.has(event.status)) {
+    return "";
+  }
+  const timestamp = event.endedAt || event.createdAt;
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) {
+    return "";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
 }
 
 export interface ActivityCapabilities {

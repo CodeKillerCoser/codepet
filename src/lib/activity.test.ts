@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeActivities, activityCapabilities, activityKey, cardMessage, cardMeta, cardTitle, statusLabel, updateActivityList } from "./activity";
+import { activeActivities, activityCapabilities, activityKey, cardEndTime, cardMessage, cardMeta, cardTitle, statusLabel, updateActivityList } from "./activity";
 import type { PetEvent } from "./types";
 
 function event(overrides: Partial<PetEvent>): PetEvent {
@@ -302,6 +302,35 @@ describe("updateActivityList", () => {
     expect(unchanged[0].title).toBe("开始任务");
   });
 
+  it("keeps the terminal event time when a listed task finishes", () => {
+    const started = event({
+      id: "codex-start",
+      sessionId: "codex-a",
+      status: "thinking",
+      message: "开始任务",
+      createdAt: "2026-05-26T06:00:00.000Z",
+    });
+    const completed = event({
+      id: "codex-done",
+      sessionId: "codex-a",
+      status: "done",
+      message: "任务完成",
+      createdAt: "2026-05-26T06:02:00.000Z",
+    });
+
+    const [finished] = updateActivityList([started], [completed], new Set<string>(), new Date("2026-05-26T06:03:00.000Z"));
+
+    const expectedTime = new Intl.DateTimeFormat(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(new Date("2026-05-26T06:02:00.000Z"));
+    expect(finished.createdAt).toBe("2026-05-26T06:00:00.000Z");
+    expect(finished.endedAt).toBe("2026-05-26T06:02:00.000Z");
+    expect(cardEndTime(finished)).toBe(expectedTime);
+    expect(cardMeta(finished)).toBe(`codex · 任务完成 · ${expectedTime}`);
+  });
+
   it("keeps dismissed completed tasks out until the same task becomes active again", () => {
     const started = event({ id: "codex-start", sessionId: "codex-a", status: "thinking", message: "开始任务" });
     const completed = event({ id: "codex-done", sessionId: "codex-a", status: "done", message: "任务完成" });
@@ -372,7 +401,7 @@ describe("card display", () => {
 
     expect(cardTitle(activity)).toBe("评审 agent token统计实现");
     expect(cardMessage(activity)).toBe("已修复并跑完真实验证。关键修正是 TurnCollector 现在按真实 assistant...");
-    expect(cardMeta(activity)).toBe("codex · 任务完成");
+    expect(cardMeta(activity)).toBe(`codex · 任务完成 · ${cardEndTime(activity)}`);
   });
 
   it("uses the message as the visible title when hook title is generic", () => {
@@ -409,6 +438,17 @@ describe("card display", () => {
       },
     });
 
+    expect(cardMeta(activity)).toBe("codex · 正在执行");
+  });
+
+  it("does not show end time for active cards", () => {
+    const activity = event({
+      provider: "codex",
+      status: "running",
+      createdAt: "2026-05-26T06:02:00.000Z",
+    });
+
+    expect(cardEndTime(activity)).toBe("");
     expect(cardMeta(activity)).toBe("codex · 正在执行");
   });
 });

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AgentView, AppSettings, PetEvent, PetLibraryView, TokenUsageSummary } from "./types";
+import type { AgentView, AppSettings, PetEvent, PetLibraryView, SubjectCutoutResult, TokenUsageSummary } from "./types";
 
 export async function listAgents(): Promise<AgentView[]> {
   return invoke<AgentView[]>("list_agents");
@@ -41,8 +41,16 @@ export async function setPetDataDirectory(path: string): Promise<PetLibraryView>
   return invoke<PetLibraryView>("set_pet_data_directory", { path });
 }
 
-export async function importPetImage(sourcePath: string, name?: string): Promise<PetLibraryView> {
-  return invoke<PetLibraryView>("import_pet_image", { sourcePath, name });
+export async function importPetImage(sourcePath: string, name?: string, pixelSize?: number): Promise<PetLibraryView> {
+  return invoke<PetLibraryView>("import_pet_image", { sourcePath, name, pixelSize });
+}
+
+export async function updatePetImagePixelSize(pixelSize: number): Promise<PetLibraryView> {
+  return invoke<PetLibraryView>("update_pet_image_pixel_size", { pixelSize });
+}
+
+export async function cutOutImageSubject(sourcePath: string, outputPath?: string): Promise<SubjectCutoutResult> {
+  return invoke<SubjectCutoutResult>("cut_out_image_subject", { sourcePath, outputPath });
 }
 
 export async function recentEvents(): Promise<PetEvent[]> {

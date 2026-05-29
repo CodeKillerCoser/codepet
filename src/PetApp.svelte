@@ -4,7 +4,8 @@
   import { availableMonitors, getCurrentWindow, primaryMonitor } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
   import { activateActivity, getAppSettings, openMainWindow, recentEvents, resolveActivityApproval, sendActivityReply } from "./lib/api";
-  import { activityCapabilities, activityKey, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
+  import { activityCapabilities, activityKey, cardEndTime, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
+  import { runningBubbleStyle } from "./lib/gradientColor";
   import PetAvatar from "./lib/PetAvatar.svelte";
   import { playNotificationSound, shouldRing } from "./lib/sound";
   import type { AppSettings, PetEvent } from "./lib/types";
@@ -23,7 +24,8 @@
   let lastTopActivityId: string | null = null;
   let ready = false;
   let lastWindowHeight = 0;
-  let frameSyncToken = 0;
+  let requestedWindowHeight = 0;
+  let syncingWindowFrame = false;
   let replyingToId: string | null = null;
   let replyText = "";
   let actionNotice = "";
@@ -35,6 +37,7 @@
   const activityPetGap = 8;
   const maxVisibleActivities = 4;
   const noticeVisibleMs = 2500;
+  const devMode = import.meta.env.DEV;
   const fallbackRunningBubble: AppSettings["appearance"]["runningBubble"] = {
     backgroundBreathing: true,
     borderMarquee: false,
@@ -45,28 +48,17 @@
 
   $: themeClass = settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "theme-dark" : "theme-light";
   $: runningBubble = settings?.appearance.runningBubble ?? fallbackRunningBubble;
-  $: runningBubbleStyle = [
-    `--pet-running-bubble-bg: ${runningBubble.backgroundColor}`,
-    `--pet-running-bubble-bg-dim: color-mix(in srgb, ${runningBubble.backgroundColor} 88%, ${runningBubble.borderColor})`,
-    `--pet-running-bubble-bg-peak: color-mix(in srgb, ${runningBubble.backgroundColor} 76%, white)`,
-    `--pet-running-bubble-border: ${runningBubble.borderColor}`,
-    `--pet-running-bubble-border-cool: color-mix(in srgb, ${runningBubble.borderColor} 50%, #2dd4ff)`,
-    `--pet-running-bubble-border-light: color-mix(in srgb, ${runningBubble.borderColor} 12%, white)`,
-    `--pet-running-bubble-border-hot: color-mix(in srgb, ${runningBubble.borderColor} 42%, #ff4fd8)`,
-    `--pet-running-bubble-border-warm: color-mix(in srgb, ${runningBubble.borderColor} 46%, #facc15)`,
-    `--pet-running-bubble-duration: ${runningBubble.animationMs}ms`,
-  ].join("; ");
+  $: runningBubbleStyleText = runningBubbleStyle(runningBubble);
   $: primary = primaryActivity(activities);
   $: hasActivities = activities.length > 0;
   $: hasLiveActivities = activities.some((activity) => activity.status === "thinking" || activity.status === "running" || activity.status === "waiting-approval");
   $: showActivities = hasActivities && !tasksCollapsed;
-  $: visibleActivityCount = showActivities ? Math.min(activities.length, maxVisibleActivities) : 0;
   $: visibleActivities = showActivities ? activities.slice(0, maxVisibleActivities) : [];
-  $: activityExtraHeight = visibleActivities.some((activity) => activity.id === replyingToId) ? 32 : 0;
+  $: activityStackHeight = activityStackHeightFor(visibleActivities, replyingToId);
   $: petScale = Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4);
   $: petVisualHeight = settings?.pet.kind === "codex-atlas" ? Math.round(32 * petScale * (208 / 192)) : 30 * petScale;
   $: petStageHeight = Math.max(104, petVisualHeight);
-  $: desiredWindowHeight = petWindowHeight(visibleActivityCount, petStageHeight, activityExtraHeight);
+  $: desiredWindowHeight = petWindowHeight(activityStackHeight, petStageHeight);
   $: topActivityId = showActivities ? activities[0]?.id ?? null : null;
   $: if (!hasActivities && tasksCollapsed) {
     tasksCollapsed = false;
@@ -151,7 +143,6 @@
       void syncLatestFromRecent(false).catch((error) => {
         console.error("failed to load recent pet events", error);
       });
-      void syncWindowFrame(petWindowHeight(Math.min(activities.length, maxVisibleActivities), petStageHeight, activityExtraHeight));
       pollTimer = window.setInterval(() => {
         void syncLatestFromRecent(true).catch((error) => {
           console.error("failed to sync recent pet events", error);
@@ -287,33 +278,67 @@
   }
 
   async function syncWindowFrame(height: number) {
-    const roundedHeight = Math.round(height);
-    const appWindow = getCurrentWindow();
-    const currentSize = await withTimeout(appWindow.innerSize(), 700).catch(() => null);
-    if (currentSize && roundedHeight === lastWindowHeight && Math.abs(currentSize.height - roundedHeight) <= 1) {
+    requestedWindowHeight = Math.round(height);
+    if (syncingWindowFrame) {
       return;
     }
 
-    const token = ++frameSyncToken;
+    syncingWindowFrame = true;
     try {
-      await withTimeout(appWindow.setSize(new LogicalSize(petWindowWidth, roundedHeight)), 900);
-      lastWindowHeight = roundedHeight;
-      if (token === frameSyncToken) {
-        void withTimeout(dockToLowerRight(), 1200).catch((error) => {
-          console.error("failed to dock pet window", error);
-        });
+      while (true) {
+        const targetHeight = requestedWindowHeight;
+        const applied = await applyWindowFrame(targetHeight);
+        if (!applied || requestedWindowHeight === targetHeight) {
+          break;
+        }
       }
-    } catch (error) {
-      console.error("failed to sync pet window frame", error);
+    } finally {
+      syncingWindowFrame = false;
     }
   }
 
-  function petWindowHeight(visibleCount: number, stageHeight: number, extraHeight = 0) {
+  async function applyWindowFrame(roundedHeight: number) {
+    const appWindow = getCurrentWindow();
+    const currentSize = await withTimeout(appWindow.innerSize(), 700).catch(() => null);
+    if (requestedWindowHeight !== roundedHeight) {
+      return true;
+    }
+    if (currentSize && roundedHeight === lastWindowHeight && Math.abs(currentSize.height - roundedHeight) <= 1) {
+      return true;
+    }
+
+    try {
+      await withTimeout(appWindow.setSize(new LogicalSize(petWindowWidth, roundedHeight)), 900);
+      if (requestedWindowHeight !== roundedHeight) {
+        return true;
+      }
+      lastWindowHeight = roundedHeight;
+      void withTimeout(dockToLowerRight(), 1200).catch((error) => {
+        console.error("failed to dock pet window", error);
+      });
+      return true;
+    } catch (error) {
+      console.error("failed to sync pet window frame", error);
+      return false;
+    }
+  }
+
+  function activityStackHeightFor(currentActivities: PetEvent[], activeReplyingToId: string | null) {
+    if (currentActivities.length === 0) {
+      return 0;
+    }
+    return currentActivities.reduce((height, activity, index) => {
+      const cardHeight = activity.id === activeReplyingToId ? 110 : activity.status === "waiting-approval" ? 86 : activityCardHeight;
+      return height + cardHeight + (index > 0 ? activityGap : 0);
+    }, 0);
+  }
+
+  function petWindowHeight(stackHeight: number, stageHeight: number) {
     const petBaseHeight = 22 + stageHeight;
-    if (visibleCount <= 0) {
+    if (stackHeight <= 0) {
       return petBaseHeight;
     }
-    return petBaseHeight + activityPetGap + visibleCount * activityCardHeight + (visibleCount - 1) * activityGap + extraHeight;
+    return petBaseHeight + activityPetGap + stackHeight;
   }
 
   function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -337,6 +362,11 @@
       return;
     }
     await getCurrentWindow().startDragging();
+  }
+
+  function preventPetWindowDoubleClick(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
   }
 
   function toggleTasks(event: MouseEvent) {
@@ -426,15 +456,16 @@
 </script>
 
 <main
-  class={`pet-window ${themeClass}`}
-  data-tauri-drag-region
+  class={`pet-window ${themeClass}${devMode ? " dev-mode" : ""}`}
+  on:dblclick={preventPetWindowDoubleClick}
 >
-  <button class="drag-layer" type="button" aria-label="拖动移动桌宠" data-tauri-drag-region on:mousedown={dragWindow}></button>
+  <button class="drag-layer" type="button" aria-label="拖动移动桌宠" on:mousedown={dragWindow}></button>
   {#if showActivities}
-    <section class="activity-stack" bind:this={activityStack} aria-live="polite">
-      {#each activities as activity (activity.id)}
+    <section class="activity-stack" bind:this={activityStack} aria-live="polite" style={`--pet-activity-stack-height: ${activityStackHeight}px`}>
+      {#each visibleActivities as activity (activity.id)}
         {@const capabilities = activityCapabilities(activity)}
         {@const activeActivity = isActiveActivity(activity)}
+        {@const endedAt = cardEndTime(activity)}
         <article
           class="status-pill"
           class:active-status={activeActivity}
@@ -444,7 +475,7 @@
           class:failed={activity.status === "failed"}
           class:done={activity.status === "done"}
           class:replying={replyingToId === activity.id}
-          style={activeActivity ? runningBubbleStyle : undefined}
+          style={activeActivity ? runningBubbleStyleText : undefined}
           title={`${cardTitle(activity)}\n${cardMessage(activity)}\n${cardMeta(activity)}`}
         >
           <div class="status-content">
@@ -485,6 +516,10 @@
                 <span class="status-agent">{activity.provider}</span>
                 <span class="status-separator"> · </span>
                 <span class={`status-state status-${activity.status}`}>{statusLabel(activity.status)}</span>
+                {#if endedAt}
+                  <span class="status-separator"> · </span>
+                  <span class="status-ended-at">{endedAt}</span>
+                {/if}
               </span>
               {#if capabilities.canApprove || capabilities.canReply}
                 <div class="status-actions" class:approval-mode={capabilities.canApprove} aria-label="任务操作">
@@ -508,7 +543,7 @@
     </section>
   {/if}
 
-  <section class="pet-stage" aria-label="拖动移动桌宠" data-tauri-drag-region>
+  <section class="pet-stage" aria-label="拖动移动桌宠">
     <button
       class="main-window-button"
       type="button"

@@ -36,6 +36,8 @@ pub struct RunningBubbleSettings {
     pub background_color: String,
     #[serde(default = "default_running_bubble_border")]
     pub border_color: String,
+    #[serde(default = "default_running_bubble_border_width")]
+    pub border_width: u8,
     #[serde(default = "default_running_bubble_animation_ms")]
     pub animation_ms: u16,
 }
@@ -61,6 +63,8 @@ pub struct PetSettings {
     pub image_path: Option<String>,
     #[serde(default = "default_scale")]
     pub scale: u8,
+    #[serde(default = "default_image_pixel_size")]
+    pub image_pixel_size: u32,
     #[serde(default = "default_always_on_top")]
     pub always_on_top: bool,
 }
@@ -170,6 +174,7 @@ impl Default for RunningBubbleSettings {
             border_marquee: false,
             background_color: default_running_bubble_background(),
             border_color: default_running_bubble_border(),
+            border_width: default_running_bubble_border_width(),
             animation_ms: default_running_bubble_animation_ms(),
         }
     }
@@ -183,6 +188,7 @@ impl Default for PetSettings {
             sprite: default_sprite(),
             image_path: None,
             scale: default_scale(),
+            image_pixel_size: default_image_pixel_size(),
             always_on_top: default_always_on_top(),
         }
     }
@@ -260,6 +266,10 @@ fn default_scale() -> u8 {
     3
 }
 
+fn default_image_pixel_size() -> u32 {
+    48
+}
+
 fn default_always_on_top() -> bool {
     true
 }
@@ -274,6 +284,10 @@ fn default_running_bubble_background() -> String {
 
 fn default_running_bubble_border() -> String {
     "#3d73d8".to_string()
+}
+
+fn default_running_bubble_border_width() -> u8 {
+    1
 }
 
 fn default_running_bubble_animation_ms() -> u16 {

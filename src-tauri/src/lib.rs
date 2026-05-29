@@ -14,6 +14,7 @@ pub mod macos_window;
 pub mod pets;
 pub mod settings;
 pub mod state;
+pub mod subject_cutout;
 pub mod title_resolver;
 pub mod token_usage;
 
@@ -23,6 +24,7 @@ use events::PetEvent;
 use pets::PetLibraryView;
 use settings::{load_app_settings, save_app_settings, AppSettings};
 use state::{ApprovalBehavior, ApprovalDecision, SharedState, COLLECTOR_PORT};
+use subject_cutout::SubjectCutoutResult;
 use token_usage::TokenUsageSummary;
 use std::str::FromStr;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, Size, WebviewUrl, WebviewWindowBuilder};
@@ -106,12 +108,26 @@ fn set_pet_data_directory(app: AppHandle, path: String) -> Result<PetLibraryView
 }
 
 #[tauri::command]
-fn import_pet_image(app: AppHandle, source_path: String, name: Option<String>) -> Result<PetLibraryView, String> {
-    let view = pets::import_pet_image(source_path, name)?;
+fn import_pet_image(app: AppHandle, source_path: String, name: Option<String>, pixel_size: Option<u32>) -> Result<PetLibraryView, String> {
+    let view = pets::import_pet_image(source_path, name, pixel_size)?;
     if let Ok(settings) = load_app_settings() {
         let _ = app.emit("settings-updated", settings);
     }
     Ok(view)
+}
+
+#[tauri::command]
+fn update_pet_image_pixel_size(app: AppHandle, pixel_size: u32) -> Result<PetLibraryView, String> {
+    let view = pets::update_active_image_pet_pixel_size(pixel_size)?;
+    if let Ok(settings) = load_app_settings() {
+        let _ = app.emit("settings-updated", settings);
+    }
+    Ok(view)
+}
+
+#[tauri::command]
+fn cut_out_image_subject(source_path: String, output_path: Option<String>) -> Result<SubjectCutoutResult, String> {
+    subject_cutout::cut_out_subject(source_path, output_path)
 }
 
 #[tauri::command]
@@ -280,6 +296,8 @@ pub fn run() {
             delete_pet,
             set_pet_data_directory,
             import_pet_image,
+            update_pet_image_pixel_size,
+            cut_out_image_subject,
             recent_events,
             token_usage_summary,
             activate_activity,

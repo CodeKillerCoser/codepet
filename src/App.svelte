@@ -24,8 +24,10 @@
     Volume2,
   } from "@lucide/svelte";
   import { onMount } from "svelte";
-  import { collectorEndpoint, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, listAgents, listPets, recentEvents, selectPet, setAgentEnabled, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings } from "./lib/api";
+  import { collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, listAgents, listPets, recentEvents, selectPet, setAgentEnabled, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
+  import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
   import PetAvatar from "./lib/PetAvatar.svelte";
   import { playNotificationSound } from "./lib/sound";
   import { buildUsageChartData, yAxisTicks, type UsageBucketSize, type UsageRange } from "./lib/usageChart";
@@ -45,6 +47,12 @@
   let launchAtLogin = false;
   let systemDark = false;
   let eventPollTimer: number | null = null;
+  let runningBubbleSaveToken = 0;
+  let runningBubbleSaveTimer: number | null = null;
+  let selectedBubbleColorStop: Record<RunningBubbleColorKey, number> = {
+    backgroundColor: 0,
+    borderColor: 0,
+  };
   let usageRange: UsageRange = "7d";
   let usageBucketSize: UsageBucketSize = "30m";
   const agentOrder: AgentView["id"][] = ["codex", "claude", "qoder", "cursor"];
@@ -67,8 +75,14 @@
     borderMarquee: false,
     backgroundColor: "#e8f2ff",
     borderColor: "#3d73d8",
+    borderWidth: 1,
     animationMs: 1800,
   };
+  const bubbleColorConfigs = [
+    { key: "backgroundColor", label: "背景色", fallback: runningBubbleDefaults.backgroundColor, directional: true },
+    { key: "borderColor", label: "边框色", fallback: runningBubbleDefaults.borderColor, directional: false },
+  ] as const;
+  const defaultImagePixelSize = 48;
 
   onMount(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -113,6 +127,7 @@
       unlistenTokenUsage?.();
       unlistenAgentDisabled?.();
       clearEventPoll();
+      clearRunningBubbleSaveTimer();
     };
   });
 
@@ -219,24 +234,35 @@
     }
   }
 
-  async function importImagePet() {
+  async function importImagePet(cutOutSubject = false) {
     const selected = await open({
       multiple: false,
       filters: [{ name: "Image", extensions: ["png", "jpg", "jpeg", "webp"] }],
     });
     if (typeof selected !== "string") return;
 
-    busyPet = "import";
+    busyPet = cutOutSubject ? "cutout-import" : "import";
     error = "";
     try {
       const filename = selected.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "Imported Pet";
-      petLibrary = await importPetImage(selected, filename);
+      const sourcePath = cutOutSubject ? (await cutOutImageSubject(selected, cutoutOutputPath(selected))).outputPath : selected;
+      petLibrary = await importPetImage(sourcePath, filename, settings?.pet.imagePixelSize ?? defaultImagePixelSize);
       settings = normalizeSettings(await getAppSettings());
     } catch (currentError) {
       error = String(currentError);
     } finally {
       busyPet = "";
     }
+  }
+
+  function cutoutOutputPath(sourcePath: string) {
+    const baseDirectory = petLibrary?.dataDirectory ?? settings?.petLibrary.dataDirectory ?? "";
+    const filename = sourcePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "subject";
+    const separator = baseDirectory.includes("\\") ? "\\" : "/";
+    const timestamp = Date.now();
+    return baseDirectory
+      ? `${baseDirectory}${separator}cutouts${separator}${filename}-${timestamp}.png`
+      : undefined;
   }
 
   async function choosePetDataDirectory() {
@@ -299,7 +325,18 @@
       ...(nextSettings.appearance.runningBubble ?? {}),
     };
     nextSettings.appearance.runningBubble.animationMs = clampRunningBubbleAnimationMs(nextSettings.appearance.runningBubble.animationMs);
+    nextSettings.appearance.runningBubble.borderWidth = clampRunningBubbleBorderWidth(nextSettings.appearance.runningBubble.borderWidth);
+    nextSettings.pet.imagePixelSize = clampImagePixelSize(nextSettings.pet.imagePixelSize);
     return nextSettings;
+  }
+
+  function clampImagePixelSize(value: number) {
+    return Math.min(128, Math.max(16, Math.round(value || defaultImagePixelSize)));
+  }
+
+  function imagePixelSizeLabel(value: number) {
+    const pixelSize = clampImagePixelSize(value);
+    return `${pixelSize}px`;
   }
 
   function clampRunningBubbleAnimationMs(value: number) {
@@ -310,10 +347,151 @@
     return `${(clampRunningBubbleAnimationMs(value) / 1000).toFixed(1)}s`;
   }
 
+  function clampRunningBubbleBorderWidth(value: number) {
+    return Math.min(8, Math.max(1, Math.round(value || runningBubbleDefaults.borderWidth)));
+  }
+
+  function runningBubbleBorderWidthLabel(value: number) {
+    return `${clampRunningBubbleBorderWidth(value)}px`;
+  }
+
+  function bubbleColorEditor(value: string | null | undefined, fallback: string) {
+    return gradientEditorFromCss(value, fallback);
+  }
+
+  function currentBubbleColorEditor(key: RunningBubbleColorKey, fallback: string) {
+    return bubbleColorEditor(settings?.appearance.runningBubble[key], fallback);
+  }
+
+  function updateBubbleColor(
+    key: RunningBubbleColorKey,
+    fallback: string,
+    patch: Partial<GradientEditorValue>,
+  ) {
+    if (!settings) return;
+    settings = updateRunningBubbleColorSetting(settings, key, fallback, patch);
+    scheduleRunningBubbleSettingsSave();
+  }
+
+  function updateBubbleColorStop(
+    key: RunningBubbleColorKey,
+    fallback: string,
+    index: number,
+    color: string,
+  ) {
+    const editor = currentBubbleColorEditor(key, fallback);
+    const colors = [...editor.colors];
+    colors[index] = color;
+    updateBubbleColor(key, fallback, { colors });
+  }
+
+  function setSelectedBubbleColorStop(key: RunningBubbleColorKey, index: number) {
+    selectedBubbleColorStop = {
+      ...selectedBubbleColorStop,
+      [key]: Math.max(0, index),
+    };
+  }
+
+  function addBubbleColorStop(key: RunningBubbleColorKey, fallback: string) {
+    const editor = currentBubbleColorEditor(key, fallback);
+    const nextColors = [...editor.colors, nextGradientStopColor(editor.colors)];
+    setSelectedBubbleColorStop(key, nextColors.length - 1);
+    updateBubbleColor(key, fallback, { colors: nextColors });
+  }
+
+  function removeBubbleColorStop(key: RunningBubbleColorKey, fallback: string, index: number) {
+    const editor = currentBubbleColorEditor(key, fallback);
+    const colors = editor.colors.filter((_, colorIndex) => colorIndex !== index);
+    setSelectedBubbleColorStop(key, Math.max(0, Math.min(selectedBubbleColorStop[key], colors.length - 1)));
+    updateBubbleColor(key, fallback, { colors: colors.length ? colors : [fallback] });
+  }
+
+  function selectedBubbleColorIndex(selectedIndex: number | undefined, count: number) {
+    return Math.max(0, Math.min(selectedIndex ?? 0, Math.max(count - 1, 0)));
+  }
+
+  function selectPreviousBubbleColorStop(key: RunningBubbleColorKey, count: number) {
+    setSelectedBubbleColorStop(key, Math.max(0, selectedBubbleColorIndex(selectedBubbleColorStop[key], count) - 1));
+  }
+
+  function selectNextBubbleColorStop(key: RunningBubbleColorKey, count: number) {
+    setSelectedBubbleColorStop(key, Math.min(Math.max(count - 1, 0), selectedBubbleColorIndex(selectedBubbleColorStop[key], count) + 1));
+  }
+
+  function selectBubbleColorStopFromBand(key: RunningBubbleColorKey, count: number, event: MouseEvent) {
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    setSelectedBubbleColorStop(key, colorStopIndexFromBand(count, event.clientX - rect.left, rect.width));
+  }
+
+  function inputValue(event: Event) {
+    return (event.currentTarget as HTMLInputElement).value;
+  }
+
+  function inputNumber(event: Event) {
+    return Number((event.currentTarget as HTMLInputElement).value);
+  }
+
+  function scheduleRunningBubbleSettingsSave() {
+    runningBubbleSaveToken += 1;
+    clearRunningBubbleSaveTimer();
+    runningBubbleSaveTimer = window.setTimeout(() => {
+      runningBubbleSaveTimer = null;
+      void saveRunningBubbleSettings();
+    }, 250);
+  }
+
+  function clearRunningBubbleSaveTimer() {
+    if (runningBubbleSaveTimer) {
+      window.clearTimeout(runningBubbleSaveTimer);
+      runningBubbleSaveTimer = null;
+    }
+  }
+
   async function saveRunningBubbleSettings() {
     if (!settings) return;
-    settings.appearance.runningBubble.animationMs = clampRunningBubbleAnimationMs(settings.appearance.runningBubble.animationMs);
-    await saveSettings();
+    const saveToken = runningBubbleSaveToken;
+    const snapshot: AppSettings = {
+      ...settings,
+      appearance: {
+        ...settings.appearance,
+        runningBubble: {
+          ...settings.appearance.runningBubble,
+          animationMs: clampRunningBubbleAnimationMs(settings.appearance.runningBubble.animationMs),
+          borderWidth: clampRunningBubbleBorderWidth(settings.appearance.runningBubble.borderWidth),
+        },
+      },
+    };
+
+    try {
+      const savedSettings = normalizeSettings(await updateAppSettings(snapshot));
+      if (saveToken !== runningBubbleSaveToken || !settings) return;
+      settings = {
+        ...settings,
+        appearance: {
+          ...settings.appearance,
+          runningBubble: savedSettings.appearance.runningBubble,
+        },
+      };
+    } catch (currentError) {
+      if (saveToken === runningBubbleSaveToken) {
+        error = String(currentError);
+      }
+    }
+  }
+
+  async function savePetImagePixelSize() {
+    if (!settings) return;
+    settings.pet.imagePixelSize = clampImagePixelSize(settings.pet.imagePixelSize);
+    busyPet = "pixel-size";
+    error = "";
+    try {
+      petLibrary = await updatePetImagePixelSize(settings.pet.imagePixelSize);
+      settings = normalizeSettings(await getAppSettings());
+    } catch (currentError) {
+      error = String(currentError);
+    } finally {
+      busyPet = "";
+    }
   }
 
   function statusLabel(status: PetEvent["status"]) {
@@ -617,10 +795,25 @@
           </header>
           <div class="pet-preview codex-preview">
             <PetAvatar sprite={settings.pet.sprite} kind={settings.pet.kind} imagePath={settings.pet.imagePath} status={latest?.status ?? "thinking"} scale={Math.max(settings.pet.scale, 4)} />
-            <button class="preview-import-button" disabled={busyPet === "import"} on:click={importImagePet} aria-label="导入图片宠物">
+            <button class="preview-import-button" disabled={busyPet === "import" || busyPet === "cutout-import"} on:click={() => importImagePet(true)} aria-label="抠图导入图片宠物">
               <ImagePlus size={18} />
             </button>
           </div>
+          <label class="image-pixel-control">
+            <span>
+              <span>像素化程度</span>
+              <strong>{imagePixelSizeLabel(settings.pet.imagePixelSize)}</strong>
+            </span>
+            <input
+              type="range"
+              min="16"
+              max="128"
+              step="8"
+              bind:value={settings.pet.imagePixelSize}
+              disabled={busyPet === "pixel-size"}
+              on:change={savePetImagePixelSize}
+            />
+          </label>
           <section class="pet-library-panel">
             <div class="panel-head compact">
               <div>
@@ -705,15 +898,54 @@
               </label>
             </div>
             <div class="bubble-color-grid">
-              <label>
-                背景色
-                <input type="color" bind:value={settings.appearance.runningBubble.backgroundColor} on:input={saveRunningBubbleSettings} />
-              </label>
-              <label>
-                边框色
-                <input type="color" bind:value={settings.appearance.runningBubble.borderColor} on:input={saveRunningBubbleSettings} />
-              </label>
+              {#each bubbleColorConfigs as colorConfig}
+                {@const editor = bubbleColorEditor(settings.appearance.runningBubble[colorConfig.key], colorConfig.fallback)}
+                {@const selectedColorIndex = selectedBubbleColorIndex(selectedBubbleColorStop[colorConfig.key], editor.colors.length)}
+                <section class="gradient-editor" aria-label={colorConfig.label}>
+                  <div class="gradient-editor-head">
+                    <strong>{colorConfig.label}</strong>
+                  </div>
+                  <button
+                    class="color-band-preview"
+                    type="button"
+                    aria-label={`选择${colorConfig.label}色段`}
+                    style={`background: ${gradientSegmentCss(editor.colors)}`}
+                    on:click={(event) => selectBubbleColorStopFromBand(colorConfig.key, editor.colors.length, event)}
+                  ></button>
+                  <div class="color-stop-editor" aria-label={`${colorConfig.label}当前颜色`}>
+                    <button type="button" aria-label="上一个颜色" disabled={selectedColorIndex === 0} on:click={() => selectPreviousBubbleColorStop(colorConfig.key, editor.colors.length)}>‹</button>
+                    <label class="color-stop">
+                      {#key `${colorConfig.key}-${selectedColorIndex}-${editor.colors[selectedColorIndex]}`}
+                        <input type="color" value={editor.colors[selectedColorIndex]} on:input={(event) => updateBubbleColorStop(colorConfig.key, colorConfig.fallback, selectedColorIndex, inputValue(event))} />
+                      {/key}
+                    </label>
+                    <button type="button" aria-label="下一个颜色" disabled={selectedColorIndex >= editor.colors.length - 1} on:click={() => selectNextBubbleColorStop(colorConfig.key, editor.colors.length)}>›</button>
+                    <span>{selectedColorIndex + 1}/{editor.colors.length}</span>
+                    <button class="add-color-stop" type="button" on:click={() => addBubbleColorStop(colorConfig.key, colorConfig.fallback)}>添加颜色</button>
+                    {#if editor.colors.length > 1}
+                      <button class="remove-color-stop" type="button" aria-label={`移除当前 ${colorConfig.label}颜色`} on:click={() => removeBubbleColorStop(colorConfig.key, colorConfig.fallback, selectedColorIndex)}>移除</button>
+                    {/if}
+                  </div>
+                  {#if colorConfig.directional}
+                    <label>
+                      角度 <strong>{editor.angle}deg</strong>
+                      <input type="range" min="0" max="360" step="5" value={editor.angle} on:input={(event) => updateBubbleColor(colorConfig.key, colorConfig.fallback, { angle: inputNumber(event) })} />
+                    </label>
+                  {/if}
+                </section>
+              {/each}
             </div>
+            <label>
+              边框宽度 <strong>{runningBubbleBorderWidthLabel(settings.appearance.runningBubble.borderWidth)}</strong>
+              <input
+                type="range"
+                min="1"
+                max="8"
+                step="1"
+                bind:value={settings.appearance.runningBubble.borderWidth}
+                on:change={saveRunningBubbleSettings}
+              />
+            </label>
             <label>
               动画速率 <strong>{runningBubbleSpeedLabel(settings.appearance.runningBubble.animationMs)}</strong>
               <input

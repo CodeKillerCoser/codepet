@@ -50,6 +50,14 @@ export interface PetLibraryView {
   pets: ConfiguredPet[];
 }
 
+export interface SubjectCutoutResult {
+  sourcePath: string;
+  outputPath: string;
+  width: number;
+  height: number;
+  mimeType: "image/png";
+}
+
 export interface AppSettings {
   appearance: {
     theme: "system" | "light" | "dark";
@@ -58,6 +66,7 @@ export interface AppSettings {
       borderMarquee: boolean;
       backgroundColor: string;
       borderColor: string;
+      borderWidth: number;
       animationMs: number;
     };
   };
@@ -67,6 +76,7 @@ export interface AppSettings {
     sprite: PixelPetSprite;
     imagePath?: string | null;
     scale: number;
+    imagePixelSize: number;
     alwaysOnTop: boolean;
   };
   petLibrary: {
@@ -100,6 +110,7 @@ export interface PetEvent {
   toolName?: string | null;
   shouldRing: boolean;
   createdAt: string;
+  endedAt?: string | null;
   raw: unknown;
   source?: ActivitySource | null;
 }

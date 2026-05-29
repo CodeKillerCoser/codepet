@@ -58,4 +58,8 @@ describe("shouldRing", () => {
   it("does not ring for completed tasks when the done toggle is disabled", () => {
     expect(shouldRing(settings({ ringOnDone: false }), event())).toBe(false);
   });
+
+  it("does not use done status alone as a completion notification", () => {
+    expect(shouldRing(settings(), event({ kind: "message", status: "done", shouldRing: true }))).toBe(false);
+  });
 });

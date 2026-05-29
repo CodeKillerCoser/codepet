@@ -77,10 +77,14 @@ pub fn delete_pet(settings: &mut AppSettings, pet_id: &str) -> Result<(), String
     Ok(())
 }
 
+pub fn clamp_image_pixel_size(value: u32) -> u32 {
+    value.clamp(16, 128)
+}
+
 pub fn pixelate_image(source: &Path, output: &Path, max_side: u32) -> io::Result<()> {
     let image = image::open(source).map_err(io::Error::other)?.to_rgba8();
     let image = cut_out_flat_background(image);
-    let max_side = max_side.max(8);
+    let max_side = clamp_image_pixel_size(max_side);
     let pixelated = DynamicImage::ImageRgba8(image).resize(max_side, max_side, FilterType::Nearest);
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)?;
@@ -312,7 +316,7 @@ pub fn remove_pet_from_library(pet_id: String) -> Result<PetLibraryView, String>
     Ok(pet_library_view(&settings))
 }
 
-pub fn import_pet_image(source_path: String, name: Option<String>) -> Result<PetLibraryView, String> {
+pub fn import_pet_image(source_path: String, name: Option<String>, pixel_size: Option<u32>) -> Result<PetLibraryView, String> {
     let mut settings = load_app_settings().map_err(|error| error.to_string())?;
     normalize_pet_selection(&mut settings)?;
 
@@ -336,8 +340,10 @@ pub fn import_pet_image(source_path: String, name: Option<String>) -> Result<Pet
     let copied_source = pet_dir.join(format!("source.{source_extension}"));
     fs::copy(&source, &copied_source).map_err(|error| error.to_string())?;
 
-    let pixelated = pet_dir.join("pixel.png");
-    pixelate_image(&copied_source, &pixelated, 48).map_err(|error| error.to_string())?;
+    let pixel_size = clamp_image_pixel_size(pixel_size.unwrap_or(settings.pet.image_pixel_size));
+    settings.pet.image_pixel_size = pixel_size;
+    let pixelated = pixelated_image_path(&pet_dir, pixel_size);
+    pixelate_image(&copied_source, &pixelated, pixel_size).map_err(|error| error.to_string())?;
 
     let display_name = name
         .filter(|value| !value.trim().is_empty())
@@ -362,6 +368,41 @@ pub fn import_pet_image(source_path: String, name: Option<String>) -> Result<Pet
     select_pet(&mut settings, &id)?;
     save_app_settings(&settings).map_err(|error| error.to_string())?;
     Ok(pet_library_view(&settings))
+}
+
+pub fn update_active_image_pet_pixel_size(pixel_size: u32) -> Result<PetLibraryView, String> {
+    let mut settings = load_app_settings().map_err(|error| error.to_string())?;
+    normalize_pet_selection(&mut settings)?;
+
+    let pixel_size = clamp_image_pixel_size(pixel_size);
+    settings.pet.image_pixel_size = pixel_size;
+    let selected_pet_id = settings.pet_library.selected_pet_id.clone();
+
+    if let Some(pet) = settings
+        .pet_library
+        .pets
+        .iter_mut()
+        .find(|candidate| candidate.id == selected_pet_id && candidate.kind == PetKind::Image)
+    {
+        if let Some(source_path) = pet.source_path.clone() {
+            let source = PathBuf::from(source_path);
+            if source.exists() {
+                let pet_dir = source.parent().unwrap_or_else(|| Path::new("."));
+                let pixelated = pixelated_image_path(pet_dir, pixel_size);
+                pixelate_image(&source, &pixelated, pixel_size).map_err(|error| error.to_string())?;
+                pet.image_path = Some(pixelated.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    let selected = settings.pet_library.selected_pet_id.clone();
+    select_pet(&mut settings, &selected)?;
+    save_app_settings(&settings).map_err(|error| error.to_string())?;
+    Ok(pet_library_view(&settings))
+}
+
+fn pixelated_image_path(pet_dir: &Path, pixel_size: u32) -> PathBuf {
+    pet_dir.join(format!("pixel-{}.png", clamp_image_pixel_size(pixel_size)))
 }
 
 fn normalize_pet_selection(settings: &mut AppSettings) -> Result<(), String> {

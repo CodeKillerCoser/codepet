@@ -8,13 +8,13 @@ export function shouldRing(settings: AppSettings, event: PetEvent): boolean {
   if (settings.notifications.quietHoursEnabled && isQuietNow(settings)) {
     return false;
   }
-  if (event.status === "waiting-approval") {
+  if (event.kind === "permission-requested" && event.status === "waiting-approval") {
     return settings.notifications.ringOnPermission;
   }
-  if (event.status === "failed") {
+  if (event.kind === "task-failed" && event.status === "failed") {
     return settings.notifications.ringOnFailure;
   }
-  if (event.status === "done") {
+  if (event.kind === "task-completed" && event.status === "done") {
     return settings.notifications.ringOnDone;
   }
   return false;
