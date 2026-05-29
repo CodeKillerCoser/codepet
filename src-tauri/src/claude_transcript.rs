@@ -1,5 +1,5 @@
 use crate::agents::AgentId;
-use crate::events::{frontend_event, PetEvent, PetEventKind, TaskStatus};
+use crate::events::{clean_title, frontend_event, PetEvent, PetEventKind, TaskStatus};
 use crate::state::SharedState;
 use chrono::Utc;
 use serde_json::Value;
@@ -169,15 +169,83 @@ fn assistant_text(message: &Value) -> Option<String> {
 }
 
 fn fallback_title(fallback: &PetEvent, default_title: &str) -> String {
-    if matches!(
-        fallback.title.as_str(),
-        "任务开始" | "收到消息" | "正在执行工具" | "工具执行完成" | "任务完成" | "任务失败"
-    ) && !fallback.message.trim().is_empty()
-    {
+    if !is_generic_title(&fallback.title) && !fallback.title.trim().is_empty() {
+        return fallback.title.clone();
+    }
+
+    if let Some(title) = first_user_title_from_fallback_transcript(fallback) {
+        return title;
+    }
+
+    if !fallback.message.trim().is_empty() && !is_transcript_path_text(&fallback.message) {
         fallback.message.clone()
     } else if fallback.title.trim().is_empty() {
         default_title.to_string()
     } else {
-        fallback.title.clone()
+        default_title.to_string()
     }
+}
+
+fn is_generic_title(title: &str) -> bool {
+    matches!(
+        title,
+        "任务开始" | "收到消息" | "正在执行工具" | "工具执行完成" | "任务完成" | "任务失败"
+    )
+}
+
+fn first_user_title_from_fallback_transcript(fallback: &PetEvent) -> Option<String> {
+    let transcript_path = transcript_path_from_event(fallback)?;
+    let text = fs::read_to_string(transcript_path).ok()?;
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let raw: Value = serde_json::from_str(line).ok()?;
+        if raw.get("type").and_then(Value::as_str) != Some("user") {
+            continue;
+        }
+        if fallback
+            .session_id
+            .as_deref()
+            .is_some_and(|session_id| raw.get("sessionId").and_then(Value::as_str) != Some(session_id))
+        {
+            continue;
+        }
+        let message = raw.get("message")?;
+        if let Some(title) = user_message_text(message).and_then(|text| clean_title(&text)) {
+            return Some(title);
+        }
+    }
+    None
+}
+
+fn user_message_text(message: &Value) -> Option<String> {
+    if let Some(content) = message.get("content").and_then(Value::as_str) {
+        return Some(content.trim().to_string()).filter(|value| !value.is_empty());
+    }
+    if let Some(text) = message.as_str() {
+        return Some(text.trim().to_string()).filter(|value| !value.is_empty());
+    }
+
+    let mut parts = Vec::new();
+    for item in message.get("content")?.as_array()? {
+        if item.get("type").and_then(Value::as_str) == Some("text") {
+            if let Some(text) = item.get("text").and_then(Value::as_str) {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    parts.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n"))
+    }
+}
+
+fn is_transcript_path_text(value: &str) -> bool {
+    let path = Path::new(value.trim());
+    path.is_absolute()
+        && path.extension().and_then(|extension| extension.to_str()) == Some("jsonl")
+        && (value.contains("/.claude/") || value.contains("/.codex/"))
 }

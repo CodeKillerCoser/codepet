@@ -210,6 +210,38 @@ describe("activeActivities", () => {
     expect(activities[0].message).toBe("排查桌宠刷新");
   });
 
+  it("keeps the prompt title when Claude completion title is a transcript path", () => {
+    const activities = activeActivities(
+      [
+        event({
+          id: "prompt",
+          provider: "claude",
+          sessionId: "claude-a",
+          title: "任务开始",
+          message: "今天天气怎么样",
+          status: "thinking",
+          createdAt: "2026-05-26T06:00:00.000Z",
+        }),
+        event({
+          id: "done",
+          provider: "claude",
+          sessionId: "claude-a",
+          kind: "task-completed",
+          title: "/Users/wangxin/.claude/projects/-Users-wangxin/session.jsonl",
+          message: "我没有获取实时天气数据的能力。",
+          status: "done",
+          createdAt: "2026-05-26T06:01:00.000Z",
+        }),
+      ],
+      4,
+      new Date("2026-05-26T06:02:00.000Z"),
+    );
+
+    expect(activities[0].id).toBe("done");
+    expect(activities[0].title).toBe("今天天气怎么样");
+    expect(activities[0].message).toBe("我没有获取实时天气数据的能力。");
+  });
+
   it("lets a later authoritative title replace an earlier prompt fallback", () => {
     const activities = activeActivities(
       [

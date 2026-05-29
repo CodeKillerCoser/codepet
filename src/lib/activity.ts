@@ -252,6 +252,9 @@ function isTerminalSource(event: PetEvent): boolean {
 }
 
 function taskTitleFor(event: PetEvent): string {
+  if (isTranscriptPath(event.title)) {
+    return statusLabel(event.status);
+  }
   if (event.message && event.message !== event.title && !isTranscriptPath(event.message) && genericActivityTitles.has(event.title)) {
     return event.message;
   }
@@ -259,5 +262,5 @@ function taskTitleFor(event: PetEvent): string {
 }
 
 function authoritativeTitle(event: PetEvent): string | null {
-  return genericActivityTitles.has(event.title) ? null : event.title;
+  return genericActivityTitles.has(event.title) || isTranscriptPath(event.title) ? null : event.title;
 }
