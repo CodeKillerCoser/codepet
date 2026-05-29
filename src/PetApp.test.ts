@@ -85,4 +85,31 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain('activity.status === "waiting-approval" ? 86 : activityCardHeight');
     expect(source).toContain('style={`--pet-activity-stack-height: ${activityStackHeight}px`}');
   });
+
+  it("deduplicates pushed pet events before ringing", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const listenBlock = source.slice(source.indexOf('listen<PetEvent>("pet-event"'), source.indexOf('listen<AppSettings>("settings-updated"'));
+
+    expect(listenBlock).toContain("const alreadySeen = seenEventIds.has(event.payload.id) || event.payload.id === lastEventId");
+    expect(listenBlock).toContain("if (!alreadySeen) {");
+    expect(listenBlock).toContain("await handleRing(event.payload)");
+  });
+
+  it("stops repeated permission rings when the source activity is dismissed or expires", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const handleRingBlock = source.slice(source.indexOf("async function handleRing"), source.indexOf("function clearRepeat"));
+    const clearRepeatBlock = source.slice(source.indexOf("function clearRepeat"), source.indexOf("function clearPoll"));
+    const dismissBlock = source.slice(source.indexOf("function dismissActivity"), source.indexOf("async function activate"));
+
+    expect(source).toContain("const permissionRepeatMaxMs = 590_000");
+    expect(source).toContain("let repeatEventId: string | null = null");
+    expect(source).toContain("let repeatExpiresAt = 0");
+    expect(handleRingBlock).toContain("repeatEventId = event.id");
+    expect(handleRingBlock).toContain("repeatExpiresAt = Date.now() + permissionRepeatMaxMs");
+    expect(handleRingBlock).toContain("Date.now() >= repeatExpiresAt");
+    expect(dismissBlock).toContain("if (repeatEventId === activity.id) {");
+    expect(dismissBlock).toContain("clearRepeat()");
+    expect(clearRepeatBlock).toContain("repeatEventId = null");
+    expect(clearRepeatBlock).toContain("repeatExpiresAt = 0");
+  });
 });

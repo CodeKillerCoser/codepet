@@ -13,6 +13,8 @@
   let settings: AppSettings | null = null;
   let activities: PetEvent[] = [];
   let repeatTimer: number | null = null;
+  let repeatEventId: string | null = null;
+  let repeatExpiresAt = 0;
   let pollTimer: number | null = null;
   let lastEventId: string | null = null;
   let seenEventIds = new Set<string>();
@@ -37,6 +39,7 @@
   const activityPetGap = 8;
   const maxVisibleActivities = 4;
   const noticeVisibleMs = 2500;
+  const permissionRepeatMaxMs = 590_000;
   const devMode = import.meta.env.DEV;
   const fallbackRunningBubble: AppSettings["appearance"]["runningBubble"] = {
     backgroundBreathing: true,
@@ -92,9 +95,12 @@
     let unlistenAgentDisabled: (() => void) | null = null;
 
     void listen<PetEvent>("pet-event", async (event) => {
+      const alreadySeen = seenEventIds.has(event.payload.id) || event.payload.id === lastEventId;
       applyIncomingEvents([event.payload]);
       lastEventId = event.payload.id;
-      await handleRing(event.payload);
+      if (!alreadySeen) {
+        await handleRing(event.payload);
+      }
     }).then((unlisten) => {
       if (disposed) {
         unlisten();
@@ -215,10 +221,14 @@
     await playNotificationSound(settings);
     clearRepeat();
     if (event.status === "waiting-approval" && settings.notifications.repeatSeconds > 0) {
+      repeatEventId = event.id;
+      repeatExpiresAt = Date.now() + permissionRepeatMaxMs;
       repeatTimer = window.setInterval(() => {
-        if (settings) {
-          void playNotificationSound(settings);
+        if (Date.now() >= repeatExpiresAt || !settings || !shouldRing(settings, event)) {
+          clearRepeat();
+          return;
         }
+        void playNotificationSound(settings);
       }, settings.notifications.repeatSeconds * 1000);
     }
   }
@@ -228,6 +238,8 @@
       window.clearInterval(repeatTimer);
       repeatTimer = null;
     }
+    repeatEventId = null;
+    repeatExpiresAt = 0;
   }
 
   function clearPoll() {
@@ -379,6 +391,9 @@
     dismissedActivityKeys.add(activityKey(activity));
     dismissedActivityKeys = new Set(dismissedActivityKeys);
     activities = activities.filter((candidate) => activityKey(candidate) !== activityKey(activity));
+    if (repeatEventId === activity.id) {
+      clearRepeat();
+    }
     if (replyingToId === activity.id) {
       replyingToId = null;
       replyText = "";
