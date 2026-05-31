@@ -184,6 +184,16 @@ describe("pet message bubble activity", () => {
     expect(marquee).toContain("288deg");
   });
 
+  test("exposes whip reaction sound choices in personalization", () => {
+    expect(appSource).toContain("settings.pet.whipReactionSound");
+    expect(appSource).toContain("settings.pet.customWhipReactionSoundPath");
+    expect(appSource).toContain("playWhipReactionSound(settings.pet.whipReactionSound, settings.pet.customWhipReactionSoundPath)");
+    expect(appSource).toContain("pickCustomWhipReactionSound");
+    expect(appSource).toContain("啪");
+    expect(appSource).toContain("啊啊啊");
+    expect(appSource).toContain("自定义");
+  });
+
   test("uses distinct dim and peak colors for background breathing", () => {
     const keyframes = keyframesFor("pet-pill-breathe");
 

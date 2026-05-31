@@ -29,7 +29,7 @@
   import { mergeEventFeed } from "./lib/eventFeed";
   import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
   import PetAvatar from "./lib/PetAvatar.svelte";
-  import { playNotificationSound } from "./lib/sound";
+  import { playNotificationSound, playWhipReactionSound } from "./lib/sound";
   import { buildUsageChartData, yAxisTicks, type UsageBucketSize, type UsageRange } from "./lib/usageChart";
   import type { AgentView, AppSettings, PetEvent, PetLibraryView, TokenUsageSummary } from "./lib/types";
 
@@ -69,6 +69,12 @@
     { value: "5h", label: "5小时" },
     { value: "12h", label: "12小时" },
     { value: "24h", label: "24小时" },
+  ];
+  const whipReactionSounds: Array<{ value: AppSettings["pet"]["whipReactionSound"]; label: string }> = [
+    { value: "none", label: "无" },
+    { value: "pa", label: "啪" },
+    { value: "scream", label: "啊啊啊" },
+    { value: "custom", label: "自定义" },
   ];
   const runningBubbleDefaults: AppSettings["appearance"]["runningBubble"] = {
     backgroundBreathing: true,
@@ -234,6 +240,19 @@
     }
   }
 
+  async function pickCustomWhipReactionSound() {
+    if (!settings) return;
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: "Audio", extensions: ["mp3", "wav", "m4a", "aac", "ogg"] }],
+    });
+    if (typeof selected === "string") {
+      settings.pet.customWhipReactionSoundPath = selected;
+      settings.pet.whipReactionSound = "custom";
+      await saveSettings();
+    }
+  }
+
   async function importImagePet(cutOutSubject = false) {
     const selected = await open({
       multiple: false,
@@ -327,6 +346,8 @@
     nextSettings.appearance.runningBubble.animationMs = clampRunningBubbleAnimationMs(nextSettings.appearance.runningBubble.animationMs);
     nextSettings.appearance.runningBubble.borderWidth = clampRunningBubbleBorderWidth(nextSettings.appearance.runningBubble.borderWidth);
     nextSettings.pet.imagePixelSize = clampImagePixelSize(nextSettings.pet.imagePixelSize);
+    nextSettings.pet.whipReactionSound = nextSettings.pet.whipReactionSound ?? "none";
+    nextSettings.pet.customWhipReactionSoundPath = nextSettings.pet.customWhipReactionSoundPath ?? null;
     return nextSettings;
   }
 
@@ -531,6 +552,10 @@
       custom: "自定义",
       silent: "静音",
     }[sound];
+  }
+
+  function whipReactionSoundLabel(sound: AppSettings["pet"]["whipReactionSound"]) {
+    return whipReactionSounds.find((option) => option.value === sound)?.label ?? "无";
   }
 
   function compactNumber(value: number | undefined) {
@@ -1002,6 +1027,34 @@
             </div>
             {#if settings.notifications.customSoundPath}
               <p class="path">{settings.notifications.customSoundPath}</p>
+            {/if}
+            <div class="sound-subsection">
+              <strong>抽打反应</strong>
+              <span>抽完鞭子后，桌宠继续发出的声音：{whipReactionSoundLabel(settings.pet.whipReactionSound)}</span>
+            </div>
+            <div class="segmented">
+              {#each whipReactionSounds as reaction}
+                <button
+                  class:active={settings.pet.whipReactionSound === reaction.value}
+                  on:click={async () => {
+                    settings.pet.whipReactionSound = reaction.value;
+                    await saveSettings();
+                  }}
+                >
+                  {reaction.label}
+                </button>
+              {/each}
+            </div>
+            <div class="row-actions">
+              <button on:click={() => playWhipReactionSound(settings.pet.whipReactionSound, settings.pet.customWhipReactionSoundPath)}>
+                <Volume2 size={17} /> 试听反应
+              </button>
+              <button on:click={pickCustomWhipReactionSound}>
+                <FolderOpen size={17} /> 选择反应音频
+              </button>
+            </div>
+            {#if settings.pet.customWhipReactionSoundPath}
+              <p class="path">{settings.pet.customWhipReactionSoundPath}</p>
             {/if}
             <label class="check">
               <input type="checkbox" bind:checked={settings.notifications.ringOnPermission} on:change={saveSettings} />

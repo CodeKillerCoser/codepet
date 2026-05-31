@@ -447,7 +447,7 @@
     event.stopPropagation();
     whipAnimating = true;
     clearWhipTimer();
-    void playWhipSound().catch((error) => {
+    void playWhipSound(settings).catch((error) => {
       console.error("failed to play whip sound", error);
     });
     whipTimer = window.setTimeout(() => {

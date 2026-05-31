@@ -33,6 +33,7 @@ export interface PixelPetSprite {
 }
 
 export type PetKind = "palette" | "image" | "codex-atlas";
+export type WhipReactionSound = "none" | "pa" | "scream" | "custom";
 
 export interface ConfiguredPet {
   id: string;
@@ -78,6 +79,8 @@ export interface AppSettings {
     scale: number;
     imagePixelSize: number;
     alwaysOnTop: boolean;
+    whipReactionSound: WhipReactionSound;
+    customWhipReactionSoundPath?: string | null;
   };
   petLibrary: {
     dataDirectory?: string | null;

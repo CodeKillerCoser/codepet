@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { playWhipSound, shouldRepeatNotification, shouldRing } from "./sound";
+import { playWhipSound, shouldPlayWhipReaction, shouldRepeatNotification, shouldRing, whipReactionDelayMs } from "./sound";
 import type { AppSettings, PetEvent } from "./types";
 
 function settings(overrides: Partial<AppSettings["notifications"]> = {}): AppSettings {
@@ -10,7 +10,10 @@ function settings(overrides: Partial<AppSettings["notifications"]> = {}): AppSet
       kind: "palette",
       sprite: { body: "#111111", accent: "#222222", eyes: "#333333" },
       scale: 3,
+      imagePixelSize: 48,
       alwaysOnTop: true,
+      whipReactionSound: "none",
+      customWhipReactionSoundPath: null,
     },
     petLibrary: {
       selectedPetId: "default",
@@ -104,5 +107,24 @@ describe("shouldRepeatNotification", () => {
 describe("playWhipSound", () => {
   it("is available as a separate pet action sound", () => {
     expect(playWhipSound).toEqual(expect.any(Function));
+  });
+});
+
+describe("whip reaction sound", () => {
+  it("plays only configured pet reactions after the whip crack", () => {
+    expect(shouldPlayWhipReaction("none")).toBe(false);
+    expect(shouldPlayWhipReaction(null)).toBe(false);
+    expect(shouldPlayWhipReaction("pa")).toBe(true);
+    expect(shouldPlayWhipReaction("scream")).toBe(true);
+    expect(shouldPlayWhipReaction("custom", null)).toBe(false);
+    expect(shouldPlayWhipReaction("custom", "/tmp/ouch.wav")).toBe(true);
+  });
+
+  it("delays pet reaction audio until after the whip crack starts", () => {
+    expect(whipReactionDelayMs("none")).toBe(0);
+    expect(whipReactionDelayMs("pa")).toBeGreaterThan(100);
+    expect(whipReactionDelayMs("scream")).toBeGreaterThan(100);
+    expect(whipReactionDelayMs("custom", null)).toBe(0);
+    expect(whipReactionDelayMs("custom", "/tmp/ouch.wav")).toBeGreaterThan(100);
   });
 });

@@ -1267,6 +1267,25 @@ input[type="time"] {
   padding: 0 14px;
 }
 
+.sound-subsection {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid var(--app-border);
+  padding-top: 14px;
+}
+
+.sound-subsection strong {
+  color: var(--app-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.sound-subsection span {
+  color: var(--app-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .event-log {
   display: grid;
   align-content: start;

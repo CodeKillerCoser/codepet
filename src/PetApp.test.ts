@@ -49,6 +49,7 @@ describe("PetApp activity helpers", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
 
     expect(source).toContain("playWhipSound");
+    expect(source).toContain("playWhipSound(settings)");
     expect(source).toContain("function whipPet");
     expect(source).toContain('aria-label="抽鞭子"');
     expect(source).toContain('class="whip-button"');

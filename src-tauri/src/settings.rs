@@ -67,6 +67,10 @@ pub struct PetSettings {
     pub image_pixel_size: u32,
     #[serde(default = "default_always_on_top")]
     pub always_on_top: bool,
+    #[serde(default)]
+    pub whip_reaction_sound: WhipReactionSound,
+    #[serde(default)]
+    pub custom_whip_reaction_sound_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -113,9 +117,24 @@ pub enum PetKind {
     CodexAtlas,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WhipReactionSound {
+    None,
+    Pa,
+    Scream,
+    Custom,
+}
+
 impl Default for PetKind {
     fn default() -> Self {
         Self::Palette
+    }
+}
+
+impl Default for WhipReactionSound {
+    fn default() -> Self {
+        Self::None
     }
 }
 
@@ -190,6 +209,8 @@ impl Default for PetSettings {
             scale: default_scale(),
             image_pixel_size: default_image_pixel_size(),
             always_on_top: default_always_on_top(),
+            whip_reaction_sound: WhipReactionSound::default(),
+            custom_whip_reaction_sound_path: None,
         }
     }
 }
