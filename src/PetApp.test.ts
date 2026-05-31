@@ -45,19 +45,25 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain('devMode ? " dev-mode" : ""');
   });
 
-  it("shows a whip action button that replays the local lottie animation and sound", () => {
+  it("shows a whip action button that replays the braided demo whip and sound", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
 
-    expect(source).toContain('import lottie');
-    expect(source).toContain('from "lottie-web/build/player/lottie_light"');
-    expect(source).toContain("whipCrackAnimation");
     expect(source).toContain("playWhipSound");
     expect(source).toContain("function whipPet");
     expect(source).toContain('aria-label="抽鞭子"');
     expect(source).toContain('class="whip-button"');
-    expect(source).toContain("whipAnimation?.goToAndPlay(0, true)");
-    expect(source).toContain("container: whipAnimationHost");
-    expect(source).not.toContain("class=\"whip-cord\"");
+    expect(source).toContain('class="whip-animation whip-svg"');
+    expect(source).toContain('class="whip-rig"');
+    expect(source).toContain('class="handle-core"');
+    expect(source).toContain('class="ferrule"');
+    expect(source).toContain('class="join-knot"');
+    expect(source).toContain('class="rope-core rope-thick"');
+    expect(source).toContain('class="rope-strand light strand-mid"');
+    expect(source).toContain('class="tail-line"');
+    expect(source).not.toContain('class="whip-cord"');
+    expect(source).not.toContain('d="M 148 24 C 114 26, 87 44, 66 72 S 33 120, 18 126"');
+    expect(source).not.toContain("lottie.loadAnimation");
+    expect(source).not.toContain("whipCrackAnimation");
   });
 
   it("serializes pet window resize requests so stale small frames cannot win", () => {

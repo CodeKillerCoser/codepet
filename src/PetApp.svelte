@@ -2,8 +2,6 @@
   import { listen } from "@tauri-apps/api/event";
   import { LogicalPosition, LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
   import { availableMonitors, getCurrentWindow, primaryMonitor } from "@tauri-apps/api/window";
-  import type { AnimationItem } from "lottie-web";
-  import lottie from "lottie-web/build/player/lottie_light";
   import { onMount } from "svelte";
   import { activateActivity, getAppSettings, openMainWindow, recentEvents, resolveActivityApproval, sendActivityReply } from "./lib/api";
   import { activityCapabilities, activityKey, cardEndTime, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
@@ -11,7 +9,6 @@
   import PetAvatar from "./lib/PetAvatar.svelte";
   import { playNotificationSound, playWhipSound, shouldRepeatNotification, shouldRing } from "./lib/sound";
   import type { AppSettings, PetEvent } from "./lib/types";
-  import { whipCrackAnimation } from "./lib/whipLottie";
 
   let settings: AppSettings | null = null;
   let activities: PetEvent[] = [];
@@ -38,8 +35,6 @@
   let noticeTimer: number | null = null;
   let whipAnimating = false;
   let whipTimer: number | null = null;
-  let whipAnimationHost: HTMLDivElement | null = null;
-  let whipAnimation: AnimationItem | null = null;
 
   const petWindowWidth = 360;
   const activityCardHeight = 78;
@@ -47,7 +42,7 @@
   const activityPetGap = 8;
   const maxVisibleActivities = 4;
   const noticeVisibleMs = 2500;
-  const whipVisibleMs = 560;
+  const whipVisibleMs = 760;
   const permissionRepeatMaxMs = 590_000;
   const devMode = import.meta.env.DEV;
   const fallbackRunningBubble: AppSettings["appearance"]["runningBubble"] = {
@@ -102,25 +97,6 @@
     let unlistenPetEvent: (() => void) | null = null;
     let unlistenSettings: (() => void) | null = null;
     let unlistenAgentDisabled: (() => void) | null = null;
-    let unlistenWhipComplete: (() => void) | null = null;
-
-    if (whipAnimationHost) {
-      whipAnimation = lottie.loadAnimation({
-        container: whipAnimationHost,
-        renderer: "svg",
-        loop: false,
-        autoplay: false,
-        animationData: whipCrackAnimation,
-        rendererSettings: {
-          preserveAspectRatio: "xMidYMid meet",
-          progressiveLoad: false,
-        },
-      });
-      whipAnimation.goToAndStop(0, true);
-      unlistenWhipComplete = whipAnimation.addEventListener("complete", () => {
-        whipAnimating = false;
-      });
-    }
 
     void listen<PetEvent>("pet-event", async (event) => {
       const alreadySeen = seenEventIds.has(event.payload.id) || event.payload.id === lastEventId;
@@ -190,9 +166,6 @@
       unlistenPetEvent?.();
       unlistenSettings?.();
       unlistenAgentDisabled?.();
-      unlistenWhipComplete?.();
-      whipAnimation?.destroy();
-      whipAnimation = null;
       clearRepeat();
       clearPoll();
       clearNoticeTimer();
@@ -474,8 +447,6 @@
     event.stopPropagation();
     whipAnimating = true;
     clearWhipTimer();
-    whipAnimation?.stop();
-    whipAnimation?.goToAndPlay(0, true);
     void playWhipSound().catch((error) => {
       console.error("failed to play whip sound", error);
     });
@@ -644,7 +615,62 @@
     >
       <span aria-hidden="true"></span>
     </button>
-    <div class="whip-animation" class:active={whipAnimating} bind:this={whipAnimationHost} aria-hidden="true"></div>
+    <svg class="whip-animation whip-svg" class:active={whipAnimating} viewBox="0 0 460 340" aria-hidden="true">
+      <defs>
+        <linearGradient id="whipHandleGradient" x1="30" y1="296" x2="68" y2="263" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#7a4726" />
+          <stop offset="0.45" stop-color="#4f2d1a" />
+          <stop offset="1" stop-color="#8d5a34" />
+        </linearGradient>
+        <linearGradient id="whipFerruleGradient" x1="56" y1="255" x2="75" y2="274" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#f2d08a" />
+          <stop offset="0.45" stop-color="#a86f2c" />
+          <stop offset="1" stop-color="#5f3a1d" />
+        </linearGradient>
+        <filter id="whipRopeTexture" x="-8%" y="-8%" width="116%" height="116%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="1" seed="8" result="grain" />
+          <feColorMatrix in="grain" type="matrix" values="0 0 0 0 0.28 0 0 0 0 0.18 0 0 0 0 0.11 0 0 0 0.16 0" result="grainColor" />
+          <feBlend in="SourceGraphic" in2="grainColor" mode="multiply" />
+        </filter>
+      </defs>
+      <g class="whip-rig">
+        <path class="motion-ghost" d="M 36 291 L 66 264 C 101 234, 132 207, 163 137 S 235 84, 286 96 C 306 101, 320 111, 332 126" pathLength="1" />
+        <path class="handle-shadow" d="M 30 296 L 63 267" />
+        <path class="handle-core" d="M 30 296 L 63 267" />
+        <path class="handle-highlight" d="M 34 292 L 57 272" />
+        <path class="handle-ring" d="M 35 289 L 43 298" />
+        <path class="handle-ring" d="M 48 277 L 56 286" />
+        <ellipse class="ferrule" cx="66" cy="263" rx="10" ry="7" transform="rotate(-43 66 263)" />
+        <g class="join-knot">
+          <ellipse class="knot-lobe" cx="76" cy="257" rx="12" ry="9" transform="rotate(-35 76 257)" />
+          <ellipse class="knot-lobe" cx="84" cy="251" rx="8" ry="11" transform="rotate(32 84 251)" />
+          <path class="knot-band" d="M 66 258 C 74 249, 82 247, 91 251" />
+          <path class="knot-band" d="M 70 265 C 78 255, 87 254, 95 259" />
+        </g>
+        <path class="rope-shadow" d="M 86 254 C 112 230, 139 202, 164 138 S 238 85, 286 96 C 306 101, 320 111, 332 126" />
+        <path class="rope-core rope-thick" d="M 86 254 C 112 230, 139 202, 164 138" />
+        <path class="rope-core rope-mid" d="M 164 138 C 196 96, 241 85, 286 96" />
+        <path class="rope-core rope-thin" d="M 286 96 C 306 101, 320 111, 332 126" />
+        <path class="rope-strand strand-thick" d="M 86 254 C 112 230, 139 202, 164 138" />
+        <path class="rope-strand light strand-thick" d="M 86 254 C 112 230, 139 202, 164 138" />
+        <path class="rope-strand strand-mid" d="M 164 138 C 196 96, 241 85, 286 96" />
+        <path class="rope-strand light strand-mid" d="M 164 138 C 196 96, 241 85, 286 96" />
+        <path class="rope-strand strand-thin" d="M 286 96 C 306 101, 320 111, 332 126" />
+        <path class="rope-strand light strand-thin" d="M 286 96 C 306 101, 320 111, 332 126" />
+        <path class="tail-line" d="M 288 97 C 312 96, 336 104, 354 118" />
+        <path class="tail-line" d="M 288 97 C 314 110, 333 128, 346 150" />
+        <path class="tail-line" d="M 288 97 C 306 121, 316 143, 326 165" />
+        <circle class="tail-knot" cx="354" cy="118" r="5" />
+        <circle class="tail-knot" cx="346" cy="150" r="5" />
+        <circle class="tail-knot" cx="326" cy="165" r="5" />
+      </g>
+      <g class="crack">
+        <path d="M 332 126 L 302 111" />
+        <path d="M 332 126 L 306 150" />
+        <path d="M 332 126 L 369 118" />
+        <path d="M 332 126 L 337 90" />
+      </g>
+    </svg>
     <PetAvatar
       sprite={settings?.pet.sprite ?? { body: "#22c55e", accent: "#facc15", eyes: "#0f172a" }}
       kind={settings?.pet.kind}

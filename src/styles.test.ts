@@ -164,8 +164,8 @@ describe("pet message bubble activity", () => {
     expect(marquee).toContain("conic-gradient");
     expect(marquee).toContain("0deg");
     expect(marquee).toContain("360deg");
-    expect(styles).not.toContain("stroke-dasharray");
-    expect(styles).not.toContain("stroke-dashoffset");
+    expect(marquee).not.toContain("stroke-dasharray");
+    expect(marquee).not.toContain("stroke-dashoffset");
     expect(styles).not.toContain("mask-composite");
   });
 

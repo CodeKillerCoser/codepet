@@ -1871,17 +1871,246 @@ input[type="time"] {
 .whip-animation {
   position: absolute;
   z-index: 5;
-  top: -22px;
-  right: -28px;
-  width: 158px;
-  height: 112px;
+  top: -28px;
+  left: -96px;
+  width: 184px;
+  height: 136px;
   opacity: 0;
   pointer-events: none;
-  transform: translateZ(0);
+  overflow: visible;
+  transform-origin: 47px 286px;
 }
 
 .whip-animation.active {
-  opacity: 1;
+  animation: whip-rig-flick 640ms cubic-bezier(0.12, 0.88, 0.24, 1) both;
+}
+
+.handle-shadow,
+.handle-core,
+.handle-highlight,
+.handle-ring,
+.rope-shadow,
+.rope-core,
+.rope-strand,
+.tail-line,
+.motion-ghost,
+.crack path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.handle-shadow {
+  stroke: rgba(15, 23, 42, 0.2);
+  stroke-width: 21;
+  transform: translate(3px, 5px);
+}
+
+.handle-core {
+  stroke: url("#whipHandleGradient");
+  stroke-width: 17;
+}
+
+.handle-highlight {
+  stroke: rgba(255, 219, 156, 0.62);
+  stroke-width: 4;
+  transform: translate(-2px, -3px);
+}
+
+.handle-ring {
+  stroke: #5b321d;
+  stroke-width: 4;
+}
+
+.ferrule {
+  fill: url("#whipFerruleGradient");
+  stroke: rgba(65, 47, 34, 0.35);
+  stroke-width: 1.5;
+}
+
+.knot-lobe {
+  fill: #7a4726;
+  stroke: #3f2416;
+  stroke-width: 2;
+}
+
+.knot-band {
+  fill: none;
+  stroke: #b16d38;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.rope-shadow {
+  stroke: rgba(15, 23, 42, 0.18);
+  stroke-width: 15;
+  transform: translate(3px, 5px);
+}
+
+.rope-core {
+  stroke: #6b3a22;
+  filter: url("#whipRopeTexture");
+}
+
+.rope-strand {
+  stroke: #2f1b12;
+  stroke-dasharray: 8 7;
+  stroke-dashoffset: 1;
+}
+
+.rope-strand.light {
+  stroke: #b87541;
+  stroke-dasharray: 7 8;
+  stroke-dashoffset: 8;
+}
+
+.rope-thick {
+  stroke-width: 12;
+}
+
+.rope-mid {
+  stroke-width: 8;
+}
+
+.rope-thin {
+  stroke-width: 5;
+}
+
+.strand-thick {
+  stroke-width: 4;
+}
+
+.strand-mid {
+  stroke-width: 3;
+}
+
+.strand-thin {
+  stroke-width: 2;
+}
+
+.tail-line {
+  stroke: #5b321f;
+  stroke-width: 3.5;
+  filter: url("#whipRopeTexture");
+}
+
+.tail-knot {
+  fill: #7c4a2c;
+  stroke: #3f2416;
+  stroke-width: 2;
+}
+
+.motion-ghost {
+  opacity: 0;
+  stroke: rgba(58, 36, 22, 0.18);
+  stroke-width: 8;
+}
+
+.crack {
+  opacity: 0;
+  transform-origin: 322px 116px;
+}
+
+.crack path {
+  stroke: #facc15;
+  stroke-width: 8;
+}
+
+.whip-animation.active .rope-shadow,
+.whip-animation.active .rope-core,
+.whip-animation.active .rope-strand,
+.whip-animation.active .tail-line,
+.whip-animation.active .tail-knot {
+  animation: whip-rope-sweep 720ms cubic-bezier(0.12, 0.88, 0.24, 1) both;
+}
+
+.whip-animation.active .motion-ghost {
+  animation: whip-ghost-sweep 640ms ease-out both;
+}
+
+.whip-animation.active .crack {
+  animation: whip-crack-pop 640ms ease-out both;
+}
+
+@keyframes whip-rig-flick {
+  0% {
+    opacity: 0;
+    transform: translate(-18px, 18px) rotate(-22deg);
+  }
+  6% {
+    opacity: 1;
+  }
+  18% {
+    opacity: 1;
+    transform: translate(12px, -10px) rotate(19deg);
+  }
+  34% {
+    transform: translate(0, 0) rotate(-6deg);
+  }
+  56% {
+    opacity: 1;
+    transform: translate(-4px, 4px) rotate(4deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-8px, 8px) rotate(0deg);
+  }
+}
+
+@keyframes whip-rope-sweep {
+  0% {
+    opacity: 0;
+    transform: translate(-28px, 27px) rotate(-24deg) scale(0.82);
+  }
+  14% {
+    opacity: 1;
+    transform: translate(18px, -18px) rotate(14deg) scale(1.04);
+  }
+  26% {
+    transform: translate(0, 0) rotate(0deg) scaleX(1.02);
+  }
+  48% {
+    opacity: 1;
+    transform: translate(-10px, 8px) rotate(-5deg) scaleX(0.98);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-20px, 15px) rotate(7deg) scaleX(0.96);
+  }
+}
+
+@keyframes whip-ghost-sweep {
+  0%,
+  14% {
+    opacity: 0;
+    transform: translate(34px, -23px) rotate(-18deg);
+  }
+  24% {
+    opacity: 1;
+    transform: translate(14px, -10px) rotate(-8deg);
+  }
+  48%,
+  100% {
+    opacity: 0;
+    transform: translate(-12px, 9px) rotate(6deg);
+  }
+}
+
+@keyframes whip-crack-pop {
+  0%,
+  28% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  36% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  72%,
+  100% {
+    opacity: 0;
+    transform: scale(1.32);
+  }
 }
 
 .fold-button {
@@ -2211,6 +2440,13 @@ input[type="time"] {
   .status-pill.active-breath,
   .status-pill.active-marquee,
   .whip-animation,
+  .whip-animation.active .rope-shadow,
+  .whip-animation.active .rope-core,
+  .whip-animation.active .rope-strand,
+  .whip-animation.active .tail-line,
+  .whip-animation.active .tail-knot,
+  .whip-animation.active .motion-ghost,
+  .whip-animation.active .crack,
   .tabs button,
   .icon-button,
   .power-button,
