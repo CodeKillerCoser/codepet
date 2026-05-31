@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldRing } from "./sound";
+import { playWhipSound, shouldRing } from "./sound";
 import type { AppSettings, PetEvent } from "./types";
 
 function settings(overrides: Partial<AppSettings["notifications"]> = {}): AppSettings {
@@ -61,5 +61,11 @@ describe("shouldRing", () => {
 
   it("does not use done status alone as a completion notification", () => {
     expect(shouldRing(settings(), event({ kind: "message", status: "done", shouldRing: true }))).toBe(false);
+  });
+});
+
+describe("playWhipSound", () => {
+  it("is available as a separate pet action sound", () => {
+    expect(playWhipSound).toEqual(expect.any(Function));
   });
 });

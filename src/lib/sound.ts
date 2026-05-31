@@ -47,6 +47,34 @@ export async function playNotificationSound(settings: AppSettings): Promise<void
   oscillator.stop(audioContext.currentTime + 0.42);
 }
 
+export async function playWhipSound(): Promise<void> {
+  const audioContext = new AudioContext();
+  const gain = audioContext.createGain();
+  const filter = audioContext.createBiquadFilter();
+  const sampleCount = Math.floor(audioContext.sampleRate * 0.16);
+  const buffer = audioContext.createBuffer(1, sampleCount, audioContext.sampleRate);
+  const channel = buffer.getChannelData(0);
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    const tail = 1 - index / sampleCount;
+    channel[index] = (Math.random() * 2 - 1) * tail * tail;
+  }
+
+  filter.type = "highpass";
+  filter.frequency.setValueAtTime(1800, audioContext.currentTime);
+  gain.gain.setValueAtTime(0.001, audioContext.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.32, audioContext.currentTime + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.16);
+  filter.connect(gain);
+  gain.connect(audioContext.destination);
+
+  const crack = audioContext.createBufferSource();
+  crack.buffer = buffer;
+  crack.connect(filter);
+  crack.start();
+  crack.stop(audioContext.currentTime + 0.17);
+}
+
 function frequencyFor(sound: AppSettings["notifications"]["sound"]): number {
   if (sound === "bell") {
     return 880;

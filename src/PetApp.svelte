@@ -2,13 +2,16 @@
   import { listen } from "@tauri-apps/api/event";
   import { LogicalPosition, LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
   import { availableMonitors, getCurrentWindow, primaryMonitor } from "@tauri-apps/api/window";
+  import type { AnimationItem } from "lottie-web";
+  import lottie from "lottie-web/build/player/lottie_light";
   import { onMount } from "svelte";
   import { activateActivity, getAppSettings, openMainWindow, recentEvents, resolveActivityApproval, sendActivityReply } from "./lib/api";
   import { activityCapabilities, activityKey, cardEndTime, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
   import { runningBubbleStyle } from "./lib/gradientColor";
   import PetAvatar from "./lib/PetAvatar.svelte";
-  import { playNotificationSound, shouldRing } from "./lib/sound";
+  import { playNotificationSound, playWhipSound, shouldRing } from "./lib/sound";
   import type { AppSettings, PetEvent } from "./lib/types";
+  import { whipCrackAnimation } from "./lib/whipLottie";
 
   let settings: AppSettings | null = null;
   let activities: PetEvent[] = [];
@@ -32,6 +35,10 @@
   let replyText = "";
   let actionNotice = "";
   let noticeTimer: number | null = null;
+  let whipAnimating = false;
+  let whipTimer: number | null = null;
+  let whipAnimationHost: HTMLDivElement | null = null;
+  let whipAnimation: AnimationItem | null = null;
 
   const petWindowWidth = 360;
   const activityCardHeight = 78;
@@ -39,6 +46,7 @@
   const activityPetGap = 8;
   const maxVisibleActivities = 4;
   const noticeVisibleMs = 2500;
+  const whipVisibleMs = 560;
   const permissionRepeatMaxMs = 590_000;
   const devMode = import.meta.env.DEV;
   const fallbackRunningBubble: AppSettings["appearance"]["runningBubble"] = {
@@ -93,6 +101,25 @@
     let unlistenPetEvent: (() => void) | null = null;
     let unlistenSettings: (() => void) | null = null;
     let unlistenAgentDisabled: (() => void) | null = null;
+    let unlistenWhipComplete: (() => void) | null = null;
+
+    if (whipAnimationHost) {
+      whipAnimation = lottie.loadAnimation({
+        container: whipAnimationHost,
+        renderer: "svg",
+        loop: false,
+        autoplay: false,
+        animationData: whipCrackAnimation,
+        rendererSettings: {
+          preserveAspectRatio: "xMidYMid meet",
+          progressiveLoad: false,
+        },
+      });
+      whipAnimation.goToAndStop(0, true);
+      unlistenWhipComplete = whipAnimation.addEventListener("complete", () => {
+        whipAnimating = false;
+      });
+    }
 
     void listen<PetEvent>("pet-event", async (event) => {
       const alreadySeen = seenEventIds.has(event.payload.id) || event.payload.id === lastEventId;
@@ -162,9 +189,13 @@
       unlistenPetEvent?.();
       unlistenSettings?.();
       unlistenAgentDisabled?.();
+      unlistenWhipComplete?.();
+      whipAnimation?.destroy();
+      whipAnimation = null;
       clearRepeat();
       clearPoll();
       clearNoticeTimer();
+      clearWhipTimer();
     };
   });
 
@@ -262,6 +293,13 @@
     if (noticeTimer) {
       window.clearTimeout(noticeTimer);
       noticeTimer = null;
+    }
+  }
+
+  function clearWhipTimer() {
+    if (whipTimer) {
+      window.clearTimeout(whipTimer);
+      whipTimer = null;
     }
   }
 
@@ -419,6 +457,21 @@
     }
   }
 
+  function whipPet(event: MouseEvent) {
+    event.stopPropagation();
+    whipAnimating = true;
+    clearWhipTimer();
+    whipAnimation?.stop();
+    whipAnimation?.goToAndPlay(0, true);
+    void playWhipSound().catch((error) => {
+      console.error("failed to play whip sound", error);
+    });
+    whipTimer = window.setTimeout(() => {
+      whipAnimating = false;
+      whipTimer = null;
+    }, whipVisibleMs);
+  }
+
   function toggleReply(event: MouseEvent, activity: PetEvent) {
     event.stopPropagation();
     if (!activityCapabilities(activity).canReply) {
@@ -568,6 +621,17 @@
     >
       <span aria-hidden="true"></span>
     </button>
+    <button
+      class="whip-button"
+      type="button"
+      aria-label="抽鞭子"
+      title="抽鞭子"
+      on:mousedown={(event) => event.stopPropagation()}
+      on:click={whipPet}
+    >
+      <span aria-hidden="true"></span>
+    </button>
+    <div class="whip-animation" class:active={whipAnimating} bind:this={whipAnimationHost} aria-hidden="true"></div>
     <PetAvatar
       sprite={settings?.pet.sprite ?? { body: "#22c55e", accent: "#facc15", eyes: "#0f172a" }}
       kind={settings?.pet.kind}

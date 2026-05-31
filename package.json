@@ -11,9 +11,10 @@
     "package:signed": "python3 scripts/package_signed.py"
   },
   "dependencies": {
+    "@lucide/svelte": "^1.16.0",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
-    "@lucide/svelte": "^1.16.0",
+    "lottie-web": "^5.13.0",
     "svelte": "^5.0.0"
   },
   "devDependencies": {

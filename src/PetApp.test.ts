@@ -45,6 +45,21 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain('devMode ? " dev-mode" : ""');
   });
 
+  it("shows a whip action button that replays the local lottie animation and sound", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+
+    expect(source).toContain('import lottie');
+    expect(source).toContain('from "lottie-web/build/player/lottie_light"');
+    expect(source).toContain("whipCrackAnimation");
+    expect(source).toContain("playWhipSound");
+    expect(source).toContain("function whipPet");
+    expect(source).toContain('aria-label="抽鞭子"');
+    expect(source).toContain('class="whip-button"');
+    expect(source).toContain("whipAnimation?.goToAndPlay(0, true)");
+    expect(source).toContain("container: whipAnimationHost");
+    expect(source).not.toContain("class=\"whip-cord\"");
+  });
+
   it("serializes pet window resize requests so stale small frames cannot win", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const syncWindowFrame = source.slice(source.indexOf("async function syncWindowFrame"), source.indexOf("function petWindowHeight"));
