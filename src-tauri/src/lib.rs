@@ -1,6 +1,7 @@
 pub mod activity_actions;
 pub mod agent_control;
 pub mod agents;
+pub mod app_log;
 pub mod autostart;
 pub mod cli;
 pub mod claude_transcript;
@@ -236,8 +237,14 @@ fn pet_asset_data_url(path: String) -> Result<String, String> {
 }
 
 pub fn run() {
+    if let Err(error) = app_log::init_app_logging() {
+        eprintln!("failed to initialize Code Pet file logging: {error}");
+    }
+    app_log::info("app", "tauri builder initializing");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            crate::app_log::info("app", &format!("single instance requested args={} cwd={}", args.len(), cwd));
             raise_existing_windows(app);
             let _ = app.emit("single-instance", serde_json::json!({ "args": args, "cwd": cwd }));
         }))
@@ -247,27 +254,43 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(SharedState::default())
         .setup(|app| {
+            app_log::info("startup", "setup started");
             let handle = app.handle().clone();
             let state = app.state::<SharedState>().inner().clone();
             configure_pet_overlay_window(&handle);
+            app_log::info("startup", "pet overlay window configured");
             match agent_control::list_agent_views() {
-                Ok(views) => state.set_agents(views),
+                Ok(views) => {
+                    app_log::info("startup", &format!("agent views loaded count={}", views.len()));
+                    state.set_agents(views);
+                }
                 Err(error) => {
+                    app_log::error("startup", &format!("failed to list agent views error={error}"));
                     let _ = handle.emit("collector-error", error.to_string());
                 }
             }
-            if let Err(error) = collector::replay_default_spooled_events(&state) {
-                let _ = handle.emit("collector-error", error.to_string());
+            match collector::replay_default_spooled_events(&state) {
+                Ok(count) => app_log::info("startup", &format!("spooled events replayed count={count}")),
+                Err(error) => {
+                    app_log::error("startup", &format!("failed to replay spooled events error={error}"));
+                    let _ = handle.emit("collector-error", error.to_string());
+                }
             }
-            if let Err(error) = codex_audit::replay_default_codex_audit_events(&state) {
-                let _ = handle.emit("collector-error", error.to_string());
+            match codex_audit::replay_default_codex_audit_events(&state) {
+                Ok(count) => app_log::info("startup", &format!("codex audit events replayed count={count}")),
+                Err(error) => {
+                    app_log::error("startup", &format!("failed to replay codex audit events error={error}"));
+                    let _ = handle.emit("collector-error", error.to_string());
+                }
             }
             let usage_handle = handle.clone();
             tauri::async_runtime::spawn_blocking(move || match token_usage::refresh_default_usage_summary() {
                 Ok(summary) => {
+                    crate::app_log::info("token_usage", "default usage summary refreshed");
                     let _ = usage_handle.emit("token-usage-updated", summary);
                 }
                 Err(error) => {
+                    crate::app_log::error("token_usage", &format!("failed to refresh default usage summary error={error}"));
                     let _ = usage_handle.emit("collector-error", error.to_string());
                 }
             });
@@ -277,11 +300,14 @@ pub fn run() {
                 codex_audit::watch_default_codex_audit(audit_state, audit_handle).await;
             });
             tauri::async_runtime::spawn(async move {
+                crate::app_log::info("collector", "collector starting");
                 if let Err(error) = collector::run_collector(state, handle.clone()).await {
+                    crate::app_log::error("collector", &format!("collector exited error={error}"));
                     let _ = handle.emit("collector-error", error.to_string());
                     handle.exit(1);
                 }
             });
+            app_log::info("startup", "setup finished");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
