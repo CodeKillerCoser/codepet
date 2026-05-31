@@ -9,7 +9,7 @@
   import { activityCapabilities, activityKey, cardEndTime, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
   import { runningBubbleStyle } from "./lib/gradientColor";
   import PetAvatar from "./lib/PetAvatar.svelte";
-  import { playNotificationSound, playWhipSound, shouldRing } from "./lib/sound";
+  import { playNotificationSound, playWhipSound, shouldRepeatNotification, shouldRing } from "./lib/sound";
   import type { AppSettings, PetEvent } from "./lib/types";
   import { whipCrackAnimation } from "./lib/whipLottie";
 
@@ -17,6 +17,7 @@
   let activities: PetEvent[] = [];
   let repeatTimer: number | null = null;
   let repeatEventId: string | null = null;
+  let repeatEvent: PetEvent | null = null;
   let repeatExpiresAt = 0;
   let pollTimer: number | null = null;
   let lastEventId: string | null = null;
@@ -226,6 +227,7 @@
     }
     seenEventIds = new Set(seenEventIds);
     activities = updateActivityList(activities, incoming, dismissedActivityKeys, new Date(), hiddenInternalActivityKeys);
+    stopRepeatIfNoLongerNeedsAttention();
   }
 
   function isActiveActivity(activity: PetEvent) {
@@ -253,9 +255,10 @@
     clearRepeat();
     if (event.status === "waiting-approval" && settings.notifications.repeatSeconds > 0) {
       repeatEventId = event.id;
+      repeatEvent = event;
       repeatExpiresAt = Date.now() + permissionRepeatMaxMs;
       repeatTimer = window.setInterval(() => {
-        if (Date.now() >= repeatExpiresAt || !settings || !shouldRing(settings, event)) {
+        if (!settings || !repeatEvent || !shouldRepeatNotification(settings, repeatEvent, activities, Date.now(), repeatExpiresAt)) {
           clearRepeat();
           return;
         }
@@ -270,7 +273,17 @@
       repeatTimer = null;
     }
     repeatEventId = null;
+    repeatEvent = null;
     repeatExpiresAt = 0;
+  }
+
+  function stopRepeatIfNoLongerNeedsAttention() {
+    if (!settings || !repeatEvent) {
+      return;
+    }
+    if (!shouldRepeatNotification(settings, repeatEvent, activities, Date.now(), repeatExpiresAt)) {
+      clearRepeat();
+    }
   }
 
   function clearPoll() {
@@ -429,7 +442,7 @@
     dismissedActivityKeys.add(activityKey(activity));
     dismissedActivityKeys = new Set(dismissedActivityKeys);
     activities = activities.filter((candidate) => activityKey(candidate) !== activityKey(activity));
-    if (repeatEventId === activity.id) {
+    if (repeatEvent && activityKey(repeatEvent) === activityKey(activity)) {
       clearRepeat();
     }
     if (replyingToId === activity.id) {

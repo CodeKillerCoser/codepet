@@ -121,10 +121,33 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain("let repeatExpiresAt = 0");
     expect(handleRingBlock).toContain("repeatEventId = event.id");
     expect(handleRingBlock).toContain("repeatExpiresAt = Date.now() + permissionRepeatMaxMs");
-    expect(handleRingBlock).toContain("Date.now() >= repeatExpiresAt");
-    expect(dismissBlock).toContain("if (repeatEventId === activity.id) {");
+    expect(handleRingBlock).toContain("shouldRepeatNotification(settings, repeatEvent, activities, Date.now(), repeatExpiresAt)");
+    expect(dismissBlock).toContain("repeatEvent && activityKey(repeatEvent) === activityKey(activity)");
     expect(dismissBlock).toContain("clearRepeat()");
     expect(clearRepeatBlock).toContain("repeatEventId = null");
     expect(clearRepeatBlock).toContain("repeatExpiresAt = 0");
+  });
+
+  it("keeps repeat ringing tied to the current waiting-approval activity", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const applyBlock = source.slice(source.indexOf("function applyIncomingEvents"), source.indexOf("function isActiveActivity"));
+    const handleRingBlock = source.slice(source.indexOf("async function handleRing"), source.indexOf("function clearRepeat"));
+    const repeatGuardBlock = source.slice(source.indexOf("function stopRepeatIfNoLongerNeedsAttention"), source.indexOf("async function dockToLowerRight"));
+
+    expect(source).toContain("shouldRepeatNotification");
+    expect(source).toContain("let repeatEvent: PetEvent | null = null");
+    expect(applyBlock).toContain("stopRepeatIfNoLongerNeedsAttention()");
+    expect(handleRingBlock).toContain("repeatEvent = event");
+    expect(handleRingBlock).toContain("shouldRepeatNotification(settings, repeatEvent, activities, Date.now(), repeatExpiresAt)");
+    expect(repeatGuardBlock).toContain("shouldRepeatNotification(settings, repeatEvent, activities, Date.now(), repeatExpiresAt)");
+    expect(repeatGuardBlock).toContain("clearRepeat()");
+  });
+
+  it("clears repeat ringing by activity key when the visible permission card is dismissed", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const dismissBlock = source.slice(source.indexOf("function dismissActivity"), source.indexOf("async function activate"));
+
+    expect(dismissBlock).toContain("repeatEvent && activityKey(repeatEvent) === activityKey(activity)");
+    expect(dismissBlock).not.toContain("repeatEventId === activity.id");
   });
 });

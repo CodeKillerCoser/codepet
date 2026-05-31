@@ -1,4 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { activityKey } from "./activity";
 import type { AppSettings, PetEvent } from "./types";
 
 export function shouldRing(settings: AppSettings, event: PetEvent): boolean {
@@ -18,6 +19,20 @@ export function shouldRing(settings: AppSettings, event: PetEvent): boolean {
     return settings.notifications.ringOnDone;
   }
   return false;
+}
+
+export function shouldRepeatNotification(
+  settings: AppSettings,
+  repeatEvent: PetEvent | null,
+  currentActivities: PetEvent[],
+  nowMs: number,
+  repeatExpiresAt: number,
+): boolean {
+  if (!repeatEvent || nowMs >= repeatExpiresAt || !shouldRing(settings, repeatEvent)) {
+    return false;
+  }
+  const repeatKey = activityKey(repeatEvent);
+  return currentActivities.some((activity) => activityKey(activity) === repeatKey && activity.status === "waiting-approval");
 }
 
 export async function playNotificationSound(settings: AppSettings): Promise<void> {
