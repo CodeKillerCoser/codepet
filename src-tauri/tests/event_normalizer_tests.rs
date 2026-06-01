@@ -69,6 +69,41 @@ fn codex_notification_hook_is_not_task_completion() {
 }
 
 #[test]
+fn qoder_idle_prompt_notification_becomes_task_completion() {
+    let payload = json!({
+        "hook_event_name": "Notification",
+        "session_id": "qoder-idle",
+        "cwd": "C:\\WINDOWS\\system32",
+        "notification_type": "idle_prompt",
+        "message": "Qoder CLI finished responding and is awaiting input.",
+        "details": { "streamingState": "idle" }
+    });
+
+    let event = normalize_hook_payload(AgentId::Qoder, payload).unwrap();
+
+    assert_eq!(event.kind, PetEventKind::TaskCompleted);
+    assert_eq!(event.status, TaskStatus::Done);
+    assert!(event.should_ring);
+    assert_eq!(event.message, "");
+}
+
+#[test]
+fn qoder_non_idle_notification_stays_running_message() {
+    let payload = json!({
+        "hook_event_name": "Notification",
+        "session_id": "qoder-info",
+        "notification_type": "info",
+        "message": "background progress"
+    });
+
+    let event = normalize_hook_payload(AgentId::Qoder, payload).unwrap();
+
+    assert_eq!(event.kind, PetEventKind::Message);
+    assert_eq!(event.status, TaskStatus::Running);
+    assert!(!event.should_ring);
+}
+
+#[test]
 fn codex_stop_uses_last_assistant_message_as_completion_summary() {
     let payload = json!({
         "hook_event_name": "Stop",

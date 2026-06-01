@@ -37,8 +37,11 @@ async function readStdin(timeoutMs = STDIN_WAIT_MS) {
   let timer;
   const timeout = new Promise((resolve) => {
     timer = setTimeout(() => {
+      // Pause instead of destroy: destroying stdin releases the last active handle
+      // on the libuv loop under MSYS2/Git Bash pipes, letting Node exit before the
+      // collector fetch flushes. Pausing keeps the loop alive until postEvent resolves.
       try {
-        process.stdin.destroy();
+        process.stdin.pause();
       } catch {
         // Falling back to the explicit --event payload is safer than blocking the agent.
       }
@@ -92,6 +95,12 @@ function sourceContext() {
 }
 
 function controllingTty() {
+  // Windows has no /dev/tty and must never shell out to sh/bash. The tty path is
+  // only used for macOS terminal-window activation, so skip the probe entirely.
+  if (process.platform === "win32") {
+    return null;
+  }
+
   try {
     const result = spawnSync("sh", ["-c", "tty < /dev/tty"], {
       encoding: "utf8",
@@ -209,17 +218,30 @@ function forwardBase64Arg() {
   }
 }
 
-const stdinText = await readStdin();
-const agent = process.env.CODE_PET_AGENT || argValue("--agent") || "unknown";
-const eventName = argValue("--event") || process.env.CODE_PET_EVENT;
-const payload = withSourceContext(parsePayload(stdinText, eventName));
-const event = await postEvent({ agent, payload });
-forwardToPrevious(stdinText);
-if (payload.hook_event_name === "PermissionRequest" && event?.id) {
-  const decision = await waitForApproval(event.id);
-  if (decision) {
-    process.stdout.write(`${JSON.stringify(hookDecisionOutput(payload.hook_event_name, decision))}\n`);
+async function main() {
+  const stdinText = await readStdin();
+  const agent = process.env.CODE_PET_AGENT || argValue("--agent") || "unknown";
+  const eventName = argValue("--event") || process.env.CODE_PET_EVENT;
+  const payload = withSourceContext(parsePayload(stdinText, eventName));
+  const event = await postEvent({ agent, payload });
+  forwardToPrevious(stdinText);
+  if (payload.hook_event_name === "PermissionRequest" && event?.id) {
+    const decision = await waitForApproval(event.id);
+    if (decision) {
+      process.stdout.write(`${JSON.stringify(hookDecisionOutput(payload.hook_event_name, decision))}\n`);
+    }
+  } else if (agent === "cursor") {
+    process.stdout.write(`${JSON.stringify(cursorAllowOutput())}\n`);
   }
-} else if (agent === "cursor") {
-  process.stdout.write(`${JSON.stringify(cursorAllowOutput())}\n`);
 }
+
+// Run the hook and exit explicitly only after every async step (including the
+// collector fetch) has settled. Relying on Node's implicit exit is unsafe under
+// MSYS2/Git Bash pipes, where the process can quit before the fetch flushes.
+main()
+  .catch(() => {
+    // The hook must never surface errors back to the agent that invoked it.
+  })
+  .finally(() => {
+    process.exit(0);
+  });

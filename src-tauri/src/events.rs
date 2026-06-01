@@ -100,7 +100,14 @@ pub fn normalize_hook_payload(provider: AgentId, raw: Value) -> Result<PetEvent,
     let tool_name = tool_name_from_payload(provider, &raw, &raw_hook_event, &hook_event);
     let session_id = first_string(&raw, &["session_id", "sessionId", "conversation_id", "generation_id"]);
     let cwd = first_string(&raw, &["cwd", "workspace", "project_dir", "projectDir"]).or_else(|| workspace_root_from_payload(&raw));
-    let message = message_from_payload(&raw, &hook_event, tool_name.as_deref());
+    let is_idle_notification = hook_event == "Notification" && notification_signals_idle(&raw);
+    let message = if is_idle_notification {
+        // Idle notifications only carry the agent's boilerplate "awaiting input"
+        // prompt. Suppress it so the idle prompt never reaches the pet UI.
+        String::new()
+    } else {
+        message_from_payload(&raw, &hook_event, tool_name.as_deref())
+    };
     let payload_title = title_from_payload(&raw);
     let source = source_from_payload(&raw);
 
@@ -146,6 +153,12 @@ pub fn normalize_hook_payload(provider: AgentId, raw: Value) -> Result<PetEvent,
             "任务失败",
         ),
         "Stop" | "SessionEnd" => (
+            PetEventKind::TaskCompleted,
+            TaskStatus::Done,
+            true,
+            "任务完成",
+        ),
+        "Notification" if is_idle_notification => (
             PetEventKind::TaskCompleted,
             TaskStatus::Done,
             true,
@@ -218,6 +231,21 @@ fn workspace_root_from_payload(raw: &Value) -> Option<String> {
         .and_then(Value::as_array)
         .and_then(|roots| roots.iter().find_map(Value::as_str))
         .map(ToString::to_string)
+}
+
+fn notification_signals_idle(raw: &Value) -> bool {
+    let notification_type = first_string(raw, &["notification_type", "notificationType"]);
+    if notification_type
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("idle_prompt") || value.eq_ignore_ascii_case("idle"))
+    {
+        return true;
+    }
+
+    raw.get("details")
+        .and_then(|details| details.get("streamingState"))
+        .and_then(Value::as_str)
+        .is_some_and(|state| state.eq_ignore_ascii_case("idle"))
 }
 
 fn payload_indicates_failure(raw: &Value, message: &str) -> bool {
