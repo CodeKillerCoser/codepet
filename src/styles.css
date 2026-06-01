@@ -1445,7 +1445,7 @@ input[type="time"] {
   margin: 0 0 8px 28px;
   padding-right: 10px;
   overflow-x: hidden;
-  overflow-y: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   pointer-events: auto;
   scrollbar-color: var(--pet-scrollbar) transparent;

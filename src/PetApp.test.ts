@@ -83,11 +83,12 @@ describe("PetApp activity helpers", () => {
     expect(syncWindowFrame).toContain("if (!applied || requestedWindowHeight === targetHeight)");
   });
 
-  it("renders only the visible activity slice used for pet window sizing", () => {
+  it("renders every activity while sizing the pet window from the first four cards", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
 
-    expect(source).toContain("$: visibleActivities = showActivities ? activities.slice(0, maxVisibleActivities) : []");
-    expect(source).toContain("{#each visibleActivities as activity (activity.id)}");
+    expect(source).toContain("$: renderedActivities = showActivities ? activities : []");
+    expect(source).toContain("$: stackSizedActivities = showActivities ? activities.slice(0, maxVisibleActivities) : []");
+    expect(source).toContain("{#each renderedActivities as activity (activity.id)}");
     expect(source).not.toContain("{#each activities as activity (activity.id)}");
   });
 
@@ -103,7 +104,7 @@ describe("PetApp activity helpers", () => {
   it("sizes the activity stack from visible card heights", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
 
-    expect(source).toContain("$: activityStackHeight = activityStackHeightFor(visibleActivities, replyingToId)");
+    expect(source).toContain("$: activityStackHeight = activityStackHeightFor(stackSizedActivities, replyingToId)");
     expect(source).toContain("$: desiredWindowHeight = petWindowHeight(activityStackHeight, petStageHeight)");
     expect(source).toContain("function activityStackHeightFor");
     expect(source).toContain("activity.id === activeReplyingToId");

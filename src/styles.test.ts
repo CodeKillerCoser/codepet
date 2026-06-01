@@ -41,13 +41,13 @@ describe("pet message bubble activity", () => {
     expect(devWindow).toContain("border:");
   });
 
-  test("keeps the pet activity stack at the measured visible height", () => {
+  test("keeps the pet activity stack at the measured visible height while allowing overflow scroll", () => {
     const stack = blockFor(".activity-stack");
 
     expect(stack).toContain("flex: 0 0 auto");
     expect(stack).toContain("height: var(--pet-activity-stack-height)");
-    expect(stack).toContain("overflow-y: hidden");
-    expect(stack).not.toContain("overflow-y: auto");
+    expect(stack).toContain("overflow-y: auto");
+    expect(stack).not.toContain("overflow-y: hidden");
   });
 
   test("exposes a marquee border width control", () => {

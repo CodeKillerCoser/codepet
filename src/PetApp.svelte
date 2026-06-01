@@ -61,8 +61,9 @@
   $: hasActivities = activities.length > 0;
   $: hasLiveActivities = activities.some((activity) => activity.status === "thinking" || activity.status === "running" || activity.status === "waiting-approval");
   $: showActivities = hasActivities && !tasksCollapsed;
-  $: visibleActivities = showActivities ? activities.slice(0, maxVisibleActivities) : [];
-  $: activityStackHeight = activityStackHeightFor(visibleActivities, replyingToId);
+  $: renderedActivities = showActivities ? activities : [];
+  $: stackSizedActivities = showActivities ? activities.slice(0, maxVisibleActivities) : [];
+  $: activityStackHeight = activityStackHeightFor(stackSizedActivities, replyingToId);
   $: clearReplyIfNoLongerAvailable(activities, replyingToId);
   $: petScale = Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4);
   $: petVisualHeight = settings?.pet.kind === "codex-atlas" ? Math.round(32 * petScale * (208 / 192)) : 30 * petScale;
@@ -556,7 +557,7 @@
   <button class="drag-layer" type="button" aria-label="拖动移动桌宠" on:mousedown={dragWindow}></button>
   {#if showActivities}
     <section class="activity-stack" bind:this={activityStack} aria-live="polite" style={`--pet-activity-stack-height: ${activityStackHeight}px`}>
-      {#each visibleActivities as activity (activity.id)}
+      {#each renderedActivities as activity (activity.id)}
         {@const capabilities = activityCapabilities(activity)}
         {@const activeActivity = isActiveActivity(activity)}
         {@const endedAt = cardEndTime(activity)}
