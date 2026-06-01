@@ -5,8 +5,10 @@
   "windows": ["main", "pet"],
   "permissions": [
     "core:default",
+    "core:window:allow-cursor-position",
     "core:window:allow-set-position",
     "core:window:allow-set-size",
+    "core:window:allow-set-ignore-cursor-events",
     "core:window:allow-start-dragging",
     "dialog:default",
     "opener:default",

@@ -201,4 +201,17 @@ describe("PetApp activity helpers", () => {
     expect(dismissBlock).toContain("repeatEvent && activityKey(repeatEvent) === activityKey(activity)");
     expect(dismissBlock).not.toContain("repeatEventId === activity.id");
   });
+
+  it("passes cursor events through transparent pet-window regions", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+
+    expect(source).toContain("cursorPosition");
+    expect(source).toContain("setIgnoreCursorEvents");
+    expect(source).toContain("collectPetHitRects");
+    expect(source).toContain("isPointOnOpaquePetImage");
+    expect(source).toContain("shouldIgnorePetWindowCursor");
+    expect(source).toContain("clearCursorPassthroughTimer");
+    expect(source).toContain('data-pet-hit-target="stage"');
+    expect(source).not.toContain('<button class="drag-layer"');
+  });
 });
