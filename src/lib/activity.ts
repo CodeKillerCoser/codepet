@@ -240,7 +240,7 @@ export interface ActivityCapabilities {
 export function activityCapabilities(event: PetEvent): ActivityCapabilities {
   const terminalProgram = event.source?.terminalProgram ?? "";
   const hasTargetableTerminal = Boolean(event.source?.ttyPath && isSupportedReplyTerminal(terminalProgram));
-  const canReply = event.provider === "qoder" && hasTargetableTerminal;
+  const canReply = event.provider === "qoder" && hasTargetableTerminal && (event.status === "thinking" || event.status === "running");
   return {
     canActivate: true,
     canReply,

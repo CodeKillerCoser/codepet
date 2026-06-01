@@ -63,6 +63,7 @@
   $: showActivities = hasActivities && !tasksCollapsed;
   $: visibleActivities = showActivities ? activities.slice(0, maxVisibleActivities) : [];
   $: activityStackHeight = activityStackHeightFor(visibleActivities, replyingToId);
+  $: clearReplyIfNoLongerAvailable(activities, replyingToId);
   $: petScale = Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4);
   $: petVisualHeight = settings?.pet.kind === "codex-atlas" ? Math.round(32 * petScale * (208 / 192)) : 30 * petScale;
   $: petStageHeight = Math.max(104, petVisualHeight);
@@ -218,6 +219,17 @@
         await handleRing(next);
       }
     }
+  }
+
+  function clearReplyIfNoLongerAvailable(currentActivities: PetEvent[], activeReplyingToId: string | null) {
+    if (!activeReplyingToId) {
+      return;
+    }
+    if (currentActivities.some((activity) => activity.id === activeReplyingToId && activityCapabilities(activity).canReply)) {
+      return;
+    }
+    replyingToId = null;
+    replyText = "";
   }
 
   function applyIncomingEvents(incoming: PetEvent[]) {
@@ -593,7 +605,7 @@
                 >回复</button>
               </form>
             {/if}
-            <div class="status-footer" class:with-actions={capabilities.canApprove || capabilities.canReply}>
+            <div class="status-footer" class:with-actions={capabilities.canApprove || (capabilities.canReply && replyingToId !== activity.id)}>
               <span class="status-meta" title={cardMeta(activity)}>
                 <span class="status-agent">{activity.provider}</span>
                 <span class="status-separator"> · </span>
@@ -603,7 +615,7 @@
                   <span class="status-ended-at">{endedAt}</span>
                 {/if}
               </span>
-              {#if capabilities.canApprove || capabilities.canReply}
+              {#if capabilities.canApprove || (capabilities.canReply && replyingToId !== activity.id)}
                 <div class="status-actions" class:approval-mode={capabilities.canApprove} aria-label="任务操作">
                   {#if capabilities.canApprove}
                     <button class="approval-button allow" type="button" aria-label="同意" on:click={(event) => approve(event, activity, "allow")}>
@@ -613,7 +625,7 @@
                       <span>拒绝</span>
                     </button>
                   {/if}
-                  {#if capabilities.canReply}
+                  {#if capabilities.canReply && replyingToId !== activity.id}
                     <button class="reply-button" type="button" on:click={(event) => toggleReply(event, activity)}>回复</button>
                   {/if}
                 </div>

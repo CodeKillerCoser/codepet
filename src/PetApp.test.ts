@@ -111,6 +111,22 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain('style={`--pet-activity-stack-height: ${activityStackHeight}px`}');
   });
 
+  it("clears reply mode when the source activity is no longer replyable", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const cleanupBlock = source.slice(source.indexOf("function clearReplyIfNoLongerAvailable"), source.indexOf("function applyIncomingEvents"));
+
+    expect(source).toContain("$: clearReplyIfNoLongerAvailable(activities, replyingToId)");
+    expect(cleanupBlock).toContain("activity.id === activeReplyingToId && activityCapabilities(activity).canReply");
+    expect(cleanupBlock).toContain("replyingToId = null");
+    expect(cleanupBlock).toContain('replyText = ""');
+  });
+
+  it("hides the footer reply button while the inline reply editor is open", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+
+    expect(source).toContain("{#if capabilities.canReply && replyingToId !== activity.id}");
+  });
+
   it("deduplicates pushed pet events before ringing", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const listenBlock = source.slice(source.indexOf('listen<PetEvent>("pet-event"'), source.indexOf('listen<AppSettings>("settings-updated"'));

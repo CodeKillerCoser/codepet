@@ -560,6 +560,19 @@ describe("activityCapabilities", () => {
     expect(activityCapabilities(appActivity).canReply).toBe(false);
   });
 
+  it("does not expose reply for completed terminal sessions", () => {
+    const activity = event({
+      provider: "qoder",
+      status: "done",
+      source: {
+        terminalProgram: "Apple_Terminal",
+        ttyPath: "/dev/ttys018",
+      },
+    });
+
+    expect(activityCapabilities(activity).canReply).toBe(false);
+  });
+
   it("exposes approval controls only for active permission requests", () => {
     expect(activityCapabilities(event({ provider: "qoder", status: "waiting-approval" })).canApprove).toBe(true);
     expect(activityCapabilities(event({ provider: "qoder", status: "running" })).canApprove).toBe(false);
