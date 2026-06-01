@@ -6,18 +6,51 @@ import { spawnSync } from "node:child_process";
 
 const COLLECTOR_URL = process.env.CODE_PET_COLLECTOR_URL || "http://127.0.0.1:47621/hook";
 const APPROVAL_WAIT_MS = Number(process.env.CODE_PET_APPROVAL_WAIT_MS || 590000);
+const STDIN_WAIT_MS = Number(process.env.CODE_PET_STDIN_WAIT_MS || 1000);
 
 function argValue(name) {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
-async function readStdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(Buffer.from(chunk));
+async function readStdin(timeoutMs = STDIN_WAIT_MS) {
+  if (process.stdin.isTTY) {
+    return "";
   }
-  return Buffer.concat(chunks).toString("utf8");
+
+  const chunks = [];
+  const read = (async () => {
+    try {
+      for await (const chunk of process.stdin) {
+        chunks.push(Buffer.from(chunk));
+      }
+    } catch {
+      // Some agents leave stdin inherited instead of closing it after hook launch.
+    }
+    return Buffer.concat(chunks).toString("utf8");
+  })();
+
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return await read;
+  }
+
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      try {
+        process.stdin.destroy();
+      } catch {
+        // Falling back to the explicit --event payload is safer than blocking the agent.
+      }
+      resolve(Buffer.concat(chunks).toString("utf8"));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([read, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function parsePayload(stdinText, eventName) {

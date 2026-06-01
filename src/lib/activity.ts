@@ -48,7 +48,7 @@ function applyActivityEvent(
   hiddenInternalKeys: Set<string>,
   nowMs: number,
 ) {
-  const key = activityKey(event);
+  let key = activityKey(event);
   if (hiddenInternalKeys.has(key)) {
     activities.delete(key);
     return;
@@ -73,9 +73,20 @@ function applyActivityEvent(
     return;
   }
   if (event.status === "done" && !activities.has(key)) {
-    return;
+    if (hasStableActivityIdentity(event)) {
+      return;
+    }
+    const fallbackKey = latestActiveActivityKeyForProvider(activities, event.provider);
+    if (!fallbackKey) {
+      return;
+    }
+    key = fallbackKey;
   }
-  activities.set(key, displayEventForUpdate(activities.get(key), event));
+  const previous = activities.get(key);
+  const eventForUpdate = key === activityKey(event) || !previous
+    ? event
+    : { ...event, sessionId: previous.sessionId, cwd: previous.cwd };
+  activities.set(key, displayEventForUpdate(previous, eventForUpdate));
 }
 
 function sortActivities(activities: PetEvent[]): PetEvent[] {
@@ -83,11 +94,18 @@ function sortActivities(activities: PetEvent[]): PetEvent[] {
 }
 
 function displayEventForUpdate(previous: PetEvent | undefined, event: PetEvent): PetEvent {
-  const title = authoritativeTitle(event) ?? previous?.title ?? taskTitleFor(event);
+  const title = authoritativeTitle(event) ?? previousDisplayTitle(previous) ?? taskTitleFor(event);
   const message = previous && isTranscriptPath(event.message) && !isTranscriptPath(previous.message) ? previous.message : event.message;
   const createdAt = shouldRefreshActivitySort(previous, event) ? event.createdAt : previous.createdAt;
   const endedAt = terminalActivityStatuses.has(event.status) ? event.createdAt : null;
   return { ...event, title, message, createdAt, endedAt };
+}
+
+function previousDisplayTitle(previous: PetEvent | undefined): string | undefined {
+  if (!previous) {
+    return undefined;
+  }
+  return authoritativeTitle(previous) ?? taskTitleFor(previous);
 }
 
 function shouldRefreshActivitySort(previous: PetEvent | undefined, event: PetEvent): boolean {
@@ -95,6 +113,27 @@ function shouldRefreshActivitySort(previous: PetEvent | undefined, event: PetEve
     return true;
   }
   return previous.status === "done" && event.status !== "done";
+}
+
+function hasStableActivityIdentity(event: PetEvent): boolean {
+  return Boolean(event.sessionId || event.cwd);
+}
+
+function latestActiveActivityKeyForProvider(activities: Map<string, PetEvent>, provider: PetEvent["provider"]): string | null {
+  let latestKey: string | null = null;
+  let latestTime = Number.NEGATIVE_INFINITY;
+  for (const [key, activity] of activities) {
+    if (activity.provider !== provider || terminalActivityStatuses.has(activity.status) || inactiveStatuses.has(activity.status)) {
+      continue;
+    }
+    const createdAt = new Date(activity.createdAt).getTime();
+    const createdAtMs = Number.isFinite(createdAt) ? createdAt : 0;
+    if (createdAtMs >= latestTime) {
+      latestKey = key;
+      latestTime = createdAtMs;
+    }
+  }
+  return latestKey;
 }
 
 function isTranscriptPath(value: string): boolean {

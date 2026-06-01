@@ -10,8 +10,8 @@ function event(overrides: Partial<PetEvent>): PetEvent {
     status: overrides.status ?? "thinking",
     title: overrides.title ?? "任务开始",
     message: overrides.message ?? "test",
-    sessionId: overrides.sessionId ?? "session-a",
-    cwd: overrides.cwd ?? "/workspace/a",
+    sessionId: "sessionId" in overrides ? overrides.sessionId : "session-a",
+    cwd: "cwd" in overrides ? overrides.cwd : "/workspace/a",
     toolName: overrides.toolName ?? null,
     shouldRing: overrides.shouldRing ?? false,
     createdAt: overrides.createdAt ?? "2026-05-26T06:00:00.000Z",
@@ -350,7 +350,8 @@ describe("updateActivityList", () => {
       createdAt: "2026-05-26T06:02:00.000Z",
     });
 
-    const [finished] = updateActivityList([started], [completed], new Set<string>(), new Date("2026-05-26T06:03:00.000Z"));
+    const active = updateActivityList([], [started], new Set<string>(), new Date("2026-05-26T06:01:00.000Z"));
+    const [finished] = updateActivityList(active, [completed], new Set<string>(), new Date("2026-05-26T06:03:00.000Z"));
 
     const expectedTime = new Intl.DateTimeFormat(undefined, {
       hour: "2-digit",
@@ -361,6 +362,36 @@ describe("updateActivityList", () => {
     expect(finished.endedAt).toBe("2026-05-26T06:02:00.000Z");
     expect(cardEndTime(finished)).toBe(expectedTime);
     expect(cardMeta(finished)).toBe(`codex · 任务完成 · ${expectedTime}`);
+  });
+
+  it("matches a keyless completed event to the latest active task for the same provider", () => {
+    const started = event({
+      id: "codex-start",
+      provider: "codex",
+      sessionId: "codex-a",
+      cwd: "/workspace/a",
+      status: "running",
+      message: "Windows 任务",
+      createdAt: "2026-05-26T06:00:00.000Z",
+    });
+    const completed = event({
+      id: "codex-done",
+      provider: "codex",
+      sessionId: null,
+      cwd: null,
+      status: "done",
+      message: "Stop",
+      createdAt: "2026-05-26T06:02:00.000Z",
+    });
+
+    const active = updateActivityList([], [started], new Set<string>(), new Date("2026-05-26T06:01:00.000Z"));
+    const [finished] = updateActivityList(active, [completed], new Set<string>(), new Date("2026-05-26T06:03:00.000Z"));
+
+    expect(finished.id).toBe("codex-done");
+    expect(finished.status).toBe("done");
+    expect(finished.sessionId).toBe("codex-a");
+    expect(finished.cwd).toBe("/workspace/a");
+    expect(finished.title).toBe("Windows 任务");
   });
 
   it("keeps dismissed completed tasks out until the same task becomes active again", () => {

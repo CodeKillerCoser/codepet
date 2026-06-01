@@ -28,7 +28,12 @@ use state::{ApprovalBehavior, ApprovalDecision, SharedState, COLLECTOR_PORT};
 use subject_cutout::SubjectCutoutResult;
 use token_usage::TokenUsageSummary;
 use std::str::FromStr;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, Size, WebviewUrl, WebviewWindowBuilder};
+
+const TRAY_MENU_OPEN: &str = "open-main";
+const TRAY_MENU_QUIT: &str = "quit";
 
 #[tauri::command]
 fn list_agents(state: tauri::State<'_, SharedState>) -> Result<Vec<AgentView>, String> {
@@ -269,6 +274,10 @@ pub fn run() {
             app_log::info("startup", "setup started");
             let handle = app.handle().clone();
             let state = app.state::<SharedState>().inner().clone();
+            if let Err(error) = install_tray_icon(&handle) {
+                app_log::error("startup", &format!("failed to create tray icon error={error}"));
+                let _ = handle.emit("collector-error", error);
+            }
             let overlay_span = app_log::PerfSpan::start("startup.configure_pet_overlay_window");
             configure_pet_overlay_window(&handle);
             overlay_span.finish_ok(&[]);
@@ -377,6 +386,45 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build Code Pet")
         .run(handle_run_event);
+}
+
+fn install_tray_icon(app: &AppHandle) -> Result<(), String> {
+    let open = MenuItem::with_id(app, TRAY_MENU_OPEN, "Open Code Pet", true, None::<&str>)
+        .map_err(|error| error.to_string())?;
+    let quit = MenuItem::with_id(app, TRAY_MENU_QUIT, "Quit Code Pet", true, None::<&str>)
+        .map_err(|error| error.to_string())?;
+    let menu = Menu::with_items(app, &[&open, &quit]).map_err(|error| error.to_string())?;
+    let mut builder = TrayIconBuilder::with_id("code-pet")
+        .tooltip("Code Pet")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| {
+            if event.id() == TRAY_MENU_OPEN {
+                let _ = open_main_window(app.clone());
+            } else if event.id() == TRAY_MENU_QUIT {
+                app.exit(0);
+            }
+        })
+        .on_tray_icon_event(|tray, event| {
+            if matches!(
+                event,
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    ..
+                } | TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                }
+            ) {
+                let _ = open_main_window(tray.app_handle().clone());
+            }
+        });
+
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+
+    builder.build(app).map(|_| ()).map_err(|error| error.to_string())
 }
 
 #[cfg(target_os = "macos")]
