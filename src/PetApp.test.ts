@@ -55,7 +55,7 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain("whipAnimationKey += 1");
     expect(source).toContain("{#key whipAnimationKey}");
     expect(source).toContain('aria-label="抽鞭子"');
-    expect(source).toContain('class="whip-button"');
+    expect(source).toContain('class="pet-action-button whip-button"');
     expect(source).toContain('class="whip-animation whip-svg"');
     expect(source).toContain('class="whip-rig"');
     expect(source).toContain('class="handle-core"');
@@ -68,6 +68,30 @@ describe("PetApp activity helpers", () => {
     expect(source).not.toContain('d="M 148 24 C 114 26, 87 44, 66 72 S 33 120, 18 126"');
     expect(source).not.toContain("lottie.loadAnimation");
     expect(source).not.toContain("whipCrackAnimation");
+  });
+
+  it("shows a right-side action to clear completed activities", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const clearBlock = source.slice(source.indexOf("function clearCompletedActivities"), source.indexOf("async function activate"));
+
+    expect(source).toContain("hasCompletedActivities");
+    expect(source).toContain('aria-label="移除全部已完成任务"');
+    expect(source).toContain('class="pet-action-button clear-completed-button"');
+    expect(clearBlock).toContain('activity.status === "done"');
+    expect(clearBlock).toContain("dismissedActivityKeys.add(key)");
+    expect(clearBlock).toContain("replyingToId = null");
+  });
+
+  it("groups pet-side actions in one compact rail", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const stageBlock = source.slice(source.indexOf('<section class="pet-stage"'), source.indexOf("{#key whipAnimationKey}"));
+
+    expect(stageBlock).toContain('<div class="pet-action-rail"');
+    expect(stageBlock).toContain('class="pet-action-button fold-button"');
+    expect(stageBlock).toContain('class="pet-action-button main-window-button"');
+    expect(stageBlock).toContain('class="pet-action-button whip-button"');
+    expect(stageBlock.indexOf('class="pet-action-button fold-button"')).toBeLessThan(stageBlock.indexOf('class="pet-action-button main-window-button"'));
+    expect(stageBlock.indexOf('class="pet-action-button main-window-button"')).toBeLessThan(stageBlock.indexOf('class="pet-action-button whip-button"'));
   });
 
   it("serializes pet window resize requests so stale small frames cannot win", () => {

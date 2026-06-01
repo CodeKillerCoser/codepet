@@ -60,6 +60,7 @@
   $: primary = primaryActivity(activities);
   $: hasActivities = activities.length > 0;
   $: hasLiveActivities = activities.some((activity) => activity.status === "thinking" || activity.status === "running" || activity.status === "waiting-approval");
+  $: hasCompletedActivities = activities.some((activity) => activity.status === "done");
   $: showActivities = hasActivities && !tasksCollapsed;
   $: renderedActivities = showActivities ? activities : [];
   $: stackSizedActivities = showActivities ? activities.slice(0, maxVisibleActivities) : [];
@@ -466,6 +467,28 @@
     }
   }
 
+  function clearCompletedActivities(event: MouseEvent) {
+    event.stopPropagation();
+    const completedKeys = new Set(activities.filter((activity) => activity.status === "done").map(activityKey));
+    if (completedKeys.size === 0) {
+      return;
+    }
+
+    for (const key of completedKeys) {
+      dismissedActivityKeys.add(key);
+    }
+    dismissedActivityKeys = new Set(dismissedActivityKeys);
+    activities = activities.filter((activity) => !completedKeys.has(activityKey(activity)));
+    if (repeatEvent && completedKeys.has(activityKey(repeatEvent))) {
+      clearRepeat();
+    }
+    if (replyingToId && !activities.some((activity) => activity.id === replyingToId)) {
+      replyingToId = null;
+      replyText = "";
+    }
+    showNotice("已清除完成任务");
+  }
+
   async function activate(activity: PetEvent) {
     try {
       await activateActivity(activity.id);
@@ -639,25 +662,51 @@
   {/if}
 
   <section class="pet-stage" aria-label="拖动移动桌宠">
-    <button
-      class="main-window-button"
-      type="button"
-      aria-label="打开主窗口"
-      on:mousedown={(event) => event.stopPropagation()}
-      on:click={openMain}
-    >
-      <span aria-hidden="true"></span>
-    </button>
-    <button
-      class="whip-button"
-      type="button"
-      aria-label="抽鞭子"
-      title="抽鞭子"
-      on:mousedown={(event) => event.stopPropagation()}
-      on:click={whipPet}
-    >
-      <span aria-hidden="true"></span>
-    </button>
+    <div class="pet-action-rail">
+      {#if hasActivities}
+        <button
+          class="pet-action-button fold-button"
+          class:collapsed={tasksCollapsed}
+          type="button"
+          aria-label={tasksCollapsed ? "展开任务列表" : "收起任务列表"}
+          on:mousedown={(event) => event.stopPropagation()}
+          on:click={toggleTasks}
+        >
+          <span aria-hidden="true"></span>
+        </button>
+      {/if}
+      <button
+        class="pet-action-button main-window-button"
+        type="button"
+        aria-label="打开主窗口"
+        on:mousedown={(event) => event.stopPropagation()}
+        on:click={openMain}
+      >
+        <span aria-hidden="true"></span>
+      </button>
+      <button
+        class="pet-action-button whip-button"
+        type="button"
+        aria-label="抽鞭子"
+        title="抽鞭子"
+        on:mousedown={(event) => event.stopPropagation()}
+        on:click={whipPet}
+      >
+        <span aria-hidden="true"></span>
+      </button>
+      {#if hasCompletedActivities}
+        <button
+          class="pet-action-button clear-completed-button"
+          type="button"
+          aria-label="移除全部已完成任务"
+          title="移除全部已完成任务"
+          on:mousedown={(event) => event.stopPropagation()}
+          on:click={clearCompletedActivities}
+        >
+          <span aria-hidden="true"></span>
+        </button>
+      {/if}
+    </div>
     {#key whipAnimationKey}
       <svg class="whip-animation whip-svg" class:active={whipAnimating} viewBox="0 0 460 340" aria-hidden="true">
         <defs>
@@ -723,18 +772,6 @@
       status={primary?.status ?? "idle"}
       scale={Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4)}
     />
-    {#if hasActivities}
-      <button
-        class="fold-button"
-        class:collapsed={tasksCollapsed}
-        type="button"
-        aria-label={tasksCollapsed ? "展开任务列表" : "收起任务列表"}
-        on:mousedown={(event) => event.stopPropagation()}
-        on:click={toggleTasks}
-      >
-        <span aria-hidden="true"></span>
-      </button>
-    {/if}
     {#if actionNotice}
       <span class="pet-notice">{actionNotice}</span>
     {/if}

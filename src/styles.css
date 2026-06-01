@@ -1776,13 +1776,20 @@ input[type="time"] {
   pointer-events: none;
 }
 
-.main-window-button {
+.pet-action-rail {
   position: absolute;
-  top: 36px;
-  right: -34px;
+  top: -2px;
+  right: -31px;
+  z-index: 5;
   display: grid;
-  width: 27px;
-  height: 27px;
+  gap: 3px;
+  pointer-events: auto;
+}
+
+.pet-action-button {
+  display: grid;
+  width: 25px;
+  height: 25px;
   place-items: center;
   border: 1px solid var(--pet-border);
   border-radius: 50%;
@@ -1794,7 +1801,7 @@ input[type="time"] {
   transition: transform 160ms ease, background 160ms ease;
 }
 
-.main-window-button:hover {
+.pet-action-button:hover {
   transform: translateY(-1px);
 }
 
@@ -1834,25 +1841,7 @@ input[type="time"] {
 }
 
 .whip-button {
-  position: absolute;
-  top: 69px;
-  right: -34px;
-  display: grid;
-  width: 27px;
-  height: 27px;
-  place-items: center;
-  border: 1px solid var(--pet-border);
-  border-radius: 50%;
-  background: var(--pet-button-bg);
-  box-shadow: 0 4px 11px var(--pet-shadow);
-  backdrop-filter: blur(10px);
-  cursor: pointer;
-  pointer-events: auto;
-  transition: transform 160ms ease, background 160ms ease;
-}
-
-.whip-button:hover {
-  transform: translateY(-1px);
+  color: #8b95aa;
 }
 
 .whip-button span {
@@ -1885,6 +1874,41 @@ input[type="time"] {
   border-left: 2px solid #8b95aa;
   border-radius: 10px 0 0;
   transform: rotate(-24deg);
+}
+
+.clear-completed-button span {
+  position: relative;
+  display: block;
+  width: 12px;
+  height: 13px;
+  border: 1.8px solid #8b95aa;
+  border-top: 0;
+  border-radius: 1px 1px 3px 3px;
+  transform: translateY(1px);
+}
+
+.clear-completed-button span::before {
+  content: "";
+  position: absolute;
+  left: -2px;
+  top: -4px;
+  width: 14px;
+  height: 1.8px;
+  border-radius: 999px;
+  background: #8b95aa;
+}
+
+.clear-completed-button span::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -7px;
+  width: 6px;
+  height: 3px;
+  border: 1.8px solid #8b95aa;
+  border-bottom: 0;
+  border-radius: 3px 3px 0 0;
+  transform: translateX(-50%);
 }
 
 .whip-animation {
@@ -2133,21 +2157,7 @@ input[type="time"] {
 }
 
 .fold-button {
-  position: absolute;
-  top: 3px;
-  right: -34px;
-  display: grid;
-  width: 27px;
-  height: 27px;
-  place-items: center;
-  border: 1px solid var(--pet-border);
-  border-radius: 50%;
-  background: var(--pet-button-bg);
-  box-shadow: 0 4px 11px var(--pet-shadow);
-  backdrop-filter: blur(10px);
-  cursor: pointer;
-  pointer-events: auto;
-  transition: transform 160ms ease, background 160ms ease;
+  color: #8b95aa;
 }
 
 .fold-button span {
