@@ -1,4 +1,5 @@
 use crate::agents::AgentId;
+use crate::app_log::PerfSpan;
 use crate::events::PetEvent;
 use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
@@ -210,21 +211,37 @@ pub fn save_usage_store_to(path: &Path, store: &TokenUsageStore) -> io::Result<(
 }
 
 pub fn refresh_known_sources(store: &mut TokenUsageStore) -> io::Result<usize> {
+    let span = PerfSpan::start("token_usage.refresh_known_sources");
     let mut changed = 0;
+    let mut audit_transcript_files = 0;
+    let mut recursive_transcript_files = 0;
+    let mut transcript_bytes = 0_u64;
     for (provider, path) in default_audit_paths() {
-        for path in transcript_paths_from_audit(&path)? {
+        let paths = transcript_paths_from_audit(&path)?;
+        audit_transcript_files += paths.len();
+        for path in paths {
+            transcript_bytes += path.metadata().map(|metadata| metadata.len()).unwrap_or(0);
             if refresh_transcript_usage(store, provider, &path, None)? {
                 changed += 1;
             }
         }
     }
     for (provider, root) in default_recursive_source_roots() {
-        for path in jsonl_files_under(&root)? {
+        let paths = jsonl_files_under(&root)?;
+        recursive_transcript_files += paths.len();
+        for path in paths {
+            transcript_bytes += path.metadata().map(|metadata| metadata.len()).unwrap_or(0);
             if refresh_transcript_usage(store, provider, &path, None)? {
                 changed += 1;
             }
         }
     }
+    span.finish_ok(&[
+        ("changed", changed.to_string()),
+        ("audit_transcript_files", audit_transcript_files.to_string()),
+        ("recursive_transcript_files", recursive_transcript_files.to_string()),
+        ("transcript_bytes", transcript_bytes.to_string()),
+    ]);
     Ok(changed)
 }
 

@@ -1,6 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AgentView, AppSettings, PetEvent, PetLibraryView, SubjectCutoutResult, TokenUsageSummary } from "./types";
 
+export interface PerfEventPayload {
+  name: string;
+  durationMs: number;
+  status?: "ok" | "error";
+  fields?: Record<string, string | number | boolean | null>;
+  error?: string;
+}
+
 export async function listAgents(): Promise<AgentView[]> {
   return invoke<AgentView[]>("list_agents");
 }
@@ -77,6 +85,10 @@ export async function recentEvents(): Promise<PetEvent[]> {
 
 export async function tokenUsageSummary(): Promise<TokenUsageSummary> {
   return invoke<TokenUsageSummary>("token_usage_summary");
+}
+
+export async function recordPerfEvent(event: PerfEventPayload): Promise<void> {
+  return invoke<void>("record_perf_event", { event });
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

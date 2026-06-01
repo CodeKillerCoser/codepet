@@ -6,6 +6,7 @@ import {
   getLaunchAtLoginEnabled,
   importPetImage,
   recentEvents,
+  recordPerfEvent,
   setLaunchAtLoginEnabled,
   tokenUsageSummary,
   updatePetImagePixelSize,
@@ -201,6 +202,30 @@ describe("tokenUsageSummary", () => {
     await expect(tokenUsageSummary()).resolves.toEqual(summary);
 
     expect(invoke).toHaveBeenCalledWith("token_usage_summary");
+  });
+});
+
+describe("recordPerfEvent", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("invokes the desktop perf logging command", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+
+    await recordPerfEvent({
+      name: "frontend.main.refresh",
+      durationMs: 42.6,
+      fields: { agents: 4 },
+    });
+
+    expect(invoke).toHaveBeenCalledWith("record_perf_event", {
+      event: {
+        name: "frontend.main.refresh",
+        durationMs: 42.6,
+        fields: { agents: 4 },
+      },
+    });
   });
 });
 

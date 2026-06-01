@@ -142,6 +142,11 @@ fn token_usage_summary() -> Result<TokenUsageSummary, String> {
 }
 
 #[tauri::command]
+fn record_perf_event(event: app_log::PerfEvent) {
+    app_log::record_perf_event(event);
+}
+
+#[tauri::command]
 fn activate_activity(state: tauri::State<'_, SharedState>, event_id: String) -> Result<(), String> {
     let event = state
         .event_by_id(&event_id)
@@ -240,6 +245,7 @@ pub fn run() {
     if let Err(error) = app_log::init_app_logging() {
         eprintln!("failed to initialize Code Pet file logging: {error}");
     }
+    app_log::log_app_start_banner();
     app_log::info("app", "tauri builder initializing");
 
     let builder = tauri::Builder::default()
@@ -259,44 +265,53 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(SharedState::default())
         .setup(|app| {
+            let setup_span = app_log::PerfSpan::start("startup.total");
             app_log::info("startup", "setup started");
             let handle = app.handle().clone();
             let state = app.state::<SharedState>().inner().clone();
+            let overlay_span = app_log::PerfSpan::start("startup.configure_pet_overlay_window");
             configure_pet_overlay_window(&handle);
+            overlay_span.finish_ok(&[]);
             app_log::info("startup", "pet overlay window configured");
+            let agents_span = app_log::PerfSpan::start("startup.list_agent_views");
             match agent_control::list_agent_views() {
                 Ok(views) => {
+                    agents_span.finish_ok(&[("agents", views.len().to_string())]);
                     app_log::info("startup", &format!("agent views loaded count={}", views.len()));
                     state.set_agents(views);
                 }
                 Err(error) => {
+                    agents_span.finish_error(&error.to_string(), &[]);
                     app_log::error("startup", &format!("failed to list agent views error={error}"));
                     let _ = handle.emit("collector-error", error.to_string());
                 }
             }
+            let spool_span = app_log::PerfSpan::start("startup.replay_spooled_events");
             match collector::replay_default_spooled_events(&state) {
-                Ok(count) => app_log::info("startup", &format!("spooled events replayed count={count}")),
+                Ok(count) => {
+                    spool_span.finish_ok(&[("events", count.to_string())]);
+                    app_log::info("startup", &format!("spooled events replayed count={count}"));
+                }
                 Err(error) => {
+                    spool_span.finish_error(&error.to_string(), &[]);
                     app_log::error("startup", &format!("failed to replay spooled events error={error}"));
                     let _ = handle.emit("collector-error", error.to_string());
                 }
             }
-            match codex_audit::replay_default_codex_audit_events(&state) {
-                Ok(count) => app_log::info("startup", &format!("codex audit events replayed count={count}")),
-                Err(error) => {
-                    app_log::error("startup", &format!("failed to replay codex audit events error={error}"));
-                    let _ = handle.emit("collector-error", error.to_string());
-                }
-            }
             let usage_handle = handle.clone();
-            tauri::async_runtime::spawn_blocking(move || match token_usage::refresh_default_usage_summary() {
-                Ok(summary) => {
-                    crate::app_log::info("token_usage", "default usage summary refreshed");
-                    let _ = usage_handle.emit("token-usage-updated", summary);
-                }
-                Err(error) => {
-                    crate::app_log::error("token_usage", &format!("failed to refresh default usage summary error={error}"));
-                    let _ = usage_handle.emit("collector-error", error.to_string());
+            tauri::async_runtime::spawn_blocking(move || {
+                let span = crate::app_log::PerfSpan::start("token_usage.refresh_default_usage_summary");
+                match token_usage::refresh_default_usage_summary() {
+                    Ok(summary) => {
+                        span.finish_ok(&[("sessions", summary.sessions.len().to_string())]);
+                        crate::app_log::info("token_usage", "default usage summary refreshed");
+                        let _ = usage_handle.emit("token-usage-updated", summary);
+                    }
+                    Err(error) => {
+                        span.finish_error(&error.to_string(), &[]);
+                        crate::app_log::error("token_usage", &format!("failed to refresh default usage summary error={error}"));
+                        let _ = usage_handle.emit("collector-error", error.to_string());
+                    }
                 }
             });
             let audit_handle = handle.clone();
@@ -304,15 +319,34 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 codex_audit::watch_default_codex_audit(audit_state, audit_handle).await;
             });
+            let collector_handle = handle.clone();
+            let collector_state = state.clone();
             tauri::async_runtime::spawn(async move {
                 crate::app_log::info("collector", "collector starting");
-                if let Err(error) = collector::run_collector(state, handle.clone()).await {
+                if let Err(error) = collector::run_collector(collector_state, collector_handle.clone()).await {
                     crate::app_log::error("collector", &format!("collector exited error={error}"));
-                    let _ = handle.emit("collector-error", error.to_string());
-                    handle.exit(1);
+                    let _ = collector_handle.emit("collector-error", error.to_string());
+                    collector_handle.exit(1);
                 }
             });
             app_log::info("startup", "setup finished");
+            setup_span.finish_ok(&[]);
+            let replay_handle = handle.clone();
+            let replay_state = state.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let codex_span = crate::app_log::PerfSpan::start("startup.replay_codex_audit_events");
+                match codex_audit::replay_default_codex_audit_events(&replay_state) {
+                    Ok(count) => {
+                        codex_span.finish_ok(&[("events", count.to_string())]);
+                        crate::app_log::info("startup", &format!("codex audit events replayed count={count}"));
+                    }
+                    Err(error) => {
+                        codex_span.finish_error(&error.to_string(), &[]);
+                        crate::app_log::error("startup", &format!("failed to replay codex audit events error={error}"));
+                        let _ = replay_handle.emit("collector-error", error.to_string());
+                    }
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -331,6 +365,7 @@ pub fn run() {
             cut_out_image_subject,
             recent_events,
             token_usage_summary,
+            record_perf_event,
             activate_activity,
             send_activity_reply,
             resolve_activity_approval,

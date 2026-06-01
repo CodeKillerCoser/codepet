@@ -1,8 +1,10 @@
 use code_pet_lib::app_log::{
-    append_log_line_to, code_pet_data_dir, log_file_path, rotate_log_file_for_date_if_needed,
-    rotate_log_file_if_needed,
+    append_app_start_banner_to, append_log_file_header_to, append_log_line_to,
+    append_perf_event_to, code_pet_data_dir, log_file_path, rotate_log_file_for_date_if_needed,
+    rotate_log_file_if_needed, PerfEvent,
 };
 use chrono::NaiveDate;
+use std::collections::BTreeMap;
 
 #[test]
 fn log_file_lives_under_code_pet_logs_directory() {
@@ -95,4 +97,62 @@ fn does_not_overwrite_existing_date_archives() {
 
     assert_eq!(std::fs::read_to_string(log_dir.join("code-pet.2026-05-30.log")).unwrap(), "first archive");
     assert_eq!(std::fs::read_to_string(log_dir.join("code-pet.2026-05-30.1.log")).unwrap(), "second archive");
+}
+
+#[test]
+fn appends_perf_events_as_parseable_key_value_lines() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("logs").join("code-pet.log");
+    let mut fields = BTreeMap::new();
+    fields.insert("events".to_string(), "42".into());
+    fields.insert("audit_bytes".to_string(), "27946907".into());
+
+    append_perf_event_to(
+        &path,
+        &PerfEvent {
+            name: "startup.codex_audit_replay".to_string(),
+            duration_ms: 1384.4,
+            status: Some("ok".to_string()),
+            fields,
+            error: None,
+        },
+    )
+    .unwrap();
+
+    let text = std::fs::read_to_string(path).unwrap();
+    assert!(text.contains("[perf]"));
+    assert!(text.contains("name=startup.codex_audit_replay"));
+    assert!(text.contains("status=ok"));
+    assert!(text.contains("duration_ms=1384"));
+    assert!(text.contains("events=42"));
+    assert!(text.contains("audit_bytes=27946907"));
+}
+
+#[test]
+fn app_start_banner_is_visually_distinct_from_log_file_header() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("logs").join("code-pet.log");
+
+    append_app_start_banner_to(&path).unwrap();
+
+    let text = std::fs::read_to_string(path).unwrap();
+    assert!(text.contains("==================== CODE PET APP START ===================="));
+    assert!(text.contains("version="));
+    assert!(text.contains("pid="));
+    assert!(!text.contains("CODE PET LOG FILE OPENED"));
+}
+
+#[test]
+fn log_file_header_marks_new_files_without_looking_like_app_start() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("logs").join("code-pet.log");
+
+    append_log_file_header_to(&path, "rotated_by_date").unwrap();
+
+    let text = std::fs::read_to_string(path).unwrap();
+    assert!(text.contains("==================== CODE PET LOG FILE OPENED ===================="));
+    assert!(text.contains("reason=rotated_by_date"));
+    assert!(text.contains("version="));
+    assert!(text.contains("pid="));
+    assert!(!text.contains("CODE PET APP START"));
 }

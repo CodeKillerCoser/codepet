@@ -3,7 +3,7 @@
   import { LogicalPosition, LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
   import { availableMonitors, getCurrentWindow, primaryMonitor } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
-  import { activateActivity, getAppSettings, openMainWindow, recentEvents, resolveActivityApproval, sendActivityReply } from "./lib/api";
+  import { activateActivity, getAppSettings, openMainWindow, recentEvents, recordPerfEvent, resolveActivityApproval, sendActivityReply } from "./lib/api";
   import { activityCapabilities, activityKey, cardEndTime, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
   import { runningBubbleStyle } from "./lib/gradientColor";
   import PetAvatar from "./lib/PetAvatar.svelte";
@@ -86,6 +86,7 @@
   }
 
   onMount(() => {
+    const mountedAt = performance.now();
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     systemDark = media.matches;
     const syncTheme = () => {
@@ -142,7 +143,17 @@
     void (async () => {
       try {
         settings = await getAppSettings();
+        void recordPerfEvent({
+          name: "frontend.pet.get_settings",
+          durationMs: performance.now() - mountedAt,
+        }).catch(() => {});
       } catch (error) {
+        void recordPerfEvent({
+          name: "frontend.pet.get_settings",
+          status: "error",
+          durationMs: performance.now() - mountedAt,
+          error: String(error),
+        }).catch(() => {});
         console.error("failed to load pet settings", error);
       }
       if (disposed) {
@@ -150,6 +161,11 @@
       }
 
       ready = true;
+      void recordPerfEvent({
+        name: "frontend.pet.ready",
+        durationMs: performance.now() - mountedAt,
+        fields: { activities: activities.length },
+      }).catch(() => {});
       void syncLatestFromRecent(false).catch((error) => {
         console.error("failed to load recent pet events", error);
       });
@@ -174,7 +190,19 @@
   });
 
   async function syncLatestFromRecent(ringOnNewEvent: boolean) {
+    const startedAt = performance.now();
     const nextEvents = await recentEvents();
+    const durationMs = performance.now() - startedAt;
+    if (durationMs >= 100 || nextEvents.length > 0) {
+      void recordPerfEvent({
+        name: "frontend.pet.sync_recent_events",
+        durationMs,
+        fields: {
+          events: nextEvents.length,
+          ringOnNewEvent,
+        },
+      }).catch(() => {});
+    }
     const unseenEvents = nextEvents.filter((event) => !seenEventIds.has(event.id));
     applyIncomingEvents(unseenEvents);
     const next = nextEvents.at(-1) ?? null;

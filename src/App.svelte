@@ -24,7 +24,7 @@
     Volume2,
   } from "@lucide/svelte";
   import { onMount } from "svelte";
-  import { collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, listAgents, listPets, recentEvents, selectPet, setAgentEnabled, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, listAgents, listPets, recentEvents, recordPerfEvent, selectPet, setAgentEnabled, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
   import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
@@ -149,14 +149,15 @@
 
   async function refresh() {
     error = "";
+    const startedAt = performance.now();
     try {
       const [nextAgents, nextEvents, nextEndpoint, nextPetLibrary, nextUsage, nextLaunchAtLogin] = await Promise.all([
-        listAgents(),
-        recentEvents(),
-        collectorEndpoint(),
-        listPets(),
-        tokenUsageSummary(),
-        getLaunchAtLoginEnabled(),
+        measureFrontendPerf("frontend.main.list_agents", () => listAgents()),
+        measureFrontendPerf("frontend.main.recent_events", () => recentEvents()),
+        measureFrontendPerf("frontend.main.collector_endpoint", () => collectorEndpoint()),
+        measureFrontendPerf("frontend.main.list_pets", () => listPets()),
+        measureFrontendPerf("frontend.main.token_usage_summary", () => tokenUsageSummary()),
+        measureFrontendPerf("frontend.main.get_launch_at_login", () => getLaunchAtLoginEnabled()),
       ]);
       agents = nextAgents;
       events = mergeEventFeed(events, nextEvents);
@@ -164,9 +165,41 @@
       petLibrary = nextPetLibrary;
       usage = nextUsage;
       launchAtLogin = nextLaunchAtLogin;
-      settings = normalizeSettings(await getAppSettings());
+      settings = normalizeSettings(await measureFrontendPerf("frontend.main.get_settings", () => getAppSettings()));
+      void recordPerfEvent({
+        name: "frontend.main.refresh",
+        durationMs: performance.now() - startedAt,
+        fields: {
+          agents: nextAgents.length,
+          events: nextEvents.length,
+          pets: nextPetLibrary.pets.length,
+        },
+      }).catch(() => {});
     } catch (currentError) {
+      void recordPerfEvent({
+        name: "frontend.main.refresh",
+        status: "error",
+        durationMs: performance.now() - startedAt,
+        error: String(currentError),
+      }).catch(() => {});
       error = String(currentError);
+    }
+  }
+
+  async function measureFrontendPerf<T>(name: string, task: () => Promise<T>): Promise<T> {
+    const startedAt = performance.now();
+    try {
+      const value = await task();
+      void recordPerfEvent({ name, durationMs: performance.now() - startedAt }).catch(() => {});
+      return value;
+    } catch (currentError) {
+      void recordPerfEvent({
+        name,
+        status: "error",
+        durationMs: performance.now() - startedAt,
+        error: String(currentError),
+      }).catch(() => {});
+      throw currentError;
     }
   }
 

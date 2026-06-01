@@ -1,4 +1,5 @@
 use crate::agents::AgentId;
+use crate::app_log::PerfSpan;
 use crate::events::{frontend_event, normalize_hook_payload, PetEvent, PetEventKind, TaskStatus};
 use crate::state::SharedState;
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
@@ -92,10 +93,24 @@ fn replay_recent_codex_audit_events_with_titles(
         return Ok(0);
     }
 
+    let read_span = PerfSpan::start("startup.codex_audit.read_audit");
     let text = fs::read_to_string(audit_path)?;
+    let audit_bytes = text.len();
+    let audit_lines = text.lines().count();
+    read_span.finish_ok(&[
+        ("audit_bytes", audit_bytes.to_string()),
+        ("audit_lines", audit_lines.to_string()),
+    ]);
+    let recent_span = PerfSpan::start("startup.codex_audit.collect_recent");
     let mut lines = text.lines().rev().take(max_lines).collect::<Vec<_>>();
     lines.reverse();
+    let recent_lines = lines.len();
+    recent_span.finish_ok(&[
+        ("max_lines", max_lines.to_string()),
+        ("recent_lines", recent_lines.to_string()),
+    ]);
 
+    let parse_span = PerfSpan::start("startup.codex_audit.parse_recent");
     let mut imported = 0;
     let mut hidden_internal_sessions = HashSet::new();
     let mut transcript_cache = HashMap::new();
@@ -109,6 +124,14 @@ fn replay_recent_codex_audit_events_with_titles(
             imported += 1;
         }
     }
+    let transcript_files = transcript_cache.len();
+    let transcript_bytes = transcript_cache.values().map(|text| text.len()).sum::<usize>();
+    parse_span.finish_ok(&[
+        ("imported", imported.to_string()),
+        ("recent_lines", recent_lines.to_string()),
+        ("transcript_files", transcript_files.to_string()),
+        ("transcript_bytes", transcript_bytes.to_string()),
+    ]);
     Ok(imported)
 }
 
