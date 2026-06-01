@@ -67,13 +67,13 @@ fn update_app_settings(app: AppHandle, settings: AppSettings) -> Result<AppSetti
 }
 
 #[tauri::command]
-fn get_launch_at_login_enabled() -> bool {
-    autostart::launch_agent_enabled()
+fn get_launch_at_login_enabled(app: AppHandle) -> Result<bool, String> {
+    autostart::launch_at_login_enabled(&app)
 }
 
 #[tauri::command]
-fn set_launch_at_login_enabled(enabled: bool) -> Result<bool, String> {
-    autostart::set_launch_agent_enabled(enabled).map_err(|error| error.to_string())
+fn set_launch_at_login_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    autostart::set_launch_at_login_enabled(&app, enabled)
 }
 
 #[tauri::command]
@@ -242,13 +242,18 @@ pub fn run() {
     }
     app_log::info("app", "tauri builder initializing");
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             crate::app_log::info("app", &format!("single instance requested args={} cwd={}", args.len(), cwd));
             raise_existing_windows(app);
             let _ = app.emit("single-instance", serde_json::json!({ "args": args, "cwd": cwd }));
-        }))
-        .plugin(tauri_nspanel::init())
+        }));
+
+    install_platform_plugins(builder)
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
@@ -336,18 +341,17 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Code Pet")
-        .run(|app, event| {
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen {
-                has_visible_windows,
-                ..
-            } = event
-            {
-                if should_restore_main_on_reopen(has_visible_windows) {
-                    let _ = open_main_window(app.clone());
-                }
-            }
-        });
+        .run(handle_run_event);
+}
+
+#[cfg(target_os = "macos")]
+fn install_platform_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder.plugin(tauri_nspanel::init())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn install_platform_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder
 }
 
 #[cfg(target_os = "macos")]
@@ -360,6 +364,23 @@ fn configure_pet_overlay_window(app: &AppHandle) {
 #[cfg(not(target_os = "macos"))]
 fn configure_pet_overlay_window(_app: &AppHandle) {}
 
+#[cfg(target_os = "macos")]
+fn handle_run_event(app: &AppHandle, event: tauri::RunEvent) {
+    if let tauri::RunEvent::Reopen {
+        has_visible_windows,
+        ..
+    } = event
+    {
+        if should_restore_main_on_reopen(has_visible_windows) {
+            let _ = open_main_window(app.clone());
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn handle_run_event(_app: &AppHandle, _event: tauri::RunEvent) {}
+
+#[cfg(any(target_os = "macos", test))]
 fn should_restore_main_on_reopen(_has_visible_windows: bool) -> bool {
     true
 }

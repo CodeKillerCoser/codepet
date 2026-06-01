@@ -1,12 +1,13 @@
 use crate::agents::{AgentId, AgentSpec};
+use base64::Engine;
 use serde_json::{json, Value};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
 const HOOK_SCRIPT: &str = include_str!("../hooks/code-pet-hook.mjs");
-const MANAGED_MARKER: &str = "CODE_PET_MANAGED=1";
 const SCRIPT_NAME: &str = "code-pet-hook.mjs";
+const LEGACY_MANAGED_MARKER: &str = "CODE_PET_MANAGED=1";
 
 pub fn install_hook_script() -> io::Result<PathBuf> {
     let dir = app_support_dir().join("hooks");
@@ -144,7 +145,7 @@ fn is_managed_json_entry(entry: &Value, script_path: &Path) -> bool {
         .get("command")
         .and_then(Value::as_str)
         .is_some_and(|command| {
-            command.contains(MANAGED_MARKER)
+            command.contains(LEGACY_MANAGED_MARKER)
                 || command.contains(SCRIPT_NAME)
                 || command.contains(&script_path)
         })
@@ -160,9 +161,9 @@ fn is_managed_json_entry(entry: &Value, script_path: &Path) -> bool {
                 hook.get("command")
                     .and_then(Value::as_str)
                     .is_some_and(|command| {
-                        command.contains(MANAGED_MARKER)
-                            || command.contains(SCRIPT_NAME)
-                            || command.contains(&script_path)
+                            command.contains(LEGACY_MANAGED_MARKER)
+                                || command.contains(SCRIPT_NAME)
+                                || command.contains(&script_path)
                     })
             })
         })
@@ -175,18 +176,20 @@ fn managed_command(
     forward: Option<&[String]>,
 ) -> String {
     let mut command = format!(
-        "{MANAGED_MARKER} CODE_PET_AGENT={} node {}",
-        shell_quote(agent_id),
-        shell_quote(script_path_to_str(script_path).as_ref())
+        "node {} --agent {}",
+        command_arg_quote(script_path_to_str(script_path).as_ref()),
+        command_arg_quote(agent_id)
     );
     if let Some(event) = event {
         command.push_str(" --event ");
-        command.push_str(&shell_quote(event));
+        command.push_str(&command_arg_quote(event));
     }
     if let Some(forward) = forward {
         if let Ok(encoded) = serde_json::to_string(forward) {
-            command.push_str(" --forward ");
-            command.push_str(&shell_quote(&encoded));
+            command.push_str(" --forward-b64 ");
+            command.push_str(&command_arg_quote(
+                &base64::engine::general_purpose::STANDARD.encode(encoded),
+            ));
         }
     }
     command
@@ -232,8 +235,14 @@ fn hook_timeout_ms(event: &str) -> u64 {
     hook_timeout_seconds(event) * 1000
 }
 
-fn shell_quote(value: &str) -> String {
+#[cfg(not(windows))]
+fn command_arg_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(windows)]
+fn command_arg_quote(value: &str) -> String {
+    format!("\"{}\"", value.replace('%', "%%").replace('"', "\\\""))
 }
 
 fn script_path_to_str(path: &Path) -> String {

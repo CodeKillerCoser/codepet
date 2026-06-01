@@ -229,7 +229,7 @@ fn cursor_json_hooks_use_flat_hooks_schema() {
             .iter()
             .filter(|entry| entry["command"]
                 .as_str()
-                .is_some_and(|command| command.contains("CODE_PET_AGENT='cursor'")))
+                .is_some_and(|command| command.contains("--agent 'cursor'")))
             .count(),
         1
     );
@@ -303,6 +303,11 @@ fn permission_request_hooks_are_installed_with_long_timeout() {
             managed_hook["command"]
                 .as_str()
                 .is_some_and(|command| command.contains("--event 'PermissionRequest'"))
+        );
+        assert!(
+            managed_hook["command"]
+                .as_str()
+                .is_some_and(|command| !command.contains("CODE_PET_AGENT="))
         );
     }
 }

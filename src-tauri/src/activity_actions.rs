@@ -1,5 +1,6 @@
 use crate::agents::AgentId;
 use crate::events::PetEvent;
+#[cfg(target_os = "macos")]
 use std::io::Write;
 use std::process::Command;
 
@@ -27,6 +28,7 @@ pub enum ReplyStrategy {
 }
 
 pub fn activation_strategy_for_event(event: &PetEvent) -> ActivationStrategy {
+    #[cfg(target_os = "macos")]
     match event
         .source
         .as_ref()
@@ -49,6 +51,7 @@ pub fn activation_strategy_for_event(event: &PetEvent) -> ActivationStrategy {
 }
 
 pub fn activation_target_for_event(event: &PetEvent) -> ActivationTarget {
+    #[cfg(target_os = "macos")]
     if let Some(source) = &event.source {
         if let Some(bundle_id) = source.app_bundle_id.as_ref().filter(|value| !value.is_empty()) {
             return ActivationTarget::BundleId(bundle_id.clone());
@@ -77,6 +80,7 @@ pub fn reply_strategy_for_event(event: &PetEvent) -> ReplyStrategy {
         return ReplyStrategy::Unsupported;
     }
 
+    #[cfg(target_os = "macos")]
     match event
         .source
         .as_ref()
@@ -85,6 +89,11 @@ pub fn reply_strategy_for_event(event: &PetEvent) -> ReplyStrategy {
         Some("Apple_Terminal" | "Terminal" | "Terminal.app") if source_tty(event).is_some() => ReplyStrategy::Terminal,
         Some("iTerm.app" | "iTerm2" | "iTerm2.app") if source_tty(event).is_some() => ReplyStrategy::ITerm,
         _ => ReplyStrategy::Unsupported,
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        ReplyStrategy::Unsupported
     }
 }
 
@@ -109,6 +118,7 @@ pub fn send_reply_to_event(event: &PetEvent, message: &str) -> Result<(), String
     }
 }
 
+#[cfg(target_os = "macos")]
 fn target_for_terminal_program(program: &str) -> Option<ActivationTarget> {
     match program {
         "Apple_Terminal" | "Terminal" | "Terminal.app" => {
@@ -129,11 +139,17 @@ fn target_for_terminal_program(program: &str) -> Option<ActivationTarget> {
 
 fn activate_target(target: &ActivationTarget) -> Result<(), String> {
     match target {
+        #[cfg(target_os = "macos")]
         ActivationTarget::BundleId(bundle_id) => run_command("open", &["-b", bundle_id]),
+        #[cfg(not(target_os = "macos"))]
+        ActivationTarget::BundleId(_) => Err("当前平台不支持按 macOS bundle id 打开应用".to_string()),
+        #[cfg(target_os = "macos")]
         ActivationTarget::AppName(app_name) => run_osascript(&[
             format!("tell application \"{}\" to activate", escape_applescript(app_name)),
         ]),
-        ActivationTarget::Path(path) => run_command("open", &[path]),
+        #[cfg(not(target_os = "macos"))]
+        ActivationTarget::AppName(_) => Err("当前平台不支持按应用名称激活会话".to_string()),
+        ActivationTarget::Path(path) => open::that_detached(path).map_err(|error| error.to_string()),
     }
 }
 
@@ -190,15 +206,8 @@ fn paste_and_submit(message: &str) -> Result<(), String> {
 
     #[cfg(not(target_os = "macos"))]
     {
-        run_osascript(&[
-            "set previousClipboard to the clipboard".to_string(),
-            format!("set the clipboard to \"{}\"", escape_applescript(message)),
-            "delay 0.05".to_string(),
-            "tell application \"System Events\" to keystroke \"v\" using command down".to_string(),
-            "tell application \"System Events\" to key code 36".to_string(),
-            "delay 0.05".to_string(),
-            "set the clipboard to previousClipboard".to_string(),
-        ])
+        let _ = message;
+        Err("当前平台不支持自动粘贴回复".to_string())
     }
 }
 
@@ -328,6 +337,7 @@ fn run_osascript(lines: &[String]) -> Result<(), String> {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn run_command(program: &str, args: &[&str]) -> Result<(), String> {
     let output = Command::new(program)
         .args(args)

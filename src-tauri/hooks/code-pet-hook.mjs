@@ -143,7 +143,7 @@ function cursorAllowOutput() {
 }
 
 function forwardToPrevious(stdinText) {
-  const encoded = argValue("--forward");
+  const encoded = argValue("--forward") || forwardBase64Arg();
   if (!encoded) {
     return;
   }
@@ -161,6 +161,18 @@ function forwardToPrevious(stdinText) {
     });
   } catch {
     // Hook forwarding must never break the agent that invoked the hook.
+  }
+}
+
+function forwardBase64Arg() {
+  const encoded = argValue("--forward-b64");
+  if (!encoded) {
+    return undefined;
+  }
+  try {
+    return Buffer.from(encoded, "base64").toString("utf8");
+  } catch {
+    return undefined;
   }
 }
 

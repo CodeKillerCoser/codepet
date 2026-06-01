@@ -20,13 +20,12 @@ tauri-build = { version = "2", features = [] }
 axum = "0.7"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
-core-graphics = "0.25"
 dirs = "5"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = ["protocol-asset", "macos-private-api", "tray-icon"] }
-tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel.git", rev = "a3122e894383aa068ec5365a42994e3ac94ba1b6" }
+open = "5"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-shell = "2"
@@ -40,8 +39,13 @@ uuid = { version = "1", features = ["v4"] }
 tempfile = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.25"
 objc2 = "0.6.4"
 objc2-core-graphics = "0.3.2"
 objc2-core-image = "0.3.2"
 objc2-foundation = "0.3.2"
 objc2-vision = "0.3.2"
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel.git", rev = "a3122e894383aa068ec5365a42994e3ac94ba1b6" }
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-autostart = "2"
