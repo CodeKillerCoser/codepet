@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { playWhipSound, shouldPlayWhipReaction, shouldRepeatNotification, shouldRing, whipReactionDelayMs } from "./sound";
 import type { AppSettings, PetEvent } from "./types";
 
@@ -107,6 +109,24 @@ describe("shouldRepeatNotification", () => {
 describe("playWhipSound", () => {
   it("is available as a separate pet action sound", () => {
     expect(playWhipSound).toEqual(expect.any(Function));
+  });
+
+  it("uses the three bundled renamed wav resources for whip cracks", () => {
+    const root = resolve(import.meta.dirname, "../..");
+    const source = readFileSync(resolve(root, "src/lib/sound.ts"), "utf8");
+    const tauriConfig = readFileSync(resolve(root, "src-tauri/tauri.conf.json"), "utf8");
+    const resources = [
+      "resources/sounds/whip-crack.wav",
+      "resources/sounds/whip-swing.wav",
+      "resources/sounds/whip-heavy-crack.wav",
+    ];
+
+    for (const resource of resources) {
+      expect(source).toContain(resource);
+      expect(tauriConfig).toContain(resource);
+      expect(existsSync(resolve(root, "src-tauri", resource))).toBe(true);
+    }
+    expect(source).toContain("resolveResource");
   });
 });
 

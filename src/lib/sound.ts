@@ -1,8 +1,14 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { resolveResource } from "@tauri-apps/api/path";
 import { activityKey } from "./activity";
 import type { AppSettings, PetEvent, WhipReactionSound } from "./types";
 
 const whipReactionDelay = 180;
+const whipSoundResources = [
+  "resources/sounds/whip-crack.wav",
+  "resources/sounds/whip-swing.wav",
+  "resources/sounds/whip-heavy-crack.wav",
+] as const;
 
 export function shouldRing(settings: AppSettings, event: PetEvent): boolean {
   if (!event.shouldRing || settings.notifications.sound === "silent") {
@@ -65,39 +71,15 @@ export async function playNotificationSound(settings: AppSettings): Promise<void
 }
 
 export async function playWhipSound(settings?: AppSettings | null): Promise<void> {
-  const audioContext = new AudioContext();
-  const startTime = audioContext.currentTime;
-  const gain = audioContext.createGain();
-  const filter = audioContext.createBiquadFilter();
-  const sampleCount = Math.floor(audioContext.sampleRate * 0.16);
-  const buffer = audioContext.createBuffer(1, sampleCount, audioContext.sampleRate);
-  const channel = buffer.getChannelData(0);
-
-  for (let index = 0; index < sampleCount; index += 1) {
-    const tail = 1 - index / sampleCount;
-    channel[index] = (Math.random() * 2 - 1) * tail * tail;
-  }
-
-  filter.type = "highpass";
-  filter.frequency.setValueAtTime(1800, startTime);
-  gain.gain.setValueAtTime(0.001, startTime);
-  gain.gain.exponentialRampToValueAtTime(0.32, startTime + 0.012);
-  gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.16);
-  filter.connect(gain);
-  gain.connect(audioContext.destination);
-
-  const crack = audioContext.createBufferSource();
-  crack.buffer = buffer;
-  crack.connect(filter);
-  crack.start(startTime);
-  crack.stop(startTime + 0.17);
-
   const reactionSound = settings?.pet.whipReactionSound ?? "none";
   const customSoundPath = settings?.pet.customWhipReactionSoundPath ?? null;
   const delayMs = whipReactionDelayMs(reactionSound, customSoundPath);
   if (delayMs > 0) {
-    scheduleWhipReactionSound(audioContext, startTime + delayMs / 1000, reactionSound, customSoundPath);
+    window.setTimeout(() => {
+      void playWhipReactionSound(reactionSound, customSoundPath);
+    }, delayMs);
   }
+  await playBuiltInWhipCrackSound();
 }
 
 export function shouldPlayWhipReaction(
@@ -133,22 +115,12 @@ export async function playWhipReactionSound(
   scheduleBuiltInWhipReaction(audioContext, startTime, sound);
 }
 
-function scheduleWhipReactionSound(
-  audioContext: AudioContext,
-  startTime: number,
-  sound: WhipReactionSound | null | undefined,
-  customSoundPath?: string | null,
-) {
-  if (sound === "custom" && customSoundPath) {
-    const audio = new Audio(convertFileSrc(customSoundPath));
-    audio.preload = "auto";
-    window.setTimeout(() => {
-      void audio.play();
-    }, Math.max(0, Math.round((startTime - audioContext.currentTime) * 1000)));
-    return;
-  }
-
-  scheduleBuiltInWhipReaction(audioContext, startTime, sound);
+async function playBuiltInWhipCrackSound(): Promise<void> {
+  const resourcePath = whipSoundResources[Math.floor(Math.random() * whipSoundResources.length)];
+  const audioPath = await resolveResource(resourcePath);
+  const audio = new Audio(convertFileSrc(audioPath));
+  audio.preload = "auto";
+  await audio.play();
 }
 
 function scheduleBuiltInWhipReaction(
