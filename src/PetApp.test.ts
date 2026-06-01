@@ -51,6 +51,9 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain("playWhipSound");
     expect(source).toContain("playWhipSound(settings)");
     expect(source).toContain("function whipPet");
+    expect(source).toContain("let whipAnimationKey = 0");
+    expect(source).toContain("whipAnimationKey += 1");
+    expect(source).toContain("{#key whipAnimationKey}");
     expect(source).toContain('aria-label="抽鞭子"');
     expect(source).toContain('class="whip-button"');
     expect(source).toContain('class="whip-animation whip-svg"');
