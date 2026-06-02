@@ -41,8 +41,8 @@
   let cursorPassthroughTimer: number | null = null;
   let cursorEventsIgnored = false;
   let cursorPassthroughInFlight = false;
-  let constrainWindowTimer: number | null = null;
-  let constrainingWindow = false;
+  let ensureWindowFrameTimer: number | null = null;
+  let ensuringWindowFrame = false;
   const petImageAlphaCache = new WeakMap<HTMLImageElement, { src: string; width: number; height: number; data: Uint8ClampedArray }>();
 
   const petWindowWidth = 360;
@@ -114,9 +114,10 @@
     let unlistenSettings: (() => void) | null = null;
     let unlistenAgentDisabled: (() => void) | null = null;
     let unlistenWindowMoved: (() => void) | null = null;
+    let unlistenWindowResized: (() => void) | null = null;
 
     void getCurrentWindow().onMoved(() => {
-      scheduleConstrainWindowToScreen();
+      scheduleEnsureWindowFrameAndBounds();
     }).then((unlisten) => {
       if (disposed) {
         unlisten();
@@ -125,6 +126,18 @@
       }
     }).catch((error) => {
       console.error("failed to watch pet window movement", error);
+    });
+
+    void getCurrentWindow().onResized(() => {
+      scheduleEnsureWindowFrameAndBounds();
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        unlistenWindowResized = unlisten;
+      }
+    }).catch((error) => {
+      console.error("failed to watch pet window resize", error);
     });
 
     void listen<PetEvent>("pet-event", async (event) => {
@@ -211,12 +224,13 @@
       unlistenSettings?.();
       unlistenAgentDisabled?.();
       unlistenWindowMoved?.();
+      unlistenWindowResized?.();
       clearRepeat();
       clearPoll();
       clearNoticeTimer();
       clearWhipTimer();
       clearCursorPassthroughTimer();
-      clearConstrainWindowTimer();
+      clearEnsureWindowFrameTimer();
       void setPetWindowCursorEventsIgnored(false);
     };
   });
@@ -377,19 +391,19 @@
     }
   }
 
-  function clearConstrainWindowTimer() {
-    if (constrainWindowTimer) {
-      window.clearTimeout(constrainWindowTimer);
-      constrainWindowTimer = null;
+  function clearEnsureWindowFrameTimer() {
+    if (ensureWindowFrameTimer) {
+      window.clearTimeout(ensureWindowFrameTimer);
+      ensureWindowFrameTimer = null;
     }
   }
 
-  function scheduleConstrainWindowToScreen() {
-    clearConstrainWindowTimer();
-    constrainWindowTimer = window.setTimeout(() => {
-      constrainWindowTimer = null;
-      void constrainWindowToScreen().catch((error) => {
-        console.error("failed to constrain pet window", error);
+  function scheduleEnsureWindowFrameAndBounds() {
+    clearEnsureWindowFrameTimer();
+    ensureWindowFrameTimer = window.setTimeout(() => {
+      ensureWindowFrameTimer = null;
+      void ensureWindowFrameAndBounds().catch((error) => {
+        console.error("failed to ensure pet window frame", error);
       });
     }, 120);
   }
@@ -572,29 +586,56 @@
     const clamped = clampWindowPositionToMonitor({ x, y }, size, monitor);
     await appWindow.setPosition(new PhysicalPosition(clamped.x, clamped.y));
 
-    await constrainWindowToScreen();
+    await ensureWindowFrameAndBounds();
   }
 
-  async function constrainWindowToScreen() {
-    if (constrainingWindow) {
+  async function ensureWindowFrameAndBounds() {
+    if (ensuringWindowFrame) {
       return;
     }
 
-    constrainingWindow = true;
+    ensuringWindowFrame = true;
     try {
-      const appWindow = getCurrentWindow();
-      const [monitors, fallbackMonitor, position, size] = await Promise.all([availableMonitors(), primaryMonitor(), appWindow.outerPosition(), appWindow.outerSize()]);
-      const monitor = monitorForWindow(position, size, monitors, fallbackMonitor);
-      if (!monitor) {
-        return;
-      }
-
-      const clamped = clampWindowPositionToMonitor(position, size, monitor);
-      if (Math.round(clamped.x) !== Math.round(position.x) || Math.round(clamped.y) !== Math.round(position.y)) {
-        await appWindow.setPosition(new PhysicalPosition(clamped.x, clamped.y));
-      }
+      await ensureWindowSize();
+      await constrainWindowToScreen();
     } finally {
-      constrainingWindow = false;
+      ensuringWindowFrame = false;
+    }
+  }
+
+  async function ensureWindowSize() {
+    const targetHeight = Math.round(desiredWindowHeight);
+    if (targetHeight <= 0) {
+      return;
+    }
+
+    const appWindow = getCurrentWindow();
+    const [currentSize, scaleFactor] = await Promise.all([
+      withTimeout(appWindow.innerSize(), 700).catch(() => null),
+      withTimeout(appWindow.scaleFactor(), 700).catch(() => 1),
+    ]);
+    if (!currentSize) {
+      return;
+    }
+
+    const currentLogicalSize = currentSize.toLogical(scaleFactor);
+    if (Math.abs(currentLogicalSize.width - petWindowWidth) > 1 || Math.abs(currentLogicalSize.height - targetHeight) > 1) {
+      await appWindow.setSize(new LogicalSize(petWindowWidth, targetHeight));
+      lastWindowHeight = targetHeight;
+    }
+  }
+
+  async function constrainWindowToScreen() {
+    const appWindow = getCurrentWindow();
+    const [monitors, fallbackMonitor, position, size] = await Promise.all([availableMonitors(), primaryMonitor(), appWindow.outerPosition(), appWindow.outerSize()]);
+    const monitor = monitorForWindow(position, size, monitors, fallbackMonitor);
+    if (!monitor) {
+      return;
+    }
+
+    const clamped = clampWindowPositionToMonitor(position, size, monitor);
+    if (Math.round(clamped.x) !== Math.round(position.x) || Math.round(clamped.y) !== Math.round(position.y)) {
+      await appWindow.setPosition(new PhysicalPosition(clamped.x, clamped.y));
     }
   }
 
@@ -676,11 +717,15 @@
 
   async function applyWindowFrame(roundedHeight: number) {
     const appWindow = getCurrentWindow();
-    const currentSize = await withTimeout(appWindow.innerSize(), 700).catch(() => null);
+    const [currentSize, scaleFactor] = await Promise.all([
+      withTimeout(appWindow.innerSize(), 700).catch(() => null),
+      withTimeout(appWindow.scaleFactor(), 700).catch(() => 1),
+    ]);
     if (requestedWindowHeight !== roundedHeight) {
       return true;
     }
-    if (currentSize && roundedHeight === lastWindowHeight && Math.abs(currentSize.height - roundedHeight) <= 1) {
+    const currentLogicalHeight = currentSize ? currentSize.toLogical(scaleFactor).height : null;
+    if (currentLogicalHeight !== null && roundedHeight === lastWindowHeight && Math.abs(currentLogicalHeight - roundedHeight) <= 1) {
       return true;
     }
 

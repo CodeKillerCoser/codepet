@@ -229,18 +229,22 @@ describe("PetApp activity helpers", () => {
     expect(source).not.toContain('<button class="drag-layer"');
   });
 
-  it("keeps the pet window inside the active monitor work area after moves", () => {
+  it("keeps the pet window frame and bounds stable after monitor moves or resizes", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
-    const constrainBlock = source.slice(source.indexOf("async function constrainWindowToScreen"), source.indexOf("function withTimeout"));
+    const ensureBlock = source.slice(source.indexOf("async function ensureWindowFrameAndBounds"), source.indexOf("function withTimeout"));
 
     expect(source).toContain("onMoved");
-    expect(source).toContain("scheduleConstrainWindowToScreen");
-    expect(source).toContain("clearConstrainWindowTimer");
-    expect(constrainBlock).toContain("outerPosition()");
-    expect(constrainBlock).toContain("outerSize()");
-    expect(constrainBlock).toContain("monitorForWindow");
-    expect(constrainBlock).toContain("clampWindowPositionToMonitor");
-    expect(constrainBlock).toContain("monitor.workArea");
+    expect(source).toContain("onResized");
+    expect(source).toContain("scheduleEnsureWindowFrameAndBounds");
+    expect(source).toContain("clearEnsureWindowFrameTimer");
+    expect(ensureBlock).toContain("ensureWindowSize");
+    expect(ensureBlock).toContain("constrainWindowToScreen");
+    expect(ensureBlock).toContain("outerPosition()");
+    expect(ensureBlock).toContain("outerSize()");
+    expect(ensureBlock).toContain("monitorForWindow");
+    expect(ensureBlock).toContain("clampWindowPositionToMonitor");
+    expect(ensureBlock).toContain("monitor.workArea");
+    expect(ensureBlock).toContain("currentSize.toLogical(scaleFactor)");
     expect(source).not.toContain("workArea.position.y >= 0");
   });
 });

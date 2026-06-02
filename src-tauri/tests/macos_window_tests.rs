@@ -18,6 +18,6 @@ fn pet_overlay_window_uses_nonactivating_panel_style() {
     let style = pet_overlay_style_mask();
 
     assert!(style.contains(NSWindowStyleMask::NonactivatingPanel));
-    assert!(style.contains(NSWindowStyleMask::Resizable));
+    assert!(!style.contains(NSWindowStyleMask::Resizable));
     assert!(!style.contains(NSWindowStyleMask::Titled));
 }

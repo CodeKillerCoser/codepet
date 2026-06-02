@@ -34,7 +34,6 @@ pub fn pet_overlay_style_mask() -> NSWindowStyleMask {
     StyleMask::empty()
         .borderless()
         .nonactivating_panel()
-        .resizable()
         .value()
 }
 
