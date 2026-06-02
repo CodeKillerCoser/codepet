@@ -159,9 +159,20 @@ fn activation_targets_warp_by_bundle_id() {
 }
 
 #[test]
-fn reply_strategy_does_not_use_codex_app_server_for_desktop_threads() {
+fn reply_strategy_uses_codex_app_server_for_desktop_threads() {
     assert_eq!(
         reply_strategy_for_event(&event(AgentId::Codex, None)),
+        ReplyStrategy::CodexAppServer
+    );
+}
+
+#[test]
+fn reply_strategy_requires_codex_thread_id() {
+    let mut codex_event = event(AgentId::Codex, None);
+    codex_event.session_id = None;
+
+    assert_eq!(
+        reply_strategy_for_event(&codex_event),
         ReplyStrategy::Unsupported
     );
 }

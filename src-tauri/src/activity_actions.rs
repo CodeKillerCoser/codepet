@@ -76,7 +76,19 @@ pub fn activation_target_for_event(event: &PetEvent) -> ActivationTarget {
 }
 
 pub fn reply_strategy_for_event(event: &PetEvent) -> ReplyStrategy {
-    if matches!(event.provider, AgentId::Codex | AgentId::Claude | AgentId::Cursor) {
+    if event.provider == AgentId::Codex {
+        return if event
+            .session_id
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+        {
+            ReplyStrategy::CodexAppServer
+        } else {
+            ReplyStrategy::Unsupported
+        };
+    }
+
+    if matches!(event.provider, AgentId::Claude | AgentId::Cursor) {
         return ReplyStrategy::Unsupported;
     }
 

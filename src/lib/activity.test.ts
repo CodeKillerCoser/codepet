@@ -582,13 +582,22 @@ describe("card display", () => {
 });
 
 describe("activityCapabilities", () => {
-  it("does not expose reply for Codex Desktop events because the public app-server path is not UI-synced", () => {
+  it("exposes reply for Codex Desktop events with a thread id", () => {
     const activity = event({
       provider: "codex",
       sessionId: "019e66f1-4d9e-78e2-8f87-f07c0251ce36",
       source: {
         appBundleId: "com.openai.codex",
       },
+    });
+
+    expect(activityCapabilities(activity).canReply).toBe(true);
+  });
+
+  it("does not expose reply for Codex events without a thread id", () => {
+    const activity = event({
+      provider: "codex",
+      sessionId: null,
     });
 
     expect(activityCapabilities(activity).canReply).toBe(false);
@@ -643,12 +652,12 @@ describe("activityCapabilities", () => {
     expect(activityCapabilities(event({ provider: "qoder", status: "running" })).canApprove).toBe(false);
   });
 
-  it("does not expose approval controls for Codex permission requests", () => {
+  it("exposes approval controls for Codex permission requests", () => {
     const activity = event({
       provider: "codex",
       status: "waiting-approval",
     });
 
-    expect(activityCapabilities(activity).canApprove).toBe(false);
+    expect(activityCapabilities(activity).canApprove).toBe(true);
   });
 });

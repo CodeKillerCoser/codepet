@@ -156,6 +156,14 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain("{#if capabilities.canReply && replyingToId !== activity.id}");
   });
 
+  it("renders approval actions for waiting approval activities", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+
+    expect(source).toContain("{#if capabilities.canApprove}");
+    expect(source).toContain('on:click={(event) => approve(event, activity, "allow")}');
+    expect(source).toContain('on:click={(event) => approve(event, activity, "deny")}');
+  });
+
   it("allows dismissing activities in any status", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const titleRowBlock = source.slice(source.indexOf('<div class="status-title-row">'), source.indexOf('<button class="status-open" type="button"'));
