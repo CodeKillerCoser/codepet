@@ -181,11 +181,10 @@ fn resolve_activity_approval(
     behavior: ApprovalBehavior,
     message: Option<String>,
 ) -> Result<(), String> {
-    if state.resolve_approval(&event_id, ApprovalDecision { behavior, message }) {
-        Ok(())
-    } else {
-        Err(format!("approval not found: {event_id}"))
-    }
+    let event = state
+        .event_by_id(&event_id)
+        .ok_or_else(|| format!("approval not found: {event_id}"))?;
+    activity_actions::resolve_approval_for_event(&state, &event, ApprovalDecision { behavior, message })
 }
 
 #[tauri::command]

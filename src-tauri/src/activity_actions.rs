@@ -1,5 +1,6 @@
 use crate::agents::AgentId;
 use crate::events::PetEvent;
+use crate::state::{ApprovalDecision, SharedState};
 #[cfg(target_os = "macos")]
 use std::io::Write;
 use std::process::Command;
@@ -25,6 +26,144 @@ pub enum ReplyStrategy {
     ITerm,
     AccessibilityPaste,
     Unsupported,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ApprovalStrategy {
+    CollectorWait,
+    Unsupported,
+}
+
+trait AgentInteractionDriver {
+    fn reply_strategy(&self, event: &PetEvent) -> ReplyStrategy;
+
+    fn approval_strategy(&self, event: &PetEvent) -> ApprovalStrategy {
+        let _ = event;
+        ApprovalStrategy::Unsupported
+    }
+
+    fn send_reply(&self, event: &PetEvent, message: &str) -> Result<(), String> {
+        match self.reply_strategy(event) {
+            ReplyStrategy::CodexAppServer => crate::codex_app_server::send_reply(event, message),
+            ReplyStrategy::Terminal => send_terminal_reply(event, message),
+            ReplyStrategy::ITerm => send_iterm_reply(event, message),
+            ReplyStrategy::AccessibilityPaste => {
+                activate_event(event)?;
+                paste_and_submit(message)
+            }
+            ReplyStrategy::Unsupported => Err("当前来源不支持可靠回复，请打开原会话输入".to_string()),
+        }
+    }
+
+    fn resolve_approval(
+        &self,
+        state: &SharedState,
+        event: &PetEvent,
+        decision: ApprovalDecision,
+    ) -> Result<(), String> {
+        match self.approval_strategy(event) {
+            ApprovalStrategy::CollectorWait => {
+                if state.resolve_approval(&event.id, decision) {
+                    Ok(())
+                } else {
+                    Err(format!("approval not found: {}", event.id))
+                }
+            }
+            ApprovalStrategy::Unsupported => Err("当前来源不支持审批".to_string()),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CodexRemoteDriver;
+
+#[derive(Clone, Copy)]
+struct QoderDriver;
+
+#[derive(Clone, Copy)]
+struct DefaultDriver;
+
+enum AgentInteraction {
+    CodexRemote(CodexRemoteDriver),
+    Qoder(QoderDriver),
+    Default(DefaultDriver),
+}
+
+impl AgentInteractionDriver for CodexRemoteDriver {
+    fn reply_strategy(&self, event: &PetEvent) -> ReplyStrategy {
+        if event
+            .session_id
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+        {
+            ReplyStrategy::CodexAppServer
+        } else {
+            ReplyStrategy::Unsupported
+        }
+    }
+
+    fn approval_strategy(&self, event: &PetEvent) -> ApprovalStrategy {
+        collector_approval_strategy(event)
+    }
+}
+
+impl AgentInteractionDriver for QoderDriver {
+    fn reply_strategy(&self, event: &PetEvent) -> ReplyStrategy {
+        terminal_reply_strategy(event)
+    }
+
+    fn approval_strategy(&self, event: &PetEvent) -> ApprovalStrategy {
+        collector_approval_strategy(event)
+    }
+}
+
+impl AgentInteractionDriver for DefaultDriver {
+    fn reply_strategy(&self, _event: &PetEvent) -> ReplyStrategy {
+        ReplyStrategy::Unsupported
+    }
+
+    fn approval_strategy(&self, event: &PetEvent) -> ApprovalStrategy {
+        collector_approval_strategy(event)
+    }
+}
+
+impl AgentInteractionDriver for AgentInteraction {
+    fn reply_strategy(&self, event: &PetEvent) -> ReplyStrategy {
+        match self {
+            Self::CodexRemote(driver) => driver.reply_strategy(event),
+            Self::Qoder(driver) => driver.reply_strategy(event),
+            Self::Default(driver) => driver.reply_strategy(event),
+        }
+    }
+
+    fn approval_strategy(&self, event: &PetEvent) -> ApprovalStrategy {
+        match self {
+            Self::CodexRemote(driver) => driver.approval_strategy(event),
+            Self::Qoder(driver) => driver.approval_strategy(event),
+            Self::Default(driver) => driver.approval_strategy(event),
+        }
+    }
+
+    fn send_reply(&self, event: &PetEvent, message: &str) -> Result<(), String> {
+        match self {
+            Self::CodexRemote(driver) => driver.send_reply(event, message),
+            Self::Qoder(driver) => driver.send_reply(event, message),
+            Self::Default(driver) => driver.send_reply(event, message),
+        }
+    }
+
+    fn resolve_approval(
+        &self,
+        state: &SharedState,
+        event: &PetEvent,
+        decision: ApprovalDecision,
+    ) -> Result<(), String> {
+        match self {
+            Self::CodexRemote(driver) => driver.resolve_approval(state, event, decision),
+            Self::Qoder(driver) => driver.resolve_approval(state, event, decision),
+            Self::Default(driver) => driver.resolve_approval(state, event, decision),
+        }
+    }
 }
 
 pub fn activation_strategy_for_event(event: &PetEvent) -> ActivationStrategy {
@@ -76,22 +215,14 @@ pub fn activation_target_for_event(event: &PetEvent) -> ActivationTarget {
 }
 
 pub fn reply_strategy_for_event(event: &PetEvent) -> ReplyStrategy {
-    if event.provider == AgentId::Codex {
-        return if event
-            .session_id
-            .as_deref()
-            .is_some_and(|value| !value.is_empty())
-        {
-            ReplyStrategy::CodexAppServer
-        } else {
-            ReplyStrategy::Unsupported
-        };
-    }
+    interaction_for_event(event).reply_strategy(event)
+}
 
-    if matches!(event.provider, AgentId::Claude | AgentId::Cursor) {
-        return ReplyStrategy::Unsupported;
-    }
+pub fn approval_strategy_for_event(event: &PetEvent) -> ApprovalStrategy {
+    interaction_for_event(event).approval_strategy(event)
+}
 
+fn terminal_reply_strategy(event: &PetEvent) -> ReplyStrategy {
     #[cfg(target_os = "macos")]
     match event
         .source
@@ -105,6 +236,7 @@ pub fn reply_strategy_for_event(event: &PetEvent) -> ReplyStrategy {
 
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = event;
         ReplyStrategy::Unsupported
     }
 }
@@ -118,15 +250,30 @@ pub fn activate_event(event: &PetEvent) -> Result<(), String> {
 }
 
 pub fn send_reply_to_event(event: &PetEvent, message: &str) -> Result<(), String> {
-    match reply_strategy_for_event(event) {
-        ReplyStrategy::CodexAppServer => crate::codex_app_server::send_reply(event, message),
-        ReplyStrategy::Terminal => send_terminal_reply(event, message),
-        ReplyStrategy::ITerm => send_iterm_reply(event, message),
-        ReplyStrategy::AccessibilityPaste => {
-            activate_event(event)?;
-            paste_and_submit(message)
-        }
-        ReplyStrategy::Unsupported => Err("当前来源不支持可靠回复，请打开原会话输入".to_string()),
+    interaction_for_event(event).send_reply(event, message)
+}
+
+pub fn resolve_approval_for_event(
+    state: &SharedState,
+    event: &PetEvent,
+    decision: ApprovalDecision,
+) -> Result<(), String> {
+    interaction_for_event(event).resolve_approval(state, event, decision)
+}
+
+fn interaction_for_event(event: &PetEvent) -> AgentInteraction {
+    match event.provider {
+        AgentId::Codex => AgentInteraction::CodexRemote(CodexRemoteDriver),
+        AgentId::Qoder => AgentInteraction::Qoder(QoderDriver),
+        AgentId::Claude | AgentId::Cursor => AgentInteraction::Default(DefaultDriver),
+    }
+}
+
+fn collector_approval_strategy(event: &PetEvent) -> ApprovalStrategy {
+    if event.status == crate::events::TaskStatus::WaitingApproval {
+        ApprovalStrategy::CollectorWait
+    } else {
+        ApprovalStrategy::Unsupported
     }
 }
 

@@ -1,3 +1,4 @@
+import { activityCapabilitiesFor, type ActivityCapabilities } from "./agentInteractions";
 import type { ActivityFilterSettings, PetEvent, TaskStatus } from "./types";
 
 const inactiveStatuses = new Set<TaskStatus>(["idle"]);
@@ -262,28 +263,8 @@ export function cardEndTime(event: PetEvent): string {
   }).format(date);
 }
 
-export interface ActivityCapabilities {
-  canActivate: boolean;
-  canReply: boolean;
-  canApprove: boolean;
-  replyReason?: string;
-}
-
 export function activityCapabilities(event: PetEvent): ActivityCapabilities {
-  const terminalProgram = event.source?.terminalProgram ?? "";
-  const hasTargetableTerminal = Boolean(event.source?.ttyPath && isSupportedReplyTerminal(terminalProgram));
-  const isActiveConversation = event.status === "thinking" || event.status === "running";
-  const canReply =
-    isActiveConversation &&
-    (event.provider === "codex"
-      ? Boolean(event.sessionId)
-      : event.provider === "qoder" && hasTargetableTerminal);
-  return {
-    canActivate: true,
-    canReply,
-    canApprove: event.status === "waiting-approval",
-    replyReason: canReply ? undefined : "来源不支持可靠回复",
-  };
+  return activityCapabilitiesFor(event);
 }
 
 export function primaryActivity(activities: PetEvent[]): PetEvent | null {
@@ -303,10 +284,6 @@ function activityPriority(event: PetEvent): number {
     default:
       return 0;
   }
-}
-
-function isSupportedReplyTerminal(program: string): boolean {
-  return ["Apple_Terminal", "Terminal", "Terminal.app", "iTerm.app", "iTerm2", "iTerm2.app"].includes(program);
 }
 
 function activitySourceLabel(event: PetEvent): string {

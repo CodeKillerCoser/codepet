@@ -1,5 +1,5 @@
 use chrono::Utc;
-use code_pet_lib::activity_actions::{activation_strategy_for_event, activation_target_for_event, reply_strategy_for_event, ActivationStrategy, ActivationTarget, ReplyStrategy};
+use code_pet_lib::activity_actions::{activation_strategy_for_event, activation_target_for_event, approval_strategy_for_event, reply_strategy_for_event, ActivationStrategy, ActivationTarget, ApprovalStrategy, ReplyStrategy};
 use code_pet_lib::events::{ActivitySource, AgentId, PetEvent, PetEventKind, TaskStatus};
 use serde_json::json;
 
@@ -174,6 +174,25 @@ fn reply_strategy_requires_codex_thread_id() {
     assert_eq!(
         reply_strategy_for_event(&codex_event),
         ReplyStrategy::Unsupported
+    );
+}
+
+#[test]
+fn approval_strategy_uses_collector_wait_for_waiting_approval_events() {
+    let mut codex_event = event(AgentId::Codex, None);
+    codex_event.status = TaskStatus::WaitingApproval;
+    let mut qoder_event = event(AgentId::Qoder, None);
+    qoder_event.status = TaskStatus::WaitingApproval;
+
+    assert_eq!(approval_strategy_for_event(&codex_event), ApprovalStrategy::CollectorWait);
+    assert_eq!(approval_strategy_for_event(&qoder_event), ApprovalStrategy::CollectorWait);
+}
+
+#[test]
+fn approval_strategy_rejects_non_approval_events() {
+    assert_eq!(
+        approval_strategy_for_event(&event(AgentId::Codex, None)),
+        ApprovalStrategy::Unsupported
     );
 }
 
