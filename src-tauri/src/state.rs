@@ -38,6 +38,7 @@ pub struct ApprovalDecision {
 
 #[derive(Clone)]
 struct PendingApproval {
+    event: PetEvent,
     decision: Option<ApprovalDecision>,
     notify: Arc<Notify>,
 }
@@ -69,6 +70,7 @@ impl SharedState {
                 state.approvals.insert(
                     event.id.clone(),
                     PendingApproval {
+                        event: event.clone(),
                         decision: None,
                         notify: Arc::new(Notify::new()),
                     },
@@ -113,6 +115,13 @@ impl SharedState {
             .lock()
             .ok()
             .and_then(|state| state.events.iter().find(|event| event.id == event_id).cloned())
+    }
+
+    pub fn approval_event_by_id(&self, event_id: &str) -> Option<PetEvent> {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|state| state.approvals.get(event_id).map(|approval| approval.event.clone()))
     }
 
     pub fn resolve_approval(&self, event_id: &str, decision: ApprovalDecision) -> bool {

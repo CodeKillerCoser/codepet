@@ -77,6 +77,31 @@ fn recent_events_returns_a_bounded_frontend_snapshot() {
 }
 
 #[test]
+fn approval_event_snapshot_survives_event_log_trimming() {
+    let state = SharedState::default();
+    state.push_event(permission_event("approval-trimmed"));
+    for index in 0..1001 {
+        state.push_event(PetEvent {
+            id: format!("later-event-{index}"),
+            status: TaskStatus::Running,
+            ..permission_event(&format!("later-event-{index}"))
+        });
+    }
+
+    assert!(state.event_by_id("approval-trimmed").is_none());
+    let approval_event = state.approval_event_by_id("approval-trimmed").unwrap();
+    assert_eq!(approval_event.id, "approval-trimmed");
+    assert_eq!(approval_event.status, TaskStatus::WaitingApproval);
+    assert!(state.resolve_approval(
+        "approval-trimmed",
+        ApprovalDecision {
+            behavior: ApprovalBehavior::Allow,
+            message: None,
+        },
+    ));
+}
+
+#[test]
 fn remove_events_for_agent_clears_existing_provider_events() {
     let state = SharedState::default();
     state.push_event(PetEvent {

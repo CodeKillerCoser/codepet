@@ -1,6 +1,7 @@
 use chrono::Utc;
-use code_pet_lib::activity_actions::{activation_strategy_for_event, activation_target_for_event, approval_strategy_for_event, reply_strategy_for_event, ActivationStrategy, ActivationTarget, ApprovalStrategy, ReplyStrategy};
+use code_pet_lib::activity_actions::{activation_strategy_for_event, activation_target_for_event, approval_strategy_for_event, reply_strategy_for_event, resolve_approval_for_event, ActivationStrategy, ActivationTarget, ApprovalStrategy, ReplyStrategy};
 use code_pet_lib::events::{ActivitySource, AgentId, PetEvent, PetEventKind, TaskStatus};
+use code_pet_lib::state::{ApprovalBehavior, ApprovalDecision, SharedState};
 use serde_json::json;
 
 fn event(provider: AgentId, source: Option<ActivitySource>) -> PetEvent {
@@ -194,6 +195,25 @@ fn approval_strategy_rejects_non_approval_events() {
         approval_strategy_for_event(&event(AgentId::Codex, None)),
         ApprovalStrategy::Unsupported
     );
+}
+
+#[test]
+fn approval_driver_can_resolve_from_pending_event_snapshot() {
+    let state = SharedState::default();
+    let mut approval = event(AgentId::Codex, None);
+    approval.id = "approval-driver".to_string();
+    approval.status = TaskStatus::WaitingApproval;
+    state.push_event(approval.clone());
+
+    resolve_approval_for_event(
+        &state,
+        &approval,
+        ApprovalDecision {
+            behavior: ApprovalBehavior::Allow,
+            message: None,
+        },
+    )
+    .unwrap();
 }
 
 #[test]
