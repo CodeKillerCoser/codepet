@@ -97,11 +97,15 @@ fn activation_falls_back_to_provider_app_or_cwd() {
         activation_target_for_event(&event(AgentId::Cursor, None)),
         ActivationTarget::AppName("Cursor".to_string())
     );
+    assert_eq!(
+        activation_target_for_event(&event(AgentId::Qoder, None)),
+        ActivationTarget::Url("https://qoder.com/agents".to_string())
+    );
 }
 
 #[test]
-fn reply_strategy_prefers_terminal_specific_sender() {
-    let strategy = reply_strategy_for_event(&event(
+fn reply_strategy_uses_qoder_remote_control_instead_of_terminal_sender() {
+    let mut qoder_event = event(
         AgentId::Qoder,
         Some(ActivitySource {
             pid: None,
@@ -114,9 +118,11 @@ fn reply_strategy_prefers_terminal_specific_sender() {
             kitty_window_id: None,
             app_bundle_id: Some("com.apple.Terminal".to_string()),
         }),
-    ));
+    );
+    qoder_event.status = TaskStatus::Done;
+    let strategy = reply_strategy_for_event(&qoder_event);
 
-    assert_eq!(strategy, ReplyStrategy::Terminal);
+    assert_eq!(strategy, ReplyStrategy::QoderRemoteControl);
 }
 
 #[test]
@@ -161,19 +167,46 @@ fn activation_targets_warp_by_bundle_id() {
 
 #[test]
 fn reply_strategy_uses_codex_app_server_for_desktop_threads() {
+    let mut codex_event = event(AgentId::Codex, None);
+    codex_event.status = TaskStatus::Done;
+
     assert_eq!(
-        reply_strategy_for_event(&event(AgentId::Codex, None)),
+        reply_strategy_for_event(&codex_event),
         ReplyStrategy::CodexAppServer
     );
 }
 
 #[test]
+fn reply_strategy_rejects_running_events() {
+    let mut codex_event = event(AgentId::Codex, None);
+    codex_event.status = TaskStatus::Running;
+    let mut qoder_event = event(AgentId::Qoder, None);
+    qoder_event.status = TaskStatus::Running;
+
+    assert_eq!(reply_strategy_for_event(&codex_event), ReplyStrategy::Unsupported);
+    assert_eq!(reply_strategy_for_event(&qoder_event), ReplyStrategy::Unsupported);
+}
+
+#[test]
 fn reply_strategy_requires_codex_thread_id() {
     let mut codex_event = event(AgentId::Codex, None);
+    codex_event.status = TaskStatus::Done;
     codex_event.session_id = None;
 
     assert_eq!(
         reply_strategy_for_event(&codex_event),
+        ReplyStrategy::Unsupported
+    );
+}
+
+#[test]
+fn reply_strategy_requires_qoder_session_id() {
+    let mut qoder_event = event(AgentId::Qoder, None);
+    qoder_event.status = TaskStatus::Done;
+    qoder_event.session_id = None;
+
+    assert_eq!(
+        reply_strategy_for_event(&qoder_event),
         ReplyStrategy::Unsupported
     );
 }

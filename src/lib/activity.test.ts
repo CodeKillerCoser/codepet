@@ -582,9 +582,10 @@ describe("card display", () => {
 });
 
 describe("activityCapabilities", () => {
-  it("exposes reply for Codex Desktop events with a thread id", () => {
+  it("exposes reply for completed Codex Desktop events with a thread id", () => {
     const activity = event({
       provider: "codex",
+      status: "done",
       sessionId: "019e66f1-4d9e-78e2-8f87-f07c0251ce36",
       source: {
         appBundleId: "com.openai.codex",
@@ -592,6 +593,16 @@ describe("activityCapabilities", () => {
     });
 
     expect(activityCapabilities(activity).canReply).toBe(true);
+  });
+
+  it("does not expose reply for running Codex events", () => {
+    const activity = event({
+      provider: "codex",
+      status: "running",
+      sessionId: "019e66f1-4d9e-78e2-8f87-f07c0251ce36",
+    });
+
+    expect(activityCapabilities(activity).canReply).toBe(false);
   });
 
   it("does not expose reply for Codex events without a thread id", () => {
@@ -615,40 +626,36 @@ describe("activityCapabilities", () => {
     expect(activityCapabilities(activity).canReply).toBe(false);
   });
 
-  it("exposes reply only for supported non-Claude terminal sessions that can be targeted", () => {
-    const cliActivity = event({
-      provider: "qoder",
-      source: {
-        terminalProgram: "Apple_Terminal",
-        ttyPath: "/dev/ttys018",
-      },
-    });
-    const appActivity = event({
-      provider: "qoder",
-      source: {
-        appBundleId: "com.qoder.Qoder",
-      },
-    });
-
-    expect(activityCapabilities(cliActivity).canReply).toBe(true);
-    expect(activityCapabilities(appActivity).canReply).toBe(false);
-  });
-
-  it("does not expose reply for completed terminal sessions", () => {
-    const activity = event({
+  it("exposes reply for completed Qoder remote-control sessions with a session id", () => {
+    const remoteActivity = event({
       provider: "qoder",
       status: "done",
-      source: {
-        terminalProgram: "Apple_Terminal",
-        ttyPath: "/dev/ttys018",
-      },
+      sessionId: "qoder-session",
+    });
+    const missingSessionActivity = event({
+      provider: "qoder",
+      status: "done",
+      sessionId: null,
+    });
+
+    expect(activityCapabilities(remoteActivity).canReply).toBe(true);
+    expect(activityCapabilities(missingSessionActivity).canReply).toBe(false);
+  });
+
+  it("does not expose reply for running Qoder remote-control sessions", () => {
+    const activity = event({
+      provider: "qoder",
+      status: "running",
+      sessionId: "qoder-session",
     });
 
     expect(activityCapabilities(activity).canReply).toBe(false);
   });
 
   it("exposes approval controls only for active permission requests", () => {
-    expect(activityCapabilities(event({ provider: "qoder", status: "waiting-approval" })).canApprove).toBe(true);
+    const approval = activityCapabilities(event({ provider: "qoder", status: "waiting-approval" }));
+    expect(approval.canApprove).toBe(true);
+    expect(approval.canReply).toBe(false);
     expect(activityCapabilities(event({ provider: "qoder", status: "running" })).canApprove).toBe(false);
   });
 

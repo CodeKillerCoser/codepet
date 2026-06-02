@@ -1,15 +1,18 @@
 use crate::agents::AgentId;
-use crate::events::PetEvent;
+use crate::events::{PetEvent, TaskStatus};
 use crate::state::{ApprovalDecision, SharedState};
 #[cfg(target_os = "macos")]
 use std::io::Write;
 use std::process::Command;
+
+const QODER_REMOTE_CONTROL_URL: &str = "https://qoder.com/agents";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ActivationTarget {
     BundleId(String),
     AppName(String),
     Path(String),
+    Url(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,6 +25,7 @@ pub enum ActivationStrategy {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReplyStrategy {
     CodexAppServer,
+    QoderRemoteControl,
     Terminal,
     ITerm,
     AccessibilityPaste,
@@ -45,6 +49,7 @@ trait AgentInteractionDriver {
     fn send_reply(&self, event: &PetEvent, message: &str) -> Result<(), String> {
         match self.reply_strategy(event) {
             ReplyStrategy::CodexAppServer => crate::codex_app_server::send_reply(event, message),
+            ReplyStrategy::QoderRemoteControl => send_qoder_remote_control_reply(event, message),
             ReplyStrategy::Terminal => send_terminal_reply(event, message),
             ReplyStrategy::ITerm => send_iterm_reply(event, message),
             ReplyStrategy::AccessibilityPaste => {
@@ -91,10 +96,7 @@ enum AgentInteraction {
 
 impl AgentInteractionDriver for CodexRemoteDriver {
     fn reply_strategy(&self, event: &PetEvent) -> ReplyStrategy {
-        if event
-            .session_id
-            .as_deref()
-            .is_some_and(|value| !value.is_empty())
+        if is_replyable_event(event) && has_session_id(event)
         {
             ReplyStrategy::CodexAppServer
         } else {
@@ -109,7 +111,12 @@ impl AgentInteractionDriver for CodexRemoteDriver {
 
 impl AgentInteractionDriver for QoderDriver {
     fn reply_strategy(&self, event: &PetEvent) -> ReplyStrategy {
-        terminal_reply_strategy(event)
+        if is_replyable_event(event) && has_session_id(event)
+        {
+            ReplyStrategy::QoderRemoteControl
+        } else {
+            ReplyStrategy::Unsupported
+        }
     }
 
     fn approval_strategy(&self, event: &PetEvent) -> ApprovalStrategy {
@@ -204,7 +211,7 @@ pub fn activation_target_for_event(event: &PetEvent) -> ActivationTarget {
 
     match event.provider {
         AgentId::Codex => ActivationTarget::AppName("Codex".to_string()),
-        AgentId::Qoder => ActivationTarget::AppName("Qoder".to_string()),
+        AgentId::Qoder => ActivationTarget::Url(QODER_REMOTE_CONTROL_URL.to_string()),
         AgentId::Cursor => ActivationTarget::AppName("Cursor".to_string()),
         AgentId::Claude => event
             .cwd
@@ -220,25 +227,6 @@ pub fn reply_strategy_for_event(event: &PetEvent) -> ReplyStrategy {
 
 pub fn approval_strategy_for_event(event: &PetEvent) -> ApprovalStrategy {
     interaction_for_event(event).approval_strategy(event)
-}
-
-fn terminal_reply_strategy(event: &PetEvent) -> ReplyStrategy {
-    #[cfg(target_os = "macos")]
-    match event
-        .source
-        .as_ref()
-        .and_then(|source| source.terminal_program.as_deref())
-    {
-        Some("Apple_Terminal" | "Terminal" | "Terminal.app") if source_tty(event).is_some() => ReplyStrategy::Terminal,
-        Some("iTerm.app" | "iTerm2" | "iTerm2.app") if source_tty(event).is_some() => ReplyStrategy::ITerm,
-        _ => ReplyStrategy::Unsupported,
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = event;
-        ReplyStrategy::Unsupported
-    }
 }
 
 pub fn activate_event(event: &PetEvent) -> Result<(), String> {
@@ -270,11 +258,22 @@ fn interaction_for_event(event: &PetEvent) -> AgentInteraction {
 }
 
 fn collector_approval_strategy(event: &PetEvent) -> ApprovalStrategy {
-    if event.status == crate::events::TaskStatus::WaitingApproval {
+    if event.status == TaskStatus::WaitingApproval {
         ApprovalStrategy::CollectorWait
     } else {
         ApprovalStrategy::Unsupported
     }
+}
+
+fn has_session_id(event: &PetEvent) -> bool {
+    event
+        .session_id
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+}
+
+fn is_replyable_event(event: &PetEvent) -> bool {
+    matches!(event.status, TaskStatus::Done | TaskStatus::Failed)
 }
 
 #[cfg(target_os = "macos")]
@@ -309,7 +308,21 @@ fn activate_target(target: &ActivationTarget) -> Result<(), String> {
         #[cfg(not(target_os = "macos"))]
         ActivationTarget::AppName(_) => Err("当前平台不支持按应用名称激活会话".to_string()),
         ActivationTarget::Path(path) => open::that_detached(path).map_err(|error| error.to_string()),
+        ActivationTarget::Url(url) => open::that_detached(url).map_err(|error| error.to_string()),
     }
+}
+
+fn send_qoder_remote_control_reply(event: &PetEvent, message: &str) -> Result<(), String> {
+    let _ = event;
+    let _ = message;
+    open_qoder_remote_control()?;
+    Err(format!(
+        "Qoder Remote Control is open at {QODER_REMOTE_CONTROL_URL}. Qoder docs do not expose a local reply API for third-party desktop clients; reply in Qoder Web or Mobile."
+    ))
+}
+
+fn open_qoder_remote_control() -> Result<(), String> {
+    open::that_detached(QODER_REMOTE_CONTROL_URL).map_err(|error| error.to_string())
 }
 
 fn activate_terminal_session(tty: &str) -> Result<(), String> {

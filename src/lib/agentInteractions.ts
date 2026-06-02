@@ -13,8 +13,7 @@ interface AgentInteraction {
 
 const codexRemoteInteraction: AgentInteraction = {
   capabilities(event) {
-    const isActiveConversation = event.status === "thinking" || event.status === "running";
-    const canReply = isActiveConversation && Boolean(event.sessionId);
+    const canReply = isReplyableStatus(event) && Boolean(event.sessionId);
     return {
       canActivate: true,
       canReply,
@@ -26,15 +25,12 @@ const codexRemoteInteraction: AgentInteraction = {
 
 const qoderInteraction: AgentInteraction = {
   capabilities(event) {
-    const terminalProgram = event.source?.terminalProgram ?? "";
-    const hasTargetableTerminal = Boolean(event.source?.ttyPath && isSupportedReplyTerminal(terminalProgram));
-    const isActiveConversation = event.status === "thinking" || event.status === "running";
-    const canReply = isActiveConversation && hasTargetableTerminal;
+    const canReply = isReplyableStatus(event) && Boolean(event.sessionId);
     return {
       canActivate: true,
       canReply,
       canApprove: event.status === "waiting-approval",
-      replyReason: canReply ? undefined : "来源不支持可靠回复",
+      replyReason: canReply ? undefined : "Open Qoder Remote Control to reply",
     };
   },
 };
@@ -65,6 +61,6 @@ function interactionForEvent(event: PetEvent): AgentInteraction {
   }
 }
 
-function isSupportedReplyTerminal(program: string): boolean {
-  return ["Apple_Terminal", "Terminal", "Terminal.app", "iTerm.app", "iTerm2", "iTerm2.app"].includes(program);
+function isReplyableStatus(event: PetEvent): boolean {
+  return event.status === "done" || event.status === "failed";
 }
