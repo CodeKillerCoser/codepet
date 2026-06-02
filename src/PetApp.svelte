@@ -1,7 +1,7 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
-  import { LogicalPosition, LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
-  import { availableMonitors, cursorPosition, getCurrentWindow, primaryMonitor } from "@tauri-apps/api/window";
+  import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
+  import { availableMonitors, cursorPosition, getCurrentWindow, primaryMonitor, type Monitor } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
   import { activateActivity, getAppSettings, openMainWindow, recentEvents, recordPerfEvent, resolveActivityApproval, sendActivityReply } from "./lib/api";
   import { activityCapabilities, activityKey, cardEndTime, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
@@ -41,6 +41,8 @@
   let cursorPassthroughTimer: number | null = null;
   let cursorEventsIgnored = false;
   let cursorPassthroughInFlight = false;
+  let constrainWindowTimer: number | null = null;
+  let constrainingWindow = false;
   const petImageAlphaCache = new WeakMap<HTMLImageElement, { src: string; width: number; height: number; data: Uint8ClampedArray }>();
 
   const petWindowWidth = 360;
@@ -111,6 +113,19 @@
     let unlistenPetEvent: (() => void) | null = null;
     let unlistenSettings: (() => void) | null = null;
     let unlistenAgentDisabled: (() => void) | null = null;
+    let unlistenWindowMoved: (() => void) | null = null;
+
+    void getCurrentWindow().onMoved(() => {
+      scheduleConstrainWindowToScreen();
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        unlistenWindowMoved = unlisten;
+      }
+    }).catch((error) => {
+      console.error("failed to watch pet window movement", error);
+    });
 
     void listen<PetEvent>("pet-event", async (event) => {
       const alreadySeen = seenEventIds.has(event.payload.id) || event.payload.id === lastEventId;
@@ -195,11 +210,13 @@
       unlistenPetEvent?.();
       unlistenSettings?.();
       unlistenAgentDisabled?.();
+      unlistenWindowMoved?.();
       clearRepeat();
       clearPoll();
       clearNoticeTimer();
       clearWhipTimer();
       clearCursorPassthroughTimer();
+      clearConstrainWindowTimer();
       void setPetWindowCursorEventsIgnored(false);
     };
   });
@@ -358,6 +375,23 @@
       window.clearInterval(cursorPassthroughTimer);
       cursorPassthroughTimer = null;
     }
+  }
+
+  function clearConstrainWindowTimer() {
+    if (constrainWindowTimer) {
+      window.clearTimeout(constrainWindowTimer);
+      constrainWindowTimer = null;
+    }
+  }
+
+  function scheduleConstrainWindowToScreen() {
+    clearConstrainWindowTimer();
+    constrainWindowTimer = window.setTimeout(() => {
+      constrainWindowTimer = null;
+      void constrainWindowToScreen().catch((error) => {
+        console.error("failed to constrain pet window", error);
+      });
+    }, 120);
   }
 
   async function syncCursorPassthrough() {
@@ -526,11 +560,8 @@
 
   async function dockToLowerRight() {
     const appWindow = getCurrentWindow();
-    const [monitors, fallbackMonitor, size] = await Promise.all([availableMonitors(), primaryMonitor(), appWindow.innerSize()]);
-    const visibleMonitors = monitors.filter((monitor) => monitor.workArea.position.y >= 0);
-    const monitor = (visibleMonitors.length > 0 ? visibleMonitors : monitors)
-      .sort((first, second) => second.workArea.size.width * second.workArea.size.height - first.workArea.size.width * first.workArea.size.height)
-      .at(0) ?? fallbackMonitor;
+    const [monitors, fallbackMonitor, position, size] = await Promise.all([availableMonitors(), primaryMonitor(), appWindow.outerPosition(), appWindow.outerSize()]);
+    const monitor = monitorForWindow(position, size, monitors, fallbackMonitor);
     if (!monitor) {
       return;
     }
@@ -538,14 +569,89 @@
     const margin = 42;
     const x = monitor.workArea.position.x + monitor.workArea.size.width - size.width - margin;
     const y = monitor.workArea.position.y + monitor.workArea.size.height - size.height - margin;
-    await appWindow.setPosition(new PhysicalPosition(Math.max(x, monitor.workArea.position.x), Math.max(y, monitor.workArea.position.y)));
+    const clamped = clampWindowPositionToMonitor({ x, y }, size, monitor);
+    await appWindow.setPosition(new PhysicalPosition(clamped.x, clamped.y));
 
-    const position = await appWindow.outerPosition();
-    if (position.y < 0) {
-      const fallbackX = Math.max(42, Math.round(window.screen.availLeft + window.screen.availWidth - 402));
-      const fallbackY = Math.max(42, Math.round(window.screen.availTop + window.screen.availHeight - 362));
-      await appWindow.setPosition(new LogicalPosition(fallbackX, fallbackY));
+    await constrainWindowToScreen();
+  }
+
+  async function constrainWindowToScreen() {
+    if (constrainingWindow) {
+      return;
     }
+
+    constrainingWindow = true;
+    try {
+      const appWindow = getCurrentWindow();
+      const [monitors, fallbackMonitor, position, size] = await Promise.all([availableMonitors(), primaryMonitor(), appWindow.outerPosition(), appWindow.outerSize()]);
+      const monitor = monitorForWindow(position, size, monitors, fallbackMonitor);
+      if (!monitor) {
+        return;
+      }
+
+      const clamped = clampWindowPositionToMonitor(position, size, monitor);
+      if (Math.round(clamped.x) !== Math.round(position.x) || Math.round(clamped.y) !== Math.round(position.y)) {
+        await appWindow.setPosition(new PhysicalPosition(clamped.x, clamped.y));
+      }
+    } finally {
+      constrainingWindow = false;
+    }
+  }
+
+  function monitorForWindow(
+    position: { x: number; y: number },
+    size: { width: number; height: number },
+    monitors: Monitor[],
+    fallbackMonitor: Monitor | null,
+  ) {
+    const windowRight = position.x + size.width;
+    const windowBottom = position.y + size.height;
+    let bestMonitor: Monitor | null = null;
+    let bestIntersection = 0;
+
+    for (const monitor of monitors) {
+      const area = monitor.workArea;
+      const intersectionWidth = Math.max(0, Math.min(windowRight, area.position.x + area.size.width) - Math.max(position.x, area.position.x));
+      const intersectionHeight = Math.max(0, Math.min(windowBottom, area.position.y + area.size.height) - Math.max(position.y, area.position.y));
+      const intersection = intersectionWidth * intersectionHeight;
+      if (intersection > bestIntersection) {
+        bestIntersection = intersection;
+        bestMonitor = monitor;
+      }
+    }
+
+    if (bestMonitor) {
+      return bestMonitor;
+    }
+
+    const center = { x: position.x + size.width / 2, y: position.y + size.height / 2 };
+    return monitors
+      .slice()
+      .sort((first, second) => distanceToMonitorCenter(center, first) - distanceToMonitorCenter(center, second))
+      .at(0) ?? fallbackMonitor;
+  }
+
+  function distanceToMonitorCenter(point: { x: number; y: number }, monitor: Monitor) {
+    const area = monitor.workArea;
+    const centerX = area.position.x + area.size.width / 2;
+    const centerY = area.position.y + area.size.height / 2;
+    return (point.x - centerX) ** 2 + (point.y - centerY) ** 2;
+  }
+
+  function clampWindowPositionToMonitor(
+    position: { x: number; y: number },
+    size: { width: number; height: number },
+    monitor: Monitor,
+  ) {
+    const area = monitor.workArea;
+    const minX = area.position.x;
+    const minY = area.position.y;
+    const maxX = area.position.x + Math.max(0, area.size.width - size.width);
+    const maxY = area.position.y + Math.max(0, area.size.height - size.height);
+    return {
+      x: Math.min(Math.max(position.x, minX), maxX),
+      y: Math.min(Math.max(position.y, minY), maxY),
+    };
   }
 
   async function syncWindowFrame(height: number) {

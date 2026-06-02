@@ -228,4 +228,19 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain('data-pet-hit-target="stage"');
     expect(source).not.toContain('<button class="drag-layer"');
   });
+
+  it("keeps the pet window inside the active monitor work area after moves", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const constrainBlock = source.slice(source.indexOf("async function constrainWindowToScreen"), source.indexOf("function withTimeout"));
+
+    expect(source).toContain("onMoved");
+    expect(source).toContain("scheduleConstrainWindowToScreen");
+    expect(source).toContain("clearConstrainWindowTimer");
+    expect(constrainBlock).toContain("outerPosition()");
+    expect(constrainBlock).toContain("outerSize()");
+    expect(constrainBlock).toContain("monitorForWindow");
+    expect(constrainBlock).toContain("clampWindowPositionToMonitor");
+    expect(constrainBlock).toContain("monitor.workArea");
+    expect(source).not.toContain("workArea.position.y >= 0");
+  });
 });
