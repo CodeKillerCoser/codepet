@@ -99,17 +99,16 @@ describe("PetApp activity helpers", () => {
     expect(stageBlock.indexOf('class="pet-action-button main-window-button"')).toBeLessThan(stageBlock.indexOf('class="pet-action-button whip-button"'));
   });
 
-  it("serializes pet window resize requests so stale small frames cannot win", () => {
+  it("uses a fixed preset maximum pet window size", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
-    const syncWindowFrame = source.slice(source.indexOf("async function syncWindowFrame"), source.indexOf("function petWindowHeight"));
 
-    expect(source).toContain("let requestedWindowHeight = 0");
-    expect(source).toContain("let syncingWindowFrame = false");
-    expect(syncWindowFrame).toContain("requestedWindowHeight = Math.round(height)");
-    expect(syncWindowFrame).toContain("if (syncingWindowFrame) {");
-    expect(syncWindowFrame).toContain("while (true)");
-    expect(syncWindowFrame).toContain("const targetHeight = requestedWindowHeight");
-    expect(syncWindowFrame).toContain("if (!applied || requestedWindowHeight === targetHeight)");
+    expect(source).toContain("const maxActivityStackHeight");
+    expect(source).toContain("const maxPetStageHeight");
+    expect(source).toContain("const petWindowPresetHeight");
+    expect(source).toContain("const targetHeight = petWindowPresetHeight");
+    expect(source).toContain("new LogicalSize(petWindowWidth, targetHeight)");
+    expect(source).not.toContain("async function syncWindowFrame");
+    expect(source).not.toContain("async function applyWindowFrame");
   });
 
   it("renders every activity while sizing the pet window from the first four cards", () => {
@@ -134,7 +133,7 @@ describe("PetApp activity helpers", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
 
     expect(source).toContain("$: activityStackHeight = activityStackHeightFor(stackSizedActivities, replyingToId)");
-    expect(source).toContain("$: desiredWindowHeight = petWindowHeight(activityStackHeight, petStageHeight)");
+    expect(source).toContain("const petWindowPresetHeight");
     expect(source).toContain("function activityStackHeightFor");
     expect(source).toContain("activity.id === activeReplyingToId");
     expect(source).toContain('activity.status === "waiting-approval" ? 86 : activityCardHeight');
@@ -216,15 +215,15 @@ describe("PetApp activity helpers", () => {
     expect(dismissBlock).not.toContain("repeatEventId === activity.id");
   });
 
-  it("passes cursor events through transparent pet-window regions", () => {
+  it("does not toggle cursor passthrough for transparent pet-window regions", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
 
-    expect(source).toContain("cursorPosition");
-    expect(source).toContain("setIgnoreCursorEvents");
-    expect(source).toContain("collectPetHitRects");
-    expect(source).toContain("isPointOnOpaquePetImage");
-    expect(source).toContain("shouldIgnorePetWindowCursor");
-    expect(source).toContain("clearCursorPassthroughTimer");
+    expect(source).not.toContain("cursorPosition");
+    expect(source).not.toContain("setIgnoreCursorEvents");
+    expect(source).not.toContain("collectPetHitRects");
+    expect(source).not.toContain("isPointOnOpaquePetImage");
+    expect(source).not.toContain("shouldIgnorePetWindowCursor");
+    expect(source).not.toContain("clearCursorPassthroughTimer");
     expect(source).toContain('data-pet-hit-target="stage"');
     expect(source).not.toContain('<button class="drag-layer"');
   });
@@ -235,6 +234,7 @@ describe("PetApp activity helpers", () => {
 
     expect(source).toContain("onMoved");
     expect(source).toContain("onResized");
+    expect(source).toContain("setResizable(false)");
     expect(source).toContain("scheduleEnsureWindowFrameAndBounds");
     expect(source).toContain("clearEnsureWindowFrameTimer");
     expect(ensureBlock).toContain("ensureWindowSize");

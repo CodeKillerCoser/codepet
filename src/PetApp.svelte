@@ -1,12 +1,11 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
   import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
-  import { availableMonitors, cursorPosition, getCurrentWindow, primaryMonitor, type Monitor } from "@tauri-apps/api/window";
+  import { availableMonitors, getCurrentWindow, primaryMonitor, type Monitor } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
   import { activateActivity, getAppSettings, openMainWindow, recentEvents, recordPerfEvent, resolveActivityApproval, sendActivityReply } from "./lib/api";
   import { activityCapabilities, activityKey, cardEndTime, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
   import { runningBubbleStyle } from "./lib/gradientColor";
-  import { isOpaqueCssColor, rectFromElementBounds, shouldIgnorePetWindowCursor, type PetHitRect } from "./lib/petHitTest";
   import PetAvatar from "./lib/PetAvatar.svelte";
   import { playNotificationSound, playWhipSound, shouldRepeatNotification, shouldRing } from "./lib/sound";
   import type { AppSettings, PetEvent } from "./lib/types";
@@ -27,9 +26,6 @@
   let activityStack: HTMLElement | null = null;
   let lastTopActivityId: string | null = null;
   let ready = false;
-  let lastWindowHeight = 0;
-  let requestedWindowHeight = 0;
-  let syncingWindowFrame = false;
   let replyingToId: string | null = null;
   let replyText = "";
   let actionNotice = "";
@@ -37,24 +33,20 @@
   let whipAnimating = false;
   let whipAnimationKey = 0;
   let whipTimer: number | null = null;
-  let petWindowElement: HTMLElement | null = null;
-  let cursorPassthroughTimer: number | null = null;
-  let cursorEventsIgnored = false;
-  let cursorPassthroughInFlight = false;
   let ensureWindowFrameTimer: number | null = null;
   let ensuringWindowFrame = false;
-  const petImageAlphaCache = new WeakMap<HTMLImageElement, { src: string; width: number; height: number; data: Uint8ClampedArray }>();
 
   const petWindowWidth = 360;
   const activityCardHeight = 78;
   const activityGap = 8;
   const activityPetGap = 8;
   const maxVisibleActivities = 4;
+  const maxActivityStackHeight = activityCardHeight * maxVisibleActivities + activityGap * (maxVisibleActivities - 1) + 32;
+  const maxPetStageHeight = Math.max(104, Math.round(32 * 4 * (208 / 192)));
+  const petWindowPresetHeight = 22 + maxPetStageHeight + activityPetGap + maxActivityStackHeight;
   const noticeVisibleMs = 2500;
   const whipVisibleMs = 760;
   const permissionRepeatMaxMs = 590_000;
-  const cursorPassthroughPollMs = 60;
-  const petHitPadding = 2;
   const devMode = import.meta.env.DEV;
   const fallbackRunningBubble: AppSettings["appearance"]["runningBubble"] = {
     backgroundBreathing: true,
@@ -77,15 +69,12 @@
   $: activityStackHeight = activityStackHeightFor(stackSizedActivities, replyingToId);
   $: clearReplyIfNoLongerAvailable(activities, replyingToId);
   $: petScale = Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4);
-  $: petVisualHeight = settings?.pet.kind === "codex-atlas" ? Math.round(32 * petScale * (208 / 192)) : 30 * petScale;
-  $: petStageHeight = Math.max(104, petVisualHeight);
-  $: desiredWindowHeight = petWindowHeight(activityStackHeight, petStageHeight);
   $: topActivityId = showActivities ? activities[0]?.id ?? null : null;
   $: if (!hasActivities && tasksCollapsed) {
     tasksCollapsed = false;
   }
   $: if (ready) {
-    void syncWindowFrame(desiredWindowHeight);
+    void ensureWindowFrameAndBounds();
   }
   $: if (activityStack && topActivityId && topActivityId !== lastTopActivityId) {
     lastTopActivityId = topActivityId;
@@ -98,16 +87,16 @@
 
   onMount(() => {
     const mountedAt = performance.now();
+    const appWindow = getCurrentWindow();
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     systemDark = media.matches;
     const syncTheme = () => {
       systemDark = media.matches;
     };
     media.addEventListener("change", syncTheme);
-    cursorPassthroughTimer = window.setInterval(() => {
-      void syncCursorPassthrough();
-    }, cursorPassthroughPollMs);
-    void syncCursorPassthrough();
+    void appWindow.setResizable(false).catch((error) => {
+      console.error("failed to disable pet window resizing", error);
+    });
 
     let disposed = false;
     let unlistenPetEvent: (() => void) | null = null;
@@ -116,7 +105,7 @@
     let unlistenWindowMoved: (() => void) | null = null;
     let unlistenWindowResized: (() => void) | null = null;
 
-    void getCurrentWindow().onMoved(() => {
+    void appWindow.onMoved(() => {
       scheduleEnsureWindowFrameAndBounds();
     }).then((unlisten) => {
       if (disposed) {
@@ -128,7 +117,7 @@
       console.error("failed to watch pet window movement", error);
     });
 
-    void getCurrentWindow().onResized(() => {
+    void appWindow.onResized(() => {
       scheduleEnsureWindowFrameAndBounds();
     }).then((unlisten) => {
       if (disposed) {
@@ -202,6 +191,9 @@
       }
 
       ready = true;
+      void dockToLowerRight().catch((error) => {
+        console.error("failed to dock pet window", error);
+      });
       void recordPerfEvent({
         name: "frontend.pet.ready",
         durationMs: performance.now() - mountedAt,
@@ -229,9 +221,7 @@
       clearPoll();
       clearNoticeTimer();
       clearWhipTimer();
-      clearCursorPassthroughTimer();
       clearEnsureWindowFrameTimer();
-      void setPetWindowCursorEventsIgnored(false);
     };
   });
 
@@ -384,13 +374,6 @@
     }
   }
 
-  function clearCursorPassthroughTimer() {
-    if (cursorPassthroughTimer) {
-      window.clearInterval(cursorPassthroughTimer);
-      cursorPassthroughTimer = null;
-    }
-  }
-
   function clearEnsureWindowFrameTimer() {
     if (ensureWindowFrameTimer) {
       window.clearTimeout(ensureWindowFrameTimer);
@@ -408,172 +391,9 @@
     }, 120);
   }
 
-  async function syncCursorPassthrough() {
-    if (!petWindowElement || cursorPassthroughInFlight) {
-      return;
-    }
-
-    cursorPassthroughInFlight = true;
-    try {
-      const appWindow = getCurrentWindow();
-      const [cursor, windowPosition, scaleFactor] = await Promise.all([
-        cursorPosition(),
-        appWindow.outerPosition(),
-        appWindow.scaleFactor(),
-      ]);
-      const point = {
-        x: (cursor.x - windowPosition.x) / scaleFactor,
-        y: (cursor.y - windowPosition.y) / scaleFactor,
-      };
-      const ignoreCursor = shouldIgnorePetWindowCursor(point, collectPetHitRects(petWindowElement)) && !isPointOnOpaquePetImage(petWindowElement, point);
-      await setPetWindowCursorEventsIgnored(ignoreCursor);
-    } catch (error) {
-      console.error("failed to update pet cursor passthrough", error);
-    } finally {
-      cursorPassthroughInFlight = false;
-    }
-  }
-
-  async function setPetWindowCursorEventsIgnored(ignore: boolean) {
-    if (cursorEventsIgnored === ignore) {
-      return;
-    }
-
-    cursorEventsIgnored = ignore;
-    try {
-      await getCurrentWindow().setIgnoreCursorEvents(ignore);
-    } catch (error) {
-      cursorEventsIgnored = !ignore;
-      console.error("failed to set pet cursor passthrough", error);
-    }
-  }
-
-  function collectPetHitRects(root: HTMLElement): PetHitRect[] {
-    const rootBounds = root.getBoundingClientRect();
-    const hitRects: PetHitRect[] = [];
-    for (const element of root.querySelectorAll<HTMLElement>(".status-pill, .pet-action-button")) {
-      const rect = element.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        hitRects.push(rectFromElementBounds(rect, rootBounds, petHitPadding));
-      }
-    }
-
-    for (const pixel of root.querySelectorAll<HTMLElement>(".pet-sprite span")) {
-      if (!isOpaqueCssColor(pixel.style.backgroundColor || pixel.style.background)) {
-        continue;
-      }
-      const rect = pixel.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        hitRects.push(rectFromElementBounds(rect, rootBounds));
-      }
-    }
-
-    return hitRects;
-  }
-
-  function isPointOnOpaquePetImage(root: HTMLElement, point: { x: number; y: number }) {
-    const rootBounds = root.getBoundingClientRect();
-    for (const wrapper of root.querySelectorAll<HTMLElement>(".pet-image, .pet-atlas")) {
-      const wrapperRect = rectFromElementBounds(wrapper.getBoundingClientRect(), rootBounds, petHitPadding);
-      if (shouldIgnorePetWindowCursor(point, [wrapperRect])) {
-        continue;
-      }
-
-      const image = wrapper instanceof HTMLImageElement ? wrapper : wrapper.querySelector("img");
-      if (!image || !image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) {
-        return true;
-      }
-
-      const alpha = petImageAlphaAtPoint(wrapper, image, point, rootBounds);
-      if (alpha === null) {
-        return true;
-      }
-      if (alpha > 12) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  function petImageAlphaAtPoint(wrapper: HTMLElement, image: HTMLImageElement, point: { x: number; y: number }, rootBounds: DOMRect) {
-    const pixel = petImagePixelCoordinates(wrapper, image, point, rootBounds);
-    if (!pixel) {
-      return null;
-    }
-
-    const data = petImageAlphaData(image);
-    if (!data) {
-      return null;
-    }
-
-    const x = Math.floor(pixel.x);
-    const y = Math.floor(pixel.y);
-    if (x < 0 || y < 0 || x >= data.width || y >= data.height) {
-      return 0;
-    }
-
-    return data.data[(y * data.width + x) * 4 + 3];
-  }
-
-  function petImagePixelCoordinates(wrapper: HTMLElement, image: HTMLImageElement, point: { x: number; y: number }, rootBounds: DOMRect) {
-    const wrapperRect = rectFromElementBounds(wrapper.getBoundingClientRect(), rootBounds);
-    const relativeX = point.x - wrapperRect.left;
-    const relativeY = point.y - wrapperRect.top;
-    const wrapperWidth = wrapperRect.right - wrapperRect.left;
-    const wrapperHeight = wrapperRect.bottom - wrapperRect.top;
-    if (wrapper instanceof HTMLImageElement) {
-      return {
-        x: relativeX * (image.naturalWidth / wrapperWidth),
-        y: relativeY * (image.naturalHeight / wrapperHeight),
-      };
-    }
-
-    const transform = getComputedStyle(image).transform;
-    const matrix = transform && transform !== "none" ? new DOMMatrixReadOnly(transform) : new DOMMatrixReadOnly();
-    const imageWidth = image.offsetWidth || image.getBoundingClientRect().width;
-    const imageHeight = image.offsetHeight || image.getBoundingClientRect().height;
-    if (imageWidth <= 0 || imageHeight <= 0) {
-      return null;
-    }
-
-    return {
-      x: (relativeX - matrix.m41) * (image.naturalWidth / imageWidth),
-      y: (relativeY - matrix.m42) * (image.naturalHeight / imageHeight),
-    };
-  }
-
-  function petImageAlphaData(image: HTMLImageElement) {
-    const cached = petImageAlphaCache.get(image);
-    if (cached && cached.src === image.currentSrc && cached.width === image.naturalWidth && cached.height === image.naturalHeight) {
-      return cached;
-    }
-
-    const canvas = document.createElement("canvas");
-    canvas.width = image.naturalWidth;
-    canvas.height = image.naturalHeight;
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) {
-      return null;
-    }
-
-    try {
-      context.drawImage(image, 0, 0);
-      const next = {
-        src: image.currentSrc,
-        width: image.naturalWidth,
-        height: image.naturalHeight,
-        data: context.getImageData(0, 0, image.naturalWidth, image.naturalHeight).data,
-      };
-      petImageAlphaCache.set(image, next);
-      return next;
-    } catch {
-      return null;
-    }
-  }
-
   async function dockToLowerRight() {
     const appWindow = getCurrentWindow();
+    await ensureWindowSize();
     const [monitors, fallbackMonitor, position, size] = await Promise.all([availableMonitors(), primaryMonitor(), appWindow.outerPosition(), appWindow.outerSize()]);
     const monitor = monitorForWindow(position, size, monitors, fallbackMonitor);
     if (!monitor) {
@@ -604,7 +424,7 @@
   }
 
   async function ensureWindowSize() {
-    const targetHeight = Math.round(desiredWindowHeight);
+    const targetHeight = petWindowPresetHeight;
     if (targetHeight <= 0) {
       return;
     }
@@ -621,7 +441,6 @@
     const currentLogicalSize = currentSize.toLogical(scaleFactor);
     if (Math.abs(currentLogicalSize.width - petWindowWidth) > 1 || Math.abs(currentLogicalSize.height - targetHeight) > 1) {
       await appWindow.setSize(new LogicalSize(petWindowWidth, targetHeight));
-      lastWindowHeight = targetHeight;
     }
   }
 
@@ -695,56 +514,6 @@
     };
   }
 
-  async function syncWindowFrame(height: number) {
-    requestedWindowHeight = Math.round(height);
-    if (syncingWindowFrame) {
-      return;
-    }
-
-    syncingWindowFrame = true;
-    try {
-      while (true) {
-        const targetHeight = requestedWindowHeight;
-        const applied = await applyWindowFrame(targetHeight);
-        if (!applied || requestedWindowHeight === targetHeight) {
-          break;
-        }
-      }
-    } finally {
-      syncingWindowFrame = false;
-    }
-  }
-
-  async function applyWindowFrame(roundedHeight: number) {
-    const appWindow = getCurrentWindow();
-    const [currentSize, scaleFactor] = await Promise.all([
-      withTimeout(appWindow.innerSize(), 700).catch(() => null),
-      withTimeout(appWindow.scaleFactor(), 700).catch(() => 1),
-    ]);
-    if (requestedWindowHeight !== roundedHeight) {
-      return true;
-    }
-    const currentLogicalHeight = currentSize ? currentSize.toLogical(scaleFactor).height : null;
-    if (currentLogicalHeight !== null && roundedHeight === lastWindowHeight && Math.abs(currentLogicalHeight - roundedHeight) <= 1) {
-      return true;
-    }
-
-    try {
-      await withTimeout(appWindow.setSize(new LogicalSize(petWindowWidth, roundedHeight)), 900);
-      if (requestedWindowHeight !== roundedHeight) {
-        return true;
-      }
-      lastWindowHeight = roundedHeight;
-      void withTimeout(dockToLowerRight(), 1200).catch((error) => {
-        console.error("failed to dock pet window", error);
-      });
-      return true;
-    } catch (error) {
-      console.error("failed to sync pet window frame", error);
-      return false;
-    }
-  }
-
   function activityStackHeightFor(currentActivities: PetEvent[], activeReplyingToId: string | null) {
     if (currentActivities.length === 0) {
       return 0;
@@ -753,14 +522,6 @@
       const cardHeight = activity.id === activeReplyingToId ? 110 : activity.status === "waiting-approval" ? 86 : activityCardHeight;
       return height + cardHeight + (index > 0 ? activityGap : 0);
     }, 0);
-  }
-
-  function petWindowHeight(stackHeight: number, stageHeight: number) {
-    const petBaseHeight = 22 + stageHeight;
-    if (stackHeight <= 0) {
-      return petBaseHeight;
-    }
-    return petBaseHeight + activityPetGap + stackHeight;
   }
 
   function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -917,7 +678,6 @@
 </script>
 
 <main
-  bind:this={petWindowElement}
   class={`pet-window ${themeClass}${devMode ? " dev-mode" : ""}`}
   on:dblclick={preventPetWindowDoubleClick}
 >

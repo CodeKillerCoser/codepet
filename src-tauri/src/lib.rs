@@ -30,7 +30,7 @@ use token_usage::TokenUsageSummary;
 use std::str::FromStr;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, Size, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const TRAY_MENU_OPEN: &str = "open-main";
 const TRAY_MENU_QUIT: &str = "quit";
@@ -191,21 +191,6 @@ fn resolve_activity_approval(
 #[tauri::command]
 fn collector_endpoint() -> String {
     format!("http://127.0.0.1:{COLLECTOR_PORT}/hook")
-}
-
-#[tauri::command]
-fn resize_pet_window(app: AppHandle, height: f64) -> Result<(), String> {
-    let Some(window) = app.get_webview_window("pet") else {
-        return Ok(());
-    };
-    window
-        .set_size(Size::Logical(LogicalSize {
-            width: 360.0,
-            height,
-        }))
-        .map_err(|error| error.to_string())?;
-    configure_pet_overlay_window(&app);
-    Ok(())
 }
 
 #[tauri::command]
@@ -379,7 +364,6 @@ pub fn run() {
             send_activity_reply,
             resolve_activity_approval,
             collector_endpoint,
-            resize_pet_window,
             open_main_window,
             pet_asset_data_url
         ])
