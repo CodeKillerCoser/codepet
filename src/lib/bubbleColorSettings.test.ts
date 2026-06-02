@@ -39,6 +39,10 @@ function settingsFixture(): AppSettings {
       quietHoursStart: "22:00",
       quietHoursEnd: "08:00",
     },
+    activityFilters: {
+      titleKeywords: [],
+      messageKeywords: [],
+    },
   };
 }
 

@@ -31,7 +31,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -41,7 +42,8 @@ button {
 
 button:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+textarea:focus-visible {
   outline: 2px solid #38bdf8;
   outline-offset: 2px;
 }
@@ -301,6 +303,11 @@ select:focus-visible {
   gap: 14px;
 }
 
+.filter-workspace {
+  display: grid;
+  gap: 14px;
+}
+
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -380,6 +387,7 @@ select:focus-visible {
 .appearance-editor,
 .bubble-editor,
 .sound-editor,
+.filter-editor,
 .event-log {
   border-radius: 8px;
 }
@@ -1115,6 +1123,47 @@ input[type="time"] {
   padding: 0 10px;
   color: var(--app-text);
   background: var(--app-surface-soft);
+}
+
+textarea {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--app-text);
+  background: var(--app-surface-soft);
+  line-height: 1.45;
+}
+
+.filter-editor {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.filter-editor h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.filter-field {
+  display: grid;
+  gap: 8px;
+}
+
+.filter-field > span {
+  color: var(--app-muted);
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .check {
@@ -2496,6 +2545,10 @@ input[type="time"] {
 
   .usage-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filter-grid {
+    grid-template-columns: 1fr;
   }
 }
 

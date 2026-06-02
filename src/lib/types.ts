@@ -99,6 +99,12 @@ export interface AppSettings {
     quietHoursStart: string;
     quietHoursEnd: string;
   };
+  activityFilters: ActivityFilterSettings;
+}
+
+export interface ActivityFilterSettings {
+  titleKeywords: string[];
+  messageKeywords: string[];
 }
 
 export interface PetEvent {

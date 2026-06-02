@@ -12,6 +12,8 @@ fn settings_default_to_system_theme() {
     assert_eq!(settings.pet.image_pixel_size, 48);
     assert_eq!(settings.pet.whip_reaction_sound, WhipReactionSound::None);
     assert!(settings.pet.custom_whip_reaction_sound_path.is_none());
+    assert!(settings.activity_filters.title_keywords.is_empty());
+    assert!(settings.activity_filters.message_keywords.is_empty());
 }
 
 #[test]
@@ -49,6 +51,23 @@ fn settings_keep_existing_values_when_theme_field_is_missing() {
     assert_eq!(settings.pet.sprite.body, "#111111");
     assert!(!settings.notifications.ring_on_failure);
     assert!(!settings.notifications.ring_on_done);
+    assert!(settings.activity_filters.title_keywords.is_empty());
+}
+
+#[test]
+fn settings_read_activity_filter_keywords() {
+    let settings: AppSettings = serde_json::from_str(
+        r##"{
+          "activityFilters": {
+            "titleKeywords": ["memory summary", "生成标题"],
+            "messageKeywords": ["Recent Codex threads", "MEMORY.md"]
+          }
+        }"##,
+    )
+    .unwrap();
+
+    assert_eq!(settings.activity_filters.title_keywords, vec!["memory summary", "生成标题"]);
+    assert_eq!(settings.activity_filters.message_keywords, vec!["Recent Codex threads", "MEMORY.md"]);
 }
 
 #[test]

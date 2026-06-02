@@ -14,6 +14,8 @@ pub struct AppSettings {
     pub pet_library: PetLibrarySettings,
     #[serde(default)]
     pub notifications: NotificationSettings,
+    #[serde(default)]
+    pub activity_filters: ActivityFilterSettings,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -161,6 +163,15 @@ pub struct NotificationSettings {
     pub quiet_hours_end: String,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityFilterSettings {
+    #[serde(default)]
+    pub title_keywords: Vec<String>,
+    #[serde(default)]
+    pub message_keywords: Vec<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SoundChoice {
@@ -255,6 +266,7 @@ impl Default for AppSettings {
             pet: PetSettings::default(),
             pet_library: PetLibrarySettings::default(),
             notifications: NotificationSettings::default(),
+            activity_filters: ActivityFilterSettings::default(),
         }
     }
 }

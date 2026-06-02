@@ -10,6 +10,7 @@
     Bot,
     Check,
     Clock3,
+    Filter,
     FolderCog,
     FolderOpen,
     ImagePlus,
@@ -33,7 +34,7 @@
   import { buildUsageChartData, yAxisTicks, type UsageBucketSize, type UsageRange } from "./lib/usageChart";
   import type { AgentView, AppSettings, PetEvent, PetLibraryView, TokenUsageSummary } from "./lib/types";
 
-  let tab: "agents" | "usage" | "personalize" | "events" = "agents";
+  let tab: "agents" | "usage" | "filters" | "personalize" | "events" = "agents";
   let agents: AgentView[] = [];
   let settings: AppSettings | null = null;
   let petLibrary: PetLibraryView | null = null;
@@ -83,6 +84,10 @@
     borderColor: "#3d73d8",
     borderWidth: 1,
     animationMs: 1800,
+  };
+  const activityFilterDefaults: AppSettings["activityFilters"] = {
+    titleKeywords: [],
+    messageKeywords: [],
   };
   const bubbleColorConfigs = [
     { key: "backgroundColor", label: "背景色", fallback: runningBubbleDefaults.backgroundColor, directional: true },
@@ -381,7 +386,72 @@
     nextSettings.pet.imagePixelSize = clampImagePixelSize(nextSettings.pet.imagePixelSize);
     nextSettings.pet.whipReactionSound = nextSettings.pet.whipReactionSound ?? "none";
     nextSettings.pet.customWhipReactionSoundPath = nextSettings.pet.customWhipReactionSoundPath ?? null;
+    nextSettings.activityFilters = normalizeActivityFilters(nextSettings.activityFilters);
     return nextSettings;
+  }
+
+  function normalizeActivityFilters(filters: Partial<AppSettings["activityFilters"]> | null | undefined): AppSettings["activityFilters"] {
+    return {
+      titleKeywords: normalizeFilterKeywords(filters?.titleKeywords),
+      messageKeywords: normalizeFilterKeywords(filters?.messageKeywords),
+    };
+  }
+
+  function normalizeFilterKeywords(keywords: string[] | null | undefined): string[] {
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const keyword of keywords ?? []) {
+      const value = keyword.trim();
+      const key = value.toLocaleLowerCase();
+      if (!value || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      normalized.push(value);
+    }
+    return normalized;
+  }
+
+  function filterKeywordsText(keywords: string[]) {
+    return normalizeFilterKeywords(keywords).join("\n");
+  }
+
+  function parseFilterKeywords(text: string) {
+    return normalizeFilterKeywords(text.split(/\r?\n/));
+  }
+
+  function updateFilterKeywords(kind: keyof AppSettings["activityFilters"], text: string) {
+    if (!settings) return;
+    settings = {
+      ...settings,
+      activityFilters: {
+        ...activityFilterDefaults,
+        ...settings.activityFilters,
+        [kind]: parseFilterKeywords(text),
+      },
+    };
+  }
+
+  async function saveActivityFilters() {
+    if (!settings) return;
+    settings = {
+      ...settings,
+      activityFilters: normalizeActivityFilters(settings.activityFilters),
+    };
+    await saveSettings();
+  }
+
+  async function clearActivityFilters() {
+    if (!settings) return;
+    settings = {
+      ...settings,
+      activityFilters: { ...activityFilterDefaults },
+    };
+    await saveSettings();
+  }
+
+  function activityFilterCount(filters: AppSettings["activityFilters"]) {
+    return normalizeFilterKeywords(filters.titleKeywords).length + normalizeFilterKeywords(filters.messageKeywords).length;
   }
 
   function clampImagePixelSize(value: number) {
@@ -631,7 +701,7 @@
   $: usageBuckets = usageData.buckets;
   $: usageMaxTokens = usageData.maxTokens;
   $: usageTickLabels = yAxisTicks(usageMaxTokens);
-  $: pageTitle = tab === "agents" ? "Agent" : tab === "usage" ? "用量" : tab === "personalize" ? "个性化" : "最新事件";
+  $: pageTitle = tab === "agents" ? "Agent" : tab === "usage" ? "用量" : tab === "filters" ? "过滤" : tab === "personalize" ? "个性化" : "最新事件";
   $: appTheme = settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "theme-dark" : "theme-light";
 </script>
 
@@ -643,6 +713,9 @@
       </button>
       <button class:active={tab === "usage"} on:click={() => (tab = "usage")} aria-label="用量统计">
         <BarChart3 size={18} /> 用量
+      </button>
+      <button class:active={tab === "filters"} on:click={() => (tab = "filters")} aria-label="任务过滤">
+        <Filter size={18} /> 过滤
       </button>
       <button class:active={tab === "personalize"} on:click={() => (tab = "personalize")} aria-label="个性化配置">
         <Palette size={18} /> 个性化
@@ -842,6 +915,50 @@
             {/each}
           </section>
         {/if}
+      </div>
+    {:else if tab === "filters" && settings}
+      <div class="filter-workspace">
+        <section class="filter-editor pixel-panel">
+          <header class="section-head">
+            <div>
+              <span class="agent-kicker">HOOK FILTERS</span>
+              <h3><Filter size={18} /> 自定义过滤</h3>
+            </div>
+            <span>{activityFilterCount(settings.activityFilters)} 条规则</span>
+          </header>
+
+          <div class="filter-grid">
+            <label class="filter-field">
+              <span>对话标题关键字</span>
+              <textarea
+                rows="8"
+                spellcheck="false"
+                placeholder="一行一个标题关键字"
+                value={filterKeywordsText(settings.activityFilters.titleKeywords)}
+                on:input={(event) => updateFilterKeywords("titleKeywords", event.currentTarget.value)}
+              ></textarea>
+            </label>
+            <label class="filter-field">
+              <span>对话内容关键字</span>
+              <textarea
+                rows="8"
+                spellcheck="false"
+                placeholder="一行一个内容关键字"
+                value={filterKeywordsText(settings.activityFilters.messageKeywords)}
+                on:input={(event) => updateFilterKeywords("messageKeywords", event.currentTarget.value)}
+              ></textarea>
+            </label>
+          </div>
+
+          <div class="row-actions">
+            <button on:click={saveActivityFilters}>
+              <Check size={17} /> 保存过滤
+            </button>
+            <button on:click={clearActivityFilters}>
+              <Trash2 size={17} /> 清空
+            </button>
+          </div>
+        </section>
       </div>
     {:else if tab === "personalize" && settings}
       <div class="personal-grid">

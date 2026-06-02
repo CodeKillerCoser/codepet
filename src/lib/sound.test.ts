@@ -33,6 +33,10 @@ function settings(overrides: Partial<AppSettings["notifications"]> = {}): AppSet
       quietHoursEnd: "08:00",
       ...overrides,
     },
+    activityFilters: {
+      titleKeywords: [],
+      messageKeywords: [],
+    },
   };
 }
 

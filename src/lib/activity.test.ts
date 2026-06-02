@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { activeActivities, activityCapabilities, activityKey, cardEndTime, cardMessage, cardMeta, cardTitle, statusLabel, updateActivityList } from "./activity";
-import type { PetEvent } from "./types";
+import type { ActivityFilterSettings, PetEvent } from "./types";
 
 function event(overrides: Partial<PetEvent>): PetEvent {
   return {
@@ -17,6 +17,13 @@ function event(overrides: Partial<PetEvent>): PetEvent {
     createdAt: overrides.createdAt ?? "2026-05-26T06:00:00.000Z",
     raw: overrides.raw ?? {},
     source: overrides.source ?? null,
+  };
+}
+
+function filters(overrides: Partial<ActivityFilterSettings>): ActivityFilterSettings {
+  return {
+    titleKeywords: overrides.titleKeywords ?? [],
+    messageKeywords: overrides.messageKeywords ?? [],
   };
 }
 
@@ -289,6 +296,34 @@ describe("activeActivities", () => {
     expect(activities.map((activity) => activity.id)).toEqual(["codex-4", "codex-3", "codex-2", "codex-1", "codex-0"]);
   });
 
+  it("filters activities by custom title keywords", () => {
+    const activities = activeActivities(
+      [
+        event({ id: "memory", title: "Codex memory summary", message: "writing memory", sessionId: "memory-session" }),
+        event({ id: "real", title: "Review implementation", message: "inspect code", sessionId: "real-session" }),
+      ],
+      undefined,
+      new Date("2026-05-26T06:02:00.000Z"),
+      filters({ titleKeywords: ["memory summary"] }),
+    );
+
+    expect(activities.map((activity) => activity.id)).toEqual(["real"]);
+  });
+
+  it("filters activities by custom message keywords", () => {
+    const activities = activeActivities(
+      [
+        event({ id: "suggestion", title: "SessionStart", message: "Recent Codex threads in this project", sessionId: "suggestion-session" }),
+        event({ id: "real", title: "Build package", message: "npm run build", sessionId: "real-session" }),
+      ],
+      undefined,
+      new Date("2026-05-26T06:02:00.000Z"),
+      filters({ messageKeywords: ["codex threads"] }),
+    );
+
+    expect(activities.map((activity) => activity.id)).toEqual(["real"]);
+  });
+
   it("does not reorder an already active task when later hook updates arrive", () => {
     const activities = activeActivities(
       [
@@ -437,6 +472,36 @@ describe("updateActivityList", () => {
 
     const afterPrompt = updateActivityList([], [prompt], new Set<string>(), new Date("2026-05-26T06:00:01.000Z"), hiddenInternalKeys);
     const afterTool = updateActivityList(afterPrompt, [tool], new Set<string>(), new Date("2026-05-26T06:00:02.000Z"), hiddenInternalKeys);
+
+    expect(afterPrompt).toEqual([]);
+    expect(afterTool).toEqual([]);
+    expect(hiddenInternalKeys.has(activityKey(prompt))).toBe(true);
+  });
+
+  it("keeps custom-filtered sessions hidden across incremental event batches", () => {
+    const hiddenInternalKeys = new Set<string>();
+    const prompt = event({
+      id: "memory-prompt",
+      provider: "codex",
+      sessionId: "memory-session",
+      title: "Memory summary",
+      message: "start",
+      status: "thinking",
+      createdAt: "2026-05-26T06:00:01.000Z",
+    });
+    const tool = event({
+      id: "memory-tool",
+      provider: "codex",
+      sessionId: "memory-session",
+      kind: "tool-started",
+      title: "Bash",
+      message: "cat MEMORY.md",
+      status: "running",
+      createdAt: "2026-05-26T06:00:02.000Z",
+    });
+
+    const afterPrompt = updateActivityList([], [prompt], new Set<string>(), new Date("2026-05-26T06:00:01.000Z"), hiddenInternalKeys, filters({ titleKeywords: ["memory"] }));
+    const afterTool = updateActivityList(afterPrompt, [tool], new Set<string>(), new Date("2026-05-26T06:00:02.000Z"), hiddenInternalKeys, filters({ titleKeywords: ["memory"] }));
 
     expect(afterPrompt).toEqual([]);
     expect(afterTool).toEqual([]);

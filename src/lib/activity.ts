@@ -1,4 +1,4 @@
-import type { PetEvent, TaskStatus } from "./types";
+import type { ActivityFilterSettings, PetEvent, TaskStatus } from "./types";
 
 const inactiveStatuses = new Set<TaskStatus>(["idle"]);
 const staleActivityStatuses = new Set<TaskStatus>(["thinking", "running"]);
@@ -10,13 +10,13 @@ export function activityKey(event: PetEvent): string {
   return [event.provider, event.sessionId || event.cwd || "global"].join(":");
 }
 
-export function activeActivities(events: PetEvent[], maxItems?: number, now = new Date()): PetEvent[] {
+export function activeActivities(events: PetEvent[], maxItems?: number, now = new Date(), filters?: ActivityFilterSettings): PetEvent[] {
   const activities = new Map<string, PetEvent>();
   const hiddenInternalKeys = new Set<string>();
   const nowMs = now.getTime();
 
   for (const event of events) {
-    applyActivityEvent(activities, event, undefined, hiddenInternalKeys, nowMs);
+    applyActivityEvent(activities, event, undefined, hiddenInternalKeys, nowMs, filters);
   }
 
   const sorted = sortActivities(Array.from(activities.values()));
@@ -32,13 +32,26 @@ export function updateActivityList(
   dismissedKeys = new Set<string>(),
   now = new Date(),
   hiddenInternalKeys = new Set<string>(),
+  filters?: ActivityFilterSettings,
 ): PetEvent[] {
   const activities = new Map(current.map((event) => [activityKey(event), event]));
   const nowMs = now.getTime();
   for (const event of incoming) {
-    applyActivityEvent(activities, event, dismissedKeys, hiddenInternalKeys, nowMs);
+    applyActivityEvent(activities, event, dismissedKeys, hiddenInternalKeys, nowMs, filters);
   }
   return sortActivities(Array.from(activities.values()));
+}
+
+export function matchesActivityFilters(event: PetEvent, filters?: ActivityFilterSettings): boolean {
+  const titleKeywords = normalizedKeywords(filters?.titleKeywords);
+  const messageKeywords = normalizedKeywords(filters?.messageKeywords);
+  if (titleKeywords.length === 0 && messageKeywords.length === 0) {
+    return false;
+  }
+
+  const titleText = normalizedSearchText(`${event.title}\n${taskTitleFor(event)}`);
+  const messageText = normalizedSearchText(event.message);
+  return titleKeywords.some((keyword) => titleText.includes(keyword)) || messageKeywords.some((keyword) => messageText.includes(keyword));
 }
 
 function applyActivityEvent(
@@ -47,13 +60,14 @@ function applyActivityEvent(
   dismissedKeys: Set<string> | undefined,
   hiddenInternalKeys: Set<string>,
   nowMs: number,
+  filters: ActivityFilterSettings | undefined,
 ) {
   let key = activityKey(event);
   if (hiddenInternalKeys.has(key)) {
     activities.delete(key);
     return;
   }
-  if (isCodexInternalBackgroundEvent(event)) {
+  if (isCodexInternalBackgroundEvent(event) || matchesActivityFilters(event, filters)) {
     hiddenInternalKeys.add(key);
     activities.delete(key);
     return;
@@ -161,6 +175,24 @@ function isCodexInternalBackgroundEvent(event: PetEvent): boolean {
     text.includes("Each suggestion must include: title, description, prompt, appId") ||
     text.includes("You will be presented with a user prompt, and your job is to provide a short title for a task")
   );
+}
+
+function normalizedKeywords(keywords: string[] | null | undefined): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const keyword of keywords ?? []) {
+    const value = normalizedSearchText(keyword);
+    if (!value || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    normalized.push(value);
+  }
+  return normalized;
+}
+
+function normalizedSearchText(value: string): string {
+  return value.trim().toLocaleLowerCase();
 }
 
 function isStaleActivity(event: PetEvent, nowMs: number): boolean {

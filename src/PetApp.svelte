@@ -4,7 +4,7 @@
   import { availableMonitors, getCurrentWindow, primaryMonitor, type Monitor } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
   import { activateActivity, getAppSettings, openMainWindow, recentEvents, recordPerfEvent, resolveActivityApproval, sendActivityReply } from "./lib/api";
-  import { activityCapabilities, activityKey, cardEndTime, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
+  import { activityCapabilities, activityKey, cardEndTime, cardMessage, cardMeta, cardTitle, matchesActivityFilters, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
   import { runningBubbleStyle } from "./lib/gradientColor";
   import PetAvatar from "./lib/PetAvatar.svelte";
   import { playNotificationSound, playWhipSound, shouldRepeatNotification, shouldRing } from "./lib/sound";
@@ -148,6 +148,7 @@
 
     void listen<AppSettings>("settings-updated", (event) => {
       settings = event.payload;
+      applyCurrentActivityFilters();
     }).then((unlisten) => {
       if (disposed) {
         unlisten();
@@ -173,6 +174,7 @@
     void (async () => {
       try {
         settings = await getAppSettings();
+        applyCurrentActivityFilters();
         void recordPerfEvent({
           name: "frontend.pet.get_settings",
           durationMs: performance.now() - mountedAt,
@@ -275,13 +277,31 @@
       seenEventIds.add(event.id);
     }
     seenEventIds = new Set(seenEventIds);
-    const nextActivities = updateActivityList(activities, incoming, dismissedActivityKeys, new Date(), hiddenInternalActivityKeys);
+    const nextActivities = updateActivityList(activities, incoming, dismissedActivityKeys, new Date(), hiddenInternalActivityKeys, settings?.activityFilters);
     const hasNewLiveActivity = nextActivities.some((activity) => isLiveActivity(activity) && !previousLiveKeys.has(activityKey(activity)));
     activities = nextActivities;
     if (tasksCollapsed && hasNewLiveActivity) {
       tasksCollapsed = false;
     }
     stopRepeatIfNoLongerNeedsAttention();
+  }
+
+  function applyCurrentActivityFilters() {
+    if (!settings?.activityFilters || activities.length === 0) {
+      return;
+    }
+    const nextActivities = activities.filter((activity) => {
+      if (!matchesActivityFilters(activity, settings?.activityFilters)) {
+        return true;
+      }
+      hiddenInternalActivityKeys.add(activityKey(activity));
+      return false;
+    });
+    if (nextActivities.length !== activities.length) {
+      hiddenInternalActivityKeys = new Set(hiddenInternalActivityKeys);
+      activities = nextActivities;
+      stopRepeatIfNoLongerNeedsAttention();
+    }
   }
 
   function isLiveActivity(activity: PetEvent) {
