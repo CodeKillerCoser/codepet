@@ -82,9 +82,6 @@
   $: if (!hasActivities && tasksCollapsed) {
     tasksCollapsed = false;
   }
-  $: if (hasLiveActivities && tasksCollapsed) {
-    tasksCollapsed = false;
-  }
   $: if (ready) {
     void syncWindowFrame(desiredWindowHeight);
   }
@@ -252,12 +249,22 @@
     if (incoming.length === 0) {
       return;
     }
+    const previousLiveKeys = new Set(activities.filter(isLiveActivity).map(activityKey));
     for (const event of incoming) {
       seenEventIds.add(event.id);
     }
     seenEventIds = new Set(seenEventIds);
-    activities = updateActivityList(activities, incoming, dismissedActivityKeys, new Date(), hiddenInternalActivityKeys);
+    const nextActivities = updateActivityList(activities, incoming, dismissedActivityKeys, new Date(), hiddenInternalActivityKeys);
+    const hasNewLiveActivity = nextActivities.some((activity) => isLiveActivity(activity) && !previousLiveKeys.has(activityKey(activity)));
+    activities = nextActivities;
+    if (tasksCollapsed && hasNewLiveActivity) {
+      tasksCollapsed = false;
+    }
     stopRepeatIfNoLongerNeedsAttention();
+  }
+
+  function isLiveActivity(activity: PetEvent) {
+    return activity.status === "thinking" || activity.status === "running" || activity.status === "waiting-approval";
   }
 
   function isActiveActivity(activity: PetEvent) {

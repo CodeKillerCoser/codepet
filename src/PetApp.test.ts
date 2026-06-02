@@ -19,13 +19,18 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain("clearNoticeTimer");
   });
 
-  it("auto-expands the task list while live activities are present", () => {
+  it("auto-expands the task list only when a new live activity appears", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const applyBlock = source.slice(source.indexOf("function applyIncomingEvents"), source.indexOf("function isActiveActivity"));
 
     expect(source).toContain("hasLiveActivities");
     expect(source).toContain('activity.status === "running"');
-    expect(source).toContain("hasLiveActivities && tasksCollapsed");
+    expect(source).toContain("function isLiveActivity");
+    expect(applyBlock).toContain("const previousLiveKeys = new Set(activities.filter(isLiveActivity).map(activityKey))");
+    expect(applyBlock).toContain("const hasNewLiveActivity = nextActivities.some");
+    expect(applyBlock).toContain("if (tasksCollapsed && hasNewLiveActivity)");
     expect(source).toContain("tasksCollapsed = false");
+    expect(source).not.toContain("hasLiveActivities && tasksCollapsed");
   });
 
   it("prevents pet window double-click defaults", () => {
