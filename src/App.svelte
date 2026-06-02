@@ -34,7 +34,7 @@
   import { buildUsageChartData, yAxisTicks, type UsageBucketSize, type UsageRange } from "./lib/usageChart";
   import type { AgentView, AppSettings, PetEvent, PetLibraryView, TokenUsageSummary } from "./lib/types";
 
-  let tab: "agents" | "usage" | "filters" | "personalize" | "events" = "agents";
+  let tab: "agents" | "usage" | "personalize" | "events" = "agents";
   let agents: AgentView[] = [];
   let settings: AppSettings | null = null;
   let petLibrary: PetLibraryView | null = null;
@@ -56,6 +56,10 @@
   };
   let usageRange: UsageRange = "7d";
   let usageBucketSize: UsageBucketSize = "30m";
+  let filterDrafts: Record<keyof AppSettings["activityFilters"], string> = {
+    titleKeywords: "",
+    messageKeywords: "",
+  };
   const agentOrder: AgentView["id"][] = ["codex", "claude", "qoder", "cursor"];
   const usageRanges: Array<{ value: UsageRange; label: string }> = [
     { value: "24h", label: "24小时" },
@@ -89,6 +93,10 @@
     titleKeywords: [],
     messageKeywords: [],
   };
+  const activityFilterGroups = [
+    { key: "titleKeywords", label: "标题", placeholder: "添加标题关键字" },
+    { key: "messageKeywords", label: "内容", placeholder: "添加内容关键字" },
+  ] as const;
   const bubbleColorConfigs = [
     { key: "backgroundColor", label: "背景色", fallback: runningBubbleDefaults.backgroundColor, directional: true },
     { key: "borderColor", label: "边框色", fallback: runningBubbleDefaults.borderColor, directional: false },
@@ -412,33 +420,48 @@
     return normalized;
   }
 
-  function filterKeywordsText(keywords: string[]) {
-    return normalizeFilterKeywords(keywords).join("\n");
+  function updateFilterDraft(kind: keyof AppSettings["activityFilters"], value: string) {
+    filterDrafts = {
+      ...filterDrafts,
+      [kind]: value,
+    };
   }
 
-  function parseFilterKeywords(text: string) {
-    return normalizeFilterKeywords(text.split(/\r?\n/));
+  async function addFilterKeyword(kind: keyof AppSettings["activityFilters"]) {
+    if (!settings) return;
+    const value = filterDrafts[kind].trim();
+    if (!value) {
+      return;
+    }
+    await updateActivityFilterKeywords(kind, [...settings.activityFilters[kind], value]);
+    updateFilterDraft(kind, "");
   }
 
-  function updateFilterKeywords(kind: keyof AppSettings["activityFilters"], text: string) {
+  async function removeFilterKeyword(kind: keyof AppSettings["activityFilters"], keyword: string) {
+    if (!settings) return;
+    const target = keyword.toLocaleLowerCase();
+    await updateActivityFilterKeywords(kind, settings.activityFilters[kind].filter((item) => item.toLocaleLowerCase() !== target));
+  }
+
+  async function updateActivityFilterKeywords(kind: keyof AppSettings["activityFilters"], keywords: string[]) {
     if (!settings) return;
     settings = {
       ...settings,
       activityFilters: {
         ...activityFilterDefaults,
         ...settings.activityFilters,
-        [kind]: parseFilterKeywords(text),
+        [kind]: normalizeFilterKeywords(keywords),
       },
     };
+    await saveSettings();
   }
 
-  async function saveActivityFilters() {
-    if (!settings) return;
-    settings = {
-      ...settings,
-      activityFilters: normalizeActivityFilters(settings.activityFilters),
-    };
-    await saveSettings();
+  function handleFilterDraftKeydown(event: KeyboardEvent, kind: keyof AppSettings["activityFilters"]) {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    void addFilterKeyword(kind);
   }
 
   async function clearActivityFilters() {
@@ -701,7 +724,7 @@
   $: usageBuckets = usageData.buckets;
   $: usageMaxTokens = usageData.maxTokens;
   $: usageTickLabels = yAxisTicks(usageMaxTokens);
-  $: pageTitle = tab === "agents" ? "Agent" : tab === "usage" ? "用量" : tab === "filters" ? "过滤" : tab === "personalize" ? "个性化" : "最新事件";
+  $: pageTitle = tab === "agents" ? "Agent" : tab === "usage" ? "用量" : tab === "personalize" ? "个性化" : "最新事件";
   $: appTheme = settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "theme-dark" : "theme-light";
 </script>
 
@@ -713,9 +736,6 @@
       </button>
       <button class:active={tab === "usage"} on:click={() => (tab = "usage")} aria-label="用量统计">
         <BarChart3 size={18} /> 用量
-      </button>
-      <button class:active={tab === "filters"} on:click={() => (tab = "filters")} aria-label="任务过滤">
-        <Filter size={18} /> 过滤
       </button>
       <button class:active={tab === "personalize"} on:click={() => (tab = "personalize")} aria-label="个性化配置">
         <Palette size={18} /> 个性化
@@ -764,6 +784,41 @@
           </header>
 
           <div class="agent-list">
+            {#if settings}
+              <article class="agent-filter-card">
+                <div class="filter-card-head">
+                  <div>
+                    <span class="agent-kicker">FILTERS</span>
+                    <h3><Filter size={18} /> 任务过滤</h3>
+                  </div>
+                  <button class="filter-clear-button" disabled={activityFilterCount(settings.activityFilters) === 0} on:click={clearActivityFilters}>
+                    <Trash2 size={15} /> 清空
+                  </button>
+                </div>
+                <div class="compact-filter-groups">
+                  {#each activityFilterGroups as group}
+                    <div class="compact-filter-group">
+                      <span>{group.label}</span>
+                      <div class="filter-chip-row">
+                        {#each settings.activityFilters[group.key] as keyword}
+                          <button class="filter-chip" type="button" on:click={() => removeFilterKeyword(group.key, keyword)} aria-label={`移除${group.label}过滤 ${keyword}`}>
+                            {keyword}
+                            <Trash2 size={12} />
+                          </button>
+                        {/each}
+                        <input
+                          value={filterDrafts[group.key]}
+                          placeholder={group.placeholder}
+                          on:input={(event) => updateFilterDraft(group.key, event.currentTarget.value)}
+                          on:keydown={(event) => handleFilterDraftKeydown(event, group.key)}
+                        />
+                        <button class="filter-add-button" type="button" on:click={() => addFilterKeyword(group.key)}>添加</button>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              </article>
+            {/if}
             {#each agents as agent}
               <article class="agent-card">
                 <div class="agent-title">
@@ -915,50 +970,6 @@
             {/each}
           </section>
         {/if}
-      </div>
-    {:else if tab === "filters" && settings}
-      <div class="filter-workspace">
-        <section class="filter-editor pixel-panel">
-          <header class="section-head">
-            <div>
-              <span class="agent-kicker">HOOK FILTERS</span>
-              <h3><Filter size={18} /> 自定义过滤</h3>
-            </div>
-            <span>{activityFilterCount(settings.activityFilters)} 条规则</span>
-          </header>
-
-          <div class="filter-grid">
-            <label class="filter-field">
-              <span>对话标题关键字</span>
-              <textarea
-                rows="8"
-                spellcheck="false"
-                placeholder="一行一个标题关键字"
-                value={filterKeywordsText(settings.activityFilters.titleKeywords)}
-                on:input={(event) => updateFilterKeywords("titleKeywords", event.currentTarget.value)}
-              ></textarea>
-            </label>
-            <label class="filter-field">
-              <span>对话内容关键字</span>
-              <textarea
-                rows="8"
-                spellcheck="false"
-                placeholder="一行一个内容关键字"
-                value={filterKeywordsText(settings.activityFilters.messageKeywords)}
-                on:input={(event) => updateFilterKeywords("messageKeywords", event.currentTarget.value)}
-              ></textarea>
-            </label>
-          </div>
-
-          <div class="row-actions">
-            <button on:click={saveActivityFilters}>
-              <Check size={17} /> 保存过滤
-            </button>
-            <button on:click={clearActivityFilters}>
-              <Trash2 size={17} /> 清空
-            </button>
-          </div>
-        </section>
       </div>
     {:else if tab === "personalize" && settings}
       <div class="personal-grid">

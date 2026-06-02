@@ -31,8 +31,7 @@ body {
 
 button,
 input,
-select,
-textarea {
+select {
   font: inherit;
 }
 
@@ -42,8 +41,7 @@ button {
 
 button:focus-visible,
 input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
+select:focus-visible {
   outline: 2px solid #38bdf8;
   outline-offset: 2px;
 }
@@ -303,11 +301,6 @@ textarea:focus-visible {
   gap: 14px;
 }
 
-.filter-workspace {
-  display: grid;
-  gap: 14px;
-}
-
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -387,7 +380,7 @@ textarea:focus-visible {
 .appearance-editor,
 .bubble-editor,
 .sound-editor,
-.filter-editor,
+.agent-filter-card,
 .event-log {
   border-radius: 8px;
 }
@@ -1125,45 +1118,99 @@ input[type="time"] {
   background: var(--app-surface-soft);
 }
 
-textarea {
-  width: 100%;
-  min-height: 180px;
-  resize: vertical;
+.agent-filter-card {
+  display: grid;
+  gap: 12px;
   border: 1px solid var(--app-border);
   border-radius: 8px;
-  padding: 12px;
-  color: var(--app-text);
+  padding: 14px 16px;
   background: var(--app-surface-soft);
-  line-height: 1.45;
 }
 
-.filter-editor {
-  display: grid;
-  gap: 16px;
-  padding: 18px;
+.filter-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.filter-editor h3 {
+.filter-card-head h3 {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
+  margin: 0;
+  color: var(--app-text);
+  font-size: 17px;
+  font-weight: 680;
 }
 
-.filter-grid {
+.filter-clear-button,
+.filter-add-button,
+.filter-chip {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--app-muted);
+  background: var(--app-surface-strong);
+  font-size: 12px;
+  font-weight: 640;
+}
+
+.filter-clear-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.compact-filter-groups {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 10px;
 }
 
-.filter-field {
+.compact-filter-group {
   display: grid;
-  gap: 8px;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
 }
 
-.filter-field > span {
+.compact-filter-group > span {
+  padding-top: 8px;
   color: var(--app-muted);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 680;
+}
+
+.filter-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.filter-chip {
+  max-width: 100%;
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-accent) 14%, var(--app-surface-strong));
+}
+
+.filter-chip svg {
+  flex: 0 0 auto;
+}
+
+.filter-chip-row input {
+  flex: 1 1 150px;
+  min-width: 130px;
+  min-height: 32px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--app-text);
+  background: var(--app-surface-strong);
 }
 
 .check {
@@ -2547,9 +2594,6 @@ textarea {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .filter-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 840px) {
