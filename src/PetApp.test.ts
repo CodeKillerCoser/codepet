@@ -156,6 +156,14 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain("{#if capabilities.canReply && replyingToId !== activity.id}");
   });
 
+  it("keeps bottom spacing on activity cards with footer actions", () => {
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    const actionCardRule = styles.slice(styles.indexOf(".status-pill:has(.reply-button)"), styles.indexOf(".status-pill:hover"));
+
+    expect(actionCardRule).toContain("min-height: 86px");
+    expect(actionCardRule).toContain("padding-bottom: 10px");
+  });
+
   it("renders approval actions for waiting approval activities", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
 

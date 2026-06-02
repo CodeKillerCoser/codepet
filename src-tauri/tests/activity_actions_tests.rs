@@ -99,12 +99,12 @@ fn activation_falls_back_to_provider_app_or_cwd() {
     );
     assert_eq!(
         activation_target_for_event(&event(AgentId::Qoder, None)),
-        ActivationTarget::Url("https://qoder.com/agents".to_string())
+        ActivationTarget::AppName("Qoder".to_string())
     );
 }
 
 #[test]
-fn reply_strategy_uses_qoder_remote_control_instead_of_terminal_sender() {
+fn reply_strategy_does_not_send_qoder_messages_without_verified_existing_session_api() {
     let mut qoder_event = event(
         AgentId::Qoder,
         Some(ActivitySource {
@@ -122,7 +122,7 @@ fn reply_strategy_uses_qoder_remote_control_instead_of_terminal_sender() {
     qoder_event.status = TaskStatus::Done;
     let strategy = reply_strategy_for_event(&qoder_event);
 
-    assert_eq!(strategy, ReplyStrategy::QoderRemoteControl);
+    assert_eq!(strategy, ReplyStrategy::Unsupported);
 }
 
 #[test]

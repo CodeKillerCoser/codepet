@@ -1572,6 +1572,8 @@ input[type="time"] {
 
 .status-pill:has(.reply-button) {
   grid-template-columns: minmax(0, 1fr);
+  min-height: 86px;
+  padding-bottom: 10px;
 }
 
 .status-pill:hover {

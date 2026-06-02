@@ -626,7 +626,7 @@ describe("activityCapabilities", () => {
     expect(activityCapabilities(activity).canReply).toBe(false);
   });
 
-  it("exposes reply for completed Qoder remote-control sessions with a session id", () => {
+  it("does not expose reply for Qoder remote-control sessions until an existing-session send API is verified", () => {
     const remoteActivity = event({
       provider: "qoder",
       status: "done",
@@ -638,7 +638,7 @@ describe("activityCapabilities", () => {
       sessionId: null,
     });
 
-    expect(activityCapabilities(remoteActivity).canReply).toBe(true);
+    expect(activityCapabilities(remoteActivity).canReply).toBe(false);
     expect(activityCapabilities(missingSessionActivity).canReply).toBe(false);
   });
 

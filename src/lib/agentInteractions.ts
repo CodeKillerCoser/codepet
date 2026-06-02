@@ -25,12 +25,13 @@ const codexRemoteInteraction: AgentInteraction = {
 
 const qoderInteraction: AgentInteraction = {
   capabilities(event) {
-    const canReply = isReplyableStatus(event) && Boolean(event.sessionId);
+    const canReply = false;
+    const canApprove = event.status === "waiting-approval";
     return {
       canActivate: true,
       canReply,
-      canApprove: event.status === "waiting-approval",
-      replyReason: canReply ? undefined : "Open Qoder Remote Control to reply",
+      canApprove,
+      replyReason: "Qoder cannot send messages to existing local sessions yet",
     };
   },
 };
