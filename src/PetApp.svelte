@@ -539,7 +539,8 @@
       return 0;
     }
     return currentActivities.reduce((height, activity, index) => {
-      const cardHeight = activity.id === activeReplyingToId ? 110 : activity.status === "waiting-approval" ? 86 : activityCardHeight;
+      const hasFooterAction = activityCapabilities(activity).canApprove || activityCapabilities(activity).canReply;
+      const cardHeight = activity.id === activeReplyingToId ? 110 : hasFooterAction ? 86 : activityCardHeight;
       return height + cardHeight + (index > 0 ? activityGap : 0);
     }, 0);
   }

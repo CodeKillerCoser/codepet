@@ -136,7 +136,8 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain("const petWindowPresetHeight");
     expect(source).toContain("function activityStackHeightFor");
     expect(source).toContain("activity.id === activeReplyingToId");
-    expect(source).toContain('activity.status === "waiting-approval" ? 86 : activityCardHeight');
+    expect(source).toContain("const hasFooterAction = activityCapabilities(activity).canApprove || activityCapabilities(activity).canReply");
+    expect(source).toContain("hasFooterAction ? 86 : activityCardHeight");
     expect(source).toContain('style={`--pet-activity-stack-height: ${activityStackHeight}px`}');
   });
 
