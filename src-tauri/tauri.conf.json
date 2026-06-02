@@ -53,8 +53,11 @@
     "macOSPrivateApi": true
   },
   "bundle": {
-    "active": false,
-    "targets": "all",
+    "active": true,
+    "targets": [
+      "dmg",
+      "nsis"
+    ],
     "resources": [
       "resources/sounds/whip-crack.wav",
       "resources/sounds/whip-swing.wav",
