@@ -157,6 +157,15 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain("{#if capabilities.canReply && replyingToId !== activity.id}");
   });
 
+  it("allows dismissing activities in any status", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const titleRowBlock = source.slice(source.indexOf('<div class="status-title-row">'), source.indexOf('<button class="status-open" type="button"'));
+
+    expect(titleRowBlock).toContain('class="dismiss-button inline-dismiss"');
+    expect(titleRowBlock).toContain("dismissActivity(event, activity)");
+    expect(titleRowBlock).not.toContain('activity.status === "done" || activity.status === "failed"');
+  });
+
   it("deduplicates pushed pet events before ringing", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const listenBlock = source.slice(source.indexOf('listen<PetEvent>("pet-event"'), source.indexOf('listen<AppSettings>("settings-updated"'));

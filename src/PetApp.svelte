@@ -796,9 +796,7 @@
               {#if activity.status === "done"}
                 <i class="inline-done-mark" aria-hidden="true"></i>
               {/if}
-              {#if activity.status === "done" || activity.status === "failed"}
-                <button class="dismiss-button inline-dismiss" type="button" aria-label="从列表移除" on:click={(event) => dismissActivity(event, activity)}></button>
-              {/if}
+              <button class="dismiss-button inline-dismiss" type="button" aria-label="从列表移除" on:click={(event) => dismissActivity(event, activity)}></button>
             </div>
             <button class="status-open" type="button" aria-label={`打开 ${cardTitle(activity)}`} title={cardMessage(activity)} on:click={() => activate(activity)}>
               <span class="status-message">{cardMessage(activity)}</span>
