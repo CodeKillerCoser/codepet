@@ -11,6 +11,7 @@ pub enum ActivationTarget {
     BundleId(String),
     AppName(String),
     Path(String),
+    Url(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,11 +37,19 @@ pub enum ApprovalStrategy {
 }
 
 pub(crate) trait AgentInteractionDriver {
+    fn activation_strategy(&self, event: &PetEvent) -> ActivationStrategy {
+        default_activation_strategy_for_event(event)
+    }
+
     fn reply_strategy(&self, event: &PetEvent) -> ReplyStrategy;
 
     fn approval_strategy(&self, event: &PetEvent) -> ApprovalStrategy {
         let _ = event;
         ApprovalStrategy::Unsupported
+    }
+
+    fn activate(&self, event: &PetEvent) -> Result<(), String> {
+        activate_by_strategy(&self.activation_strategy(event))
     }
 
     fn send_reply(&self, event: &PetEvent, message: &str) -> Result<(), String> {
@@ -110,6 +119,14 @@ impl AgentInteractionDriver for DefaultDriver {
 }
 
 impl AgentInteractionDriver for AgentInteraction {
+    fn activation_strategy(&self, event: &PetEvent) -> ActivationStrategy {
+        match self {
+            Self::CodexAppServer(driver) => driver.activation_strategy(event),
+            Self::Qoder(driver) => driver.activation_strategy(event),
+            Self::Default(driver) => driver.activation_strategy(event),
+        }
+    }
+
     fn reply_strategy(&self, event: &PetEvent) -> ReplyStrategy {
         match self {
             Self::CodexAppServer(driver) => driver.reply_strategy(event),
@@ -134,6 +151,14 @@ impl AgentInteractionDriver for AgentInteraction {
         }
     }
 
+    fn activate(&self, event: &PetEvent) -> Result<(), String> {
+        match self {
+            Self::CodexAppServer(driver) => driver.activate(event),
+            Self::Qoder(driver) => driver.activate(event),
+            Self::Default(driver) => driver.activate(event),
+        }
+    }
+
     fn resolve_approval(
         &self,
         state: &SharedState,
@@ -149,6 +174,10 @@ impl AgentInteractionDriver for AgentInteraction {
 }
 
 pub fn activation_strategy_for_event(event: &PetEvent) -> ActivationStrategy {
+    interaction_for_event(event).activation_strategy(event)
+}
+
+pub(crate) fn default_activation_strategy_for_event(event: &PetEvent) -> ActivationStrategy {
     #[cfg(target_os = "macos")]
     match event
         .source
@@ -172,6 +201,15 @@ pub fn activation_strategy_for_event(event: &PetEvent) -> ActivationStrategy {
 }
 
 pub fn activation_target_for_event(event: &PetEvent) -> ActivationTarget {
+    match activation_strategy_for_event(event) {
+        ActivationStrategy::Target(target) => target,
+        ActivationStrategy::TerminalSession(_) | ActivationStrategy::ITermSession(_) => {
+            default_activation_target_for_event(event)
+        }
+    }
+}
+
+fn default_activation_target_for_event(event: &PetEvent) -> ActivationTarget {
     #[cfg(target_os = "macos")]
     if let Some(source) = &event.source {
         if let Some(bundle_id) = source.app_bundle_id.as_ref().filter(|value| !value.is_empty()) {
@@ -205,7 +243,11 @@ pub fn approval_strategy_for_event(event: &PetEvent) -> ApprovalStrategy {
 }
 
 pub fn activate_event(event: &PetEvent) -> Result<(), String> {
-    match activation_strategy_for_event(event) {
+    interaction_for_event(event).activate(event)
+}
+
+fn activate_by_strategy(strategy: &ActivationStrategy) -> Result<(), String> {
+    match strategy {
         ActivationStrategy::Target(target) => activate_target(&target),
         ActivationStrategy::TerminalSession(tty) => activate_terminal_session(&tty),
         ActivationStrategy::ITermSession(tty) => activate_iterm_session(&tty),
@@ -313,6 +355,7 @@ fn activate_target(target: &ActivationTarget) -> Result<(), String> {
         #[cfg(not(target_os = "macos"))]
         ActivationTarget::AppName(_) => Err("当前平台不支持按应用名称激活会话".to_string()),
         ActivationTarget::Path(path) => open::that_detached(path).map_err(|error| error.to_string()),
+        ActivationTarget::Url(url) => open::that_detached(url).map_err(|error| error.to_string()),
     }
 }
 

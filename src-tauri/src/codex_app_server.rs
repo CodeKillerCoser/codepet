@@ -1,6 +1,6 @@
 use crate::activity_actions::{
     collector_approval_strategy, has_session_id, is_replyable_event, AgentInteractionDriver,
-    ApprovalStrategy, ReplyStrategy,
+    ActivationStrategy, ActivationTarget, ApprovalStrategy, ReplyStrategy,
 };
 use crate::app_log;
 use crate::events::PetEvent;
@@ -20,6 +20,14 @@ pub enum CodexReplyAction {
 pub(crate) struct CodexAppServerManager;
 
 impl AgentInteractionDriver for CodexAppServerManager {
+    fn activation_strategy(&self, event: &PetEvent) -> ActivationStrategy {
+        if let Some(thread_id) = event.session_id.as_deref().filter(|value| !value.is_empty()) {
+            ActivationStrategy::Target(ActivationTarget::Url(codex_thread_deeplink(thread_id)))
+        } else {
+            crate::activity_actions::default_activation_strategy_for_event(event)
+        }
+    }
+
     fn reply_strategy(&self, event: &PetEvent) -> ReplyStrategy {
         if is_replyable_event(event) && has_session_id(event) {
             ReplyStrategy::CodexAppServer
@@ -303,7 +311,7 @@ fn refresh_codex_thread_view(thread_id: &str) {
     }
 }
 
-fn codex_thread_deeplink(thread_id: &str) -> String {
+pub(crate) fn codex_thread_deeplink(thread_id: &str) -> String {
     let escaped: String = url::form_urlencoded::byte_serialize(thread_id.as_bytes()).collect();
     format!("codex://threads/{escaped}")
 }
