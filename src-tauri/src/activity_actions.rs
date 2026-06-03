@@ -1,4 +1,5 @@
 use crate::agents::AgentId;
+use crate::app_log;
 use crate::events::{PetEvent, TaskStatus};
 use crate::state::{ApprovalDecision, SharedState};
 #[cfg(target_os = "macos")]
@@ -34,7 +35,7 @@ pub enum ApprovalStrategy {
     Unsupported,
 }
 
-trait AgentInteractionDriver {
+pub(crate) trait AgentInteractionDriver {
     fn reply_strategy(&self, event: &PetEvent) -> ReplyStrategy;
 
     fn approval_strategy(&self, event: &PetEvent) -> ApprovalStrategy {
@@ -44,7 +45,9 @@ trait AgentInteractionDriver {
 
     fn send_reply(&self, event: &PetEvent, message: &str) -> Result<(), String> {
         match self.reply_strategy(event) {
-            ReplyStrategy::CodexAppServer => crate::codex_app_server::send_reply(event, message),
+            ReplyStrategy::CodexAppServer => {
+                Err("codex app-server reply must be handled by its interaction driver".to_string())
+            }
             ReplyStrategy::Terminal => send_terminal_reply(event, message),
             ReplyStrategy::ITerm => send_iterm_reply(event, message),
             ReplyStrategy::AccessibilityPaste => {
@@ -75,33 +78,15 @@ trait AgentInteractionDriver {
 }
 
 #[derive(Clone, Copy)]
-struct CodexRemoteDriver;
-
-#[derive(Clone, Copy)]
 struct QoderDriver;
 
 #[derive(Clone, Copy)]
 struct DefaultDriver;
 
 enum AgentInteraction {
-    CodexRemote(CodexRemoteDriver),
+    CodexAppServer(crate::codex_app_server::CodexAppServerManager),
     Qoder(QoderDriver),
     Default(DefaultDriver),
-}
-
-impl AgentInteractionDriver for CodexRemoteDriver {
-    fn reply_strategy(&self, event: &PetEvent) -> ReplyStrategy {
-        if is_replyable_event(event) && has_session_id(event)
-        {
-            ReplyStrategy::CodexAppServer
-        } else {
-            ReplyStrategy::Unsupported
-        }
-    }
-
-    fn approval_strategy(&self, event: &PetEvent) -> ApprovalStrategy {
-        collector_approval_strategy(event)
-    }
 }
 
 impl AgentInteractionDriver for QoderDriver {
@@ -127,7 +112,7 @@ impl AgentInteractionDriver for DefaultDriver {
 impl AgentInteractionDriver for AgentInteraction {
     fn reply_strategy(&self, event: &PetEvent) -> ReplyStrategy {
         match self {
-            Self::CodexRemote(driver) => driver.reply_strategy(event),
+            Self::CodexAppServer(driver) => driver.reply_strategy(event),
             Self::Qoder(driver) => driver.reply_strategy(event),
             Self::Default(driver) => driver.reply_strategy(event),
         }
@@ -135,7 +120,7 @@ impl AgentInteractionDriver for AgentInteraction {
 
     fn approval_strategy(&self, event: &PetEvent) -> ApprovalStrategy {
         match self {
-            Self::CodexRemote(driver) => driver.approval_strategy(event),
+            Self::CodexAppServer(driver) => driver.approval_strategy(event),
             Self::Qoder(driver) => driver.approval_strategy(event),
             Self::Default(driver) => driver.approval_strategy(event),
         }
@@ -143,7 +128,7 @@ impl AgentInteractionDriver for AgentInteraction {
 
     fn send_reply(&self, event: &PetEvent, message: &str) -> Result<(), String> {
         match self {
-            Self::CodexRemote(driver) => driver.send_reply(event, message),
+            Self::CodexAppServer(driver) => driver.send_reply(event, message),
             Self::Qoder(driver) => driver.send_reply(event, message),
             Self::Default(driver) => driver.send_reply(event, message),
         }
@@ -156,7 +141,7 @@ impl AgentInteractionDriver for AgentInteraction {
         decision: ApprovalDecision,
     ) -> Result<(), String> {
         match self {
-            Self::CodexRemote(driver) => driver.resolve_approval(state, event, decision),
+            Self::CodexAppServer(driver) => driver.resolve_approval(state, event, decision),
             Self::Qoder(driver) => driver.resolve_approval(state, event, decision),
             Self::Default(driver) => driver.resolve_approval(state, event, decision),
         }
@@ -228,7 +213,35 @@ pub fn activate_event(event: &PetEvent) -> Result<(), String> {
 }
 
 pub fn send_reply_to_event(event: &PetEvent, message: &str) -> Result<(), String> {
-    interaction_for_event(event).send_reply(event, message)
+    let interaction = interaction_for_event(event);
+    let strategy = interaction.reply_strategy(event);
+    app_log::info(
+        "activity_reply",
+        &format!(
+            "send reply requested event_id={} provider={} status={:?} strategy={:?} has_session_id={} title={}",
+            event.id,
+            event.provider.as_str(),
+            event.status,
+            strategy,
+            has_session_id(event),
+            event.title
+        ),
+    );
+    let result = interaction.send_reply(event, message);
+    match &result {
+        Ok(()) => app_log::info(
+            "activity_reply",
+            &format!("send reply finished event_id={} strategy={strategy:?}", event.id),
+        ),
+        Err(error) => app_log::error(
+            "activity_reply",
+            &format!(
+                "send reply failed event_id={} strategy={strategy:?} error={error}",
+                event.id
+            ),
+        ),
+    }
+    result
 }
 
 pub fn resolve_approval_for_event(
@@ -241,13 +254,15 @@ pub fn resolve_approval_for_event(
 
 fn interaction_for_event(event: &PetEvent) -> AgentInteraction {
     match event.provider {
-        AgentId::Codex => AgentInteraction::CodexRemote(CodexRemoteDriver),
+        AgentId::Codex => {
+            AgentInteraction::CodexAppServer(crate::codex_app_server::CodexAppServerManager)
+        }
         AgentId::Qoder => AgentInteraction::Qoder(QoderDriver),
         AgentId::Claude | AgentId::Cursor => AgentInteraction::Default(DefaultDriver),
     }
 }
 
-fn collector_approval_strategy(event: &PetEvent) -> ApprovalStrategy {
+pub(crate) fn collector_approval_strategy(event: &PetEvent) -> ApprovalStrategy {
     if event.status == TaskStatus::WaitingApproval {
         ApprovalStrategy::CollectorWait
     } else {
@@ -255,14 +270,14 @@ fn collector_approval_strategy(event: &PetEvent) -> ApprovalStrategy {
     }
 }
 
-fn has_session_id(event: &PetEvent) -> bool {
+pub(crate) fn has_session_id(event: &PetEvent) -> bool {
     event
         .session_id
         .as_deref()
         .is_some_and(|value| !value.is_empty())
 }
 
-fn is_replyable_event(event: &PetEvent) -> bool {
+pub(crate) fn is_replyable_event(event: &PetEvent) -> bool {
     matches!(event.status, TaskStatus::Done | TaskStatus::Failed)
 }
 

@@ -161,18 +161,21 @@ fn activate_activity(state: tauri::State<'_, SharedState>, event_id: String) -> 
 }
 
 #[tauri::command]
-fn send_activity_reply(
+async fn send_activity_reply(
     state: tauri::State<'_, SharedState>,
     event_id: String,
     message: String,
 ) -> Result<(), String> {
-    if message.trim().is_empty() {
+    let message = message.trim().to_string();
+    if message.is_empty() {
         return Err("reply message is empty".to_string());
     }
     let event = state
         .event_by_id(&event_id)
         .ok_or_else(|| format!("activity not found: {event_id}"))?;
-    activity_actions::send_reply_to_event(&event, message.trim())
+    tauri::async_runtime::spawn_blocking(move || activity_actions::send_reply_to_event(&event, &message))
+        .await
+        .map_err(|error| format!("reply task failed: {error}"))?
 }
 
 #[tauri::command]
