@@ -130,6 +130,14 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain('<span class="status-ended-at">{endedAt}</span>');
   });
 
+  it("uses the normalized source label in the footer agent text", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+
+    expect(source).toContain("cardAgentLabel");
+    expect(source).toContain('<span class="status-agent">{cardAgentLabel(activity)}</span>');
+    expect(source).not.toContain('<span class="status-agent">{activity.provider}</span>');
+  });
+
   it("lets CSS size the activity stack naturally up to a max height", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");

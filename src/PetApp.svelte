@@ -4,7 +4,7 @@
   import { availableMonitors, getCurrentWindow, primaryMonitor, type Monitor } from "@tauri-apps/api/window";
   import { onMount, tick } from "svelte";
   import { activateActivity, getAppSettings, openMainWindow, recentEvents, recordPerfEvent, resolveActivityApproval, sendActivityReply } from "./lib/api";
-  import { activityCapabilities, activityKey, cardEndTime, cardMessage, cardMeta, cardTitle, matchesActivityFilters, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
+  import { activityCapabilities, activityKey, cardAgentLabel, cardEndTime, cardMessage, cardMeta, cardTitle, matchesActivityFilters, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
   import { runningBubbleStyle } from "./lib/gradientColor";
   import PetAvatar from "./lib/PetAvatar.svelte";
   import { playNotificationSound, playWhipSound, shouldRepeatNotification, shouldRing } from "./lib/sound";
@@ -825,7 +825,7 @@
             {/if}
             <div class="status-footer" class:with-actions={capabilities.canApprove || (capabilities.canReply && replyingToId !== activity.id)}>
               <span class="status-meta" title={cardMeta(activity)}>
-                <span class="status-agent">{activity.provider}</span>
+                <span class="status-agent">{cardAgentLabel(activity)}</span>
                 <span class="status-separator"> · </span>
                 <span class={`status-state status-${activity.status}`}>{statusLabel(activity.status)}</span>
                 {#if endedAt}

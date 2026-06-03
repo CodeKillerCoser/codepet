@@ -1,5 +1,5 @@
 import { activityCapabilitiesFor, type ActivityCapabilities } from "./agentInteractions";
-import type { ActivityFilterSettings, PetEvent, TaskStatus } from "./types";
+import type { ActivityFilterSettings, ActivitySource, PetEvent, TaskStatus } from "./types";
 
 const inactiveStatuses = new Set<TaskStatus>(["idle"]);
 const staleActivityStatuses = new Set<TaskStatus>(["thinking", "running"]);
@@ -113,7 +113,8 @@ function displayEventForUpdate(previous: PetEvent | undefined, event: PetEvent):
   const message = previous && isTranscriptPath(event.message) && !isTranscriptPath(previous.message) ? previous.message : event.message;
   const createdAt = shouldRefreshActivitySort(previous, event) ? event.createdAt : previous.createdAt;
   const endedAt = terminalActivityStatuses.has(event.status) ? event.createdAt : null;
-  return { ...event, title, message, createdAt, endedAt };
+  const source = sourceForUpdate(previous?.source, event.source);
+  return { ...event, title, message, createdAt, endedAt, source };
 }
 
 function previousDisplayTitle(previous: PetEvent | undefined): string | undefined {
@@ -240,7 +241,7 @@ export function cardMessage(event: PetEvent): string {
 }
 
 export function cardMeta(event: PetEvent): string {
-  return [activitySourceLabel(event), statusLabel(event.status), cardEndTime(event)].filter(Boolean).join(" · ");
+  return [cardAgentLabel(event), statusLabel(event.status), cardEndTime(event)].filter(Boolean).join(" · ");
 }
 
 export function cardSubtitle(event: PetEvent): string {
@@ -286,12 +287,29 @@ function activityPriority(event: PetEvent): number {
   }
 }
 
-function activitySourceLabel(event: PetEvent): string {
+export function cardAgentLabel(event: PetEvent): string {
   return isTerminalSource(event) ? `${event.provider} cli` : event.provider;
 }
 
 function isTerminalSource(event: PetEvent): boolean {
-  const source = event.source;
+  return hasTerminalSourceSignal(event.source);
+}
+
+function sourceForUpdate(previous: ActivitySource | null | undefined, incoming: ActivitySource | null | undefined): ActivitySource | null | undefined {
+  return sourceRank(incoming) >= sourceRank(previous) ? incoming : previous;
+}
+
+function sourceRank(source: ActivitySource | null | undefined): number {
+  if (!source) {
+    return 0;
+  }
+  if (hasTerminalSourceSignal(source)) {
+    return 2;
+  }
+  return source.appBundleId ? 1 : 0;
+}
+
+function hasTerminalSourceSignal(source: ActivitySource | null | undefined): boolean {
   if (!source) {
     return false;
   }
