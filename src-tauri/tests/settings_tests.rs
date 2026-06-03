@@ -10,6 +10,7 @@ fn settings_default_to_system_theme() {
     assert_eq!(settings.appearance.running_bubble.animation_ms, 1800);
     assert_eq!(settings.appearance.running_bubble.border_width, 1);
     assert_eq!(settings.pet.image_pixel_size, 48);
+    assert_eq!(settings.pet.opacity, 1.0);
     assert_eq!(settings.pet.whip_reaction_sound, WhipReactionSound::None);
     assert!(settings.pet.custom_whip_reaction_sound_path.is_none());
     assert!(settings.activity_filters.title_keywords.is_empty());
@@ -46,6 +47,7 @@ fn settings_keep_existing_values_when_theme_field_is_missing() {
     assert_eq!(settings.appearance.running_bubble.border_width, 1);
     assert_eq!(settings.pet.scale, 4);
     assert_eq!(settings.pet.image_pixel_size, 48);
+    assert_eq!(settings.pet.opacity, 1.0);
     assert_eq!(settings.pet.whip_reaction_sound, WhipReactionSound::None);
     assert!(settings.pet.custom_whip_reaction_sound_path.is_none());
     assert_eq!(settings.pet.sprite.body, "#111111");

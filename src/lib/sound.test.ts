@@ -13,6 +13,7 @@ function settings(overrides: Partial<AppSettings["notifications"]> = {}): AppSet
       sprite: { body: "#111111", accent: "#222222", eyes: "#333333" },
       scale: 3,
       imagePixelSize: 48,
+      opacity: 1,
       alwaysOnTop: true,
       whipReactionSound: "none",
       customWhipReactionSoundPath: null,

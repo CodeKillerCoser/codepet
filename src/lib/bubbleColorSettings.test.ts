@@ -22,6 +22,7 @@ function settingsFixture(): AppSettings {
       imagePath: null,
       scale: 4,
       imagePixelSize: 48,
+      opacity: 1,
       alwaysOnTop: true,
     },
     petLibrary: {

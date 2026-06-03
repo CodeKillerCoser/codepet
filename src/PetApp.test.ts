@@ -291,6 +291,15 @@ describe("PetApp activity helpers", () => {
     expect(source).not.toContain('<button class="drag-layer"');
   });
 
+  it("applies a clamped overall pet window opacity from settings", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+
+    expect(source).toContain("$: petWindowOpacity = clampPetOpacity(settings?.pet.opacity)");
+    expect(source).toContain("const minPetOpacity = 0.25");
+    expect(source).toContain("Math.min(defaultPetOpacity, Math.max(minPetOpacity, numericValue))");
+    expect(source).toContain('style={`--pet-window-opacity: ${petWindowOpacity};`}');
+  });
+
   it("keeps the pet window frame and bounds stable after monitor moves or resizes", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const ensureBlock = source.slice(source.indexOf("async function ensureWindowFrameAndBounds"), source.indexOf("function withTimeout"));

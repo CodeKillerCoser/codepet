@@ -965,7 +965,8 @@ select:focus-visible {
   border-color: var(--app-border-strong);
 }
 
-.image-pixel-control {
+.image-pixel-control,
+.pet-opacity-control {
   display: grid;
   gap: 8px;
   border: 1px solid var(--app-border);
@@ -974,14 +975,16 @@ select:focus-visible {
   background: var(--app-surface-soft);
 }
 
-.image-pixel-control > span {
+.image-pixel-control > span,
+.pet-opacity-control > span {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.image-pixel-control strong {
+.image-pixel-control strong,
+.pet-opacity-control strong {
   color: var(--app-text);
   font-size: var(--font-size-sm-plus);
   font-weight: var(--font-weight-bold);
@@ -1464,6 +1467,7 @@ input[type="time"] {
   padding: 10px 0 12px;
   background: transparent;
   cursor: grab;
+  opacity: var(--pet-window-opacity, 1);
   user-select: none;
 }
 

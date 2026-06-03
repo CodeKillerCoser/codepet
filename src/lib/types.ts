@@ -78,6 +78,7 @@ export interface AppSettings {
     imagePath?: string | null;
     scale: number;
     imagePixelSize: number;
+    opacity: number;
     alwaysOnTop: boolean;
     whipReactionSound: WhipReactionSound;
     customWhipReactionSoundPath?: string | null;

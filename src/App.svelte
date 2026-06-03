@@ -96,6 +96,8 @@
     { key: "borderColor", label: "边框色", fallback: runningBubbleDefaults.borderColor, directional: false },
   ] as const;
   const defaultImagePixelSize = 48;
+  const defaultPetOpacity = 1;
+  const minPetOpacity = 0.25;
 
   onMount(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -386,6 +388,7 @@
     nextSettings.appearance.runningBubble.animationMs = clampRunningBubbleAnimationMs(nextSettings.appearance.runningBubble.animationMs);
     nextSettings.appearance.runningBubble.borderWidth = clampRunningBubbleBorderWidth(nextSettings.appearance.runningBubble.borderWidth);
     nextSettings.pet.imagePixelSize = clampImagePixelSize(nextSettings.pet.imagePixelSize);
+    nextSettings.pet.opacity = clampPetOpacity(nextSettings.pet.opacity ?? defaultPetOpacity);
     nextSettings.pet.whipReactionSound = nextSettings.pet.whipReactionSound ?? "none";
     nextSettings.pet.customWhipReactionSoundPath = nextSettings.pet.customWhipReactionSoundPath ?? null;
     nextSettings.activityFilters = normalizeActivityFilters(nextSettings.activityFilters);
@@ -478,6 +481,18 @@
   function imagePixelSizeLabel(value: number) {
     const pixelSize = clampImagePixelSize(value);
     return `${pixelSize}px`;
+  }
+
+  function clampPetOpacity(value: number | null | undefined) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) {
+      return defaultPetOpacity;
+    }
+    return Math.min(defaultPetOpacity, Math.max(minPetOpacity, numericValue));
+  }
+
+  function petOpacityLabel(value: number | null | undefined) {
+    return `${Math.round(clampPetOpacity(value) * 100)}%`;
   }
 
   function clampRunningBubbleAnimationMs(value: number) {
@@ -633,6 +648,12 @@
     } finally {
       busyPet = "";
     }
+  }
+
+  async function savePetOpacity() {
+    if (!settings) return;
+    settings.pet.opacity = clampPetOpacity(settings.pet.opacity);
+    await saveSettings();
   }
 
   function statusLabel(status: PetEvent["status"]) {
@@ -992,6 +1013,21 @@
               bind:value={settings.pet.imagePixelSize}
               disabled={busyPet === "pixel-size"}
               on:change={savePetImagePixelSize}
+            />
+          </label>
+          <label class="pet-opacity-control">
+            <span>
+              <span>窗口不透明度</span>
+              <strong>{petOpacityLabel(settings.pet.opacity)}</strong>
+            </span>
+            <input
+              type="range"
+              min={minPetOpacity}
+              max="1"
+              step="0.05"
+              bind:value={settings.pet.opacity}
+              on:input={(event) => (settings.pet.opacity = clampPetOpacity(inputNumber(event)))}
+              on:change={savePetOpacity}
             />
           </label>
           <section class="pet-library-panel">

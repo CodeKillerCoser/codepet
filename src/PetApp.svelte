@@ -49,6 +49,8 @@
   const replyEditorMaxRows = 5;
   const devMode = import.meta.env.DEV;
   const fallbackRunningBubble = defaultRunningBubbleSettings;
+  const defaultPetOpacity = 1;
+  const minPetOpacity = 0.25;
 
   $: themeClass = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
   $: runningBubble = settings?.appearance.runningBubble ?? fallbackRunningBubble;
@@ -61,6 +63,7 @@
   $: renderedActivities = showActivities ? activities : [];
   $: clearReplyIfNoLongerAvailable(activities, replyingToId);
   $: petScale = Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4);
+  $: petWindowOpacity = clampPetOpacity(settings?.pet.opacity);
   $: topActivityId = showActivities ? activities[0]?.id ?? null : null;
   $: if (!hasActivities && tasksCollapsed) {
     tasksCollapsed = false;
@@ -714,6 +717,14 @@
     return Math.ceil(lineHeight * replyEditorMaxRows + paddingTop + paddingBottom + borderTop + borderBottom);
   }
 
+  function clampPetOpacity(value: number | null | undefined) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) {
+      return defaultPetOpacity;
+    }
+    return Math.min(defaultPetOpacity, Math.max(minPetOpacity, numericValue));
+  }
+
   async function approve(event: MouseEvent, activity: PetEvent, behavior: "allow" | "deny") {
     event.stopPropagation();
     try {
@@ -728,6 +739,7 @@
 
 <main
   class={`pet-window ${themeClass}${devMode ? " dev-mode" : ""}`}
+  style={`--pet-window-opacity: ${petWindowOpacity};`}
   on:dblclick={preventPetWindowDoubleClick}
 >
   {#if showActivities}

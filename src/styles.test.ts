@@ -233,6 +233,16 @@ describe("pet message bubble activity", () => {
     expect(appSource).toContain("自定义");
   });
 
+  test("exposes pet window opacity as a personalization control", () => {
+    const petWindow = blockFor(".pet-window");
+
+    expect(appSource).toContain("settings.pet.opacity");
+    expect(appSource).toContain("petOpacityLabel(settings.pet.opacity)");
+    expect(appSource).toContain("savePetOpacity");
+    expect(petAppSource).toContain("--pet-window-opacity");
+    expect(petWindow).toContain("opacity: var(--pet-window-opacity, 1)");
+  });
+
   test("uses distinct dim and peak colors for background breathing", () => {
     const keyframes = keyframesFor("pet-pill-breathe");
 

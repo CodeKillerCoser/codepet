@@ -68,6 +68,8 @@ pub struct PetSettings {
     pub scale: u8,
     #[serde(default = "default_image_pixel_size")]
     pub image_pixel_size: u32,
+    #[serde(default = "default_pet_opacity")]
+    pub opacity: f32,
     #[serde(default = "default_always_on_top")]
     pub always_on_top: bool,
     #[serde(default)]
@@ -220,6 +222,7 @@ impl Default for PetSettings {
             image_path: None,
             scale: default_scale(),
             image_pixel_size: default_image_pixel_size(),
+            opacity: default_pet_opacity(),
             always_on_top: default_always_on_top(),
             whip_reaction_sound: WhipReactionSound::default(),
             custom_whip_reaction_sound_path: None,
@@ -302,6 +305,10 @@ fn default_scale() -> u8 {
 
 fn default_image_pixel_size() -> u32 {
     48
+}
+
+fn default_pet_opacity() -> f32 {
+    1.0
 }
 
 fn default_always_on_top() -> bool {
