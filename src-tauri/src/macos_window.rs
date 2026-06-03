@@ -11,7 +11,7 @@ const PET_WINDOW_LABEL: &str = "pet";
 tauri_panel! {
     panel!(PetOverlayPanel {
         config: {
-            can_become_key_window: false,
+            can_become_key_window: true,
             can_become_main_window: false,
             becomes_key_only_if_needed: true,
             hides_on_deactivate: false,
