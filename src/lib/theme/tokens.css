@@ -1,0 +1,316 @@
+@import "@radix-ui/colors/amber.css";
+@import "@radix-ui/colors/amber-dark.css";
+@import "@radix-ui/colors/blue.css";
+@import "@radix-ui/colors/blue-dark.css";
+@import "@radix-ui/colors/brown.css";
+@import "@radix-ui/colors/brown-dark.css";
+@import "@radix-ui/colors/crimson.css";
+@import "@radix-ui/colors/crimson-dark.css";
+@import "@radix-ui/colors/cyan.css";
+@import "@radix-ui/colors/cyan-dark.css";
+@import "@radix-ui/colors/gray.css";
+@import "@radix-ui/colors/gray-dark.css";
+@import "@radix-ui/colors/green.css";
+@import "@radix-ui/colors/green-dark.css";
+@import "@radix-ui/colors/orange.css";
+@import "@radix-ui/colors/orange-dark.css";
+@import "@radix-ui/colors/red.css";
+@import "@radix-ui/colors/red-dark.css";
+@import "@radix-ui/colors/violet.css";
+@import "@radix-ui/colors/violet-dark.css";
+
+:root {
+  --color-transparent: transparent;
+  --color-white: white;
+  --color-black: black;
+
+  --font-family-ui: "SF Pro Rounded", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --font-size-2xs: 10px;
+  --font-size-2xs-plus: 10.5px;
+  --font-size-xs: 11px;
+  --font-size-xs-plus: 11.5px;
+  --font-size-sm: 12px;
+  --font-size-sm-plus: 13px;
+  --font-size-md: 14px;
+  --font-size-md-plus: 15px;
+  --font-size-lg: 16px;
+  --font-size-xl: 17px;
+  --font-size-2xl: 18px;
+  --font-size-3xl: 19px;
+  --font-size-4xl: 20px;
+  --font-size-5xl: 22px;
+  --font-size-6xl: 23px;
+  --font-size-7xl: 25px;
+  --font-size-display: 30px;
+  --font-size-pet-title: 13.5px;
+
+  --font-weight-regular: 400;
+  --font-weight-normal: 480;
+  --font-weight-medium: 520;
+  --font-weight-medium-strong: 560;
+  --font-weight-semibold: 620;
+  --font-weight-semibold-strong: 640;
+  --font-weight-semibold-heavy: 650;
+  --font-weight-bold: 680;
+  --font-weight-heavy: 700;
+
+  --line-height-none: 1;
+  --line-height-tight: 1.18;
+  --line-height-compact: 1.1;
+  --line-height-heading: 1.15;
+  --line-height-snug: 1.2;
+  --line-height-title: 1.22;
+  --line-height-message: 1.24;
+  --line-height-card: 1.25;
+  --line-height-copy: 1.35;
+  --line-height-relaxed: 1.45;
+  --line-height-loose: 1.5;
+  --line-height-display: 1.04;
+
+  --letter-spacing-normal: 0;
+  --letter-spacing-caps: 0.1em;
+  --letter-spacing-caps-wide: 0.12em;
+}
+
+:root,
+.light,
+.light-theme,
+.theme-light {
+  --color-app-background: var(--gray-2);
+  --color-surface-panel: color-mix(in srgb, var(--gray-1) 82%, var(--color-transparent));
+  --color-surface-strong: var(--gray-1);
+  --color-surface-soft: var(--gray-2);
+  --color-border-default: var(--gray-6);
+  --color-border-strong: var(--gray-8);
+  --color-text-primary: var(--gray-12);
+  --color-text-muted: var(--gray-11);
+  --color-text-subtle: var(--gray-10);
+  --color-accent: var(--gray-11);
+  --color-accent-strong: var(--gray-12);
+  --color-success: var(--green-11);
+  --color-danger: var(--crimson-10);
+  --color-focus-ring: var(--cyan-9);
+  --color-grid-line: color-mix(in srgb, var(--gray-9) 14%, var(--color-transparent));
+  --color-shadow-panel: color-mix(in srgb, var(--gray-12) 8%, var(--color-transparent));
+  --color-shadow-card: color-mix(in srgb, var(--gray-12) 10%, var(--color-transparent));
+  --color-shadow-strong: color-mix(in srgb, var(--gray-12) 16%, var(--color-transparent));
+  --color-agent-codex: var(--blue-11);
+  --color-agent-claude: var(--amber-10);
+  --color-agent-qoder: var(--green-10);
+  --color-agent-cursor: var(--violet-10);
+  --color-state-success-border: color-mix(in srgb, var(--green-9) 52%, var(--color-transparent));
+  --color-state-success-surface: color-mix(in srgb, var(--green-4) 60%, var(--color-transparent));
+  --color-state-danger-border: color-mix(in srgb, var(--crimson-9) 42%, var(--color-transparent));
+  --color-state-danger-surface: color-mix(in srgb, var(--crimson-3) 70%, var(--color-transparent));
+  --color-state-error-border: color-mix(in srgb, var(--red-9) 45%, var(--color-transparent));
+  --color-approval-border: color-mix(in srgb, var(--violet-9) 42%, var(--color-transparent));
+  --color-approval-surface: var(--violet-9);
+  --color-approval-text: var(--color-white);
+  --color-dev-border: color-mix(in srgb, var(--blue-10) 42%, var(--color-transparent));
+  --color-dev-surface: color-mix(in srgb, var(--blue-3) 72%, var(--color-transparent));
+  --color-dock-icon: var(--gray-10);
+  --color-pet-outline-soft: color-mix(in srgb, var(--gray-12) 20%, var(--color-transparent));
+  --color-pet-shadow-soft: color-mix(in srgb, var(--gray-12) 14%, var(--color-transparent));
+  --color-pet-shadow: color-mix(in srgb, var(--gray-12) 16%, var(--color-transparent));
+  --color-running-border-cool: var(--cyan-9);
+  --color-running-border-hot: var(--crimson-9);
+  --color-running-border-warm: var(--amber-9);
+
+  --asset-pet-sprite-soft-white: var(--gray-1);
+  --asset-pet-sprite-white: var(--color-white);
+  --asset-pet-sprite-foot: var(--brown-12);
+  --asset-pet-sprite-idle: var(--gray-9);
+  --asset-pet-sprite-thinking: var(--violet-9);
+  --asset-pet-sprite-running: var(--amber-9);
+  --asset-pet-sprite-waiting: var(--crimson-9);
+  --asset-pet-sprite-failed: var(--red-9);
+  --asset-pet-sprite-done: var(--cyan-9);
+
+  --asset-whip-shadow: color-mix(in srgb, var(--gray-12) 18%, var(--color-transparent));
+  --asset-whip-cord-highlight: color-mix(in srgb, var(--amber-5) 62%, var(--color-transparent));
+  --asset-whip-cord-outline: var(--brown-11);
+  --asset-whip-cord-shadow: color-mix(in srgb, var(--brown-12) 35%, var(--color-transparent));
+  --asset-whip-handle-fill: var(--brown-10);
+  --asset-whip-handle-gradient-start: var(--brown-10);
+  --asset-whip-handle-gradient-mid: var(--brown-11);
+  --asset-whip-handle-gradient-end: var(--brown-9);
+  --asset-whip-handle-stroke: var(--brown-12);
+  --asset-whip-handle-highlight: var(--orange-9);
+  --asset-whip-handle-detail: var(--brown-11);
+  --asset-whip-ferrule-gradient-start: var(--amber-5);
+  --asset-whip-ferrule-gradient-mid: var(--orange-9);
+  --asset-whip-ferrule-gradient-end: var(--brown-11);
+  --asset-whip-ferrule-outline: color-mix(in srgb, var(--brown-12) 35%, var(--color-transparent));
+  --asset-whip-tip: var(--brown-12);
+  --asset-whip-spark: var(--amber-9);
+  --pet-image-shadow-filter:
+    drop-shadow(0 6px 0 var(--color-pet-shadow-soft))
+    drop-shadow(0 10px 13px var(--color-pet-shadow));
+
+  --app-bg: var(--color-app-background);
+  --app-surface: var(--color-surface-panel);
+  --app-surface-strong: var(--color-surface-strong);
+  --app-surface-soft: var(--color-surface-soft);
+  --app-border: var(--color-border-default);
+  --app-border-strong: var(--color-border-strong);
+  --app-text: var(--color-text-primary);
+  --app-muted: var(--color-text-muted);
+  --app-subtle: var(--color-text-subtle);
+  --app-accent: var(--color-accent);
+  --app-accent-strong: var(--color-accent-strong);
+  --app-good: var(--color-success);
+  --app-danger: var(--color-danger);
+  --app-shadow: var(--color-shadow-panel);
+  --pixel-grid: var(--color-grid-line);
+
+  --pet-pill-bg: color-mix(in srgb, var(--gray-1) 90%, var(--color-transparent));
+  --pet-pill-hover-bg: color-mix(in srgb, var(--blue-2) 82%, var(--color-transparent));
+  --pet-button-bg: color-mix(in srgb, var(--gray-3) 78%, var(--color-transparent));
+  --pet-input-bg: color-mix(in srgb, var(--gray-1) 86%, var(--color-transparent));
+  --pet-border: color-mix(in srgb, var(--gray-9) 26%, var(--color-transparent));
+  --pet-highlight: color-mix(in srgb, var(--color-white) 82%, var(--color-transparent));
+  --pet-title: var(--gray-12);
+  --pet-message: var(--gray-11);
+  --pet-subtitle: var(--gray-11);
+  --pet-agent: var(--gray-9);
+  --pet-status-thinking: var(--gray-11);
+  --pet-status-running: var(--blue-11);
+  --pet-status-waiting: var(--crimson-10);
+  --pet-status-failed: var(--red-10);
+  --pet-status-done: var(--green-10);
+  --pet-scrollbar: color-mix(in srgb, var(--gray-11) 32%, var(--color-transparent));
+  --pet-shadow: var(--color-shadow-card);
+  --pet-urgent-bg: color-mix(in srgb, var(--crimson-2) 94%, var(--color-transparent));
+  --pet-urgent-hover-bg: color-mix(in srgb, var(--crimson-3) 96%, var(--color-transparent));
+  --pet-failed-bg: color-mix(in srgb, var(--red-2) 94%, var(--color-transparent));
+  --pet-failed-hover-bg: color-mix(in srgb, var(--red-3) 96%, var(--color-transparent));
+  --pet-done-bg: color-mix(in srgb, var(--green-2) 94%, var(--color-transparent));
+  --pet-done-hover-bg: color-mix(in srgb, var(--green-3) 96%, var(--color-transparent));
+  --pet-active-border: color-mix(in srgb, var(--blue-9) 56%, var(--color-transparent));
+  --pet-active-bg: color-mix(in srgb, var(--blue-3) 96%, var(--color-transparent));
+  --pet-active-bg-peak: color-mix(in srgb, var(--blue-4) 98%, var(--color-transparent));
+  --pet-active-ring: color-mix(in srgb, var(--blue-9) 20%, var(--color-transparent));
+  --pet-active-glow: color-mix(in srgb, var(--blue-9) 34%, var(--color-transparent));
+  --pet-active-shadow: color-mix(in srgb, var(--blue-9) 24%, var(--color-transparent));
+}
+
+.dark,
+.dark-theme,
+.theme-dark {
+  --color-app-background: var(--gray-1);
+  --color-surface-panel: color-mix(in srgb, var(--gray-3) 90%, var(--color-transparent));
+  --color-surface-strong: var(--gray-3);
+  --color-surface-soft: var(--gray-2);
+  --color-border-default: var(--gray-6);
+  --color-border-strong: var(--gray-8);
+  --color-text-primary: var(--gray-12);
+  --color-text-muted: var(--gray-11);
+  --color-text-subtle: var(--gray-10);
+  --color-accent: var(--gray-11);
+  --color-accent-strong: var(--gray-12);
+  --color-success: var(--green-11);
+  --color-danger: var(--crimson-11);
+  --color-focus-ring: var(--cyan-9);
+  --color-grid-line: color-mix(in srgb, var(--gray-9) 8%, var(--color-transparent));
+  --color-shadow-panel: color-mix(in srgb, var(--color-black) 28%, var(--color-transparent));
+  --color-shadow-card: color-mix(in srgb, var(--color-black) 28%, var(--color-transparent));
+  --color-shadow-strong: color-mix(in srgb, var(--color-black) 34%, var(--color-transparent));
+  --color-agent-codex: var(--blue-10);
+  --color-agent-claude: var(--amber-10);
+  --color-agent-qoder: var(--green-10);
+  --color-agent-cursor: var(--violet-10);
+  --color-state-success-border: color-mix(in srgb, var(--green-9) 52%, var(--color-transparent));
+  --color-state-success-surface: color-mix(in srgb, var(--green-4) 36%, var(--color-transparent));
+  --color-state-danger-border: color-mix(in srgb, var(--crimson-9) 44%, var(--color-transparent));
+  --color-state-danger-surface: color-mix(in srgb, var(--crimson-4) 36%, var(--color-transparent));
+  --color-state-error-border: color-mix(in srgb, var(--red-9) 45%, var(--color-transparent));
+  --color-approval-border: color-mix(in srgb, var(--violet-9) 42%, var(--color-transparent));
+  --color-approval-surface: var(--violet-9);
+  --color-approval-text: var(--color-white);
+  --color-dev-border: color-mix(in srgb, var(--blue-10) 42%, var(--color-transparent));
+  --color-dev-surface: color-mix(in srgb, var(--blue-3) 72%, var(--color-transparent));
+  --color-dock-icon: var(--gray-10);
+  --color-pet-outline-soft: color-mix(in srgb, var(--gray-12) 20%, var(--color-transparent));
+  --color-pet-shadow-soft: color-mix(in srgb, var(--color-black) 24%, var(--color-transparent));
+  --color-pet-shadow: color-mix(in srgb, var(--color-black) 30%, var(--color-transparent));
+  --color-running-border-cool: var(--cyan-9);
+  --color-running-border-hot: var(--crimson-9);
+  --color-running-border-warm: var(--amber-9);
+
+  --asset-pet-sprite-soft-white: var(--gray-2);
+  --asset-pet-sprite-white: var(--gray-1);
+  --asset-pet-sprite-foot: var(--brown-12);
+  --asset-pet-sprite-idle: var(--gray-9);
+  --asset-pet-sprite-thinking: var(--violet-9);
+  --asset-pet-sprite-running: var(--amber-9);
+  --asset-pet-sprite-waiting: var(--crimson-9);
+  --asset-pet-sprite-failed: var(--red-9);
+  --asset-pet-sprite-done: var(--cyan-9);
+
+  --asset-whip-shadow: color-mix(in srgb, var(--color-black) 24%, var(--color-transparent));
+  --asset-whip-cord-highlight: color-mix(in srgb, var(--amber-5) 62%, var(--color-transparent));
+  --asset-whip-cord-outline: var(--brown-10);
+  --asset-whip-cord-shadow: color-mix(in srgb, var(--brown-12) 42%, var(--color-transparent));
+  --asset-whip-handle-fill: var(--brown-9);
+  --asset-whip-handle-gradient-start: var(--brown-9);
+  --asset-whip-handle-gradient-mid: var(--brown-10);
+  --asset-whip-handle-gradient-end: var(--brown-8);
+  --asset-whip-handle-stroke: var(--brown-12);
+  --asset-whip-handle-highlight: var(--orange-8);
+  --asset-whip-handle-detail: var(--brown-10);
+  --asset-whip-ferrule-gradient-start: var(--amber-5);
+  --asset-whip-ferrule-gradient-mid: var(--orange-8);
+  --asset-whip-ferrule-gradient-end: var(--brown-10);
+  --asset-whip-ferrule-outline: color-mix(in srgb, var(--brown-12) 42%, var(--color-transparent));
+  --asset-whip-tip: var(--brown-12);
+  --asset-whip-spark: var(--amber-9);
+  --pet-image-shadow-filter:
+    drop-shadow(0 6px 0 var(--color-pet-shadow-soft))
+    drop-shadow(0 10px 13px var(--color-pet-shadow));
+
+  --app-bg: var(--color-app-background);
+  --app-surface: var(--color-surface-panel);
+  --app-surface-strong: var(--color-surface-strong);
+  --app-surface-soft: var(--color-surface-soft);
+  --app-border: var(--color-border-default);
+  --app-border-strong: var(--color-border-strong);
+  --app-text: var(--color-text-primary);
+  --app-muted: var(--color-text-muted);
+  --app-subtle: var(--color-text-subtle);
+  --app-accent: var(--color-accent);
+  --app-accent-strong: var(--color-accent-strong);
+  --app-good: var(--color-success);
+  --app-danger: var(--color-danger);
+  --app-shadow: var(--color-shadow-panel);
+  --pixel-grid: var(--color-grid-line);
+
+  --pet-pill-bg: color-mix(in srgb, var(--gray-3) 78%, var(--color-transparent));
+  --pet-pill-hover-bg: color-mix(in srgb, var(--gray-4) 86%, var(--color-transparent));
+  --pet-button-bg: color-mix(in srgb, var(--gray-4) 78%, var(--color-transparent));
+  --pet-input-bg: color-mix(in srgb, var(--gray-2) 78%, var(--color-transparent));
+  --pet-border: color-mix(in srgb, var(--gray-9) 22%, var(--color-transparent));
+  --pet-highlight: color-mix(in srgb, var(--color-white) 12%, var(--color-transparent));
+  --pet-title: var(--gray-12);
+  --pet-message: var(--gray-11);
+  --pet-subtitle: var(--gray-11);
+  --pet-agent: var(--gray-10);
+  --pet-status-thinking: var(--gray-11);
+  --pet-status-running: var(--blue-11);
+  --pet-status-waiting: var(--crimson-11);
+  --pet-status-failed: var(--red-11);
+  --pet-status-done: var(--green-11);
+  --pet-scrollbar: color-mix(in srgb, var(--gray-11) 32%, var(--color-transparent));
+  --pet-shadow: var(--color-shadow-card);
+  --pet-urgent-bg: color-mix(in srgb, var(--crimson-4) 84%, var(--color-transparent));
+  --pet-urgent-hover-bg: color-mix(in srgb, var(--crimson-5) 90%, var(--color-transparent));
+  --pet-failed-bg: color-mix(in srgb, var(--red-4) 84%, var(--color-transparent));
+  --pet-failed-hover-bg: color-mix(in srgb, var(--red-5) 90%, var(--color-transparent));
+  --pet-done-bg: color-mix(in srgb, var(--green-4) 84%, var(--color-transparent));
+  --pet-done-hover-bg: color-mix(in srgb, var(--green-5) 90%, var(--color-transparent));
+  --pet-active-border: color-mix(in srgb, var(--blue-10) 62%, var(--color-transparent));
+  --pet-active-bg: color-mix(in srgb, var(--blue-4) 60%, var(--gray-2));
+  --pet-active-bg-peak: color-mix(in srgb, var(--blue-5) 68%, var(--gray-3));
+  --pet-active-ring: color-mix(in srgb, var(--blue-10) 26%, var(--color-transparent));
+  --pet-active-glow: color-mix(in srgb, var(--blue-10) 42%, var(--color-transparent));
+  --pet-active-shadow: color-mix(in srgb, var(--blue-10) 28%, var(--color-transparent));
+}

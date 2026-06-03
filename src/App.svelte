@@ -31,6 +31,7 @@
   import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
   import PetAvatar from "./lib/PetAvatar.svelte";
   import { playNotificationSound, playWhipReactionSound } from "./lib/sound";
+  import { defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
   import { buildUsageChartData, yAxisTicks, type UsageBucketSize, type UsageRange } from "./lib/usageChart";
   import type { AgentView, AppSettings, PetEvent, PetLibraryView, TokenUsageSummary } from "./lib/types";
 
@@ -81,14 +82,7 @@
     { value: "scream", label: "啊啊啊" },
     { value: "custom", label: "自定义" },
   ];
-  const runningBubbleDefaults: AppSettings["appearance"]["runningBubble"] = {
-    backgroundBreathing: true,
-    borderMarquee: false,
-    backgroundColor: "#e8f2ff",
-    borderColor: "#3d73d8",
-    borderWidth: 1,
-    animationMs: 1800,
-  };
+  const runningBubbleDefaults = defaultRunningBubbleSettings;
   const activityFilterDefaults: AppSettings["activityFilters"] = {
     titleKeywords: [],
     messageKeywords: [],
@@ -725,7 +719,7 @@
   $: usageMaxTokens = usageData.maxTokens;
   $: usageTickLabels = yAxisTicks(usageMaxTokens);
   $: pageTitle = tab === "agents" ? "Agent" : tab === "usage" ? "用量" : tab === "personalize" ? "个性化" : "最新事件";
-  $: appTheme = settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "theme-dark" : "theme-light";
+  $: appTheme = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
 </script>
 
 <main class={`app-shell pixel-shell ${appTheme}`}>

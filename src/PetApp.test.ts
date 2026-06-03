@@ -102,7 +102,7 @@ describe("PetApp activity helpers", () => {
   it("uses a fixed preset maximum pet window size", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
 
-    expect(source).toContain("const maxActivityStackHeight");
+    expect(source).toContain("const activityStackMaxHeight");
     expect(source).toContain("const maxPetStageHeight");
     expect(source).toContain("const petWindowPresetHeight");
     expect(source).toContain("const targetHeight = petWindowPresetHeight");
@@ -111,13 +111,14 @@ describe("PetApp activity helpers", () => {
     expect(source).not.toContain("async function applyWindowFrame");
   });
 
-  it("renders every activity while sizing the pet window from the first four cards", () => {
+  it("renders every activity and lets the stack viewport enforce overflow", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
 
     expect(source).toContain("$: renderedActivities = showActivities ? activities : []");
-    expect(source).toContain("$: stackSizedActivities = showActivities ? activities.slice(0, maxVisibleActivities) : []");
     expect(source).toContain("{#each renderedActivities as activity (activity.id)}");
     expect(source).not.toContain("{#each activities as activity (activity.id)}");
+    expect(source).not.toContain("stackSizedActivities");
+    expect(source).not.toContain("maxVisibleActivities");
   });
 
   it("shows terminal activity times in the card footer row", () => {
@@ -129,16 +130,17 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain('<span class="status-ended-at">{endedAt}</span>');
   });
 
-  it("sizes the activity stack from visible card heights", () => {
+  it("lets CSS size the activity stack naturally up to a max height", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    const stackRule = styles.slice(styles.indexOf(".activity-stack"), styles.indexOf(".activity-stack::-webkit-scrollbar"));
 
-    expect(source).toContain("$: activityStackHeight = activityStackHeightFor(stackSizedActivities, replyingToId)");
     expect(source).toContain("const petWindowPresetHeight");
-    expect(source).toContain("function activityStackHeightFor");
-    expect(source).toContain("activity.id === activeReplyingToId");
-    expect(source).toContain("const hasFooterAction = activityCapabilities(activity).canApprove || activityCapabilities(activity).canReply");
-    expect(source).toContain("hasFooterAction ? 86 : activityCardHeight");
-    expect(source).toContain('style={`--pet-activity-stack-height: ${activityStackHeight}px`}');
+    expect(source).toContain('style={`--pet-activity-stack-max-height: ${activityStackMaxHeight}px`}');
+    expect(source).not.toContain("activityStackHeightFor");
+    expect(source).not.toContain("activityCardHeight");
+    expect(stackRule).toContain("height: auto");
+    expect(stackRule).toContain("max-height: var(--pet-activity-stack-max-height)");
   });
 
   it("clears reply mode when the source activity is no longer replyable", () => {

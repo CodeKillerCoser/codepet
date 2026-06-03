@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { cssColorTokens, spriteAccentColorForStatus } from "./theme";
   import type { PixelPetSprite, TaskStatus } from "./types";
 
   export let sprite: PixelPetSprite;
@@ -39,24 +40,15 @@
   ];
 
   $: colors = {
-    "0": "transparent",
+    "0": cssColorTokens.transparent,
     "1": sprite.accent,
-    "2": "#f8fafc",
+    "2": cssColorTokens.petSpriteSoftWhite,
     "3": sprite.eyes,
-    "4": "#ffffff",
-    "5": statusColor(status),
+    "4": cssColorTokens.petSpriteWhite,
+    "5": spriteAccentColorForStatus(status),
     "6": sprite.body,
-    "7": "#2f1f19",
+    "7": cssColorTokens.petSpriteFoot,
   };
-
-  function statusColor(value: TaskStatus): string {
-    if (value === "waiting-approval") return "#f43f5e";
-    if (value === "failed") return "#ef4444";
-    if (value === "done") return "#38bdf8";
-    if (value === "running") return "#facc15";
-    if (value === "thinking") return "#a78bfa";
-    return "#94a3b8";
-  }
 </script>
 
 <div

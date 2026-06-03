@@ -1,3 +1,4 @@
+use crate::theme_defaults;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -273,9 +274,9 @@ impl Default for AppSettings {
 
 pub fn default_sprite() -> PixelPetSprite {
     PixelPetSprite {
-        body: "#f4c04e".to_string(),
-        accent: "#1f2937".to_string(),
-        eyes: "#2563eb".to_string(),
+        body: theme_defaults::DEFAULT_PET_BODY.to_string(),
+        accent: theme_defaults::DEFAULT_PET_ACCENT.to_string(),
+        eyes: theme_defaults::DEFAULT_PET_EYES.to_string(),
     }
 }
 
@@ -312,11 +313,11 @@ fn default_true() -> bool {
 }
 
 fn default_running_bubble_background() -> String {
-    "#e8f2ff".to_string()
+    theme_defaults::DEFAULT_RUNNING_BUBBLE_BACKGROUND.to_string()
 }
 
 fn default_running_bubble_border() -> String {
-    "#3d73d8".to_string()
+    theme_defaults::DEFAULT_RUNNING_BUBBLE_BORDER.to_string()
 }
 
 fn default_running_bubble_border_width() -> u8 {

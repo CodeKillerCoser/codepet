@@ -1,6 +1,7 @@
 use crate::settings::{
     load_app_settings, save_app_settings, AppSettings, PixelPetSprite,
 };
+use crate::theme_defaults;
 use chrono::Utc;
 use image::imageops::FilterType;
 use image::{DynamicImage, Rgba, RgbaImage};
@@ -477,9 +478,9 @@ fn ensure_profiles(mut pets: Vec<ConfiguredPet>) -> Vec<ConfiguredPet> {
             name: "Classic Pixel".to_string(),
             kind: PetKind::Palette,
             sprite: Some(PixelPetSprite {
-                body: "#f4c04e".to_string(),
-                accent: "#1f2937".to_string(),
-                eyes: "#2563eb".to_string(),
+                body: theme_defaults::DEFAULT_PET_BODY.to_string(),
+                accent: theme_defaults::DEFAULT_PET_ACCENT.to_string(),
+                eyes: theme_defaults::DEFAULT_PET_EYES.to_string(),
             }),
             image_path: None,
             source_path: None,

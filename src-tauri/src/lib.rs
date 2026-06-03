@@ -16,6 +16,7 @@ pub mod pets;
 pub mod settings;
 pub mod state;
 pub mod subject_cutout;
+pub mod theme_defaults;
 pub mod title_resolver;
 pub mod token_usage;
 

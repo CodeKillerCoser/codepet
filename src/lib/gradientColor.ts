@@ -1,4 +1,5 @@
 import type { AppSettings } from "./types";
+import { cssColorTokens, defaultColorFallback, defaultRunningBubbleColors, gradientStopPalette } from "./theme";
 
 export type GradientEditorValue = {
   angle: number;
@@ -9,13 +10,13 @@ const hexColorPattern = /^#[0-9a-f]{6}$/i;
 const linearGradientPattern = /^linear-gradient\(\s*(\d{1,3})deg\s*,\s*(.+)\)$/i;
 
 export function gradientCss(value: GradientEditorValue): string {
-  const colors = safeColorStops(value.colors, "#000000");
+  const colors = safeColorStops(value.colors, defaultColorFallback);
   const angle = clampGradientAngle(value.angle);
   return `linear-gradient(${angle}deg, ${gradientStops(colors)})`;
 }
 
 export function gradientSegmentCss(colors: string[]): string {
-  const safeColors = safeColorStops(colors, "#000000");
+  const safeColors = safeColorStops(colors, defaultColorFallback);
   const width = 100 / safeColors.length;
   const stops = safeColors.flatMap((color, index) => {
     const start = Math.round(index * width * 100) / 100;
@@ -26,7 +27,7 @@ export function gradientSegmentCss(colors: string[]): string {
 }
 
 export function gradientEditorFromCss(value: string | null | undefined, fallback: string): GradientEditorValue {
-  const fallbackColor = safeHexColor(fallback, "#000000");
+  const fallbackColor = safeHexColor(fallback, defaultColorFallback);
   const current = value?.trim() || fallbackColor;
   const gradient = parseLinearGradient(current);
   if (gradient) return gradient;
@@ -39,8 +40,8 @@ export function gradientEditorFromCss(value: string | null | undefined, fallback
 }
 
 export function runningBubbleStyle(runningBubble: AppSettings["appearance"]["runningBubble"]): string {
-  const background = colorParts(runningBubble.backgroundColor, "#e8f2ff");
-  const border = colorParts(runningBubble.borderColor, "#3d73d8");
+  const background = colorParts(runningBubble.backgroundColor, defaultRunningBubbleColors.background);
+  const border = colorParts(runningBubble.borderColor, defaultRunningBubbleColors.border);
   const duration = Math.min(4000, Math.max(600, Math.round(runningBubble.animationMs || 1800)));
   const borderWidth = Math.min(8, Math.max(1, Math.round(runningBubble.borderWidth || 1)));
   const backgroundBorderColor = border.start;
@@ -50,8 +51,8 @@ export function runningBubbleStyle(runningBubble: AppSettings["appearance"]["run
     `--pet-running-bubble-bg-layer: ${backgroundLayerValue(background.css)}`,
     `--pet-running-bubble-bg-dim: ${mixedColorValue(background, `88%, ${backgroundBorderColor}`)}`,
     `--pet-running-bubble-bg-dim-layer: ${mixedLayerValue(background, `88%, ${backgroundBorderColor}`)}`,
-    `--pet-running-bubble-bg-peak: ${mixedColorValue(background, "76%, white")}`,
-    `--pet-running-bubble-bg-peak-layer: ${mixedLayerValue(background, "76%, white")}`,
+    `--pet-running-bubble-bg-peak: ${mixedColorValue(background, `76%, ${cssColorTokens.white}`)}`,
+    `--pet-running-bubble-bg-peak-layer: ${mixedLayerValue(background, `76%, ${cssColorTokens.white}`)}`,
     `--pet-running-bubble-border: ${border.start}`,
     `--pet-running-bubble-border-cool: ${border.palette[1]}`,
     `--pet-running-bubble-border-light: ${border.palette[2]}`,
@@ -63,9 +64,8 @@ export function runningBubbleStyle(runningBubble: AppSettings["appearance"]["run
 }
 
 export function nextGradientStopColor(colors: string[]): string {
-  const palette = ["#0066ee", "#eecc00", "#c946ff", "#00d084", "#ff7a00", "#00c2ff"];
   const normalized = new Set(colors.map((color) => safeHexColor(color, "").toLowerCase()).filter(Boolean));
-  return palette.find((color) => !normalized.has(color)) ?? palette[colors.length % palette.length];
+  return gradientStopPalette.find((color) => !normalized.has(color)) ?? gradientStopPalette[colors.length % gradientStopPalette.length];
 }
 
 function colorParts(value: string, fallback: string) {
@@ -128,7 +128,7 @@ function parseLinearGradient(value: string | null | undefined): GradientEditorVa
 function safeHexColor(value: string | null | undefined, fallback: string): string {
   const current = value?.trim();
   if (current && hexColorPattern.test(current)) return current.toLowerCase();
-  return hexColorPattern.test(fallback) ? fallback.toLowerCase() : "#000000";
+  return hexColorPattern.test(fallback) ? fallback.toLowerCase() : defaultColorFallback;
 }
 
 function clampGradientAngle(value: number): number {
@@ -139,7 +139,7 @@ function safeColorStops(colors: string[] | null | undefined, fallback: string): 
   const sanitized = (colors ?? [])
     .map((color) => safeHexColor(color, ""))
     .filter(Boolean);
-  return sanitized.length ? sanitized : [safeHexColor(fallback, "#000000")];
+  return sanitized.length ? sanitized : [safeHexColor(fallback, defaultColorFallback)];
 }
 
 function gradientStops(colors: string[]): string {
@@ -150,6 +150,6 @@ function gradientStops(colors: string[]): string {
 }
 
 function marqueePalette(colors: string[]): string[] {
-  const safeColors = safeColorStops(colors, "#3d73d8");
+  const safeColors = safeColorStops(colors, defaultRunningBubbleColors.border);
   return [0, 1, 2, 3, 4].map((index) => safeColors[index % safeColors.length]);
 }

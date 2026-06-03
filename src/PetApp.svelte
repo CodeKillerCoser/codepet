@@ -8,6 +8,7 @@
   import { runningBubbleStyle } from "./lib/gradientColor";
   import PetAvatar from "./lib/PetAvatar.svelte";
   import { playNotificationSound, playWhipSound, shouldRepeatNotification, shouldRing } from "./lib/sound";
+  import { defaultPetSprite, defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
   import type { AppSettings, PetEvent } from "./lib/types";
 
   let settings: AppSettings | null = null;
@@ -37,26 +38,17 @@
   let ensuringWindowFrame = false;
 
   const petWindowWidth = 360;
-  const activityCardHeight = 78;
-  const activityGap = 8;
   const activityPetGap = 8;
-  const maxVisibleActivities = 4;
-  const maxActivityStackHeight = activityCardHeight * maxVisibleActivities + activityGap * (maxVisibleActivities - 1) + 32;
+  const activityStackMaxHeight = 368;
   const maxPetStageHeight = Math.max(104, Math.round(32 * 4 * (208 / 192)));
-  const petWindowPresetHeight = 22 + maxPetStageHeight + activityPetGap + maxActivityStackHeight;
+  const petWindowPresetHeight = 22 + maxPetStageHeight + activityPetGap + activityStackMaxHeight;
   const noticeVisibleMs = 2500;
   const whipVisibleMs = 760;
   const permissionRepeatMaxMs = 590_000;
   const devMode = import.meta.env.DEV;
-  const fallbackRunningBubble: AppSettings["appearance"]["runningBubble"] = {
-    backgroundBreathing: true,
-    borderMarquee: false,
-    backgroundColor: "#e8f2ff",
-    borderColor: "#3d73d8",
-    animationMs: 1800,
-  };
+  const fallbackRunningBubble = defaultRunningBubbleSettings;
 
-  $: themeClass = settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "theme-dark" : "theme-light";
+  $: themeClass = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
   $: runningBubble = settings?.appearance.runningBubble ?? fallbackRunningBubble;
   $: runningBubbleStyleText = runningBubbleStyle(runningBubble);
   $: primary = primaryActivity(activities);
@@ -65,8 +57,6 @@
   $: hasCompletedActivities = activities.some((activity) => activity.status === "done");
   $: showActivities = hasActivities && !tasksCollapsed;
   $: renderedActivities = showActivities ? activities : [];
-  $: stackSizedActivities = showActivities ? activities.slice(0, maxVisibleActivities) : [];
-  $: activityStackHeight = activityStackHeightFor(stackSizedActivities, replyingToId);
   $: clearReplyIfNoLongerAvailable(activities, replyingToId);
   $: petScale = Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4);
   $: topActivityId = showActivities ? activities[0]?.id ?? null : null;
@@ -534,17 +524,6 @@
     };
   }
 
-  function activityStackHeightFor(currentActivities: PetEvent[], activeReplyingToId: string | null) {
-    if (currentActivities.length === 0) {
-      return 0;
-    }
-    return currentActivities.reduce((height, activity, index) => {
-      const hasFooterAction = activityCapabilities(activity).canApprove || activityCapabilities(activity).canReply;
-      const cardHeight = activity.id === activeReplyingToId ? 110 : hasFooterAction ? 86 : activityCardHeight;
-      return height + cardHeight + (index > 0 ? activityGap : 0);
-    }, 0);
-  }
-
   function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
     return new Promise((resolve, reject) => {
       const timeout = window.setTimeout(() => reject(new Error(`operation timed out after ${timeoutMs}ms`)), timeoutMs);
@@ -703,7 +682,7 @@
   on:dblclick={preventPetWindowDoubleClick}
 >
   {#if showActivities}
-    <section class="activity-stack" bind:this={activityStack} aria-live="polite" style={`--pet-activity-stack-height: ${activityStackHeight}px`}>
+    <section class="activity-stack" bind:this={activityStack} aria-live="polite" style={`--pet-activity-stack-max-height: ${activityStackMaxHeight}px`}>
       {#each renderedActivities as activity (activity.id)}
         {@const capabilities = activityCapabilities(activity)}
         {@const activeActivity = isActiveActivity(activity)}
@@ -834,14 +813,14 @@
       <svg class="whip-animation whip-svg" class:active={whipAnimating} viewBox="0 0 460 340" aria-hidden="true">
         <defs>
           <linearGradient id="whipHandleGradient" x1="30" y1="296" x2="68" y2="263" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stop-color="#7a4726" />
-            <stop offset="0.45" stop-color="#4f2d1a" />
-            <stop offset="1" stop-color="#8d5a34" />
+            <stop offset="0" stop-color="var(--asset-whip-handle-gradient-start)" />
+            <stop offset="0.45" stop-color="var(--asset-whip-handle-gradient-mid)" />
+            <stop offset="1" stop-color="var(--asset-whip-handle-gradient-end)" />
           </linearGradient>
           <linearGradient id="whipFerruleGradient" x1="56" y1="255" x2="75" y2="274" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stop-color="#f2d08a" />
-            <stop offset="0.45" stop-color="#a86f2c" />
-            <stop offset="1" stop-color="#5f3a1d" />
+            <stop offset="0" stop-color="var(--asset-whip-ferrule-gradient-start)" />
+            <stop offset="0.45" stop-color="var(--asset-whip-ferrule-gradient-mid)" />
+            <stop offset="1" stop-color="var(--asset-whip-ferrule-gradient-end)" />
           </linearGradient>
           <filter id="whipRopeTexture" x="-8%" y="-8%" width="116%" height="116%">
             <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="1" seed="8" result="grain" />
@@ -889,7 +868,7 @@
       </svg>
     {/key}
     <PetAvatar
-      sprite={settings?.pet.sprite ?? { body: "#22c55e", accent: "#facc15", eyes: "#0f172a" }}
+      sprite={settings?.pet.sprite ?? defaultPetSprite}
       kind={settings?.pet.kind}
       imagePath={settings?.pet.imagePath}
       status={primary?.status ?? "idle"}

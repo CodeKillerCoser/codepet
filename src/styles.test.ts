@@ -3,8 +3,10 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 
 const styles = readFileSync(resolve(__dirname, "styles.css"), "utf8");
+const themeTokens = readFileSync(resolve(__dirname, "lib/theme/tokens.css"), "utf8");
 const appSource = readFileSync(resolve(__dirname, "App.svelte"), "utf8");
 const petAppSource = readFileSync(resolve(__dirname, "PetApp.svelte"), "utf8");
+const petSpriteSource = readFileSync(resolve(__dirname, "lib/PetSprite.svelte"), "utf8");
 const gradientColorSource = readFileSync(resolve(__dirname, "lib/gradientColor.ts"), "utf8");
 
 function blockFor(selector: string) {
@@ -33,6 +35,42 @@ describe("main app scrolling layout", () => {
   });
 });
 
+describe("theme tokens", () => {
+  test("loads Radix primitive palettes and exposes project semantic tokens", () => {
+    expect(themeTokens).toContain('@import "@radix-ui/colors/gray.css"');
+    expect(themeTokens).toContain('@import "@radix-ui/colors/gray-dark.css"');
+    expect(themeTokens).toContain("--color-text-primary");
+    expect(themeTokens).toContain("--font-family-ui");
+    expect(themeTokens).toContain("--pet-pill-bg");
+  });
+
+  test("routes app and pet theme classes through the theme library", () => {
+    expect(appSource).toContain("themeClassNames(");
+    expect(petAppSource).toContain("themeClassNames(");
+    expect(appSource).not.toContain('? "theme-dark" : "theme-light"');
+    expect(petAppSource).not.toContain('? "theme-dark" : "theme-light"');
+  });
+
+  test("keeps production css free of raw theme colors", () => {
+    expect(styles).not.toMatch(/#[0-9a-fA-F]{3,8}|rgba?\(/);
+  });
+
+  test("keeps production frontend sources on theme defaults and css tokens", () => {
+    const productionSources = [appSource, petAppSource, petSpriteSource, gradientColorSource];
+    for (const source of productionSources) {
+      expect(source).not.toMatch(/(^|[^{}])#[0-9a-fA-F]{3,8}|rgba?\(/m);
+    }
+    expect(petAppSource).not.toMatch(/stop-color="#/);
+  });
+
+  test("keeps production css typography on theme tokens", () => {
+    expect(styles).not.toMatch(/font-size:\s*[0-9]/);
+    expect(styles).not.toMatch(/font-weight:\s*[0-9]/);
+    expect(styles).not.toMatch(/line-height:\s*[0-9]/);
+    expect(styles).not.toMatch(/letter-spacing:\s*[0-9]/);
+  });
+});
+
 describe("pet message bubble activity", () => {
   test("shows a dev-only background on the pet window", () => {
     const devWindow = blockFor(".pet-window.dev-mode");
@@ -41,11 +79,12 @@ describe("pet message bubble activity", () => {
     expect(devWindow).toContain("border:");
   });
 
-  test("keeps the pet activity stack at the measured visible height while allowing overflow scroll", () => {
+  test("lets the pet activity stack size naturally up to its tokenized max height", () => {
     const stack = blockFor(".activity-stack");
 
     expect(stack).toContain("flex: 0 0 auto");
-    expect(stack).toContain("height: var(--pet-activity-stack-height)");
+    expect(stack).toContain("height: auto");
+    expect(stack).toContain("max-height: var(--pet-activity-stack-max-height)");
     expect(stack).toContain("overflow-y: auto");
     expect(stack).not.toContain("overflow-y: hidden");
   });
@@ -200,7 +239,7 @@ describe("pet message bubble activity", () => {
     expect(gradientColorSource).toContain("--pet-running-bubble-bg-dim");
     expect(gradientColorSource).toContain("--pet-running-bubble-bg-peak");
     expect(gradientColorSource).toContain("88%, ${backgroundBorderColor}");
-    expect(gradientColorSource).toContain("76%, white");
+    expect(gradientColorSource).toContain("76%, ${cssColorTokens.white}");
     expect(keyframes).toContain("--pet-running-bubble-bg-dim");
     expect(keyframes).toContain("--pet-running-bubble-bg-peak");
     expect(gradientColorSource).not.toContain("72%, ${runningBubble.borderColor}");
