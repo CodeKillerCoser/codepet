@@ -2,7 +2,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
   import { availableMonitors, getCurrentWindow, primaryMonitor, type Monitor } from "@tauri-apps/api/window";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { activateActivity, getAppSettings, openMainWindow, recentEvents, recordPerfEvent, resolveActivityApproval, sendActivityReply } from "./lib/api";
   import { activityCapabilities, activityKey, cardEndTime, cardMessage, cardMeta, cardTitle, matchesActivityFilters, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
   import { runningBubbleStyle } from "./lib/gradientColor";
@@ -30,6 +30,7 @@
   let replyingToId: string | null = null;
   let replyText = "";
   let actionNotice = "";
+  let replyTextarea: HTMLTextAreaElement | null = null;
   let noticeTimer: number | null = null;
   let whipAnimating = false;
   let whipAnimationKey = 0;
@@ -45,6 +46,7 @@
   const noticeVisibleMs = 2500;
   const whipVisibleMs = 760;
   const permissionRepeatMaxMs = 590_000;
+  const replyEditorMaxRows = 5;
   const devMode = import.meta.env.DEV;
   const fallbackRunningBubble = defaultRunningBubbleSettings;
 
@@ -632,7 +634,28 @@
       showNotice("当前来源不支持可靠回复");
       return;
     }
-    replyingToId = replyingToId === activity.id ? null : activity.id;
+    const opening = replyingToId !== activity.id;
+    replyingToId = opening ? activity.id : null;
+    replyText = "";
+    if (opening) {
+      void focusReplyEditor(activity.id);
+    }
+  }
+
+  async function focusReplyEditor(activityId: string) {
+    await tick();
+    if (replyingToId !== activityId || !replyTextarea) {
+      return;
+    }
+    resizeReplyEditor(replyTextarea);
+    replyTextarea.focus({ preventScroll: true });
+    replyTextarea.setSelectionRange(replyTextarea.value.length, replyTextarea.value.length);
+  }
+
+  function cancelReply(event?: Event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    replyingToId = null;
     replyText = "";
   }
 
@@ -659,10 +682,36 @@
 
   function handleReplyKeydown(event: KeyboardEvent, activity: PetEvent) {
     event.stopPropagation();
-    if (event.key === "Enter" && !event.isComposing) {
+    if (event.key === "Escape") {
+      cancelReply(event);
+      return;
+    }
+    if (event.key === "Enter" && !event.isComposing && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       void sendReply(activity);
     }
+  }
+
+  function handleReplyInput(event: Event) {
+    resizeReplyEditor(event.currentTarget as HTMLTextAreaElement);
+  }
+
+  function resizeReplyEditor(editor: HTMLTextAreaElement) {
+    editor.style.height = "auto";
+    const maxHeight = replyEditorMaxHeight(editor);
+    const nextHeight = Math.min(editor.scrollHeight, maxHeight);
+    editor.style.height = `${nextHeight}px`;
+    editor.style.overflowY = editor.scrollHeight > maxHeight ? "auto" : "hidden";
+  }
+
+  function replyEditorMaxHeight(editor: HTMLTextAreaElement) {
+    const style = window.getComputedStyle(editor);
+    const lineHeight = Number.parseFloat(style.lineHeight) || 16;
+    const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+    const paddingBottom = Number.parseFloat(style.paddingBottom) || 0;
+    const borderTop = Number.parseFloat(style.borderTopWidth) || 0;
+    const borderBottom = Number.parseFloat(style.borderBottomWidth) || 0;
+    return Math.ceil(lineHeight * replyEditorMaxRows + paddingTop + paddingBottom + borderTop + borderBottom);
   }
 
   async function approve(event: MouseEvent, activity: PetEvent, behavior: "allow" | "deny") {
@@ -714,20 +763,32 @@
             </button>
             {#if replyingToId === activity.id}
               <form class="reply-row" on:submit={(event) => submitReply(event, activity)}>
-                <input
+                <textarea
+                  bind:this={replyTextarea}
                   bind:value={replyText}
                   aria-label="回复"
                   placeholder="回复"
+                  rows="1"
+                  on:mousedown={(event) => event.stopPropagation()}
+                  on:input={handleReplyInput}
                   on:click={(event) => event.stopPropagation()}
                   on:keydown={(event) => handleReplyKeydown(event, activity)}
-                />
-                <button
-                  type="button"
-                  on:click={(event) => {
-                    event.stopPropagation();
-                    void sendReply(activity);
-                  }}
-                >回复</button>
+                ></textarea>
+                <div class="reply-controls">
+                  <button
+                    class="reply-submit"
+                    type="submit"
+                    disabled={!replyText.trim()}
+                    on:mousedown={(event) => event.stopPropagation()}
+                    on:click={(event) => event.stopPropagation()}
+                  >发送</button>
+                  <button
+                    class="reply-cancel"
+                    type="button"
+                    on:mousedown={(event) => event.stopPropagation()}
+                    on:click={cancelReply}
+                  >取消</button>
+                </div>
               </form>
             {/if}
             <div class="status-footer" class:with-actions={capabilities.canApprove || (capabilities.canReply && replyingToId !== activity.id)}>

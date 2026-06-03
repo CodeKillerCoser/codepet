@@ -159,12 +159,56 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain("{#if capabilities.canReply && replyingToId !== activity.id}");
   });
 
+  it("focuses and auto-sizes the reply editor after entering reply mode", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const focusBlock = source.slice(source.indexOf("async function focusReplyEditor"), source.indexOf("function cancelReply"));
+    const resizeBlock = source.slice(source.indexOf("function resizeReplyEditor"), source.indexOf("function replyEditorMaxHeight"));
+
+    expect(source).toContain("let replyTextarea: HTMLTextAreaElement | null = null");
+    expect(source).toContain("const replyEditorMaxRows = 5");
+    expect(source).toContain("void focusReplyEditor(activity.id)");
+    expect(focusBlock).toContain("await tick()");
+    expect(focusBlock).toContain("replyTextarea.focus({ preventScroll: true })");
+    expect(resizeBlock).toContain("editor.style.height = \"auto\"");
+    expect(resizeBlock).toContain("Math.min(editor.scrollHeight, maxHeight)");
+  });
+
+  it("uses a multiline reply editor with explicit cancel and keyboard exit", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const replyTemplate = source.slice(source.indexOf('<form class="reply-row"'), source.indexOf('<div class="status-footer"'));
+    const keydownBlock = source.slice(source.indexOf("function handleReplyKeydown"), source.indexOf("function handleReplyInput"));
+
+    expect(replyTemplate).toContain("<textarea");
+    expect(replyTemplate).toContain("bind:this={replyTextarea}");
+    expect(replyTemplate).toContain("on:mousedown={(event) => event.stopPropagation()}");
+    expect(replyTemplate).toContain("on:input={handleReplyInput}");
+    expect(replyTemplate).toContain("class=\"reply-cancel\"");
+    expect(replyTemplate).toContain("on:click={cancelReply}");
+    expect(keydownBlock).toContain('event.key === "Escape"');
+    expect(keydownBlock).toContain("cancelReply(event)");
+    expect(keydownBlock).toContain("event.ctrlKey || event.metaKey");
+  });
+
   it("keeps bottom spacing on activity cards with footer actions", () => {
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
     const actionCardRule = styles.slice(styles.indexOf(".status-pill:has(.reply-button)"), styles.indexOf(".status-pill:hover"));
 
     expect(actionCardRule).toContain("min-height: 86px");
     expect(actionCardRule).toContain("padding-bottom: 10px");
+  });
+
+  it("expands reply cards over the pet area while capping the editor to five rows", () => {
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    const stackRule = styles.slice(styles.indexOf(".activity-stack"), styles.indexOf(".activity-stack::-webkit-scrollbar"));
+    const replyingRule = styles.slice(styles.indexOf(".status-pill.replying"), styles.indexOf(".status-content"));
+    const editorRule = styles.slice(styles.indexOf(".reply-row textarea"), styles.indexOf(".reply-row textarea::placeholder"));
+
+    expect(stackRule).toContain("width: 326px");
+    expect(replyingRule).toContain("width: 316px");
+    expect(replyingRule).toContain("z-index: 6");
+    expect(editorRule).toContain("max-height: 92px");
+    expect(editorRule).toContain("resize: none");
+    expect(editorRule).toContain("overscroll-behavior: contain");
   });
 
   it("renders approval actions for waiting approval activities", () => {
