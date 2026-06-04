@@ -214,6 +214,7 @@ npm run package:signed
 
 ```text
 .
+├── .agents/skills/         # Codex 仓库级技能
 ├── frontend/               # Svelte 前端
 │   ├── App.svelte           # 主窗口：Agent、用量、个性化、事件页
 │   ├── PetApp.svelte        # 桌宠悬浮窗
@@ -227,10 +228,9 @@ npm run package:signed
 │   │   ├── pet/             # 宠物库、抠图、主题默认值
 │   │   └── platform/        # 平台窗口能力
 │   └── tests/               # Rust 集成测试
-├── skills/                  # 可被 Agent 复用的本项目技能
 ├── knowledge/               # 活知识库，目录树和标题即语义索引
-├── prompts/                 # 可复用的目标任务提示词
 ├── scripts/                 # 打包签名辅助脚本
+├── AGENTS.md                # AI Agent 协作入口指令
 ├── package.json             # npm 脚本和前端依赖
 └── README.md
 ```

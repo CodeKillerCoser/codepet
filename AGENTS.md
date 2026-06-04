@@ -1,6 +1,6 @@
 # Agent Collaboration Guide
 
-This file is the entry protocol for AI agents working in Code Pet / Hanging Metal. It should stay short. Project facts belong in `knowledge/`, and task-specific prompts belong in `prompts/`.
+This file is the entry protocol for AI agents working in Code Pet / Hanging Metal. It should stay short. Project facts belong in `knowledge/`. Repo-local reusable skills belong in `.agents/skills/` so Codex can load them from the workspace.
 
 ## Before Editing
 
@@ -27,6 +27,7 @@ This file is the entry protocol for AI agents working in Code Pet / Hanging Meta
 
 ## Documentation
 
-- Use `skills/living-dev-doc-writer/` when writing or reviewing living development documents.
+- Use `.agents/skills/living-dev-doc-writer/` when writing or reviewing living development documents.
+- Keep skill instructions in `SKILL.md`; keep optional reusable prompts or reference material under that skill's `references/` directory.
 - Evidence comes before conclusions in bug documents.
 - Every affected module needs a reason, and every risk needs a validation path.

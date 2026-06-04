@@ -1,0 +1,8 @@
+interface:
+  display_name: "Living Dev Doc Writer"
+  short_description: "Write evidence-backed living dev docs"
+  brand_color: "#2563EB"
+  default_prompt: "Use $living-dev-doc-writer to draft or review a concise, evidence-backed development document for this change."
+
+policy:
+  allow_implicit_invocation: true

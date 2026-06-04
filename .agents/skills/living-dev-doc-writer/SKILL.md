@@ -11,6 +11,8 @@ Use this skill when asked to write, normalize, or review a development document 
 
 This skill describes how to write. It must not hard-code project facts. Read project facts from the repository, README, existing knowledge documents, source, tests, git history, logs, or user-provided evidence.
 
+Codex loads this as a repo-local skill from `.agents/skills/living-dev-doc-writer/`. Claude Code can reuse the compact prompt in `references/claude-prompt.md`.
+
 ## Workflow
 
 1. Identify the document type:
