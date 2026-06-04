@@ -11,6 +11,7 @@
 `src-tauri/src/agent/actions.rs` provides activation, reply, and approval behavior.
 
 - Codex replies use `src-tauri/src/agent/codex_app_server.rs` when the event is completed or failed and has a session id.
+- Codex activation uses a `codex://threads/<thread-id>` deeplink when the event has a session id.
 - Qoder currently has no verified existing-local-session send path.
 - Approval resolution uses the collector wait path for `waiting-approval` events.
 - Activation is platform-dependent and can use app names, bundle ids, paths, or macOS terminal session automation.

@@ -87,8 +87,11 @@ fn activation_targets_live_terminal_session_by_tty() {
 
 #[test]
 fn activation_falls_back_to_provider_app_or_cwd() {
+    let mut codex_without_thread = event(AgentId::Codex, None);
+    codex_without_thread.session_id = None;
+
     assert_eq!(
-        activation_target_for_event(&event(AgentId::Codex, None)),
+        activation_target_for_event(&codex_without_thread),
         ActivationTarget::AppName("Codex".to_string())
     );
     assert_eq!(
@@ -148,6 +151,19 @@ fn activation_uses_cross_platform_fallback_when_macos_source_metadata_is_present
     assert_eq!(
         activation_target_for_event(&qoder_event),
         ActivationTarget::AppName("Qoder".to_string())
+    );
+}
+
+#[test]
+fn activation_uses_codex_thread_deeplink_when_session_id_available() {
+    let mut codex_event = event(AgentId::Codex, None);
+    codex_event.session_id = Some("019e8862-0d6c-7150-823f-18d4cd4e2813".to_string());
+
+    assert_eq!(
+        activation_target_for_event(&codex_event),
+        ActivationTarget::Url(
+            "codex://threads/019e8862-0d6c-7150-823f-18d4cd4e2813".to_string()
+        )
     );
 }
 

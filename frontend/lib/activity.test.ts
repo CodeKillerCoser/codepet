@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeActivities, activityCapabilities, activityKey, cardEndTime, cardMessage, cardMeta, cardTitle, statusLabel, updateActivityList } from "./activity";
+import { activeActivities, activityCapabilities, activityKey, cardAgentLabel, cardEndTime, cardMessage, cardMeta, cardTitle, statusLabel, updateActivityList } from "./activity";
 import type { ActivityFilterSettings, PetEvent } from "./types";
 
 function event(overrides: Partial<PetEvent>): PetEvent {
@@ -447,6 +447,39 @@ describe("updateActivityList", () => {
     expect(dismissedKeys.has(activityKey(started))).toBe(false);
   });
 
+  it("keeps the known terminal source when later events omit source context", () => {
+    const started = event({
+      id: "codex-cli-start",
+      provider: "codex",
+      sessionId: "codex-a",
+      status: "thinking",
+      message: "开始任务",
+      source: {
+        terminalProgram: "Apple_Terminal",
+        ttyPath: "/dev/ttys018",
+        appBundleId: "com.apple.Terminal",
+      },
+    });
+    const updatedWithoutSource = event({
+      id: "codex-cli-update",
+      provider: "codex",
+      sessionId: "codex-a",
+      status: "running",
+      message: "继续执行",
+      source: null,
+    });
+
+    const [activity] = updateActivityList(
+      updateActivityList([], [started], new Set<string>(), new Date("2026-05-26T06:00:00.000Z")),
+      [updatedWithoutSource],
+      new Set<string>(),
+      new Date("2026-05-26T06:01:00.000Z"),
+    );
+
+    expect(cardAgentLabel(activity)).toBe("codex cli");
+    expect(cardMeta(activity)).toBe("codex cli · 正在执行");
+  });
+
   it("keeps Codex internal sessions hidden across incremental event batches", () => {
     const hiddenInternalKeys = new Set<string>();
     const prompt = event({
@@ -555,6 +588,25 @@ describe("card display", () => {
     });
 
     expect(cardMeta(activity)).toBe("cursor cli · 正在执行");
+  });
+
+  it("distinguishes Codex and Qoder app versus cli sources", () => {
+    expect(cardAgentLabel(event({
+      provider: "codex",
+      source: { appBundleId: "com.openai.codex" },
+    }))).toBe("codex");
+    expect(cardAgentLabel(event({
+      provider: "codex",
+      source: { terminalProgram: "Apple_Terminal", ttyPath: "/dev/ttys018", appBundleId: "com.apple.Terminal" },
+    }))).toBe("codex cli");
+    expect(cardAgentLabel(event({
+      provider: "qoder",
+      source: { appBundleId: "com.qoder.ide" },
+    }))).toBe("qoder");
+    expect(cardAgentLabel(event({
+      provider: "qoder",
+      source: { terminalProgram: "iTerm.app", ttyPath: "/dev/ttys007", appBundleId: "com.googlecode.iterm2" },
+    }))).toBe("qoder cli");
   });
 
   it("keeps app-sourced agent cards using the current provider footer", () => {

@@ -7,6 +7,7 @@
 ## Current Capabilities
 
 - Activate: generally visible, but backend can return unsupported on platforms that cannot activate by the requested target type.
+- Codex activate: uses a thread deeplink when a session id is available, otherwise falls back to the generic provider target.
 - Reply: Codex only, done/failed only, session id required.
 - Approval: waiting-approval only, resolved through collector state.
 

@@ -130,6 +130,14 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain('<span class="status-ended-at">{endedAt}</span>');
   });
 
+  it("uses the normalized source label in the footer agent text", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+
+    expect(source).toContain("cardAgentLabel");
+    expect(source).toContain('<span class="status-agent">{cardAgentLabel(activity)}</span>');
+    expect(source).not.toContain('<span class="status-agent">{activity.provider}</span>');
+  });
+
   it("lets CSS size the activity stack naturally up to a max height", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
@@ -168,6 +176,7 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain("const replyEditorMaxRows = 5");
     expect(source).toContain("void focusReplyEditor(activity.id)");
     expect(focusBlock).toContain("await tick()");
+    expect(focusBlock).toContain("await getCurrentWindow().setFocus()");
     expect(focusBlock).toContain("replyTextarea.focus({ preventScroll: true })");
     expect(resizeBlock).toContain("editor.style.height = \"auto\"");
     expect(resizeBlock).toContain("Math.min(editor.scrollHeight, maxHeight)");
@@ -180,7 +189,7 @@ describe("PetApp activity helpers", () => {
 
     expect(replyTemplate).toContain("<textarea");
     expect(replyTemplate).toContain("bind:this={replyTextarea}");
-    expect(replyTemplate).toContain("on:mousedown={(event) => event.stopPropagation()}");
+    expect(replyTemplate).toContain("on:mousedown={stopReplyEditorEvent}");
     expect(replyTemplate).toContain("on:input={handleReplyInput}");
     expect(replyTemplate).toContain("class=\"reply-cancel\"");
     expect(replyTemplate).toContain("on:click={cancelReply}");
@@ -189,23 +198,77 @@ describe("PetApp activity helpers", () => {
     expect(keydownBlock).toContain("event.ctrlKey || event.metaKey");
   });
 
-  it("keeps bottom spacing on activity cards with footer actions", () => {
+  it("keeps reply mode pending until the backend confirms completion", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const sendBlock = source.slice(source.indexOf("async function sendReply"), source.indexOf("function handleReplyKeydown"));
+    const replyTemplate = source.slice(source.indexOf('<form class="reply-row"'), source.indexOf('<div class="status-footer"'));
+
+    expect(source).toContain("let replySubmitting = false");
+    expect(sendBlock).toContain("replySubmitting = true");
+    expect(sendBlock).toContain("await sendActivityReply(activity.id, message)");
+    expect(sendBlock).toContain("replyingToId = null");
+    expect(sendBlock).toContain("finally");
+    expect(sendBlock).toContain("replySubmitting = false");
+    expect(replyTemplate).toContain("disabled={replySubmitting || !replyText.trim()}");
+    expect(replyTemplate).toContain('{replySubmitting ? "发送中" : "发送"}');
+  });
+
+  it("keeps reply editor pointer and focus events inside the textarea", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    const replyTemplate = source.slice(source.indexOf('<form class="reply-row"'), source.indexOf('<div class="status-footer"'));
+    const editorRule = styles.slice(styles.indexOf(".reply-row textarea"), styles.indexOf(".reply-row textarea::placeholder"));
+
+    expect(source).toContain("function stopReplyEditorEvent");
+    expect(replyTemplate).toContain("on:pointerdown={stopReplyEditorEvent}");
+    expect(replyTemplate).toContain("on:mousedown={stopReplyEditorEvent}");
+    expect(replyTemplate).toContain("on:click={stopReplyEditorEvent}");
+    expect(replyTemplate).toContain("on:focus={stopReplyEditorEvent}");
+    expect(editorRule).toContain("user-select: text");
+  });
+
+  it("keeps reply editor vertical padding balanced", () => {
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    const replyRowRule = styles.slice(styles.indexOf(".reply-row"), styles.indexOf(".reply-row textarea"));
+
+    expect(replyRowRule).toContain("padding: 3px 0");
+    expect(replyRowRule).not.toContain("padding: 3px 0 2px");
+  });
+
+  it("places reply controls below the editor instead of squeezing the input row", () => {
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    const replyRowRule = styles.slice(styles.indexOf(".reply-row"), styles.indexOf(".reply-row textarea"));
+    const controlsRule = styles.slice(styles.indexOf(".reply-controls"), styles.indexOf(".reply-row button"));
+
+    expect(replyRowRule).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(controlsRule).toContain("justify-self: end");
+  });
+
+  it("keeps footer bottom spacing consistent between reply states", () => {
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    const contentRule = styles.slice(styles.indexOf(".status-content"), styles.indexOf(".status-pill.replying .status-content"));
+    const footerRule = styles.slice(styles.indexOf(".status-footer {"), styles.indexOf(".status-footer.with-actions"));
     const actionCardRule = styles.slice(styles.indexOf(".status-pill:has(.reply-button)"), styles.indexOf(".status-pill:hover"));
 
     expect(actionCardRule).toContain("min-height: 86px");
-    expect(actionCardRule).toContain("padding-bottom: 10px");
+    expect(actionCardRule).not.toContain("padding-bottom");
+    expect(contentRule).toContain("align-self: stretch");
+    expect(footerRule).toContain("margin-top: auto");
   });
 
-  it("expands reply cards over the pet area while capping the editor to five rows", () => {
+  it("keeps every activity bubble the same width while capping the reply editor to five rows", () => {
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
     const stackRule = styles.slice(styles.indexOf(".activity-stack"), styles.indexOf(".activity-stack::-webkit-scrollbar"));
+    const pillRule = styles.slice(styles.indexOf(".status-pill"), styles.indexOf(".status-pill.urgent"));
     const replyingRule = styles.slice(styles.indexOf(".status-pill.replying"), styles.indexOf(".status-content"));
     const editorRule = styles.slice(styles.indexOf(".reply-row textarea"), styles.indexOf(".reply-row textarea::placeholder"));
 
     expect(stackRule).toContain("width: 326px");
-    expect(replyingRule).toContain("width: 316px");
+    expect(pillRule).toContain("width: 316px");
     expect(replyingRule).toContain("z-index: 6");
+    expect(replyingRule).not.toContain("width:");
+    expect(replyingRule).not.toContain("min-height");
+    expect(replyingRule).not.toContain("align-items: start");
     expect(editorRule).toContain("max-height: 92px");
     expect(editorRule).toContain("resize: none");
     expect(editorRule).toContain("overscroll-behavior: contain");

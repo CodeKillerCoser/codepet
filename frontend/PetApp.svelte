@@ -4,7 +4,7 @@
   import { availableMonitors, getCurrentWindow, primaryMonitor, type Monitor } from "@tauri-apps/api/window";
   import { onMount, tick } from "svelte";
   import { activateActivity, getAppSettings, openMainWindow, recentEvents, recordPerfEvent, resolveActivityApproval, sendActivityReply } from "./lib/api";
-  import { activityCapabilities, activityKey, cardEndTime, cardMessage, cardMeta, cardTitle, matchesActivityFilters, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
+  import { activityCapabilities, activityKey, cardAgentLabel, cardEndTime, cardMessage, cardMeta, cardTitle, matchesActivityFilters, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
   import { runningBubbleStyle } from "./lib/gradientColor";
   import PetAvatar from "./lib/PetAvatar.svelte";
   import { playNotificationSound, playWhipSound, shouldRepeatNotification, shouldRing } from "./lib/sound";
@@ -29,6 +29,7 @@
   let ready = false;
   let replyingToId: string | null = null;
   let replyText = "";
+  let replySubmitting = false;
   let actionNotice = "";
   let replyTextarea: HTMLTextAreaElement | null = null;
   let noticeTimer: number | null = null;
@@ -261,6 +262,7 @@
     }
     replyingToId = null;
     replyText = "";
+    replySubmitting = false;
   }
 
   function applyIncomingEvents(incoming: PetEvent[]) {
@@ -314,6 +316,7 @@
     if (replyingToId && !activities.some((activity) => activity.id === replyingToId)) {
       replyingToId = null;
       replyText = "";
+      replySubmitting = false;
     }
     clearRepeat();
   }
@@ -573,6 +576,7 @@
     if (replyingToId === activity.id) {
       replyingToId = null;
       replyText = "";
+      replySubmitting = false;
     }
   }
 
@@ -594,6 +598,7 @@
     if (replyingToId && !activities.some((activity) => activity.id === replyingToId)) {
       replyingToId = null;
       replyText = "";
+      replySubmitting = false;
     }
     showNotice("已清除完成任务");
   }
@@ -640,6 +645,7 @@
     const opening = replyingToId !== activity.id;
     replyingToId = opening ? activity.id : null;
     replyText = "";
+    replySubmitting = false;
     if (opening) {
       void focusReplyEditor(activity.id);
     }
@@ -651,6 +657,9 @@
       return;
     }
     resizeReplyEditor(replyTextarea);
+    await getCurrentWindow().setFocus().catch((error) => {
+      console.error("failed to focus pet window for reply", error);
+    });
     replyTextarea.focus({ preventScroll: true });
     replyTextarea.setSelectionRange(replyTextarea.value.length, replyTextarea.value.length);
   }
@@ -660,6 +669,7 @@
     event?.stopPropagation();
     replyingToId = null;
     replyText = "";
+    replySubmitting = false;
   }
 
   async function submitReply(event: SubmitEvent, activity: PetEvent) {
@@ -670,9 +680,10 @@
 
   async function sendReply(activity: PetEvent) {
     const message = replyText.trim();
-    if (!message) {
+    if (!message || replySubmitting) {
       return;
     }
+    replySubmitting = true;
     try {
       await sendActivityReply(activity.id, message);
       replyText = "";
@@ -680,6 +691,8 @@
       showNotice("已发送回复");
     } catch (error) {
       showNotice(String(error));
+    } finally {
+      replySubmitting = false;
     }
   }
 
@@ -697,6 +710,10 @@
 
   function handleReplyInput(event: Event) {
     resizeReplyEditor(event.currentTarget as HTMLTextAreaElement);
+  }
+
+  function stopReplyEditorEvent(event: Event) {
+    event.stopPropagation();
   }
 
   function resizeReplyEditor(editor: HTMLTextAreaElement) {
@@ -781,22 +798,25 @@
                   aria-label="回复"
                   placeholder="回复"
                   rows="1"
-                  on:mousedown={(event) => event.stopPropagation()}
+                  on:pointerdown={stopReplyEditorEvent}
+                  on:mousedown={stopReplyEditorEvent}
                   on:input={handleReplyInput}
-                  on:click={(event) => event.stopPropagation()}
+                  on:click={stopReplyEditorEvent}
+                  on:focus={stopReplyEditorEvent}
                   on:keydown={(event) => handleReplyKeydown(event, activity)}
                 ></textarea>
                 <div class="reply-controls">
                   <button
                     class="reply-submit"
                     type="submit"
-                    disabled={!replyText.trim()}
+                    disabled={replySubmitting || !replyText.trim()}
                     on:mousedown={(event) => event.stopPropagation()}
                     on:click={(event) => event.stopPropagation()}
-                  >发送</button>
+                  >{replySubmitting ? "发送中" : "发送"}</button>
                   <button
                     class="reply-cancel"
                     type="button"
+                    disabled={replySubmitting}
                     on:mousedown={(event) => event.stopPropagation()}
                     on:click={cancelReply}
                   >取消</button>
@@ -805,7 +825,7 @@
             {/if}
             <div class="status-footer" class:with-actions={capabilities.canApprove || (capabilities.canReply && replyingToId !== activity.id)}>
               <span class="status-meta" title={cardMeta(activity)}>
-                <span class="status-agent">{activity.provider}</span>
+                <span class="status-agent">{cardAgentLabel(activity)}</span>
                 <span class="status-separator"> · </span>
                 <span class={`status-state status-${activity.status}`}>{statusLabel(activity.status)}</span>
                 {#if endedAt}

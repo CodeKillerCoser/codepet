@@ -14,7 +14,7 @@ The frontend still controls runtime sizing. It calls `ensureWindowSize()` and us
 
 ## macOS Overlay Setup
 
-`src-tauri/src/platform/macos_window.rs` configures macOS-specific overlay behavior. Non-macOS builds use the no-op wrapper in `src-tauri/src/lib.rs`.
+`src-tauri/src/platform/macos_window.rs` configures macOS-specific overlay behavior. The panel can become key only when needed so reply inputs can receive focus while keeping the pet window as a floating overlay. Non-macOS builds use the no-op wrapper in `src-tauri/src/lib.rs`.
 
 ## Risks
 

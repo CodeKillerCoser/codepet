@@ -6,6 +6,8 @@ Reply mode is controlled by `replyingToId` and `replyText` in `frontend/PetApp.s
 
 When opened, the textarea is focused, cursor is moved to the end, and the editor height is adjusted from `scrollHeight`. Maximum height is five rows, calculated from computed line height, padding, and border.
 
+On macOS, the pet overlay panel is allowed to become key only when needed so the reply textarea can accept keyboard focus.
+
 Reply mode can be cancelled with the cancel button, submit clears it on success, and it is cleared when the target activity disappears or loses reply capability.
 
 ## Capability Dependency
