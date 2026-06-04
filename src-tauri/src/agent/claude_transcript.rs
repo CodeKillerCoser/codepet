@@ -244,8 +244,7 @@ fn user_message_text(message: &Value) -> Option<String> {
 }
 
 fn is_transcript_path_text(value: &str) -> bool {
-    let path = Path::new(value.trim());
-    path.is_absolute()
-        && path.extension().and_then(|extension| extension.to_str()) == Some("jsonl")
-        && (value.contains("/.claude/") || value.contains("/.codex/"))
+    let normalized = value.trim().replace('\\', "/").to_ascii_lowercase();
+    normalized.ends_with(".jsonl")
+        && (normalized.contains("/.claude/") || normalized.contains("/.codex/"))
 }

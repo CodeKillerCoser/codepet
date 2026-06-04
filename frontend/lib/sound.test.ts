@@ -118,7 +118,7 @@ describe("playWhipSound", () => {
 
   it("uses the three bundled renamed wav resources for whip cracks", () => {
     const root = resolve(import.meta.dirname, "../..");
-    const source = readFileSync(resolve(root, "src/lib/sound.ts"), "utf8");
+    const source = readFileSync(resolve(root, "frontend/lib/sound.ts"), "utf8");
     const tauriConfig = readFileSync(resolve(root, "src-tauri/tauri.conf.json"), "utf8");
     const resources = [
       "resources/sounds/whip-crack.wav",

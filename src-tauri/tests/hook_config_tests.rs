@@ -2,6 +2,12 @@ use code_pet_lib::agents::{agent_specs, AgentId};
 use code_pet_lib::hooks::{disable_agent_hook, enable_agent_hook, is_agent_hook_enabled};
 use serde_json::json;
 
+fn command_has_arg(command: &str, name: &str, value: &str) -> bool {
+    command.contains(&format!("{name} '{value}'"))
+        || command.contains(&format!("{name} \"{value}\""))
+        || command.contains(&format!("{name} {value}"))
+}
+
 #[test]
 fn enable_json_agent_hook_is_idempotent_and_keeps_existing_hooks() {
     let temp = tempfile::tempdir().unwrap();
@@ -229,7 +235,7 @@ fn cursor_json_hooks_use_flat_hooks_schema() {
             .iter()
             .filter(|entry| entry["command"]
                 .as_str()
-                .is_some_and(|command| command.contains("--agent 'cursor'")))
+                .is_some_and(|command| command_has_arg(command, "--agent", "cursor")))
             .count(),
         1
     );
@@ -302,7 +308,7 @@ fn permission_request_hooks_are_installed_with_long_timeout() {
         assert!(
             managed_hook["command"]
                 .as_str()
-                .is_some_and(|command| command.contains("--event 'PermissionRequest'"))
+                .is_some_and(|command| command_has_arg(command, "--event", "PermissionRequest"))
         );
         assert!(
             managed_hook["command"]

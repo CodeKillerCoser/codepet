@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-const HOOK_SCRIPT: &str = include_str!("../hooks/code-pet-hook.mjs");
+const HOOK_SCRIPT: &str = include_str!("../../hooks/code-pet-hook.mjs");
 const SCRIPT_NAME: &str = "code-pet-hook.mjs";
 const LEGACY_MANAGED_MARKER: &str = "CODE_PET_MANAGED=1";
 

@@ -23,6 +23,7 @@ fn event(provider: AgentId, source: Option<ActivitySource>) -> PetEvent {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
 fn activation_prefers_source_bundle_id() {
     let target = activation_target_for_event(&event(
         AgentId::Claude,
@@ -43,6 +44,7 @@ fn activation_prefers_source_bundle_id() {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
 fn activation_targets_live_terminal_session_by_tty() {
     let terminal_event = event(
         AgentId::Claude,
@@ -104,6 +106,52 @@ fn activation_falls_back_to_provider_app_or_cwd() {
 }
 
 #[test]
+#[cfg(not(target_os = "macos"))]
+fn activation_uses_cross_platform_fallback_when_macos_source_metadata_is_present() {
+    let claude_event = event(
+        AgentId::Claude,
+        Some(ActivitySource {
+            pid: Some(1234),
+            ppid: None,
+            terminal_program: Some("Apple_Terminal".to_string()),
+            term_session_id: None,
+            tty_path: Some("/dev/ttys018".to_string()),
+            tmux_pane: None,
+            wezterm_pane: None,
+            kitty_window_id: None,
+            app_bundle_id: Some("com.apple.Terminal".to_string()),
+        }),
+    );
+    let qoder_event = event(
+        AgentId::Qoder,
+        Some(ActivitySource {
+            pid: None,
+            ppid: None,
+            terminal_program: Some("WarpTerminal".to_string()),
+            term_session_id: None,
+            tty_path: Some("/dev/ttys018".to_string()),
+            tmux_pane: None,
+            wezterm_pane: None,
+            kitty_window_id: None,
+            app_bundle_id: Some("dev.warp.Warp-Stable".to_string()),
+        }),
+    );
+
+    assert_eq!(
+        activation_target_for_event(&claude_event),
+        ActivationTarget::Path("/tmp/project".to_string())
+    );
+    assert_eq!(
+        activation_strategy_for_event(&claude_event),
+        ActivationStrategy::Target(ActivationTarget::Path("/tmp/project".to_string()))
+    );
+    assert_eq!(
+        activation_target_for_event(&qoder_event),
+        ActivationTarget::AppName("Qoder".to_string())
+    );
+}
+
+#[test]
 fn reply_strategy_does_not_send_qoder_messages_without_verified_existing_session_api() {
     let mut qoder_event = event(
         AgentId::Qoder,
@@ -146,6 +194,7 @@ fn reply_strategy_does_not_support_claude_terminal_automation() {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
 fn activation_targets_warp_by_bundle_id() {
     let target = activation_target_for_event(&event(
         AgentId::Qoder,

@@ -76,6 +76,24 @@ fn claude_done_title_does_not_use_transcript_path_fallback_message() {
 }
 
 #[test]
+fn claude_done_title_does_not_use_windows_transcript_path_fallback_message() {
+    let fallback = fallback_event(json!({
+        "message": r"C:\Users\wangxin\.claude\projects\-Users-wangxin\session-1.jsonl",
+        "raw": {
+            "transcript_path": r"C:\Users\wangxin\.claude\projects\-Users-wangxin\session-1.jsonl"
+        }
+    }));
+    let event = event_from_claude_outcome(&fallback, ClaudeTranscriptOutcome::Done {
+        session_id: "session-1".to_string(),
+        cwd: Some("/tmp/project".to_string()),
+        message: "我没有获取实时天气数据的能力。".to_string(),
+    })
+    .unwrap();
+
+    assert_eq!(event.title, "任务完成");
+}
+
+#[test]
 fn claude_done_title_uses_first_user_message_from_transcript() {
     let dir = tempdir().unwrap();
     let transcript = dir.path().join("session-1.jsonl");

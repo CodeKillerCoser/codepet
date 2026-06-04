@@ -214,14 +214,22 @@ npm run package:signed
 
 ```text
 .
-├── src/                    # Svelte 前端
+├── frontend/               # Svelte 前端
 │   ├── App.svelte           # 主窗口：Agent、用量、个性化、事件页
 │   ├── PetApp.svelte        # 桌宠悬浮窗
 │   └── lib/                 # API、活动归并、音效、宠物渲染、图表等
 ├── src-tauri/               # Tauri/Rust 后端
 │   ├── hooks/               # 注入到各 Agent 配置里的 hook 脚本
-│   ├── src/                 # collector、settings、pets、token usage 等模块
+│   ├── src/                 # 按功能域组织的 Rust 模块
+│   │   ├── activity/        # collector、事件归一化、标题解析、Token 用量
+│   │   ├── agent/           # Agent 注册、hook、交互控制和远程能力
+│   │   ├── app/             # 设置、状态、日志、自启动和 CLI
+│   │   ├── pet/             # 宠物库、抠图、主题默认值
+│   │   └── platform/        # 平台窗口能力
 │   └── tests/               # Rust 集成测试
+├── skills/                  # 可被 Agent 复用的本项目技能
+├── knowledge/               # 活知识库，目录树和标题即语义索引
+├── prompts/                 # 可复用的目标任务提示词
 ├── scripts/                 # 打包签名辅助脚本
 ├── package.json             # npm 脚本和前端依赖
 └── README.md
@@ -229,19 +237,20 @@ npm run package:signed
 
 ## 重要模块
 
-- `src-tauri/src/agents.rs`：Agent 列表、配置路径和 hook 事件声明。
-- `src-tauri/src/hooks.rs`：托管 hook 写入和移除逻辑。
-- `src-tauri/src/collector.rs`：本机 HTTP collector。
-- `src-tauri/src/events.rs`：hook payload 到桌宠事件的归一化。
-- `src-tauri/src/state.rs`：近期事件、授权决策和 collector 共享状态。
-- `src-tauri/src/settings.rs`：应用设置读写和默认值。
-- `src-tauri/src/pets.rs`：宠物库、图片导入、像素化和宠物选择。
-- `src-tauri/src/token_usage.rs`：Token 用量解析和聚合。
-- `src-tauri/src/app_log.rs`：应用日志、启动 banner 和性能事件记录。
-- `src-tauri/src/autostart.rs`：基于 Tauri autostart 插件的登录启动控制。
-- `src-tauri/src/activity_actions.rs`：任务卡片激活和回复能力，macOS 终端自动化与跨平台路径打开边界。
-- `src/lib/sound.ts`：通知音效、鞭子音效和抽打反应音。
-- `src/lib/activity.ts`：任务活动归并和展示辅助逻辑。
+- `src-tauri/src/agent/registry.rs`：Agent 列表、配置路径和 hook 事件声明。
+- `src-tauri/src/agent/hooks.rs`：托管 hook 写入和移除逻辑。
+- `src-tauri/src/activity/collector.rs`：本机 HTTP collector。
+- `src-tauri/src/activity/events.rs`：hook payload 到桌宠事件的归一化。
+- `src-tauri/src/app/state.rs`：近期事件、授权决策和 collector 共享状态。
+- `src-tauri/src/app/settings.rs`：应用设置读写和默认值。
+- `src-tauri/src/pet/library.rs`：宠物库、图片导入、像素化和宠物选择。
+- `src-tauri/src/activity/token_usage.rs`：Token 用量解析和聚合。
+- `src-tauri/src/app/log.rs`：应用日志、启动 banner 和性能事件记录。
+- `src-tauri/src/app/autostart.rs`：基于 Tauri autostart 插件的登录启动控制。
+- `src-tauri/src/agent/actions.rs`：任务卡片激活、回复和审批能力边界。
+- `frontend/lib/activity.ts`：任务活动归并、过滤和展示辅助逻辑。
+- `frontend/lib/agentInteractions.ts`：前端任务操作 capability 计算。
+- `frontend/lib/sound.ts`：通知音效、鞭子音效和抽打反应音。
 
 ## 开发约定
 
