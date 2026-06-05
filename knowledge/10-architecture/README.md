@@ -1,22 +1,22 @@
-# Architecture
+# 架构
 
-Code Pet is a Tauri 2 application with a Svelte frontend and Rust backend. The frontend owns UI state and interaction ergonomics. The backend owns local integration points, persistence, event ingestion, and platform APIs.
+Code Pet 是一个 Tauri 2 应用，前端使用 Svelte，后端使用 Rust。前端负责 UI 状态和交互体验；后端负责本地集成点、持久化、事件接入和平台 API。
 
-## Main Areas
+## 主要区域
 
-- `runtime-topology.md`: windows, collector, IPC, tray, and local runtime flow.
-- `frontend-backend-boundary.md`: what belongs in Svelte versus Rust.
-- `event-pipeline.md`: hook payload to pet task card.
-- `settings-persistence.md`: settings model and storage flow.
-- `window-system.md`: pet window sizing, docking, and monitor bounds.
-- `agent-control.md`: hooks, activation, reply, and approval boundaries.
-- `cross-platform-boundaries.md`: macOS, Windows, and unsupported paths.
+- `runtime-topology.md`：窗口、collector、IPC、托盘和本地运行流。
+- `frontend-backend-boundary.md`：Svelte 与 Rust 的职责边界。
+- `event-pipeline.md`：hook payload 到桌宠任务卡片的路径。
+- `settings-persistence.md`：设置模型和存储流程。
+- `window-system.md`：桌宠窗口尺寸、停靠和屏幕边界。
+- `agent-control.md`：hook、激活、回复和审批边界。
+- `cross-platform-boundaries.md`：macOS、Windows 和不支持路径的边界。
 
-## Module Evidence
+## 模块证据
 
-- `frontend/` contains Svelte entry points and frontend libraries.
-- `src-tauri/src/activity/` contains collector, events, title resolution, and token usage.
-- `src-tauri/src/agent/` contains agent registry, hook management, provider control, and provider-specific helpers.
-- `src-tauri/src/app/` contains settings, shared state, logs, autostart, and CLI helpers.
-- `src-tauri/src/pet/` contains pet library, image processing, subject cutout, and theme defaults.
-- `src-tauri/src/platform/` contains platform-specific window code.
+- `frontend/` 包含 Svelte 入口和前端库。
+- `src-tauri/src/activity/` 包含 collector、事件、标题解析和 Token 用量。
+- `src-tauri/src/agent/` 包含 Agent 注册、hook 管理、provider 控制和 provider 专属辅助逻辑。
+- `src-tauri/src/app/` 包含设置、共享状态、日志、自启动和 CLI 辅助逻辑。
+- `src-tauri/src/pet/` 包含宠物库、图片处理、主体抠图和主题默认值。
+- `src-tauri/src/platform/` 包含平台专属窗口代码。

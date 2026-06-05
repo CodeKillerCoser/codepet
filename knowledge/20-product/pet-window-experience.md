@@ -1,24 +1,24 @@
-# Pet Window Experience
+# 桌宠窗口体验
 
-## Behavior
+## 行为
 
-The pet window is a transparent floating surface for daily activity monitoring. It shows the current pet avatar, task cards, action buttons, notification messages, and whip interaction.
+桌宠窗口是用于日常活动监控的透明悬浮界面。它展示当前宠物形象、任务卡片、操作按钮、通知消息和抽打互动。
 
-## Current Facts
+## 当前事实
 
-- `frontend/PetApp.svelte` is loaded from `pet.html`.
-- The pet window loads settings, listens to `pet-event`, polls `recentEvents()`, and listens for `settings-updated`.
-- New live activities can expand a collapsed task list.
-- Pet opacity is controlled by `settings.pet.opacity` and applied as `--pet-window-opacity`.
-- The window is programmatically sized and constrained to monitor bounds.
+- `frontend/PetApp.svelte` 由 `pet.html` 加载。
+- 桌宠窗口会加载设置、监听 `pet-event`、轮询 `recentEvents()`，并监听 `settings-updated`。
+- 新的实时活动可以展开已经收起的任务列表。
+- 宠物透明度由 `settings.pet.opacity` 控制，并应用为 `--pet-window-opacity`。
+- 窗口由程序控制尺寸，并限制在屏幕边界内。
 
-## Product Constraints
+## 产品约束
 
-- The pet should stay useful while the user reads other content, so opacity and task list density matter.
-- Transparent area mouse behavior has been simplified by using a preset window size.
-- Reply or approval UI must not appear during unsupported task phases.
+- 桌宠需要在用户阅读其他内容时仍然有用，因此透明度和任务列表密度都重要。
+- 透明区域的鼠标行为已经简化为使用预设窗口尺寸。
+- 不受支持的任务阶段不能出现回复或审批 UI。
 
-## Validation
+## 验证
 
-- Check `frontend/PetApp.svelte` for layout and action state changes.
-- Run `npx vitest run frontend/lib/activity.test.ts frontend/lib/sound.test.ts` after changing card behavior or sound behavior.
+- 修改布局或操作状态时，检查 `frontend/PetApp.svelte`。
+- 修改卡片行为或声音行为后，运行 `npx vitest run frontend/lib/activity.test.ts frontend/lib/sound.test.ts`。

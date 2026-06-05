@@ -1,292 +1,290 @@
 ---
 name: living-dev-doc-writer
-description: Use when writing or reviewing living development documents for a codebase, including feature specs, bug investigations, bug fix records, architecture decisions, and development rules. The skill standardizes evidence, scope, risk, validation, and knowledge-evolution sections without embedding project-specific facts.
-metadata:
-  short-description: Write living development docs
+description: 用于为代码库编写或审阅活文档，包括功能设计、Bug 排查、Bug 修复复盘、架构决策和开发规约。适用于需要统一证据、范围、风险、验证和知识演进写法的场景；技能只规定如何写文档，不固化具体项目事实。
 ---
 
-# Living Dev Doc Writer
+# 活文档写作技能
 
-Use this skill when asked to write, normalize, or review a development document that should stay useful as the codebase evolves.
+当用户要求编写、整理或审阅需要随代码库演进的开发文档时，使用这个技能。
 
-This skill describes how to write. It must not hard-code project facts. Read project facts from the repository, README, existing knowledge documents, source, tests, git history, logs, or user-provided evidence.
+这个技能只描述“如何写”。不要在技能里固化项目事实；事实必须来自仓库、README、已有 `knowledge/` 文档、源码、测试、Git 历史、日志或用户提供的证据。
 
-Codex loads this as a repo-local skill from `.agents/skills/living-dev-doc-writer/`. Claude Code can reuse the compact prompt in `references/claude-prompt.md`.
+Codex 会从 `.agents/skills/living-dev-doc-writer/` 读取这个仓库级技能。Claude Code 可以复用 `references/claude-prompt.md` 中的紧凑版 prompt。
 
-## Workflow
+## 工作流程
 
-1. Identify the document type:
-   - Feature or product change: use Development Spec.
-   - Bug still under investigation: use Bug Investigation.
-   - Bug already fixed or fix is known: use Bug Fix Record.
-   - Important technical choice: use Architecture Decision.
-   - Reusable constraint from repeated bugs or high-risk areas: use Development Rule.
-2. Choose intensity:
-   - Small: narrow UI tweak, small bug, single-module change. Target 300-700 words.
-   - Standard: normal feature or bug. Target 700-1400 words.
-   - Deep: cross-module, cross-platform, architecture, agent integration, data flow, windowing, or security-sensitive change. Target 1200-2200 words.
-3. Gather evidence before writing conclusions.
-4. Keep the document action-oriented. Avoid generic technology introductions.
-5. Use `Unknowns` when information is missing. Do not invent evidence, history, or decisions.
+1. 先判断文档类型：
+   - 功能或产品变更：使用“开发需求 / 功能设计文档”。
+   - Bug 仍在排查：使用“Bug 排查文档”。
+   - Bug 已定位或已修复：使用“Bug 修复复盘文档”。
+   - 重要技术取舍：使用“架构决策文档”。
+   - 从重复 Bug 或高风险区域沉淀长期规则：使用“开发规约文档”。
+2. 再判断文档强度：
+   - Small：小 UI 调整、小 Bug、单模块变更。建议 300-700 字。
+   - Standard：普通功能或普通 Bug。建议 700-1400 字。
+   - Deep：跨模块、跨平台、架构、Agent 接入、数据流、窗口系统或安全敏感变更。建议 1200-2200 字。
+3. 先收集证据，再写判断和结论。
+4. 文档要面向行动，避免泛泛介绍技术背景。
+5. 信息不足时显式写“未知项”，不要编造证据、历史或决策。
 
-## Common Rules
+## 通用规则
 
-- Every affected module must explain why it is relevant.
-- Every risk must have a matching test, check, or manual validation path.
-- Bug documents must be evidence-first; do not start from an unsupported root cause.
-- Bug introduction history must not be guessed. If not verified with git history or comparable evidence, write `Unconfirmed`.
-- A document that proposes an implementation must include validation.
-- A bug fix record must include a regression guard.
-- Repeated bugs, public-module regressions, cross-platform constraints, or recurring UI/state failures should be promoted into a Development Rule.
-- Keep examples and wording concrete. Prefer file paths, command names, observed behavior, and test names over broad prose.
+- 每个受影响模块都必须说明为什么相关。
+- 每个风险都必须对应测试、检查或人工验证方式。
+- Bug 文档必须证据优先，不能从未经证实的根因开头。
+- Bug 引入历史不能猜；没有 Git 历史或等价证据时，写“未确认”。
+- 任何提出实现方案的文档都必须包含验证计划。
+- Bug 修复复盘必须包含回归防线。
+- 重复 Bug、公共模块回归、跨平台约束、UI/状态/数据流的反复问题，应升级为开发规约。
+- 表达要具体。优先使用文件路径、命令、观察到的现象和测试名，避免宽泛叙述。
 
-## Development Spec
+## 开发需求 / 功能设计文档
 
-Use for new features, product changes, behavior changes, or planned architecture work.
+用于新功能、产品改造、行为变更或计划中的架构工作。
 
-Required sections:
-
-```md
-# <Feature or Change Name>
-
-## Background
-Why this change is needed. Mention the user pain, product gap, or technical pressure.
-
-## Goals
-- Concrete outcomes this work must achieve.
-
-## Non-Goals
-- Explicitly excluded work to prevent scope expansion.
-
-## Current Understanding
-Current product behavior, code shape, constraints, and any relevant existing knowledge.
-
-## Implementation Path
-Recommended approach, data flow, state flow, edge cases, and boundaries.
-
-## Affected Modules
-- `<path or module>`: why it is involved.
-
-## Risks
-- Risk: validation or mitigation.
-
-## Test Plan
-- Automated tests to add or run.
-- Manual checks when automation is insufficient.
-
-## Knowledge Evolution
-State whether this should update feature docs, runbooks, decisions, rules, or bug records.
-
-## Unknowns
-- Open questions or facts not yet verified.
-```
-
-Small specs may omit `Non-Goals` only when the scope is obvious. Deep specs must keep all sections.
-
-## Bug Investigation
-
-Use while the bug is still being analyzed and the root cause is not proven.
-
-Required sections:
+必填结构：
 
 ```md
-# <Bug Title>
+# <功能或变更名称>
 
-## Symptom
-What the user sees. Include platform, timing, frequency, and visible failure mode when known.
+## 背景
+说明为什么需要这个变更，包含用户痛点、产品缺口或技术压力。
 
-## Reproduction Path
-Steps, environment, and whether reproduction is stable, intermittent, or unavailable.
+## 目标
+- 本次工作必须达成的具体结果。
 
-## Evidence
-- Logs, screenshots, failing tests, code references, user reports, timestamps, or observed state.
+## 非目标
+- 明确不做的事项，避免范围膨胀。
 
-## Initial Impact Scope
-Likely affected features, modules, platforms, and user workflows.
+## 现状理解
+当前产品行为、代码形态、约束和相关已有知识。
 
-## Hypotheses
-- Hypothesis: supporting evidence and confidence.
+## 实现路径
+推荐方案、数据流、状态流、边界和边缘情况。
 
-## Ruled Out
-- Direction checked: why it is unlikely or disproven.
+## 涉及模块
+- `<路径或模块>`：说明为什么涉及。
 
-## Next Debug Steps
-- The next concrete checks to run.
+## 风险
+- 风险：对应验证或缓解方式。
 
-## Unknowns
-- Missing facts that block stronger conclusions.
+## 测试计划
+- 需要新增或运行的自动化测试。
+- 自动化不足时的人工验证。
+
+## 知识沉淀
+说明是否需要更新功能文档、runbook、决策、规约或 Bug 记录。
+
+## 未知项
+- 尚未验证的事实或问题。
 ```
 
-Do not include a final root cause unless it is proven. If evidence changes, update the document instead of appending disconnected notes.
+Small 文档可以在范围明显时省略“非目标”。Deep 文档必须保留全部章节。
 
-## Bug Fix Record
+## Bug 排查文档
 
-Use after the root cause and fix are known.
+用于 Bug 仍在分析、根因尚未被证实的阶段。
 
-Required sections:
+必填结构：
 
 ```md
-# <Bug Title>
+# <Bug 标题>
 
-## Symptom
-External behavior that failed.
+## 现象
+用户看到的问题；已知时写明平台、时机、频率和可见失败模式。
 
-## Evidence
-- The observations, logs, tests, code references, or reproduction results that support the diagnosis.
+## 复现路径
+步骤、环境，以及复现是否稳定、偶发或暂不可复现。
 
-## Root Cause
-The mechanism that caused the bug. Tie it back to evidence.
+## 证据
+- 日志、截图、失败测试、代码引用、用户描述、时间戳或观察到的状态。
 
-## Introduction History
-Commit, change, release, or code evolution that introduced the bug.
-Write `Unconfirmed` if not verified.
+## 初步影响范围
+可能受影响的功能、模块、平台和用户流程。
 
-## Fix
-What changed and why this fix is appropriate.
+## 当前假设
+- 假设：支持证据和可信度。
 
-## Affected Modules
-- `<path or module>`: why it was involved.
+## 已排除方向
+- 已检查方向：为什么不成立或已被反证。
 
-## Validation
-- Tests run, tests added, commands, manual verification, and remaining gaps.
+## 下一步排查
+- 接下来要执行的具体检查。
 
-## Regression Guard
-The test, rule, runbook, or checklist that should prevent recurrence.
-
-## Rule Candidate
-State whether this should become or update a Development Rule, and why.
-
-## Unknowns
-- Any residual uncertainty.
+## 未知项
+- 阻碍更强结论的缺失事实。
 ```
 
-Bug fix records should be short enough to read during future debugging, but precise enough to prevent repeating the same investigation.
+除非根因已经被证据证明，否则不要写最终根因。证据变化时，应更新文档，而不是追加互相脱节的笔记。
 
-## Architecture Decision
+## Bug 修复复盘文档
 
-Use for durable technical choices that future agents should not casually reverse.
+用于根因和修复方案已经明确之后。
 
-Required sections:
+必填结构：
 
 ```md
-# <Decision Title>
+# <Bug 标题>
 
-## Background
-Context and problem.
+## 现象
+对外表现出来的失败行为。
 
-## Decision
-The chosen direction.
+## 证据
+- 支持诊断的观察、日志、测试、代码引用或复现结果。
 
-## Alternatives Considered
-- Alternative: benefit, cost, and why it was not chosen.
+## 根因
+导致 Bug 的具体机制，并回扣证据。
 
-## Rationale
-Tradeoffs, constraints, and evidence behind the decision.
+## 引入历史
+引入 Bug 的提交、变更、版本或代码演进。
+没有验证时写“未确认”。
 
-## Impact
-Affected modules, workflows, tests, and future maintenance.
+## 修复方案
+改了什么，以及为什么这个修复合适。
 
-## Follow-Up
-Signals to watch, planned revisit points, or known limitations.
+## 涉及模块
+- `<路径或模块>`：说明为什么涉及。
+
+## 验证结果
+- 已运行测试、已新增测试、命令、人工验证和剩余缺口。
+
+## 回归防线
+用于防止复发的测试、规约、runbook 或检查清单。
+
+## 规约候选
+说明是否应该新增或更新开发规约，以及原因。
+
+## 未知项
+- 仍然存在的不确定性。
 ```
 
-Architecture decisions should describe why, not just what.
+Bug 修复复盘要短到未来排查时愿意读，同时精确到能避免重复踩坑。
 
-## Development Rule
+## 架构决策文档
 
-Use when a bug or review exposes a reusable engineering constraint.
+用于记录未来 Agent 不应随意推翻的长期技术取舍。
 
-Required sections:
+必填结构：
 
 ```md
-# <Rule Title>
+# <决策标题>
 
-## Rule
-The constraint in one or two direct sentences.
+## 背景
+上下文和问题。
 
-## Applies When
-The code areas, behaviors, or change types where this rule matters.
+## 决策
+最终选择的方向。
 
-## Counterexample
-What goes wrong when the rule is ignored.
+## 备选方案
+- 方案：收益、成本，以及未选择的原因。
 
-## Recommended Practice
-What to do instead.
+## 取舍理由
+支撑决策的约束、证据和权衡。
 
-## Source
-Related bug records, decisions, incidents, or reviews.
+## 影响范围
+受影响模块、流程、测试和维护成本。
 
-## Verification
-Tests, review checks, or manual validation that enforce the rule.
+## 后续观察
+需要关注的信号、计划复盘点或已知限制。
 ```
 
-Promote a bug to a rule when it repeats, affects shared behavior, crosses platforms, or reveals a general UI/state/data-flow constraint.
+架构决策要解释“为什么”，不只是记录“做了什么”。
 
-## Short Examples
+## 开发规约文档
 
-Development Spec style:
+用于把 Bug 或 review 中暴露的约束沉淀为长期规则。
+
+必填结构：
 
 ```md
-# Adjustable Sidebar Density
+# <规约标题>
 
-## Background
-The current sidebar takes too much space on small screens. Users need a compact mode without losing navigation access.
+## 规则
+用一两句直接说明约束。
 
-## Goals
-- Persist a density setting.
-- Apply compact spacing to sidebar navigation.
+## 适用场景
+这个规则影响的代码区域、行为或变更类型。
 
-## Non-Goals
-- Do not redesign the full navigation model.
+## 反例
+忽略这个规则会发生什么。
 
-## Affected Modules
-- `settings`: store the new preference.
-- `sidebar UI`: render compact spacing from the setting.
+## 推荐做法
+应该怎么做。
 
-## Risks
-- Reducing tap targets too far: keep a minimum hit area and verify keyboard navigation.
+## 来源
+相关 Bug 记录、架构决策、事故或 review。
 
-## Test Plan
-- Settings default/load tests.
-- UI tests for default and compact density.
+## 验证方式
+用于执行规则的测试、review 检查或人工验证。
 ```
 
-Bug Fix Record style:
+当问题重复出现、影响共享行为、跨平台，或暴露出通用 UI/状态/数据流约束时，应将 Bug 升级为规约。
+
+## 简短示例
+
+开发需求示例：
 
 ```md
-# Search Field Does Not Focus
+# 侧边栏密度调整
 
-## Symptom
-After opening search, the field appears but does not receive the cursor.
+## 背景
+当前侧边栏在小屏上占用空间过多。用户需要紧凑模式，但不能失去导航入口。
 
-## Evidence
-- The search field is conditionally rendered.
-- Focus was attempted before the input was mounted.
+## 目标
+- 持久化密度设置。
+- 让侧边栏导航使用紧凑间距。
 
-## Root Cause
-The code entered search mode and called focus synchronously, before the DOM node existed.
+## 非目标
+- 不重做完整导航模型。
 
-## Introduction History
-Unconfirmed.
+## 涉及模块
+- `settings`：存储新偏好。
+- `sidebar UI`：根据设置渲染紧凑间距。
 
-## Fix
-Wait for the rendered input before focusing it, and allow the search trigger to toggle the mode off.
+## 风险
+- 点击区域过小：保留最小命中面积，并验证键盘导航。
 
-## Validation
-- Focus path covered by a targeted UI/source test.
-- Manual check: open search, type text, close search.
-
-## Regression Guard
-Conditional UI that needs focus must wait for the render cycle before calling DOM focus.
+## 测试计划
+- 设置默认值和加载测试。
+- 默认密度与紧凑密度的 UI 测试。
 ```
 
-## Output Quality Checklist
+Bug 修复复盘示例：
 
-Before finalizing, confirm:
+```md
+# 搜索框无法聚焦
 
-- The chosen document type is clear.
-- Evidence and conclusions are separated.
-- Scope and affected modules are explicit.
-- Risks map to validation.
-- Unknowns are named instead of hidden.
-- The document says whether knowledge should evolve.
+## 现象
+打开搜索后输入框出现，但没有获得光标。
+
+## 证据
+- 搜索框是条件渲染出来的。
+- 旧逻辑在输入框挂载前就尝试 focus。
+
+## 根因
+代码进入搜索模式后同步调用 focus，此时 DOM 节点还不存在。
+
+## 引入历史
+未确认。
+
+## 修复方案
+等待输入框完成渲染后再聚焦，并允许搜索按钮再次点击时退出搜索模式。
+
+## 验证结果
+- 用针对性的 UI/源码测试覆盖聚焦路径。
+- 人工检查：打开搜索、输入文本、关闭搜索。
+
+## 回归防线
+条件渲染元素需要聚焦时，必须等待渲染周期完成后再调用 DOM focus。
+```
+
+## 输出质量检查
+
+定稿前确认：
+
+- 文档类型明确。
+- 证据和结论分开。
+- 范围和涉及模块清楚。
+- 风险能映射到验证方式。
+- 未知项被显式写出。
+- 文档说明了知识是否需要继续演进。

@@ -1,22 +1,22 @@
-# Notification Settings
+# 通知设置
 
-## Current Settings
+## 当前设置
 
-`NotificationSettings` includes:
+`NotificationSettings` 包含：
 
-- selected sound.
-- custom sound path.
-- ring toggles for permission, failure, and done.
-- repeat seconds for waiting approval.
-- quiet hours.
+- 选中的声音。
+- 自定义声音路径。
+- 权限、失败和完成状态的响铃开关。
+- 等待审批的重复秒数。
+- 静音时段。
 
-Whip reaction sound is stored under `PetSettings` because it belongs to pet interaction rather than task notifications.
+抽打反应音存放在 `PetSettings` 下，因为它属于宠物互动，而不是任务通知。
 
-## Runtime Behavior
+## 运行时行为
 
-`frontend/PetApp.svelte` calls `handleRing()` when new events arrive. It uses `frontend/lib/sound.ts` for ring decisions, quiet hours, sound playback, and repeat behavior.
+`frontend/PetApp.svelte` 在新事件到达时调用 `handleRing()`。它使用 `frontend/lib/sound.ts` 判断是否响铃、静音时段、声音播放和重复行为。
 
-## Validation
+## 验证
 
-- Run `npx vitest run frontend/lib/sound.test.ts`.
-- Manually verify repeat approval sound stops when approval is resolved or the activity disappears.
+- 运行 `npx vitest run frontend/lib/sound.test.ts`。
+- 人工确认审批被处理或 activity 消失后，重复审批提醒会停止。

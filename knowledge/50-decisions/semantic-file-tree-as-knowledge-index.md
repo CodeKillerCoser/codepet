@@ -1,26 +1,26 @@
-# Semantic File Tree As Knowledge Index
+# 以语义化文件树作为知识索引
 
-## Background
+## 背景
 
-The project needs living documentation that agents can navigate without a fragile central mapping file.
+项目需要一套活文档，让 Agent 能导航知识，而不依赖脆弱的中心化映射文件。
 
-## Decision
+## 决策
 
-Use the `knowledge/` directory tree and document titles as the knowledge index. Do not create `map.yaml` or a similar central index.
+使用 `knowledge/` 目录树和文档标题作为知识索引。不要创建 `map.yaml` 或类似中心化索引。
 
-## Alternatives Considered
+## 备选方案
 
-- Central YAML map: easy to query, but becomes another stale artifact to maintain.
-- One large document: simple, but hard for agents to scope and easy to bloat.
+- 中心化 YAML map：查询方便，但会变成另一个需要维护且容易过期的产物。
+- 单个大文档：简单，但难以让 Agent 缩小范围，也容易膨胀。
 
-## Rationale
+## 取舍理由
 
-Semantic directory names let agents select relevant facts by reading the file tree. This matches the project goal of living documents that evolve with code changes and bug fixes.
+语义化目录名让 Agent 可以通过读取文件树选择相关事实。这符合项目目标：文档应随代码变更和 Bug 修复持续演进。
 
-## Impact
+## 影响范围
 
-Every directory needs a `README.md`, and new docs should be placed where their path expresses their role.
+每个目录都需要 `README.md`，新增文档应放在能通过路径表达职责的位置。
 
-## Follow-Up
+## 后续观察
 
-If navigation becomes hard, improve names and local README entries before adding a separate map.
+如果导航变困难，先改善命名和局部 README，再考虑新增独立映射。

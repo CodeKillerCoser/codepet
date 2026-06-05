@@ -1,18 +1,18 @@
-# Pet Window Known Risks
+# 桌宠窗口已知风险
 
-## Layout Regressions From Actions
+## 操作按钮引发的布局回归
 
-Adding buttons to the task card footer can remove bottom spacing or create unnecessary scrollbars. Keep footer padding and card natural height in mind.
+向任务卡片 footer 添加按钮可能移除底部间距，或制造无意义滚动条。修改时要关注 footer padding 和卡片自然高度。
 
-## Cross-Screen Dragging
+## 跨屏拖动
 
-The task list can appear compressed if window size or monitor bounds are stale during cross-screen drag. Keep size enforcement and bounds clamping together.
+跨屏拖动时，如果窗口尺寸或屏幕边界数据陈旧，任务列表可能被压缩。尺寸修正和边界限制需要保持成组工作。
 
-## Focus Regressions
+## 焦点回归
 
-Reply inputs can fail to focus if the editor is conditionally mounted and focus runs before the DOM update.
+回复输入框如果是条件挂载的，而 focus 早于 DOM 更新执行，就可能无法获得光标。
 
-## Validation
+## 验证
 
-- Inspect the pet window in one-card, multi-card, reply, approval, and collapsed states.
-- Run relevant frontend tests before changing merge/action logic.
+- 检查桌宠窗口的单卡、多卡、回复、审批和收起状态。
+- 修改归并或操作逻辑前，运行相关前端测试。

@@ -1,30 +1,30 @@
-# Agent Control
+# Agent 控制
 
-## Hook Control
+## Hook 控制
 
-`src-tauri/src/agent/control.rs` lists agents and toggles enabled state. It delegates JSON config mutation to `src-tauri/src/agent/hooks.rs`.
+`src-tauri/src/agent/control.rs` 维护 Agent 列表并切换启用状态；具体 JSON 配置改写委托给 `src-tauri/src/agent/hooks.rs`。
 
-`hooks.rs` writes `code-pet-hook.mjs` into local app data, then installs managed hook entries for each supported event. It recognizes existing managed entries by legacy marker, script name, or script path.
+`hooks.rs` 会把 `code-pet-hook.mjs` 写入本地 app data，然后为每个支持的事件安装托管 hook。它通过旧 marker、脚本名或脚本路径识别已有托管项。
 
-## Activity Control
+## 活动控制
 
-`src-tauri/src/agent/actions.rs` provides activation, reply, and approval behavior.
+`src-tauri/src/agent/actions.rs` 提供激活、回复和审批行为。
 
-- Codex replies use `src-tauri/src/agent/codex_app_server.rs` when the event is completed or failed and has a session id.
-- Codex activation uses a `codex://threads/<thread-id>` deeplink when the event has a session id.
-- Qoder currently has no verified existing-local-session send path.
-- Approval resolution uses the collector wait path for `waiting-approval` events.
-- Activation is platform-dependent and can use app names, bundle ids, paths, or macOS terminal session automation.
+- Codex 回复：当事件已完成或失败且带 session id 时，使用 `src-tauri/src/agent/codex_app_server.rs`。
+- Codex 激活：当事件有 session id 时，使用 `codex://threads/<thread-id>` deeplink。
+- Qoder 当前没有经过验证的“向现有本机会话发送消息”路径。
+- 审批处理通过 collector 的等待路径解决 `waiting-approval` 事件。
+- 激活能力依赖平台，可使用应用名、bundle id、路径或 macOS 终端会话自动化。
 
-## Frontend Capabilities
+## 前端能力边界
 
-`frontend/lib/agentInteractions.ts` mirrors user-visible capabilities:
+`frontend/lib/agentInteractions.ts` 映射用户可见能力：
 
-- Codex can reply only for `done` or `failed` events with a session id.
-- Qoder can approve waiting approvals, but cannot reply to existing local sessions yet.
-- Running tasks should not expose reply.
+- Codex 只有在 `done` 或 `failed` 且带 session id 时可以回复。
+- Qoder 可以审批等待授权事件，但暂时不能回复现有本机会话。
+- 运行中的任务不应暴露回复入口。
 
-## Validation
+## 验证
 
-- Run `cargo test --manifest-path src-tauri/Cargo.toml agent_control_tests`.
-- Run `npx vitest run frontend/lib/activity.test.ts`.
+- 运行 `cargo test --manifest-path src-tauri/Cargo.toml agent_control_tests`。
+- 运行 `npx vitest run frontend/lib/activity.test.ts`。

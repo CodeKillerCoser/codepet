@@ -1,17 +1,17 @@
-# Theme Migration Rules
+# 主题迁移规则
 
-## Rule
+## 规则
 
-New production UI styles should not introduce raw hex, rgb, hsl, or named colors outside the theme library unless the value is user-authored content or an external asset requirement.
+新的生产 UI 样式不应在主题库之外引入 raw hex、rgb、hsl 或命名颜色，除非该值来自用户输入或外部资源要求。
 
-## Recommended Practice
+## 推荐做法
 
-- Add or reuse a semantic token in `frontend/lib/theme/tokens.css`.
-- Use component aliases when updating a specific surface.
-- Keep TypeScript defaults in `frontend/lib/theme/defaults.ts`.
-- Keep Rust persisted defaults in `src-tauri/src/pet/theme_defaults.rs` aligned when a default crosses the backend boundary.
+- 在 `frontend/lib/theme/tokens.css` 中新增或复用语义 token。
+- 更新特定界面时使用 component alias。
+- TypeScript 默认值保留在 `frontend/lib/theme/defaults.ts`。
+- 当默认值跨越后端边界时，保持 `src-tauri/src/pet/theme_defaults.rs` 中的 Rust 持久化默认值一致。
 
-## Validation
+## 验证
 
-- Use `rg` to search for raw color literals in `frontend/`.
-- Run frontend tests after token migration.
+- 使用 `rg` 搜索 `frontend/` 中的 raw color literal。
+- 主题迁移后运行前端测试。

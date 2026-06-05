@@ -1,8 +1,8 @@
-# Settings Model
+# 设置模型
 
-## Current Model
+## 当前模型
 
-`AppSettings` in `src-tauri/src/app/settings.rs` has five top-level areas:
+`src-tauri/src/app/settings.rs` 中的 `AppSettings` 有五个顶层区域：
 
 - `appearance`
 - `pet`
@@ -10,23 +10,23 @@
 - `notifications`
 - `activityFilters`
 
-All sections use serde defaults so old settings files can load when new fields are added.
+所有区域都使用 serde defaults，确保新增字段后旧设置文件仍能加载。
 
-## Frontend Normalization
+## 前端归一化
 
-`frontend/App.svelte` normalizes loaded settings before use:
+`frontend/App.svelte` 会在使用加载到的设置前做归一化：
 
-- running bubble defaults and numeric bounds.
-- image pixel size.
-- pet opacity.
-- whip reaction sound defaults.
-- activity filter keyword trimming and deduplication.
+- 运行中气泡默认值和数值边界。
+- 图片像素尺寸。
+- 宠物透明度。
+- 抽打反应音默认值。
+- activity filter 关键词去空白和去重。
 
-## Risk
+## 风险
 
-Adding a field without a Rust default or frontend normalization can break old users or produce `undefined` UI state.
+新增字段如果没有 Rust 默认值或前端归一化，可能破坏旧用户设置，或产生 `undefined` UI 状态。
 
-## Validation
+## 验证
 
-- Run `cargo test --manifest-path src-tauri/Cargo.toml settings_tests`.
-- Add or update frontend tests when default values affect UI helpers.
+- 运行 `cargo test --manifest-path src-tauri/Cargo.toml settings_tests`。
+- 默认值影响 UI helper 时，新增或更新前端测试。

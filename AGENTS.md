@@ -1,33 +1,33 @@
-# Agent Collaboration Guide
+# Agent 协作指南
 
-This file is the entry protocol for AI agents working in Code Pet / Hanging Metal. It should stay short. Project facts belong in `knowledge/`. Repo-local reusable skills belong in `.agents/skills/` so Codex can load them from the workspace.
+这是 Code Pet / Hanging Metal 的 AI Agent 协作入口。文件应保持简短。项目事实沉淀在 `knowledge/`；仓库级可复用技能放在 `.agents/skills/`，便于 Codex 从当前工作区加载。
 
-## Before Editing
+## 修改前
 
-- Read the relevant source and nearby tests before proposing or changing code.
-- Search `knowledge/` by semantic directory and document title. Do not rely only on chat history.
-- Check `git status --short` and preserve unrelated user changes.
-- Identify affected modules and older behavior that could regress.
+- 先阅读相关源码和附近测试，再提出方案或修改代码。
+- 按目录语义和文档标题检索 `knowledge/`，不要只依赖聊天记录。
+- 执行 `git status --short`，保留与当前任务无关的用户改动。
+- 识别受影响模块，以及可能被踩坏的旧行为。
 
-## During Editing
+## 修改中
 
-- Keep changes scoped to the requested behavior.
-- Prefer existing module boundaries, APIs, tokens, and test style.
-- Do not add a central knowledge map. The `knowledge/` file tree and document titles are the index.
-- For frontend UI changes, verify layout, focus behavior, action visibility, and responsive sizing when relevant.
-- For Tauri/Rust changes, verify module paths and public re-exports used by tests.
+- 让改动严格围绕用户请求的行为。
+- 优先沿用现有模块边界、API、主题 token 和测试风格。
+- 不要新增中心化知识映射文件；`knowledge/` 的目录树和文档标题就是索引。
+- 前端 UI 修改需要在相关场景下验证布局、焦点、动作可见性和响应式尺寸。
+- Tauri/Rust 修改需要确认模块路径，以及测试依赖的公开 re-export。
 
-## After Editing
+## 修改后
 
-- Run the smallest meaningful automated checks, then broaden when the change crosses module or platform boundaries.
-- Record commands that were run and any checks that could not be run.
-- If a bug fix reveals a reusable constraint, update or create a rule under `knowledge/60-rules/`.
-- If a fix creates a repeatable diagnostic path, update or create a runbook under `knowledge/40-runbooks/`.
-- Do not leave important conclusions only in chat.
+- 先运行最小但有意义的自动化检查；当改动跨模块或跨平台时，再扩大检查范围。
+- 记录已运行的命令，以及无法运行的检查。
+- 如果 Bug 修复暴露出可复用约束，更新或新增 `knowledge/60-rules/` 下的规约。
+- 如果修复过程形成可复用排查路径，更新或新增 `knowledge/40-runbooks/` 下的 runbook。
+- 不要把重要结论只留在聊天记录里。
 
-## Documentation
+## 文档
 
-- Use `.agents/skills/living-dev-doc-writer/` when writing or reviewing living development documents.
-- Keep skill instructions in `SKILL.md`; keep optional reusable prompts or reference material under that skill's `references/` directory.
-- Evidence comes before conclusions in bug documents.
-- Every affected module needs a reason, and every risk needs a validation path.
+- 编写或审阅活文档时，使用 `.agents/skills/living-dev-doc-writer/`。
+- 技能主说明放在 `SKILL.md`；可复用 prompt 或参考材料放在该技能的 `references/` 目录。
+- Bug 文档必须证据先行，再给结论。
+- 每个受影响模块都要说明原因；每个风险都要有验证路径。

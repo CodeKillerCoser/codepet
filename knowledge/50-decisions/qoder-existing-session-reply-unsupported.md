@@ -1,23 +1,23 @@
-# Qoder Existing Session Reply Unsupported
+# 暂不支持 Qoder 现有会话回复
 
-## Background
+## 背景
 
-Qoder remote-control supports registering the machine as a remote environment, but Code Pet needs to send messages to an existing local Qoder session.
+Qoder remote-control 支持把本机注册为远程环境，但 Code Pet 需要向现有本地 Qoder session 发送消息。
 
-## Decision
+## 决策
 
-Do not expose Qoder existing-session reply in the pet UI until a stable, verified API exists.
+在稳定、已验证的 API 出现之前，不在桌宠 UI 中暴露 Qoder 现有会话回复。
 
-## Alternatives Considered
+## 备选方案
 
-- Use Qoder remote-control daemon as if it were a local chat API: rejected because the observed shape registers an environment through a broker.
-- Use local MCP-like port `127.0.0.1:52345`: rejected because probing found VM info tooling, not chat/session send APIs.
-- Use focus and paste: rejected as unreliable for a provider-specific remote-control feature.
+- 把 Qoder remote-control daemon 当作本地聊天 API 使用：拒绝，因为观察到的形态是通过 broker 注册环境。
+- 使用本地 MCP-like 端口 `127.0.0.1:52345`：拒绝，因为探测只发现 VM 信息工具，没有 chat/session send API。
+- 使用聚焦和粘贴：拒绝，因为对 provider 专属 remote-control 功能来说不可靠。
 
-## Impact
+## 影响范围
 
-Backend `QoderDriver` returns unsupported for reply. Frontend sets `canReply` to false for Qoder.
+后端 `QoderDriver` 对回复返回 unsupported。前端将 Qoder 的 `canReply` 设为 false。
 
-## Follow-Up
+## 后续观察
 
-Investigate official qoder.com broker or remote-control APIs before enabling this capability.
+启用此能力前，需要研究官方 qoder.com broker 或 remote-control API。

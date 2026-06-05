@@ -1,19 +1,19 @@
-# Pet Personalization
+# 宠物个性化
 
-## Current Behavior
+## 当前行为
 
-Users can select default palette pets, import image pets, adjust image pixel size, choose a pet data directory, and delete non-default pets.
+用户可以选择默认 palette 宠物、导入图片宠物、调整图片像素尺寸、选择宠物数据目录，并删除非默认宠物。
 
-`settings.pet.opacity` controls the pet window overall opacity and is exposed in the personalization UI.
+`settings.pet.opacity` 控制桌宠窗口整体透明度，并在个性化 UI 中暴露。
 
-## Implementation
+## 实现
 
-- `src-tauri/src/pet/library.rs` handles library listing, import, selection, deletion, data directory changes, image pixelation, and built-in Codex atlas pet discovery.
-- `src-tauri/src/pet/subject_cutout.rs` handles cutout requests.
-- `frontend/App.svelte` owns the personalization controls.
-- `frontend/PetApp.svelte` applies pet opacity and renders the selected avatar.
+- `src-tauri/src/pet/library.rs` 处理宠物库列表、导入、选择、删除、数据目录修改、图片像素化和内置 Codex atlas 宠物发现。
+- `src-tauri/src/pet/subject_cutout.rs` 处理抠图请求。
+- `frontend/App.svelte` 持有个性化控件。
+- `frontend/PetApp.svelte` 应用宠物透明度并渲染选中头像。
 
-## Validation
+## 验证
 
-- Run `cargo test --manifest-path src-tauri/Cargo.toml pet_library_tests subject_cutout_tests`.
-- Manually verify imported image, default pet, and opacity changes in the pet window.
+- 运行 `cargo test --manifest-path src-tauri/Cargo.toml pet_library_tests subject_cutout_tests`。
+- 人工验证导入图片、默认宠物和透明度修改在桌宠窗口中生效。

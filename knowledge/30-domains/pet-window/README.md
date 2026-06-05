@@ -1,14 +1,14 @@
-# Pet Window Domain
+# 桌宠窗口领域
 
-This domain covers the floating window, task card layout, window sizing, monitor bounds, and reply editor.
+这个领域覆盖悬浮窗口、任务卡片布局、窗口尺寸、屏幕边界和回复编辑器。
 
-## Source Modules
+## 源码模块
 
-- `frontend/PetApp.svelte`: window UI, sizing, docking, drag, reply, approval, sound repeat.
-- `frontend/lib/petHitTest.ts`: hit-test rectangle support.
-- `src-tauri/src/platform/macos_window.rs`: macOS overlay configuration.
+- `frontend/PetApp.svelte`：窗口 UI、尺寸、停靠、拖动、回复、审批和声音重复提醒。
+- `frontend/lib/petHitTest.ts`：hit-test 矩形支持。
+- `src-tauri/src/platform/macos_window.rs`：macOS 悬浮窗配置。
 
-## Tests
+## 测试
 
 - `frontend/PetApp.test.ts`
 - `frontend/lib/petHitTest.test.ts`

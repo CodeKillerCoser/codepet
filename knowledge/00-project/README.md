@@ -1,22 +1,22 @@
-# Project Knowledge
+# 项目知识入口
 
-This directory is the entry point for durable project facts. It explains what Code Pet is and where future agents should start before changing code.
+这个目录是长期项目事实的入口。它说明 Code Pet 是什么，以及后续 Agent 在改代码前应该从哪里开始阅读。
 
-## Read First
+## 优先阅读
 
-- `product-intent.md`: product purpose, audience, and non-goals.
-- `../10-architecture/README.md`: runtime shape and module boundaries.
-- `../30-domains/README.md`: feature domains with deeper implementation facts.
-- `../40-runbooks/README.md`: repeatable debugging procedures.
-- `../60-rules/README.md`: reusable development constraints.
+- `product-intent.md`：产品目的、用户对象和非目标。
+- `../10-architecture/README.md`：运行形态和模块边界。
+- `../30-domains/README.md`：按功能域组织的更深实现事实。
+- `../40-runbooks/README.md`：可复用的排查流程。
+- `../60-rules/README.md`：可复用开发约束。
 
-## Evidence Sources
+## 证据来源
 
-- `README.md` for user-facing capabilities and local development commands.
-- `frontend/` for Svelte UI, task card behavior, settings UI, theme tokens, and sound logic.
-- `src-tauri/src/` for Rust backend, collector, settings persistence, agent hooks, and platform behavior.
-- `src-tauri/tests/` and `frontend/**/*.test.ts` for protected behavior.
+- `README.md`：面向用户的能力和本地开发命令。
+- `frontend/`：Svelte UI、任务卡片行为、设置界面、主题 token 和声音逻辑。
+- `src-tauri/src/`：Rust 后端、collector、设置持久化、Agent hook 和平台行为。
+- `src-tauri/tests/` 与 `frontend/**/*.test.ts`：已受测试保护的行为。
 
-## Maintenance Rule
+## 维护规则
 
-Keep this tree semantic. Do not add `map.yaml` or a similar central index. A future agent should understand the knowledge shape by reading directory and document names.
+保持目录树语义化。不要新增 `map.yaml` 或类似中心化索引；未来 Agent 应该通过目录名和文档名理解知识库结构。

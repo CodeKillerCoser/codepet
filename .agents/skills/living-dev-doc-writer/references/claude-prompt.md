@@ -1,110 +1,110 @@
-# Living Dev Doc Writer Prompt
+# 活文档写作 Prompt
 
-Use this prompt in Claude Code when writing or reviewing living development documents.
+在 Claude Code 中编写或审阅活文档时使用这段 prompt。
 
-You are writing a development document that must remain useful as the codebase evolves. Do not hard-code project facts unless you have read them from the repository, README, existing knowledge documents, source, tests, git history, logs, or user-provided evidence.
+你正在编写一份需要随着代码库演进而继续有用的开发文档。除非事实已经来自仓库、README、已有 `knowledge/` 文档、源码、测试、Git 历史、日志或用户证据，否则不要把它写成确定事实。
 
-First classify the document:
+先判断文档类型：
 
-- Development Spec: new feature, product change, behavior change, or planned architecture work.
-- Bug Investigation: bug is still being analyzed and root cause is not proven.
-- Bug Fix Record: bug is fixed or root cause and fix are known.
-- Architecture Decision: durable technical choice.
-- Development Rule: reusable constraint from repeated bugs or high-risk areas.
+- 开发需求 / 功能设计：新功能、产品改造、行为变更或计划中的架构工作。
+- Bug 排查：Bug 仍在分析，根因尚未被证明。
+- Bug 修复复盘：Bug 已修复，或根因和修复方案已明确。
+- 架构决策：需要长期保留的重要技术取舍。
+- 开发规约：从重复 Bug 或高风险区域沉淀出的可复用约束。
 
-Choose intensity:
+再判断文档强度：
 
-- Small: narrow UI tweak, small bug, single-module change. 300-700 words.
-- Standard: normal feature or bug. 700-1400 words.
-- Deep: cross-module, cross-platform, architecture, agent integration, data flow, windowing, or security-sensitive change. 1200-2200 words.
+- Small：小 UI 调整、小 Bug、单模块变更。300-700 字。
+- Standard：普通功能或普通 Bug。700-1400 字。
+- Deep：跨模块、跨平台、架构、Agent 接入、数据流、窗口系统或安全敏感变更。1200-2200 字。
 
-Common rules:
+通用规则：
 
-- Evidence before conclusions.
-- Do not guess bug introduction history; write `Unconfirmed` if not verified.
-- Every affected module must explain why it is relevant.
-- Every risk must map to a test, check, or manual validation.
-- Use `Unknowns` for missing facts.
-- Do not write generic technology introductions.
-- Do not propose implementation without validation.
-- Bug fix records must include a regression guard.
-- Repeated bugs or shared constraints should become Development Rules.
+- 先写证据，再写结论。
+- 不要猜 Bug 引入历史；未验证时写“未确认”。
+- 每个涉及模块都要说明为什么相关。
+- 每个风险都要对应测试、检查或人工验证。
+- 信息不足时写“未知项”。
+- 不要写泛泛的技术介绍。
+- 不要只写实现方案而缺少验证计划。
+- Bug 修复复盘必须包含回归防线。
+- 重复 Bug 或共享约束应该沉淀为开发规约。
 
-Use the matching template.
+根据类型使用对应模板。
 
-Development Spec:
-
-```md
-# <Feature or Change Name>
-
-## Background
-## Goals
-## Non-Goals
-## Current Understanding
-## Implementation Path
-## Affected Modules
-## Risks
-## Test Plan
-## Knowledge Evolution
-## Unknowns
-```
-
-Bug Investigation:
+开发需求 / 功能设计：
 
 ```md
-# <Bug Title>
+# <功能或变更名称>
 
-## Symptom
-## Reproduction Path
-## Evidence
-## Initial Impact Scope
-## Hypotheses
-## Ruled Out
-## Next Debug Steps
-## Unknowns
+## 背景
+## 目标
+## 非目标
+## 现状理解
+## 实现路径
+## 涉及模块
+## 风险
+## 测试计划
+## 知识沉淀
+## 未知项
 ```
 
-Bug Fix Record:
+Bug 排查：
 
 ```md
-# <Bug Title>
+# <Bug 标题>
 
-## Symptom
-## Evidence
-## Root Cause
-## Introduction History
-## Fix
-## Affected Modules
-## Validation
-## Regression Guard
-## Rule Candidate
-## Unknowns
+## 现象
+## 复现路径
+## 证据
+## 初步影响范围
+## 当前假设
+## 已排除方向
+## 下一步排查
+## 未知项
 ```
 
-Architecture Decision:
+Bug 修复复盘：
 
 ```md
-# <Decision Title>
+# <Bug 标题>
 
-## Background
-## Decision
-## Alternatives Considered
-## Rationale
-## Impact
-## Follow-Up
+## 现象
+## 证据
+## 根因
+## 引入历史
+## 修复方案
+## 涉及模块
+## 验证结果
+## 回归防线
+## 规约候选
+## 未知项
 ```
 
-Development Rule:
+架构决策：
 
 ```md
-# <Rule Title>
+# <决策标题>
 
-## Rule
-## Applies When
-## Counterexample
-## Recommended Practice
-## Source
-## Verification
+## 背景
+## 决策
+## 备选方案
+## 取舍理由
+## 影响范围
+## 后续观察
 ```
 
-Before finalizing, check that the document is concrete, scoped, evidence-backed, validation-aware, and clear about whether knowledge should evolve.
+开发规约：
+
+```md
+# <规约标题>
+
+## 规则
+## 适用场景
+## 反例
+## 推荐做法
+## 来源
+## 验证方式
+```
+
+定稿前检查：文档要具体、范围清晰、证据充分、有验证路径，并明确是否需要继续演进知识库。

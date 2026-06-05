@@ -1,25 +1,25 @@
-# Multi Monitor Bounds
+# 多屏边界
 
-## Current Implementation
+## 当前实现
 
-`frontend/PetApp.svelte` keeps the pet window inside the selected monitor work area.
+`frontend/PetApp.svelte` 会将桌宠窗口限制在选中屏幕的工作区内。
 
-Selection rules:
+屏幕选择规则：
 
-1. Use the monitor with the largest intersection with the window.
-2. If no monitor intersects, choose the monitor nearest the window center.
-3. If monitor lookup fails, fall back to the primary monitor.
+1. 使用与窗口相交面积最大的屏幕。
+2. 如果没有屏幕相交，选择离窗口中心最近的屏幕。
+3. 如果屏幕查询失败，回退到主屏。
 
-The final position is clamped between the monitor work area top-left and the maximum position that still keeps the whole window inside the work area.
+最终位置会被限制在屏幕工作区左上角与最大可用位置之间，保证整个窗口都在工作区内。
 
-## Risks
+## 风险
 
-- Multi-monitor setups can use negative coordinates.
-- macOS cross-screen dragging can produce brief stale geometry.
-- Resizing and moving can trigger each other, so `ensureWindowFrameAndBounds()` guards against concurrent execution.
+- 多屏环境可能使用负坐标。
+- macOS 跨屏拖动时可能短暂产生陈旧几何数据。
+- resize 和 move 会互相触发，因此 `ensureWindowFrameAndBounds()` 要防止并发执行。
 
-## Validation
+## 验证
 
-- Drag across monitors on macOS and Windows.
-- Verify right and bottom edges remain inside the visible work area.
-- Verify task list does not become clipped after a cross-screen drag.
+- 在 macOS 和 Windows 上跨屏拖动。
+- 确认右边缘和下边缘都保持在可见工作区内。
+- 确认跨屏拖动后任务列表不会被裁剪。

@@ -1,23 +1,23 @@
-# Activity Merge
+# 活动归并
 
-## Responsibility
+## 职责
 
-`frontend/lib/activity.ts` turns recent event history into the compact list shown by the pet window.
+`frontend/lib/activity.ts` 将近期事件历史转换为桌宠窗口展示的紧凑列表。
 
-## Current Rules
+## 当前规则
 
-- The key is `provider:sessionId`, falling back to `provider:cwd`, then `provider:global`.
-- Internal Codex background prompts are filtered in code.
-- User-defined title and message filters are applied through `ActivityFilterSettings`.
-- Hidden activity keys are retained across incremental batches.
-- Stale thinking/running activities are removed after 30 minutes.
-- Completed and failed activities use `endedAt` or `createdAt` for footer time.
+- key 使用 `provider:sessionId`，再回退到 `provider:cwd`，最后回退到 `provider:global`。
+- 内部 Codex 后台 prompt 在代码中被过滤。
+- 用户自定义标题和消息过滤通过 `ActivityFilterSettings` 应用。
+- 隐藏 activity key 会在增量批次之间保留。
+- 超过 30 分钟的陈旧 thinking/running activity 会被移除。
+- completed 和 failed activity 使用 `endedAt` 或 `createdAt` 作为 footer 时间。
 
-## Why This Matters
+## 为什么重要
 
-Most visible task card regressions come from grouping, hidden-key persistence, or terminal event handling. Treat this module as a shared behavior surface.
+大多数可见任务卡片回归来自分组、hidden-key 持久化或终态事件处理。应把这个模块视为共享行为面。
 
-## Validation
+## 验证
 
-- Run the full `frontend/lib/activity.test.ts` suite.
-- Manually inspect the pet window after changing merge behavior.
+- 运行完整 `frontend/lib/activity.test.ts`。
+- 修改归并行为后，人工检查桌宠窗口。

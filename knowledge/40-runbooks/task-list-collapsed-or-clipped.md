@@ -1,28 +1,28 @@
-# Task List Collapsed Or Clipped
+# 任务列表收起或被裁剪
 
-## Symptom
+## 现象
 
-The pet task list becomes hidden, compressed, clipped, or shows an unnecessary scrollbar, especially with one card or after cross-screen dragging.
+桌宠任务列表隐藏、被压缩、被裁剪，或出现无意义滚动条；常见于只有一个卡片，或跨屏拖动之后。
 
-## Evidence To Collect
+## 需要收集的证据
 
-- Screenshot or exact visible state.
-- Number of activities and their statuses.
-- Whether reply or approval controls are visible.
-- Current pet window size.
-- Whether the issue follows moving between monitors.
+- 截图或准确的可见状态。
+- activity 数量及其状态。
+- 回复或审批控件是否可见。
+- 当前桌宠窗口尺寸。
+- 问题是否跟随跨屏移动出现。
 
-## Checks
+## 排查步骤
 
-1. Inspect `frontend/PetApp.svelte` task list CSS and reply/approval rendering.
-2. Confirm no fixed task card height is forcing content overflow.
-3. Confirm `ensureWindowSize()` and monitor clamping still run together.
-4. Confirm collapsed state is not stuck after new live activity.
-5. Run activity tests to ensure merge logic did not produce unexpected hidden cards.
+1. 检查 `frontend/PetApp.svelte` 中任务列表 CSS，以及回复/审批渲染。
+2. 确认没有固定任务卡片高度造成内容溢出。
+3. 确认 `ensureWindowSize()` 和屏幕边界限制仍然一起运行。
+4. 确认有新的实时活动后，收起状态不会卡住。
+5. 运行 activity 测试，确认归并逻辑没有生成意外隐藏卡片。
 
-## Validation After Fix
+## 修复后验证
 
-- One card should not produce a list scrollbar.
-- Reply mode should not remove footer spacing.
-- Approval controls should remain reachable.
-- Cross-screen drag should not compress the list.
+- 单卡不应产生列表滚动条。
+- 回复模式不应移除 footer 间距。
+- 审批控件应保持可触达。
+- 跨屏拖动不应压缩列表。

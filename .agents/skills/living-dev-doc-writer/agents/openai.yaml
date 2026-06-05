@@ -1,8 +1,8 @@
 interface:
-  display_name: "Living Dev Doc Writer"
-  short_description: "Write evidence-backed living dev docs"
+  display_name: "活文档写作"
+  short_description: "编写证据充分、可演进的开发文档"
   brand_color: "#2563EB"
-  default_prompt: "Use $living-dev-doc-writer to draft or review a concise, evidence-backed development document for this change."
+  default_prompt: "使用 $living-dev-doc-writer 为这次变更起草或审阅一份简洁、证据充分的开发文档。"
 
 policy:
   allow_implicit_invocation: true

@@ -1,21 +1,21 @@
-# Capability Boundaries
+# 能力边界
 
-## Frontend Contract
+## 前端契约
 
-`frontend/lib/agentInteractions.ts` decides visible card actions. It must stay aligned with backend behavior in `src-tauri/src/agent/actions.rs`.
+`frontend/lib/agentInteractions.ts` 决定卡片操作是否可见。它必须与 `src-tauri/src/agent/actions.rs` 中的后端行为保持一致。
 
-## Current Capabilities
+## 当前能力
 
-- Activate: generally visible, but backend can return unsupported on platforms that cannot activate by the requested target type.
-- Codex activate: uses a thread deeplink when a session id is available, otherwise falls back to the generic provider target.
-- Reply: Codex only, done/failed only, session id required.
-- Approval: waiting-approval only, resolved through collector state.
+- 激活：通常可见，但当平台无法按请求的目标类型激活时，后端可以返回不支持。
+- Codex 激活：有 session id 时使用 thread deeplink；否则回退到通用 provider target。
+- 回复：仅 Codex，且仅限 done/failed，必须有 session id。
+- 审批：仅 waiting-approval，通过 collector state 处理。
 
-## Risk
+## 风险
 
-If the frontend exposes an action the backend rejects, the pet window feels broken even if the backend is technically correct.
+如果前端暴露了后端会拒绝的动作，即使后端技术上是正确的，桌宠窗口也会给用户“坏了”的体验。
 
-## Validation
+## 验证
 
-- Update both frontend capability tests and Rust action tests when changing a provider capability.
-- Check running, waiting approval, done, failed, missing session id, and unsupported provider cases.
+- 修改 provider capability 时，同步更新前端能力测试和 Rust action 测试。
+- 检查 running、waiting approval、done、failed、缺少 session id 和不支持 provider 的场景。

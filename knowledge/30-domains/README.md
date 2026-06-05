@@ -1,15 +1,15 @@
-# Domain Knowledge
+# 领域知识
 
-Domain documents connect product behavior to source modules and tests.
+领域文档用于连接产品行为、源码模块和测试。
 
-## Domains
+## 领域
 
-- `agent-events/`: hook ingestion, normalization, activity merge, and filtering risks.
-- `agent-control/`: provider capabilities, Codex app-server, Qoder remote-control boundary, reply and approval.
-- `pet-window/`: overlay layout, sizing, monitor bounds, and reply editor.
-- `settings-and-personalization/`: settings model, pet personalization, and notifications.
-- `theme-system/`: theme token library and migration rules.
+- `agent-events/`：hook 接入、归一化、活动归并和过滤风险。
+- `agent-control/`：provider capability、Codex app-server、Qoder remote-control 边界、回复和审批。
+- `pet-window/`：悬浮窗布局、尺寸、屏幕边界和回复编辑器。
+- `settings-and-personalization/`：设置模型、宠物个性化和通知。
+- `theme-system/`：主题 token 库和迁移规则。
 
-## Maintenance
+## 维护
 
-When a bug touches one domain repeatedly, update the domain `known-risks.md` and consider adding a reusable rule under `../60-rules/`.
+当 Bug 反复触及某个领域时，更新该领域的 `known-risks.md`，并考虑在 `../60-rules/` 下新增可复用规约。

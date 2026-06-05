@@ -1,14 +1,14 @@
-# Agent Control
+# Agent 控制领域
 
-This domain covers actions that control or interact with provider sessions after an event appears.
+这个领域覆盖事件出现后，对 provider session 进行控制或交互的动作。
 
-## Source Modules
+## 源码模块
 
-- `src-tauri/src/agent/actions.rs`: driver abstraction for activation, replies, and approvals.
-- `src-tauri/src/agent/codex_app_server.rs`: Codex app-server reply path.
-- `frontend/lib/agentInteractions.ts`: frontend capability display rules.
-- `src-tauri/src/app/state.rs`: pending approval storage and resolution.
+- `src-tauri/src/agent/actions.rs`：激活、回复和审批的 driver 抽象。
+- `src-tauri/src/agent/codex_app_server.rs`：Codex app-server 回复路径。
+- `frontend/lib/agentInteractions.ts`：前端能力展示规则。
+- `src-tauri/src/app/state.rs`：待审批项存储和处理。
 
-## Principle
+## 原则
 
-Provider capability controls UI visibility. A task card action must not be visible unless the backend has a verified path for that action and task state.
+Provider capability 决定 UI 可见性。除非后端对当前动作和任务状态有已验证路径，否则任务卡片不应显示该操作。

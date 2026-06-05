@@ -1,28 +1,28 @@
-# Product Intent
+# 产品意图
 
-Code Pet is a desktop pet companion for local AI coding tools. It makes background agent activity visible through a transparent floating pet window and keeps configuration in a normal main window.
+Code Pet 是面向本机 AI 编程工具的桌面宠物伴侣。它通过透明悬浮桌宠窗口把后台 Agent 活动变成可见状态，同时用普通主窗口承载配置和数据查看。
 
-## Product Goals
+## 产品目标
 
-- Show task activity from Codex, Claude Code, Qoder, and Cursor without forcing the user to keep every agent window in view.
-- Surface high-attention states such as permission requests, failures, and completed tasks.
-- Provide lightweight actions from task cards when the backend has a reliable provider capability.
-- Let the user personalize pet appearance, task bubble style, sounds, and pet window opacity.
-- Keep all collector traffic local. The collector binds to `127.0.0.1`.
+- 展示 Codex、Claude Code、Qoder 和 Cursor 的任务活动，让用户不必一直盯着每个 Agent 窗口。
+- 突出需要注意的状态，例如权限请求、失败和任务完成。
+- 当后端具备可靠 provider 能力时，在任务卡片上提供轻量操作。
+- 允许用户个性化宠物外观、任务气泡样式、声音和桌宠窗口透明度。
+- collector 流量保持本机内闭环；collector 只绑定 `127.0.0.1`。
 
-## Non-Goals
+## 非目标
 
-- Code Pet is not a replacement agent runtime.
-- It should not claim active control capabilities for a provider until the provider path is verified.
-- It should not turn README into the full knowledge base.
+- Code Pet 不是替代 Agent 的运行时。
+- 在 provider 控制路径被验证前，不声明主动控制能力。
+- README 不承担完整知识库职责。
 
-## Current Evidence
+## 当前证据
 
-- `README.md` lists supported agents, local collector endpoint, settings data, and build/test commands.
-- `src-tauri/src/activity/collector.rs` binds the collector to `127.0.0.1:47621`.
-- `frontend/PetApp.svelte` renders the transparent pet window and task card actions.
-- `frontend/App.svelte` renders the main configuration UI.
+- `README.md` 记录了支持的 Agent、本地 collector 端点、设置数据和构建/测试命令。
+- `src-tauri/src/activity/collector.rs` 将 collector 绑定到 `127.0.0.1:47621`。
+- `frontend/PetApp.svelte` 渲染透明桌宠窗口和任务卡片操作。
+- `frontend/App.svelte` 渲染主配置界面。
 
-## Unknowns
+## 未知项
 
-- Long-term product naming between Hanging Metal and Code Pet is not normalized in code comments or docs.
+- Hanging Metal 与 Code Pet 的长期产品命名尚未在代码注释和文档中完全统一。

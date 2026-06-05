@@ -1,28 +1,28 @@
-# Window System
+# 窗口系统
 
-## Current Behavior
+## 当前行为
 
-The pet overlay window is not user-resizable. `frontend/PetApp.svelte` calls `getCurrentWindow().setResizable(false)` on mount.
+桌宠悬浮窗不允许用户手动缩放。`frontend/PetApp.svelte` 在挂载时调用 `getCurrentWindow().setResizable(false)`。
 
-The frontend still controls runtime sizing. It calls `ensureWindowSize()` and uses a preset logical width and height before docking or constraining the window. This preserves a stable maximum transparent area while avoiding user-driven resize.
+前端仍负责运行时尺寸控制。它会调用 `ensureWindowSize()`，并在停靠或限制边界前使用预设逻辑宽高。这样可以保持稳定的最大透明区域，同时避免用户手动缩放带来的不确定性。
 
-## Monitor Bounds
+## 屏幕边界
 
-`frontend/PetApp.svelte` uses `availableMonitors()`, `primaryMonitor()`, `outerPosition()`, and `outerSize()` to select the monitor with the largest window intersection. If there is no intersection, it chooses the monitor nearest the window center or the primary monitor fallback.
+`frontend/PetApp.svelte` 使用 `availableMonitors()`、`primaryMonitor()`、`outerPosition()` 和 `outerSize()` 选择与窗口相交面积最大的屏幕。没有相交时，选择离窗口中心最近的屏幕；仍然失败时回退到主屏。
 
-`clampWindowPositionToMonitor()` clamps the pet window to the selected monitor work area so it does not exceed screen edges.
+`clampWindowPositionToMonitor()` 会把桌宠窗口限制在选中屏幕的工作区内，避免窗口越过屏幕边缘。
 
-## macOS Overlay Setup
+## macOS 悬浮窗设置
 
-`src-tauri/src/platform/macos_window.rs` configures macOS-specific overlay behavior. The panel can become key only when needed so reply inputs can receive focus while keeping the pet window as a floating overlay. Non-macOS builds use the no-op wrapper in `src-tauri/src/lib.rs`.
+`src-tauri/src/platform/macos_window.rs` 配置 macOS 专属悬浮行为。panel 只有在需要时才允许成为 key window，使回复输入框可以获得键盘焦点，同时保持桌宠作为悬浮层。非 macOS 构建使用 `src-tauri/src/lib.rs` 中的 no-op wrapper。
 
-## Risks
+## 风险
 
-- Cross-screen dragging can briefly produce stale position or size data.
-- Changing content height without reviewing `ensureWindowSize()` can reintroduce clipped task lists or unnecessary scrollbars.
-- Monitor work areas may use negative coordinates on multi-monitor setups.
+- 跨屏拖动时，位置或尺寸数据可能短暂陈旧。
+- 修改内容高度但不检查 `ensureWindowSize()`，可能重新引入任务列表被裁剪或无意义滚动条。
+- 多屏工作区可能使用负坐标。
 
-## Validation
+## 验证
 
-- Verify `npx vitest run` for frontend layout logic indirectly covered by tests.
-- Manually test dragging across monitors on Windows and macOS when changing `PetApp.svelte` window code.
+- 运行 `npx vitest run`，间接覆盖前端布局逻辑。
+- 修改 `PetApp.svelte` 窗口代码时，在 Windows 和 macOS 上人工验证跨屏拖动。

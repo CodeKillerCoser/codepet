@@ -1,22 +1,22 @@
-# Notification And Approval
+# 通知与审批
 
-## Notification Behavior
+## 通知行为
 
-Notifications are controlled by `settings.notifications`. Permission, failure, and done states can each ring. Waiting approval can repeat until resolved or until repeat limits stop it.
+通知由 `settings.notifications` 控制。权限、失败和完成状态可以分别控制是否响铃。等待审批状态可以重复提醒，直到被处理或达到重复限制。
 
-`frontend/lib/sound.ts` decides whether a new event should ring and whether repeat notification should continue.
+`frontend/lib/sound.ts` 决定新事件是否响铃，以及重复通知是否继续。
 
-## Approval Behavior
+## 审批行为
 
-Permission request events become `TaskStatus::WaitingApproval` in `src-tauri/src/activity/events.rs`. `src-tauri/src/app/state.rs` stores pending approvals and exposes an async wait path.
+权限请求事件会在 `src-tauri/src/activity/events.rs` 中变成 `TaskStatus::WaitingApproval`。`src-tauri/src/app/state.rs` 保存待审批项，并提供异步等待路径。
 
-The collector exposes `/approvals/:event_id/wait`, and `resolve_activity_approval` resolves the pending decision from the pet UI.
+collector 暴露 `/approvals/:event_id/wait`；桌宠 UI 通过 `resolve_activity_approval` 处理待审批决策。
 
-## User-Facing Rule
+## 用户可见规则
 
-Approval controls should appear only while a task is waiting for approval. Reply controls should not appear during approval unless the UI is intentionally sending an approval message through the approval flow.
+审批控件只应在任务等待审批时出现。回复控件不应在审批阶段出现，除非 UI 明确通过审批流程发送审批消息。
 
-## Validation
+## 验证
 
-- Run `cargo test --manifest-path src-tauri/Cargo.toml activity_actions_tests`.
-- Run `npx vitest run frontend/lib/activity.test.ts frontend/lib/sound.test.ts`.
+- 运行 `cargo test --manifest-path src-tauri/Cargo.toml activity_actions_tests`。
+- 运行 `npx vitest run frontend/lib/activity.test.ts frontend/lib/sound.test.ts`。

@@ -1,16 +1,16 @@
-# Agent Events
+# Agent 事件领域
 
-This domain covers raw agent hook payloads, local ingestion, normalization, title enrichment, frontend merge, and activity filtering.
+这个领域覆盖原始 Agent hook payload、本地接入、归一化、标题增强、前端归并和活动过滤。
 
-## Source Modules
+## 源码模块
 
-- `src-tauri/hooks/code-pet-hook.mjs`: hook script installed into supported agent configs.
-- `src-tauri/src/agent/hooks.rs`: writes managed hook entries.
-- `src-tauri/src/activity/collector.rs`: receives hook payloads.
-- `src-tauri/src/activity/events.rs`: normalizes payloads into `PetEvent`.
-- `frontend/lib/activity.ts`: merges and filters user-visible activities.
+- `src-tauri/hooks/code-pet-hook.mjs`：安装到支持的 Agent 配置中的 hook 脚本。
+- `src-tauri/src/agent/hooks.rs`：写入托管 hook 项。
+- `src-tauri/src/activity/collector.rs`：接收 hook payload。
+- `src-tauri/src/activity/events.rs`：将 payload 归一化为 `PetEvent`。
+- `frontend/lib/activity.ts`：归并和过滤用户可见活动。
 
-## Tests
+## 测试
 
 - `src-tauri/tests/hook_config_tests.rs`
 - `src-tauri/tests/hook_script_tests.rs`

@@ -1,19 +1,19 @@
-# Qoder Remote Control
+# Qoder Remote Control 边界
 
-## Current Status
+## 当前状态
 
-Qoder has a remote-control daemon direction, but Code Pet does not currently have a verified local API to send messages into an existing local Qoder session.
+Qoder 具备 remote-control daemon 方向，但 Code Pet 当前没有已验证的本地 API 可以向现有本地 Qoder session 发送消息。
 
-## Implemented Boundary
+## 已实现边界
 
-- Backend `QoderDriver` in `src-tauri/src/agent/actions.rs` returns `ReplyStrategy::Unsupported`.
-- Frontend `qoderInteraction` in `frontend/lib/agentInteractions.ts` sets `canReply` to false.
-- Qoder approval still uses the collector wait path when the task is waiting for approval.
+- 后端 `src-tauri/src/agent/actions.rs` 中的 `QoderDriver` 返回 `ReplyStrategy::Unsupported`。
+- 前端 `frontend/lib/agentInteractions.ts` 中的 `qoderInteraction` 将 `canReply` 设为 false。
+- 当任务等待审批时，Qoder 审批仍然使用 collector wait 路径。
 
-## Evidence
+## 证据
 
-Prior probing found that Qoder remote-control registers the machine as a remote environment through a cloud broker. The local `127.0.0.1:52345` MCP-like endpoint did not expose chat/session send APIs.
+此前探测发现，Qoder remote-control 是通过云端 broker 把本机注册为远程环境。本地 `127.0.0.1:52345` 的 MCP-like 端点没有暴露 chat/session send API。
 
-## Rule
+## 规则
 
-Do not expose Qoder existing-session reply until a stable official or verified broker/API path can send a message and make it appear in Qoder UI.
+在没有稳定官方路径或已验证 broker/API 可以发送消息并让消息出现在 Qoder UI 前，不要暴露 Qoder 现有会话回复。

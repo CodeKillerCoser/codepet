@@ -1,25 +1,25 @@
-# Window Overflows Screen
+# 窗口超出屏幕
 
-## Symptom
+## 现象
 
-The pet window extends past the edge of the monitor or cannot be fully seen.
+桌宠窗口越过显示器边缘，或无法完整看到。
 
-## Evidence To Collect
+## 需要收集的证据
 
-- Platform and number of monitors.
-- Monitor coordinates, including negative coordinates.
-- Window outer position and outer size.
-- Whether the issue happens on dock, drag, resize event, or cross-screen movement.
+- 平台和显示器数量。
+- 显示器坐标，包括负坐标。
+- 窗口 outer position 和 outer size。
+- 问题发生在停靠、拖动、resize 事件还是跨屏移动时。
 
-## Checks
+## 排查步骤
 
-1. Review `monitorForWindow()` in `frontend/PetApp.svelte`.
-2. Review `clampWindowPositionToMonitor()`.
-3. Confirm `ensureWindowFrameAndBounds()` is scheduled after move and resize events.
-4. Confirm the selected monitor work area is correct.
+1. 检查 `frontend/PetApp.svelte` 中的 `monitorForWindow()`。
+2. 检查 `clampWindowPositionToMonitor()`。
+3. 确认 move 和 resize 事件后会调度 `ensureWindowFrameAndBounds()`。
+4. 确认选中的屏幕工作区正确。
 
-## Validation After Fix
+## 修复后验证
 
-- Manual drag on every monitor edge.
-- Manual cross-screen drag.
-- Verify the task list remains visible after clamping.
+- 人工拖动到每个屏幕边缘。
+- 人工跨屏拖动。
+- 确认边界限制后任务列表仍然可见。

@@ -1,32 +1,32 @@
-# Task Card Interaction
+# 任务卡片交互
 
-## Card Content
+## 卡片内容
 
-Task cards display a title, message, provider/source metadata, status, and terminal time when available. Display helpers live in `frontend/lib/activity.ts`.
+任务卡片展示标题、消息、provider/source 元数据、状态，以及可用时的终止时间。展示辅助逻辑位于 `frontend/lib/activity.ts`。
 
-## Activity Merge
+## 活动归并
 
-Cards are grouped by provider plus session id, cwd, or a global fallback. Active task updates replace the prior card for the same activity key. Terminal events are retained only when they belong to an existing visible activity or can be matched by fallback.
+卡片按 provider 加 session id、cwd 或全局 fallback 分组。同一个 activity key 的 active 更新会替换旧卡片。终态事件只有在属于已有可见活动，或能通过 fallback 匹配时才保留。
 
-## Actions
+## 操作
 
-- Open: attempts to activate the source application or project path.
-- Remove: removes any task card from the pet list.
-- Remove completed: clears completed cards.
-- Reply: only visible when provider capability says it is safe.
-- Approval: visible only for waiting approval events.
+- 打开：尝试激活来源应用或项目路径。
+- 移除：从桌宠列表中移除任意任务卡片。
+- 移除已完成：清除已完成卡片。
+- 回复：只有 provider capability 判断安全时才显示。
+- 审批：只在等待审批事件上显示。
 
-## Reply Mode
+## 回复模式
 
-Reply mode is local UI state in `frontend/PetApp.svelte`. It can be toggled open and closed, focuses the textarea, and resizes the editor up to five rows.
+回复模式是 `frontend/PetApp.svelte` 内的本地 UI 状态。它可以打开和关闭，会聚焦 textarea，并让编辑器按内容自适应到最多五行。
 
-## Risks
+## 风险
 
-- Adding footer actions can collapse spacing or remove the bottom card gap.
-- Fixed card heights are fragile because reply editor, footer, and message content vary.
-- Showing reply during running states is wrong because the backend cannot reliably inject into active provider sessions except approved control paths.
+- 给 footer 增加操作按钮可能压掉底部间距，或造成无意义滚动条。
+- 固定任务卡片高度很脆弱，因为回复编辑器、footer 和消息内容都会变化。
+- 运行中任务不应显示回复入口，因为后端除已验证控制路径外，无法可靠向 active provider session 注入消息。
 
-## Validation
+## 验证
 
-- Run `npx vitest run frontend/lib/activity.test.ts`.
-- Manually inspect one-card, multi-card, reply-mode, and approval-mode layouts when editing `frontend/PetApp.svelte`.
+- 运行 `npx vitest run frontend/lib/activity.test.ts`。
+- 修改 `frontend/PetApp.svelte` 时，人工检查单卡、多卡、回复模式和审批模式布局。

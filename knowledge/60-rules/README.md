@@ -1,13 +1,13 @@
-# Development Rules
+# 开发规约
 
-Rules are reusable constraints promoted from repeated bugs, risky areas, or architecture decisions.
+规约是从重复 Bug、高风险区域或架构决策中提炼出来的可复用约束。
 
-## Current Rules
+## 当前规约
 
 - `bug-to-rule-promotion.md`
 - `conditional-render-focus.md`
 - `module-reorganization.md`
 
-## Promotion Criteria
+## 升级标准
 
-Promote a bug or review finding into a rule when it is likely to recur, crosses module boundaries, affects platform behavior, or protects a user-visible workflow.
+当一个 Bug 或 review 发现很可能复发、跨模块、影响平台行为，或保护用户可见流程时，应将其升级为规约。

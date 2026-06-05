@@ -1,13 +1,13 @@
-# Architecture Decisions
+# 架构决策
 
-Decision documents record durable technical choices that future agents should not casually reverse.
+决策文档记录未来 Agent 不应随意推翻的长期技术选择。
 
-## Current Decisions
+## 当前决策
 
 - `codex-app-server-as-primary-reply-path.md`
 - `qoder-existing-session-reply-unsupported.md`
 - `semantic-file-tree-as-knowledge-index.md`
 
-## Rule
+## 规则
 
-Keep decisions short and explicit. Include alternatives and consequences, not just the final choice.
+决策文档要短而明确。除了最终选择，还要写备选方案和后果。

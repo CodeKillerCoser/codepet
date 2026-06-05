@@ -1,24 +1,24 @@
-# Settings Persistence
+# 设置持久化
 
-## Model
+## 模型
 
-`src-tauri/src/app/settings.rs` defines `AppSettings` with these top-level areas:
+`src-tauri/src/app/settings.rs` 定义 `AppSettings`，顶层区域包括：
 
-- `appearance`: theme and running bubble settings.
-- `pet`: selected pet, sprite/image settings, opacity, always-on-top, and whip reaction sound.
-- `petLibrary`: configured pets and data directory.
-- `notifications`: sound, custom sound path, ring toggles, repeat interval, and quiet hours.
-- `activityFilters`: title and message keyword filters.
+- `appearance`：主题和运行中气泡设置。
+- `pet`：当前宠物、sprite/图片设置、透明度、置顶和抽打反应音。
+- `petLibrary`：宠物列表和数据目录。
+- `notifications`：声音、自定义声音路径、响铃开关、重复间隔和静音时段。
+- `activityFilters`：标题和消息关键词过滤。
 
-## Storage
+## 存储
 
-Settings are saved under the system local data directory as `code-pet/settings.json`. README also documents token cache, logs, pet library, and offline event spool locations.
+设置保存到系统 local data 目录下的 `code-pet/settings.json`。README 还记录了 Token 缓存、日志、宠物库和离线事件 spool 的位置。
 
-## Frontend Sync
+## 前端同步
 
-`frontend/App.svelte` normalizes settings after loading and saves through Tauri commands. `frontend/PetApp.svelte` listens for `settings-updated` to update theme, filters, sounds, and pet opacity.
+`frontend/App.svelte` 加载设置后会先归一化，再通过 Tauri command 保存。`frontend/PetApp.svelte` 监听 `settings-updated`，用于更新主题、过滤器、声音和宠物透明度。
 
-## Validation
+## 验证
 
-- Run `cargo test --manifest-path src-tauri/Cargo.toml settings`.
-- Run frontend tests that construct settings defaults, especially sound and bubble color tests.
+- 运行 `cargo test --manifest-path src-tauri/Cargo.toml settings`。
+- 运行会构造设置默认值的前端测试，尤其是声音和气泡颜色相关测试。

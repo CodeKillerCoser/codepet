@@ -1,27 +1,27 @@
-# Bug To Rule Promotion
+# Bug 到规约的升级
 
-## Rule
+## 规则
 
-When a bug reveals a reusable constraint, update the relevant runbook or add a rule. Do not leave the lesson only in chat.
+当 Bug 暴露出可复用约束时，更新相关 runbook 或新增规约。不要把经验只留在聊天记录里。
 
-## Applies When
+## 适用场景
 
-- The same class of bug has happened more than once.
-- The fix touches shared UI state, provider capabilities, window behavior, or settings persistence.
-- A review finds a regression risk that future agents are likely to repeat.
+- 同类 Bug 已经发生不止一次。
+- 修复触及共享 UI 状态、provider capability、窗口行为或设置持久化。
+- review 发现未来 Agent 很可能重复踩到的回归风险。
 
-## Counterexample
+## 反例
 
-A reply button is moved based on local UI convenience, but the provider capability boundary is not documented. A later agent exposes the same button during running tasks and breaks the workflow again.
+因为局部 UI 便利而移动回复按钮，但没有记录 provider capability 边界。后续 Agent 又在运行中任务上暴露同一个按钮，导致流程再次出错。
 
-## Recommended Practice
+## 推荐做法
 
-Write a short rule with source, counterexample, and validation. Link to domain docs or runbooks by path.
+写一条短规约，包含来源、反例和验证方式。通过路径链接到相关领域文档或 runbook。
 
-## Source
+## 来源
 
-Project discussion about keeping living documents aligned with every change and bug fix.
+项目关于“让活文档随每次变更和 Bug 修复保持一致”的讨论。
 
-## Verification
+## 验证方式
 
-After bug fixes, check whether `knowledge/40-runbooks/`, `knowledge/50-decisions/`, or `knowledge/60-rules/` needs an update.
+Bug 修复后，检查是否需要更新 `knowledge/40-runbooks/`、`knowledge/50-decisions/` 或 `knowledge/60-rules/`。
