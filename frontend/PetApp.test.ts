@@ -341,15 +341,15 @@ describe("PetApp activity helpers", () => {
     expect(dismissBlock).not.toContain("repeatEventId === activity.id");
   });
 
-  it("does not toggle cursor passthrough for transparent pet-window regions", () => {
+  it("passes cursor events through transparent pet-window regions", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
 
-    expect(source).not.toContain("cursorPosition");
-    expect(source).not.toContain("setIgnoreCursorEvents");
-    expect(source).not.toContain("collectPetHitRects");
-    expect(source).not.toContain("isPointOnOpaquePetImage");
-    expect(source).not.toContain("shouldIgnorePetWindowCursor");
-    expect(source).not.toContain("clearCursorPassthroughTimer");
+    expect(source).toContain("cursorPosition");
+    expect(source).toContain("setIgnoreCursorEvents");
+    expect(source).toContain("collectPetHitRects");
+    expect(source).toContain("isPointOnOpaquePetImage");
+    expect(source).toContain("shouldIgnorePetWindowCursor");
+    expect(source).toContain("clearCursorPassthroughTimer");
     expect(source).toContain('data-pet-hit-target="stage"');
     expect(source).not.toContain('<button class="drag-layer"');
   });

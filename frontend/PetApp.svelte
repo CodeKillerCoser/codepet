@@ -1,11 +1,12 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
   import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
-  import { availableMonitors, getCurrentWindow, primaryMonitor, type Monitor } from "@tauri-apps/api/window";
+  import { availableMonitors, cursorPosition, getCurrentWindow, primaryMonitor, type Monitor } from "@tauri-apps/api/window";
   import { onMount, tick } from "svelte";
   import { activateActivity, getAppSettings, openMainWindow, recentEvents, recordPerfEvent, resolveActivityApproval, sendActivityReply } from "./lib/api";
   import { activityCapabilities, activityKey, cardAgentLabel, cardEndTime, cardMessage, cardMeta, cardTitle, matchesActivityFilters, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
   import { runningBubbleStyle } from "./lib/gradientColor";
+  import { isOpaqueCssColor, rectFromElementBounds, shouldIgnorePetWindowCursor, type PetHitRect } from "./lib/petHitTest";
   import PetAvatar from "./lib/PetAvatar.svelte";
   import { playNotificationSound, playWhipSound, shouldRepeatNotification, shouldRing } from "./lib/sound";
   import { defaultPetSprite, defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
@@ -38,6 +39,11 @@
   let whipTimer: number | null = null;
   let ensureWindowFrameTimer: number | null = null;
   let ensuringWindowFrame = false;
+  let petWindowElement: HTMLElement | null = null;
+  let cursorPassthroughTimer: number | null = null;
+  let cursorEventsIgnored = false;
+  let cursorPassthroughInFlight = false;
+  const petImageAlphaCache = new WeakMap<HTMLImageElement, { src: string; width: number; height: number; data: Uint8ClampedArray }>();
 
   const petWindowWidth = 360;
   const activityPetGap = 8;
@@ -48,6 +54,8 @@
   const whipVisibleMs = 760;
   const permissionRepeatMaxMs = 590_000;
   const replyEditorMaxRows = 5;
+  const cursorPassthroughPollMs = 60;
+  const petHitPadding = 2;
   const devMode = import.meta.env.DEV;
   const fallbackRunningBubble = defaultRunningBubbleSettings;
   const defaultPetOpacity = 1;
@@ -93,6 +101,10 @@
     void appWindow.setResizable(false).catch((error) => {
       console.error("failed to disable pet window resizing", error);
     });
+    cursorPassthroughTimer = window.setInterval(() => {
+      void syncCursorPassthrough();
+    }, cursorPassthroughPollMs);
+    void syncCursorPassthrough();
 
     let disposed = false;
     let unlistenPetEvent: (() => void) | null = null;
@@ -220,6 +232,8 @@
       clearNoticeTimer();
       clearWhipTimer();
       clearEnsureWindowFrameTimer();
+      clearCursorPassthroughTimer();
+      void setPetWindowCursorEventsIgnored(false);
     };
   });
 
@@ -396,6 +410,180 @@
     if (ensureWindowFrameTimer) {
       window.clearTimeout(ensureWindowFrameTimer);
       ensureWindowFrameTimer = null;
+    }
+  }
+
+  function clearCursorPassthroughTimer() {
+    if (cursorPassthroughTimer) {
+      window.clearInterval(cursorPassthroughTimer);
+      cursorPassthroughTimer = null;
+    }
+  }
+
+  async function syncCursorPassthrough() {
+    if (!petWindowElement || cursorPassthroughInFlight) {
+      return;
+    }
+
+    cursorPassthroughInFlight = true;
+    try {
+      const appWindow = getCurrentWindow();
+      const [cursor, windowPosition, scaleFactor] = await Promise.all([
+        cursorPosition(),
+        appWindow.outerPosition(),
+        appWindow.scaleFactor(),
+      ]);
+      const point = {
+        x: (cursor.x - windowPosition.x) / scaleFactor,
+        y: (cursor.y - windowPosition.y) / scaleFactor,
+      };
+      const ignoreCursor = shouldIgnorePetWindowCursor(point, collectPetHitRects(petWindowElement)) && !isPointOnOpaquePetImage(petWindowElement, point);
+      await setPetWindowCursorEventsIgnored(ignoreCursor);
+    } catch (error) {
+      console.error("failed to update pet cursor passthrough", error);
+    } finally {
+      cursorPassthroughInFlight = false;
+    }
+  }
+
+  async function setPetWindowCursorEventsIgnored(ignore: boolean) {
+    if (cursorEventsIgnored === ignore) {
+      return;
+    }
+
+    cursorEventsIgnored = ignore;
+    try {
+      await getCurrentWindow().setIgnoreCursorEvents(ignore);
+    } catch (error) {
+      cursorEventsIgnored = !ignore;
+      console.error("failed to set pet cursor passthrough", error);
+    }
+  }
+
+  function collectPetHitRects(root: HTMLElement): PetHitRect[] {
+    const rootBounds = root.getBoundingClientRect();
+    const hitRects: PetHitRect[] = [];
+    for (const element of root.querySelectorAll<HTMLElement>(".status-pill, .pet-action-button")) {
+      const rect = element.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        hitRects.push(rectFromElementBounds(rect, rootBounds, petHitPadding));
+      }
+    }
+
+    for (const pixel of root.querySelectorAll<HTMLElement>(".pet-sprite span")) {
+      if (!isOpaqueCssColor(window.getComputedStyle(pixel).backgroundColor || pixel.style.backgroundColor || pixel.style.background)) {
+        continue;
+      }
+      const rect = pixel.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        hitRects.push(rectFromElementBounds(rect, rootBounds));
+      }
+    }
+
+    return hitRects;
+  }
+
+  function isPointOnOpaquePetImage(root: HTMLElement, point: { x: number; y: number }) {
+    const rootBounds = root.getBoundingClientRect();
+    for (const wrapper of root.querySelectorAll<HTMLElement>(".pet-image, .pet-atlas")) {
+      const wrapperRect = rectFromElementBounds(wrapper.getBoundingClientRect(), rootBounds, petHitPadding);
+      if (shouldIgnorePetWindowCursor(point, [wrapperRect])) {
+        continue;
+      }
+
+      const image = wrapper instanceof HTMLImageElement ? wrapper : wrapper.querySelector("img");
+      if (!image || !image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) {
+        return true;
+      }
+
+      const alpha = petImageAlphaAtPoint(wrapper, image, point, rootBounds);
+      if (alpha === null) {
+        return true;
+      }
+      if (alpha > 12) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function petImageAlphaAtPoint(wrapper: HTMLElement, image: HTMLImageElement, point: { x: number; y: number }, rootBounds: DOMRect) {
+    const pixel = petImagePixelCoordinates(wrapper, image, point, rootBounds);
+    if (!pixel) {
+      return null;
+    }
+
+    const data = petImageAlphaData(image);
+    if (!data) {
+      return null;
+    }
+
+    const x = Math.floor(pixel.x);
+    const y = Math.floor(pixel.y);
+    if (x < 0 || y < 0 || x >= data.width || y >= data.height) {
+      return 0;
+    }
+
+    return data.data[(y * data.width + x) * 4 + 3];
+  }
+
+  function petImagePixelCoordinates(wrapper: HTMLElement, image: HTMLImageElement, point: { x: number; y: number }, rootBounds: DOMRect) {
+    const wrapperRect = rectFromElementBounds(wrapper.getBoundingClientRect(), rootBounds);
+    const relativeX = point.x - wrapperRect.left;
+    const relativeY = point.y - wrapperRect.top;
+    const wrapperWidth = wrapperRect.right - wrapperRect.left;
+    const wrapperHeight = wrapperRect.bottom - wrapperRect.top;
+    if (wrapperWidth <= 0 || wrapperHeight <= 0) {
+      return null;
+    }
+    if (wrapper instanceof HTMLImageElement) {
+      return {
+        x: relativeX * (image.naturalWidth / wrapperWidth),
+        y: relativeY * (image.naturalHeight / wrapperHeight),
+      };
+    }
+
+    const transform = getComputedStyle(image).transform;
+    const matrix = transform && transform !== "none" ? new DOMMatrixReadOnly(transform) : new DOMMatrixReadOnly();
+    const imageWidth = image.offsetWidth || image.getBoundingClientRect().width;
+    const imageHeight = image.offsetHeight || image.getBoundingClientRect().height;
+    if (imageWidth <= 0 || imageHeight <= 0) {
+      return null;
+    }
+
+    return {
+      x: (relativeX - matrix.m41) * (image.naturalWidth / imageWidth),
+      y: (relativeY - matrix.m42) * (image.naturalHeight / imageHeight),
+    };
+  }
+
+  function petImageAlphaData(image: HTMLImageElement) {
+    const cached = petImageAlphaCache.get(image);
+    if (cached && cached.src === image.currentSrc && cached.width === image.naturalWidth && cached.height === image.naturalHeight) {
+      return cached;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      return null;
+    }
+
+    try {
+      context.drawImage(image, 0, 0);
+      const next = {
+        src: image.currentSrc,
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        data: context.getImageData(0, 0, image.naturalWidth, image.naturalHeight).data,
+      };
+      petImageAlphaCache.set(image, next);
+      return next;
+    } catch {
+      return null;
     }
   }
 
@@ -755,6 +943,7 @@
 </script>
 
 <main
+  bind:this={petWindowElement}
   class={`pet-window ${themeClass}${devMode ? " dev-mode" : ""}`}
   style={`--pet-window-opacity: ${petWindowOpacity};`}
   on:dblclick={preventPetWindowDoubleClick}

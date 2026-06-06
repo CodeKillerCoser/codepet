@@ -7,6 +7,7 @@
 - `bug-to-rule-promotion.md`
 - `conditional-render-focus.md`
 - `module-reorganization.md`
+- `pet-window-click-through.md`
 
 ## 升级标准
 
