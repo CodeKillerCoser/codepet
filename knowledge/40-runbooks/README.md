@@ -8,6 +8,7 @@ Runbook 是可重复执行的排查路径。它们应从可观察现象开始，
 - `reply-not-shown-in-app.md`
 - `window-overflows-screen.md`
 - `task-list-collapsed-or-clipped.md`
+- `performance-monitoring.md`
 
 ## 写作规则
 
