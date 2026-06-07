@@ -17,6 +17,10 @@ export async function setAgentEnabled(agentId: string, enabled: boolean): Promis
   return invoke<AgentView[]>("set_agent_enabled", { agentId, enabled });
 }
 
+export async function setAgentHookEvents(agentId: string, hookEvents: string[]): Promise<AgentView[]> {
+  return invoke<AgentView[]>("set_agent_hook_events", { agentId, hookEvents });
+}
+
 export async function getAppSettings(): Promise<AppSettings> {
   return invoke<AppSettings>("get_app_settings");
 }

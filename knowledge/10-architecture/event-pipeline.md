@@ -21,11 +21,14 @@ Agent hook payload 由 `src-tauri/hooks/code-pet-hook.mjs` 接收，并发送到
 
 `frontend/lib/activity.ts` 按 provider 加 session 或 cwd 分组，过滤内部/后台事件，隐藏用户配置命中的过滤项，丢弃过期 active work，并只保留属于可见活动的终态卡片。
 
+用户过滤配置按 Agent 生效：`activityFilters.byAgent.<agent>` 只影响同 provider 的事件。旧顶层过滤字段只作为兼容输入，不应作为新 UI 的写入目标。`frontend/PetApp.svelte` 会缓存最近事件；收到 `settings-updated` 后从缓存重建可见任务列表，让新增或移除过滤条件在不重启应用的情况下反映到已显示列表。
+
 ## 风险
 
 - 修改事件 identity 可能把无关任务合并，或把一个任务拆成多个卡片。
 - 修改终态事件处理可能重新引入孤立完成卡片。
 - 过滤逻辑必须在增量批次中保留隐藏 key，否则已过滤的后台任务可能重新出现。
+- 设置变更时如果只从当前可见列表删除匹配项，取消过滤后旧任务不会恢复；需要从近期事件缓存重建列表。
 
 ## 验证
 

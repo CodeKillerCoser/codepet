@@ -24,6 +24,7 @@ function filters(overrides: Partial<ActivityFilterSettings>): ActivityFilterSett
   return {
     titleKeywords: overrides.titleKeywords ?? [],
     messageKeywords: overrides.messageKeywords ?? [],
+    byAgent: overrides.byAgent ?? {},
   };
 }
 
@@ -322,6 +323,25 @@ describe("activeActivities", () => {
     );
 
     expect(activities.map((activity) => activity.id)).toEqual(["real"]);
+  });
+
+  it("applies custom filters only to the matching agent", () => {
+    const activities = activeActivities(
+      [
+        event({ id: "codex-memory", provider: "codex", title: "Memory summary", message: "internal", sessionId: "codex-memory" }),
+        event({ id: "claude-memory", provider: "claude", title: "Memory summary", message: "user task", sessionId: "claude-memory" }),
+        event({ id: "codex-real", provider: "codex", title: "Build package", message: "npm run build", sessionId: "codex-real" }),
+      ],
+      undefined,
+      new Date("2026-05-26T06:02:00.000Z"),
+      filters({
+        byAgent: {
+          codex: { titleKeywords: ["memory"], messageKeywords: [] },
+        },
+      }),
+    );
+
+    expect(activities.map((activity) => activity.id)).toEqual(["claude-memory", "codex-real"]);
   });
 
   it("does not reorder an already active task when later hook updates arrive", () => {

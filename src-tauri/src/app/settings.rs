@@ -1,5 +1,7 @@
+use crate::agents::AgentId;
 use crate::theme_defaults;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -17,6 +19,8 @@ pub struct AppSettings {
     pub notifications: NotificationSettings,
     #[serde(default)]
     pub activity_filters: ActivityFilterSettings,
+    #[serde(default)]
+    pub agents: AgentSettings,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -173,6 +177,31 @@ pub struct ActivityFilterSettings {
     pub title_keywords: Vec<String>,
     #[serde(default)]
     pub message_keywords: Vec<String>,
+    #[serde(default)]
+    pub by_agent: HashMap<AgentId, ActivityKeywordFilterSettings>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityKeywordFilterSettings {
+    #[serde(default)]
+    pub title_keywords: Vec<String>,
+    #[serde(default)]
+    pub message_keywords: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSettings {
+    #[serde(default)]
+    pub by_agent: HashMap<AgentId, AgentPreferenceSettings>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPreferenceSettings {
+    #[serde(default)]
+    pub hook_events: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -271,6 +300,7 @@ impl Default for AppSettings {
             pet_library: PetLibrarySettings::default(),
             notifications: NotificationSettings::default(),
             activity_filters: ActivityFilterSettings::default(),
+            agents: AgentSettings::default(),
         }
     }
 }

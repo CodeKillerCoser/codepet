@@ -59,10 +59,16 @@ pub struct AgentView {
     pub enabled: bool,
     pub config_path: String,
     pub hook_events: Vec<String>,
+    pub selected_hook_events: Vec<String>,
 }
 
 impl AgentView {
-    pub fn from_spec(spec: AgentSpec, config_path: PathBuf, enabled: bool) -> Self {
+    pub fn from_spec(
+        spec: AgentSpec,
+        config_path: PathBuf,
+        enabled: bool,
+        selected_hook_events: Vec<String>,
+    ) -> Self {
         Self {
             id: spec.id,
             name: spec.name.to_string(),
@@ -70,6 +76,7 @@ impl AgentView {
             enabled,
             config_path: config_path.display().to_string(),
             hook_events: spec.hook_events.iter().map(|event| event.to_string()).collect(),
+            selected_hook_events,
         }
     }
 }

@@ -4,7 +4,8 @@
   import { availableMonitors, cursorPosition, getCurrentWindow, primaryMonitor, type Monitor } from "@tauri-apps/api/window";
   import { onMount, tick } from "svelte";
   import { activateActivity, getAppSettings, openMainWindow, recentEvents, recordPerfEvent, resolveActivityApproval, sendActivityReply } from "./lib/api";
-  import { activityCapabilities, activityKey, cardAgentLabel, cardEndTime, cardMessage, cardMeta, cardTitle, matchesActivityFilters, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
+  import { activityCapabilities, activityKey, cardAgentLabel, cardEndTime, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
+  import { mergeEventFeed } from "./lib/eventFeed";
   import { runningBubbleStyle } from "./lib/gradientColor";
   import { isOpaqueCssColor, rectFromElementBounds, shouldIgnorePetWindowCursor, type PetHitRect } from "./lib/petHitTest";
   import PetAvatar from "./lib/PetAvatar.svelte";
@@ -14,6 +15,7 @@
 
   let settings: AppSettings | null = null;
   let activities: PetEvent[] = [];
+  let recentEventCache: PetEvent[] = [];
   let repeatTimer: number | null = null;
   let repeatEventId: string | null = null;
   let repeatEvent: PetEvent | null = null;
@@ -156,7 +158,10 @@
 
     void listen<AppSettings>("settings-updated", (event) => {
       settings = event.payload;
-      applyCurrentActivityFilters();
+      rebuildActivitiesFromRecentEvents();
+      void syncLatestFromRecent(false, true).catch((error) => {
+        console.error("failed to resync pet events after settings update", error);
+      });
     }).then((unlisten) => {
       if (disposed) {
         unlisten();
@@ -182,7 +187,6 @@
     void (async () => {
       try {
         settings = await getAppSettings();
-        applyCurrentActivityFilters();
         void recordPerfEvent({
           name: "frontend.pet.get_settings",
           durationMs: performance.now() - mountedAt,
@@ -237,7 +241,7 @@
     };
   });
 
-  async function syncLatestFromRecent(ringOnNewEvent: boolean) {
+  async function syncLatestFromRecent(ringOnNewEvent: boolean, rebuildFromCache = false) {
     const startedAt = performance.now();
     const nextEvents = await recentEvents();
     const durationMs = performance.now() - startedAt;
@@ -251,8 +255,12 @@
         },
       }).catch(() => {});
     }
+    recentEventCache = mergeEventFeed(recentEventCache, nextEvents);
+    if (rebuildFromCache) {
+      rebuildActivitiesFromRecentEvents();
+    }
     const unseenEvents = nextEvents.filter((event) => !seenEventIds.has(event.id));
-    applyIncomingEvents(unseenEvents);
+    applyIncomingEvents(unseenEvents, false);
     const next = nextEvents.at(-1) ?? null;
     if (!next) {
       lastEventId = null;
@@ -279,9 +287,12 @@
     replySubmitting = false;
   }
 
-  function applyIncomingEvents(incoming: PetEvent[]) {
+  function applyIncomingEvents(incoming: PetEvent[], updateCache = true) {
     if (incoming.length === 0) {
       return;
+    }
+    if (updateCache) {
+      recentEventCache = mergeEventFeed(recentEventCache, incoming);
     }
     const previousLiveKeys = new Set(activities.filter(isLiveActivity).map(activityKey));
     for (const event of incoming) {
@@ -297,22 +308,13 @@
     stopRepeatIfNoLongerNeedsAttention();
   }
 
-  function applyCurrentActivityFilters() {
-    if (!settings?.activityFilters || activities.length === 0) {
+  function rebuildActivitiesFromRecentEvents() {
+    if (recentEventCache.length === 0) {
       return;
     }
-    const nextActivities = activities.filter((activity) => {
-      if (!matchesActivityFilters(activity, settings?.activityFilters)) {
-        return true;
-      }
-      hiddenInternalActivityKeys.add(activityKey(activity));
-      return false;
-    });
-    if (nextActivities.length !== activities.length) {
-      hiddenInternalActivityKeys = new Set(hiddenInternalActivityKeys);
-      activities = nextActivities;
-      stopRepeatIfNoLongerNeedsAttention();
-    }
+    hiddenInternalActivityKeys = new Set<string>();
+    activities = updateActivityList([], recentEventCache, dismissedActivityKeys, new Date(), hiddenInternalActivityKeys, settings?.activityFilters);
+    stopRepeatIfNoLongerNeedsAttention();
   }
 
   function isLiveActivity(activity: PetEvent) {
@@ -324,6 +326,7 @@
   }
 
   function removeActivitiesForAgent(agentId: string) {
+    recentEventCache = recentEventCache.filter((activity) => activity.provider !== agentId);
     activities = activities.filter((activity) => activity.provider !== agentId);
     dismissedActivityKeys = new Set(Array.from(dismissedActivityKeys).filter((key) => !key.startsWith(`${agentId}:`)));
     hiddenInternalActivityKeys = new Set(Array.from(hiddenInternalActivityKeys).filter((key) => !key.startsWith(`${agentId}:`)));

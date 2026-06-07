@@ -86,5 +86,6 @@ fn agent_view(id: AgentId, enabled: bool) -> AgentView {
         enabled,
         config_path: String::new(),
         hook_events: Vec::new(),
+        selected_hook_events: Vec::new(),
     }
 }

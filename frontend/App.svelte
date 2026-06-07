@@ -25,7 +25,7 @@
     Volume2,
   } from "@lucide/svelte";
   import { onMount } from "svelte";
-  import { collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, listAgents, listPets, recentEvents, recordPerfEvent, selectPet, setAgentEnabled, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, listAgents, listPets, recentEvents, recordPerfEvent, selectPet, setAgentEnabled, setAgentHookEvents, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
   import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
@@ -33,7 +33,9 @@
   import { playNotificationSound, playWhipReactionSound } from "./lib/sound";
   import { defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
   import { buildUsageChartData, yAxisTicks, type UsageBucketSize, type UsageRange } from "./lib/usageChart";
-  import type { AgentView, AppSettings, PetEvent, PetLibraryView, TokenUsageSummary } from "./lib/types";
+  import type { ActivityKeywordFilterSettings, AgentId, AgentView, AppSettings, PetEvent, PetLibraryView, TokenUsageSummary } from "./lib/types";
+
+  type ActivityFilterKind = keyof ActivityKeywordFilterSettings;
 
   let tab: "agents" | "usage" | "personalize" | "events" = "agents";
   let agents: AgentView[] = [];
@@ -57,11 +59,8 @@
   };
   let usageRange: UsageRange = "7d";
   let usageBucketSize: UsageBucketSize = "30m";
-  let filterDrafts: Record<keyof AppSettings["activityFilters"], string> = {
-    titleKeywords: "",
-    messageKeywords: "",
-  };
-  const agentOrder: AgentView["id"][] = ["codex", "claude", "qoder", "cursor"];
+  const agentOrder: AgentId[] = ["codex", "claude", "qoder", "cursor"];
+  let filterDrafts: Record<AgentId, Record<ActivityFilterKind, string>> = createFilterDrafts();
   const usageRanges: Array<{ value: UsageRange; label: string }> = [
     { value: "24h", label: "24小时" },
     { value: "7d", label: "7天" },
@@ -83,9 +82,17 @@
     { value: "custom", label: "自定义" },
   ];
   const runningBubbleDefaults = defaultRunningBubbleSettings;
+  const agentActivityFilterDefaults: ActivityKeywordFilterSettings = {
+    titleKeywords: [],
+    messageKeywords: [],
+  };
   const activityFilterDefaults: AppSettings["activityFilters"] = {
     titleKeywords: [],
     messageKeywords: [],
+    byAgent: {},
+  };
+  const agentSettingsDefaults: AppSettings["agents"] = {
+    byAgent: {},
   };
   const activityFilterGroups = [
     { key: "titleKeywords", label: "标题", placeholder: "添加标题关键字" },
@@ -111,6 +118,7 @@
     let unlistenPetEvent: (() => void) | null = null;
     let unlistenTokenUsage: (() => void) | null = null;
     let unlistenAgentDisabled: (() => void) | null = null;
+    let unlistenSettings: (() => void) | null = null;
     void (async () => {
       await keepWindowVisible();
       unlistenPetEvent = await listen<PetEvent>("pet-event", (event) => {
@@ -122,10 +130,14 @@
       unlistenAgentDisabled = await listen<string>("agent-disabled", (event) => {
         events = events.filter((activity) => activity.provider !== event.payload);
       });
+      unlistenSettings = await listen<AppSettings>("settings-updated", (event) => {
+        settings = normalizeSettings(event.payload);
+      });
       if (disposed) {
         unlistenPetEvent();
         unlistenTokenUsage();
         unlistenAgentDisabled();
+        unlistenSettings();
         return;
       }
 
@@ -141,6 +153,7 @@
       unlistenPetEvent?.();
       unlistenTokenUsage?.();
       unlistenAgentDisabled?.();
+      unlistenSettings?.();
       clearEventPoll();
       clearRunningBubbleSaveTimer();
     };
@@ -232,6 +245,48 @@
     error = "";
     try {
       agents = await setAgentEnabled(agent.id, !agent.enabled);
+    } catch (currentError) {
+      error = String(currentError);
+    } finally {
+      busyAgent = null;
+    }
+  }
+
+  function agentBusy(agent: AgentView) {
+    return busyAgent === agent.id || busyAgent === hookBusyKey(agent.id);
+  }
+
+  function hookBusyKey(agentId: AgentId) {
+    return `${agentId}:hooks`;
+  }
+
+  function selectedHookEvents(agent: AgentView) {
+    return normalizeHookEventsForAgent(agent, agent.selectedHookEvents);
+  }
+
+  function hookEventSelected(agent: AgentView, hookEvent: string) {
+    return selectedHookEvents(agent).includes(hookEvent);
+  }
+
+  function isLastSelectedHookEvent(agent: AgentView, hookEvent: string) {
+    const selectedEvents = selectedHookEvents(agent);
+    return selectedEvents.length <= 1 && selectedEvents.includes(hookEvent);
+  }
+
+  async function toggleHookEvent(agent: AgentView, hookEvent: string, checked: boolean) {
+    const currentEvents = selectedHookEvents(agent);
+    const nextEvents = checked
+      ? agent.hookEvents.filter((event) => event === hookEvent || currentEvents.includes(event))
+      : currentEvents.filter((event) => event !== hookEvent);
+    if (nextEvents.length === 0) {
+      return;
+    }
+
+    busyAgent = hookBusyKey(agent.id);
+    error = "";
+    try {
+      agents = await setAgentHookEvents(agent.id, nextEvents);
+      settings = normalizeSettings(await getAppSettings());
     } catch (currentError) {
       error = String(currentError);
     } finally {
@@ -392,14 +447,48 @@
     nextSettings.pet.whipReactionSound = nextSettings.pet.whipReactionSound ?? "none";
     nextSettings.pet.customWhipReactionSoundPath = nextSettings.pet.customWhipReactionSoundPath ?? null;
     nextSettings.activityFilters = normalizeActivityFilters(nextSettings.activityFilters);
+    nextSettings.agents = normalizeAgentSettings(nextSettings.agents);
     return nextSettings;
   }
 
   function normalizeActivityFilters(filters: Partial<AppSettings["activityFilters"]> | null | undefined): AppSettings["activityFilters"] {
+    const legacyFilters = normalizeAgentActivityFilters(filters);
+    const rawByAgent = filters?.byAgent ?? {};
+    const hasAgentFilters = Object.keys(rawByAgent).length > 0;
+    const byAgent = agentOrder.reduce<AppSettings["activityFilters"]["byAgent"]>((nextByAgent, agentId) => {
+      nextByAgent[agentId] = normalizeAgentActivityFilters(rawByAgent[agentId] ?? (!hasAgentFilters ? legacyFilters : undefined));
+      return nextByAgent;
+    }, {});
+
+    return {
+      titleKeywords: [],
+      messageKeywords: [],
+      byAgent,
+    };
+  }
+
+  function normalizeAgentActivityFilters(filters: Partial<ActivityKeywordFilterSettings> | null | undefined): ActivityKeywordFilterSettings {
     return {
       titleKeywords: normalizeFilterKeywords(filters?.titleKeywords),
       messageKeywords: normalizeFilterKeywords(filters?.messageKeywords),
     };
+  }
+
+  function normalizeAgentSettings(agentSettings: Partial<AppSettings["agents"]> | null | undefined): AppSettings["agents"] {
+    const rawByAgent = agentSettings?.byAgent ?? {};
+    const byAgent = agents.reduce<AppSettings["agents"]["byAgent"]>((nextByAgent, agent) => {
+      const configured = rawByAgent[agent.id]?.hookEvents ?? agent.selectedHookEvents;
+      nextByAgent[agent.id] = {
+        hookEvents: normalizeHookEventsForAgent(agent, configured),
+      };
+      return nextByAgent;
+    }, { ...agentSettingsDefaults.byAgent });
+    return { byAgent };
+  }
+
+  function normalizeHookEventsForAgent(agent: AgentView, hookEvents: string[] | null | undefined) {
+    const selected = agent.hookEvents.filter((event) => hookEvents?.includes(event));
+    return selected.length ? selected : [...agent.hookEvents];
   }
 
   function normalizeFilterKeywords(keywords: string[] | null | undefined): string[] {
@@ -417,61 +506,97 @@
     return normalized;
   }
 
-  function updateFilterDraft(kind: keyof AppSettings["activityFilters"], value: string) {
+  function createFilterDrafts(): Record<AgentId, Record<ActivityFilterKind, string>> {
+    return agentOrder.reduce<Record<AgentId, Record<ActivityFilterKind, string>>>((drafts, agentId) => {
+      drafts[agentId] = {
+        titleKeywords: "",
+        messageKeywords: "",
+      };
+      return drafts;
+    }, {} as Record<AgentId, Record<ActivityFilterKind, string>>);
+  }
+
+  function agentActivityFilters(agentId: AgentId): ActivityKeywordFilterSettings {
+    return settings?.activityFilters.byAgent?.[agentId] ?? agentActivityFilterDefaults;
+  }
+
+  function updateFilterDraft(agentId: AgentId, kind: ActivityFilterKind, value: string) {
     filterDrafts = {
       ...filterDrafts,
-      [kind]: value,
+      [agentId]: {
+        ...filterDrafts[agentId],
+        [kind]: value,
+      },
     };
   }
 
-  async function addFilterKeyword(kind: keyof AppSettings["activityFilters"]) {
+  async function addFilterKeyword(agentId: AgentId, kind: ActivityFilterKind) {
     if (!settings) return;
-    const value = filterDrafts[kind].trim();
+    const value = filterDrafts[agentId][kind].trim();
     if (!value) {
       return;
     }
-    await updateActivityFilterKeywords(kind, [...settings.activityFilters[kind], value]);
-    updateFilterDraft(kind, "");
+    await updateActivityFilterKeywords(agentId, kind, [...agentActivityFilters(agentId)[kind], value]);
+    updateFilterDraft(agentId, kind, "");
   }
 
-  async function removeFilterKeyword(kind: keyof AppSettings["activityFilters"], keyword: string) {
+  async function removeFilterKeyword(agentId: AgentId, kind: ActivityFilterKind, keyword: string) {
     if (!settings) return;
     const target = keyword.toLocaleLowerCase();
-    await updateActivityFilterKeywords(kind, settings.activityFilters[kind].filter((item) => item.toLocaleLowerCase() !== target));
+    await updateActivityFilterKeywords(agentId, kind, agentActivityFilters(agentId)[kind].filter((item) => item.toLocaleLowerCase() !== target));
   }
 
-  async function updateActivityFilterKeywords(kind: keyof AppSettings["activityFilters"], keywords: string[]) {
+  async function updateActivityFilterKeywords(agentId: AgentId, kind: ActivityFilterKind, keywords: string[]) {
+    if (!settings) return;
+    const agentFilters = {
+      ...agentActivityFilterDefaults,
+      ...agentActivityFilters(agentId),
+      [kind]: normalizeFilterKeywords(keywords),
+    };
+    settings = {
+      ...settings,
+      activityFilters: {
+        ...activityFilterDefaults,
+        ...settings.activityFilters,
+        titleKeywords: [],
+        messageKeywords: [],
+        byAgent: {
+          ...settings.activityFilters.byAgent,
+          [agentId]: agentFilters,
+        },
+      },
+    };
+    await saveSettings();
+  }
+
+  function handleFilterDraftKeydown(event: KeyboardEvent, agentId: AgentId, kind: ActivityFilterKind) {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    void addFilterKeyword(agentId, kind);
+  }
+
+  async function clearAgentActivityFilters(agentId: AgentId) {
     if (!settings) return;
     settings = {
       ...settings,
       activityFilters: {
         ...activityFilterDefaults,
         ...settings.activityFilters,
-        [kind]: normalizeFilterKeywords(keywords),
+        titleKeywords: [],
+        messageKeywords: [],
+        byAgent: {
+          ...settings.activityFilters.byAgent,
+          [agentId]: { ...agentActivityFilterDefaults },
+        },
       },
     };
     await saveSettings();
   }
 
-  function handleFilterDraftKeydown(event: KeyboardEvent, kind: keyof AppSettings["activityFilters"]) {
-    if (event.key !== "Enter") {
-      return;
-    }
-    event.preventDefault();
-    void addFilterKeyword(kind);
-  }
-
-  async function clearActivityFilters() {
-    if (!settings) return;
-    settings = {
-      ...settings,
-      activityFilters: { ...activityFilterDefaults },
-    };
-    await saveSettings();
-  }
-
-  function activityFilterCount(filters: AppSettings["activityFilters"]) {
-    return normalizeFilterKeywords(filters.titleKeywords).length + normalizeFilterKeywords(filters.messageKeywords).length;
+  function agentActivityFilterCount(filters: ActivityKeywordFilterSettings | null | undefined) {
+    return normalizeFilterKeywords(filters?.titleKeywords).length + normalizeFilterKeywords(filters?.messageKeywords).length;
   }
 
   function clampImagePixelSize(value: number) {
@@ -734,7 +859,7 @@
   $: latest = events.at(-1);
   $: recentVisibleEvents = events.slice(-5).reverse();
   $: enabledAgents = agents.filter((agent) => agent.enabled);
-  $: enabledHookCount = enabledAgents.reduce((count, agent) => count + agent.hookEvents.length, 0);
+  $: enabledHookCount = enabledAgents.reduce((count, agent) => count + selectedHookEvents(agent).length, 0);
   $: usageData = buildUsageChartData(usage, { range: usageRange, bucketSize: usageBucketSize });
   $: usageBuckets = usageData.buckets;
   $: usageMaxTokens = usageData.maxTokens;
@@ -799,41 +924,6 @@
           </header>
 
           <div class="agent-list">
-            {#if settings}
-              <article class="agent-filter-card">
-                <div class="filter-card-head">
-                  <div>
-                    <span class="agent-kicker">FILTERS</span>
-                    <h3><Filter size={18} /> 任务过滤</h3>
-                  </div>
-                  <button class="filter-clear-button" disabled={activityFilterCount(settings.activityFilters) === 0} on:click={clearActivityFilters}>
-                    <Trash2 size={15} /> 清空
-                  </button>
-                </div>
-                <div class="compact-filter-groups">
-                  {#each activityFilterGroups as group}
-                    <div class="compact-filter-group">
-                      <span>{group.label}</span>
-                      <div class="filter-chip-row">
-                        {#each settings.activityFilters[group.key] as keyword}
-                          <button class="filter-chip" type="button" on:click={() => removeFilterKeyword(group.key, keyword)} aria-label={`移除${group.label}过滤 ${keyword}`}>
-                            {keyword}
-                            <Trash2 size={12} />
-                          </button>
-                        {/each}
-                        <input
-                          value={filterDrafts[group.key]}
-                          placeholder={group.placeholder}
-                          on:input={(event) => updateFilterDraft(group.key, event.currentTarget.value)}
-                          on:keydown={(event) => handleFilterDraftKeydown(event, group.key)}
-                        />
-                        <button class="filter-add-button" type="button" on:click={() => addFilterKeyword(group.key)}>添加</button>
-                      </div>
-                    </div>
-                  {/each}
-                </div>
-              </article>
-            {/if}
             {#each agents as agent}
               <article class="agent-card">
                 <div class="agent-title">
@@ -848,20 +938,60 @@
                   </div>
                   <div>
                     <dt>事件</dt>
-                    <dd>{agent.hookEvents.length} 个 hooks</dd>
+                    <dd>{selectedHookEvents(agent).length}/{agent.hookEvents.length} 个 hooks</dd>
                   </div>
                 </dl>
                 <div class="event-row">
-                  {#each agent.hookEvents as event}
-                    <span>{event}</span>
+                  {#each agent.hookEvents as hookEvent}
+                    <label class="hook-event-check" class:active={hookEventSelected(agent, hookEvent)}>
+                      <input
+                        type="checkbox"
+                        checked={hookEventSelected(agent, hookEvent)}
+                        disabled={agentBusy(agent) || isLastSelectedHookEvent(agent, hookEvent)}
+                        on:change={(event) => toggleHookEvent(agent, hookEvent, event.currentTarget.checked)}
+                      />
+                      <span>{hookEvent}</span>
+                    </label>
                   {/each}
                 </div>
+                {#if settings}
+                  <div class="agent-filter-panel">
+                    <div class="filter-card-head compact">
+                      <h3><Filter size={16} /> 任务过滤</h3>
+                      <button class="filter-clear-button" disabled={agentActivityFilterCount(agentActivityFilters(agent.id)) === 0} on:click={() => clearAgentActivityFilters(agent.id)}>
+                        <Trash2 size={15} /> 清空
+                      </button>
+                    </div>
+                    <div class="compact-filter-groups">
+                      {#each activityFilterGroups as group}
+                        <div class="compact-filter-group">
+                          <span>{group.label}</span>
+                          <div class="filter-chip-row">
+                            {#each agentActivityFilters(agent.id)[group.key] as keyword}
+                              <button class="filter-chip" type="button" on:click={() => removeFilterKeyword(agent.id, group.key, keyword)} aria-label={`移除${agent.name} ${group.label}过滤 ${keyword}`}>
+                                {keyword}
+                                <Trash2 size={12} />
+                              </button>
+                            {/each}
+                            <input
+                              value={filterDrafts[agent.id][group.key]}
+                              placeholder={group.placeholder}
+                              on:input={(event) => updateFilterDraft(agent.id, group.key, event.currentTarget.value)}
+                              on:keydown={(event) => handleFilterDraftKeydown(event, agent.id, group.key)}
+                            />
+                            <button class="filter-add-button" type="button" on:click={() => addFilterKeyword(agent.id, group.key)}>添加</button>
+                          </div>
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
                 <div class="agent-controls">
                   <span class:online={agent.enabled} class="status-chip">{agent.enabled ? "已启用" : "未启用"}</span>
                   <button
                     class:enabled={agent.enabled}
                     class="power-button"
-                    disabled={busyAgent === agent.id}
+                    disabled={agentBusy(agent)}
                     on:click={() => toggleAgent(agent)}
                     aria-label={`${agent.name} ${agent.enabled ? "关闭" : "启用"}`}
                   >

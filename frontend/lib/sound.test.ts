@@ -37,6 +37,10 @@ function settings(overrides: Partial<AppSettings["notifications"]> = {}): AppSet
     activityFilters: {
       titleKeywords: [],
       messageKeywords: [],
+      byAgent: {},
+    },
+    agents: {
+      byAgent: {},
     },
   };
 }

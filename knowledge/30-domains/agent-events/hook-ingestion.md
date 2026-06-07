@@ -2,9 +2,11 @@
 
 ## 当前流程
 
-`src-tauri/src/agent/hooks.rs` 为每个支持的 Agent hook 事件安装托管 Node 命令。命令会以 `--agent <id>` 运行 `code-pet-hook.mjs`，可用时还会带上 `--event <event>`。
+`src-tauri/src/agent/hooks.rs` 为每个已勾选的 Agent hook 事件安装托管 Node 命令。命令会以 `--agent <id>` 运行 `code-pet-hook.mjs`，可用时还会带上 `--event <event>`。
 
 Hook 脚本会把 payload 发送到 `http://127.0.0.1:47621/hook`。如果应用不可用，事件可暂存到 `~/.code-pet/spool/events.jsonl`，并在启动时回放。
+
+用户勾选的 hook 事件保存在 `settings.agents.byAgent.<agent>.hookEvents`。缺失配置时默认全部支持事件都勾选。Agent 已启用时修改勾选项会立即重写对应 Agent JSON 配置：选中的事件安装或更新托管项，未选中的事件移除 Code Pet 托管项，但保留用户自己的 hooks。
 
 ## Provider 配置
 

@@ -7,6 +7,7 @@ import {
   importPetImage,
   recentEvents,
   recordPerfEvent,
+  setAgentHookEvents,
   setLaunchAtLoginEnabled,
   tokenUsageSummary,
   updatePetImagePixelSize,
@@ -242,5 +243,33 @@ describe("launchAtLogin", () => {
 
     expect(invoke).toHaveBeenNthCalledWith(1, "get_launch_at_login_enabled");
     expect(invoke).toHaveBeenNthCalledWith(2, "set_launch_at_login_enabled", { enabled: true });
+  });
+});
+
+describe("setAgentHookEvents", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("invokes the desktop command with selected hook events", async () => {
+    const agents = [
+      {
+        id: "codex",
+        name: "Codex",
+        description: "",
+        enabled: true,
+        configPath: "/tmp/hooks.json",
+        hookEvents: ["UserPromptSubmit", "PreToolUse", "Stop"],
+        selectedHookEvents: ["UserPromptSubmit", "Stop"],
+      },
+    ];
+    vi.mocked(invoke).mockResolvedValue(agents);
+
+    await expect(setAgentHookEvents("codex", ["UserPromptSubmit", "Stop"])).resolves.toEqual(agents);
+
+    expect(invoke).toHaveBeenCalledWith("set_agent_hook_events", {
+      agentId: "codex",
+      hookEvents: ["UserPromptSubmit", "Stop"],
+    });
   });
 });

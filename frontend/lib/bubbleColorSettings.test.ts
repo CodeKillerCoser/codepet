@@ -43,6 +43,10 @@ function settingsFixture(): AppSettings {
     activityFilters: {
       titleKeywords: [],
       messageKeywords: [],
+      byAgent: {},
+    },
+    agents: {
+      byAgent: {},
     },
   };
 }

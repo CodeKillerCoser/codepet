@@ -24,6 +24,7 @@ export interface AgentView {
   enabled: boolean;
   configPath: string;
   hookEvents: string[];
+  selectedHookEvents: string[];
 }
 
 export interface PixelPetSprite {
@@ -101,11 +102,26 @@ export interface AppSettings {
     quietHoursEnd: string;
   };
   activityFilters: ActivityFilterSettings;
+  agents: AgentSettings;
 }
 
 export interface ActivityFilterSettings {
   titleKeywords: string[];
   messageKeywords: string[];
+  byAgent: Partial<Record<AgentId, ActivityKeywordFilterSettings>>;
+}
+
+export interface ActivityKeywordFilterSettings {
+  titleKeywords: string[];
+  messageKeywords: string[];
+}
+
+export interface AgentSettings {
+  byAgent: Partial<Record<AgentId, AgentPreferenceSettings>>;
+}
+
+export interface AgentPreferenceSettings {
+  hookEvents: string[];
 }
 
 export interface PetEvent {

@@ -1,5 +1,8 @@
 use code_pet_lib::agents::{agent_specs, AgentId};
-use code_pet_lib::hooks::{disable_agent_hook, enable_agent_hook, is_agent_hook_enabled};
+use code_pet_lib::hooks::{
+    disable_agent_hook, enable_agent_hook, enable_agent_hook_events, is_agent_hook_enabled,
+    is_agent_hook_enabled_for_events,
+};
 use serde_json::json;
 
 fn command_has_arg(command: &str, name: &str, value: &str) -> bool {
@@ -171,6 +174,56 @@ fn enable_codex_json_hooks_preserves_existing_config_and_is_idempotent() {
         spec.hook_events.len()
     );
     assert!(is_agent_hook_enabled(&spec, &config_path, &script_path).unwrap());
+}
+
+#[test]
+fn enable_json_agent_hook_events_installs_only_selected_events() {
+    let temp = tempfile::tempdir().unwrap();
+    let script_path = temp.path().join("code-pet-hook.mjs");
+    let config_path = temp.path().join("hooks.json");
+    let spec = agent_specs()
+        .into_iter()
+        .find(|agent| agent.id == AgentId::Codex)
+        .unwrap();
+
+    enable_agent_hook(&spec, &config_path, &script_path).unwrap();
+    enable_agent_hook_events(
+        &spec,
+        &config_path,
+        &script_path,
+        &["UserPromptSubmit".to_string(), "Stop".to_string()],
+    )
+    .unwrap();
+
+    let updated: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert!(updated["hooks"]["UserPromptSubmit"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry["hooks"][0]["command"]
+            .as_str()
+            .is_some_and(|command| command_has_arg(command, "--event", "UserPromptSubmit"))));
+    assert!(updated["hooks"]["Stop"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry["hooks"][0]["command"]
+            .as_str()
+            .is_some_and(|command| command_has_arg(command, "--event", "Stop"))));
+    assert!(updated["hooks"]["PreToolUse"]
+        .as_array()
+        .is_none_or(|entries| entries.iter().all(|entry| !entry["hooks"][0]["command"]
+            .as_str()
+            .is_some_and(|command| command.contains("code-pet-hook.mjs")))));
+    assert!(is_agent_hook_enabled_for_events(
+        &spec,
+        &config_path,
+        &script_path,
+        &["UserPromptSubmit", "Stop"],
+    )
+    .unwrap());
+    assert!(!is_agent_hook_enabled(&spec, &config_path, &script_path).unwrap());
 }
 
 #[test]

@@ -1,6 +1,7 @@
 use crate::agents::{AgentId, AgentSpec};
 use base64::Engine;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -29,7 +30,17 @@ pub fn enable_agent_hook(
     config_path: &Path,
     script_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    enable_json_hooks(spec, config_path, script_path)
+    sync_json_hooks(spec, config_path, script_path, spec.hook_events)
+}
+
+pub fn enable_agent_hook_events(
+    spec: &AgentSpec,
+    config_path: &Path,
+    script_path: &Path,
+    hook_events: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let selected_events = supported_hook_events(spec, hook_events);
+    sync_json_hooks(spec, config_path, script_path, &selected_events)
 }
 
 pub fn disable_agent_hook(
@@ -45,12 +56,24 @@ pub fn is_agent_hook_enabled(
     config_path: &Path,
     script_path: &Path,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+    is_agent_hook_enabled_for_events(spec, config_path, script_path, spec.hook_events)
+}
+
+pub fn is_agent_hook_enabled_for_events(
+    _spec: &AgentSpec,
+    config_path: &Path,
+    script_path: &Path,
+    hook_events: &[&str],
+) -> Result<bool, Box<dyn std::error::Error>> {
     if !config_path.exists() {
+        return Ok(false);
+    }
+    if hook_events.is_empty() {
         return Ok(false);
     }
 
     let root = read_json_config(config_path)?;
-    Ok(spec.hook_events.iter().all(|event| {
+    Ok(hook_events.iter().all(|event| {
         root.get("hooks")
             .and_then(|hooks| hooks.get(*event))
             .and_then(Value::as_array)
@@ -60,11 +83,16 @@ pub fn is_agent_hook_enabled(
     }))
 }
 
-fn enable_json_hooks(
+fn sync_json_hooks(
     spec: &AgentSpec,
     config_path: &Path,
     script_path: &Path,
+    selected_events: &[&str],
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if selected_events.is_empty() && !config_path.exists() {
+        return Ok(());
+    }
+
     let mut root = read_json_config(config_path)?;
     if !root.is_object() {
         root = json!({});
@@ -73,11 +101,19 @@ fn enable_json_hooks(
     if root.get("hooks").and_then(Value::as_object).is_none() {
         root["hooks"] = json!({});
     }
-    if spec.id == AgentId::Cursor && root.get("version").is_none() {
+    if spec.id == AgentId::Cursor && root.get("version").is_none() && !selected_events.is_empty() {
         root["version"] = json!(1);
     }
 
+    let selected_events = selected_events.iter().copied().collect::<HashSet<_>>();
     for event in spec.hook_events {
+        if !selected_events.contains(event) {
+            if let Some(entries) = root["hooks"].get_mut(*event).and_then(Value::as_array_mut) {
+                entries.retain(|entry| !is_managed_json_entry(entry, script_path));
+            }
+            continue;
+        }
+
         if root["hooks"].get(*event).and_then(Value::as_array).is_none() {
             root["hooks"][*event] = json!([]);
         }
@@ -119,6 +155,15 @@ fn disable_json_hooks(
     }
     write_json_config(config_path, &root)?;
     Ok(())
+}
+
+fn supported_hook_events<'a>(spec: &'a AgentSpec, hook_events: &[String]) -> Vec<&'a str> {
+    let requested = hook_events.iter().map(String::as_str).collect::<HashSet<_>>();
+    spec.hook_events
+        .iter()
+        .copied()
+        .filter(|event| requested.contains(*event))
+        .collect()
 }
 
 fn read_json_config(config_path: &Path) -> Result<Value, Box<dyn std::error::Error>> {

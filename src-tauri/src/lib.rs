@@ -67,6 +67,23 @@ fn set_agent_enabled(
 }
 
 #[tauri::command]
+fn set_agent_hook_events(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+    agent_id: String,
+    hook_events: Vec<String>,
+) -> Result<Vec<AgentView>, String> {
+    let id = AgentId::from_str(&agent_id)?;
+    let views = agent_control::set_agent_hook_events(id, hook_events)
+        .map_err(|error| error.to_string())?;
+    state.set_agents(views.clone());
+    if let Ok(settings) = load_app_settings() {
+        let _ = app.emit("settings-updated", settings);
+    }
+    Ok(views)
+}
+
+#[tauri::command]
 fn get_app_settings() -> Result<AppSettings, String> {
     load_app_settings().map_err(|error| error.to_string())
 }
@@ -356,6 +373,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_agents,
             set_agent_enabled,
+            set_agent_hook_events,
             get_app_settings,
             update_app_settings,
             get_launch_at_login_enabled,

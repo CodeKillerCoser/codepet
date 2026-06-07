@@ -1,5 +1,5 @@
 import { activityCapabilitiesFor, type ActivityCapabilities } from "./agentInteractions";
-import type { ActivityFilterSettings, ActivitySource, PetEvent, TaskStatus } from "./types";
+import type { ActivityFilterSettings, ActivityKeywordFilterSettings, ActivitySource, PetEvent, TaskStatus } from "./types";
 
 const inactiveStatuses = new Set<TaskStatus>(["idle"]);
 const staleActivityStatuses = new Set<TaskStatus>(["thinking", "running"]);
@@ -44,8 +44,9 @@ export function updateActivityList(
 }
 
 export function matchesActivityFilters(event: PetEvent, filters?: ActivityFilterSettings): boolean {
-  const titleKeywords = normalizedKeywords(filters?.titleKeywords);
-  const messageKeywords = normalizedKeywords(filters?.messageKeywords);
+  const agentFilters = activityFiltersForEvent(event, filters);
+  const titleKeywords = normalizedKeywords(agentFilters?.titleKeywords);
+  const messageKeywords = normalizedKeywords(agentFilters?.messageKeywords);
   if (titleKeywords.length === 0 && messageKeywords.length === 0) {
     return false;
   }
@@ -53,6 +54,26 @@ export function matchesActivityFilters(event: PetEvent, filters?: ActivityFilter
   const titleText = normalizedSearchText(`${event.title}\n${taskTitleFor(event)}`);
   const messageText = normalizedSearchText(event.message);
   return titleKeywords.some((keyword) => titleText.includes(keyword)) || messageKeywords.some((keyword) => messageText.includes(keyword));
+}
+
+function activityFiltersForEvent(event: PetEvent, filters?: ActivityFilterSettings): ActivityKeywordFilterSettings | undefined {
+  if (!filters) {
+    return undefined;
+  }
+
+  const byAgent = filters.byAgent ?? {};
+  const hasAgentFilters = Object.keys(byAgent).length > 0;
+  const agentFilters = byAgent[event.provider];
+  if (agentFilters) {
+    return agentFilters;
+  }
+  if (!hasAgentFilters) {
+    return {
+      titleKeywords: filters.titleKeywords ?? [],
+      messageKeywords: filters.messageKeywords ?? [],
+    };
+  }
+  return undefined;
 }
 
 function applyActivityEvent(

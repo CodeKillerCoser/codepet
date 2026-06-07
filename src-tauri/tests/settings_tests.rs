@@ -1,3 +1,4 @@
+use code_pet_lib::agents::AgentId;
 use code_pet_lib::settings::{AppSettings, ThemeChoice, WhipReactionSound};
 
 #[test]
@@ -15,6 +16,8 @@ fn settings_default_to_system_theme() {
     assert!(settings.pet.custom_whip_reaction_sound_path.is_none());
     assert!(settings.activity_filters.title_keywords.is_empty());
     assert!(settings.activity_filters.message_keywords.is_empty());
+    assert!(settings.activity_filters.by_agent.is_empty());
+    assert!(settings.agents.by_agent.is_empty());
 }
 
 #[test]
@@ -70,6 +73,57 @@ fn settings_read_activity_filter_keywords() {
 
     assert_eq!(settings.activity_filters.title_keywords, vec!["memory summary", "生成标题"]);
     assert_eq!(settings.activity_filters.message_keywords, vec!["Recent Codex threads", "MEMORY.md"]);
+}
+
+#[test]
+fn settings_read_per_agent_activity_filters_and_hook_preferences() {
+    let settings: AppSettings = serde_json::from_str(
+        r##"{
+          "activityFilters": {
+            "byAgent": {
+              "codex": {
+                "titleKeywords": ["memory summary"],
+                "messageKeywords": ["Recent Codex threads"]
+              },
+              "claude": {
+                "titleKeywords": ["transcript"],
+                "messageKeywords": []
+              }
+            }
+          },
+          "agents": {
+            "byAgent": {
+              "codex": {
+                "hookEvents": ["UserPromptSubmit", "Stop"]
+              }
+            }
+          }
+        }"##,
+    )
+    .unwrap();
+
+    let codex_filters = settings
+        .activity_filters
+        .by_agent
+        .get(&AgentId::Codex)
+        .unwrap();
+    let claude_filters = settings
+        .activity_filters
+        .by_agent
+        .get(&AgentId::Claude)
+        .unwrap();
+    assert_eq!(codex_filters.title_keywords, vec!["memory summary"]);
+    assert_eq!(codex_filters.message_keywords, vec!["Recent Codex threads"]);
+    assert_eq!(claude_filters.title_keywords, vec!["transcript"]);
+    assert_eq!(
+        settings
+            .agents
+            .by_agent
+            .get(&AgentId::Codex)
+            .unwrap()
+            .hook_events,
+        vec!["UserPromptSubmit", "Stop"]
+    );
 }
 
 #[test]

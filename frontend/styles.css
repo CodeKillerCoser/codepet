@@ -356,7 +356,8 @@ select:focus-visible {
   display: grid;
   grid-template-areas:
     "title meta controls"
-    "events events events";
+    "events events events"
+    "filters filters filters";
   grid-template-columns: minmax(180px, 1.1fr) minmax(210px, 0.9fr) auto;
   gap: 12px 16px;
   align-items: start;
@@ -470,13 +471,41 @@ select:focus-visible {
   min-width: 0;
 }
 
-.event-row span {
+.hook-event-check {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 7px;
   border: 1px solid var(--app-border);
   border-radius: 6px;
-  padding: 5px 7px;
+  padding: 5px 8px;
   color: var(--app-muted);
   background: var(--app-surface-strong);
   font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.hook-event-check.active {
+  border-color: color-mix(in srgb, var(--app-accent) 48%, var(--app-border));
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-accent) 12%, var(--app-surface-strong));
+}
+
+.hook-event-check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+}
+
+.agent-filter-panel {
+  grid-area: filters;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--app-surface) 58%, transparent);
 }
 
 .usage-workspace {
@@ -1112,6 +1141,10 @@ input[type="time"] {
   color: var(--app-text);
   font-size: var(--font-size-xl);
   font-weight: var(--font-weight-bold);
+}
+
+.filter-card-head.compact h3 {
+  font-size: var(--font-size-md);
 }
 
 .filter-clear-button,
@@ -2546,6 +2579,7 @@ input[type="time"] {
       "title"
       "meta"
       "events"
+      "filters"
       "controls";
     grid-template-columns: 1fr;
   }
