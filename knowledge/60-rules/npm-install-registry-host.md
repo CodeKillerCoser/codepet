@@ -28,3 +28,4 @@
 - `npm i`
 - 使用空临时 cache 执行 `npm ci --cache <temp-cache> --prefer-online`
 - `rg "registry\.anpm\.alibaba-inc\.com" package-lock.json` 应无结果
+- `rg "mirrors\.cloud\.tencent\.com" package-lock.json .npmrc` 应无结果；2026-06-08 GitHub Actions 在 macOS 与 Windows runner 上曾因 `zimmerframe` 的腾讯镜像 tarball 404 导致 `npm ci` 失败。
