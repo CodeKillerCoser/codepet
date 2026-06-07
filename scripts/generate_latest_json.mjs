@@ -62,8 +62,12 @@ function releaseAsset(file) {
 
   return {
     signature: readFileSync(signaturePath, "utf8").trim(),
-    url: `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(basename(file))}`,
+    url: `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(githubReleaseAssetName(file))}`,
   };
+}
+
+function githubReleaseAssetName(file) {
+  return basename(file).replaceAll(" ", ".");
 }
 
 function findArtifact(files, predicate, description) {

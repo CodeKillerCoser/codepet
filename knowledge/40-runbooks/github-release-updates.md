@@ -38,6 +38,8 @@ workflow 完成后，Release 应包含：
 
 macOS workflow 需要使用 `--bundles app,dmg`。只构建 `dmg` 时 Release 里会有安装包，但不会生成 updater 使用的 `.app.tar.gz`。
 
+GitHub Release 上传资产时会把文件名中的空格规范化为 `.`，`latest.json` 里的 URL 必须使用规范化后的资产名。
+
 ## 验证
 
 - 本地语法检查：`node --check scripts/generate_latest_json.mjs` 和 `node --check scripts/publish_github_release.mjs`。
