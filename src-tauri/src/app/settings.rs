@@ -34,6 +34,14 @@ pub struct DataSettings {
     pub data_directory: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppDataDirectoryTargetStatus {
+    pub is_current: bool,
+    pub is_empty: bool,
+    pub requires_clear: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppearanceSettings {
@@ -438,19 +446,48 @@ pub fn current_app_data_dir() -> PathBuf {
         .unwrap_or_else(|_| default_app_data_dir())
 }
 
-pub fn update_app_data_directory(path: Option<String>) -> io::Result<AppSettings> {
+pub fn app_data_directory_target_status(path: String) -> io::Result<AppDataDirectoryTargetStatus> {
+    let settings = load_app_settings()?;
+    let current_data_dir = configured_app_data_dir(&settings);
+    let target_data_dir = normalized_required_app_data_dir(path)?;
+    if same_directory(&current_data_dir, &target_data_dir) {
+        return Ok(AppDataDirectoryTargetStatus {
+            is_current: true,
+            is_empty: data_directory_is_empty(&target_data_dir)?,
+            requires_clear: false,
+        });
+    }
+    if migration_directories_overlap(&current_data_dir, &target_data_dir) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "new data directory cannot overlap the current data directory",
+        ));
+    }
+    let is_empty = data_directory_is_empty(&target_data_dir)?;
+    Ok(AppDataDirectoryTargetStatus {
+        is_current: false,
+        is_empty,
+        requires_clear: !is_empty,
+    })
+}
+
+pub fn update_app_data_directory(
+    path: Option<String>,
+    clear_target: bool,
+) -> io::Result<AppSettings> {
     let mut settings = load_app_settings()?;
     let old_data_dir = configured_app_data_dir(&settings);
-    settings.data.data_directory = path
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+    settings.data.data_directory = normalized_optional_app_data_dir(path);
     let new_data_dir = configured_app_data_dir(&settings);
     if !same_directory(&old_data_dir, &new_data_dir) {
-        if destination_inside_source(&old_data_dir, &new_data_dir) {
+        if migration_directories_overlap(&old_data_dir, &new_data_dir) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "new data directory cannot be inside the current data directory",
+                "new data directory cannot overlap the current data directory",
             ));
+        }
+        if settings.data.data_directory.is_some() {
+            prepare_app_data_directory_target(&new_data_dir, clear_target)?;
         }
         copy_app_data_directory_contents(&old_data_dir, &new_data_dir)?;
         rewrite_default_pet_library_paths(&mut settings, &old_data_dir, &new_data_dir);
@@ -459,6 +496,66 @@ pub fn update_app_data_directory(path: Option<String>) -> io::Result<AppSettings
     }
     save_app_settings(&settings)?;
     Ok(settings)
+}
+
+fn normalized_optional_app_data_dir(path: Option<String>) -> Option<String> {
+    path.map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn normalized_required_app_data_dir(path: String) -> io::Result<PathBuf> {
+    normalized_optional_app_data_dir(Some(path))
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "data directory is empty"))
+}
+
+fn prepare_app_data_directory_target(destination: &Path, clear_target: bool) -> io::Result<()> {
+    if !destination.exists() {
+        fs::create_dir_all(destination)?;
+        return Ok(());
+    }
+    if !fs::metadata(destination)?.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "data directory target must be a directory",
+        ));
+    }
+    if data_directory_is_empty(destination)? {
+        return Ok(());
+    }
+    if !clear_target {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "selected data directory is not empty",
+        ));
+    }
+    clear_directory_contents(destination)
+}
+
+fn data_directory_is_empty(path: &Path) -> io::Result<bool> {
+    if !path.exists() {
+        return Ok(true);
+    }
+    if !fs::metadata(path)?.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "data directory target must be a directory",
+        ));
+    }
+    Ok(fs::read_dir(path)?.next().transpose()?.is_none())
+}
+
+fn clear_directory_contents(path: &Path) -> io::Result<()> {
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let child = entry.path();
+        if entry.file_type()?.is_dir() {
+            fs::remove_dir_all(child)?;
+        } else {
+            fs::remove_file(child)?;
+        }
+    }
+    Ok(())
 }
 
 fn copy_app_data_directory_contents(source: &Path, destination: &Path) -> io::Result<()> {
@@ -547,12 +644,12 @@ fn same_directory(left: &Path, right: &Path) -> bool {
     }
 }
 
-fn destination_inside_source(source: &Path, destination: &Path) -> bool {
-    if destination.starts_with(source) {
+fn migration_directories_overlap(current: &Path, target: &Path) -> bool {
+    if target.starts_with(current) || current.starts_with(target) {
         return true;
     }
-    match (source.canonicalize(), destination.canonicalize()) {
-        (Ok(source), Ok(destination)) => destination.starts_with(source),
+    match (current.canonicalize(), target.canonicalize()) {
+        (Ok(current), Ok(target)) => target.starts_with(&current) || current.starts_with(&target),
         _ => false,
     }
 }
@@ -598,11 +695,52 @@ mod tests {
     }
 
     #[test]
-    fn destination_inside_source_detects_nested_target() {
-        let source = PathBuf::from("data");
+    fn migration_directories_overlap_detects_nested_paths() {
+        let current = PathBuf::from("data");
 
-        assert!(destination_inside_source(&source, &source.join("nested")));
-        assert!(!destination_inside_source(&source, Path::new("other-data")));
+        assert!(migration_directories_overlap(
+            &current,
+            &current.join("nested")
+        ));
+        assert!(migration_directories_overlap(
+            &current.join("nested"),
+            &current
+        ));
+        assert!(!migration_directories_overlap(
+            &current,
+            Path::new("other-data")
+        ));
+    }
+
+    #[test]
+    fn prepare_target_rejects_non_empty_directory_without_confirmation() -> io::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let destination = temp.path().join("target");
+        fs::create_dir_all(&destination)?;
+        fs::write(destination.join("existing.txt"), "keep")?;
+
+        let error = prepare_app_data_directory_target(&destination, false).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            fs::read_to_string(destination.join("existing.txt"))?,
+            "keep"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_target_clears_non_empty_directory_after_confirmation() -> io::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let destination = temp.path().join("target");
+        fs::create_dir_all(destination.join("nested"))?;
+        fs::write(destination.join("existing.txt"), "remove")?;
+        fs::write(destination.join("nested").join("child.txt"), "remove")?;
+
+        prepare_app_data_directory_target(&destination, true)?;
+
+        assert!(data_directory_is_empty(&destination)?);
+        Ok(())
     }
 
     #[test]

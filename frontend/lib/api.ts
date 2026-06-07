@@ -9,6 +9,12 @@ export interface PerfEventPayload {
   error?: string;
 }
 
+export interface AppDataDirectoryTargetStatus {
+  isCurrent: boolean;
+  isEmpty: boolean;
+  requiresClear: boolean;
+}
+
 export async function listAgents(): Promise<AgentView[]> {
   return invoke<AgentView[]>("list_agents");
 }
@@ -41,8 +47,12 @@ export async function appDataDirectory(): Promise<string> {
   return invoke<string>("app_data_directory");
 }
 
-export async function setAppDataDirectory(path?: string | null): Promise<AppSettings> {
-  return invoke<AppSettings>("set_app_data_directory", { path });
+export async function appDataDirectoryTargetStatus(path: string): Promise<AppDataDirectoryTargetStatus> {
+  return invoke<AppDataDirectoryTargetStatus>("app_data_directory_target_status", { path });
+}
+
+export async function setAppDataDirectory(path?: string | null, clearTarget = false): Promise<AppSettings> {
+  return invoke<AppSettings>("set_app_data_directory", { path, clearTarget });
 }
 
 export async function getLaunchAtLoginEnabled(): Promise<boolean> {

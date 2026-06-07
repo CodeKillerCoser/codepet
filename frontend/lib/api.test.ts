@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
   appDataDirectory,
+  appDataDirectoryTargetStatus,
   checkAppUpdate,
   cutOutImageSubject,
   deletePet,
@@ -125,17 +126,32 @@ describe("appDataDirectory", () => {
     expect(invoke).toHaveBeenCalledWith("app_data_directory");
   });
 
+  it("checks whether the selected app data directory needs clearing", async () => {
+    const status = { isCurrent: false, isEmpty: false, requiresClear: true };
+    vi.mocked(invoke).mockResolvedValue(status);
+
+    await expect(appDataDirectoryTargetStatus("/tmp/code-pet")).resolves.toEqual(status);
+
+    expect(invoke).toHaveBeenCalledWith("app_data_directory_target_status", { path: "/tmp/code-pet" });
+  });
+
   it("updates or resets the app data directory", async () => {
     const settings = {
       data: { dataDirectory: "/tmp/code-pet" },
     };
     vi.mocked(invoke).mockResolvedValue(settings);
 
-    await expect(setAppDataDirectory("/tmp/code-pet")).resolves.toEqual(settings);
+    await expect(setAppDataDirectory("/tmp/code-pet", true)).resolves.toEqual(settings);
     await setAppDataDirectory(null);
 
-    expect(invoke).toHaveBeenNthCalledWith(1, "set_app_data_directory", { path: "/tmp/code-pet" });
-    expect(invoke).toHaveBeenNthCalledWith(2, "set_app_data_directory", { path: null });
+    expect(invoke).toHaveBeenNthCalledWith(1, "set_app_data_directory", {
+      path: "/tmp/code-pet",
+      clearTarget: true,
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "set_app_data_directory", {
+      path: null,
+      clearTarget: false,
+    });
   });
 });
 

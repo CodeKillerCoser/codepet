@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { open } from "@tauri-apps/plugin-dialog";
+  import { confirm as confirmDialog, open } from "@tauri-apps/plugin-dialog";
   import { LogicalPosition } from "@tauri-apps/api/dpi";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -29,7 +29,7 @@
     Volume2,
   } from "@lucide/svelte";
   import { onMount } from "svelte";
-  import { appDataDirectory, checkAppUpdate, collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listAgents, listPets, recentEvents, recordPerfEvent, selectPet, setAgentEnabled, setAgentHookEvents, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { appDataDirectory, appDataDirectoryTargetStatus, checkAppUpdate, collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listAgents, listPets, recentEvents, recordPerfEvent, selectPet, setAgentEnabled, setAgentHookEvents, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
   import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
@@ -500,18 +500,39 @@
   async function chooseAppDataDirectory() {
     const selected = await open({ directory: true, multiple: false });
     if (typeof selected !== "string") return;
-    await updateAppDataDirectory(selected);
+    busyAppDataDirectory = true;
+    error = "";
+    let clearTarget = false;
+    try {
+      const targetStatus = await appDataDirectoryTargetStatus(selected);
+      if (targetStatus.requiresClear) {
+        const confirmed = await confirmDialog("所选目录已有内容。继续会先清空该目录，再复制当前 Code Pet 数据。是否继续？", {
+          title: "清空数据目录",
+          kind: "warning",
+          okLabel: "清空并使用",
+          cancelLabel: "取消",
+        });
+        if (!confirmed) return;
+        clearTarget = true;
+      }
+    } catch (currentError) {
+      error = String(currentError);
+      return;
+    } finally {
+      busyAppDataDirectory = false;
+    }
+    await updateAppDataDirectory(selected, clearTarget);
   }
 
   async function resetAppDataDirectory() {
     await updateAppDataDirectory(null);
   }
 
-  async function updateAppDataDirectory(path: string | null) {
+  async function updateAppDataDirectory(path: string | null, clearTarget = false) {
     busyAppDataDirectory = true;
     error = "";
     try {
-      settings = normalizeSettings(await setAppDataDirectory(path));
+      settings = normalizeSettings(await setAppDataDirectory(path, clearTarget));
       appDataDir = await appDataDirectory();
       petLibrary = await listPets();
       usage = await tokenUsageSummary();
@@ -1458,7 +1479,7 @@
                 </div>
               </div>
               <p class="setting-note">
-                {appDataRestartPending ? "已保存并复制原数据，重启后完全生效。" : "修改后会复制原数据，保存完成后请重启。"}
+                {appDataRestartPending ? "已保存并复制原数据，重启后完全生效。" : "所选目录需为空；若非空会先确认清空，再复制原数据，保存后请重启。"}
               </p>
             </div>
             <label class="check">
