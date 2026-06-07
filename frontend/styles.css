@@ -1614,6 +1614,8 @@ input[type="time"] {
 
 .status-pill.replying {
   z-index: 6;
+  min-height: 154px;
+  align-items: stretch;
 }
 
 .status-content {

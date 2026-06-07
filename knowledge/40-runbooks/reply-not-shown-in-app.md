@@ -18,6 +18,7 @@
 2. 确认事件有非空 session id。
 3. 确认 provider 是 Codex。Qoder 现有会话回复目前是故意不支持。
 4. 对 Codex，检查 `src-tauri/src/agent/codex_app_server.rs` 行为和 app-server 启动路径。
+   - 如果日志出现 `failed to start codex app-server: program not found`，优先检查 Windows 下 Codex binary 查找是否覆盖 `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`，或临时设置 `CODE_PET_CODEX_BIN`。
 5. 确认回复路径没有与审批处理路径混淆。
 
 ## 修复后验证

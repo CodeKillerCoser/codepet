@@ -4,8 +4,8 @@ use crate::settings::{configured_app_data_dir, load_app_settings, AppSettings};
 use crate::state::{ApprovalDecision, SharedState, COLLECTOR_PORT};
 use crate::title_resolver::enrich_event_title;
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::http::{header, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
@@ -39,7 +39,7 @@ pub async fn run_collector(
         app_handle,
     };
     let app = Router::new()
-        .route("/health", get(|| async { Json(json!({ "ok": true })) }))
+        .route("/health", get(health))
         .route("/events", get(recent_events))
         .route("/hook", post(receive_hook))
         .route("/approvals/:event_id/wait", get(wait_for_approval))
@@ -49,6 +49,10 @@ pub async fn run_collector(
     Ok(())
 }
 
+async fn health() -> Response {
+    json_utf8_response(json!({ "ok": true }))
+}
+
 pub fn replay_default_spooled_events(app_state: &SharedState) -> Result<usize, std::io::Error> {
     let spool_path = load_app_settings()
         .map(|settings| spool_path_for_settings(&settings))
@@ -56,7 +60,10 @@ pub fn replay_default_spooled_events(app_state: &SharedState) -> Result<usize, s
     replay_spooled_events(app_state, &spool_path)
 }
 
-pub fn replay_spooled_events(app_state: &SharedState, spool_path: &Path) -> Result<usize, std::io::Error> {
+pub fn replay_spooled_events(
+    app_state: &SharedState,
+    spool_path: &Path,
+) -> Result<usize, std::io::Error> {
     if !spool_path.exists() {
         return Ok(0);
     }
@@ -107,18 +114,18 @@ fn legacy_default_spool_path() -> PathBuf {
         .join("events.jsonl")
 }
 
-async fn recent_events(State(state): State<CollectorState>) -> impl IntoResponse {
-    ([("Access-Control-Allow-Origin", "*")], Json(state.app_state.recent_events()))
+async fn recent_events(State(state): State<CollectorState>) -> Response {
+    json_utf8_response(state.app_state.recent_events())
 }
 
 async fn receive_hook(
     State(state): State<CollectorState>,
     Json(incoming): Json<IncomingHook>,
-) -> Result<Json<Option<PetEvent>>, (StatusCode, String)> {
+) -> Result<Response, (StatusCode, String)> {
     let agent = AgentId::from_str(&incoming.agent)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
     if !state.app_state.agent_enabled(agent) {
-        return Ok(Json(None));
+        return Ok(json_utf8_response(None::<PetEvent>));
     }
     let event = normalize_hook_payload(agent, incoming.payload)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
@@ -128,7 +135,21 @@ async fn receive_hook(
     let _ = state.app_handle.emit("pet-event", &frontend_event);
     refresh_token_usage_if_needed(&state.app_handle, event.clone());
     watch_claude_transcript_if_needed(&state, &event);
-    Ok(Json(Some(frontend_event)))
+    Ok(json_utf8_response(Some(frontend_event)))
+}
+
+fn json_utf8_response<T: Serialize>(value: T) -> Response {
+    let mut response = Json(value).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json; charset=utf-8"),
+    );
+    response
 }
 
 fn refresh_token_usage_if_needed(app_handle: &AppHandle, event: PetEvent) {
@@ -141,7 +162,9 @@ fn refresh_token_usage_if_needed(app_handle: &AppHandle, event: PetEvent) {
 }
 
 fn watch_claude_transcript_if_needed(state: &CollectorState, event: &PetEvent) {
-    if event.provider != AgentId::Claude || !matches!(event.status, TaskStatus::Thinking | TaskStatus::Running) {
+    if event.provider != AgentId::Claude
+        || !matches!(event.status, TaskStatus::Thinking | TaskStatus::Running)
+    {
         return;
     }
     let Some(transcript_path) = crate::claude_transcript::transcript_path_from_event(event) else {
@@ -178,8 +201,31 @@ async fn wait_for_approval(
     State(state): State<CollectorState>,
     AxumPath(event_id): AxumPath<String>,
     Query(query): Query<WaitApprovalQuery>,
-) -> Json<WaitApprovalResponse> {
-    let timeout = std::time::Duration::from_millis(query.timeout_ms.unwrap_or(590_000).min(590_000));
+) -> Response {
+    let timeout =
+        std::time::Duration::from_millis(query.timeout_ms.unwrap_or(590_000).min(590_000));
     let decision = state.app_state.wait_for_approval(&event_id, timeout).await;
-    Json(WaitApprovalResponse { decision })
+    json_utf8_response(WaitApprovalResponse { decision })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collector_json_responses_declare_utf8() {
+        let response = json_utf8_response(json!({ "title": "任务完成" }));
+
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/json; charset=utf-8"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
+            "*"
+        );
+    }
 }

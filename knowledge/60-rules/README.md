@@ -5,9 +5,14 @@
 ## 当前规约
 
 - `bug-to-rule-promotion.md`
+- `codex-thread-title-source.md`
 - `conditional-render-focus.md`
+- `collector-json-utf8.md`
 - `module-reorganization.md`
+- `npm-install-registry-host.md`
 - `pet-window-click-through.md`
+- `transcript-path-display.md`
+- `vite-realpath-root.md`
 
 ## 升级标准
 

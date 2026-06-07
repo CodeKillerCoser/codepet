@@ -4,7 +4,7 @@
 
 回复模式由 `frontend/PetApp.svelte` 中的 `replyingToId` 和 `replyText` 控制。
 
-打开后，textarea 会获得焦点，光标会移动到末尾，编辑器高度根据 `scrollHeight` 调整。最大高度为五行，计算依据包括 computed line height、padding 和 border。
+打开后，textarea 会获得焦点，光标会移动到末尾，编辑器高度根据 `scrollHeight` 调整。最大高度为五行，计算依据包括 computed line height、padding 和 border。回复态气泡需要保留显式最小高度和 stretch 对齐，让 textarea、发送/取消按钮与 footer 都被气泡包住。
 
 在 macOS 上，桌宠悬浮 panel 只有在需要时才允许成为 key window，使回复 textarea 可以接收键盘焦点。
 
@@ -18,10 +18,11 @@
 
 - 条件渲染可能让 textarea 在点击处理之后才挂载；focus 必须发生在 DOM 更新之后。
 - 列表中复用一个 `replyTextarea` binding 只有在同一时间只有一个卡片进入回复模式时才安全。
-- 自动调整高度不能迫使整个任务卡片布局依赖固定高度。
+- 自动调整 textarea 高度时，不能只依赖内容自然撑开气泡；回复态卡片必须有覆盖初始编辑器和按钮的最小高度。
 
 ## 验证
 
 - 人工点击回复，确认光标出现在编辑器里。
+- 人工点击回复，确认气泡高度包住 textarea、发送/取消按钮和 footer。
 - 输入超过五行，确认编辑器内部滚动。
 - 取消回复，确认 footer 操作恢复。

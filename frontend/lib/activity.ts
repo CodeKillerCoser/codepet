@@ -174,7 +174,7 @@ function latestActiveActivityKeyForProvider(activities: Map<string, PetEvent>, p
 }
 
 function isTranscriptPath(value: string): boolean {
-  return /\/\.(codex|claude)\/.+\.jsonl$/.test(value);
+  return /(^|[\\/])\.(codex|claude)[\\/].+\.jsonl$/i.test(value);
 }
 
 function isLifecycleOnlySessionStart(event: PetEvent): boolean {
@@ -249,13 +249,13 @@ export function cardTitle(event: PetEvent): string {
 }
 
 export function cardMessage(event: PetEvent): string {
-  if (event.message && event.message !== cardTitle(event)) {
+  if (event.message && event.message !== cardTitle(event) && !isTranscriptPath(event.message)) {
     return event.message;
   }
   if (event.toolName) {
     return `工具：${event.toolName}`;
   }
-  if (event.message) {
+  if (event.message && !isTranscriptPath(event.message)) {
     return event.message;
   }
   return statusLabel(event.status);
@@ -347,7 +347,7 @@ function taskTitleFor(event: PetEvent): string {
   if (isTranscriptPath(event.title)) {
     return statusLabel(event.status);
   }
-  if (event.message && event.message !== event.title && !isTranscriptPath(event.message) && genericActivityTitles.has(event.title)) {
+  if (shouldUseMessageAsTitle(event)) {
     return event.message;
   }
   return event.title;
@@ -355,4 +355,14 @@ function taskTitleFor(event: PetEvent): string {
 
 function authoritativeTitle(event: PetEvent): string | null {
   return genericActivityTitles.has(event.title) || isTranscriptPath(event.title) ? null : event.title;
+}
+
+function shouldUseMessageAsTitle(event: PetEvent): boolean {
+  return Boolean(
+    event.message &&
+      event.message !== event.title &&
+      !isTranscriptPath(event.message) &&
+      genericActivityTitles.has(event.title) &&
+      !terminalActivityStatuses.has(event.status),
+  );
 }

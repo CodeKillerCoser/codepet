@@ -1,4 +1,7 @@
-use code_pet_lib::title_resolver::{resolve_claude_title_from_projects, resolve_qoder_title_from_projects};
+use code_pet_lib::title_resolver::{
+    resolve_claude_title_from_projects, resolve_codex_title_from_session_index,
+    resolve_qoder_title_from_projects,
+};
 use std::fs;
 use tempfile::tempdir;
 
@@ -47,4 +50,23 @@ fn ignores_qoder_placeholder_titles() {
     let title = resolve_qoder_title_from_projects(dir.path(), "qoder-placeholder");
 
     assert_eq!(title, None);
+}
+
+#[test]
+fn resolves_codex_title_from_session_index_thread_name() {
+    let dir = tempdir().unwrap();
+    let session_index = dir.path().join("session_index.jsonl");
+    fs::write(
+        &session_index,
+        [
+            r#"{"id":"other-session","thread_name":"其他会话"}"#,
+            r#"{"id":"codex-session","thread_name":"修复透明区鼠标透传","updated_at":"2026-06-06T06:28:54Z"}"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+
+    let title = resolve_codex_title_from_session_index(&session_index, "codex-session");
+
+    assert_eq!(title.as_deref(), Some("修复透明区鼠标透传"));
 }

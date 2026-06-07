@@ -218,6 +218,27 @@ describe("activeActivities", () => {
     expect(activities[0].message).toBe("排查桌宠刷新");
   });
 
+  it("keeps the prompt title when later Windows tool events only carry transcript paths", () => {
+    const activities = activeActivities(
+      [
+        event({ id: "prompt", sessionId: "codex-a", message: "继续修复乱码", status: "thinking", createdAt: "2026-05-26T06:00:00.000Z" }),
+        event({
+          id: "tool",
+          sessionId: "codex-a",
+          message: String.raw`\\?\E:\.codex\sessions\2026\06\06\rollout.jsonl`,
+          status: "running",
+          createdAt: "2026-05-26T06:01:00.000Z",
+        }),
+      ],
+      4,
+      new Date("2026-05-26T06:02:00.000Z"),
+    );
+
+    expect(activities[0].id).toBe("tool");
+    expect(activities[0].title).toBe("继续修复乱码");
+    expect(activities[0].message).toBe("继续修复乱码");
+  });
+
   it("keeps the prompt title when Claude completion title is a transcript path", () => {
     const activities = activeActivities(
       [
@@ -585,15 +606,37 @@ describe("card display", () => {
     expect(cardMeta(activity)).toBe(`codex · 任务完成 · ${cardEndTime(activity)}`);
   });
 
-  it("uses the message as the visible title when hook title is generic", () => {
+  it("uses the prompt message as the visible title while a generic task is active", () => {
     const activity = event({
-      status: "done",
+      status: "thinking",
       title: "任务开始",
       message: "hello一下",
     });
 
     expect(cardTitle(activity)).toBe("hello一下");
     expect(cardMessage(activity)).toBe("hello一下");
+  });
+
+  it("does not use a terminal assistant summary as the visible title", () => {
+    const activity = event({
+      status: "done",
+      title: "任务完成",
+      message: "修好了。根因确认是 Collector 返回的 JSON 字节本身是 UTF-8 正常的。",
+    });
+
+    expect(cardTitle(activity)).toBe("任务完成");
+    expect(cardMessage(activity)).toBe("修好了。根因确认是 Collector 返回的 JSON 字节本身是 UTF-8 正常的。");
+  });
+
+  it("does not render Windows transcript paths as card title or message", () => {
+    const activity = event({
+      status: "running",
+      title: "正在执行工具",
+      message: String.raw`\\?\E:\.codex\sessions\2026\06\06\rollout.jsonl`,
+    });
+
+    expect(cardTitle(activity)).toBe("正在执行工具");
+    expect(cardMessage(activity)).toBe("正在执行");
   });
 
   it("marks terminal-sourced agent cards as cli in the footer", () => {

@@ -69,34 +69,13 @@ describe("recentEvents", () => {
     expect(fetch).toHaveBeenCalledWith("http://127.0.0.1:47621/events");
   });
 
-  it("checks the collector endpoint when Tauri IPC returns an empty startup snapshot", async () => {
-    const events = [event()];
+  it("keeps the Tauri snapshot when desktop IPC succeeds with no events", async () => {
     vi.mocked(invoke).mockResolvedValue([]);
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => events,
-    }));
-
-    await expect(recentEvents()).resolves.toEqual(events);
-
-    expect(fetch).toHaveBeenCalledWith("http://127.0.0.1:47621/events");
-  });
-
-  it("keeps the empty Tauri snapshot when the collector has no events yet", async () => {
-    vi.mocked(invoke).mockResolvedValue([]);
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => [],
-    }));
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("collector should not be used")));
 
     await expect(recentEvents()).resolves.toEqual([]);
-  });
 
-  it("keeps the empty Tauri snapshot when the collector is unavailable", async () => {
-    vi.mocked(invoke).mockResolvedValue([]);
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("collector unavailable")));
-
-    await expect(recentEvents()).resolves.toEqual([]);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("falls back to the collector endpoint when Tauri IPC stalls", async () => {

@@ -359,7 +359,11 @@ fn argument_value(value: Option<&Value>) -> Option<Value> {
 }
 
 fn is_transcript_path(value: &str) -> bool {
-    value.ends_with(".jsonl") && (value.contains("/.codex/") || value.contains("/.claude/"))
+    value.ends_with(".jsonl")
+        && (value.contains("/.codex/")
+            || value.contains("/.claude/")
+            || value.contains("\\.codex\\")
+            || value.contains("\\.claude\\"))
 }
 
 fn file_len(path: &Path) -> io::Result<u64> {

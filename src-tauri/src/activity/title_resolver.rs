@@ -20,8 +20,27 @@ pub fn resolve_external_title(provider: AgentId, session_id: &str) -> Option<Str
     match provider {
         AgentId::Claude => resolve_claude_title_from_projects(&home.join(".claude").join("projects"), session_id),
         AgentId::Qoder => resolve_qoder_title_from_projects(&home.join(".qoder").join("projects"), session_id),
-        AgentId::Codex | AgentId::Cursor => None,
+        AgentId::Codex => resolve_codex_title_from_session_index(&home.join(".codex").join("session_index.jsonl"), session_id),
+        AgentId::Cursor => None,
     }
+}
+
+pub fn resolve_codex_title_from_session_index(session_index_path: &Path, session_id: &str) -> Option<String> {
+    let text = fs::read_to_string(session_index_path).ok()?;
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let Ok(item) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if item.get("id").and_then(Value::as_str) != Some(session_id) {
+            continue;
+        }
+        return item
+            .get("thread_name")
+            .and_then(Value::as_str)
+            .and_then(clean_title)
+            .or_else(|| item.get("title").and_then(Value::as_str).and_then(clean_title));
+    }
+    None
 }
 
 pub fn resolve_claude_title_from_projects(projects_root: &Path, session_id: &str) -> Option<String> {

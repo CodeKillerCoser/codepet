@@ -74,12 +74,8 @@ export async function cutOutImageSubject(sourcePath: string, outputPath?: string
 }
 
 export async function recentEvents(): Promise<PetEvent[]> {
-  let ipcEvents: PetEvent[] | null = null;
   try {
-    ipcEvents = await withTimeout(invoke<PetEvent[]>("recent_events"), 1200);
-    if (ipcEvents.length > 0) {
-      return ipcEvents;
-    }
+    return await withTimeout(invoke<PetEvent[]>("recent_events"), 1200);
   } catch {
     // Browser preview cannot use Tauri IPC, so fall back to the local collector HTTP endpoint.
   }
@@ -92,7 +88,7 @@ export async function recentEvents(): Promise<PetEvent[]> {
   } catch {
     // The collector may still be starting.
   }
-  return ipcEvents ?? [];
+  return [];
 }
 
 export async function tokenUsageSummary(): Promise<TokenUsageSummary> {

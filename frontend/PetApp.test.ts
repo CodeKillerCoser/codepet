@@ -266,9 +266,9 @@ describe("PetApp activity helpers", () => {
     expect(stackRule).toContain("width: 326px");
     expect(pillRule).toContain("width: 316px");
     expect(replyingRule).toContain("z-index: 6");
+    expect(replyingRule).toContain("min-height: 154px");
+    expect(replyingRule).toContain("align-items: stretch");
     expect(replyingRule).not.toContain("width:");
-    expect(replyingRule).not.toContain("min-height");
-    expect(replyingRule).not.toContain("align-items: start");
     expect(editorRule).toContain("max-height: 92px");
     expect(editorRule).toContain("resize: none");
     expect(editorRule).toContain("overscroll-behavior: contain");

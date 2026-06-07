@@ -127,6 +127,45 @@ fn replay_codex_audit_keeps_prompt_title_for_later_tool_events() {
 }
 
 #[test]
+fn replay_codex_audit_keeps_prompt_title_for_later_windows_tool_events() {
+    let temp = tempfile::tempdir().unwrap();
+    let audit_path = temp.path().join("audit.jsonl");
+    std::fs::write(
+        &audit_path,
+        [
+            serde_json::to_string(&json!({
+                "platform": "codex",
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "codex-session",
+                "cwd": "/workspace/project",
+                "prompt": "继续修复标题",
+                "_timestamp": "2026-05-26 17:42:00"
+            }))
+            .unwrap(),
+            serde_json::to_string(&json!({
+                "platform": "codex",
+                "hook_event_name": "PreToolUse",
+                "session_id": "codex-session",
+                "cwd": "/workspace/project",
+                "transcript_path": r"\\?\E:\.codex\sessions\2026\06\06\rollout.jsonl",
+                "tool_name": "Bash",
+                "_timestamp": "2026-05-26 17:43:00"
+            }))
+            .unwrap(),
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let state = SharedState::default();
+
+    replay_recent_codex_audit_events(&state, &audit_path, 20).unwrap();
+
+    let latest = state.recent_events().last().unwrap().clone();
+    assert_eq!(latest.status, TaskStatus::Running);
+    assert_eq!(latest.message, "继续修复标题");
+}
+
+#[test]
 fn replay_codex_audit_does_not_store_session_start_as_title() {
     let temp = tempfile::tempdir().unwrap();
     let audit_path = temp.path().join("audit.jsonl");

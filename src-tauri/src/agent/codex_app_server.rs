@@ -1,12 +1,16 @@
 use crate::activity_actions::{
-    collector_approval_strategy, has_session_id, is_replyable_event, AgentInteractionDriver,
-    ActivationStrategy, ActivationTarget, ApprovalStrategy, ReplyStrategy,
+    collector_approval_strategy, has_session_id, is_replyable_event, ActivationStrategy,
+    ActivationTarget, AgentInteractionDriver, ApprovalStrategy, ReplyStrategy,
 };
 use crate::app_log;
 use crate::events::PetEvent;
 use serde_json::{json, Value};
 use std::env;
+#[cfg(windows)]
+use std::fs;
 use std::io::{BufRead, BufReader, Write};
+#[cfg(windows)]
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
@@ -21,7 +25,11 @@ pub(crate) struct CodexAppServerManager;
 
 impl AgentInteractionDriver for CodexAppServerManager {
     fn activation_strategy(&self, event: &PetEvent) -> ActivationStrategy {
-        if let Some(thread_id) = event.session_id.as_deref().filter(|value| !value.is_empty()) {
+        if let Some(thread_id) = event
+            .session_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
             ActivationStrategy::Target(ActivationTarget::Url(codex_thread_deeplink(thread_id)))
         } else {
             crate::activity_actions::default_activation_strategy_for_event(event)
@@ -125,11 +133,15 @@ struct CodexAppServerClient {
 
 impl CodexAppServerClient {
     fn spawn() -> Result<Self, String> {
+        let binary = codex_binary();
         app_log::info(
             "codex_app_server",
-            "starting codex app-server args=app-server --listen stdio://",
+            &format!(
+                "starting codex app-server binary={} args=app-server --listen stdio://",
+                binary.display()
+            ),
         );
-        let mut child = Command::new(codex_binary())
+        let mut child = Command::new(binary)
             .args(["app-server", "--listen", "stdio://"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -194,7 +206,9 @@ impl CodexAppServerClient {
 
     fn write_json(&mut self, value: Value) -> Result<(), String> {
         serde_json::to_writer(&mut self.stdin, &value).map_err(|error| error.to_string())?;
-        self.stdin.write_all(b"\n").map_err(|error| error.to_string())?;
+        self.stdin
+            .write_all(b"\n")
+            .map_err(|error| error.to_string())?;
         self.stdin.flush().map_err(|error| error.to_string())
     }
 
@@ -210,7 +224,10 @@ impl CodexAppServerClient {
                 return Err("codex app-server closed before replying".to_string());
             }
             let value: Value = serde_json::from_str(line.trim()).map_err(|error| {
-                format!("invalid codex app-server json response: {error}; line={}", line.trim())
+                format!(
+                    "invalid codex app-server json response: {error}; line={}",
+                    line.trim()
+                )
             })?;
             if is_turn_completed_notification(&value) {
                 self.turn_completion = Some(value.clone());
@@ -233,15 +250,17 @@ impl CodexAppServerClient {
         let mut line = String::new();
         loop {
             line.clear();
-            let read = self
-                .stdout
-                .read_line(&mut line)
-                .map_err(|error| format!("failed to read codex app-server turn completion: {error}"))?;
+            let read = self.stdout.read_line(&mut line).map_err(|error| {
+                format!("failed to read codex app-server turn completion: {error}")
+            })?;
             if read == 0 {
                 return Err("codex app-server closed before turn completed".to_string());
             }
             let value: Value = serde_json::from_str(line.trim()).map_err(|error| {
-                format!("invalid codex app-server json notification: {error}; line={}", line.trim())
+                format!(
+                    "invalid codex app-server json notification: {error}; line={}",
+                    line.trim()
+                )
             })?;
             if is_turn_completed_notification(&value) {
                 app_log::info(
@@ -326,11 +345,128 @@ fn codex_binary() -> PathBuf {
     if let Some(path) = env::var_os("CODE_PET_CODEX_BIN") {
         return PathBuf::from(path);
     }
-    let app_binary = PathBuf::from("/Applications/Codex.app/Contents/Resources/codex");
-    if app_binary.exists() {
-        return app_binary;
+    if let Some(path) = platform_codex_binary_candidates()
+        .into_iter()
+        .find(|path| path.exists())
+    {
+        return path;
     }
     PathBuf::from("codex")
+}
+
+fn platform_codex_binary_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    append_platform_codex_binary_candidates(&mut candidates);
+    append_path_codex_binary_candidates(&mut candidates);
+    candidates
+}
+
+#[cfg(target_os = "macos")]
+fn append_platform_codex_binary_candidates(candidates: &mut Vec<PathBuf>) {
+    let app_binary = PathBuf::from("/Applications/Codex.app/Contents/Resources/codex");
+    push_candidate(candidates, app_binary);
+}
+
+#[cfg(windows)]
+fn append_platform_codex_binary_candidates(candidates: &mut Vec<PathBuf>) {
+    if let Some(local_app_data) = env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        for path in windows_codex_binary_candidates_from_local_app_data(&local_app_data) {
+            push_candidate(candidates, path);
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn append_platform_codex_binary_candidates(_candidates: &mut Vec<PathBuf>) {}
+
+#[cfg(windows)]
+fn windows_codex_binary_candidates_from_local_app_data(local_app_data: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    append_codex_exes_in_child_dirs(
+        &mut candidates,
+        &local_app_data.join("OpenAI").join("Codex").join("bin"),
+    );
+
+    let packages = local_app_data.join("Packages");
+    for package_dir in child_dirs_with_prefix(&packages, "OpenAI.Codex_") {
+        let package_bin = package_dir
+            .join("LocalCache")
+            .join("Local")
+            .join("OpenAI")
+            .join("Codex")
+            .join("bin")
+            .join("codex.exe");
+        push_candidate(&mut candidates, package_bin);
+    }
+
+    candidates
+}
+
+#[cfg(windows)]
+fn append_codex_exes_in_child_dirs(candidates: &mut Vec<PathBuf>, parent: &Path) {
+    for child in child_dirs_newest_first(parent) {
+        push_candidate(candidates, child.join("codex.exe"));
+    }
+}
+
+#[cfg(windows)]
+fn child_dirs_with_prefix(parent: &Path, prefix: &str) -> Vec<PathBuf> {
+    child_dirs_newest_first(parent)
+        .into_iter()
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(prefix))
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+fn child_dirs_newest_first(parent: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(parent) else {
+        return Vec::new();
+    };
+    let mut dirs = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect::<Vec<_>>();
+    dirs.sort_by(|left, right| modified_time(right).cmp(&modified_time(left)));
+    dirs
+}
+
+#[cfg(windows)]
+fn modified_time(path: &Path) -> Option<std::time::SystemTime> {
+    path.metadata()
+        .and_then(|metadata| metadata.modified())
+        .ok()
+}
+
+fn append_path_codex_binary_candidates(candidates: &mut Vec<PathBuf>) {
+    let Some(paths) = env::var_os("PATH") else {
+        return;
+    };
+    for dir in env::split_paths(&paths) {
+        for name in path_codex_binary_names() {
+            push_candidate(candidates, dir.join(name));
+        }
+    }
+}
+
+#[cfg(windows)]
+fn path_codex_binary_names() -> &'static [&'static str] {
+    &["codex.exe", "codex.cmd", "codex.bat", "codex"]
+}
+
+#[cfg(not(windows))]
+fn path_codex_binary_names() -> &'static [&'static str] {
+    &["codex"]
+}
+
+fn push_candidate(candidates: &mut Vec<PathBuf>, path: PathBuf) {
+    if !candidates.iter().any(|candidate| candidate == &path) {
+        candidates.push(path);
+    }
 }
 
 #[cfg(test)]
@@ -436,10 +572,7 @@ mod tests {
         let manager = CodexAppServerManager;
 
         assert_eq!(
-            manager.approval_strategy(&codex_event(
-                TaskStatus::WaitingApproval,
-                Some("thread-1")
-            )),
+            manager.approval_strategy(&codex_event(TaskStatus::WaitingApproval, Some("thread-1"))),
             ApprovalStrategy::CollectorWait
         );
     }
@@ -450,5 +583,38 @@ mod tests {
             codex_thread_deeplink("019e8862-0d6c-7150-823f-18d4cd4e2813"),
             "codex://threads/019e8862-0d6c-7150-823f-18d4cd4e2813"
         );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_codex_binary_candidates_include_local_app_bins() {
+        let temp = tempfile::tempdir().unwrap();
+        let user_bin = temp
+            .path()
+            .join("OpenAI")
+            .join("Codex")
+            .join("bin")
+            .join("hash")
+            .join("codex.exe");
+        std::fs::create_dir_all(user_bin.parent().unwrap()).unwrap();
+        std::fs::write(&user_bin, b"").unwrap();
+
+        let package_bin = temp
+            .path()
+            .join("Packages")
+            .join("OpenAI.Codex_test")
+            .join("LocalCache")
+            .join("Local")
+            .join("OpenAI")
+            .join("Codex")
+            .join("bin")
+            .join("codex.exe");
+        std::fs::create_dir_all(package_bin.parent().unwrap()).unwrap();
+        std::fs::write(&package_bin, b"").unwrap();
+
+        let candidates = windows_codex_binary_candidates_from_local_app_data(temp.path());
+
+        assert!(candidates.contains(&user_bin));
+        assert!(candidates.contains(&package_bin));
     }
 }
