@@ -149,11 +149,12 @@ select:focus-visible {
 
 .tabs button,
 .icon-button,
-.power-button,
-.data-directory button,
-.pet-select-button,
-.pet-delete-button,
-.row-actions button,
+  .power-button,
+  .data-directory button,
+  .update-status-row button,
+  .pet-select-button,
+  .pet-delete-button,
+  .row-actions button,
 .segmented button {
   display: inline-flex;
   min-height: 44px;
@@ -178,9 +179,10 @@ select:focus-visible {
 
 .tabs button:hover,
 .icon-button:hover,
-.power-button:hover,
-.data-directory button:hover,
-.pet-select-button:hover,
+  .power-button:hover,
+  .data-directory button:hover,
+  .update-status-row button:hover,
+  .pet-select-button:hover,
 .pet-delete-button:hover,
 .row-actions button:hover,
 .segmented button:hover {
@@ -861,6 +863,36 @@ select:focus-visible {
   gap: 8px;
 }
 
+.update-settings {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--app-surface-soft);
+}
+
+.update-status-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.update-status-row span {
+  min-width: 0;
+  color: var(--app-muted);
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-status-row button {
+  min-height: 38px;
+  padding: 0 12px;
+}
+
 .setting-line {
   display: flex;
   min-width: 0;
@@ -1497,6 +1529,55 @@ input[type="time"] {
   max-width: 380px;
   margin: 0;
   line-height: var(--line-height-loose);
+}
+
+.modal-scrim {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--app-bg) 72%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.update-dialog {
+  display: grid;
+  width: min(440px, calc(100vw - 32px));
+  gap: 14px;
+  border-radius: 8px;
+  padding: 18px;
+}
+
+.update-dialog h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--app-text);
+  font-size: var(--font-size-4xl);
+  font-weight: var(--font-weight-bold);
+}
+
+.update-dialog p {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-loose);
+}
+
+.update-dialog .icon-button {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+}
+
+.primary-action {
+  border-color: var(--app-good) !important;
+  color: var(--app-text) !important;
+  background: color-mix(in srgb, var(--app-good) 22%, var(--app-surface-soft)) !important;
 }
 
 .pet-html,

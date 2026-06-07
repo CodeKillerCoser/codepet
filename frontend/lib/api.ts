@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AgentView, AppSettings, PetEvent, PetLibraryView, SubjectCutoutResult, TokenUsageSummary } from "./types";
+import type { AgentView, AppSettings, AppUpdate, PetEvent, PetLibraryView, SubjectCutoutResult, TokenUsageSummary } from "./types";
 
 export interface PerfEventPayload {
   name: string;
@@ -27,6 +27,14 @@ export async function getAppSettings(): Promise<AppSettings> {
 
 export async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   return invoke<AppSettings>("update_app_settings", { settings });
+}
+
+export async function checkAppUpdate(): Promise<AppUpdate | null> {
+  return invoke<AppUpdate | null>("check_app_update");
+}
+
+export async function installAppUpdate(): Promise<void> {
+  return invoke<void>("install_app_update");
 }
 
 export async function appDataDirectory(): Promise<string> {

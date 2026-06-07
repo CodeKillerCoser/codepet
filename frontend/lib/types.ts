@@ -106,6 +106,12 @@ export interface AppSettings {
   };
   activityFilters: ActivityFilterSettings;
   agents: AgentSettings;
+  updates: UpdateSettings;
+}
+
+export interface AppUpdate {
+  version: string;
+  currentVersion: string;
 }
 
 export interface ActivityFilterSettings {
@@ -125,6 +131,10 @@ export interface AgentSettings {
 
 export interface AgentPreferenceSettings {
   hookEvents: string[];
+}
+
+export interface UpdateSettings {
+  ignoredVersion?: string | null;
 }
 
 export interface PetEvent {

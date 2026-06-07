@@ -20,6 +20,7 @@ pub use app::cli;
 pub use app::log as app_log;
 pub use app::settings;
 pub use app::state;
+pub use app::updates;
 pub use pet::library as pets;
 pub use pet::subject_cutout;
 pub use pet::theme_defaults;
@@ -34,6 +35,7 @@ use settings::{configured_app_data_dir, load_app_settings, save_app_settings, up
 use state::{ApprovalBehavior, ApprovalDecision, SharedState, COLLECTOR_PORT};
 use subject_cutout::SubjectCutoutResult;
 use token_usage::TokenUsageSummary;
+use updates::PendingAppUpdate;
 use std::str::FromStr;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
@@ -283,7 +285,8 @@ pub fn run() {
             crate::app_log::info("app", &format!("single instance requested args={} cwd={}", args.len(), cwd));
             raise_existing_windows(app);
             let _ = app.emit("single-instance", serde_json::json!({ "args": args, "cwd": cwd }));
-        }));
+        }))
+        .plugin(tauri_plugin_updater::Builder::new().build());
 
     install_platform_plugins(builder)
         .plugin(tauri_plugin_autostart::init(
@@ -294,6 +297,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .manage(SharedState::default())
+        .manage(PendingAppUpdate::default())
         .setup(|app| {
             let setup_span = app_log::PerfSpan::start("startup.total");
             app_log::info("startup", "setup started");
@@ -408,7 +412,9 @@ pub fn run() {
             resolve_activity_approval,
             collector_endpoint,
             open_main_window,
-            pet_asset_data_url
+            pet_asset_data_url,
+            updates::check_app_update,
+            updates::install_app_update
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Code Pet")

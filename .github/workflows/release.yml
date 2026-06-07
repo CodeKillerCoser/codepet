@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag. Defaults to v<tauri version>.
+        required: false
+        type: string
+      release_name:
+        description: Release title.
+        required: false
+        type: string
+      release_notes:
+        description: Release notes.
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS universal
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: npm ci
+      - name: Build Tauri app
+        run: npm run tauri -- build --target universal-apple-darwin --bundles dmg
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal
+          if-no-files-found: error
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+
+  build-windows:
+    name: Build Windows x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - name: Build Tauri app
+        run: npm run tauri -- build --bundles nsis
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/nsis/*setup.exe
+            src-tauri/target/release/bundle/nsis/*setup.exe.sig
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - build-macos
+      - build-windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/release-assets
+      - name: Prepare release metadata
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_RELEASE_NAME: ${{ inputs.release_name }}
+          INPUT_RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: |
+          VERSION="$(node -p "JSON.parse(require('fs').readFileSync('src-tauri/tauri.conf.json', 'utf8')).version")"
+          TAG="$INPUT_TAG"
+          if [ -z "$TAG" ]; then
+            TAG="v$VERSION"
+          fi
+          RELEASE_NAME="$INPUT_RELEASE_NAME"
+          if [ -z "$RELEASE_NAME" ]; then
+            RELEASE_NAME="Release $TAG"
+          fi
+          RELEASE_NOTES="$INPUT_RELEASE_NOTES"
+          if [ -z "$RELEASE_NOTES" ]; then
+            RELEASE_NOTES="$RELEASE_NAME"
+          fi
+          NOTES_DELIMITER="RELEASE_NOTES_${RANDOM}_${RANDOM}"
+          {
+            echo "VERSION=$VERSION"
+            echo "TAG=$TAG"
+            echo "RELEASE_NAME=$RELEASE_NAME"
+            echo "RELEASE_NOTES<<$NOTES_DELIMITER"
+            printf '%s\n' "$RELEASE_NOTES"
+            echo "$NOTES_DELIMITER"
+          } >> "$GITHUB_ENV"
+      - name: Generate latest.json
+        run: >
+          node scripts/generate_latest_json.mjs
+          --repo "$GITHUB_REPOSITORY"
+          --tag "$TAG"
+          --version "$VERSION"
+          --artifacts dist/release-assets
+          --output dist/latest.json
+          --notes "$RELEASE_NOTES"
+      - name: Create or update release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mapfile -d '' ASSETS < <(find dist/release-assets -type f -print0)
+          ASSETS+=(dist/latest.json)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+            gh release edit "$TAG" --title "$RELEASE_NAME" --notes "$RELEASE_NOTES" --latest
+          else
+            gh release create "$TAG" "${ASSETS[@]}" --title "$RELEASE_NAME" --notes "$RELEASE_NOTES" --latest
+          fi

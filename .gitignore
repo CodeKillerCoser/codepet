@@ -2,6 +2,7 @@ node_modules/
 dist/
 src-tauri/target/
 custom-pet-data/
+.local-secrets/
 __pycache__/
 *.pyc
 .DS_Store

@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "tauri",
-    "package:signed": "python3 scripts/package_signed.py"
+    "package:signed": "python3 scripts/package_signed.py",
+    "release:latest-json": "node scripts/generate_latest_json.mjs",
+    "release:github": "node scripts/publish_github_release.mjs"
   },
   "dependencies": {
     "@lucide/svelte": "^1.16.0",

@@ -51,6 +51,9 @@ function settingsFixture(): AppSettings {
     agents: {
       byAgent: {},
     },
+    updates: {
+      ignoredVersion: null,
+    },
   };
 }
 
