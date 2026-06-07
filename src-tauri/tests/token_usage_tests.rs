@@ -1,5 +1,6 @@
 use code_pet_lib::agents::AgentId;
-use code_pet_lib::token_usage::{refresh_transcript_usage, TokenUsageStore};
+use code_pet_lib::settings::AppSettings;
+use code_pet_lib::token_usage::{refresh_transcript_usage, usage_store_path, TokenUsageStore};
 use serde_json::json;
 
 fn write_jsonl(path: &std::path::Path, rows: Vec<serde_json::Value>) {
@@ -9,6 +10,15 @@ fn write_jsonl(path: &std::path::Path, rows: Vec<serde_json::Value>) {
         .collect::<Vec<_>>()
         .join("\n");
     std::fs::write(path, format!("{text}\n")).unwrap();
+}
+
+#[test]
+fn usage_store_path_follows_custom_app_data_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut settings = AppSettings::default();
+    settings.data.data_directory = Some(temp.path().join("code-pet-data").to_string_lossy().to_string());
+
+    assert_eq!(usage_store_path(&settings), temp.path().join("code-pet-data").join("token-usage.json"));
 }
 
 #[test]

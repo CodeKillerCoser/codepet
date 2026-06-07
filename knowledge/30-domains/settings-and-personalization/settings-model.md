@@ -4,6 +4,7 @@
 
 `src-tauri/src/app/settings.rs` 中的 `AppSettings` 有六个顶层区域：
 
+- `data`
 - `appearance`
 - `pet`
 - `petLibrary`
@@ -22,6 +23,7 @@
 `frontend/App.svelte` 会在使用加载到的设置前做归一化：
 
 - 运行中气泡默认值和数值边界。
+- 应用数据目录缺省对象。
 - 图片像素尺寸。
 - 宠物透明度。
 - 抽打反应音默认值。
@@ -30,7 +32,7 @@
 
 ## 风险
 
-新增字段如果没有 Rust 默认值或前端归一化，可能破坏旧用户设置，或产生 `undefined` UI 状态。
+新增字段如果没有 Rust 默认值或前端归一化，可能破坏旧用户设置，或产生 `undefined` UI 状态。数据目录覆盖项必须保留系统 local data 下的固定 settings 入口，否则应用启动时无法先定位配置再定位自定义数据目录。
 
 按 Agent 过滤时，不能再把顶层 `activityFilters.titleKeywords/messageKeywords` 当成新配置写回；否则会重新变成全局过滤。
 

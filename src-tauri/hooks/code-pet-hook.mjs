@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -126,9 +126,45 @@ function withSourceContext(payload) {
 }
 
 function spoolEvent(body) {
-  const spoolPath = join(homedir(), ".code-pet", "spool", "events.jsonl");
+  const spoolPath = spoolFilePath();
   mkdirSync(dirname(spoolPath), { recursive: true });
   appendFileSync(spoolPath, `${JSON.stringify({ ...body, spooledAt: new Date().toISOString() })}\n`);
+}
+
+function spoolFilePath() {
+  const dataDirectory = configuredDataDirectory();
+  if (dataDirectory) {
+    return join(dataDirectory, "spool", "events.jsonl");
+  }
+  return join(homedir(), ".code-pet", "spool", "events.jsonl");
+}
+
+function configuredDataDirectory() {
+  try {
+    const settingsPath = process.env.CODE_PET_SETTINGS_PATH || defaultSettingsPath();
+    if (!existsSync(settingsPath)) {
+      return null;
+    }
+    const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+    const dataDirectory = settings?.data?.dataDirectory;
+    return typeof dataDirectory === "string" && dataDirectory.trim() ? dataDirectory.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function defaultSettingsPath() {
+  return join(defaultDataRoot(), "code-pet", "settings.json");
+}
+
+function defaultDataRoot() {
+  if (process.platform === "win32") {
+    return process.env.LOCALAPPDATA || process.env.APPDATA || homedir();
+  }
+  if (process.platform === "darwin") {
+    return join(homedir(), "Library", "Application Support");
+  }
+  return process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
 }
 
 async function postEvent(body) {

@@ -18,6 +18,7 @@
     Palette,
     PlugZap,
     Power,
+    RotateCcw,
     Rocket,
     ShieldAlert,
     Sun,
@@ -25,7 +26,7 @@
     Volume2,
   } from "@lucide/svelte";
   import { onMount } from "svelte";
-  import { collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, listAgents, listPets, recentEvents, recordPerfEvent, selectPet, setAgentEnabled, setAgentHookEvents, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { appDataDirectory, collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, listAgents, listPets, recentEvents, recordPerfEvent, selectPet, setAgentEnabled, setAgentHookEvents, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
   import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
@@ -44,8 +45,10 @@
   let usage: TokenUsageSummary | null = null;
   let events: PetEvent[] = [];
   let endpoint = "";
+  let appDataDir = "";
   let busyAgent: string | null = null;
   let busyPet = "";
+  let busyAppDataDirectory = false;
   let busyLaunchAtLogin = false;
   let error = "";
   let launchAtLogin = false;
@@ -173,10 +176,11 @@
     error = "";
     const startedAt = performance.now();
     try {
-      const [nextAgents, nextEvents, nextEndpoint, nextPetLibrary, nextUsage, nextLaunchAtLogin] = await Promise.all([
+      const [nextAgents, nextEvents, nextEndpoint, nextAppDataDir, nextPetLibrary, nextUsage, nextLaunchAtLogin] = await Promise.all([
         measureFrontendPerf("frontend.main.list_agents", () => listAgents()),
         measureFrontendPerf("frontend.main.recent_events", () => recentEvents()),
         measureFrontendPerf("frontend.main.collector_endpoint", () => collectorEndpoint()),
+        measureFrontendPerf("frontend.main.app_data_directory", () => appDataDirectory()),
         measureFrontendPerf("frontend.main.list_pets", () => listPets()),
         measureFrontendPerf("frontend.main.token_usage_summary", () => tokenUsageSummary()),
         measureFrontendPerf("frontend.main.get_launch_at_login", () => getLaunchAtLoginEnabled()),
@@ -184,6 +188,7 @@
       agents = nextAgents;
       events = mergeEventFeed(events, nextEvents);
       endpoint = nextEndpoint;
+      appDataDir = nextAppDataDir;
       petLibrary = nextPetLibrary;
       usage = nextUsage;
       launchAtLogin = nextLaunchAtLogin;
@@ -397,6 +402,31 @@
     }
   }
 
+  async function chooseAppDataDirectory() {
+    const selected = await open({ directory: true, multiple: false });
+    if (typeof selected !== "string") return;
+    await updateAppDataDirectory(selected);
+  }
+
+  async function resetAppDataDirectory() {
+    await updateAppDataDirectory(null);
+  }
+
+  async function updateAppDataDirectory(path: string | null) {
+    busyAppDataDirectory = true;
+    error = "";
+    try {
+      settings = normalizeSettings(await setAppDataDirectory(path));
+      appDataDir = await appDataDirectory();
+      petLibrary = await listPets();
+      usage = await tokenUsageSummary();
+    } catch (currentError) {
+      error = String(currentError);
+    } finally {
+      busyAppDataDirectory = false;
+    }
+  }
+
   async function activatePet(petId: string) {
     busyPet = petId;
     error = "";
@@ -436,6 +466,9 @@
   }
 
   function normalizeSettings(nextSettings: AppSettings) {
+    nextSettings.data = {
+      ...(nextSettings.data ?? {}),
+    };
     nextSettings.appearance.runningBubble = {
       ...runningBubbleDefaults,
       ...(nextSettings.appearance.runningBubble ?? {}),
@@ -1309,6 +1342,23 @@
             <header class="panel-head">
               <h3><Rocket size={18} /> 系统</h3>
             </header>
+            <div class="system-data-directory">
+              <div class="setting-line">
+                <span>数据目录</span>
+                <em>{settings.data.dataDirectory ? "自定义" : "默认"}</em>
+              </div>
+              <div class="data-directory">
+                <span>{appDataDir || settings.data.dataDirectory || "app data/code-pet"}</span>
+                <div class="directory-actions">
+                  <button disabled={busyAppDataDirectory} on:click={chooseAppDataDirectory}>
+                    <FolderCog size={16} /> 修改
+                  </button>
+                  <button disabled={busyAppDataDirectory || !settings.data.dataDirectory} on:click={resetAppDataDirectory} aria-label="恢复默认数据目录">
+                    <RotateCcw size={16} /> 默认
+                  </button>
+                </div>
+              </div>
+            </div>
             <label class="check">
               <input type="checkbox" checked={launchAtLogin} disabled={busyLaunchAtLogin} on:change={toggleLaunchAtLogin} />
               开机自启动

@@ -6,6 +6,7 @@ import type { AppSettings, PetEvent } from "./types";
 
 function settings(overrides: Partial<AppSettings["notifications"]> = {}): AppSettings {
   return {
+    data: {},
     appearance: { theme: "system" },
     pet: {
       selectedPetId: "default",

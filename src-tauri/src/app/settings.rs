@@ -10,6 +10,8 @@ use std::path::PathBuf;
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     #[serde(default)]
+    pub data: DataSettings,
+    #[serde(default)]
     pub appearance: AppearanceSettings,
     #[serde(default)]
     pub pet: PetSettings,
@@ -21,6 +23,13 @@ pub struct AppSettings {
     pub activity_filters: ActivityFilterSettings,
     #[serde(default)]
     pub agents: AgentSettings,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataSettings {
+    #[serde(default)]
+    pub data_directory: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -295,6 +304,7 @@ impl Default for SoundChoice {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            data: DataSettings::default(),
             appearance: AppearanceSettings::default(),
             pet: PetSettings::default(),
             pet_library: PetLibrarySettings::default(),
@@ -397,10 +407,44 @@ pub fn save_app_settings(settings: &AppSettings) -> io::Result<()> {
     fs::write(path, serde_json::to_string_pretty(settings)?)
 }
 
+pub fn default_app_data_dir() -> PathBuf {
+    default_data_root().join("code-pet")
+}
+
+pub fn configured_app_data_dir(settings: &AppSettings) -> PathBuf {
+    settings
+        .data
+        .data_directory
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(default_app_data_dir)
+}
+
+pub fn current_app_data_dir() -> PathBuf {
+    load_app_settings()
+        .map(|settings| configured_app_data_dir(&settings))
+        .unwrap_or_else(|_| default_app_data_dir())
+}
+
+pub fn update_app_data_directory(path: Option<String>) -> io::Result<AppSettings> {
+    let mut settings = load_app_settings()?;
+    settings.data.data_directory = path
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let data_dir = configured_app_data_dir(&settings);
+    fs::create_dir_all(&data_dir)?;
+    save_app_settings(&settings)?;
+    Ok(settings)
+}
+
 fn settings_path() -> PathBuf {
+    default_app_data_dir().join("settings.json")
+}
+
+fn default_data_root() -> PathBuf {
     dirs::data_local_dir()
         .or_else(dirs::data_dir)
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
-        .join("code-pet")
-        .join("settings.json")
 }

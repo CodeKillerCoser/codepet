@@ -4,6 +4,7 @@
 
 `src-tauri/src/app/settings.rs` 定义 `AppSettings`，顶层区域包括：
 
+- `data`：应用数据目录覆盖项。
 - `appearance`：主题和运行中气泡设置。
 - `pet`：当前宠物、sprite/图片设置、透明度、置顶和抽打反应音。
 - `petLibrary`：宠物列表和数据目录。
@@ -12,7 +13,7 @@
 
 ## 存储
 
-设置保存到系统 local data 目录下的 `code-pet/settings.json`。README 还记录了 Token 缓存、日志、宠物库和离线事件 spool 的位置。
+设置入口保存到系统 local data 目录下的 `code-pet/settings.json`，用于保证应用始终能找到自定义数据目录配置。未配置 `settings.data.dataDirectory` 时，Token 缓存、日志和默认宠物库路径保持原来的系统 local data 下 `code-pet/`。配置后，Token 缓存、下次启动的日志、默认宠物库和自定义离线 spool 跟随该目录；显式配置过的 `petLibrary.dataDirectory` 仍优先。
 
 ## 前端同步
 

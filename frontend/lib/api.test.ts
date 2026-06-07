@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  appDataDirectory,
   cutOutImageSubject,
   deletePet,
   getLaunchAtLoginEnabled,
@@ -8,6 +9,7 @@ import {
   recentEvents,
   recordPerfEvent,
   setAgentHookEvents,
+  setAppDataDirectory,
   setLaunchAtLoginEnabled,
   tokenUsageSummary,
   updatePetImagePixelSize,
@@ -126,6 +128,33 @@ describe("deletePet", () => {
     await expect(deletePet("image-custom")).resolves.toEqual(view);
 
     expect(invoke).toHaveBeenCalledWith("delete_pet", { petId: "image-custom" });
+  });
+});
+
+describe("appDataDirectory", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("reads the resolved app data directory", async () => {
+    vi.mocked(invoke).mockResolvedValue("/tmp/code-pet");
+
+    await expect(appDataDirectory()).resolves.toBe("/tmp/code-pet");
+
+    expect(invoke).toHaveBeenCalledWith("app_data_directory");
+  });
+
+  it("updates or resets the app data directory", async () => {
+    const settings = {
+      data: { dataDirectory: "/tmp/code-pet" },
+    };
+    vi.mocked(invoke).mockResolvedValue(settings);
+
+    await expect(setAppDataDirectory("/tmp/code-pet")).resolves.toEqual(settings);
+    await setAppDataDirectory(null);
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "set_app_data_directory", { path: "/tmp/code-pet" });
+    expect(invoke).toHaveBeenNthCalledWith(2, "set_app_data_directory", { path: null });
   });
 });
 

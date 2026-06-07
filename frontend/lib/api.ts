@@ -29,6 +29,14 @@ export async function updateAppSettings(settings: AppSettings): Promise<AppSetti
   return invoke<AppSettings>("update_app_settings", { settings });
 }
 
+export async function appDataDirectory(): Promise<string> {
+  return invoke<string>("app_data_directory");
+}
+
+export async function setAppDataDirectory(path?: string | null): Promise<AppSettings> {
+  return invoke<AppSettings>("set_app_data_directory", { path });
+}
+
 export async function getLaunchAtLoginEnabled(): Promise<boolean> {
   return invoke<boolean>("get_launch_at_login_enabled");
 }

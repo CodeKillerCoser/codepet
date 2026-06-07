@@ -1,3 +1,4 @@
+use crate::settings::current_app_data_dir;
 use chrono::{DateTime, Local, NaiveDate, SecondsFormat};
 use serde::Deserialize;
 use serde_json::Value;
@@ -66,7 +67,7 @@ impl PerfSpan {
 }
 
 pub fn init_app_logging() -> io::Result<PathBuf> {
-    let data_dir = code_pet_data_dir(&default_data_root());
+    let data_dir = current_app_data_dir();
     let path = log_file_path(&data_dir);
     let existed_before_rotation = path.exists();
     let rotated_by_date = rotate_log_file_for_date_if_needed(&path, log_file_modified_date(&path)?, Local::now().date_naive())?;
@@ -167,12 +168,6 @@ pub fn warn(target: &str, message: &str) {
 
 pub fn error(target: &str, message: &str) {
     write_global("ERROR", target, message);
-}
-
-fn default_data_root() -> PathBuf {
-    dirs::data_local_dir()
-        .or_else(dirs::data_dir)
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
 }
 
 fn log_file_modified_date(path: &Path) -> io::Result<Option<NaiveDate>> {

@@ -18,6 +18,25 @@ fn default_pet_data_directory_is_under_app_data_not_workspace() {
 }
 
 #[test]
+fn default_pet_data_directory_follows_custom_app_data_directory() {
+    let temp = tempdir().unwrap();
+    let mut settings = AppSettings::default();
+    settings.data.data_directory = Some(temp.path().join("code-pet-data").to_string_lossy().to_string());
+
+    assert_eq!(pet_data_directory(&settings), temp.path().join("code-pet-data").join("pets"));
+}
+
+#[test]
+fn pet_library_data_directory_overrides_app_data_directory() {
+    let temp = tempdir().unwrap();
+    let mut settings = AppSettings::default();
+    settings.data.data_directory = Some(temp.path().join("code-pet-data").to_string_lossy().to_string());
+    settings.pet_library.data_directory = Some(temp.path().join("pets-only").to_string_lossy().to_string());
+
+    assert_eq!(pet_data_directory(&settings), temp.path().join("pets-only"));
+}
+
+#[test]
 fn selecting_a_pet_updates_the_active_pet_settings() {
     let mut settings = AppSettings::default();
     let sprite = PixelPetSprite {

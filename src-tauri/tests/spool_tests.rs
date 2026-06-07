@@ -1,8 +1,26 @@
-use code_pet_lib::collector::replay_spooled_events;
 use code_pet_lib::agents::{AgentId, AgentView};
+use code_pet_lib::collector::{replay_spooled_events, spool_path_for_settings};
 use code_pet_lib::events::TaskStatus;
+use code_pet_lib::settings::AppSettings;
 use code_pet_lib::state::SharedState;
 use serde_json::json;
+
+#[test]
+fn spool_path_keeps_legacy_default_until_app_data_directory_is_customized() {
+    let settings = AppSettings::default();
+    let spool_path = spool_path_for_settings(&settings);
+
+    assert!(spool_path.ends_with(std::path::Path::new(".code-pet").join("spool").join("events.jsonl")));
+}
+
+#[test]
+fn spool_path_follows_custom_app_data_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut settings = AppSettings::default();
+    settings.data.data_directory = Some(temp.path().join("code-pet-data").to_string_lossy().to_string());
+
+    assert_eq!(spool_path_for_settings(&settings), temp.path().join("code-pet-data").join("spool").join("events.jsonl"));
+}
 
 #[test]
 fn replay_spooled_events_imports_hook_events_and_clears_file() {

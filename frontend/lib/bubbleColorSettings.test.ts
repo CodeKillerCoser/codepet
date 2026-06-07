@@ -4,6 +4,7 @@ import type { AppSettings } from "./types";
 
 function settingsFixture(): AppSettings {
   return {
+    data: {},
     appearance: {
       theme: "system",
       runningBubble: {
@@ -24,6 +25,8 @@ function settingsFixture(): AppSettings {
       imagePixelSize: 48,
       opacity: 1,
       alwaysOnTop: true,
+      whipReactionSound: "none",
+      customWhipReactionSoundPath: null,
     },
     petLibrary: {
       selectedPetId: "default",

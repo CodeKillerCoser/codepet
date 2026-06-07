@@ -856,6 +856,27 @@ select:focus-visible {
   background: var(--app-surface-soft);
 }
 
+.system-data-directory {
+  display: grid;
+  gap: 8px;
+}
+
+.setting-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--app-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.setting-line em {
+  color: var(--app-subtle);
+  font-style: normal;
+}
+
 .data-directory span {
   min-width: 0;
   color: var(--app-muted);
@@ -863,6 +884,13 @@ select:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.directory-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .data-directory button {

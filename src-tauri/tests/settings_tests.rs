@@ -1,11 +1,12 @@
 use code_pet_lib::agents::AgentId;
-use code_pet_lib::settings::{AppSettings, ThemeChoice, WhipReactionSound};
+use code_pet_lib::settings::{configured_app_data_dir, AppSettings, ThemeChoice, WhipReactionSound};
 
 #[test]
 fn settings_default_to_system_theme() {
     let settings = AppSettings::default();
 
     assert_eq!(settings.appearance.theme, ThemeChoice::System);
+    assert!(settings.data.data_directory.is_none());
     assert!(settings.appearance.running_bubble.background_breathing);
     assert!(!settings.appearance.running_bubble.border_marquee);
     assert_eq!(settings.appearance.running_bubble.animation_ms, 1800);
@@ -45,6 +46,7 @@ fn settings_keep_existing_values_when_theme_field_is_missing() {
     .unwrap();
 
     assert_eq!(settings.appearance.theme, ThemeChoice::System);
+    assert!(settings.data.data_directory.is_none());
     assert!(settings.appearance.running_bubble.background_breathing);
     assert!(!settings.appearance.running_bubble.border_marquee);
     assert_eq!(settings.appearance.running_bubble.border_width, 1);
@@ -124,6 +126,21 @@ fn settings_read_per_agent_activity_filters_and_hook_preferences() {
             .hook_events,
         vec!["UserPromptSubmit", "Stop"]
     );
+}
+
+#[test]
+fn settings_read_custom_app_data_directory() {
+    let settings: AppSettings = serde_json::from_str(
+        r##"{
+          "data": {
+            "dataDirectory": "/tmp/code-pet-data"
+          }
+        }"##,
+    )
+    .unwrap();
+
+    assert_eq!(settings.data.data_directory.as_deref(), Some("/tmp/code-pet-data"));
+    assert_eq!(configured_app_data_dir(&settings), std::path::PathBuf::from("/tmp/code-pet-data"));
 }
 
 #[test]

@@ -61,6 +61,9 @@ export interface SubjectCutoutResult {
 }
 
 export interface AppSettings {
+  data: {
+    dataDirectory?: string | null;
+  };
   appearance: {
     theme: "system" | "light" | "dark";
     runningBubble: {

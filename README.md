@@ -106,11 +106,12 @@ npm run tauri dev
 
 应用会在本机写入少量状态和缓存：
 
-- 应用设置：系统 local data 目录下的 `code-pet/settings.json`。
-- Token 用量缓存：系统 local data 目录下的 `code-pet/token-usage.json`。
-- 应用日志：系统 local data 目录下的 `code-pet/logs/code-pet.log`。
-- 宠物库：默认位于系统 local data 目录下的 `code-pet/pets`，也可以在设置页修改。
-- 离线事件暂存：`~/.code-pet/spool/events.jsonl`。
+- 应用设置入口：系统 local data 目录下的 `code-pet/settings.json`。这个入口保持固定，用于保存自定义数据目录配置。
+- 数据目录：可以在 `个性化 -> 系统 -> 数据目录` 修改；未配置时默认仍是系统 local data 目录下的 `code-pet/`。
+- Token 用量缓存：默认位于数据目录下的 `token-usage.json`。
+- 应用日志：默认位于数据目录下的 `logs/code-pet.log`。
+- 宠物库：默认位于数据目录下的 `pets`，也可以单独在设置页修改。
+- 离线事件暂存：未配置数据目录时仍是 `~/.code-pet/spool/events.jsonl`；配置后使用数据目录下的 `spool/events.jsonl`。
 
 Tauri asset protocol 允许读取 `$APPLOCALDATA`、`$DATA`、`$LOCALDATA`、`$HOME` 和 `$TEMP` 范围内的图片或音频资源，用于宠物图片和自定义音效。
 

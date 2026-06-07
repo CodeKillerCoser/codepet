@@ -30,7 +30,7 @@ use agents::{AgentId, AgentView};
 use base64::Engine;
 use events::PetEvent;
 use pets::PetLibraryView;
-use settings::{load_app_settings, save_app_settings, AppSettings};
+use settings::{configured_app_data_dir, load_app_settings, save_app_settings, update_app_data_directory, AppSettings};
 use state::{ApprovalBehavior, ApprovalDecision, SharedState, COLLECTOR_PORT};
 use subject_cutout::SubjectCutoutResult;
 use token_usage::TokenUsageSummary;
@@ -91,6 +91,19 @@ fn get_app_settings() -> Result<AppSettings, String> {
 #[tauri::command]
 fn update_app_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, String> {
     save_app_settings(&settings).map_err(|error| error.to_string())?;
+    let _ = app.emit("settings-updated", settings.clone());
+    Ok(settings)
+}
+
+#[tauri::command]
+fn app_data_directory() -> Result<String, String> {
+    let settings = load_app_settings().map_err(|error| error.to_string())?;
+    Ok(configured_app_data_dir(&settings).to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn set_app_data_directory(app: AppHandle, path: Option<String>) -> Result<AppSettings, String> {
+    let settings = update_app_data_directory(path).map_err(|error| error.to_string())?;
     let _ = app.emit("settings-updated", settings.clone());
     Ok(settings)
 }
@@ -376,6 +389,8 @@ pub fn run() {
             set_agent_hook_events,
             get_app_settings,
             update_app_settings,
+            app_data_directory,
+            set_app_data_directory,
             get_launch_at_login_enabled,
             set_launch_at_login_enabled,
             list_pets,

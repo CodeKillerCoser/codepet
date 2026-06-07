@@ -1,5 +1,5 @@
 use crate::settings::{
-    load_app_settings, save_app_settings, AppSettings, PixelPetSprite,
+    configured_app_data_dir, load_app_settings, save_app_settings, AppSettings, PixelPetSprite,
 };
 use crate::theme_defaults;
 use chrono::Utc;
@@ -19,14 +19,13 @@ pub struct PetLibraryView {
     pub selected_pet_id: String,
     pub pets: Vec<ConfiguredPet>,
 }
-
 pub fn pet_data_directory(settings: &AppSettings) -> PathBuf {
     settings
         .pet_library
         .data_directory
         .as_ref()
         .map(PathBuf::from)
-        .unwrap_or_else(|| app_data_dir().join("pets"))
+        .unwrap_or_else(|| configured_app_data_dir(settings).join("pets"))
 }
 
 pub fn pet_library_view(settings: &AppSettings) -> PetLibraryView {
@@ -488,11 +487,4 @@ fn ensure_profiles(mut pets: Vec<ConfiguredPet>) -> Vec<ConfiguredPet> {
         },
     );
     pets
-}
-
-fn app_data_dir() -> PathBuf {
-    dirs::data_local_dir()
-        .or_else(dirs::data_dir)
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
-        .join("code-pet")
 }

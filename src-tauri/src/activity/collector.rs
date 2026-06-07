@@ -1,5 +1,6 @@
 use crate::agents::AgentId;
 use crate::events::{frontend_event, normalize_hook_payload, PetEvent, TaskStatus};
+use crate::settings::{configured_app_data_dir, load_app_settings, AppSettings};
 use crate::state::{ApprovalDecision, SharedState, COLLECTOR_PORT};
 use crate::title_resolver::enrich_event_title;
 use axum::extract::{Path as AxumPath, Query, State};
@@ -49,7 +50,10 @@ pub async fn run_collector(
 }
 
 pub fn replay_default_spooled_events(app_state: &SharedState) -> Result<usize, std::io::Error> {
-    replay_spooled_events(app_state, &default_spool_path())
+    let spool_path = load_app_settings()
+        .map(|settings| spool_path_for_settings(&settings))
+        .unwrap_or_else(|_| legacy_default_spool_path());
+    replay_spooled_events(app_state, &spool_path)
 }
 
 pub fn replay_spooled_events(app_state: &SharedState, spool_path: &Path) -> Result<usize, std::io::Error> {
@@ -83,7 +87,19 @@ pub fn replay_spooled_events(app_state: &SharedState, spool_path: &Path) -> Resu
     Ok(imported)
 }
 
-fn default_spool_path() -> PathBuf {
+pub fn spool_path_for_settings(settings: &AppSettings) -> PathBuf {
+    if settings
+        .data
+        .data_directory
+        .as_deref()
+        .is_some_and(|path| !path.trim().is_empty())
+    {
+        return configured_app_data_dir(settings).join("spool").join("events.jsonl");
+    }
+    legacy_default_spool_path()
+}
+
+fn legacy_default_spool_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".code-pet")

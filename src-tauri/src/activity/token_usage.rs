@@ -1,6 +1,7 @@
 use crate::agents::AgentId;
 use crate::app_log::PerfSpan;
 use crate::events::PetEvent;
+use crate::settings::{configured_app_data_dir, current_app_data_dir, AppSettings};
 use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -208,6 +209,10 @@ pub fn save_usage_store_to(path: &Path, store: &TokenUsageStore) -> io::Result<(
         fs::create_dir_all(parent)?;
     }
     fs::write(path, serde_json::to_string_pretty(store)?)
+}
+
+pub fn usage_store_path(settings: &AppSettings) -> PathBuf {
+    configured_app_data_dir(settings).join("token-usage.json")
 }
 
 pub fn refresh_known_sources(store: &mut TokenUsageStore) -> io::Result<usize> {
@@ -627,9 +632,5 @@ fn collect_jsonl_files(path: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> 
 }
 
 fn default_store_path() -> PathBuf {
-    dirs::data_local_dir()
-        .or_else(dirs::data_dir)
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
-        .join("code-pet")
-        .join("token-usage.json")
+    current_app_data_dir().join("token-usage.json")
 }
