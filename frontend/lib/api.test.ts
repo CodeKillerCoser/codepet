@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
   appDataDirectory,
+  checkAppUpdate,
   cutOutImageSubject,
   deletePet,
   getLaunchAtLoginEnabled,
   importPetImage,
+  installAppUpdate,
   recentEvents,
   recordPerfEvent,
   setAgentHookEvents,
@@ -134,6 +136,29 @@ describe("appDataDirectory", () => {
 
     expect(invoke).toHaveBeenNthCalledWith(1, "set_app_data_directory", { path: "/tmp/code-pet" });
     expect(invoke).toHaveBeenNthCalledWith(2, "set_app_data_directory", { path: null });
+  });
+});
+
+describe("appUpdates", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("checks for an available desktop update", async () => {
+    const update = { version: "0.2.0", currentVersion: "0.1.0" };
+    vi.mocked(invoke).mockResolvedValue(update);
+
+    await expect(checkAppUpdate()).resolves.toEqual(update);
+
+    expect(invoke).toHaveBeenCalledWith("check_app_update");
+  });
+
+  it("installs the pending desktop update", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+
+    await expect(installAppUpdate()).resolves.toBeUndefined();
+
+    expect(invoke).toHaveBeenCalledWith("install_app_update");
   });
 });
 

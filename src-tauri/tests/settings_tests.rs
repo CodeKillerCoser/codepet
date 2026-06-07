@@ -19,6 +19,7 @@ fn settings_default_to_system_theme() {
     assert!(settings.activity_filters.message_keywords.is_empty());
     assert!(settings.activity_filters.by_agent.is_empty());
     assert!(settings.agents.by_agent.is_empty());
+    assert!(settings.updates.ignored_version.is_none());
 }
 
 #[test]
@@ -59,6 +60,21 @@ fn settings_keep_existing_values_when_theme_field_is_missing() {
     assert!(!settings.notifications.ring_on_failure);
     assert!(!settings.notifications.ring_on_done);
     assert!(settings.activity_filters.title_keywords.is_empty());
+    assert!(settings.updates.ignored_version.is_none());
+}
+
+#[test]
+fn settings_read_ignored_update_version() {
+    let settings: AppSettings = serde_json::from_str(
+        r#"{
+          "updates": {
+            "ignoredVersion": "0.2.0"
+          }
+        }"#,
+    )
+    .unwrap();
+
+    assert_eq!(settings.updates.ignored_version.as_deref(), Some("0.2.0"));
 }
 
 #[test]

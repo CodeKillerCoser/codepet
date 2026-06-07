@@ -10,6 +10,7 @@
     Bot,
     Check,
     Clock3,
+    Download,
     Filter,
     FolderCog,
     FolderOpen,
@@ -18,23 +19,26 @@
     Palette,
     PlugZap,
     Power,
+    RefreshCw,
     RotateCcw,
     Rocket,
     ShieldAlert,
     Sun,
     Trash2,
+    X,
     Volume2,
   } from "@lucide/svelte";
   import { onMount } from "svelte";
-  import { appDataDirectory, collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, listAgents, listPets, recentEvents, recordPerfEvent, selectPet, setAgentEnabled, setAgentHookEvents, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { appDataDirectory, checkAppUpdate, collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listAgents, listPets, recentEvents, recordPerfEvent, selectPet, setAgentEnabled, setAgentHookEvents, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
   import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
   import PetAvatar from "./lib/PetAvatar.svelte";
   import { playNotificationSound, playWhipReactionSound } from "./lib/sound";
   import { defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
+  import { ignoredUpdateSettings, shouldPromptForUpdate, type UpdateCheckMode } from "./lib/updates";
   import { buildUsageChartData, yAxisTicks, type UsageBucketSize, type UsageRange } from "./lib/usageChart";
-  import type { ActivityKeywordFilterSettings, AgentId, AgentView, AppSettings, PetEvent, PetLibraryView, TokenUsageSummary } from "./lib/types";
+  import type { ActivityKeywordFilterSettings, AgentId, AgentView, AppSettings, AppUpdate, PetEvent, PetLibraryView, TokenUsageSummary } from "./lib/types";
 
   type ActivityFilterKind = keyof ActivityKeywordFilterSettings;
 
@@ -55,6 +59,13 @@
   let launchAtLogin = false;
   let systemDark = false;
   let eventPollTimer: number | null = null;
+  let updatePollTimer: number | null = null;
+  let updateCheckMode: UpdateCheckMode | null = null;
+  let updatePromptMode: UpdateCheckMode = "auto";
+  let availableUpdate: AppUpdate | null = null;
+  let updateInstallBusy = false;
+  let updateMessage = "";
+  let updateError = "";
   let runningBubbleSaveToken = 0;
   let runningBubbleSaveTimer: number | null = null;
   let selectedBubbleColorStop: Record<RunningBubbleColorKey, number> = {
@@ -109,6 +120,7 @@
   const defaultImagePixelSize = 48;
   const defaultPetOpacity = 1;
   const minPetOpacity = 0.25;
+  const updateAutoIntervalMs = 6 * 60 * 60 * 1000;
 
   onMount(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -146,9 +158,13 @@
       }
 
       await refresh();
+      void checkForUpdates("auto");
       eventPollTimer = window.setInterval(() => {
         void syncRecentEvents();
       }, 8000);
+      updatePollTimer = window.setInterval(() => {
+        void checkForUpdates("auto");
+      }, updateAutoIntervalMs);
     })();
 
     return () => {
@@ -159,6 +175,7 @@
       unlistenAgentDisabled?.();
       unlistenSettings?.();
       clearEventPoll();
+      clearUpdatePoll();
       clearRunningBubbleSaveTimer();
     };
   });
@@ -246,6 +263,13 @@
     }
   }
 
+  function clearUpdatePoll() {
+    if (updatePollTimer) {
+      window.clearInterval(updatePollTimer);
+      updatePollTimer = null;
+    }
+  }
+
   async function toggleAgent(agent: AgentView) {
     busyAgent = agent.id;
     error = "";
@@ -327,6 +351,76 @@
       error = String(currentError);
     } finally {
       busyLaunchAtLogin = false;
+    }
+  }
+
+  async function checkForUpdates(mode: UpdateCheckMode) {
+    if (updateCheckMode || updateInstallBusy) {
+      return;
+    }
+
+    updateCheckMode = mode;
+    updateError = "";
+    if (mode === "manual") {
+      updateMessage = "Checking...";
+    }
+
+    try {
+      const update = await checkAppUpdate();
+      if (!shouldPromptForUpdate(update, mode, settings)) {
+        if (mode === "manual") {
+          updateMessage = "Latest version installed.";
+        }
+        return;
+      }
+
+      availableUpdate = update;
+      updatePromptMode = mode;
+      updateMessage = `Version ${update.version} available.`;
+    } catch (currentError) {
+      if (mode === "manual") {
+        updateError = String(currentError);
+        updateMessage = "";
+      }
+    } finally {
+      updateCheckMode = null;
+    }
+  }
+
+  async function dismissAvailableUpdate() {
+    const update = availableUpdate;
+    availableUpdate = null;
+    if (!update || !settings) {
+      return;
+    }
+
+    const nextSettings = normalizeSettings({
+      ...settings,
+      updates: ignoredUpdateSettings(update.version),
+    });
+    settings = nextSettings;
+    updateMessage = updatePromptMode === "manual" ? `Version ${update.version} skipped.` : "";
+    updateError = "";
+    try {
+      settings = normalizeSettings(await updateAppSettings(nextSettings));
+    } catch (currentError) {
+      updateError = String(currentError);
+    }
+  }
+
+  async function installAvailableUpdate() {
+    if (!availableUpdate || updateInstallBusy) {
+      return;
+    }
+
+    updateInstallBusy = true;
+    updateError = "";
+    updateMessage = `Installing ${availableUpdate.version}...`;
+    try {
+      await installAppUpdate();
+    } catch (currentError) {
+      updateInstallBusy = false;
+      updateError = String(currentError);
     }
   }
 
@@ -483,6 +577,9 @@
     nextSettings.pet.customWhipReactionSoundPath = nextSettings.pet.customWhipReactionSoundPath ?? null;
     nextSettings.activityFilters = normalizeActivityFilters(nextSettings.activityFilters);
     nextSettings.agents = normalizeAgentSettings(nextSettings.agents);
+    nextSettings.updates = {
+      ignoredVersion: nextSettings.updates?.ignoredVersion ?? null,
+    };
     return nextSettings;
   }
 
@@ -1368,6 +1465,18 @@
               <input type="checkbox" checked={launchAtLogin} disabled={busyLaunchAtLogin} on:change={toggleLaunchAtLogin} />
               开机自启动
             </label>
+            <div class="update-settings">
+              <div class="setting-line">
+                <span>App updates</span>
+                <em>{settings.updates.ignoredVersion ? `Ignored ${settings.updates.ignoredVersion}` : "Ready"}</em>
+              </div>
+              <div class="update-status-row">
+                <span>{updateError || updateMessage || "Ready"}</span>
+                <button disabled={!!updateCheckMode || updateInstallBusy} on:click={() => checkForUpdates("manual")}>
+                  <RefreshCw size={16} /> {updateCheckMode === "manual" ? "Checking" : "Check"}
+                </button>
+              </div>
+            </div>
           </section>
 
           <section class="sound-editor pixel-panel">
@@ -1487,3 +1596,28 @@
     {/if}
   </section>
 </main>
+
+{#if availableUpdate}
+  <div class="modal-scrim">
+    <div class="update-dialog pixel-panel" role="dialog" aria-modal="true" aria-labelledby="update-dialog-title">
+      <header class="panel-head">
+        <div>
+          <h3 id="update-dialog-title"><Download size={18} /> Update available</h3>
+        </div>
+        <button class="icon-button" type="button" disabled={updateInstallBusy} on:click={dismissAvailableUpdate} aria-label="Cancel update">
+          <X size={17} />
+        </button>
+      </header>
+      <p>Code Pet {availableUpdate.version} is ready. Current version: {availableUpdate.currentVersion}.</p>
+      {#if updateError}
+        <p class="error">{updateError}</p>
+      {/if}
+      <div class="row-actions">
+        <button type="button" disabled={updateInstallBusy} on:click={dismissAvailableUpdate}>Cancel</button>
+        <button class="primary-action" type="button" disabled={updateInstallBusy} on:click={installAvailableUpdate}>
+          <Download size={17} /> {updateInstallBusy ? "Installing" : "Upgrade now"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}

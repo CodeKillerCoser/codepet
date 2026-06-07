@@ -43,6 +43,9 @@ function settings(overrides: Partial<AppSettings["notifications"]> = {}): AppSet
     agents: {
       byAgent: {},
     },
+    updates: {
+      ignoredVersion: null,
+    },
   };
 }
 

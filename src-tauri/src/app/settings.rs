@@ -23,6 +23,8 @@ pub struct AppSettings {
     pub activity_filters: ActivityFilterSettings,
     #[serde(default)]
     pub agents: AgentSettings,
+    #[serde(default)]
+    pub updates: UpdateSettings,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -213,6 +215,13 @@ pub struct AgentPreferenceSettings {
     pub hook_events: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSettings {
+    #[serde(default)]
+    pub ignored_version: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SoundChoice {
@@ -311,6 +320,7 @@ impl Default for AppSettings {
             notifications: NotificationSettings::default(),
             activity_filters: ActivityFilterSettings::default(),
             agents: AgentSettings::default(),
+            updates: UpdateSettings::default(),
         }
     }
 }
