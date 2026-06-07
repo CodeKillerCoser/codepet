@@ -15,6 +15,7 @@
 
 - 仓库需要配置 secret `TAURI_SIGNING_PRIVATE_KEY`。如果私钥有密码，同时配置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。
 - 这两个 secret 是 Tauri updater 签名，不是 Apple/Windows 代码签名。当前 workflow 不做 notarization、Apple 签名或 Windows 签名。
+- workflow 会把 `TAURI_SIGNING_PRIVATE_KEY` 写入 runner 临时文件，并通过 `TAURI_SIGNING_PRIVATE_KEY_PATH` 交给 Tauri CLI，避免 Windows shell 直接传递长私钥内容时出现解码差异。
 - 当前 `latest.json` 只发布 `macos-universal` 和 `windows-x86_64` 两个平台键。
 - 公共 GitHub Release asset 可匿名下载，客户端检查更新不需要 GitHub 身份验证。私有仓库或私有 Release 不适合当前静态 endpoint 方案。
 
