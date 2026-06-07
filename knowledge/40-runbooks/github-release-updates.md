@@ -36,6 +36,8 @@ workflow 完成后，Release 应包含：
 - Windows `*setup.exe` 与 `*setup.exe.sig`。
 - `latest.json`。
 
+macOS workflow 需要使用 `--bundles app,dmg`。只构建 `dmg` 时 Release 里会有安装包，但不会生成 updater 使用的 `.app.tar.gz`。
+
 ## 验证
 
 - 本地语法检查：`node --check scripts/generate_latest_json.mjs` 和 `node --check scripts/publish_github_release.mjs`。
