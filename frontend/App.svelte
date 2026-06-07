@@ -49,6 +49,7 @@
   let busyAgent: string | null = null;
   let busyPet = "";
   let busyAppDataDirectory = false;
+  let appDataRestartPending = false;
   let busyLaunchAtLogin = false;
   let error = "";
   let launchAtLogin = false;
@@ -420,6 +421,7 @@
       appDataDir = await appDataDirectory();
       petLibrary = await listPets();
       usage = await tokenUsageSummary();
+      appDataRestartPending = true;
     } catch (currentError) {
       error = String(currentError);
     } finally {
@@ -1358,6 +1360,9 @@
                   </button>
                 </div>
               </div>
+              <p class="setting-note">
+                {appDataRestartPending ? "已保存并复制原数据，重启后完全生效。" : "修改后会复制原数据，保存完成后请重启。"}
+              </p>
             </div>
             <label class="check">
               <input type="checkbox" checked={launchAtLogin} disabled={busyLaunchAtLogin} on:change={toggleLaunchAtLogin} />

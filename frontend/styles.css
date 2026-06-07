@@ -877,6 +877,13 @@ select:focus-visible {
   font-style: normal;
 }
 
+.setting-note {
+  margin: 0;
+  color: var(--app-subtle);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-body);
+}
+
 .data-directory span {
   min-width: 0;
   color: var(--app-muted);

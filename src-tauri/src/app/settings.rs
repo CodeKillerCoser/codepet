@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -430,13 +430,121 @@ pub fn current_app_data_dir() -> PathBuf {
 
 pub fn update_app_data_directory(path: Option<String>) -> io::Result<AppSettings> {
     let mut settings = load_app_settings()?;
+    let old_data_dir = configured_app_data_dir(&settings);
     settings.data.data_directory = path
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let data_dir = configured_app_data_dir(&settings);
-    fs::create_dir_all(&data_dir)?;
+    let new_data_dir = configured_app_data_dir(&settings);
+    if !same_directory(&old_data_dir, &new_data_dir) {
+        if destination_inside_source(&old_data_dir, &new_data_dir) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "new data directory cannot be inside the current data directory",
+            ));
+        }
+        copy_app_data_directory_contents(&old_data_dir, &new_data_dir)?;
+        rewrite_default_pet_library_paths(&mut settings, &old_data_dir, &new_data_dir);
+    } else {
+        fs::create_dir_all(&new_data_dir)?;
+    }
     save_app_settings(&settings)?;
     Ok(settings)
+}
+
+fn copy_app_data_directory_contents(source: &Path, destination: &Path) -> io::Result<()> {
+    if same_directory(source, destination) {
+        return Ok(());
+    }
+    if !source.exists() {
+        fs::create_dir_all(destination)?;
+        return Ok(());
+    }
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("settings.json")
+        {
+            continue;
+        }
+        copy_path_if_missing(&entry.path(), &destination.join(entry.file_name()))?;
+    }
+    Ok(())
+}
+
+fn copy_path_if_missing(source: &Path, destination: &Path) -> io::Result<()> {
+    let metadata = fs::metadata(source)?;
+    if metadata.is_dir() {
+        fs::create_dir_all(destination)?;
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            copy_path_if_missing(&entry.path(), &destination.join(entry.file_name()))?;
+        }
+    } else if metadata.is_file() && !destination.exists() {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(source, destination)?;
+    }
+    Ok(())
+}
+
+fn rewrite_default_pet_library_paths(
+    settings: &mut AppSettings,
+    old_data_dir: &Path,
+    new_data_dir: &Path,
+) {
+    if settings
+        .pet_library
+        .data_directory
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .is_some()
+    {
+        return;
+    }
+
+    let old_pet_dir = old_data_dir.join("pets");
+    let new_pet_dir = new_data_dir.join("pets");
+    settings.pet.image_path =
+        rewrite_path_setting(settings.pet.image_path.take(), &old_pet_dir, &new_pet_dir);
+    for pet in &mut settings.pet_library.pets {
+        pet.image_path = rewrite_path_setting(pet.image_path.take(), &old_pet_dir, &new_pet_dir);
+        pet.source_path = rewrite_path_setting(pet.source_path.take(), &old_pet_dir, &new_pet_dir);
+    }
+}
+
+fn rewrite_path_setting(value: Option<String>, old_root: &Path, new_root: &Path) -> Option<String> {
+    value.map(|path| {
+        let current = PathBuf::from(&path);
+        current
+            .strip_prefix(old_root)
+            .map(|relative| new_root.join(relative).to_string_lossy().to_string())
+            .unwrap_or(path)
+    })
+}
+
+fn same_directory(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn destination_inside_source(source: &Path, destination: &Path) -> bool {
+    if destination.starts_with(source) {
+        return true;
+    }
+    match (source.canonicalize(), destination.canonicalize()) {
+        (Ok(source), Ok(destination)) => destination.starts_with(source),
+        _ => false,
+    }
 }
 
 fn settings_path() -> PathBuf {
@@ -447,4 +555,103 @@ fn default_data_root() -> PathBuf {
     dirs::data_local_dir()
         .or_else(dirs::data_dir)
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copy_data_dir_skips_settings_and_preserves_target_files() -> io::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let source = temp.path().join("old-data");
+        let destination = temp.path().join("new-data");
+        fs::create_dir_all(source.join("logs"))?;
+        fs::create_dir_all(&destination)?;
+        fs::write(source.join("settings.json"), "old settings")?;
+        fs::write(source.join("token-usage.json"), "old usage")?;
+        fs::write(source.join("logs").join("code-pet.log"), "old log")?;
+        fs::write(destination.join("token-usage.json"), "existing usage")?;
+
+        copy_app_data_directory_contents(&source, &destination)?;
+
+        assert_eq!(
+            fs::read_to_string(destination.join("token-usage.json"))?,
+            "existing usage"
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("logs").join("code-pet.log"))?,
+            "old log"
+        );
+        assert!(!destination.join("settings.json").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn destination_inside_source_detects_nested_target() {
+        let source = PathBuf::from("data");
+
+        assert!(destination_inside_source(&source, &source.join("nested")));
+        assert!(!destination_inside_source(&source, Path::new("other-data")));
+    }
+
+    #[test]
+    fn rewrite_default_pet_library_paths_moves_managed_pet_files() {
+        let old_data = PathBuf::from("old").join("code-pet");
+        let new_data = PathBuf::from("new").join("code-pet");
+        let old_image = old_data
+            .join("pets")
+            .join("image-1")
+            .join("pixelated-48.png");
+        let old_source = old_data.join("pets").join("image-1").join("source.png");
+        let new_image = new_data
+            .join("pets")
+            .join("image-1")
+            .join("pixelated-48.png");
+        let new_source = new_data.join("pets").join("image-1").join("source.png");
+        let mut settings = AppSettings::default();
+        settings.pet.image_path = Some(old_image.to_string_lossy().to_string());
+        settings.pet_library.pets.push(ConfiguredPet {
+            id: "image-1".to_string(),
+            name: "Imported".to_string(),
+            kind: PetKind::Image,
+            sprite: None,
+            image_path: Some(old_image.to_string_lossy().to_string()),
+            source_path: Some(old_source.to_string_lossy().to_string()),
+            created_at: "2026-06-08T00:00:00Z".to_string(),
+        });
+
+        rewrite_default_pet_library_paths(&mut settings, &old_data, &new_data);
+
+        let expected_image = new_image.to_string_lossy().to_string();
+        let expected_source = new_source.to_string_lossy().to_string();
+        assert_eq!(
+            settings.pet.image_path.as_deref(),
+            Some(expected_image.as_str())
+        );
+        let pet = settings.pet_library.pets.last().unwrap();
+        assert_eq!(pet.image_path.as_deref(), Some(expected_image.as_str()));
+        assert_eq!(pet.source_path.as_deref(), Some(expected_source.as_str()));
+    }
+
+    #[test]
+    fn rewrite_default_pet_library_paths_keeps_explicit_pet_directory() {
+        let old_data = PathBuf::from("old").join("code-pet");
+        let new_data = PathBuf::from("new").join("code-pet");
+        let old_image = old_data
+            .join("pets")
+            .join("image-1")
+            .join("pixelated-48.png");
+        let mut settings = AppSettings::default();
+        settings.pet_library.data_directory = Some("/external/pets".to_string());
+        settings.pet.image_path = Some(old_image.to_string_lossy().to_string());
+
+        rewrite_default_pet_library_paths(&mut settings, &old_data, &new_data);
+
+        let expected_image = old_image.to_string_lossy().to_string();
+        assert_eq!(
+            settings.pet.image_path.as_deref(),
+            Some(expected_image.as_str())
+        );
+    }
 }

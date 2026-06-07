@@ -15,6 +15,8 @@
 
 设置入口保存到系统 local data 目录下的 `code-pet/settings.json`，用于保证应用始终能找到自定义数据目录配置。未配置 `settings.data.dataDirectory` 时，Token 缓存、日志和默认宠物库路径保持原来的系统 local data 下 `code-pet/`。配置后，Token 缓存、下次启动的日志、默认宠物库和自定义离线 spool 跟随该目录；显式配置过的 `petLibrary.dataDirectory` 仍优先。
 
+修改应用数据目录时，后端会把原数据目录内容复制到目标目录，但不会复制固定入口 `settings.json`，也不会覆盖目标目录中已有文件。默认宠物库的图片路径会随应用数据目录改写；显式配置过宠物库目录时不改写。保存完成后需要重启应用，日志等启动期资源才会完全使用新目录。
+
 ## 前端同步
 
 `frontend/App.svelte` 加载设置后会先归一化，再通过 Tauri command 保存。`frontend/PetApp.svelte` 监听 `settings-updated`，用于更新主题、过滤器、声音和宠物透明度。
