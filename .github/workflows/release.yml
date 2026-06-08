@@ -114,6 +114,11 @@ jobs:
           if [ -z "$TAG" ]; then
             TAG="v$VERSION"
           fi
+          TAG_VERSION="${TAG#v}"
+          if [ "$TAG_VERSION" != "$VERSION" ]; then
+            echo "::error title=Release tag/version mismatch::Release tag $TAG does not match src-tauri/tauri.conf.json version $VERSION."
+            exit 1
+          fi
           RELEASE_NAME="$INPUT_RELEASE_NAME"
           if [ -z "$RELEASE_NAME" ]; then
             RELEASE_NAME="Release $TAG"
@@ -148,7 +153,11 @@ jobs:
           mapfile -d '' ASSETS < <(find dist/release-assets -type f -print0)
           ASSETS+=(dist/latest.json)
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+            mapfile -t EXISTING_ASSETS < <(gh release view "$TAG" --json assets --jq '.assets[].name')
+            for ASSET in "${EXISTING_ASSETS[@]}"; do
+              gh release delete-asset "$TAG" "$ASSET" --yes
+            done
+            gh release upload "$TAG" "${ASSETS[@]}"
             gh release edit "$TAG" --title "$RELEASE_NAME" --notes "$RELEASE_NOTES" --latest
           else
             gh release create "$TAG" "${ASSETS[@]}" --title "$RELEASE_NAME" --notes "$RELEASE_NOTES" --latest

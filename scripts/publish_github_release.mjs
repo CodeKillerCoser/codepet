@@ -11,6 +11,8 @@ const ref = args.ref ?? "main";
 const releaseName = args.releaseName ?? `Release ${tag}`;
 const releaseNotes = args.releaseNotes ?? releaseName;
 
+validateTagMatchesVersion(tag, tauriConfig.version);
+
 run("gh", [
   "workflow",
   "run",
@@ -61,6 +63,20 @@ function parseArgs(argv) {
   }
 
   return parsed;
+}
+
+function validateTagMatchesVersion(releaseTag, releaseVersion) {
+  const tagVersion = releaseTag.replace(/^v/, "");
+  if (tagVersion !== releaseVersion) {
+    fail(
+      [
+        "Release tag must match src-tauri/tauri.conf.json version.",
+        `Tag: ${releaseTag}`,
+        `Version: ${releaseVersion}`,
+        "Bump the app version before publishing a new tag, or use the matching tag.",
+      ].join("\n"),
+    );
+  }
 }
 
 function fail(message) {

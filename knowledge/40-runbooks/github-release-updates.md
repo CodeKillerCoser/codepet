@@ -18,6 +18,7 @@
 - workflow 会在构建前检查 `TAURI_SIGNING_PRIVATE_KEY` 非空；Tauri build 需要通过这个环境变量读取 updater 私钥。
 - 当前 `latest.json` 只发布 `macos-universal` 和 `windows-x86_64` 两个平台键。
 - `src-tauri/tauri.conf.json` 中的 updater endpoint 必须是固定检查入口 `https://github.com/CodeKillerCoser/codepet/releases/latest/download/latest.json`。不要配置成 `releases/download/<tag>/latest.json`，否则旧客户端会一直检查旧 tag 下的 manifest，无法发现新版本。
+- 发布新版本前必须先提升 `src-tauri/tauri.conf.json` 的 `version`，并保持 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 中的应用版本一致。release tag 可以带 `v` 前缀，也可以不带，但去掉 `v` 后必须等于 Tauri version。
 - 公共 GitHub Release asset 可匿名下载，客户端检查更新不需要 GitHub 身份验证。私有仓库或私有 Release 不适合当前静态 endpoint 方案。
 
 ## 发布步骤
@@ -25,10 +26,10 @@
 在本地有 GitHub CLI 且已登录时，可运行：
 
 ```powershell
-npm run release:github -- --tag v0.1.0 --ref main
+npm run release:github -- --tag v0.1.1 --ref main
 ```
 
-也可以直接在 GitHub Actions 页面手动触发 `Release` workflow。未填写 tag 时，workflow 使用 `src-tauri/tauri.conf.json` 里的版本生成 `v<version>`。
+也可以直接在 GitHub Actions 页面手动触发 `Release` workflow。未填写 tag 时，workflow 使用 `src-tauri/tauri.conf.json` 里的版本生成 `v<version>`。如果填写 tag，workflow 会校验 tag 去掉可选 `v` 前缀后必须等于 `src-tauri/tauri.conf.json` 的版本。
 
 workflow 完成后，Release 应包含：
 
@@ -36,6 +37,8 @@ workflow 完成后，Release 应包含：
 - macOS `.app.tar.gz` 与 `.app.tar.gz.sig`。
 - Windows `*setup.exe` 与 `*setup.exe.sig`。
 - `latest.json`。
+
+更新已有 release 时，workflow 会先删除该 release 的旧资产再上传本次构建产物，避免同一个 tag 下同时残留旧版本和新版本安装包。
 
 macOS workflow 需要使用 `--bundles app,dmg`。只构建 `dmg` 时 Release 里会有安装包，但不会生成 updater 使用的 `.app.tar.gz`。
 
@@ -46,8 +49,9 @@ GitHub Release 上传资产时会把文件名中的空格规范化为 `.`，`lat
 ## 验证
 
 - 本地语法检查：`node --check scripts/generate_latest_json.mjs` 和 `node --check scripts/publish_github_release.mjs`。
-- 本地 manifest 生成：用临时目录放置 `.app.tar.gz`、`.app.tar.gz.sig`、`*setup.exe`、`*setup.exe.sig`，运行 `npm run release:latest-json -- --repo CodeKillerCoser/codepet --tag v0.1.0 --artifacts <dir> --output <file>`。
+- 本地 manifest 生成：用临时目录放置 `.app.tar.gz`、`.app.tar.gz.sig`、`*setup.exe`、`*setup.exe.sig`，运行 `npm run release:latest-json -- --repo CodeKillerCoser/codepet --tag v0.1.1 --artifacts <dir> --output <file>`。
 - manifest 生成脚本会校验 `src-tauri/tauri.conf.json` 的 updater endpoint 是否等于固定检查入口。该检查失败时，应优先修正 `tauri.conf.json`，不要改脚本绕过。
+- manifest 生成脚本会校验 release tag 与 Tauri version 一致。该检查失败时，应先提升版本源或改用匹配 tag，避免发布出 tag 是新版本但 `latest.json.version` 仍是旧版本的 release。
 - Release 后检查 `https://github.com/CodeKillerCoser/codepet/releases/latest/download/latest.json` 可公开访问，且 JSON 中两个 URL 都能下载。
 - 客户端验证：安装旧版本后手动检查更新，确认弹窗出现；取消后自动检查不再提示同一版本，手动检查仍会提示。
 

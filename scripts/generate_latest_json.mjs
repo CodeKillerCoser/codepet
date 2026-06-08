@@ -28,6 +28,7 @@ if (!version) {
   fail("Missing release version. Pass --version or set src-tauri/tauri.conf.json version.");
 }
 
+validateTagMatchesVersion(tag, version);
 validateUpdaterEndpoint(tauriConfig, updaterManifestEndpoint);
 
 if (!existsSync(artifactsDir)) {
@@ -89,6 +90,20 @@ function validateUpdaterEndpoint(config, expectedEndpoint) {
         `Expected exactly: ${expectedEndpoint}`,
         `Found: ${endpoints.join(", ")}`,
         "Do not use a tag-scoped /releases/download/<tag>/latest.json URL as the updater endpoint.",
+      ].join("\n"),
+    );
+  }
+}
+
+function validateTagMatchesVersion(releaseTag, releaseVersion) {
+  const tagVersion = releaseTag.replace(/^v/, "");
+  if (tagVersion !== releaseVersion) {
+    fail(
+      [
+        "Release tag must match the Tauri version used in latest.json.",
+        `Tag: ${releaseTag}`,
+        `Version: ${releaseVersion}`,
+        "Bump src-tauri/tauri.conf.json before publishing a new version, or use the matching tag.",
       ].join("\n"),
     );
   }
