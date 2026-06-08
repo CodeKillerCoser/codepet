@@ -133,6 +133,7 @@ async fn receive_hook(
     state.app_state.push_event(event.clone());
     let frontend_event = frontend_event(&event);
     let _ = state.app_handle.emit("pet-event", &frontend_event);
+    crate::notifications::notify_event(event.clone());
     refresh_token_usage_if_needed(&state.app_handle, event.clone());
     watch_claude_transcript_if_needed(&state, &event);
     Ok(json_utf8_response(Some(frontend_event)))

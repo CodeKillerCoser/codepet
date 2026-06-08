@@ -1,5 +1,8 @@
 use code_pet_lib::agents::AgentId;
-use code_pet_lib::settings::{configured_app_data_dir, AppSettings, ThemeChoice, WhipReactionSound};
+use code_pet_lib::settings::{
+    configured_app_data_dir, AppSettings, DingTalkRobotAuthMode, DingTalkRobotTargetType,
+    RobotNotificationChannel, ThemeChoice, WhipReactionSound,
+};
 
 #[test]
 fn settings_default_to_system_theme() {
@@ -15,6 +18,11 @@ fn settings_default_to_system_theme() {
     assert_eq!(settings.pet.opacity, 1.0);
     assert_eq!(settings.pet.whip_reaction_sound, WhipReactionSound::None);
     assert!(settings.pet.custom_whip_reaction_sound_path.is_none());
+    assert!(!settings.notifications.robot.enabled);
+    assert!(settings.notifications.robot.triggers.waiting_approval);
+    assert!(settings.notifications.robot.triggers.task_failed);
+    assert!(settings.notifications.robot.triggers.task_done);
+    assert!(settings.notifications.robot.channels.is_empty());
     assert!(settings.activity_filters.title_keywords.is_empty());
     assert!(settings.activity_filters.message_keywords.is_empty());
     assert!(settings.activity_filters.by_agent.is_empty());
@@ -59,6 +67,7 @@ fn settings_keep_existing_values_when_theme_field_is_missing() {
     assert_eq!(settings.pet.sprite.body, "#111111");
     assert!(!settings.notifications.ring_on_failure);
     assert!(!settings.notifications.ring_on_done);
+    assert!(!settings.notifications.robot.enabled);
     assert!(settings.activity_filters.title_keywords.is_empty());
     assert!(settings.updates.ignored_version.is_none());
 }
@@ -78,6 +87,67 @@ fn settings_read_ignored_update_version() {
 }
 
 #[test]
+fn settings_read_robot_notification_channels() {
+    let settings: AppSettings = serde_json::from_str(
+        r##"{
+          "notifications": {
+            "robot": {
+              "enabled": true,
+              "triggers": {
+                "waitingApproval": true,
+                "taskFailed": true,
+                "taskDone": false
+              },
+              "channels": [
+                {
+                  "provider": "dingtalk",
+                  "id": "ding-1",
+                  "name": "钉钉",
+                  "enabled": true,
+                  "authMode": "enterprise-robot",
+                  "targetType": "user-ids",
+                  "robotCode": "robot-code",
+                  "clientId": "client-id",
+                  "clientSecret": "client-secret",
+                  "userIds": ["user-a", "user-b"]
+                },
+                {
+                  "provider": "feishu",
+                  "id": "fei-1",
+                  "name": "飞书",
+                  "enabled": false,
+                  "webhookUrl": "https://open.feishu.cn/open-apis/bot/v2/hook/token",
+                  "webhookSecret": "secret"
+                }
+              ]
+            }
+          }
+        }"##,
+    )
+    .unwrap();
+
+    assert!(settings.notifications.robot.enabled);
+    assert!(!settings.notifications.robot.triggers.task_done);
+    assert_eq!(settings.notifications.robot.channels.len(), 2);
+    match &settings.notifications.robot.channels[0] {
+        RobotNotificationChannel::DingTalk(channel) => {
+            assert_eq!(channel.auth_mode, DingTalkRobotAuthMode::EnterpriseRobot);
+            assert_eq!(channel.target_type, DingTalkRobotTargetType::UserIds);
+            assert_eq!(channel.robot_code, "robot-code");
+            assert_eq!(channel.user_ids, vec!["user-a", "user-b"]);
+        }
+        RobotNotificationChannel::Feishu(_) => panic!("expected DingTalk channel"),
+    }
+    match &settings.notifications.robot.channels[1] {
+        RobotNotificationChannel::Feishu(channel) => {
+            assert!(!channel.enabled);
+            assert_eq!(channel.webhook_secret, "secret");
+        }
+        RobotNotificationChannel::DingTalk(_) => panic!("expected Feishu channel"),
+    }
+}
+
+#[test]
 fn settings_read_activity_filter_keywords() {
     let settings: AppSettings = serde_json::from_str(
         r##"{
@@ -89,8 +159,14 @@ fn settings_read_activity_filter_keywords() {
     )
     .unwrap();
 
-    assert_eq!(settings.activity_filters.title_keywords, vec!["memory summary", "生成标题"]);
-    assert_eq!(settings.activity_filters.message_keywords, vec!["Recent Codex threads", "MEMORY.md"]);
+    assert_eq!(
+        settings.activity_filters.title_keywords,
+        vec!["memory summary", "生成标题"]
+    );
+    assert_eq!(
+        settings.activity_filters.message_keywords,
+        vec!["Recent Codex threads", "MEMORY.md"]
+    );
 }
 
 #[test]
@@ -155,8 +231,14 @@ fn settings_read_custom_app_data_directory() {
     )
     .unwrap();
 
-    assert_eq!(settings.data.data_directory.as_deref(), Some("/tmp/code-pet-data"));
-    assert_eq!(configured_app_data_dir(&settings), std::path::PathBuf::from("/tmp/code-pet-data"));
+    assert_eq!(
+        settings.data.data_directory.as_deref(),
+        Some("/tmp/code-pet-data")
+    );
+    assert_eq!(
+        configured_app_data_dir(&settings),
+        std::path::PathBuf::from("/tmp/code-pet-data")
+    );
 }
 
 #[test]
@@ -172,7 +254,10 @@ fn settings_read_whip_reaction_sound_personalization() {
     .unwrap();
 
     assert_eq!(settings.pet.whip_reaction_sound, WhipReactionSound::Custom);
-    assert_eq!(settings.pet.custom_whip_reaction_sound_path.as_deref(), Some("/tmp/ouch.wav"));
+    assert_eq!(
+        settings.pet.custom_whip_reaction_sound_path.as_deref(),
+        Some("/tmp/ouch.wav")
+    );
 }
 
 #[test]
@@ -196,7 +281,10 @@ fn settings_read_running_bubble_personalization() {
 
     assert!(!settings.appearance.running_bubble.background_breathing);
     assert!(settings.appearance.running_bubble.border_marquee);
-    assert_eq!(settings.appearance.running_bubble.background_color, "#102a43");
+    assert_eq!(
+        settings.appearance.running_bubble.background_color,
+        "#102a43"
+    );
     assert_eq!(settings.appearance.running_bubble.border_color, "#f59e0b");
     assert_eq!(settings.appearance.running_bubble.border_width, 4);
     assert_eq!(settings.appearance.running_bubble.animation_ms, 950);

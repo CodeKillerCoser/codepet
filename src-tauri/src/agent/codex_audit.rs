@@ -182,6 +182,7 @@ async fn watch_codex_audit(app_state: SharedState, app_handle: AppHandle, audit_
                 let event = apply_session_title(&mut session_titles, event);
                 app_state.push_event(event.clone());
                 let _ = app_handle.emit("pet-event", &frontend_event(&event));
+                crate::notifications::notify_event(event.clone());
                 refresh_token_usage_if_needed(&app_handle, event);
             }
         }

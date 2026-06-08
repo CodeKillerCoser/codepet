@@ -29,7 +29,7 @@
     Volume2,
   } from "@lucide/svelte";
   import { onMount } from "svelte";
-  import { appDataDirectory, appDataDirectoryTargetStatus, checkAppUpdate, collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listAgents, listPets, recentEvents, recordPerfEvent, selectPet, setAgentEnabled, setAgentHookEvents, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { appDataDirectory, appDataDirectoryTargetStatus, checkAppUpdate, collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listAgents, listPets, recentEvents, recordPerfEvent, selectPet, sendTestRobotNotification, setAgentEnabled, setAgentHookEvents, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
   import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
@@ -38,7 +38,7 @@
   import { defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
   import { ignoredUpdateSettings, shouldPromptForUpdate, type UpdateCheckMode } from "./lib/updates";
   import { buildUsageChartData, yAxisTicks, type UsageBucketSize, type UsageRange } from "./lib/usageChart";
-  import type { ActivityKeywordFilterSettings, AgentId, AgentView, AppSettings, AppUpdate, PetEvent, PetLibraryView, TokenUsageSummary } from "./lib/types";
+  import type { ActivityKeywordFilterSettings, AgentId, AgentView, AppSettings, AppUpdate, DingTalkRobotChannel, PetEvent, PetLibraryView, RobotNotificationChannel, TokenUsageSummary } from "./lib/types";
 
   type ActivityFilterKind = keyof ActivityKeywordFilterSettings;
 
@@ -55,7 +55,9 @@
   let busyAppDataDirectory = false;
   let appDataRestartPending = false;
   let busyLaunchAtLogin = false;
+  let busyRobotChannel = "";
   let error = "";
+  let robotNotificationResult = "";
   let launchAtLogin = false;
   let systemDark = false;
   let eventPollTimer: number | null = null;
@@ -109,6 +111,20 @@
   const agentSettingsDefaults: AppSettings["agents"] = {
     byAgent: {},
   };
+  const robotNotificationDefaults: AppSettings["notifications"]["robot"] = {
+    enabled: false,
+    triggers: {
+      waitingApproval: true,
+      taskFailed: true,
+      taskDone: true,
+    },
+    channels: [],
+  };
+  const robotTriggerOptions = [
+    { key: "waitingApproval", label: "等待授权" },
+    { key: "taskFailed", label: "任务失败" },
+    { key: "taskDone", label: "任务完成" },
+  ] as const;
   const activityFilterGroups = [
     { key: "titleKeywords", label: "标题", placeholder: "添加标题关键字" },
     { key: "messageKeywords", label: "内容", placeholder: "添加内容关键字" },
@@ -596,12 +612,163 @@
     nextSettings.pet.opacity = clampPetOpacity(nextSettings.pet.opacity ?? defaultPetOpacity);
     nextSettings.pet.whipReactionSound = nextSettings.pet.whipReactionSound ?? "none";
     nextSettings.pet.customWhipReactionSoundPath = nextSettings.pet.customWhipReactionSoundPath ?? null;
+    nextSettings.notifications.robot = normalizeRobotNotificationSettings(nextSettings.notifications.robot);
     nextSettings.activityFilters = normalizeActivityFilters(nextSettings.activityFilters);
     nextSettings.agents = normalizeAgentSettings(nextSettings.agents);
     nextSettings.updates = {
       ignoredVersion: nextSettings.updates?.ignoredVersion ?? null,
     };
     return nextSettings;
+  }
+
+  function normalizeRobotNotificationSettings(robot: Partial<AppSettings["notifications"]["robot"]> | null | undefined): AppSettings["notifications"]["robot"] {
+    return {
+      enabled: Boolean(robot?.enabled),
+      triggers: {
+        ...robotNotificationDefaults.triggers,
+        ...(robot?.triggers ?? {}),
+      },
+      channels: (robot?.channels ?? []).map(normalizeRobotChannel).filter((channel): channel is RobotNotificationChannel => Boolean(channel)),
+    };
+  }
+
+  function normalizeRobotChannel(channel: Partial<RobotNotificationChannel> | null | undefined): RobotNotificationChannel | null {
+    if (!channel) return null;
+    if (channel.provider === "feishu") {
+      const feishu = channel;
+      return {
+        provider: "feishu",
+        id: feishu.id || robotChannelId("feishu"),
+        name: feishu.name || "飞书机器人",
+        enabled: feishu.enabled ?? true,
+        webhookUrl: feishu.webhookUrl ?? "",
+        webhookSecret: feishu.webhookSecret ?? "",
+      };
+    }
+    if (channel.provider === "dingtalk") {
+      const dingtalk = channel;
+      return {
+        provider: "dingtalk",
+        id: dingtalk.id || robotChannelId("dingtalk"),
+        name: dingtalk.name || "钉钉机器人",
+        enabled: dingtalk.enabled ?? true,
+        authMode: dingtalk.authMode ?? "enterprise-robot",
+        targetType: dingtalk.targetType ?? "user-ids",
+        robotCode: dingtalk.robotCode ?? "",
+        clientId: dingtalk.clientId ?? "",
+        clientSecret: dingtalk.clientSecret ?? "",
+        userIds: normalizeRobotList(dingtalk.userIds),
+        openConversationId: dingtalk.openConversationId ?? "",
+        webhookUrl: dingtalk.webhookUrl ?? "",
+        webhookSecret: dingtalk.webhookSecret ?? "",
+      };
+    }
+    return null;
+  }
+
+  function robotChannelId(provider: RobotNotificationChannel["provider"]) {
+    return `${provider}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  }
+
+  function createRobotChannel(provider: RobotNotificationChannel["provider"]): RobotNotificationChannel {
+    if (provider === "feishu") {
+      return {
+        provider,
+        id: robotChannelId(provider),
+        name: "飞书机器人",
+        enabled: true,
+        webhookUrl: "",
+        webhookSecret: "",
+      };
+    }
+    return {
+      provider,
+      id: robotChannelId(provider),
+      name: "钉钉机器人",
+      enabled: true,
+      authMode: "enterprise-robot",
+      targetType: "user-ids",
+      robotCode: "",
+      clientId: "",
+      clientSecret: "",
+      userIds: [],
+      openConversationId: "",
+      webhookUrl: "",
+      webhookSecret: "",
+    };
+  }
+
+  async function addRobotChannel(provider: RobotNotificationChannel["provider"]) {
+    if (!settings) return;
+    settings.notifications.robot = normalizeRobotNotificationSettings({
+      ...settings.notifications.robot,
+      enabled: true,
+      channels: [...settings.notifications.robot.channels, createRobotChannel(provider)],
+    });
+    robotNotificationResult = "";
+    await saveSettings();
+  }
+
+  async function removeRobotChannel(channelId: string) {
+    if (!settings) return;
+    settings.notifications.robot.channels = settings.notifications.robot.channels.filter((channel) => channel.id !== channelId);
+    robotNotificationResult = "";
+    await saveSettings();
+  }
+
+  async function testRobotChannel(channelId: string) {
+    if (!settings) return;
+    busyRobotChannel = channelId;
+    robotNotificationResult = "";
+    error = "";
+    try {
+      await saveSettings();
+      robotNotificationResult = await sendTestRobotNotification(channelId);
+    } catch (currentError) {
+      error = String(currentError);
+    } finally {
+      busyRobotChannel = "";
+    }
+  }
+
+  function robotChannelLabel(channel: RobotNotificationChannel) {
+    if (channel.provider === "feishu") {
+      return channel.name || "飞书机器人";
+    }
+    return channel.name || (channel.authMode === "webhook" ? "钉钉 webhook" : "钉钉企业机器人");
+  }
+
+  function robotChannelMeta(channel: RobotNotificationChannel) {
+    if (channel.provider === "feishu") {
+      return "飞书 webhook";
+    }
+    return channel.authMode === "webhook"
+      ? "钉钉 webhook"
+      : channel.targetType === "open-conversation-id"
+        ? "钉钉企业机器人 · 群"
+        : "钉钉企业机器人 · 用户";
+  }
+
+  function dingTalkUserIdsValue(channel: DingTalkRobotChannel) {
+    return normalizeRobotList(channel.userIds).join(", ");
+  }
+
+  function updateDingTalkUserIds(channel: DingTalkRobotChannel, value: string) {
+    channel.userIds = normalizeRobotList(value.split(/[,\n，\s]+/));
+  }
+
+  function normalizeRobotList(values: Array<string | null | undefined> | null | undefined): string[] {
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const rawValue of values ?? []) {
+      const value = (rawValue ?? "").trim();
+      if (!value || seen.has(value)) {
+        continue;
+      }
+      seen.add(value);
+      normalized.push(value);
+    }
+    return normalized;
   }
 
   function normalizeActivityFilters(filters: Partial<AppSettings["activityFilters"]> | null | undefined): AppSettings["activityFilters"] {
@@ -1585,6 +1752,172 @@
             <div class="time-row">
               <input type="time" bind:value={settings.notifications.quietHoursStart} on:change={saveSettings} />
               <input type="time" bind:value={settings.notifications.quietHoursEnd} on:change={saveSettings} />
+            </div>
+          </section>
+
+          <section class="robot-editor pixel-panel">
+            <header class="panel-head">
+              <div>
+                <h3><Bot size={18} /> 通知机器人</h3>
+              </div>
+              <label class="switch-check">
+                <input type="checkbox" bind:checked={settings.notifications.robot.enabled} on:change={saveSettings} />
+                启用
+              </label>
+            </header>
+
+            <div class="robot-trigger-grid" aria-label="机器人触发事件">
+              {#each robotTriggerOptions as trigger}
+                <label class="check">
+                  <input type="checkbox" bind:checked={settings.notifications.robot.triggers[trigger.key]} on:change={saveSettings} />
+                  {trigger.label}
+                </label>
+              {/each}
+            </div>
+
+            <div class="row-actions">
+              <button on:click={() => addRobotChannel("dingtalk")}>
+                <Bot size={17} /> 钉钉
+              </button>
+              <button on:click={() => addRobotChannel("feishu")}>
+                <Bot size={17} /> 飞书
+              </button>
+            </div>
+
+            {#if robotNotificationResult}
+              <p class="setting-note robot-result">{robotNotificationResult}</p>
+            {/if}
+
+            <div class="robot-channel-list" aria-label="机器人通知渠道">
+              {#if settings.notifications.robot.channels.length}
+                {#each settings.notifications.robot.channels as channel (channel.id)}
+                  <article class="robot-channel-card">
+                    <div class="robot-channel-head">
+                      <span class={`robot-provider ${channel.provider}`}>{channel.provider === "dingtalk" ? "钉" : "飞"}</span>
+                      <div>
+                        <strong>{robotChannelLabel(channel)}</strong>
+                        <em>{robotChannelMeta(channel)}</em>
+                      </div>
+                      <label class="switch-check compact">
+                        <input type="checkbox" bind:checked={channel.enabled} on:change={saveSettings} />
+                        启用
+                      </label>
+                    </div>
+
+                    <label>
+                      名称
+                      <input type="text" bind:value={channel.name} on:change={saveSettings} />
+                    </label>
+
+                    {#if channel.provider === "dingtalk"}
+                      <div class="segmented">
+                        <button
+                          class:active={channel.authMode === "enterprise-robot"}
+                          on:click={async () => {
+                            channel.authMode = "enterprise-robot";
+                            await saveSettings();
+                          }}
+                        >
+                          企业机器人
+                        </button>
+                        <button
+                          class:active={channel.authMode === "webhook"}
+                          on:click={async () => {
+                            channel.authMode = "webhook";
+                            await saveSettings();
+                          }}
+                        >
+                          Webhook
+                        </button>
+                      </div>
+
+                      {#if channel.authMode === "enterprise-robot"}
+                        <div class="robot-field-grid">
+                          <label>
+                            robotCode
+                            <input type="text" bind:value={channel.robotCode} on:change={saveSettings} />
+                          </label>
+                          <label>
+                            clientId
+                            <input type="text" bind:value={channel.clientId} on:change={saveSettings} />
+                          </label>
+                        </div>
+                        <label>
+                          clientSecret
+                          <input type="password" bind:value={channel.clientSecret} on:change={saveSettings} />
+                        </label>
+                        <div class="segmented">
+                          <button
+                            class:active={channel.targetType === "user-ids"}
+                            on:click={async () => {
+                              channel.targetType = "user-ids";
+                              await saveSettings();
+                            }}
+                          >
+                            用户
+                          </button>
+                          <button
+                            class:active={channel.targetType === "open-conversation-id"}
+                            on:click={async () => {
+                              channel.targetType = "open-conversation-id";
+                              await saveSettings();
+                            }}
+                          >
+                            群
+                          </button>
+                        </div>
+                        {#if channel.targetType === "user-ids"}
+                          <label>
+                            userId
+                            <textarea rows="2" value={dingTalkUserIdsValue(channel)} on:change={(event) => {
+                              updateDingTalkUserIds(channel, inputValue(event));
+                              void saveSettings();
+                            }}></textarea>
+                          </label>
+                        {:else}
+                          <label>
+                            openConversationId
+                            <input type="text" bind:value={channel.openConversationId} on:change={saveSettings} />
+                          </label>
+                        {/if}
+                      {:else}
+                        <label>
+                          webhook
+                          <input type="url" bind:value={channel.webhookUrl} on:change={saveSettings} />
+                        </label>
+                        <label>
+                          加签密钥
+                          <input type="password" bind:value={channel.webhookSecret} on:change={saveSettings} />
+                        </label>
+                      {/if}
+                    {:else}
+                      <label>
+                        webhook
+                        <input type="url" bind:value={channel.webhookUrl} on:change={saveSettings} />
+                      </label>
+                      <label>
+                        签名密钥
+                        <input type="password" bind:value={channel.webhookSecret} on:change={saveSettings} />
+                      </label>
+                    {/if}
+
+                    <div class="robot-channel-actions">
+                      <button disabled={busyRobotChannel === channel.id} on:click={() => testRobotChannel(channel.id)}>
+                        <PlugZap size={17} /> 测试
+                      </button>
+                      <button class="danger-action" on:click={() => removeRobotChannel(channel.id)} aria-label={`删除 ${robotChannelLabel(channel)}`}>
+                        <Trash2 size={17} /> 删除
+                      </button>
+                    </div>
+                  </article>
+                {/each}
+              {:else}
+                <div class="empty-state compact">
+                  <Bot size={20} />
+                  <strong>未配置机器人</strong>
+                  <p>添加一个钉钉或飞书渠道后，任务状态会按上面的事件发送。</p>
+                </div>
+              {/if}
             </div>
           </section>
         </div>

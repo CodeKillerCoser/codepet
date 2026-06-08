@@ -187,6 +187,97 @@ pub struct NotificationSettings {
     pub quiet_hours_start: String,
     #[serde(default = "default_quiet_end")]
     pub quiet_hours_end: String,
+    #[serde(default)]
+    pub robot: RobotNotificationSettings,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RobotNotificationSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub triggers: RobotNotificationTriggers,
+    #[serde(default)]
+    pub channels: Vec<RobotNotificationChannel>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RobotNotificationTriggers {
+    #[serde(default = "default_true")]
+    pub waiting_approval: bool,
+    #[serde(default = "default_true")]
+    pub task_failed: bool,
+    #[serde(default = "default_true")]
+    pub task_done: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "provider")]
+pub enum RobotNotificationChannel {
+    #[serde(rename = "dingtalk")]
+    DingTalk(DingTalkRobotChannel),
+    #[serde(rename = "feishu")]
+    Feishu(FeishuRobotChannel),
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DingTalkRobotChannel {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub auth_mode: DingTalkRobotAuthMode,
+    #[serde(default)]
+    pub target_type: DingTalkRobotTargetType,
+    #[serde(default)]
+    pub robot_code: String,
+    #[serde(default)]
+    pub client_id: String,
+    #[serde(default)]
+    pub client_secret: String,
+    #[serde(default)]
+    pub user_ids: Vec<String>,
+    #[serde(default)]
+    pub open_conversation_id: String,
+    #[serde(default)]
+    pub webhook_url: String,
+    #[serde(default)]
+    pub webhook_secret: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeishuRobotChannel {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub webhook_url: String,
+    #[serde(default)]
+    pub webhook_secret: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DingTalkRobotAuthMode {
+    EnterpriseRobot,
+    Webhook,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DingTalkRobotTargetType {
+    UserIds,
+    OpenConversationId,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -308,7 +399,30 @@ impl Default for NotificationSettings {
             quiet_hours_enabled: false,
             quiet_hours_start: default_quiet_start(),
             quiet_hours_end: default_quiet_end(),
+            robot: RobotNotificationSettings::default(),
         }
+    }
+}
+
+impl Default for RobotNotificationTriggers {
+    fn default() -> Self {
+        Self {
+            waiting_approval: true,
+            task_failed: true,
+            task_done: true,
+        }
+    }
+}
+
+impl Default for DingTalkRobotAuthMode {
+    fn default() -> Self {
+        Self::EnterpriseRobot
+    }
+}
+
+impl Default for DingTalkRobotTargetType {
+    fn default() -> Self {
+        Self::UserIds
     }
 }
 

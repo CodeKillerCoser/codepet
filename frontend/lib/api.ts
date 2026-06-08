@@ -43,6 +43,10 @@ export async function installAppUpdate(): Promise<void> {
   return invoke<void>("install_app_update");
 }
 
+export async function sendTestRobotNotification(channelId?: string): Promise<string> {
+  return invoke<string>("send_test_robot_notification", { channelId });
+}
+
 export async function appDataDirectory(): Promise<string> {
   return invoke<string>("app_data_directory");
 }

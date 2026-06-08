@@ -103,6 +103,7 @@ export interface AppSettings {
     quietHoursEnabled: boolean;
     quietHoursStart: string;
     quietHoursEnd: string;
+    robot: RobotNotificationSettings;
   };
   activityFilters: ActivityFilterSettings;
   agents: AgentSettings;
@@ -112,6 +113,43 @@ export interface AppSettings {
 export interface AppUpdate {
   version: string;
   currentVersion: string;
+}
+
+export interface RobotNotificationSettings {
+  enabled: boolean;
+  triggers: {
+    waitingApproval: boolean;
+    taskFailed: boolean;
+    taskDone: boolean;
+  };
+  channels: RobotNotificationChannel[];
+}
+
+export type RobotNotificationChannel = DingTalkRobotChannel | FeishuRobotChannel;
+
+export interface DingTalkRobotChannel {
+  provider: "dingtalk";
+  id: string;
+  name: string;
+  enabled: boolean;
+  authMode: "enterprise-robot" | "webhook";
+  targetType: "user-ids" | "open-conversation-id";
+  robotCode: string;
+  clientId: string;
+  clientSecret: string;
+  userIds: string[];
+  openConversationId: string;
+  webhookUrl: string;
+  webhookSecret: string;
+}
+
+export interface FeishuRobotChannel {
+  provider: "feishu";
+  id: string;
+  name: string;
+  enabled: boolean;
+  webhookUrl: string;
+  webhookSecret: string;
 }
 
 export interface ActivityFilterSettings {

@@ -126,6 +126,7 @@ pub async fn watch_claude_transcript_for_outcome(
                 if let Some(event) = event_from_claude_outcome(&fallback, outcome) {
                     state.push_event(event.clone());
                     let _ = app_handle.emit("pet-event", &frontend_event(&event));
+                    crate::notifications::notify_event(event);
                     return;
                 }
             }

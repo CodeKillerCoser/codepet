@@ -804,7 +804,8 @@ select:focus-visible {
 .pet-editor,
 .appearance-editor,
 .bubble-editor,
-.sound-editor {
+.sound-editor,
+.robot-editor {
   display: grid;
   gap: 16px;
   padding: 20px;
@@ -1153,6 +1154,121 @@ select:focus-visible {
   white-space: nowrap;
 }
 
+.switch-check {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--app-muted);
+  font-size: var(--font-size-sm-plus);
+  font-weight: var(--font-weight-semibold-strong);
+}
+
+.switch-check.compact {
+  min-height: 32px;
+  font-size: var(--font-size-sm);
+}
+
+.robot-trigger-grid,
+.robot-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.robot-trigger-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.robot-channel-list {
+  display: grid;
+  gap: 12px;
+}
+
+.robot-channel-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--app-surface-soft);
+}
+
+.robot-channel-head {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.robot-channel-head > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.robot-channel-head strong,
+.robot-channel-head em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.robot-channel-head strong {
+  color: var(--app-text);
+  font-size: var(--font-size-md-plus);
+  font-weight: var(--font-weight-bold);
+}
+
+.robot-channel-head em {
+  color: var(--app-muted);
+  font-size: var(--font-size-sm);
+  font-style: normal;
+}
+
+.robot-provider {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  color: var(--app-text);
+  background: var(--app-surface-strong);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+}
+
+.robot-provider.dingtalk {
+  border-color: color-mix(in srgb, var(--app-accent) 32%, var(--app-border));
+  background: color-mix(in srgb, var(--app-accent) 14%, var(--app-surface-strong));
+}
+
+.robot-provider.feishu {
+  border-color: color-mix(in srgb, var(--app-good) 36%, var(--app-border));
+  background: color-mix(in srgb, var(--app-good) 14%, var(--app-surface-strong));
+}
+
+.robot-channel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.danger-action {
+  color: var(--app-danger);
+}
+
+.robot-result {
+  border: 1px solid color-mix(in srgb, var(--app-good) 34%, var(--app-border));
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--app-good) 12%, var(--app-surface-soft));
+}
+
 label {
   display: grid;
   gap: 8px;
@@ -1175,13 +1291,25 @@ input[type="color"] {
 
 input[type="range"],
 input[type="number"],
-input[type="time"] {
+input[type="time"],
+input[type="text"],
+input[type="password"],
+input[type="url"],
+select,
+textarea {
   min-height: 44px;
   border: 1px solid var(--app-border);
   border-radius: 8px;
   padding: 0 10px;
   color: var(--app-text);
   background: var(--app-surface-soft);
+}
+
+textarea {
+  min-height: 72px;
+  padding: 10px;
+  resize: vertical;
+  line-height: var(--line-height-body);
 }
 
 .agent-filter-card {
@@ -2714,6 +2842,16 @@ input[type="time"] {
   .usage-row {
     grid-template-columns: 1fr;
     align-items: start;
+  }
+
+  .robot-trigger-grid,
+  .robot-field-grid,
+  .robot-channel-head {
+    grid-template-columns: 1fr;
+  }
+
+  .robot-channel-actions {
+    justify-content: flex-start;
   }
 
   .event-provider,

@@ -11,6 +11,7 @@ import {
   installAppUpdate,
   recentEvents,
   recordPerfEvent,
+  sendTestRobotNotification,
   setAgentHookEvents,
   setAppDataDirectory,
   setLaunchAtLoginEnabled,
@@ -276,6 +277,20 @@ describe("recordPerfEvent", () => {
         fields: { agents: 4 },
       },
     });
+  });
+});
+
+describe("sendTestRobotNotification", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("invokes the desktop command for a selected robot channel", async () => {
+    vi.mocked(invoke).mockResolvedValue("已发送 1 个机器人通知");
+
+    await expect(sendTestRobotNotification("ding-1")).resolves.toBe("已发送 1 个机器人通知");
+
+    expect(invoke).toHaveBeenCalledWith("send_test_robot_notification", { channelId: "ding-1" });
   });
 });
 

@@ -18,6 +18,7 @@ pub use agent::registry as agents;
 pub use app::autostart;
 pub use app::cli;
 pub use app::log as app_log;
+pub use app::notifications;
 pub use app::settings;
 pub use app::state;
 pub use app::updates;
@@ -99,6 +100,11 @@ fn update_app_settings(app: AppHandle, settings: AppSettings) -> Result<AppSetti
     save_app_settings(&settings).map_err(|error| error.to_string())?;
     let _ = app.emit("settings-updated", settings.clone());
     Ok(settings)
+}
+
+#[tauri::command]
+async fn send_test_robot_notification(channel_id: Option<String>) -> Result<String, String> {
+    notifications::send_test_notification(channel_id).await
 }
 
 #[tauri::command]
@@ -406,6 +412,7 @@ pub fn run() {
             set_agent_hook_events,
             get_app_settings,
             update_app_settings,
+            send_test_robot_notification,
             app_data_directory,
             app_data_directory_target_status,
             set_app_data_directory,
