@@ -13,17 +13,22 @@ import { fileURLToPath } from "node:url";
 const args = parseArgs(process.argv.slice(2));
 const root = fileURLToPath(new URL("..", import.meta.url));
 const tauriConfigPath = resolve(root, "src-tauri", "tauri.conf.json");
-const version = args.version ?? readJson(tauriConfigPath).version;
+const tauriConfig = readJson(tauriConfigPath);
+const version = args.version ?? tauriConfig.version;
 const tag = args.tag ?? `v${version}`;
 const repository = normalizeRepository(args.repo ?? process.env.GITHUB_REPOSITORY ?? readGitRemote());
 const artifactsDir = resolve(root, args.artifacts ?? "dist/release-assets");
 const outputPath = resolve(root, args.output ?? "dist/latest.json");
 const notes = args.notes ?? `Release ${version}`;
 const pubDate = args.pubDate ?? new Date().toISOString();
+const updaterManifestName = "latest.json";
+const updaterManifestEndpoint = `https://github.com/${repository}/releases/latest/download/${updaterManifestName}`;
 
 if (!version) {
   fail("Missing release version. Pass --version or set src-tauri/tauri.conf.json version.");
 }
+
+validateUpdaterEndpoint(tauriConfig, updaterManifestEndpoint);
 
 if (!existsSync(artifactsDir)) {
   fail(`Artifacts directory does not exist: ${artifactsDir}`);
@@ -53,6 +58,7 @@ const latest = {
 mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(outputPath, `${JSON.stringify(latest, null, 2)}\n`);
 console.log(`Wrote ${outputPath}`);
+console.log(`Updater manifest endpoint: ${updaterManifestEndpoint}`);
 
 function releaseAsset(file) {
   const signaturePath = `${file}.sig`;
@@ -68,6 +74,24 @@ function releaseAsset(file) {
 
 function githubReleaseAssetName(file) {
   return basename(file).replaceAll(" ", ".");
+}
+
+function validateUpdaterEndpoint(config, expectedEndpoint) {
+  const endpoints = config.plugins?.updater?.endpoints;
+  if (!Array.isArray(endpoints) || endpoints.length === 0) {
+    fail("Missing Tauri updater endpoint in src-tauri/tauri.conf.json.");
+  }
+
+  if (endpoints.length !== 1 || endpoints[0] !== expectedEndpoint) {
+    fail(
+      [
+        "Tauri updater endpoint must be the stable latest.json URL.",
+        `Expected exactly: ${expectedEndpoint}`,
+        `Found: ${endpoints.join(", ")}`,
+        "Do not use a tag-scoped /releases/download/<tag>/latest.json URL as the updater endpoint.",
+      ].join("\n"),
+    );
+  }
 }
 
 function findArtifact(files, predicate, description) {
