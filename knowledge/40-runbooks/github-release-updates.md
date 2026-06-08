@@ -60,6 +60,7 @@ GitHub Release 上传资产时会把文件名中的空格规范化为 `.`，`lat
 - `latest.json` 使用 `releases/latest` endpoint。如果 GitHub latest 指向了错误 Release，客户端会读取错误版本。发布 job 会用 `gh release ... --latest` 标记当前 Release。
 - Windows 当前是 x86_64 runner 产物。如果未来需要 32-bit x86，需要增加新的构建 target 和平台键。
 - 未签名或未公证的安装包可能触发系统安全提示，这不影响 updater manifest，但会影响用户安装体验。
+- Tauri 打包阶段会下载 NSIS 等外部工具，GitHub 下载链路偶发 `504` 时可能导致 Windows build 失败。workflow 对 Tauri build 做三次重试；如果三次都失败，应先按 job 日志确认是否仍是外部下载错误。
 
 ## 未知项
 

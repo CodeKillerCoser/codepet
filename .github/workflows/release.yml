@@ -43,7 +43,17 @@ jobs:
             exit 1
           fi
       - name: Build Tauri app
-        run: npm run tauri -- build --target universal-apple-darwin --bundles app,dmg
+        shell: bash
+        run: |
+          for ATTEMPT in 1 2 3; do
+            if npm run tauri -- build --target universal-apple-darwin --bundles app,dmg; then
+              exit 0
+            fi
+            if [ "$ATTEMPT" = "3" ]; then
+              exit 1
+            fi
+            sleep $((ATTEMPT * 20))
+          done
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -76,7 +86,19 @@ jobs:
             throw "TAURI_SIGNING_PRIVATE_KEY secret is required."
           }
       - name: Build Tauri app
-        run: npm run tauri -- build --bundles nsis
+        shell: pwsh
+        run: |
+          $maxAttempts = 3
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt += 1) {
+            npm run tauri -- build --bundles nsis
+            if ($LASTEXITCODE -eq 0) {
+              exit 0
+            }
+            if ($attempt -eq $maxAttempts) {
+              exit $LASTEXITCODE
+            }
+            Start-Sleep -Seconds ($attempt * 20)
+          }
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
