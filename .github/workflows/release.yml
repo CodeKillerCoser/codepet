@@ -3,8 +3,12 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: Base app version. CI syncs it to the branch, then builds v<version+short_commit>.
+        required: false
+        type: string
       tag:
-        description: Optional release tag override. Defaults to v<tauri version>.
+        description: Advanced release tag override. Must match v<version+short_commit>.
         required: false
         type: string
       release_name:
@@ -21,25 +25,61 @@ permissions:
 
 jobs:
   preflight:
-    name: Validate release version
+    name: Resolve release version
     runs-on: ubuntu-latest
     outputs:
+      base_version: ${{ steps.release.outputs.base_version }}
       version: ${{ steps.release.outputs.version }}
+      commit_sha: ${{ steps.release.outputs.commit_sha }}
       tag: ${{ steps.release.outputs.tag }}
       release_name: ${{ steps.release.outputs.release_name }}
       release_notes: ${{ steps.release.outputs.release_notes }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Sync requested source version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_VERSION" ]; then
+            if [ "$GITHUB_REF_TYPE" != "branch" ]; then
+              echo "Version sync requires workflow_dispatch to run on a branch ref."
+              exit 1
+            fi
+            node scripts/release_version.mjs --sync-version "$INPUT_VERSION"
+          fi
+          BASE_VERSION="$(node scripts/release_version.mjs --print-version)"
+          echo "BASE_VERSION=$BASE_VERSION" >> "$GITHUB_ENV"
+      - name: Commit synced source version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+            git commit -m "chore: sync release version to ${BASE_VERSION}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
       - name: Resolve release metadata
         id: release
         env:
           INPUT_TAG: ${{ inputs.tag }}
           INPUT_RELEASE_NAME: ${{ inputs.release_name }}
           INPUT_RELEASE_NOTES: ${{ inputs.release_notes }}
-        run: node scripts/release_version.mjs --github-output "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          COMMIT_SHA="$(git rev-parse HEAD)"
+          node scripts/release_version.mjs \
+            --version "$BASE_VERSION" \
+            --commit-sha "$COMMIT_SHA" \
+            --github-output "$GITHUB_OUTPUT"
 
   build-macos:
     name: Build macOS universal
@@ -47,6 +87,8 @@ jobs:
     needs: preflight
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.commit_sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -55,6 +97,8 @@ jobs:
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - run: npm ci
+      - name: Apply build version
+        run: node scripts/release_version.mjs --sync-version "${{ needs.preflight.outputs.version }}" --allow-build-metadata
       - name: Check updater signing key secret
         shell: bash
         env:
@@ -94,12 +138,17 @@ jobs:
     needs: preflight
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.commit_sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
+      - name: Apply build version
+        shell: pwsh
+        run: node scripts/release_version.mjs --sync-version "${{ needs.preflight.outputs.version }}" --allow-build-metadata
       - name: Check updater signing key secret
         shell: pwsh
         env:
@@ -142,6 +191,8 @@ jobs:
       - build-windows
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.commit_sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22

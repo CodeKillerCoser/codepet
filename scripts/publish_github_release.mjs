@@ -5,11 +5,8 @@ import { prepareReleaseMetadata } from "./release_version.mjs";
 const args = parseArgs(process.argv.slice(2));
 const root = fileURLToPath(new URL("..", import.meta.url));
 const metadata = prepareReleaseMetadata({
-  tag: args.tag,
-  releaseName: args.releaseName,
-  releaseNotes: args.releaseNotes,
+  version: args.version,
 });
-const tag = metadata.tag;
 const ref = args.ref ?? "main";
 
 run("gh", [
@@ -19,14 +16,16 @@ run("gh", [
   "--ref",
   ref,
   "--field",
-  `tag=${tag}`,
+  `version=${args.version ?? ""}`,
   "--field",
-  `release_name=${metadata.releaseName}`,
+  `tag=${args.tag ?? ""}`,
   "--field",
-  `release_notes=${metadata.releaseNotes}`,
+  `release_name=${args.releaseName ?? ""}`,
+  "--field",
+  `release_notes=${args.releaseNotes ?? ""}`,
 ]);
 
-console.log(`Queued GitHub release workflow for ${tag} on ${ref}.`);
+console.log(`Queued GitHub release workflow for base version ${metadata.baseVersion} on ${ref}.`);
 
 function run(command, commandArgs) {
   const result = spawnSync(command, commandArgs, {
