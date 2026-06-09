@@ -7,6 +7,7 @@
 ## 数据来源
 
 - `src-tauri/tauri.conf.json`：updater 公钥、endpoint 和 `createUpdaterArtifacts`。
+- `scripts/release_version.mjs`：以 `src-tauri/tauri.conf.json.version` 为版本源，校验 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock`。
 - `scripts/generate_latest_json.mjs`：从 Release 产物和 `.sig` 文件生成 `latest.json`。
 - `.github/workflows/release.yml`：手动触发 macOS universal 与 Windows x86_64 构建，并创建或更新 GitHub Release。
 - GitHub Release asset：客户端直接下载的安装包、updater 包、签名文件和 `latest.json`。
@@ -19,6 +20,7 @@
 - 当前 `latest.json` 只发布 `macos-universal` 和 `windows-x86_64` 两个平台键。
 - `src-tauri/tauri.conf.json` 中的 updater endpoint 必须是固定检查入口 `https://github.com/CodeKillerCoser/codepet/releases/latest/download/latest.json`。不要配置成 `releases/download/<tag>/latest.json`，否则旧客户端会一直检查旧 tag 下的 manifest，无法发现新版本。
 - 发布新版本前必须先提升 `src-tauri/tauri.conf.json` 的 `version`，并保持 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 中的应用版本一致。release tag 可以带 `v` 前缀，也可以不带，但去掉 `v` 后必须等于 Tauri version。
+- Release workflow 会先运行 `preflight` job。版本不一致或手动 tag 与 Tauri version 不一致时，会在 macOS/Windows 构建开始前失败。
 - 公共 GitHub Release asset 可匿名下载，客户端检查更新不需要 GitHub 身份验证。私有仓库或私有 Release 不适合当前静态 endpoint 方案。
 
 ## 发布步骤
@@ -26,10 +28,11 @@
 在本地有 GitHub CLI 且已登录时，可运行：
 
 ```powershell
-npm run release:github -- --tag v0.1.1 --ref main
+npm run version:check
+npm run release:github -- --ref main
 ```
 
-也可以直接在 GitHub Actions 页面手动触发 `Release` workflow。未填写 tag 时，workflow 使用 `src-tauri/tauri.conf.json` 里的版本生成 `v<version>`。如果填写 tag，workflow 会校验 tag 去掉可选 `v` 前缀后必须等于 `src-tauri/tauri.conf.json` 的版本。
+也可以直接在 GitHub Actions 页面手动触发 `Release` workflow。日常发布不要填写 tag；workflow 会使用 `src-tauri/tauri.conf.json` 里的版本生成 `v<version>`。如果填写 tag，`preflight` 会校验 tag 去掉可选 `v` 前缀后必须等于 `src-tauri/tauri.conf.json` 的版本。
 
 workflow 完成后，Release 应包含：
 
@@ -48,7 +51,8 @@ GitHub Release 上传资产时会把文件名中的空格规范化为 `.`，`lat
 
 ## 验证
 
-- 本地语法检查：`node --check scripts/generate_latest_json.mjs` 和 `node --check scripts/publish_github_release.mjs`。
+- 本地语法检查：`node --check scripts/release_version.mjs`、`node --check scripts/generate_latest_json.mjs` 和 `node --check scripts/publish_github_release.mjs`。
+- 本地版本一致性检查：`npm run version:check`。
 - 本地 manifest 生成：用临时目录放置 `.app.tar.gz`、`.app.tar.gz.sig`、`*setup.exe`、`*setup.exe.sig`，运行 `npm run release:latest-json -- --repo CodeKillerCoser/codepet --tag v0.1.1 --artifacts <dir> --output <file>`。
 - manifest 生成脚本会校验 `src-tauri/tauri.conf.json` 的 updater endpoint 是否等于固定检查入口。该检查失败时，应优先修正 `tauri.conf.json`，不要改脚本绕过。
 - manifest 生成脚本会校验 release tag 与 Tauri version 一致。该检查失败时，应先提升版本源或改用匹配 tag，避免发布出 tag 是新版本但 `latest.json.version` 仍是旧版本的 release。

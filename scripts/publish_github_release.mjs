@@ -1,17 +1,16 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { prepareReleaseMetadata } from "./release_version.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const root = fileURLToPath(new URL("..", import.meta.url));
-const tauriConfig = JSON.parse(readFileSync(resolve(root, "src-tauri", "tauri.conf.json"), "utf8"));
-const tag = args.tag ?? `v${tauriConfig.version}`;
+const metadata = prepareReleaseMetadata({
+  tag: args.tag,
+  releaseName: args.releaseName,
+  releaseNotes: args.releaseNotes,
+});
+const tag = metadata.tag;
 const ref = args.ref ?? "main";
-const releaseName = args.releaseName ?? `Release ${tag}`;
-const releaseNotes = args.releaseNotes ?? releaseName;
-
-validateTagMatchesVersion(tag, tauriConfig.version);
 
 run("gh", [
   "workflow",
@@ -22,9 +21,9 @@ run("gh", [
   "--field",
   `tag=${tag}`,
   "--field",
-  `release_name=${releaseName}`,
+  `release_name=${metadata.releaseName}`,
   "--field",
-  `release_notes=${releaseNotes}`,
+  `release_notes=${metadata.releaseNotes}`,
 ]);
 
 console.log(`Queued GitHub release workflow for ${tag} on ${ref}.`);
@@ -63,20 +62,6 @@ function parseArgs(argv) {
   }
 
   return parsed;
-}
-
-function validateTagMatchesVersion(releaseTag, releaseVersion) {
-  const tagVersion = releaseTag.replace(/^v/, "");
-  if (tagVersion !== releaseVersion) {
-    fail(
-      [
-        "Release tag must match src-tauri/tauri.conf.json version.",
-        `Tag: ${releaseTag}`,
-        `Version: ${releaseVersion}`,
-        "Bump the app version before publishing a new tag, or use the matching tag.",
-      ].join("\n"),
-    );
-  }
 }
 
 function fail(message) {
