@@ -26,6 +26,17 @@
 
 飞书支持群 webhook，可选签名密钥。
 
+机器人通知使用结构化 Markdown 样式：
+
+- 钉钉群 webhook 使用 `msgtype=markdown`，正文写入 `markdown.title` 和 `markdown.text`。
+- 钉钉企业内部机器人使用 `msgKey=sampleMarkdown`，`msgParam` 序列化为 `{"title": "...", "text": "..."}`。
+- 飞书群 webhook 使用 `msg_type=interactive`，通过卡片 header 显示标题和状态色，在 body 中使用 `markdown` 元素展示状态、Agent、任务、内容、目录、工具和时间。
+
+相关公开文档：
+
+- 钉钉开放平台：自定义机器人和企业机器人 Markdown 消息类型。
+- 飞书开放平台：自定义机器人支持 `interactive` 卡片，卡片 body 可使用 `markdown` 元素。
+
 机器人敏感字段保存在本地 settings 中，不应写进源码默认值、测试夹具或日志。通知错误日志需要避免输出 token、sign、clientSecret 等敏感值。
 
 ## 验证

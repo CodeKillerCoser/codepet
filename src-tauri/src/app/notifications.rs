@@ -19,7 +19,126 @@ type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Clone, Debug)]
 struct RobotNotificationMessage {
-    text: String,
+    title: String,
+    status: String,
+    provider: String,
+    task_title: String,
+    content: Option<String>,
+    cwd: Option<String>,
+    tool_name: Option<String>,
+    occurred_at: String,
+    tone: RobotNotificationTone,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RobotNotificationTone {
+    Success,
+    Error,
+    Warning,
+    Info,
+}
+
+impl RobotNotificationMessage {
+    fn dingtalk_markdown_text(&self) -> String {
+        let mut lines = vec![
+            "### Code Pet 通知".to_string(),
+            format!("> {}", markdown_inline(&self.status)),
+            String::new(),
+            format!("- **状态**：{}", markdown_inline(&self.status)),
+            format!("- **Agent**：{}", markdown_inline(&self.provider)),
+            format!("- **任务**：{}", markdown_inline(&self.task_title)),
+        ];
+
+        if let Some(content) = &self.content {
+            lines.push(String::new());
+            lines.push("**内容**".to_string());
+            lines.push(markdown_quote(content));
+        }
+        if let Some(cwd) = &self.cwd {
+            lines.push(format!("- **目录**：{}", markdown_code(cwd)));
+        }
+        if let Some(tool_name) = &self.tool_name {
+            lines.push(format!("- **工具**：{}", markdown_inline(tool_name)));
+        }
+        lines.push(format!(
+            "- **时间**：{}",
+            markdown_inline(&self.occurred_at)
+        ));
+        lines.join("\n")
+    }
+
+    fn feishu_markdown_text(&self) -> String {
+        let mut lines = vec![
+            format!("**状态**：{}", markdown_inline(&self.status)),
+            format!("**Agent**：{}", markdown_inline(&self.provider)),
+            format!("**任务**：{}", markdown_inline(&self.task_title)),
+        ];
+
+        if let Some(content) = &self.content {
+            lines.push(String::new());
+            lines.push(markdown_quote(content));
+        }
+        if let Some(cwd) = &self.cwd {
+            lines.push(format!("**目录**：{}", markdown_code(cwd)));
+        }
+        if let Some(tool_name) = &self.tool_name {
+            lines.push(format!("**工具**：{}", markdown_inline(tool_name)));
+        }
+        lines.push(format!("**时间**：{}", markdown_inline(&self.occurred_at)));
+        lines.join("\n")
+    }
+
+    fn feishu_header_template(&self) -> &'static str {
+        match self.tone {
+            RobotNotificationTone::Success => "green",
+            RobotNotificationTone::Error => "red",
+            RobotNotificationTone::Warning => "orange",
+            RobotNotificationTone::Info => "blue",
+        }
+    }
+
+    fn feishu_card(&self) -> Value {
+        json!({
+            "schema": "2.0",
+            "config": {
+                "update_multi": true,
+                "style": {
+                    "text_size": {
+                        "normal_v2": {
+                            "default": "normal",
+                            "pc": "normal",
+                            "mobile": "normal"
+                        }
+                    }
+                }
+            },
+            "body": {
+                "direction": "vertical",
+                "padding": "12px 12px 12px 12px",
+                "elements": [
+                    {
+                        "tag": "markdown",
+                        "content": self.feishu_markdown_text(),
+                        "text_align": "left",
+                        "text_size": "normal_v2",
+                        "margin": "0px 0px 0px 0px"
+                    }
+                ]
+            },
+            "header": {
+                "title": {
+                    "tag": "plain_text",
+                    "content": self.title
+                },
+                "subtitle": {
+                    "tag": "plain_text",
+                    "content": self.occurred_at
+                },
+                "template": self.feishu_header_template(),
+                "padding": "12px 12px 12px 12px"
+            }
+        })
+    }
 }
 
 trait RobotNotificationStrategy: Send + Sync {
@@ -95,10 +214,15 @@ pub async fn send_event_notification(event: &PetEvent) -> Result<(), String> {
 pub async fn send_test_notification(channel_id: Option<String>) -> Result<String, String> {
     let settings = crate::settings::load_app_settings().map_err(|error| error.to_string())?;
     let message = RobotNotificationMessage {
-        text: format!(
-            "Code Pet 测试通知\n状态：测试\n时间：{}",
-            Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
-        ),
+        title: "Code Pet | 测试通知".to_string(),
+        status: "测试".to_string(),
+        provider: "Code Pet".to_string(),
+        task_title: "机器人渠道连通性测试".to_string(),
+        content: Some("这是一条测试消息，用于确认机器人渠道可以收到 Code Pet 通知。".to_string()),
+        cwd: None,
+        tool_name: None,
+        occurred_at: Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        tone: RobotNotificationTone::Info,
     };
     let sent = send_robot_notification(
         &settings.notifications.robot,
@@ -232,9 +356,10 @@ impl RobotNotificationStrategy for DingTalkWebhookStrategy {
             }
 
             let body = json!({
-                "msgtype": "text",
-                "text": {
-                    "content": message.text,
+                "msgtype": "markdown",
+                "markdown": {
+                    "title": message.title,
+                    "text": message.dingtalk_markdown_text(),
                 },
             });
             post_json(client, url.as_str(), &body).await.map(|_| ())
@@ -258,8 +383,11 @@ impl RobotNotificationStrategy for DingTalkEnterpriseStrategy {
             let client_secret = required_field(&self.channel.client_secret, "钉钉 clientSecret")?;
             let access_token =
                 dingtalk_access_token(client, client_id, client_secret, &self.endpoints).await?;
-            let msg_param = serde_json::to_string(&json!({ "content": message.text }))
-                .map_err(|error| error.to_string())?;
+            let msg_param = serde_json::to_string(&json!({
+                "title": message.title,
+                "text": message.dingtalk_markdown_text(),
+            }))
+            .map_err(|error| error.to_string())?;
 
             let (url, body) = match self.channel.target_type {
                 DingTalkRobotTargetType::UserIds => {
@@ -272,7 +400,7 @@ impl RobotNotificationStrategy for DingTalkEnterpriseStrategy {
                         json!({
                             "robotCode": robot_code,
                             "userIds": user_ids,
-                            "msgKey": "sampleText",
+                            "msgKey": "sampleMarkdown",
                             "msgParam": msg_param,
                         }),
                     )
@@ -287,7 +415,7 @@ impl RobotNotificationStrategy for DingTalkEnterpriseStrategy {
                         json!({
                             "robotCode": robot_code,
                             "openConversationId": open_conversation_id,
-                            "msgKey": "sampleText",
+                            "msgKey": "sampleMarkdown",
                             "msgParam": msg_param,
                         }),
                     )
@@ -314,10 +442,8 @@ impl RobotNotificationStrategy for FeishuWebhookStrategy {
         Box::pin(async move {
             let webhook_url = required_field(&self.channel.webhook_url, "飞书 webhook 地址")?;
             let mut body = json!({
-                "msg_type": "text",
-                "content": {
-                    "text": message.text,
-                },
+                "msg_type": "interactive",
+                "card": message.feishu_card(),
             });
             if let Some(secret) = optional_field(&self.channel.webhook_secret) {
                 let timestamp = Utc::now().timestamp().to_string();
@@ -432,44 +558,38 @@ fn provider_error(field: &str, code: i64, value: &Value) -> String {
 }
 
 fn message_from_event(event: &PetEvent) -> RobotNotificationMessage {
-    let status = match event.kind {
-        PetEventKind::PermissionRequested => "等待授权",
-        PetEventKind::TaskFailed => "任务失败",
-        PetEventKind::TaskCompleted => "任务完成",
-        _ => "任务更新",
+    let (status, tone) = match event.kind {
+        PetEventKind::PermissionRequested => ("等待授权", RobotNotificationTone::Warning),
+        PetEventKind::TaskFailed => ("任务失败", RobotNotificationTone::Error),
+        PetEventKind::TaskCompleted => ("任务完成", RobotNotificationTone::Success),
+        _ => ("任务更新", RobotNotificationTone::Info),
     };
-    let mut lines = vec![
-        "Code Pet 通知".to_string(),
-        format!("状态：{status}"),
-        format!("Agent：{}", event.provider.as_str()),
-        format!("任务：{}", compact_line(&event.title, 120)),
-    ];
-    if !event.message.trim().is_empty() {
-        lines.push(format!("内容：{}", compact_line(&event.message, 500)));
-    }
-    if let Some(cwd) = event
+    let content = optional_field(&event.message).map(|value| compact_line(value, 500));
+    let cwd = event
         .cwd
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-    {
-        lines.push(format!("目录：{}", compact_line(cwd, 180)));
-    }
-    if let Some(tool_name) = event
+        .map(|value| compact_line(value, 180));
+    let tool_name = event
         .tool_name
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-    {
-        lines.push(format!("工具：{}", compact_line(tool_name, 80)));
-    }
-    lines.push(format!(
-        "时间：{}",
-        event
+        .map(|value| compact_line(value, 80));
+
+    RobotNotificationMessage {
+        title: format!("Code Pet | {status}"),
+        status: status.to_string(),
+        provider: event.provider.as_str().to_string(),
+        task_title: compact_line(&event.title, 120),
+        content,
+        cwd,
+        tool_name,
+        occurred_at: event
             .created_at
             .with_timezone(&Utc)
             .format("%Y-%m-%d %H:%M:%S UTC")
-    ));
-    RobotNotificationMessage {
-        text: lines.join("\n"),
+            .to_string(),
+        tone,
     }
 }
 
@@ -529,6 +649,30 @@ fn compact_line(value: &str, max_chars: usize) -> String {
 
 fn compact_response_text(value: &str) -> String {
     compact_line(value, 240)
+}
+
+fn markdown_inline(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(|ch| match ch {
+            '\\' | '`' | '*' | '_' | '[' | ']' | '(' | ')' | '#' | '>' | '|' => {
+                vec!['\\', ch]
+            }
+            _ => vec![ch],
+        })
+        .collect()
+}
+
+fn markdown_code(value: &str) -> String {
+    format!("`{}`", value.replace('`', "'"))
+}
+
+fn markdown_quote(value: &str) -> String {
+    value
+        .lines()
+        .map(|line| format!("> {}", markdown_inline(line)))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn redact_error(error: &str) -> String {
@@ -692,16 +836,25 @@ mod tests {
     #[test]
     fn event_message_keeps_code_pet_keyword_and_context() {
         let message = message_from_event(&event(PetEventKind::TaskCompleted));
+        let dingtalk_text = message.dingtalk_markdown_text();
+        let feishu_card = message.feishu_card();
 
-        assert!(message.text.contains("Code Pet 通知"));
-        assert!(message.text.contains("状态：任务完成"));
-        assert!(message.text.contains("Agent：codex"));
-        assert!(message.text.contains("任务：生成报告"));
-        assert!(message.text.contains("目录：/workspace/codepet"));
+        assert_eq!(message.title, "Code Pet | 任务完成");
+        assert_eq!(message.tone, RobotNotificationTone::Success);
+        assert!(dingtalk_text.contains("### Code Pet 通知"));
+        assert!(dingtalk_text.contains("**状态**：任务完成"));
+        assert!(dingtalk_text.contains("**Agent**：codex"));
+        assert!(dingtalk_text.contains("**任务**：生成报告"));
+        assert!(dingtalk_text.contains("**目录**：`/workspace/codepet`"));
+        assert_eq!(feishu_card["header"]["template"], "green");
+        assert!(feishu_card["body"]["elements"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("**状态**：任务完成"));
     }
 
     #[tokio::test]
-    async fn dingtalk_webhook_posts_text_and_signed_query_to_local_server() {
+    async fn dingtalk_webhook_posts_markdown_and_signed_query_to_local_server() {
         let (base_url, captured) = start_capture_server().await;
         let robot = robot_with_channel(dingtalk_channel(format!("{base_url}ding"), "secret"));
         let message = message_from_event(&event(PetEventKind::TaskCompleted));
@@ -716,15 +869,16 @@ mod tests {
         assert_eq!(requests[0].path, "/ding");
         assert!(requests[0].query.contains("timestamp="));
         assert!(requests[0].query.contains("sign="));
-        assert_eq!(requests[0].body["msgtype"], "text");
-        assert!(requests[0].body["text"]["content"]
+        assert_eq!(requests[0].body["msgtype"], "markdown");
+        assert_eq!(requests[0].body["markdown"]["title"], "Code Pet | 任务完成");
+        assert!(requests[0].body["markdown"]["text"]
             .as_str()
             .unwrap()
-            .contains("状态：任务完成"));
+            .contains("**状态**：任务完成"));
     }
 
     #[tokio::test]
-    async fn feishu_webhook_posts_text_and_signature_to_local_server() {
+    async fn feishu_webhook_posts_interactive_markdown_card_and_signature_to_local_server() {
         let (base_url, captured) = start_capture_server().await;
         let robot = robot_with_channel(feishu_channel(format!("{base_url}feishu"), "secret"));
         let message = message_from_event(&event(PetEventKind::PermissionRequested));
@@ -737,13 +891,19 @@ mod tests {
         assert_eq!(sent, 1);
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].path, "/feishu");
-        assert_eq!(requests[0].body["msg_type"], "text");
+        assert_eq!(requests[0].body["msg_type"], "interactive");
         assert!(requests[0].body["timestamp"].as_str().is_some());
         assert!(requests[0].body["sign"].as_str().is_some());
-        assert!(requests[0].body["content"]["text"]
+        assert_eq!(requests[0].body["card"]["schema"], "2.0");
+        assert_eq!(requests[0].body["card"]["header"]["template"], "orange");
+        assert_eq!(
+            requests[0].body["card"]["body"]["elements"][0]["tag"],
+            "markdown"
+        );
+        assert!(requests[0].body["card"]["body"]["elements"][0]["content"]
             .as_str()
             .unwrap()
-            .contains("状态：等待授权"));
+            .contains("**状态**：等待授权"));
     }
 
     #[tokio::test]
@@ -792,16 +952,17 @@ mod tests {
         assert_eq!(oauth.body["appSecret"], "client-secret");
         assert_eq!(oto.body["robotCode"], "robot-code");
         assert_eq!(oto.body["userIds"][0], "user-a");
-        assert_eq!(oto.body["msgKey"], "sampleText");
+        assert_eq!(oto.body["msgKey"], "sampleMarkdown");
         assert!(oto
             .headers
             .iter()
             .any(|(key, value)| { key == "x-acs-dingtalk-access-token" && value == "token-1" }));
         let msg_param: Value =
             serde_json::from_str(oto.body["msgParam"].as_str().unwrap()).unwrap();
-        assert!(msg_param["content"]
+        assert_eq!(msg_param["title"], "Code Pet | 任务失败");
+        assert!(msg_param["text"]
             .as_str()
             .unwrap()
-            .contains("状态：任务失败"));
+            .contains("**状态**：任务失败"));
     }
 }
