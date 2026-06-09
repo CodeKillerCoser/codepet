@@ -14,7 +14,7 @@ export function prepareReleaseMetadata(options = {}) {
   const baseVersion = normalizeBaseVersion(inputVersion ?? versions.tauri, inputVersion ? "release version input" : "source version");
   const commitSha = normalizeCommitSha(firstValue(options.commitSha, process.env.RELEASE_COMMIT_SHA));
   const releaseVersion = commitSha ? buildVersionWithCommit(baseVersion, commitSha) : baseVersion;
-  const tag = normalizeReleaseTag(firstValue(options.tag, process.env.INPUT_TAG), releaseVersion);
+  const tag = normalizeReleaseTag(firstValue(options.tag, process.env.INPUT_TAG), releaseVersion, baseVersion);
   const releaseName = firstValue(options.releaseName, process.env.INPUT_RELEASE_NAME) ?? `Release ${tag}`;
   const releaseNotes = firstValue(options.releaseNotes, process.env.INPUT_RELEASE_NOTES) ?? releaseName;
 
@@ -167,9 +167,18 @@ function normalizeCommitSha(value) {
   return commitSha.toLowerCase();
 }
 
-function normalizeReleaseTag(value, version) {
+function normalizeReleaseTag(value, version, baseVersion) {
   const tag = value?.trim();
-  return tag ? tag : `v${version}`;
+  if (!tag) {
+    return `v${version}`;
+  }
+
+  const tagVersion = tag.replace(/^v/, "");
+  if (tagVersion === baseVersion) {
+    return `v${version}`;
+  }
+
+  return tag;
 }
 
 function readJson(path) {

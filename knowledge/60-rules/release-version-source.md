@@ -21,7 +21,7 @@
 - 发布前运行 `npm run version:check`。
 - 本地同步基础版本时运行 `npm run version:sync -- <version>`，例如 `npm run version:sync -- 0.1.4`。
 - 日常发布通过 workflow 的 `version` 输入或 `npm run release:github -- --version <version>` 指定基础版本，让 CI 负责同步仓库版本并派生 `v<version+short_commit>`。
-- 日常发布不填写 workflow 的 `tag` 输入。只有明确知道最终构建版本时才填写 tag，且 `tag.replace(/^v/, "")` 必须等于 CI 派生出的构建版本。
+- 日常发布不填写 workflow 的 `tag` 输入。若误填 `v<base>` 或 `<base>`，CI 会按留空处理并派生最终 tag。只有明确知道最终构建版本时才填写精确 tag，且 `tag.replace(/^v/, "")` 必须等于 CI 派生出的构建版本。
 - 修改基础版本时同时更新 `package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock`；应优先使用版本同步脚本完成。
 
 ## 来源

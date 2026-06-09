@@ -21,7 +21,7 @@
 - `src-tauri/tauri.conf.json` 中的 updater endpoint 必须是固定检查入口 `https://github.com/CodeKillerCoser/codepet/releases/latest/download/latest.json`。不要配置成 `releases/download/<tag>/latest.json`，否则旧客户端会一直检查旧 tag 下的 manifest，无法发现新版本。
 - 仓库提交的版本必须是基础版本，例如 `0.1.4`，不要提交 `0.1.4+<sha>`。构建版本由 workflow 基于版本同步后的 commit 派生。
 - 发布新版本时优先在 workflow 的 `version` 输入中填写基础版本，或通过本地 `npm run release:github -- --version <version> --ref main` 触发。`preflight` job 会先把基础版本同步并推送回当前分支，再输出 `version=<base>+<short_commit>` 给 macOS/Windows 构建。
-- Release workflow 会先运行 `preflight` job。基础版本格式错误、版本源不一致、无法同步分支，或手动 tag 与最终构建版本不一致时，会在 macOS/Windows 构建开始前失败。
+- Release workflow 会先运行 `preflight` job。基础版本格式错误、版本源不一致、无法同步分支，或手动 tag 与最终构建版本不一致时，会在 macOS/Windows 构建开始前失败。手动 tag 若只是 `v<base>` 或 `<base>`，会按留空处理并自动派生最终 tag。
 - 公共 GitHub Release asset 可匿名下载，客户端检查更新不需要 GitHub 身份验证。私有仓库或私有 Release 不适合当前静态 endpoint 方案。
 
 ## 发布步骤
@@ -33,7 +33,7 @@ npm run version:check
 npm run release:github -- --version 0.1.4 --ref main
 ```
 
-也可以直接在 GitHub Actions 页面手动触发 `Release` workflow。日常发布填写 `version`，不要填写 `tag`；workflow 会同步基础版本并生成 `v<version+short_commit>`。如果填写 tag，`preflight` 会校验 tag 去掉可选 `v` 前缀后必须等于最终构建版本。
+也可以直接在 GitHub Actions 页面手动触发 `Release` workflow。日常发布填写 `version`，不要填写 `tag`；workflow 会同步基础版本并生成 `v<version+short_commit>`。如果误填 `v<version>` 或 `<version>`，workflow 会按留空处理。如果填写其他 tag，`preflight` 会校验 tag 去掉可选 `v` 前缀后必须等于最终构建版本。
 
 如果只是本地提升仓库基础版本，可以运行：
 

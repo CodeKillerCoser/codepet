@@ -8,7 +8,7 @@ on:
         required: false
         type: string
       tag:
-        description: Advanced release tag override. Must match v<version+short_commit>.
+        description: Advanced tag override. Leave empty; v<base version> is treated as empty.
         required: false
         type: string
       release_name:
