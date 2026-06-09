@@ -118,8 +118,23 @@
       taskFailed: true,
       taskDone: true,
     },
+    template: {
+      title: "{{statusIcon}} Code Pet | {{status}}",
+      header: "{{statusIcon}} {{status}} · {{agent}}",
+      primary: "**{{task}}**\n{{contentBlock}}",
+      secondary: "{{cwdLine}}\n{{toolLine}}\n{{sessionLine}}",
+      footer: "{{time}}",
+    },
     channels: [],
   };
+  const robotTemplateFields = [
+    { key: "title", label: "标题", rows: 1 },
+    { key: "header", label: "摘要", rows: 1 },
+    { key: "primary", label: "一级内容", rows: 3 },
+    { key: "secondary", label: "二级内容", rows: 3 },
+    { key: "footer", label: "页脚", rows: 1 },
+  ] as const;
+  const robotTemplateVariables = "{{statusIcon}} {{status}} {{agent}} {{task}} {{contentBlock}} {{cwdLine}} {{toolLine}} {{sessionLine}} {{time}}";
   const robotTriggerOptions = [
     { key: "waitingApproval", label: "等待授权" },
     { key: "taskFailed", label: "任务失败" },
@@ -628,7 +643,15 @@
         ...robotNotificationDefaults.triggers,
         ...(robot?.triggers ?? {}),
       },
+      template: normalizeRobotTemplate(robot?.template),
       channels: (robot?.channels ?? []).map(normalizeRobotChannel).filter((channel): channel is RobotNotificationChannel => Boolean(channel)),
+    };
+  }
+
+  function normalizeRobotTemplate(template: Partial<AppSettings["notifications"]["robot"]["template"]> | null | undefined): AppSettings["notifications"]["robot"]["template"] {
+    return {
+      ...robotNotificationDefaults.template,
+      ...(template ?? {}),
     };
   }
 
@@ -755,6 +778,21 @@
 
   function updateDingTalkUserIds(channel: DingTalkRobotChannel, value: string) {
     channel.userIds = normalizeRobotList(value.split(/[,\n，\s]+/));
+  }
+
+  async function updateRobotTemplateField(key: keyof AppSettings["notifications"]["robot"]["template"], value: string) {
+    if (!settings) return;
+    settings.notifications.robot.template = normalizeRobotTemplate({
+      ...settings.notifications.robot.template,
+      [key]: value,
+    });
+    await saveSettings();
+  }
+
+  async function resetRobotTemplate() {
+    if (!settings) return;
+    settings.notifications.robot.template = normalizeRobotTemplate(null);
+    await saveSettings();
   }
 
   function normalizeRobotList(values: Array<string | null | undefined> | null | undefined): string[] {
@@ -1774,6 +1812,26 @@
                 </label>
               {/each}
             </div>
+
+            <section class="robot-template-panel">
+              <div class="robot-template-head">
+                <strong>消息模板</strong>
+                <button type="button" on:click={resetRobotTemplate}>恢复默认</button>
+              </div>
+              <code>{robotTemplateVariables}</code>
+              <div class="robot-template-grid">
+                {#each robotTemplateFields as field}
+                  <label>
+                    {field.label}
+                    <textarea
+                      rows={field.rows}
+                      value={settings.notifications.robot.template[field.key]}
+                      on:change={(event) => updateRobotTemplateField(field.key, inputValue(event))}
+                    ></textarea>
+                  </label>
+                {/each}
+              </div>
+            </section>
 
             <div class="row-actions">
               <button on:click={() => addRobotChannel("dingtalk")}>

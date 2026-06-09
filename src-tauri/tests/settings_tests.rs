@@ -98,6 +98,10 @@ fn settings_read_robot_notification_channels() {
                 "taskFailed": true,
                 "taskDone": false
               },
+              "template": {
+                "title": "{{status}}",
+                "primary": "{{task}}"
+              },
               "channels": [
                 {
                   "provider": "dingtalk",
@@ -128,6 +132,12 @@ fn settings_read_robot_notification_channels() {
 
     assert!(settings.notifications.robot.enabled);
     assert!(!settings.notifications.robot.triggers.task_done);
+    assert_eq!(settings.notifications.robot.template.title, "{{status}}");
+    assert_eq!(settings.notifications.robot.template.primary, "{{task}}");
+    assert_eq!(
+        settings.notifications.robot.template.header,
+        "{{statusIcon}} {{status}} · {{agent}}"
+    );
     assert_eq!(settings.notifications.robot.channels.len(), 2);
     match &settings.notifications.robot.channels[0] {
         RobotNotificationChannel::DingTalk(channel) => {

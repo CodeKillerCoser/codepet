@@ -122,7 +122,16 @@ export interface RobotNotificationSettings {
     taskFailed: boolean;
     taskDone: boolean;
   };
+  template: RobotNotificationTemplateSettings;
   channels: RobotNotificationChannel[];
+}
+
+export interface RobotNotificationTemplateSettings {
+  title: string;
+  header: string;
+  primary: string;
+  secondary: string;
+  footer: string;
 }
 
 export type RobotNotificationChannel = DingTalkRobotChannel | FeishuRobotChannel;

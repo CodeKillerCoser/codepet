@@ -1181,6 +1181,50 @@ select:focus-visible {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.robot-template-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--app-surface-soft);
+}
+
+.robot-template-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.robot-template-head strong {
+  color: var(--app-text);
+  font-size: var(--font-size-md);
+}
+
+.robot-template-panel code {
+  display: block;
+  overflow-x: auto;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  padding: 8px;
+  color: var(--app-muted);
+  background: var(--app-surface);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.robot-template-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.robot-template-grid label:nth-child(3),
+.robot-template-grid label:nth-child(4) {
+  grid-column: 1 / -1;
+}
+
 .robot-channel-list {
   display: grid;
   gap: 12px;
@@ -2846,6 +2890,7 @@ textarea {
 
   .robot-trigger-grid,
   .robot-field-grid,
+  .robot-template-grid,
   .robot-channel-head {
     grid-template-columns: 1fr;
   }

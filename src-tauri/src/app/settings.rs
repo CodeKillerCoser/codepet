@@ -199,7 +199,24 @@ pub struct RobotNotificationSettings {
     #[serde(default)]
     pub triggers: RobotNotificationTriggers,
     #[serde(default)]
+    pub template: RobotNotificationTemplateSettings,
+    #[serde(default)]
     pub channels: Vec<RobotNotificationChannel>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RobotNotificationTemplateSettings {
+    #[serde(default = "default_robot_template_title")]
+    pub title: String,
+    #[serde(default = "default_robot_template_header")]
+    pub header: String,
+    #[serde(default = "default_robot_template_primary")]
+    pub primary: String,
+    #[serde(default = "default_robot_template_secondary")]
+    pub secondary: String,
+    #[serde(default = "default_robot_template_footer")]
+    pub footer: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -414,6 +431,18 @@ impl Default for RobotNotificationTriggers {
     }
 }
 
+impl Default for RobotNotificationTemplateSettings {
+    fn default() -> Self {
+        Self {
+            title: default_robot_template_title(),
+            header: default_robot_template_header(),
+            primary: default_robot_template_primary(),
+            secondary: default_robot_template_secondary(),
+            footer: default_robot_template_footer(),
+        }
+    }
+}
+
 impl Default for DingTalkRobotAuthMode {
     fn default() -> Self {
         Self::EnterpriseRobot
@@ -509,6 +538,26 @@ fn default_running_bubble_animation_ms() -> u16 {
 
 fn default_repeat_seconds() -> u16 {
     30
+}
+
+fn default_robot_template_title() -> String {
+    "{{statusIcon}} Code Pet | {{status}}".to_string()
+}
+
+fn default_robot_template_header() -> String {
+    "{{statusIcon}} {{status}} · {{agent}}".to_string()
+}
+
+fn default_robot_template_primary() -> String {
+    "**{{task}}**\n{{contentBlock}}".to_string()
+}
+
+fn default_robot_template_secondary() -> String {
+    "{{cwdLine}}\n{{toolLine}}\n{{sessionLine}}".to_string()
+}
+
+fn default_robot_template_footer() -> String {
+    "{{time}}".to_string()
 }
 
 fn default_quiet_start() -> String {

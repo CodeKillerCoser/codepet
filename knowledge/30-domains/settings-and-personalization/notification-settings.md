@@ -9,7 +9,7 @@
 - 权限、失败和完成状态的响铃开关。
 - 等待审批的重复秒数。
 - 静音时段。
-- 外部机器人通知：全局启用开关、等待授权/任务失败/任务完成触发项，以及钉钉或飞书渠道列表。
+- 外部机器人通知：全局启用开关、等待授权/任务失败/任务完成触发项、消息模板，以及钉钉或飞书渠道列表。
 
 抽打反应音存放在 `PetSettings` 下，因为它属于宠物互动，而不是任务通知。
 
@@ -17,7 +17,7 @@
 
 `frontend/PetApp.svelte` 在新事件到达时调用 `handleRing()`。它使用 `frontend/lib/sound.ts` 判断是否响铃、静音时段、声音播放和重复行为。
 
-外部机器人通知由后端处理，避免依赖桌宠窗口是否打开。`src-tauri/src/app/notifications.rs` 负责事件触发判断、消息格式化和 provider 策略分发；`collector`、Codex audit watcher 和 Claude transcript watcher 在推送实时事件后调用同一通知入口。
+外部机器人通知由后端处理，避免依赖桌宠窗口是否打开。`src-tauri/src/app/notifications.rs` 负责事件触发判断、消息模板渲染和 provider 策略分发；`collector`、Codex audit watcher 和 Claude transcript watcher 在推送实时事件后调用同一通知入口。终态通知会按 provider、事件类型和 session 生成短期幂等 key，避免 hook 入口和 transcript/audit watcher 同时报告完成时重复推送。
 
 钉钉支持两种渠道：
 
@@ -26,11 +26,21 @@
 
 飞书支持群 webhook，可选签名密钥。
 
+机器人通知先把事件抽象为变量，再渲染模板。`RobotNotificationSettings.template` 包含 `title`、`header`、`primary`、`secondary`、`footer` 五段，默认变量包括：
+
+- `{{statusIcon}}`、`{{status}}`、`{{agent}}`、`{{task}}`、`{{time}}`。
+- `{{content}}`、`{{contentBlock}}`。
+- `{{cwd}}`、`{{cwdLine}}`。
+- `{{tool}}`、`{{toolLine}}`。
+- `{{sessionId}}`、`{{sessionLine}}`。
+
+变量值会按 Markdown 场景做基础转义；空变量所在的模板空行会被压缩，避免卡片留下孤立空白。provider 策略只消费渲染后的五段内容，不应直接拼事件字段。
+
 机器人通知使用结构化 Markdown 样式：
 
 - 钉钉群 webhook 使用 `msgtype=markdown`，正文写入 `markdown.title` 和 `markdown.text`。
 - 钉钉企业内部机器人使用 `msgKey=sampleMarkdown`，`msgParam` 序列化为 `{"title": "...", "text": "..."}`。
-- 飞书群 webhook 使用 `msg_type=interactive`，通过卡片 header 显示标题和状态色，在 body 中使用 `markdown` 元素展示状态、Agent、任务、内容、目录、工具和时间。
+- 飞书群 webhook 使用 `msg_type=interactive`，通过卡片 header 显示标题、摘要和状态色，在 body 中使用 `markdown` 元素区分一级内容、二级内容和 footer。
 
 相关公开文档：
 
