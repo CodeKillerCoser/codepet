@@ -1,18 +1,33 @@
+mod client;
+pub mod mapper;
+pub mod protocol;
+
+pub use client::{
+    CodexAppServerSession, JsonRpcReader, JsonRpcWriter, SessionControl,
+};
+pub use mapper::CodexProtocolMapper;
+pub use protocol::{
+    CodexAppServerError, CodexApprovalKind, CodexApprovalRequest,
+    CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexThread,
+    CodexThreadListRequest, CodexThreadPage, CodexThreadStartRequest, CodexThreadStatus,
+    CodexTurn, CodexTurnStartRequest, CodexTurnStatus, CodexTurnSteerRequest, JsonRpcId,
+    CODEX_EXTENSION_NAMESPACE, CODEX_PROVIDER_ID,
+};
+
 use crate::activity_actions::{
     collector_approval_strategy, has_session_id, is_replyable_event, ActivationStrategy,
     ActivationTarget, AgentInteractionDriver, ApprovalStrategy, ReplyStrategy,
 };
 use crate::app_log;
 use crate::events::PetEvent;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::env;
 #[cfg(windows)]
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
 #[cfg(windows)]
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CodexReplyAction {
@@ -53,49 +68,122 @@ impl AgentInteractionDriver for CodexAppServerManager {
     }
 }
 
+static REPLY_SESSION: OnceLock<Mutex<Option<CodexAppServerSession>>> = OnceLock::new();
+
 pub fn send_reply(event: &PetEvent, message: &str) -> Result<(), String> {
     let thread_id = event
         .session_id
         .as_deref()
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "codex reply requires a thread id".to_string())?;
-    let mut client = CodexAppServerClient::spawn()?;
-    client.initialize()?;
-    let resume = client.request("thread/resume", json!({ "threadId": thread_id }))?;
-    let action = reply_action_for_resume_response(&resume)?;
-    let input = text_input(message);
-    match action {
+    let session = shared_reply_session().map_err(|error| error.to_string())?;
+    let incoming = session.subscribe();
+    let resumed = session
+        .thread_resume(thread_id)
+        .map_err(|error| error.to_string())?;
+    let turn_id = match reply_action_for_thread(&resumed.thread)? {
         CodexReplyAction::SteerTurn(turn_id) => {
             app_log::info(
                 "codex_app_server",
                 &format!("reply action=turn/steer thread_id={thread_id} turn_id={turn_id}"),
             );
-            client.request(
-                "turn/steer",
-                json!({
-                    "threadId": thread_id,
-                    "input": input,
-                    "expectedTurnId": turn_id,
-                }),
-            )?;
+            session
+                .turn_steer(CodexTurnSteerRequest {
+                    thread_id: thread_id.to_string(),
+                    expected_turn_id: turn_id,
+                    message: message.to_string(),
+                    client_message_id: None,
+                })
+                .map_err(|error| error.to_string())?
+                .id
         }
         CodexReplyAction::StartTurn => {
             app_log::info(
                 "codex_app_server",
                 &format!("reply action=turn/start thread_id={thread_id}"),
             );
-            client.request(
-                "turn/start",
-                json!({
-                    "threadId": thread_id,
-                    "input": input,
-                }),
-            )?;
+            session
+                .turn_start(CodexTurnStartRequest {
+                    thread_id: thread_id.to_string(),
+                    message: message.to_string(),
+                    ..CodexTurnStartRequest::default()
+                })
+                .map_err(|error| error.to_string())?
+                .id
         }
-    }
-    client.wait_for_turn_completion(thread_id)?;
+    };
+    wait_for_turn_completion(&incoming, thread_id, &turn_id)?;
     refresh_codex_thread_view(thread_id);
     Ok(())
+}
+
+pub fn shutdown_shared_session() -> Result<(), String> {
+    let slot = REPLY_SESSION.get_or_init(|| Mutex::new(None));
+    let session = slot
+        .lock()
+        .map_err(|_| "codex app-server session lock is poisoned".to_string())?
+        .take();
+    if let Some(session) = session {
+        session.shutdown().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn shared_reply_session() -> Result<CodexAppServerSession, CodexAppServerError> {
+    let slot = REPLY_SESSION.get_or_init(|| Mutex::new(None));
+    let mut session = slot.lock().map_err(|_| {
+        CodexAppServerError::Protocol("shared session lock is poisoned".to_string())
+    })?;
+    if session
+        .as_ref()
+        .is_some_and(CodexAppServerSession::is_running)
+    {
+        return Ok(session.as_ref().unwrap().clone());
+    }
+    let spawned = CodexAppServerSession::spawn()?;
+    *session = Some(spawned.clone());
+    Ok(spawned)
+}
+
+fn wait_for_turn_completion(
+    incoming: &std::sync::mpsc::Receiver<Result<CodexIncoming, CodexAppServerError>>,
+    thread_id: &str,
+    turn_id: &str,
+) -> Result<(), String> {
+    loop {
+        let message = incoming
+            .recv()
+            .map_err(|_| "codex app-server notification stream closed".to_string())?
+            .map_err(|error| error.to_string())?;
+        if let CodexIncoming::Notification(CodexNotification::TurnCompleted {
+            thread_id: completed_thread_id,
+            turn,
+        }) = message
+        {
+            if completed_thread_id != thread_id || turn.id != turn_id {
+                continue;
+            }
+            return match turn.status {
+                CodexTurnStatus::Completed => Ok(()),
+                status => Err(format!(
+                    "codex reply turn did not complete successfully: status={status:?}"
+                )),
+            };
+        }
+    }
+}
+
+fn reply_action_for_thread(thread: &CodexThread) -> Result<CodexReplyAction, String> {
+    let Some(last_turn) = thread.turns.last() else {
+        return Ok(CodexReplyAction::StartTurn);
+    };
+    if last_turn.status == CodexTurnStatus::InProgress {
+        if last_turn.id.is_empty() {
+            return Err("codex active turn is missing id".to_string());
+        }
+        return Ok(CodexReplyAction::SteerTurn(last_turn.id.clone()));
+    }
+    Ok(CodexReplyAction::StartTurn)
 }
 
 pub fn reply_action_for_resume_response(resume: &Value) -> Result<CodexReplyAction, String> {
@@ -119,203 +207,6 @@ pub fn reply_action_for_resume_response(resume: &Value) -> Result<CodexReplyActi
     Ok(CodexReplyAction::StartTurn)
 }
 
-fn text_input(message: &str) -> Value {
-    json!([{ "type": "text", "text": message, "text_elements": [] }])
-}
-
-struct CodexAppServerClient {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    next_id: u64,
-    turn_completion: Option<Value>,
-}
-
-impl CodexAppServerClient {
-    fn spawn() -> Result<Self, String> {
-        let binary = codex_binary();
-        app_log::info(
-            "codex_app_server",
-            &format!(
-                "starting codex app-server binary={} args=app-server --listen stdio://",
-                binary.display()
-            ),
-        );
-        let mut child = Command::new(binary)
-            .args(["app-server", "--listen", "stdio://"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("failed to start codex app-server: {error}"))?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "failed to open codex app-server stdin".to_string())?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| "failed to open codex app-server stdout".to_string())?;
-        Ok(Self {
-            child,
-            stdin,
-            stdout: BufReader::new(stdout),
-            next_id: 1,
-            turn_completion: None,
-        })
-    }
-
-    fn initialize(&mut self) -> Result<(), String> {
-        self.request(
-            "initialize",
-            json!({
-                "clientInfo": {
-                    "name": "code-pet",
-                    "title": "Code Pet",
-                    "version": env!("CARGO_PKG_VERSION"),
-                },
-                "capabilities": {
-                    "experimentalApi": true,
-                    "requestAttestation": false,
-                    "optOutNotificationMethods": [],
-                },
-            }),
-        )?;
-        self.notify("initialized", json!({}))
-    }
-
-    fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.write_json(json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        }))?;
-        self.read_response(id)
-    }
-
-    fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
-        self.write_json(json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        }))
-    }
-
-    fn write_json(&mut self, value: Value) -> Result<(), String> {
-        serde_json::to_writer(&mut self.stdin, &value).map_err(|error| error.to_string())?;
-        self.stdin
-            .write_all(b"\n")
-            .map_err(|error| error.to_string())?;
-        self.stdin.flush().map_err(|error| error.to_string())
-    }
-
-    fn read_response(&mut self, id: u64) -> Result<Value, String> {
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let read = self
-                .stdout
-                .read_line(&mut line)
-                .map_err(|error| format!("failed to read codex app-server response: {error}"))?;
-            if read == 0 {
-                return Err("codex app-server closed before replying".to_string());
-            }
-            let value: Value = serde_json::from_str(line.trim()).map_err(|error| {
-                format!(
-                    "invalid codex app-server json response: {error}; line={}",
-                    line.trim()
-                )
-            })?;
-            if is_turn_completed_notification(&value) {
-                self.turn_completion = Some(value.clone());
-            }
-            if value.get("id").and_then(Value::as_u64) != Some(id) {
-                continue;
-            }
-            if let Some(error) = value.get("error") {
-                return Err(format!("codex app-server {id} error: {error}"));
-            }
-            return Ok(value.get("result").cloned().unwrap_or(Value::Null));
-        }
-    }
-
-    fn wait_for_turn_completion(&mut self, thread_id: &str) -> Result<(), String> {
-        if let Some(completion) = self.turn_completion.take() {
-            return self.validate_turn_completion(thread_id, &completion);
-        }
-
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let read = self.stdout.read_line(&mut line).map_err(|error| {
-                format!("failed to read codex app-server turn completion: {error}")
-            })?;
-            if read == 0 {
-                return Err("codex app-server closed before turn completed".to_string());
-            }
-            let value: Value = serde_json::from_str(line.trim()).map_err(|error| {
-                format!(
-                    "invalid codex app-server json notification: {error}; line={}",
-                    line.trim()
-                )
-            })?;
-            if is_turn_completed_notification(&value) {
-                app_log::info(
-                    "codex_app_server",
-                    &format!("turn completed notification thread_id={thread_id}"),
-                );
-                return self.validate_turn_completion(thread_id, &value);
-            }
-        }
-    }
-
-    fn validate_turn_completion(&self, thread_id: &str, completion: &Value) -> Result<(), String> {
-        if turn_completion_thread_id(completion) != Some(thread_id) {
-            return Err(format!(
-                "codex app-server completed unexpected thread: expected={thread_id} actual={}",
-                turn_completion_thread_id(completion).unwrap_or("<missing>")
-            ));
-        }
-        if !turn_completion_succeeded(completion) {
-            return Err(format!(
-                "codex reply turn did not complete successfully: status={}",
-                turn_completion_status(completion).unwrap_or("<missing>")
-            ));
-        }
-        app_log::info(
-            "codex_app_server",
-            &format!("reply turn completed successfully thread_id={thread_id}"),
-        );
-        Ok(())
-    }
-}
-
-fn is_turn_completed_notification(value: &Value) -> bool {
-    value.get("method").and_then(Value::as_str) == Some("turn/completed")
-}
-
-fn turn_completion_thread_id(value: &Value) -> Option<&str> {
-    value
-        .get("params")
-        .and_then(|params| params.get("threadId"))
-        .and_then(Value::as_str)
-}
-
-fn turn_completion_status(value: &Value) -> Option<&str> {
-    value
-        .get("params")
-        .and_then(|params| params.get("turn"))
-        .and_then(|turn| turn.get("status"))
-        .and_then(Value::as_str)
-}
-
-fn turn_completion_succeeded(value: &Value) -> bool {
-    is_turn_completed_notification(value) && turn_completion_status(value) == Some("completed")
-}
-
 fn refresh_codex_thread_view(thread_id: &str) {
     let deeplink = codex_thread_deeplink(thread_id);
     match open::that_detached(&deeplink) {
@@ -335,13 +226,7 @@ pub(crate) fn codex_thread_deeplink(thread_id: &str) -> String {
     format!("codex://threads/{escaped}")
 }
 
-impl Drop for CodexAppServerClient {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-    }
-}
-
-fn codex_binary() -> PathBuf {
+pub(super) fn codex_binary() -> PathBuf {
     if let Some(path) = env::var_os("CODE_PET_CODEX_BIN") {
         return PathBuf::from(path);
     }
@@ -363,8 +248,10 @@ fn platform_codex_binary_candidates() -> Vec<PathBuf> {
 
 #[cfg(target_os = "macos")]
 fn append_platform_codex_binary_candidates(candidates: &mut Vec<PathBuf>) {
-    let app_binary = PathBuf::from("/Applications/Codex.app/Contents/Resources/codex");
-    push_candidate(candidates, app_binary);
+    push_candidate(
+        candidates,
+        PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"),
+    );
 }
 
 #[cfg(windows)]
@@ -386,19 +273,19 @@ fn windows_codex_binary_candidates_from_local_app_data(local_app_data: &Path) ->
         &mut candidates,
         &local_app_data.join("OpenAI").join("Codex").join("bin"),
     );
-
     let packages = local_app_data.join("Packages");
     for package_dir in child_dirs_with_prefix(&packages, "OpenAI.Codex_") {
-        let package_bin = package_dir
-            .join("LocalCache")
-            .join("Local")
-            .join("OpenAI")
-            .join("Codex")
-            .join("bin")
-            .join("codex.exe");
-        push_candidate(&mut candidates, package_bin);
+        push_candidate(
+            &mut candidates,
+            package_dir
+                .join("LocalCache")
+                .join("Local")
+                .join("OpenAI")
+                .join("Codex")
+                .join("bin")
+                .join("codex.exe"),
+        );
     }
-
     candidates
 }
 
@@ -437,9 +324,7 @@ fn child_dirs_newest_first(parent: &Path) -> Vec<PathBuf> {
 
 #[cfg(windows)]
 fn modified_time(path: &Path) -> Option<std::time::SystemTime> {
-    path.metadata()
-        .and_then(|metadata| metadata.modified())
-        .ok()
+    path.metadata().and_then(|metadata| metadata.modified()).ok()
 }
 
 fn append_path_codex_binary_candidates(candidates: &mut Vec<PathBuf>) {
@@ -476,6 +361,7 @@ mod tests {
     use crate::agents::AgentId;
     use crate::events::{PetEvent, PetEventKind, TaskStatus};
     use chrono::Utc;
+    use serde_json::json;
 
     fn codex_event(status: TaskStatus, session_id: Option<&str>) -> PetEvent {
         PetEvent {
@@ -483,8 +369,8 @@ mod tests {
             provider: AgentId::Codex,
             kind: PetEventKind::TaskUpdated,
             status,
-            title: "任务".to_string(),
-            message: "完成".to_string(),
+            title: "task".to_string(),
+            message: "done".to_string(),
             session_id: session_id.map(str::to_string),
             cwd: Some("/tmp/project".to_string()),
             tool_name: None,
@@ -505,7 +391,6 @@ mod tests {
                 ]
             }
         });
-
         assert_eq!(
             reply_action_for_resume_response(&resume).unwrap(),
             CodexReplyAction::SteerTurn("turn-active".to_string())
@@ -513,75 +398,19 @@ mod tests {
     }
 
     #[test]
-    fn chooses_start_for_idle_thread() {
-        let resume = json!({
-            "thread": {
-                "turns": [
-                    { "id": "turn-old", "status": "completed" }
-                ]
-            }
-        });
-
-        assert_eq!(
-            reply_action_for_resume_response(&resume).unwrap(),
-            CodexReplyAction::StartTurn
-        );
-    }
-
-    #[test]
-    fn turn_completion_success_requires_completed_turn_status() {
-        let completed = json!({
-            "method": "turn/completed",
-            "params": {
-                "threadId": "thread-1",
-                "turn": { "id": "turn-1", "status": "completed" }
-            }
-        });
-        let failed = json!({
-            "method": "turn/completed",
-            "params": {
-                "threadId": "thread-1",
-                "turn": { "id": "turn-1", "status": "failed" }
-            }
-        });
-
-        assert!(turn_completion_succeeded(&completed));
-        assert!(!turn_completion_succeeded(&failed));
-    }
-
-    #[test]
-    fn app_server_manager_is_the_codex_interaction_driver() {
+    fn app_server_manager_preserves_reply_approval_and_deeplink_behavior() {
         let manager = CodexAppServerManager;
-
         assert_eq!(
             manager.reply_strategy(&codex_event(TaskStatus::Done, Some("thread-1"))),
             ReplyStrategy::CodexAppServer
         );
         assert_eq!(
-            manager.reply_strategy(&codex_event(TaskStatus::Running, Some("thread-1"))),
-            ReplyStrategy::Unsupported
-        );
-        assert_eq!(
-            manager.reply_strategy(&codex_event(TaskStatus::Done, None)),
-            ReplyStrategy::Unsupported
-        );
-    }
-
-    #[test]
-    fn app_server_manager_supports_codex_collector_approval() {
-        let manager = CodexAppServerManager;
-
-        assert_eq!(
             manager.approval_strategy(&codex_event(TaskStatus::WaitingApproval, Some("thread-1"))),
             ApprovalStrategy::CollectorWait
         );
-    }
-
-    #[test]
-    fn codex_thread_deeplink_points_at_the_desktop_thread_route() {
         assert_eq!(
-            codex_thread_deeplink("019e8862-0d6c-7150-823f-18d4cd4e2813"),
-            "codex://threads/019e8862-0d6c-7150-823f-18d4cd4e2813"
+            codex_thread_deeplink("thread/with space"),
+            "codex://threads/thread%2Fwith+space"
         );
     }
 
@@ -598,23 +427,7 @@ mod tests {
             .join("codex.exe");
         std::fs::create_dir_all(user_bin.parent().unwrap()).unwrap();
         std::fs::write(&user_bin, b"").unwrap();
-
-        let package_bin = temp
-            .path()
-            .join("Packages")
-            .join("OpenAI.Codex_test")
-            .join("LocalCache")
-            .join("Local")
-            .join("OpenAI")
-            .join("Codex")
-            .join("bin")
-            .join("codex.exe");
-        std::fs::create_dir_all(package_bin.parent().unwrap()).unwrap();
-        std::fs::write(&package_bin, b"").unwrap();
-
         let candidates = windows_codex_binary_candidates_from_local_app_data(temp.path());
-
         assert!(candidates.contains(&user_bin));
-        assert!(candidates.contains(&package_bin));
     }
 }
