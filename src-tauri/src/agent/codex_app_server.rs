@@ -1,11 +1,13 @@
 mod client;
 pub mod mapper;
+mod provider;
 pub mod protocol;
 
 pub use client::{
     CodexAppServerSession, JsonRpcReader, JsonRpcWriter, SessionControl,
 };
 pub use mapper::CodexProtocolMapper;
+pub use provider::CodexProviderAdapter;
 pub use protocol::{
     CodexAppServerError, CodexApprovalKind, CodexApprovalRequest,
     CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexThread,

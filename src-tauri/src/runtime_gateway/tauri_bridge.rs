@@ -1,6 +1,7 @@
 use super::gateway::Gateway;
 use super::generated::{EventSequence, ProtocolError, ProtocolEvent, ProtocolRequest, ProtocolResponse};
 use super::transport::{LocalTransport, Transport};
+use crate::agent::codex_app_server::CodexProviderAdapter;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
@@ -14,7 +15,15 @@ pub struct RuntimeGatewayState {
 
 impl Default for RuntimeGatewayState {
     fn default() -> Self {
-        Self::new(Arc::new(Gateway::default()))
+        let gateway = Arc::new(Gateway::default());
+        let codex = Arc::new(CodexProviderAdapter::spawn(gateway.event_sink()));
+        if let Err(error) = gateway.registry().register(codex) {
+            crate::app_log::error(
+                "runtime_gateway",
+                &format!("failed to register Codex provider error={error:?}"),
+            );
+        }
+        Self::new(gateway)
     }
 }
 
