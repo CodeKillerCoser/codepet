@@ -3,6 +3,7 @@ pub mod agent;
 pub mod app;
 pub mod pet;
 pub mod platform;
+pub mod runtime_gateway;
 
 pub use activity::collector;
 pub use activity::events;

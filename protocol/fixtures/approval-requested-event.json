@@ -1,0 +1,19 @@
+{
+  "protocolVersion": 0,
+  "eventSequence": 43,
+  "event": "approval.requested",
+  "payload": {
+    "approval": {
+      "id": "approval-1",
+      "providerId": "codex-local",
+      "conversationId": "conversation-1",
+      "turnId": "turn-1",
+      "kind": "workspace-write",
+      "title": "Allow workspace changes?",
+      "description": "The task wants to update files in the selected workspace.",
+      "status": "pending",
+      "decisions": ["approve", "deny"],
+      "requestedAt": 1787700000000
+    }
+  }
+}

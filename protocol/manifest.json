@@ -1,0 +1,75 @@
+{
+  "name": "code-pet-standard-protocol",
+  "version": 0,
+  "error": {
+    "$ref": "./schemas/v0.json#/$defs/ProtocolError"
+  },
+  "methods": [
+    {
+      "name": "protocol.handshake",
+      "request": { "$ref": "./schemas/v0.json#/$defs/HandshakeRequest" },
+      "response": { "$ref": "./schemas/v0.json#/$defs/HandshakeResponse" }
+    },
+    {
+      "name": "provider.list",
+      "request": { "$ref": "./schemas/v0.json#/$defs/ProviderListRequest" },
+      "response": { "$ref": "./schemas/v0.json#/$defs/ProviderListResponse" }
+    },
+    {
+      "name": "conversation.list",
+      "request": { "$ref": "./schemas/v0.json#/$defs/ConversationListRequest" },
+      "response": { "$ref": "./schemas/v0.json#/$defs/ConversationListResponse" }
+    },
+    {
+      "name": "conversation.get",
+      "request": { "$ref": "./schemas/v0.json#/$defs/ConversationGetRequest" },
+      "response": { "$ref": "./schemas/v0.json#/$defs/ConversationGetResponse" }
+    },
+    {
+      "name": "conversation.create",
+      "request": { "$ref": "./schemas/v0.json#/$defs/ConversationCreateRequest" },
+      "response": { "$ref": "./schemas/v0.json#/$defs/ConversationCreateResponse" }
+    },
+    {
+      "name": "turn.send",
+      "request": { "$ref": "./schemas/v0.json#/$defs/TurnSendRequest" },
+      "response": { "$ref": "./schemas/v0.json#/$defs/TurnSendResponse" }
+    },
+    {
+      "name": "turn.interrupt",
+      "request": { "$ref": "./schemas/v0.json#/$defs/TurnInterruptRequest" },
+      "response": { "$ref": "./schemas/v0.json#/$defs/TurnInterruptResponse" }
+    },
+    {
+      "name": "approval.resolve",
+      "request": { "$ref": "./schemas/v0.json#/$defs/ApprovalResolveRequest" },
+      "response": { "$ref": "./schemas/v0.json#/$defs/ApprovalResolveResponse" }
+    }
+  ],
+  "events": [
+    {
+      "name": "provider.statusChanged",
+      "payload": { "$ref": "./schemas/v0.json#/$defs/ProviderStatusChangedEvent" }
+    },
+    {
+      "name": "conversation.upserted",
+      "payload": { "$ref": "./schemas/v0.json#/$defs/ConversationUpsertedEvent" }
+    },
+    {
+      "name": "turn.upserted",
+      "payload": { "$ref": "./schemas/v0.json#/$defs/TurnUpsertedEvent" }
+    },
+    {
+      "name": "turn.outputDelta",
+      "payload": { "$ref": "./schemas/v0.json#/$defs/TurnOutputDeltaEvent" }
+    },
+    {
+      "name": "approval.requested",
+      "payload": { "$ref": "./schemas/v0.json#/$defs/ApprovalRequestedEvent" }
+    },
+    {
+      "name": "approval.resolved",
+      "payload": { "$ref": "./schemas/v0.json#/$defs/ApprovalResolvedEvent" }
+    }
+  ]
+}

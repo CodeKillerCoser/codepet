@@ -1,0 +1,17 @@
+{
+  "protocolVersion": 0,
+  "eventSequence": 44,
+  "event": "conversation.upserted",
+  "payload": {
+    "conversation": {
+      "id": "conversation-project-1",
+      "providerId": "codex-local",
+      "title": "Implement runtime gateway",
+      "status": "idle",
+      "permissionLevel": "workspace-write",
+      "workspaceRoot": "/workspace/code-pet",
+      "createdAt": 1787700000000,
+      "updatedAt": 1787700001000
+    }
+  }
+}

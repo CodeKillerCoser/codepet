@@ -1,0 +1,12 @@
+{
+  "protocolVersion": 0,
+  "id": "request-handshake-1",
+  "method": "protocol.handshake",
+  "params": {
+    "clientName": "code-pet-desktop",
+    "clientVersion": "0.1.4",
+    "minProtocolVersion": 0,
+    "maxProtocolVersion": 0,
+    "lastEventSequence": 40
+  }
+}

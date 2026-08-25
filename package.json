@@ -12,7 +12,9 @@
     "version:check": "node scripts/release_version.mjs",
     "version:sync": "node scripts/release_version.mjs --sync-version",
     "release:latest-json": "node scripts/generate_latest_json.mjs",
-    "release:github": "node scripts/publish_github_release.mjs"
+    "release:github": "node scripts/publish_github_release.mjs",
+    "protocol:generate": "node scripts/generate_protocol.mjs",
+    "protocol:check": "node scripts/generate_protocol.mjs --check"
   },
   "dependencies": {
     "@lucide/svelte": "^1.16.0",

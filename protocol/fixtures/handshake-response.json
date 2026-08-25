@@ -1,0 +1,38 @@
+{
+  "protocolVersion": 0,
+  "id": "request-handshake-1",
+  "method": "protocol.handshake",
+  "response": {
+    "status": "ok",
+    "result": {
+      "protocolVersion": 0,
+      "serverName": "Code Pet Runtime Gateway",
+      "serverVersion": "0.1.4",
+      "providers": [
+        {
+          "id": "codex-local",
+          "providerType": "codex",
+          "displayName": "Codex",
+          "version": "1.0.0",
+          "status": "ready",
+          "capabilities": {
+            "methods": ["conversation.list", "conversation.get", "conversation.create", "turn.send", "turn.interrupt", "approval.resolve"],
+            "permissionLevels": ["read-only", "workspace-write", "full-access"],
+            "models": ["provider-default"],
+            "reasoningEfforts": ["medium"],
+            "quickReplies": [
+              { "id": "continue", "label": "Continue", "text": "Continue." }
+            ],
+            "canSteer": true,
+            "canInterrupt": true,
+            "extension": {
+              "namespace": "dev.code-pet.codex",
+              "data": { "runtime": "app-server", "experimental": true }
+            }
+          }
+        }
+      ],
+      "eventSequence": 41
+    }
+  }
+}

@@ -1,0 +1,379 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/schemas/v0.json",
+  "title": "Code Pet Standard Protocol v0",
+  "$defs": {
+    "ProtocolVersion": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "RequestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "EventSequence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "TimestampMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "Cursor": {
+      "type": "string",
+      "minLength": 1
+    },
+    "JsonObject": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "PermissionLevel": {
+      "type": "string",
+      "enum": ["read-only", "workspace-write", "full-access"]
+    },
+    "ProviderStatus": {
+      "type": "string",
+      "enum": ["disconnected", "connecting", "ready", "unavailable", "error"]
+    },
+    "ConversationStatus": {
+      "type": "string",
+      "enum": ["idle", "running", "waiting-approval", "error", "archived"]
+    },
+    "TurnTaskStatus": {
+      "type": "string",
+      "enum": ["queued", "running", "waiting-approval", "completed", "failed", "interrupted"]
+    },
+    "ApprovalStatus": {
+      "type": "string",
+      "enum": ["pending", "approved", "denied", "expired"]
+    },
+    "ApprovalDecision": {
+      "type": "string",
+      "enum": ["approve", "deny"]
+    },
+    "ProviderExtension": {
+      "type": "object",
+      "properties": {
+        "namespace": { "type": "string", "minLength": 1 },
+        "data": { "$ref": "#/$defs/JsonObject" }
+      },
+      "required": ["namespace", "data"],
+      "additionalProperties": false
+    },
+    "QuickReply": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "text": { "type": "string", "minLength": 1 }
+      },
+      "required": ["id", "label", "text"],
+      "additionalProperties": false
+    },
+    "ProviderCapabilities": {
+      "type": "object",
+      "properties": {
+        "methods": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "permissionLevels": { "type": "array", "items": { "$ref": "#/$defs/PermissionLevel" }, "uniqueItems": true },
+        "models": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "reasoningEfforts": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "quickReplies": { "type": "array", "items": { "$ref": "#/$defs/QuickReply" } },
+        "canSteer": { "type": "boolean" },
+        "canInterrupt": { "type": "boolean" },
+        "extension": { "$ref": "#/$defs/ProviderExtension" }
+      },
+      "required": ["methods", "permissionLevels", "models", "reasoningEfforts", "quickReplies", "canSteer", "canInterrupt"],
+      "additionalProperties": false
+    },
+    "Provider": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "providerType": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string", "minLength": 1 },
+        "version": { "type": "string" },
+        "status": { "$ref": "#/$defs/ProviderStatus" },
+        "capabilities": { "$ref": "#/$defs/ProviderCapabilities" },
+        "extension": { "$ref": "#/$defs/ProviderExtension" }
+      },
+      "required": ["id", "providerType", "displayName", "status", "capabilities"],
+      "additionalProperties": false
+    },
+    "TurnTask": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "providerId": { "type": "string", "minLength": 1 },
+        "conversationId": { "type": "string", "minLength": 1 },
+        "status": { "$ref": "#/$defs/TurnTaskStatus" },
+        "displaySummary": { "type": "string" },
+        "startedAt": { "$ref": "#/$defs/TimestampMs" },
+        "updatedAt": { "$ref": "#/$defs/TimestampMs" },
+        "completedAt": { "$ref": "#/$defs/TimestampMs" },
+        "extension": { "$ref": "#/$defs/ProviderExtension" }
+      },
+      "required": ["id", "providerId", "conversationId", "status", "updatedAt"],
+      "additionalProperties": false
+    },
+    "Conversation": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "providerId": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "preview": { "type": "string" },
+        "status": { "$ref": "#/$defs/ConversationStatus" },
+        "permissionLevel": { "$ref": "#/$defs/PermissionLevel" },
+        "model": { "type": "string" },
+        "reasoningEffort": { "type": "string" },
+        "workspaceRoot": { "type": "string", "minLength": 1 },
+        "createdAt": { "$ref": "#/$defs/TimestampMs" },
+        "updatedAt": { "$ref": "#/$defs/TimestampMs" },
+        "activeTurn": { "$ref": "#/$defs/TurnTask" },
+        "extension": { "$ref": "#/$defs/ProviderExtension" }
+      },
+      "required": ["id", "providerId", "title", "status", "permissionLevel", "createdAt", "updatedAt"],
+      "additionalProperties": false
+    },
+    "Approval": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "providerId": { "type": "string", "minLength": 1 },
+        "conversationId": { "type": "string", "minLength": 1 },
+        "turnId": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "status": { "$ref": "#/$defs/ApprovalStatus" },
+        "decisions": { "type": "array", "items": { "$ref": "#/$defs/ApprovalDecision" }, "minItems": 1, "uniqueItems": true },
+        "requestedAt": { "$ref": "#/$defs/TimestampMs" },
+        "resolvedAt": { "$ref": "#/$defs/TimestampMs" },
+        "decision": { "$ref": "#/$defs/ApprovalDecision" },
+        "extension": { "$ref": "#/$defs/ProviderExtension" }
+      },
+      "required": ["id", "providerId", "conversationId", "turnId", "kind", "title", "status", "decisions", "requestedAt"],
+      "additionalProperties": false
+    },
+    "ProtocolError": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "details": { "$ref": "#/$defs/JsonObject" }
+      },
+      "required": ["code", "message", "retryable"],
+      "additionalProperties": false
+    },
+    "HandshakeRequest": {
+      "type": "object",
+      "properties": {
+        "clientName": { "type": "string", "minLength": 1 },
+        "clientVersion": { "type": "string", "minLength": 1 },
+        "minProtocolVersion": { "$ref": "#/$defs/ProtocolVersion" },
+        "maxProtocolVersion": { "$ref": "#/$defs/ProtocolVersion" },
+        "lastEventSequence": { "$ref": "#/$defs/EventSequence" }
+      },
+      "required": ["clientName", "clientVersion", "minProtocolVersion", "maxProtocolVersion"],
+      "additionalProperties": false
+    },
+    "HandshakeResponse": {
+      "type": "object",
+      "properties": {
+        "protocolVersion": { "$ref": "#/$defs/ProtocolVersion" },
+        "serverName": { "type": "string", "minLength": 1 },
+        "serverVersion": { "type": "string", "minLength": 1 },
+        "providers": { "type": "array", "items": { "$ref": "#/$defs/Provider" } },
+        "eventSequence": { "$ref": "#/$defs/EventSequence" }
+      },
+      "required": ["protocolVersion", "serverName", "serverVersion", "providers", "eventSequence"],
+      "additionalProperties": false
+    },
+    "ProviderListRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "ProviderListResponse": {
+      "type": "object",
+      "properties": {
+        "providers": { "type": "array", "items": { "$ref": "#/$defs/Provider" } }
+      },
+      "required": ["providers"],
+      "additionalProperties": false
+    },
+    "ConversationListRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": { "type": "string", "minLength": 1 },
+        "cursor": { "$ref": "#/$defs/Cursor" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+      },
+      "additionalProperties": false
+    },
+    "ConversationListResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": { "type": "array", "items": { "$ref": "#/$defs/Conversation" } },
+        "nextCursor": { "$ref": "#/$defs/Cursor" },
+        "eventSequence": { "$ref": "#/$defs/EventSequence" }
+      },
+      "required": ["conversations", "eventSequence"],
+      "additionalProperties": false
+    },
+    "ConversationGetRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": { "type": "string", "minLength": 1 },
+        "conversationId": { "type": "string", "minLength": 1 }
+      },
+      "required": ["providerId", "conversationId"],
+      "additionalProperties": false
+    },
+    "ConversationGetResponse": {
+      "type": "object",
+      "properties": {
+        "conversation": { "$ref": "#/$defs/Conversation" }
+      },
+      "required": ["conversation"],
+      "additionalProperties": false
+    },
+    "ConversationCreateRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "permissionLevel": { "$ref": "#/$defs/PermissionLevel" },
+        "model": { "type": "string", "minLength": 1 },
+        "reasoningEffort": { "type": "string", "minLength": 1 },
+        "workspaceRoot": { "type": "string", "minLength": 1 }
+      },
+      "required": ["providerId", "permissionLevel"],
+      "additionalProperties": false
+    },
+    "ConversationCreateResponse": {
+      "type": "object",
+      "properties": {
+        "conversation": { "$ref": "#/$defs/Conversation" }
+      },
+      "required": ["conversation"],
+      "additionalProperties": false
+    },
+    "TurnSendRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": { "type": "string", "minLength": 1 },
+        "conversationId": { "type": "string", "minLength": 1 },
+        "clientMessageId": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "quickReplyId": { "type": "string", "minLength": 1 },
+        "steerTurnId": { "type": "string", "minLength": 1 }
+      },
+      "required": ["providerId", "conversationId", "clientMessageId", "message"],
+      "additionalProperties": false
+    },
+    "TurnSendResponse": {
+      "type": "object",
+      "properties": {
+        "turn": { "$ref": "#/$defs/TurnTask" }
+      },
+      "required": ["turn"],
+      "additionalProperties": false
+    },
+    "TurnInterruptRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": { "type": "string", "minLength": 1 },
+        "conversationId": { "type": "string", "minLength": 1 },
+        "turnId": { "type": "string", "minLength": 1 }
+      },
+      "required": ["providerId", "conversationId", "turnId"],
+      "additionalProperties": false
+    },
+    "TurnInterruptResponse": {
+      "type": "object",
+      "properties": {
+        "turn": { "$ref": "#/$defs/TurnTask" }
+      },
+      "required": ["turn"],
+      "additionalProperties": false
+    },
+    "ApprovalResolveRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": { "type": "string", "minLength": 1 },
+        "approvalId": { "type": "string", "minLength": 1 },
+        "decision": { "$ref": "#/$defs/ApprovalDecision" }
+      },
+      "required": ["providerId", "approvalId", "decision"],
+      "additionalProperties": false
+    },
+    "ApprovalResolveResponse": {
+      "type": "object",
+      "properties": {
+        "approval": { "$ref": "#/$defs/Approval" }
+      },
+      "required": ["approval"],
+      "additionalProperties": false
+    },
+    "ProviderStatusChangedEvent": {
+      "type": "object",
+      "properties": {
+        "provider": { "$ref": "#/$defs/Provider" },
+        "previousStatus": { "$ref": "#/$defs/ProviderStatus" }
+      },
+      "required": ["provider"],
+      "additionalProperties": false
+    },
+    "ConversationUpsertedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": { "$ref": "#/$defs/Conversation" }
+      },
+      "required": ["conversation"],
+      "additionalProperties": false
+    },
+    "TurnUpsertedEvent": {
+      "type": "object",
+      "properties": {
+        "turn": { "$ref": "#/$defs/TurnTask" }
+      },
+      "required": ["turn"],
+      "additionalProperties": false
+    },
+    "TurnOutputDeltaEvent": {
+      "type": "object",
+      "properties": {
+        "providerId": { "type": "string", "minLength": 1 },
+        "conversationId": { "type": "string", "minLength": 1 },
+        "turnId": { "type": "string", "minLength": 1 },
+        "outputId": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "delta": { "type": "string" },
+        "extension": { "$ref": "#/$defs/ProviderExtension" }
+      },
+      "required": ["providerId", "conversationId", "turnId", "outputId", "kind", "delta"],
+      "additionalProperties": false
+    },
+    "ApprovalRequestedEvent": {
+      "type": "object",
+      "properties": {
+        "approval": { "$ref": "#/$defs/Approval" }
+      },
+      "required": ["approval"],
+      "additionalProperties": false
+    },
+    "ApprovalResolvedEvent": {
+      "type": "object",
+      "properties": {
+        "approval": { "$ref": "#/$defs/Approval" }
+      },
+      "required": ["approval"],
+      "additionalProperties": false
+    }
+  }
+}
