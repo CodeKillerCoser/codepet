@@ -2,7 +2,7 @@ use code_pet_lib::agent_control::{agent_statuses_for_paths, set_agent_enabled_at
 use code_pet_lib::agents::{agent_specs, AgentId};
 
 #[test]
-fn agent_statuses_report_all_enabled_after_installing_each_agent() {
+fn codex_stays_disabled_while_other_agent_hooks_can_be_enabled() {
     let temp = tempfile::tempdir().unwrap();
     let script_path = temp.path().join("code-pet-hook.mjs");
 
@@ -24,9 +24,25 @@ fn agent_statuses_report_all_enabled_after_installing_each_agent() {
     let statuses = agent_statuses_for_paths(&specs, &paths, &script_path).unwrap();
 
     assert_eq!(statuses.len(), 4);
-    assert!(statuses.iter().all(|status| status.enabled));
-    assert!(statuses.iter().any(|status| status.id == AgentId::Codex));
+    assert!(statuses
+        .iter()
+        .find(|status| status.id == AgentId::Codex)
+        .is_some_and(|status| !status.enabled));
     assert!(statuses.iter().any(|status| status.id == AgentId::Claude));
     assert!(statuses.iter().any(|status| status.id == AgentId::Qoder));
     assert!(statuses.iter().any(|status| status.id == AgentId::Cursor));
+    assert!(statuses
+        .iter()
+        .filter(|status| status.id != AgentId::Codex)
+        .all(|status| status.enabled));
+    assert!(specs
+        .iter()
+        .find(|spec| spec.id == AgentId::Codex)
+        .is_some_and(|spec| spec.hook_events.is_empty()));
+    assert!(!paths
+        .iter()
+        .find(|(id, _)| *id == AgentId::Codex)
+        .unwrap()
+        .1
+        .exists());
 }

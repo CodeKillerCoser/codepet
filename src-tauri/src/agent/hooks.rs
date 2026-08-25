@@ -9,6 +9,15 @@ use std::path::{Path, PathBuf};
 const HOOK_SCRIPT: &str = include_str!("../../hooks/code-pet-hook.mjs");
 const SCRIPT_NAME: &str = "code-pet-hook.mjs";
 const LEGACY_MANAGED_MARKER: &str = "CODE_PET_MANAGED=1";
+const LEGACY_CODEX_HOOK_EVENTS: &[&str] = &[
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PermissionRequest",
+    "Stop",
+];
 
 pub fn install_hook_script() -> io::Result<PathBuf> {
     let dir = app_support_dir().join("hooks");
@@ -49,6 +58,26 @@ pub fn disable_agent_hook(
     script_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     disable_json_hooks(spec, config_path, script_path)
+}
+
+pub fn remove_legacy_codex_hook(
+    config_path: &Path,
+    script_path: &Path,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    if !config_path.exists() {
+        return Ok(false);
+    }
+
+    let mut root = read_json_config(config_path)?;
+    let removed = remove_managed_json_entries(
+        &mut root,
+        LEGACY_CODEX_HOOK_EVENTS,
+        script_path,
+    );
+    if removed {
+        write_json_config(config_path, &root)?;
+    }
+    Ok(removed)
 }
 
 pub fn is_agent_hook_enabled(
@@ -146,15 +175,28 @@ fn disable_json_hooks(
     }
 
     let mut root = read_json_config(config_path)?;
-    if let Some(hooks) = root.get_mut("hooks").and_then(Value::as_object_mut) {
-        for event in spec.hook_events {
-            if let Some(entries) = hooks.get_mut(*event).and_then(Value::as_array_mut) {
-                entries.retain(|entry| !is_managed_json_entry(entry, script_path));
-            }
-        }
-    }
+    remove_managed_json_entries(&mut root, spec.hook_events, script_path);
     write_json_config(config_path, &root)?;
     Ok(())
+}
+
+fn remove_managed_json_entries(
+    root: &mut Value,
+    hook_events: &[&str],
+    script_path: &Path,
+) -> bool {
+    let mut removed = false;
+    let Some(hooks) = root.get_mut("hooks").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    for event in hook_events {
+        if let Some(entries) = hooks.get_mut(*event).and_then(Value::as_array_mut) {
+            let previous_len = entries.len();
+            entries.retain(|entry| !is_managed_json_entry(entry, script_path));
+            removed |= entries.len() != previous_len;
+        }
+    }
+    removed
 }
 
 fn supported_hook_events<'a>(spec: &'a AgentSpec, hook_events: &[String]) -> Vec<&'a str> {
@@ -248,24 +290,15 @@ fn managed_json_entry(agent_id: AgentId, script_path: &Path, event: &str) -> Val
         });
     }
 
-    let mut hook = json!({
+    let hook = json!({
         "type": "command",
-        "command": managed_command(agent_id.as_str(), script_path, Some(event), None)
+        "command": managed_command(agent_id.as_str(), script_path, Some(event), None),
+        "timeout": hook_timeout_seconds(event)
     });
-    if agent_id == AgentId::Codex {
-        hook["timeout_ms"] = json!(hook_timeout_ms(event));
-    } else {
-        hook["timeout"] = json!(hook_timeout_seconds(event));
-    }
-
-    if agent_id == AgentId::Codex {
-        json!({ "hooks": [hook] })
-    } else {
-        json!({
-            "matcher": "*",
-            "hooks": [hook]
-        })
-    }
+    json!({
+        "matcher": "*",
+        "hooks": [hook]
+    })
 }
 
 fn hook_timeout_seconds(event: &str) -> u64 {
@@ -274,10 +307,6 @@ fn hook_timeout_seconds(event: &str) -> u64 {
     } else {
         5
     }
-}
-
-fn hook_timeout_ms(event: &str) -> u64 {
-    hook_timeout_seconds(event) * 1000
 }
 
 #[cfg(not(windows))]

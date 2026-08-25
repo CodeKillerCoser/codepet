@@ -23,7 +23,7 @@ fn spool_path_follows_custom_app_data_directory() {
 }
 
 #[test]
-fn replay_spooled_events_imports_hook_events_and_clears_file() {
+fn replay_spooled_events_skips_codex_but_keeps_other_providers() {
     let temp = tempfile::tempdir().unwrap();
     let spool_path = temp.path().join("events.jsonl");
     std::fs::write(
@@ -60,11 +60,11 @@ fn replay_spooled_events_imports_hook_events_and_clears_file() {
     let imported = replay_spooled_events(&state, &spool_path).unwrap();
 
     let events = state.recent_events();
-    assert_eq!(imported, 2);
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0].message, "spooled prompt");
-    assert_eq!(events[0].created_at.to_rfc3339(), "2026-05-26T05:43:30.484+00:00");
-    assert_eq!(events[1].status, TaskStatus::WaitingApproval);
+    assert_eq!(imported, 1);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].provider, AgentId::Claude);
+    assert_eq!(events[0].status, TaskStatus::WaitingApproval);
+    assert_eq!(events[0].created_at.to_rfc3339(), "2026-05-26T05:44:30.484+00:00");
     assert!(!spool_path.exists());
 }
 

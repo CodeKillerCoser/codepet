@@ -1,13 +1,13 @@
 # Code Pet
 
-Code Pet 是一个面向本机 AI 编程工具的桌面宠物应用。它会常驻在桌面上，监听 Codex、Claude Code、Qoder 和 Cursor 的 hook 事件，把任务开始、工具调用、等待授权、失败和完成等状态变成可见的桌宠消息，并提供通知音效、宠物外观、任务气泡、Token 用量统计等个性化能力。
+Code Pet 是一个面向本机 AI 编程工具的桌面宠物应用。它会常驻在桌面上，监听 Claude Code、Qoder 和 Cursor 的 hook 事件，把任务开始、工具调用、等待授权、失败和完成等状态变成可见的桌宠消息，并提供通知音效、宠物外观、任务气泡、Token 用量统计等个性化能力。Codex 的旧 Hook 与 audit 活动源已停用，等待 Runtime Gateway 接管。
 
 项目使用 Tauri 2、Svelte 5、Vite 和 Rust 构建。主窗口用于配置和查看数据，透明桌宠窗口用于日常悬浮展示。
 
 ## 功能概览
 
 - **桌面宠物悬浮窗**：透明、置顶、可自动调整高度的桌宠窗口，用于展示最近的任务活动。
-- **多 Agent 事件接入**：支持 Codex、Claude Code、Qoder 和 Cursor 的 hook 配置接入，托管 hook 命令兼容 Windows 和类 Unix shell。
+- **多 Agent 事件接入**：支持 Claude Code、Qoder 和 Cursor 的 hook 配置接入，托管 hook 命令兼容 Windows 和类 Unix shell。
 - **任务状态卡片**：展示任务标题、工具调用、状态、时间、授权等待等信息。
 - **授权提醒**：等待授权时可以响铃，并在用户处理前重复提醒；普通完成任务只提示一次。
 - **通知音效**：支持内置通知音、静音、自定义通知音频和静音时段。
@@ -17,19 +17,19 @@ Code Pet 是一个面向本机 AI 编程工具的桌面宠物应用。它会常�
 - **Token 用量统计**：读取本机审计和 transcript 数据，按 Agent、时间范围和桶大小聚合展示 Token 用量。
 - **最近事件日志**：在主窗口中查看近期收到的 hook 事件。
 - **开机自启动**：通过 Tauri autostart 插件在设置页控制登录启动，覆盖 macOS、Windows 和 Linux 桌面平台。
-- **启动性能日志**：记录后端启动阶段、Codex audit 回放、Token 用量刷新和前端首屏请求耗时，便于排查启动变慢。
+- **启动性能日志**：记录后端启动阶段、Token 用量刷新和前端首屏请求耗时，便于排查启动变慢。
 - **macOS 打包签名辅助**：提供 DMG 构建、签名校验和 notarization 脚本。
 
 ## 支持的 Agent
 
 | Agent | 配置文件 | 事件覆盖 |
 | --- | --- | --- |
-| Codex | `~/.codex/hooks.json` | `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`PermissionRequest`、`Stop` |
+| Codex | — | 旧 Hook 活动源已停用；设置页保留不可启用的占位项 |
 | Claude Code | `~/.claude/settings.json` | `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`PermissionRequest`、`Stop` |
 | Qoder | `~/.qoder/settings.json` | `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`PermissionRequest`、`Notification`、`Stop` |
 | Cursor | `~/.cursor/hooks.json` | `sessionStart`、`beforeSubmitPrompt`、`preToolUse`、`postToolUse`、`beforeShellExecution`、`afterShellExecution`、`beforeMCPExecution`、`afterMCPExecution`、`afterFileEdit`、`stop` |
 
-启用某个 Agent 时，应用会把托管的 `code-pet-hook.mjs` 写入对应配置。关闭时会移除托管项，并清理该 Agent 的当前事件。托管命令使用 `node <script> --agent <id>` 形式传递 Agent 信息，并保留对旧版 `CODE_PET_AGENT=...` 托管项的识别和升级能力。
+启用 Claude Code、Qoder 或 Cursor 时，应用会把托管的 `code-pet-hook.mjs` 写入对应配置。关闭时会移除托管项，并清理该 Agent 的当前事件。托管命令使用 `node <script> --agent <id>` 形式传递 Agent 信息，并保留对旧版 `CODE_PET_AGENT=...` 托管项的识别和升级能力。应用启动时会移除 `~/.codex/hooks.json` 中由 Code Pet 管理的遗留 Codex Hook，且 collector 不接收 Codex Hook 或 spool 事件。
 
 ## 环境要求
 
@@ -66,7 +66,7 @@ npm run tauri dev
 ## 使用方式
 
 1. 启动应用。
-2. 在主窗口的 `Agent` 页启用需要接入的工具，例如 Codex 或 Claude Code。
+2. 在主窗口的 `Agent` 页启用需要接入的工具，例如 Claude Code 或 Qoder。
 3. 运行对应 Agent 的任务。
 4. 桌宠窗口会展示任务状态、工具调用、授权等待、完成或失败等活动。
 5. 在 `个性化` 页调整宠物、主题、任务气泡、通知音效和抽打反应音。

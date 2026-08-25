@@ -2,7 +2,7 @@
 
 ## 当前流程
 
-`src-tauri/src/agent/hooks.rs` 为每个已勾选的 Agent hook 事件安装托管 Node 命令。命令会以 `--agent <id>` 运行 `code-pet-hook.mjs`，可用时还会带上 `--event <event>`。
+`src-tauri/src/agent/hooks.rs` 为 Claude Code、Qoder 和 Cursor 中每个已勾选的 hook 事件安装托管 Node 命令。命令会以 `--agent <id>` 运行 `code-pet-hook.mjs`，可用时还会带上 `--event <event>`。
 
 Hook 脚本会把 payload 发送到 `http://127.0.0.1:47621/hook`。如果应用不可用，事件可暂存到 `~/.code-pet/spool/events.jsonl`，并在启动时回放。
 
@@ -10,7 +10,7 @@ Hook 脚本会把 payload 发送到 `http://127.0.0.1:47621/hook`。如果应用
 
 ## Provider 配置
 
-Agent 注册数据位于 `src-tauri/src/agent/registry.rs`。README 记录了 Codex、Claude Code、Qoder 和 Cursor 当前使用的配置文件。
+Agent 注册数据位于 `src-tauri/src/agent/registry.rs`。Codex 仅保留 `hook_events = []` 的 disabled UI 占位 spec，不允许通过 Hook 控制命令启用。`list_agent_views()` 会清理 `~/.codex/hooks.json` 中已有的 Code Pet 托管项；脚本与 collector 的拒收逻辑是清理失败或旧脚本调用残留时的第二道防线。Claude Code、Qoder 和 Cursor 的 Hook 行为保持不变。
 
 ## Windows 风险
 

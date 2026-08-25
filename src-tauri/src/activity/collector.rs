@@ -77,7 +77,7 @@ pub fn replay_spooled_events(
         let Ok(agent) = AgentId::from_str(&incoming.agent) else {
             continue;
         };
-        if !app_state.agent_enabled(agent) {
+        if !accepts_legacy_hook_source(agent) || !app_state.agent_enabled(agent) {
             continue;
         }
         let Ok(event) = normalize_hook_payload(agent, incoming.payload) else {
@@ -124,7 +124,7 @@ async fn receive_hook(
 ) -> Result<Response, (StatusCode, String)> {
     let agent = AgentId::from_str(&incoming.agent)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
-    if !state.app_state.agent_enabled(agent) {
+    if !accepts_legacy_hook_source(agent) || !state.app_state.agent_enabled(agent) {
         return Ok(json_utf8_response(None::<PetEvent>));
     }
     let event = normalize_hook_payload(agent, incoming.payload)
@@ -137,6 +137,10 @@ async fn receive_hook(
     refresh_token_usage_if_needed(&state.app_handle, event.clone());
     watch_claude_transcript_if_needed(&state, &event);
     Ok(json_utf8_response(Some(frontend_event)))
+}
+
+pub fn accepts_legacy_hook_source(agent: AgentId) -> bool {
+    agent != AgentId::Codex
 }
 
 fn json_utf8_response<T: Serialize>(value: T) -> Response {
@@ -228,5 +232,13 @@ mod tests {
                 .unwrap(),
             "*"
         );
+    }
+
+    #[test]
+    fn legacy_hook_source_is_disabled_only_for_codex() {
+        assert!(!accepts_legacy_hook_source(AgentId::Codex));
+        assert!(accepts_legacy_hook_source(AgentId::Claude));
+        assert!(accepts_legacy_hook_source(AgentId::Qoder));
+        assert!(accepts_legacy_hook_source(AgentId::Cursor));
     }
 }

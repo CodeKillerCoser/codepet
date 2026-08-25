@@ -255,8 +255,11 @@ function forwardBase64Arg() {
 }
 
 async function main() {
-  const stdinText = await readStdin();
   const agent = process.env.CODE_PET_AGENT || argValue("--agent") || "unknown";
+  const stdinText = await readStdin();
+  if (agent === "codex") {
+    return;
+  }
   const eventName = argValue("--event") || process.env.CODE_PET_EVENT;
   const payload = withSourceContext(parsePayload(stdinText, eventName));
   const event = await postEvent({ agent, payload });

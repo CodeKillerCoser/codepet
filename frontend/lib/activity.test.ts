@@ -697,7 +697,7 @@ describe("card display", () => {
 });
 
 describe("activityCapabilities", () => {
-  it("exposes reply for completed Codex Desktop events with a thread id", () => {
+  it("does not expose legacy actions for Codex activity events", () => {
     const activity = event({
       provider: "codex",
       status: "done",
@@ -707,7 +707,11 @@ describe("activityCapabilities", () => {
       },
     });
 
-    expect(activityCapabilities(activity).canReply).toBe(true);
+    expect(activityCapabilities(activity)).toMatchObject({
+      canActivate: false,
+      canReply: false,
+      canApprove: false,
+    });
   });
 
   it("does not expose reply for running Codex events", () => {
@@ -774,12 +778,12 @@ describe("activityCapabilities", () => {
     expect(activityCapabilities(event({ provider: "qoder", status: "running" })).canApprove).toBe(false);
   });
 
-  it("exposes approval controls for Codex permission requests", () => {
+  it("does not expose approval controls for legacy Codex permission requests", () => {
     const activity = event({
       provider: "codex",
       status: "waiting-approval",
     });
 
-    expect(activityCapabilities(activity).canApprove).toBe(true);
+    expect(activityCapabilities(activity).canApprove).toBe(false);
   });
 });

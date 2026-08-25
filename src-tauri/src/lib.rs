@@ -11,7 +11,6 @@ pub use activity::token_usage;
 pub use agent::actions as activity_actions;
 pub use agent::claude_transcript;
 pub use agent::codex_app_server;
-pub use agent::codex_audit;
 pub use agent::control as agent_control;
 pub use agent::hooks;
 pub use agent::registry as agents;
@@ -371,11 +370,6 @@ pub fn run() {
                     }
                 }
             });
-            let audit_handle = handle.clone();
-            let audit_state = state.clone();
-            tauri::async_runtime::spawn(async move {
-                codex_audit::watch_default_codex_audit(audit_state, audit_handle).await;
-            });
             let collector_handle = handle.clone();
             let collector_state = state.clone();
             tauri::async_runtime::spawn(async move {
@@ -388,22 +382,6 @@ pub fn run() {
             });
             app_log::info("startup", "setup finished");
             setup_span.finish_ok(&[]);
-            let replay_handle = handle.clone();
-            let replay_state = state.clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                let codex_span = crate::app_log::PerfSpan::start("startup.replay_codex_audit_events");
-                match codex_audit::replay_default_codex_audit_events(&replay_state) {
-                    Ok(count) => {
-                        codex_span.finish_ok(&[("events", count.to_string())]);
-                        crate::app_log::info("startup", &format!("codex audit events replayed count={count}"));
-                    }
-                    Err(error) => {
-                        codex_span.finish_error(&error.to_string(), &[]);
-                        crate::app_log::error("startup", &format!("failed to replay codex audit events error={error}"));
-                        let _ = replay_handle.emit("collector-error", error.to_string());
-                    }
-                }
-            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

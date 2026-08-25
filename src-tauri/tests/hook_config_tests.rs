@@ -1,7 +1,7 @@
 use code_pet_lib::agents::{agent_specs, AgentId};
 use code_pet_lib::hooks::{
     disable_agent_hook, enable_agent_hook, enable_agent_hook_events, is_agent_hook_enabled,
-    is_agent_hook_enabled_for_events,
+    is_agent_hook_enabled_for_events, remove_legacy_codex_hook,
 };
 use serde_json::json;
 
@@ -129,61 +129,13 @@ fn json_agent_hook_is_not_enabled_when_only_one_event_is_managed() {
 }
 
 #[test]
-fn enable_codex_json_hooks_preserves_existing_config_and_is_idempotent() {
-    let temp = tempfile::tempdir().unwrap();
-    let script_path = temp.path().join("code-pet-hook.mjs");
-    let config_path = temp.path().join("hooks.json");
-    std::fs::write(
-        &config_path,
-        serde_json::to_string_pretty(&json!({
-            "hooks": {
-                "PreToolUse": [
-                    {
-                        "matcher": "Bash",
-                        "hooks": [
-                            { "type": "command", "command": "~/.codex/hooks/guard-tool.sh", "timeout_ms": 10000 }
-                        ]
-                    }
-                ]
-            }
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-
-    let spec = agent_specs()
-        .into_iter()
-        .find(|agent| agent.id == AgentId::Codex)
-        .unwrap();
-
-    enable_agent_hook(&spec, &config_path, &script_path).unwrap();
-    enable_agent_hook(&spec, &config_path, &script_path).unwrap();
-
-    let updated: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-    assert!(updated["hooks"]["PreToolUse"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|entry| entry["hooks"][0]["command"] == "~/.codex/hooks/guard-tool.sh"));
-    assert_eq!(
-        serde_json::to_string(&updated)
-            .unwrap()
-            .matches("code-pet-hook.mjs")
-            .count(),
-        spec.hook_events.len()
-    );
-    assert!(is_agent_hook_enabled(&spec, &config_path, &script_path).unwrap());
-}
-
-#[test]
 fn enable_json_agent_hook_events_installs_only_selected_events() {
     let temp = tempfile::tempdir().unwrap();
     let script_path = temp.path().join("code-pet-hook.mjs");
     let config_path = temp.path().join("hooks.json");
     let spec = agent_specs()
         .into_iter()
-        .find(|agent| agent.id == AgentId::Codex)
+        .find(|agent| agent.id == AgentId::Claude)
         .unwrap();
 
     enable_agent_hook(&spec, &config_path, &script_path).unwrap();
@@ -224,26 +176,6 @@ fn enable_json_agent_hook_events_installs_only_selected_events() {
     )
     .unwrap());
     assert!(!is_agent_hook_enabled(&spec, &config_path, &script_path).unwrap());
-}
-
-#[test]
-fn codex_json_hooks_use_timeout_ms_schema() {
-    let temp = tempfile::tempdir().unwrap();
-    let script_path = temp.path().join("code-pet-hook.mjs");
-    let config_path = temp.path().join("hooks.json");
-    let spec = agent_specs()
-        .into_iter()
-        .find(|agent| agent.id == AgentId::Codex)
-        .unwrap();
-
-    enable_agent_hook(&spec, &config_path, &script_path).unwrap();
-
-    let updated: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-    let managed_hook = &updated["hooks"]["UserPromptSubmit"][0]["hooks"][0];
-    assert_eq!(managed_hook["timeout_ms"], 5000);
-    assert!(managed_hook.get("timeout").is_none());
-    assert!(updated["hooks"]["UserPromptSubmit"][0].get("matcher").is_none());
 }
 
 #[test]
@@ -298,11 +230,11 @@ fn cursor_json_hooks_use_flat_hooks_schema() {
 }
 
 #[test]
-fn codex_json_hooks_upgrade_existing_managed_timeout_field() {
+fn legacy_codex_hooks_are_removed_without_touching_user_hooks() {
     let temp = tempfile::tempdir().unwrap();
     let script_path = temp.path().join("code-pet-hook.mjs");
     let config_path = temp.path().join("hooks.json");
-    let command = format!(
+    let managed_command = format!(
         "CODE_PET_MANAGED=1 CODE_PET_AGENT='codex' node '{}' --event 'UserPromptSubmit'",
         script_path.display()
     );
@@ -314,7 +246,13 @@ fn codex_json_hooks_upgrade_existing_managed_timeout_field() {
                     {
                         "matcher": "*",
                         "hooks": [
-                            { "type": "command", "command": command, "timeout": 5 }
+                            { "type": "command", "command": managed_command, "timeout": 5 }
+                        ]
+                    },
+                    {
+                        "matcher": "*",
+                        "hooks": [
+                            { "type": "command", "command": "node ~/.codex/hooks/user-hook.mjs", "timeout_ms": 5000 }
                         ]
                     }
                 ]
@@ -324,20 +262,17 @@ fn codex_json_hooks_upgrade_existing_managed_timeout_field() {
     )
     .unwrap();
 
-    let spec = agent_specs()
-        .into_iter()
-        .find(|agent| agent.id == AgentId::Codex)
-        .unwrap();
-
-    enable_agent_hook(&spec, &config_path, &script_path).unwrap();
+    assert!(remove_legacy_codex_hook(&config_path, &script_path).unwrap());
+    assert!(!remove_legacy_codex_hook(&config_path, &script_path).unwrap());
 
     let updated: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
     let entries = updated["hooks"]["UserPromptSubmit"].as_array().unwrap();
     assert_eq!(entries.len(), 1);
-    let managed_hook = &entries[0]["hooks"][0];
-    assert_eq!(managed_hook["timeout_ms"], 5000);
-    assert!(managed_hook.get("timeout").is_none());
+    assert_eq!(
+        entries[0]["hooks"][0]["command"],
+        "node ~/.codex/hooks/user-hook.mjs"
+    );
 }
 
 #[test]

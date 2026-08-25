@@ -1,5 +1,7 @@
 # Codex App Server 回复路径
 
+> 当前状态（2026-08-26）：这是尚未删除的旧 `PetEvent` 交互实现，不再是生产 UI 可达路径。Codex Hook/audit 活动源和前端 Codex capability 已停用；后续由长期 Runtime Gateway Provider 替换本模块。
+
 ## 当前用途
 
 Codex 是当前已验证的主要远程回复 provider。`src-tauri/src/agent/actions.rs` 会把符合条件的 Codex 回复路由到 `src-tauri/src/agent/codex_app_server.rs`。

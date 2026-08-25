@@ -8,9 +8,11 @@
 - 本地 collector：`src-tauri/src/activity/collector.rs` 在 `127.0.0.1:47621` 暴露 HTTP 路由。
 - Hook 脚本：`src-tauri/hooks/code-pet-hook.mjs` 由 `src-tauri/src/agent/hooks.rs` 安装到本地 app data 目录。
 
+旧 Hook 拓扑当前只服务 Claude Code、Qoder 和 Cursor。Codex 在设置页保留无 Hook 的 disabled 占位项；启动时会清理遗留托管 Codex Hook，脚本、实时 collector 和 spool 回放也都会拒绝 Codex。Codex audit watcher 与启动回放已移除。历史 Token 用量扫描仍是独立路径，本阶段不变。
+
 ## 流程
 
-1. 用户在主窗口启用某个 Agent。
+1. 用户在主窗口启用 Claude Code、Qoder 或 Cursor。
 2. Rust 将托管 hook 项写入该 Agent 配置。
 3. Agent 调用 `code-pet-hook.mjs`。
 4. 脚本把 payload 发送到 `/hook`。

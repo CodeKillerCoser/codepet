@@ -11,14 +11,13 @@ interface AgentInteraction {
   capabilities(event: PetEvent): ActivityCapabilities;
 }
 
-const codexRemoteInteraction: AgentInteraction = {
-  capabilities(event) {
-    const canReply = isReplyableStatus(event) && Boolean(event.sessionId);
+const codexLegacyInteractionDisabled: AgentInteraction = {
+  capabilities() {
     return {
-      canActivate: true,
-      canReply,
-      canApprove: event.status === "waiting-approval",
-      replyReason: canReply ? undefined : "来源不支持可靠回复",
+      canActivate: false,
+      canReply: false,
+      canApprove: false,
+      replyReason: "Codex 旧活动源已停用",
     };
   },
 };
@@ -54,14 +53,10 @@ export function activityCapabilitiesFor(event: PetEvent): ActivityCapabilities {
 function interactionForEvent(event: PetEvent): AgentInteraction {
   switch (event.provider) {
     case "codex":
-      return codexRemoteInteraction;
+      return codexLegacyInteractionDisabled;
     case "qoder":
       return qoderInteraction;
     default:
       return defaultInteraction;
   }
-}
-
-function isReplyableStatus(event: PetEvent): boolean {
-  return event.status === "done" || event.status === "failed";
 }
