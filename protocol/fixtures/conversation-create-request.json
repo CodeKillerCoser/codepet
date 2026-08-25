@@ -1,0 +1,10 @@
+{
+  "protocolVersion": 0,
+  "id": "request-conversation-create-1",
+  "method": "conversation.create",
+  "params": {
+    "providerId": "codex-local",
+    "permissionLevel": "workspace-write",
+    "workspaceRoot": "/workspace/code-pet"
+  }
+}

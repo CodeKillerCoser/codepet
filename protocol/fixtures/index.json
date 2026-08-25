@@ -1,0 +1,9 @@
+[
+  { "file": "handshake-request.json", "kind": "request", "name": "protocol.handshake" },
+  { "file": "handshake-response.json", "kind": "response", "name": "protocol.handshake" },
+  { "file": "conversation-create-request.json", "kind": "request", "name": "conversation.create" },
+  { "file": "conversation-upserted-event.json", "kind": "event", "name": "conversation.upserted" },
+  { "file": "turn-output-delta-event.json", "kind": "event", "name": "turn.outputDelta" },
+  { "file": "approval-requested-event.json", "kind": "event", "name": "approval.requested" },
+  { "file": "turn-send-error.json", "kind": "response", "name": "turn.send" }
+]

@@ -1,0 +1,14 @@
+{
+  "protocolVersion": 0,
+  "id": "request-turn-1",
+  "method": "turn.send",
+  "response": {
+    "status": "error",
+    "error": {
+      "code": "provider_unavailable",
+      "message": "The selected provider is unavailable.",
+      "retryable": true,
+      "details": { "providerId": "codex-local" }
+    }
+  }
+}
