@@ -1,7 +1,7 @@
 use crate::agents::{agent_specs, resolve_agent_config_path, AgentId, AgentSpec, AgentView};
 use crate::hooks::{
     disable_agent_hook, enable_agent_hook_events, install_hook_script,
-    is_agent_hook_enabled, is_agent_hook_enabled_for_events,
+    is_agent_hook_enabled, is_agent_hook_enabled_for_events, remove_legacy_codex_hook,
 };
 use crate::settings::{load_app_settings, save_app_settings, AgentPreferenceSettings, AppSettings};
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,13 @@ pub struct AgentStatus {
 
 pub fn list_agent_views() -> Result<Vec<AgentView>, Box<dyn std::error::Error>> {
     let script_path = install_hook_script()?;
+    let codex_config_path = resolve_agent_config_path(AgentId::Codex);
+    if let Err(error) = remove_legacy_codex_hook(&codex_config_path, &script_path) {
+        crate::app_log::warn(
+            "agent_control",
+            &format!("failed to remove legacy Codex hook error={error}"),
+        );
+    }
     let settings = load_app_settings()?;
     agent_specs()
         .into_iter()
@@ -51,6 +58,9 @@ pub fn set_agent_enabled(
         .into_iter()
         .find(|agent| agent.id == agent_id)
         .ok_or("unknown agent id")?;
+    if spec.hook_events.is_empty() {
+        return list_agent_views();
+    }
     let config_path = resolve_agent_config_path(agent_id);
     let selected_hook_events = selected_hook_events_for_spec(&settings, &spec);
     set_agent_enabled_events_at_path(
@@ -72,6 +82,9 @@ pub fn set_agent_hook_events(
         .into_iter()
         .find(|agent| agent.id == agent_id)
         .ok_or("unknown agent id")?;
+    if spec.hook_events.is_empty() {
+        return list_agent_views();
+    }
     let config_path = resolve_agent_config_path(agent_id);
     let mut settings = load_app_settings()?;
     let previous_hook_events = selected_hook_events_for_spec(&settings, &spec);
@@ -137,6 +150,9 @@ pub fn set_agent_enabled_at_path(
     script_path: &Path,
     enabled: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if spec.hook_events.is_empty() {
+        return Ok(());
+    }
     let hook_events = spec
         .hook_events
         .iter()

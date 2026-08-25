@@ -1345,11 +1345,11 @@
                   </div>
                 {/if}
                 <div class="agent-controls">
-                  <span class:online={agent.enabled} class="status-chip">{agent.enabled ? "已启用" : "未启用"}</span>
+                  <span class:online={agent.enabled} class="status-chip">{agent.hookEvents.length === 0 ? "旧 Hook 已停用" : agent.enabled ? "已启用" : "未启用"}</span>
                   <button
                     class:enabled={agent.enabled}
                     class="power-button"
-                    disabled={agentBusy(agent)}
+                    disabled={agentBusy(agent) || agent.hookEvents.length === 0}
                     on:click={() => toggleAgent(agent)}
                     aria-label={`${agent.name} ${agent.enabled ? "关闭" : "启用"}`}
                   >
@@ -2001,7 +2001,7 @@
           <div class="empty-state">
             <Activity size={20} />
             <strong>还没有事件</strong>
-            <p>启动 Codex、Claude Code 或 Qoder 任务后，这里会显示最近的 hooks 消息。</p>
+            <p>启动 Claude Code、Qoder 或 Cursor 任务后，这里会显示最近的 hooks 消息。</p>
           </div>
         {/if}
       </section>

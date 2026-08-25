@@ -795,6 +795,10 @@
   }
 
   async function activate(activity: PetEvent) {
+    if (!activityCapabilities(activity).canActivate) {
+      showNotice("当前来源暂不支持打开");
+      return;
+    }
     try {
       await activateActivity(activity.id);
       showNotice("已打开来源窗口");
@@ -979,7 +983,7 @@
               {/if}
               <button class="dismiss-button inline-dismiss" type="button" aria-label="从列表移除" on:click={(event) => dismissActivity(event, activity)}></button>
             </div>
-            <button class="status-open" type="button" aria-label={`打开 ${cardTitle(activity)}`} title={cardMessage(activity)} on:click={() => activate(activity)}>
+            <button class="status-open" type="button" disabled={!capabilities.canActivate} aria-label={`打开 ${cardTitle(activity)}`} title={cardMessage(activity)} on:click={() => activate(activity)}>
               <span class="status-message">{cardMessage(activity)}</span>
             </button>
             {#if replyingToId === activity.id}

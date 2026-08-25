@@ -35,6 +35,8 @@ Code Pet 当前是一个面向本机 AI 编程工具的桌面宠物应用。它�
 
 ## 现状理解
 
+> 实施状态（2026-08-26）：Codex 已退出旧 Hook/audit 活动管线。设置页保留无 Hook 的 disabled 占位项；启动时清理 Code Pet 托管的遗留 Codex Hook；Hook 脚本、collector 与 spool 回放拒收 Codex；Codex audit watcher 和历史活动回放已删除。Claude Code、Qoder、Cursor 的旧 Hook 行为及历史 Token 聚合暂时保留。本阶段尚未实现 App Server Gateway，也未修改 protocol/IDL。
+
 ### 当前运行拓扑
 
 当前主路径是：

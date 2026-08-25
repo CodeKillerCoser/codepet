@@ -2,7 +2,9 @@
 
 ## 来源
 
-Agent hook payload 由 `src-tauri/hooks/code-pet-hook.mjs` 接收，并发送到本地 collector：`http://127.0.0.1:47621/hook`。
+Claude Code、Qoder 和 Cursor 的 hook payload 由 `src-tauri/hooks/code-pet-hook.mjs` 接收，并发送到本地 collector：`http://127.0.0.1:47621/hook`。
+
+Codex 不再进入这条活动管线：脚本消费 stdin 后直接退出，collector 的实时 `/hook` 与启动 spool 回放均显式拒收 Codex。`src-tauri/src/agent/codex_audit.rs` 及其 watcher/回放入口已删除。Token 用量页保留的历史 audit/transcript 扫描不向 `PetEvent` 或桌宠活动写入数据。
 
 ## 归一化
 

@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -13,7 +14,7 @@ fn hook_script_posts_fallback_event_when_stdin_stays_open() {
     let mut child = Command::new("node")
         .arg(script_path)
         .arg("--agent")
-        .arg("codex")
+        .arg("claude")
         .arg("--event")
         .arg("Stop")
         .env("CODE_PET_COLLECTOR_URL", "http://127.0.0.1:9/hook")
@@ -66,7 +67,7 @@ fn hook_script_spools_to_custom_app_data_directory() {
     let output = Command::new("node")
         .arg(script_path)
         .arg("--agent")
-        .arg("codex")
+        .arg("qoder")
         .arg("--event")
         .arg("Stop")
         .env("CODE_PET_COLLECTOR_URL", "http://127.0.0.1:9/hook")
@@ -79,5 +80,36 @@ fn hook_script_spools_to_custom_app_data_directory() {
 
     assert!(output.status.success());
     assert!(custom_data.join("spool").join("events.jsonl").exists());
+    assert!(!home.path().join(".code-pet").join("spool").join("events.jsonl").exists());
+}
+
+#[test]
+fn hook_script_ignores_codex_without_spooling() {
+    if Command::new("node").arg("--version").output().is_err() {
+        return;
+    }
+
+    let home = tempfile::tempdir().unwrap();
+    let script_path = concat!(env!("CARGO_MANIFEST_DIR"), "/hooks/code-pet-hook.mjs");
+    let mut child = Command::new("node")
+        .arg(script_path)
+        .arg("--agent")
+        .arg("codex")
+        .arg("--event")
+        .arg("Stop")
+        .env("CODE_PET_COLLECTOR_URL", "http://127.0.0.1:9/hook")
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(&vec![b'x'; 128 * 1024]).unwrap();
+    drop(stdin);
+    let output = child.wait_with_output().unwrap();
+
+    assert!(output.status.success());
     assert!(!home.path().join(".code-pet").join("spool").join("events.jsonl").exists());
 }

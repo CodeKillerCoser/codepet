@@ -7,8 +7,8 @@
 ## 当前能力
 
 - 激活：通常可见，但当平台无法按请求的目标类型激活时，后端可以返回不支持。
-- Codex 激活：有 session id 时使用 thread deeplink；否则回退到通用 provider target。
-- 回复：仅 Codex，且仅限 done/failed，必须有 session id。
+- Codex：旧 `PetEvent` 活动源已停用，前端不再为遗留 Codex 卡片暴露激活、回复或审批能力。
+- 回复：当前 Hook Provider 不暴露可靠回复能力。
 - 审批：仅 waiting-approval，通过 collector state 处理。
 
 ## 风险

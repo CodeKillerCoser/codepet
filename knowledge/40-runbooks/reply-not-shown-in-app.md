@@ -16,8 +16,8 @@
 
 1. 确认事件状态是 `done` 或 `failed`。
 2. 确认事件有非空 session id。
-3. 确认 provider 是 Codex。Qoder 现有会话回复目前是故意不支持。
-4. 对 Codex，检查 `src-tauri/src/agent/codex_app_server.rs` 行为和 app-server 启动路径。
+3. Codex 旧活动源与回复 capability 当前已停用；Qoder 现有会话回复也仍是故意不支持。只有新 Runtime Gateway 接管后，才应重新排查 Codex 回复链路。
+4. 仅排查旧版本或历史提交时，再检查 `src-tauri/src/agent/codex_app_server.rs` 行为和 app-server 启动路径。
    - 如果日志出现 `failed to start codex app-server: program not found`，优先检查 Windows 下 Codex binary 查找是否覆盖 `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`，或临时设置 `CODE_PET_CODEX_BIN`。
 5. 确认回复路径没有与审批处理路径混淆。
 
@@ -25,4 +25,4 @@
 
 - `cargo test --manifest-path src-tauri/Cargo.toml activity_actions_tests agent_control_tests`
 - `npx vitest run frontend/lib/activity.test.ts`
-- 人工检查 Codex app UI，确认发送文本出现在对应 thread 中。
+- 旧版本回归时才人工检查 Codex app UI；当前版本应验证 Codex 卡片不暴露回复入口。
