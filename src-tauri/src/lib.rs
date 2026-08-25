@@ -41,6 +41,9 @@ use state::{ApprovalBehavior, ApprovalDecision, SharedState, COLLECTOR_PORT};
 use subject_cutout::SubjectCutoutResult;
 use token_usage::TokenUsageSummary;
 use updates::PendingAppUpdate;
+use runtime_gateway::tauri_bridge::{
+    runtime_gateway_replay, runtime_gateway_request, start_event_bridge, RuntimeGatewayState,
+};
 use std::str::FromStr;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
@@ -317,11 +320,19 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(SharedState::default())
         .manage(PendingAppUpdate::default())
+        .manage(RuntimeGatewayState::default())
         .setup(|app| {
             let setup_span = app_log::PerfSpan::start("startup.total");
             app_log::info("startup", "setup started");
             let handle = app.handle().clone();
             let state = app.state::<SharedState>().inner().clone();
+            let runtime_gateway_state = app.state::<RuntimeGatewayState>().inner().clone();
+            if let Err(error) = start_event_bridge(handle.clone(), &runtime_gateway_state) {
+                app_log::error(
+                    "runtime_gateway",
+                    &format!("failed to start local event bridge error={error:?}"),
+                );
+            }
             if let Err(error) = install_tray_icon(&handle) {
                 app_log::error("startup", &format!("failed to create tray icon error={error}"));
                 let _ = handle.emit("collector-error", error);
@@ -413,6 +424,8 @@ pub fn run() {
             collector_endpoint,
             open_main_window,
             pet_asset_data_url,
+            runtime_gateway_request,
+            runtime_gateway_replay,
             updates::check_app_update,
             updates::install_app_update
         ])
