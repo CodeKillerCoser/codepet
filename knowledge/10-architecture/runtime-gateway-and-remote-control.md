@@ -35,7 +35,7 @@ Code Pet 当前是一个面向本机 AI 编程工具的桌面宠物应用。它�
 
 ## 现状理解
 
-> 实施状态（2026-08-26）：Codex 已退出旧 Hook/audit 活动管线。设置页保留无 Hook 的 disabled 占位项；启动时清理 Code Pet 托管的遗留 Codex Hook；Hook 脚本、collector 与 spool 回放拒收 Codex；Codex audit watcher 和历史活动回放已删除。Claude Code、Qoder、Cursor 的旧 Hook 行为及历史 Token 聚合暂时保留。本阶段尚未实现 App Server Gateway，也未修改 protocol/IDL。
+> 实施状态（2026-08-26）：Codex 已退出旧 Hook/audit 活动管线。协议 v0 的生成契约与 Runtime Gateway 手写核心已经接入：空 Provider registry、统一 dispatcher、内存事件 sequence/replay 窗口、in-process local transport 和 Tauri command/event bridge 会随应用启动。当前没有注册或伪造 Codex Provider，也没有实现 App Server client；Claude Code、Qoder、Cursor 的旧 Hook 行为及历史 Token 聚合暂时保留。
 
 ### 当前运行拓扑
 
@@ -437,6 +437,38 @@ Control Plane 包括 provider、项目、会话、turn 操作、审批、能力�
 Data Plane 包括流式文本、reasoning、工具输出、Diff 和 Provider 实验性 item。它使用稳定 envelope 和可扩展 item union，允许 unknown fallback。该划分避免把每次 Provider 字段扩展升级成整个手机协议的破坏性变更。
 
 ## Runtime Gateway 与业务状态
+
+### 已实现的手写核心与生成契约边界
+
+`protocol/schemas/v0.json` 继续是 wire DTO 的唯一事实来源。`runtime_gateway/generated.rs` 只负责 serde DTO、`ProtocolRequest`、`ProtocolResponse`、`ProtocolEvent`、`ProtocolServer` 和机械 dispatcher；手写代码不得复制这些跨边界类型，也不得在生成文件中加入 registry、状态或 Provider 特例。
+
+阶段二的手写职责位于 `src-tauri/src/runtime_gateway/`：
+
+- `provider.rs` 定义 Provider adapter 的异步能力边界，方法参数和结果直接使用生成的 v0 request/response。
+- `registry.rs` 按 `providerId` 注册、移除、枚举和路由 adapter，并把未知 Provider 与非 ready Provider 分别映射为标准 `unknown_provider` 和 `provider_unavailable` 错误。
+- `gateway.rs` 实现生成的 `ProtocolServer`。握手、Provider 枚举和六个 Provider 操作都经过同一 registry；空 registry 是合法启动状态。
+- `event_bus.rs` 接收生成的 `ProtocolEvent`，覆盖其 wire version 和 sequence，分配进程内单调 sequence，并维护有界内存重放窗口。窗口之外的 cursor 返回 `event_replay_unavailable`，由客户端重新获取快照；该窗口不是持久化会话存储。
+- `transport.rs` 的 `Transport` contract 将 request/response dispatch 与 event subscribe/replay 分开；`LocalTransport` 是直接调用同一 Gateway 的 in-process 实现，不包含 WebSocket、P2P、认证或远程加密。
+- `tauri_bridge.rs` 只在 Tauri 边界传递生成的 `ProtocolRequest`、`ProtocolResponse`、`ProtocolEvent` 和 `ProtocolError`。`runtime_gateway_request` 负责 JSON IPC request，`runtime_gateway_replay` 补回窗口内事件，实时事件统一通过 `runtime-gateway-event` 发出；Provider 原生 `Value` 不得穿过该边界。
+
+本地调用链为：
+
+```text
+generated TypeScript wire request
+  → Tauri runtime_gateway_request
+  → LocalTransport
+  → generated dispatch
+  → Gateway / ProviderRegistry
+  → ProviderAdapter
+
+Provider ProtocolEvent
+  → GatewayEventBus（重写 eventSequence）
+  → LocalTransport subscription
+  → Tauri runtime-gateway-event
+  → generated TypeScript ProtocolEvent
+```
+
+这条本地通道与未来远程 Transport 共享 Gateway 业务语义，但不预先引入远程 framing。Provider adapter 可以持有 Gateway 提供的 `ProviderEventSink` 上报标准事件；Gateway 不读取或转发 Provider 原生 payload。
 
 ### Runtime Hub
 
