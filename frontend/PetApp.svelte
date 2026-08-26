@@ -3,12 +3,16 @@
   import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
   import { availableMonitors, cursorPosition, getCurrentWindow, primaryMonitor, type Monitor } from "@tauri-apps/api/window";
   import { onMount, tick } from "svelte";
-  import { activateActivity, getAppSettings, openMainWindow, recentEvents, recordPerfEvent, resolveActivityApproval, sendActivityReply } from "./lib/api";
+  import { getAppSettings, openMainWindow, recordPerfEvent } from "./lib/api";
   import { activityCapabilities, activityKey, cardAgentLabel, cardEndTime, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
+  import { activityCanResolveApproval, activityQuickRepliesFor } from "./lib/agentInteractions";
   import { mergeEventFeed } from "./lib/eventFeed";
+  import { PROTOCOL_VERSION, type Conversation, type ProtocolEvent, type Provider, type QuickReply } from "./lib/generated/runtimeGateway";
   import { runningBubbleStyle } from "./lib/gradientColor";
   import { isOpaqueCssColor, rectFromElementBounds, shouldIgnorePetWindowCursor, type PetHitRect } from "./lib/petHitTest";
   import PetAvatar from "./lib/PetAvatar.svelte";
+  import { createRuntimeGatewayClientMessageId, replayRuntimeGatewayEvents, runtimeGatewayClient, runtimeGatewayErrorMessage, runtimeGatewayEventName } from "./lib/runtimeGateway";
+  import { RuntimeGatewayActivityProjection } from "./lib/runtimeGatewayActivity";
   import { playNotificationSound, playWhipSound, shouldRepeatNotification, shouldRing } from "./lib/sound";
   import { defaultPetSprite, defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
   import type { AppSettings, PetEvent } from "./lib/types";
@@ -20,8 +24,6 @@
   let repeatEventId: string | null = null;
   let repeatEvent: PetEvent | null = null;
   let repeatExpiresAt = 0;
-  let pollTimer: number | null = null;
-  let lastEventId: string | null = null;
   let seenEventIds = new Set<string>();
   let dismissedActivityKeys = new Set<string>();
   let hiddenInternalActivityKeys = new Set<string>();
@@ -45,6 +47,15 @@
   let cursorPassthroughTimer: number | null = null;
   let cursorEventsIgnored = false;
   let cursorPassthroughInFlight = false;
+  let gatewayProviders: Provider[] = [];
+  let gatewayPhase: "loading" | "ready" | "error" = "loading";
+  let gatewayError = "";
+  let gatewayInitialized = false;
+  let lastGatewayEventSequence = 0;
+  let bufferedGatewayEvents: ProtocolEvent[] = [];
+  let gatewayEventQueue = Promise.resolve();
+  let gatewaySyncPromise: Promise<void> | null = null;
+  const runtimeGatewayProjection = new RuntimeGatewayActivityProjection();
   const petImageAlphaCache = new WeakMap<HTMLImageElement, { src: string; width: number; height: number; data: Uint8ClampedArray }>();
 
   const petWindowWidth = 360;
@@ -72,6 +83,8 @@
   $: hasCompletedActivities = activities.some((activity) => activity.status === "done");
   $: showActivities = hasActivities && !tasksCollapsed;
   $: renderedActivities = showActivities ? activities : [];
+  $: gatewayEmptyState = hasActivities ? null : runtimeGatewayEmptyState(gatewayPhase, gatewayProviders, gatewayError);
+  $: showActivityStack = showActivities || Boolean(gatewayEmptyState);
   $: clearReplyIfNoLongerAvailable(activities, replyingToId);
   $: petScale = Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4);
   $: petWindowOpacity = clampPetOpacity(settings?.pet.opacity);
@@ -109,9 +122,8 @@
     void syncCursorPassthrough();
 
     let disposed = false;
-    let unlistenPetEvent: (() => void) | null = null;
+    let unlistenGatewayEvent: (() => void) | null = null;
     let unlistenSettings: (() => void) | null = null;
-    let unlistenAgentDisabled: (() => void) | null = null;
     let unlistenWindowMoved: (() => void) | null = null;
     let unlistenWindowResized: (() => void) | null = null;
 
@@ -139,29 +151,27 @@
       console.error("failed to watch pet window resize", error);
     });
 
-    void listen<PetEvent>("pet-event", async (event) => {
-      const alreadySeen = seenEventIds.has(event.payload.id) || event.payload.id === lastEventId;
-      applyIncomingEvents([event.payload]);
-      lastEventId = event.payload.id;
-      if (!alreadySeen) {
-        await handleRing(event.payload);
+    const gatewayListenerReady = listen<ProtocolEvent>(runtimeGatewayEventName, (event) => {
+      if (disposed) {
+        return;
       }
+      receiveRuntimeGatewayEvent(event.payload);
     }).then((unlisten) => {
       if (disposed) {
         unlisten();
       } else {
-        unlistenPetEvent = unlisten;
+        unlistenGatewayEvent = unlisten;
       }
     }).catch((error) => {
-      console.error("failed to listen pet events", error);
+      gatewayPhase = "error";
+      gatewayError = runtimeGatewayErrorMessage(error);
+      console.error("failed to listen runtime gateway events", error);
+      throw error;
     });
 
     void listen<AppSettings>("settings-updated", (event) => {
       settings = event.payload;
       rebuildActivitiesFromRecentEvents();
-      void syncLatestFromRecent(false, true).catch((error) => {
-        console.error("failed to resync pet events after settings update", error);
-      });
     }).then((unlisten) => {
       if (disposed) {
         unlisten();
@@ -170,18 +180,6 @@
       }
     }).catch((error) => {
       console.error("failed to listen settings updates", error);
-    });
-
-    void listen<string>("agent-disabled", (event) => {
-      removeActivitiesForAgent(event.payload);
-    }).then((unlisten) => {
-      if (disposed) {
-        unlisten();
-      } else {
-        unlistenAgentDisabled = unlisten;
-      }
-    }).catch((error) => {
-      console.error("failed to listen agent disabled events", error);
     });
 
     void (async () => {
@@ -213,26 +211,28 @@
         durationMs: performance.now() - mountedAt,
         fields: { activities: activities.length },
       }).catch(() => {});
-      void syncLatestFromRecent(false).catch((error) => {
-        console.error("failed to load recent pet events", error);
-      });
-      pollTimer = window.setInterval(() => {
-        void syncLatestFromRecent(true).catch((error) => {
-          console.error("failed to sync recent pet events", error);
-        });
-      }, 1000);
+      try {
+        await gatewayListenerReady;
+        if (!disposed) {
+          await synchronizeRuntimeGateway();
+        }
+      } catch (error) {
+        if (!disposed) {
+          gatewayPhase = "error";
+          gatewayError = runtimeGatewayErrorMessage(error);
+          console.error("failed to initialize runtime gateway", error);
+        }
+      }
     })();
 
     return () => {
       disposed = true;
       media.removeEventListener("change", syncTheme);
-      unlistenPetEvent?.();
+      unlistenGatewayEvent?.();
       unlistenSettings?.();
-      unlistenAgentDisabled?.();
       unlistenWindowMoved?.();
       unlistenWindowResized?.();
       clearRepeat();
-      clearPoll();
       clearNoticeTimer();
       clearWhipTimer();
       clearEnsureWindowFrameTimer();
@@ -241,38 +241,210 @@
     };
   });
 
-  async function syncLatestFromRecent(ringOnNewEvent: boolean, rebuildFromCache = false) {
-    const startedAt = performance.now();
-    const nextEvents = await recentEvents();
-    const durationMs = performance.now() - startedAt;
-    if (durationMs >= 100 || nextEvents.length > 0) {
-      void recordPerfEvent({
-        name: "frontend.pet.sync_recent_events",
-        durationMs,
-        fields: {
-          events: nextEvents.length,
-          ringOnNewEvent,
-        },
-      }).catch(() => {});
-    }
-    recentEventCache = mergeEventFeed(recentEventCache, nextEvents);
-    if (rebuildFromCache) {
-      rebuildActivitiesFromRecentEvents();
-    }
-    const unseenEvents = nextEvents.filter((event) => !seenEventIds.has(event.id));
-    applyIncomingEvents(unseenEvents, false);
-    const next = nextEvents.at(-1) ?? null;
-    if (!next) {
-      lastEventId = null;
+  function receiveRuntimeGatewayEvent(event: ProtocolEvent) {
+    if (!gatewayInitialized) {
+      bufferedGatewayEvents.push(event);
       return;
     }
+    gatewayEventQueue = gatewayEventQueue
+      .then(() => ingestRuntimeGatewayEvent(event))
+      .catch((error) => {
+        gatewayPhase = "error";
+        gatewayError = runtimeGatewayErrorMessage(error);
+        console.error("failed to apply runtime gateway event", error);
+      });
+  }
 
-    if (next.id !== lastEventId) {
-      lastEventId = next.id;
-      if (ringOnNewEvent) {
-        await handleRing(next);
+  async function synchronizeRuntimeGateway() {
+    if (gatewaySyncPromise) {
+      return gatewaySyncPromise;
+    }
+    const startedAt = performance.now();
+    gatewayPhase = "loading";
+    gatewayError = "";
+    gatewayInitialized = false;
+    const sync = (async () => {
+      let lastError: unknown = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          await performRuntimeGatewaySynchronization(startedAt);
+          return;
+        } catch (error) {
+          lastError = error;
+          gatewayInitialized = false;
+        }
+      }
+      throw lastError;
+    })();
+    gatewaySyncPromise = sync;
+    try {
+      await sync;
+    } finally {
+      if (gatewaySyncPromise === sync) {
+        gatewaySyncPromise = null;
       }
     }
+  }
+
+  async function performRuntimeGatewaySynchronization(startedAt: number) {
+    const handshake = await runtimeGatewayClient.protocolHandshake({
+      clientName: "code-pet-pet-ui",
+      clientVersion: "0",
+      minProtocolVersion: PROTOCOL_VERSION,
+      maxProtocolVersion: PROTOCOL_VERSION,
+    });
+    const initialProviders = await runtimeGatewayClient.providerList({});
+    const conversationSnapshot = await listRuntimeGatewayConversations(initialProviders.providers);
+    const currentProviders = await runtimeGatewayClient.providerList({});
+    runtimeGatewayProjection.replaceProviders(currentProviders.providers);
+    gatewayProviders = runtimeGatewayProjection.providers();
+
+    const readyProviderIds = new Set(gatewayProviders.filter((provider) => provider.status === "ready").map((provider) => provider.id));
+    const snapshotActivities = runtimeGatewayProjection.replaceConversations(
+      conversationSnapshot.conversations.filter((conversation) => readyProviderIds.has(conversation.providerId)),
+    );
+    recentEventCache = [];
+    activities = [];
+    seenEventIds = new Set<string>();
+    hiddenInternalActivityKeys = new Set<string>();
+    replyingToId = null;
+    replyText = "";
+    replySubmitting = false;
+    clearRepeat();
+    applyIncomingEvents(snapshotActivities);
+
+    lastGatewayEventSequence = handshake.eventSequence;
+    const replayed = await replayRuntimeGatewayEvents(lastGatewayEventSequence);
+    const buffered = bufferedGatewayEvents;
+    bufferedGatewayEvents = [];
+    gatewayInitialized = true;
+    for (const event of orderedRuntimeGatewayEvents([...replayed, ...buffered])) {
+      await ingestRuntimeGatewayEvent(event);
+    }
+
+    const hasReadyProvider = gatewayProviders.some((provider) => provider.status === "ready");
+    const snapshotFailedWhileReady = Boolean(conversationSnapshot.error && hasReadyProvider);
+    gatewayPhase = snapshotFailedWhileReady ? "error" : "ready";
+    gatewayError = snapshotFailedWhileReady ? runtimeGatewayErrorMessage(conversationSnapshot.error) : "";
+    void recordPerfEvent({
+      name: "frontend.pet.runtime_gateway_sync",
+      durationMs: performance.now() - startedAt,
+      status: conversationSnapshot.error ? "error" : "ok",
+      fields: {
+        providers: gatewayProviders.length,
+        conversations: conversationSnapshot.conversations.length,
+        activities: activities.length,
+        eventSequence: lastGatewayEventSequence,
+      },
+      error: conversationSnapshot.error ? runtimeGatewayErrorMessage(conversationSnapshot.error) : undefined,
+    }).catch(() => {});
+  }
+
+  async function listRuntimeGatewayConversations(providers: Provider[]): Promise<{ conversations: Conversation[]; error: unknown | null }> {
+    const readyProviders = providers.filter((provider) => provider.status === "ready");
+    if (readyProviders.length === 0) {
+      try {
+        const response = await runtimeGatewayClient.conversationList({ limit: 100 });
+        return { conversations: response.conversations, error: null };
+      } catch (error) {
+        return { conversations: [], error };
+      }
+    }
+
+    const conversations: Conversation[] = [];
+    let firstError: unknown | null = null;
+    for (const provider of readyProviders) {
+      let cursor: string | undefined;
+      const seenCursors = new Set<string>();
+      do {
+        try {
+          const response = await runtimeGatewayClient.conversationList({
+            providerId: provider.id,
+            cursor,
+            limit: 100,
+          });
+          conversations.push(...response.conversations);
+          cursor = response.nextCursor;
+          if (cursor && seenCursors.has(cursor)) {
+            throw new Error(`Runtime Gateway repeated conversation cursor for ${provider.id}`);
+          }
+          if (cursor) {
+            seenCursors.add(cursor);
+          }
+        } catch (error) {
+          firstError ??= error;
+          cursor = undefined;
+        }
+      } while (cursor);
+    }
+    return { conversations, error: firstError };
+  }
+
+  async function ingestRuntimeGatewayEvent(event: ProtocolEvent) {
+    if (event.protocolVersion !== PROTOCOL_VERSION) {
+      throw new Error(`Runtime Gateway event protocol mismatch: ${event.protocolVersion}`);
+    }
+    if (event.eventSequence <= lastGatewayEventSequence) {
+      return;
+    }
+    if (event.eventSequence > lastGatewayEventSequence + 1) {
+      try {
+        const replayed = orderedRuntimeGatewayEvents(await replayRuntimeGatewayEvents(lastGatewayEventSequence));
+        for (const replayedEvent of replayed) {
+          if (replayedEvent.eventSequence <= lastGatewayEventSequence) {
+            continue;
+          }
+          if (replayedEvent.eventSequence > lastGatewayEventSequence + 1) {
+            break;
+          }
+          await applyRuntimeGatewayEvent(replayedEvent);
+        }
+      } catch (error) {
+        bufferedGatewayEvents.push(event);
+        await synchronizeRuntimeGateway();
+        return;
+      }
+    }
+    if (event.eventSequence <= lastGatewayEventSequence) {
+      return;
+    }
+    if (event.eventSequence > lastGatewayEventSequence + 1) {
+      bufferedGatewayEvents.push(event);
+      await synchronizeRuntimeGateway();
+      return;
+    }
+    await applyRuntimeGatewayEvent(event);
+  }
+
+  async function applyRuntimeGatewayEvent(event: ProtocolEvent) {
+    const result = runtimeGatewayProjection.applyEvent(event);
+    lastGatewayEventSequence = event.eventSequence;
+    gatewayPhase = "ready";
+    gatewayError = "";
+    if (result.provider) {
+      gatewayProviders = runtimeGatewayProjection.providers();
+      if (result.provider.status === "ready") {
+        recentEventCache = recentEventCache.map((activity) => runtimeGatewayProjection.refreshActivityProvider(activity));
+        activities = activities.map((activity) => runtimeGatewayProjection.refreshActivityProvider(activity));
+      } else {
+        removeRuntimeActivitiesForProvider(result.provider.id);
+      }
+    }
+    const unseenActivities = result.activities.filter((activity) => !seenEventIds.has(activity.id));
+    applyIncomingEvents(unseenActivities);
+    for (const activity of unseenActivities) {
+      if (activity.shouldRing) {
+        await handleRing(activity);
+      }
+    }
+  }
+
+  function orderedRuntimeGatewayEvents(events: ProtocolEvent[]): ProtocolEvent[] {
+    const bySequence = new Map<number, ProtocolEvent>();
+    for (const event of events) {
+      bySequence.set(event.eventSequence, event);
+    }
+    return Array.from(bySequence.values()).sort((first, second) => first.eventSequence - second.eventSequence);
   }
 
   function clearReplyIfNoLongerAvailable(currentActivities: PetEvent[], activeReplyingToId: string | null) {
@@ -310,6 +482,8 @@
 
   function rebuildActivitiesFromRecentEvents() {
     if (recentEventCache.length === 0) {
+      activities = [];
+      stopRepeatIfNoLongerNeedsAttention();
       return;
     }
     hiddenInternalActivityKeys = new Set<string>();
@@ -325,11 +499,72 @@
     return activity.status === "thinking" || activity.status === "running";
   }
 
-  function removeActivitiesForAgent(agentId: string) {
-    recentEventCache = recentEventCache.filter((activity) => activity.provider !== agentId);
-    activities = activities.filter((activity) => activity.provider !== agentId);
-    dismissedActivityKeys = new Set(Array.from(dismissedActivityKeys).filter((key) => !key.startsWith(`${agentId}:`)));
-    hiddenInternalActivityKeys = new Set(Array.from(hiddenInternalActivityKeys).filter((key) => !key.startsWith(`${agentId}:`)));
+  function runtimeGatewayEmptyState(
+    phase: "loading" | "ready" | "error",
+    providers: Provider[],
+    error: string,
+  ): { className: string; title: string; message: string } {
+    if (phase === "loading") {
+      return {
+        className: "loading",
+        title: "正在连接 Runtime Gateway",
+        message: "正在同步 Provider 与会话",
+      };
+    }
+    if (phase === "error") {
+      return {
+        className: "unavailable",
+        title: "Runtime Gateway 不可用",
+        message: error || "无法读取本地 Runtime Gateway",
+      };
+    }
+    if (providers.length === 0) {
+      return {
+        className: "unavailable",
+        title: "暂无 Provider",
+        message: "Runtime Gateway 未注册 Provider",
+      };
+    }
+
+    const readyProviders = providers.filter((provider) => provider.status === "ready");
+    if (readyProviders.length === 0) {
+      return {
+        className: "unavailable",
+        title: "Provider 不可用",
+        message: providers.map((provider) => `${provider.displayName}：${providerStatusLabel(provider)}`).join(" · "),
+      };
+    }
+    const unavailableProviders = providers.filter((provider) => provider.status !== "ready");
+    return {
+      className: unavailableProviders.length > 0 ? "partial" : "empty",
+      title: unavailableProviders.length > 0 ? "部分 Provider 不可用" : "暂无任务",
+      message: unavailableProviders.length > 0
+        ? unavailableProviders.map((provider) => `${provider.displayName}：${providerStatusLabel(provider)}`).join(" · ")
+        : `${readyProviders.map((provider) => provider.displayName).join("、")} 当前没有活动任务`,
+    };
+  }
+
+  function providerStatusLabel(provider: Provider): string {
+    switch (provider.status) {
+      case "ready":
+        return "可用";
+      case "connecting":
+        return "连接中";
+      case "disconnected":
+        return "未连接";
+      case "unavailable":
+        return "不可用";
+      case "error":
+        return "异常";
+      default:
+        return "未知";
+    }
+  }
+
+  function removeRuntimeActivitiesForProvider(providerId: string) {
+    recentEventCache = recentEventCache.filter((activity) => activity.runtimeGateway?.provider.id !== providerId);
+    activities = activities.filter((activity) => activity.runtimeGateway?.provider.id !== providerId);
+    hiddenInternalActivityKeys = new Set(Array.from(hiddenInternalActivityKeys).filter((key) => !key.startsWith(`${providerId}:`)));
     if (replyingToId && !activities.some((activity) => activity.id === replyingToId)) {
       replyingToId = null;
       replyText = "";
@@ -376,13 +611,6 @@
     }
     if (!shouldRepeatNotification(settings, repeatEvent, activities, Date.now(), repeatExpiresAt)) {
       clearRepeat();
-    }
-  }
-
-  function clearPoll() {
-    if (pollTimer) {
-      window.clearInterval(pollTimer);
-      pollTimer = null;
     }
   }
 
@@ -794,17 +1022,8 @@
     showNotice("已清除完成任务");
   }
 
-  async function activate(activity: PetEvent) {
-    if (!activityCapabilities(activity).canActivate) {
-      showNotice("当前来源暂不支持打开");
-      return;
-    }
-    try {
-      await activateActivity(activity.id);
-      showNotice("已打开来源窗口");
-    } catch (error) {
-      showNotice(String(error));
-    }
+  function activate(activity: PetEvent) {
+    showNotice(activity.runtimeGateway ? "Runtime Gateway 暂不支持打开会话" : "当前来源暂不支持打开");
   }
 
   async function openMain(event: MouseEvent) {
@@ -880,15 +1099,51 @@
     }
     replySubmitting = true;
     try {
-      await sendActivityReply(activity.id, message);
+      await sendRuntimeGatewayMessage(activity, message);
       replyText = "";
       replyingToId = null;
       showNotice("已发送回复");
     } catch (error) {
-      showNotice(String(error));
+      showNotice(runtimeGatewayErrorMessage(error));
     } finally {
       replySubmitting = false;
     }
+  }
+
+  async function sendQuickReply(event: MouseEvent, activity: PetEvent, quickReply: QuickReply) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (replySubmitting) {
+      return;
+    }
+    replySubmitting = true;
+    try {
+      await sendRuntimeGatewayMessage(activity, quickReply.text, quickReply.id);
+      replyText = "";
+      replyingToId = null;
+      showNotice("已发送快捷回复");
+    } catch (error) {
+      showNotice(runtimeGatewayErrorMessage(error));
+    } finally {
+      replySubmitting = false;
+    }
+  }
+
+  async function sendRuntimeGatewayMessage(activity: PetEvent, message: string, quickReplyId?: string) {
+    const context = activity.runtimeGateway;
+    if (!context || !activityCapabilities(activity).canReply) {
+      throw new Error("当前任务状态不支持继续消息");
+    }
+    const activeTurn = isActiveActivity(activity) ? context.turn?.id : undefined;
+    const response = await runtimeGatewayClient.turnSend({
+      providerId: context.provider.id,
+      conversationId: context.conversationId,
+      clientMessageId: createRuntimeGatewayClientMessageId(),
+      message,
+      quickReplyId,
+      steerTurnId: activeTurn,
+    });
+    applyIncomingEvents(runtimeGatewayProjection.projectTurnResponse(response.turn));
   }
 
   function handleReplyKeydown(event: KeyboardEvent, activity: PetEvent) {
@@ -939,12 +1194,22 @@
 
   async function approve(event: MouseEvent, activity: PetEvent, behavior: "allow" | "deny") {
     event.stopPropagation();
+    const decision = behavior === "allow" ? "approve" : "deny";
+    const context = activity.runtimeGateway;
+    if (!context?.approval || !activityCanResolveApproval(activity, decision)) {
+      showNotice("当前授权请求已不可处理");
+      return;
+    }
     try {
-      await resolveActivityApproval(activity.id, behavior, behavior === "deny" ? "已在 Code Pet 中拒绝" : undefined);
+      await runtimeGatewayClient.approvalResolve({
+        providerId: context.provider.id,
+        approvalId: context.approval.id,
+        decision,
+      });
       clearRepeat();
       showNotice(behavior === "allow" ? "已允许" : "已拒绝");
     } catch (error) {
-      showNotice(String(error));
+      showNotice(runtimeGatewayErrorMessage(error));
     }
   }
 </script>
@@ -955,10 +1220,24 @@
   style={`--pet-window-opacity: ${petWindowOpacity};`}
   on:dblclick={preventPetWindowDoubleClick}
 >
-  {#if showActivities}
+  {#if showActivityStack}
     <section class="activity-stack" bind:this={activityStack} aria-live="polite" style={`--pet-activity-stack-max-height: ${activityStackMaxHeight}px`}>
+      {#if gatewayEmptyState}
+        <article class={`status-pill gateway-state-pill ${gatewayEmptyState.className}`}>
+          <div class="status-content">
+            <div class="status-title-row">
+              <span class="status-title">{gatewayEmptyState.title}</span>
+            </div>
+            <span class="status-message gateway-state-message">{gatewayEmptyState.message}</span>
+            <div class="status-footer">
+              <span class="status-meta">Runtime Gateway</span>
+            </div>
+          </div>
+        </article>
+      {:else}
       {#each renderedActivities as activity (activity.id)}
         {@const capabilities = activityCapabilities(activity)}
+        {@const quickReplies = activityQuickRepliesFor(activity)}
         {@const activeActivity = isActiveActivity(activity)}
         {@const endedAt = cardEndTime(activity)}
         <article
@@ -975,7 +1254,7 @@
         >
           <div class="status-content">
             <div class="status-title-row">
-              <button class="status-open title-open" type="button" aria-label={`打开 ${cardTitle(activity)}`} title={cardTitle(activity)} on:click={() => activate(activity)}>
+              <button class="status-open title-open" type="button" disabled={!capabilities.canActivate} aria-label={`打开 ${cardTitle(activity)}`} title={cardTitle(activity)} on:click={() => activate(activity)}>
                 <span>{cardTitle(activity)}</span>
               </button>
               {#if activity.status === "done"}
@@ -988,6 +1267,19 @@
             </button>
             {#if replyingToId === activity.id}
               <form class="reply-row" on:submit={(event) => submitReply(event, activity)}>
+                {#if quickReplies.length > 0}
+                  <div class="quick-reply-options" aria-label="快捷回复">
+                    {#each quickReplies as quickReply (quickReply.id)}
+                      <button
+                        class="quick-reply-option"
+                        type="button"
+                        disabled={replySubmitting}
+                        on:mousedown={(event) => event.stopPropagation()}
+                        on:click={(event) => sendQuickReply(event, activity, quickReply)}
+                      >{quickReply.label}</button>
+                    {/each}
+                  </div>
+                {/if}
                 <textarea
                   bind:this={replyTextarea}
                   bind:value={replyText}
@@ -1032,12 +1324,16 @@
               {#if capabilities.canApprove || (capabilities.canReply && replyingToId !== activity.id)}
                 <div class="status-actions" class:approval-mode={capabilities.canApprove} aria-label="任务操作">
                   {#if capabilities.canApprove}
-                    <button class="approval-button allow" type="button" aria-label="同意" on:click={(event) => approve(event, activity, "allow")}>
-                      <span>同意</span>
-                    </button>
-                    <button class="approval-button deny" type="button" aria-label="拒绝" on:click={(event) => approve(event, activity, "deny")}>
-                      <span>拒绝</span>
-                    </button>
+                    {#if activityCanResolveApproval(activity, "approve")}
+                      <button class="approval-button allow" type="button" aria-label="同意" on:click={(event) => approve(event, activity, "allow")}>
+                        <span>同意</span>
+                      </button>
+                    {/if}
+                    {#if activityCanResolveApproval(activity, "deny")}
+                      <button class="approval-button deny" type="button" aria-label="拒绝" on:click={(event) => approve(event, activity, "deny")}>
+                        <span>拒绝</span>
+                      </button>
+                    {/if}
                   {/if}
                   {#if capabilities.canReply && replyingToId !== activity.id}
                     <button class="reply-button" type="button" on:click={(event) => toggleReply(event, activity)}>回复</button>
@@ -1048,6 +1344,7 @@
           </div>
         </article>
       {/each}
+      {/if}
     </section>
   {/if}
 

@@ -1872,6 +1872,25 @@ textarea {
   background: var(--pet-pill-hover-bg);
 }
 
+.gateway-state-pill {
+  min-height: 72px;
+  cursor: default;
+}
+
+.gateway-state-pill.unavailable {
+  border-color: var(--color-state-error-border);
+  background: var(--pet-failed-bg);
+}
+
+.gateway-state-pill.partial {
+  border-color: var(--color-state-danger-border);
+  background: var(--pet-urgent-bg);
+}
+
+.gateway-state-message {
+  -webkit-line-clamp: 2;
+}
+
 .status-pill.replying {
   z-index: 6;
   min-height: 154px;
@@ -1899,6 +1918,10 @@ textarea {
   padding: 0;
   background: transparent;
   text-align: left;
+}
+
+.status-open:disabled {
+  cursor: default;
 }
 
 .status-title-row,
@@ -2106,6 +2129,25 @@ textarea {
   gap: 6px;
   align-items: stretch;
   padding: 3px 0;
+}
+
+.quick-reply-options {
+  display: flex;
+  min-width: 0;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.reply-row .quick-reply-option {
+  flex: 0 0 auto;
+  max-width: 132px;
+  padding: 0 8px;
+  overflow: hidden;
+  color: var(--pet-agent);
+  background: var(--pet-button-bg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .reply-row textarea {

@@ -1,3 +1,4 @@
+import type { ApprovalDecision, QuickReply } from "./generated/runtimeGateway";
 import type { PetEvent } from "./types";
 
 export interface ActivityCapabilities {
@@ -47,7 +48,49 @@ const defaultInteraction: AgentInteraction = {
 };
 
 export function activityCapabilitiesFor(event: PetEvent): ActivityCapabilities {
+  if (event.runtimeGateway) {
+    return runtimeGatewayCapabilities(event);
+  }
   return interactionForEvent(event).capabilities(event);
+}
+
+export function activityQuickRepliesFor(event: PetEvent): QuickReply[] {
+  return activityCapabilitiesFor(event).canReply
+    ? event.runtimeGateway?.provider.capabilities.quickReplies ?? []
+    : [];
+}
+
+export function activityCanResolveApproval(event: PetEvent, decision: ApprovalDecision): boolean {
+  const approval = event.runtimeGateway?.approval;
+  return Boolean(
+    activityCapabilitiesFor(event).canApprove &&
+      approval?.status === "pending" &&
+      approval.decisions.includes(decision),
+  );
+}
+
+function runtimeGatewayCapabilities(event: PetEvent): ActivityCapabilities {
+  const context = event.runtimeGateway!;
+  const provider = context.provider;
+  const methods = new Set(provider.capabilities.methods);
+  const canSend = provider.status === "ready" && methods.has("turn.send") && Boolean(context.conversationId);
+  const isActive = event.status === "thinking" || event.status === "running";
+  const canReply =
+    canSend &&
+    event.status !== "waiting-approval" &&
+    (!isActive || (provider.capabilities.canSteer && Boolean(context.turn?.id)));
+  const canApprove = Boolean(
+    provider.status === "ready" &&
+      methods.has("approval.resolve") &&
+      context.approval?.status === "pending" &&
+      context.approval.decisions.length > 0,
+  );
+  return {
+    canActivate: false,
+    canReply,
+    canApprove,
+    replyReason: canReply ? undefined : provider.status === "ready" ? "当前任务状态不支持继续消息" : "Provider 当前不可用",
+  };
 }
 
 function interactionForEvent(event: PetEvent): AgentInteraction {
