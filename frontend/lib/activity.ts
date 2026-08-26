@@ -1,5 +1,5 @@
 import { activityCapabilitiesFor, type ActivityCapabilities } from "./agentInteractions";
-import type { ActivityFilterSettings, ActivityKeywordFilterSettings, ActivitySource, PetEvent, TaskStatus } from "./types";
+import type { ActivityFilterSettings, ActivityKeywordFilterSettings, ActivitySource, AgentId, PetEvent, TaskStatus } from "./types";
 
 const inactiveStatuses = new Set<TaskStatus>(["idle"]);
 const staleActivityStatuses = new Set<TaskStatus>(["thinking", "running"]);
@@ -63,7 +63,7 @@ function activityFiltersForEvent(event: PetEvent, filters?: ActivityFilterSettin
 
   const byAgent = filters.byAgent ?? {};
   const hasAgentFilters = Object.keys(byAgent).length > 0;
-  const agentFilters = byAgent[event.provider];
+  const agentFilters = isAgentId(event.provider) ? byAgent[event.provider] : undefined;
   if (agentFilters) {
     return agentFilters;
   }
@@ -108,7 +108,7 @@ function applyActivityEvent(
     activities.delete(key);
     return;
   }
-  if (event.status === "done" && !activities.has(key)) {
+  if (event.status === "done" && !activities.has(key) && !event.runtimeGateway) {
     if (hasStableActivityIdentity(event)) {
       return;
     }
@@ -131,7 +131,7 @@ function sortActivities(activities: PetEvent[]): PetEvent[] {
 
 function displayEventForUpdate(previous: PetEvent | undefined, event: PetEvent): PetEvent {
   const title = authoritativeTitle(event) ?? previousDisplayTitle(previous) ?? taskTitleFor(event);
-  const message = previous && isTranscriptPath(event.message) && !isTranscriptPath(previous.message) ? previous.message : event.message;
+  const message = !event.runtimeGateway && previous && isTranscriptPath(event.message) && !isTranscriptPath(previous.message) ? previous.message : event.message;
   const createdAt = shouldRefreshActivitySort(previous, event) ? event.createdAt : previous.createdAt;
   const endedAt = terminalActivityStatuses.has(event.status) ? event.createdAt : null;
   const source = sourceForUpdate(previous?.source, event.source);
@@ -178,6 +178,9 @@ function isTranscriptPath(value: string): boolean {
 }
 
 function isLifecycleOnlySessionStart(event: PetEvent): boolean {
+  if (event.runtimeGateway) {
+    return false;
+  }
   if (event.provider !== "codex" || event.kind !== "task-started" || event.status !== "thinking") {
     return false;
   }
@@ -187,6 +190,9 @@ function isLifecycleOnlySessionStart(event: PetEvent): boolean {
 }
 
 function isCodexInternalBackgroundEvent(event: PetEvent): boolean {
+  if (event.runtimeGateway) {
+    return false;
+  }
   if (event.provider !== "codex") {
     return false;
   }
@@ -219,6 +225,9 @@ function normalizedSearchText(value: string): string {
 }
 
 function isStaleActivity(event: PetEvent, nowMs: number): boolean {
+  if (event.runtimeGateway) {
+    return false;
+  }
   if (!staleActivityStatuses.has(event.status)) {
     return false;
   }
@@ -249,6 +258,9 @@ export function cardTitle(event: PetEvent): string {
 }
 
 export function cardMessage(event: PetEvent): string {
+  if (event.runtimeGateway) {
+    return event.message || (event.toolName ? `工具：${event.toolName}` : statusLabel(event.status));
+  }
   if (event.message && event.message !== cardTitle(event) && !isTranscriptPath(event.message)) {
     return event.message;
   }
@@ -309,7 +321,12 @@ function activityPriority(event: PetEvent): number {
 }
 
 export function cardAgentLabel(event: PetEvent): string {
-  return isTerminalSource(event) ? `${event.provider} cli` : event.provider;
+  const providerLabel = event.runtimeGateway?.provider.displayName || event.provider;
+  return isTerminalSource(event) ? `${providerLabel} cli` : providerLabel;
+}
+
+function isAgentId(providerId: string): providerId is AgentId {
+  return providerId === "codex" || providerId === "claude" || providerId === "qoder" || providerId === "cursor";
 }
 
 function isTerminalSource(event: PetEvent): boolean {
@@ -344,6 +361,9 @@ function hasTerminalSourceSignal(source: ActivitySource | null | undefined): boo
 }
 
 function taskTitleFor(event: PetEvent): string {
+  if (event.runtimeGateway) {
+    return event.title;
+  }
   if (isTranscriptPath(event.title)) {
     return statusLabel(event.status);
   }
@@ -354,6 +374,9 @@ function taskTitleFor(event: PetEvent): string {
 }
 
 function authoritativeTitle(event: PetEvent): string | null {
+  if (event.runtimeGateway) {
+    return event.title;
+  }
   return genericActivityTitles.has(event.title) || isTranscriptPath(event.title) ? null : event.title;
 }
 

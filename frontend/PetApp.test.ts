@@ -77,7 +77,7 @@ describe("PetApp activity helpers", () => {
 
   it("shows a right-side action to clear completed activities", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
-    const clearBlock = source.slice(source.indexOf("function clearCompletedActivities"), source.indexOf("async function activate"));
+    const clearBlock = source.slice(source.indexOf("function clearCompletedActivities"), source.indexOf("function activate"));
 
     expect(source).toContain("hasCompletedActivities");
     expect(source).toContain('aria-label="移除全部已完成任务"');
@@ -198,14 +198,14 @@ describe("PetApp activity helpers", () => {
     expect(keydownBlock).toContain("event.ctrlKey || event.metaKey");
   });
 
-  it("keeps reply mode pending until the backend confirms completion", () => {
+  it("keeps reply mode pending until Runtime Gateway confirms completion", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const sendBlock = source.slice(source.indexOf("async function sendReply"), source.indexOf("function handleReplyKeydown"));
     const replyTemplate = source.slice(source.indexOf('<form class="reply-row"'), source.indexOf('<div class="status-footer"'));
 
     expect(source).toContain("let replySubmitting = false");
     expect(sendBlock).toContain("replySubmitting = true");
-    expect(sendBlock).toContain("await sendActivityReply(activity.id, message)");
+    expect(sendBlock).toContain("await sendRuntimeGatewayMessage(activity, message)");
     expect(sendBlock).toContain("replyingToId = null");
     expect(sendBlock).toContain("finally");
     expect(sendBlock).toContain("replySubmitting = false");
@@ -291,20 +291,48 @@ describe("PetApp activity helpers", () => {
     expect(titleRowBlock).not.toContain('activity.status === "done" || activity.status === "failed"');
   });
 
-  it("deduplicates pushed pet events before ringing", () => {
+  it("deduplicates projected Runtime Gateway events before ringing", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
-    const listenBlock = source.slice(source.indexOf('listen<PetEvent>("pet-event"'), source.indexOf('listen<AppSettings>("settings-updated"'));
+    const applyBlock = source.slice(source.indexOf("async function applyRuntimeGatewayEvent"), source.indexOf("function orderedRuntimeGatewayEvents"));
 
-    expect(listenBlock).toContain("const alreadySeen = seenEventIds.has(event.payload.id) || event.payload.id === lastEventId");
-    expect(listenBlock).toContain("if (!alreadySeen) {");
-    expect(listenBlock).toContain("await handleRing(event.payload)");
+    expect(source).toContain("listen<ProtocolEvent>(runtimeGatewayEventName");
+    expect(applyBlock).toContain("result.activities.filter((activity) => !seenEventIds.has(activity.id))");
+    expect(applyBlock).toContain("if (activity.shouldRing)");
+    expect(applyBlock).toContain("await handleRing(activity)");
+    expect(source).not.toContain('listen<PetEvent>("pet-event"');
+    expect(source).not.toContain("recentEvents()");
+  });
+
+  it("hydrates the pet from Runtime Gateway snapshots before applying replay and live events", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const syncBlock = source.slice(source.indexOf("async function synchronizeRuntimeGateway"), source.indexOf("async function listRuntimeGatewayConversations"));
+
+    expect(syncBlock).toContain("runtimeGatewayClient.providerList({})");
+    expect(source).toContain("runtimeGatewayClient.conversationList({");
+    expect(syncBlock).toContain("replayRuntimeGatewayEvents(lastGatewayEventSequence)");
+    expect(source).toContain("ingestRuntimeGatewayEvent(event)");
+    expect(source).toContain("Runtime Gateway 未注册 Provider");
+    expect(source).toContain("Provider 不可用");
+  });
+
+  it("routes messages and approval decisions through Runtime Gateway methods", () => {
+    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const sendBlock = source.slice(source.indexOf("async function sendRuntimeGatewayMessage"), source.indexOf("function handleReplyKeydown"));
+    const approvalBlock = source.slice(source.indexOf("async function approve"), source.indexOf("</script>"));
+
+    expect(sendBlock).toContain("runtimeGatewayClient.turnSend({");
+    expect(sendBlock).toContain("clientMessageId: createRuntimeGatewayClientMessageId()");
+    expect(sendBlock).toContain("quickReplyId");
+    expect(sendBlock).toContain("steerTurnId: activeTurn");
+    expect(approvalBlock).toContain("runtimeGatewayClient.approvalResolve({");
+    expect(approvalBlock).toContain('decision = behavior === "allow" ? "approve" : "deny"');
   });
 
   it("stops repeated permission rings when the source activity is dismissed or expires", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const handleRingBlock = source.slice(source.indexOf("async function handleRing"), source.indexOf("function clearRepeat"));
-    const clearRepeatBlock = source.slice(source.indexOf("function clearRepeat"), source.indexOf("function clearPoll"));
-    const dismissBlock = source.slice(source.indexOf("function dismissActivity"), source.indexOf("async function activate"));
+    const clearRepeatBlock = source.slice(source.indexOf("function clearRepeat"), source.indexOf("function showNotice"));
+    const dismissBlock = source.slice(source.indexOf("function dismissActivity"), source.indexOf("function activate"));
 
     expect(source).toContain("const permissionRepeatMaxMs = 590_000");
     expect(source).toContain("let repeatEventId: string | null = null");
@@ -335,7 +363,7 @@ describe("PetApp activity helpers", () => {
 
   it("clears repeat ringing by activity key when the visible permission card is dismissed", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
-    const dismissBlock = source.slice(source.indexOf("function dismissActivity"), source.indexOf("async function activate"));
+    const dismissBlock = source.slice(source.indexOf("function dismissActivity"), source.indexOf("function activate"));
 
     expect(dismissBlock).toContain("repeatEvent && activityKey(repeatEvent) === activityKey(activity)");
     expect(dismissBlock).not.toContain("repeatEventId === activity.id");

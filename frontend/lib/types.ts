@@ -1,3 +1,5 @@
+import type { Approval, Provider, TurnTask } from "./generated/runtimeGateway";
+
 export type AgentId = "codex" | "claude" | "qoder" | "cursor";
 
 export type TaskStatus =
@@ -186,7 +188,7 @@ export interface UpdateSettings {
 
 export interface PetEvent {
   id: string;
-  provider: AgentId;
+  provider: string;
   kind: PetEventKind;
   status: TaskStatus;
   title: string;
@@ -199,6 +201,14 @@ export interface PetEvent {
   endedAt?: string | null;
   raw: unknown;
   source?: ActivitySource | null;
+  runtimeGateway?: RuntimeGatewayActivityContext | null;
+}
+
+export interface RuntimeGatewayActivityContext {
+  provider: Provider;
+  conversationId: string;
+  turn?: TurnTask | null;
+  approval?: Approval | null;
 }
 
 export interface TokenUsage {
