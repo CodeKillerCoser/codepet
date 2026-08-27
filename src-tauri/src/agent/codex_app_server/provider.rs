@@ -21,6 +21,7 @@ struct CodexProviderState {
     mapper: CodexProtocolMapper,
     pending_approvals: HashMap<String, CodexApprovalRequest>,
     status: ProviderStatus,
+    retired: bool,
 }
 
 pub struct CodexProviderAdapter {
@@ -50,6 +51,7 @@ impl CodexProviderAdapter {
             mapper: CodexProtocolMapper::default(),
             pending_approvals: HashMap::new(),
             status: ProviderStatus::Ready,
+            retired: false,
         }));
         start_event_forwarder(incoming, state.clone(), events.clone());
         Self {
@@ -68,8 +70,21 @@ impl CodexProviderAdapter {
                 mapper: CodexProtocolMapper::default(),
                 pending_approvals: HashMap::new(),
                 status: ProviderStatus::Unavailable,
+                retired: false,
             })),
             events,
+        }
+    }
+
+    pub(crate) fn retire(&self) {
+        lock_state(&self.state).retired = true;
+        if let Some(session) = &self.session {
+            if let Err(error) = session.shutdown() {
+                crate::app_log::error(
+                    "codex_provider",
+                    &format!("failed to stop retired Codex provider error={error}"),
+                );
+            }
         }
     }
 
@@ -93,9 +108,18 @@ impl CodexProviderAdapter {
 impl ProviderAdapter for CodexProviderAdapter {
     fn provider(&self) -> Provider {
         let state = lock_state(&self.state);
-        state
+        let mut provider = state
             .mapper
-            .provider(None, state.status, Vec::new(), Vec::new())
+            .provider(None, state.status, Vec::new(), Vec::new());
+        if let Some(error) = &self.startup_error {
+            if let Some(extension) = provider.extension.as_mut() {
+                extension.data.insert(
+                    "unavailableReason".to_string(),
+                    serde_json::Value::String(error.to_string()),
+                );
+            }
+        }
+        provider
     }
 
     fn conversation_list<'a>(
@@ -349,6 +373,9 @@ fn start_event_forwarder(
             Ok(Ok(incoming)) => {
                 let mapped = {
                     let mut state = lock_state(&state);
+                    if state.retired {
+                        return;
+                    }
                     match &incoming {
                         CodexIncoming::ApprovalRequested(approval) => {
                             state
@@ -383,6 +410,9 @@ fn start_event_forwarder(
                 }
             }
             Ok(Err(error)) => {
+                if lock_state(&state).retired {
+                    break;
+                }
                 let protocol_error = protocol_error_for(&state, &events, error);
                 crate::app_log::error(
                     "codex_provider",
@@ -391,6 +421,9 @@ fn start_event_forwarder(
                 break;
             }
             Err(_) => {
+                if lock_state(&state).retired {
+                    break;
+                }
                 transition_provider_status(&state, &events, ProviderStatus::Unavailable);
                 crate::app_log::error(
                     "codex_provider",
@@ -432,6 +465,9 @@ fn transition_provider_status(
 ) {
     let event = {
         let mut state = lock_state(state);
+        if state.retired {
+            return;
+        }
         let previous_status = state.status;
         if previous_status == status {
             return;
@@ -818,6 +854,27 @@ mod tests {
                 .providers[0]
                 .status,
             ProviderStatus::Unavailable
+        );
+    }
+
+    #[test]
+    fn unavailable_provider_exposes_the_runtime_diagnostic() {
+        let gateway = Gateway::default();
+        let adapter = CodexProviderAdapter::unavailable(
+            CodexAppServerError::Spawn("configured Codex executable is invalid".to_string()),
+            gateway.event_sink(),
+        );
+
+        let provider = adapter.provider();
+
+        assert_eq!(provider.status, ProviderStatus::Unavailable);
+        assert_eq!(
+            provider
+                .extension
+                .as_ref()
+                .and_then(|extension| extension.data.get("unavailableReason"))
+                .and_then(Value::as_str),
+            Some("failed to start codex app-server: configured Codex executable is invalid")
         );
     }
 

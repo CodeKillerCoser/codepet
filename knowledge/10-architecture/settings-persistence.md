@@ -10,6 +10,9 @@
 - `petLibrary`：宠物列表和数据目录。
 - `notifications`：声音、自定义声音路径、响铃开关、重复间隔和静音时段。
 - `activityFilters`：标题和消息关键词过滤。
+- `agents`：每个 Agent 的 hook 偏好。
+- `agentRuntimes`：验证通过的 provider executable 路径。
+- `updates`：忽略的更新版本。
 
 ## 存储
 
@@ -20,6 +23,8 @@
 ## 前端同步
 
 `frontend/App.svelte` 加载设置后会先归一化，再通过 Tauri command 保存。`frontend/PetApp.svelte` 监听 `settings-updated`，用于更新主题、过滤器、声音和宠物透明度。
+
+`agentRuntimes` 是可执行输入，不能由通用 `update_app_settings` 改写。主 App 通过 `set_agent_runtime_executable` / `clear_agent_runtime_executable` 修改；后端在落盘前验证文件类型、执行权限和固定版本探测，失败不覆盖原配置。
 
 ## 验证
 

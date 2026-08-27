@@ -6,9 +6,12 @@
 
 - `src-tauri/src/agent/actions.rs`：激活、回复和审批的 driver 抽象。
 - `src-tauri/src/agent/codex_app_server.rs`：Codex app-server 回复路径。
+- `src-tauri/src/agent/runtime.rs`：Agent executable 检测、验证、配置和诊断。
 - `frontend/lib/agentInteractions.ts`：前端能力展示规则。
 - `src-tauri/src/app/state.rs`：待审批项存储和处理。
 
 ## 原则
 
 Provider capability 决定 UI 可见性。除非后端对当前动作和任务状态有已验证路径，否则任务卡片不应显示该操作。
+
+Agent Runtime 的解析优先级、平台发现和设置边界见 `agent-runtime.md`。

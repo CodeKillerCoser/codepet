@@ -21,9 +21,11 @@ Codex 激活也由同一个 provider driver 处理，但它使用 `codex://threa
 
 此前本机探测已验证：Codex app-server 可以把消息发送到现有 Codex app thread，并在 app UI 上屏。同一路径没有验证窗口激活或打开指定 thread 的 RPC，因此激活继续使用独立 thread deeplink。
 
-## Windows 路径
+## Runtime 路径
 
-Windows dev 模式下，Tauri 子进程不能假设 `codex` 一定在 PATH 中。`src-tauri/src/agent/codex_app_server.rs` 需要先尊重 `CODE_PET_CODEX_BIN`，再查找 `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe` 和 Codex Store 包的 LocalCache 路径，最后才回退到 PATH 中的 `codex`。
+`CodexAppServerSession::spawn()` 不再自行维护候选路径，也不会回退到裸字符串 `codex`。它从 `src-tauri/src/agent/runtime.rs` 获取已验证的绝对路径；resolver 统一处理用户配置、兼容环境变量、当前 PATH、登录 shell、macOS Spotlight 和 Windows 动态安装布局。没有可用路径时 Provider 保持 `unavailable`，具体诊断写入 Provider extension 的 `unavailableReason`。
+
+主 App 的“运行时”Tab 可以选择或清除 executable。配置变化会替换 Runtime Gateway 中的 Codex adapter，并关闭兼容回复 session，使后续启动直接使用新路径。
 
 ## 背景
 

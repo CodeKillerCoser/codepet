@@ -58,20 +58,36 @@ impl ProviderRegistry {
 
         let provider = adapter.provider();
         if provider.status != ProviderStatus::Ready {
+            let unavailable_reason = provider
+                .extension
+                .as_ref()
+                .and_then(|extension| extension.data.get("unavailableReason"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            let message = unavailable_reason
+                .clone()
+                .unwrap_or_else(|| format!("provider is not ready: {provider_id}"));
+            let mut details = HashMap::from([
+                (
+                    "providerId".to_string(),
+                    serde_json::Value::String(provider_id.to_string()),
+                ),
+                (
+                    "status".to_string(),
+                    serde_json::to_value(provider.status).unwrap_or(serde_json::Value::Null),
+                ),
+            ]);
+            if let Some(reason) = unavailable_reason {
+                details.insert(
+                    "unavailableReason".to_string(),
+                    serde_json::Value::String(reason),
+                );
+            }
             return Err(protocol_error(
                 "provider_unavailable",
-                &format!("provider is not ready: {provider_id}"),
+                &message,
                 true,
-                Some(HashMap::from([
-                    (
-                        "providerId".to_string(),
-                        serde_json::Value::String(provider_id.to_string()),
-                    ),
-                    (
-                        "status".to_string(),
-                        serde_json::to_value(provider.status).unwrap_or(serde_json::Value::Null),
-                    ),
-                ])),
+                Some(details),
             ));
         }
         Ok(adapter)

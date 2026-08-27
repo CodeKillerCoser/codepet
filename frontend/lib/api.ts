@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AgentView, AppSettings, AppUpdate, PetEvent, PetLibraryView, SubjectCutoutResult, TokenUsageSummary } from "./types";
+import type { AgentRuntime, AgentView, AppSettings, AppUpdate, PetEvent, PetLibraryView, SubjectCutoutResult, TokenUsageSummary } from "./types";
 
 export interface PerfEventPayload {
   name: string;
@@ -25,6 +25,26 @@ export async function setAgentEnabled(agentId: string, enabled: boolean): Promis
 
 export async function setAgentHookEvents(agentId: string, hookEvents: string[]): Promise<AgentView[]> {
   return invoke<AgentView[]>("set_agent_hook_events", { agentId, hookEvents });
+}
+
+export async function listAgentRuntimes(): Promise<AgentRuntime[]> {
+  return invoke<AgentRuntime[]>("list_agent_runtimes");
+}
+
+export async function detectAgentRuntime(providerId: string): Promise<AgentRuntime> {
+  return invoke<AgentRuntime>("detect_agent_runtime", { providerId });
+}
+
+export async function refreshAgentRuntimes(): Promise<AgentRuntime[]> {
+  return invoke<AgentRuntime[]>("refresh_agent_runtimes");
+}
+
+export async function setAgentRuntimeExecutable(providerId: string, executable: string): Promise<AgentRuntime> {
+  return invoke<AgentRuntime>("set_agent_runtime_executable", { providerId, executable });
+}
+
+export async function clearAgentRuntimeExecutable(providerId: string): Promise<AgentRuntime> {
+  return invoke<AgentRuntime>("clear_agent_runtime_executable", { providerId });
 }
 
 export async function getAppSettings(): Promise<AppSettings> {

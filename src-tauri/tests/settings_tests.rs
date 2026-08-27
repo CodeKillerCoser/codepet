@@ -27,6 +27,7 @@ fn settings_default_to_system_theme() {
     assert!(settings.activity_filters.message_keywords.is_empty());
     assert!(settings.activity_filters.by_agent.is_empty());
     assert!(settings.agents.by_agent.is_empty());
+    assert!(settings.agent_runtimes.by_provider.is_empty());
     assert!(settings.updates.ignored_version.is_none());
 }
 
@@ -84,6 +85,43 @@ fn settings_read_ignored_update_version() {
     .unwrap();
 
     assert_eq!(settings.updates.ignored_version.as_deref(), Some("0.2.0"));
+}
+
+#[test]
+fn settings_round_trip_configured_agent_runtime_executables() {
+    let mut settings = AppSettings::default();
+    settings
+        .agent_runtimes
+        .by_provider
+        .entry("codex".to_string())
+        .or_default()
+        .configured_executable = Some("/opt/tools/codex".to_string());
+    settings
+        .agent_runtimes
+        .by_provider
+        .entry("opencode".to_string())
+        .or_default()
+        .configured_executable = Some("/opt/tools/opencode".to_string());
+
+    let serialized = serde_json::to_value(&settings).unwrap();
+    assert_eq!(
+        serialized["agentRuntimes"]["byProvider"]["codex"]["configuredExecutable"],
+        "/opt/tools/codex"
+    );
+    let restored: AppSettings = serde_json::from_value(serialized).unwrap();
+
+    assert_eq!(
+        restored.agent_runtimes.by_provider["codex"]
+            .configured_executable
+            .as_deref(),
+        Some("/opt/tools/codex")
+    );
+    assert_eq!(
+        restored.agent_runtimes.by_provider["opencode"]
+            .configured_executable
+            .as_deref(),
+        Some("/opt/tools/opencode")
+    );
 }
 
 #[test]

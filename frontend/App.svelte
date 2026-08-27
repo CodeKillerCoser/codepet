@@ -10,6 +10,7 @@
     Bot,
     Check,
     Clock3,
+    Cpu,
     Download,
     Filter,
     FolderCog,
@@ -29,7 +30,8 @@
     Volume2,
   } from "@lucide/svelte";
   import { onMount } from "svelte";
-  import { appDataDirectory, appDataDirectoryTargetStatus, checkAppUpdate, collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listAgents, listPets, recentEvents, recordPerfEvent, selectPet, sendTestRobotNotification, setAgentEnabled, setAgentHookEvents, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { appDataDirectory, appDataDirectoryTargetStatus, checkAppUpdate, clearAgentRuntimeExecutable, collectorEndpoint, cutOutImageSubject, deletePet, detectAgentRuntime, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listAgentRuntimes, listAgents, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentEnabled, setAgentHookEvents, setAgentRuntimeExecutable, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { agentRuntimeSourceLabel, agentRuntimeStatusMeta, canRestoreAutomaticDetection, replaceAgentRuntime } from "./lib/agentRuntime";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
   import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
@@ -38,12 +40,13 @@
   import { defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
   import { ignoredUpdateSettings, shouldPromptForUpdate, type UpdateCheckMode } from "./lib/updates";
   import { buildUsageChartData, yAxisTicks, type UsageBucketSize, type UsageRange } from "./lib/usageChart";
-  import type { ActivityKeywordFilterSettings, AgentId, AgentView, AppSettings, AppUpdate, DingTalkRobotChannel, PetEvent, PetLibraryView, RobotNotificationChannel, TokenUsageSummary } from "./lib/types";
+  import type { ActivityKeywordFilterSettings, AgentId, AgentRuntime, AgentRuntimeProviderId, AgentView, AppSettings, AppUpdate, DingTalkRobotChannel, PetEvent, PetLibraryView, RobotNotificationChannel, TokenUsageSummary } from "./lib/types";
 
   type ActivityFilterKind = keyof ActivityKeywordFilterSettings;
 
-  let tab: "agents" | "usage" | "personalize" | "events" = "agents";
+  let tab: "agents" | "runtimes" | "usage" | "personalize" | "events" = "agents";
   let agents: AgentView[] = [];
+  let agentRuntimes: AgentRuntime[] = [];
   let settings: AppSettings | null = null;
   let petLibrary: PetLibraryView | null = null;
   let usage: TokenUsageSummary | null = null;
@@ -51,6 +54,7 @@
   let endpoint = "";
   let appDataDir = "";
   let busyAgent: string | null = null;
+  let busyRuntime: string | null = null;
   let busyPet = "";
   let busyAppDataDirectory = false;
   let appDataRestartPending = false;
@@ -110,6 +114,9 @@
   };
   const agentSettingsDefaults: AppSettings["agents"] = {
     byAgent: {},
+  };
+  const agentRuntimeSettingsDefaults: AppSettings["agentRuntimes"] = {
+    byProvider: {},
   };
   const robotNotificationDefaults: AppSettings["notifications"]["robot"] = {
     enabled: false,
@@ -225,8 +232,9 @@
     error = "";
     const startedAt = performance.now();
     try {
-      const [nextAgents, nextEvents, nextEndpoint, nextAppDataDir, nextPetLibrary, nextUsage, nextLaunchAtLogin] = await Promise.all([
+      const [nextAgents, nextRuntimes, nextEvents, nextEndpoint, nextAppDataDir, nextPetLibrary, nextUsage, nextLaunchAtLogin] = await Promise.all([
         measureFrontendPerf("frontend.main.list_agents", () => listAgents()),
+        measureFrontendPerf("frontend.main.list_agent_runtimes", () => listAgentRuntimes()),
         measureFrontendPerf("frontend.main.recent_events", () => recentEvents()),
         measureFrontendPerf("frontend.main.collector_endpoint", () => collectorEndpoint()),
         measureFrontendPerf("frontend.main.app_data_directory", () => appDataDirectory()),
@@ -235,6 +243,7 @@
         measureFrontendPerf("frontend.main.get_launch_at_login", () => getLaunchAtLoginEnabled()),
       ]);
       agents = nextAgents;
+      agentRuntimes = nextRuntimes;
       events = mergeEventFeed(events, nextEvents);
       endpoint = nextEndpoint;
       appDataDir = nextAppDataDir;
@@ -247,6 +256,7 @@
         durationMs: performance.now() - startedAt,
         fields: {
           agents: nextAgents.length,
+          runtimes: nextRuntimes.length,
           events: nextEvents.length,
           pets: nextPetLibrary.pets.length,
         },
@@ -353,6 +363,75 @@
     } finally {
       busyAgent = null;
     }
+  }
+
+  function runtimeBusy(providerId: AgentRuntimeProviderId) {
+    return busyRuntime === "all" || busyRuntime === providerId;
+  }
+
+  async function refreshRuntimes() {
+    busyRuntime = "all";
+    error = "";
+    try {
+      agentRuntimes = await refreshAgentRuntimes();
+    } catch (currentError) {
+      error = String(currentError);
+    } finally {
+      busyRuntime = null;
+    }
+  }
+
+  async function detectRuntime(providerId: AgentRuntimeProviderId) {
+    busyRuntime = providerId;
+    error = "";
+    try {
+      agentRuntimes = replaceAgentRuntime(agentRuntimes, await detectAgentRuntime(providerId));
+    } catch (currentError) {
+      error = String(currentError);
+    } finally {
+      busyRuntime = null;
+    }
+  }
+
+  async function chooseRuntimeExecutable(runtime: AgentRuntime) {
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      title: `选择 ${runtime.displayName} 可执行文件`,
+    });
+    if (typeof selected !== "string") return;
+
+    busyRuntime = runtime.providerId;
+    error = "";
+    try {
+      const replacement = await setAgentRuntimeExecutable(runtime.providerId, selected);
+      agentRuntimes = replaceAgentRuntime(agentRuntimes, replacement);
+      settings = normalizeSettings(await getAppSettings());
+    } catch (currentError) {
+      error = String(currentError);
+    } finally {
+      busyRuntime = null;
+    }
+  }
+
+  async function restoreAutomaticRuntime(runtime: AgentRuntime) {
+    busyRuntime = runtime.providerId;
+    error = "";
+    try {
+      const replacement = await clearAgentRuntimeExecutable(runtime.providerId);
+      agentRuntimes = replaceAgentRuntime(agentRuntimes, replacement);
+      settings = normalizeSettings(await getAppSettings());
+    } catch (currentError) {
+      error = String(currentError);
+    } finally {
+      busyRuntime = null;
+    }
+  }
+
+  function runtimeIntegrationHint(providerId: AgentRuntimeProviderId) {
+    return providerId === "codex"
+      ? "已接入 Runtime Gateway；配置变化会重启 Code Pet 管理的 Codex session。"
+      : "当前提供检测与路径配置，Provider 协议尚未接入。";
   }
 
   async function saveSettings() {
@@ -630,6 +709,12 @@
     nextSettings.notifications.robot = normalizeRobotNotificationSettings(nextSettings.notifications.robot);
     nextSettings.activityFilters = normalizeActivityFilters(nextSettings.activityFilters);
     nextSettings.agents = normalizeAgentSettings(nextSettings.agents);
+    nextSettings.agentRuntimes = {
+      byProvider: {
+        ...agentRuntimeSettingsDefaults.byProvider,
+        ...(nextSettings.agentRuntimes?.byProvider ?? {}),
+      },
+    };
     nextSettings.updates = {
       ignoredVersion: nextSettings.updates?.ignoredVersion ?? null,
     };
@@ -1222,7 +1307,7 @@
   $: usageBuckets = usageData.buckets;
   $: usageMaxTokens = usageData.maxTokens;
   $: usageTickLabels = yAxisTicks(usageMaxTokens);
-  $: pageTitle = tab === "agents" ? "Agent" : tab === "usage" ? "用量" : tab === "personalize" ? "个性化" : "最新事件";
+  $: pageTitle = tab === "agents" ? "Agent" : tab === "runtimes" ? "运行时" : tab === "usage" ? "用量" : tab === "personalize" ? "个性化" : "最新事件";
   $: appTheme = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
 </script>
 
@@ -1231,6 +1316,9 @@
     <nav class="tabs" aria-label="Code Pet settings">
       <button class:active={tab === "agents"} on:click={() => (tab = "agents")} aria-label="Agent 列表">
         <Bot size={18} /> Agent
+      </button>
+      <button class:active={tab === "runtimes"} on:click={() => (tab = "runtimes")} aria-label="Agent 运行时">
+        <Cpu size={18} /> 运行时
       </button>
       <button class:active={tab === "usage"} on:click={() => (tab = "usage")} aria-label="用量统计">
         <BarChart3 size={18} /> 用量
@@ -1357,6 +1445,84 @@
                   </button>
                 </div>
               </article>
+            {/each}
+          </div>
+        </section>
+      </div>
+    {:else if tab === "runtimes"}
+      <div class="runtime-workspace">
+        <section class="runtime-section pixel-panel">
+          <header class="section-head runtime-section-head">
+            <div>
+              <span class="agent-kicker">LOCAL EXECUTABLES</span>
+              <h3>Agent Runtime</h3>
+              <p>Code Pet 会验证可执行文件和版本；手动配置始终优先于自动检测。</p>
+            </div>
+            <button class="runtime-refresh-button" type="button" disabled={busyRuntime !== null} on:click={refreshRuntimes}>
+              <RefreshCw size={17} /> {busyRuntime === "all" ? "检测中" : "重新检测"}
+            </button>
+          </header>
+
+          <div class="runtime-list">
+            {#each agentRuntimes as runtime}
+              {@const status = agentRuntimeStatusMeta(runtime)}
+              <article class="runtime-card">
+                <header class="runtime-card-head">
+                  <div>
+                    <span class="agent-kicker">{runtime.providerId}</span>
+                    <h3>{runtime.displayName}</h3>
+                    <p>{runtimeIntegrationHint(runtime.providerId)}</p>
+                  </div>
+                  <span class:online={status.tone === "ready"} class:runtime-danger={status.tone === "danger"} class="status-chip">{status.label}</span>
+                </header>
+
+                <dl class="runtime-meta">
+                  <div>
+                    <dt>当前路径</dt>
+                    <dd><code title={runtime.resolvedExecutable ?? ""}>{runtime.resolvedExecutable ?? "—"}</code></dd>
+                  </div>
+                  <div>
+                    <dt>来源</dt>
+                    <dd>{agentRuntimeSourceLabel(runtime.source)}</dd>
+                  </div>
+                  <div>
+                    <dt>版本</dt>
+                    <dd>{runtime.version ?? "—"}</dd>
+                  </div>
+                  <div>
+                    <dt>手动配置</dt>
+                    <dd><code title={runtime.configuredExecutable ?? ""}>{runtime.configuredExecutable ?? "未配置"}</code></dd>
+                  </div>
+                </dl>
+
+                {#if runtime.diagnostic}
+                  <div class="runtime-diagnostic" role="status">
+                    <ShieldAlert size={17} />
+                    <div>
+                      <strong>{runtime.diagnostic.code}</strong>
+                      <p>{runtime.diagnostic.message}</p>
+                    </div>
+                  </div>
+                {/if}
+
+                <div class="runtime-actions">
+                  <button type="button" disabled={runtimeBusy(runtime.providerId)} on:click={() => detectRuntime(runtime.providerId)}>
+                    <RefreshCw size={16} /> 检测
+                  </button>
+                  <button type="button" disabled={runtimeBusy(runtime.providerId)} on:click={() => chooseRuntimeExecutable(runtime)}>
+                    <FolderOpen size={16} /> 选择路径
+                  </button>
+                  <button type="button" disabled={runtimeBusy(runtime.providerId) || !canRestoreAutomaticDetection(runtime)} on:click={() => restoreAutomaticRuntime(runtime)}>
+                    <RotateCcw size={16} /> 恢复自动检测
+                  </button>
+                </div>
+              </article>
+            {:else}
+              <div class="empty-state">
+                <Cpu size={20} />
+                <strong>运行时状态尚未加载</strong>
+                <p>点击重新检测以读取本机 Agent 安装状态。</p>
+              </div>
             {/each}
           </div>
         </section>

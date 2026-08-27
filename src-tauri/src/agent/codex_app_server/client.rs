@@ -7,11 +7,13 @@ use super::protocol::{
     ThreadListResponse, ThreadResponse, TurnResponse, TurnSteerResponse,
 };
 use crate::app_log;
+use crate::agent_runtime::{AgentRuntimeService, CODEX_RUNTIME_PROVIDER_ID};
 use crate::runtime_gateway::generated::ApprovalDecision;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -153,7 +155,23 @@ pub struct CodexAppServerSession {
 
 impl CodexAppServerSession {
     pub fn spawn() -> Result<Self, CodexAppServerError> {
-        let binary = super::codex_binary();
+        let runtime = AgentRuntimeService::default()
+            .detect(CODEX_RUNTIME_PROVIDER_ID)
+            .map_err(|error| {
+                CodexAppServerError::Spawn(format!(
+                    "failed to resolve the Codex runtime: {error}"
+                ))
+            })?;
+        let binary = runtime.resolved_executable.as_deref().ok_or_else(|| {
+            CodexAppServerError::Spawn(format!(
+                "Codex runtime is unavailable: {}",
+                runtime.unavailable_reason()
+            ))
+        })?;
+        Self::spawn_with_executable(Path::new(binary))
+    }
+
+    fn spawn_with_executable(binary: &Path) -> Result<Self, CodexAppServerError> {
         app_log::info(
             "codex_app_server",
             &format!(
@@ -161,8 +179,7 @@ impl CodexAppServerSession {
                 binary.display()
             ),
         );
-        let mut child = Command::new(binary)
-            .args(["app-server", "--listen", "stdio://"])
+        let mut child = codex_app_server_command(binary)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -493,6 +510,12 @@ impl CodexAppServerSession {
     }
 }
 
+fn codex_app_server_command(binary: &Path) -> Command {
+    let mut command = Command::new(binary);
+    command.args(["app-server", "--listen", "stdio://"]);
+    command
+}
+
 fn snapshot_from_response(
     response: ThreadResponse,
     workspace_root: Option<String>,
@@ -760,6 +783,21 @@ mod tests {
         .unwrap();
         let (peer_receiver, client_sender) = peer.join().unwrap();
         (session, peer_receiver, client_sender)
+    }
+
+    #[test]
+    fn app_server_command_uses_the_resolved_executable_path() {
+        let executable = Path::new("/resolved/runtime/codex");
+        let command = codex_app_server_command(executable);
+
+        assert_eq!(command.get_program(), executable.as_os_str());
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            ["app-server", "--listen", "stdio://"]
+                .iter()
+                .map(std::ffi::OsStr::new)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
