@@ -4,15 +4,20 @@ import {
   appDataDirectory,
   appDataDirectoryTargetStatus,
   checkAppUpdate,
+  clearAgentRuntimeExecutable,
   cutOutImageSubject,
   deletePet,
+  detectAgentRuntime,
   getLaunchAtLoginEnabled,
   importPetImage,
   installAppUpdate,
+  listAgentRuntimes,
   recentEvents,
   recordPerfEvent,
+  refreshAgentRuntimes,
   sendTestRobotNotification,
   setAgentHookEvents,
+  setAgentRuntimeExecutable,
   setAppDataDirectory,
   setLaunchAtLoginEnabled,
   tokenUsageSummary,
@@ -111,6 +116,56 @@ describe("deletePet", () => {
     await expect(deletePet("image-custom")).resolves.toEqual(view);
 
     expect(invoke).toHaveBeenCalledWith("delete_pet", { petId: "image-custom" });
+  });
+});
+
+describe("agentRuntimes", () => {
+  afterEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+
+  it("lists, detects, and refreshes runtimes through fixed backend actions", async () => {
+    const runtime = {
+      providerId: "codex",
+      displayName: "Codex",
+      status: "ready",
+      resolvedExecutable: "/tools/codex",
+      source: "configured",
+    };
+    vi.mocked(invoke)
+      .mockResolvedValueOnce([runtime])
+      .mockResolvedValueOnce(runtime)
+      .mockResolvedValueOnce([runtime]);
+
+    await expect(listAgentRuntimes()).resolves.toEqual([runtime]);
+    await expect(detectAgentRuntime("codex")).resolves.toEqual(runtime);
+    await expect(refreshAgentRuntimes()).resolves.toEqual([runtime]);
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "list_agent_runtimes");
+    expect(invoke).toHaveBeenNthCalledWith(2, "detect_agent_runtime", { providerId: "codex" });
+    expect(invoke).toHaveBeenNthCalledWith(3, "refresh_agent_runtimes");
+  });
+
+  it("sets and clears only a selected executable path", async () => {
+    const runtime = {
+      providerId: "codex",
+      displayName: "Codex",
+      status: "ready",
+      resolvedExecutable: "/tools/codex",
+      source: "configured",
+    };
+    vi.mocked(invoke).mockResolvedValue(runtime);
+
+    await setAgentRuntimeExecutable("codex", "/tools/codex");
+    await clearAgentRuntimeExecutable("codex");
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "set_agent_runtime_executable", {
+      providerId: "codex",
+      executable: "/tools/codex",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "clear_agent_runtime_executable", {
+      providerId: "codex",
+    });
   });
 });
 

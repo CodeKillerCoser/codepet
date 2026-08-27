@@ -15,6 +15,7 @@ pub use agent::codex_app_server;
 pub use agent::control as agent_control;
 pub use agent::hooks;
 pub use agent::registry as agents;
+pub use agent::runtime as agent_runtime;
 pub use app::autostart;
 pub use app::cli;
 pub use app::log as app_log;
@@ -29,6 +30,7 @@ pub use pet::theme_defaults;
 pub use platform::macos_window;
 
 use agents::{AgentId, AgentView};
+use agent_runtime::{AgentRuntime, AgentRuntimeService, CODEX_RUNTIME_PROVIDER_ID};
 use base64::Engine;
 use events::PetEvent;
 use pets::PetLibraryView;
@@ -94,12 +96,96 @@ fn set_agent_hook_events(
 }
 
 #[tauri::command]
+fn list_agent_runtimes(
+    service: tauri::State<'_, AgentRuntimeService>,
+) -> Result<Vec<AgentRuntime>, String> {
+    service.list().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn detect_agent_runtime(
+    service: tauri::State<'_, AgentRuntimeService>,
+    provider_id: String,
+) -> Result<AgentRuntime, String> {
+    service
+        .detect(&provider_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn refresh_agent_runtimes(
+    app: AppHandle,
+    service: tauri::State<'_, AgentRuntimeService>,
+    gateway: tauri::State<'_, RuntimeGatewayState>,
+) -> Result<Vec<AgentRuntime>, String> {
+    restart_runtime_provider(CODEX_RUNTIME_PROVIDER_ID, &gateway)?;
+    let runtimes = service.list().map_err(|error| error.to_string())?;
+    let _ = app.emit("agent-runtimes-updated", runtimes.clone());
+    Ok(runtimes)
+}
+
+#[tauri::command]
+fn set_agent_runtime_executable(
+    app: AppHandle,
+    service: tauri::State<'_, AgentRuntimeService>,
+    gateway: tauri::State<'_, RuntimeGatewayState>,
+    provider_id: String,
+    executable: String,
+) -> Result<AgentRuntime, String> {
+    let runtime = service
+        .set_configured_executable(&provider_id, &executable)
+        .map_err(|error| error.to_string())?;
+    restart_runtime_provider(&provider_id, &gateway)?;
+    emit_runtime_settings(&app, &runtime);
+    Ok(runtime)
+}
+
+#[tauri::command]
+fn clear_agent_runtime_executable(
+    app: AppHandle,
+    service: tauri::State<'_, AgentRuntimeService>,
+    gateway: tauri::State<'_, RuntimeGatewayState>,
+    provider_id: String,
+) -> Result<AgentRuntime, String> {
+    let runtime = service
+        .clear_configured_executable(&provider_id)
+        .map_err(|error| error.to_string())?;
+    restart_runtime_provider(&provider_id, &gateway)?;
+    emit_runtime_settings(&app, &runtime);
+    Ok(runtime)
+}
+
+fn restart_runtime_provider(
+    provider_id: &str,
+    gateway: &RuntimeGatewayState,
+) -> Result<(), String> {
+    if provider_id != CODEX_RUNTIME_PROVIDER_ID {
+        return Ok(());
+    }
+    codex_app_server::shutdown_shared_session()?;
+    gateway
+        .refresh_codex_provider()
+        .map_err(|error| error.message)
+}
+
+fn emit_runtime_settings(app: &AppHandle, runtime: &AgentRuntime) {
+    if let Ok(settings) = load_app_settings() {
+        let _ = app.emit("settings-updated", settings);
+    }
+    let _ = app.emit("agent-runtime-updated", runtime.clone());
+}
+
+#[tauri::command]
 fn get_app_settings() -> Result<AppSettings, String> {
     load_app_settings().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-fn update_app_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, String> {
+fn update_app_settings(app: AppHandle, mut settings: AppSettings) -> Result<AppSettings, String> {
+    // Runtime paths are executable inputs and may only change through the validating runtime API.
+    settings.agent_runtimes = load_app_settings()
+        .map_err(|error| error.to_string())?
+        .agent_runtimes;
     save_app_settings(&settings).map_err(|error| error.to_string())?;
     let _ = app.emit("settings-updated", settings.clone());
     Ok(settings)
@@ -320,6 +406,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(SharedState::default())
         .manage(PendingAppUpdate::default())
+        .manage(AgentRuntimeService::default())
         .manage(RuntimeGatewayState::default())
         .setup(|app| {
             let setup_span = app_log::PerfSpan::start("startup.total");
@@ -400,6 +487,11 @@ pub fn run() {
             list_agents,
             set_agent_enabled,
             set_agent_hook_events,
+            list_agent_runtimes,
+            detect_agent_runtime,
+            refresh_agent_runtimes,
+            set_agent_runtime_executable,
+            clear_agent_runtime_executable,
             get_app_settings,
             update_app_settings,
             send_test_robot_notification,

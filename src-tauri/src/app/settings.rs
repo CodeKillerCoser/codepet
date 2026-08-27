@@ -24,6 +24,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub agents: AgentSettings,
     #[serde(default)]
+    pub agent_runtimes: AgentRuntimeSettings,
+    #[serde(default)]
     pub updates: UpdateSettings,
 }
 
@@ -331,6 +333,20 @@ pub struct AgentPreferenceSettings {
     pub hook_events: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRuntimeSettings {
+    #[serde(default)]
+    pub by_provider: HashMap<String, AgentRuntimePreferenceSettings>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRuntimePreferenceSettings {
+    #[serde(default)]
+    pub configured_executable: Option<String>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateSettings {
@@ -471,6 +487,7 @@ impl Default for AppSettings {
             notifications: NotificationSettings::default(),
             activity_filters: ActivityFilterSettings::default(),
             agents: AgentSettings::default(),
+            agent_runtimes: AgentRuntimeSettings::default(),
             updates: UpdateSettings::default(),
         }
     }

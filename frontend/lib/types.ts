@@ -1,6 +1,15 @@
 import type { Approval, Provider, TurnTask } from "./generated/runtimeGateway";
 
 export type AgentId = "codex" | "claude" | "qoder" | "cursor";
+export type AgentRuntimeProviderId = "codex" | "claude" | "opencode";
+export type AgentRuntimeStatus = "ready" | "unavailable" | "invalid-configured-executable";
+export type AgentRuntimeSource =
+  | "configured"
+  | "environment"
+  | "current-path"
+  | "login-shell"
+  | "macos-application"
+  | "windows-application";
 
 export type TaskStatus =
   | "idle"
@@ -27,6 +36,22 @@ export interface AgentView {
   configPath: string;
   hookEvents: string[];
   selectedHookEvents: string[];
+}
+
+export interface AgentRuntimeDiagnostic {
+  code: string;
+  message: string;
+}
+
+export interface AgentRuntime {
+  providerId: AgentRuntimeProviderId;
+  displayName: string;
+  status: AgentRuntimeStatus;
+  resolvedExecutable?: string | null;
+  source?: AgentRuntimeSource | null;
+  configuredExecutable?: string | null;
+  version?: string | null;
+  diagnostic?: AgentRuntimeDiagnostic | null;
 }
 
 export interface PixelPetSprite {
@@ -109,6 +134,7 @@ export interface AppSettings {
   };
   activityFilters: ActivityFilterSettings;
   agents: AgentSettings;
+  agentRuntimes: AgentRuntimeSettings;
   updates: UpdateSettings;
 }
 
@@ -180,6 +206,14 @@ export interface AgentSettings {
 
 export interface AgentPreferenceSettings {
   hookEvents: string[];
+}
+
+export interface AgentRuntimeSettings {
+  byProvider: Partial<Record<AgentRuntimeProviderId, AgentRuntimePreferenceSettings>>;
+}
+
+export interface AgentRuntimePreferenceSettings {
+  configuredExecutable?: string | null;
 }
 
 export interface UpdateSettings {

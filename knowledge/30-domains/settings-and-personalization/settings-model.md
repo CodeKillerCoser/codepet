@@ -2,7 +2,7 @@
 
 ## 当前模型
 
-`src-tauri/src/app/settings.rs` 中的 `AppSettings` 有六个顶层区域：
+`src-tauri/src/app/settings.rs` 中的 `AppSettings` 有九个顶层区域：
 
 - `data`
 - `appearance`
@@ -11,12 +11,16 @@
 - `notifications`
 - `activityFilters`
 - `agents`
+- `agentRuntimes`
+- `updates`
 
 所有区域都使用 serde defaults，确保新增字段后旧设置文件仍能加载。
 
 `activityFilters` 现在以 `byAgent` 保存每个 Agent 的标题和内容关键词过滤。旧的顶层 `titleKeywords` 和 `messageKeywords` 字段保留为兼容入口；前端归一化会把旧全局过滤迁移成每个 Agent 各自的过滤配置。
 
 `agents.byAgent.<agent>.hookEvents` 保存每个 Agent 勾选的 hook 事件。缺失或空列表表示默认使用该 Agent 注册表中的全部支持事件。
+
+`agentRuntimes.byProvider.<provider>.configuredExecutable` 保存用户验证通过的 Agent 可执行文件绝对路径。它只能由 runtime 专用 Tauri command 修改；通用 settings 更新会保留后端当前值，避免绕过文件、执行权限和版本探测。
 
 ## 前端归一化
 
@@ -33,6 +37,8 @@
 ## 风险
 
 新增字段如果没有 Rust 默认值或前端归一化，可能破坏旧用户设置，或产生 `undefined` UI 状态。数据目录覆盖项必须保留系统 local data 下的固定 settings 入口，否则应用启动时无法先定位配置再定位自定义数据目录。
+
+Agent runtime 配置失效时必须保留原值并展示诊断，不能静默写入自动检测结果。用户显式“恢复自动检测”后才清除配置。
 
 数据目录变更属于迁移操作：保存新配置前应复制旧目录内容到目标目录、跳过固定 `settings.json`，并拒绝新旧数据目录互相包含，避免递归复制或清空源数据。用户选定的自定义目录必须为空；非空目录必须先由前端弹窗确认，后端收到确认标记后才允许清空目标目录并继续迁移。前端需要提示保存完成后重启，后端只保证迁移和设置落盘。
 
