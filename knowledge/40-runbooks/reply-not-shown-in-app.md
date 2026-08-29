@@ -1,6 +1,6 @@
 # 回复没有在 App 上屏
 
-> 当前状态（2026-08-29）：Codex Desktop IPC Provider 阶段一是只读能力，不支持回复或快捷回复。旧独立 App Server 回复链路已从当前源码删除，只能作为历史版本背景；当前排障不应寻找或恢复该源码。
+> 当前状态（2026-08-29）：Codex Desktop IPC Provider 只对由 follower 公告或显式已知、完成 bootstrap 且 owner 仍有效的会话支持 start/steer/interrupt 与 command/file 二元审批；本 runbook 只排查其中的 start/steer 回复。旧独立 App Server 回复链路已从当前源码删除，只能作为历史版本背景；当前排障不应寻找或恢复该源码。
 
 ## 现象
 
@@ -17,7 +17,7 @@
 ## 排查步骤
 
 1. 先确认正在排查的构建版本和 Provider capability，不要仅凭卡片状态推断支持回复。
-2. 当前 Codex Desktop Provider 不应声明 `turn.send`，UI 也不应显示回复或快捷回复。若按钮出现，这是 capability/UI 回归，不是消息上屏故障。
+2. 当前 Codex Desktop Provider 只应在会话已 bootstrap 且 owner 仍有效时受理 `turn.send`；活动 turn 走 steer，无活动 turn 走 start。按钮缺失先检查 capability 与当前权威状态。
 3. Qoder 现有会话回复仍是故意不支持；其他 Provider 只有在 Runtime Gateway 明确声明 `turn.send` 时才继续排查。
 4. 对确实声明回复能力的 Provider，确认标准请求包含正确 conversation identity，并检查 Gateway 返回的明确成功或错误。不得绕过 capability 直接调用 provider。
 5. 确认回复路径没有与审批或等待输入路径混淆；等待状态不等于可以发送普通回复。
@@ -26,5 +26,5 @@
 ## 修复后验证
 
 - 运行当前 Provider capability 和前端交互能力测试。
-- 当前 Codex 验证重点是任务卡片不暴露回复或快捷回复入口，调用写方法返回 unsupported。
-- 只有确实声明回复能力的其他 Provider 才人工检查消息是否在对应 App 上屏。
+- 当前 Codex 验证重点是 start/steer 选择、owner/revision/handler 校验，以及超时或重连后不重放。
+- 人工检查消息是否由目标 owner 明确接受，并等待后续权威 snapshot/patch 上屏；Gateway ack 不代表最终状态。

@@ -16,7 +16,19 @@ pub const METHOD_THREAD_STREAM_FOLLOWING_STATUS_REQUESTED: &str =
     "thread-stream-following-status-requested";
 pub const METHOD_THREAD_FOLLOWER_LOAD_COMPLETE_HISTORY: &str =
     "thread-follower-load-complete-history";
+pub const METHOD_THREAD_FOLLOWER_START_TURN: &str = "thread-follower-start-turn";
+pub const METHOD_THREAD_FOLLOWER_STEER_TURN: &str = "thread-follower-steer-turn";
+pub const METHOD_THREAD_FOLLOWER_INTERRUPT_TURN: &str = "thread-follower-interrupt-turn";
+pub const METHOD_THREAD_FOLLOWER_COMMAND_APPROVAL_DECISION: &str =
+    "thread-follower-command-approval-decision";
+pub const METHOD_THREAD_FOLLOWER_FILE_APPROVAL_DECISION: &str =
+    "thread-follower-file-approval-decision";
 pub const METHOD_CLIENT_STATUS_CHANGED: &str = "client-status-changed";
+
+pub const THREAD_FOLLOWER_START_TURN_VERSION: u64 = 2;
+pub const THREAD_FOLLOWER_STEER_TURN_VERSION: u64 = 1;
+pub const THREAD_FOLLOWER_INTERRUPT_TURN_VERSION: u64 = 4;
+pub const THREAD_FOLLOWER_APPROVAL_DECISION_VERSION: u64 = 1;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DesktopIpcError {
@@ -26,6 +38,9 @@ pub enum DesktopIpcError {
     Protocol(String),
     Remote(String),
     Timeout(String),
+    Stale(String),
+    OutcomeUnknown(String),
+    PartialFailure(String),
     Disconnected(String),
     Shutdown,
     #[cfg_attr(unix, allow(dead_code))]
@@ -47,6 +62,13 @@ impl fmt::Display for DesktopIpcError {
             }
             Self::Remote(message) => write!(formatter, "Codex Desktop IPC request failed: {message}"),
             Self::Timeout(message) => write!(formatter, "Codex Desktop IPC request timed out: {message}"),
+            Self::Stale(message) => write!(formatter, "Codex Desktop IPC action is stale: {message}"),
+            Self::OutcomeUnknown(message) => {
+                write!(formatter, "Codex Desktop IPC action outcome is unknown: {message}")
+            }
+            Self::PartialFailure(message) => {
+                write!(formatter, "Codex Desktop IPC action partially failed: {message}")
+            }
             Self::Disconnected(message) => {
                 write!(formatter, "Codex Desktop IPC disconnected: {message}")
             }

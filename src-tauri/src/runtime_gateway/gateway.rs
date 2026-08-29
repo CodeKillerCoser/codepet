@@ -6,9 +6,10 @@ use super::generated::{
     ConversationCreateResponse, ConversationGetRequest, ConversationGetResponse,
     ConversationListRequest, ConversationListResponse, EventSequence, HandshakeRequest,
     HandshakeResponse, ProtocolError, ProtocolEvent, ProtocolFuture, ProtocolServer,
-    ProviderListRequest, ProviderListResponse, TurnInterruptRequest, TurnInterruptResponse,
-    TurnSendRequest, TurnSendResponse, PROTOCOL_VERSION,
+    Provider, ProviderListRequest, ProviderListResponse, TurnInterruptRequest,
+    TurnInterruptResponse, TurnSendRequest, TurnSendResponse, PROTOCOL_VERSION,
 };
+use super::provider::ProviderAdapter;
 use super::registry::ProviderRegistry;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -69,6 +70,17 @@ impl Gateway {
     ) -> Result<EventSubscription, ProtocolError> {
         self.events.subscribe(after_sequence)
     }
+
+    fn resolve_method(
+        &self,
+        provider_id: &str,
+        method: &str,
+    ) -> Result<Arc<dyn ProviderAdapter>, ProtocolError> {
+        let adapter = self.registry.resolve(provider_id)?;
+        let provider = adapter.provider();
+        ensure_method_capability(&provider, method)?;
+        Ok(adapter)
+    }
 }
 
 impl ProtocolServer for Gateway {
@@ -120,13 +132,20 @@ impl ProtocolServer for Gateway {
     ) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async move {
             if let Some(provider_id) = request.provider_id.as_deref() {
-                let adapter = self.registry.resolve(provider_id)?;
+                let adapter = self.resolve_method(provider_id, "conversation.list")?;
                 let mut response = adapter.conversation_list(request).await?;
                 response.event_sequence = self.current_event_sequence();
                 return Ok(response);
             }
 
-            let adapters = self.registry.ready_adapters()?;
+            let adapters = self
+                .registry
+                .ready_adapters()?
+                .into_iter()
+                .filter(|adapter| {
+                    provider_advertises_method(&adapter.provider(), "conversation.list")
+                })
+                .collect::<Vec<_>>();
             let single_provider = adapters.len() == 1;
             let mut conversations = Vec::new();
             let mut next_cursor = None;
@@ -155,8 +174,7 @@ impl ProtocolServer for Gateway {
         request: ConversationGetRequest,
     ) -> ProtocolFuture<'a, ConversationGetResponse> {
         Box::pin(async move {
-            self.registry
-                .resolve(&request.provider_id)?
+            self.resolve_method(&request.provider_id, "conversation.get")?
                 .conversation_get(request)
                 .await
         })
@@ -167,8 +185,7 @@ impl ProtocolServer for Gateway {
         request: ConversationCreateRequest,
     ) -> ProtocolFuture<'a, ConversationCreateResponse> {
         Box::pin(async move {
-            self.registry
-                .resolve(&request.provider_id)?
+            self.resolve_method(&request.provider_id, "conversation.create")?
                 .conversation_create(request)
                 .await
         })
@@ -179,10 +196,15 @@ impl ProtocolServer for Gateway {
         request: TurnSendRequest,
     ) -> ProtocolFuture<'a, TurnSendResponse> {
         Box::pin(async move {
-            self.registry
-                .resolve(&request.provider_id)?
-                .turn_send(request)
-                .await
+            let adapter = self.resolve_method(&request.provider_id, "turn.send")?;
+            if request.steer_turn_id.is_some() && !adapter.provider().capabilities.can_steer {
+                return Err(capability_error(
+                    &request.provider_id,
+                    "turn.send",
+                    Some("canSteer"),
+                ));
+            }
+            adapter.turn_send(request).await
         })
     }
 
@@ -191,10 +213,15 @@ impl ProtocolServer for Gateway {
         request: TurnInterruptRequest,
     ) -> ProtocolFuture<'a, TurnInterruptResponse> {
         Box::pin(async move {
-            self.registry
-                .resolve(&request.provider_id)?
-                .turn_interrupt(request)
-                .await
+            let adapter = self.resolve_method(&request.provider_id, "turn.interrupt")?;
+            if !adapter.provider().capabilities.can_interrupt {
+                return Err(capability_error(
+                    &request.provider_id,
+                    "turn.interrupt",
+                    Some("canInterrupt"),
+                ));
+            }
+            adapter.turn_interrupt(request).await
         })
     }
 
@@ -203,11 +230,59 @@ impl ProtocolServer for Gateway {
         request: ApprovalResolveRequest,
     ) -> ProtocolFuture<'a, ApprovalResolveResponse> {
         Box::pin(async move {
-            self.registry
-                .resolve(&request.provider_id)?
+            self.resolve_method(&request.provider_id, "approval.resolve")?
                 .approval_resolve(request)
                 .await
         })
+    }
+}
+
+fn ensure_method_capability(provider: &Provider, method: &str) -> Result<(), ProtocolError> {
+    if provider_advertises_method(provider, method) {
+        return Ok(());
+    }
+    Err(capability_error(&provider.id, method, None))
+}
+
+fn provider_advertises_method(provider: &Provider, method: &str) -> bool {
+    provider
+        .capabilities
+        .methods
+        .iter()
+        .any(|candidate| candidate == method)
+}
+
+fn capability_error(
+    provider_id: &str,
+    method: &str,
+    capability: Option<&str>,
+) -> ProtocolError {
+    let mut details = BTreeMap::from([
+        (
+            "providerId".to_string(),
+            serde_json::Value::String(provider_id.to_string()),
+        ),
+        (
+            "method".to_string(),
+            serde_json::Value::String(method.to_string()),
+        ),
+    ]);
+    if let Some(capability) = capability {
+        details.insert(
+            "capability".to_string(),
+            serde_json::Value::String(capability.to_string()),
+        );
+    }
+    let message = capability
+        .map(|capability| {
+            format!("provider does not advertise {capability} for method: {method}")
+        })
+        .unwrap_or_else(|| format!("provider does not advertise method: {method}"));
+    ProtocolError {
+        code: "capability_unsupported".to_string(),
+        message,
+        retryable: false,
+        details: Some(details),
     }
 }
 

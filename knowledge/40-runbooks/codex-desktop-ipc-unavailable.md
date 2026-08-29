@@ -6,7 +6,7 @@
 - Codex Desktop 中有任务，但 Code Pet 没有显示任务或停止更新。
 - 日志出现 socket 安全检查、initialize、路由、frame、revision 或重连相关错误。
 
-阶段一没有 App Server、Hook、transcript 或文件监听回退。Codex CLI 能被设置页检测到，也不代表 Desktop IPC Provider 可用。
+当前实现没有 App Server、Hook、transcript 或文件监听回退。Codex CLI 能被设置页检测到，也不代表 Desktop IPC Provider 可用。
 
 ## 需要收集的证据
 
@@ -17,6 +17,8 @@
 - 当前 client identity、消息是定向还是广播，以及定向目标是否匹配；日志中应使用截断或脱敏标识。
 - 受影响 thread id 是否已知，以及是否完成 owner discovery、following、完整历史和 snapshot bootstrap。
 - 当前 revision、收到的 revision，以及是否处于等待完整 snapshot 状态。
+- 失败动作冻结的 connection generation、owner client id、snapshot revision，以及活动 turn id 或原生 pending request id；日志只记录脱敏标识。
+- 写请求使用的 follower 方法与版本、目标 client，以及 response 的 method、`handledByClientId` 和错误类别；不要记录消息、命令或 diff 正文。
 - Codex Desktop 版本，以及 adapter 当前验证的 Owner/Follower/状态广播版本。
 
 ## 排查步骤
@@ -34,8 +36,10 @@
    - 重复或旧 patch 可以安全忽略。
    - 前向缺口必须让旧基线失效；当前实现断开该 IPC generation，再通过有界重连和完整 bootstrap 请求新 snapshot。
    - 等待期间任务不应继续应用 patch；如果 UI 仍变化，优先排查状态机错误。
-7. 检查断线复位：pending request 应显式失败，revision、following 和旧 owner route 应清空。重连应使用有界退避重新 initialize 和 bootstrap。
-8. 若 Code Pet 是晚加入且没有任何已知 thread id，当前协议没有任务目录，无法保证从零枚举。其他 follower 可能机会性公告 `following=true`，但当前联调已观察到空 known-set 客户端收不到现有任务公告的合法情况。这是已知限制，不要通过 transcript、audit、Hook 或文件监听绕过。
+7. 检查断线复位：pending router request 应显式失败，revision、following 和旧 owner route 应清空。重连应使用有界退避重新 initialize 和 bootstrap；断线前未确认的 send、interrupt 或 approval 不得自动重放。
+8. 对写动作检查本地并发前置条件：thread 必须已 bootstrap，connection generation、owner 和 snapshot revision 必须仍与冻结值一致；steer/interrupt 还必须匹配当前活动 turn，审批必须匹配仍 pending 的原生 request id、thread 和 owner。当前 wire 没有 `expectedRevision` 字段，不能通过添加猜测字段代替本地重检。
+9. 检查 Owner 响应：start v2、steer v1、interrupt v4、command/file approval decision v1 必须由目标 owner 以相同 method 和 `handledByClientId` 明确接受。`no-handler-for-request`、`request-version-mismatch`、handler/owner 变化、断线和超时都按失败关闭处理。超时属于结果未知，不自动重试；Owner ack 不手工推进最终任务状态，本地审批决定需同时具备 ack 与权威 request removal，两者顺序不限。
+10. 若 Code Pet 是晚加入且没有任何已知 thread id，当前协议没有任务目录，无法保证从零枚举。其他 follower 可能机会性公告 `following=true`，但当前联调已观察到空 known-set 客户端收不到现有任务公告的合法情况。这是已知限制，不要通过 transcript、audit、Hook 或文件监听绕过。
 
 ## 结果判断
 
@@ -44,13 +48,16 @@
 - 协议或版本不兼容：Provider error/unavailable，停止解析并记录 Desktop 版本。
 - revision 缺口：thread 等待 snapshot，不发布由缺口 patch 推导的状态。
 - 无已知 thread id：报告发现范围限制，不宣称 Desktop 没有任务。
-- 回复或审批按钮缺失：阶段一设计如此，不是连接故障。
+- 回复、停止或审批按钮缺失：先检查 Provider capability 和当前权威状态。只有已 bootstrap 会话上的 send/steer、活动 turn 的 interrupt，以及 command/file 两类二元审批可用；permissions、MCP elicitation、user input、plan implementation 和 `conversation.create` 缺失是能力限制，不是连接故障。
+- 写请求被拒绝或超时：不因本地返回自行改状态，继续接受最新权威 snapshot/patch 并显示标准可诊断错误；不要为了让按钮“成功”而关闭 owner、revision 或 handler 校验。
 
 ## 恢复后验证
 
 - Provider 状态按 connecting → ready 恢复，并保留唯一的新 client identity。
 - 已知 thread 重新完成完整 bootstrap，revision 从新 snapshot 建立，不沿用断线前基线。
 - 运行、等待审批或输入、完成、失败和中断状态可以继续更新。
+- reconnect 后旧写动作没有重放；只有基于新 generation、owner 和 snapshot 重新发起的动作可以派发。
+- UI 不因 Owner ack 单独伪造 turn/approval 终态；本地审批决定只在 ack 与权威 request removal 两项证据齐全时发布，顺序不限。
 - 多客户端定向消息不串流。
 - 生产日志没有私有完整 JSON、命令内容、diff 或其他敏感 payload。
 - 代码和日志均没有启动独立 App Server、恢复 Hook 或扫描 transcript 的迹象。
@@ -61,5 +68,6 @@
 - 同一 revision 出现互相冲突的 snapshot/patch。
 - 完整历史与 snapshot 长期无法在同一 revision 收敛。
 - socket 安全检查通过，但不同 client 仍收到彼此的定向状态。
+- 写请求响应没有 handler、handler 不是已绑定 owner，或 Owner ack 后权威状态长期不收敛。
 
 这些情况属于私有协议兼容或路由正确性问题，不能通过扩大 capability 或启用写操作缓解。

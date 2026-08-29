@@ -2207,7 +2207,18 @@ textarea {
   justify-items: stretch;
 }
 
+.status-actions.interrupt-mode {
+  grid-auto-flow: column;
+  align-items: center;
+}
+
+.status-actions.approval-mode.interrupt-mode {
+  grid-template-columns: repeat(2, 52px) 34px;
+  gap: 5px;
+}
+
 .reply-button,
+.interrupt-button,
 .approval-button {
   display: grid;
   place-items: center;
@@ -2217,7 +2228,8 @@ textarea {
   box-shadow: 0 2px 7px var(--pet-shadow);
 }
 
-.reply-button {
+.reply-button,
+.interrupt-button {
   width: 34px;
   height: 19px;
   border-radius: 10px;
@@ -2225,6 +2237,11 @@ textarea {
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-medium);
   line-height: var(--line-height-none);
+}
+
+.interrupt-button {
+  border-color: var(--color-state-danger-border);
+  color: var(--pet-status-waiting);
 }
 
 .approval-button {

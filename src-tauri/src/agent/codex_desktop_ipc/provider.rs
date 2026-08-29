@@ -1,22 +1,37 @@
 use super::client::{
-    CodexDesktopClient, DesktopClientEvent, DesktopConnectionSnapshot, DesktopConnectionStatus,
+    CodexDesktopClient, DesktopApprovalDecision, DesktopClientEvent,
+    DesktopConnectionSnapshot, DesktopConnectionStatus, NativeApprovalTarget,
 };
-use super::mapper::{map_thread, provider, MappedThread};
+use super::mapper::{
+    map_thread, provider, MappedApproval, MappedThread, CODEX_PROVIDER_ID,
+    CONTINUE_QUICK_REPLY_ID,
+};
 use super::protocol::DesktopIpcError;
 use super::state::ThreadSnapshot;
 use crate::runtime_gateway::generated::{
-    ApprovalResolveRequest, ApprovalResolveResponse, ConversationCreateRequest,
+    Approval, ApprovalDecision, ApprovalRequestedEvent, ApprovalResolveRequest,
+    ApprovalResolveResponse, ApprovalResolvedEvent, ApprovalStatus, ConversationCreateRequest,
     ConversationCreateResponse, ConversationGetRequest, ConversationGetResponse,
     ConversationListRequest, ConversationListResponse, ConversationUpsertedEvent, ProtocolError,
     ProtocolEvent, Provider, ProviderStatus, ProviderStatusChangedEvent, TurnInterruptRequest,
-    TurnInterruptResponse, TurnSendRequest, TurnSendResponse, TurnUpsertedEvent, PROTOCOL_VERSION,
+    TurnInterruptResponse, TurnSendRequest, TurnSendResponse, TurnTask, TurnTaskStatus,
+    TurnUpsertedEvent, PROTOCOL_VERSION,
 };
 use crate::runtime_gateway::{ProviderAdapter, ProviderEventSink, ProviderFuture};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+#[derive(Clone, Debug)]
+struct ApprovalIntent {
+    approval: Approval,
+    decision: ApprovalDecision,
+    acknowledged: bool,
+    outcome_unknown: bool,
+    authoritative_removed_at: Option<u64>,
+}
 
 struct CodexProviderState {
     status: ProviderStatus,
@@ -24,6 +39,7 @@ struct CodexProviderState {
     connection_generation: u64,
     follower_epoch: Option<u64>,
     threads: BTreeMap<String, MappedThread>,
+    approval_intents: BTreeMap<String, ApprovalIntent>,
     bootstrap_workers: HashSet<String>,
     retired: bool,
 }
@@ -31,6 +47,7 @@ struct CodexProviderState {
 pub struct CodexProviderAdapter {
     client: CodexDesktopClient,
     state: Arc<Mutex<CodexProviderState>>,
+    events: ProviderEventSink,
     forwarder: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -45,6 +62,7 @@ impl CodexProviderAdapter {
             connection_generation: connection.generation,
             follower_epoch: None,
             threads: BTreeMap::new(),
+            approval_intents: BTreeMap::new(),
             bootstrap_workers: HashSet::new(),
             retired: false,
         }));
@@ -58,6 +76,7 @@ impl CodexProviderAdapter {
         Self {
             client,
             state,
+            events,
             forwarder: Mutex::new(Some(handle)),
         }
     }
@@ -93,6 +112,7 @@ impl ProviderAdapter for CodexProviderAdapter {
         request: ConversationListRequest,
     ) -> ProviderFuture<'a, ConversationListResponse> {
         let state = self.state.clone();
+        let events = self.events.clone();
         Box::pin(async move {
             let offset = parse_cursor(request.cursor.as_deref())?;
             let limit = request.limit.unwrap_or(50);
@@ -118,6 +138,11 @@ impl ProviderAdapter for CodexProviderAdapter {
                 .take(limit)
                 .collect::<Vec<_>>();
             let next_offset = offset.saturating_add(conversations.len());
+            let listed_ids = conversations
+                .iter()
+                .map(|conversation| conversation.id.clone())
+                .collect::<HashSet<_>>();
+            publish_pending_approval_hydration(&state, &events, &listed_ids);
             Ok(ConversationListResponse {
                 conversations,
                 next_cursor: (next_offset < total).then(|| format!("desktop:{next_offset}")),
@@ -142,7 +167,7 @@ impl ProviderAdapter for CodexProviderAdapter {
             let conversation_id = request.conversation_id;
             let bootstrap_id = conversation_id.clone();
             let snapshot = tokio::task::spawn_blocking(move || {
-                client.bootstrap_thread(&bootstrap_id)
+                client.bootstrap_followed_thread(&bootstrap_id)
             })
             .await
             .map_err(provider_task_error)?
@@ -162,23 +187,149 @@ impl ProviderAdapter for CodexProviderAdapter {
 
     fn turn_send<'a>(
         &'a self,
-        _request: TurnSendRequest,
+        request: TurnSendRequest,
     ) -> ProviderFuture<'a, TurnSendResponse> {
-        unsupported("turn.send")
+        let client = self.client.clone();
+        Box::pin(async move {
+            validate_provider_id(&request.provider_id)?;
+            if request
+                .quick_reply_id
+                .as_deref()
+                .is_some_and(|id| id != CONTINUE_QUICK_REPLY_ID)
+            {
+                return Err(ProtocolError {
+                    code: "invalid_request".to_string(),
+                    message: "quick reply id is not advertised by Codex Desktop".to_string(),
+                    retryable: false,
+                    details: None,
+                });
+            }
+            let acknowledgement = tokio::task::spawn_blocking(move || {
+                client.send_turn(
+                    &request.conversation_id,
+                    &request.client_message_id,
+                    &request.message,
+                    request.steer_turn_id.as_deref(),
+                )
+            })
+            .await
+            .map_err(provider_task_error)?
+            .map_err(desktop_error)?;
+            let mapped = map_thread(&acknowledgement.frozen_snapshot);
+            let turn = if acknowledgement.started {
+                TurnTask {
+                    id: acknowledgement.turn_id,
+                    provider_id: CODEX_PROVIDER_ID.to_string(),
+                    conversation_id: acknowledgement.frozen_snapshot.conversation_id,
+                    status: TurnTaskStatus::Queued,
+                    display_summary: None,
+                    started_at: None,
+                    updated_at: now_ms(),
+                    completed_at: None,
+                    extension: None,
+                }
+            } else {
+                mapped
+                    .latest_turn
+                    .filter(|turn| turn.id == acknowledgement.turn_id)
+                    .ok_or_else(|| stale_action_error(
+                        "the acknowledged steer turn is absent from the frozen snapshot",
+                    ))?
+            };
+            Ok(TurnSendResponse { turn })
+        })
     }
 
     fn turn_interrupt<'a>(
         &'a self,
-        _request: TurnInterruptRequest,
+        request: TurnInterruptRequest,
     ) -> ProviderFuture<'a, TurnInterruptResponse> {
-        unsupported("turn.interrupt")
+        let client = self.client.clone();
+        Box::pin(async move {
+            validate_provider_id(&request.provider_id)?;
+            let requested_turn_id = request.turn_id.clone();
+            let snapshot = tokio::task::spawn_blocking(move || {
+                client.interrupt_turn(&request.conversation_id, &request.turn_id)
+            })
+            .await
+            .map_err(provider_task_error)?
+            .map_err(desktop_error)?;
+            let turn = map_thread(&snapshot)
+                .latest_turn
+                .filter(|turn| turn.id == requested_turn_id)
+                .ok_or_else(|| stale_action_error(
+                    "the interrupt target is absent from the frozen snapshot",
+                ))?;
+            Ok(TurnInterruptResponse { turn })
+        })
     }
 
     fn approval_resolve<'a>(
         &'a self,
-        _request: ApprovalResolveRequest,
+        request: ApprovalResolveRequest,
     ) -> ProviderFuture<'a, ApprovalResolveResponse> {
-        unsupported("approval.resolve")
+        let client = self.client.clone();
+        let state = self.state.clone();
+        let events = self.events.clone();
+        Box::pin(async move {
+            validate_provider_id(&request.provider_id)?;
+            let decision = request.decision;
+            let mapped = begin_approval_resolution(
+                &state,
+                &request.approval_id,
+                decision,
+            )?;
+            let pending_approval = mapped.approval.clone();
+            let target = NativeApprovalTarget {
+                conversation_id: mapped.thread_id,
+                owner_client_id: mapped.owner_client_id,
+                revision: mapped.revision,
+                request_id: mapped.raw_request_id,
+                request_method: mapped.native_method,
+                turn_id: mapped.turn_id,
+                item_id: mapped.item_id,
+            };
+            let desktop_decision = match decision {
+                ApprovalDecision::Approve => DesktopApprovalDecision::Approve,
+                ApprovalDecision::Deny => DesktopApprovalDecision::Deny,
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                client.resolve_approval(&target, desktop_decision)
+            })
+            .await
+            .map_err(provider_task_error)
+            .and_then(|result| result.map_err(desktop_error));
+            match result {
+                Ok(_) => {
+                    if let Some(resolved) = acknowledge_approval_resolution(
+                        &state,
+                        &pending_approval.id,
+                    ) {
+                        publish_approval_resolved(&events, resolved);
+                    }
+                    Ok(ApprovalResolveResponse {
+                        approval: pending_approval,
+                    })
+                }
+                Err(error) => {
+                    if error.code == "desktop_ipc_outcome_unknown" {
+                        if let Some(expired) =
+                            mark_approval_outcome_unknown(&state, &pending_approval.id)
+                        {
+                            publish_approval_resolved(&events, expired);
+                        }
+                    } else {
+                        if let Some(expired) = fail_approval_resolution(
+                            &state,
+                            &pending_approval.id,
+                        ) {
+                            publish_approval_resolved(&events, expired);
+                        }
+                    }
+                    Err(error)
+                }
+            }
+        })
     }
 }
 
@@ -375,6 +526,30 @@ fn publish_snapshot(
     publish_mapped_thread(state, events, mapped, publication_kind);
 }
 
+fn publish_pending_approval_hydration(
+    state: &Arc<Mutex<CodexProviderState>>,
+    events: &ProviderEventSink,
+    conversation_ids: &HashSet<String>,
+) {
+    let state = lock(state);
+    for approval in state
+        .threads
+        .values()
+        .filter(|thread| conversation_ids.contains(&thread.conversation.id))
+        .flat_map(|thread| thread.approvals.iter())
+        .map(|mapped| mapped.approval.clone())
+    {
+        publish_event(
+            events,
+            ProtocolEvent::ApprovalRequested {
+                protocol_version: PROTOCOL_VERSION,
+                event_sequence: 0,
+                payload: ApprovalRequestedEvent { approval },
+            },
+        );
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PublicationKind {
     Baseline,
@@ -387,35 +562,134 @@ fn publish_mapped_thread(
     mapped: MappedThread,
     publication_kind: PublicationKind,
 ) {
-    let (conversation_changed, turn_changed) = {
+    let (conversation_changed, turn_changed, requested, resolved) = {
         let mut state = lock(state);
         if state.retired || state.status != ProviderStatus::Ready {
             return;
         }
-        let previous = state.threads.get(&mapped.conversation.id);
-        if previous.is_some_and(|previous| mapped.revision < previous.revision) {
+        let previous = state.threads.get(&mapped.conversation.id).cloned();
+        if previous.as_ref().is_some_and(|previous| mapped.revision < previous.revision) {
             crate::app_log::warn(
                 "codex_desktop_provider",
                 &format!(
                     "ignored stale Desktop projection conversation_id={} revision={} current_revision={}",
                     mapped.conversation.id,
                     mapped.revision,
-                    previous.map(|thread| thread.revision).unwrap_or(0)
+                    previous.as_ref().map(|thread| thread.revision).unwrap_or(0)
                 ),
             );
             return;
         }
         let conversation_changed = previous
+            .as_ref()
             .map(|previous| previous.conversation != mapped.conversation)
             .unwrap_or(true);
         let turn_changed = publication_kind == PublicationKind::Live
             && previous
+                .as_ref()
                 .map(|previous| previous.latest_turn != mapped.latest_turn)
                 .unwrap_or(false);
+        let previous_approvals = previous
+            .as_ref()
+            .map(|thread| {
+                thread
+                    .approvals
+                    .iter()
+                    .map(|mapped| (mapped.approval.id.clone(), mapped.approval.clone()))
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .unwrap_or_default();
+        let current_approval_ids = mapped
+            .approvals
+            .iter()
+            .map(|mapped| mapped.approval.id.clone())
+            .collect::<HashSet<_>>();
+        let requested = mapped
+            .approvals
+            .iter()
+            .filter(|mapped| !previous_approvals.contains_key(&mapped.approval.id))
+            .map(|mapped| mapped.approval.clone())
+            .collect::<Vec<_>>();
+        let mut resolved = Vec::new();
+        let intents_without_previous = state
+            .approval_intents
+            .iter()
+            .filter(|(approval_id, intent)| {
+                intent.approval.conversation_id == mapped.conversation.id
+                    && !current_approval_ids.contains(*approval_id)
+                    && !previous_approvals.contains_key(*approval_id)
+            })
+            .map(|(approval_id, _)| approval_id.clone())
+            .collect::<Vec<_>>();
+        for approval_id in intents_without_previous {
+            let removal_time = mapped.conversation.updated_at;
+            let still_native_pending = mapped
+                .native_pending_approval_ids
+                .contains(&approval_id);
+            let outcome_unknown = state
+                .approval_intents
+                .get(&approval_id)
+                .is_some_and(|intent| intent.outcome_unknown);
+            if still_native_pending || outcome_unknown {
+                if let Some(intent) = state.approval_intents.remove(&approval_id) {
+                    resolved.push(resolve_approval_dto(
+                        intent.approval,
+                        None,
+                        removal_time,
+                    ));
+                }
+            } else if let Some(intent) = state.approval_intents.get_mut(&approval_id) {
+                intent.authoritative_removed_at = Some(removal_time);
+            }
+        }
+        for (approval_id, approval) in previous_approvals {
+            if current_approval_ids.contains(&approval_id) {
+                continue;
+            }
+            let removal_time = mapped.conversation.updated_at;
+            if mapped.native_pending_approval_ids.contains(&approval_id) {
+                let approval = state
+                    .approval_intents
+                    .remove(&approval_id)
+                    .map(|intent| intent.approval)
+                    .unwrap_or(approval);
+                resolved.push(resolve_approval_dto(approval, None, removal_time));
+                continue;
+            }
+            let acknowledged = state
+                .approval_intents
+                .get(&approval_id)
+                .is_some_and(|intent| intent.acknowledged);
+            let outcome_unknown = state
+                .approval_intents
+                .get(&approval_id)
+                .is_some_and(|intent| intent.outcome_unknown);
+            if acknowledged {
+                if let Some(intent) = state.approval_intents.remove(&approval_id) {
+                    resolved.push(resolve_approval_dto(
+                        intent.approval,
+                        Some(intent.decision),
+                        removal_time,
+                    ));
+                }
+            } else if outcome_unknown {
+                if let Some(intent) = state.approval_intents.remove(&approval_id) {
+                    resolved.push(resolve_approval_dto(
+                        intent.approval,
+                        None,
+                        removal_time,
+                    ));
+                }
+            } else if let Some(intent) = state.approval_intents.get_mut(&approval_id) {
+                intent.authoritative_removed_at = Some(removal_time);
+            } else {
+                resolved.push(resolve_approval_dto(approval, None, removal_time));
+            }
+        }
         state
             .threads
             .insert(mapped.conversation.id.clone(), mapped.clone());
-        (conversation_changed, turn_changed)
+        (conversation_changed, turn_changed, requested, resolved)
     };
     if conversation_changed {
         publish_event(
@@ -430,7 +704,7 @@ fn publish_mapped_thread(
         );
     }
     if turn_changed {
-        if let Some(turn) = mapped.latest_turn {
+        if let Some(turn) = mapped.latest_turn.clone() {
             publish_event(
                 events,
                 ProtocolEvent::TurnUpserted {
@@ -441,6 +715,161 @@ fn publish_mapped_thread(
             );
         }
     }
+    for approval in requested {
+        publish_event(
+            events,
+            ProtocolEvent::ApprovalRequested {
+                protocol_version: PROTOCOL_VERSION,
+                event_sequence: 0,
+                payload: ApprovalRequestedEvent { approval },
+            },
+        );
+    }
+    for approval in resolved {
+        publish_approval_resolved(events, approval);
+    }
+}
+
+fn begin_approval_resolution(
+    state: &Arc<Mutex<CodexProviderState>>,
+    approval_id: &str,
+    decision: ApprovalDecision,
+) -> Result<MappedApproval, ProtocolError> {
+    let mut state = lock(state);
+    if state.retired || state.status != ProviderStatus::Ready {
+        return Err(ProtocolError {
+            code: "provider_unavailable".to_string(),
+            message: "Codex Desktop provider is not ready".to_string(),
+            retryable: false,
+            details: None,
+        });
+    }
+    if let Some(intent) = state.approval_intents.get(approval_id) {
+        return Err(ProtocolError {
+            code: if intent.outcome_unknown {
+                "action_outcome_unknown"
+            } else {
+                "action_in_flight"
+            }
+            .to_string(),
+            message: if intent.outcome_unknown {
+                "A previous decision has an unknown outcome; wait for authoritative Desktop state"
+                    .to_string()
+            } else {
+                "This approval already has a decision in flight".to_string()
+            },
+            retryable: false,
+            details: None,
+        });
+    }
+    let mut matches = state
+        .threads
+        .values()
+        .flat_map(|thread| thread.approvals.iter())
+        .filter(|mapped| mapped.approval.id == approval_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return Err(stale_action_error(
+            "the approval is no longer pending in authoritative Desktop state",
+        ));
+    }
+    let mapped = matches.remove(0);
+    if mapped.approval.status != ApprovalStatus::Pending
+        || !mapped.approval.decisions.contains(&decision)
+    {
+        return Err(stale_action_error(
+            "the approval does not accept this decision",
+        ));
+    }
+    state.approval_intents.insert(
+        approval_id.to_string(),
+        ApprovalIntent {
+            approval: mapped.approval.clone(),
+            decision,
+            acknowledged: false,
+            outcome_unknown: false,
+            authoritative_removed_at: None,
+        },
+    );
+    Ok(mapped)
+}
+
+fn acknowledge_approval_resolution(
+    state: &Arc<Mutex<CodexProviderState>>,
+    approval_id: &str,
+) -> Option<Approval> {
+    let mut state = lock(state);
+    let removal_time = state
+        .approval_intents
+        .get(approval_id)
+        .and_then(|intent| intent.authoritative_removed_at);
+    if let Some(removal_time) = removal_time {
+        let intent = state.approval_intents.remove(approval_id)?;
+        return Some(resolve_approval_dto(
+            intent.approval,
+            Some(intent.decision),
+            removal_time,
+        ));
+    }
+    if let Some(intent) = state.approval_intents.get_mut(approval_id) {
+        intent.acknowledged = true;
+    }
+    None
+}
+
+fn fail_approval_resolution(
+    state: &Arc<Mutex<CodexProviderState>>,
+    approval_id: &str,
+) -> Option<Approval> {
+    let intent = lock(state).approval_intents.remove(approval_id)?;
+    intent.authoritative_removed_at.map(|removed_at| {
+        resolve_approval_dto(intent.approval, None, removed_at)
+    })
+}
+
+fn mark_approval_outcome_unknown(
+    state: &Arc<Mutex<CodexProviderState>>,
+    approval_id: &str,
+) -> Option<Approval> {
+    let mut state = lock(state);
+    let removed_at = state
+        .approval_intents
+        .get_mut(approval_id)
+        .and_then(|intent| {
+            intent.outcome_unknown = true;
+            intent.authoritative_removed_at
+        });
+    removed_at.and_then(|removed_at| {
+        let intent = state.approval_intents.remove(approval_id)?;
+        Some(resolve_approval_dto(intent.approval, None, removed_at))
+    })
+}
+
+fn resolve_approval_dto(
+    mut approval: Approval,
+    decision: Option<ApprovalDecision>,
+    resolved_at: u64,
+) -> Approval {
+    approval.status = match decision {
+        Some(ApprovalDecision::Approve) => ApprovalStatus::Approved,
+        Some(ApprovalDecision::Deny) => ApprovalStatus::Denied,
+        None => ApprovalStatus::Expired,
+    };
+    approval.resolved_at = Some(resolved_at);
+    approval.decision = decision;
+    approval
+}
+
+fn publish_approval_resolved(events: &ProviderEventSink, approval: Approval) {
+    publish_event(
+        events,
+        ProtocolEvent::ApprovalResolved {
+            protocol_version: PROTOCOL_VERSION,
+            event_sequence: 0,
+            payload: ApprovalResolvedEvent { approval },
+        },
+    );
 }
 
 fn transition_connection(
@@ -571,16 +1000,49 @@ fn invalid_limit_error() -> ProtocolError {
     }
 }
 
+fn validate_provider_id(provider_id: &str) -> Result<(), ProtocolError> {
+    if provider_id == CODEX_PROVIDER_ID {
+        return Ok(());
+    }
+    Err(ProtocolError {
+        code: "invalid_request".to_string(),
+        message: "request provider does not match Codex Desktop".to_string(),
+        retryable: false,
+        details: None,
+    })
+}
+
+fn stale_action_error(message: &str) -> ProtocolError {
+    ProtocolError {
+        code: "action_stale".to_string(),
+        message: message.to_string(),
+        retryable: false,
+        details: None,
+    }
+}
+
 fn desktop_error(error: DesktopIpcError) -> ProtocolError {
+    let code = match &error {
+        DesktopIpcError::Stale(_) => "action_stale",
+        DesktopIpcError::OutcomeUnknown(_) => "desktop_ipc_outcome_unknown",
+        DesktopIpcError::PartialFailure(_) => "desktop_ipc_partial_failure",
+        DesktopIpcError::Remote(_) => "desktop_ipc_rejected",
+        DesktopIpcError::Unsupported(_) => "capability_unsupported",
+        _ => "desktop_ipc_unavailable",
+    };
     let retryable = !matches!(
         error,
         DesktopIpcError::Protocol(_)
             | DesktopIpcError::UnsafeSocket(_)
             | DesktopIpcError::Unsupported(_)
+            | DesktopIpcError::Stale(_)
+            | DesktopIpcError::OutcomeUnknown(_)
+            | DesktopIpcError::PartialFailure(_)
+            | DesktopIpcError::Remote(_)
             | DesktopIpcError::Shutdown
     );
     ProtocolError {
-        code: "desktop_ipc_unavailable".to_string(),
+        code: code.to_string(),
         message: public_desktop_error(&error),
         retryable,
         details: None,
@@ -607,6 +1069,17 @@ fn public_desktop_error(error: &DesktopIpcError) -> String {
         DesktopIpcError::Timeout(_) => {
             "Timed out while synchronizing with Codex Desktop".to_string()
         }
+        DesktopIpcError::Stale(_) => {
+            "Codex Desktop state changed before this action could be dispatched".to_string()
+        }
+        DesktopIpcError::OutcomeUnknown(_) => {
+            "Codex Desktop did not confirm the action outcome; it will not be replayed"
+                .to_string()
+        }
+        DesktopIpcError::PartialFailure(_) => {
+            "Codex Desktop accepted the interruption, but could not pause the related goal"
+                .to_string()
+        }
         DesktopIpcError::Disconnected(_) => {
             "Codex Desktop IPC connection was lost".to_string()
         }
@@ -631,12 +1104,21 @@ fn unsupported<'a, T>(method: &'static str) -> ProviderFuture<'a, T> {
         Err(ProtocolError {
             code: "capability_unsupported".to_string(),
             message: format!(
-                "{method} is unavailable: the Codex Desktop phase-one provider is read-only"
+                "{method} is unavailable through the current Codex Desktop follower protocol"
             ),
             retryable: false,
             details: None,
         })
     })
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 fn publish_event(events: &ProviderEventSink, event: ProtocolEvent) {
@@ -682,6 +1164,57 @@ mod tests {
         })
     }
 
+    fn mapped_thread_with_approval(revision: u64, pending: bool) -> MappedThread {
+        let requests = if pending {
+            json!([{
+                "id": 41,
+                "method": "item/commandExecution/requestApproval",
+                "params": {
+                    "threadId": "thread-approval",
+                    "turnId": "turn-active",
+                    "itemId": "command-item",
+                    "reason": "Run a controlled check",
+                },
+            }])
+        } else {
+            json!([])
+        };
+        map_thread(&ThreadSnapshot {
+            conversation_id: "thread-approval".to_string(),
+            owner_client_id: "owner-one".to_string(),
+            revision,
+            state: json!({
+                "id": "thread-approval",
+                "title": "Approval task",
+                "createdAt": 1_700_000_000_000_u64,
+                "updatedAt": 1_700_000_000_000_u64 + revision,
+                "threadRuntimeStatus": { "type": "active" },
+                "currentPermissions": {
+                    "sandboxPolicy": { "type": "workspaceWrite" }
+                },
+                "turns": [{
+                    "turnId": "turn-active",
+                    "status": "inProgress",
+                    "turnStartedAtMs": 1_700_000_000_000_u64,
+                }],
+                "requests": requests,
+            }),
+        })
+    }
+
+    fn ready_provider_state() -> Arc<Mutex<CodexProviderState>> {
+        Arc::new(Mutex::new(CodexProviderState {
+            status: ProviderStatus::Ready,
+            unavailable_reason: None,
+            connection_generation: 1,
+            follower_epoch: Some(1),
+            threads: BTreeMap::new(),
+            approval_intents: BTreeMap::new(),
+            bootstrap_workers: HashSet::new(),
+            retired: false,
+        }))
+    }
+
     #[test]
     fn standard_protocol_errors_do_not_expose_private_method_names() {
         let error = DesktopIpcError::Timeout(
@@ -699,15 +1232,7 @@ mod tests {
     fn bootstrap_is_a_non_ringing_baseline_and_cannot_overwrite_newer_revision() {
         let gateway = Gateway::default();
         let events = gateway.event_sink();
-        let state = Arc::new(Mutex::new(CodexProviderState {
-            status: ProviderStatus::Ready,
-            unavailable_reason: None,
-            connection_generation: 1,
-            follower_epoch: Some(1),
-            threads: BTreeMap::new(),
-            bootstrap_workers: HashSet::new(),
-            retired: false,
-        }));
+        let state = ready_provider_state();
 
         publish_mapped_thread(
             &state,
@@ -728,5 +1253,258 @@ mod tests {
         );
         assert_eq!(lock(&state).threads["thread-one"].revision, 2);
         assert_eq!(gateway.replay_events(None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn approval_ack_is_deduplicated_and_resolves_only_after_authoritative_removal() {
+        let gateway = Gateway::default();
+        let events = gateway.event_sink();
+        let state = ready_provider_state();
+        publish_mapped_thread(
+            &state,
+            &events,
+            mapped_thread_with_approval(1, true),
+            PublicationKind::Baseline,
+        );
+        let baseline = gateway.replay_events(None).unwrap();
+        assert_eq!(
+            baseline
+                .iter()
+                .filter(|event| matches!(event, ProtocolEvent::ApprovalRequested { .. }))
+                .count(),
+            1
+        );
+        assert!(!baseline
+            .iter()
+            .any(|event| matches!(event, ProtocolEvent::ApprovalResolved { .. })));
+        let approval_id = lock(&state).threads["thread-approval"].approvals[0]
+            .approval
+            .id
+            .clone();
+        begin_approval_resolution(&state, &approval_id, ApprovalDecision::Approve).unwrap();
+        assert_eq!(
+            begin_approval_resolution(&state, &approval_id, ApprovalDecision::Approve)
+                .unwrap_err()
+                .code,
+            "action_in_flight"
+        );
+        assert!(acknowledge_approval_resolution(&state, &approval_id).is_none());
+        assert!(!gateway
+            .replay_events(None)
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, ProtocolEvent::ApprovalResolved { .. })));
+
+        publish_mapped_thread(
+            &state,
+            &events,
+            mapped_thread_with_approval(2, false),
+            PublicationKind::Live,
+        );
+        let resolved = gateway
+            .replay_events(None)
+            .unwrap()
+            .into_iter()
+            .find_map(|event| match event {
+                ProtocolEvent::ApprovalResolved { payload, .. } => Some(payload.approval),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(resolved.id, approval_id);
+        assert_eq!(resolved.status, ApprovalStatus::Approved);
+        assert_eq!(resolved.decision, Some(ApprovalDecision::Approve));
+    }
+
+    #[test]
+    fn authoritative_removal_during_in_flight_waits_for_ack_and_external_removal_expires() {
+        let gateway = Gateway::default();
+        let events = gateway.event_sink();
+        let state = ready_provider_state();
+        publish_mapped_thread(
+            &state,
+            &events,
+            mapped_thread_with_approval(1, true),
+            PublicationKind::Baseline,
+        );
+        let approval_id = lock(&state).threads["thread-approval"].approvals[0]
+            .approval
+            .id
+            .clone();
+        begin_approval_resolution(&state, &approval_id, ApprovalDecision::Deny).unwrap();
+        publish_mapped_thread(
+            &state,
+            &events,
+            mapped_thread_with_approval(2, false),
+            PublicationKind::Live,
+        );
+        assert!(!gateway
+            .replay_events(None)
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, ProtocolEvent::ApprovalResolved { .. })));
+        let resolved = acknowledge_approval_resolution(&state, &approval_id).unwrap();
+        assert_eq!(resolved.status, ApprovalStatus::Denied);
+        assert_eq!(resolved.decision, Some(ApprovalDecision::Deny));
+
+        let external_gateway = Gateway::default();
+        let external_events = external_gateway.event_sink();
+        let external_state = ready_provider_state();
+        publish_mapped_thread(
+            &external_state,
+            &external_events,
+            mapped_thread_with_approval(1, true),
+            PublicationKind::Baseline,
+        );
+        publish_mapped_thread(
+            &external_state,
+            &external_events,
+            mapped_thread_with_approval(2, false),
+            PublicationKind::Live,
+        );
+        let expired = external_gateway
+            .replay_events(None)
+            .unwrap()
+            .into_iter()
+            .find_map(|event| match event {
+                ProtocolEvent::ApprovalResolved { payload, .. } => Some(payload.approval),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(expired.status, ApprovalStatus::Expired);
+        assert_eq!(expired.decision, None);
+    }
+
+    #[test]
+    fn conversation_snapshot_hydrates_already_pending_approvals() {
+        let initial_gateway = Gateway::default();
+        let state = ready_provider_state();
+        publish_mapped_thread(
+            &state,
+            &initial_gateway.event_sink(),
+            mapped_thread_with_approval(1, true),
+            PublicationKind::Baseline,
+        );
+        let hydration_gateway = Gateway::default();
+        publish_pending_approval_hydration(
+            &state,
+            &hydration_gateway.event_sink(),
+            &HashSet::from(["thread-approval".to_string()]),
+        );
+        assert!(matches!(
+            hydration_gateway.replay_events(None).unwrap().as_slice(),
+            [ProtocolEvent::ApprovalRequested { .. }]
+        ));
+    }
+
+    #[test]
+    fn unknown_approval_outcome_survives_rebootstrap_and_blocks_duplicate_resolution() {
+        let gateway = Gateway::default();
+        let events = gateway.event_sink();
+        let state = ready_provider_state();
+        publish_mapped_thread(
+            &state,
+            &events,
+            mapped_thread_with_approval(1, true),
+            PublicationKind::Baseline,
+        );
+        let approval_id = lock(&state).threads["thread-approval"].approvals[0]
+            .approval
+            .id
+            .clone();
+        begin_approval_resolution(&state, &approval_id, ApprovalDecision::Approve).unwrap();
+        transition_connection(
+            &state,
+            &events,
+            &DesktopConnectionSnapshot {
+                status: DesktopConnectionStatus::Unavailable,
+                client_id: None,
+                generation: 2,
+                error: Some(DesktopIpcError::Timeout("approval".to_string())),
+            },
+        );
+        transition_connection(
+            &state,
+            &events,
+            &DesktopConnectionSnapshot {
+                status: DesktopConnectionStatus::Ready,
+                client_id: Some("codepet-new".to_string()),
+                generation: 3,
+                error: None,
+            },
+        );
+        assert!(lock(&state).approval_intents.contains_key(&approval_id));
+        assert!(mark_approval_outcome_unknown(&state, &approval_id).is_none());
+        publish_mapped_thread(
+            &state,
+            &events,
+            mapped_thread_with_approval(2, true),
+            PublicationKind::Baseline,
+        );
+        assert_eq!(
+            begin_approval_resolution(&state, &approval_id, ApprovalDecision::Approve)
+                .unwrap_err()
+                .code,
+            "action_outcome_unknown"
+        );
+        publish_mapped_thread(
+            &state,
+            &events,
+            mapped_thread_with_approval(3, false),
+            PublicationKind::Live,
+        );
+        let resolved = gateway
+            .replay_events(None)
+            .unwrap()
+            .into_iter()
+            .filter_map(|event| match event {
+                ProtocolEvent::ApprovalResolved { payload, .. }
+                    if payload.approval.id == approval_id => Some(payload.approval),
+                _ => None,
+            })
+            .last()
+            .unwrap();
+        assert_eq!(resolved.status, ApprovalStatus::Expired);
+        assert_eq!(resolved.decision, None);
+    }
+
+    #[test]
+    fn approval_that_remains_native_pending_but_becomes_unsafe_expires() {
+        let gateway = Gateway::default();
+        let events = gateway.event_sink();
+        let state = ready_provider_state();
+        publish_mapped_thread(
+            &state,
+            &events,
+            mapped_thread_with_approval(1, true),
+            PublicationKind::Baseline,
+        );
+        let approval_id = lock(&state).threads["thread-approval"].approvals[0]
+            .approval
+            .id
+            .clone();
+        begin_approval_resolution(&state, &approval_id, ApprovalDecision::Approve).unwrap();
+        let mut no_longer_actionable = mapped_thread_with_approval(2, true);
+        no_longer_actionable.approvals.clear();
+        publish_mapped_thread(
+            &state,
+            &events,
+            no_longer_actionable,
+            PublicationKind::Live,
+        );
+
+        let resolved = gateway
+            .replay_events(None)
+            .unwrap()
+            .into_iter()
+            .filter_map(|event| match event {
+                ProtocolEvent::ApprovalResolved { payload, .. }
+                    if payload.approval.id == approval_id => Some(payload.approval),
+                _ => None,
+            })
+            .last()
+            .unwrap();
+        assert_eq!(resolved.status, ApprovalStatus::Expired);
+        assert_eq!(resolved.decision, None);
+        assert!(!lock(&state).approval_intents.contains_key(&approval_id));
     }
 }

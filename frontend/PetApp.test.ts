@@ -215,7 +215,7 @@ describe("PetApp activity helpers", () => {
     expect(sendBlock).toContain("replyingToId = null");
     expect(sendBlock).toContain("finally");
     expect(sendBlock).toContain("replySubmitting = false");
-    expect(replyEditorTemplate).toContain("disabled={replySubmitting || !replyText.trim()}");
+    expect(replyEditorTemplate).toContain("disabled={replySubmitting || Boolean(controlSubmittingId) || !replyText.trim()}");
     expect(replyEditorTemplate).toContain('{replySubmitting ? "发送中" : "发送"}');
   });
 
@@ -324,17 +324,23 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain("这里只显示 Desktop follower 已公告或显式已知的 Codex 任务");
   });
 
-  it("routes messages and approval decisions through Runtime Gateway methods", () => {
+  it("routes messages, interruption, and approval decisions through Runtime Gateway methods", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const sendBlock = source.slice(source.indexOf("async function sendRuntimeGatewayMessage"), source.indexOf("function handleReplyKeydown"));
     const approvalBlock = source.slice(source.indexOf("async function approve"), source.indexOf("</script>"));
+    const interruptBlock = source.slice(source.indexOf("async function interrupt"), source.indexOf("</script>"));
 
     expect(sendBlock).toContain("runtimeGatewayClient.turnSend({");
     expect(sendBlock).toContain("clientMessageId: createRuntimeGatewayClientMessageId()");
     expect(sendBlock).toContain("quickReplyId");
-    expect(sendBlock).toContain("steerTurnId: activeTurn");
+    expect(sendBlock).toContain("steerTurnId: activeTurn?.id");
+    expect(sendBlock).not.toContain("projectTurnResponse");
+    expect(interruptBlock).toContain("runtimeGatewayClient.turnInterrupt({");
+    expect(interruptBlock).toContain("turnId: turn.id");
+    expect(source).toContain("{#if capabilities.canInterrupt}");
     expect(approvalBlock).toContain("runtimeGatewayClient.approvalResolve({");
     expect(approvalBlock).toContain('decision = behavior === "allow" ? "approve" : "deny"');
+    expect(source).not.toContain("runtimeGatewayProjection.projectTurnResponse");
   });
 
   it("stops repeated permission rings when the source activity is dismissed or expires", () => {

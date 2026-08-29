@@ -29,7 +29,14 @@ impl FakeProvider {
                 version: Some("test".to_string()),
                 status,
                 capabilities: ProviderCapabilities {
-                    methods: Vec::new(),
+                    methods: vec![
+                        "conversation.list".to_string(),
+                        "conversation.get".to_string(),
+                        "conversation.create".to_string(),
+                        "turn.send".to_string(),
+                        "turn.interrupt".to_string(),
+                        "approval.resolve".to_string(),
+                    ],
                     permission_levels: vec![PermissionLevel::WorkspaceWrite],
                     models: Vec::new(),
                     reasoning_efforts: Vec::new(),
@@ -50,6 +57,11 @@ impl FakeProvider {
 
     fn calls(&self) -> Vec<String> {
         self.calls.lock().unwrap().clone()
+    }
+
+    fn advertise_only(mut self, methods: &[&str]) -> Self {
+        self.provider.capabilities.methods = methods.iter().map(|method| method.to_string()).collect();
+        self
     }
 }
 
@@ -290,6 +302,97 @@ async fn gateway_returns_clear_unknown_and_unavailable_provider_errors() {
         .unwrap_err();
     assert_eq!(unavailable.code, "provider_unavailable");
     assert!(unavailable.retryable);
+}
+
+#[tokio::test]
+async fn gateway_fails_closed_before_dispatching_unadvertised_actions() {
+    let registry = ProviderRegistry::default();
+    let provider = Arc::new(
+        FakeProvider::new("read-only", ProviderStatus::Ready)
+            .advertise_only(&["conversation.list", "conversation.get"]),
+    );
+    registry.register(provider.clone()).unwrap();
+    let gateway = Gateway::new(registry);
+
+    let create_error = gateway
+        .conversation_create(ConversationCreateRequest {
+            provider_id: "read-only".to_string(),
+            title: None,
+            permission_level: PermissionLevel::WorkspaceWrite,
+            model: None,
+            reasoning_effort: None,
+            workspace_root: None,
+        })
+        .await
+        .unwrap_err();
+    let send_error = gateway
+        .turn_send(TurnSendRequest {
+            provider_id: "read-only".to_string(),
+            conversation_id: "conversation-1".to_string(),
+            client_message_id: "message-1".to_string(),
+            message: "hello".to_string(),
+            quick_reply_id: None,
+            steer_turn_id: None,
+        })
+        .await
+        .unwrap_err();
+    let interrupt_error = gateway
+        .turn_interrupt(TurnInterruptRequest {
+            provider_id: "read-only".to_string(),
+            conversation_id: "conversation-1".to_string(),
+            turn_id: "turn-1".to_string(),
+        })
+        .await
+        .unwrap_err();
+    let approval_error = gateway
+        .approval_resolve(ApprovalResolveRequest {
+            provider_id: "read-only".to_string(),
+            approval_id: "approval-1".to_string(),
+            decision: ApprovalDecision::Deny,
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(create_error.code, "capability_unsupported");
+    assert_eq!(send_error.code, "capability_unsupported");
+    assert_eq!(interrupt_error.code, "capability_unsupported");
+    assert_eq!(approval_error.code, "capability_unsupported");
+    assert_eq!(provider.calls(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn gateway_requires_action_specific_capability_flags() {
+    let registry = ProviderRegistry::default();
+    let mut provider = FakeProvider::new("limited", ProviderStatus::Ready);
+    provider.provider.capabilities.can_steer = false;
+    provider.provider.capabilities.can_interrupt = false;
+    let provider = Arc::new(provider);
+    registry.register(provider.clone()).unwrap();
+    let gateway = Gateway::new(registry);
+
+    let steer_error = gateway
+        .turn_send(TurnSendRequest {
+            provider_id: "limited".to_string(),
+            conversation_id: "conversation-1".to_string(),
+            client_message_id: "message-1".to_string(),
+            message: "hello".to_string(),
+            quick_reply_id: None,
+            steer_turn_id: Some("turn-1".to_string()),
+        })
+        .await
+        .unwrap_err();
+    let interrupt_error = gateway
+        .turn_interrupt(TurnInterruptRequest {
+            provider_id: "limited".to_string(),
+            conversation_id: "conversation-1".to_string(),
+            turn_id: "turn-1".to_string(),
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(steer_error.code, "capability_unsupported");
+    assert_eq!(interrupt_error.code, "capability_unsupported");
+    assert_eq!(provider.calls(), Vec::<String>::new());
 }
 
 #[tokio::test]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Conversation, ProtocolEvent, Provider, ProviderStatus, TurnTask } from "./generated/runtimeGateway";
+import type { Approval, Conversation, ProtocolEvent, Provider, ProviderStatus, TurnTask } from "./generated/runtimeGateway";
 import { RuntimeGatewayActivityProjection } from "./runtimeGatewayActivity";
 
 function provider(status: ProviderStatus): Provider {
@@ -43,6 +43,20 @@ function conversation(status: Conversation["status"], activeTurn?: TurnTask): Co
     createdAt: 1_700_000_000_000,
     updatedAt: 1_700_000_001_000,
     activeTurn,
+  };
+}
+
+function approval(id: string): Approval {
+  return {
+    id,
+    providerId: "codex",
+    conversationId: "thread-one",
+    turnId: "turn-one",
+    kind: "command-execution",
+    title: "Run command",
+    status: "pending",
+    decisions: ["approve", "deny"],
+    requestedAt: 1_700_000_001_000,
   };
 }
 
@@ -110,5 +124,67 @@ describe("RuntimeGatewayActivityProjection", () => {
     expect(result.activities[0].status).toBe("idle");
     expect(result.activities[0].message).toBe("任务已停止");
     expect(result.activities[0].shouldRing).toBe(false);
+  });
+
+  it("keeps authoritative waiting state when one of multiple approvals resolves", () => {
+    const projection = new RuntimeGatewayActivityProjection();
+    projection.replaceProviders([provider("ready")]);
+    const waitingTurn = turn("waiting-approval");
+    projection.applyEvent(event({
+      event: "conversation.upserted",
+      payload: { conversation: conversation("waiting-approval", waitingTurn) },
+    }));
+    projection.applyEvent(event({
+      event: "approval.requested",
+      payload: { approval: approval("approval-one") },
+    }));
+    projection.applyEvent(event({
+      event: "approval.requested",
+      payload: { approval: approval("approval-two") },
+    }));
+
+    const result = projection.applyEvent(event({
+      event: "approval.resolved",
+      payload: {
+        approval: {
+          ...approval("approval-one"),
+          status: "approved",
+          resolvedAt: 1_700_000_002_000,
+          decision: "approve",
+        },
+      },
+    }));
+
+    expect(result.activities[0].status).toBe("waiting-approval");
+    expect(result.activities[0].runtimeGateway?.approval?.id).toBe("approval-two");
+  });
+
+  it("rings once for a pending approval across snapshot resynchronization", () => {
+    const projection = new RuntimeGatewayActivityProjection();
+    projection.replaceProviders([provider("ready")]);
+    const waitingTurn = turn("waiting-approval");
+    const waitingConversation = conversation("waiting-approval", waitingTurn);
+    projection.replaceConversations([waitingConversation]);
+
+    const requested = event({
+      event: "approval.requested",
+      payload: { approval: approval("approval-one") },
+    });
+    expect(projection.applyEvent(requested).activities[0].shouldRing).toBe(true);
+
+    projection.replaceConversations([waitingConversation]);
+    expect(projection.applyEvent(requested).activities[0].shouldRing).toBe(false);
+
+    projection.applyEvent(event({
+      event: "approval.resolved",
+      payload: {
+        approval: {
+          ...approval("approval-one"),
+          status: "expired",
+          resolvedAt: 1_700_000_002_000,
+        },
+      },
+    }));
+    expect(projection.applyEvent(requested).activities[0].shouldRing).toBe(true);
   });
 });

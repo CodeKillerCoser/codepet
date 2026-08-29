@@ -5,7 +5,7 @@
   import { onMount, tick } from "svelte";
   import { getAppSettings, openMainWindow, recordPerfEvent } from "./lib/api";
   import { activityCapabilities, activityKey, cardAgentLabel, cardEndTime, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
-  import { activityCanResolveApproval, activityQuickRepliesFor } from "./lib/agentInteractions";
+  import { activityActiveTurnFor, activityCanResolveApproval, activityQuickRepliesFor } from "./lib/agentInteractions";
   import { mergeEventFeed } from "./lib/eventFeed";
   import { PROTOCOL_VERSION, type Conversation, type ProtocolEvent, type Provider, type QuickReply } from "./lib/generated/runtimeGateway";
   import { runningBubbleStyle } from "./lib/gradientColor";
@@ -35,6 +35,7 @@
   let replyingToId: string | null = null;
   let replyText = "";
   let replySubmitting = false;
+  let controlSubmittingId: string | null = null;
   let actionNotice = "";
   let replyTextarea: HTMLTextAreaElement | null = null;
   let noticeTimer: number | null = null;
@@ -1060,8 +1061,9 @@
 
   function toggleReply(event: MouseEvent, activity: PetEvent) {
     event.stopPropagation();
-    if (!activityCapabilities(activity).canReply) {
-      showNotice("当前来源不支持可靠回复");
+    const capabilities = activityCapabilities(activity);
+    if (!capabilities.canReply) {
+      showNotice(capabilities.replyReason ?? "当前来源不支持可靠回复");
       return;
     }
     const opening = replyingToId !== activity.id;
@@ -1102,7 +1104,7 @@
 
   async function sendReply(activity: PetEvent) {
     const message = replyText.trim();
-    if (!message || replySubmitting) {
+    if (!message || replySubmitting || controlSubmittingId) {
       return;
     }
     replySubmitting = true;
@@ -1110,7 +1112,7 @@
       await sendRuntimeGatewayMessage(activity, message);
       replyText = "";
       replyingToId = null;
-      showNotice("已发送回复");
+      showNotice("回复已接受，等待任务更新");
     } catch (error) {
       showNotice(runtimeGatewayErrorMessage(error));
     } finally {
@@ -1121,7 +1123,7 @@
   async function sendQuickReply(event: MouseEvent, activity: PetEvent, quickReply: QuickReply) {
     event.preventDefault();
     event.stopPropagation();
-    if (replySubmitting) {
+    if (replySubmitting || controlSubmittingId) {
       return;
     }
     replySubmitting = true;
@@ -1129,7 +1131,7 @@
       await sendRuntimeGatewayMessage(activity, quickReply.text, quickReply.id);
       replyText = "";
       replyingToId = null;
-      showNotice("已发送快捷回复");
+      showNotice("快捷回复已接受，等待任务更新");
     } catch (error) {
       showNotice(runtimeGatewayErrorMessage(error));
     } finally {
@@ -1142,16 +1144,15 @@
     if (!context || !activityCapabilities(activity).canReply) {
       throw new Error("当前任务状态不支持继续消息");
     }
-    const activeTurn = isActiveActivity(activity) ? context.turn?.id : undefined;
-    const response = await runtimeGatewayClient.turnSend({
+    const activeTurn = activityActiveTurnFor(activity);
+    await runtimeGatewayClient.turnSend({
       providerId: context.provider.id,
       conversationId: context.conversationId,
       clientMessageId: createRuntimeGatewayClientMessageId(),
       message,
       quickReplyId,
-      steerTurnId: activeTurn,
+      steerTurnId: activeTurn?.id,
     });
-    applyIncomingEvents(runtimeGatewayProjection.projectTurnResponse(response.turn));
   }
 
   function handleReplyKeydown(event: KeyboardEvent, activity: PetEvent) {
@@ -1202,12 +1203,16 @@
 
   async function approve(event: MouseEvent, activity: PetEvent, behavior: "allow" | "deny") {
     event.stopPropagation();
+    if (replySubmitting || controlSubmittingId) {
+      return;
+    }
     const decision = behavior === "allow" ? "approve" : "deny";
     const context = activity.runtimeGateway;
     if (!context?.approval || !activityCanResolveApproval(activity, decision)) {
       showNotice("当前授权请求已不可处理");
       return;
     }
+    controlSubmittingId = activity.id;
     try {
       await runtimeGatewayClient.approvalResolve({
         providerId: context.provider.id,
@@ -1215,9 +1220,41 @@
         decision,
       });
       clearRepeat();
-      showNotice(behavior === "allow" ? "已允许" : "已拒绝");
+      showNotice(behavior === "allow" ? "允许操作已接受，等待任务更新" : "拒绝操作已接受，等待任务更新");
     } catch (error) {
       showNotice(runtimeGatewayErrorMessage(error));
+    } finally {
+      if (controlSubmittingId === activity.id) {
+        controlSubmittingId = null;
+      }
+    }
+  }
+
+  async function interrupt(event: MouseEvent, activity: PetEvent) {
+    event.stopPropagation();
+    if (replySubmitting || controlSubmittingId) {
+      return;
+    }
+    const context = activity.runtimeGateway;
+    const turn = activityActiveTurnFor(activity);
+    if (!context || !turn || !activityCapabilities(activity).canInterrupt) {
+      showNotice("当前任务已不可停止");
+      return;
+    }
+    controlSubmittingId = activity.id;
+    try {
+      await runtimeGatewayClient.turnInterrupt({
+        providerId: context.provider.id,
+        conversationId: context.conversationId,
+        turnId: turn.id,
+      });
+      showNotice("停止请求已接受，等待任务更新");
+    } catch (error) {
+      showNotice(runtimeGatewayErrorMessage(error));
+    } finally {
+      if (controlSubmittingId === activity.id) {
+        controlSubmittingId = null;
+      }
     }
   }
 </script>
@@ -1281,7 +1318,7 @@
                       <button
                         class="quick-reply-option"
                         type="button"
-                        disabled={replySubmitting}
+                        disabled={replySubmitting || Boolean(controlSubmittingId)}
                         on:mousedown={(event) => event.stopPropagation()}
                         on:click={(event) => sendQuickReply(event, activity, quickReply)}
                       >{quickReply.label}</button>
@@ -1305,21 +1342,21 @@
                   <button
                     class="reply-submit"
                     type="submit"
-                    disabled={replySubmitting || !replyText.trim()}
+                    disabled={replySubmitting || Boolean(controlSubmittingId) || !replyText.trim()}
                     on:mousedown={(event) => event.stopPropagation()}
                     on:click={(event) => event.stopPropagation()}
                   >{replySubmitting ? "发送中" : "发送"}</button>
                   <button
                     class="reply-cancel"
                     type="button"
-                    disabled={replySubmitting}
+                    disabled={replySubmitting || Boolean(controlSubmittingId)}
                     on:mousedown={(event) => event.stopPropagation()}
                     on:click={cancelReply}
                   >取消</button>
                 </div>
               </form>
             {/if}
-            <div class="status-footer" class:with-actions={capabilities.canApprove || (capabilities.canReply && replyingToId !== activity.id)}>
+            <div class="status-footer" class:with-actions={capabilities.canApprove || capabilities.canInterrupt || (capabilities.canReply && replyingToId !== activity.id)}>
               <span class="status-meta" title={cardMeta(activity)}>
                 <span class="status-agent">{cardAgentLabel(activity)}</span>
                 <span class="status-separator"> · </span>
@@ -1329,22 +1366,25 @@
                   <span class="status-ended-at">{endedAt}</span>
                 {/if}
               </span>
-              {#if capabilities.canApprove || (capabilities.canReply && replyingToId !== activity.id)}
-                <div class="status-actions" class:approval-mode={capabilities.canApprove} aria-label="任务操作">
+              {#if capabilities.canApprove || capabilities.canInterrupt || (capabilities.canReply && replyingToId !== activity.id)}
+                <div class="status-actions" class:approval-mode={capabilities.canApprove} class:interrupt-mode={capabilities.canInterrupt} aria-label="任务操作">
                   {#if capabilities.canApprove}
                     {#if activityCanResolveApproval(activity, "approve")}
-                      <button class="approval-button allow" type="button" aria-label="同意" on:click={(event) => approve(event, activity, "allow")}>
+                      <button class="approval-button allow" type="button" aria-label="同意" disabled={Boolean(controlSubmittingId) || replySubmitting} on:click={(event) => approve(event, activity, "allow")}>
                         <span>同意</span>
                       </button>
                     {/if}
                     {#if activityCanResolveApproval(activity, "deny")}
-                      <button class="approval-button deny" type="button" aria-label="拒绝" on:click={(event) => approve(event, activity, "deny")}>
+                      <button class="approval-button deny" type="button" aria-label="拒绝" disabled={Boolean(controlSubmittingId) || replySubmitting} on:click={(event) => approve(event, activity, "deny")}>
                         <span>拒绝</span>
                       </button>
                     {/if}
                   {/if}
+                  {#if capabilities.canInterrupt}
+                    <button class="interrupt-button" type="button" aria-label="停止任务" disabled={Boolean(controlSubmittingId) || replySubmitting} on:click={(event) => interrupt(event, activity)}>停止</button>
+                  {/if}
                   {#if capabilities.canReply && replyingToId !== activity.id}
-                    <button class="reply-button" type="button" on:click={(event) => toggleReply(event, activity)}>回复</button>
+                    <button class="reply-button" type="button" disabled={Boolean(controlSubmittingId)} on:click={(event) => toggleReply(event, activity)}>回复</button>
                   {/if}
                 </div>
               {/if}

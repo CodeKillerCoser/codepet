@@ -95,7 +95,7 @@ export function createRuntimeGatewayClientMessageId(): string {
 
 export function runtimeGatewayErrorMessage(error: unknown): string {
   if (error instanceof RuntimeGatewayRequestError) {
-    return error.protocolError.message;
+    return `[${error.protocolError.code}] ${error.protocolError.message}`;
   }
   if (error instanceof Error) {
     return error.message;

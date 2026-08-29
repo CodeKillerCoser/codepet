@@ -1,13 +1,16 @@
 use super::state::ThreadSnapshot;
 use crate::runtime_gateway::generated::{
-    Conversation, ConversationStatus, JsonObject, PermissionLevel, Provider,
-    ProviderCapabilities, ProviderExtension, ProviderStatus, TurnTask, TurnTaskStatus,
+    Approval, ApprovalDecision, ApprovalStatus, Conversation, ConversationStatus, JsonObject,
+    PermissionLevel, Provider, ProviderCapabilities, ProviderExtension, ProviderStatus, TurnTask,
+    QuickReply, TurnTaskStatus,
 };
 use chrono::DateTime;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const CODEX_PROVIDER_ID: &str = "codex";
+pub(crate) const CONTINUE_QUICK_REPLY_ID: &str = "continue";
 const EXTENSION_NAMESPACE: &str = "codepet.codex-desktop";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -15,13 +18,28 @@ pub struct MappedThread {
     pub revision: u64,
     pub conversation: Conversation,
     pub latest_turn: Option<TurnTask>,
+    pub(crate) approvals: Vec<MappedApproval>,
+    pub(crate) native_pending_approval_ids: HashSet<String>,
     pub diagnostics: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct MappedApproval {
+    pub(crate) approval: Approval,
+    pub(crate) raw_request_id: Value,
+    pub(crate) native_method: String,
+    pub(crate) owner_client_id: String,
+    pub(crate) revision: u64,
+    pub(crate) thread_id: String,
+    pub(crate) turn_id: String,
+    pub(crate) item_id: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum WaitingKind {
     Approval,
     UserInput,
+    Unsupported,
 }
 
 pub fn provider(status: ProviderStatus, unavailable_reason: Option<&str>) -> Provider {
@@ -44,13 +62,20 @@ pub fn provider(status: ProviderStatus, unavailable_reason: Option<&str>) -> Pro
             methods: vec![
                 "conversation.list".to_string(),
                 "conversation.get".to_string(),
+                "turn.send".to_string(),
+                "turn.interrupt".to_string(),
+                "approval.resolve".to_string(),
             ],
             permission_levels: Vec::new(),
             models: Vec::new(),
             reasoning_efforts: Vec::new(),
-            quick_replies: Vec::new(),
-            can_steer: false,
-            can_interrupt: false,
+            quick_replies: vec![QuickReply {
+                id: CONTINUE_QUICK_REPLY_ID.to_string(),
+                label: "继续".to_string(),
+                text: "请继续。".to_string(),
+            }],
+            can_steer: true,
+            can_interrupt: true,
             extension: None,
         },
         extension: Some(ProviderExtension {
@@ -63,6 +88,8 @@ pub fn provider(status: ProviderStatus, unavailable_reason: Option<&str>) -> Pro
 pub fn map_thread(snapshot: &ThreadSnapshot) -> MappedThread {
     let state = &snapshot.state;
     let mut diagnostics = Vec::new();
+    let (approvals, native_pending_approval_ids) =
+        map_pending_approvals(snapshot, &mut diagnostics);
     let created_at = timestamp_ms(state.get("createdAt"))
         .or_else(|| timestamp_ms(state.get("updatedAt")))
         .unwrap_or_else(now_ms);
@@ -174,8 +201,187 @@ pub fn map_thread(snapshot: &ThreadSnapshot) -> MappedThread {
             extension: None,
         },
         latest_turn,
+        approvals,
+        native_pending_approval_ids,
         diagnostics,
     }
+}
+
+pub(crate) fn map_pending_approvals(
+    snapshot: &ThreadSnapshot,
+    diagnostics: &mut Vec<String>,
+) -> (Vec<MappedApproval>, HashSet<String>) {
+    let Some(requests) = snapshot.state.get("requests").and_then(Value::as_array) else {
+        return (Vec::new(), HashSet::new());
+    };
+    let mut approvals = Vec::new();
+    let mut native_pending_approval_ids = HashSet::new();
+    for request in requests {
+        let Some(method) = request.get("method").and_then(Value::as_str) else {
+            continue;
+        };
+        let (kind, title, id_kind) = match method {
+            "item/commandExecution/requestApproval" => (
+                "command-execution",
+                "Allow command execution?",
+                "command",
+            ),
+            "item/fileChange/requestApproval" => {
+                ("file-change", "Allow file changes?", "file")
+            }
+            _ => continue,
+        };
+        let Some(raw_request_id) = request.get("id").filter(|id| valid_request_id(id)) else {
+            invalid_approval_diagnostic(diagnostics, method, "missing string or number request id");
+            continue;
+        };
+        if requests
+            .iter()
+            .filter(|candidate| candidate.get("id") == Some(raw_request_id))
+            .count()
+            != 1
+        {
+            invalid_approval_diagnostic(diagnostics, method, "request id is not unique");
+            continue;
+        }
+        let Some(params) = request.get("params").and_then(Value::as_object) else {
+            invalid_approval_diagnostic(diagnostics, method, "missing params object");
+            continue;
+        };
+        let Some(thread_id) = native_id(params.get("threadId")) else {
+            invalid_approval_diagnostic(diagnostics, method, "missing threadId");
+            continue;
+        };
+        let Some(turn_id) = native_id(params.get("turnId")) else {
+            invalid_approval_diagnostic(diagnostics, method, "missing turnId");
+            continue;
+        };
+        let Some(item_id) = native_id(params.get("itemId")) else {
+            invalid_approval_diagnostic(diagnostics, method, "missing itemId");
+            continue;
+        };
+        let approval_id = approval_public_id(
+            snapshot,
+            id_kind,
+            raw_request_id,
+            thread_id,
+            turn_id,
+            item_id,
+        );
+        native_pending_approval_ids.insert(approval_id.clone());
+        if thread_id != snapshot.conversation_id {
+            invalid_approval_diagnostic(diagnostics, method, "threadId does not match snapshot");
+            continue;
+        }
+        if active_turn_id(&snapshot.state) != Some(turn_id) {
+            invalid_approval_diagnostic(
+                diagnostics,
+                method,
+                "turnId is not the current inProgress turn",
+            );
+            continue;
+        }
+        let requested_at = approval_requested_at(&snapshot.state, turn_id);
+        approvals.push(MappedApproval {
+            approval: Approval {
+                id: approval_id,
+                provider_id: CODEX_PROVIDER_ID.to_string(),
+                conversation_id: snapshot.conversation_id.clone(),
+                turn_id: turn_id.to_string(),
+                kind: kind.to_string(),
+                title: title.to_string(),
+                description: nonempty_string(params.get("reason")),
+                status: ApprovalStatus::Pending,
+                decisions: vec![ApprovalDecision::Approve, ApprovalDecision::Deny],
+                requested_at,
+                resolved_at: None,
+                decision: None,
+                extension: None,
+            },
+            raw_request_id: raw_request_id.clone(),
+            native_method: method.to_string(),
+            owner_client_id: snapshot.owner_client_id.clone(),
+            revision: snapshot.revision,
+            thread_id: thread_id.to_string(),
+            turn_id: turn_id.to_string(),
+            item_id: item_id.to_string(),
+        });
+    }
+    (approvals, native_pending_approval_ids)
+}
+
+fn approval_public_id(
+    snapshot: &ThreadSnapshot,
+    id_kind: &str,
+    raw_request_id: &Value,
+    thread_id: &str,
+    turn_id: &str,
+    item_id: &str,
+) -> String {
+    format!(
+        "desktop-approval:{}:{id_kind}:{}:{}:{}:{}:{}",
+        encode_request_id(&Value::String(snapshot.conversation_id.clone())),
+        encode_request_id(&Value::String(snapshot.owner_client_id.clone())),
+        encode_request_id(raw_request_id),
+        encode_request_id(&Value::String(thread_id.to_string())),
+        encode_request_id(&Value::String(turn_id.to_string())),
+        encode_request_id(&Value::String(item_id.to_string()))
+    )
+}
+
+fn valid_request_id(value: &Value) -> bool {
+    value.is_string() || value.is_number()
+}
+
+fn native_id(value: Option<&Value>) -> Option<&str> {
+    value
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn invalid_approval_diagnostic(diagnostics: &mut Vec<String>, method: &str, reason: &str) {
+    diagnostics.push(format!(
+        "invalid_pending_request: Desktop {method} approval is not actionable: {reason}"
+    ));
+}
+
+fn approval_requested_at(state: &Value, turn_id: &str) -> u64 {
+    ordered_turns(state)
+        .into_iter()
+        .find(|turn| turn.get("turnId").and_then(Value::as_str) == Some(turn_id))
+        .and_then(|turn| timestamp_ms(turn.get("turnStartedAtMs")))
+        .or_else(|| timestamp_ms(state.get("createdAt")))
+        .or_else(|| timestamp_ms(state.get("updatedAt")))
+        .unwrap_or_else(now_ms)
+}
+
+fn active_turn_id(state: &Value) -> Option<&str> {
+    if state
+        .get("threadRuntimeStatus")
+        .and_then(|status| status.get("type"))
+        .and_then(Value::as_str)
+        != Some("active")
+    {
+        return None;
+    }
+    ordered_turns(state)
+        .into_iter()
+        .rev()
+        .find(|turn| turn.get("status").and_then(Value::as_str) == Some("inProgress"))
+        .and_then(|turn| turn.get("turnId"))
+        .and_then(Value::as_str)
+        .filter(|turn_id| !turn_id.trim().is_empty())
+}
+
+fn encode_request_id(value: &Value) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let serialized = value.to_string();
+    let mut encoded = String::with_capacity(serialized.len().saturating_mul(2));
+    for byte in serialized.bytes() {
+        encoded.push(HEX[usize::from(byte >> 4)] as char);
+        encoded.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    encoded
 }
 
 fn conversation_status(
@@ -333,21 +539,26 @@ fn waiting_kind(state: &Value, diagnostics: &mut Vec<String>) -> Option<WaitingK
         .flatten()
     {
         let method = request.get("method").and_then(Value::as_str);
-        let is_approval = matches!(
+        if matches!(
             method,
             Some(
                 "item/commandExecution/requestApproval"
                     | "item/fileChange/requestApproval"
-                    | "item/permissions/requestApproval"
             )
-        ) || (method == Some("mcpServer/elicitation/request")
-            && request
-                .get("params")
-                .and_then(|params| params.get("completed"))
-                .and_then(Value::as_bool)
-                != Some(true));
-        if is_approval {
+        ) {
             waiting = Some(WaitingKind::Approval);
+            continue;
+        }
+        if method == Some("item/permissions/requestApproval") {
+            waiting = Some(WaitingKind::Approval);
+            capability_unsupported_diagnostic(diagnostics, method.unwrap_or_default());
+            continue;
+        }
+        if method == Some("mcpServer/elicitation/request") {
+            if !request_is_completed(request) {
+                waiting = Some(WaitingKind::Approval);
+                capability_unsupported_diagnostic(diagnostics, method.unwrap_or_default());
+            }
             continue;
         }
         let is_user_input = matches!(
@@ -362,6 +573,7 @@ fn waiting_kind(state: &Value, diagnostics: &mut Vec<String>) -> Option<WaitingK
             if waiting != Some(WaitingKind::Approval) {
                 waiting = Some(WaitingKind::UserInput);
             }
+            capability_unsupported_diagnostic(diagnostics, method.unwrap_or_default());
             continue;
         }
         if method == Some("item/tool/call") {
@@ -382,21 +594,26 @@ fn waiting_kind(state: &Value, diagnostics: &mut Vec<String>) -> Option<WaitingK
                     waiting = Some(WaitingKind::UserInput);
                 }
             } else {
+                if waiting.is_none() {
+                    waiting = Some(WaitingKind::Unsupported);
+                }
                 unknown_requests = unknown_requests.saturating_add(1);
             }
+            capability_unsupported_diagnostic(diagnostics, method.unwrap_or_default());
             continue;
         }
-        if method == Some("item/plan/requestImplementation")
-            || (method == Some("mcpServer/elicitation/request")
-                && request
-                    .get("params")
-                    .and_then(|params| params.get("completed"))
-                    .and_then(Value::as_bool)
-                    == Some(true))
-        {
+        if method == Some("item/plan/requestImplementation") {
+            if waiting.is_none() {
+                waiting = Some(WaitingKind::Unsupported);
+            }
+            capability_unsupported_diagnostic(diagnostics, method.unwrap_or_default());
             continue;
+        }
+        if waiting.is_none() {
+            waiting = Some(WaitingKind::Unsupported);
         }
         unknown_requests = unknown_requests.saturating_add(1);
+        capability_unsupported_diagnostic(diagnostics, method.unwrap_or("unknown"));
     }
     if unknown_requests > 0 {
         diagnostics.push(format!(
@@ -404,6 +621,21 @@ fn waiting_kind(state: &Value, diagnostics: &mut Vec<String>) -> Option<WaitingK
         ));
     }
     waiting
+}
+
+fn request_is_completed(request: &Value) -> bool {
+    request.get("completed").and_then(Value::as_bool) == Some(true)
+        || request
+            .get("params")
+            .and_then(|params| params.get("completed"))
+            .and_then(Value::as_bool)
+            == Some(true)
+}
+
+fn capability_unsupported_diagnostic(diagnostics: &mut Vec<String>, method: &str) {
+    diagnostics.push(format!(
+        "capability_unsupported: pending Desktop request {method} cannot be resolved through Standard Protocol v0"
+    ));
 }
 
 fn permission_level(
@@ -471,6 +703,7 @@ fn waiting_summary(waiting: Option<WaitingKind>) -> Option<String> {
     waiting.map(|kind| match kind {
         WaitingKind::Approval => "等待审批".to_string(),
         WaitingKind::UserInput => "等待输入".to_string(),
+        WaitingKind::Unsupported => "等待 Desktop 操作".to_string(),
     })
 }
 
@@ -685,14 +918,155 @@ mod tests {
     }
 
     #[test]
-    fn provider_only_advertises_read_methods() {
+    fn maps_command_and_file_approvals_with_native_routing_metadata() {
+        let mut source = snapshot(json!({ "type": "active" }), "inProgress");
+        source.state["requests"] = json!([
+            {
+                "id": 17,
+                "method": "item/commandExecution/requestApproval",
+                "params": {
+                    "threadId": "thread-one",
+                    "turnId": "turn-one",
+                    "itemId": "command-one",
+                    "reason": "Run a harmless check"
+                }
+            },
+            {
+                "id": "file-request",
+                "method": "item/fileChange/requestApproval",
+                "params": {
+                    "threadId": "thread-one",
+                    "turnId": "turn-one",
+                    "itemId": "file-one"
+                }
+            }
+        ]);
+
+        let mapped = map_thread(&source);
+
+        assert_eq!(mapped.conversation.status, ConversationStatus::WaitingApproval);
+        assert_eq!(mapped.approvals.len(), 2);
+        let command = &mapped.approvals[0];
+        assert_eq!(command.raw_request_id, json!(17));
+        assert_eq!(command.native_method, "item/commandExecution/requestApproval");
+        assert_eq!(command.owner_client_id, "owner-one");
+        assert_eq!(command.revision, 3);
+        assert_eq!(command.thread_id, "thread-one");
+        assert_eq!(command.turn_id, "turn-one");
+        assert_eq!(command.item_id, "command-one");
+        assert_eq!(command.approval.kind, "command-execution");
+        assert_eq!(command.approval.status, ApprovalStatus::Pending);
+        assert_eq!(
+            command.approval.decisions,
+            vec![ApprovalDecision::Approve, ApprovalDecision::Deny]
+        );
+        assert_eq!(command.approval.requested_at, 1_700_000_000_000_u64);
+        assert_eq!(
+            command.approval.description.as_deref(),
+            Some("Run a harmless check")
+        );
+        let file = &mapped.approvals[1];
+        assert_eq!(file.raw_request_id, json!("file-request"));
+        assert_eq!(file.native_method, "item/fileChange/requestApproval");
+        assert_eq!(file.approval.kind, "file-change");
+        assert_ne!(command.approval.id, file.approval.id);
+    }
+
+    #[test]
+    fn unsupported_pending_requests_remain_waiting_with_diagnostics() {
+        let mut source = snapshot(json!({ "type": "active" }), "inProgress");
+        source.state["requests"] = json!([
+            {
+                "id": "permissions-one",
+                "method": "item/permissions/requestApproval",
+                "params": { "threadId": "thread-one", "turnId": "turn-one" }
+            },
+            {
+                "id": "plan-one",
+                "method": "item/plan/requestImplementation",
+                "params": { "threadId": "thread-one", "turnId": "turn-one" }
+            }
+        ]);
+
+        let mapped = map_thread(&source);
+
+        assert!(mapped.approvals.is_empty());
+        assert_eq!(mapped.conversation.status, ConversationStatus::WaitingApproval);
+        assert_eq!(
+            mapped.latest_turn.as_ref().map(|turn| turn.status),
+            Some(TurnTaskStatus::WaitingApproval)
+        );
+        assert_eq!(
+            mapped
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.contains("capability_unsupported"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn mismatched_approval_thread_is_not_actionable() {
+        let mut source = snapshot(json!({ "type": "active" }), "inProgress");
+        source.state["requests"] = json!([{
+            "id": "command-one",
+            "method": "item/commandExecution/requestApproval",
+            "params": {
+                "threadId": "thread-other",
+                "turnId": "turn-one",
+                "itemId": "command-one"
+            }
+        }]);
+
+        let mapped = map_thread(&source);
+
+        assert!(mapped.approvals.is_empty());
+        assert!(mapped
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.contains("threadId does not match snapshot")));
+        assert_eq!(mapped.conversation.status, ConversationStatus::WaitingApproval);
+    }
+
+    #[test]
+    fn approval_for_non_active_turn_is_not_actionable() {
+        let mut source = snapshot(json!({ "type": "active" }), "completed");
+        source.state["requests"] = json!([{
+            "id": "command-one",
+            "method": "item/commandExecution/requestApproval",
+            "params": {
+                "threadId": "thread-one",
+                "turnId": "turn-one",
+                "itemId": "command-one"
+            }
+        }]);
+
+        let mapped = map_thread(&source);
+
+        assert!(mapped.approvals.is_empty());
+        assert!(mapped.diagnostics.iter().any(|diagnostic| {
+            diagnostic.contains("turnId is not the current inProgress turn")
+        }));
+        assert_eq!(mapped.conversation.status, ConversationStatus::WaitingApproval);
+    }
+
+    #[test]
+    fn provider_advertises_supported_write_methods() {
         let provider = provider(ProviderStatus::Ready, None);
         assert_eq!(
             provider.capabilities.methods,
-            vec!["conversation.list", "conversation.get"]
+            vec![
+                "conversation.list",
+                "conversation.get",
+                "turn.send",
+                "turn.interrupt",
+                "approval.resolve"
+            ]
         );
-        assert!(!provider.capabilities.can_steer);
-        assert!(!provider.capabilities.can_interrupt);
-        assert!(provider.capabilities.quick_replies.is_empty());
+        assert!(provider.capabilities.can_steer);
+        assert!(provider.capabilities.can_interrupt);
+        assert_eq!(provider.capabilities.quick_replies.len(), 1);
+        assert_eq!(provider.capabilities.quick_replies[0].id, CONTINUE_QUICK_REPLY_ID);
     }
 }

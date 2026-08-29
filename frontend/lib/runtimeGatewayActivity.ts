@@ -19,6 +19,7 @@ export class RuntimeGatewayActivityProjection {
   private readonly conversationsByKey = new Map<string, Conversation>();
   private readonly turnsByKey = new Map<string, TurnTask>();
   private readonly approvalsById = new Map<string, Approval>();
+  private readonly announcedApprovalIds = new Set<string>();
   private readonly outputByKey = new Map<string, string>();
 
   replaceProviders(providers: Provider[]): void {
@@ -80,12 +81,15 @@ export class RuntimeGatewayActivityProjection {
       }
       case "approval.requested": {
         const approval = event.payload.approval;
+        const shouldRing = !this.announcedApprovalIds.has(approval.id);
+        this.announcedApprovalIds.add(approval.id);
         this.approvalsById.set(approval.id, approval);
-        const activity = this.activityFromApproval(approval, eventId, true, event);
+        const activity = this.activityFromApproval(approval, eventId, shouldRing, event);
         return { activities: activity ? [activity] : [] };
       }
       case "approval.resolved": {
         const approval = event.payload.approval;
+        this.announcedApprovalIds.delete(approval.id);
         this.approvalsById.delete(approval.id);
         const activity = this.activityFromResolvedApproval(approval, eventId, event);
         return { activities: activity ? [activity] : [] };
@@ -93,17 +97,6 @@ export class RuntimeGatewayActivityProjection {
       default:
         throw new Error(`Unsupported Runtime Gateway event: ${(event as { event: string }).event}`);
     }
-  }
-
-  projectTurnResponse(turn: TurnTask): PetEvent[] {
-    this.rememberTurn(turn);
-    const activity = this.activityFromTurn(
-      turn,
-      `gateway-response:turn.send:${turn.providerId}:${turn.conversationId}:${turn.id}:${turn.updatedAt}`,
-      false,
-      turn,
-    );
-    return activity ? [activity] : [];
   }
 
   providers(): Provider[] {
@@ -266,29 +259,14 @@ export class RuntimeGatewayActivityProjection {
   }
 
   private activityFromResolvedApproval(approval: Approval, eventId: string, raw: unknown): PetEvent | null {
-    const provider = this.readyProvider(approval.providerId);
-    if (!provider) {
-      return null;
-    }
     const conversation = this.conversationsByKey.get(conversationKey(approval.providerId, approval.conversationId));
     const turn = this.turnsByKey.get(turnKey(approval.providerId, approval.conversationId, approval.turnId));
-    if (turn && isTerminalTurnStatus(turn.status)) {
+    if (turn) {
       return this.activityFromTurn(turn, eventId, false, raw);
     }
-    return this.petEvent({
-      id: eventId,
-      provider,
-      conversation,
-      conversationId: approval.conversationId,
-      turn,
-      approval,
-      kind: "task-updated",
-      status: "running",
-      message: resolvedApprovalMessage(approval),
-      shouldRing: false,
-      createdAt: approval.resolvedAt ?? approval.requestedAt,
-      raw,
-    });
+    return conversation
+      ? this.activityFromConversation(conversation, eventId, false, raw)
+      : null;
   }
 
   private petEvent(input: {
@@ -463,21 +441,6 @@ function turnActivityStatus(status: TurnTaskStatus): { kind: PetEventKind; statu
 
 function isTerminalTurnStatus(status: TurnTaskStatus): boolean {
   return status === "completed" || status === "failed" || status === "interrupted";
-}
-
-function resolvedApprovalMessage(approval: Approval): string {
-  switch (approval.status) {
-    case "approved":
-      return "已允许，等待任务继续";
-    case "denied":
-      return "已拒绝，等待任务更新";
-    case "expired":
-      return "授权请求已失效";
-    case "pending":
-      return approval.description || approval.title;
-    default:
-      throw new Error("Unsupported approval status");
-  }
 }
 
 function timestampToIso(timestamp?: number): string {
