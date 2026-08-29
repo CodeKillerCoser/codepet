@@ -33,13 +33,13 @@ Rust packages are located at:
 - `sdk/rust/codepet-provider-sdk`
 - `sdk/rust/codepet-gateway-sdk`
 
-Service SDKs contain serde DTOs, method/event enums, async server traits, dispatchers, typed client/transport shells, wire envelopes, and codecs. Provider/Gateway capability enums and `ProtocolMethod::capability()` are generated from checked manifest/schema metadata. Provider descriptors expose protocol validation for non-empty supported instance kinds, and `instance.create` plus returned instances carry the selected `instanceKind`. Generated packages contain no Provider manager, process supervisor, registry, business handler, authentication, or UI behavior.
+Service SDKs contain serde DTOs, method/event enums, async server traits, dispatchers, typed client/transport shells, wire envelopes, and codecs. Provider/Gateway capability enums and `ProtocolMethod::capability()` are generated from checked manifest/schema metadata. Provider descriptors expose protocol validation for non-empty supported instance kinds, and `instance.create` plus returned instances carry the selected `instanceKind`. The generated packages remain transport contracts rather than business runtimes. The consuming implementation is now `crates/codepet-host`: it owns device/instance persistence, Provider process supervision, Plugin Manager behavior, and an internal Gateway v1 service without copying protocol DTOs back into the host.
 
 ## Runtime Gateway compatibility
 
 The existing in-process Runtime Gateway and Desktop Companion still use the unchanged v0 wire profile while v1 is introduced. That profile now lives at `gateway/v1/compat-v0.*` and is generated into `codepet-gateway-sdk::compat_v0` plus the TypeScript compatibility SDK. The Tauri and frontend files named `generated` are thin re-export shims only.
 
-This compatibility path preserves current dual-channel behavior: remote App Server events remain on the remote gateway bus, Desktop IPC remains on the companion bus, and neither channel is migrated into the public Provider plugin protocol in this phase.
+This compatibility path preserves current dual-channel behavior: remote App Server events remain on the remote gateway bus, Desktop IPC remains on the companion bus, and neither channel is migrated into the public Provider plugin protocol in this phase. Provider Host events have a third, v1-only service boundary and never fall back into either compatibility channel.
 
 ## Commands
 
@@ -54,6 +54,6 @@ node tools/protocol-codegen/generate.mjs --target=rust --check
 
 ## Current limits
 
-- No Plugin Manager, Provider binary migration, signature, marketplace, or sandbox exists yet.
+- A reusable Plugin Manager and process supervisor exists in `crates/codepet-host`; no production Provider binary migration, signature, marketplace, sandbox, or automatic restart policy exists yet.
 - No LAN listener, pairing, remote authentication, remote UI, or persistent event-cursor store exists yet.
 - The v0 compatibility profile remains in use by the desktop process until a later phase wires gateway v1 sessions and a separate pet-protocol adapter.

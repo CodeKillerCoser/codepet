@@ -715,6 +715,9 @@
         ...(nextSettings.agentRuntimes?.byProvider ?? {}),
       },
     };
+    nextSettings.providerPlugins = {
+      directories: [...(nextSettings.providerPlugins?.directories ?? [])],
+    };
     nextSettings.updates = {
       ignoredVersion: nextSettings.updates?.ignoredVersion ?? null,
     };

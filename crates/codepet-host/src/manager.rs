@@ -1,0 +1,1347 @@
+use crate::catalog::{CatalogDiagnostic, PluginCatalog, PluginDescriptor};
+use crate::{
+    DeviceRegistry, HostError, HostResult, PluginProcess, PluginProcessExit,
+    PluginProcessOptions, ProviderInstanceRecord, ProviderInstanceRegistry, StderrDiagnostic,
+};
+use codepet_provider_sdk::{
+    ApprovalResolveRequest, ApprovalResolveResponse, ClientId, ConversationCreateRequest,
+    ConversationCreateResponse, ConversationGetRequest, ConversationGetResponse,
+    ConversationListRequest, ConversationListResponse, InstanceCapabilitiesRequest,
+    InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceDestroyRequest,
+    InstanceStartRequest, InstanceStatus, InstanceStopRequest, ProtocolEvent, ProtocolMethod,
+    JsonObject, ProviderCapability, ProviderDescribeRequest, ProviderInitializeRequest, ProviderInstance,
+    ProviderInstanceRoute, ProviderPluginDescriptor, ProviderShutdownRequest, RoutedResourceId,
+    TurnInterruptRequest, TurnInterruptResponse, TurnStartRequest, TurnStartResponse,
+    TurnSteerRequest, TurnSteerResponse, VersionRange, PROTOCOL_VERSION,
+};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use tokio::sync::{broadcast, RwLock};
+use uuid::Uuid;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PluginRuntimeState {
+    Discovered,
+    Starting,
+    Ready,
+    Degraded,
+    Stopped,
+    Crashed,
+    Disabled,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProviderInstanceRuntimeSnapshot {
+    pub record: ProviderInstanceRecord,
+    pub instance: Option<ProviderInstance>,
+    pub diagnostic: Option<HostError>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PluginRuntimeSnapshot {
+    pub plugin_id: String,
+    pub catalog: PluginDescriptor,
+    pub reported: Option<ProviderPluginDescriptor>,
+    pub state: PluginRuntimeState,
+    pub diagnostic: Option<HostError>,
+    pub generation: u64,
+    pub process_exit: Option<PluginProcessExit>,
+    pub stderr_diagnostics: Vec<StderrDiagnostic>,
+    pub instances: Vec<ProviderInstanceRuntimeSnapshot>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ManagerEvent {
+    PluginStateChanged {
+        snapshot: PluginRuntimeSnapshot,
+        previous_state: PluginRuntimeState,
+    },
+    ProviderEvent {
+        plugin_id: String,
+        event: ProtocolEvent,
+    },
+    Diagnostic {
+        plugin_id: String,
+        error: HostError,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct PluginManagerConfig {
+    pub host_client_id: ClientId,
+    pub host_version: String,
+    pub supported_versions: VersionRange,
+    pub process: PluginProcessOptions,
+    pub event_capacity: usize,
+}
+
+impl Default for PluginManagerConfig {
+    fn default() -> Self {
+        Self {
+            host_client_id: format!("client-host-{}", Uuid::new_v4()),
+            host_version: env!("CARGO_PKG_VERSION").to_string(),
+            supported_versions: VersionRange {
+                min_version: PROTOCOL_VERSION,
+                max_version: PROTOCOL_VERSION,
+            },
+            process: PluginProcessOptions::default(),
+            event_capacity: 256,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ManagedInstance {
+    record: ProviderInstanceRecord,
+    instance: Option<ProviderInstance>,
+    diagnostic: Option<HostError>,
+}
+
+struct PluginEntry {
+    catalog: PluginDescriptor,
+    reported: Option<ProviderPluginDescriptor>,
+    state: PluginRuntimeState,
+    diagnostic: Option<HostError>,
+    generation: u64,
+    process: Option<Arc<PluginProcess>>,
+    process_exit: Option<PluginProcessExit>,
+    stderr_diagnostics: Vec<StderrDiagnostic>,
+    instances: BTreeMap<String, ManagedInstance>,
+}
+
+impl PluginEntry {
+    fn snapshot(&self) -> PluginRuntimeSnapshot {
+        PluginRuntimeSnapshot {
+            plugin_id: self.catalog.plugin_id.clone(),
+            catalog: self.catalog.clone(),
+            reported: self.reported.clone(),
+            state: self.state,
+            diagnostic: self.diagnostic.clone(),
+            generation: self.generation,
+            process_exit: self.process_exit.clone(),
+            stderr_diagnostics: self.stderr_diagnostics.clone(),
+            instances: self
+                .instances
+                .values()
+                .map(|instance| ProviderInstanceRuntimeSnapshot {
+                    record: instance.record.clone(),
+                    instance: instance.instance.clone(),
+                    diagnostic: instance.diagnostic.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+struct PluginManagerInner {
+    device: DeviceRegistry,
+    instances: ProviderInstanceRegistry,
+    plugins: RwLock<BTreeMap<String, PluginEntry>>,
+    events: broadcast::Sender<ManagerEvent>,
+    config: PluginManagerConfig,
+    catalog_diagnostics: Vec<CatalogDiagnostic>,
+}
+
+#[derive(Clone)]
+pub struct PluginManager {
+    inner: Arc<PluginManagerInner>,
+}
+
+impl PluginManager {
+    pub fn new(
+        device: DeviceRegistry,
+        catalog: PluginCatalog,
+        instances: ProviderInstanceRegistry,
+        config: PluginManagerConfig,
+    ) -> HostResult<Self> {
+        if device.identity().device_id != instances.device_id() {
+            return Err(HostError::new(
+                "provider_host_device_mismatch",
+                "device identity and Provider instance registry do not match",
+            )
+            .with_detail("identityDeviceId", device.identity().device_id.clone())
+            .with_detail("registryDeviceId", instances.device_id().to_string()));
+        }
+        instances.synchronize_catalog(&catalog)?;
+        let synchronized = instances.list()?;
+        let mut instances_by_plugin = BTreeMap::<String, Vec<ProviderInstanceRecord>>::new();
+        for record in synchronized {
+            instances_by_plugin
+                .entry(record.plugin_id.clone())
+                .or_default()
+                .push(record);
+        }
+        let mut plugins = BTreeMap::new();
+        for descriptor in catalog.descriptors() {
+            let managed_instances = instances_by_plugin
+                .remove(&descriptor.plugin_id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|record| {
+                    (
+                        record.instance_id.clone(),
+                        ManagedInstance {
+                            record,
+                            instance: None,
+                            diagnostic: None,
+                        },
+                    )
+                })
+                .collect();
+            plugins.insert(
+                descriptor.plugin_id.clone(),
+                PluginEntry {
+                    catalog: descriptor.clone(),
+                    reported: None,
+                    state: if descriptor.enabled {
+                        PluginRuntimeState::Discovered
+                    } else {
+                        PluginRuntimeState::Disabled
+                    },
+                    diagnostic: None,
+                    generation: 0,
+                    process: None,
+                    process_exit: None,
+                    stderr_diagnostics: Vec::new(),
+                    instances: managed_instances,
+                },
+            );
+        }
+        let (event_sender, _) = broadcast::channel(config.event_capacity.max(1));
+        Ok(Self {
+            inner: Arc::new(PluginManagerInner {
+                device,
+                instances,
+                plugins: RwLock::new(plugins),
+                events: event_sender,
+                config,
+                catalog_diagnostics: catalog.diagnostics().to_vec(),
+            }),
+        })
+    }
+
+    pub fn device(&self) -> &DeviceRegistry {
+        &self.inner.device
+    }
+
+    pub fn instance_registry(&self) -> &ProviderInstanceRegistry {
+        &self.inner.instances
+    }
+
+    pub fn client_id(&self) -> &str {
+        &self.inner.config.host_client_id
+    }
+
+    pub fn catalog_diagnostics(&self) -> &[CatalogDiagnostic] {
+        &self.inner.catalog_diagnostics
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<ManagerEvent> {
+        self.inner.events.subscribe()
+    }
+
+    pub async fn snapshots(&self) -> Vec<PluginRuntimeSnapshot> {
+        self.inner
+            .plugins
+            .read()
+            .await
+            .values()
+            .map(PluginEntry::snapshot)
+            .collect()
+    }
+
+    pub async fn snapshot(&self, plugin_id: &str) -> HostResult<PluginRuntimeSnapshot> {
+        self.inner
+            .plugins
+            .read()
+            .await
+            .get(plugin_id)
+            .map(PluginEntry::snapshot)
+            .ok_or_else(|| unknown_plugin(plugin_id))
+    }
+
+    pub async fn start_enabled(&self) -> Vec<(String, HostResult<()>)> {
+        let plugin_ids = self
+            .inner
+            .plugins
+            .read()
+            .await
+            .values()
+            .filter(|entry| entry.catalog.enabled)
+            .map(|entry| entry.catalog.plugin_id.clone())
+            .collect::<Vec<_>>();
+        let mut tasks = Vec::new();
+        for plugin_id in plugin_ids {
+            let manager = self.clone();
+            let task_plugin_id = plugin_id.clone();
+            let task = tokio::spawn(async move {
+                manager.start_plugin(&task_plugin_id).await?;
+                let records = manager.inner.instances.list_for_plugin(&task_plugin_id)?;
+                for record in records.into_iter().filter(|record| record.enabled) {
+                    if let Err(error) = manager.create_instance_record(&record).await {
+                        manager
+                            .set_instance_error(
+                                &task_plugin_id,
+                                &record.instance_id,
+                                error.clone(),
+                            )
+                            .await;
+                        continue;
+                    }
+                    if let Err(error) = manager.start_instance(&record.route()).await {
+                        manager
+                            .set_instance_error(&task_plugin_id, &record.instance_id, error)
+                            .await;
+                    }
+                }
+                Ok(())
+            });
+            tasks.push((plugin_id, task));
+        }
+        let mut outcomes = Vec::new();
+        for (plugin_id, task) in tasks {
+            let outcome = task.await.unwrap_or_else(|error| {
+                Err(HostError::new(
+                    "provider_start_task_failed",
+                    format!("Provider startup task failed: {error}"),
+                ))
+            });
+            outcomes.push((plugin_id, outcome));
+        }
+        outcomes
+    }
+
+    pub async fn register_plugin(
+        &self,
+        descriptor: PluginDescriptor,
+    ) -> HostResult<Option<PluginRuntimeSnapshot>> {
+        let plugin_id = descriptor.plugin_id.clone();
+        let catalog = PluginCatalog::discover(
+            crate::PluginCatalogConfig::default().with_descriptor(descriptor),
+        );
+        let validated = catalog
+            .descriptor(&plugin_id)
+            .cloned()
+            .ok_or_else(|| {
+                let diagnostic = catalog.diagnostics().first();
+                HostError::new(
+                    diagnostic
+                        .map(|diagnostic| diagnostic.code.as_str())
+                        .unwrap_or("invalid_plugin_descriptor"),
+                    diagnostic
+                        .map(|diagnostic| diagnostic.message.clone())
+                        .unwrap_or_else(|| "Provider plugin descriptor is invalid".to_string()),
+                )
+            })?;
+        self.inner.instances.synchronize_catalog(&catalog)?;
+        let synchronized = self.inner.instances.list_for_plugin(&plugin_id)?;
+        let mut instances = BTreeMap::new();
+        for record in synchronized {
+            instances.insert(
+                record.instance_id.clone(),
+                ManagedInstance {
+                    record,
+                    instance: None,
+                    diagnostic: None,
+                },
+            );
+        }
+        let mut plugins = self.inner.plugins.write().await;
+        if plugins
+            .get(&plugin_id)
+            .is_some_and(|entry| entry.process.is_some())
+        {
+            return Err(HostError::new(
+                "provider_plugin_running",
+                format!("stop Provider plugin before replacing registration: {plugin_id}"),
+            ));
+        }
+        let previous = plugins.remove(&plugin_id).map(|entry| entry.snapshot());
+        plugins.insert(
+            plugin_id,
+            PluginEntry {
+                state: if validated.enabled {
+                    PluginRuntimeState::Discovered
+                } else {
+                    PluginRuntimeState::Disabled
+                },
+                catalog: validated,
+                reported: None,
+                diagnostic: None,
+                generation: 0,
+                process: None,
+                process_exit: None,
+                stderr_diagnostics: Vec::new(),
+                instances,
+            },
+        );
+        Ok(previous)
+    }
+
+    pub async fn set_plugin_enabled(&self, plugin_id: &str, enabled: bool) -> HostResult<()> {
+        if !enabled {
+            self.stop_plugin(plugin_id).await?;
+        }
+        let previous_state = {
+            let mut plugins = self.inner.plugins.write().await;
+            let entry = plugins.get_mut(plugin_id).ok_or_else(|| unknown_plugin(plugin_id))?;
+            let previous_state = entry.state;
+            entry.catalog.enabled = enabled;
+            entry.state = if enabled {
+                PluginRuntimeState::Discovered
+            } else {
+                PluginRuntimeState::Disabled
+            };
+            previous_state
+        };
+        self.publish_state(plugin_id, previous_state).await;
+        Ok(())
+    }
+
+    pub async fn start_plugin(&self, plugin_id: &str) -> HostResult<()> {
+        let (descriptor, generation, previous_state) = {
+            let mut plugins = self.inner.plugins.write().await;
+            let entry = plugins.get_mut(plugin_id).ok_or_else(|| unknown_plugin(plugin_id))?;
+            if !entry.catalog.enabled || entry.state == PluginRuntimeState::Disabled {
+                return Err(HostError::new(
+                    "provider_plugin_disabled",
+                    format!("Provider plugin is disabled: {plugin_id}"),
+                ));
+            }
+            if entry.state == PluginRuntimeState::Ready && entry.process.is_some() {
+                return Ok(());
+            }
+            let previous_state = entry.state;
+            entry.generation = entry.generation.saturating_add(1);
+            entry.state = PluginRuntimeState::Starting;
+            entry.diagnostic = None;
+            entry.process_exit = None;
+            entry.stderr_diagnostics.clear();
+            for instance in entry.instances.values_mut() {
+                instance.instance = None;
+                instance.diagnostic = None;
+            }
+            (entry.catalog.clone(), entry.generation, previous_state)
+        };
+        self.publish_state(plugin_id, previous_state).await;
+
+        let process = match PluginProcess::spawn(&descriptor, self.inner.config.process.clone()).await {
+            Ok(process) => Arc::new(process),
+            Err(error) => {
+                self.finish_start_failure(
+                    plugin_id,
+                    generation,
+                    error.clone(),
+                    Vec::new(),
+                    None,
+                )
+                .await;
+                return Err(error);
+            }
+        };
+        let initialization = process
+            .client()
+            .provider_initialize(ProviderInitializeRequest {
+                host_client_id: self.inner.config.host_client_id.clone(),
+                host_device_id: self.inner.device.identity().device_id.clone(),
+                host_version: self.inner.config.host_version.clone(),
+                supported_versions: self.inner.config.supported_versions.clone(),
+            })
+            .await
+            .map_err(HostError::from)
+            .and_then(|response| {
+                validate_negotiated_descriptor(
+                    &descriptor,
+                    &self.inner.config.supported_versions,
+                    response.selected_version,
+                    &response.plugin,
+                )?;
+                Ok(response.plugin)
+            });
+        let initialized_descriptor = match initialization {
+            Ok(descriptor) => descriptor,
+            Err(error) => {
+                let process_exit = process.kill("Provider initialize failed").await.ok();
+                self.finish_start_failure(
+                    plugin_id,
+                    generation,
+                    error.clone(),
+                    process.stderr_diagnostics(),
+                    process_exit,
+                )
+                .await;
+                return Err(error);
+            }
+        };
+        let described = process
+            .client()
+            .provider_describe(ProviderDescribeRequest {})
+            .await
+            .map_err(HostError::from)
+            .and_then(|response| {
+                validate_describe_descriptor(&initialized_descriptor, &response.plugin)?;
+                Ok(response.plugin)
+            });
+        let reported = match described {
+            Ok(reported) => reported,
+            Err(error) => {
+                let process_exit = process.kill("Provider describe failed").await.ok();
+                self.finish_start_failure(
+                    plugin_id,
+                    generation,
+                    error.clone(),
+                    process.stderr_diagnostics(),
+                    process_exit,
+                )
+                .await;
+                return Err(error);
+            }
+        };
+
+        let previous_state = {
+            let mut plugins = self.inner.plugins.write().await;
+            let entry = plugins.get_mut(plugin_id).ok_or_else(|| unknown_plugin(plugin_id))?;
+            if entry.generation != generation {
+                drop(plugins);
+                let _ = process.kill("Provider start generation was superseded").await;
+                return Ok(());
+            }
+            let previous_state = entry.state;
+            entry.reported = Some(reported);
+            entry.process = Some(process.clone());
+            entry.state = PluginRuntimeState::Ready;
+            entry.diagnostic = None;
+            previous_state
+        };
+        self.publish_state(plugin_id, previous_state).await;
+        self.spawn_process_tasks(plugin_id.to_string(), generation, process);
+        Ok(())
+    }
+
+    pub async fn stop_plugin(&self, plugin_id: &str) -> HostResult<()> {
+        let (process, previous_state) = {
+            let mut plugins = self.inner.plugins.write().await;
+            let entry = plugins.get_mut(plugin_id).ok_or_else(|| unknown_plugin(plugin_id))?;
+            let previous_state = entry.state;
+            entry.generation = entry.generation.saturating_add(1);
+            entry.state = if entry.catalog.enabled {
+                PluginRuntimeState::Stopped
+            } else {
+                PluginRuntimeState::Disabled
+            };
+            (entry.process.clone(), previous_state)
+        };
+        self.publish_state(plugin_id, previous_state).await;
+        if let Some(process) = process {
+            let outcome = process.shutdown().await;
+            let stderr_diagnostics = process.stderr_diagnostics();
+            match outcome {
+                Ok(exit) => {
+                    let mut plugins = self.inner.plugins.write().await;
+                    if let Some(entry) = plugins.get_mut(plugin_id) {
+                        entry.process = None;
+                        entry.process_exit = Some(exit);
+                        entry.stderr_diagnostics = stderr_diagnostics;
+                    }
+                }
+                Err(error) => {
+                    if let Some(entry) = self.inner.plugins.write().await.get_mut(plugin_id) {
+                        entry.stderr_diagnostics = stderr_diagnostics;
+                    }
+                    self.set_plugin_state(
+                        plugin_id,
+                        PluginRuntimeState::Crashed,
+                        Some(error.clone()),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn shutdown(&self) -> Vec<(String, HostResult<()>)> {
+        let plugin_ids = self
+            .inner
+            .plugins
+            .read()
+            .await
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut tasks = Vec::new();
+        for plugin_id in plugin_ids {
+            let manager = self.clone();
+            let task_plugin_id = plugin_id.clone();
+            let task = tokio::spawn(async move { manager.stop_plugin(&task_plugin_id).await });
+            tasks.push((plugin_id, task));
+        }
+        let mut outcomes = Vec::new();
+        for (plugin_id, task) in tasks {
+            let outcome = task.await.unwrap_or_else(|error| {
+                Err(HostError::new(
+                    "provider_shutdown_task_failed",
+                    format!("Provider shutdown task failed: {error}"),
+                ))
+            });
+            outcomes.push((plugin_id, outcome));
+        }
+        outcomes
+    }
+
+    pub async fn create_instance_record(
+        &self,
+        record: &ProviderInstanceRecord,
+    ) -> HostResult<ProviderInstance> {
+        let process = self.process_for_plugin(&record.plugin_id).await?;
+        let reported = self
+            .snapshot(&record.plugin_id)
+            .await?
+            .reported
+            .ok_or_else(|| {
+                HostError::new(
+                    "provider_not_initialized",
+                    format!("Provider plugin is not initialized: {}", record.plugin_id),
+                )
+            })?;
+        reported
+            .validate_instance_kind(&record.instance_kind)
+            .map_err(HostError::from)?;
+        let response = process
+            .client()
+            .instance_create(InstanceCreateRequest {
+                route: record.route(),
+                instance_kind: record.instance_kind.clone(),
+                display_name: record.display_name.clone(),
+                settings: record.settings.clone(),
+            })
+            .await
+            .map_err(HostError::from)?;
+        validate_instance_response(record, &response.instance)?;
+        self.set_runtime_instance(&record.plugin_id, response.instance.clone())
+            .await?;
+        Ok(response.instance)
+    }
+
+    pub async fn create_instance(
+        &self,
+        plugin_id: &str,
+        instance_kind: String,
+        display_name: String,
+        settings: JsonObject,
+        requested_instance_id: Option<String>,
+    ) -> HostResult<ProviderInstance> {
+        {
+            let plugins = self.inner.plugins.read().await;
+            if !plugins.contains_key(plugin_id) {
+                return Err(unknown_plugin(plugin_id));
+            }
+        }
+        let record = self.inner.instances.create(
+            plugin_id.to_string(),
+            instance_kind,
+            display_name,
+            settings,
+            requested_instance_id,
+            true,
+        )?;
+        {
+            let mut plugins = self.inner.plugins.write().await;
+            let entry = plugins.get_mut(plugin_id).ok_or_else(|| unknown_plugin(plugin_id))?;
+            entry.instances.insert(
+                record.instance_id.clone(),
+                ManagedInstance {
+                    record: record.clone(),
+                    instance: None,
+                    diagnostic: None,
+                },
+            );
+        }
+        match self.create_instance_record(&record).await {
+            Ok(instance) => Ok(instance),
+            Err(error) => {
+                self.set_instance_error(plugin_id, &record.instance_id, error.clone())
+                    .await;
+                Err(error)
+            }
+        }
+    }
+
+    pub async fn start_instance(&self, route: &ProviderInstanceRoute) -> HostResult<ProviderInstance> {
+        let (record, process, _) = self.routing_context(route).await?;
+        let response = process
+            .client()
+            .instance_start(InstanceStartRequest { route: route.clone() })
+            .await
+            .map_err(HostError::from)?;
+        validate_instance_response(&record, &response.instance)?;
+        self.set_runtime_instance(&record.plugin_id, response.instance.clone())
+            .await?;
+        Ok(response.instance)
+    }
+
+    pub async fn stop_instance(&self, route: &ProviderInstanceRoute) -> HostResult<ProviderInstance> {
+        let (record, process, _) = self.routing_context(route).await?;
+        let response = process
+            .client()
+            .instance_stop(InstanceStopRequest { route: route.clone() })
+            .await
+            .map_err(HostError::from)?;
+        validate_instance_response(&record, &response.instance)?;
+        self.set_runtime_instance(&record.plugin_id, response.instance.clone())
+            .await?;
+        Ok(response.instance)
+    }
+
+    pub async fn destroy_instance(&self, route: &ProviderInstanceRoute) -> HostResult<bool> {
+        let (record, process, _) = self.routing_context(route).await?;
+        let response = process
+            .client()
+            .instance_destroy(InstanceDestroyRequest { route: route.clone() })
+            .await
+            .map_err(HostError::from)?;
+        if response.destroyed {
+            self.inner.instances.remove(&record.instance_id)?;
+            let mut plugins = self.inner.plugins.write().await;
+            if let Some(entry) = plugins.get_mut(&record.plugin_id) {
+                entry.instances.remove(&record.instance_id);
+            }
+        }
+        Ok(response.destroyed)
+    }
+
+    pub async fn instance_capabilities(
+        &self,
+        route: &ProviderInstanceRoute,
+    ) -> HostResult<InstanceCapabilitiesResponse> {
+        let (record, process, _) = self.routing_context(route).await?;
+        let response = process
+            .client()
+            .instance_capabilities(InstanceCapabilitiesRequest { route: route.clone() })
+            .await
+            .map_err(HostError::from)?;
+        let mut plugins = self.inner.plugins.write().await;
+        if let Some(entry) = plugins.get_mut(&record.plugin_id) {
+            if let Some(runtime) = entry.instances.get_mut(&record.instance_id) {
+                if let Some(instance) = runtime.instance.as_mut() {
+                    instance.capabilities = response.capabilities.clone();
+                }
+            }
+        }
+        Ok(response)
+    }
+
+    pub async fn conversation_list(
+        &self,
+        request: ConversationListRequest,
+    ) -> HostResult<ConversationListResponse> {
+        let route = request.route.clone();
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::ConversationList)?;
+        let response = process
+            .client()
+            .conversation_list(request)
+            .await
+            .map_err(HostError::from)?;
+        for conversation in &response.conversations {
+            validate_conversation_routes(conversation, &route)?;
+        }
+        Ok(response)
+    }
+
+    pub async fn conversation_get(
+        &self,
+        request: ConversationGetRequest,
+    ) -> HostResult<ConversationGetResponse> {
+        let route = route_from_resource(&request.conversation);
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::ConversationGet)?;
+        let response = process
+            .client()
+            .conversation_get(request)
+            .await
+            .map_err(HostError::from)?;
+        validate_conversation_routes(&response.conversation, &route)?;
+        Ok(response)
+    }
+
+    pub async fn conversation_create(
+        &self,
+        request: ConversationCreateRequest,
+    ) -> HostResult<ConversationCreateResponse> {
+        let route = request.route.clone();
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::ConversationCreate)?;
+        let response = process
+            .client()
+            .conversation_create(request)
+            .await
+            .map_err(HostError::from)?;
+        validate_conversation_routes(&response.conversation, &route)?;
+        Ok(response)
+    }
+
+    pub async fn turn_start(&self, request: TurnStartRequest) -> HostResult<TurnStartResponse> {
+        let route = route_from_resource(&request.conversation);
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::TurnStart)?;
+        let response = process
+            .client()
+            .turn_start(request)
+            .await
+            .map_err(HostError::from)?;
+        validate_turn_routes(&response.turn, &route)?;
+        Ok(response)
+    }
+
+    pub async fn turn_steer(&self, request: TurnSteerRequest) -> HostResult<TurnSteerResponse> {
+        let route = route_from_resource(&request.turn);
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::TurnSteer)?;
+        let response = process
+            .client()
+            .turn_steer(request)
+            .await
+            .map_err(HostError::from)?;
+        validate_turn_routes(&response.turn, &route)?;
+        Ok(response)
+    }
+
+    pub async fn turn_interrupt(
+        &self,
+        request: TurnInterruptRequest,
+    ) -> HostResult<TurnInterruptResponse> {
+        let route = route_from_resource(&request.turn);
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::TurnInterrupt)?;
+        let response = process
+            .client()
+            .turn_interrupt(request)
+            .await
+            .map_err(HostError::from)?;
+        validate_turn_routes(&response.turn, &route)?;
+        Ok(response)
+    }
+
+    pub async fn approval_resolve(
+        &self,
+        request: ApprovalResolveRequest,
+    ) -> HostResult<ApprovalResolveResponse> {
+        let route = route_from_resource(&request.approval);
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::ApprovalResolve)?;
+        let response = process
+            .client()
+            .approval_resolve(request)
+            .await
+            .map_err(HostError::from)?;
+        validate_approval_routes(&response.approval, &route)?;
+        Ok(response)
+    }
+
+    pub async fn accept_provider_event(
+        &self,
+        plugin_id: &str,
+        event: ProtocolEvent,
+    ) -> HostResult<()> {
+        let route = event_route(&event);
+        let record = self
+            .inner
+            .instances
+            .resolve_route(&route, Some(plugin_id))?;
+        validate_event_routes(&event, &route, &record)?;
+        if let ProtocolEvent::EventInstanceStatusChanged { params, .. } = &event {
+            self.set_runtime_instance(plugin_id, params.instance.clone()).await?;
+        }
+        let _ = self.inner.events.send(ManagerEvent::ProviderEvent {
+            plugin_id: plugin_id.to_string(),
+            event,
+        });
+        Ok(())
+    }
+
+    async fn routing_context(
+        &self,
+        route: &ProviderInstanceRoute,
+    ) -> HostResult<(ProviderInstanceRecord, Arc<PluginProcess>, ProviderInstance)> {
+        let record = self.inner.instances.resolve_route(route, None)?;
+        let plugins = self.inner.plugins.read().await;
+        let entry = plugins
+            .get(&record.plugin_id)
+            .ok_or_else(|| unknown_plugin(&record.plugin_id))?;
+        if !matches!(entry.state, PluginRuntimeState::Ready | PluginRuntimeState::Degraded) {
+            return Err(HostError::new(
+                "provider_plugin_unavailable",
+                format!("Provider plugin is not ready: {}", record.plugin_id),
+            )
+            .retryable(true));
+        }
+        let process = entry.process.clone().ok_or_else(|| {
+            HostError::new(
+                "provider_process_unavailable",
+                format!("Provider process is unavailable: {}", record.plugin_id),
+            )
+            .retryable(true)
+        })?;
+        let instance = entry
+            .instances
+            .get(&record.instance_id)
+            .and_then(|runtime| runtime.instance.clone())
+            .ok_or_else(|| {
+                HostError::new(
+                    "provider_instance_unavailable",
+                    format!("Provider instance has not been created: {}", record.instance_id),
+                )
+                .retryable(true)
+            })?;
+        Ok((record, process, instance))
+    }
+
+    async fn process_for_plugin(&self, plugin_id: &str) -> HostResult<Arc<PluginProcess>> {
+        let plugins = self.inner.plugins.read().await;
+        let entry = plugins.get(plugin_id).ok_or_else(|| unknown_plugin(plugin_id))?;
+        if !matches!(entry.state, PluginRuntimeState::Ready | PluginRuntimeState::Degraded) {
+            return Err(HostError::new(
+                "provider_plugin_unavailable",
+                format!("Provider plugin is not ready: {plugin_id}"),
+            )
+            .retryable(true));
+        }
+        entry.process.clone().ok_or_else(|| {
+            HostError::new(
+                "provider_process_unavailable",
+                format!("Provider process is unavailable: {plugin_id}"),
+            )
+            .retryable(true)
+        })
+    }
+
+    async fn set_runtime_instance(
+        &self,
+        plugin_id: &str,
+        instance: ProviderInstance,
+    ) -> HostResult<()> {
+        let record = self
+            .inner
+            .instances
+            .resolve_route(&instance.route, Some(plugin_id))?;
+        validate_instance_response(&record, &instance)?;
+        let mut plugins = self.inner.plugins.write().await;
+        let entry = plugins.get_mut(plugin_id).ok_or_else(|| unknown_plugin(plugin_id))?;
+        let runtime = entry
+            .instances
+            .entry(record.instance_id.clone())
+            .or_insert(ManagedInstance {
+                record,
+                instance: None,
+                diagnostic: None,
+            });
+        runtime.instance = Some(instance);
+        runtime.diagnostic = None;
+        Ok(())
+    }
+
+    async fn set_instance_error(&self, plugin_id: &str, instance_id: &str, error: HostError) {
+        let mut plugins = self.inner.plugins.write().await;
+        if let Some(entry) = plugins.get_mut(plugin_id) {
+            if let Some(instance) = entry.instances.get_mut(instance_id) {
+                instance.diagnostic = Some(error.clone());
+            }
+        }
+        let _ = self.inner.events.send(ManagerEvent::Diagnostic {
+            plugin_id: plugin_id.to_string(),
+            error,
+        });
+    }
+
+    async fn finish_start_failure(
+        &self,
+        plugin_id: &str,
+        generation: u64,
+        error: HostError,
+        stderr_diagnostics: Vec<StderrDiagnostic>,
+        process_exit: Option<PluginProcessExit>,
+    ) {
+        let previous_state = {
+            let mut plugins = self.inner.plugins.write().await;
+            let Some(entry) = plugins.get_mut(plugin_id) else {
+                return;
+            };
+            if entry.generation != generation {
+                return;
+            }
+            let previous_state = entry.state;
+            entry.state = PluginRuntimeState::Degraded;
+            entry.diagnostic = Some(error.clone());
+            entry.process = None;
+            entry.process_exit = process_exit;
+            entry.stderr_diagnostics = stderr_diagnostics;
+            previous_state
+        };
+        self.publish_state(plugin_id, previous_state).await;
+        let _ = self.inner.events.send(ManagerEvent::Diagnostic {
+            plugin_id: plugin_id.to_string(),
+            error,
+        });
+    }
+
+    async fn set_plugin_state(
+        &self,
+        plugin_id: &str,
+        state: PluginRuntimeState,
+        diagnostic: Option<HostError>,
+    ) {
+        let previous_state = {
+            let mut plugins = self.inner.plugins.write().await;
+            let Some(entry) = plugins.get_mut(plugin_id) else {
+                return;
+            };
+            let previous_state = entry.state;
+            entry.state = state;
+            entry.diagnostic = diagnostic;
+            previous_state
+        };
+        self.publish_state(plugin_id, previous_state).await;
+    }
+
+    async fn publish_state(&self, plugin_id: &str, previous_state: PluginRuntimeState) {
+        if let Ok(snapshot) = self.snapshot(plugin_id).await {
+            let _ = self.inner.events.send(ManagerEvent::PluginStateChanged {
+                snapshot,
+                previous_state,
+            });
+        }
+    }
+
+    fn spawn_process_tasks(&self, plugin_id: String, generation: u64, process: Arc<PluginProcess>) {
+        let manager = Arc::downgrade(&self.inner);
+        let mut inbound = process.subscribe();
+        let event_plugin_id = plugin_id.clone();
+        let process_identity = Arc::as_ptr(&process) as usize;
+        tokio::spawn(async move {
+            loop {
+                match inbound.recv().await {
+                    Ok(codepet_provider_sdk::ProviderWireMessage::Event(event)) => {
+                        let Some(manager) = manager.upgrade() else {
+                            return;
+                        };
+                        let manager = PluginManager { inner: manager };
+                        if !manager
+                            .is_current_process(
+                                &event_plugin_id,
+                                generation,
+                                process_identity,
+                            )
+                            .await
+                        {
+                            return;
+                        }
+                        if let Err(error) = manager
+                            .accept_provider_event(&event_plugin_id, event)
+                            .await
+                        {
+                            manager
+                                .set_plugin_state(
+                                    &event_plugin_id,
+                                    PluginRuntimeState::Degraded,
+                                    Some(error.clone()),
+                                )
+                                .await;
+                            let _ = manager.inner.events.send(ManagerEvent::Diagnostic {
+                                plugin_id: event_plugin_id.clone(),
+                                error,
+                            });
+                        }
+                    }
+                    Ok(codepet_provider_sdk::ProviderWireMessage::Notification(_)) => {}
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        let Some(manager) = manager.upgrade() else {
+                            return;
+                        };
+                        let manager = PluginManager { inner: manager };
+                        manager
+                            .set_plugin_state(
+                                &event_plugin_id,
+                                PluginRuntimeState::Degraded,
+                                Some(HostError::new(
+                                    "provider_event_lagged",
+                                    format!("Provider event consumer skipped {skipped} messages"),
+                                )
+                                .retryable(true)),
+                            )
+                            .await;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
+
+        let manager = Arc::downgrade(&self.inner);
+        let diagnostics = process.diagnostics();
+        let mut exit = process.exit_receiver();
+        tokio::spawn(async move {
+            loop {
+                if exit.changed().await.is_err() {
+                    return;
+                }
+                let Some(process_exit) = exit.borrow().clone() else {
+                    continue;
+                };
+                let Some(manager) = manager.upgrade() else {
+                    return;
+                };
+                let manager = PluginManager { inner: manager };
+                let stderr_diagnostics = diagnostics.snapshot();
+                let previous_state = {
+                    let mut plugins = manager.inner.plugins.write().await;
+                    let Some(entry) = plugins.get_mut(&plugin_id) else {
+                        return;
+                    };
+                    if entry.generation != generation {
+                        return;
+                    }
+                    let previous_state = entry.state;
+                    entry.process_exit = Some(process_exit.clone());
+                    entry.process = None;
+                    entry.stderr_diagnostics = stderr_diagnostics;
+                    if !matches!(entry.state, PluginRuntimeState::Stopped | PluginRuntimeState::Disabled) {
+                        entry.state = PluginRuntimeState::Crashed;
+                        entry.diagnostic = Some(HostError::new(
+                            "provider_process_crashed",
+                            process_exit
+                                .reason
+                                .clone()
+                                .unwrap_or_else(|| "Provider process exited unexpectedly".to_string()),
+                        )
+                        .retryable(true));
+                    }
+                    previous_state
+                };
+                manager.publish_state(&plugin_id, previous_state).await;
+                return;
+            }
+        });
+    }
+
+    async fn is_current_process(
+        &self,
+        plugin_id: &str,
+        generation: u64,
+        process_identity: usize,
+    ) -> bool {
+        let plugins = self.inner.plugins.read().await;
+        plugins.get(plugin_id).is_some_and(|entry| {
+            entry.generation == generation
+                && matches!(entry.state, PluginRuntimeState::Ready | PluginRuntimeState::Degraded)
+                && entry
+                    .process
+                    .as_ref()
+                    .is_some_and(|current| Arc::as_ptr(current) as usize == process_identity)
+        })
+    }
+}
+
+fn validate_negotiated_descriptor(
+    catalog: &PluginDescriptor,
+    supported: &VersionRange,
+    selected_version: u32,
+    reported: &ProviderPluginDescriptor,
+) -> HostResult<()> {
+    if selected_version < supported.min_version || selected_version > supported.max_version {
+        return Err(HostError::new(
+            "provider_protocol_version_mismatch",
+            format!("Provider selected unsupported protocol version: {selected_version}"),
+        ));
+    }
+    if reported.supported_versions.min_version > reported.supported_versions.max_version
+        || selected_version < reported.supported_versions.min_version
+        || selected_version > reported.supported_versions.max_version
+    {
+        return Err(HostError::new(
+            "provider_protocol_version_mismatch",
+            "Provider selected a version outside its reported supported range",
+        )
+        .with_detail("selectedVersion", selected_version)
+        .with_detail(
+            "providerMinVersion",
+            reported.supported_versions.min_version,
+        )
+        .with_detail(
+            "providerMaxVersion",
+            reported.supported_versions.max_version,
+        ));
+    }
+    if reported.plugin_id != catalog.plugin_id {
+        return Err(HostError::new(
+            "provider_plugin_id_mismatch",
+            "Provider initialize response does not match the catalog plugin id",
+        )
+        .with_detail("catalogPluginId", catalog.plugin_id.clone())
+        .with_detail("reportedPluginId", reported.plugin_id.clone()));
+    }
+    reported.validate_instance_kinds().map_err(HostError::from)
+}
+
+fn validate_describe_descriptor(
+    initialized: &ProviderPluginDescriptor,
+    described: &ProviderPluginDescriptor,
+) -> HostResult<()> {
+    described.validate_instance_kinds().map_err(HostError::from)?;
+    if initialized != described {
+        return Err(HostError::new(
+            "provider_descriptor_changed",
+            "Provider describe response differs from initialize response",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_instance_response(
+    record: &ProviderInstanceRecord,
+    instance: &ProviderInstance,
+) -> HostResult<()> {
+    if instance.route != record.route()
+        || instance.plugin_id != record.plugin_id
+        || instance.instance_kind != record.instance_kind
+    {
+        return Err(HostError::new(
+            "provider_instance_response_mismatch",
+            "Provider returned an instance for a different route, plugin, or kind",
+        )
+        .with_detail("expectedPluginId", record.plugin_id.clone())
+        .with_detail("expectedInstanceId", record.instance_id.clone()));
+    }
+    Ok(())
+}
+
+fn ensure_capability(instance: &ProviderInstance, method: ProtocolMethod) -> HostResult<()> {
+    let Some(capability) = method.capability() else {
+        return Ok(());
+    };
+    if instance.capabilities.methods.contains(&capability) {
+        return Ok(());
+    }
+    Err(HostError::new(
+        "provider_capability_unsupported",
+        format!("Provider instance does not support method: {}", method.as_str()),
+    )
+    .with_detail("providerInstanceId", instance.route.provider_instance_id.clone())
+    .with_detail("method", method.as_str().to_string()))
+}
+
+fn event_route(event: &ProtocolEvent) -> ProviderInstanceRoute {
+    match event {
+        ProtocolEvent::EventInstanceStatusChanged { params, .. } => params.instance.route.clone(),
+        ProtocolEvent::EventConversationUpserted { params, .. } => {
+            route_from_resource(&params.conversation.resource)
+        }
+        ProtocolEvent::EventTurnUpserted { params, .. } => route_from_resource(&params.turn.resource),
+        ProtocolEvent::EventTurnOutputDelta { params, .. } => route_from_resource(&params.turn),
+        ProtocolEvent::EventApprovalRequested { params, .. } => {
+            route_from_resource(&params.approval.resource)
+        }
+        ProtocolEvent::EventApprovalResolved { params, .. } => {
+            route_from_resource(&params.approval.resource)
+        }
+    }
+}
+
+fn validate_event_routes(
+    event: &ProtocolEvent,
+    route: &ProviderInstanceRoute,
+    record: &ProviderInstanceRecord,
+) -> HostResult<()> {
+    match event {
+        ProtocolEvent::EventInstanceStatusChanged { params, .. } => {
+            validate_instance_response(record, &params.instance)
+        }
+        ProtocolEvent::EventConversationUpserted { params, .. } => {
+            validate_conversation_routes(&params.conversation, route)
+        }
+        ProtocolEvent::EventTurnUpserted { params, .. } => validate_turn_routes(&params.turn, route),
+        ProtocolEvent::EventTurnOutputDelta { params, .. } => {
+            validate_resource_route(&params.turn, route)
+        }
+        ProtocolEvent::EventApprovalRequested { params, .. } => {
+            validate_approval_routes(&params.approval, route)
+        }
+        ProtocolEvent::EventApprovalResolved { params, .. } => {
+            validate_approval_routes(&params.approval, route)
+        }
+    }
+}
+
+fn validate_conversation_routes(
+    conversation: &codepet_provider_sdk::ProviderConversation,
+    route: &ProviderInstanceRoute,
+) -> HostResult<()> {
+    validate_resource_route(&conversation.resource, route)?;
+    if let Some(turn) = conversation.active_turn.as_ref() {
+        validate_turn_routes(turn, route)?;
+    }
+    Ok(())
+}
+
+fn validate_turn_routes(
+    turn: &codepet_provider_sdk::ProviderTurn,
+    route: &ProviderInstanceRoute,
+) -> HostResult<()> {
+    validate_resource_route(&turn.resource, route)?;
+    validate_resource_route(&turn.conversation, route)
+}
+
+fn validate_approval_routes(
+    approval: &codepet_provider_sdk::ProviderApproval,
+    route: &ProviderInstanceRoute,
+) -> HostResult<()> {
+    validate_resource_route(&approval.resource, route)?;
+    validate_resource_route(&approval.conversation, route)?;
+    validate_resource_route(&approval.turn, route)
+}
+
+fn validate_resource_route(
+    resource: &RoutedResourceId,
+    route: &ProviderInstanceRoute,
+) -> HostResult<()> {
+    if resource.device_id != route.device_id
+        || resource.provider_instance_id != route.provider_instance_id
+    {
+        return Err(HostError::new(
+            "provider_resource_route_mismatch",
+            "Provider returned a resource for a different device or instance",
+        )
+        .with_detail("expectedDeviceId", route.device_id.clone())
+        .with_detail("expectedProviderInstanceId", route.provider_instance_id.clone())
+        .with_detail("actualDeviceId", resource.device_id.clone())
+        .with_detail(
+            "actualProviderInstanceId",
+            resource.provider_instance_id.clone(),
+        ));
+    }
+    Ok(())
+}
+
+fn route_from_resource(resource: &RoutedResourceId) -> ProviderInstanceRoute {
+    ProviderInstanceRoute {
+        device_id: resource.device_id.clone(),
+        provider_instance_id: resource.provider_instance_id.clone(),
+    }
+}
+
+fn unknown_plugin(plugin_id: &str) -> HostError {
+    HostError::new(
+        "unknown_provider_plugin",
+        format!("Provider plugin is not registered: {plugin_id}"),
+    )
+    .with_detail("pluginId", plugin_id.to_string())
+}
+
+#[allow(dead_code)]
+fn _lifecycle_types_are_sdk_owned(
+    _status: InstanceStatus,
+    _capability: ProviderCapability,
+    _shutdown: ProviderShutdownRequest,
+) {
+}

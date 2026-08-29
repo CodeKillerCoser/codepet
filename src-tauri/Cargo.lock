@@ -562,6 +562,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "codepet-gateway-sdk",
+ "codepet-host",
  "core-graphics",
  "dirs 5.0.1",
  "hmac",
@@ -603,6 +604,28 @@ dependencies = [
 
 [[package]]
 name = "codepet-gateway-sdk"
+version = "0.1.0"
+dependencies = [
+ "codepet-core-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "codepet-host"
+version = "0.1.0"
+dependencies = [
+ "codepet-gateway-sdk",
+ "codepet-provider-sdk",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "codepet-provider-sdk"
 version = "0.1.0"
 dependencies = [
  "codepet-core-sdk",
@@ -4740,6 +4763,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

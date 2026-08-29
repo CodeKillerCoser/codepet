@@ -432,6 +432,7 @@ pub fn run() {
                     &format!("failed to start remote gateway local event bridge error={error:?}"),
                 );
             }
+            runtime_gateway_state.start_provider_plugins_in_background();
             let desktop_companion_state = app.state::<CodexDesktopCompanionState>().inner().clone();
             if let Err(error) = start_codex_desktop_companion_event_bridge(handle.clone(), &desktop_companion_state) {
                 app_log::error(

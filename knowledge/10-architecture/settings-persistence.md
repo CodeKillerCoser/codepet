@@ -12,6 +12,7 @@
 - `activityFilters`：标题和消息关键词过滤。
 - `agents`：每个 Agent 的 hook 偏好。
 - `agentRuntimes`：验证通过的 provider executable 路径。
+- `providerPlugins`：额外 Provider plugin manifest 目录；默认目录不需要写入设置。
 - `updates`：忽略的更新版本。
 
 ## 存储
@@ -25,6 +26,8 @@
 `frontend/App.svelte` 加载设置后会先归一化，再通过 Tauri command 保存。`frontend/PetApp.svelte` 监听 `settings-updated`，用于更新主题、过滤器、声音和宠物透明度。
 
 `agentRuntimes` 是可执行输入，不能由通用 `update_app_settings` 改写。主 App 通过 `set_agent_runtime_executable` / `clear_agent_runtime_executable` 修改；后端在落盘前验证文件类型、执行权限和固定版本探测，失败不覆盖原配置。
+
+`providerPlugins.directories` 是 Plugin Catalog 的显式附加目录。相对路径按已解析应用数据目录解析，绝对路径保持不变。Host 始终同时检查该数据目录下的 `provider-plugins/`；设备身份和实例注册分别保存在同一目录下的 `provider-host/device-identity.json` 与 `provider-host/provider-instances.json`。这些记录不进入 pet activity 数据。
 
 ## 验证
 

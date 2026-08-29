@@ -28,7 +28,27 @@ fn settings_default_to_system_theme() {
     assert!(settings.activity_filters.by_agent.is_empty());
     assert!(settings.agents.by_agent.is_empty());
     assert!(settings.agent_runtimes.by_provider.is_empty());
+    assert!(settings.provider_plugins.directories.is_empty());
     assert!(settings.updates.ignored_version.is_none());
+}
+
+#[test]
+fn settings_round_trip_explicit_provider_plugin_directories() {
+    let settings: AppSettings = serde_json::from_str(
+        r#"{
+          "providerPlugins": {
+            "directories": ["/opt/codepet/providers", "/tmp/provider-fixtures"]
+          }
+        }"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        settings.provider_plugins.directories,
+        vec!["/opt/codepet/providers", "/tmp/provider-fixtures"]
+    );
+    let serialized = serde_json::to_value(settings).unwrap();
+    assert_eq!(serialized["providerPlugins"]["directories"][0], "/opt/codepet/providers");
 }
 
 #[test]

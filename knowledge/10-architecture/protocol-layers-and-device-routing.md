@@ -17,7 +17,7 @@
 
 ## 非目标
 
-- 不实现 Plugin Manager、插件发现、安装、签名、市场、沙箱或 Provider 进程 supervisor。
+- 不实现插件安装、签名、市场、沙箱或 production Provider adapter；Plugin Manager、显式目录发现与 Provider 进程 supervisor 已在下一阶段落到 `crates/codepet-host`。
 - 不迁移 Codex App Server 或 Desktop IPC adapter 到独立 Provider 二进制。
 - 不实现 LAN listener、配对、认证、加密、持久 event cursor 或 Remote UI。
 - 不改桌宠展示、交互或 activity projection；本阶段只提供未来 Pet Protocol 的生成 SDK。
@@ -40,7 +40,7 @@
 5. Provider 和 gateway 的资源 ID 均使用 `RoutedResourceId { deviceId, providerInstanceId, nativeResourceId }`；Provider descriptor 的 `instanceKinds` 非空，create request/instance 都携带稳定 `instanceKind`，生成 helper 供服务实现 fail closed 选择。
 6. capability enum、capability container 与 method mapping 同时受 manifest/schema 校验，并生成 typed `ProtocolMethod::capability()`。
 7. Tauri 只增加 `codepet-gateway-sdk` path dependency，并继续通过 compat v0 re-export 使用原类型。remote 与 companion 保持各自 Gateway/EventBus/Tauri event；Provider v1 generated event 没有任何 Tauri publication 接线。
-8. 下一阶段若实现 Provider Host，应直接实现 `codepet-provider-sdk::ProtocolServer` 与带 `next_message` 的 `ProtocolTransport`，并在 application boundary 映射到 gateway v1；不得让插件 event sink 指向 companion bus。
+8. `crates/codepet-host` 已消费生成 SDK 实现进程外 Provider client、Plugin Manager 和 `codepet-gateway-sdk::ProtocolServer` application boundary；插件 event sink 只指向该 v1 Gateway service，不指向 companion bus。详见 `provider-host-device-and-plugin-runtime.md`。
 
 ## 涉及模块
 
@@ -78,7 +78,7 @@
 
 ## 未知项
 
-- Provider Host 的进程 supervisor、实例配置持久化和崩溃恢复语义尚未实现。
+- Provider Host 的进程 supervisor 与实例配置持久化已经实现；自动重启/backoff、签名和 sandbox 尚未实现。
 - Gateway v1 event cursor 的持久化格式、过期窗口和远程 session 恢复策略尚未确定。
 - Dart/Python adapter 尚未实现；registry 会拒绝显式选择。未来实现仍需决定 unknown enum、async stream 和 codec error 映射，并必须使用现有 generator interface 与同一 IDL。
 - 现有 Desktop Companion 何时从 compat v0 映射到 Pet v1，需要独立阶段验证，不能顺带进入 Provider 协议。

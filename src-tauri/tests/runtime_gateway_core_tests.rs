@@ -18,6 +18,17 @@ use code_pet_lib::runtime_gateway::tauri_bridge::{
     CodexDesktopCompanionState, RuntimeGatewayState,
 };
 use code_pet_lib::agent::codex_thread_scope::CodexThreadScope;
+use code_pet_lib::state::SharedState;
+use codepet_host::{
+    DeviceIdentity, DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor,
+    PluginInstanceConfig, PluginManager, PluginManagerConfig, ProviderGatewayService,
+    ProviderInstanceRegistry,
+};
+use codepet_host::provider_sdk::{
+    ConversationStatus as ProviderConversationStatus,
+    ConversationUpsertedEvent as ProviderConversationUpsertedEvent,
+    ProtocolEvent as ProviderProtocolEvent, ProviderConversation, RoutedResourceId,
+};
 use std::sync::{Arc, Mutex};
 
 struct FakeProvider {
@@ -582,4 +593,94 @@ fn remote_events_never_enter_the_desktop_companion_transport() {
         .unwrap();
     assert_eq!(companion.transport().replay(None).unwrap().len(), 1);
     assert_eq!(remote.transport().replay(None).unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn provider_plugin_events_stay_out_of_compat_companion_and_pet_activity_state() {
+    let device = DeviceRegistry::from_identity(DeviceIdentity {
+        version: 1,
+        device_id: "device-plugin-test".to_string(),
+        display_name: "Plugin Test Device".to_string(),
+        created_at: 1,
+    })
+    .unwrap();
+    let catalog = PluginCatalog::discover(
+        PluginCatalogConfig::default().with_descriptor(PluginDescriptor {
+            plugin_id: "dev.codepet.isolation".to_string(),
+            display_name: "Isolation Fixture".to_string(),
+            executable: "/not-started/codepet-provider-fixture".into(),
+            args: Vec::new(),
+            env: Default::default(),
+            enabled: true,
+            instances: vec![PluginInstanceConfig {
+                instance_id: Some("instance-plugin-test".to_string()),
+                instance_kind: "fake".to_string(),
+                display_name: "Plugin Instance".to_string(),
+                settings: Default::default(),
+                enabled: true,
+            }],
+        }),
+    );
+    let instances = ProviderInstanceRegistry::in_memory("device-plugin-test".to_string()).unwrap();
+    let manager = Arc::new(
+        PluginManager::new(
+            device,
+            catalog,
+            instances,
+            PluginManagerConfig::default(),
+        )
+        .unwrap(),
+    );
+    let provider_gateway = Arc::new(ProviderGatewayService::new(manager.clone()));
+    provider_gateway.start_event_forwarding();
+    let current_cursor = provider_gateway.current_event_cursor();
+    let mut plugin_events = provider_gateway
+        .subscribe_events(Some(&current_cursor))
+        .unwrap();
+
+    let remote = RuntimeGatewayState::new(Arc::new(Gateway::default()))
+        .with_provider_gateway_v1(provider_gateway.clone());
+    let companion = CodexDesktopCompanionState::new(Arc::new(Gateway::default()));
+    let pet_activity = SharedState::default();
+    let resource = RoutedResourceId {
+        device_id: "device-plugin-test".to_string(),
+        provider_instance_id: "instance-plugin-test".to_string(),
+        native_resource_id: "plugin-conversation".to_string(),
+    };
+    manager
+        .accept_provider_event(
+            "dev.codepet.isolation",
+            ProviderProtocolEvent::EventConversationUpserted {
+                jsonrpc: "2.0".to_string(),
+                params: ProviderConversationUpsertedEvent {
+                    conversation: ProviderConversation {
+                        resource: resource.clone(),
+                        title: "Plugin conversation".to_string(),
+                        preview: None,
+                        status: ProviderConversationStatus::Idle,
+                        permission_level: "workspace-write".to_string(),
+                        model: None,
+                        reasoning_effort: None,
+                        workspace_root: None,
+                        created_at: 1,
+                        updated_at: 2,
+                        active_turn: None,
+                        extension: None,
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    let event = plugin_events.next_event().await.unwrap();
+    let codepet_gateway_sdk::ProtocolEvent::ConversationUpserted { payload, .. } = event else {
+        panic!("expected v1 Provider conversation event");
+    };
+    assert_eq!(payload.conversation.resource, resource);
+    assert!(remote.transport().replay(None).unwrap().is_empty());
+    assert!(companion.transport().replay(None).unwrap().is_empty());
+    assert!(pet_activity.recent_events().is_empty());
+    assert!(remote.provider_manager().is_some());
+    assert!(companion.gateway().registry().list().unwrap().is_empty());
 }

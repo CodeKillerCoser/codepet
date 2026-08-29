@@ -1,0 +1,21 @@
+[package]
+name = "codepet-host"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+codepet-gateway-sdk = { path = "../../sdk/rust/codepet-gateway-sdk" }
+codepet-provider-sdk = { path = "../../sdk/rust/codepet-provider-sdk" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "sync", "time"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-std", "macros", "process", "rt-multi-thread", "sync", "time"] }
+
+[[bin]]
+name = "codepet-host-fake-provider"
+path = "tests/fixtures/fake_provider.rs"

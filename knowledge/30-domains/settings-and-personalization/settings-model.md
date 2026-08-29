@@ -2,7 +2,7 @@
 
 ## 当前模型
 
-`src-tauri/src/app/settings.rs` 中的 `AppSettings` 有九个顶层区域：
+`src-tauri/src/app/settings.rs` 中的 `AppSettings` 有十个顶层区域：
 
 - `data`
 - `appearance`
@@ -12,6 +12,7 @@
 - `activityFilters`
 - `agents`
 - `agentRuntimes`
+- `providerPlugins`
 - `updates`
 
 所有区域都使用 serde defaults，确保新增字段后旧设置文件仍能加载。
@@ -21,6 +22,8 @@
 `agents.byAgent.<agent>.hookEvents` 保存每个 Agent 勾选的 hook 事件。缺失或空列表表示默认使用该 Agent 注册表中的全部支持事件。
 
 `agentRuntimes.byProvider.<provider>.configuredExecutable` 保存用户验证通过的 Agent 可执行文件绝对路径。它只能由 runtime 专用 Tauri command 修改；通用 settings 更新会保留后端当前值，避免绕过文件、执行权限和版本探测。
+
+`providerPlugins.directories` 保存额外 Provider plugin manifest 目录。缺失时默认空数组；Host 另有应用数据目录下的固定 `provider-plugins/` 默认目录。该字段只配置 Plugin Catalog，不改变 `agentRuntimes` 的 executable 探测，也不授权桌宠动作调用 Plugin Manager。
 
 ## 前端归一化
 
@@ -33,6 +36,7 @@
 - 抽打反应音默认值。
 - activity filter 关键词按 Agent 去空白和去重。
 - agent hook 事件按注册表顺序过滤非法值，默认全选。
+- Provider plugin 目录缺失时归一化为空数组。
 
 ## 风险
 

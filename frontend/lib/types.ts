@@ -135,7 +135,12 @@ export interface AppSettings {
   activityFilters: ActivityFilterSettings;
   agents: AgentSettings;
   agentRuntimes: AgentRuntimeSettings;
+  providerPlugins?: ProviderPluginSettings;
   updates: UpdateSettings;
+}
+
+export interface ProviderPluginSettings {
+  directories: string[];
 }
 
 export interface AppUpdate {

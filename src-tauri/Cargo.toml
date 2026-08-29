@@ -21,6 +21,7 @@ axum = "0.7"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 codepet-gateway-sdk = { path = "../sdk/rust/codepet-gateway-sdk" }
+codepet-host = { path = "../crates/codepet-host" }
 dirs = "5"
 hmac = "0.12"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
