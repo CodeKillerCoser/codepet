@@ -1,0 +1,9 @@
+{
+  "name": "@codepet/gateway-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./compat-v0": "./src/compat-v0.ts"
+  }
+}

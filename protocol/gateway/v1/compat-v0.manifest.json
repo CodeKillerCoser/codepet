@@ -1,0 +1,124 @@
+{
+  "name": "codepet-gateway-compat-v0",
+  "layer": "gateway",
+  "version": 0,
+  "kind": "service",
+  "transport": {
+    "kind": "codepet-envelope",
+    "framing": "in-process",
+    "requestDiscriminator": "method",
+    "responseDiscriminator": "method",
+    "eventDiscriminator": "event",
+    "versionField": "protocolVersion",
+    "protocolVersion": { "$ref": "../../core/v1/schema.json#/$defs/ProtocolVersion" },
+    "requestId": { "$ref": "../../core/v1/schema.json#/$defs/RequestId" },
+    "eventCursorField": "eventSequence",
+    "eventCursor": { "$ref": "../../core/v1/schema.json#/$defs/EventSequence" }
+  },
+  "error": {
+    "$ref": "../../core/v1/schema.json#/$defs/ProtocolError"
+  },
+  "methods": [
+    {
+      "name": "protocol.handshake",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": { "$ref": "./compat-v0.schema.json#/$defs/HandshakeRequest" },
+      "response": { "$ref": "./compat-v0.schema.json#/$defs/HandshakeResponse" }
+    },
+    {
+      "name": "provider.list",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": { "$ref": "./compat-v0.schema.json#/$defs/ProviderListRequest" },
+      "response": { "$ref": "./compat-v0.schema.json#/$defs/ProviderListResponse" }
+    },
+    {
+      "name": "conversation.list",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": { "$ref": "./compat-v0.schema.json#/$defs/ConversationListRequest" },
+      "response": { "$ref": "./compat-v0.schema.json#/$defs/ConversationListResponse" }
+    },
+    {
+      "name": "conversation.get",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": { "$ref": "./compat-v0.schema.json#/$defs/ConversationGetRequest" },
+      "response": { "$ref": "./compat-v0.schema.json#/$defs/ConversationGetResponse" }
+    },
+    {
+      "name": "conversation.create",
+      "direction": "clientToGateway",
+      "idempotency": "nonIdempotent",
+      "request": { "$ref": "./compat-v0.schema.json#/$defs/ConversationCreateRequest" },
+      "response": { "$ref": "./compat-v0.schema.json#/$defs/ConversationCreateResponse" }
+    },
+    {
+      "name": "turn.send",
+      "direction": "clientToGateway",
+      "idempotency": "nonIdempotent",
+      "request": { "$ref": "./compat-v0.schema.json#/$defs/TurnSendRequest" },
+      "response": { "$ref": "./compat-v0.schema.json#/$defs/TurnSendResponse" }
+    },
+    {
+      "name": "turn.interrupt",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": { "$ref": "./compat-v0.schema.json#/$defs/TurnInterruptRequest" },
+      "response": { "$ref": "./compat-v0.schema.json#/$defs/TurnInterruptResponse" }
+    },
+    {
+      "name": "approval.resolve",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": { "$ref": "./compat-v0.schema.json#/$defs/ApprovalResolveRequest" },
+      "response": { "$ref": "./compat-v0.schema.json#/$defs/ApprovalResolveResponse" }
+    }
+  ],
+  "events": [
+    {
+      "name": "provider.statusChanged",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "providerInstance",
+      "payload": { "$ref": "./compat-v0.schema.json#/$defs/ProviderStatusChangedEvent" }
+    },
+    {
+      "name": "conversation.upserted",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "conversation",
+      "payload": { "$ref": "./compat-v0.schema.json#/$defs/ConversationUpsertedEvent" }
+    },
+    {
+      "name": "turn.upserted",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "turn",
+      "payload": { "$ref": "./compat-v0.schema.json#/$defs/TurnUpsertedEvent" }
+    },
+    {
+      "name": "turn.outputDelta",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "turn",
+      "payload": { "$ref": "./compat-v0.schema.json#/$defs/TurnOutputDeltaEvent" }
+    },
+    {
+      "name": "approval.requested",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "approval",
+      "payload": { "$ref": "./compat-v0.schema.json#/$defs/ApprovalRequestedEvent" }
+    },
+    {
+      "name": "approval.resolved",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "approval",
+      "payload": { "$ref": "./compat-v0.schema.json#/$defs/ApprovalResolvedEvent" }
+    }
+  ],
+  "fixtures": "../../fixtures/index.json"
+}

@@ -1,0 +1,14 @@
+{
+  "protocolVersion": 1,
+  "id": "pet-init-1",
+  "method": "protocol.initialize",
+  "params": {
+    "clientId": "desktop-pet-ui",
+    "clientName": "CodePet Desktop Pet",
+    "clientVersion": "0.1.4",
+    "supportedVersions": {
+      "minVersion": 1,
+      "maxVersion": 1
+    }
+  }
+}

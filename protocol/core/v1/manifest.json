@@ -1,0 +1,8 @@
+{
+  "name": "codepet-core",
+  "layer": "core",
+  "version": 1,
+  "kind": "types",
+  "methods": [],
+  "events": []
+}

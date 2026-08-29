@@ -1,0 +1,5 @@
+[
+  { "file": "initialize-request.json", "kind": "request", "name": "protocol.initialize" },
+  { "file": "initialize-response.json", "kind": "response", "name": "protocol.initialize" },
+  { "file": "snapshot-event.json", "kind": "event", "name": "pet.snapshot" }
+]

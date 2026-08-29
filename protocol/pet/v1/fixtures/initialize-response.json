@@ -1,0 +1,17 @@
+{
+  "protocolVersion": 1,
+  "id": "pet-initialize-1",
+  "method": "protocol.initialize",
+  "response": {
+    "status": "ok",
+    "result": {
+      "selectedVersion": 1,
+      "snapshot": {
+        "revision": 7,
+        "generatedAt": 1787700000000,
+        "tasks": [],
+        "approvals": []
+      }
+    }
+  }
+}

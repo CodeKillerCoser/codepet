@@ -1,0 +1,59 @@
+{
+  "name": "codepet-pet",
+  "layer": "pet",
+  "version": 1,
+  "kind": "service",
+  "transport": {
+    "kind": "codepet-envelope",
+    "framing": "transport-defined",
+    "requestDiscriminator": "method",
+    "responseDiscriminator": "method",
+    "eventDiscriminator": "event",
+    "versionField": "protocolVersion",
+    "protocolVersion": { "$ref": "../../core/v1/schema.json#/$defs/ProtocolVersion" },
+    "requestId": { "$ref": "../../core/v1/schema.json#/$defs/RequestId" }
+  },
+  "error": {
+    "$ref": "../../core/v1/schema.json#/$defs/ProtocolError"
+  },
+  "methods": [
+    {
+      "name": "protocol.initialize",
+      "direction": "clientToCompanion",
+      "idempotency": "safe",
+      "request": { "$ref": "./schema.json#/$defs/PetInitializeRequest" },
+      "response": { "$ref": "./schema.json#/$defs/PetInitializeResponse" }
+    },
+    {
+      "name": "pet.snapshot",
+      "direction": "clientToCompanion",
+      "idempotency": "safe",
+      "request": { "$ref": "./schema.json#/$defs/PetSnapshotRequest" },
+      "response": { "$ref": "./schema.json#/$defs/PetSnapshotResponse" }
+    },
+    {
+      "name": "pet.action",
+      "direction": "clientToCompanion",
+      "idempotency": "nonIdempotent",
+      "request": { "$ref": "./schema.json#/$defs/PetActionRequest" },
+      "response": { "$ref": "./schema.json#/$defs/PetActionResponse" }
+    }
+  ],
+  "events": [
+    {
+      "name": "pet.snapshot",
+      "direction": "companionToClient",
+      "delivery": "state",
+      "scope": "pet",
+      "payload": { "$ref": "./schema.json#/$defs/PetSnapshotEvent" }
+    },
+    {
+      "name": "pet.patch",
+      "direction": "companionToClient",
+      "delivery": "ordered",
+      "scope": "pet",
+      "payload": { "$ref": "./schema.json#/$defs/PetPatchEvent" }
+    }
+  ],
+  "fixtures": "fixtures/index.json"
+}

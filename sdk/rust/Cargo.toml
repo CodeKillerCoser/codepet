@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "codepet-core-sdk",
+    "codepet-pet-sdk",
+    "codepet-provider-sdk",
+    "codepet-gateway-sdk",
+]
+resolver = "2"

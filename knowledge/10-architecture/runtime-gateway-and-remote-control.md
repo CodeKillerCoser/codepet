@@ -467,7 +467,9 @@ Data Plane 包括流式文本、reasoning、工具输出、Diff 和 Provider 实
 
 ### 已实现的手写核心与生成契约边界
 
-`protocol/schemas/v0.json` 继续是 wire DTO 的唯一事实来源。`runtime_gateway/generated.rs` 只负责 serde DTO、`ProtocolRequest`、`ProtocolResponse`、`ProtocolEvent`、`ProtocolServer` 和机械 dispatcher；手写代码不得复制这些跨边界类型，也不得在生成文件中加入 registry、状态或 Provider 特例。
+当前协议事实已收敛到 `protocol/{core,pet,provider,gateway}/v1` 与 `protocol/codegen.json`。详细的分层、设备路由、生成包和验证路径见 `protocol-layers-and-device-routing.md`；长期取舍见 `../50-decisions/language-neutral-protocol-idl-and-sdk-boundary.md`。
+
+现有 Runtime Gateway 尚未切换到 gateway v1 session。原 v0 wire profile 已迁入 `protocol/gateway/v1/compat-v0.*`，并生成到 `sdk/rust/codepet-gateway-sdk::compat_v0` 和 TypeScript compatibility SDK。`runtime_gateway/generated.rs` 只做 re-export；手写代码不得复制 DTO，也不得在生成文件中加入 registry、状态或 Provider 特例。Provider v1 event 没有接入 Tauri event/replay 或桌宠 projection。
 
 阶段二的手写职责位于 `src-tauri/src/runtime_gateway/`：
 

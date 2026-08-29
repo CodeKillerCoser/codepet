@@ -1,35 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://code-pet.dev/protocol/schemas/v0.json",
-  "title": "Code Pet Standard Protocol v0",
+  "$id": "https://code-pet.dev/protocol/gateway/v1/compat-v0.schema.json",
+  "title": "CodePet Runtime Gateway Compatibility Protocol v0",
   "$defs": {
-    "ProtocolVersion": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 4294967295
-    },
-    "RequestId": {
-      "type": "string",
-      "minLength": 1
-    },
-    "EventSequence": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
-    },
-    "TimestampMs": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
-    },
-    "Cursor": {
-      "type": "string",
-      "minLength": 1
-    },
-    "JsonObject": {
-      "type": "object",
-      "additionalProperties": true
-    },
     "PermissionLevel": {
       "type": "string",
       "enum": ["read-only", "workspace-write", "full-access"]
@@ -58,7 +31,7 @@
       "type": "object",
       "properties": {
         "namespace": { "type": "string", "minLength": 1 },
-        "data": { "$ref": "#/$defs/JsonObject" }
+        "data": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" }
       },
       "required": ["namespace", "data"],
       "additionalProperties": false
@@ -110,9 +83,9 @@
         "conversationId": { "type": "string", "minLength": 1 },
         "status": { "$ref": "#/$defs/TurnTaskStatus" },
         "displaySummary": { "type": "string" },
-        "startedAt": { "$ref": "#/$defs/TimestampMs" },
-        "updatedAt": { "$ref": "#/$defs/TimestampMs" },
-        "completedAt": { "$ref": "#/$defs/TimestampMs" },
+        "startedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
+        "updatedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
+        "completedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
         "extension": { "$ref": "#/$defs/ProviderExtension" }
       },
       "required": ["id", "providerId", "conversationId", "status", "updatedAt"],
@@ -130,8 +103,8 @@
         "model": { "type": "string" },
         "reasoningEffort": { "type": "string" },
         "workspaceRoot": { "type": "string", "minLength": 1 },
-        "createdAt": { "$ref": "#/$defs/TimestampMs" },
-        "updatedAt": { "$ref": "#/$defs/TimestampMs" },
+        "createdAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
+        "updatedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
         "activeTurn": { "$ref": "#/$defs/TurnTask" },
         "extension": { "$ref": "#/$defs/ProviderExtension" }
       },
@@ -150,23 +123,12 @@
         "description": { "type": "string" },
         "status": { "$ref": "#/$defs/ApprovalStatus" },
         "decisions": { "type": "array", "items": { "$ref": "#/$defs/ApprovalDecision" }, "minItems": 1, "uniqueItems": true },
-        "requestedAt": { "$ref": "#/$defs/TimestampMs" },
-        "resolvedAt": { "$ref": "#/$defs/TimestampMs" },
+        "requestedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
+        "resolvedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
         "decision": { "$ref": "#/$defs/ApprovalDecision" },
         "extension": { "$ref": "#/$defs/ProviderExtension" }
       },
       "required": ["id", "providerId", "conversationId", "turnId", "kind", "title", "status", "decisions", "requestedAt"],
-      "additionalProperties": false
-    },
-    "ProtocolError": {
-      "type": "object",
-      "properties": {
-        "code": { "type": "string", "minLength": 1 },
-        "message": { "type": "string", "minLength": 1 },
-        "retryable": { "type": "boolean" },
-        "details": { "$ref": "#/$defs/JsonObject" }
-      },
-      "required": ["code", "message", "retryable"],
       "additionalProperties": false
     },
     "HandshakeRequest": {
@@ -174,9 +136,9 @@
       "properties": {
         "clientName": { "type": "string", "minLength": 1 },
         "clientVersion": { "type": "string", "minLength": 1 },
-        "minProtocolVersion": { "$ref": "#/$defs/ProtocolVersion" },
-        "maxProtocolVersion": { "$ref": "#/$defs/ProtocolVersion" },
-        "lastEventSequence": { "$ref": "#/$defs/EventSequence" }
+        "minProtocolVersion": { "$ref": "../../core/v1/schema.json#/$defs/ProtocolVersion" },
+        "maxProtocolVersion": { "$ref": "../../core/v1/schema.json#/$defs/ProtocolVersion" },
+        "lastEventSequence": { "$ref": "../../core/v1/schema.json#/$defs/EventSequence" }
       },
       "required": ["clientName", "clientVersion", "minProtocolVersion", "maxProtocolVersion"],
       "additionalProperties": false
@@ -184,11 +146,11 @@
     "HandshakeResponse": {
       "type": "object",
       "properties": {
-        "protocolVersion": { "$ref": "#/$defs/ProtocolVersion" },
+        "protocolVersion": { "$ref": "../../core/v1/schema.json#/$defs/ProtocolVersion" },
         "serverName": { "type": "string", "minLength": 1 },
         "serverVersion": { "type": "string", "minLength": 1 },
         "providers": { "type": "array", "items": { "$ref": "#/$defs/Provider" } },
-        "eventSequence": { "$ref": "#/$defs/EventSequence" }
+        "eventSequence": { "$ref": "../../core/v1/schema.json#/$defs/EventSequence" }
       },
       "required": ["protocolVersion", "serverName", "serverVersion", "providers", "eventSequence"],
       "additionalProperties": false
@@ -210,7 +172,7 @@
       "type": "object",
       "properties": {
         "providerId": { "type": "string", "minLength": 1 },
-        "cursor": { "$ref": "#/$defs/Cursor" },
+        "cursor": { "$ref": "../../core/v1/schema.json#/$defs/Cursor" },
         "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
       },
       "additionalProperties": false
@@ -219,8 +181,8 @@
       "type": "object",
       "properties": {
         "conversations": { "type": "array", "items": { "$ref": "#/$defs/Conversation" } },
-        "nextCursor": { "$ref": "#/$defs/Cursor" },
-        "eventSequence": { "$ref": "#/$defs/EventSequence" }
+        "nextCursor": { "$ref": "../../core/v1/schema.json#/$defs/Cursor" },
+        "eventSequence": { "$ref": "../../core/v1/schema.json#/$defs/EventSequence" }
       },
       "required": ["conversations", "eventSequence"],
       "additionalProperties": false

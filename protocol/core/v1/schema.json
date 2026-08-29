@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/core/v1/schema.json",
+  "title": "CodePet Core Protocol v1",
+  "$defs": {
+    "ClientId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identity of a protocol client installation."
+    },
+    "Cursor": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque pagination cursor."
+    },
+    "DeviceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identity of a CodePet host device."
+    },
+    "EventCursor": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque cursor for a replayable event stream."
+    },
+    "EventSequence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "Legacy numeric event cursor retained by the v0 compatibility profile."
+    },
+    "JsonObject": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "NativeResourceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Provider-native resource identity, meaningful only with its route."
+    },
+    "PageInfo": {
+      "type": "object",
+      "properties": {
+        "nextCursor": { "$ref": "#/$defs/Cursor" }
+      },
+      "additionalProperties": false
+    },
+    "PageRequest": {
+      "type": "object",
+      "properties": {
+        "cursor": { "$ref": "#/$defs/Cursor" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+      },
+      "additionalProperties": false
+    },
+    "ProtocolError": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "details": { "$ref": "#/$defs/JsonObject" }
+      },
+      "required": ["code", "message", "retryable"],
+      "additionalProperties": false
+    },
+    "ProtocolVersion": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "ProviderInstanceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identity of one configured provider instance."
+    },
+    "ProviderPluginId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identity declared by a provider plugin implementation."
+    },
+    "RequestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "RoutedResourceId": {
+      "type": "object",
+      "properties": {
+        "deviceId": { "$ref": "#/$defs/DeviceId" },
+        "providerInstanceId": { "$ref": "#/$defs/ProviderInstanceId" },
+        "nativeResourceId": { "$ref": "#/$defs/NativeResourceId" }
+      },
+      "required": ["deviceId", "providerInstanceId", "nativeResourceId"],
+      "additionalProperties": false,
+      "description": "Complete route for a provider-native resource."
+    },
+    "RpcError": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "integer" },
+        "message": { "type": "string", "minLength": 1 },
+        "data": { "$ref": "#/$defs/JsonObject" }
+      },
+      "required": ["code", "message"],
+      "additionalProperties": false
+    },
+    "TimestampMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "VersionRange": {
+      "type": "object",
+      "properties": {
+        "minVersion": { "$ref": "#/$defs/ProtocolVersion" },
+        "maxVersion": { "$ref": "#/$defs/ProtocolVersion" }
+      },
+      "required": ["minVersion", "maxVersion"],
+      "additionalProperties": false
+    }
+  }
+}

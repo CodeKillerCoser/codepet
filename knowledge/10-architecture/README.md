@@ -12,6 +12,7 @@ Code Pet 是一个 Tauri 2 应用，前端使用 Svelte，后端使用 Rust。�
 - `agent-control.md`：hook、激活、回复和审批边界。
 - `cross-platform-boundaries.md`：macOS、Windows 和不支持路径的边界。
 - `runtime-gateway-and-remote-control.md`：从 Hook 事件观察器升级到多 Provider Runtime Gateway、统一 IDL 和手机远程控制的目标架构与实施路径。
+- `protocol-layers-and-device-routing.md`：当前 core/pet/provider/gateway v1 IDL、SDK 生成、多设备资源路由和 Runtime Gateway 兼容边界。
 
 ## 模块证据
 

@@ -13,6 +13,7 @@
 - `module-reorganization.md`
 - `npm-install-registry-host.md`
 - `pet-window-click-through.md`
+- `protocol-layer-and-channel-boundaries.md`
 - `transcript-path-display.md`
 - `vite-realpath-root.md`
 

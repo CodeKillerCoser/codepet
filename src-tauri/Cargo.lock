@@ -561,6 +561,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "chrono",
+ "codepet-gateway-sdk",
  "core-graphics",
  "dirs 5.0.1",
  "hmac",
@@ -590,6 +591,23 @@ dependencies = [
  "toml_edit 0.22.27",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "codepet-core-sdk"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "codepet-gateway-sdk"
+version = "0.1.0"
+dependencies = [
+ "codepet-core-sdk",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

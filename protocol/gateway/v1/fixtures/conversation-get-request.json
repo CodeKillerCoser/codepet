@@ -1,0 +1,12 @@
+{
+  "protocolVersion": 1,
+  "id": "conversation-get-1",
+  "method": "conversation.get",
+  "params": {
+    "conversation": {
+      "deviceId": "device-macbook-1",
+      "providerInstanceId": "codex-work",
+      "nativeResourceId": "thread-01"
+    }
+  }
+}

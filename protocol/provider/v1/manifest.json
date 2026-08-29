@@ -1,0 +1,177 @@
+{
+  "name": "codepet-provider",
+  "layer": "provider",
+  "version": 1,
+  "kind": "service",
+  "transport": {
+    "kind": "json-rpc-2.0",
+    "framing": "stdio-json-lines",
+    "requestDiscriminator": "method",
+    "eventDiscriminator": "method",
+    "jsonRpcVersion": "2.0",
+    "requestId": { "$ref": "../../core/v1/schema.json#/$defs/RequestId" },
+    "rpcError": { "$ref": "../../core/v1/schema.json#/$defs/RpcError" }
+  },
+  "error": {
+    "$ref": "../../core/v1/schema.json#/$defs/ProtocolError"
+  },
+  "methods": [
+    {
+      "name": "provider.initialize",
+      "direction": "hostToPlugin",
+      "idempotency": "safe",
+      "request": { "$ref": "./schema.json#/$defs/ProviderInitializeRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ProviderInitializeResponse" }
+    },
+    {
+      "name": "provider.describe",
+      "direction": "hostToPlugin",
+      "idempotency": "safe",
+      "request": { "$ref": "./schema.json#/$defs/ProviderDescribeRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ProviderDescribeResponse" }
+    },
+    {
+      "name": "instance.create",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": { "$ref": "./schema.json#/$defs/InstanceCreateRequest" },
+      "response": { "$ref": "./schema.json#/$defs/InstanceCreateResponse" }
+    },
+    {
+      "name": "instance.start",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": { "$ref": "./schema.json#/$defs/InstanceStartRequest" },
+      "response": { "$ref": "./schema.json#/$defs/InstanceStartResponse" }
+    },
+    {
+      "name": "instance.stop",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": { "$ref": "./schema.json#/$defs/InstanceStopRequest" },
+      "response": { "$ref": "./schema.json#/$defs/InstanceStopResponse" }
+    },
+    {
+      "name": "instance.destroy",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": { "$ref": "./schema.json#/$defs/InstanceDestroyRequest" },
+      "response": { "$ref": "./schema.json#/$defs/InstanceDestroyResponse" }
+    },
+    {
+      "name": "instance.capabilities",
+      "direction": "hostToPlugin",
+      "idempotency": "safe",
+      "request": { "$ref": "./schema.json#/$defs/InstanceCapabilitiesRequest" },
+      "response": { "$ref": "./schema.json#/$defs/InstanceCapabilitiesResponse" }
+    },
+    {
+      "name": "conversation.list",
+      "direction": "hostToPlugin",
+      "idempotency": "safe",
+      "capability": "conversation.list",
+      "request": { "$ref": "./schema.json#/$defs/ConversationListRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ConversationListResponse" }
+    },
+    {
+      "name": "conversation.get",
+      "direction": "hostToPlugin",
+      "idempotency": "safe",
+      "capability": "conversation.get",
+      "request": { "$ref": "./schema.json#/$defs/ConversationGetRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ConversationGetResponse" }
+    },
+    {
+      "name": "conversation.create",
+      "direction": "hostToPlugin",
+      "idempotency": "nonIdempotent",
+      "capability": "conversation.create",
+      "request": { "$ref": "./schema.json#/$defs/ConversationCreateRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ConversationCreateResponse" }
+    },
+    {
+      "name": "turn.start",
+      "direction": "hostToPlugin",
+      "idempotency": "nonIdempotent",
+      "capability": "turn.start",
+      "request": { "$ref": "./schema.json#/$defs/TurnStartRequest" },
+      "response": { "$ref": "./schema.json#/$defs/TurnStartResponse" }
+    },
+    {
+      "name": "turn.steer",
+      "direction": "hostToPlugin",
+      "idempotency": "nonIdempotent",
+      "capability": "turn.steer",
+      "request": { "$ref": "./schema.json#/$defs/TurnSteerRequest" },
+      "response": { "$ref": "./schema.json#/$defs/TurnSteerResponse" }
+    },
+    {
+      "name": "turn.interrupt",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "capability": "turn.interrupt",
+      "request": { "$ref": "./schema.json#/$defs/TurnInterruptRequest" },
+      "response": { "$ref": "./schema.json#/$defs/TurnInterruptResponse" }
+    },
+    {
+      "name": "approval.resolve",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "capability": "approval.resolve",
+      "request": { "$ref": "./schema.json#/$defs/ApprovalResolveRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ApprovalResolveResponse" }
+    },
+    {
+      "name": "provider.shutdown",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": { "$ref": "./schema.json#/$defs/ProviderShutdownRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ProviderShutdownResponse" }
+    }
+  ],
+  "events": [
+    {
+      "name": "event.instanceStatusChanged",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "instance",
+      "payload": { "$ref": "./schema.json#/$defs/InstanceStatusChangedEvent" }
+    },
+    {
+      "name": "event.conversationUpserted",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "conversation",
+      "payload": { "$ref": "./schema.json#/$defs/ConversationUpsertedEvent" }
+    },
+    {
+      "name": "event.turnUpserted",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "turn",
+      "payload": { "$ref": "./schema.json#/$defs/TurnUpsertedEvent" }
+    },
+    {
+      "name": "event.turnOutputDelta",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "turn",
+      "payload": { "$ref": "./schema.json#/$defs/TurnOutputDeltaEvent" }
+    },
+    {
+      "name": "event.approvalRequested",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "approval",
+      "payload": { "$ref": "./schema.json#/$defs/ApprovalRequestedEvent" }
+    },
+    {
+      "name": "event.approvalResolved",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "approval",
+      "payload": { "$ref": "./schema.json#/$defs/ApprovalResolvedEvent" }
+    }
+  ],
+  "fixtures": "fixtures/index.json"
+}

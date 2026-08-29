@@ -1,0 +1,5 @@
+[
+  { "file": "initialize-request.json", "kind": "request", "name": "provider.initialize" },
+  { "file": "initialize-response.json", "kind": "response", "name": "provider.initialize" },
+  { "file": "conversation-upserted-event.json", "kind": "event", "name": "event.conversationUpserted" }
+]

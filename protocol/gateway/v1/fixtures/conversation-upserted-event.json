@@ -1,0 +1,19 @@
+{
+  "protocolVersion": 1,
+  "eventCursor": "event-41",
+  "event": "conversation.upserted",
+  "payload": {
+    "conversation": {
+      "resource": {
+        "deviceId": "device-macbook-1",
+        "providerInstanceId": "codex-work",
+        "nativeResourceId": "thread-01"
+      },
+      "title": "Gateway protocol foundation",
+      "status": "running",
+      "permissionLevel": "workspace-write",
+      "createdAt": 1787700000000,
+      "updatedAt": 1787700001000
+    }
+  }
+}

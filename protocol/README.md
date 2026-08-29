@@ -1,49 +1,58 @@
-# Code Pet Standard Protocol v0
+# CodePet protocol IDL
 
-## 背景
+## Single source of truth
 
-桌宠与未来远程客户端需要共享同一套 Runtime Gateway 契约。v0 只建立可生成、可编译、可检查漂移的协议边界，不接入任何 Provider runtime 或 Transport 业务实现。
+Everything under `protocol/` is language-neutral, handwritten protocol input. Generated Rust and TypeScript files are outputs only; they must not be edited as an alternative model source.
 
-## 事实来源与版本
+The v1 layers are:
 
-`schemas/v0.json` 是 DTO 的唯一事实来源，使用 JSON Schema Draft 2020-12。`manifest.json` 只描述协议版本、RPC 方法的 request/response 配对及 server event payload，不重复声明字段。Rust 与 TypeScript 文件都是机械生成产物，带有禁止手改标记。
+- `core/v1` — stable IDs, timestamps, versions, pagination, errors, JSON primitives, and routed resource identity.
+- `pet/v1` — Desktop Companion-driven `PetTask`, `PetApproval`, `PetAction`, snapshot, and patch contracts. It does not reference Provider conversation, turn, or approval models.
+- `provider/v1` — public Host ↔ independent Provider binary JSON-RPC 2.0 over newline-delimited stdio. It owns initialize, describe, instance lifecycle/capability, conversation, turn, approval, event, and shutdown contracts.
+- `gateway/v1` — Host ↔ Remote Client methods and replayable events. Resources use `deviceId + providerInstanceId + nativeResourceId`; the gateway exposes neither plugin process lifecycle nor pet-private state.
 
-wire `protocolVersion` 当前为 `0`，它标识一份确定的生成契约。改变 DTO、方法集合或事件集合时必须提升协议版本并同步更新 fixture；Provider-advertised string 和受控 extension data 可以在同一版本内扩展。握手由 `protocol.handshake` 协商客户端支持范围，事件用单调 `eventSequence` 标识顺序。
+`codegen.json` declares packages, dependency direction, output targets, and the shared `codepet.protocol.codegen/v1` interface for Rust, TypeScript, Dart, and Python. Rust is active for all four v1 layers. TypeScript currently covers core plus the Runtime Gateway compatibility surface; Dart and Python remain planned targets.
 
-## v0 范围
+## Versioning and discriminators
 
-- Provider：identity、status、capability、模型与 reasoning effort 的 Provider-advertised string，以及显式的 JSON extension point。
-- Conversation：摘要、运行状态、权限级别、当前 TurnTask，以及可选 `workspaceRoot`。省略 `workspaceRoot` 表示普通聊天，有值表示以该目录作为 Provider 会话上下文的项目会话。
-- TurnTask：一次可运行任务的 identity、状态和可展示摘要；`turn.send` 同时承载普通回复、快捷回复 identity 和 steer target。
-- Approval：待审批内容、允许的 `approve`/`deny` 决定和解决状态。
-- 基础 ProtocolError、分页 cursor 和 event sequence。
+Every public v1 initialize/handshake request carries an explicit supported `VersionRange`, and the response selects one `ProtocolVersion`. Method and event names live in each layer's manifest rather than Rust code.
 
-权限只有 `read-only`、`workspace-write`、`full-access`。v0 不包含 usage、Diff、文件浏览、终端、远程加密、Dart SDK 或 Provider runtime。
+- Pet and gateway use CodePet envelopes discriminated by `method` and `event`.
+- Provider uses JSON-RPC 2.0 requests discriminated by `method`, JSON-RPC responses, and notification events also discriminated by `method`.
+- Gateway v1 events carry an opaque `eventCursor` for replay.
+- Union-like domain DTOs such as `PetAction` retain an explicit `kind`; receivers validate kind-specific optional fields.
 
-`conversation.create` 原样携带可选 `workspaceRoot`，供后续 Provider adapter 映射到 Codex `thread/start` 的 `cwd`；协议不因此引入 Project 实体，也不授予目录浏览能力。
+The generator supports a deliberately small JSON Schema Draft 2020-12 subset. Unsupported keywords, unresolved references, duplicate method/event names, invalid fixtures, or undeclared cross-layer dependencies fail generation.
 
-## 生成边界
+## Generated SDKs
 
-- Rust：`src-tauri/src/runtime_gateway/generated.rs`，包含 serde DTO、tagged request/response/event、`ProtocolServer` 与 dispatcher 壳。
-- TypeScript：`frontend/lib/generated/runtimeGateway.ts`，包含 DTO、tagged union、typed client、transport contract 与 event map。
-- 共享样例：`protocol/fixtures/`，由生成检查校验，并由 Rust 测试执行 serde round-trip。
+Rust packages are located at:
 
-## 命令
+- `sdk/rust/codepet-core-sdk`
+- `sdk/rust/codepet-pet-sdk`
+- `sdk/rust/codepet-provider-sdk`
+- `sdk/rust/codepet-gateway-sdk`
+
+Service SDKs contain serde DTOs, method/event enums, async server traits, dispatchers, typed client/transport shells, wire envelopes, and codecs. They contain no Provider manager, process supervisor, registry, business handler, authentication, or UI behavior.
+
+## Runtime Gateway compatibility
+
+The existing in-process Runtime Gateway and Desktop Companion still use the unchanged v0 wire profile while v1 is introduced. That profile now lives at `gateway/v1/compat-v0.*` and is generated into `codepet-gateway-sdk::compat_v0` plus the TypeScript compatibility SDK. The Tauri and frontend files named `generated` are thin re-export shims only.
+
+This compatibility path preserves current dual-channel behavior: remote App Server events remain on the remote gateway bus, Desktop IPC remains on the companion bus, and neither channel is migrated into the public Provider plugin protocol in this phase.
+
+## Commands
 
 ```sh
 npm run protocol:generate
 npm run protocol:check
+cargo test --manifest-path sdk/rust/Cargo.toml
 ```
 
-`protocol:generate` 在校验 manifest、所有 ref、方法/事件名称唯一性、受支持 schema 子集和 fixture 后重写生成文件。`protocol:check` 执行相同校验，但不写文件；生成内容与仓库不一致时返回失败。
+`protocol:check` validates schema/manifest consistency, fixtures, layer dependencies, future language target declarations, and generated-file freshness. Runtime compatibility is covered by `runtime_gateway_protocol_tests` and `runtime_gateway_core_tests` in the Tauri crate.
 
-## 风险与验证
+## Current limits
 
-- Rust/TypeScript 漂移：运行 `npm run protocol:check`。
-- schema 或 ref 失效：生成器在输出前拒绝未解析 ref、非法 Draft 标记和不受支持关键字。
-- wire fixture 与 serde 行为不一致：运行 `cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_protocol_tests`。
-- 前端生成类型不可导入：运行 `npx tsc --noEmit --incremental false --target ES2022 --module ESNext --moduleResolution Bundler frontend/lib/generated/runtimeGateway.ts` 和 `npm run build`。
-
-## 未知项
-
-Transport framing、Provider 原生 payload 映射和事件重放存储由后续阶段确定；它们不得绕过或复制这里的 wire DTO。
+- No Plugin Manager, Provider binary migration, signature, marketplace, or sandbox exists yet.
+- No LAN listener, pairing, remote authentication, remote UI, or persistent event-cursor store exists yet.
+- The v0 compatibility profile remains in use by the desktop process until a later phase wires gateway v1 sessions and a separate pet-protocol adapter.

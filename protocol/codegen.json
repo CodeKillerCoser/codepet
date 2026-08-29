@@ -1,0 +1,84 @@
+{
+  "generatorInterfaceVersion": 1,
+  "languages": [
+    {
+      "id": "rust",
+      "interface": "codepet.protocol.codegen/v1",
+      "status": "active"
+    },
+    {
+      "id": "typescript",
+      "interface": "codepet.protocol.codegen/v1",
+      "status": "compatibility"
+    },
+    {
+      "id": "dart",
+      "interface": "codepet.protocol.codegen/v1",
+      "status": "planned"
+    },
+    {
+      "id": "python",
+      "interface": "codepet.protocol.codegen/v1",
+      "status": "planned"
+    }
+  ],
+  "packages": [
+    {
+      "id": "core-v1",
+      "layer": "core",
+      "version": 1,
+      "schema": "core/v1/schema.json",
+      "manifest": "core/v1/manifest.json",
+      "dependencies": [],
+      "outputs": {
+        "rust": "sdk/rust/codepet-core-sdk/src/generated.rs",
+        "typescript": "sdk/typescript/codepet-core-sdk/src/generated.ts"
+      }
+    },
+    {
+      "id": "pet-v1",
+      "layer": "pet",
+      "version": 1,
+      "schema": "pet/v1/schema.json",
+      "manifest": "pet/v1/manifest.json",
+      "dependencies": ["core-v1"],
+      "outputs": {
+        "rust": "sdk/rust/codepet-pet-sdk/src/generated.rs"
+      }
+    },
+    {
+      "id": "provider-v1",
+      "layer": "provider",
+      "version": 1,
+      "schema": "provider/v1/schema.json",
+      "manifest": "provider/v1/manifest.json",
+      "dependencies": ["core-v1"],
+      "outputs": {
+        "rust": "sdk/rust/codepet-provider-sdk/src/generated.rs"
+      }
+    },
+    {
+      "id": "gateway-v1",
+      "layer": "gateway",
+      "version": 1,
+      "schema": "gateway/v1/schema.json",
+      "manifest": "gateway/v1/manifest.json",
+      "dependencies": ["core-v1"],
+      "outputs": {
+        "rust": "sdk/rust/codepet-gateway-sdk/src/generated.rs"
+      }
+    },
+    {
+      "id": "gateway-compat-v0",
+      "layer": "gateway",
+      "version": 0,
+      "schema": "gateway/v1/compat-v0.schema.json",
+      "manifest": "gateway/v1/compat-v0.manifest.json",
+      "dependencies": ["core-v1"],
+      "outputs": {
+        "rust": "sdk/rust/codepet-gateway-sdk/src/compat_v0.rs",
+        "typescript": "sdk/typescript/codepet-gateway-sdk/src/compat-v0.ts"
+      }
+    }
+  ]
+}

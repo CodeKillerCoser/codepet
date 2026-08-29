@@ -5,6 +5,7 @@
 ## 当前决策
 
 - `codex-remote-and-desktop-companion-dual-channel.md`
+- `language-neutral-protocol-idl-and-sdk-boundary.md`
 - `qoder-existing-session-reply-unsupported.md`
 - `semantic-file-tree-as-knowledge-index.md`
 

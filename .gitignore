@@ -1,6 +1,7 @@
 node_modules/
 dist/
 src-tauri/target/
+sdk/rust/target/
 custom-pet-data/
 .local-secrets/
 __pycache__/

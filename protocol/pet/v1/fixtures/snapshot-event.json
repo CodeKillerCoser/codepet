@@ -1,0 +1,19 @@
+{
+  "protocolVersion": 1,
+  "event": "pet.snapshot",
+  "payload": {
+    "snapshot": {
+      "revision": 7,
+      "generatedAt": 1787700000000,
+      "tasks": [
+        {
+          "id": "pet-task-1",
+          "title": "Local desktop task",
+          "status": "running",
+          "updatedAt": 1787700000000
+        }
+      ],
+      "approvals": []
+    }
+  }
+}

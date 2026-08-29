@@ -1,0 +1,18 @@
+{
+  "jsonrpc": "2.0",
+  "method": "event.conversationUpserted",
+  "params": {
+    "conversation": {
+      "resource": {
+        "deviceId": "device-macbook-1",
+        "providerInstanceId": "codex-work",
+        "nativeResourceId": "thread-01"
+      },
+      "title": "Provider protocol foundation",
+      "status": "running",
+      "permissionLevel": "workspace-write",
+      "createdAt": 1787700000000,
+      "updatedAt": 1787700001000
+    }
+  }
+}

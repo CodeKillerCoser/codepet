@@ -1,0 +1,144 @@
+{
+  "name": "codepet-gateway",
+  "layer": "gateway",
+  "version": 1,
+  "kind": "service",
+  "transport": {
+    "kind": "codepet-envelope",
+    "framing": "transport-defined",
+    "requestDiscriminator": "method",
+    "responseDiscriminator": "method",
+    "eventDiscriminator": "event",
+    "versionField": "protocolVersion",
+    "protocolVersion": { "$ref": "../../core/v1/schema.json#/$defs/ProtocolVersion" },
+    "requestId": { "$ref": "../../core/v1/schema.json#/$defs/RequestId" },
+    "eventCursorField": "eventCursor",
+    "eventCursor": { "$ref": "../../core/v1/schema.json#/$defs/EventCursor" }
+  },
+  "error": {
+    "$ref": "../../core/v1/schema.json#/$defs/ProtocolError"
+  },
+  "methods": [
+    {
+      "name": "protocol.handshake",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": { "$ref": "./schema.json#/$defs/HandshakeRequest" },
+      "response": { "$ref": "./schema.json#/$defs/HandshakeResponse" }
+    },
+    {
+      "name": "device.list",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": { "$ref": "./schema.json#/$defs/DeviceListRequest" },
+      "response": { "$ref": "./schema.json#/$defs/DeviceListResponse" }
+    },
+    {
+      "name": "provider.list",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": { "$ref": "./schema.json#/$defs/ProviderListRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ProviderListResponse" }
+    },
+    {
+      "name": "conversation.list",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "conversation.list",
+      "request": { "$ref": "./schema.json#/$defs/ConversationListRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ConversationListResponse" }
+    },
+    {
+      "name": "conversation.get",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "conversation.get",
+      "request": { "$ref": "./schema.json#/$defs/ConversationGetRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ConversationGetResponse" }
+    },
+    {
+      "name": "conversation.create",
+      "direction": "clientToGateway",
+      "idempotency": "nonIdempotent",
+      "capability": "conversation.create",
+      "request": { "$ref": "./schema.json#/$defs/ConversationCreateRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ConversationCreateResponse" }
+    },
+    {
+      "name": "turn.send",
+      "direction": "clientToGateway",
+      "idempotency": "nonIdempotent",
+      "capability": "turn.send",
+      "request": { "$ref": "./schema.json#/$defs/TurnSendRequest" },
+      "response": { "$ref": "./schema.json#/$defs/TurnSendResponse" }
+    },
+    {
+      "name": "turn.interrupt",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "turn.interrupt",
+      "request": { "$ref": "./schema.json#/$defs/TurnInterruptRequest" },
+      "response": { "$ref": "./schema.json#/$defs/TurnInterruptResponse" }
+    },
+    {
+      "name": "approval.resolve",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "approval.resolve",
+      "request": { "$ref": "./schema.json#/$defs/ApprovalResolveRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ApprovalResolveResponse" }
+    }
+  ],
+  "events": [
+    {
+      "name": "device.statusChanged",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "device",
+      "payload": { "$ref": "./schema.json#/$defs/DeviceStatusChangedEvent" }
+    },
+    {
+      "name": "provider.statusChanged",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "providerInstance",
+      "payload": { "$ref": "./schema.json#/$defs/ProviderStatusChangedEvent" }
+    },
+    {
+      "name": "conversation.upserted",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "conversation",
+      "payload": { "$ref": "./schema.json#/$defs/ConversationUpsertedEvent" }
+    },
+    {
+      "name": "turn.upserted",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "turn",
+      "payload": { "$ref": "./schema.json#/$defs/TurnUpsertedEvent" }
+    },
+    {
+      "name": "turn.outputDelta",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "turn",
+      "payload": { "$ref": "./schema.json#/$defs/TurnOutputDeltaEvent" }
+    },
+    {
+      "name": "approval.requested",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "approval",
+      "payload": { "$ref": "./schema.json#/$defs/ApprovalRequestedEvent" }
+    },
+    {
+      "name": "approval.resolved",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "approval",
+      "payload": { "$ref": "./schema.json#/$defs/ApprovalResolvedEvent" }
+    }
+  ],
+  "fixtures": "fixtures/index.json"
+}

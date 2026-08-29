@@ -13,8 +13,9 @@
     "version:sync": "node scripts/release_version.mjs --sync-version",
     "release:latest-json": "node scripts/generate_latest_json.mjs",
     "release:github": "node scripts/publish_github_release.mjs",
-    "protocol:generate": "node scripts/generate_protocol.mjs",
-    "protocol:check": "node scripts/generate_protocol.mjs --check"
+    "protocol:generate": "node tools/protocol-codegen/generate.mjs",
+    "protocol:test": "node --test tools/protocol-codegen/test.mjs",
+    "protocol:check": "node tools/protocol-codegen/generate.mjs --check && node --test tools/protocol-codegen/test.mjs"
   },
   "dependencies": {
     "@lucide/svelte": "^1.16.0",

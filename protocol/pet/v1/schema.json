@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/pet/v1/schema.json",
+  "title": "CodePet Pet Protocol v1",
+  "$defs": {
+    "PetActionDecision": {
+      "type": "string",
+      "enum": ["approve", "deny"]
+    },
+    "PetActionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "PetActionKind": {
+      "type": "string",
+      "enum": ["activate", "reply", "interrupt", "resolve-approval"]
+    },
+    "PetActionRequest": {
+      "type": "object",
+      "properties": {
+        "actionId": { "$ref": "#/$defs/PetActionId" },
+        "kind": { "$ref": "#/$defs/PetActionKind" },
+        "taskId": { "$ref": "#/$defs/PetTaskId" },
+        "message": { "type": "string", "minLength": 1 },
+        "approvalId": { "$ref": "#/$defs/PetApprovalId" },
+        "decision": { "$ref": "#/$defs/PetActionDecision" }
+      },
+      "required": ["actionId", "kind", "taskId"],
+      "additionalProperties": false,
+      "description": "Pet action discriminated by kind; companion validates kind-specific optional fields."
+    },
+    "PetActionResponse": {
+      "type": "object",
+      "properties": {
+        "accepted": { "type": "boolean" },
+        "revision": { "$ref": "#/$defs/PetRevision" }
+      },
+      "required": ["accepted", "revision"],
+      "additionalProperties": false
+    },
+    "PetApproval": {
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/PetApprovalId" },
+        "taskId": { "$ref": "#/$defs/PetTaskId" },
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "requestedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" }
+      },
+      "required": ["id", "taskId", "title", "requestedAt"],
+      "additionalProperties": false
+    },
+    "PetApprovalId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "PetInitializeRequest": {
+      "type": "object",
+      "properties": {
+        "clientId": { "$ref": "../../core/v1/schema.json#/$defs/ClientId" },
+        "clientName": { "type": "string", "minLength": 1 },
+        "clientVersion": { "type": "string", "minLength": 1 },
+        "supportedVersions": { "$ref": "../../core/v1/schema.json#/$defs/VersionRange" }
+      },
+      "required": ["clientId", "clientName", "clientVersion", "supportedVersions"],
+      "additionalProperties": false
+    },
+    "PetInitializeResponse": {
+      "type": "object",
+      "properties": {
+        "selectedVersion": { "$ref": "../../core/v1/schema.json#/$defs/ProtocolVersion" },
+        "snapshot": { "$ref": "#/$defs/PetSnapshot" }
+      },
+      "required": ["selectedVersion", "snapshot"],
+      "additionalProperties": false
+    },
+    "PetPatch": {
+      "type": "object",
+      "properties": {
+        "baseRevision": { "$ref": "#/$defs/PetRevision" },
+        "revision": { "$ref": "#/$defs/PetRevision" },
+        "operations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PetPatchOperation" }
+        }
+      },
+      "required": ["baseRevision", "revision", "operations"],
+      "additionalProperties": false
+    },
+    "PetPatchEvent": {
+      "type": "object",
+      "properties": {
+        "patch": { "$ref": "#/$defs/PetPatch" }
+      },
+      "required": ["patch"],
+      "additionalProperties": false
+    },
+    "PetPatchOperation": {
+      "type": "object",
+      "properties": {
+        "op": { "$ref": "#/$defs/PetPatchOperationKind" },
+        "path": { "type": "string", "minLength": 1 },
+        "value": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" }
+      },
+      "required": ["op", "path"],
+      "additionalProperties": false
+    },
+    "PetPatchOperationKind": {
+      "type": "string",
+      "enum": ["add", "replace", "remove"]
+    },
+    "PetRevision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "PetSnapshot": {
+      "type": "object",
+      "properties": {
+        "revision": { "$ref": "#/$defs/PetRevision" },
+        "generatedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
+        "tasks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PetTask" }
+        },
+        "approvals": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PetApproval" }
+        }
+      },
+      "required": ["revision", "generatedAt", "tasks", "approvals"],
+      "additionalProperties": false
+    },
+    "PetSnapshotEvent": {
+      "type": "object",
+      "properties": {
+        "snapshot": { "$ref": "#/$defs/PetSnapshot" }
+      },
+      "required": ["snapshot"],
+      "additionalProperties": false
+    },
+    "PetSnapshotRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "PetSnapshotResponse": {
+      "type": "object",
+      "properties": {
+        "snapshot": { "$ref": "#/$defs/PetSnapshot" }
+      },
+      "required": ["snapshot"],
+      "additionalProperties": false
+    },
+    "PetTask": {
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/PetTaskId" },
+        "title": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string" },
+        "status": { "$ref": "#/$defs/PetTaskStatus" },
+        "updatedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" }
+      },
+      "required": ["id", "title", "status", "updatedAt"],
+      "additionalProperties": false
+    },
+    "PetTaskId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "PetTaskStatus": {
+      "type": "string",
+      "enum": ["idle", "running", "waiting-approval", "completed", "failed", "interrupted"]
+    }
+  }
+}

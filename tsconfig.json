@@ -9,5 +9,10 @@
     "target": "ES2022",
     "useDefineForClassFields": true
   },
-  "include": ["frontend/**/*.ts", "frontend/**/*.svelte", "vite.config.ts"]
+  "include": [
+    "frontend/**/*.ts",
+    "frontend/**/*.svelte",
+    "sdk/typescript/**/*.ts",
+    "vite.config.ts"
+  ]
 }
