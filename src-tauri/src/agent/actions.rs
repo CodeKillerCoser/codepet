@@ -23,7 +23,6 @@ pub enum ActivationStrategy {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReplyStrategy {
-    CodexAppServer,
     Terminal,
     ITerm,
     AccessibilityPaste,
@@ -54,9 +53,6 @@ pub(crate) trait AgentInteractionDriver {
 
     fn send_reply(&self, event: &PetEvent, message: &str) -> Result<(), String> {
         match self.reply_strategy(event) {
-            ReplyStrategy::CodexAppServer => {
-                Err("codex app-server reply must be handled by its interaction driver".to_string())
-            }
             ReplyStrategy::Terminal => send_terminal_reply(event, message),
             ReplyStrategy::ITerm => send_iterm_reply(event, message),
             ReplyStrategy::AccessibilityPaste => {
@@ -87,15 +83,36 @@ pub(crate) trait AgentInteractionDriver {
 }
 
 #[derive(Clone, Copy)]
+struct CodexLegacyDriver;
+
+#[derive(Clone, Copy)]
 struct QoderDriver;
 
 #[derive(Clone, Copy)]
 struct DefaultDriver;
 
 enum AgentInteraction {
-    CodexAppServer(crate::codex_app_server::CodexAppServerManager),
+    Codex(CodexLegacyDriver),
     Qoder(QoderDriver),
     Default(DefaultDriver),
+}
+
+impl AgentInteractionDriver for CodexLegacyDriver {
+    fn activation_strategy(&self, event: &PetEvent) -> ActivationStrategy {
+        if let Some(thread_id) = event
+            .session_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            ActivationStrategy::Target(ActivationTarget::Url(codex_thread_deeplink(thread_id)))
+        } else {
+            default_activation_strategy_for_event(event)
+        }
+    }
+
+    fn reply_strategy(&self, _event: &PetEvent) -> ReplyStrategy {
+        ReplyStrategy::Unsupported
+    }
 }
 
 impl AgentInteractionDriver for QoderDriver {
@@ -121,7 +138,7 @@ impl AgentInteractionDriver for DefaultDriver {
 impl AgentInteractionDriver for AgentInteraction {
     fn activation_strategy(&self, event: &PetEvent) -> ActivationStrategy {
         match self {
-            Self::CodexAppServer(driver) => driver.activation_strategy(event),
+            Self::Codex(driver) => driver.activation_strategy(event),
             Self::Qoder(driver) => driver.activation_strategy(event),
             Self::Default(driver) => driver.activation_strategy(event),
         }
@@ -129,7 +146,7 @@ impl AgentInteractionDriver for AgentInteraction {
 
     fn reply_strategy(&self, event: &PetEvent) -> ReplyStrategy {
         match self {
-            Self::CodexAppServer(driver) => driver.reply_strategy(event),
+            Self::Codex(driver) => driver.reply_strategy(event),
             Self::Qoder(driver) => driver.reply_strategy(event),
             Self::Default(driver) => driver.reply_strategy(event),
         }
@@ -137,7 +154,7 @@ impl AgentInteractionDriver for AgentInteraction {
 
     fn approval_strategy(&self, event: &PetEvent) -> ApprovalStrategy {
         match self {
-            Self::CodexAppServer(driver) => driver.approval_strategy(event),
+            Self::Codex(driver) => driver.approval_strategy(event),
             Self::Qoder(driver) => driver.approval_strategy(event),
             Self::Default(driver) => driver.approval_strategy(event),
         }
@@ -145,7 +162,7 @@ impl AgentInteractionDriver for AgentInteraction {
 
     fn send_reply(&self, event: &PetEvent, message: &str) -> Result<(), String> {
         match self {
-            Self::CodexAppServer(driver) => driver.send_reply(event, message),
+            Self::Codex(driver) => driver.send_reply(event, message),
             Self::Qoder(driver) => driver.send_reply(event, message),
             Self::Default(driver) => driver.send_reply(event, message),
         }
@@ -153,7 +170,7 @@ impl AgentInteractionDriver for AgentInteraction {
 
     fn activate(&self, event: &PetEvent) -> Result<(), String> {
         match self {
-            Self::CodexAppServer(driver) => driver.activate(event),
+            Self::Codex(driver) => driver.activate(event),
             Self::Qoder(driver) => driver.activate(event),
             Self::Default(driver) => driver.activate(event),
         }
@@ -166,7 +183,7 @@ impl AgentInteractionDriver for AgentInteraction {
         decision: ApprovalDecision,
     ) -> Result<(), String> {
         match self {
-            Self::CodexAppServer(driver) => driver.resolve_approval(state, event, decision),
+            Self::Codex(driver) => driver.resolve_approval(state, event, decision),
             Self::Qoder(driver) => driver.resolve_approval(state, event, decision),
             Self::Default(driver) => driver.resolve_approval(state, event, decision),
         }
@@ -296,9 +313,7 @@ pub fn resolve_approval_for_event(
 
 fn interaction_for_event(event: &PetEvent) -> AgentInteraction {
     match event.provider {
-        AgentId::Codex => {
-            AgentInteraction::CodexAppServer(crate::codex_app_server::CodexAppServerManager)
-        }
+        AgentId::Codex => AgentInteraction::Codex(CodexLegacyDriver),
         AgentId::Qoder => AgentInteraction::Qoder(QoderDriver),
         AgentId::Claude | AgentId::Cursor => AgentInteraction::Default(DefaultDriver),
     }
@@ -319,8 +334,9 @@ pub(crate) fn has_session_id(event: &PetEvent) -> bool {
         .is_some_and(|value| !value.is_empty())
 }
 
-pub(crate) fn is_replyable_event(event: &PetEvent) -> bool {
-    matches!(event.status, TaskStatus::Done | TaskStatus::Failed)
+fn codex_thread_deeplink(thread_id: &str) -> String {
+    let escaped: String = url::form_urlencoded::byte_serialize(thread_id.as_bytes()).collect();
+    format!("codex://threads/{escaped}")
 }
 
 #[cfg(target_os = "macos")]

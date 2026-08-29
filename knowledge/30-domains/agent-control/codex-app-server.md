@@ -1,97 +1,117 @@
-# Codex App Server 回复路径
+# Codex Desktop 私有 IPC Provider
 
-> 当前状态（2026-08-26）：Codex 原生侧已经改为可长期持有的 stdio JSON-RPC session，并提供 Code Pet Standard Protocol v0 的纯映射边界。Runtime Gateway Provider 尚未接线；旧 Hook、audit 和 transcript 数据源没有恢复。
-
-## 当前用途
-
-Codex 是当前已验证的主要远程回复 provider。`src-tauri/src/agent/actions.rs` 会把符合条件的 Codex 回复路由到 `src-tauri/src/agent/codex_app_server.rs`。当前前端 Codex capability 仍然关闭，因此这是保留的公共兼容入口；新 Runtime Gateway Provider 接线后可以直接持有同一模块提供的 session。
-
-Codex 激活也由同一个 provider driver 处理，但它使用 `codex://threads/<thread-id>` deeplink，而不是 app-server RPC。
-
-## 兼容入口的能力边界
-
-旧前端只在以下条件同时满足时暴露 Codex 回复：
-
-- 事件状态是 `done` 或 `failed`。
-- 事件包含非空 `sessionId`。
-
-这与后端保留的 `is_replyable_event()` 和 `has_session_id()` 一致。Codex Hook/audit 活动源和前端 Codex capability 已停用，因此不能把这段兼容判断视为新的生产数据源。
-
-## 已验证能力
-
-此前本机探测已验证：Codex app-server 可以把消息发送到现有 Codex app thread，并在 app UI 上屏。同一路径没有验证窗口激活或打开指定 thread 的 RPC，因此激活继续使用独立 thread deeplink。
-
-## Runtime 路径
-
-`CodexAppServerSession::spawn()` 不再自行维护候选路径，也不会回退到裸字符串 `codex`。它从 `src-tauri/src/agent/runtime.rs` 获取已验证的绝对路径；resolver 统一处理用户配置、兼容环境变量、当前 PATH、登录 shell、macOS Spotlight 和 Windows 动态安装布局。没有可用路径时 Provider 保持 `unavailable`，具体诊断写入 Provider extension 的 `unavailableReason`。
-
-主 App 的“运行时”Tab 可以选择或清除 executable。配置变化会替换 Runtime Gateway 中的 Codex adapter，并关闭兼容回复 session，使后续启动直接使用新路径。
+> 当前状态（2026-08-29）：本页文件名为保持知识链接兼容暂时保留。Codex Provider 的运行时数据源已经从 Code Pet 独立启动的 `codex app-server --listen stdio://` 改为当前用户正在运行的 Codex Desktop Owner/Follower 私有 IPC。该协议没有兼容性承诺，接入必须版本耦合并 fail closed。
 
 ## 背景
 
-旧实现只服务桌宠快捷回复：每次回复启动一个 `codex app-server`，同步执行 `initialize`、`thread/resume` 和 `turn/start` 或 `turn/steer`，等到 `turn/completed` 后销毁进程。它不能被未来 Provider 长期管理，也不能并发匹配 response、持续消费通知或接收 App Server 发起的审批请求。
+Code Pet 需要展示 Codex Desktop 中已经存在的任务及其状态变化。独立启动 App Server 会形成另一个运行实例，不能把它收到的数据当成 Desktop 当前任务的权威状态，也可能把回复或审批发往错误实例。因此阶段一只附着 Desktop 的私有 IPC，不再启动独立 App Server，也不使用 Hook、transcript、audit 扫描或文件监听补齐任务状态。
 
-## 当前实现
+## 目标
 
-`src-tauri/src/agent/codex_app_server/` 分为三层：
+- 安全连接当前用户的 Codex Desktop IPC，并把连接失败公开为可诊断的 Provider unavailable。
+- 在已知 thread id 的前提下完成 owner discovery、following、完整历史和状态快照 bootstrap。
+- 严格按 revision 应用 snapshot/patch，并把可判定状态映射到 Code Pet Standard Protocol。
+- 让桌宠展示运行、等待审批或输入、完成、失败和中断等状态。
+- 保持私有 DTO、路由字段和生命周期消息在 Codex Desktop adapter 内部。
 
-- `client.rs`：长期 session、stdio JSONL、request ID pending map、持续 reader、stderr drain、进程退出和协议错误转换、显式 `shutdown`，以及可替换的 `JsonRpcReader`/`JsonRpcWriter`。
-- `protocol.rs`：只覆盖当前产品需要的 Codex thread、turn、输出和审批字段；未识别原生字段由 serde 忽略，不扩大公共 native API。
-- `mapper.rs`：把 typed Codex 数据投影到 `runtime_gateway/generated.rs` 中的 Provider、Conversation、TurnTask、Approval、ProtocolEvent 和 ProtocolError。
+## 非目标
 
-`CodexAppServerSession` 在一次 initialize 后可被克隆和长期持有。多个请求共享一个 writer，response 按字符串或整数 request ID 分发；reader 在请求之间持续接收 notification 和 server request。EOF、非法 JSON、非法 envelope、未知 response ID 和 RPC error 都转换为 `CodexAppServerError`。显式 `shutdown` 会关闭 writer、终止受管子进程并解除 pending request。
+- 不把私有 IPC 扩展成 Code Pet 的公共协议，也不让 UI 解析原生 payload。
+- 不通过 transcript、Hook、audit、文件监听或目录扫描发现任务。
+- 不在 Desktop IPC 失败时启动独立 App Server 或 Codex CLI 作为回退。
+- 阶段一不发送回复、快捷回复、审批决定或其他写操作。
+- 不承诺在完全未知 thread id 时枚举 Desktop 中的全部任务。
 
-旧 `send_reply(PetEvent, message)` 与 `codex://threads/<thread-id>` deeplink 保留。回复兼容入口通过进程内共享 session 复用同一个 App Server，不再按操作 spawn；未来 Provider 可以直接持有 `CodexAppServerSession` 并自行决定生命周期。
+## 已验证证据
 
-## 已接入方法
+- 当前本机 Codex Desktop 默认使用 `~/.codex/ipc/ipc.sock`；目标是当前有效用户所有、权限为 `0600` 的 Unix domain socket。
+- 每个 IPC frame 使用 4 字节 little-endian 长度前缀，后跟 JSON；bundle frame 上限为 256 MiB。
+- 连接初始化需要唯一 `clientId`。消息带有目标路由，多客户端不会天然共享同一条流，因此接收方必须过滤不属于自己的定向消息，同时分发明确的广播消息。
+- 当前 Owner/Follower 协议族为 v1，状态广播实现当前为 v11。这是私有实现版本，不是 Code Pet Standard Protocol 版本。
+- 已知 thread id 时，可依次执行 owner discovery、设置 `following=true`、接收初始 snapshot、请求完整历史并取得 revision，之后等待对应 revision 的 snapshot，再进入增量跟随。
+- patch 只有在 revision 连续时才能应用。遇到缺口必须重新请求完整 snapshot；等待期间不得把后续 patch 拼接到旧状态。
+- 断线后旧 revision、following 和未完成请求都不再可信。客户端需要清空连接态，并以有界退避重新连接和 bootstrap。
+- 当前私有 IPC 没有可用的任务目录。Code Pet 在完全没有 thread id 的情况下无法从零枚举任务；这项限制不能用 transcript 扫描绕过。
+- 2026-08-29 只读联调中，显式提供一个正在运行的 thread id 后，新的唯一 client 成功完成 owner discovery、following、初始 snapshot、完整历史和目标 revision snapshot；同一环境下，另一个 known-set 为空的新 client 在有界观察期内没有收到当前任务公告。因此 `following=true` 公告只能作为机会性发现信号，不能当作任务目录或晚加入保证。
 
-- 初始化：`initialize`，随后发送 `initialized`。
-- 会话：`thread/list`、`thread/read`、`thread/resume`、`thread/start`。
-- Turn：`turn/start`、`turn/steer`、`turn/interrupt`。
-- 审批回应：`item/commandExecution/requestApproval` 和 `item/fileChange/requestApproval` 的 JSON-RPC response。
+这些事实来自当前 Codex Desktop 打包实现和只读多客户端探针。升级 Desktop 后必须重新核对，不能仅凭历史字段或方法名继续声明兼容。
 
-`thread/start` 的映射规则：
+## 现状理解
 
-- 有 `workspaceRoot` 的 project chat 写入 `cwd`；normal chat 不发送 `cwd`。
-- `read-only` → `sandbox=read-only`、`approvalPolicy=on-request`。
-- `workspace-write` → `sandbox=workspace-write`、`approvalPolicy=on-request`。
-- `full-access` → `sandbox=danger-full-access`、`approvalPolicy=never`。
-- model 写入 `model`；reasoning effort 写入受支持的 thread config，并可在 `turn/start.effort` 覆盖。
+Codex Desktop 是任务 owner，Code Pet 是 follower。IPC transport 只负责安全 framing、初始化、请求关联、路由过滤、广播分发、关闭和重连；Owner/Follower adapter 负责私有生命周期和 revision 状态机；mapper 只把经过验证的 thread/turn 语义投影到标准 Provider、Conversation、TurnTask 和 ProtocolEvent。
 
-## 已接入通知和 server request
+Code Pet 可以可靠处理两类 thread：连接期间由其他 Desktop follower 明确公告的 thread，以及外部已经提供已知 id、随后完成 bootstrap 的 thread。应用重启后如果既没有受控的已知 thread id，也收不到新的 follower 公告，则不能声称已经发现 Desktop 中所有正在运行的任务。
 
-- `thread/started` → `conversation.upserted`。
-- `turn/started`、`turn/completed` → `turn.upserted`，覆盖 `inProgress`、`completed`、`failed`、`interrupted`。
-- `item/agentMessage/delta` → `turn.outputDelta` 的 `assistant-message`。
-- `item/commandExecution/outputDelta` → `turn.outputDelta` 的 `command-output`。
-- `item/fileChange/outputDelta` → `turn.outputDelta` 的 `file-change-output`。
-- `item/reasoning/textDelta`、`item/reasoning/summaryTextDelta` → `turn.outputDelta` 的 `reasoning`。
-- command/file approval server request → `approval.requested` 和 waiting-approval `turn.upserted`。
-- `serverRequest/resolved` → 尚在本 mapper pending 集合中的 `approval.resolved`；无法获知外部 decision 时标记为 expired。
+## 实现路径
 
-## 审批归一化限制
+### Socket 与 frame 安全
 
-Standard Protocol v0 只有 `approve`/`deny`。command/file 原生 decision 可能包含 `acceptForSession`、`cancel` 或策略 amendment；当前最小回应固定映射为 `approve → accept`、`deny → decline`。原生方法、item ID、可用 decisions 和该映射写入受控 ProviderExtension，便于 UI 展示限制，但不会把完整原生 payload 透传到标准 DTO。
+连接前解析 Desktop IPC 位置，并通过不跟随替换目标的 metadata 检查确认目标是 Unix socket、由当前有效用户所有且权限符合 `0600` 安全边界。目标缺失、类型错误、owner 不匹配、权限过宽或连接被拒绝时，Provider 保持 unavailable，并公开不含原始私有 payload 的诊断原因。
 
-`item/permissions/requestApproval` 可以被识别并投影为 Approval，但 v0 的二元 decision 无法构造 App Server 要求的 granted permission profile，因此 resolve 显式返回 `capability_unsupported`。`item/tool/requestUserInput`、`mcpServer/elicitation/request` 和 dynamic tool call 不是二元审批，当前作为不支持的 server request 返回 ProtocolError，不伪造成功。
+frame decoder 必须先校验 4 字节长度，再分配和读取 payload。长度超过 256 MiB、短帧、非法 UTF-8/JSON 或 envelope 不完整都属于协议错误；不得继续猜测边界或复用半帧数据。
 
-## ProviderExtension 策略
+### 初始化、路由与请求关联
 
-extension namespace 固定为 `codex.app-server`。只允许 mapper 明确挑选的标量或短列表进入 extension，例如 native method/status、native cwd、item ID、原生可用 decisions 和 decision mapping。未知 JSON 字段被忽略；不存在把原始 `serde_json::Value`、完整 params、command action、diff 或任意 future field 直接塞进标准 DTO 的 fallback。
+每次物理连接生成唯一 client identity，并完成 initialize 后才进入可用状态。请求使用连接内唯一 id 关联 response；断线或关闭时所有 pending request 必须以显式错误结束。
 
-Provider capability 只声明 v0 已可调用的方法。extension 同时列出 native method 和当前不支持的 approval kind。独立 Codex Desktop 进程是否把实时通知广播给 Code Pet 管理的 App Server 仍未验证，因此 capability 只承诺 managed conversation 的实时事件。
+接收路径先判断目标路由。发给其他 client 的消息必须忽略，明确发给当前 client 的消息进入请求或 follower 分发，广播消息进入受控广播分发。未知消息只记录有限诊断，不得把原始 JSON 放进 Standard Protocol extension 或 UI。
 
-## 已知限制
+### Owner/Follower bootstrap
 
-- Runtime Gateway Provider 尚未接线，session 目前仅由兼容回复入口共享或供后续 Provider 直接持有。
-- 当前没有自动重启、重连和 reconciliation；进程退出会使 pending request 和订阅者收到显式错误。
-- thread/list 和 thread/read 响应本身不足以区分 normal/project；mapper 只使用 Gateway/创建请求明确提供的 `workspaceRoot`，不会仅凭 App Server 的默认 cwd 猜成 project chat。
-- 未接入完整 item history、diff、usage、model discovery、permission profile discovery、user input 和 MCP elicitation。
+对已知 thread id，adapter 按当前真实生命周期完成 owner discovery 和 following，不能只订阅未来事件。完整历史请求返回的 revision 是 bootstrap 的同步锚点；在收到匹配的完整 snapshot 前，该 thread 不得标记为已同步。
 
-## 验证
+若 owner 不存在、following 被拒绝、历史加载失败或等待 snapshot 超时，应保留明确的 thread/provider 诊断状态，不构造看似完整的会话。由于没有任务目录，空发现结果只能解释为“当前没有收到可附着任务公告，也没有显式已知 id”，不能解释为 Desktop 中一定没有任务。
 
-- `cargo test --manifest-path src-tauri/Cargo.toml codex_app_server --lib -- --test-threads=1`
-- `cargo check --manifest-path src-tauri/Cargo.toml`
-- `npm run protocol:check`
+### Revision 状态机
 
-mock peer 测试不启动真实 Codex，覆盖 initialize 顺序、乱序 response ID、持续通知、normal/project thread start、list/read/start、turn start/steer/interrupt、turn 状态、输出增量、command approval request/response，以及旧 reply/deeplink capability。
+完整 snapshot 可以建立新的基线。连续 patch 只能从当前 revision 前进一个协议允许的步长；重复或旧 revision 安全忽略，前向缺口进入 `awaiting snapshot` 状态并触发重新同步。在重新建立基线前不对外发布由缺口 patch 推导出的状态。
+
+重连必须清空 revision 基线、following 状态和旧 owner 路由，再从 initialize 与 bootstrap 开始。退避应有上限，并在 Desktop 恢复后允许 Provider 从 connecting/unavailable 回到 ready。
+
+### 标准状态与能力
+
+adapter 只输出 Code Pet 已能证明的公共语义。当前映射至少覆盖 running、waiting approval/input、completed、failed 和 interrupted；等待输入可以复用标准等待状态并保留安全的展示文案，但不得因此暴露审批按钮。
+
+阶段一 Provider 是只读观察者。capability 只能列出已实现的发现/读取方法；`quickReplies` 为空，审批、回复、steer、interrupt 及创建会话等未接通写操作不得声明可用。对应 Gateway 调用必须返回明确的 unsupported，而不是发送私有 follower 请求后猜测成功。
+
+## 涉及模块
+
+- `src-tauri/src/agent/codex_desktop_ipc/transport.rs`：socket 校验、frame codec、initialize transport、关闭和连接边界。
+- `src-tauri/src/agent/codex_desktop_ipc/protocol.rs`：私有 envelope、请求关联和路由过滤。它与同目录模块是私有 wire DTO 的唯一归属。
+- `src-tauri/src/agent/codex_desktop_ipc/state.rs`：thread 附着状态、snapshot/patch 和 revision 状态机。
+- Codex Provider mapper：私有 follower state 到 Standard Protocol DTO/event 的单向投影。
+- `src-tauri/src/runtime_gateway/`：Provider registry、标准 capability、事件序列和 Tauri transport；不得出现 Desktop 私有方法名或 DTO。
+- `frontend/lib/runtimeGatewayActivity.ts` 与 `frontend/PetApp.svelte`：只消费标准状态和 capability，展示任务与 Provider 诊断。
+- `src-tauri/src/agent/runtime.rs` 与运行时设置 UI：可以保留 executable 检测，但其结果不决定 Desktop IPC Provider 是否可用。
+
+## 风险
+
+- 私有协议版本漂移：每次升级 Codex Desktop 后复核握手、Owner/Follower 和状态版本；不兼容时 Provider fail closed。
+- 路由过滤错误导致串流：用多个唯一 client id 的 fixture 验证定向隔离和广播分发。
+- revision 缺口产生错误任务状态：状态机测试验证缺口后停止应用 patch，直到完整 snapshot 建立新基线。
+- Code Pet 晚加入但没有 thread id：`following=true` 公告只做机会性发现；通过日志和 UI 明确展示发现范围限制，不扫描 transcript 冒充目录。
+- 重连沿用旧连接状态：断线测试验证 pending request、revision、following 和 owner route 全部复位。
+- UI 暴露未接通动作：后端 capability 精确测试与前端能力测试共同验证审批、回复和快捷回复不可见。
+
+## 测试计划
+
+- frame codec：little-endian 往返、短帧、非法 JSON 和 256 MiB 上限。
+- 路由：当前 client 定向消息、其他 client 消息和广播消息互不串线。
+- bootstrap：已知 thread id 在任务已运行时完成 discovery、following、完整历史和 snapshot 同步。
+- revision：顺序 patch、重复 patch、缺口重新请求 snapshot，以及等待期间不发布错误状态。
+- 生命周期：干净关闭、断线 pending request 失败、有界重连和状态复位。
+- mapper：running、waiting approval/input、completed、failed、interrupted 和未知状态。
+- capability/UI：阶段一不显示审批、回复或快捷回复；Provider unavailable 展示安全诊断原因。
+- 静态检查：生产代码中不再存在 `app-server --listen stdio://` 启动路径，Desktop 私有方法名不出现在 adapter 之外。
+
+## 知识沉淀
+
+- 架构选择见 `../../50-decisions/codex-desktop-ipc-as-provider-source.md`。
+- 连接故障见 `../../40-runbooks/codex-desktop-ipc-unavailable.md`。
+- 长期约束见 `../../60-rules/codex-desktop-ipc-fail-closed.md`。
+
+## 未知项
+
+- 当前 IPC 没有公开任务目录；无已知 thread id 的完整晚加入枚举仍被协议阻挡。
+- Owner/Follower 和状态广播版本没有长期兼容承诺，支持的 Desktop 版本范围仍需随发布验证确定。
+- 回复、审批、用户输入、steer、interrupt 和其他写操作需要分别验证请求路由、结果确认和失败语义，阶段一不作支持承诺。

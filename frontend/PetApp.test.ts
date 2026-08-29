@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+function replyTemplate(source: string): string {
+  const formIndex = source.indexOf('<form class="reply-row"');
+  const footerIndex = source.indexOf('<div class="status-footer"', formIndex);
+  return source.slice(formIndex, footerIndex);
+}
+
 describe("PetApp activity helpers", () => {
   it("imports every activity helper used by the activity card template", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
@@ -184,15 +190,15 @@ describe("PetApp activity helpers", () => {
 
   it("uses a multiline reply editor with explicit cancel and keyboard exit", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
-    const replyTemplate = source.slice(source.indexOf('<form class="reply-row"'), source.indexOf('<div class="status-footer"'));
+    const replyEditorTemplate = replyTemplate(source);
     const keydownBlock = source.slice(source.indexOf("function handleReplyKeydown"), source.indexOf("function handleReplyInput"));
 
-    expect(replyTemplate).toContain("<textarea");
-    expect(replyTemplate).toContain("bind:this={replyTextarea}");
-    expect(replyTemplate).toContain("on:mousedown={stopReplyEditorEvent}");
-    expect(replyTemplate).toContain("on:input={handleReplyInput}");
-    expect(replyTemplate).toContain("class=\"reply-cancel\"");
-    expect(replyTemplate).toContain("on:click={cancelReply}");
+    expect(replyEditorTemplate).toContain("<textarea");
+    expect(replyEditorTemplate).toContain("bind:this={replyTextarea}");
+    expect(replyEditorTemplate).toContain("on:mousedown={stopReplyEditorEvent}");
+    expect(replyEditorTemplate).toContain("on:input={handleReplyInput}");
+    expect(replyEditorTemplate).toContain("class=\"reply-cancel\"");
+    expect(replyEditorTemplate).toContain("on:click={cancelReply}");
     expect(keydownBlock).toContain('event.key === "Escape"');
     expect(keydownBlock).toContain("cancelReply(event)");
     expect(keydownBlock).toContain("event.ctrlKey || event.metaKey");
@@ -201,7 +207,7 @@ describe("PetApp activity helpers", () => {
   it("keeps reply mode pending until Runtime Gateway confirms completion", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const sendBlock = source.slice(source.indexOf("async function sendReply"), source.indexOf("function handleReplyKeydown"));
-    const replyTemplate = source.slice(source.indexOf('<form class="reply-row"'), source.indexOf('<div class="status-footer"'));
+    const replyEditorTemplate = replyTemplate(source);
 
     expect(source).toContain("let replySubmitting = false");
     expect(sendBlock).toContain("replySubmitting = true");
@@ -209,21 +215,21 @@ describe("PetApp activity helpers", () => {
     expect(sendBlock).toContain("replyingToId = null");
     expect(sendBlock).toContain("finally");
     expect(sendBlock).toContain("replySubmitting = false");
-    expect(replyTemplate).toContain("disabled={replySubmitting || !replyText.trim()}");
-    expect(replyTemplate).toContain('{replySubmitting ? "发送中" : "发送"}');
+    expect(replyEditorTemplate).toContain("disabled={replySubmitting || !replyText.trim()}");
+    expect(replyEditorTemplate).toContain('{replySubmitting ? "发送中" : "发送"}');
   });
 
   it("keeps reply editor pointer and focus events inside the textarea", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
-    const replyTemplate = source.slice(source.indexOf('<form class="reply-row"'), source.indexOf('<div class="status-footer"'));
+    const replyEditorTemplate = replyTemplate(source);
     const editorRule = styles.slice(styles.indexOf(".reply-row textarea"), styles.indexOf(".reply-row textarea::placeholder"));
 
     expect(source).toContain("function stopReplyEditorEvent");
-    expect(replyTemplate).toContain("on:pointerdown={stopReplyEditorEvent}");
-    expect(replyTemplate).toContain("on:mousedown={stopReplyEditorEvent}");
-    expect(replyTemplate).toContain("on:click={stopReplyEditorEvent}");
-    expect(replyTemplate).toContain("on:focus={stopReplyEditorEvent}");
+    expect(replyEditorTemplate).toContain("on:pointerdown={stopReplyEditorEvent}");
+    expect(replyEditorTemplate).toContain("on:mousedown={stopReplyEditorEvent}");
+    expect(replyEditorTemplate).toContain("on:click={stopReplyEditorEvent}");
+    expect(replyEditorTemplate).toContain("on:focus={stopReplyEditorEvent}");
     expect(editorRule).toContain("user-select: text");
   });
 
@@ -313,6 +319,9 @@ describe("PetApp activity helpers", () => {
     expect(source).toContain("ingestRuntimeGatewayEvent(event)");
     expect(source).toContain("Runtime Gateway 未注册 Provider");
     expect(source).toContain("Provider 不可用");
+    expect(source).toContain("provider.extension?.data?.unavailableReason");
+    expect(source).toContain('typeof unavailableReason === "string"');
+    expect(source).toContain("这里只显示 Desktop follower 已公告或显式已知的 Codex 任务");
   });
 
   it("routes messages and approval decisions through Runtime Gateway methods", () => {

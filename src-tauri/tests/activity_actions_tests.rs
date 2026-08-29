@@ -1,5 +1,5 @@
 use chrono::Utc;
-use code_pet_lib::activity_actions::{activation_strategy_for_event, activation_target_for_event, approval_strategy_for_event, reply_strategy_for_event, resolve_approval_for_event, ActivationStrategy, ActivationTarget, ApprovalStrategy, ReplyStrategy};
+use code_pet_lib::activity_actions::{activation_strategy_for_event, activation_target_for_event, approval_strategy_for_event, reply_strategy_for_event, resolve_approval_for_event, send_reply_to_event, ActivationStrategy, ActivationTarget, ApprovalStrategy, ReplyStrategy};
 use code_pet_lib::events::{ActivitySource, AgentId, PetEvent, PetEventKind, TaskStatus};
 use code_pet_lib::state::{ApprovalBehavior, ApprovalDecision, SharedState};
 use serde_json::json;
@@ -231,13 +231,17 @@ fn activation_targets_warp_by_bundle_id() {
 }
 
 #[test]
-fn reply_strategy_uses_codex_app_server_for_desktop_threads() {
+fn reply_strategy_rejects_legacy_codex_events_even_when_completed_and_targetable() {
     let mut codex_event = event(AgentId::Codex, None);
     codex_event.status = TaskStatus::Done;
 
     assert_eq!(
         reply_strategy_for_event(&codex_event),
-        ReplyStrategy::CodexAppServer
+        ReplyStrategy::Unsupported
+    );
+    assert_eq!(
+        send_reply_to_event(&codex_event, "continue").unwrap_err(),
+        "当前来源不支持可靠回复，请打开原会话输入"
     );
 }
 
@@ -253,18 +257,6 @@ fn reply_strategy_rejects_running_events() {
 }
 
 #[test]
-fn reply_strategy_requires_codex_thread_id() {
-    let mut codex_event = event(AgentId::Codex, None);
-    codex_event.status = TaskStatus::Done;
-    codex_event.session_id = None;
-
-    assert_eq!(
-        reply_strategy_for_event(&codex_event),
-        ReplyStrategy::Unsupported
-    );
-}
-
-#[test]
 fn reply_strategy_requires_qoder_session_id() {
     let mut qoder_event = event(AgentId::Qoder, None);
     qoder_event.status = TaskStatus::Done;
@@ -277,13 +269,13 @@ fn reply_strategy_requires_qoder_session_id() {
 }
 
 #[test]
-fn approval_strategy_uses_collector_wait_for_waiting_approval_events() {
+fn approval_strategy_keeps_legacy_codex_events_unsupported() {
     let mut codex_event = event(AgentId::Codex, None);
     codex_event.status = TaskStatus::WaitingApproval;
     let mut qoder_event = event(AgentId::Qoder, None);
     qoder_event.status = TaskStatus::WaitingApproval;
 
-    assert_eq!(approval_strategy_for_event(&codex_event), ApprovalStrategy::CollectorWait);
+    assert_eq!(approval_strategy_for_event(&codex_event), ApprovalStrategy::Unsupported);
     assert_eq!(approval_strategy_for_event(&qoder_event), ApprovalStrategy::CollectorWait);
 }
 
@@ -296,9 +288,9 @@ fn approval_strategy_rejects_non_approval_events() {
 }
 
 #[test]
-fn approval_driver_can_resolve_from_pending_event_snapshot() {
+fn collector_approval_driver_can_resolve_from_pending_event_snapshot() {
     let state = SharedState::default();
-    let mut approval = event(AgentId::Codex, None);
+    let mut approval = event(AgentId::Qoder, None);
     approval.id = "approval-driver".to_string();
     approval.status = TaskStatus::WaitingApproval;
     state.push_event(approval.clone());
@@ -312,6 +304,28 @@ fn approval_driver_can_resolve_from_pending_event_snapshot() {
         },
     )
     .unwrap();
+}
+
+#[test]
+fn codex_approval_driver_rejects_pending_event_snapshot() {
+    let state = SharedState::default();
+    let mut approval = event(AgentId::Codex, None);
+    approval.id = "codex-approval-driver".to_string();
+    approval.status = TaskStatus::WaitingApproval;
+    state.push_event(approval.clone());
+
+    let error = resolve_approval_for_event(
+        &state,
+        &approval,
+        ApprovalDecision {
+            behavior: ApprovalBehavior::Allow,
+            message: None,
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(error, "当前来源不支持审批");
+    assert!(state.approval_event_by_id(&approval.id).is_some());
 }
 
 #[test]

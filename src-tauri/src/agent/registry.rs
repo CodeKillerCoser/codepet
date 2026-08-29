@@ -86,7 +86,7 @@ pub fn agent_specs() -> Vec<AgentSpec> {
         AgentSpec {
             id: AgentId::Codex,
             name: "Codex",
-            description: "旧 Codex Hook 活动源已停用，等待 Runtime Gateway 接入。",
+            description: "旧 Codex Hook 活动源已停用；任务由 Runtime Gateway 跟随 Codex Desktop。",
             config_format: ConfigFormat::JsonHooks,
             hook_events: &[],
         },

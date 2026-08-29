@@ -1,12 +1,10 @@
 use super::gateway::Gateway;
 use super::generated::{
     EventSequence, ProtocolError, ProtocolEvent, ProtocolRequest, ProtocolResponse,
-    ProviderStatusChangedEvent, PROTOCOL_VERSION,
 };
 use super::transport::{LocalTransport, Transport};
-use crate::agent::codex_app_server::CodexProviderAdapter;
-use crate::runtime_gateway::ProviderAdapter;
-use std::sync::{Arc, Mutex};
+use crate::agent::codex_desktop_ipc::CodexProviderAdapter;
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
 pub const RUNTIME_GATEWAY_EVENT: &str = "runtime-gateway-event";
@@ -15,7 +13,6 @@ pub const RUNTIME_GATEWAY_EVENT: &str = "runtime-gateway-event";
 pub struct RuntimeGatewayState {
     gateway: Arc<Gateway>,
     transport: LocalTransport,
-    codex: Arc<Mutex<Option<Arc<CodexProviderAdapter>>>>,
 }
 
 impl Default for RuntimeGatewayState {
@@ -31,7 +28,6 @@ impl Default for RuntimeGatewayState {
         Self {
             transport: LocalTransport::new(gateway.clone()),
             gateway,
-            codex: Arc::new(Mutex::new(Some(codex))),
         }
     }
 }
@@ -41,7 +37,6 @@ impl RuntimeGatewayState {
         Self {
             transport: LocalTransport::new(gateway.clone()),
             gateway,
-            codex: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -53,36 +48,6 @@ impl RuntimeGatewayState {
         &self.transport
     }
 
-    pub fn refresh_codex_provider(&self) -> Result<(), ProtocolError> {
-        let mut slot = self.codex.lock().map_err(|_| ProtocolError {
-            code: "gateway_state_error".to_string(),
-            message: "Codex provider refresh lock is unavailable".to_string(),
-            retryable: true,
-            details: None,
-        })?;
-        let previous_provider = slot.as_ref().map(|adapter| adapter.provider());
-        let replacement = Arc::new(CodexProviderAdapter::spawn(self.gateway.event_sink()));
-        let replacement_provider = replacement.provider();
-        self.gateway.registry().register(replacement.clone())?;
-        if let Some(previous) = slot.replace(replacement) {
-            previous.retire();
-        }
-        let event = ProtocolEvent::ProviderStatusChanged {
-            protocol_version: PROTOCOL_VERSION,
-            event_sequence: 0,
-            payload: ProviderStatusChangedEvent {
-                provider: replacement_provider,
-                previous_status: previous_provider.map(|provider| provider.status),
-            },
-        };
-        if let Err(error) = self.gateway.event_sink().publish(event) {
-            crate::app_log::error(
-                "runtime_gateway",
-                &format!("failed to publish refreshed Codex provider error={error:?}"),
-            );
-        }
-        Ok(())
-    }
 }
 
 #[tauri::command]

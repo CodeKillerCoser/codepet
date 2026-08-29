@@ -531,17 +531,25 @@
       return {
         className: "unavailable",
         title: "Provider 不可用",
-        message: providers.map((provider) => `${provider.displayName}：${providerStatusLabel(provider)}`).join(" · "),
+        message: providers.map((provider) => `${provider.displayName}：${providerUnavailableMessage(provider)}`).join(" · "),
       };
     }
     const unavailableProviders = providers.filter((provider) => provider.status !== "ready");
+    const desktopFollowerHint = "这里只显示 Desktop follower 已公告或显式已知的 Codex 任务";
     return {
       className: unavailableProviders.length > 0 ? "partial" : "empty",
       title: unavailableProviders.length > 0 ? "部分 Provider 不可用" : "暂无任务",
       message: unavailableProviders.length > 0
-        ? unavailableProviders.map((provider) => `${provider.displayName}：${providerStatusLabel(provider)}`).join(" · ")
-        : `${readyProviders.map((provider) => provider.displayName).join("、")} 当前没有活动任务`,
+        ? `${unavailableProviders.map((provider) => `${provider.displayName}：${providerUnavailableMessage(provider)}`).join(" · ")} · ${desktopFollowerHint}`
+        : desktopFollowerHint,
     };
+  }
+
+  function providerUnavailableMessage(provider: Provider): string {
+    const unavailableReason = provider.extension?.data?.unavailableReason;
+    return typeof unavailableReason === "string" && unavailableReason.trim()
+      ? unavailableReason.trim()
+      : providerStatusLabel(provider);
   }
 
   function providerStatusLabel(provider: Provider): string {

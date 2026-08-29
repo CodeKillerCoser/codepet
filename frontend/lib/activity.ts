@@ -242,7 +242,7 @@ export function statusLabel(status: TaskStatus): string {
     case "running":
       return "正在执行";
     case "waiting-approval":
-      return "等待授权";
+      return "等待审批或输入";
     case "failed":
       return "需要查看";
     case "done":

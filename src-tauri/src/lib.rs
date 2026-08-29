@@ -11,7 +11,7 @@ pub use activity::title_resolver;
 pub use activity::token_usage;
 pub use agent::actions as activity_actions;
 pub use agent::claude_transcript;
-pub use agent::codex_app_server;
+pub use agent::codex_desktop_ipc;
 pub use agent::control as agent_control;
 pub use agent::hooks;
 pub use agent::registry as agents;
@@ -30,7 +30,7 @@ pub use pet::theme_defaults;
 pub use platform::macos_window;
 
 use agents::{AgentId, AgentView};
-use agent_runtime::{AgentRuntime, AgentRuntimeService, CODEX_RUNTIME_PROVIDER_ID};
+use agent_runtime::{AgentRuntime, AgentRuntimeService};
 use base64::Engine;
 use events::PetEvent;
 use pets::PetLibraryView;
@@ -116,9 +116,7 @@ fn detect_agent_runtime(
 fn refresh_agent_runtimes(
     app: AppHandle,
     service: tauri::State<'_, AgentRuntimeService>,
-    gateway: tauri::State<'_, RuntimeGatewayState>,
 ) -> Result<Vec<AgentRuntime>, String> {
-    restart_runtime_provider(CODEX_RUNTIME_PROVIDER_ID, &gateway)?;
     let runtimes = service.list().map_err(|error| error.to_string())?;
     let _ = app.emit("agent-runtimes-updated", runtimes.clone());
     Ok(runtimes)
@@ -128,14 +126,12 @@ fn refresh_agent_runtimes(
 fn set_agent_runtime_executable(
     app: AppHandle,
     service: tauri::State<'_, AgentRuntimeService>,
-    gateway: tauri::State<'_, RuntimeGatewayState>,
     provider_id: String,
     executable: String,
 ) -> Result<AgentRuntime, String> {
     let runtime = service
         .set_configured_executable(&provider_id, &executable)
         .map_err(|error| error.to_string())?;
-    restart_runtime_provider(&provider_id, &gateway)?;
     emit_runtime_settings(&app, &runtime);
     Ok(runtime)
 }
@@ -144,28 +140,13 @@ fn set_agent_runtime_executable(
 fn clear_agent_runtime_executable(
     app: AppHandle,
     service: tauri::State<'_, AgentRuntimeService>,
-    gateway: tauri::State<'_, RuntimeGatewayState>,
     provider_id: String,
 ) -> Result<AgentRuntime, String> {
     let runtime = service
         .clear_configured_executable(&provider_id)
         .map_err(|error| error.to_string())?;
-    restart_runtime_provider(&provider_id, &gateway)?;
     emit_runtime_settings(&app, &runtime);
     Ok(runtime)
-}
-
-fn restart_runtime_provider(
-    provider_id: &str,
-    gateway: &RuntimeGatewayState,
-) -> Result<(), String> {
-    if provider_id != CODEX_RUNTIME_PROVIDER_ID {
-        return Ok(());
-    }
-    codex_app_server::shutdown_shared_session()?;
-    gateway
-        .refresh_codex_provider()
-        .map_err(|error| error.message)
 }
 
 fn emit_runtime_settings(app: &AppHandle, runtime: &AgentRuntime) {

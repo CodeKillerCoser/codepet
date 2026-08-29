@@ -5,7 +5,7 @@
 ## 领域
 
 - `agent-events/`：hook 接入、归一化、活动归并和过滤风险。
-- `agent-control/`：provider capability、Codex app-server、Qoder remote-control 边界、回复和审批。
+- `agent-control/`：provider capability、Codex Desktop 私有 IPC、Qoder remote-control 边界、回复和审批。
 - `pet-window/`：悬浮窗布局、尺寸、屏幕边界和回复编辑器。
 - `settings-and-personalization/`：设置模型、宠物个性化和通知。
 - `theme-system/`：主题 token 库和迁移规则。
