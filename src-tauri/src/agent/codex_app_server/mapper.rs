@@ -596,4 +596,32 @@ mod tests {
             "item/tool/requestUserInput"
         );
     }
+
+    #[test]
+    fn provider_capabilities_expose_only_resolvable_approval_kinds() {
+        let mapper = CodexProtocolMapper::default();
+        let provider = mapper.provider(None, ProviderStatus::Ready, Vec::new(), Vec::new());
+
+        assert!(provider
+            .capabilities
+            .methods
+            .iter()
+            .any(|method| method == "approval.resolve"));
+        let extension = provider.capabilities.extension.unwrap();
+        let native_methods = extension.data["nativeMethods"].as_array().unwrap();
+        assert!(native_methods
+            .iter()
+            .any(|method| method == "item/commandExecution/requestApproval"));
+        assert!(native_methods
+            .iter()
+            .any(|method| method == "item/fileChange/requestApproval"));
+        assert!(!native_methods
+            .iter()
+            .any(|method| method == "item/permissions/requestApproval"));
+        assert!(extension.data["unsupportedApprovalKinds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|kind| kind == "permissions"));
+    }
 }

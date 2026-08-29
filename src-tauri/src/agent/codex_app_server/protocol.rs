@@ -192,7 +192,6 @@ pub struct CodexTurnSteerRequest {
 pub enum CodexApprovalKind {
     CommandExecution,
     FileChange,
-    Permissions,
 }
 
 impl CodexApprovalKind {
@@ -200,7 +199,6 @@ impl CodexApprovalKind {
         match self {
             Self::CommandExecution => "command-execution",
             Self::FileChange => "file-change",
-            Self::Permissions => "permissions",
         }
     }
 }
@@ -227,7 +225,6 @@ impl CodexApprovalRequest {
         match self.kind {
             CodexApprovalKind::CommandExecution => "item/commandExecution/requestApproval",
             CodexApprovalKind::FileChange => "item/fileChange/requestApproval",
-            CodexApprovalKind::Permissions => "item/permissions/requestApproval",
         }
     }
 }
@@ -289,7 +286,25 @@ pub(crate) struct ThreadResponse {
     #[serde(default)]
     pub reasoning_effort: Option<String>,
     #[serde(default)]
-    pub sandbox: Option<String>,
+    pub sandbox: Option<CodexSandboxPolicy>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub(crate) enum CodexSandboxPolicy {
+    Structured {
+        #[serde(rename = "type")]
+        policy_type: String,
+    },
+    Legacy(String),
+}
+
+impl CodexSandboxPolicy {
+    fn policy_type(&self) -> &str {
+        match self {
+            Self::Structured { policy_type } | Self::Legacy(policy_type) => policy_type,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -379,11 +394,13 @@ pub(crate) fn permission_settings(permission: PermissionLevel) -> (&'static str,
     }
 }
 
-pub(crate) fn permission_from_sandbox(sandbox: Option<&str>) -> Option<PermissionLevel> {
-    match sandbox {
-        Some("read-only") => Some(PermissionLevel::ReadOnly),
-        Some("workspace-write") => Some(PermissionLevel::WorkspaceWrite),
-        Some("danger-full-access") => Some(PermissionLevel::FullAccess),
+pub(crate) fn permission_from_sandbox(
+    sandbox: Option<&CodexSandboxPolicy>,
+) -> Option<PermissionLevel> {
+    match sandbox.map(CodexSandboxPolicy::policy_type) {
+        Some("readOnly" | "read-only") => Some(PermissionLevel::ReadOnly),
+        Some("workspaceWrite" | "workspace-write") => Some(PermissionLevel::WorkspaceWrite),
+        Some("dangerFullAccess" | "danger-full-access") => Some(PermissionLevel::FullAccess),
         _ => None,
     }
 }

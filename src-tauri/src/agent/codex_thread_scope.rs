@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -10,6 +10,7 @@ pub struct CodexThreadScope {
 #[derive(Default)]
 struct CodexThreadScopeState {
     remote_thread_ids: HashSet<String>,
+    remote_operations_in_flight: HashMap<String, usize>,
     remote_creations_in_flight: usize,
     remote_creation_ambiguous: bool,
     remote_creation_epoch: u64,
@@ -42,6 +43,12 @@ pub struct CodexRemoteCreationGuard {
     active: bool,
 }
 
+pub struct CodexRemoteOperationGuard {
+    scope: CodexThreadScope,
+    thread_id: String,
+    active: bool,
+}
+
 impl CodexThreadScope {
     pub fn mark_remote(&self, thread_id: impl Into<String>) {
         let thread_id = thread_id.into();
@@ -49,6 +56,7 @@ impl CodexThreadScope {
             return;
         }
         let mut state = lock(&self.inner);
+        state.remote_operations_in_flight.remove(&thread_id);
         if !state.remote_thread_ids.insert(thread_id.clone()) {
             return;
         }
@@ -102,12 +110,32 @@ impl CodexThreadScope {
         operation: impl FnOnce() -> T,
     ) -> Option<T> {
         let state = lock(&self.inner);
-        if state.remote_thread_ids.contains(thread_id) {
+        if state.remote_thread_ids.contains(thread_id)
+            || state.remote_operations_in_flight.contains_key(thread_id)
+        {
             return None;
         }
         let result = operation();
         drop(state);
         Some(result)
+    }
+
+    pub fn begin_remote_operation(
+        &self,
+        thread_id: impl Into<String>,
+    ) -> CodexRemoteOperationGuard {
+        let thread_id = thread_id.into();
+        let mut state = lock(&self.inner);
+        *state
+            .remote_operations_in_flight
+            .entry(thread_id.clone())
+            .or_insert(0) += 1;
+        drop(state);
+        CodexRemoteOperationGuard {
+            scope: self.clone(),
+            thread_id,
+            active: true,
+        }
     }
 
     pub fn subscribe_remote_threads(&self) -> Receiver<String> {
@@ -172,6 +200,38 @@ impl CodexRemoteCreationGuard {
                 .creation_settled_subscribers
                 .retain(|subscriber| subscriber.send(settlement).is_ok());
             state.remote_creation_ambiguous = false;
+        }
+        self.active = false;
+    }
+}
+
+impl Drop for CodexRemoteOperationGuard {
+    fn drop(&mut self) {
+        if self.active {
+            self.commit_remote();
+        }
+    }
+}
+
+impl CodexRemoteOperationGuard {
+    pub fn commit_remote(&mut self) {
+        if !self.active {
+            return;
+        }
+        self.active = false;
+        self.scope.mark_remote(self.thread_id.clone());
+    }
+
+    pub fn release_local(&mut self) {
+        if !self.active {
+            return;
+        }
+        let mut state = lock(&self.scope.inner);
+        if let Some(count) = state.remote_operations_in_flight.get_mut(&self.thread_id) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                state.remote_operations_in_flight.remove(&self.thread_id);
+            }
         }
         self.active = false;
     }
@@ -282,5 +342,29 @@ mod tests {
         mark_finished_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         marker.join().unwrap();
         assert!(scope.is_remote("thread-race"));
+    }
+
+    #[test]
+    fn remote_operation_guard_blocks_local_actions_until_evidence_settles() {
+        let scope = CodexThreadScope::default();
+        let mut rejected = scope.begin_remote_operation("thread-rejected");
+        assert!(scope
+            .with_local_thread("thread-rejected", || ())
+            .is_none());
+        rejected.release_local();
+        assert!(scope
+            .with_local_thread("thread-rejected", || ())
+            .is_some());
+        assert!(!scope.is_remote("thread-rejected"));
+
+        let ambiguous = scope.begin_remote_operation("thread-ambiguous");
+        assert!(scope
+            .with_local_thread("thread-ambiguous", || ())
+            .is_none());
+        drop(ambiguous);
+        assert!(scope.is_remote("thread-ambiguous"));
+        assert!(scope
+            .with_local_thread("thread-ambiguous", || ())
+            .is_none());
     }
 }

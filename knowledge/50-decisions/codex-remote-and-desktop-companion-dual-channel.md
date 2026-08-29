@@ -19,7 +19,7 @@ Codex 使用两个彼此隔离的运行时通道：
 
 remote create 开始时先建立带 epoch 的 source quarantine；Desktop companion 对该 epoch 中尚未 known 的新 thread 暂缓发布。App Server response 或 notification 得到 id 后写入 `CodexThreadScope` 并永久排除；明确未派发的失败会释放同 epoch 的本地候选，可能已执行但响应丢失的歧义结果则保守排除候选。epoch 防止迟到 settlement 误处理下一批 create。Desktop companion 在 Rust publication/snapshot/action 边界继续检查 provenance；前端 projection 也保存排除 tombstone，已排队 event 不能重新建卡。
 
-这项来源表只共享 thread provenance 和本地 action permit，不共享任何协议 session 或 Desktop owner 状态。动作 permit 将 Desktop dispatch 与 remote marking 线性化，避免检查后、写出前发生 source 切换。
+这项来源表只共享 thread provenance、本地 action permit 和 transient remote-operation fence，不共享任何协议 session、App Server loaded-thread cache 或 Desktop owner 状态。动作 permit/fence 将 Desktop dispatch 与有证据的 remote marking 线性化，避免检查后、写出前发生 source 切换。
 
 Hook、audit、transcript 扫描和文件监听继续不得成为 Codex 桌宠数据源或任一 Codex Provider 的 fallback。
 

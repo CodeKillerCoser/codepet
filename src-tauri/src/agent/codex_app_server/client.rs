@@ -15,9 +15,9 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -112,10 +112,19 @@ struct SessionInner {
     writer: Mutex<Option<Box<dyn JsonRpcWriter>>>,
     pending: Mutex<HashMap<JsonRpcId, Sender<Result<Value, CodexAppServerError>>>>,
     subscribers: Mutex<Vec<Sender<Result<CodexIncoming, CodexAppServerError>>>>,
+    loaded_threads: Mutex<HashMap<String, ThreadLoadState>>,
+    loaded_threads_changed: Condvar,
+    next_load_evidence: AtomicU64,
     next_id: AtomicI64,
     running: AtomicBool,
     control: Mutex<Option<Box<dyn SessionControl>>>,
     reader_thread: Mutex<Option<JoinHandle<()>>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ThreadLoadState {
+    Resuming,
+    Loaded(u64),
 }
 
 impl SessionInner {
@@ -135,6 +144,35 @@ impl SessionInner {
             }
         }
         self.broadcast(Err(error));
+    }
+
+    fn write(&self, message: Value) -> Result<(), CodexAppServerError> {
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|_| CodexAppServerError::Protocol("writer lock is poisoned".to_string()))?;
+        let writer = writer
+            .as_mut()
+            .ok_or(CodexAppServerError::Shutdown)?;
+        writer.write_message(&message)
+    }
+
+    fn mark_thread_loaded(&self, thread_id: &str) -> u64 {
+        let evidence = self.next_load_evidence.fetch_add(1, Ordering::SeqCst);
+        if let Ok(mut loaded_threads) = self.loaded_threads.lock() {
+            loaded_threads.insert(thread_id.to_string(), ThreadLoadState::Loaded(evidence));
+            self.loaded_threads_changed.notify_all();
+        }
+        evidence
+    }
+
+    fn forget_thread_loaded(&self, thread_id: &str, evidence: u64) {
+        if let Ok(mut loaded_threads) = self.loaded_threads.lock() {
+            if loaded_threads.get(thread_id) == Some(&ThreadLoadState::Loaded(evidence)) {
+                loaded_threads.remove(thread_id);
+                self.loaded_threads_changed.notify_all();
+            }
+        }
     }
 }
 
@@ -245,6 +283,9 @@ impl CodexAppServerSession {
             writer: Mutex::new(Some(writer)),
             pending: Mutex::new(HashMap::new()),
             subscribers: Mutex::new(Vec::new()),
+            loaded_threads: Mutex::new(HashMap::new()),
+            loaded_threads_changed: Condvar::new(),
+            next_load_evidence: AtomicU64::new(1),
             next_id: AtomicI64::new(1),
             running: AtomicBool::new(true),
             control: Mutex::new(control),
@@ -357,9 +398,85 @@ impl CodexAppServerSession {
         &self,
         thread_id: &str,
     ) -> Result<CodexConversationSnapshot, CodexAppServerError> {
+        let snapshot = self.request_thread_resume(thread_id)?;
+        self.inner.mark_thread_loaded(thread_id);
+        Ok(snapshot)
+    }
+
+    fn request_thread_resume(
+        &self,
+        thread_id: &str,
+    ) -> Result<CodexConversationSnapshot, CodexAppServerError> {
         let response: ThreadResponse =
             self.request("thread/resume", json!({ "threadId": thread_id }))?;
-        Ok(snapshot_from_response(response, None, None))
+        let snapshot = snapshot_from_response(response, None, None);
+        if snapshot.thread.id != thread_id {
+            return Err(CodexAppServerError::Protocol(format!(
+                "thread/resume returned thread {} for requested thread {thread_id}",
+                snapshot.thread.id
+            )));
+        }
+        Ok(snapshot)
+    }
+
+    pub fn ensure_thread_loaded(&self, thread_id: &str) -> Result<u64, CodexAppServerError> {
+        loop {
+            let mut loaded_threads = self.inner.loaded_threads.lock().map_err(|_| {
+                CodexAppServerError::Protocol("loaded thread state lock is poisoned".to_string())
+            })?;
+            match loaded_threads.get(thread_id).copied() {
+                Some(ThreadLoadState::Loaded(evidence)) => return Ok(evidence),
+                Some(ThreadLoadState::Resuming) => {
+                    loaded_threads = self
+                        .inner
+                        .loaded_threads_changed
+                        .wait(loaded_threads)
+                        .map_err(|_| {
+                            CodexAppServerError::Protocol(
+                                "loaded thread state lock is poisoned".to_string(),
+                            )
+                        })?;
+                    drop(loaded_threads);
+                }
+                None => {
+                    loaded_threads.insert(thread_id.to_string(), ThreadLoadState::Resuming);
+                    break;
+                }
+            }
+        }
+        let result = self.request_thread_resume(thread_id);
+        let mut loaded_threads = self.inner.loaded_threads.lock().map_err(|_| {
+            CodexAppServerError::Protocol("loaded thread state lock is poisoned".to_string())
+        })?;
+        let settled = match result {
+            Ok(_) => {
+                let evidence = match loaded_threads.get(thread_id).copied() {
+                    Some(ThreadLoadState::Loaded(evidence)) => evidence,
+                    _ => {
+                        let evidence = self
+                            .inner
+                            .next_load_evidence
+                            .fetch_add(1, Ordering::SeqCst);
+                        loaded_threads
+                            .insert(thread_id.to_string(), ThreadLoadState::Loaded(evidence));
+                        evidence
+                    }
+                };
+                Ok(evidence)
+            }
+            Err(error) => {
+                if loaded_threads.get(thread_id) == Some(&ThreadLoadState::Resuming) {
+                    loaded_threads.remove(thread_id);
+                }
+                Err(error)
+            }
+        };
+        self.inner.loaded_threads_changed.notify_all();
+        settled
+    }
+
+    pub fn forget_thread_loaded(&self, thread_id: &str, evidence: u64) {
+        self.inner.forget_thread_loaded(thread_id, evidence);
     }
 
     pub fn thread_start(
@@ -368,17 +485,20 @@ impl CodexAppServerSession {
     ) -> Result<CodexConversationSnapshot, CodexAppServerError> {
         let response: ThreadResponse =
             self.request("thread/start", thread_start_params(&request))?;
-        Ok(snapshot_from_response(
+        let snapshot = snapshot_from_response(
             response,
             request.workspace_root,
             Some(request.permission_level),
-        ))
+        );
+        self.inner.mark_thread_loaded(&snapshot.thread.id);
+        Ok(snapshot)
     }
 
     pub fn turn_start(
         &self,
         request: CodexTurnStartRequest,
     ) -> Result<CodexTurn, CodexAppServerError> {
+        self.ensure_thread_loaded(&request.thread_id)?;
         let response: TurnResponse =
             self.request("turn/start", turn_start_params(&request))?;
         Ok(response.turn)
@@ -388,6 +508,7 @@ impl CodexAppServerSession {
         &self,
         request: CodexTurnSteerRequest,
     ) -> Result<CodexTurn, CodexAppServerError> {
+        self.ensure_thread_loaded(&request.thread_id)?;
         let response: TurnSteerResponse =
             self.request("turn/steer", turn_steer_params(&request))?;
         Ok(CodexTurn {
@@ -403,6 +524,7 @@ impl CodexAppServerSession {
         thread_id: &str,
         turn_id: &str,
     ) -> Result<CodexTurn, CodexAppServerError> {
+        self.ensure_thread_loaded(thread_id)?;
         let _: Value = self.request(
             "turn/interrupt",
             json!({ "threadId": thread_id, "turnId": turn_id }),
@@ -420,18 +542,12 @@ impl CodexAppServerSession {
         approval: &CodexApprovalRequest,
         decision: ApprovalDecision,
     ) -> Result<(), CodexAppServerError> {
+        self.ensure_thread_loaded(&approval.thread_id)?;
         let native_decision = match approval.kind {
             CodexApprovalKind::CommandExecution | CodexApprovalKind::FileChange => match decision {
                 ApprovalDecision::Approve => "accept",
                 ApprovalDecision::Deny => "decline",
             },
-            CodexApprovalKind::Permissions => {
-                return Err(CodexAppServerError::UnsupportedCapability {
-                    capability: "approval.permissions.resolve".to_string(),
-                    message: "permission requests require a granted permission profile and cannot be represented by v0 approve/deny"
-                        .to_string(),
-                })
-            }
         };
         self.respond(&approval.request_id, json!({ "decision": native_decision }))
     }
@@ -541,15 +657,7 @@ impl CodexAppServerSession {
     }
 
     fn write(&self, message: Value) -> Result<(), CodexAppServerError> {
-        let mut writer = self
-            .inner
-            .writer
-            .lock()
-            .map_err(|_| CodexAppServerError::Protocol("writer lock is poisoned".to_string()))?;
-        let writer = writer
-            .as_mut()
-            .ok_or(CodexAppServerError::Shutdown)?;
-        writer.write_message(&message)
+        self.inner.write(message)
     }
 }
 
@@ -567,7 +675,7 @@ fn snapshot_from_response(
     CodexConversationSnapshot {
         thread: response.thread,
         workspace_root,
-        permission_level: permission_level.or_else(|| permission_from_sandbox(response.sandbox.as_deref())),
+        permission_level: permission_level.or_else(|| permission_from_sandbox(response.sandbox.as_ref())),
         model: response.model,
         reasoning_effort: response.reasoning_effort,
     }
@@ -583,6 +691,41 @@ fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppSe
     }
     if message.get("method").is_some() {
         let incoming = parse_incoming(message)?;
+        if let CodexIncoming::UnsupportedServerRequest {
+            request_id,
+            method,
+        } = &incoming
+        {
+            let response = if method == "item/permissions/requestApproval" {
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "permissions": {},
+                        "scope": "turn"
+                    }
+                })
+            } else {
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32601,
+                        "message": format!(
+                            "Code Pet does not support Codex server request {method}"
+                        ),
+                        "data": {
+                            "method": method,
+                            "reason": "unsupported_client_capability"
+                        }
+                    }
+                })
+            };
+            inner.write(response)?;
+        }
+        if let Some(thread_id) = incoming_thread_id(&incoming) {
+            inner.mark_thread_loaded(thread_id);
+        }
         inner.broadcast(Ok(incoming));
         return Ok(());
     }
@@ -617,6 +760,23 @@ fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppSe
     Ok(())
 }
 
+fn incoming_thread_id(incoming: &CodexIncoming) -> Option<&str> {
+    match incoming {
+        CodexIncoming::Notification(CodexNotification::ThreadStarted { thread }) => {
+            Some(&thread.id)
+        }
+        CodexIncoming::Notification(
+            CodexNotification::TurnStarted { thread_id, .. }
+            | CodexNotification::TurnCompleted { thread_id, .. }
+            | CodexNotification::OutputDelta { thread_id, .. }
+            | CodexNotification::ServerRequestResolved { thread_id, .. },
+        ) => Some(thread_id),
+        CodexIncoming::ApprovalRequested(approval) => Some(&approval.thread_id),
+        CodexIncoming::Notification(CodexNotification::Unknown { .. })
+        | CodexIncoming::UnsupportedServerRequest { .. } => None,
+    }
+}
+
 fn parse_incoming(message: Value) -> Result<CodexIncoming, CodexAppServerError> {
     let method = required_string(&message, "method")?;
     let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
@@ -637,7 +797,6 @@ fn parse_server_request(
     let kind = match method {
         "item/commandExecution/requestApproval" => CodexApprovalKind::CommandExecution,
         "item/fileChange/requestApproval" => CodexApprovalKind::FileChange,
-        "item/permissions/requestApproval" => CodexApprovalKind::Permissions,
         _ => {
             return Ok(CodexIncoming::UnsupportedServerRequest {
                 request_id,
@@ -672,10 +831,6 @@ fn parse_server_request(
         CodexApprovalKind::FileChange => (
             "Apply file changes".to_string(),
             optional_string(params, "reason"),
-        ),
-        CodexApprovalKind::Permissions => (
-            "Grant additional permissions".to_string(),
-            optional_string(params, "reason").or_else(|| optional_string(params, "cwd")),
         ),
     };
     Ok(CodexIncoming::ApprovalRequested(CodexApprovalRequest {
@@ -975,6 +1130,10 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(normal.workspace_root, None);
+            assert_eq!(
+                normal.permission_level,
+                Some(crate::runtime_gateway::generated::PermissionLevel::ReadOnly)
+            );
             let project = operation_session
                 .thread_start(CodexThreadStartRequest {
                     workspace_root: Some("/work/project".to_string()),
@@ -985,6 +1144,10 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(project.workspace_root.as_deref(), Some("/work/project"));
+            assert_eq!(
+                project.permission_level,
+                Some(crate::runtime_gateway::generated::PermissionLevel::FullAccess)
+            );
             assert_eq!(project.model.as_deref(), Some("gpt-fixture"));
             assert_eq!(project.reasoning_effort.as_deref(), Some("high"));
             let turn = operation_session
@@ -1052,7 +1215,10 @@ mod tests {
                     "thread": thread_fixture("thread-normal", "/tmp", "idle", vec![]),
                     "model": "default",
                     "reasoningEffort": "medium",
-                    "sandbox": "read-only"
+                    "sandbox": {
+                        "type": "readOnly",
+                        "networkAccess": false
+                    }
                 }
             }))
             .unwrap();
@@ -1074,7 +1240,9 @@ mod tests {
                     "thread": thread_fixture("thread-project", "/work/project", "idle", vec![]),
                     "model": "gpt-fixture",
                     "reasoningEffort": "high",
-                    "sandbox": "danger-full-access"
+                    "sandbox": {
+                        "type": "dangerFullAccess"
+                    }
                 }
             }))
             .unwrap();
@@ -1118,7 +1286,80 @@ mod tests {
     }
 
     #[test]
-    fn approval_server_request_maps_and_binary_response_uses_native_decision() {
+    fn historical_threads_resume_once_per_app_server_session() {
+        for session_number in 1..=2 {
+            let (session, peer_receiver, peer_sender) = mock_session();
+            let operation_session = session.clone();
+            let operation = thread::spawn(move || {
+                for message_number in 1..=2 {
+                    operation_session
+                        .turn_start(CodexTurnStartRequest {
+                            thread_id: "thread-historical".to_string(),
+                            message: format!("message {message_number}"),
+                            client_message_id: Some(format!(
+                                "session-{session_number}-message-{message_number}"
+                            )),
+                            model: None,
+                            reasoning_effort: None,
+                        })
+                        .unwrap();
+                }
+            });
+
+            let resume = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+            assert_eq!(resume["method"], "thread/resume");
+            assert_eq!(resume["params"]["threadId"], "thread-historical");
+            peer_sender
+                .send(json!({
+                    "jsonrpc": "2.0",
+                    "id": resume["id"],
+                    "result": {
+                        "thread": thread_fixture(
+                            "thread-historical",
+                            "/tmp/project",
+                            "idle",
+                            vec![]
+                        ),
+                        "sandbox": {
+                            "type": "workspaceWrite",
+                            "writableRoots": [],
+                            "networkAccess": false,
+                            "excludeTmpdirEnvVar": false,
+                            "excludeSlashTmp": false
+                        }
+                    }
+                }))
+                .unwrap();
+
+            for message_number in 1..=2 {
+                let start = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+                assert_eq!(start["method"], "turn/start");
+                assert_eq!(
+                    start["params"]["clientUserMessageId"],
+                    format!("session-{session_number}-message-{message_number}")
+                );
+                peer_sender
+                    .send(json!({
+                        "jsonrpc": "2.0",
+                        "id": start["id"],
+                        "result": {
+                            "turn": turn_fixture(
+                                &format!("turn-{session_number}-{message_number}"),
+                                "inProgress"
+                            )
+                        }
+                    }))
+                    .unwrap();
+            }
+
+            operation.join().unwrap();
+            assert!(peer_receiver.try_recv().is_err());
+            session.shutdown().unwrap();
+        }
+    }
+
+    #[test]
+    fn approval_and_unsupported_server_requests_receive_terminal_responses() {
         let (session, peer_receiver, peer_sender) = mock_session();
         let notifications = session.subscribe();
         peer_sender
@@ -1150,24 +1391,59 @@ mod tests {
         assert_eq!(response["id"], "approval-one");
         assert_eq!(response["result"]["decision"], "accept");
         assert!(response.get("method").is_none());
-        let permission_approval = CodexApprovalRequest {
-            request_id: JsonRpcId::Number(2),
-            kind: CodexApprovalKind::Permissions,
-            thread_id: "thread-one".to_string(),
-            turn_id: "turn-one".to_string(),
-            item_id: "item-two".to_string(),
-            title: "Grant additional permissions".to_string(),
-            description: None,
-            requested_at_ms: 124,
-            available_decisions: Vec::new(),
-        };
-        let error = session
-            .respond_to_approval(&permission_approval, ApprovalDecision::Approve)
-            .unwrap_err();
+
+        peer_sender
+            .send(json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "item/permissions/requestApproval",
+                "params": {
+                    "threadId": "thread-one",
+                    "turnId": "turn-one",
+                    "itemId": "item-two",
+                    "environmentId": null,
+                    "startedAtMs": 124,
+                    "cwd": "/tmp/project",
+                    "reason": "Allow network access",
+                    "permissions": {
+                        "network": { "enabled": true },
+                        "fileSystem": null
+                    }
+                }
+            }))
+            .unwrap();
+        let incoming = notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
         assert!(matches!(
-            error,
-            CodexAppServerError::UnsupportedCapability { .. }
+            incoming,
+            CodexIncoming::UnsupportedServerRequest { request_id: JsonRpcId::Number(2), method }
+                if method == "item/permissions/requestApproval"
         ));
+        let response = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(response["id"], 2);
+        assert_eq!(response["result"]["permissions"], json!({}));
+        assert_eq!(response["result"]["scope"], "turn");
+        assert!(response.get("error").is_none());
+
+        peer_sender
+            .send(json!({
+                "jsonrpc": "2.0",
+                "id": "unknown-one",
+                "method": "item/future/request",
+                "params": {}
+            }))
+            .unwrap();
+        let incoming = notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
+        assert!(matches!(
+            incoming,
+            CodexIncoming::UnsupportedServerRequest {
+                request_id: JsonRpcId::String(request_id),
+                method
+            } if request_id == "unknown-one" && method == "item/future/request"
+        ));
+        let response = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(response["id"], "unknown-one");
+        assert_eq!(response["error"]["code"], -32601);
+        assert!(session.is_running());
         session.shutdown().unwrap();
     }
 

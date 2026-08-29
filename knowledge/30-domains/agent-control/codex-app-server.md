@@ -36,6 +36,14 @@ remote Provider 广告并实现：
 
 `CodexAppServerClient` 启动并 initialize 官方 stdio JSON-RPC 子进程，reader/writer 长期运行。request id 映射允许 response 乱序返回；notification 经 mapper 生成标准 conversation、turn、item 与 approval event。Provider 复用同一 session 完成 list/read/start/steer/interrupt/approval，不重新手写协议。
 
+协议 DTO 以本机 ChatGPT 内置 `codex-cli 0.151.0-alpha.7.1` 的 `app-server generate-json-schema` 与 `generate-ts` 输出为证据。该版本的 `ThreadStartResponse`、`ThreadResumeResponse` 都返回带 `type` discriminator 的 `SandboxPolicy` 对象；adapter 同时接受旧版字符串形状，但权限映射以结构化 `readOnly`、`workspaceWrite`、`dangerFullAccess` 为主。
+
+`thread/list`、`thread/read` 只返回历史目录/快照，不代表 thread 已加载进当前 session。每个 `CodexAppServerSession` 独立维护 `Unknown → Resuming → Loaded` 状态，同一 thread 的并发首次动作共用一次 resume 结果；`thread/start`、成功 resume 或当前 session 的 thread/turn/approval 通知构成 loaded 证据。新 session 不继承这张表，因此必须重新 resume。
+
+历史 thread 的 send、interrupt 和 approval 在 resume/dispatch 期间先建立 transient source fence，阻止 Desktop companion 动作并发。成功结果或 timeout、断线、协议错等歧义结果永久标记 remote；App Server 明确返回 unknown thread、not loaded、method/params 未派发错误时释放 fence，不创建 companion tombstone。
+
+官方 permissions request 的 response 是 granted permission subset 与 scope，不是二元 decision。v0 无法无损表达该 profile，因此不发布可操作 Approval，并立即回 `{permissions: {}, scope: "turn"}` 拒绝全部权限。其他未知 server request 复用原 request id 返回 JSON-RPC `-32601`；两类请求都不会进入 pending approval 或让 App Server 永久等待。
+
 runtime resolver 提供已验证 executable。应用启动、设置 path、清除 path 或刷新 runtime 时，只刷新 remote App Server adapter；Desktop companion 的 socket connection、generation、owner 与 revision 不受影响。App Server unavailable 只改变 remote Provider 状态，不清空 companion projection。
 
 `conversation.create` 在发出请求前建立带 epoch 的 source guard。response 或 notification 给出 thread id 时先写入共享 `CodexThreadScope`；明确未派发的错误释放已证明为本地的候选，session 已建立后的请求错误按歧义结果保守排除同 epoch 候选。scope 只协调 provenance、quarantine 和本地动作 permit，Desktop adapter 仍有独立协议、owner 状态和生命周期。
@@ -52,6 +60,9 @@ runtime resolver 提供已验证 executable。应用启动、设置 path、清�
 ## 风险与验证
 
 - App Server JSON-RPC 漂移：fake peer 覆盖 initialize、乱序 response、list/read/create/start/steer/interrupt/approval 和通知；升级 CLI 后重跑。
+- response schema 漂移：用当前 binary 重新生成 JSON Schema/TS binding，核对 start/resume `SandboxPolicy` 与 permissions request/response；真实对象 fixture 必须保持可反序列化。
+- 历史 thread 生命周期：list/read 后首次运行时动作必须先 resume；测试覆盖成功缓存、明确失败不污染 source fence、歧义失败 fail-closed 和新 session 重新 resume。
+- server request 悬挂：permissions 必须得到空 grant 的拒绝 response，未知 method 必须得到 `-32601`；测试同时断言无 Approval event、pending 为空且 session 继续运行。
 - 子进程退出：remote Provider 变为 unavailable；当前没有持续 supervisor 自动拉起，需显式 refresh 或重启，不能借 companion 掩盖。
 - 生命周期串扰：测试分别将 remote/companion 置为 unavailable，并断言另一条 Provider 与状态仍可用。
 - 事件串流：bridge 测试向 remote sink 发布 conversation/turn/approval，断言 companion replay 仍为空。
@@ -61,6 +72,8 @@ runtime resolver 提供已验证 executable。应用启动、设置 path、清�
 ## 测试计划
 
 - App Server fake peer 完整请求/通知闭环。
+- list → resume → send、同 session 缓存与新 session 重新 resume。
+- permissions/未知 server request 的终态 response 与 capability/event 一致性。
 - remote `conversation.list/create` 明确路由 App Server adapter；companion 不广告或实现这两项能力。
 - runtime executable refresh 只替换 remote adapter。
 - remote event 不进入 companion Tauri replay/event，桌宠源码不引用 remote client。

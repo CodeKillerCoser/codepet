@@ -11,7 +11,7 @@ use crate::runtime_gateway::generated::{
     TurnSendRequest, TurnSendResponse, PROTOCOL_VERSION,
 };
 use crate::runtime_gateway::{ProviderAdapter, ProviderEventSink, ProviderFuture};
-use crate::agent::codex_thread_scope::CodexThreadScope;
+use crate::agent::codex_thread_scope::{CodexRemoteOperationGuard, CodexThreadScope};
 use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -313,8 +313,16 @@ impl ProviderAdapter for CodexProviderAdapter {
                 })
             })
             .await
-            .map_err(provider_task_error)?
-            .map_err(|error| protocol_error_for(&state, &events, error))?;
+            .map_err(provider_task_error)?;
+            let snapshot = match snapshot {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    if !operation_outcome_is_ambiguous(&error) {
+                        creation.settle_known();
+                    }
+                    return Err(protocol_error_for(&state, &events, error));
+                }
+            };
             let conversation = lock_state(&state).mapper.conversation(&snapshot);
             thread_scope.mark_remote(conversation.id.clone());
             creation.settle_known();
@@ -347,23 +355,36 @@ impl ProviderAdapter for CodexProviderAdapter {
                 state.clone(),
                 events,
                 move |session| {
-                    thread_scope.mark_remote(request.conversation_id.clone());
-                    if let Some(expected_turn_id) = request.steer_turn_id {
-                        session.turn_steer(CodexTurnSteerRequest {
-                            thread_id: request.conversation_id,
-                            expected_turn_id,
-                            message: request.message,
-                            client_message_id: Some(request.client_message_id),
-                        })
-                    } else {
-                        session.turn_start(CodexTurnStartRequest {
-                            thread_id: request.conversation_id,
-                            message: request.message,
-                            client_message_id: Some(request.client_message_id),
-                            model: None,
-                            reasoning_effort: None,
-                        })
-                    }
+                    let thread_id = request.conversation_id.clone();
+                    let mut source_fence =
+                        thread_scope.begin_remote_operation(thread_id.clone());
+                    let mut load_evidence = None;
+                    let result = (|| {
+                        load_evidence = Some(session.ensure_thread_loaded(&thread_id)?);
+                        if let Some(expected_turn_id) = request.steer_turn_id {
+                            session.turn_steer(CodexTurnSteerRequest {
+                                thread_id: request.conversation_id,
+                                expected_turn_id,
+                                message: request.message,
+                                client_message_id: Some(request.client_message_id),
+                            })
+                        } else {
+                            session.turn_start(CodexTurnStartRequest {
+                                thread_id: request.conversation_id,
+                                message: request.message,
+                                client_message_id: Some(request.client_message_id),
+                                model: None,
+                                reasoning_effort: None,
+                            })
+                        }
+                    })();
+                    apply_runtime_operation_evidence(
+                        &session,
+                        &mut source_fence,
+                        &thread_id,
+                        load_evidence,
+                        result,
+                    )
                 },
             )
             .await?;
@@ -388,8 +409,22 @@ impl ProviderAdapter for CodexProviderAdapter {
                 state.clone(),
                 events,
                 move |session| {
-                    thread_scope.mark_remote(request.conversation_id.clone());
-                    session.turn_interrupt(&request.conversation_id, &request.turn_id)
+                    let mut source_fence = thread_scope
+                        .begin_remote_operation(request.conversation_id.clone());
+                    let mut load_evidence = None;
+                    let result = (|| {
+                        load_evidence = Some(
+                            session.ensure_thread_loaded(&request.conversation_id)?,
+                        );
+                        session.turn_interrupt(&request.conversation_id, &request.turn_id)
+                    })();
+                    apply_runtime_operation_evidence(
+                        &session,
+                        &mut source_fence,
+                        &request.conversation_id,
+                        load_evidence,
+                        result,
+                    )
                 },
             )
             .await?;
@@ -420,10 +455,43 @@ impl ProviderAdapter for CodexProviderAdapter {
                     .get(&approval_id)
                     .cloned()
                     .ok_or_else(|| ProviderCallError::Protocol(approval_not_found(&approval_id)))?;
-                thread_scope.mark_remote(approval.thread_id.clone());
-                session
-                    .respond_to_approval(&approval, decision)
-                    .map_err(ProviderCallError::Codex)?;
+                let mut source_fence =
+                    thread_scope.begin_remote_operation(approval.thread_id.clone());
+                let load_evidence = match session.ensure_thread_loaded(&approval.thread_id) {
+                    Ok(load_evidence) => load_evidence,
+                    Err(error) => {
+                        let error = apply_runtime_operation_evidence::<()>(
+                            &session,
+                            &mut source_fence,
+                            &approval.thread_id,
+                            None,
+                            Err(error),
+                        )
+                        .expect_err("an App Server load error must remain an error");
+                        return Err(ProviderCallError::Codex(error));
+                    }
+                };
+                let pending = lock_state(&operation_state);
+                if !pending
+                    .pending_approvals
+                    .get(&approval_id)
+                    .is_some_and(|current| current.request_id == approval.request_id)
+                {
+                    source_fence.release_local();
+                    return Err(ProviderCallError::Protocol(approval_not_found(
+                        &approval_id,
+                    )));
+                }
+                let result = session.respond_to_approval(&approval, decision);
+                drop(pending);
+                apply_runtime_operation_evidence(
+                    &session,
+                    &mut source_fence,
+                    &approval.thread_id,
+                    Some(load_evidence),
+                    result,
+                )
+                .map_err(ProviderCallError::Codex)?;
                 let mut state = lock_state(&operation_state);
                 let event = state
                     .mapper
@@ -454,6 +522,67 @@ impl ProviderAdapter for CodexProviderAdapter {
 enum ProviderCallError {
     Codex(CodexAppServerError),
     Protocol(ProtocolError),
+}
+
+fn apply_runtime_operation_evidence<T>(
+    session: &CodexAppServerSession,
+    source_fence: &mut CodexRemoteOperationGuard,
+    thread_id: &str,
+    load_evidence: Option<u64>,
+    result: Result<T, CodexAppServerError>,
+) -> Result<T, CodexAppServerError> {
+    match &result {
+        Ok(_) => source_fence.commit_remote(),
+        Err(error) => {
+            if thread_state_was_rejected(error) {
+                if let Some(load_evidence) = load_evidence {
+                    session.forget_thread_loaded(thread_id, load_evidence);
+                }
+            }
+            if operation_outcome_is_ambiguous(error) {
+                source_fence.commit_remote();
+            } else {
+                source_fence.release_local();
+            }
+        }
+    }
+    result
+}
+
+fn operation_outcome_is_ambiguous(error: &CodexAppServerError) -> bool {
+    match error {
+        CodexAppServerError::Spawn(_) | CodexAppServerError::UnsupportedCapability { .. } => false,
+        CodexAppServerError::Rpc { code, message } => {
+            !rpc_error_proves_not_dispatched(*code, message)
+        }
+        CodexAppServerError::Io(_)
+        | CodexAppServerError::Timeout(_)
+        | CodexAppServerError::Protocol(_)
+        | CodexAppServerError::ProcessExited
+        | CodexAppServerError::Shutdown => true,
+    }
+}
+
+fn rpc_error_proves_not_dispatched(code: i64, message: &str) -> bool {
+    matches!(code, -32601 | -32602) || thread_state_was_rejected_message(message)
+}
+
+fn thread_state_was_rejected(error: &CodexAppServerError) -> bool {
+    matches!(
+        error,
+        CodexAppServerError::Rpc { message, .. }
+            if thread_state_was_rejected_message(message)
+    )
+}
+
+fn thread_state_was_rejected_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("unknown thread")
+        || (message.contains("thread") && message.contains("not found"))
+        || message.contains("thread is not loaded")
+        || message.contains("thread not loaded")
+        || message.contains("not-loaded thread")
+        || message.contains("thread_not_loaded")
 }
 
 async fn call_session<T, F>(
@@ -772,15 +901,38 @@ mod tests {
                             "idle",
                             vec![]
                         ),
-                        "sandbox": "workspace-write"
+                        "sandbox": sandbox_policy("workspace-write")
                     }),
+                    "thread/resume" => {
+                        let thread_id = request["params"]["threadId"].as_str().unwrap();
+                        if thread_id == "missing" {
+                            send_from_peer(
+                                &responder_incoming,
+                                json!({
+                                    "jsonrpc": "2.0",
+                                    "id": request["id"],
+                                    "error": {
+                                        "code": -32000,
+                                        "message": "unknown thread"
+                                    }
+                                }),
+                            );
+                            continue;
+                        }
+                        json!({
+                            "thread": thread(thread_id, "idle", vec![]),
+                            "sandbox": sandbox_policy("workspace-write")
+                        })
+                    },
                     "thread/start" => json!({
                         "thread": thread("created", "idle", vec![]),
                         "model": request["params"].get("model").cloned(),
                         "reasoningEffort": request["params"]["config"]
                             .get("model_reasoning_effort")
                             .cloned(),
-                        "sandbox": request["params"]["sandbox"]
+                        "sandbox": sandbox_policy(
+                            request["params"]["sandbox"].as_str().unwrap()
+                        )
                     }),
                     "turn/start" => json!({
                         "turn": turn("started", "inProgress")
@@ -819,6 +971,24 @@ mod tests {
         )
     }
 
+    fn sandbox_policy(policy: &str) -> Value {
+        match policy {
+            "read-only" => json!({
+                "type": "readOnly",
+                "networkAccess": false
+            }),
+            "workspace-write" => json!({
+                "type": "workspaceWrite",
+                "writableRoots": [],
+                "networkAccess": false,
+                "excludeTmpdirEnvVar": false,
+                "excludeSlashTmp": false
+            }),
+            "danger-full-access" => json!({ "type": "dangerFullAccess" }),
+            other => panic!("unexpected sandbox policy {other}"),
+        }
+    }
+
     #[tokio::test]
     async fn fake_session_closes_gateway_commands_events_approvals_and_status_loop() {
         let (session, peer) = fake_session();
@@ -830,7 +1000,7 @@ mod tests {
             gateway.event_sink(),
             thread_scope.clone(),
         ));
-        registry.register(adapter).unwrap();
+        registry.register(adapter.clone()).unwrap();
 
         let providers = gateway.provider_list(ProviderListRequest {}).await.unwrap();
         assert_eq!(providers.providers.len(), 1);
@@ -886,7 +1056,7 @@ mod tests {
         let started = gateway
             .turn_send(TurnSendRequest {
                 provider_id: "codex".to_string(),
-                conversation_id: "continued".to_string(),
+                conversation_id: "listed".to_string(),
                 client_message_id: "message-start".to_string(),
                 message: "hello".to_string(),
                 quick_reply_id: None,
@@ -896,7 +1066,10 @@ mod tests {
             .unwrap();
         assert_eq!(started.turn.id, "started");
         assert_eq!(started.turn.status, TurnTaskStatus::Running);
-        assert!(thread_scope.is_remote("continued"));
+        assert!(thread_scope.is_remote("listed"));
+        let resume_request = peer.next_request();
+        assert_eq!(resume_request["method"], "thread/resume");
+        assert_eq!(resume_request["params"]["threadId"], "listed");
         let start_request = peer.next_request();
         assert_eq!(start_request["method"], "turn/start");
         assert_eq!(start_request["params"]["clientUserMessageId"], "message-start");
@@ -964,6 +1137,53 @@ mod tests {
 
         peer.send(json!({
             "jsonrpc": "2.0",
+            "id": "permissions-one",
+            "method": "item/permissions/requestApproval",
+            "params": {
+                "threadId": "created",
+                "turnId": "notification-turn",
+                "itemId": "permissions-item",
+                "environmentId": null,
+                "startedAtMs": 124,
+                "cwd": "/work/fake",
+                "reason": "Allow network access",
+                "permissions": {
+                    "network": { "enabled": true },
+                    "fileSystem": null
+                }
+            }
+        }));
+        let permissions_response = peer.next_request();
+        assert_eq!(permissions_response["id"], "permissions-one");
+        assert_eq!(permissions_response["result"]["permissions"], json!({}));
+        assert_eq!(permissions_response["result"]["scope"], "turn");
+        assert!(lock_state(&adapter.state).pending_approvals.is_empty());
+        assert!(tokio::time::timeout(
+            Duration::from_millis(50),
+            subscription.next_event()
+        )
+        .await
+        .is_err());
+
+        peer.send(json!({
+            "jsonrpc": "2.0",
+            "id": "unknown-request-one",
+            "method": "item/future/request",
+            "params": {}
+        }));
+        let unknown_response = peer.next_request();
+        assert_eq!(unknown_response["id"], "unknown-request-one");
+        assert_eq!(unknown_response["error"]["code"], -32601);
+        assert!(tokio::time::timeout(
+            Duration::from_millis(50),
+            subscription.next_event()
+        )
+        .await
+        .is_err());
+        assert_eq!(adapter.provider().status, ProviderStatus::Ready);
+
+        peer.send(json!({
+            "jsonrpc": "2.0",
             "id": "approval-one",
             "method": "item/commandExecution/requestApproval",
             "params": {
@@ -1016,6 +1236,83 @@ mod tests {
                 .status,
             ProviderStatus::Unavailable
         );
+    }
+
+    #[tokio::test]
+    async fn explicit_resume_failure_does_not_exclude_the_desktop_thread() {
+        let (session, peer) = fake_session();
+        let registry = ProviderRegistry::default();
+        let gateway = Gateway::new(registry.clone());
+        let thread_scope = CodexThreadScope::default();
+        registry
+            .register(Arc::new(CodexProviderAdapter::new_scoped(
+                session,
+                gateway.event_sink(),
+                thread_scope.clone(),
+            )))
+            .unwrap();
+
+        let error = gateway
+            .turn_send(TurnSendRequest {
+                provider_id: "codex".to_string(),
+                conversation_id: "missing".to_string(),
+                client_message_id: "message-missing".to_string(),
+                message: "hello".to_string(),
+                quick_reply_id: None,
+                steer_turn_id: None,
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code, "provider_error");
+        assert!(!thread_scope.is_remote("missing"));
+        let resume = peer.next_request();
+        assert_eq!(resume["method"], "thread/resume");
+        assert_eq!(resume["params"]["threadId"], "missing");
+        assert_eq!(
+            gateway
+                .provider_list(ProviderListRequest {})
+                .await
+                .unwrap()
+                .providers[0]
+                .status,
+            ProviderStatus::Ready
+        );
+    }
+
+    #[test]
+    fn ambiguous_runtime_failure_marks_remote_but_known_rejection_does_not() {
+        let (session, _peer) = fake_session();
+        let known_scope = CodexThreadScope::default();
+        let mut known_fence = known_scope.begin_remote_operation("thread-known");
+        let known: Result<(), CodexAppServerError> = apply_runtime_operation_evidence(
+            &session,
+            &mut known_fence,
+            "thread-known",
+            None,
+            Err(CodexAppServerError::Rpc {
+                code: -32000,
+                message: "thread is not loaded".to_string(),
+            }),
+        );
+        assert!(known.is_err());
+        assert!(!known_scope.is_remote("thread-known"));
+
+        let ambiguous_scope = CodexThreadScope::default();
+        let mut ambiguous_fence =
+            ambiguous_scope.begin_remote_operation("thread-ambiguous");
+        let ambiguous: Result<(), CodexAppServerError> = apply_runtime_operation_evidence(
+            &session,
+            &mut ambiguous_fence,
+            "thread-ambiguous",
+            None,
+            Err(CodexAppServerError::Timeout(
+                "turn/start outcome is unknown".to_string(),
+            )),
+        );
+        assert!(ambiguous.is_err());
+        assert!(ambiguous_scope.is_remote("thread-ambiguous"));
+        session.shutdown().unwrap();
     }
 
     #[test]
