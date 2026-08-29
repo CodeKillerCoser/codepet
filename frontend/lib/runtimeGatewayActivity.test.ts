@@ -187,4 +187,51 @@ describe("RuntimeGatewayActivityProjection", () => {
     }));
     expect(projection.applyEvent(requested).activities[0].shouldRing).toBe(true);
   });
+
+  it("permanently excludes an App Server-created thread from companion snapshots and events", () => {
+    const projection = new RuntimeGatewayActivityProjection();
+    projection.replaceProviders([provider("ready")]);
+    projection.applyEvent(event({
+      event: "conversation.upserted",
+      payload: { conversation: conversation("running", turn("running")) },
+    }));
+    projection.applyEvent(event({
+      event: "approval.requested",
+      payload: { approval: approval("approval-remote") },
+    }));
+
+    projection.removeConversation("thread-one");
+    const snapshot = projection.replaceConversations([
+      conversation("running", turn("running")),
+    ]);
+    const conversationResult = projection.applyEvent(event({
+      event: "conversation.upserted",
+      payload: { conversation: conversation("running", turn("running")) },
+    }));
+    const turnResult = projection.applyEvent(event({
+      event: "turn.upserted",
+      payload: { turn: turn("running") },
+    }));
+    const approvalResult = projection.applyEvent(event({
+      event: "approval.requested",
+      payload: { approval: approval("approval-replayed") },
+    }));
+    const outputResult = projection.applyEvent(event({
+      event: "turn.outputDelta",
+      payload: {
+        providerId: "codex",
+        conversationId: "thread-one",
+        turnId: "turn-one",
+        outputId: "output-one",
+        kind: "agent-message",
+        delta: "must stay hidden",
+      },
+    }));
+
+    expect(snapshot).toEqual([]);
+    expect(conversationResult.activities).toEqual([]);
+    expect(turnResult.activities).toEqual([]);
+    expect(approvalResult.activities).toEqual([]);
+    expect(outputResult.activities).toEqual([]);
+  });
 });

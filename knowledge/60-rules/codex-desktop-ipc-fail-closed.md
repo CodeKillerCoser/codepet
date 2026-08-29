@@ -2,7 +2,7 @@
 
 ## 规则
 
-Codex Desktop socket、握手、路由、协议版本、owner 或 revision 无法确认正确时，Provider 必须明确 unavailable/error，并停止发布不可信状态或写请求。不得启动独立 App Server、恢复 Hook、扫描 transcript/audit 或监听文件作为回退。
+Codex Desktop socket、握手、路由、协议版本、owner、revision 或 thread source 无法确认正确时，companion 必须明确 unavailable/error，并停止发布不可信状态或写请求。不得把独立 remote App Server、Hook、transcript/audit 或文件监听接成 companion fallback。App Server 可以在隔离 remote runtime 中独立工作。
 
 Desktop 私有 DTO、方法名、路由字段和原始 JSON 只能存在于 Codex Desktop adapter。写 capability 使用肯定列表：只有已完成端到端路由、并发前置条件、Owner 确认和失败测试的动作才能声明；Owner ack 不等于权威任务状态已经变化。
 
@@ -22,6 +22,7 @@ Desktop 私有 DTO、方法名、路由字段和原始 JSON 只能存在于 Code
 - 私有协议存在审批请求，就直接广告 `approval.resolve`，但没有验证目标路由和 Desktop 是否确认处理。
 - 写请求超时或断线后在新连接自动重放，导致一条回复、停止或审批决定作用两次。
 - 收到 `{ok: true}` 就手工删除 pending approval 或把 turn 标成 interrupted，不等待权威 snapshot/patch。
+- remote thread 已被 scope 标记后，仍允许 companion snapshot/event 或动作通过；或只从 UI 删除一次，却允许 replay 重新建卡。
 - 把 permissions、MCP elicitation、user input 或 plan implementation 强行压成 v0 `approve`/`deny`，丢失原生语义。
 
 ## 推荐做法
@@ -37,11 +38,13 @@ Desktop 私有 DTO、方法名、路由字段和原始 JSON 只能存在于 Code
 - Owner 明确接受只结束本次请求；最终 turn 继续由权威 snapshot/patch 驱动，本地审批决定则需同时取得 Owner ack 与权威 request removal，顺序不限。非幂等写请求不自动重试或跨重连重放。
 - capability 只包含当前 adapter 已实现并测试的方法；`conversation.create` 等未接通能力继续 unsupported。
 - 无任务目录时明确报告覆盖限制，不用推断数据伪造目录。
+- companion snapshot/replay/event 只来自 Desktop adapter。remote create 未确定来源时先 quarantine；remote id 确认或结果歧义时排除，明确未派发时才恢复本地候选。
+- 动作在实际 IPC dispatch 期间持有 local-thread permit，与 remote marking 线性化；approval 与 turn 动作都必须遵守相同 source fence。
 
 ## 来源
 
-- `../50-decisions/codex-desktop-ipc-as-provider-source.md`
-- `../30-domains/agent-control/codex-app-server.md`
+- `../50-decisions/codex-remote-and-desktop-companion-dual-channel.md`
+- `../30-domains/agent-control/codex-desktop-companion.md`
 - 当前 Codex Desktop 打包资源中的 Owner/Follower 实现、写方法版本与多客户端探针。
 
 ## 验证方式
@@ -52,4 +55,5 @@ Desktop 私有 DTO、方法名、路由字段和原始 JSON 只能存在于 Code
 - fake Router 测试覆盖 start/steer 选择、interrupt 活动 turn 前置条件、approval 精确定向、request/response 隔离、handler/owner/revision 校验、超时和重连不重放。
 - mapper/Provider 测试覆盖 command/file Approval DTO、unsupported pending request 诊断、过期/重复保护，以及 ack 不提前发布最终状态。
 - Provider 与前端测试共同断言只展示已声明且当前状态允许的 send、interrupt、approve/deny；错误保留可诊断信息。
-- 静态检查确认独立 App Server 启动命令已从生产路径删除，Desktop 私有方法名没有越过 adapter 边界。
+- 静态检查确认 Desktop adapter 不调用 App Server fallback、PetApp 不引用 remote client/event，Desktop 私有方法名没有越过 adapter 边界。
+- source 测试覆盖 remote event bus 与 companion replay 隔离、create quarantine、歧义结果保守排除、前端 tombstone，以及 remote approval/send/interrupt fail closed。

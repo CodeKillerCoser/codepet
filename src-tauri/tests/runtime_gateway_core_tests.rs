@@ -1,17 +1,23 @@
 use code_pet_lib::runtime_gateway::generated::{
     Approval, ApprovalDecision, ApprovalResolveRequest, ApprovalResolveResponse, ApprovalStatus,
+    ApprovalRequestedEvent,
     Conversation, ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
     ConversationGetResponse, ConversationListRequest, ConversationListResponse,
     ConversationStatus, ConversationUpsertedEvent, PermissionLevel, ProtocolEvent,
     ProtocolRequest, ProtocolResponse, ProtocolServer, Provider, ProviderCapabilities,
     ProviderListRequest, ProviderStatus, ResponsePayload, TurnInterruptRequest,
     TurnInterruptResponse, TurnSendRequest, TurnSendResponse, TurnTask, TurnTaskStatus,
+    TurnUpsertedEvent,
     PROTOCOL_VERSION,
 };
 use code_pet_lib::runtime_gateway::{
     event_sequence, Gateway, LocalTransport, ProviderAdapter, ProviderFuture, ProviderRegistry,
     Transport,
 };
+use code_pet_lib::runtime_gateway::tauri_bridge::{
+    CodexDesktopCompanionState, RuntimeGatewayState,
+};
+use code_pet_lib::agent::codex_thread_scope::CodexThreadScope;
 use std::sync::{Arc, Mutex};
 
 struct FakeProvider {
@@ -457,4 +463,123 @@ async fn local_transport_dispatches_requests_and_subscribes_to_gateway_events() 
     let event = subscription.next_event().await.unwrap();
     assert_eq!(event_sequence(&event), 1);
     assert_eq!(transport.replay(Some(0)).unwrap(), vec![event]);
+}
+
+#[tokio::test]
+async fn remote_and_desktop_companion_lifecycles_are_independent() {
+    let remote_registry = ProviderRegistry::default();
+    remote_registry
+        .register(Arc::new(FakeProvider::new("codex", ProviderStatus::Ready)))
+        .unwrap();
+    let companion_registry = ProviderRegistry::default();
+    companion_registry
+        .register(Arc::new(FakeProvider::new(
+            "codex",
+            ProviderStatus::Unavailable,
+        )))
+        .unwrap();
+    let remote = RuntimeGatewayState::new(Arc::new(Gateway::new(remote_registry)));
+    let companion = CodexDesktopCompanionState::new(Arc::new(Gateway::new(companion_registry)));
+
+    let listed = remote
+        .gateway()
+        .conversation_list(ConversationListRequest {
+            provider_id: Some("codex".to_string()),
+            cursor: None,
+            limit: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(listed.conversations.len(), 1);
+    assert_eq!(
+        companion
+            .gateway()
+            .provider_list(ProviderListRequest {})
+            .await
+            .unwrap()
+            .providers[0]
+            .status,
+        ProviderStatus::Unavailable
+    );
+}
+
+#[tokio::test]
+async fn remote_initialization_placeholder_does_not_block_companion_construction() {
+    let thread_scope = CodexThreadScope::default();
+    let remote = RuntimeGatewayState::with_thread_scope(thread_scope.clone());
+    let companion = CodexDesktopCompanionState::with_thread_scope(thread_scope);
+
+    let remote_provider = remote
+        .gateway()
+        .provider_list(ProviderListRequest {})
+        .await
+        .unwrap()
+        .providers
+        .remove(0);
+    let companion_provider = companion
+        .gateway()
+        .provider_list(ProviderListRequest {})
+        .await
+        .unwrap()
+        .providers
+        .remove(0);
+
+    assert_eq!(remote_provider.status, ProviderStatus::Unavailable);
+    assert_eq!(remote_provider.id, "codex");
+    assert_eq!(companion_provider.id, "codex");
+}
+
+#[test]
+fn remote_events_never_enter_the_desktop_companion_transport() {
+    let remote = RuntimeGatewayState::new(Arc::new(Gateway::default()));
+    let companion = CodexDesktopCompanionState::new(Arc::new(Gateway::default()));
+    let remote_turn = turn("codex");
+    let remote_approval = Approval {
+        id: "remote-approval".to_string(),
+        provider_id: "codex".to_string(),
+        conversation_id: "codex-conversation".to_string(),
+        turn_id: remote_turn.id.clone(),
+        kind: "command-execution".to_string(),
+        title: "Remote approval".to_string(),
+        description: None,
+        status: ApprovalStatus::Pending,
+        decisions: vec![ApprovalDecision::Approve, ApprovalDecision::Deny],
+        requested_at: 1,
+        resolved_at: None,
+        decision: None,
+        extension: None,
+    };
+
+    remote
+        .gateway()
+        .publish_event(conversation_event("codex"))
+        .unwrap();
+    remote
+        .gateway()
+        .publish_event(ProtocolEvent::TurnUpserted {
+            protocol_version: PROTOCOL_VERSION,
+            event_sequence: 0,
+            payload: TurnUpsertedEvent { turn: remote_turn },
+        })
+        .unwrap();
+    remote
+        .gateway()
+        .publish_event(ProtocolEvent::ApprovalRequested {
+            protocol_version: PROTOCOL_VERSION,
+            event_sequence: 0,
+            payload: ApprovalRequestedEvent {
+                approval: remote_approval,
+            },
+        })
+        .unwrap();
+
+    assert_eq!(remote.transport().replay(None).unwrap().len(), 3);
+    assert!(companion.transport().replay(None).unwrap().is_empty());
+
+    companion
+        .gateway()
+        .publish_event(conversation_event("codex"))
+        .unwrap();
+    assert_eq!(companion.transport().replay(None).unwrap().len(), 1);
+    assert_eq!(remote.transport().replay(None).unwrap().len(), 3);
 }

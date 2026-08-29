@@ -297,48 +297,53 @@ describe("PetApp activity helpers", () => {
     expect(titleRowBlock).not.toContain('activity.status === "done" || activity.status === "failed"');
   });
 
-  it("deduplicates projected Runtime Gateway events before ringing", () => {
+  it("deduplicates projected Desktop companion events before ringing", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const applyBlock = source.slice(source.indexOf("async function applyRuntimeGatewayEvent"), source.indexOf("function orderedRuntimeGatewayEvents"));
 
-    expect(source).toContain("listen<ProtocolEvent>(runtimeGatewayEventName");
+    expect(source).toContain("listen<ProtocolEvent>(codexDesktopCompanionEventName");
     expect(applyBlock).toContain("result.activities.filter((activity) => !seenEventIds.has(activity.id))");
     expect(applyBlock).toContain("if (activity.shouldRing)");
     expect(applyBlock).toContain("await handleRing(activity)");
     expect(source).not.toContain('listen<PetEvent>("pet-event"');
     expect(source).not.toContain("recentEvents()");
+    expect(source).not.toContain("runtimeGatewayEventName");
   });
 
-  it("hydrates the pet from Runtime Gateway snapshots before applying replay and live events", () => {
+  it("hydrates the pet only from the Desktop companion snapshot and event channel", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
-    const syncBlock = source.slice(source.indexOf("async function synchronizeRuntimeGateway"), source.indexOf("async function listRuntimeGatewayConversations"));
+    const syncBlock = source.slice(source.indexOf("async function synchronizeRuntimeGateway"), source.indexOf("async function ingestRuntimeGatewayEvent"));
 
-    expect(syncBlock).toContain("runtimeGatewayClient.providerList({})");
-    expect(source).toContain("runtimeGatewayClient.conversationList({");
-    expect(syncBlock).toContain("replayRuntimeGatewayEvents(lastGatewayEventSequence)");
+    expect(syncBlock).toContain("codexDesktopCompanionClient.protocolHandshake({");
+    expect(syncBlock).toContain("readCodexDesktopCompanionSnapshot()");
+    expect(syncBlock).toContain("replayCodexDesktopCompanionEvents(lastGatewayEventSequence)");
+    expect(source).toContain("codexDesktopCompanionThreadExcludedEventName");
+    expect(source).toContain("excludeRemoteCompanionThread(event.payload.conversationId)");
     expect(source).toContain("ingestRuntimeGatewayEvent(event)");
-    expect(source).toContain("Runtime Gateway 未注册 Provider");
+    expect(source).toContain("Codex Desktop companion 未注册");
     expect(source).toContain("Provider 不可用");
     expect(source).toContain("provider.extension?.data?.unavailableReason");
     expect(source).toContain('typeof unavailableReason === "string"');
     expect(source).toContain("这里只显示 Desktop follower 已公告或显式已知的 Codex 任务");
+    expect(source).not.toContain("runtimeGatewayClient");
+    expect(source).not.toContain("runtimeGatewayClient.conversationList");
   });
 
-  it("routes messages, interruption, and approval decisions through Runtime Gateway methods", () => {
+  it("routes messages, interruption, and approval decisions only through the Desktop companion", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const sendBlock = source.slice(source.indexOf("async function sendRuntimeGatewayMessage"), source.indexOf("function handleReplyKeydown"));
     const approvalBlock = source.slice(source.indexOf("async function approve"), source.indexOf("</script>"));
     const interruptBlock = source.slice(source.indexOf("async function interrupt"), source.indexOf("</script>"));
 
-    expect(sendBlock).toContain("runtimeGatewayClient.turnSend({");
-    expect(sendBlock).toContain("clientMessageId: createRuntimeGatewayClientMessageId()");
+    expect(sendBlock).toContain("codexDesktopCompanionClient.turnSend({");
+    expect(sendBlock).toContain("clientMessageId: createCodexDesktopCompanionClientMessageId()");
     expect(sendBlock).toContain("quickReplyId");
     expect(sendBlock).toContain("steerTurnId: activeTurn?.id");
     expect(sendBlock).not.toContain("projectTurnResponse");
-    expect(interruptBlock).toContain("runtimeGatewayClient.turnInterrupt({");
+    expect(interruptBlock).toContain("codexDesktopCompanionClient.turnInterrupt({");
     expect(interruptBlock).toContain("turnId: turn.id");
     expect(source).toContain("{#if capabilities.canInterrupt}");
-    expect(approvalBlock).toContain("runtimeGatewayClient.approvalResolve({");
+    expect(approvalBlock).toContain("codexDesktopCompanionClient.approvalResolve({");
     expect(approvalBlock).toContain('decision = behavior === "allow" ? "approve" : "deny"');
     expect(source).not.toContain("runtimeGatewayProjection.projectTurnResponse");
   });

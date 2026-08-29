@@ -6,6 +6,7 @@ Runbook 是可重复执行的排查路径。它们应从可观察现象开始，
 
 - `hook-not-working.md`
 - `codex-desktop-ipc-unavailable.md`
+- `codex-app-server-unavailable.md`
 - `reply-not-shown-in-app.md`
 - `window-overflows-screen.md`
 - `task-list-collapsed-or-clipped.md`

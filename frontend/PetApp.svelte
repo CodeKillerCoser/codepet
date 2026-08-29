@@ -6,12 +6,21 @@
   import { getAppSettings, openMainWindow, recordPerfEvent } from "./lib/api";
   import { activityCapabilities, activityKey, cardAgentLabel, cardEndTime, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
   import { activityActiveTurnFor, activityCanResolveApproval, activityQuickRepliesFor } from "./lib/agentInteractions";
+  import {
+    codexDesktopCompanionClient,
+    codexDesktopCompanionErrorMessage,
+    codexDesktopCompanionEventName,
+    codexDesktopCompanionThreadExcludedEventName,
+    createCodexDesktopCompanionClientMessageId,
+    readCodexDesktopCompanionSnapshot,
+    replayCodexDesktopCompanionEvents,
+    type CodexDesktopCompanionThreadExcluded,
+  } from "./lib/codexDesktopCompanion";
   import { mergeEventFeed } from "./lib/eventFeed";
-  import { PROTOCOL_VERSION, type Conversation, type ProtocolEvent, type Provider, type QuickReply } from "./lib/generated/runtimeGateway";
+  import { PROTOCOL_VERSION, type ProtocolEvent, type Provider, type QuickReply } from "./lib/generated/runtimeGateway";
   import { runningBubbleStyle } from "./lib/gradientColor";
   import { isOpaqueCssColor, rectFromElementBounds, shouldIgnorePetWindowCursor, type PetHitRect } from "./lib/petHitTest";
   import PetAvatar from "./lib/PetAvatar.svelte";
-  import { createRuntimeGatewayClientMessageId, replayRuntimeGatewayEvents, runtimeGatewayClient, runtimeGatewayErrorMessage, runtimeGatewayEventName } from "./lib/runtimeGateway";
   import { RuntimeGatewayActivityProjection } from "./lib/runtimeGatewayActivity";
   import { playNotificationSound, playWhipSound, shouldRepeatNotification, shouldRing } from "./lib/sound";
   import { defaultPetSprite, defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
@@ -124,6 +133,7 @@
 
     let disposed = false;
     let unlistenGatewayEvent: (() => void) | null = null;
+    let unlistenExcludedThread: (() => void) | null = null;
     let unlistenSettings: (() => void) | null = null;
     let unlistenWindowMoved: (() => void) | null = null;
     let unlistenWindowResized: (() => void) | null = null;
@@ -152,7 +162,7 @@
       console.error("failed to watch pet window resize", error);
     });
 
-    const gatewayListenerReady = listen<ProtocolEvent>(runtimeGatewayEventName, (event) => {
+    const gatewayListenerReady = listen<ProtocolEvent>(codexDesktopCompanionEventName, (event) => {
       if (disposed) {
         return;
       }
@@ -165,9 +175,24 @@
       }
     }).catch((error) => {
       gatewayPhase = "error";
-      gatewayError = runtimeGatewayErrorMessage(error);
-      console.error("failed to listen runtime gateway events", error);
+      gatewayError = codexDesktopCompanionErrorMessage(error);
+      console.error("failed to listen Codex Desktop companion events", error);
       throw error;
+    });
+
+    const excludedThreadListenerReady = listen<CodexDesktopCompanionThreadExcluded>(
+      codexDesktopCompanionThreadExcludedEventName,
+      (event) => {
+        if (!disposed) {
+          excludeRemoteCompanionThread(event.payload.conversationId);
+        }
+      },
+    ).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        unlistenExcludedThread = unlisten;
+      }
     });
 
     void listen<AppSettings>("settings-updated", (event) => {
@@ -213,15 +238,15 @@
         fields: { activities: activities.length },
       }).catch(() => {});
       try {
-        await gatewayListenerReady;
+        await Promise.all([gatewayListenerReady, excludedThreadListenerReady]);
         if (!disposed) {
           await synchronizeRuntimeGateway();
         }
       } catch (error) {
         if (!disposed) {
           gatewayPhase = "error";
-          gatewayError = runtimeGatewayErrorMessage(error);
-          console.error("failed to initialize runtime gateway", error);
+          gatewayError = codexDesktopCompanionErrorMessage(error);
+          console.error("failed to initialize Codex Desktop companion", error);
         }
       }
     })();
@@ -230,6 +255,7 @@
       disposed = true;
       media.removeEventListener("change", syncTheme);
       unlistenGatewayEvent?.();
+      unlistenExcludedThread?.();
       unlistenSettings?.();
       unlistenWindowMoved?.();
       unlistenWindowResized?.();
@@ -251,8 +277,8 @@
       .then(() => ingestRuntimeGatewayEvent(event))
       .catch((error) => {
         gatewayPhase = "error";
-        gatewayError = runtimeGatewayErrorMessage(error);
-        console.error("failed to apply runtime gateway event", error);
+        gatewayError = codexDesktopCompanionErrorMessage(error);
+        console.error("failed to apply Codex Desktop companion event", error);
       });
   }
 
@@ -288,21 +314,18 @@
   }
 
   async function performRuntimeGatewaySynchronization(startedAt: number) {
-    const handshake = await runtimeGatewayClient.protocolHandshake({
+    const handshake = await codexDesktopCompanionClient.protocolHandshake({
       clientName: "code-pet-pet-ui",
       clientVersion: "0",
       minProtocolVersion: PROTOCOL_VERSION,
       maxProtocolVersion: PROTOCOL_VERSION,
     });
-    const initialProviders = await runtimeGatewayClient.providerList({});
-    const conversationSnapshot = await listRuntimeGatewayConversations(initialProviders.providers);
-    const currentProviders = await runtimeGatewayClient.providerList({});
-    runtimeGatewayProjection.replaceProviders(currentProviders.providers);
+    const snapshot = await readCodexDesktopCompanionSnapshot();
+    runtimeGatewayProjection.replaceProviders([snapshot.provider]);
     gatewayProviders = runtimeGatewayProjection.providers();
 
-    const readyProviderIds = new Set(gatewayProviders.filter((provider) => provider.status === "ready").map((provider) => provider.id));
     const snapshotActivities = runtimeGatewayProjection.replaceConversations(
-      conversationSnapshot.conversations.filter((conversation) => readyProviderIds.has(conversation.providerId)),
+      snapshot.provider.status === "ready" ? snapshot.conversations : [],
     );
     recentEventCache = [];
     activities = [];
@@ -315,7 +338,7 @@
     applyIncomingEvents(snapshotActivities);
 
     lastGatewayEventSequence = handshake.eventSequence;
-    const replayed = await replayRuntimeGatewayEvents(lastGatewayEventSequence);
+    const replayed = await replayCodexDesktopCompanionEvents(lastGatewayEventSequence);
     const buffered = bufferedGatewayEvents;
     bufferedGatewayEvents = [];
     gatewayInitialized = true;
@@ -323,74 +346,31 @@
       await ingestRuntimeGatewayEvent(event);
     }
 
-    const hasReadyProvider = gatewayProviders.some((provider) => provider.status === "ready");
-    const snapshotFailedWhileReady = Boolean(conversationSnapshot.error && hasReadyProvider);
-    gatewayPhase = snapshotFailedWhileReady ? "error" : "ready";
-    gatewayError = snapshotFailedWhileReady ? runtimeGatewayErrorMessage(conversationSnapshot.error) : "";
+    gatewayPhase = "ready";
+    gatewayError = "";
     void recordPerfEvent({
-      name: "frontend.pet.runtime_gateway_sync",
+      name: "frontend.pet.codex_desktop_companion_sync",
       durationMs: performance.now() - startedAt,
-      status: conversationSnapshot.error ? "error" : "ok",
+      status: "ok",
       fields: {
         providers: gatewayProviders.length,
-        conversations: conversationSnapshot.conversations.length,
+        conversations: snapshot.conversations.length,
         activities: activities.length,
         eventSequence: lastGatewayEventSequence,
       },
-      error: conversationSnapshot.error ? runtimeGatewayErrorMessage(conversationSnapshot.error) : undefined,
     }).catch(() => {});
-  }
-
-  async function listRuntimeGatewayConversations(providers: Provider[]): Promise<{ conversations: Conversation[]; error: unknown | null }> {
-    const readyProviders = providers.filter((provider) => provider.status === "ready");
-    if (readyProviders.length === 0) {
-      try {
-        const response = await runtimeGatewayClient.conversationList({ limit: 100 });
-        return { conversations: response.conversations, error: null };
-      } catch (error) {
-        return { conversations: [], error };
-      }
-    }
-
-    const conversations: Conversation[] = [];
-    let firstError: unknown | null = null;
-    for (const provider of readyProviders) {
-      let cursor: string | undefined;
-      const seenCursors = new Set<string>();
-      do {
-        try {
-          const response = await runtimeGatewayClient.conversationList({
-            providerId: provider.id,
-            cursor,
-            limit: 100,
-          });
-          conversations.push(...response.conversations);
-          cursor = response.nextCursor;
-          if (cursor && seenCursors.has(cursor)) {
-            throw new Error(`Runtime Gateway repeated conversation cursor for ${provider.id}`);
-          }
-          if (cursor) {
-            seenCursors.add(cursor);
-          }
-        } catch (error) {
-          firstError ??= error;
-          cursor = undefined;
-        }
-      } while (cursor);
-    }
-    return { conversations, error: firstError };
   }
 
   async function ingestRuntimeGatewayEvent(event: ProtocolEvent) {
     if (event.protocolVersion !== PROTOCOL_VERSION) {
-      throw new Error(`Runtime Gateway event protocol mismatch: ${event.protocolVersion}`);
+      throw new Error(`Codex Desktop companion event protocol mismatch: ${event.protocolVersion}`);
     }
     if (event.eventSequence <= lastGatewayEventSequence) {
       return;
     }
     if (event.eventSequence > lastGatewayEventSequence + 1) {
       try {
-        const replayed = orderedRuntimeGatewayEvents(await replayRuntimeGatewayEvents(lastGatewayEventSequence));
+        const replayed = orderedRuntimeGatewayEvents(await replayCodexDesktopCompanionEvents(lastGatewayEventSequence));
         for (const replayedEvent of replayed) {
           if (replayedEvent.eventSequence <= lastGatewayEventSequence) {
             continue;
@@ -508,22 +488,22 @@
     if (phase === "loading") {
       return {
         className: "loading",
-        title: "正在连接 Runtime Gateway",
-        message: "正在同步 Provider 与会话",
+        title: "正在连接 Codex Desktop",
+        message: "正在同步 Desktop companion 状态",
       };
     }
     if (phase === "error") {
       return {
         className: "unavailable",
-        title: "Runtime Gateway 不可用",
-        message: error || "无法读取本地 Runtime Gateway",
+        title: "Codex Desktop companion 不可用",
+        message: error || "无法读取本机 Codex Desktop IPC",
       };
     }
     if (providers.length === 0) {
       return {
         className: "unavailable",
-        title: "暂无 Provider",
-        message: "Runtime Gateway 未注册 Provider",
+        title: "暂无 Desktop companion",
+        message: "Codex Desktop companion 未注册",
       };
     }
 
@@ -580,6 +560,24 @@
       replySubmitting = false;
     }
     clearRepeat();
+  }
+
+  function excludeRemoteCompanionThread(conversationId: string) {
+    runtimeGatewayProjection.removeConversation(conversationId);
+    recentEventCache = recentEventCache.filter(
+      (activity) => activity.runtimeGateway?.conversationId !== conversationId,
+    );
+    activities = activities.filter(
+      (activity) => activity.runtimeGateway?.conversationId !== conversationId,
+    );
+    if (replyingToId && !activities.some((activity) => activity.id === replyingToId)) {
+      replyingToId = null;
+      replyText = "";
+      replySubmitting = false;
+    }
+    if (repeatEvent?.runtimeGateway?.conversationId === conversationId) {
+      clearRepeat();
+    }
   }
 
   async function handleRing(event: PetEvent) {
@@ -1032,7 +1030,7 @@
   }
 
   function activate(activity: PetEvent) {
-    showNotice(activity.runtimeGateway ? "Runtime Gateway 暂不支持打开会话" : "当前来源暂不支持打开");
+    showNotice(activity.runtimeGateway ? "Desktop companion 暂不支持打开会话" : "当前来源暂不支持打开");
   }
 
   async function openMain(event: MouseEvent) {
@@ -1114,7 +1112,7 @@
       replyingToId = null;
       showNotice("回复已接受，等待任务更新");
     } catch (error) {
-      showNotice(runtimeGatewayErrorMessage(error));
+      showNotice(codexDesktopCompanionErrorMessage(error));
     } finally {
       replySubmitting = false;
     }
@@ -1133,7 +1131,7 @@
       replyingToId = null;
       showNotice("快捷回复已接受，等待任务更新");
     } catch (error) {
-      showNotice(runtimeGatewayErrorMessage(error));
+      showNotice(codexDesktopCompanionErrorMessage(error));
     } finally {
       replySubmitting = false;
     }
@@ -1145,10 +1143,10 @@
       throw new Error("当前任务状态不支持继续消息");
     }
     const activeTurn = activityActiveTurnFor(activity);
-    await runtimeGatewayClient.turnSend({
+    await codexDesktopCompanionClient.turnSend({
       providerId: context.provider.id,
       conversationId: context.conversationId,
-      clientMessageId: createRuntimeGatewayClientMessageId(),
+      clientMessageId: createCodexDesktopCompanionClientMessageId(),
       message,
       quickReplyId,
       steerTurnId: activeTurn?.id,
@@ -1214,7 +1212,7 @@
     }
     controlSubmittingId = activity.id;
     try {
-      await runtimeGatewayClient.approvalResolve({
+      await codexDesktopCompanionClient.approvalResolve({
         providerId: context.provider.id,
         approvalId: context.approval.id,
         decision,
@@ -1222,7 +1220,7 @@
       clearRepeat();
       showNotice(behavior === "allow" ? "允许操作已接受，等待任务更新" : "拒绝操作已接受，等待任务更新");
     } catch (error) {
-      showNotice(runtimeGatewayErrorMessage(error));
+      showNotice(codexDesktopCompanionErrorMessage(error));
     } finally {
       if (controlSubmittingId === activity.id) {
         controlSubmittingId = null;
@@ -1243,14 +1241,14 @@
     }
     controlSubmittingId = activity.id;
     try {
-      await runtimeGatewayClient.turnInterrupt({
+      await codexDesktopCompanionClient.turnInterrupt({
         providerId: context.provider.id,
         conversationId: context.conversationId,
         turnId: turn.id,
       });
       showNotice("停止请求已接受，等待任务更新");
     } catch (error) {
-      showNotice(runtimeGatewayErrorMessage(error));
+      showNotice(codexDesktopCompanionErrorMessage(error));
     } finally {
       if (controlSubmittingId === activity.id) {
         controlSubmittingId = null;
@@ -1275,7 +1273,7 @@
             </div>
             <span class="status-message gateway-state-message">{gatewayEmptyState.message}</span>
             <div class="status-footer">
-              <span class="status-meta">Runtime Gateway</span>
+              <span class="status-meta">Desktop Companion</span>
             </div>
           </div>
         </article>

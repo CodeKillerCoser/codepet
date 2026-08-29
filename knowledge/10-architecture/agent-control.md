@@ -14,8 +14,9 @@ Agent 开关和 hook 事件勾选是两个层级：开关决定是否安装 Code
 
 `src-tauri/src/agent/actions.rs` 提供激活、回复和审批行为。
 
-- 旧 Codex `PetEvent` 的激活、回复和审批路径均为 unsupported；独立 `codex_app_server.rs` 及其一次性回复实现已经删除，生产代码不存在 App Server fallback。
-- Codex Desktop Provider 通过 Runtime Gateway 声明 start/steer/interrupt 与 command/file 二元审批写能力；具体动作只对由 follower 公告或显式已知、完成 bootstrap 且 owner 仍有效的会话受理。
+- 旧 Codex `PetEvent` 的回复和审批路径仍为 unsupported；Hook/audit/transcript 不得成为 Codex fallback。
+- Codex Remote 通过独立 App Server Provider 提供 list/get/create、turn 和 approval，面向远程控制；它的事件不进入桌宠。
+- Codex Desktop Companion 通过专用 Tauri channel 声明 get、start/steer/interrupt 与 command/file 二元审批；动作只对已 bootstrap、owner 仍有效且未被 remote provenance 排除的会话受理。
 - Qoder 当前没有经过验证的“向现有本机会话发送消息”路径。
 - 审批处理通过 collector 的等待路径解决 `waiting-approval` 事件。
 - 激活能力依赖平台，可使用应用名、bundle id、路径或 macOS 终端会话自动化。
@@ -24,7 +25,7 @@ Agent 开关和 hook 事件勾选是两个层级：开关决定是否安装 Code
 
 `frontend/lib/agentInteractions.ts` 映射用户可见能力：
 
-- Codex 旧 `PetEvent` 卡片不暴露操作能力；Codex Desktop IPC 卡片只使用 Runtime Gateway 实际声明且当前状态允许的 capability。
+- Codex 旧 `PetEvent` 卡片不暴露操作能力；桌宠只接受 namespace 为 `codepet.codex-desktop` 且 source 为 `codex-desktop-private-ipc` 的 companion capability，remote App Server capability 即使同为 provider id `codex` 也失败关闭。
 - Qoder 可以审批等待授权事件，但暂时不能回复现有本机会话。
 - 运行中的任务仅在 Provider 声明 `turn.send` 且当前会话满足受理前置条件时暴露回复入口。
 

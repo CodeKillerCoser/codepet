@@ -8,16 +8,21 @@ use super::mapper::{
 };
 use super::protocol::DesktopIpcError;
 use super::state::ThreadSnapshot;
+use crate::agent::codex_thread_scope::{
+    CodexCompanionDisposition, CodexRemoteCreationOutcome,
+    CodexRemoteCreationSettlement, CodexThreadScope,
+};
 use crate::runtime_gateway::generated::{
     Approval, ApprovalDecision, ApprovalRequestedEvent, ApprovalResolveRequest,
     ApprovalResolveResponse, ApprovalResolvedEvent, ApprovalStatus, ConversationCreateRequest,
-    ConversationCreateResponse, ConversationGetRequest, ConversationGetResponse,
+    ConversationCreateResponse, Conversation, ConversationGetRequest, ConversationGetResponse,
     ConversationListRequest, ConversationListResponse, ConversationUpsertedEvent, ProtocolError,
     ProtocolEvent, Provider, ProviderStatus, ProviderStatusChangedEvent, TurnInterruptRequest,
     TurnInterruptResponse, TurnSendRequest, TurnSendResponse, TurnTask, TurnTaskStatus,
     TurnUpsertedEvent, PROTOCOL_VERSION,
 };
 use crate::runtime_gateway::{ProviderAdapter, ProviderEventSink, ProviderFuture};
+use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -33,6 +38,11 @@ struct ApprovalIntent {
     authoritative_removed_at: Option<u64>,
 }
 
+struct QuarantinedThread {
+    epoch: u64,
+    payload: Option<(ThreadSnapshot, PublicationKind)>,
+}
+
 struct CodexProviderState {
     status: ProviderStatus,
     unavailable_reason: Option<String>,
@@ -41,18 +51,31 @@ struct CodexProviderState {
     threads: BTreeMap<String, MappedThread>,
     approval_intents: BTreeMap<String, ApprovalIntent>,
     bootstrap_workers: HashSet<String>,
+    quarantined_threads: BTreeMap<String, QuarantinedThread>,
     retired: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexDesktopCompanionSnapshot {
+    pub provider: Provider,
+    pub conversations: Vec<Conversation>,
 }
 
 pub struct CodexProviderAdapter {
     client: CodexDesktopClient,
     state: Arc<Mutex<CodexProviderState>>,
     events: ProviderEventSink,
+    thread_scope: CodexThreadScope,
     forwarder: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl CodexProviderAdapter {
     pub fn spawn(events: ProviderEventSink) -> Self {
+        Self::spawn_scoped(events, CodexThreadScope::default())
+    }
+
+    pub fn spawn_scoped(events: ProviderEventSink, thread_scope: CodexThreadScope) -> Self {
         let client = CodexDesktopClient::spawn();
         let connection = client.connection_snapshot();
         let (status, unavailable_reason) = provider_connection_state(&connection);
@@ -64,21 +87,59 @@ impl CodexProviderAdapter {
             threads: BTreeMap::new(),
             approval_intents: BTreeMap::new(),
             bootstrap_workers: HashSet::new(),
+            quarantined_threads: BTreeMap::new(),
             retired: false,
         }));
         let incoming = client.subscribe();
+        let creation_settled = thread_scope.subscribe_remote_creation_settled();
         let handle = start_event_forwarder(
             incoming,
+            creation_settled,
             client.clone(),
             state.clone(),
             events.clone(),
+            thread_scope.clone(),
         );
         Self {
             client,
             state,
             events,
+            thread_scope,
             forwarder: Mutex::new(Some(handle)),
         }
+    }
+
+    pub fn snapshot(&self) -> CodexDesktopCompanionSnapshot {
+        let provider = self.provider();
+        let mut conversations = if provider.status == ProviderStatus::Ready {
+            lock(&self.state)
+                .threads
+                .values()
+                .filter(|thread| !self.thread_scope.is_remote(&thread.conversation.id))
+                .map(|thread| thread.conversation.clone())
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        conversations.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        let conversation_ids = conversations
+            .iter()
+            .map(|conversation| conversation.id.clone())
+            .collect::<HashSet<_>>();
+        publish_pending_approval_hydration(&self.state, &self.events, &conversation_ids);
+        CodexDesktopCompanionSnapshot {
+            provider,
+            conversations,
+        }
+    }
+
+    pub(crate) fn exclude_remote_thread(&self, conversation_id: &str) {
+        exclude_thread_from_projection(&self.state, conversation_id);
     }
 
     pub(crate) fn retire(&self) {
@@ -109,52 +170,18 @@ impl ProviderAdapter for CodexProviderAdapter {
 
     fn conversation_list<'a>(
         &'a self,
-        request: ConversationListRequest,
+        _request: ConversationListRequest,
     ) -> ProviderFuture<'a, ConversationListResponse> {
-        let state = self.state.clone();
-        let events = self.events.clone();
-        Box::pin(async move {
-            let offset = parse_cursor(request.cursor.as_deref())?;
-            let limit = request.limit.unwrap_or(50);
-            if !(1..=100).contains(&limit) {
-                return Err(invalid_limit_error());
-            }
-            let limit = usize::try_from(limit).map_err(|_| invalid_limit_error())?;
-            let mut conversations = lock(&state)
-                .threads
-                .values()
-                .map(|thread| thread.conversation.clone())
-                .collect::<Vec<_>>();
-            conversations.sort_by(|left, right| {
-                right
-                    .updated_at
-                    .cmp(&left.updated_at)
-                    .then_with(|| left.id.cmp(&right.id))
-            });
-            let total = conversations.len();
-            let conversations = conversations
-                .into_iter()
-                .skip(offset)
-                .take(limit)
-                .collect::<Vec<_>>();
-            let next_offset = offset.saturating_add(conversations.len());
-            let listed_ids = conversations
-                .iter()
-                .map(|conversation| conversation.id.clone())
-                .collect::<HashSet<_>>();
-            publish_pending_approval_hydration(&state, &events, &listed_ids);
-            Ok(ConversationListResponse {
-                conversations,
-                next_cursor: (next_offset < total).then(|| format!("desktop:{next_offset}")),
-                event_sequence: 0,
-            })
-        })
+        unsupported("conversation.list")
     }
 
     fn conversation_get<'a>(
         &'a self,
         request: ConversationGetRequest,
     ) -> ProviderFuture<'a, ConversationGetResponse> {
+        if self.thread_scope.is_remote(&request.conversation_id) {
+            return source_excluded("conversation.get");
+        }
         let cached = lock(&self.state)
             .threads
             .get(&request.conversation_id)
@@ -163,6 +190,7 @@ impl ProviderAdapter for CodexProviderAdapter {
             return Box::pin(async move { Ok(ConversationGetResponse { conversation }) });
         }
         let client = self.client.clone();
+        let thread_scope = self.thread_scope.clone();
         Box::pin(async move {
             let conversation_id = request.conversation_id;
             let bootstrap_id = conversation_id.clone();
@@ -172,6 +200,9 @@ impl ProviderAdapter for CodexProviderAdapter {
             .await
             .map_err(provider_task_error)?
             .map_err(desktop_error)?;
+            if thread_scope.is_remote(&conversation_id) {
+                return Err(source_excluded_error("conversation.get"));
+            }
             let mapped = map_thread(&snapshot);
             let conversation = mapped.conversation.clone();
             Ok(ConversationGetResponse { conversation })
@@ -189,7 +220,11 @@ impl ProviderAdapter for CodexProviderAdapter {
         &'a self,
         request: TurnSendRequest,
     ) -> ProviderFuture<'a, TurnSendResponse> {
+        if self.thread_scope.is_remote(&request.conversation_id) {
+            return source_excluded("turn.send");
+        }
         let client = self.client.clone();
+        let thread_scope = self.thread_scope.clone();
         Box::pin(async move {
             validate_provider_id(&request.provider_id)?;
             if request
@@ -205,16 +240,20 @@ impl ProviderAdapter for CodexProviderAdapter {
                 });
             }
             let acknowledgement = tokio::task::spawn_blocking(move || {
-                client.send_turn(
-                    &request.conversation_id,
-                    &request.client_message_id,
-                    &request.message,
-                    request.steer_turn_id.as_deref(),
-                )
+                thread_scope
+                    .with_local_thread(&request.conversation_id, || {
+                        client.send_turn(
+                            &request.conversation_id,
+                            &request.client_message_id,
+                            &request.message,
+                            request.steer_turn_id.as_deref(),
+                        )
+                        .map_err(desktop_error)
+                    })
+                    .unwrap_or_else(|| Err(source_excluded_error("turn.send")))
             })
             .await
-            .map_err(provider_task_error)?
-            .map_err(desktop_error)?;
+            .map_err(provider_task_error)??;
             let mapped = map_thread(&acknowledgement.frozen_snapshot);
             let turn = if acknowledgement.started {
                 TurnTask {
@@ -244,16 +283,25 @@ impl ProviderAdapter for CodexProviderAdapter {
         &'a self,
         request: TurnInterruptRequest,
     ) -> ProviderFuture<'a, TurnInterruptResponse> {
+        if self.thread_scope.is_remote(&request.conversation_id) {
+            return source_excluded("turn.interrupt");
+        }
         let client = self.client.clone();
+        let thread_scope = self.thread_scope.clone();
         Box::pin(async move {
             validate_provider_id(&request.provider_id)?;
             let requested_turn_id = request.turn_id.clone();
             let snapshot = tokio::task::spawn_blocking(move || {
-                client.interrupt_turn(&request.conversation_id, &request.turn_id)
+                thread_scope
+                    .with_local_thread(&request.conversation_id, || {
+                        client
+                            .interrupt_turn(&request.conversation_id, &request.turn_id)
+                            .map_err(desktop_error)
+                    })
+                    .unwrap_or_else(|| Err(source_excluded_error("turn.interrupt")))
             })
             .await
-            .map_err(provider_task_error)?
-            .map_err(desktop_error)?;
+            .map_err(provider_task_error)??;
             let turn = map_thread(&snapshot)
                 .latest_turn
                 .filter(|turn| turn.id == requested_turn_id)
@@ -271,15 +319,18 @@ impl ProviderAdapter for CodexProviderAdapter {
         let client = self.client.clone();
         let state = self.state.clone();
         let events = self.events.clone();
+        let thread_scope = self.thread_scope.clone();
         Box::pin(async move {
             validate_provider_id(&request.provider_id)?;
             let decision = request.decision;
-            let mapped = begin_approval_resolution(
+            let mapped = begin_companion_approval_resolution(
                 &state,
+                &thread_scope,
                 &request.approval_id,
                 decision,
             )?;
             let pending_approval = mapped.approval.clone();
+            let dispatch_conversation_id = mapped.thread_id.clone();
             let target = NativeApprovalTarget {
                 conversation_id: mapped.thread_id,
                 owner_client_id: mapped.owner_client_id,
@@ -294,11 +345,16 @@ impl ProviderAdapter for CodexProviderAdapter {
                 ApprovalDecision::Deny => DesktopApprovalDecision::Deny,
             };
             let result = tokio::task::spawn_blocking(move || {
-                client.resolve_approval(&target, desktop_decision)
+                thread_scope
+                    .with_local_thread(&dispatch_conversation_id, || {
+                        client
+                            .resolve_approval(&target, desktop_decision)
+                            .map_err(desktop_error)
+                    })
+                    .unwrap_or_else(|| Err(source_excluded_error("approval.resolve")))
             })
             .await
-            .map_err(provider_task_error)
-            .and_then(|result| result.map_err(desktop_error));
+            .map_err(provider_task_error)?;
             match result {
                 Ok(_) => {
                     if let Some(resolved) = acknowledge_approval_resolution(
@@ -375,12 +431,27 @@ fn accept_follower_reset(
 
 fn start_event_forwarder(
     incoming: Receiver<DesktopClientEvent>,
+    creation_settled: Receiver<CodexRemoteCreationSettlement>,
     client: CodexDesktopClient,
     state: Arc<Mutex<CodexProviderState>>,
     events: ProviderEventSink,
+    thread_scope: CodexThreadScope,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
-        while let Ok(event) = incoming.recv() {
+        loop {
+            for settlement in creation_settled.try_iter() {
+                settle_quarantined_threads(
+                    &state,
+                    &events,
+                    &thread_scope,
+                    settlement,
+                );
+            }
+            let event = match incoming.recv_timeout(Duration::from_millis(100)) {
+                Ok(event) => event,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            };
             if lock(&state).retired {
                 break;
             }
@@ -390,7 +461,12 @@ fn start_event_forwarder(
                     transition_connection(&state, &events, &connection);
                     if ready {
                         for conversation_id in client.known_threads() {
-                            spawn_bootstrap(client.clone(), state.clone(), conversation_id);
+                            spawn_bootstrap(
+                                client.clone(),
+                                state.clone(),
+                                thread_scope.clone(),
+                                conversation_id,
+                            );
                         }
                     }
                     if connection.status == DesktopConnectionStatus::Shutdown {
@@ -398,7 +474,12 @@ fn start_event_forwarder(
                     }
                 }
                 DesktopClientEvent::ThreadDiscovered { conversation_id } => {
-                    spawn_bootstrap(client.clone(), state.clone(), conversation_id);
+                    spawn_bootstrap(
+                        client.clone(),
+                        state.clone(),
+                        thread_scope.clone(),
+                        conversation_id,
+                    );
                 }
                 DesktopClientEvent::ThreadStateChanged {
                     snapshot,
@@ -417,6 +498,7 @@ fn start_event_forwarder(
                         publish_snapshot(
                             &state,
                             &events,
+                            &thread_scope,
                             snapshot,
                             PublicationKind::Live,
                         );
@@ -433,6 +515,7 @@ fn start_event_forwarder(
                         publish_snapshot(
                             &state,
                             &events,
+                            &thread_scope,
                             snapshot,
                             PublicationKind::Baseline,
                         );
@@ -470,8 +553,12 @@ fn start_event_forwarder(
 fn spawn_bootstrap(
     client: CodexDesktopClient,
     state: Arc<Mutex<CodexProviderState>>,
+    thread_scope: CodexThreadScope,
     conversation_id: String,
 ) {
+    if thread_scope.is_remote(&conversation_id) {
+        return;
+    }
     {
         let mut state = lock(&state);
         if state.retired || !state.bootstrap_workers.insert(conversation_id.clone()) {
@@ -482,7 +569,7 @@ fn spawn_bootstrap(
         let mut backoff = Duration::from_millis(250);
         let mut attempts = 0_u64;
         loop {
-            if lock(&state).retired {
+            if lock(&state).retired || thread_scope.is_remote(&conversation_id) {
                 break;
             }
             match client.bootstrap_followed_thread(&conversation_id) {
@@ -510,6 +597,74 @@ fn spawn_bootstrap(
 fn publish_snapshot(
     state: &Arc<Mutex<CodexProviderState>>,
     events: &ProviderEventSink,
+    thread_scope: &CodexThreadScope,
+    snapshot: ThreadSnapshot,
+    publication_kind: PublicationKind,
+) {
+    {
+        let mut state = lock(state);
+        if let Some(quarantined) = state
+            .quarantined_threads
+            .get_mut(&snapshot.conversation_id)
+        {
+            let should_replace = quarantined
+                .payload
+                .as_ref()
+                .map(|(current, current_kind)| {
+                    snapshot.revision > current.revision
+                        || (snapshot.revision == current.revision
+                            && *current_kind == PublicationKind::Baseline
+                            && publication_kind == PublicationKind::Live)
+                })
+                .unwrap_or(true);
+            if should_replace {
+                quarantined.payload = Some((snapshot, publication_kind));
+            }
+            return;
+        }
+    }
+    let already_known = lock(state).threads.contains_key(&snapshot.conversation_id);
+    match thread_scope.companion_disposition(&snapshot.conversation_id, already_known) {
+        CodexCompanionDisposition::Remote => {
+            exclude_thread_from_projection(state, &snapshot.conversation_id);
+            return;
+        }
+        CodexCompanionDisposition::Quarantine(epoch) => {
+            let mut state = lock(state);
+            let should_replace = state
+                .quarantined_threads
+                .get(&snapshot.conversation_id)
+                .and_then(|quarantined| quarantined.payload.as_ref())
+                .map(|(current, current_kind)| {
+                    snapshot.revision > current.revision
+                        || (snapshot.revision == current.revision
+                            && *current_kind == PublicationKind::Baseline
+                            && publication_kind == PublicationKind::Live)
+                })
+                .unwrap_or(true);
+            if should_replace {
+                let conversation_id = snapshot.conversation_id.clone();
+                state
+                    .quarantined_threads
+                    .entry(conversation_id)
+                    .and_modify(|quarantined| {
+                        quarantined.payload = Some((snapshot.clone(), publication_kind));
+                    })
+                    .or_insert(QuarantinedThread {
+                        epoch,
+                        payload: Some((snapshot, publication_kind)),
+                    });
+            }
+            return;
+        }
+        CodexCompanionDisposition::Local => {}
+    }
+    publish_local_snapshot(state, events, snapshot, publication_kind);
+}
+
+fn publish_local_snapshot(
+    state: &Arc<Mutex<CodexProviderState>>,
+    events: &ProviderEventSink,
     snapshot: ThreadSnapshot,
     publication_kind: PublicationKind,
 ) {
@@ -524,6 +679,62 @@ fn publish_snapshot(
         );
     }
     publish_mapped_thread(state, events, mapped, publication_kind);
+}
+
+fn settle_quarantined_threads(
+    state: &Arc<Mutex<CodexProviderState>>,
+    events: &ProviderEventSink,
+    thread_scope: &CodexThreadScope,
+    settlement: CodexRemoteCreationSettlement,
+) {
+    let conversation_ids = {
+        let state = lock(state);
+        state
+            .quarantined_threads
+            .iter()
+            .filter(|(_, quarantined)| quarantined.epoch == settlement.epoch)
+            .map(|(conversation_id, _)| conversation_id.clone())
+            .collect::<Vec<_>>()
+    };
+    if settlement.outcome == CodexRemoteCreationOutcome::Ambiguous {
+        for conversation_id in conversation_ids {
+            thread_scope.mark_remote(conversation_id.clone());
+            exclude_thread_from_projection(state, &conversation_id);
+        }
+        return;
+    }
+    let quarantined = {
+        let mut state = lock(state);
+        conversation_ids
+            .into_iter()
+            .filter_map(|conversation_id| {
+                state
+                    .quarantined_threads
+                    .remove(&conversation_id)
+                    .map(|quarantined| (conversation_id, quarantined))
+            })
+            .collect::<Vec<_>>()
+    };
+    for (conversation_id, quarantined) in quarantined {
+        if thread_scope.is_remote(&conversation_id) {
+            exclude_thread_from_projection(state, &conversation_id);
+        } else if let Some((snapshot, publication_kind)) = quarantined.payload {
+            publish_local_snapshot(state, events, snapshot, publication_kind);
+        }
+    }
+}
+
+fn exclude_thread_from_projection(
+    state: &Arc<Mutex<CodexProviderState>>,
+    conversation_id: &str,
+) {
+    let mut state = lock(state);
+    state.threads.remove(conversation_id);
+    state.bootstrap_workers.remove(conversation_id);
+    state.quarantined_threads.remove(conversation_id);
+    state
+        .approval_intents
+        .retain(|_, intent| intent.approval.conversation_id != conversation_id);
 }
 
 fn publish_pending_approval_hydration(
@@ -795,6 +1006,20 @@ fn begin_approval_resolution(
     Ok(mapped)
 }
 
+fn begin_companion_approval_resolution(
+    state: &Arc<Mutex<CodexProviderState>>,
+    thread_scope: &CodexThreadScope,
+    approval_id: &str,
+    decision: ApprovalDecision,
+) -> Result<MappedApproval, ProtocolError> {
+    let mapped = begin_approval_resolution(state, approval_id, decision)?;
+    if thread_scope.is_remote(&mapped.thread_id) {
+        fail_approval_resolution(state, approval_id);
+        return Err(source_excluded_error("approval.resolve"));
+    }
+    Ok(mapped)
+}
+
 fn acknowledge_approval_resolution(
     state: &Arc<Mutex<CodexProviderState>>,
     approval_id: &str,
@@ -893,6 +1118,9 @@ fn transition_connection(
         state.unavailable_reason = next_reason.clone();
         if next_status != ProviderStatus::Ready {
             state.threads.clear();
+            for quarantined in state.quarantined_threads.values_mut() {
+                quarantined.payload = None;
+            }
         }
         changed.then(|| ProtocolEvent::ProviderStatusChanged {
             protocol_version: PROTOCOL_VERSION,
@@ -919,6 +1147,9 @@ fn reset_provider_projection(
             return;
         }
         state.threads.clear();
+        for quarantined in state.quarantined_threads.values_mut() {
+            quarantined.payload = None;
+        }
         if state.status != ProviderStatus::Ready {
             Vec::new()
         } else {
@@ -973,30 +1204,6 @@ fn provider_connection_state(
             ProviderStatus::Disconnected,
             Some("Codex Desktop 私有 IPC 已关闭".to_string()),
         ),
-    }
-}
-
-fn parse_cursor(cursor: Option<&str>) -> Result<usize, ProtocolError> {
-    let Some(cursor) = cursor else {
-        return Ok(0);
-    };
-    cursor
-        .strip_prefix("desktop:")
-        .and_then(|offset| offset.parse::<usize>().ok())
-        .ok_or_else(|| ProtocolError {
-            code: "invalid_cursor".to_string(),
-            message: "Codex Desktop conversation cursor is invalid".to_string(),
-            retryable: false,
-            details: None,
-        })
-}
-
-fn invalid_limit_error() -> ProtocolError {
-    ProtocolError {
-        code: "invalid_request".to_string(),
-        message: "conversation list limit exceeds the provider range".to_string(),
-        retryable: false,
-        details: None,
     }
 }
 
@@ -1112,6 +1319,19 @@ fn unsupported<'a, T>(method: &'static str) -> ProviderFuture<'a, T> {
     })
 }
 
+fn source_excluded<'a, T>(method: &'static str) -> ProviderFuture<'a, T> {
+    Box::pin(async move { Err(source_excluded_error(method)) })
+}
+
+fn source_excluded_error(method: &'static str) -> ProtocolError {
+    ProtocolError {
+        code: "source_excluded".to_string(),
+        message: format!("{method} is not available for a remote App Server thread"),
+        retryable: false,
+        details: None,
+    }
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1140,13 +1360,13 @@ mod tests {
     use crate::runtime_gateway::Gateway;
     use serde_json::json;
 
-    fn mapped_thread(revision: u64) -> MappedThread {
-        map_thread(&ThreadSnapshot {
-            conversation_id: "thread-one".to_string(),
+    fn thread_snapshot(conversation_id: &str, revision: u64) -> ThreadSnapshot {
+        ThreadSnapshot {
+            conversation_id: conversation_id.to_string(),
             owner_client_id: "owner-one".to_string(),
             revision,
             state: json!({
-                "id": "thread-one",
+                "id": conversation_id,
                 "title": "Desktop task",
                 "createdAt": 1_700_000_000_000_u64,
                 "updatedAt": 1_700_000_001_000_u64,
@@ -1161,7 +1381,11 @@ mod tests {
                     "durationMs": 1_000
                 }]
             }),
-        })
+        }
+    }
+
+    fn mapped_thread(revision: u64) -> MappedThread {
+        map_thread(&thread_snapshot("thread-one", revision))
     }
 
     fn mapped_thread_with_approval(revision: u64, pending: bool) -> MappedThread {
@@ -1211,6 +1435,7 @@ mod tests {
             threads: BTreeMap::new(),
             approval_intents: BTreeMap::new(),
             bootstrap_workers: HashSet::new(),
+            quarantined_threads: BTreeMap::new(),
             retired: false,
         }))
     }
@@ -1394,6 +1619,426 @@ mod tests {
             hydration_gateway.replay_events(None).unwrap().as_slice(),
             [ProtocolEvent::ApprovalRequested { .. }]
         ));
+    }
+
+    #[test]
+    fn remote_app_server_threads_are_excluded_before_companion_publication() {
+        let gateway = Gateway::default();
+        let events = gateway.event_sink();
+        let state = ready_provider_state();
+        let thread_scope = CodexThreadScope::default();
+        thread_scope.mark_remote("thread-remote");
+
+        publish_snapshot(
+            &state,
+            &events,
+            &thread_scope,
+            thread_snapshot("thread-remote", 1),
+            PublicationKind::Live,
+        );
+
+        assert!(gateway.replay_events(None).unwrap().is_empty());
+        assert!(!lock(&state).threads.contains_key("thread-remote"));
+    }
+
+    #[test]
+    fn remote_creation_quarantines_new_desktop_threads_until_provenance_is_known() {
+        let gateway = Gateway::default();
+        let events = gateway.event_sink();
+        let state = ready_provider_state();
+        let thread_scope = CodexThreadScope::default();
+        let creation = thread_scope.begin_remote_creation();
+        let creation_epoch = creation.epoch();
+
+        publish_snapshot(
+            &state,
+            &events,
+            &thread_scope,
+            thread_snapshot("thread-racing", 1),
+            PublicationKind::Live,
+        );
+        thread_scope.mark_remote("thread-racing");
+        creation.settle_known();
+        settle_quarantined_threads(
+            &state,
+            &events,
+            &thread_scope,
+            CodexRemoteCreationSettlement {
+                epoch: creation_epoch,
+                outcome: CodexRemoteCreationOutcome::Known,
+            },
+        );
+
+        assert!(gateway.replay_events(None).unwrap().is_empty());
+        assert!(!lock(&state).threads.contains_key("thread-racing"));
+        assert!(lock(&state).quarantined_threads.is_empty());
+    }
+
+    #[test]
+    fn failed_remote_creation_releases_quarantined_local_desktop_threads() {
+        let gateway = Gateway::default();
+        let events = gateway.event_sink();
+        let state = ready_provider_state();
+        let thread_scope = CodexThreadScope::default();
+        let creation = thread_scope.begin_remote_creation();
+        let creation_epoch = creation.epoch();
+
+        publish_snapshot(
+            &state,
+            &events,
+            &thread_scope,
+            thread_snapshot("thread-local", 1),
+            PublicationKind::Live,
+        );
+        assert!(gateway.replay_events(None).unwrap().is_empty());
+        creation.settle_known();
+        settle_quarantined_threads(
+            &state,
+            &events,
+            &thread_scope,
+            CodexRemoteCreationSettlement {
+                epoch: creation_epoch,
+                outcome: CodexRemoteCreationOutcome::Known,
+            },
+        );
+
+        assert!(matches!(
+            gateway.replay_events(None).unwrap().as_slice(),
+            [ProtocolEvent::ConversationUpserted { payload, .. }]
+                if payload.conversation.id == "thread-local"
+        ));
+        assert!(lock(&state).threads.contains_key("thread-local"));
+    }
+
+    #[test]
+    fn ambiguous_remote_creation_permanently_excludes_quarantined_candidates() {
+        let gateway = Gateway::default();
+        let events = gateway.event_sink();
+        let state = ready_provider_state();
+        let thread_scope = CodexThreadScope::default();
+        let creation = thread_scope.begin_remote_creation();
+        let creation_epoch = creation.epoch();
+
+        publish_snapshot(
+            &state,
+            &events,
+            &thread_scope,
+            thread_snapshot("thread-ambiguous", 1),
+            PublicationKind::Live,
+        );
+        drop(creation);
+        settle_quarantined_threads(
+            &state,
+            &events,
+            &thread_scope,
+            CodexRemoteCreationSettlement {
+                epoch: creation_epoch,
+                outcome: CodexRemoteCreationOutcome::Ambiguous,
+            },
+        );
+
+        assert!(gateway.replay_events(None).unwrap().is_empty());
+        assert!(thread_scope.is_remote("thread-ambiguous"));
+        assert!(lock(&state).quarantined_threads.is_empty());
+    }
+
+    #[test]
+    fn late_ambiguous_settlement_cannot_exclude_the_next_creation_epoch() {
+        let gateway = Gateway::default();
+        let events = gateway.event_sink();
+        let state = ready_provider_state();
+        let thread_scope = CodexThreadScope::default();
+        let first = thread_scope.begin_remote_creation();
+        let first_epoch = first.epoch();
+        publish_snapshot(
+            &state,
+            &events,
+            &thread_scope,
+            thread_snapshot("thread-first", 1),
+            PublicationKind::Live,
+        );
+        drop(first);
+
+        let second = thread_scope.begin_remote_creation();
+        let second_epoch = second.epoch();
+        publish_snapshot(
+            &state,
+            &events,
+            &thread_scope,
+            thread_snapshot("thread-second", 1),
+            PublicationKind::Live,
+        );
+        settle_quarantined_threads(
+            &state,
+            &events,
+            &thread_scope,
+            CodexRemoteCreationSettlement {
+                epoch: first_epoch,
+                outcome: CodexRemoteCreationOutcome::Ambiguous,
+            },
+        );
+
+        assert!(thread_scope.is_remote("thread-first"));
+        assert!(!thread_scope.is_remote("thread-second"));
+        assert_eq!(
+            lock(&state).quarantined_threads["thread-second"].epoch,
+            second_epoch
+        );
+        second.settle_known();
+    }
+
+    #[test]
+    fn newer_same_id_snapshot_keeps_its_original_quarantine_epoch() {
+        let gateway = Gateway::default();
+        let events = gateway.event_sink();
+        let state = ready_provider_state();
+        let thread_scope = CodexThreadScope::default();
+        let first = thread_scope.begin_remote_creation();
+        let first_epoch = first.epoch();
+        publish_snapshot(
+            &state,
+            &events,
+            &thread_scope,
+            thread_snapshot("thread-same", 1),
+            PublicationKind::Live,
+        );
+        drop(first);
+
+        let second = thread_scope.begin_remote_creation();
+        publish_snapshot(
+            &state,
+            &events,
+            &thread_scope,
+            thread_snapshot("thread-same", 2),
+            PublicationKind::Live,
+        );
+        assert_eq!(
+            lock(&state).quarantined_threads["thread-same"].epoch,
+            first_epoch
+        );
+        settle_quarantined_threads(
+            &state,
+            &events,
+            &thread_scope,
+            CodexRemoteCreationSettlement {
+                epoch: first_epoch,
+                outcome: CodexRemoteCreationOutcome::Ambiguous,
+            },
+        );
+
+        assert!(thread_scope.is_remote("thread-same"));
+        assert!(gateway.replay_events(None).unwrap().is_empty());
+        second.settle_known();
+    }
+
+    #[test]
+    fn known_settlement_is_not_retagged_by_a_new_creation_epoch() {
+        let gateway = Gateway::default();
+        let events = gateway.event_sink();
+        let state = ready_provider_state();
+        let thread_scope = CodexThreadScope::default();
+        let first = thread_scope.begin_remote_creation();
+        let first_epoch = first.epoch();
+        publish_snapshot(
+            &state,
+            &events,
+            &thread_scope,
+            thread_snapshot("thread-known-local", 1),
+            PublicationKind::Live,
+        );
+        first.settle_known();
+
+        let second = thread_scope.begin_remote_creation();
+        let second_epoch = second.epoch();
+        publish_snapshot(
+            &state,
+            &events,
+            &thread_scope,
+            thread_snapshot("thread-known-local", 2),
+            PublicationKind::Live,
+        );
+        settle_quarantined_threads(
+            &state,
+            &events,
+            &thread_scope,
+            CodexRemoteCreationSettlement {
+                epoch: first_epoch,
+                outcome: CodexRemoteCreationOutcome::Known,
+            },
+        );
+
+        assert!(!thread_scope.is_remote("thread-known-local"));
+        assert!(lock(&state).threads.contains_key("thread-known-local"));
+        drop(second);
+        settle_quarantined_threads(
+            &state,
+            &events,
+            &thread_scope,
+            CodexRemoteCreationSettlement {
+                epoch: second_epoch,
+                outcome: CodexRemoteCreationOutcome::Ambiguous,
+            },
+        );
+        assert!(!thread_scope.is_remote("thread-known-local"));
+    }
+
+    #[test]
+    fn quarantine_keeps_live_semantics_for_equal_revision_snapshots() {
+        let gateway = Gateway::default();
+        let events = gateway.event_sink();
+        let state = ready_provider_state();
+        let thread_scope = CodexThreadScope::default();
+        let creation = thread_scope.begin_remote_creation();
+
+        publish_snapshot(
+            &state,
+            &events,
+            &thread_scope,
+            thread_snapshot("thread-equal", 1),
+            PublicationKind::Live,
+        );
+        publish_snapshot(
+            &state,
+            &events,
+            &thread_scope,
+            thread_snapshot("thread-equal", 1),
+            PublicationKind::Baseline,
+        );
+
+        assert_eq!(
+            lock(&state).quarantined_threads["thread-equal"]
+                .payload
+                .as_ref()
+                .unwrap()
+                .1,
+            PublicationKind::Live
+        );
+        creation.settle_known();
+    }
+
+    #[test]
+    fn ambiguous_quarantine_survives_projection_reset_and_disconnect() {
+        let gateway = Gateway::default();
+        let events = gateway.event_sink();
+        let state = ready_provider_state();
+        let thread_scope = CodexThreadScope::default();
+        let creation = thread_scope.begin_remote_creation();
+        let creation_epoch = creation.epoch();
+
+        publish_snapshot(
+            &state,
+            &events,
+            &thread_scope,
+            thread_snapshot("thread-reset-race", 1),
+            PublicationKind::Live,
+        );
+        reset_provider_projection(&state, &events, "follower reset");
+        assert!(lock(&state).quarantined_threads["thread-reset-race"]
+            .payload
+            .is_none());
+
+        drop(creation);
+        publish_snapshot(
+            &state,
+            &events,
+            &thread_scope,
+            thread_snapshot("thread-reset-race", 2),
+            PublicationKind::Live,
+        );
+        assert_eq!(
+            lock(&state).quarantined_threads["thread-reset-race"]
+                .payload
+                .as_ref()
+                .unwrap()
+                .0
+                .revision,
+            2
+        );
+
+        transition_connection(
+            &state,
+            &events,
+            &DesktopConnectionSnapshot {
+                status: DesktopConnectionStatus::Unavailable,
+                client_id: None,
+                generation: 2,
+                error: Some(DesktopIpcError::Disconnected(
+                    "test disconnect".to_string(),
+                )),
+            },
+        );
+        assert!(lock(&state).quarantined_threads["thread-reset-race"]
+            .payload
+            .is_none());
+
+        settle_quarantined_threads(
+            &state,
+            &events,
+            &thread_scope,
+            CodexRemoteCreationSettlement {
+                epoch: creation_epoch,
+                outcome: CodexRemoteCreationOutcome::Ambiguous,
+            },
+        );
+        assert!(thread_scope.is_remote("thread-reset-race"));
+        assert!(lock(&state).quarantined_threads.is_empty());
+
+        transition_connection(
+            &state,
+            &events,
+            &DesktopConnectionSnapshot {
+                status: DesktopConnectionStatus::Ready,
+                client_id: Some("codepet-new".to_string()),
+                generation: 3,
+                error: None,
+            },
+        );
+        publish_snapshot(
+            &state,
+            &events,
+            &thread_scope,
+            thread_snapshot("thread-reset-race", 3),
+            PublicationKind::Baseline,
+        );
+
+        assert!(!gateway
+            .replay_events(None)
+            .unwrap()
+            .iter()
+            .any(|event| matches!(
+                event,
+                ProtocolEvent::ConversationUpserted { payload, .. }
+                    if payload.conversation.id == "thread-reset-race"
+            )));
+    }
+
+    #[test]
+    fn remote_app_server_approvals_are_rejected_before_desktop_dispatch() {
+        let gateway = Gateway::default();
+        let state = ready_provider_state();
+        publish_mapped_thread(
+            &state,
+            &gateway.event_sink(),
+            mapped_thread_with_approval(1, true),
+            PublicationKind::Baseline,
+        );
+        let approval_id = lock(&state).threads["thread-approval"].approvals[0]
+            .approval
+            .id
+            .clone();
+        let thread_scope = CodexThreadScope::default();
+        thread_scope.mark_remote("thread-approval");
+
+        let error = begin_companion_approval_resolution(
+            &state,
+            &thread_scope,
+            &approval_id,
+            ApprovalDecision::Approve,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, "source_excluded");
+        assert!(!lock(&state).approval_intents.contains_key(&approval_id));
     }
 
     #[test]

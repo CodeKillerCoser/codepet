@@ -24,6 +24,10 @@ function provider(capabilities: Partial<ProviderCapabilities> = {}): Provider {
       canInterrupt: false,
       ...capabilities,
     },
+    extension: {
+      namespace: "codepet.codex-desktop",
+      data: { source: "codex-desktop-private-ipc" },
+    },
   };
 }
 
@@ -146,5 +150,30 @@ describe("Runtime Gateway activity capabilities", () => {
     });
     expect(activityCapabilitiesFor(wrongOwner).canApprove).toBe(false);
     expect(activityCanResolveApproval(wrongOwner, "approve")).toBe(false);
+  });
+
+  it("does not expose companion actions for a remote App Server provider", () => {
+    const remoteProvider = {
+      ...provider({
+        methods: ["turn.send", "turn.interrupt", "approval.resolve"],
+        canSteer: true,
+        canInterrupt: true,
+      }),
+      extension: {
+        namespace: "codex.app-server",
+        data: { managedConversationEvents: true },
+      },
+    };
+    const remote = event({
+      provider: remoteProvider,
+      turn: turn(),
+      approval: approval(),
+    });
+
+    expect(activityCapabilitiesFor(remote)).toMatchObject({
+      canReply: false,
+      canInterrupt: false,
+      canApprove: false,
+    });
   });
 });

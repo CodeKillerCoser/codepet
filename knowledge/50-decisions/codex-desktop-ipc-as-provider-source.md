@@ -1,5 +1,7 @@
 # Codex Desktop IPC 作为任务事实来源
 
+> 状态：已被 `codex-remote-and-desktop-companion-dual-channel.md` 取代。本页保留阶段一/二为何要求 Desktop IPC fail closed 的历史依据；这些约束继续适用于 Desktop companion，但“不允许独立 App Server”不再适用于隔离的 remote runtime。
+
 ## 背景
 
 Code Pet 需要跟随用户正在使用的 Codex Desktop 任务。Code Pet 自行启动的 `codex app-server --listen stdio://` 是独立运行实例，不能代表 Desktop 当前 owner 的实时状态，也可能让控制动作发往错误实例。当前 Desktop 提供私有 Owner/Follower IPC，但协议与 Desktop 版本耦合，且没有从零枚举全部任务的目录。
@@ -47,4 +49,4 @@ Desktop 私有 DTO、方法名和路由字段只存在于 Codex Desktop adapter�
 - 每次 Desktop 升级复核 Owner/Follower v1、当前状态广播 v11、写方法版本、bootstrap 顺序和路由语义。
 - 新增审批类别或其他写操作前，必须先证明 Standard Protocol 能无损表达其决定，并验证目标路由、并发前置条件、Owner 确认和失败状态，再单独增加 capability。
 
-本决策取代 `codex-app-server-as-primary-reply-path.md`。
+本决策曾取代 `codex-app-server-as-primary-reply-path.md`，现由 `codex-remote-and-desktop-companion-dual-channel.md` 取代。

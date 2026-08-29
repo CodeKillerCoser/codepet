@@ -1,6 +1,6 @@
 # Codex App Server 作为主要回复路径
 
-> 状态：已被 `codex-desktop-ipc-as-provider-source.md` 取代。本页只保留历史决策背景，不再描述当前运行时路径；生产代码不得据此恢复独立 App Server 或回复 capability。
+> 状态：已被后续决策取代。本页只保留旧 `PetEvent` 一次性回复路径的历史背景；当前长期 remote App Server 与 Desktop companion 以 `codex-remote-and-desktop-companion-dual-channel.md` 为准，不得据此恢复旧全局 reply session。
 
 ## 背景
 

@@ -60,7 +60,6 @@ pub fn provider(status: ProviderStatus, unavailable_reason: Option<&str>) -> Pro
         status,
         capabilities: ProviderCapabilities {
             methods: vec![
-                "conversation.list".to_string(),
                 "conversation.get".to_string(),
                 "turn.send".to_string(),
                 "turn.interrupt".to_string(),
@@ -1052,12 +1051,11 @@ mod tests {
     }
 
     #[test]
-    fn provider_advertises_supported_write_methods() {
+    fn provider_advertises_only_verified_companion_methods() {
         let provider = provider(ProviderStatus::Ready, None);
         assert_eq!(
             provider.capabilities.methods,
             vec![
-                "conversation.list",
                 "conversation.get",
                 "turn.send",
                 "turn.interrupt",
@@ -1068,5 +1066,7 @@ mod tests {
         assert!(provider.capabilities.can_interrupt);
         assert_eq!(provider.capabilities.quick_replies.len(), 1);
         assert_eq!(provider.capabilities.quick_replies[0].id, CONTINUE_QUICK_REPLY_ID);
+        assert!(!provider.capabilities.methods.contains(&"conversation.list".to_string()));
+        assert!(!provider.capabilities.methods.contains(&"conversation.create".to_string()));
     }
 }

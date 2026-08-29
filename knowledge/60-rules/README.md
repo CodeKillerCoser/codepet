@@ -6,6 +6,7 @@
 
 - `bug-to-rule-promotion.md`
 - `codex-desktop-ipc-fail-closed.md`
+- `codex-provider-channel-isolation.md`
 - `codex-thread-title-source.md`
 - `conditional-render-focus.md`
 - `collector-json-utf8.md`

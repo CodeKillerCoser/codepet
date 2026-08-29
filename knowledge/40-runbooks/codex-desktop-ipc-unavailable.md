@@ -6,7 +6,7 @@
 - Codex Desktop 中有任务，但 Code Pet 没有显示任务或停止更新。
 - 日志出现 socket 安全检查、initialize、路由、frame、revision 或重连相关错误。
 
-当前实现没有 App Server、Hook、transcript 或文件监听回退。Codex CLI 能被设置页检测到，也不代表 Desktop IPC Provider 可用。
+remote App Server 可以独立工作，但不是 Desktop companion 的回退，也不能向桌宠补状态。Codex CLI/App Server ready 不代表 Desktop IPC 可用；companion unavailable 也不应改变 remote Provider。Hook、transcript、audit 和文件监听仍不是回退。
 
 ## 需要收集的证据
 
@@ -23,7 +23,7 @@
 
 ## 排查步骤
 
-1. 确认 Codex Desktop 正在运行。Desktop 未运行时 Provider unavailable 是预期行为；不要因此启动 `codex app-server`。
+1. 确认 Codex Desktop 正在运行。Desktop 未运行时 companion unavailable 是预期行为；不要把独立运行的 remote App Server 接到 companion channel。
 2. 检查 `~/.codex/ipc/ipc.sock`：
    - 不存在：记录 socket missing，启动或恢复 Desktop 后等待有界重连。
    - 不是 Unix socket：停止排查并按不安全目标处理，不要连接、改权限或删除未知文件。
@@ -48,7 +48,7 @@
 - 协议或版本不兼容：Provider error/unavailable，停止解析并记录 Desktop 版本。
 - revision 缺口：thread 等待 snapshot，不发布由缺口 patch 推导的状态。
 - 无已知 thread id：报告发现范围限制，不宣称 Desktop 没有任务。
-- 回复、停止或审批按钮缺失：先检查 Provider capability 和当前权威状态。只有已 bootstrap 会话上的 send/steer、活动 turn 的 interrupt，以及 command/file 两类二元审批可用；permissions、MCP elicitation、user input、plan implementation 和 `conversation.create` 缺失是能力限制，不是连接故障。
+- 回复、停止或审批按钮缺失：先检查 companion capability、Desktop source marker 和当前权威状态。只有已 bootstrap 会话上的 send/steer、活动 turn 的 interrupt，以及 command/file 两类二元审批可用；permissions、MCP elicitation、user input、plan implementation 以及 companion 的 `conversation.list/create` 缺失是能力限制，不是连接故障。
 - 写请求被拒绝或超时：不因本地返回自行改状态，继续接受最新权威 snapshot/patch 并显示标准可诊断错误；不要为了让按钮“成功”而关闭 owner、revision 或 handler 校验。
 
 ## 恢复后验证
@@ -60,7 +60,8 @@
 - UI 不因 Owner ack 单独伪造 turn/approval 终态；本地审批决定只在 ack 与权威 request removal 两项证据齐全时发布，顺序不限。
 - 多客户端定向消息不串流。
 - 生产日志没有私有完整 JSON、命令内容、diff 或其他敏感 payload。
-- 代码和日志均没有启动独立 App Server、恢复 Hook 或扫描 transcript 的迹象。
+- companion 日志没有调用 App Server fallback、恢复 Hook 或扫描 transcript 的迹象；remote App Server 可有独立日志，但不得出现在 companion replay/event 或桌宠 store。
+- remote Provider 状态和会话能力在 companion 故障期间不被清空或重启。
 
 ## 仍需升级处理的情况
 

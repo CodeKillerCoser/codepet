@@ -93,6 +93,18 @@ export function activityActiveTurnFor(event: PetEvent): TurnTask | undefined {
 function runtimeGatewayCapabilities(event: PetEvent): ActivityCapabilities {
   const context = event.runtimeGateway!;
   const provider = context.provider;
+  if (
+    provider.extension?.namespace !== "codepet.codex-desktop" ||
+    provider.extension.data.source !== "codex-desktop-private-ipc"
+  ) {
+    return {
+      canActivate: false,
+      canReply: false,
+      canInterrupt: false,
+      canApprove: false,
+      replyReason: "任务不属于 Codex Desktop companion",
+    };
+  }
   const methods = new Set(provider.capabilities.methods);
   const turnMatchesContext = !context.turn || (
     context.turn.providerId === provider.id && context.turn.conversationId === context.conversationId

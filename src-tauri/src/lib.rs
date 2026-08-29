@@ -11,6 +11,7 @@ pub use activity::title_resolver;
 pub use activity::token_usage;
 pub use agent::actions as activity_actions;
 pub use agent::claude_transcript;
+pub use agent::codex_app_server;
 pub use agent::codex_desktop_ipc;
 pub use agent::control as agent_control;
 pub use agent::hooks;
@@ -30,7 +31,7 @@ pub use pet::theme_defaults;
 pub use platform::macos_window;
 
 use agents::{AgentId, AgentView};
-use agent_runtime::{AgentRuntime, AgentRuntimeService};
+use agent_runtime::{AgentRuntime, AgentRuntimeService, CODEX_RUNTIME_PROVIDER_ID};
 use base64::Engine;
 use events::PetEvent;
 use pets::PetLibraryView;
@@ -44,7 +45,11 @@ use subject_cutout::SubjectCutoutResult;
 use token_usage::TokenUsageSummary;
 use updates::PendingAppUpdate;
 use runtime_gateway::tauri_bridge::{
-    runtime_gateway_replay, runtime_gateway_request, start_event_bridge, RuntimeGatewayState,
+    codex_desktop_companion_replay, codex_desktop_companion_request,
+    codex_desktop_companion_snapshot,
+    runtime_gateway_replay, runtime_gateway_request,
+    start_codex_desktop_companion_event_bridge, start_runtime_gateway_event_bridge,
+    CodexDesktopCompanionState, RuntimeGatewayState,
 };
 use std::str::FromStr;
 use tauri::menu::{Menu, MenuItem};
@@ -116,7 +121,9 @@ fn detect_agent_runtime(
 fn refresh_agent_runtimes(
     app: AppHandle,
     service: tauri::State<'_, AgentRuntimeService>,
+    gateway: tauri::State<'_, RuntimeGatewayState>,
 ) -> Result<Vec<AgentRuntime>, String> {
+    restart_remote_runtime_provider(CODEX_RUNTIME_PROVIDER_ID, &gateway)?;
     let runtimes = service.list().map_err(|error| error.to_string())?;
     let _ = app.emit("agent-runtimes-updated", runtimes.clone());
     Ok(runtimes)
@@ -126,12 +133,14 @@ fn refresh_agent_runtimes(
 fn set_agent_runtime_executable(
     app: AppHandle,
     service: tauri::State<'_, AgentRuntimeService>,
+    gateway: tauri::State<'_, RuntimeGatewayState>,
     provider_id: String,
     executable: String,
 ) -> Result<AgentRuntime, String> {
     let runtime = service
         .set_configured_executable(&provider_id, &executable)
         .map_err(|error| error.to_string())?;
+    restart_remote_runtime_provider(&provider_id, &gateway)?;
     emit_runtime_settings(&app, &runtime);
     Ok(runtime)
 }
@@ -140,13 +149,27 @@ fn set_agent_runtime_executable(
 fn clear_agent_runtime_executable(
     app: AppHandle,
     service: tauri::State<'_, AgentRuntimeService>,
+    gateway: tauri::State<'_, RuntimeGatewayState>,
     provider_id: String,
 ) -> Result<AgentRuntime, String> {
     let runtime = service
         .clear_configured_executable(&provider_id)
         .map_err(|error| error.to_string())?;
+    restart_remote_runtime_provider(&provider_id, &gateway)?;
     emit_runtime_settings(&app, &runtime);
     Ok(runtime)
+}
+
+fn restart_remote_runtime_provider(
+    provider_id: &str,
+    gateway: &RuntimeGatewayState,
+) -> Result<(), String> {
+    if provider_id != CODEX_RUNTIME_PROVIDER_ID {
+        return Ok(());
+    }
+    gateway
+        .refresh_codex_remote_provider()
+        .map_err(|error| error.message)
 }
 
 fn emit_runtime_settings(app: &AppHandle, runtime: &AgentRuntime) {
@@ -369,6 +392,13 @@ pub fn run() {
     app_log::log_app_start_banner();
     app_log::info("app", "tauri builder initializing");
 
+    let codex_thread_scope = agent::codex_thread_scope::CodexThreadScope::default();
+    let runtime_gateway_state =
+        RuntimeGatewayState::with_thread_scope(codex_thread_scope.clone());
+    let desktop_companion_state =
+        CodexDesktopCompanionState::with_thread_scope(codex_thread_scope);
+    runtime_gateway_state.refresh_codex_remote_provider_in_background();
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             crate::app_log::info("app", &format!("single instance requested args={} cwd={}", args.len(), cwd));
@@ -388,17 +418,25 @@ pub fn run() {
         .manage(SharedState::default())
         .manage(PendingAppUpdate::default())
         .manage(AgentRuntimeService::default())
-        .manage(RuntimeGatewayState::default())
+        .manage(runtime_gateway_state)
+        .manage(desktop_companion_state)
         .setup(|app| {
             let setup_span = app_log::PerfSpan::start("startup.total");
             app_log::info("startup", "setup started");
             let handle = app.handle().clone();
             let state = app.state::<SharedState>().inner().clone();
             let runtime_gateway_state = app.state::<RuntimeGatewayState>().inner().clone();
-            if let Err(error) = start_event_bridge(handle.clone(), &runtime_gateway_state) {
+            if let Err(error) = start_runtime_gateway_event_bridge(handle.clone(), &runtime_gateway_state) {
                 app_log::error(
                     "runtime_gateway",
-                    &format!("failed to start local event bridge error={error:?}"),
+                    &format!("failed to start remote gateway local event bridge error={error:?}"),
+                );
+            }
+            let desktop_companion_state = app.state::<CodexDesktopCompanionState>().inner().clone();
+            if let Err(error) = start_codex_desktop_companion_event_bridge(handle.clone(), &desktop_companion_state) {
+                app_log::error(
+                    "codex_desktop_companion",
+                    &format!("failed to start Desktop companion event bridge error={error:?}"),
                 );
             }
             if let Err(error) = install_tray_icon(&handle) {
@@ -499,6 +537,9 @@ pub fn run() {
             pet_asset_data_url,
             runtime_gateway_request,
             runtime_gateway_replay,
+            codex_desktop_companion_request,
+            codex_desktop_companion_replay,
+            codex_desktop_companion_snapshot,
             updates::check_app_update,
             updates::install_app_update
         ])

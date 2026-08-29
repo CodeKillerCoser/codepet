@@ -4,13 +4,14 @@
 
 ## 当前决策
 
-- `codex-desktop-ipc-as-provider-source.md`
+- `codex-remote-and-desktop-companion-dual-channel.md`
 - `qoder-existing-session-reply-unsupported.md`
 - `semantic-file-tree-as-knowledge-index.md`
 
 ## 已取代决策
 
-- `codex-app-server-as-primary-reply-path.md`：已由 Codex Desktop IPC 决策取代，仅保留历史背景。
+- `codex-desktop-ipc-as-provider-source.md`：已由 Codex 双链路决策取代；其中 Desktop IPC fail-closed 约束继续适用于 companion。
+- `codex-app-server-as-primary-reply-path.md`：旧 `PetEvent` 一次性回复路径已取代；当前 remote App Server 由双链路决策约束。
 
 ## 规则
 

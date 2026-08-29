@@ -6,6 +6,13 @@ Claude Code、Qoder 和 Cursor 的 hook payload 由 `src-tauri/hooks/code-pet-ho
 
 Codex 不再进入这条活动管线：脚本消费 stdin 后直接退出，collector 的实时 `/hook` 与启动 spool 回放均显式拒收 Codex。`src-tauri/src/agent/codex_audit.rs` 及其 watcher/回放入口已删除。Token 用量页保留的历史 audit/transcript 扫描不向 `PetEvent` 或桌宠活动写入数据。
 
+Codex 当前有两个标准协议事件源，但只有一个进入桌宠：
+
+- remote App Server event 只写入 `RuntimeGatewayState` 的 remote event bus，通过 `runtime-gateway-event` 面向远程客户端；PetApp 不监听该 event，也不读取 remote snapshot/replay。
+- Desktop IPC event 只写入 `CodexDesktopCompanionState` 的 companion event bus，通过专用 snapshot/replay 与 `codex-desktop-companion-event` 驱动 PetApp。
+
+两套 event bus、sequence 和 LocalTransport 物理分离。remote thread provenance 在 Rust publication/snapshot/action 边界排除，并在前端 projection 形成不可逆 tombstone，防止已排队的 companion event 重新建卡。这是 activity store 之前的 source/channel 隔离，不是 UI 隐藏。
+
 ## 归一化
 
 `src-tauri/src/activity/events.rs` 将原始 payload 转换为 `PetEvent`：
@@ -31,6 +38,7 @@ Codex 不再进入这条活动管线：脚本消费 stdin 后直接退出，coll
 - 修改终态事件处理可能重新引入孤立完成卡片。
 - 过滤逻辑必须在增量批次中保留隐藏 key，否则已过滤的后台任务可能重新出现。
 - 设置变更时如果只从当前可见列表删除匹配项，取消过滤后旧任务不会恢复；需要从近期事件缓存重建列表。
+- 合并 remote 与 companion bus、复用同一个 Tauri event 或让 PetApp 枚举 remote Provider，会重新引入跨来源污染；双 transport 测试和前端静态测试必须持续守护。
 
 ## 验证
 

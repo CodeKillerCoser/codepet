@@ -5,4 +5,7 @@ mod provider;
 mod state;
 mod transport;
 
-pub use provider::CodexProviderAdapter;
+pub use provider::{
+    CodexDesktopCompanionSnapshot,
+    CodexProviderAdapter as CodexDesktopCompanionAdapter,
+};
