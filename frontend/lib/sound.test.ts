@@ -88,7 +88,7 @@ describe("shouldRepeatNotification", () => {
       id: "permission-1",
       kind: "permission-requested",
       status: "waiting-approval",
-      title: "等待授权",
+      title: "等待审批或输入",
       shouldRing: true,
     });
     const refreshedPermissionEvent = event({

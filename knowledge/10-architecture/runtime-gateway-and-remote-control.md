@@ -1,5 +1,9 @@
 # Runtime Gateway 与远程控制架构
 
+> 文档状态：本页是早期 Runtime Gateway 长期设计稿，其中把独立 `codex app-server` 写成当前或目标实现的段落已经被取代，不得作为现状或恢复旧路径的依据。当前 Codex Provider 使用 Codex Desktop 私有 Owner/Follower IPC，阶段一只读、无审批/回复，也没有 IPC 任务目录或 App Server/Hook/transcript fallback。
+>
+> 当前事实入口：`../30-domains/agent-control/codex-app-server.md`；架构决策：`../50-decisions/codex-desktop-ipc-as-provider-source.md`；故障排查：`../40-runbooks/codex-desktop-ipc-unavailable.md`；长期规约：`../60-rules/codex-desktop-ipc-fail-closed.md`。下文保留用于理解历史问题、标准协议和远程控制方向，出现冲突时以上述当前文档为准。
+
 ## 背景
 
 Code Pet 当前是一个面向本机 AI 编程工具的桌面宠物应用。它通过透明悬浮窗口展示 Codex、Claude Code、Qoder 和 Cursor 的任务活动，并提供完成提醒、等待审批提示、轻量回复、打开原会话和 Token 用量统计。项目已经具备 Tauri 2 桌面壳、Svelte UI、Rust 后端、自动启动、自动化构建、签名、更新发布、通知、跨平台配置和桌宠交互等基础能力。

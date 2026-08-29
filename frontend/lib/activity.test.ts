@@ -587,7 +587,7 @@ describe("statusLabel", () => {
   it("uses stable display labels for all active states", () => {
     expect(statusLabel("thinking")).toBe("正在思考");
     expect(statusLabel("running")).toBe("正在执行");
-    expect(statusLabel("waiting-approval")).toBe("等待授权");
+    expect(statusLabel("waiting-approval")).toBe("等待审批或输入");
     expect(statusLabel("done")).toBe("任务完成");
   });
 });

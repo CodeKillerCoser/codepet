@@ -4,9 +4,13 @@
 
 ## 当前决策
 
-- `codex-app-server-as-primary-reply-path.md`
+- `codex-desktop-ipc-as-provider-source.md`
 - `qoder-existing-session-reply-unsupported.md`
 - `semantic-file-tree-as-knowledge-index.md`
+
+## 已取代决策
+
+- `codex-app-server-as-primary-reply-path.md`：已由 Codex Desktop IPC 决策取代，仅保留历史背景。
 
 ## 规则
 

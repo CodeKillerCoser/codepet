@@ -143,7 +143,7 @@
   ] as const;
   const robotTemplateVariables = "{{statusIcon}} {{status}} {{agent}} {{task}} {{contentBlock}} {{cwdLine}} {{toolLine}} {{sessionLine}} {{time}}";
   const robotTriggerOptions = [
-    { key: "waitingApproval", label: "等待授权" },
+    { key: "waitingApproval", label: "等待审批或输入" },
     { key: "taskFailed", label: "任务失败" },
     { key: "taskDone", label: "任务完成" },
   ] as const;
@@ -430,7 +430,7 @@
 
   function runtimeIntegrationHint(providerId: AgentRuntimeProviderId) {
     return providerId === "codex"
-      ? "已接入 Runtime Gateway；配置变化会重启 Code Pet 管理的 Codex session。"
+      ? "Codex CLI 路径仅供独立运行时检测；任务来源可用性取决于 Codex Desktop 私有 IPC。"
       : "当前提供检测与路径配置，Provider 协议尚未接入。";
   }
 
@@ -1229,7 +1229,7 @@
       idle: "待命",
       thinking: "正在思考",
       running: "正在执行",
-      "waiting-approval": "等待授权",
+      "waiting-approval": "等待审批或输入",
       failed: "任务失败",
       done: "任务完成",
     }[status];

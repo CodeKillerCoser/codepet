@@ -55,11 +55,14 @@ export class RuntimeGatewayActivityProjection {
     switch (event.event) {
       case "provider.statusChanged":
         this.providersById.set(event.payload.provider.id, event.payload.provider);
+        if (event.payload.provider.status !== "ready") {
+          this.clearProviderState(event.payload.provider.id);
+        }
         return { activities: [], provider: event.payload.provider };
       case "conversation.upserted": {
         const conversation = event.payload.conversation;
         this.rememberConversation(conversation);
-        const activity = this.activityFromConversation(conversation, eventId, true, event);
+        const activity = this.activityFromConversation(conversation, eventId, false, event);
         return { activities: activity ? [activity] : [] };
       }
       case "turn.upserted": {
@@ -384,6 +387,30 @@ export class RuntimeGatewayActivityProjection {
       }
     }
   }
+
+  private clearProviderState(providerId: string): void {
+    const keyPrefix = `${providerId}:`;
+    for (const key of this.conversationsByKey.keys()) {
+      if (key.startsWith(keyPrefix)) {
+        this.conversationsByKey.delete(key);
+      }
+    }
+    for (const key of this.turnsByKey.keys()) {
+      if (key.startsWith(keyPrefix)) {
+        this.turnsByKey.delete(key);
+      }
+    }
+    for (const [approvalId, approval] of this.approvalsById) {
+      if (approval.providerId === providerId) {
+        this.approvalsById.delete(approvalId);
+      }
+    }
+    for (const key of this.outputByKey.keys()) {
+      if (key.startsWith(keyPrefix)) {
+        this.outputByKey.delete(key);
+      }
+    }
+  }
 }
 
 function conversationKey(providerId: string, conversationId: string): string {
@@ -403,7 +430,7 @@ function conversationActivityStatus(status: Conversation["status"]): { kind: Pet
     case "running":
       return { kind: "task-updated", status: "running", message: "会话正在运行" };
     case "waiting-approval":
-      return { kind: "permission-requested", status: "waiting-approval", message: "等待授权" };
+      return { kind: "permission-requested", status: "waiting-approval", message: "等待审批或输入" };
     case "error":
       return { kind: "task-failed", status: "failed", message: "Provider 报告会话异常" };
     case "idle":
@@ -422,13 +449,13 @@ function turnActivityStatus(status: TurnTaskStatus): { kind: PetEventKind; statu
     case "running":
       return { kind: "task-updated", status: "running", message: "任务正在执行" };
     case "waiting-approval":
-      return { kind: "permission-requested", status: "waiting-approval", message: "等待授权" };
+      return { kind: "permission-requested", status: "waiting-approval", message: "等待审批或输入" };
     case "completed":
       return { kind: "task-completed", status: "done", message: "任务完成" };
     case "failed":
       return { kind: "task-failed", status: "failed", message: "任务失败" };
     case "interrupted":
-      return { kind: "task-failed", status: "failed", message: "任务已中断" };
+      return { kind: "task-updated", status: "idle", message: "任务已停止" };
     default:
       throw new Error(`Unsupported turn status: ${status}`);
   }

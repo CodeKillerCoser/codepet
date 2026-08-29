@@ -1,5 +1,7 @@
 # 回复没有在 App 上屏
 
+> 当前状态（2026-08-29）：Codex Desktop IPC Provider 阶段一是只读能力，不支持回复或快捷回复。旧独立 App Server 回复链路已从当前源码删除，只能作为历史版本背景；当前排障不应寻找或恢复该源码。
+
 ## 现象
 
 桌宠卡片的回复操作看起来已经提交，但消息没有出现在 provider app 里。
@@ -8,21 +10,21 @@
 
 - Provider、event id、状态和 session id。
 - 前端 capability 是否对该事件暴露了回复。
-- `send_activity_reply` 的后端结果。
-- 可用时的 provider 专属日志或 app-server stderr。
+- Runtime Gateway Provider 是否实际声明 `turn.send`，以及发送请求的标准错误。
+- 可用时的 provider 专属安全诊断；不要收集完整原生 payload。
 - 人工确认 provider UI 是否显示了消息。
 
 ## 排查步骤
 
-1. 确认事件状态是 `done` 或 `failed`。
-2. 确认事件有非空 session id。
-3. Codex 旧活动源与回复 capability 当前已停用；Qoder 现有会话回复也仍是故意不支持。只有新 Runtime Gateway 接管后，才应重新排查 Codex 回复链路。
-4. 仅排查旧版本或历史提交时，再检查 `src-tauri/src/agent/codex_app_server.rs` 行为和 app-server 启动路径。
-   - 如果日志出现 `failed to start codex app-server: program not found`，优先检查 Windows 下 Codex binary 查找是否覆盖 `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`，或临时设置 `CODE_PET_CODEX_BIN`。
-5. 确认回复路径没有与审批处理路径混淆。
+1. 先确认正在排查的构建版本和 Provider capability，不要仅凭卡片状态推断支持回复。
+2. 当前 Codex Desktop Provider 不应声明 `turn.send`，UI 也不应显示回复或快捷回复。若按钮出现，这是 capability/UI 回归，不是消息上屏故障。
+3. Qoder 现有会话回复仍是故意不支持；其他 Provider 只有在 Runtime Gateway 明确声明 `turn.send` 时才继续排查。
+4. 对确实声明回复能力的 Provider，确认标准请求包含正确 conversation identity，并检查 Gateway 返回的明确成功或错误。不得绕过 capability 直接调用 provider。
+5. 确认回复路径没有与审批或等待输入路径混淆；等待状态不等于可以发送普通回复。
+6. 仅排查旧发布包或历史提交时，使用该版本自己的源码和知识文档确认当时的实现。当前分支不再保留独立 App Server 文件、启动命令或 CLI fallback，不要按历史错误文案修改当前 runtime 设置。
 
 ## 修复后验证
 
-- `cargo test --manifest-path src-tauri/Cargo.toml activity_actions_tests agent_control_tests`
-- `npx vitest run frontend/lib/activity.test.ts`
-- 旧版本回归时才人工检查 Codex app UI；当前版本应验证 Codex 卡片不暴露回复入口。
+- 运行当前 Provider capability 和前端交互能力测试。
+- 当前 Codex 验证重点是任务卡片不暴露回复或快捷回复入口，调用写方法返回 unsupported。
+- 只有确实声明回复能力的其他 Provider 才人工检查消息是否在对应 App 上屏。

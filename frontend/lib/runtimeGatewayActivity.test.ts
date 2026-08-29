@@ -1,0 +1,114 @@
+import { describe, expect, it } from "vitest";
+import type { Conversation, ProtocolEvent, Provider, ProviderStatus, TurnTask } from "./generated/runtimeGateway";
+import { RuntimeGatewayActivityProjection } from "./runtimeGatewayActivity";
+
+function provider(status: ProviderStatus): Provider {
+  return {
+    id: "codex",
+    providerType: "codex",
+    displayName: "Codex Desktop",
+    status,
+    capabilities: {
+      methods: ["conversation.list", "conversation.get"],
+      permissionLevels: [],
+      models: [],
+      reasoningEfforts: [],
+      quickReplies: [],
+      canSteer: false,
+      canInterrupt: false,
+    },
+  };
+}
+
+function turn(status: TurnTask["status"]): TurnTask {
+  return {
+    id: "turn-one",
+    providerId: "codex",
+    conversationId: "thread-one",
+    status,
+    updatedAt: 1_700_000_001_000,
+    completedAt: status === "completed" || status === "failed" || status === "interrupted"
+      ? 1_700_000_001_000
+      : undefined,
+  };
+}
+
+function conversation(status: Conversation["status"], activeTurn?: TurnTask): Conversation {
+  return {
+    id: "thread-one",
+    providerId: "codex",
+    title: "Desktop task",
+    status,
+    permissionLevel: "workspace-write",
+    createdAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_001_000,
+    activeTurn,
+  };
+}
+
+function event(input: Omit<ProtocolEvent, "protocolVersion" | "eventSequence">): ProtocolEvent {
+  return {
+    protocolVersion: 0,
+    eventSequence: 1,
+    ...input,
+  } as ProtocolEvent;
+}
+
+describe("RuntimeGatewayActivityProjection", () => {
+  it("clears provider-scoped projection state while the provider is unavailable", () => {
+    const projection = new RuntimeGatewayActivityProjection();
+    projection.replaceProviders([provider("ready")]);
+    projection.applyEvent(event({
+      event: "conversation.upserted",
+      payload: { conversation: conversation("idle") },
+    }));
+    projection.applyEvent(event({
+      event: "turn.upserted",
+      payload: { turn: turn("completed") },
+    }));
+
+    projection.applyEvent(event({
+      event: "provider.statusChanged",
+      payload: { provider: provider("unavailable"), previousStatus: "ready" },
+    }));
+    projection.applyEvent(event({
+      event: "provider.statusChanged",
+      payload: { provider: provider("ready"), previousStatus: "unavailable" },
+    }));
+    const result = projection.applyEvent(event({
+      event: "conversation.upserted",
+      payload: { conversation: conversation("idle") },
+    }));
+
+    expect(result.activities).toHaveLength(1);
+    expect(result.activities[0].status).toBe("idle");
+    expect(result.activities[0].shouldRing).toBe(false);
+  });
+
+  it("does not ring for a conversation baseline error without a live turn transition", () => {
+    const projection = new RuntimeGatewayActivityProjection();
+    projection.replaceProviders([provider("ready")]);
+
+    const result = projection.applyEvent(event({
+      event: "conversation.upserted",
+      payload: { conversation: conversation("error") },
+    }));
+
+    expect(result.activities[0].status).toBe("failed");
+    expect(result.activities[0].shouldRing).toBe(false);
+  });
+
+  it("projects an interrupted turn as stopped without a failure ring", () => {
+    const projection = new RuntimeGatewayActivityProjection();
+    projection.replaceProviders([provider("ready")]);
+
+    const result = projection.applyEvent(event({
+      event: "turn.upserted",
+      payload: { turn: turn("interrupted") },
+    }));
+
+    expect(result.activities[0].status).toBe("idle");
+    expect(result.activities[0].message).toBe("任务已停止");
+    expect(result.activities[0].shouldRing).toBe(false);
+  });
+});

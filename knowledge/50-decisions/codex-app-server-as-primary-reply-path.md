@@ -1,5 +1,7 @@
 # Codex App Server 作为主要回复路径
 
+> 状态：已被 `codex-desktop-ipc-as-provider-source.md` 取代。本页只保留历史决策背景，不再描述当前运行时路径；生产代码不得据此恢复独立 App Server 或回复 capability。
+
 ## 背景
 
 Code Pet 需要一种可靠方式，把任务卡片中的回复发送到 Codex 对话里。
