@@ -1,7 +1,7 @@
 use super::{
     CodexAppServerError, CodexAppServerSession, CodexApprovalRequest, CodexIncoming,
-    CodexNotification, CodexProtocolMapper, CodexThreadListRequest, CodexThreadStartRequest,
-    CodexTurnStartRequest, CodexTurnSteerRequest,
+    CodexNotification, CodexProtocolMapper, CodexRequestOutcome, CodexThreadListRequest,
+    CodexThreadStartRequest, CodexTurnStartRequest, CodexTurnSteerRequest,
 };
 use crate::runtime_gateway::generated::{
     ApprovalResolveRequest, ApprovalResolveResponse, ConversationCreateRequest,
@@ -305,7 +305,7 @@ impl ProviderAdapter for CodexProviderAdapter {
                 return Err(protocol_error_for(&state, &events, error));
             };
             let snapshot = tokio::task::spawn_blocking(move || {
-                session.thread_start(CodexThreadStartRequest {
+                session.thread_start_outcome(CodexThreadStartRequest {
                     workspace_root: request.workspace_root,
                     permission_level: request.permission_level,
                     model: request.model,
@@ -315,11 +315,18 @@ impl ProviderAdapter for CodexProviderAdapter {
             .await
             .map_err(provider_task_error)?;
             let snapshot = match snapshot {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
+                CodexRequestOutcome::Success(snapshot) => snapshot,
+                CodexRequestOutcome::NotSent(error) => {
+                    creation.settle_known();
+                    return Err(protocol_error_for(&state, &events, error));
+                }
+                CodexRequestOutcome::ExplicitRpcReject(error) => {
                     if !operation_outcome_is_ambiguous(&error) {
                         creation.settle_known();
                     }
+                    return Err(protocol_error_for(&state, &events, error));
+                }
+                CodexRequestOutcome::SentOutcomeUnknown(error) => {
                     return Err(protocol_error_for(&state, &events, error));
                 }
             };
@@ -358,32 +365,32 @@ impl ProviderAdapter for CodexProviderAdapter {
                     let thread_id = request.conversation_id.clone();
                     let mut source_fence =
                         thread_scope.begin_remote_operation(thread_id.clone());
-                    let mut load_evidence = None;
-                    let result = (|| {
-                        load_evidence = Some(session.ensure_thread_loaded(&thread_id)?);
-                        if let Some(expected_turn_id) = request.steer_turn_id {
-                            session.turn_steer(CodexTurnSteerRequest {
-                                thread_id: request.conversation_id,
-                                expected_turn_id,
-                                message: request.message,
-                                client_message_id: Some(request.client_message_id),
-                            })
-                        } else {
-                            session.turn_start(CodexTurnStartRequest {
-                                thread_id: request.conversation_id,
-                                message: request.message,
-                                client_message_id: Some(request.client_message_id),
-                                model: None,
-                                reasoning_effort: None,
-                            })
-                        }
-                    })();
-                    apply_runtime_operation_evidence(
-                        &session,
+                    let load_outcome = session.ensure_thread_loaded_outcome(&thread_id);
+                    let load_evidence = settle_remote_load_outcome(
                         &mut source_fence,
+                        load_outcome,
+                    )?;
+                    let dispatch_outcome = if let Some(expected_turn_id) = request.steer_turn_id {
+                        session.turn_steer(CodexTurnSteerRequest {
+                            thread_id: request.conversation_id,
+                            expected_turn_id,
+                            message: request.message,
+                            client_message_id: Some(request.client_message_id),
+                        })
+                    } else {
+                        session.turn_start(CodexTurnStartRequest {
+                            thread_id: request.conversation_id,
+                            message: request.message,
+                            client_message_id: Some(request.client_message_id),
+                            model: None,
+                            reasoning_effort: None,
+                        })
+                    };
+                    finish_remote_dispatch(
+                        &session,
                         &thread_id,
                         load_evidence,
-                        result,
+                        dispatch_outcome,
                     )
                 },
             )
@@ -411,19 +418,21 @@ impl ProviderAdapter for CodexProviderAdapter {
                 move |session| {
                     let mut source_fence = thread_scope
                         .begin_remote_operation(request.conversation_id.clone());
-                    let mut load_evidence = None;
-                    let result = (|| {
-                        load_evidence = Some(
-                            session.ensure_thread_loaded(&request.conversation_id)?,
-                        );
-                        session.turn_interrupt(&request.conversation_id, &request.turn_id)
-                    })();
-                    apply_runtime_operation_evidence(
-                        &session,
+                    let load_outcome =
+                        session.ensure_thread_loaded_outcome(&request.conversation_id);
+                    let load_evidence = settle_remote_load_outcome(
                         &mut source_fence,
+                        load_outcome,
+                    )?;
+                    let dispatch_outcome = session.turn_interrupt(
+                        &request.conversation_id,
+                        &request.turn_id,
+                    );
+                    finish_remote_dispatch(
+                        &session,
                         &request.conversation_id,
                         load_evidence,
-                        result,
+                        dispatch_outcome,
                     )
                 },
             )
@@ -457,39 +466,29 @@ impl ProviderAdapter for CodexProviderAdapter {
                     .ok_or_else(|| ProviderCallError::Protocol(approval_not_found(&approval_id)))?;
                 let mut source_fence =
                     thread_scope.begin_remote_operation(approval.thread_id.clone());
-                let load_evidence = match session.ensure_thread_loaded(&approval.thread_id) {
-                    Ok(load_evidence) => load_evidence,
-                    Err(error) => {
-                        let error = apply_runtime_operation_evidence::<()>(
-                            &session,
-                            &mut source_fence,
-                            &approval.thread_id,
-                            None,
-                            Err(error),
-                        )
-                        .expect_err("an App Server load error must remain an error");
-                        return Err(ProviderCallError::Codex(error));
-                    }
-                };
+                let load_outcome = session.ensure_thread_loaded_outcome(&approval.thread_id);
+                let load_evidence = settle_remote_load_outcome(
+                    &mut source_fence,
+                    load_outcome,
+                )
+                .map_err(ProviderCallError::Codex)?;
                 let pending = lock_state(&operation_state);
                 if !pending
                     .pending_approvals
                     .get(&approval_id)
                     .is_some_and(|current| current.request_id == approval.request_id)
                 {
-                    source_fence.release_local();
                     return Err(ProviderCallError::Protocol(approval_not_found(
                         &approval_id,
                     )));
                 }
-                let result = session.respond_to_approval(&approval, decision);
+                let dispatch_outcome = session.respond_to_approval(&approval, decision);
                 drop(pending);
-                apply_runtime_operation_evidence(
+                finish_remote_dispatch(
                     &session,
-                    &mut source_fence,
                     &approval.thread_id,
-                    Some(load_evidence),
-                    result,
+                    load_evidence,
+                    dispatch_outcome,
                 )
                 .map_err(ProviderCallError::Codex)?;
                 let mut state = lock_state(&operation_state);
@@ -524,29 +523,49 @@ enum ProviderCallError {
     Protocol(ProtocolError),
 }
 
-fn apply_runtime_operation_evidence<T>(
-    session: &CodexAppServerSession,
+fn settle_remote_load_outcome(
     source_fence: &mut CodexRemoteOperationGuard,
-    thread_id: &str,
-    load_evidence: Option<u64>,
-    result: Result<T, CodexAppServerError>,
-) -> Result<T, CodexAppServerError> {
-    match &result {
-        Ok(_) => source_fence.commit_remote(),
-        Err(error) => {
-            if thread_state_was_rejected(error) {
-                if let Some(load_evidence) = load_evidence {
-                    session.forget_thread_loaded(thread_id, load_evidence);
-                }
-            }
-            if operation_outcome_is_ambiguous(error) {
+    outcome: CodexRequestOutcome<u64>,
+) -> Result<u64, CodexAppServerError> {
+    match outcome {
+        CodexRequestOutcome::Success(load_evidence) => {
+            source_fence.commit_remote();
+            Ok(load_evidence)
+        }
+        CodexRequestOutcome::NotSent(error) => {
+            source_fence.release_local();
+            Err(error)
+        }
+        CodexRequestOutcome::ExplicitRpcReject(error) => {
+            if operation_outcome_is_ambiguous(&error) {
                 source_fence.commit_remote();
             } else {
                 source_fence.release_local();
             }
+            Err(error)
+        }
+        CodexRequestOutcome::SentOutcomeUnknown(error) => {
+            source_fence.commit_remote();
+            Err(error)
         }
     }
-    result
+}
+
+fn finish_remote_dispatch<T>(
+    session: &CodexAppServerSession,
+    thread_id: &str,
+    load_evidence: u64,
+    outcome: Result<T, CodexAppServerError>,
+) -> Result<T, CodexAppServerError> {
+    match outcome {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            if thread_state_was_rejected(&error) {
+                session.forget_thread_loaded(thread_id, load_evidence);
+            }
+            Err(error)
+        }
+    }
 }
 
 fn operation_outcome_is_ambiguous(error: &CodexAppServerError) -> bool {
@@ -564,15 +583,25 @@ fn operation_outcome_is_ambiguous(error: &CodexAppServerError) -> bool {
 }
 
 fn rpc_error_proves_not_dispatched(code: i64, message: &str) -> bool {
-    matches!(code, -32601 | -32602) || thread_state_was_rejected_message(message)
+    matches!(code, -32601 | -32602)
+        || thread_state_was_rejected_message(message)
+        || no_rollout_found_rejection(code, message)
 }
 
 fn thread_state_was_rejected(error: &CodexAppServerError) -> bool {
     matches!(
         error,
-        CodexAppServerError::Rpc { message, .. }
+        CodexAppServerError::Rpc { code, message }
             if thread_state_was_rejected_message(message)
+                || no_rollout_found_rejection(*code, message)
     )
+}
+
+fn no_rollout_found_rejection(code: i64, message: &str) -> bool {
+    code == -32600
+        && message
+            .to_ascii_lowercase()
+            .contains("no rollout found for thread id")
 }
 
 fn thread_state_was_rejected_message(message: &str) -> bool {
@@ -912,11 +941,15 @@ mod tests {
                                     "jsonrpc": "2.0",
                                     "id": request["id"],
                                     "error": {
-                                        "code": -32000,
-                                        "message": "unknown thread"
+                                        "code": -32600,
+                                        "message": "no rollout found for thread id missing"
                                     }
                                 }),
                             );
+                            continue;
+                        }
+                        if thread_id == "disconnect-after-write" {
+                            lock_sender(&responder_incoming).take();
                             continue;
                         }
                         json!({
@@ -1265,10 +1298,19 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.code, "provider_error");
+        assert_eq!(
+            error
+                .details
+                .as_ref()
+                .and_then(|details| details.get("nativeCode")),
+            Some(&json!(-32600))
+        );
         assert!(!thread_scope.is_remote("missing"));
+        assert!(thread_scope.with_local_thread("missing", || ()).is_some());
         let resume = peer.next_request();
         assert_eq!(resume["method"], "thread/resume");
         assert_eq!(resume["params"]["threadId"], "missing");
+        assert!(peer.requests.try_recv().is_err());
         assert_eq!(
             gateway
                 .provider_list(ProviderListRequest {})
@@ -1280,39 +1322,142 @@ mod tests {
         );
     }
 
-    #[test]
-    fn ambiguous_runtime_failure_marks_remote_but_known_rejection_does_not() {
-        let (session, _peer) = fake_session();
-        let known_scope = CodexThreadScope::default();
-        let mut known_fence = known_scope.begin_remote_operation("thread-known");
-        let known: Result<(), CodexAppServerError> = apply_runtime_operation_evidence(
-            &session,
-            &mut known_fence,
-            "thread-known",
-            None,
-            Err(CodexAppServerError::Rpc {
-                code: -32000,
-                message: "thread is not loaded".to_string(),
-            }),
-        );
-        assert!(known.is_err());
-        assert!(!known_scope.is_remote("thread-known"));
-
-        let ambiguous_scope = CodexThreadScope::default();
-        let mut ambiguous_fence =
-            ambiguous_scope.begin_remote_operation("thread-ambiguous");
-        let ambiguous: Result<(), CodexAppServerError> = apply_runtime_operation_evidence(
-            &session,
-            &mut ambiguous_fence,
-            "thread-ambiguous",
-            None,
-            Err(CodexAppServerError::Timeout(
-                "turn/start outcome is unknown".to_string(),
-            )),
-        );
-        assert!(ambiguous.is_err());
-        assert!(ambiguous_scope.is_remote("thread-ambiguous"));
+    #[tokio::test]
+    async fn stopped_session_create_settles_known_without_writing() {
+        let (session, peer) = fake_session();
         session.shutdown().unwrap();
+        let registry = ProviderRegistry::default();
+        let gateway = Gateway::new(registry.clone());
+        let thread_scope = CodexThreadScope::default();
+        let settlements = thread_scope.subscribe_remote_creation_settled();
+        registry
+            .register(Arc::new(CodexProviderAdapter::new_scoped(
+                session,
+                gateway.event_sink(),
+                thread_scope.clone(),
+            )))
+            .unwrap();
+
+        let error = gateway
+            .conversation_create(ConversationCreateRequest {
+                provider_id: "codex".to_string(),
+                title: None,
+                permission_level: PermissionLevel::WorkspaceWrite,
+                model: None,
+                reasoning_effort: None,
+                workspace_root: Some("/work/fake".to_string()),
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code, "provider_unavailable");
+        assert!(!thread_scope.remote_creation_in_flight());
+        assert_eq!(
+            settlements.recv_timeout(Duration::from_secs(1)).unwrap().outcome,
+            crate::agent::codex_thread_scope::CodexRemoteCreationOutcome::Known
+        );
+        assert!(peer.requests.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn stopped_session_does_not_tombstone_and_replacement_resumes_again() {
+        let (stopped_session, stopped_peer) = fake_session();
+        stopped_session.shutdown().unwrap();
+        let registry = ProviderRegistry::default();
+        let gateway = Gateway::new(registry.clone());
+        let thread_scope = CodexThreadScope::default();
+        registry
+            .register(Arc::new(CodexProviderAdapter::new_scoped(
+                stopped_session,
+                gateway.event_sink(),
+                thread_scope.clone(),
+            )))
+            .unwrap();
+
+        let error = gateway
+            .turn_send(TurnSendRequest {
+                provider_id: "codex".to_string(),
+                conversation_id: "refresh-thread".to_string(),
+                client_message_id: "message-before-refresh".to_string(),
+                message: "hello".to_string(),
+                quick_reply_id: None,
+                steer_turn_id: None,
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code, "provider_unavailable");
+        assert!(!thread_scope.is_remote("refresh-thread"));
+        assert!(thread_scope
+            .with_local_thread("refresh-thread", || ())
+            .is_some());
+        assert!(stopped_peer.requests.try_recv().is_err());
+
+        let (replacement_session, replacement_peer) = fake_session();
+        registry
+            .register(Arc::new(CodexProviderAdapter::new_scoped(
+                replacement_session,
+                gateway.event_sink(),
+                thread_scope.clone(),
+            )))
+            .unwrap();
+        let response = gateway
+            .turn_send(TurnSendRequest {
+                provider_id: "codex".to_string(),
+                conversation_id: "refresh-thread".to_string(),
+                client_message_id: "message-after-refresh".to_string(),
+                message: "hello again".to_string(),
+                quick_reply_id: None,
+                steer_turn_id: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(response.turn.id, "started");
+        let resume = replacement_peer.next_request();
+        assert_eq!(resume["method"], "thread/resume");
+        assert_eq!(resume["params"]["threadId"], "refresh-thread");
+        let start = replacement_peer.next_request();
+        assert_eq!(start["method"], "turn/start");
+        assert_eq!(start["params"]["clientUserMessageId"], "message-after-refresh");
+        assert!(thread_scope.is_remote("refresh-thread"));
+    }
+
+    #[tokio::test]
+    async fn disconnect_after_resume_write_keeps_the_remote_tombstone() {
+        let (session, peer) = fake_session();
+        let registry = ProviderRegistry::default();
+        let gateway = Gateway::new(registry.clone());
+        let thread_scope = CodexThreadScope::default();
+        registry
+            .register(Arc::new(CodexProviderAdapter::new_scoped(
+                session,
+                gateway.event_sink(),
+                thread_scope.clone(),
+            )))
+            .unwrap();
+
+        let error = gateway
+            .turn_send(TurnSendRequest {
+                provider_id: "codex".to_string(),
+                conversation_id: "disconnect-after-write".to_string(),
+                client_message_id: "message-disconnect".to_string(),
+                message: "hello".to_string(),
+                quick_reply_id: None,
+                steer_turn_id: None,
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code, "provider_unavailable");
+        let resume = peer.next_request();
+        assert_eq!(resume["method"], "thread/resume");
+        assert_eq!(resume["params"]["threadId"], "disconnect-after-write");
+        assert!(peer.requests.try_recv().is_err());
+        assert!(thread_scope.is_remote("disconnect-after-write"));
+        assert!(thread_scope
+            .with_local_thread("disconnect-after-write", || ())
+            .is_none());
     }
 
     #[test]

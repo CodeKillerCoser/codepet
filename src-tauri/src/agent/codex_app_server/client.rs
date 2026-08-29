@@ -127,6 +127,34 @@ enum ThreadLoadState {
     Loaded(u64),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CodexRequestOutcome<T> {
+    Success(T),
+    NotSent(CodexAppServerError),
+    ExplicitRpcReject(CodexAppServerError),
+    SentOutcomeUnknown(CodexAppServerError),
+}
+
+impl<T> CodexRequestOutcome<T> {
+    fn and_then<U>(self, operation: impl FnOnce(T) -> CodexRequestOutcome<U>) -> CodexRequestOutcome<U> {
+        match self {
+            Self::Success(value) => operation(value),
+            Self::NotSent(error) => CodexRequestOutcome::NotSent(error),
+            Self::ExplicitRpcReject(error) => CodexRequestOutcome::ExplicitRpcReject(error),
+            Self::SentOutcomeUnknown(error) => CodexRequestOutcome::SentOutcomeUnknown(error),
+        }
+    }
+
+    pub(crate) fn into_result(self) -> Result<T, CodexAppServerError> {
+        match self {
+            Self::Success(value) => Ok(value),
+            Self::NotSent(error)
+            | Self::ExplicitRpcReject(error)
+            | Self::SentOutcomeUnknown(error) => Err(error),
+        }
+    }
+}
+
 impl SessionInner {
     fn broadcast(&self, message: Result<CodexIncoming, CodexAppServerError>) {
         if let Ok(mut subscribers) = self.subscribers.lock() {
@@ -155,6 +183,24 @@ impl SessionInner {
             .as_mut()
             .ok_or(CodexAppServerError::Shutdown)?;
         writer.write_message(&message)
+    }
+
+    fn write_request(&self, message: Value) -> CodexRequestOutcome<()> {
+        let mut writer = match self.writer.lock() {
+            Ok(writer) => writer,
+            Err(_) => {
+                return CodexRequestOutcome::NotSent(CodexAppServerError::Protocol(
+                    "writer lock is poisoned".to_string(),
+                ))
+            }
+        };
+        let Some(writer) = writer.as_mut() else {
+            return CodexRequestOutcome::NotSent(CodexAppServerError::Shutdown);
+        };
+        match writer.write_message(&message) {
+            Ok(()) => CodexRequestOutcome::Success(()),
+            Err(error) => CodexRequestOutcome::SentOutcomeUnknown(error),
+        }
     }
 
     fn mark_thread_loaded(&self, thread_id: &str) -> u64 {
@@ -398,44 +444,66 @@ impl CodexAppServerSession {
         &self,
         thread_id: &str,
     ) -> Result<CodexConversationSnapshot, CodexAppServerError> {
-        let snapshot = self.request_thread_resume(thread_id)?;
+        let snapshot = self.request_thread_resume_outcome(thread_id).into_result()?;
         self.inner.mark_thread_loaded(thread_id);
         Ok(snapshot)
     }
 
-    fn request_thread_resume(
+    fn request_thread_resume_outcome(
         &self,
         thread_id: &str,
-    ) -> Result<CodexConversationSnapshot, CodexAppServerError> {
-        let response: ThreadResponse =
-            self.request("thread/resume", json!({ "threadId": thread_id }))?;
-        let snapshot = snapshot_from_response(response, None, None);
-        if snapshot.thread.id != thread_id {
-            return Err(CodexAppServerError::Protocol(format!(
-                "thread/resume returned thread {} for requested thread {thread_id}",
-                snapshot.thread.id
-            )));
-        }
-        Ok(snapshot)
+    ) -> CodexRequestOutcome<CodexConversationSnapshot> {
+        self.request_outcome("thread/resume", json!({ "threadId": thread_id }))
+            .and_then(|response: ThreadResponse| {
+                let snapshot = snapshot_from_response(response, None, None);
+                if snapshot.thread.id != thread_id {
+                    return CodexRequestOutcome::SentOutcomeUnknown(
+                        CodexAppServerError::Protocol(format!(
+                            "thread/resume returned thread {} for requested thread {thread_id}",
+                            snapshot.thread.id
+                        )),
+                    );
+                }
+                CodexRequestOutcome::Success(snapshot)
+            })
     }
 
     pub fn ensure_thread_loaded(&self, thread_id: &str) -> Result<u64, CodexAppServerError> {
+        self.ensure_thread_loaded_outcome(thread_id).into_result()
+    }
+
+    pub(crate) fn ensure_thread_loaded_outcome(
+        &self,
+        thread_id: &str,
+    ) -> CodexRequestOutcome<u64> {
         loop {
-            let mut loaded_threads = self.inner.loaded_threads.lock().map_err(|_| {
-                CodexAppServerError::Protocol("loaded thread state lock is poisoned".to_string())
-            })?;
+            let mut loaded_threads = match self.inner.loaded_threads.lock() {
+                Ok(loaded_threads) => loaded_threads,
+                Err(_) => {
+                    return CodexRequestOutcome::NotSent(CodexAppServerError::Protocol(
+                        "loaded thread state lock is poisoned".to_string(),
+                    ))
+                }
+            };
             match loaded_threads.get(thread_id).copied() {
-                Some(ThreadLoadState::Loaded(evidence)) => return Ok(evidence),
+                Some(ThreadLoadState::Loaded(evidence)) => {
+                    return CodexRequestOutcome::Success(evidence)
+                }
                 Some(ThreadLoadState::Resuming) => {
-                    loaded_threads = self
+                    loaded_threads = match self
                         .inner
                         .loaded_threads_changed
                         .wait(loaded_threads)
-                        .map_err(|_| {
-                            CodexAppServerError::Protocol(
-                                "loaded thread state lock is poisoned".to_string(),
+                    {
+                        Ok(loaded_threads) => loaded_threads,
+                        Err(_) => {
+                            return CodexRequestOutcome::NotSent(
+                                CodexAppServerError::Protocol(
+                                    "loaded thread state lock is poisoned".to_string(),
+                                ),
                             )
-                        })?;
+                        }
+                    };
                     drop(loaded_threads);
                 }
                 None => {
@@ -444,12 +512,19 @@ impl CodexAppServerSession {
                 }
             }
         }
-        let result = self.request_thread_resume(thread_id);
-        let mut loaded_threads = self.inner.loaded_threads.lock().map_err(|_| {
-            CodexAppServerError::Protocol("loaded thread state lock is poisoned".to_string())
-        })?;
+        let result = self.request_thread_resume_outcome(thread_id);
+        let mut loaded_threads = match self.inner.loaded_threads.lock() {
+            Ok(loaded_threads) => loaded_threads,
+            Err(_) => {
+                return CodexRequestOutcome::SentOutcomeUnknown(
+                    CodexAppServerError::Protocol(
+                        "loaded thread state lock is poisoned".to_string(),
+                    ),
+                )
+            }
+        };
         let settled = match result {
-            Ok(_) => {
+            CodexRequestOutcome::Success(_) => {
                 let evidence = match loaded_threads.get(thread_id).copied() {
                     Some(ThreadLoadState::Loaded(evidence)) => evidence,
                     _ => {
@@ -462,13 +537,25 @@ impl CodexAppServerSession {
                         evidence
                     }
                 };
-                Ok(evidence)
+                CodexRequestOutcome::Success(evidence)
             }
-            Err(error) => {
+            CodexRequestOutcome::NotSent(error) => {
                 if loaded_threads.get(thread_id) == Some(&ThreadLoadState::Resuming) {
                     loaded_threads.remove(thread_id);
                 }
-                Err(error)
+                CodexRequestOutcome::NotSent(error)
+            }
+            CodexRequestOutcome::ExplicitRpcReject(error) => {
+                if loaded_threads.get(thread_id) == Some(&ThreadLoadState::Resuming) {
+                    loaded_threads.remove(thread_id);
+                }
+                CodexRequestOutcome::ExplicitRpcReject(error)
+            }
+            CodexRequestOutcome::SentOutcomeUnknown(error) => {
+                if loaded_threads.get(thread_id) == Some(&ThreadLoadState::Resuming) {
+                    loaded_threads.remove(thread_id);
+                }
+                CodexRequestOutcome::SentOutcomeUnknown(error)
             }
         };
         self.inner.loaded_threads_changed.notify_all();
@@ -483,15 +570,23 @@ impl CodexAppServerSession {
         &self,
         request: CodexThreadStartRequest,
     ) -> Result<CodexConversationSnapshot, CodexAppServerError> {
-        let response: ThreadResponse =
-            self.request("thread/start", thread_start_params(&request))?;
-        let snapshot = snapshot_from_response(
-            response,
-            request.workspace_root,
-            Some(request.permission_level),
-        );
-        self.inner.mark_thread_loaded(&snapshot.thread.id);
-        Ok(snapshot)
+        self.thread_start_outcome(request).into_result()
+    }
+
+    pub(crate) fn thread_start_outcome(
+        &self,
+        request: CodexThreadStartRequest,
+    ) -> CodexRequestOutcome<CodexConversationSnapshot> {
+        self.request_outcome("thread/start", thread_start_params(&request))
+            .and_then(|response: ThreadResponse| {
+                let snapshot = snapshot_from_response(
+                    response,
+                    request.workspace_root,
+                    Some(request.permission_level),
+                );
+                self.inner.mark_thread_loaded(&snapshot.thread.id);
+                CodexRequestOutcome::Success(snapshot)
+            })
     }
 
     pub fn turn_start(
@@ -584,14 +679,31 @@ impl CodexAppServerSession {
         method: &str,
         params: Value,
     ) -> Result<T, CodexAppServerError> {
-        let result = self.request_value(method, params)?;
-        serde_json::from_value(result).map_err(|error| {
-            CodexAppServerError::Protocol(format!("invalid {method} response: {error}"))
-        })
+        self.request_outcome(method, params).into_result()
     }
 
-    fn request_value(&self, method: &str, params: Value) -> Result<Value, CodexAppServerError> {
-        self.request_value_with_timeout(method, params, REQUEST_TIMEOUT)
+    fn request_outcome<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> CodexRequestOutcome<T> {
+        self.request_value_outcome(method, params)
+            .and_then(|result| match serde_json::from_value(result) {
+                Ok(result) => CodexRequestOutcome::Success(result),
+                Err(error) => CodexRequestOutcome::SentOutcomeUnknown(
+                    CodexAppServerError::Protocol(format!(
+                        "invalid {method} response: {error}"
+                    )),
+                ),
+            })
+    }
+
+    fn request_value_outcome(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> CodexRequestOutcome<Value> {
+        self.request_value_with_timeout_outcome(method, params, REQUEST_TIMEOUT)
     }
 
     fn request_value_with_timeout(
@@ -600,29 +712,64 @@ impl CodexAppServerSession {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, CodexAppServerError> {
+        self.request_value_with_timeout_outcome(method, params, timeout)
+            .into_result()
+    }
+
+    fn request_value_with_timeout_outcome(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> CodexRequestOutcome<Value> {
         if !self.is_running() {
-            return Err(CodexAppServerError::Shutdown);
+            return CodexRequestOutcome::NotSent(CodexAppServerError::Shutdown);
         }
         let id = JsonRpcId::Number(self.inner.next_id.fetch_add(1, Ordering::SeqCst));
         let (sender, receiver) = mpsc::channel();
-        self.inner
-            .pending
-            .lock()
-            .map_err(|_| CodexAppServerError::Protocol("pending map lock is poisoned".to_string()))?
-            .insert(id.clone(), sender);
-        if let Err(error) = self.write(json!({
+        let mut pending = match self.inner.pending.lock() {
+            Ok(pending) => pending,
+            Err(_) => {
+                return CodexRequestOutcome::NotSent(CodexAppServerError::Protocol(
+                    "pending map lock is poisoned".to_string(),
+                ))
+            }
+        };
+        pending.insert(id.clone(), sender);
+        drop(pending);
+        let write_outcome = self.inner.write_request(json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": method,
             "params": params,
-        })) {
-            if let Ok(mut pending) = self.inner.pending.lock() {
-                pending.remove(&id);
+        }));
+        match write_outcome {
+            CodexRequestOutcome::Success(()) => {}
+            CodexRequestOutcome::NotSent(error) => {
+                if let Ok(mut pending) = self.inner.pending.lock() {
+                    pending.remove(&id);
+                }
+                return CodexRequestOutcome::NotSent(error);
             }
-            return Err(error);
+            CodexRequestOutcome::ExplicitRpcReject(error) => {
+                if let Ok(mut pending) = self.inner.pending.lock() {
+                    pending.remove(&id);
+                }
+                return CodexRequestOutcome::ExplicitRpcReject(error);
+            }
+            CodexRequestOutcome::SentOutcomeUnknown(error) => {
+                if let Ok(mut pending) = self.inner.pending.lock() {
+                    pending.remove(&id);
+                }
+                return CodexRequestOutcome::SentOutcomeUnknown(error);
+            }
         }
         match receiver.recv_timeout(timeout) {
-            Ok(result) => result,
+            Ok(Ok(result)) => CodexRequestOutcome::Success(result),
+            Ok(Err(error @ CodexAppServerError::Rpc { .. })) => {
+                CodexRequestOutcome::ExplicitRpcReject(error)
+            }
+            Ok(Err(error)) => CodexRequestOutcome::SentOutcomeUnknown(error),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if let Ok(mut pending) = self.inner.pending.lock() {
                     pending.remove(&id);
@@ -632,11 +779,11 @@ impl CodexAppServerSession {
                     timeout.as_millis()
                 ));
                 self.inner.fail(error.clone());
-                Err(error)
+                CodexRequestOutcome::SentOutcomeUnknown(error)
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                Err(CodexAppServerError::ProcessExited)
-            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => CodexRequestOutcome::SentOutcomeUnknown(
+                CodexAppServerError::ProcessExited,
+            ),
         }
     }
 
@@ -1091,6 +1238,24 @@ mod tests {
     }
 
     #[test]
+    fn stopped_session_reports_not_sent_without_allocating_or_writing() {
+        let (session, peer_receiver, peer_sender) = mock_session();
+        session.shutdown().unwrap();
+        let next_id = session.inner.next_id.load(Ordering::SeqCst);
+
+        let outcome = session.ensure_thread_loaded_outcome("thread-stopped");
+
+        assert_eq!(
+            outcome,
+            CodexRequestOutcome::NotSent(CodexAppServerError::Shutdown)
+        );
+        assert_eq!(session.inner.next_id.load(Ordering::SeqCst), next_id);
+        assert!(session.inner.pending.lock().unwrap().is_empty());
+        assert!(peer_receiver.try_recv().is_err());
+        drop(peer_sender);
+    }
+
+    #[test]
     fn unmatched_response_id_is_a_protocol_error() {
         let (session, _, peer_sender) = mock_session();
         let notifications = session.subscribe();
@@ -1356,6 +1521,61 @@ mod tests {
             assert!(peer_receiver.try_recv().is_err());
             session.shutdown().unwrap();
         }
+    }
+
+    #[test]
+    fn failed_resume_wakes_waiter_to_retry_without_caching_failure() {
+        let (session, peer_receiver, peer_sender) = mock_session();
+        let first_session = session.clone();
+        let first = thread::spawn(move || {
+            first_session.ensure_thread_loaded_outcome("thread-missing")
+        });
+        let first_resume = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(first_resume["method"], "thread/resume");
+
+        let second_session = session.clone();
+        let second = thread::spawn(move || {
+            second_session.ensure_thread_loaded_outcome("thread-missing")
+        });
+        assert!(peer_receiver
+            .recv_timeout(Duration::from_millis(20))
+            .is_err());
+        peer_sender
+            .send(json!({
+                "jsonrpc": "2.0",
+                "id": first_resume["id"],
+                "error": {
+                    "code": -32600,
+                    "message": "no rollout found for thread id thread-missing"
+                }
+            }))
+            .unwrap();
+
+        let second_resume = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(second_resume["method"], "thread/resume");
+        assert_eq!(second_resume["params"]["threadId"], "thread-missing");
+        peer_sender
+            .send(json!({
+                "jsonrpc": "2.0",
+                "id": second_resume["id"],
+                "error": {
+                    "code": -32600,
+                    "message": "no rollout found for thread id thread-missing"
+                }
+            }))
+            .unwrap();
+
+        for outcome in [first.join().unwrap(), second.join().unwrap()] {
+            assert!(matches!(
+                outcome,
+                CodexRequestOutcome::ExplicitRpcReject(CodexAppServerError::Rpc {
+                    code: -32600,
+                    message
+                }) if message == "no rollout found for thread id thread-missing"
+            ));
+        }
+        assert!(peer_receiver.try_recv().is_err());
+        session.shutdown().unwrap();
     }
 
     #[test]

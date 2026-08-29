@@ -4,6 +4,7 @@ mod provider;
 pub mod protocol;
 
 pub use client::{CodexAppServerSession, JsonRpcReader, JsonRpcWriter, SessionControl};
+pub(crate) use client::CodexRequestOutcome;
 pub use mapper::CodexProtocolMapper;
 pub use provider::CodexProviderAdapter as CodexRemoteProviderAdapter;
 pub use protocol::{
