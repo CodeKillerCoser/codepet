@@ -225,10 +225,26 @@ pub struct DeviceStatusChangedEvent {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct GatewayCapabilities {
-    pub methods: Vec<String>,
+    pub methods: Vec<GatewayCapability>,
     pub permission_levels: Vec<String>,
     pub models: Vec<String>,
     pub reasoning_efforts: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GatewayCapability {
+    #[serde(rename = "conversation.list")]
+    ConversationList,
+    #[serde(rename = "conversation.get")]
+    ConversationGet,
+    #[serde(rename = "conversation.create")]
+    ConversationCreate,
+    #[serde(rename = "turn.send")]
+    TurnSend,
+    #[serde(rename = "turn.interrupt")]
+    TurnInterrupt,
+    #[serde(rename = "approval.resolve")]
+    ApprovalResolve,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -429,6 +445,20 @@ impl ProtocolMethod {
             Self::TurnSend => "turn.send",
             Self::TurnInterrupt => "turn.interrupt",
             Self::ApprovalResolve => "approval.resolve",
+        }
+    }
+
+    pub const fn capability(self) -> Option<GatewayCapability> {
+        match self {
+            Self::ProtocolHandshake => None,
+            Self::DeviceList => None,
+            Self::ProviderList => None,
+            Self::ConversationList => Some(GatewayCapability::ConversationList),
+            Self::ConversationGet => Some(GatewayCapability::ConversationGet),
+            Self::ConversationCreate => Some(GatewayCapability::ConversationCreate),
+            Self::TurnSend => Some(GatewayCapability::TurnSend),
+            Self::TurnInterrupt => Some(GatewayCapability::TurnInterrupt),
+            Self::ApprovalResolve => Some(GatewayCapability::ApprovalResolve),
         }
     }
 }

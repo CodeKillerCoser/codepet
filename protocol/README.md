@@ -11,14 +11,14 @@ The v1 layers are:
 - `provider/v1` — public Host ↔ independent Provider binary JSON-RPC 2.0 over newline-delimited stdio. It owns initialize, describe, instance lifecycle/capability, conversation, turn, approval, event, and shutdown contracts.
 - `gateway/v1` — Host ↔ Remote Client methods and replayable events. Resources use `deviceId + providerInstanceId + nativeResourceId`; the gateway exposes neither plugin process lifecycle nor pet-private state.
 
-`codegen.json` declares packages, dependency direction, output targets, and the shared `codepet.protocol.codegen/v1` interface for Rust, TypeScript, Dart, and Python. Rust is active for all four v1 layers. TypeScript currently covers core plus the Runtime Gateway compatibility surface; Dart and Python remain planned targets.
+`codegen.json` declares packages, dependency direction, output targets, and the shared `codepet.protocol.codegen/v1` adapter interface for Rust, TypeScript, Dart, and Python. Rust is active for all four v1 layers. TypeScript currently covers core plus the Runtime Gateway compatibility surface. Dart and Python remain explicitly registered but unimplemented planned targets; selecting them fails closed before generation.
 
 ## Versioning and discriminators
 
 Every public v1 initialize/handshake request carries an explicit supported `VersionRange`, and the response selects one `ProtocolVersion`. Method and event names live in each layer's manifest rather than Rust code.
 
 - Pet and gateway use CodePet envelopes discriminated by `method` and `event`.
-- Provider uses JSON-RPC 2.0 requests discriminated by `method`, JSON-RPC responses, and notification events also discriminated by `method`.
+- Provider uses JSON-RPC 2.0 requests discriminated by `method`, strict result/error responses, and notification events also discriminated by `method`. Its generated `JsonLineCodec` enforces a caller-selected frame limit and classifies inbound request, response, notification, and declared event messages.
 - Gateway v1 events carry an opaque `eventCursor` for replay.
 - Union-like domain DTOs such as `PetAction` retain an explicit `kind`; receivers validate kind-specific optional fields.
 
@@ -33,7 +33,7 @@ Rust packages are located at:
 - `sdk/rust/codepet-provider-sdk`
 - `sdk/rust/codepet-gateway-sdk`
 
-Service SDKs contain serde DTOs, method/event enums, async server traits, dispatchers, typed client/transport shells, wire envelopes, and codecs. They contain no Provider manager, process supervisor, registry, business handler, authentication, or UI behavior.
+Service SDKs contain serde DTOs, method/event enums, async server traits, dispatchers, typed client/transport shells, wire envelopes, and codecs. Provider/Gateway capability enums and `ProtocolMethod::capability()` are generated from checked manifest/schema metadata. Provider descriptors expose protocol validation for non-empty supported instance kinds, and `instance.create` plus returned instances carry the selected `instanceKind`. Generated packages contain no Provider manager, process supervisor, registry, business handler, authentication, or UI behavior.
 
 ## Runtime Gateway compatibility
 
@@ -47,9 +47,10 @@ This compatibility path preserves current dual-channel behavior: remote App Serv
 npm run protocol:generate
 npm run protocol:check
 cargo test --manifest-path sdk/rust/Cargo.toml
+node tools/protocol-codegen/generate.mjs --target=rust --check
 ```
 
-`protocol:check` validates schema/manifest consistency, fixtures, layer dependencies, future language target declarations, and generated-file freshness. Runtime compatibility is covered by `runtime_gateway_protocol_tests` and `runtime_gateway_core_tests` in the Tauri crate.
+`protocol:check` validates schema/manifest consistency, fixtures, schema and manifest dependency direction, capability mappings, target fail-closed behavior, and generated-file freshness. Runtime compatibility is covered by `runtime_gateway_protocol_tests` and `runtime_gateway_core_tests` in the Tauri crate.
 
 ## Current limits
 

@@ -25,7 +25,7 @@
 
 ## 现状理解
 
-协议布局现在是 `protocol/{core,pet,provider,gateway}/v1`。`protocol/codegen.json` 记录包、依赖、输出与 `codepet.protocol.codegen/v1` 语言接口。Rust 输出位于 `sdk/rust/codepet-*-sdk`；TypeScript 只生成 core 和现有 Runtime Gateway v0 兼容面。
+协议布局现在是 `protocol/{core,pet,provider,gateway}/v1`。`protocol/codegen.json` 记录包、依赖、输出与 `codepet.protocol.codegen/v1` target adapter 接口。Rust 和 TypeScript 有显式 adapter；Dart/Python 只有 fail-closed 的 planned registry entry，显式选择时在写文件前失败。Rust 输出位于 `sdk/rust/codepet-*-sdk`；TypeScript 只生成 core 和现有 Runtime Gateway v0 兼容面。
 
 `core/v1` 只包含可安全共享的 ID、版本范围、时间戳、分页、错误、JSON 对象、JSON-RPC error 和 `RoutedResourceId`。`pet/v1` 只出现 PetTask/PetApproval/PetAction/Snapshot/Patch；schema 和 manifest 不引用 provider/gateway。`provider/v1` 拥有 initialize、describe、instance create/start/stop/destroy/capabilities、conversation、turn、approval、event 和 shutdown。`gateway/v1` 拥有 handshake、device/provider 枚举、conversation/turn/approval 与 replayable event cursor，不包含 instance 生命周期或 shutdown。
 
@@ -33,12 +33,14 @@
 
 ## 实现路径
 
-1. `tools/protocol-codegen/generate.mjs` 读取所有包，解析跨 schema `$ref`，验证 Draft 2020-12 子集、依赖声明、method/event metadata、transport discriminator 和 fixture。
-2. CodePet envelope 根据 manifest 的 `method`/`event` 与可选 event cursor 生成 tagged request/response/event；Provider 根据 JSON-RPC 2.0 生成 request、notification event、response envelope 与 stdio framing metadata。
-3. v1 initialize/handshake 通过 `VersionRange` 提交支持范围，并返回 selected version。manifest version、wire version 与生成常量由同一输入产生。
-4. Provider 和 gateway 的资源 ID 均使用 `RoutedResourceId { deviceId, providerInstanceId, nativeResourceId }`；只定位实例的请求使用各层 route DTO。native ID 单独使用时不构成全局地址。
-5. Tauri 只增加 `codepet-gateway-sdk` path dependency，并继续通过 compat v0 re-export 使用原类型。remote 与 companion 保持各自 Gateway/EventBus/Tauri event；Provider v1 generated event 没有任何 Tauri publication 接线。
-6. 下一阶段若实现 Provider Host，应直接实现 `codepet-provider-sdk::ProtocolServer` 与 `ProtocolTransport`，并在 application boundary 映射到 gateway v1；不得让插件 event sink 指向 companion bus。
+1. `tools/protocol-codegen/generate.mjs` 读取所有包，统一审计 schema 和 manifest 中的全部 `$ref`，验证 Draft 2020-12 子集、依赖声明、method/event/capability metadata、transport discriminator 和 fixture。
+2. target registry 把 Rust、TypeScript、Dart、Python 映射到独立 adapter；未实现 adapter 不允许降级到其他语言。CodePet envelope 根据 manifest 的 `method`/`event` 与可选 event cursor 生成 tagged request/response/event。
+3. Provider 根据 JSON-RPC 2.0/stdio-json-lines 生成有界 `JsonLineCodec`、request/response/notification/event 入站分类、标准错误映射和含入站接口的 transport。未知 method 与非法 params 保留 request id，分别映射 `-32601` 与 `-32602`；response 必须满足 result/error XOR。
+4. v1 initialize/handshake 通过 `VersionRange` 提交支持范围，并返回 selected version。manifest version、wire version 与生成常量由同一输入产生。
+5. Provider 和 gateway 的资源 ID 均使用 `RoutedResourceId { deviceId, providerInstanceId, nativeResourceId }`；Provider descriptor 的 `instanceKinds` 非空，create request/instance 都携带稳定 `instanceKind`，生成 helper 供服务实现 fail closed 选择。
+6. capability enum、capability container 与 method mapping 同时受 manifest/schema 校验，并生成 typed `ProtocolMethod::capability()`。
+7. Tauri 只增加 `codepet-gateway-sdk` path dependency，并继续通过 compat v0 re-export 使用原类型。remote 与 companion 保持各自 Gateway/EventBus/Tauri event；Provider v1 generated event 没有任何 Tauri publication 接线。
+8. 下一阶段若实现 Provider Host，应直接实现 `codepet-provider-sdk::ProtocolServer` 与带 `next_message` 的 `ProtocolTransport`，并在 application boundary 映射到 gateway v1；不得让插件 event sink 指向 companion bus。
 
 ## 涉及模块
 
@@ -53,16 +55,19 @@
 ## 风险
 
 - 风险：在 core 放入 Pet/Provider/Gateway 领域对象，导致层间重新耦合。验证：codegen dependency audit 与 Node 测试断言 core 无上行依赖。
-- 风险：Pet schema 偷用 Provider conversation/approval，未来再次把 remote 事件投影到桌宠。验证：Node 测试扫描 Pet refs/definition 名；现有双 transport Rust 测试继续运行。
+- 风险：Pet schema 或 manifest 偷用 Provider conversation/approval，未来再次把 remote 事件投影到桌宠。验证：统一 `$ref` audit 和 manifest 反向负例；现有双 transport Rust 测试继续运行。
 - 风险：资源只带 native ID，在多设备或多个同类 Provider instance 间碰撞。验证：Provider/Gateway fixture 和 Rust round-trip 测试断言三段路由同时存在。
 - 风险：生成代码被手改或 Rust/TypeScript 输出漂移。验证：`npm run protocol:check` 比较完整内容并报告 stale file。
+- 风险：planned target 被错误交给 TypeScript 或静默无输出。验证：fake/Dart/Python fail-closed 测试与 TypeScript 多包跨 schema import 测试。
+- 风险：Provider stdio reader 无界增长、混淆 notification/event 或吞掉 JSON-RPC request id。验证：真实 line framing、超限、坏包、XOR、标准错误和 transport inbound 测试。
+- 风险：instance kind 或 capability 继续成为自由字符串并在实现间漂移。验证：schema/manifest contract audit、lifecycle fixture、typed mapping 和服务侧选择失败测试。
 - 风险：compat v0 搬迁改变 serde/wire 行为。验证：共享 v0 fixtures round-trip、generated dispatcher 和 Runtime Gateway core tests。
 - 风险：Tauri 构建机械改写 `macOS-schema.json`。验证：测试后检查 `git diff`；若漂移，只从本次基线精确恢复该文件。
 
 ## 测试计划
 
-- `npm run protocol:check`：schema/manifest/fixture、自洽、层依赖、generator targets 与 freshness。
-- `cargo test --manifest-path sdk/rust/Cargo.toml`：四个 SDK 生成/编译、version、JSON-RPC dispatcher、codec、event cursor 和 route round-trip。
+- `npm run protocol:check`：schema/manifest/fixture、自洽、联合层依赖、capability contract、target registry 与 freshness。
+- `cargo test --manifest-path sdk/rust/Cargo.toml`：四个 SDK 生成/编译、version、JSON-RPC dispatcher/line framing/标准错误、instance kind、event cursor 和 route round-trip。
 - `cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_protocol_tests --test runtime_gateway_core_tests`：v0 wire 与双链路隔离。
 - TypeScript 对兼容 SDK执行独立 `tsc --noEmit`，并运行现有前端 protocol/component tests。
 - 测试后确认 `src-tauri/gen/schemas/macOS-schema.json` 无提交差异。
@@ -75,5 +80,5 @@
 
 - Provider Host 的进程 supervisor、实例配置持久化和崩溃恢复语义尚未实现。
 - Gateway v1 event cursor 的持久化格式、过期窗口和远程 session 恢复策略尚未确定。
-- Dart/Python 对 unknown enum、async stream 和 codec error 的具体映射尚未实现，但必须使用现有 generator interface 与同一 IDL。
+- Dart/Python adapter 尚未实现；registry 会拒绝显式选择。未来实现仍需决定 unknown enum、async stream 和 codec error 映射，并必须使用现有 generator interface 与同一 IDL。
 - 现有 Desktop Companion 何时从 compat v0 映射到 Pet v1，需要独立阶段验证，不能顺带进入 Provider 协议。

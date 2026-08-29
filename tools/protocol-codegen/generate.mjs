@@ -8,6 +8,9 @@ export const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "
 const protocolRoot = resolve(repositoryRoot, "protocol");
 const configPath = resolve(protocolRoot, "codegen.json");
 
+export const GENERATOR_TARGET_INTERFACE = "codepet.protocol.codegen/v1";
+const defaultTargetIds = ["rust", "typescript"];
+
 const supportedKeywords = new Set([
   "$schema",
   "$id",
@@ -154,29 +157,34 @@ function validateSchema(record, model) {
     validateSchemaNode(definition, record, model, `${packageConfig.id}.schema.$defs.${name}`);
   }
 
-  const actualDependencies = new Set();
-  visitRefs(schema, (reference) => {
-    const target = parseReference(reference, schemaPath, model, `${packageConfig.id}.schema`);
-    if (target.record.packageConfig.id !== packageConfig.id) actualDependencies.add(target.record.packageConfig.id);
-  });
-  const declaredDependencies = new Set(packageConfig.dependencies);
-  for (const dependency of actualDependencies) {
-    assert(declaredDependencies.has(dependency), `${packageConfig.id} uses undeclared dependency ${dependency}`);
-  }
-  for (const dependency of declaredDependencies) {
-    assert(actualDependencies.has(dependency) || packageConfig.id === "gateway-compat-v0", `${packageConfig.id} declares unused dependency ${dependency}`);
-  }
-  if (packageConfig.layer === "core") {
-    assert(actualDependencies.size === 0, "core-v1 must not depend on pet, provider, or gateway schemas");
-  } else {
-    assert(
-      [...actualDependencies].every((id) => id === "core-v1"),
-      `${packageConfig.id} may only reference core-v1`,
-    );
-  }
 }
 
-function validateManifest(record, model) {
+function validateProviderInstanceKinds(record, model) {
+  if (record.packageConfig.layer !== "provider") return;
+  const definitions = record.schema.$defs;
+  const kind = definitions.ProviderInstanceKind;
+  assert(kind?.type === "string" && kind.minLength >= 1, `${record.packageConfig.id} ProviderInstanceKind must be a non-empty string`);
+
+  const assertKindField = (definitionName, fieldName, { array = false, nonEmpty = false } = {}) => {
+    const definition = definitions[definitionName];
+    assert(definition?.type === "object" && definition.properties, `${record.packageConfig.id} is missing ${definitionName}`);
+    assert((definition.required ?? []).includes(fieldName), `${record.packageConfig.id} ${definitionName}.${fieldName} must be required`);
+    const field = definition.properties[fieldName];
+    const item = array ? field?.items : field;
+    if (array) {
+      assert(field?.type === "array" && field.uniqueItems === true, `${record.packageConfig.id} ${definitionName}.${fieldName} must be a unique array`);
+      if (nonEmpty) assert(field.minItems >= 1, `${record.packageConfig.id} ${definitionName}.${fieldName} must be non-empty`);
+    }
+    const target = referenceTarget(item, record.schemaPath, model, `${record.packageConfig.id}.${definitionName}.${fieldName}`);
+    assert(target.record === record && target.name === "ProviderInstanceKind", `${record.packageConfig.id} ${definitionName}.${fieldName} must use ProviderInstanceKind`);
+  };
+
+  assertKindField("ProviderPluginDescriptor", "instanceKinds", { array: true, nonEmpty: true });
+  assertKindField("InstanceCreateRequest", "instanceKind");
+  assertKindField("ProviderInstance", "instanceKind");
+}
+
+export function validateManifest(record, model) {
   const { manifest, manifestPath, packageConfig } = record;
   assert(isObject(manifest), `${packageConfig.id} manifest must be an object`);
   assert(manifest.layer === packageConfig.layer, `${packageConfig.id} manifest layer mismatch`);
@@ -188,8 +196,11 @@ function validateManifest(record, model) {
   if (manifest.kind === "types") {
     assert(manifest.methods.length === 0 && manifest.events.length === 0, `${packageConfig.id} types manifest cannot declare methods or events`);
     assert(manifest.transport === undefined, `${packageConfig.id} types manifest cannot declare transport`);
+    assert(manifest.capabilities === undefined, `${packageConfig.id} types manifest cannot declare capabilities`);
     return;
   }
+
+  validateProviderInstanceKinds(record, model);
 
   assert(isObject(manifest.transport), `${packageConfig.id} service manifest requires transport`);
   assert(["codepet-envelope", "json-rpc-2.0"].includes(manifest.transport.kind), `${packageConfig.id} has unsupported transport kind`);
@@ -225,9 +236,37 @@ function validateManifest(record, model) {
     methodNames.add(method.name);
     assert(typeof method.direction === "string" && method.direction.length > 0, `${location}.direction is required`);
     assert(["safe", "idempotent", "nonIdempotent"].includes(method.idempotency), `${location}.idempotency is invalid`);
+    if (method.capability !== undefined) {
+      assert(typeof method.capability === "string" && method.capability.length > 0, `${location}.capability must be a non-empty string`);
+    }
     for (const side of ["request", "response"]) {
       const target = referenceTarget(method[side], manifestPath, model, `${location}.${side}`);
       assert(target.node.type === "object" && target.node.properties !== undefined, `${location}.${side} must reference an object DTO`);
+    }
+  }
+
+  const capabilityMethods = manifest.methods.filter((method) => method.capability !== undefined);
+  if (capabilityMethods.length === 0) {
+    assert(manifest.capabilities === undefined, `${packageConfig.id} declares capability metadata without capability-gated methods`);
+  } else {
+    exactKeys(manifest.capabilities, ["type", "container", "field"], `${packageConfig.id}.capabilities`);
+    assert(/^[a-z][A-Za-z0-9]*$/.test(manifest.capabilities.field), `${packageConfig.id}.capabilities.field must be camelCase`);
+    const capabilityType = referenceTarget(manifest.capabilities.type, manifestPath, model, `${packageConfig.id}.capabilities.type`);
+    assert(capabilityType.node.type === "string" && Array.isArray(capabilityType.node.enum), `${packageConfig.id} capability type must reference a string enum`);
+    const container = referenceTarget(manifest.capabilities.container, manifestPath, model, `${packageConfig.id}.capabilities.container`);
+    assert(container.node.type === "object" && container.node.properties, `${packageConfig.id} capability container must reference an object DTO`);
+    const field = container.node.properties[manifest.capabilities.field];
+    assert(field?.type === "array" && field.uniqueItems === true, `${packageConfig.id} capability field must be a unique array`);
+    assert((container.node.required ?? []).includes(manifest.capabilities.field), `${packageConfig.id} capability field must be required`);
+    const itemType = referenceTarget(field.items, container.record.schemaPath, model, `${packageConfig.id}.capabilities.container.${manifest.capabilities.field}`);
+    assert(itemType.record === capabilityType.record && itemType.name === capabilityType.name, `${packageConfig.id} capability field item type must match capability type`);
+    const usedCapabilities = new Set();
+    for (const method of capabilityMethods) {
+      assert(capabilityType.node.enum.includes(method.capability), `${packageConfig.id} method ${method.name} uses unknown capability ${method.capability}`);
+      usedCapabilities.add(method.capability);
+    }
+    for (const capability of capabilityType.node.enum) {
+      assert(usedCapabilities.has(capability), `${packageConfig.id} capability ${capability} is not mapped to a method`);
     }
   }
 
@@ -244,6 +283,38 @@ function validateManifest(record, model) {
     const target = referenceTarget(event.payload, manifestPath, model, `${location}.payload`);
     assert(target.node.type === "object" && target.node.properties !== undefined, `${location}.payload must reference an object DTO`);
   }
+}
+
+export function validatePackageReferences(record, model) {
+  const { packageConfig } = record;
+  const actualDependencies = new Set();
+  for (const [sourceName, source, sourcePath] of [
+    ["schema", record.schema, record.schemaPath],
+    ["manifest", record.manifest, record.manifestPath],
+  ]) {
+    visitRefs(source, (reference) => {
+      const target = parseReference(reference, sourcePath, model, `${packageConfig.id}.${sourceName}`);
+      if (target.record.packageConfig.id === packageConfig.id) return;
+      const targetPackage = target.record.packageConfig;
+      actualDependencies.add(targetPackage.id);
+      if (packageConfig.layer === "core") {
+        fail(`${packageConfig.id} ${sourceName} cannot reference ${targetPackage.layer} package ${targetPackage.id}`);
+      }
+      assert(
+        targetPackage.layer === "core",
+        `${packageConfig.id} ${sourceName} may only reference core packages, found ${targetPackage.id}`,
+      );
+    });
+  }
+
+  const declaredDependencies = new Set(packageConfig.dependencies);
+  for (const dependency of actualDependencies) {
+    assert(declaredDependencies.has(dependency), `${packageConfig.id} uses undeclared dependency ${dependency}`);
+  }
+  for (const dependency of declaredDependencies) {
+    assert(actualDependencies.has(dependency), `${packageConfig.id} declares unused dependency ${dependency}`);
+  }
+  return actualDependencies;
 }
 
 function validateValue(value, node, record, model, location) {
@@ -371,10 +442,24 @@ async function validateFixtures(record, model) {
 export async function loadProtocolModel() {
   const config = await readJson(configPath);
   assert(config.generatorInterfaceVersion === 1, "protocol/codegen.json has unsupported generatorInterfaceVersion");
-  assert(Array.isArray(config.languages) && config.languages.length >= 4, "protocol/codegen.json must declare language targets");
-  const languageIds = new Set(config.languages.map((language) => language.id));
+  assert(Array.isArray(config.targets) && config.targets.length >= 4, "protocol/codegen.json must declare generator targets");
+  const targetIds = new Set(config.targets.map((target) => target.id));
+  assert(targetIds.size === config.targets.length, "protocol/codegen.json contains duplicate generator targets");
   for (const required of ["rust", "typescript", "dart", "python"]) {
-    assert(languageIds.has(required), `protocol/codegen.json is missing ${required} generator interface`);
+    assert(targetIds.has(required), `protocol/codegen.json is missing ${required} generator target`);
+  }
+  for (const target of config.targets) {
+    assert(isObject(target), "protocol generator target must be an object");
+    assert(target.interface === GENERATOR_TARGET_INTERFACE, `${target.id} uses an unsupported generator target interface`);
+    assert(["active", "compatibility", "planned"].includes(target.status), `${target.id} has invalid generator target status`);
+    const adapter = generatorTargetRegistry[target.id];
+    assert(adapter, `protocol/codegen.json declares an unknown generator target: ${target.id}`);
+    assert(adapter.interface === target.interface, `${target.id} target registry interface mismatch`);
+    if (target.status === "planned") {
+      assert(!adapter.implemented, `${target.id} is marked planned but has an implemented adapter`);
+    } else {
+      assert(adapter.implemented, `${target.id} is marked ${target.status} without an implemented adapter`);
+    }
   }
   assert(Array.isArray(config.packages) && config.packages.length > 0, "protocol/codegen.json packages must be non-empty");
 
@@ -389,8 +474,8 @@ export async function loadProtocolModel() {
     assert(Number.isInteger(packageConfig.version) && packageConfig.version >= 0, `${packageConfig.id} has invalid version`);
     assert(Array.isArray(packageConfig.dependencies), `${packageConfig.id} dependencies must be an array`);
     assert(isObject(packageConfig.outputs) && Object.keys(packageConfig.outputs).length > 0, `${packageConfig.id} outputs must be non-empty`);
-    for (const language of Object.keys(packageConfig.outputs)) {
-      assert(languageIds.has(language), `${packageConfig.id} uses undeclared language ${language}`);
+    for (const target of Object.keys(packageConfig.outputs)) {
+      assert(targetIds.has(target), `${packageConfig.id} uses undeclared generator target ${target}`);
     }
     const schemaPath = resolve(protocolRoot, packageConfig.schema);
     const manifestPath = resolve(protocolRoot, packageConfig.manifest);
@@ -412,6 +497,7 @@ export async function loadProtocolModel() {
   const model = { config, records, schemasByPath, recordsById: new Map(records.map((record) => [record.packageConfig.id, record])) };
   for (const record of records) validateSchema(record, model);
   for (const record of records) validateManifest(record, model);
+  for (const record of records) validatePackageReferences(record, model);
   for (const record of records) await validateFixtures(record, model);
   return model;
 }
@@ -524,6 +610,21 @@ function protocolEnums(record, model) {
   const eventVariants = record.manifest.events.map((event) => `    #[serde(rename = "${event.name}")]\n    ${pascalCase(event.name)},`).join("\n");
   const eventAsStr = record.manifest.events.map((event) => `            Self::${pascalCase(event.name)} => "${event.name}",`).join("\n");
   const eventFromStr = record.manifest.events.map((event) => `            "${event.name}" => Ok(Self::${pascalCase(event.name)}),`).join("\n");
+  let capabilityMethod = "";
+  if (record.manifest.capabilities) {
+    const capabilityType = referenceTarget(record.manifest.capabilities.type, record.manifestPath, model, "capability type").name;
+    const capabilityArms = record.manifest.methods.map((method) => {
+      const value = method.capability ? `Some(${capabilityType}::${pascalCase(method.capability)})` : "None";
+      return `            Self::${pascalCase(method.name)} => ${value},`;
+    }).join("\n");
+    capabilityMethod = `
+
+    pub const fn capability(self) -> Option<${capabilityType}> {
+        match self {
+${capabilityArms}
+        }
+    }`;
+  }
   return `#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolMethod {
 ${methodVariants}
@@ -534,7 +635,7 @@ impl ProtocolMethod {
         match self {
 ${methodAsStr}
         }
-    }
+    }${capabilityMethod}
 }
 
 impl std::str::FromStr for ProtocolMethod {
@@ -607,10 +708,23 @@ function clientSupport(record, model) {
         })
     }`;
   }).join("\n\n");
-  return `pub type ProtocolTransportFuture<'a> = Pin<Box<dyn Future<Output = Result<serde_json::Value, ProtocolError>> + Send + 'a>>;
+  const inboundTransport = record.manifest.transport.kind === "json-rpc-2.0"
+    ? `
+
+pub type ProtocolInboundFuture<'a> = Pin<Box<dyn Future<Output = Result<ProviderWireMessage, JsonRpcInboundError>> + Send + 'a>>;`
+    : "";
+  const inboundMethod = record.manifest.transport.kind === "json-rpc-2.0"
+    ? "\n    fn next_message<'a>(&'a self) -> ProtocolInboundFuture<'a>;"
+    : "";
+  const inboundClient = record.manifest.transport.kind === "json-rpc-2.0" ? `
+
+    pub fn next_message<'a>(&'a self) -> ProtocolInboundFuture<'a> {
+        self.transport.next_message()
+    }` : "";
+  return `pub type ProtocolTransportFuture<'a> = Pin<Box<dyn Future<Output = Result<serde_json::Value, ProtocolError>> + Send + 'a>>;${inboundTransport}
 
 pub trait ProtocolTransport: Send + Sync {
-    fn request<'a>(&'a self, method: ProtocolMethod, params: serde_json::Value) -> ProtocolTransportFuture<'a>;
+    fn request<'a>(&'a self, method: ProtocolMethod, params: serde_json::Value) -> ProtocolTransportFuture<'a>;${inboundMethod}
 }
 
 pub struct ProtocolClient<T> {
@@ -628,7 +742,7 @@ impl<T> ProtocolClient<T> {
 }
 
 impl<T: ProtocolTransport> ProtocolClient<T> {
-${methods}
+${methods}${inboundClient}
 }
 
 fn codec_error(context: &str, error: serde_json::Error) -> ProtocolError {
@@ -785,10 +899,17 @@ function generateJsonRpc(record, model) {
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         }`;
   }).join(",\n");
   return `${protocolEnums(record, model)}
+
+pub const JSON_RPC_PARSE_ERROR: i64 = -32700;
+pub const JSON_RPC_INVALID_REQUEST: i64 = -32600;
+pub const JSON_RPC_METHOD_NOT_FOUND: i64 = -32601;
+pub const JSON_RPC_INVALID_PARAMS: i64 = -32602;
+pub const JSON_RPC_INTERNAL_ERROR: i64 = -32603;
+pub const DEFAULT_MAX_JSON_LINE_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "${manifest.transport.requestDiscriminator}")]
@@ -825,13 +946,87 @@ pub enum JsonRpcResponsePayload {
     Error { error: RpcError },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct JsonRpcResponse {
     pub jsonrpc: String,
-    pub id: RequestId,
+    pub id: Option<RequestId>,
     #[serde(flatten)]
     pub response: JsonRpcResponsePayload,
 }
+
+impl<'de> Deserialize<'de> for JsonRpcResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        parse_jsonrpc_response(value).map_err(|error| serde::de::Error::custom(error.to_string()))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JsonRpcNotification {
+    pub jsonrpc: String,
+    pub method: String,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub params: serde_json::Value,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsonRpcRequestRejection {
+    pub id: RequestId,
+    pub method: String,
+    pub error: RpcError,
+}
+
+impl JsonRpcRequestRejection {
+    pub fn into_response(self) -> JsonRpcResponse {
+        JsonRpcResponse {
+            jsonrpc: "${manifest.transport.jsonRpcVersion}".to_string(),
+            id: Some(self.id),
+            response: JsonRpcResponsePayload::Error { error: self.error },
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum JsonRpcInboundRequest {
+    Typed(ProtocolRequest),
+    Rejected(JsonRpcRequestRejection),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProviderWireMessage {
+    Request(JsonRpcInboundRequest),
+    Response(JsonRpcResponse),
+    Notification(JsonRpcNotification),
+    Event(ProtocolEvent),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsonRpcInboundError {
+    pub id: Option<RequestId>,
+    pub error: RpcError,
+}
+
+impl JsonRpcInboundError {
+    pub fn into_response(self) -> JsonRpcResponse {
+        JsonRpcResponse {
+            jsonrpc: "${manifest.transport.jsonRpcVersion}".to_string(),
+            id: self.id,
+            response: JsonRpcResponsePayload::Error { error: self.error },
+        }
+    }
+}
+
+impl std::fmt::Display for JsonRpcInboundError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "JSON-RPC error {}: {}", self.error.code, self.error.message)
+    }
+}
+
+impl std::error::Error for JsonRpcInboundError {}
 
 ${serverTrait(record, model)}
 
@@ -873,7 +1068,31 @@ fn rpc_method_error(error: ProtocolError) -> RpcError {
 }
 
 fn rpc_codec_error(context: &str, error: serde_json::Error) -> RpcError {
-    RpcError { code: -32603, message: format!("{context}: {error}"), data: None }
+    RpcError { code: JSON_RPC_INTERNAL_ERROR, message: format!("{context}: {error}"), data: None }
+}
+
+fn inbound_error(id: Option<RequestId>, code: i64, message: impl Into<String>) -> JsonRpcInboundError {
+    JsonRpcInboundError {
+        id,
+        error: RpcError { code, message: message.into(), data: None },
+    }
+}
+
+fn inbound_protocol_error(error: JsonRpcInboundError) -> ProtocolError {
+    ProtocolError {
+        code: format!("json_rpc_{}", error.error.code),
+        message: error.error.message,
+        retryable: false,
+        details: error.error.data,
+    }
+}
+
+fn object_has_only(object: &serde_json::Map<String, serde_json::Value>, allowed: &[&str]) -> bool {
+    object.keys().all(|key| allowed.contains(&key.as_str()))
+}
+
+fn object_request_id(object: &serde_json::Map<String, serde_json::Value>) -> Option<RequestId> {
+    object.get("id").and_then(serde_json::Value::as_str).map(str::to_string)
 }
 
 fn validate_jsonrpc(version: &str) -> Result<(), ProtocolError> {
@@ -888,15 +1107,107 @@ fn validate_jsonrpc(version: &str) -> Result<(), ProtocolError> {
     })
 }
 
+fn validate_inbound_jsonrpc(object: &serde_json::Map<String, serde_json::Value>, id: Option<RequestId>) -> Result<(), JsonRpcInboundError> {
+    match object.get("jsonrpc").and_then(serde_json::Value::as_str) {
+        Some("${manifest.transport.jsonRpcVersion}") => Ok(()),
+        _ => Err(inbound_error(id, JSON_RPC_INVALID_REQUEST, "jsonrpc must be exactly ${manifest.transport.jsonRpcVersion}")),
+    }
+}
+
+fn parse_jsonrpc_response(value: serde_json::Value) -> Result<JsonRpcResponse, JsonRpcInboundError> {
+    let object = value.as_object().ok_or_else(|| inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC response must be an object"))?;
+    let id = match object.get("id") {
+        Some(serde_json::Value::String(value)) => Some(value.clone()),
+        Some(serde_json::Value::Null) => None,
+        _ => return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC response id must be a string or null")),
+    };
+    validate_inbound_jsonrpc(object, id.clone())?;
+    let has_result = object.contains_key("result");
+    let has_error = object.contains_key("error");
+    if has_result == has_error {
+        return Err(inbound_error(id, JSON_RPC_INVALID_REQUEST, "JSON-RPC response must contain exactly one of result or error"));
+    }
+    if !object_has_only(object, &["jsonrpc", "id", if has_result { "result" } else { "error" }]) {
+        return Err(inbound_error(id, JSON_RPC_INVALID_REQUEST, "JSON-RPC response contains unknown fields"));
+    }
+    let response = if has_result {
+        JsonRpcResponsePayload::Ok { result: object["result"].clone() }
+    } else {
+        let error = serde_json::from_value(object["error"].clone())
+            .map_err(|error| inbound_error(id.clone(), JSON_RPC_INVALID_REQUEST, format!("invalid JSON-RPC error object: {error}")))?;
+        JsonRpcResponsePayload::Error { error }
+    };
+    Ok(JsonRpcResponse { jsonrpc: "${manifest.transport.jsonRpcVersion}".to_string(), id, response })
+}
+
+pub fn decode_wire_message(value: &[u8]) -> Result<ProviderWireMessage, JsonRpcInboundError> {
+    let value: serde_json::Value = serde_json::from_slice(value)
+        .map_err(|error| inbound_error(None, JSON_RPC_PARSE_ERROR, format!("parse error: {error}")))?;
+    let object = value.as_object().ok_or_else(|| inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC message must be an object"))?;
+    let id = object_request_id(object);
+    validate_inbound_jsonrpc(object, id.clone())?;
+
+    if let Some(method_value) = object.get("method") {
+        let method = method_value.as_str().ok_or_else(|| inbound_error(id.clone(), JSON_RPC_INVALID_REQUEST, "JSON-RPC method must be a string"))?.to_string();
+        if object.contains_key("id") {
+            let id = id.ok_or_else(|| inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC request id must be a string"))?;
+            if !object_has_only(object, &["jsonrpc", "id", "method", "params"]) {
+                return Err(inbound_error(Some(id), JSON_RPC_INVALID_REQUEST, "JSON-RPC request contains unknown fields"));
+            }
+            if method.parse::<ProtocolMethod>().is_err() {
+                return Ok(ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(JsonRpcRequestRejection {
+                    id,
+                    method: method.clone(),
+                    error: RpcError { code: JSON_RPC_METHOD_NOT_FOUND, message: format!("method not found: {method}"), data: None },
+                })));
+            }
+            return match serde_json::from_value(value) {
+                Ok(request) => Ok(ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request))),
+                Err(error) => Ok(ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(JsonRpcRequestRejection {
+                    id,
+                    method: method.clone(),
+                    error: RpcError { code: JSON_RPC_INVALID_PARAMS, message: format!("invalid params for {method}: {error}"), data: None },
+                }))),
+            };
+        }
+
+        if !object_has_only(object, &["jsonrpc", "method", "params"]) {
+            return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC notification contains unknown fields"));
+        }
+        if method.parse::<ProtocolEventName>().is_ok() {
+            let event = serde_json::from_value(value)
+                .map_err(|error| inbound_error(None, JSON_RPC_INVALID_PARAMS, format!("invalid event params for {method}: {error}")))?;
+            return Ok(ProviderWireMessage::Event(event));
+        }
+        return Ok(ProviderWireMessage::Notification(JsonRpcNotification {
+            jsonrpc: "${manifest.transport.jsonRpcVersion}".to_string(),
+            method,
+            params: object.get("params").cloned().unwrap_or(serde_json::Value::Null),
+        }));
+    }
+
+    parse_jsonrpc_response(value).map(ProviderWireMessage::Response)
+}
+
 pub fn encode_request(value: &ProtocolRequest) -> Result<Vec<u8>, ProtocolError> {
     validate_jsonrpc(value.jsonrpc_version())?;
     serde_json::to_vec(value).map_err(|error| codec_error("encode request", error))
 }
 
 pub fn decode_request(value: &[u8]) -> Result<ProtocolRequest, ProtocolError> {
-    let request: ProtocolRequest = serde_json::from_slice(value).map_err(|error| codec_error("decode request", error))?;
-    validate_jsonrpc(request.jsonrpc_version())?;
-    Ok(request)
+    match decode_wire_message(value).map_err(inbound_protocol_error)? {
+        ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request)) => Ok(request),
+        ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(rejection)) => Err(inbound_protocol_error(JsonRpcInboundError {
+            id: Some(rejection.id),
+            error: rejection.error,
+        })),
+        _ => Err(ProtocolError {
+            code: "unexpected_json_rpc_message".to_string(),
+            message: "expected JSON-RPC request".to_string(),
+            retryable: false,
+            details: None,
+        }),
+    }
 }
 
 pub fn encode_response(value: &JsonRpcResponse) -> Result<Vec<u8>, ProtocolError> {
@@ -905,9 +1216,15 @@ pub fn encode_response(value: &JsonRpcResponse) -> Result<Vec<u8>, ProtocolError
 }
 
 pub fn decode_response(value: &[u8]) -> Result<JsonRpcResponse, ProtocolError> {
-    let response: JsonRpcResponse = serde_json::from_slice(value).map_err(|error| codec_error("decode response", error))?;
-    validate_jsonrpc(&response.jsonrpc)?;
-    Ok(response)
+    match decode_wire_message(value).map_err(inbound_protocol_error)? {
+        ProviderWireMessage::Response(response) => Ok(response),
+        _ => Err(ProtocolError {
+            code: "unexpected_json_rpc_message".to_string(),
+            message: "expected JSON-RPC response".to_string(),
+            retryable: false,
+            details: None,
+        }),
+    }
 }
 
 pub fn encode_event(value: &ProtocolEvent) -> Result<Vec<u8>, ProtocolError> {
@@ -916,9 +1233,195 @@ pub fn encode_event(value: &ProtocolEvent) -> Result<Vec<u8>, ProtocolError> {
 }
 
 pub fn decode_event(value: &[u8]) -> Result<ProtocolEvent, ProtocolError> {
-    let event: ProtocolEvent = serde_json::from_slice(value).map_err(|error| codec_error("decode event", error))?;
-    validate_jsonrpc(event.jsonrpc_version())?;
-    Ok(event)
+    match decode_wire_message(value).map_err(inbound_protocol_error)? {
+        ProviderWireMessage::Event(event) => Ok(event),
+        _ => Err(ProtocolError {
+            code: "unexpected_json_rpc_message".to_string(),
+            message: "expected JSON-RPC event".to_string(),
+            retryable: false,
+            details: None,
+        }),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JsonLineCodec {
+    max_frame_bytes: usize,
+}
+
+impl JsonLineCodec {
+    pub fn new(max_frame_bytes: usize) -> Result<Self, ProtocolError> {
+        if max_frame_bytes == 0 {
+            return Err(ProtocolError {
+                code: "invalid_frame_limit".to_string(),
+                message: "JSON line frame limit must be greater than zero".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+        Ok(Self { max_frame_bytes })
+    }
+
+    pub const fn max_frame_bytes(&self) -> usize {
+        self.max_frame_bytes
+    }
+
+    fn frame_payload(&self, mut payload: Vec<u8>) -> Result<Vec<u8>, ProtocolError> {
+        if payload.len() > self.max_frame_bytes {
+            return Err(ProtocolError {
+                code: "json_line_frame_too_large".to_string(),
+                message: format!("JSON line frame exceeds {} bytes", self.max_frame_bytes),
+                retryable: false,
+                details: None,
+            });
+        }
+        if payload.contains(&b'\\n') || payload.contains(&b'\\r') {
+            return Err(ProtocolError {
+                code: "invalid_json_line_frame".to_string(),
+                message: "JSON line payload contains a physical line break".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+        payload.push(b'\\n');
+        Ok(payload)
+    }
+
+    pub fn encode_message(&self, message: &ProviderWireMessage) -> Result<Vec<u8>, ProtocolError> {
+        let payload = match message {
+            ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request)) => encode_request(request)?,
+            ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(_)) => {
+                return Err(ProtocolError {
+                    code: "cannot_encode_rejected_request".to_string(),
+                    message: "a rejected inbound request is not a wire request".to_string(),
+                    retryable: false,
+                    details: None,
+                });
+            }
+            ProviderWireMessage::Response(response) => encode_response(response)?,
+            ProviderWireMessage::Notification(notification) => {
+                validate_jsonrpc(&notification.jsonrpc)?;
+                serde_json::to_vec(notification).map_err(|error| codec_error("encode notification", error))?
+            }
+            ProviderWireMessage::Event(event) => encode_event(event)?,
+        };
+        self.frame_payload(payload)
+    }
+
+    pub fn decode_line(&self, line: &[u8]) -> Result<ProviderWireMessage, JsonRpcInboundError> {
+        let mut payload = line;
+        if payload.ends_with(b"\\n") {
+            payload = &payload[..payload.len() - 1];
+            if payload.ends_with(b"\\r") {
+                payload = &payload[..payload.len() - 1];
+            }
+        }
+        if payload.len() > self.max_frame_bytes {
+            return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, format!("JSON line frame exceeds {} bytes", self.max_frame_bytes)));
+        }
+        if payload.contains(&b'\\n') || payload.contains(&b'\\r') {
+            return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON line frame contains multiple physical lines"));
+        }
+        decode_wire_message(payload)
+    }
+
+    pub fn read_message<R: BufRead>(&self, reader: &mut R) -> Result<Option<ProviderWireMessage>, JsonRpcInboundError> {
+        let mut frame = Vec::with_capacity(self.max_frame_bytes.min(8192));
+        loop {
+            let (consumed, complete) = {
+                let available = reader.fill_buf()
+                    .map_err(|error| inbound_error(None, JSON_RPC_INTERNAL_ERROR, format!("read JSON line frame: {error}")))?;
+                if available.is_empty() {
+                    if frame.is_empty() {
+                        return Ok(None);
+                    }
+                    return self.decode_line(&frame).map(Some);
+                }
+                let newline = available.iter().position(|byte| *byte == b'\\n');
+                let payload_bytes = newline.unwrap_or(available.len());
+                if frame.len() + payload_bytes > self.max_frame_bytes {
+                    return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, format!("JSON line frame exceeds {} bytes", self.max_frame_bytes)));
+                }
+                frame.extend_from_slice(&available[..payload_bytes]);
+                (newline.map_or(payload_bytes, |index| index + 1), newline.is_some())
+            };
+            reader.consume(consumed);
+            if complete {
+                if frame.ends_with(b"\\r") {
+                    frame.pop();
+                }
+                return self.decode_line(&frame).map(Some);
+            }
+        }
+    }
+
+    pub fn write_message<W: Write>(&self, writer: &mut W, message: &ProviderWireMessage) -> Result<(), ProtocolError> {
+        let frame = self.encode_message(message)?;
+        writer.write_all(&frame).map_err(|error| ProtocolError {
+            code: "json_line_write_failed".to_string(),
+            message: format!("write JSON line frame: {error}"),
+            retryable: true,
+            details: None,
+        })
+    }
+}
+
+impl Default for JsonLineCodec {
+    fn default() -> Self {
+        Self { max_frame_bytes: DEFAULT_MAX_JSON_LINE_BYTES }
+    }
+}`;
+}
+
+function providerInstanceKindSupport(record) {
+  if (record.packageConfig.layer !== "provider") return "";
+  return `impl ProviderPluginDescriptor {
+    pub fn validate_instance_kinds(&self) -> Result<(), ProtocolError> {
+        if self.instance_kinds.is_empty() {
+            return Err(ProtocolError {
+                code: "invalid_provider_descriptor".to_string(),
+                message: "provider descriptor must declare at least one instance kind".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+        for (index, instance_kind) in self.instance_kinds.iter().enumerate() {
+            if instance_kind.is_empty() {
+                return Err(ProtocolError {
+                    code: "invalid_provider_descriptor".to_string(),
+                    message: "provider descriptor instance kinds must be non-empty".to_string(),
+                    retryable: false,
+                    details: None,
+                });
+            }
+            if self.instance_kinds[..index].contains(instance_kind) {
+                return Err(ProtocolError {
+                    code: "invalid_provider_descriptor".to_string(),
+                    message: format!("provider descriptor contains duplicate instance kind: {instance_kind}"),
+                    retryable: false,
+                    details: None,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn supports_instance_kind(&self, instance_kind: &str) -> bool {
+        self.instance_kinds.iter().any(|supported| supported == instance_kind)
+    }
+
+    pub fn validate_instance_kind(&self, instance_kind: &str) -> Result<(), ProtocolError> {
+        self.validate_instance_kinds()?;
+        if self.supports_instance_kind(instance_kind) {
+            return Ok(());
+        }
+        Err(ProtocolError {
+            code: "unsupported_instance_kind".to_string(),
+            message: format!("provider does not support instance kind: {instance_kind}"),
+            retryable: false,
+            details: None,
+        })
+    }
 }`;
 }
 
@@ -927,6 +1430,7 @@ function generateRust(record, model) {
   const imports = rustImports(record, model);
   const definitions = rustDefinitions(record, model);
   const collectionsImport = definitions.includes("BTreeMap<") ? "use std::collections::BTreeMap;\n" : "";
+  const ioImport = record.manifest.transport?.kind === "json-rpc-2.0" ? "use std::io::{BufRead, Write};\n" : "";
   if (record.manifest.kind === "types") {
     return `// @generated by tools/protocol-codegen/generate.mjs from ${sourceFiles}.
 // DO NOT EDIT MANUALLY.
@@ -940,18 +1444,20 @@ ${imports ? `${imports}\n\n` : ""}${definitions}
   const service = record.manifest.transport.kind === "json-rpc-2.0"
     ? generateJsonRpc(record, model)
     : generateCodepetEnvelope(record, model);
+  const instanceKindSupport = providerInstanceKindSupport(record);
+  const instanceKindBlock = instanceKindSupport ? `${instanceKindSupport}\n\n` : "";
   return `// @generated by tools/protocol-codegen/generate.mjs from ${sourceFiles}.
 // DO NOT EDIT MANUALLY.
 
 use serde::{Deserialize, Serialize};
-${collectionsImport}use std::future::Future;
+${collectionsImport}${ioImport}use std::future::Future;
 use std::pin::Pin;
 
 ${imports ? `${imports}\n\n` : ""}pub const PROTOCOL_VERSION: ProtocolVersion = ${record.manifest.version};
 
 ${definitions}
 
-${service}
+${instanceKindBlock}${service}
 `;
 }
 
@@ -1052,6 +1558,54 @@ export interface ProtocolTransport {
 `;
 }
 
+/**
+ * Generator target adapter contract. A real adapter receives one validated
+ * package record plus the complete protocol model and returns deterministic
+ * source text. Planned adapters stay registered without a render function so
+ * explicit selection fails before any output is written.
+ *
+ * render({ record, model, output }) -> string
+ */
+export const generatorTargetRegistry = Object.freeze({
+  rust: Object.freeze({
+    id: "rust",
+    interface: GENERATOR_TARGET_INTERFACE,
+    implemented: true,
+    render: ({ record, model }) => generateRust(record, model),
+  }),
+  typescript: Object.freeze({
+    id: "typescript",
+    interface: GENERATOR_TARGET_INTERFACE,
+    implemented: true,
+    render: ({ record, model }) => generateTypeScript(record, model),
+  }),
+  dart: Object.freeze({
+    id: "dart",
+    interface: GENERATOR_TARGET_INTERFACE,
+    implemented: false,
+  }),
+  python: Object.freeze({
+    id: "python",
+    interface: GENERATOR_TARGET_INTERFACE,
+    implemented: false,
+  }),
+});
+
+export function resolveGeneratorTargets(targetIds, config) {
+  assert(Array.isArray(targetIds) && targetIds.length > 0, "at least one generator target must be selected");
+  assert(new Set(targetIds).size === targetIds.length, "generator targets must not contain duplicates");
+  const declared = new Map(config.targets.map((target) => [target.id, target]));
+  return targetIds.map((targetId) => {
+    const adapter = generatorTargetRegistry[targetId];
+    assert(adapter, `unknown generator target: ${targetId}`);
+    const target = declared.get(targetId);
+    assert(target, `generator target is not declared by protocol/codegen.json: ${targetId}`);
+    assert(adapter.interface === target.interface, `generator target interface mismatch: ${targetId}`);
+    assert(adapter.implemented && typeof adapter.render === "function", `generator target is not implemented: ${targetId}`);
+    return adapter;
+  });
+}
+
 async function updateGeneratedFile(path, content, checkMode, staleFiles) {
   let current;
   try {
@@ -1068,30 +1622,42 @@ async function updateGeneratedFile(path, content, checkMode, staleFiles) {
   await writeFile(path, content, "utf8");
 }
 
-export async function generateProtocol({ checkMode = false, languages = ["rust", "typescript"] } = {}) {
+export async function generateProtocol({ checkMode = false, targets = defaultTargetIds } = {}) {
   const model = await loadProtocolModel();
-  const knownLanguages = new Set(model.config.languages.map((language) => language.id));
-  for (const language of languages) assert(knownLanguages.has(language), `unknown language target: ${language}`);
+  const adapters = resolveGeneratorTargets(targets, model.config);
+  for (const adapter of adapters) {
+    assert(
+      model.records.some((record) => record.packageConfig.outputs[adapter.id]),
+      `generator target has no package outputs: ${adapter.id}`,
+    );
+  }
   const staleFiles = [];
+  const artifacts = [];
   for (const record of model.records) {
-    for (const language of languages) {
-      const output = record.packageConfig.outputs[language];
+    for (const adapter of adapters) {
+      const output = record.packageConfig.outputs[adapter.id];
       if (!output) continue;
-      const content = language === "rust" ? generateRust(record, model) : generateTypeScript(record, model);
-      await updateGeneratedFile(resolve(repositoryRoot, output), content, checkMode, staleFiles);
+      const content = adapter.render({ record, model, output });
+      artifacts.push({ packageId: record.packageConfig.id, targetId: adapter.id, output, content });
     }
+  }
+  for (const artifact of artifacts) {
+    await updateGeneratedFile(resolve(repositoryRoot, artifact.output), artifact.content, checkMode, staleFiles);
   }
   if (staleFiles.length > 0) {
     fail(`generated protocol files are stale:\n${staleFiles.map((path) => `- ${path}`).join("\n")}\nRun npm run protocol:generate.`);
   }
-  return { model, staleFiles };
+  const generated = artifacts.map(({ content: _content, ...artifact }) => artifact);
+  return { model, staleFiles, generated };
 }
 
 async function main() {
   const checkMode = process.argv.includes("--check");
-  const languageArgument = process.argv.find((argument) => argument.startsWith("--language="));
-  const languages = languageArgument ? languageArgument.slice("--language=".length).split(",").filter(Boolean) : ["rust", "typescript"];
-  await generateProtocol({ checkMode, languages });
+  const obsoleteLanguageArgument = process.argv.find((argument) => argument.startsWith("--language="));
+  assert(!obsoleteLanguageArgument, "--language is unsupported; use --target=<id>[,<id>]");
+  const targetArgument = process.argv.find((argument) => argument.startsWith("--target="));
+  const targets = targetArgument ? targetArgument.slice("--target=".length).split(",").filter(Boolean) : defaultTargetIds;
+  await generateProtocol({ checkMode, targets });
   console.log(checkMode ? "protocol generated files are up to date" : "protocol generated files updated");
 }
 

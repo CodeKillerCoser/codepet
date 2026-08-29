@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { generateProtocol, loadProtocolModel } from "./generate.mjs";
+import {
+  GENERATOR_TARGET_INTERFACE,
+  generateProtocol,
+  loadProtocolModel,
+  validateManifest,
+  validatePackageReferences,
+} from "./generate.mjs";
 
 function record(model, id) {
   const value = model.recordsById.get(id);
@@ -34,6 +41,21 @@ test("core has no upward dependency and pet never references provider or gateway
   assert.deepEqual(pet.packageConfig.dependencies, ["core-v1"]);
   assert.equal(allRefs(pet.schema).some((ref) => ref.includes("provider") || ref.includes("gateway")), false);
   assert.equal(JSON.stringify(pet.schema).includes("Provider"), false);
+});
+
+test("manifest references obey the same declared dependency and layer rules as schemas", async () => {
+  const model = await loadProtocolModel();
+  const pet = record(model, "pet-v1");
+  const original = pet.manifest.error.$ref;
+  pet.manifest.error.$ref = "../../provider/v1/schema.json#/$defs/ProviderInitializeRequest";
+  try {
+    assert.throws(
+      () => validatePackageReferences(pet, model),
+      /pet-v1 manifest may only reference core packages, found provider-v1/,
+    );
+  } finally {
+    pet.manifest.error.$ref = original;
+  }
 });
 
 test("provider is JSON-RPC over stdio and owns plugin instance lifecycle", async () => {
@@ -79,12 +101,52 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
 
 test("future language generators share the same declared interface", async () => {
   const model = await loadProtocolModel();
-  const languages = new Map(model.config.languages.map((language) => [language.id, language]));
-  assert.equal(languages.get("rust").status, "active");
-  assert.equal(languages.get("typescript").status, "compatibility");
-  assert.equal(languages.get("dart").status, "planned");
-  assert.equal(languages.get("python").status, "planned");
-  assert.equal(new Set(model.config.languages.map((language) => language.interface)).size, 1);
+  const targets = new Map(model.config.targets.map((target) => [target.id, target]));
+  assert.equal(targets.get("rust").status, "active");
+  assert.equal(targets.get("typescript").status, "compatibility");
+  assert.equal(targets.get("dart").status, "planned");
+  assert.equal(targets.get("python").status, "planned");
+  assert.deepEqual(new Set(model.config.targets.map((target) => target.interface)), new Set([GENERATOR_TARGET_INTERFACE]));
+});
+
+test("target registry fails closed for fake and planned adapters", async () => {
+  await assert.rejects(
+    generateProtocol({ checkMode: true, targets: ["fake"] }),
+    /unknown generator target: fake/,
+  );
+  for (const target of ["dart", "python"]) {
+    await assert.rejects(
+      generateProtocol({ checkMode: true, targets: [target] }),
+      new RegExp(`generator target is not implemented: ${target}`),
+    );
+  }
+});
+
+test("TypeScript adapter handles multiple packages and cross-schema imports", async () => {
+  const result = await generateProtocol({ checkMode: true, targets: ["typescript"] });
+  assert.deepEqual(
+    result.generated.map(({ packageId, targetId }) => [packageId, targetId]),
+    [["core-v1", "typescript"], ["gateway-compat-v0", "typescript"]],
+  );
+  const source = await readFile("sdk/typescript/codepet-gateway-sdk/src/compat-v0.ts", "utf8");
+  assert.match(source, /from "\.\.\/\.\.\/codepet-core-sdk\/src\/generated"/);
+  assert.match(source, /import type \{ Cursor, EventSequence, JsonObject, ProtocolError, ProtocolVersion, RequestId, TimestampMs \}/);
+});
+
+test("capability metadata rejects unknown method capability values", async () => {
+  const model = await loadProtocolModel();
+  const provider = record(model, "provider-v1");
+  const method = provider.manifest.methods.find((entry) => entry.name === "conversation.list");
+  const original = method.capability;
+  method.capability = "conversation.lsit";
+  try {
+    assert.throws(
+      () => validateManifest(provider, model),
+      /uses unknown capability conversation\.lsit/,
+    );
+  } finally {
+    method.capability = original;
+  }
 });
 
 test("checked-in SDK files are fresh", async () => {

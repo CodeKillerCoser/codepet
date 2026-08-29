@@ -1,6 +1,6 @@
 {
   "generatorInterfaceVersion": 1,
-  "languages": [
+  "targets": [
     {
       "id": "rust",
       "interface": "codepet.protocol.codegen/v1",

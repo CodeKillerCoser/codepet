@@ -15,6 +15,11 @@
   "error": {
     "$ref": "../../core/v1/schema.json#/$defs/ProtocolError"
   },
+  "capabilities": {
+    "type": { "$ref": "./schema.json#/$defs/ProviderCapability" },
+    "container": { "$ref": "./schema.json#/$defs/ProviderCapabilities" },
+    "field": "methods"
+  },
   "methods": [
     {
       "name": "provider.initialize",

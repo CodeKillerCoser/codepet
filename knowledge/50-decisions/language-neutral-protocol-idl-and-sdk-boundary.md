@@ -10,6 +10,8 @@
 
 Provider v1 固定为 Host ↔ 独立 Provider 二进制的 JSON-RPC 2.0/stdio 协议，拥有插件描述与 instance 生命周期。Gateway v1 固定为 Host ↔ Remote Client 协议，只暴露设备、Provider instance、远程资源与 event cursor，不暴露插件进程控制。Pet v1 固定为 Desktop Companion 驱动的任务、审批、动作、快照与 patch，不引用 Provider 领域对象。
 
+每种输出语言必须通过 `codepet.protocol.codegen/v1` target adapter registry 显式接入。Rust、TypeScript 是已实现 adapter；Dart/Python 在实现前保持 planned 且选择即失败，不能落入另一个语言 generator 或静默跳过。schema 与 manifest 的 `$ref` 使用同一依赖审计，capability type/container/method mapping 也是生成器受检契约。
+
 现有进程内 Runtime Gateway 暂时使用同一 gateway SDK 内的生成 compat v0 module。compat profile 仍来自 `protocol/gateway/v1` 下的 IDL，不允许在 Tauri 源码复制 DTO。它只用于保持当前双链路编译和行为，不代表 Provider v1 或 Gateway v1 已进入生产 transport。
 
 ## 备选方案
@@ -29,7 +31,9 @@ JSON Schema Draft 2020-12 加 method/event manifest 能同时表达跨语言 DTO
 
 - 协议改动必须先修改 `protocol/`，运行生成器，再提交生成物和 fixture。
 - `tools/protocol-codegen` 必须拒绝未声明依赖、未知 schema 关键字与 stale output。
+- target adapter 未实现、没有 package output 或 interface/status 不一致时必须在写入前失败。
 - Rust 业务 crate 依赖 `codepet-*-sdk`；不得新增 `codepet-*-protocol` crate。
+- Provider Host 使用生成的有界 JSON-line codec 与统一 wire classifier，不自行实现另一套宽松 response/notification parser。
 - Provider 事件与 Pet 事件使用不同生成 enum 和 server/client contract，不能通过同一个 event sink 互换。
 - 新远程资源必须包含 device、provider instance 与 native resource 三段 identity；单独 native ID 只允许在已绑定 route 的内部 adapter 中使用。
 - Dart/Python generator 可以后加，但只能消费 `protocol/codegen.json` 声明的同一接口和 IDL。

@@ -2,6 +2,7 @@
 // DO NOT EDIT MANUALLY.
 
 use serde::{Deserialize, Serialize};
+use std::io::{BufRead, Write};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -156,6 +157,7 @@ pub struct InstanceCapabilitiesResponse {
 #[serde(deny_unknown_fields)]
 pub struct InstanceCreateRequest {
     pub route: ProviderInstanceRoute,
+    pub instance_kind: ProviderInstanceKind,
     pub display_name: String,
     pub settings: JsonObject,
 }
@@ -260,11 +262,29 @@ pub struct ProviderApproval {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ProviderCapabilities {
-    pub methods: Vec<String>,
+    pub methods: Vec<ProviderCapability>,
     pub permission_levels: Vec<String>,
     pub models: Vec<String>,
     pub reasoning_efforts: Vec<String>,
     pub extensions: Vec<ProviderExtension>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProviderCapability {
+    #[serde(rename = "conversation.list")]
+    ConversationList,
+    #[serde(rename = "conversation.get")]
+    ConversationGet,
+    #[serde(rename = "conversation.create")]
+    ConversationCreate,
+    #[serde(rename = "turn.start")]
+    TurnStart,
+    #[serde(rename = "turn.steer")]
+    TurnSteer,
+    #[serde(rename = "turn.interrupt")]
+    TurnInterrupt,
+    #[serde(rename = "approval.resolve")]
+    ApprovalResolve,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -337,10 +357,13 @@ pub struct ProviderInitializeResponse {
 pub struct ProviderInstance {
     pub route: ProviderInstanceRoute,
     pub plugin_id: ProviderPluginId,
+    pub instance_kind: ProviderInstanceKind,
     pub display_name: String,
     pub status: InstanceStatus,
     pub capabilities: ProviderCapabilities,
 }
+
+pub type ProviderInstanceKind = String;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -358,7 +381,7 @@ pub struct ProviderPluginDescriptor {
     pub display_name: String,
     pub version: String,
     pub supported_versions: VersionRange,
-    pub instance_kinds: Vec<String>,
+    pub instance_kinds: Vec<ProviderInstanceKind>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -474,6 +497,55 @@ pub struct TurnUpsertedEvent {
     pub turn: ProviderTurn,
 }
 
+impl ProviderPluginDescriptor {
+    pub fn validate_instance_kinds(&self) -> Result<(), ProtocolError> {
+        if self.instance_kinds.is_empty() {
+            return Err(ProtocolError {
+                code: "invalid_provider_descriptor".to_string(),
+                message: "provider descriptor must declare at least one instance kind".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+        for (index, instance_kind) in self.instance_kinds.iter().enumerate() {
+            if instance_kind.is_empty() {
+                return Err(ProtocolError {
+                    code: "invalid_provider_descriptor".to_string(),
+                    message: "provider descriptor instance kinds must be non-empty".to_string(),
+                    retryable: false,
+                    details: None,
+                });
+            }
+            if self.instance_kinds[..index].contains(instance_kind) {
+                return Err(ProtocolError {
+                    code: "invalid_provider_descriptor".to_string(),
+                    message: format!("provider descriptor contains duplicate instance kind: {instance_kind}"),
+                    retryable: false,
+                    details: None,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn supports_instance_kind(&self, instance_kind: &str) -> bool {
+        self.instance_kinds.iter().any(|supported| supported == instance_kind)
+    }
+
+    pub fn validate_instance_kind(&self, instance_kind: &str) -> Result<(), ProtocolError> {
+        self.validate_instance_kinds()?;
+        if self.supports_instance_kind(instance_kind) {
+            return Ok(());
+        }
+        Err(ProtocolError {
+            code: "unsupported_instance_kind".to_string(),
+            message: format!("provider does not support instance kind: {instance_kind}"),
+            retryable: false,
+            details: None,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolMethod {
     #[serde(rename = "provider.initialize")]
@@ -526,6 +598,26 @@ impl ProtocolMethod {
             Self::TurnInterrupt => "turn.interrupt",
             Self::ApprovalResolve => "approval.resolve",
             Self::ProviderShutdown => "provider.shutdown",
+        }
+    }
+
+    pub const fn capability(self) -> Option<ProviderCapability> {
+        match self {
+            Self::ProviderInitialize => None,
+            Self::ProviderDescribe => None,
+            Self::InstanceCreate => None,
+            Self::InstanceStart => None,
+            Self::InstanceStop => None,
+            Self::InstanceDestroy => None,
+            Self::InstanceCapabilities => None,
+            Self::ConversationList => Some(ProviderCapability::ConversationList),
+            Self::ConversationGet => Some(ProviderCapability::ConversationGet),
+            Self::ConversationCreate => Some(ProviderCapability::ConversationCreate),
+            Self::TurnStart => Some(ProviderCapability::TurnStart),
+            Self::TurnSteer => Some(ProviderCapability::TurnSteer),
+            Self::TurnInterrupt => Some(ProviderCapability::TurnInterrupt),
+            Self::ApprovalResolve => Some(ProviderCapability::ApprovalResolve),
+            Self::ProviderShutdown => None,
         }
     }
 }
@@ -599,6 +691,13 @@ impl std::str::FromStr for ProtocolEventName {
         }
     }
 }
+
+pub const JSON_RPC_PARSE_ERROR: i64 = -32700;
+pub const JSON_RPC_INVALID_REQUEST: i64 = -32600;
+pub const JSON_RPC_METHOD_NOT_FOUND: i64 = -32601;
+pub const JSON_RPC_INVALID_PARAMS: i64 = -32602;
+pub const JSON_RPC_INTERNAL_ERROR: i64 = -32603;
+pub const DEFAULT_MAX_JSON_LINE_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method")]
@@ -772,13 +871,87 @@ pub enum JsonRpcResponsePayload {
     Error { error: RpcError },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct JsonRpcResponse {
     pub jsonrpc: String,
-    pub id: RequestId,
+    pub id: Option<RequestId>,
     #[serde(flatten)]
     pub response: JsonRpcResponsePayload,
 }
+
+impl<'de> Deserialize<'de> for JsonRpcResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        parse_jsonrpc_response(value).map_err(|error| serde::de::Error::custom(error.to_string()))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JsonRpcNotification {
+    pub jsonrpc: String,
+    pub method: String,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub params: serde_json::Value,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsonRpcRequestRejection {
+    pub id: RequestId,
+    pub method: String,
+    pub error: RpcError,
+}
+
+impl JsonRpcRequestRejection {
+    pub fn into_response(self) -> JsonRpcResponse {
+        JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: Some(self.id),
+            response: JsonRpcResponsePayload::Error { error: self.error },
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum JsonRpcInboundRequest {
+    Typed(ProtocolRequest),
+    Rejected(JsonRpcRequestRejection),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProviderWireMessage {
+    Request(JsonRpcInboundRequest),
+    Response(JsonRpcResponse),
+    Notification(JsonRpcNotification),
+    Event(ProtocolEvent),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsonRpcInboundError {
+    pub id: Option<RequestId>,
+    pub error: RpcError,
+}
+
+impl JsonRpcInboundError {
+    pub fn into_response(self) -> JsonRpcResponse {
+        JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: self.id,
+            response: JsonRpcResponsePayload::Error { error: self.error },
+        }
+    }
+}
+
+impl std::fmt::Display for JsonRpcInboundError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "JSON-RPC error {}: {}", self.error.code, self.error.message)
+    }
+}
+
+impl std::error::Error for JsonRpcInboundError {}
 
 pub type ProtocolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ProtocolError>> + Send + 'a>>;
 
@@ -863,7 +1036,7 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
         ProtocolRequest::ProviderDescribe { jsonrpc, id, params } => {
             let response = match server.provider_describe(params).await {
@@ -873,7 +1046,7 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
         ProtocolRequest::InstanceCreate { jsonrpc, id, params } => {
             let response = match server.instance_create(params).await {
@@ -883,7 +1056,7 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
         ProtocolRequest::InstanceStart { jsonrpc, id, params } => {
             let response = match server.instance_start(params).await {
@@ -893,7 +1066,7 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
         ProtocolRequest::InstanceStop { jsonrpc, id, params } => {
             let response = match server.instance_stop(params).await {
@@ -903,7 +1076,7 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
         ProtocolRequest::InstanceDestroy { jsonrpc, id, params } => {
             let response = match server.instance_destroy(params).await {
@@ -913,7 +1086,7 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
         ProtocolRequest::InstanceCapabilities { jsonrpc, id, params } => {
             let response = match server.instance_capabilities(params).await {
@@ -923,7 +1096,7 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
         ProtocolRequest::ConversationList { jsonrpc, id, params } => {
             let response = match server.conversation_list(params).await {
@@ -933,7 +1106,7 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
         ProtocolRequest::ConversationGet { jsonrpc, id, params } => {
             let response = match server.conversation_get(params).await {
@@ -943,7 +1116,7 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
         ProtocolRequest::ConversationCreate { jsonrpc, id, params } => {
             let response = match server.conversation_create(params).await {
@@ -953,7 +1126,7 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
         ProtocolRequest::TurnStart { jsonrpc, id, params } => {
             let response = match server.turn_start(params).await {
@@ -963,7 +1136,7 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
         ProtocolRequest::TurnSteer { jsonrpc, id, params } => {
             let response = match server.turn_steer(params).await {
@@ -973,7 +1146,7 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
         ProtocolRequest::TurnInterrupt { jsonrpc, id, params } => {
             let response = match server.turn_interrupt(params).await {
@@ -983,7 +1156,7 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
         ProtocolRequest::ApprovalResolve { jsonrpc, id, params } => {
             let response = match server.approval_resolve(params).await {
@@ -993,7 +1166,7 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
         ProtocolRequest::ProviderShutdown { jsonrpc, id, params } => {
             let response = match server.provider_shutdown(params).await {
@@ -1003,7 +1176,7 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 },
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
-            JsonRpcResponse { jsonrpc, id, response }
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         }
     }
 }
@@ -1030,8 +1203,11 @@ impl<S: ProtocolServer> ProtocolDispatcher<S> {
 
 pub type ProtocolTransportFuture<'a> = Pin<Box<dyn Future<Output = Result<serde_json::Value, ProtocolError>> + Send + 'a>>;
 
+pub type ProtocolInboundFuture<'a> = Pin<Box<dyn Future<Output = Result<ProviderWireMessage, JsonRpcInboundError>> + Send + 'a>>;
+
 pub trait ProtocolTransport: Send + Sync {
     fn request<'a>(&'a self, method: ProtocolMethod, params: serde_json::Value) -> ProtocolTransportFuture<'a>;
+    fn next_message<'a>(&'a self) -> ProtocolInboundFuture<'a>;
 }
 
 pub struct ProtocolClient<T> {
@@ -1168,6 +1344,10 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
+
+    pub fn next_message<'a>(&'a self) -> ProtocolInboundFuture<'a> {
+        self.transport.next_message()
+    }
 }
 
 fn codec_error(context: &str, error: serde_json::Error) -> ProtocolError {
@@ -1189,7 +1369,31 @@ fn rpc_method_error(error: ProtocolError) -> RpcError {
 }
 
 fn rpc_codec_error(context: &str, error: serde_json::Error) -> RpcError {
-    RpcError { code: -32603, message: format!("{context}: {error}"), data: None }
+    RpcError { code: JSON_RPC_INTERNAL_ERROR, message: format!("{context}: {error}"), data: None }
+}
+
+fn inbound_error(id: Option<RequestId>, code: i64, message: impl Into<String>) -> JsonRpcInboundError {
+    JsonRpcInboundError {
+        id,
+        error: RpcError { code, message: message.into(), data: None },
+    }
+}
+
+fn inbound_protocol_error(error: JsonRpcInboundError) -> ProtocolError {
+    ProtocolError {
+        code: format!("json_rpc_{}", error.error.code),
+        message: error.error.message,
+        retryable: false,
+        details: error.error.data,
+    }
+}
+
+fn object_has_only(object: &serde_json::Map<String, serde_json::Value>, allowed: &[&str]) -> bool {
+    object.keys().all(|key| allowed.contains(&key.as_str()))
+}
+
+fn object_request_id(object: &serde_json::Map<String, serde_json::Value>) -> Option<RequestId> {
+    object.get("id").and_then(serde_json::Value::as_str).map(str::to_string)
 }
 
 fn validate_jsonrpc(version: &str) -> Result<(), ProtocolError> {
@@ -1204,15 +1408,107 @@ fn validate_jsonrpc(version: &str) -> Result<(), ProtocolError> {
     })
 }
 
+fn validate_inbound_jsonrpc(object: &serde_json::Map<String, serde_json::Value>, id: Option<RequestId>) -> Result<(), JsonRpcInboundError> {
+    match object.get("jsonrpc").and_then(serde_json::Value::as_str) {
+        Some("2.0") => Ok(()),
+        _ => Err(inbound_error(id, JSON_RPC_INVALID_REQUEST, "jsonrpc must be exactly 2.0")),
+    }
+}
+
+fn parse_jsonrpc_response(value: serde_json::Value) -> Result<JsonRpcResponse, JsonRpcInboundError> {
+    let object = value.as_object().ok_or_else(|| inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC response must be an object"))?;
+    let id = match object.get("id") {
+        Some(serde_json::Value::String(value)) => Some(value.clone()),
+        Some(serde_json::Value::Null) => None,
+        _ => return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC response id must be a string or null")),
+    };
+    validate_inbound_jsonrpc(object, id.clone())?;
+    let has_result = object.contains_key("result");
+    let has_error = object.contains_key("error");
+    if has_result == has_error {
+        return Err(inbound_error(id, JSON_RPC_INVALID_REQUEST, "JSON-RPC response must contain exactly one of result or error"));
+    }
+    if !object_has_only(object, &["jsonrpc", "id", if has_result { "result" } else { "error" }]) {
+        return Err(inbound_error(id, JSON_RPC_INVALID_REQUEST, "JSON-RPC response contains unknown fields"));
+    }
+    let response = if has_result {
+        JsonRpcResponsePayload::Ok { result: object["result"].clone() }
+    } else {
+        let error = serde_json::from_value(object["error"].clone())
+            .map_err(|error| inbound_error(id.clone(), JSON_RPC_INVALID_REQUEST, format!("invalid JSON-RPC error object: {error}")))?;
+        JsonRpcResponsePayload::Error { error }
+    };
+    Ok(JsonRpcResponse { jsonrpc: "2.0".to_string(), id, response })
+}
+
+pub fn decode_wire_message(value: &[u8]) -> Result<ProviderWireMessage, JsonRpcInboundError> {
+    let value: serde_json::Value = serde_json::from_slice(value)
+        .map_err(|error| inbound_error(None, JSON_RPC_PARSE_ERROR, format!("parse error: {error}")))?;
+    let object = value.as_object().ok_or_else(|| inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC message must be an object"))?;
+    let id = object_request_id(object);
+    validate_inbound_jsonrpc(object, id.clone())?;
+
+    if let Some(method_value) = object.get("method") {
+        let method = method_value.as_str().ok_or_else(|| inbound_error(id.clone(), JSON_RPC_INVALID_REQUEST, "JSON-RPC method must be a string"))?.to_string();
+        if object.contains_key("id") {
+            let id = id.ok_or_else(|| inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC request id must be a string"))?;
+            if !object_has_only(object, &["jsonrpc", "id", "method", "params"]) {
+                return Err(inbound_error(Some(id), JSON_RPC_INVALID_REQUEST, "JSON-RPC request contains unknown fields"));
+            }
+            if method.parse::<ProtocolMethod>().is_err() {
+                return Ok(ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(JsonRpcRequestRejection {
+                    id,
+                    method: method.clone(),
+                    error: RpcError { code: JSON_RPC_METHOD_NOT_FOUND, message: format!("method not found: {method}"), data: None },
+                })));
+            }
+            return match serde_json::from_value(value) {
+                Ok(request) => Ok(ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request))),
+                Err(error) => Ok(ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(JsonRpcRequestRejection {
+                    id,
+                    method: method.clone(),
+                    error: RpcError { code: JSON_RPC_INVALID_PARAMS, message: format!("invalid params for {method}: {error}"), data: None },
+                }))),
+            };
+        }
+
+        if !object_has_only(object, &["jsonrpc", "method", "params"]) {
+            return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC notification contains unknown fields"));
+        }
+        if method.parse::<ProtocolEventName>().is_ok() {
+            let event = serde_json::from_value(value)
+                .map_err(|error| inbound_error(None, JSON_RPC_INVALID_PARAMS, format!("invalid event params for {method}: {error}")))?;
+            return Ok(ProviderWireMessage::Event(event));
+        }
+        return Ok(ProviderWireMessage::Notification(JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method,
+            params: object.get("params").cloned().unwrap_or(serde_json::Value::Null),
+        }));
+    }
+
+    parse_jsonrpc_response(value).map(ProviderWireMessage::Response)
+}
+
 pub fn encode_request(value: &ProtocolRequest) -> Result<Vec<u8>, ProtocolError> {
     validate_jsonrpc(value.jsonrpc_version())?;
     serde_json::to_vec(value).map_err(|error| codec_error("encode request", error))
 }
 
 pub fn decode_request(value: &[u8]) -> Result<ProtocolRequest, ProtocolError> {
-    let request: ProtocolRequest = serde_json::from_slice(value).map_err(|error| codec_error("decode request", error))?;
-    validate_jsonrpc(request.jsonrpc_version())?;
-    Ok(request)
+    match decode_wire_message(value).map_err(inbound_protocol_error)? {
+        ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request)) => Ok(request),
+        ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(rejection)) => Err(inbound_protocol_error(JsonRpcInboundError {
+            id: Some(rejection.id),
+            error: rejection.error,
+        })),
+        _ => Err(ProtocolError {
+            code: "unexpected_json_rpc_message".to_string(),
+            message: "expected JSON-RPC request".to_string(),
+            retryable: false,
+            details: None,
+        }),
+    }
 }
 
 pub fn encode_response(value: &JsonRpcResponse) -> Result<Vec<u8>, ProtocolError> {
@@ -1221,9 +1517,15 @@ pub fn encode_response(value: &JsonRpcResponse) -> Result<Vec<u8>, ProtocolError
 }
 
 pub fn decode_response(value: &[u8]) -> Result<JsonRpcResponse, ProtocolError> {
-    let response: JsonRpcResponse = serde_json::from_slice(value).map_err(|error| codec_error("decode response", error))?;
-    validate_jsonrpc(&response.jsonrpc)?;
-    Ok(response)
+    match decode_wire_message(value).map_err(inbound_protocol_error)? {
+        ProviderWireMessage::Response(response) => Ok(response),
+        _ => Err(ProtocolError {
+            code: "unexpected_json_rpc_message".to_string(),
+            message: "expected JSON-RPC response".to_string(),
+            retryable: false,
+            details: None,
+        }),
+    }
 }
 
 pub fn encode_event(value: &ProtocolEvent) -> Result<Vec<u8>, ProtocolError> {
@@ -1232,7 +1534,141 @@ pub fn encode_event(value: &ProtocolEvent) -> Result<Vec<u8>, ProtocolError> {
 }
 
 pub fn decode_event(value: &[u8]) -> Result<ProtocolEvent, ProtocolError> {
-    let event: ProtocolEvent = serde_json::from_slice(value).map_err(|error| codec_error("decode event", error))?;
-    validate_jsonrpc(event.jsonrpc_version())?;
-    Ok(event)
+    match decode_wire_message(value).map_err(inbound_protocol_error)? {
+        ProviderWireMessage::Event(event) => Ok(event),
+        _ => Err(ProtocolError {
+            code: "unexpected_json_rpc_message".to_string(),
+            message: "expected JSON-RPC event".to_string(),
+            retryable: false,
+            details: None,
+        }),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JsonLineCodec {
+    max_frame_bytes: usize,
+}
+
+impl JsonLineCodec {
+    pub fn new(max_frame_bytes: usize) -> Result<Self, ProtocolError> {
+        if max_frame_bytes == 0 {
+            return Err(ProtocolError {
+                code: "invalid_frame_limit".to_string(),
+                message: "JSON line frame limit must be greater than zero".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+        Ok(Self { max_frame_bytes })
+    }
+
+    pub const fn max_frame_bytes(&self) -> usize {
+        self.max_frame_bytes
+    }
+
+    fn frame_payload(&self, mut payload: Vec<u8>) -> Result<Vec<u8>, ProtocolError> {
+        if payload.len() > self.max_frame_bytes {
+            return Err(ProtocolError {
+                code: "json_line_frame_too_large".to_string(),
+                message: format!("JSON line frame exceeds {} bytes", self.max_frame_bytes),
+                retryable: false,
+                details: None,
+            });
+        }
+        if payload.contains(&b'\n') || payload.contains(&b'\r') {
+            return Err(ProtocolError {
+                code: "invalid_json_line_frame".to_string(),
+                message: "JSON line payload contains a physical line break".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+        payload.push(b'\n');
+        Ok(payload)
+    }
+
+    pub fn encode_message(&self, message: &ProviderWireMessage) -> Result<Vec<u8>, ProtocolError> {
+        let payload = match message {
+            ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request)) => encode_request(request)?,
+            ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(_)) => {
+                return Err(ProtocolError {
+                    code: "cannot_encode_rejected_request".to_string(),
+                    message: "a rejected inbound request is not a wire request".to_string(),
+                    retryable: false,
+                    details: None,
+                });
+            }
+            ProviderWireMessage::Response(response) => encode_response(response)?,
+            ProviderWireMessage::Notification(notification) => {
+                validate_jsonrpc(&notification.jsonrpc)?;
+                serde_json::to_vec(notification).map_err(|error| codec_error("encode notification", error))?
+            }
+            ProviderWireMessage::Event(event) => encode_event(event)?,
+        };
+        self.frame_payload(payload)
+    }
+
+    pub fn decode_line(&self, line: &[u8]) -> Result<ProviderWireMessage, JsonRpcInboundError> {
+        let mut payload = line;
+        if payload.ends_with(b"\n") {
+            payload = &payload[..payload.len() - 1];
+            if payload.ends_with(b"\r") {
+                payload = &payload[..payload.len() - 1];
+            }
+        }
+        if payload.len() > self.max_frame_bytes {
+            return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, format!("JSON line frame exceeds {} bytes", self.max_frame_bytes)));
+        }
+        if payload.contains(&b'\n') || payload.contains(&b'\r') {
+            return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON line frame contains multiple physical lines"));
+        }
+        decode_wire_message(payload)
+    }
+
+    pub fn read_message<R: BufRead>(&self, reader: &mut R) -> Result<Option<ProviderWireMessage>, JsonRpcInboundError> {
+        let mut frame = Vec::with_capacity(self.max_frame_bytes.min(8192));
+        loop {
+            let (consumed, complete) = {
+                let available = reader.fill_buf()
+                    .map_err(|error| inbound_error(None, JSON_RPC_INTERNAL_ERROR, format!("read JSON line frame: {error}")))?;
+                if available.is_empty() {
+                    if frame.is_empty() {
+                        return Ok(None);
+                    }
+                    return self.decode_line(&frame).map(Some);
+                }
+                let newline = available.iter().position(|byte| *byte == b'\n');
+                let payload_bytes = newline.unwrap_or(available.len());
+                if frame.len() + payload_bytes > self.max_frame_bytes {
+                    return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, format!("JSON line frame exceeds {} bytes", self.max_frame_bytes)));
+                }
+                frame.extend_from_slice(&available[..payload_bytes]);
+                (newline.map_or(payload_bytes, |index| index + 1), newline.is_some())
+            };
+            reader.consume(consumed);
+            if complete {
+                if frame.ends_with(b"\r") {
+                    frame.pop();
+                }
+                return self.decode_line(&frame).map(Some);
+            }
+        }
+    }
+
+    pub fn write_message<W: Write>(&self, writer: &mut W, message: &ProviderWireMessage) -> Result<(), ProtocolError> {
+        let frame = self.encode_message(message)?;
+        writer.write_all(&frame).map_err(|error| ProtocolError {
+            code: "json_line_write_failed".to_string(),
+            message: format!("write JSON line frame: {error}"),
+            retryable: true,
+            details: None,
+        })
+    }
+}
+
+impl Default for JsonLineCodec {
+    fn default() -> Self {
+        Self { max_frame_bytes: DEFAULT_MAX_JSON_LINE_BYTES }
+    }
 }

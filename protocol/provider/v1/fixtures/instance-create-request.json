@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "id": "instance-create-1",
+  "method": "instance.create",
+  "params": {
+    "route": {
+      "deviceId": "device-macbook-1",
+      "providerInstanceId": "codex-work"
+    },
+    "instanceKind": "codex",
+    "displayName": "Codex Work",
+    "settings": {}
+  }
+}

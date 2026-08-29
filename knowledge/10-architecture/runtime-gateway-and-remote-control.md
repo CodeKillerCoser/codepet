@@ -2,7 +2,7 @@
 
 > 文档状态（2026-08-30）：长期远程设计仍保留，但当前 Codex 已实现隔离双链路。`CodexRemote / AppServer` 提供完整远程 Provider；`CodexDesktopCompanion / IPC` 只驱动桌宠本地投影和面向 Desktop owner 的安全动作。两路不得共享 session、registry、event bus、sequence、owner/revision 或 unavailable 状态。
 >
-> 当前事实入口：remote 见 `../30-domains/agent-control/codex-app-server.md`，companion 见 `../30-domains/agent-control/codex-desktop-companion.md`；架构决策见 `../50-decisions/codex-remote-and-desktop-companion-dual-channel.md`。下文的阶段规划和完整能力清单仍包含未实现的长期目标，出现冲突时以上述当前文档为准。
+> 当前事实入口：remote 见 `../30-domains/agent-control/codex-app-server.md`，companion 见 `../30-domains/agent-control/codex-desktop-companion.md`；协议现状见 `protocol-layers-and-device-routing.md`、`../../protocol/provider/v1/manifest.json` 和 `../../protocol/gateway/v1/manifest.json`；架构决策见 `../50-decisions/codex-remote-and-desktop-companion-dual-channel.md`。下文的阶段规划和完整能力清单仍包含未实现的长期目标；旧目录、统一 wire envelope、方法名或已生成 Dart 的描述均视为 superseded，不是当前实现证据。
 
 ## 背景
 
@@ -20,7 +20,7 @@ Code Pet 当前是一个面向本机 AI 编程工具的桌面宠物应用。它�
 - 以 Codex 为第一优先级，完整接入 `codex app-server` V2，覆盖会话历史、新建和继续对话、实时 turn/item、模型、推理强度、访问权限、审批、Diff、用量和状态。
 - 保留现有桌宠体验：任务运行时显示气泡，需要审批、完成或失败时及时提醒；支持回复、停止、审批和打开对应桌面会话。
 - 建立统一的 Code Pet Standard Protocol，使桌宠 Svelte UI 和未来 Flutter 手机 App 面对同一套方法、模型、事件、错误和能力声明。
-- 使用统一 IDL 作为协议事实来源，从 JSON Schema 和方法/事件清单自动生成 Rust、TypeScript 和 Dart 代码，避免手写模型漂移。
+- 使用统一 IDL 作为协议事实来源。当前生成 Rust SDK 与 TypeScript compatibility SDK；未来 Dart/Python 必须通过显式 target adapter 接入，在实现前选择即 fail closed。
 - 将本地 Tauri IPC 与未来远程连接实现为同一 Gateway 的不同 Transport，使业务行为、权限检查和 Provider 状态只维护一次。
 - 保持 Provider 可扩展性。完成 Codex 后，能够在不推翻 Gateway、标准协议和 UI 基础模型的前提下接入 OpenCode Server、Claude Agent SDK/runtime，并为 Qoder 等后端保留扩展空间。
 - 所有 Agent 实际执行继续发生在用户电脑上；手机只承担 UI、输入、审批和状态查看。
@@ -169,9 +169,9 @@ Codex 会话激活目前使用 `codex://threads/<thread-id>` deeplink，而不�
 
 调用从 UI 向 Provider 下行，Provider 事件经 Application 和 Gateway 反向上行。任何 UI 都不得绕过 Gateway 直接调用 Provider。
 
-### 推荐目录
+### 目录状态
 
-在 Tauri 后端创建独立边界：
+下列 Tauri 分解是未来 Runtime Gateway application/remote session 的目标形态，并非当前目录清单；当前实现仍位于 `src-tauri/src/runtime_gateway/` 的扁平模块中，不应为了匹配此图一次性搬迁：
 
 ```text
 src-tauri/src/runtime_gateway/
@@ -209,25 +209,25 @@ src-tauri/src/runtime_gateway/
     └── projection_store.rs
 ```
 
-协议和生成器独立于 Rust 实现：
+协议与生成器已经按以下目录落地；此前本文中的 `protocol/manifest.json`、`protocol/schemas/`、仓库根 `protocol-codegen/` 和 `generated/` 方案已 superseded：
 
 ```text
 protocol/
-├── manifest.json
-├── schemas/
-├── methods/
-├── events/
-├── fixtures/
+├── codegen.json
+├── core/v1/{schema.json,manifest.json}
+├── pet/v1/{schema.json,manifest.json,fixtures/}
+├── provider/v1/{schema.json,manifest.json,fixtures/}
+├── gateway/v1/{schema.json,manifest.json,fixtures/,compat-v0.*}
+├── fixtures/                 # compat-v0 fixtures
 └── README.md
 
-protocol-codegen/
-├── src/
-└── tests/
+tools/protocol-codegen/
+├── generate.mjs
+├── test.mjs
+└── README.md
 
-generated/
-├── rust/
-├── typescript/
-└── dart/
+sdk/rust/codepet-{core,pet,provider,gateway}-sdk/
+sdk/typescript/codepet-{core,gateway}-sdk/
 ```
 
 生成代码是机械产物，不包含业务逻辑，不允许手工编辑。Provider adapter 和 application service 使用生成类型实现接口。
@@ -245,44 +245,34 @@ generated/
 
 ### IDL
 
-JSON Schema Draft 2020-12 用于定义模型。JSON Schema 本身不描述 RPC 方向、方法与响应配对、事件交付和权限要求，因此增加 Code Pet Protocol Manifest：
+JSON Schema Draft 2020-12 定义 DTO，分层 manifest 定义 RPC 方向、方法与响应配对、事件交付、transport 和 capability。当前事实来源是：
+
+- `../../protocol/core/v1/manifest.json`：安全共享类型，无 methods/events。
+- `../../protocol/pet/v1/manifest.json`：Desktop Companion 驱动的 Pet 方法和事件。
+- `../../protocol/provider/v1/manifest.json`：Host ↔ Provider binary 的 JSON-RPC/stdio 方法、事件、生命周期和 capability contract。
+- `../../protocol/gateway/v1/manifest.json`：Host ↔ Remote Client 的设备/实例路由与 replayable event。
+- `../../protocol/codegen.json`：包依赖、target 状态与输出路径。
+
+manifest 中的方法条目直接引用同层 schema，并以 `capability` 映射到 manifest 声明的 typed capability enum/container：
 
 ```json
 {
   "name": "conversation.list",
-  "direction": "clientToServer",
-  "request": {
-    "$ref": "../schemas/conversation/ListConversationsRequest.json"
-  },
-  "response": {
-    "$ref": "../schemas/conversation/ListConversationsResponse.json"
-  },
+  "direction": "hostToPlugin",
   "idempotency": "safe",
-  "requiredCapability": "conversation.list"
+  "capability": "conversation.list",
+  "request": { "$ref": "./schema.json#/$defs/ConversationListRequest" },
+  "response": { "$ref": "./schema.json#/$defs/ConversationListResponse" }
 }
 ```
 
-事件定义示例：
+生成器读取所有 package schema/manifest，并统一审计两者中的 `$ref`：
 
-```json
-{
-  "name": "turn.started",
-  "direction": "serverToClient",
-  "payload": {
-    "$ref": "../schemas/turn/TurnStartedEvent.json"
-  },
-  "delivery": "replayable",
-  "scope": "conversation"
-}
-```
+- Rust serde DTO、request/response/event union、typed capability/method mapping、dispatcher、client/transport 和 codec；
+- TypeScript core 与 compat-v0 类型、discriminated union、typed client 和 event map；
+- Dart/Python 当前只有 planned target adapter entry，显式选择会在写文件前失败，尚无生成包。
 
-生成器读取 schemas、methods 和 events，生成：
-
-- Rust serde DTO、request/response/event union、method registry、dispatcher 壳和 client trait；
-- TypeScript 类型、discriminated union、runtime decoder、typed client 和 event map；
-- Dart immutable model、JSON codec、sealed union、typed client 和 event stream。
-
-业务 handler、Provider adapter 和 UI renderer仍然手写。生成器不生成业务决策。
+Provider Rust SDK 还生成有界 JSON-line framing、统一 request/response/notification/event classifier、标准 JSON-RPC error mapping 与 inbound transport 接口。业务 handler、进程 supervisor、Provider manager 和 UI renderer仍然手写。
 
 ### 跨语言 Schema 约束
 
@@ -299,64 +289,65 @@ JSON Schema Draft 2020-12 用于定义模型。JSON Schema 本身不描述 RPC �
 
 ### Wire Envelope
 
-所有 Transport 使用相同的逻辑 envelope。Tauri IPC 可以在进程内直接传递生成类型，不要求先编码为网络字符串，但语义必须相同。
+此前“所有 Transport 共用一个带 `type` 的 envelope”草案已 superseded。当前协议按边界使用两种明确 transport：Pet/Gateway 使用 CodePet envelope；Provider plugin 使用 JSON-RPC 2.0/stdio-json-lines。实际 discriminator 和字段以各层 manifest 为准。
 
-Request：
+Gateway v1 request：
 
 ```json
 {
   "protocolVersion": 1,
-  "type": "request",
+  "id": "req_01",
+  "method": "conversation.list",
+  "params": {
+    "route": {
+      "deviceId": "device_01",
+      "providerInstanceId": "instance_01"
+    }
+  }
+}
+```
+
+Gateway v1 response：
+
+```json
+{
+  "protocolVersion": 1,
+  "id": "req_01",
+  "method": "conversation.list",
+  "response": {
+    "status": "ok",
+    "result": {}
+  }
+}
+```
+
+Gateway v1 event：
+
+```json
+{
+  "protocolVersion": 1,
+  "eventCursor": "event_1042",
+  "event": "turn.upserted",
+  "payload": {}
+}
+```
+
+Provider request 则使用标准 JSON-RPC；generated classifier 严格区分 request/response/notification/declared event，response 必须且只能包含 result 或 error：
+
+```json
+{
+  "jsonrpc": "2.0",
   "id": "req_01",
   "method": "conversation.list",
   "params": {}
 }
 ```
 
-Response：
-
-```json
-{
-  "protocolVersion": 1,
-  "type": "response",
-  "id": "req_01",
-  "result": {}
-}
-```
-
-Event：
-
-```json
-{
-  "protocolVersion": 1,
-  "type": "event",
-  "seq": 1042,
-  "event": "turn.started",
-  "payload": {}
-}
-```
-
-Error：
-
-```json
-{
-  "protocolVersion": 1,
-  "type": "response",
-  "id": "req_01",
-  "error": {
-    "code": "provider_unavailable",
-    "message": "Codex App Server is unavailable",
-    "retryable": true,
-    "details": null
-  }
-}
-```
-
-远程 Transport 可在 envelope 外增加 connection id、ack 和密文 framing；这些字段不进入业务协议。
+现有进程内 Runtime Gateway 仍走 `gateway/v1/compat-v0.*` 的 v0 envelope 和 `eventSequence`，它是兼容 profile，不是 gateway v1 或 Provider wire。未来远程 Transport 可在 gateway envelope 外增加 connection id、ack 和密文 framing；这些字段不进入业务协议。
 
 ### 初始化与能力协商
 
-连接首先调用 `system.initialize`，交换：
+当前 Pet 使用 `protocol.initialize`、Gateway 使用 `protocol.handshake`、Provider 使用 `provider.initialize` 协商 `VersionRange` 并返回 selected version。此前 `system.initialize` 名称仅属未来草案，已被当前 manifests superseded。协商内容包括：
 
 - client 名称、版本和平台；
 - client 支持的最小/最大协议版本；
@@ -365,9 +356,11 @@ Error：
 - event replay、资源传输等协议能力；
 - Provider 列表、状态和 capability 概要。
 
-Provider capability 通过 `provider.readCapabilities` 动态读取。UI 不写死模型、推理强度和权限枚举，而是按 Provider 返回值构建选择器。旧客户端面对新能力时隐藏未知操作，而不是依赖 App 版本猜测。
+Provider instance capability 当前通过 `instance.capabilities` 读取，manifest capability metadata 映射到 schema 中的 typed capability enum。UI 不写死模型、推理强度和权限枚举，而是按 Provider 返回值构建选择器。旧客户端面对新能力时隐藏未知操作，而不是依赖 App 版本猜测。
 
 ### 初始公共方法
+
+以下清单是完整远程产品的未来能力草案，不是当前 v1 manifest。当前可生成接口只以 `pet/v1/manifest.json`、`provider/v1/manifest.json` 和 `gateway/v1/manifest.json` 为准。
 
 ```text
 system.initialize
@@ -752,17 +745,16 @@ Provider 状态和能力
 
 以下阶段描述依赖顺序和完成条件，不表示时间排期。每个阶段完成后保持代码库可运行，并删除已被替代的旧实现。
 
-### 阶段一：协议与生成基础
+### 阶段一：协议与生成基础（已落地范围）
 
-- 创建 `protocol/`、manifest、JSON Schema 跨语言子集和 protocol version。
-- 定义 initialize、provider、conversation、turn、timeline、approval、usage、capability 和 error 的第一版模型。
-- 定义第一批 methods/events。
-- 实现最小 codegen，生成 Rust 和 TypeScript；Dart 生成可以在手机项目启动前补齐，但 IDL 约束从第一版就需兼容 Dart。
-- 生成 dispatcher/client 壳和 runtime decoder。
-- 建立 fixture 与 round-trip 测试，确保 Rust/TS 对同一 JSON 的行为一致。
-- 让现有 Tauri UI 通过生成 client 调用一个最小 `system.health`，验证本地通道闭环。
+- 建立 `protocol/{core,pet,provider,gateway}/v1`、分层 manifest、JSON Schema 子集和显式版本协商。
+- 定义 Provider lifecycle/conversation/turn/approval/event/shutdown、Gateway device/instance routing 与 Pet snapshot/patch/action 边界。
+- 实现 Rust/TypeScript target adapter；Dart/Python 保持 planned 且 fail closed，未生成代码。
+- 生成四个 Rust SDK 的 DTO、server/client、dispatcher、typed capability mapping 和 codec；Provider 包含有界 stdio-json-lines framing。
+- 建立 fixture、dependency/capability/target 负例、Rust SDK 和 compat-v0 round-trip 测试。
+- 现有 Tauri Runtime Gateway 通过 gateway SDK `compat_v0` re-export 保持编译和双链路行为；未实现旧草案中的 `system.health` 或 UI 全量迁移。
 
-完成条件：IDL 是协议唯一事实来源；手写业务代码不再重复声明相同 wire DTO。
+完成状态：IDL 已是协议事实来源，现有 v0 wire 只作为同一 IDL 根下的兼容 profile；真实 gateway v1 remote session 与 Pet v1 adapter 仍属后续阶段。
 
 ### 阶段二：Runtime Gateway 壳与状态边界
 
@@ -838,7 +830,7 @@ Provider 状态和能力
 
 ## 涉及模块
 
-- `protocol/`、`protocol-codegen/`、`generated/`：新增协议事实来源、生成器和跨语言产物。
+- `protocol/`、`tools/protocol-codegen/`、`sdk/rust/`、`sdk/typescript/`：当前协议事实来源、target adapters、测试和生成产物；旧 `protocol-codegen/`/`generated/` 根目录方案已 superseded。
 - `src-tauri/src/runtime_gateway/`：新增 Gateway、Application、Provider、Transport 和 projection store 边界。
 - `src-tauri/src/agent/codex_app_server.rs` 与同名目录：长期 remote App Server session、mapper 和 Provider；不得恢复旧一次性 `PetEvent` reply driver。
 - `src-tauri/src/agent/codex_desktop_ipc/`：独立 Desktop companion、Owner/Follower revision 状态机和安全动作。
@@ -864,7 +856,7 @@ Provider 状态和能力
 - 风险：自定义标准协议过度复制 Codex，导致其他 Provider 难以接入。缓解与验证：OpenCode 作为第二 adapter 进行架构验收；公共模型只包含产品公共语义，Provider 差异放 capability/extension。
 - 风险：公共模型过薄，手机被迫解析原生 Provider payload。缓解与验证：手机 MVP 的每个页面只使用标准 DTO；`providerData` 只能用于增强展示，不能成为核心流程依赖。
 - 风险：公共模型过厚，Provider 新字段导致频繁全端升级。缓解与验证：未知字段容忍、unknown timeline item、按需投影和 schema 兼容性测试。
-- 风险：Rust、TypeScript 和 Dart 生成器产生不同的 optional、nullable、enum 或整数行为。缓解与验证：限定 JSON Schema 子集，使用共享 JSON fixtures 做三语言 round-trip 与负例验证。
+- 风险：未来 Rust、TypeScript、Dart 和 Python adapter 产生不同的 optional、nullable、enum 或整数行为。缓解与验证：当前先限定 JSON Schema 子集并让未实现 target fail closed；每个新 adapter 上线前增加共享 fixture round-trip 与负例。
 - 风险：长期 App Server reader 在慢消费者、并发 RPC 或大量 delta 下阻塞。缓解与验证：有界 channel、按 turn 路由、背压错误、stderr drain、并发 turn 压力测试和慢客户端测试。
 - 风险：App Server 重启后出现重复 turn、重复消息或丢失审批。缓解与验证：业务幂等键、event sequence、Provider reconciliation、故障注入和重连 E2E。
 - 风险：多个本地/远程客户端同时处理同一审批。缓解与验证：ApprovalInbox 原子状态转换；首个成功 response 为准，其余客户端收到 `approval.resolved`。
@@ -878,11 +870,12 @@ Provider 状态和能力
 
 ### IDL 与生成代码
 
-- 验证所有 `$ref` 可解析，schema 符合受支持子集。
-- Rust、TypeScript、Dart 对共享 fixture 执行 decode/encode round-trip。
+- 验证 schema 与 manifest 的所有 `$ref` 可解析、符合 declared dependency/layer，schema 符合受支持子集。
+- 当前 Rust SDK 与 TypeScript compatibility SDK 对共享 fixture 执行 decode/encode/strict compile；Dart/Python 在 adapter 实现前只验证显式选择失败。
 - 覆盖 optional、nullable、unknown enum、unknown timeline item、int64 和错误响应。
 - CI 重新生成代码并检查工作区无差异，禁止提交过期生成物。
-- 检查 method/event 名称唯一，request/response `$ref` 存在，capability 引用有效。
+- 检查 method/event 名称唯一，request/response `$ref` 存在，capability enum/container/method mapping 一致。
+- Provider 覆盖有界 line framing、超限、坏包、result/error XOR、未知 method、非法 params、notification/event 分类与 request id 保留。
 
 ### Gateway
 
@@ -950,7 +943,7 @@ Provider 状态和能力
 - 已验证 remote App Server 创建并完成的 thread 会被 Desktop 加载；App Server 对 Desktop-originated 实时 turn/item/approval 的可见程度仍未确认。
 - Desktop companion 当前使用私有 Owner/Follower IPC，其长期兼容承诺尚未确认；升级必须 fail closed 并重新验证。
 - remote thread provenance 当前只在进程内保存；跨应用重启后的历史来源仍无法可靠恢复。
-- Code Pet Standard Protocol 的 schema 生成器采用自研最小生成器、组合现有工具，还是以 OpenRPC 为输入层，尚需用 Rust/TS/Dart 小型 Spike 比较。
+- Code Pet Standard Protocol 已采用 `tools/protocol-codegen` 自研最小生成器和 `codepet.protocol.codegen/v1` target adapter contract；未来只在现有 schema 子集无法表达跨语言需求时再评估 OpenRPC 等输入层。
 - Flutter 手机项目的最终状态管理、UI 组件和发布方式尚未确定，不影响 Dart protocol package 设计。
 - 远程首版采用 WSS relay 先行还是同时实现 WebRTC，需要在 Transport Spike 中根据中国大陆实测决定；业务协议不依赖该选择。
 - projection cache 是否在 Codex 阶段立即使用 SQLite，还是先用可重建内存 store，取决于手机断线重放和 App 重启恢复的最小需求。

@@ -1,0 +1,23 @@
+{
+  "jsonrpc": "2.0",
+  "id": "instance-create-1",
+  "result": {
+    "instance": {
+      "route": {
+        "deviceId": "device-macbook-1",
+        "providerInstanceId": "codex-work"
+      },
+      "pluginId": "dev.codepet.codex",
+      "instanceKind": "codex",
+      "displayName": "Codex Work",
+      "status": "created",
+      "capabilities": {
+        "methods": ["conversation.list", "conversation.get", "turn.start"],
+        "permissionLevels": ["workspace-write"],
+        "models": ["gpt-5"],
+        "reasoningEfforts": ["high"],
+        "extensions": []
+      }
+    }
+  }
+}

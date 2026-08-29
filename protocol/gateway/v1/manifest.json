@@ -18,6 +18,11 @@
   "error": {
     "$ref": "../../core/v1/schema.json#/$defs/ProtocolError"
   },
+  "capabilities": {
+    "type": { "$ref": "./schema.json#/$defs/GatewayCapability" },
+    "container": { "$ref": "./schema.json#/$defs/GatewayCapabilities" },
+    "field": "methods"
+  },
   "methods": [
     {
       "name": "protocol.handshake",

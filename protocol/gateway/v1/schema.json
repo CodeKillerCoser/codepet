@@ -196,12 +196,23 @@
       "required": ["device"],
       "additionalProperties": false
     },
+    "GatewayCapability": {
+      "type": "string",
+      "enum": [
+        "conversation.list",
+        "conversation.get",
+        "conversation.create",
+        "turn.send",
+        "turn.interrupt",
+        "approval.resolve"
+      ]
+    },
     "GatewayCapabilities": {
       "type": "object",
       "properties": {
         "methods": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": { "$ref": "#/$defs/GatewayCapability" },
           "uniqueItems": true
         },
         "permissionLevels": {
