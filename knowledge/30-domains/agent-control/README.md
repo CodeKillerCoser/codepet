@@ -5,7 +5,7 @@
 ## 源码模块
 
 - `src-tauri/src/agent/actions.rs`：激活、回复和审批的 driver 抽象。
-- `codex-app-server.md`：文件名为链接兼容保留；内容记录 Codex Desktop 私有 IPC、Owner/Follower、revision 和只读能力边界。
+- `codex-app-server.md`：文件名为链接兼容保留；内容记录 Codex Desktop 私有 IPC、Owner/Follower、revision，以及仅限 follower 公告或显式已知且已 bootstrap owner 会话的 start/steer/interrupt 与 command/file 二元审批边界。
 - `src-tauri/src/agent/codex_desktop_ipc/`：私有 IPC transport、Owner/Follower bootstrap 和标准状态映射；私有 DTO 不得越过该边界。
 - `src-tauri/src/agent/runtime.rs`：Agent executable 检测、验证、配置和诊断。
 - `frontend/lib/agentInteractions.ts`：前端能力展示规则。

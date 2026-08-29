@@ -1,6 +1,6 @@
 # Runtime Gateway 与远程控制架构
 
-> 文档状态：本页是早期 Runtime Gateway 长期设计稿，其中把独立 `codex app-server` 写成当前或目标实现的段落已经被取代，不得作为现状或恢复旧路径的依据。当前 Codex Provider 使用 Codex Desktop 私有 Owner/Follower IPC，阶段一只读、无审批/回复，也没有 IPC 任务目录或 App Server/Hook/transcript fallback。
+> 文档状态：本页是早期 Runtime Gateway 长期设计稿，其中把独立 `codex app-server` 写成当前或目标实现的段落已经被取代，不得作为现状或恢复旧路径的依据。当前 Codex Provider 使用 Codex Desktop 私有 Owner/Follower IPC；只对由 follower 公告或显式已知、完成 bootstrap 且 owner 仍有效的会话支持 start/steer/interrupt 与 command/file 二元审批，仍没有 IPC 任务目录或 App Server/Hook/transcript fallback。
 >
 > 当前事实入口：`../30-domains/agent-control/codex-app-server.md`；架构决策：`../50-decisions/codex-desktop-ipc-as-provider-source.md`；故障排查：`../40-runbooks/codex-desktop-ipc-unavailable.md`；长期规约：`../60-rules/codex-desktop-ipc-fail-closed.md`。下文保留用于理解历史问题、标准协议和远程控制方向，出现冲突时以上述当前文档为准。
 

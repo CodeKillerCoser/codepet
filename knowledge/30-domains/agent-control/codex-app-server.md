@@ -1,10 +1,10 @@
 # Codex Desktop 私有 IPC Provider
 
-> 当前状态（2026-08-29）：本页文件名为保持知识链接兼容暂时保留。Codex Provider 的运行时数据源已经从 Code Pet 独立启动的 `codex app-server --listen stdio://` 改为当前用户正在运行的 Codex Desktop Owner/Follower 私有 IPC。该协议没有兼容性承诺，接入必须版本耦合并 fail closed。
+> 当前状态（2026-08-29）：本页文件名为保持知识链接兼容暂时保留。Codex Provider 的运行时数据源已经从 Code Pet 独立启动的 `codex app-server --listen stdio://` 改为当前用户正在运行的 Codex Desktop Owner/Follower 私有 IPC。阶段二在同一 follower 连接上接通有限写动作；该协议没有兼容性承诺，接入必须版本耦合并 fail closed。
 
 ## 背景
 
-Code Pet 需要展示 Codex Desktop 中已经存在的任务及其状态变化。独立启动 App Server 会形成另一个运行实例，不能把它收到的数据当成 Desktop 当前任务的权威状态，也可能把回复或审批发往错误实例。因此阶段一只附着 Desktop 的私有 IPC，不再启动独立 App Server，也不使用 Hook、transcript、audit 扫描或文件监听补齐任务状态。
+Code Pet 需要展示并安全控制 Codex Desktop 中已经存在的任务。独立启动 App Server 会形成另一个运行实例，不能把它收到的数据当成 Desktop 当前任务的权威状态，也可能把回复或审批发往错误实例。因此 Code Pet 只附着 Desktop 的私有 IPC，不再启动独立 App Server，也不使用 Hook、transcript、audit 扫描或文件监听补齐任务状态或控制能力。
 
 ## 目标
 
@@ -12,6 +12,7 @@ Code Pet 需要展示 Codex Desktop 中已经存在的任务及其状态变化�
 - 在已知 thread id 的前提下完成 owner discovery、following、完整历史和状态快照 bootstrap。
 - 严格按 revision 应用 snapshot/patch，并把可判定状态映射到 Code Pet Standard Protocol。
 - 让桌宠展示运行、等待审批或输入、完成、失败和中断等状态。
+- 对已 bootstrap 且 owner 仍有效的会话安全发送 start/steer、interrupt，以及 command/file 两类审批决定。
 - 保持私有 DTO、路由字段和生命周期消息在 Codex Desktop adapter 内部。
 
 ## 非目标
@@ -19,7 +20,8 @@ Code Pet 需要展示 Codex Desktop 中已经存在的任务及其状态变化�
 - 不把私有 IPC 扩展成 Code Pet 的公共协议，也不让 UI 解析原生 payload。
 - 不通过 transcript、Hook、audit、文件监听或目录扫描发现任务。
 - 不在 Desktop IPC 失败时启动独立 App Server 或 Codex CLI 作为回退。
-- 阶段一不发送回复、快捷回复、审批决定或其他写操作。
+- 不支持 `conversation.create`；私有协议没有已验证的安全创建路径时，不调用 CLI 或独立 App Server 绕路。
+- 不把 permissions approval、MCP elicitation、user input、plan implementation 等无法由 v0 二元决定无损表达的请求伪装成可审批。
 - 不承诺在完全未知 thread id 时枚举 Desktop 中的全部任务。
 
 ## 已验证证据
@@ -28,6 +30,9 @@ Code Pet 需要展示 Codex Desktop 中已经存在的任务及其状态变化�
 - 每个 IPC frame 使用 4 字节 little-endian 长度前缀，后跟 JSON；bundle frame 上限为 256 MiB。
 - 连接初始化需要唯一 `clientId`。消息带有目标路由，多客户端不会天然共享同一条流，因此接收方必须过滤不属于自己的定向消息，同时分发明确的广播消息。
 - 当前 Owner/Follower 协议族为 v1，状态广播实现当前为 v11。这是私有实现版本，不是 Code Pet Standard Protocol 版本。
+- 当前打包资源中 `thread-follower-start-turn` 为 v2、`thread-follower-steer-turn` 为 v1、`thread-follower-interrupt-turn` 为 v4，command/file approval decision 均为 v1。interrupt v4 支持 `expectedTurnId`；请求必须定向已绑定 owner，成功 response 必须返回相同 method 并由该 owner handler 处理。
+- 当前写方法没有 `expectedRevision` wire 字段。Code Pet 以本地冻结的 connection generation、owner、snapshot revision、活动 turn 或 pending request 作为并发前置条件，并在派发前重检；这项保护不能写成一个不存在的私有字段，也不能宣称覆盖请求写出后的跨客户端竞态。
+- Owner 对写请求的 success/`ok` 只表示该 follower 请求得到协议确认。turn 和 approval 的最终状态仍来自后续权威 snapshot/patch；超时或断线时结果未知，非幂等动作不得自动重放。当前 Owner 的 approval decision 对已经被其他客户端处理的 request 也可能返回 `ok`，所以 pending removal 可以证明请求已经结束，却不能在跨客户端竞争中额外证明一定由本次 decision 结束。
 - 已知 thread id 时，可依次执行 owner discovery、设置 `following=true`、接收初始 snapshot、请求完整历史并取得 revision，之后等待对应 revision 的 snapshot，再进入增量跟随。
 - patch 只有在 revision 连续时才能应用。遇到缺口必须重新请求完整 snapshot；等待期间不得把后续 patch 拼接到旧状态。
 - 断线后旧 revision、following 和未完成请求都不再可信。客户端需要清空连接态，并以有界退避重新连接和 bootstrap。
@@ -38,7 +43,7 @@ Code Pet 需要展示 Codex Desktop 中已经存在的任务及其状态变化�
 
 ## 现状理解
 
-Codex Desktop 是任务 owner，Code Pet 是 follower。IPC transport 只负责安全 framing、初始化、请求关联、路由过滤、广播分发、关闭和重连；Owner/Follower adapter 负责私有生命周期和 revision 状态机；mapper 只把经过验证的 thread/turn 语义投影到标准 Provider、Conversation、TurnTask 和 ProtocolEvent。
+Codex Desktop 是任务 owner，Code Pet 是 follower。IPC transport 只负责安全 framing、初始化、请求关联、路由过滤、广播分发、关闭和重连；Owner/Follower adapter 负责私有生命周期、revision 状态机和写动作并发前置条件；mapper 只把经过验证的 thread/turn/pending request 语义投影到标准 Provider、Conversation、TurnTask、Approval 和 ProtocolEvent。
 
 Code Pet 可以可靠处理两类 thread：连接期间由其他 Desktop follower 明确公告的 thread，以及外部已经提供已知 id、随后完成 bootstrap 的 thread。应用重启后如果既没有受控的已知 thread id，也收不到新的 follower 公告，则不能声称已经发现 Desktop 中所有正在运行的任务。
 
@@ -68,18 +73,33 @@ frame decoder 必须先校验 4 字节长度，再分配和读取 payload。长�
 
 重连必须清空 revision 基线、following 状态和旧 owner 路由，再从 initialize 与 bootstrap 开始。退避应有上限，并在 Desktop 恢复后允许 Provider 从 connecting/unavailable 回到 ready。
 
+### 写动作与并发前置条件
+
+每个动作先从已 bootstrap snapshot 冻结 connection generation、owner client id 和 revision。派发前再次确认这些值没有变化；steer 和 interrupt 还要确认活动 turn id，审批还要确认原生 request id 仍属于同一 thread、同一 owner 且仍 pending。owner 换届、revision 前进导致目标变化、断线、版本不匹配、无 handler、handler 不一致或超时都失败关闭。
+
+`turn.send` 在权威 snapshot 有活动 turn 时使用 steer v1，没有活动 turn 时使用 start v2。`turn.interrupt` 只对活动 turn 使用 interrupt v4，并携带 `expectedTurnId`。所有请求都使用本次 Code Pet 物理连接的唯一 client identity，定向已绑定 owner；请求关联和 response handler 校验通过后，Standard Protocol 调用才返回已接受。
+
+写请求不跨重连自动重放。尤其超时或不可信 ack 只能说明未取得确定响应，不能证明 Owner 没有接受；UI 保留当前权威状态和可诊断错误。结果未知的审批会按原生 request 防重，直到权威 snapshot/patch 确认其消失；其他动作也必须重新 bootstrap 后才能由用户决定是否发起新请求。
+
+### 审批映射与确认
+
+snapshot 中仍 pending 的 `item/commandExecution/requestApproval` 和 `item/fileChange/requestApproval` 可以映射为标准 Approval，决定列表仅包含 v0 能无损表达的 `approve`/`deny`，并发布 ApprovalRequested。`approval.resolve` 使用原生 request id、thread id 和 owner client id 精确定向对应的 command/file decision v1 请求；重复、过期、错 thread 或错 owner 都拒绝。
+
+permissions、MCP elicitation、user input、plan implementation 等请求继续让任务保持 waiting，并输出 `capability_unsupported` 诊断，不生成可处理的二元 Approval。本地决定只有同时满足“Owner ack”和“权威 snapshot/patch 中 pending request 已移除”两个条件才发布对应 ApprovalResolved；两者到达顺序不限，任一条件单独成立都不够。
+
 ### 标准状态与能力
 
-adapter 只输出 Code Pet 已能证明的公共语义。当前映射至少覆盖 running、waiting approval/input、completed、failed 和 interrupted；等待输入可以复用标准等待状态并保留安全的展示文案，但不得因此暴露审批按钮。
+adapter 只输出 Code Pet 已能证明的公共语义。当前映射至少覆盖 running、waiting approval/input、completed、failed 和 interrupted；等待输入可以复用标准等待状态并保留安全的展示文案，但只有可安全映射的 command/file pending request 才暴露 approve/deny。
 
-阶段一 Provider 是只读观察者。capability 只能列出已实现的发现/读取方法；`quickReplies` 为空，审批、回复、steer、interrupt 及创建会话等未接通写操作不得声明可用。对应 Gateway 调用必须返回明确的 unsupported，而不是发送私有 follower 请求后猜测成功。
+capability 只能列出已实现并测试的方法。当前 Codex Provider 声明读取、`turn.send`、`turn.interrupt` 和 `approval.resolve`，`canSteer`/`canInterrupt` 与实际路径一致；桌宠“继续”快捷回复复用同一条 `turn.send`，未知 quick reply id 失败关闭。`conversation.create` 和其他未接通写操作必须返回明确的 unsupported。
 
 ## 涉及模块
 
 - `src-tauri/src/agent/codex_desktop_ipc/transport.rs`：socket 校验、frame codec、initialize transport、关闭和连接边界。
-- `src-tauri/src/agent/codex_desktop_ipc/protocol.rs`：私有 envelope、请求关联和路由过滤。它与同目录模块是私有 wire DTO 的唯一归属。
-- `src-tauri/src/agent/codex_desktop_ipc/state.rs`：thread 附着状态、snapshot/patch 和 revision 状态机。
-- Codex Provider mapper：私有 follower state 到 Standard Protocol DTO/event 的单向投影。
+- `src-tauri/src/agent/codex_desktop_ipc/protocol.rs`：私有 envelope、方法版本、请求关联和路由过滤。它与同目录模块是私有 wire DTO 的唯一归属。
+- `src-tauri/src/agent/codex_desktop_ipc/client.rs`：bootstrap、写请求定向、generation/owner/handler 校验、超时和断线不重放。
+- `src-tauri/src/agent/codex_desktop_ipc/state.rs`：thread 附着状态、snapshot/patch 和 revision 状态机；动作上下文冻结与派发前复核位于 `client.rs`。
+- Codex Provider mapper：私有 follower state 与 pending request 到 Standard Protocol DTO/event 的单向投影。
 - `src-tauri/src/runtime_gateway/`：Provider registry、标准 capability、事件序列和 Tauri transport；不得出现 Desktop 私有方法名或 DTO。
 - `frontend/lib/runtimeGatewayActivity.ts` 与 `frontend/PetApp.svelte`：只消费标准状态和 capability，展示任务与 Provider 诊断。
 - `src-tauri/src/agent/runtime.rs` 与运行时设置 UI：可以保留 executable 检测，但其结果不决定 Desktop IPC Provider 是否可用。
@@ -90,8 +110,10 @@ adapter 只输出 Code Pet 已能证明的公共语义。当前映射至少覆�
 - 路由过滤错误导致串流：用多个唯一 client id 的 fixture 验证定向隔离和广播分发。
 - revision 缺口产生错误任务状态：状态机测试验证缺口后停止应用 patch，直到完整 snapshot 建立新基线。
 - Code Pet 晚加入但没有 thread id：`following=true` 公告只做机会性发现；通过日志和 UI 明确展示发现范围限制，不扫描 transcript 冒充目录。
-- 重连沿用旧连接状态：断线测试验证 pending request、revision、following 和 owner route 全部复位。
-- UI 暴露未接通动作：后端 capability 精确测试与前端能力测试共同验证审批、回复和快捷回复不可见。
+- 重连沿用旧连接状态或重放写动作：断线测试验证 pending router request、revision、following 和 owner route 全部复位，旧 send/interrupt/approval 不在新 generation 重放。
+- 多 follower 串线或审批错目标：fake Router 使用两个唯一 client id，验证 response 只完成对应 request，审批只作用于目标 request/thread/owner。
+- Owner ack 被误当作终态：Provider 事件测试确认 ack 不提前改 turn 或 approval；本地审批决定只有 Owner ack 与权威 request removal 两项证据齐全后才发布，顺序不限。
+- UI 暴露未接通动作：后端 capability 精确测试与前端能力测试共同验证动作只在当前状态和决策列表允许时出现，unsupported 类别只显示 waiting/诊断。
 
 ## 测试计划
 
@@ -99,9 +121,11 @@ adapter 只输出 Code Pet 已能证明的公共语义。当前映射至少覆�
 - 路由：当前 client 定向消息、其他 client 消息和广播消息互不串线。
 - bootstrap：已知 thread id 在任务已运行时完成 discovery、following、完整历史和 snapshot 同步。
 - revision：顺序 patch、重复 patch、缺口重新请求 snapshot，以及等待期间不发布错误状态。
-- 生命周期：干净关闭、断线 pending request 失败、有界重连和状态复位。
-- mapper：running、waiting approval/input、completed、failed、interrupted 和未知状态。
-- capability/UI：阶段一不显示审批、回复或快捷回复；Provider unavailable 展示安全诊断原因。
+- 写动作：active/idle 分别选择 steer/start，interrupt 只接受当前活动 turn；owner、revision、handler、版本、超时和断线均覆盖失败关闭。
+- 审批：command/file Approval DTO、请求精确定向、重复/过期保护；permissions、MCP elicitation、user input、plan implementation 保持 unsupported。
+- 生命周期：干净关闭、断线 pending request 失败、有界重连、状态复位和非幂等写动作不重放。
+- mapper：running、waiting approval/input、completed、failed、interrupted、ApprovalRequested/Resolved 和未知状态。
+- capability/UI：只显示已接通且当前状态允许的回复、快捷回复、停止和 approve/deny；失败显示安全诊断原因。
 - 静态检查：生产代码中不再存在 `app-server --listen stdio://` 启动路径，Desktop 私有方法名不出现在 adapter 之外。
 
 ## 知识沉淀
@@ -114,4 +138,5 @@ adapter 只输出 Code Pet 已能证明的公共语义。当前映射至少覆�
 
 - 当前 IPC 没有公开任务目录；无已知 thread id 的完整晚加入枚举仍被协议阻挡。
 - Owner/Follower 和状态广播版本没有长期兼容承诺，支持的 Desktop 版本范围仍需随发布验证确定。
-- 回复、审批、用户输入、steer、interrupt 和其他写操作需要分别验证请求路由、结果确认和失败语义，阶段一不作支持承诺。
+- `conversation.create` 没有已验证的安全私有方法，继续 unsupported。
+- permissions approval、MCP elicitation、user input、plan implementation 和其他非二元写操作无法由当前 v0 IDL 无损表达，继续保持 waiting/unsupported。
