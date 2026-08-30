@@ -2,7 +2,7 @@
 
 ## 当前结论
 
-`crates/codepet-host` 已提供可复用的 Rust Provider Host：它从显式目录读取 manifest，为本机持久化稳定 `DeviceId`，按 manifest 启动独立 Provider 二进制，并通过生成的 `codepet-provider-sdk` 在独占 stdio 上通信。它同时实现内部 `codepet-gateway-sdk::ProtocolServer`，但当前没有 Gateway v1 网络 listener。
+`crates/codepet-host` 已提供可复用的 Rust Provider Host：它从显式目录读取 manifest，为本机持久化稳定 `DeviceId`，按 manifest 启动独立 Provider 二进制，并通过生成的 `codepet-provider-sdk` 在独占 stdio 上通信。它同时实现内部 `codepet-gateway-sdk::ProtocolServer`，以及供后续 LAN listener 调用的 `RemoteAccessManager` 安全与持久化核心；当前仍没有 Gateway v1 网络 listener、WSS 或 mDNS route。
 
 Code Pet 发行包内置 `codepet-provider-codex`、`codepet-provider-opencode` 和 `codepet-provider-claude` 三个独立 adapter 二进制及其 manifest。内置的是 Code Pet 自有的 Provider adapter，不是 Codex、OpenCode 或 Claude runtime；runtime 仍由用户本机安装和配置，`AgentRuntimeService` 的检测/用户选择结果始终是 executable 权威。
 
@@ -27,12 +27,13 @@ Provider 事件进入 Gateway v1 replay，并由兼容适配发布到远程 `run
 - 有界 JSON-lines、并发 request id 关联、事件分流、超时、崩溃隔离、stderr 诊断和有界 shutdown；
 - 内部 Gateway v1 的 device/provider/capability/conversation/turn/approval 与 event replay 边界。
 - 从 App Resources 的单一 `provider-plugins/` 目录自动发现三个默认 Provider adapter，并在 macOS/Windows 发布构建中 staging。
+- 持久化自签 LAN TLS identity、五分钟内存配对 session，以及只保存 bearer SHA-256 的可撤销远程 credential store；这些能力尚未接入网络 route。
 
 本阶段不实现：
 
 - dylib/trait ABI、签名、沙箱、市场、下载、自动重启或 backoff；
 - 动态注册插件、动态创建生产实例或 Gateway instance lifecycle；
-- Gateway v1 LAN listener、认证、配对或持久 cursor；
+- Gateway v1 LAN listener、WSS/mDNS route、远程 frame/E2EE、持久 cursor 或权限模型；
 - 桌宠 UI、Pet 投影或桌宠动作接入 Provider Manager。
 
 ## 配置与持久化
@@ -44,6 +45,10 @@ Tauri Catalog 合并以下目录来源：
 - `settings.providerPlugins.directories`：附加显式目录，绝对路径保持不变，相对路径按应用数据目录解析；
 - `provider-host/device-identity.json`：稳定本机设备身份；
 - `provider-host/provider-instances.json`：manifest 实例的稳定身份映射。
+
+`RemoteAccessConfig::for_data_directory` 在调用方指定的 App 数据目录下使用 `lan-tls-identity.json` 与 `remote-credentials.json`。`RemoteAccessManager` 持有 `Arc<DeviceRegistry>` 并只转发其 identity；它不生成、复制或持久化第二份 `deviceId/displayName`。TLS 文件包含 leaf certificate DER 与 PKCS#8 private key DER，Unix 原子替换后的权限为 `0600`；证书 SHA-256 指纹使用 64 位小写 hex。载入时会校验证书 DER、自签签名、私钥 DER、证书/私钥匹配与 checksum，损坏文件先隔离为 `.corrupt-<timestamp>` 再重建。
+
+远程 credential 文档绑定当前 TLS certificate fingerprint。TLS identity 丢失、损坏或变化时，旧 credential 文档会被隔离并重建为空，因此必须重新配对。credential 记录只保存 opaque 256-bit bearer 的 SHA-256，不保存 bearer 本身；同时保存 `credentialId/clientId/clientName/platform/createdAt/lastSeenAt/revokedAt`。配对 session 只存在于 Host 内存：本地显式开启后生成随机 pairing id 与 32-byte secret，五分钟过期，重启即失效，并在一次成功 credential 交换后由同一互斥区原子作废。
 
 Catalog 只接受目录，不接受运行时 descriptor 注入。每个目录可包含根 `codepet-provider.json`、子目录中的 `codepet-provider.json`，或 `*.codepet-provider.json`。`read_dir` 的目录错误和逐项读取错误都会形成诊断；不会静默丢弃条目。相对 executable 按 manifest 所在目录解析。
 
@@ -143,6 +148,7 @@ Provider 包只依赖 Provider SDK，不能反向依赖 Host。Host 启动 manif
 - shutdown 误杀：fixture 响应 shutdown 后真实关闭 stdout fd，写 close marker、输出末尾 stderr、等待 200ms 再成功退出；marker 出现时及 100ms 后 future 均必须未完成，最终断言成功 exit 与完整诊断。
 - 启停竞态：initialize 延迟 fixture 与两个并发 `shutdown_once` 触发外层 timeout；断言两次调用都等到 force kill 完成、子进程已结束（Unix 额外用 PID 复核），且 shutdown gate 阻止后续 spawn。
 - 路由串流：两设备、两实例、错误 device/plugin/instance、空 ID、错误 response identity 和单调 cursor 均有定向测试。
+- 远程身份与凭据：定向测试断言 TLS identity 重启稳定、损坏轮换会清空旧 credential、pairing secret 并发只成功一次且过期/重启失效、bearer 明文不落盘、hash 校验与两种撤销路径持久生效。
 - 状态重复：stop/start lifecycle 后每次只收到一个 ProviderStatusChanged。
 - 通道污染：Tauri mock runtime 真实监听三条 Tauri event；fixture 的 Provider event 只增加 remote event/replay，不改变 companion replay、`SharedState` activity、companion/Pet event 或 Desktop adapter spy。
 - bundled 资源缺失或架构不一致：staging 测试断言三 manifest/三平台 executable，macOS 产物检查 Resources 清单、可执行位与 `lipo -archs`，DMG 用 `hdiutil verify`。
@@ -168,6 +174,7 @@ git diff --check
 ## 剩余风险
 
 - Gateway event replay 和 device last-seen 仍为进程内状态，重启恢复未定义。
+- `RemoteAccessManager` 仍是未接线的 Host 核心；Tauri App 数据路径、LAN listener、WSS/mDNS route、连接关闭联动和移动端证书 pinning 尚待后续阶段实现。
 - manifest 的 executable、args 和 env 是受信任本地配置；签名、权限隔离与资源配额尚未实现。
 - 内置 Provider adapter 随 App 一起打包，但不会安装或更新底层 Codex/OpenCode/Claude runtime；用户本机配置与版本兼容性仍决定实例能否启动。
 - 没有自动重启/backoff；故障实例需要显式重启 Host/插件。

@@ -11,6 +11,7 @@ mod instance_registry;
 mod manager;
 mod persistence;
 mod process;
+mod remote_access;
 
 pub use catalog::{
     CatalogDiagnostic, PluginCatalog, PluginCatalogConfig, PluginDescriptor,
@@ -26,4 +27,9 @@ pub use manager::{
 };
 pub use process::{
     PluginProcess, PluginProcessExit, PluginProcessOptions, ProviderRpcClient, StderrDiagnostic,
+};
+pub use remote_access::{
+    IssuedRemoteCredential, LanTlsIdentity, PairingExchangeRequest, PairingSession,
+    RemoteAccessConfig, RemoteAccessDiagnostic, RemoteAccessManager, RemoteClientIdentity,
+    RemoteCredential, RemoteCredentialStore, PAIRING_SESSION_TTL,
 };

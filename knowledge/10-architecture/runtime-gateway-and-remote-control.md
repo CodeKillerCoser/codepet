@@ -1,6 +1,6 @@
 # Runtime Gateway 与远程控制架构
 
-> 文档状态（2026-08-30）：长期远程设计仍保留。当前 Codex 使用隔离双链路：`CodexRemote` 已迁到进程外 `codepet-provider-codex`，经 Provider Protocol v1、Plugin Manager 与内部 Gateway v1 service 提供远程能力；`CodexDesktopCompanion / IPC` 只驱动桌宠本地投影和面向 Desktop owner 的安全动作。Claude 已有能力较小的独立 `codepet-provider-claude`，只接官方 CLI stream-json，不提供全局会话 CRUD、steer 或审批；OpenCode 只通过独立 `codepet-provider-opencode` 加入同一个 remote Provider Gateway，不存在 companion/Pet 支路。compat `RuntimeGatewayState` 只适配同一个 Provider Gateway，不再持有独立 Server runtime。尚无网络 listener。各链路不得共享 session、registry、event bus、sequence、owner/revision 或 unavailable 状态。
+> 文档状态（2026-08-30）：长期远程设计仍保留。当前 Codex 使用隔离双链路：`CodexRemote` 已迁到进程外 `codepet-provider-codex`，经 Provider Protocol v1、Plugin Manager 与内部 Gateway v1 service 提供远程能力；`CodexDesktopCompanion / IPC` 只驱动桌宠本地投影和面向 Desktop owner 的安全动作。Claude 已有能力较小的独立 `codepet-provider-claude`，只接官方 CLI stream-json，不提供全局会话 CRUD、steer 或审批；OpenCode 只通过独立 `codepet-provider-opencode` 加入同一个 remote Provider Gateway，不存在 companion/Pet 支路。compat `RuntimeGatewayState` 只适配同一个 Provider Gateway，不再持有独立 Server runtime。`codepet-host::RemoteAccessManager` 已提供持久 LAN TLS identity、内存 pairing session 与 hashed bearer credential core，但尚无网络 listener、WSS 或 mDNS route。各链路不得共享 session、registry、event bus、sequence、owner/revision 或 unavailable 状态。
 >
 > 当前事实入口：Codex 插件边界与协议矩阵见 `codex-provider-plugin-runtime.md`，Claude 见 `claude-provider-plugin-runtime.md`，OpenCode 见 `opencode-provider-plugin-runtime.md`，remote 领域见 `../30-domains/agent-control/codex-app-server.md`，companion 见 `../30-domains/agent-control/codex-desktop-companion.md`，Provider Host 见 `provider-host-device-and-plugin-runtime.md`；协议现状见 `protocol-layers-and-device-routing.md`、`../../protocol/provider/v1/manifest.json` 和 `../../protocol/gateway/v1/manifest.json`。下文的阶段规划和完整能力清单仍包含未实现的长期目标；旧目录、统一 wire envelope、方法名或已生成 Dart 的描述均视为 superseded，不是当前实现证据。
 
@@ -62,7 +62,7 @@ Provider Host/Gateway 与 companion state 各自持有 registry、event bus、re
 
 OpenCode Server 通过 `codepet-provider-opencode` 的 HTTP/SSE adapter 进入同一条 Provider remote bus；它不注册 Desktop companion adapter，也不向 `SharedState`、`pet-event` 或 `codex-desktop-companion-event` 发布数据。能力与版本边界见 `opencode-provider-plugin-runtime.md`。
 
-当前只有 Tauri 进程内 Gateway 调用面，尚无 WebSocket/P2P/relay 远程网络实现。App Server 只在 Provider instance start 中初始化且有超时；它 unavailable 不阻塞 Desktop companion，Desktop socket unavailable 也不改变 remote Provider。
+当前只有 Tauri 进程内 Gateway 调用面，尚无 WebSocket/P2P/relay 远程网络实现。Host 的 `RemoteAccessManager` 与 `ProviderGatewayService` 是并列边界：前者供未来 listener 读取 TLS identity、完成配对和校验/撤销 bearer，后者不感知 bearer 或 TLS。App Server 只在 Provider instance start 中初始化且有超时；它 unavailable 不阻塞 Desktop companion，Desktop socket unavailable 也不改变 remote Provider。
 
 ## 历史基线（非现状）
 
@@ -746,6 +746,8 @@ Provider 状态和能力
 - push 通知只包含 opaque device/event id，不包含任务正文。
 - 日志记录 method、状态、耗时、ID 和 payload 大小；默认不记录 prompt、回复、命令正文和 Diff。
 
+当前已落地的 Host core 使用 `DeviceRegistry` 作为 `deviceId/displayName` 唯一事实来源，不创建第二设备身份。LAN TLS leaf certificate 与 PKCS#8 private key 以 owner-only 原子文件持久化；leaf DER SHA-256 wire 值固定为 64 位小写 hex。TLS identity 变化会使绑定旧 fingerprint 的 credential store 安全重建为空。pairing id 与 32-byte secret 仅驻内存、五分钟过期、Host 重启失效，成功交换一次后原子作废。每个 remote client 获得 opaque 256-bit bearer，Host 只持久化其 SHA-256，并保存 client metadata、创建/最后访问/撤销时间。RBAC、刷新 token、证书轮换、mTLS 与后台连接不在该 core 中。
+
 ## 实施路径
 
 以下阶段描述依赖顺序和完成条件，不表示时间排期。每个阶段完成后保持代码库可运行，并删除已被替代的旧实现。
@@ -805,9 +807,9 @@ Provider 状态和能力
 
 完成条件：Codex 桌宠功能完全由 App Server 和 Runtime Gateway 驱动，代码中不存在为了历史兼容保留的旧 Agent 数据源。
 
-### 阶段六：远程 Transport 与设备模型
+### 阶段六：远程 Transport 与设备模型（Host 安全持久化 core 已部分落地）
 
-- 定义并实现设备身份、配对、撤销、连接授权和设备权限。
+- 设备身份继续复用 `DeviceRegistry`；LAN TLS identity、短期配对、hashed bearer 校验/列出/撤销已落地，连接授权 route 与设备权限尚未实现。
 - 实现 Remote Transport 的 frame、E2EE、心跳、sequence、ack、snapshot 和重放。
 - 先完成 LAN/WSS relay 闭环，再加入 direct-first P2P；Transport 可替换但业务协议不变。
 - 实现远程 client session、并发客户端、速率限制和非幂等 request 去重。
@@ -837,6 +839,8 @@ Provider 状态和能力
 
 - `protocol/`、`tools/protocol-codegen/`、`sdk/rust/`、`sdk/typescript/`：当前协议事实来源、target adapters、测试和生成产物；旧 `protocol-codegen/`/`generated/` 根目录方案已 superseded。
 - `src-tauri/src/runtime_gateway/`：新增 Gateway、Application、Provider、Transport 和 projection store 边界。
+- `crates/codepet-host/src/remote_access.rs`：LAN TLS identity、pairing session 和 remote credential store；不得引用 `ProviderGatewayService`、Desktop IPC companion、Pet 或 activity store。
+- `crates/codepet-host/src/persistence.rs`：沿用既有 tempfile + fsync + replace 原子写，并为 TLS/private credential 文件增加 regular-file 检查和 Unix `0600` 保护。
 - `crates/providers/codepet-provider-codex/`：长期 remote App Server session、mapper、Provider v1 server 与 stdio 主循环；不得反向依赖 Tauri/Host/Pet SDK。
 - `crates/providers/codepet-provider-opencode/`：OpenCode Server HTTP/SSE client、mapper、Provider v1 server 与 stdio 主循环；同样不得反向依赖 Tauri/Host/Pet SDK。
 - `src-tauri/src/agent/codex_app_server.rs` 与同名目录：已删除；不得恢复进程内直连、旧一次性 `PetEvent` reply driver 或 fallback。
@@ -917,6 +921,7 @@ Provider 状态和能力
 
 ### 远程与手机
 
+- Host 定向测试覆盖 TLS identity 重启持久化与损坏轮换、`0600` secret file、pairing 五分钟过期/重启失效/并发单次消费、bearer hash 落盘和指定客户端/当前 credential 撤销。
 - LAN、跨网络 relay、P2P 成功和 P2P 失败回落。
 - 手机断网、电脑换网、手机前后台和系统睡眠。
 - 消息发送结果丢失后重连，不重复创建 turn。
