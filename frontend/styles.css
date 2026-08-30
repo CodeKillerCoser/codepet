@@ -499,12 +499,13 @@ select:focus-visible {
   margin: 0;
 }
 
-.runtime-workspace {
+.connection-workspace {
   display: grid;
   align-content: start;
   gap: 14px;
 }
 
+.device-section,
 .runtime-section {
   display: grid;
   gap: 16px;
@@ -512,10 +513,12 @@ select:focus-visible {
   padding: 18px;
 }
 
+.connection-section-head,
 .runtime-section-head {
   align-items: start;
 }
 
+.connection-section-head p,
 .runtime-section-head p,
 .runtime-card-head p,
 .runtime-diagnostic p {
@@ -523,6 +526,96 @@ select:focus-visible {
   color: var(--app-muted);
   font-size: var(--font-size-sm-plus);
   line-height: var(--line-height-copy);
+}
+
+.remote-device-list {
+  display: grid;
+  gap: 10px;
+}
+
+.remote-device-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--app-surface-soft);
+}
+
+.remote-device-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  color: var(--app-text);
+  background: var(--app-surface-strong);
+}
+
+.remote-device-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.remote-device-copy strong,
+.remote-device-copy span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-device-copy strong {
+  color: var(--app-text);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+}
+
+.remote-device-copy span {
+  color: var(--app-muted);
+  font-size: var(--font-size-sm-plus);
+}
+
+.remote-device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.remote-device-revoke {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--app-text);
+  background: var(--app-surface-strong);
+  font-weight: var(--font-weight-medium-strong);
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.remote-device-revoke:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: var(--app-border-strong);
+}
+
+.remote-device-revoke:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.remote-device-empty-state {
+  min-height: 166px;
 }
 
 .runtime-list {
@@ -634,7 +727,8 @@ select:focus-visible {
 }
 
 .runtime-actions button,
-.runtime-refresh-button {
+.runtime-refresh-button,
+.connection-primary-button {
   display: inline-flex;
   min-height: 40px;
   align-items: center;
@@ -649,14 +743,21 @@ select:focus-visible {
   transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
 }
 
+.connection-primary-button {
+  border-color: color-mix(in srgb, var(--app-good) 46%, var(--app-border));
+  background: color-mix(in srgb, var(--app-good) 14%, var(--app-surface-strong));
+}
+
 .runtime-actions button:hover:not(:disabled),
-.runtime-refresh-button:hover:not(:disabled) {
+.runtime-refresh-button:hover:not(:disabled),
+.connection-primary-button:hover:not(:disabled) {
   transform: translateY(-1px);
   border-color: var(--app-border-strong);
 }
 
 .runtime-actions button:disabled,
-.runtime-refresh-button:disabled {
+.runtime-refresh-button:disabled,
+.connection-primary-button:disabled {
   cursor: default;
   opacity: 0.48;
 }
@@ -1915,6 +2016,130 @@ textarea {
   padding: 0;
 }
 
+.pair-device-dialog {
+  display: grid;
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  gap: 14px;
+  overflow-y: auto;
+  border-radius: 8px;
+  padding: 18px;
+}
+
+.pair-device-dialog h3 {
+  margin: 0;
+  color: var(--app-text);
+  font-size: var(--font-size-4xl);
+  font-weight: var(--font-weight-bold);
+}
+
+.pair-device-dialog > p,
+.pair-device-success p {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-loose);
+}
+
+.pair-device-dialog .icon-button {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+}
+
+.pair-device-qr-frame {
+  display: grid;
+  width: min(260px, 100%);
+  aspect-ratio: 1;
+  justify-self: center;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  overflow: hidden;
+  border: 1px dashed var(--app-border-strong);
+  border-radius: 8px;
+  padding: 18px;
+  color: var(--app-muted);
+  background:
+    linear-gradient(90deg, var(--pixel-grid) 1px, transparent 1px),
+    linear-gradient(var(--pixel-grid) 1px, transparent 1px),
+    var(--app-surface-soft);
+  background-size: 12px 12px;
+  text-align: center;
+}
+
+.pair-device-qr-frame.expired {
+  border-color: color-mix(in srgb, var(--app-danger) 48%, var(--app-border));
+  color: var(--app-danger);
+}
+
+.pair-device-qr-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.pair-device-qr-frame strong {
+  color: var(--app-text);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+}
+
+.pair-device-qr-frame span {
+  color: var(--app-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-copy);
+}
+
+.pair-device-expiry {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--app-muted);
+  background: var(--app-surface-soft);
+  font-size: var(--font-size-sm-plus);
+  font-weight: var(--font-weight-semibold);
+}
+
+.pair-device-success {
+  display: grid;
+  min-height: 260px;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--app-good) 46%, var(--app-border));
+  border-radius: 8px;
+  padding: 24px;
+  color: var(--app-good);
+  background: color-mix(in srgb, var(--app-good) 12%, var(--app-surface-soft));
+  text-align: center;
+}
+
+.pair-device-success strong {
+  color: var(--app-text);
+  font-size: var(--font-size-4xl);
+  font-weight: var(--font-weight-bold);
+}
+
+.pair-device-dialog-actions {
+  justify-content: flex-end;
+}
+
+.pair-device-dialog-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
 .primary-action {
   border-color: var(--app-good) !important;
   color: var(--app-text) !important;
@@ -3103,9 +3328,23 @@ textarea {
     justify-self: start;
   }
 
+  .connection-section-head,
   .runtime-section-head,
   .runtime-card-head {
     display: grid;
+  }
+
+  .connection-primary-button {
+    justify-self: start;
+  }
+
+  .remote-device-row {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .remote-device-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
   }
 
   .runtime-meta {

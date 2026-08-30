@@ -7,6 +7,8 @@ const themeTokens = readFileSync(resolve(__dirname, "lib/theme/tokens.css"), "ut
 const appSource = readFileSync(resolve(__dirname, "App.svelte"), "utf8");
 const petAppSource = readFileSync(resolve(__dirname, "PetApp.svelte"), "utf8");
 const petSpriteSource = readFileSync(resolve(__dirname, "lib/PetSprite.svelte"), "utf8");
+const pairDeviceDialogSource = readFileSync(resolve(__dirname, "lib/PairDeviceDialog.svelte"), "utf8");
+const remoteDeviceListSource = readFileSync(resolve(__dirname, "lib/RemoteDeviceList.svelte"), "utf8");
 const gradientColorSource = readFileSync(resolve(__dirname, "lib/gradientColor.ts"), "utf8");
 
 function blockFor(selector: string) {
@@ -56,7 +58,7 @@ describe("theme tokens", () => {
   });
 
   test("keeps production frontend sources on theme defaults and css tokens", () => {
-    const productionSources = [appSource, petAppSource, petSpriteSource, gradientColorSource];
+    const productionSources = [appSource, petAppSource, petSpriteSource, pairDeviceDialogSource, remoteDeviceListSource, gradientColorSource];
     for (const source of productionSources) {
       expect(source).not.toMatch(/(^|[^{}])#[0-9a-fA-F]{3,8}|rgba?\(/m);
     }

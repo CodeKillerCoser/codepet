@@ -8,6 +8,7 @@
     BarChart3,
     Bell,
     Bot,
+    Cable,
     Check,
     Clock3,
     Cpu,
@@ -19,6 +20,7 @@
     Moon,
     Palette,
     PlugZap,
+    Plus,
     Power,
     RefreshCw,
     RotateCcw,
@@ -29,13 +31,16 @@
     X,
     Volume2,
   } from "@lucide/svelte";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { appDataDirectory, appDataDirectoryTargetStatus, checkAppUpdate, clearAgentRuntimeExecutable, collectorEndpoint, cutOutImageSubject, deletePet, detectAgentRuntime, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listAgentRuntimes, listAgents, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentEnabled, setAgentHookEvents, setAgentRuntimeExecutable, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
   import { agentRuntimeSourceLabel, agentRuntimeStatusMeta, canRestoreAutomaticDetection, replaceAgentRuntime } from "./lib/agentRuntime";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
   import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
   import PetAvatar from "./lib/PetAvatar.svelte";
+  import PairDeviceDialog from "./lib/PairDeviceDialog.svelte";
+  import RemoteDeviceList from "./lib/RemoteDeviceList.svelte";
+  import type { PairingDisplayState, RemoteDevice } from "./lib/remoteDevices";
   import { playNotificationSound, playWhipReactionSound } from "./lib/sound";
   import { defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
   import { ignoredUpdateSettings, shouldPromptForUpdate, type UpdateCheckMode } from "./lib/updates";
@@ -44,9 +49,19 @@
 
   type ActivityFilterKind = keyof ActivityKeywordFilterSettings;
 
-  let tab: "agents" | "runtimes" | "usage" | "personalize" | "events" = "agents";
+  let tab: "agents" | "connections" | "usage" | "personalize" | "events" = "agents";
   let agents: AgentView[] = [];
   let agentRuntimes: AgentRuntime[] = [];
+  let remoteDevices: RemoteDevice[] = [];
+  let pairDeviceDialogOpen = false;
+  let addDeviceButton: HTMLButtonElement | null = null;
+  let pairingDisplay: PairingDisplayState = {
+    phase: "unavailable",
+    qrImageUrl: null,
+    expiresAtMs: null,
+    remainingSeconds: null,
+    pairedClientName: null,
+  };
   let settings: AppSettings | null = null;
   let petLibrary: PetLibraryView | null = null;
   let usage: TokenUsageSummary | null = null;
@@ -432,6 +447,16 @@
     return providerId === "codex"
       ? "Codex CLI 路径仅供独立运行时检测；任务来源可用性取决于 Codex Desktop 私有 IPC。"
       : "当前提供检测与路径配置，Provider 协议尚未接入。";
+  }
+
+  function openPairDeviceDialog() {
+    pairDeviceDialogOpen = true;
+  }
+
+  async function closePairDeviceDialog() {
+    pairDeviceDialogOpen = false;
+    await tick();
+    addDeviceButton?.focus();
   }
 
   async function saveSettings() {
@@ -1310,7 +1335,7 @@
   $: usageBuckets = usageData.buckets;
   $: usageMaxTokens = usageData.maxTokens;
   $: usageTickLabels = yAxisTicks(usageMaxTokens);
-  $: pageTitle = tab === "agents" ? "Agent" : tab === "runtimes" ? "运行时" : tab === "usage" ? "用量" : tab === "personalize" ? "个性化" : "最新事件";
+  $: pageTitle = tab === "agents" ? "Agent" : tab === "connections" ? "连接" : tab === "usage" ? "用量" : tab === "personalize" ? "个性化" : "最新事件";
   $: appTheme = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
 </script>
 
@@ -1320,8 +1345,8 @@
       <button class:active={tab === "agents"} on:click={() => (tab = "agents")} aria-label="Agent 列表">
         <Bot size={18} /> Agent
       </button>
-      <button class:active={tab === "runtimes"} on:click={() => (tab = "runtimes")} aria-label="Agent 运行时">
-        <Cpu size={18} /> 运行时
+      <button class:active={tab === "connections"} on:click={() => (tab = "connections")} aria-label="设备与本机运行时连接">
+        <Cable size={18} /> 连接
       </button>
       <button class:active={tab === "usage"} on:click={() => (tab = "usage")} aria-label="用量统计">
         <BarChart3 size={18} /> 用量
@@ -1452,13 +1477,28 @@
           </div>
         </section>
       </div>
-    {:else if tab === "runtimes"}
-      <div class="runtime-workspace">
+    {:else if tab === "connections"}
+      <div class="connection-workspace">
+        <section class="device-section pixel-panel">
+          <header class="section-head connection-section-head">
+            <div>
+              <span class="agent-kicker">PAIRED DEVICES</span>
+              <h3>设备</h3>
+              <p>管理已配对的 Remote 客户端及其访问权限。</p>
+            </div>
+            <button bind:this={addDeviceButton} class="connection-primary-button" type="button" on:click={openPairDeviceDialog}>
+              <Plus size={17} /> 添加设备
+            </button>
+          </header>
+
+          <RemoteDeviceList devices={remoteDevices} />
+        </section>
+
         <section class="runtime-section pixel-panel">
           <header class="section-head runtime-section-head">
             <div>
               <span class="agent-kicker">LOCAL EXECUTABLES</span>
-              <h3>Agent Runtime</h3>
+              <h3>本机运行时</h3>
               <p>Code Pet 会验证可执行文件和版本；手动配置始终优先于自动检测。</p>
             </div>
             <button class="runtime-refresh-button" type="button" disabled={busyRuntime !== null} on:click={refreshRuntimes}>
@@ -2176,6 +2216,8 @@
       </section>
     {/if}
   </section>
+
+  <PairDeviceDialog open={pairDeviceDialogOpen} display={pairingDisplay} onClose={closePairDeviceDialog} />
 </main>
 
 {#if availableUpdate}
