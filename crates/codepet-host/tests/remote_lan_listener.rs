@@ -355,15 +355,82 @@ async fn assert_close_reason(socket: &mut TestWebSocket, expected: &str) {
     assert_eq!(frame.reason, expected);
 }
 
+async fn assert_socket_ends_safely(socket: &mut TestWebSocket) {
+    timeout(Duration::from_secs(2), async {
+        loop {
+            match socket.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => continue,
+                Some(Ok(message)) => panic!("unexpected frame before socket close: {message:?}"),
+            }
+        }
+    })
+    .await
+    .unwrap();
+}
+
+async fn wait_for_active_sessions(server: &codepet_host::RemoteLanServerHandle, expected: usize) {
+    timeout(Duration::from_secs(5), async {
+        while server.active_session_count() != expected {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
 #[tokio::test]
 async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_shutdown() {
     assert_eq!(
         RemoteLanServerConfig::default().bind_addr,
         "0.0.0.0:0".parse().unwrap()
     );
+    assert!(RemoteLanServerConfig::default().advertised_host.is_none());
     let host = TestHost::start().await;
+    let wildcard_error = RemoteLanServer::start(
+        RemoteLanServerConfig::default(),
+        host.remote_access.clone(),
+        host.gateway.clone(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        wildcard_error.code,
+        "remote_lan_advertised_host_required"
+    );
+    let wildcard_advertised_error = RemoteLanServer::start(
+        RemoteLanServerConfig::default().with_advertised_host("0.0.0.0"),
+        host.remote_access.clone(),
+        host.gateway.clone(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        wildcard_advertised_error.code,
+        "invalid_remote_lan_advertised_host"
+    );
+    let wildcard_server = RemoteLanServer::start(
+        RemoteLanServerConfig::default().with_advertised_host("listener.local"),
+        host.remote_access.clone(),
+        host.gateway.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(wildcard_server.local_addr().ip().is_unspecified());
+    assert_eq!(
+        wildcard_server.https_base_url(),
+        format!("https://listener.local:{}", wildcard_server.port())
+    );
+    assert_eq!(
+        wildcard_server.gateway_url(),
+        format!(
+            "wss://listener.local:{}/remote/v1/gateway",
+            wildcard_server.port()
+        )
+    );
+    wildcard_server.shutdown().await.unwrap();
     let server = RemoteLanServer::start(
-        RemoteLanServerConfig::loopback(),
+        RemoteLanServerConfig::loopback().with_advertised_host("127.0.0.1"),
         host.remote_access.clone(),
         host.gateway.clone(),
     )
@@ -449,6 +516,85 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     )
     .await;
     assert_close_reason(&mut missing_handshake, "protocol_handshake_required").await;
+
+    wait_for_active_sessions(&server, 1).await;
+    let mut binary = client
+        .connect_websocket(&pairing_a.credential)
+        .await
+        .unwrap();
+    binary
+        .send(Message::Binary(vec![0_u8, 1_u8, 2_u8]))
+        .await
+        .unwrap();
+    assert_close_reason(&mut binary, "text_frames_required").await;
+
+    wait_for_active_sessions(&server, 1).await;
+    let mut oversized = client
+        .connect_websocket(&pairing_a.credential)
+        .await
+        .unwrap();
+    oversized
+        .send(Message::Text("x".repeat(300 * 1024)))
+        .await
+        .unwrap();
+    assert_socket_ends_safely(&mut oversized).await;
+
+    wait_for_active_sessions(&server, 1).await;
+    let mut stalled = client
+        .connect_websocket(&pairing_a.credential)
+        .await
+        .unwrap();
+    send_request(
+        &mut stalled,
+        handshake_request("handshake-stalled", "client-a"),
+    )
+    .await;
+    let stalled_handshake = next_response(&mut stalled, "handshake-stalled").await;
+    assert!(matches!(
+        stalled_handshake,
+        gateway::ProtocolResponse::ProtocolHandshake {
+            response: gateway::ResponsePayload::Ok { .. },
+            ..
+        }
+    ));
+    wait_for_active_sessions(&server, 2).await;
+    let large_id_tail = "x".repeat(248 * 1024);
+    let mut backpressure_requests_sent = 0;
+    for sequence in 0..128 {
+        let request = gateway::ProtocolRequest::DeviceList {
+            protocol_version: gateway::PROTOCOL_VERSION,
+            id: format!("backpressure-{sequence}-{large_id_tail}"),
+            params: gateway::DeviceListRequest {},
+        };
+        let text = serde_json::to_string(&request).unwrap();
+        assert!(text.len() < 256 * 1024);
+        match timeout(Duration::from_secs(1), stalled.send(Message::Text(text))).await {
+            Ok(Ok(())) => backpressure_requests_sent += 1,
+            Ok(Err(_)) | Err(_) => break,
+        }
+    }
+    assert!(backpressure_requests_sent > 0);
+
+    send_request(
+        &mut socket_a,
+        gateway::ProtocolRequest::DeviceList {
+            protocol_version: gateway::PROTOCOL_VERSION,
+            id: "healthy-during-backpressure".to_string(),
+            params: gateway::DeviceListRequest {},
+        },
+    )
+    .await;
+    let healthy_during_backpressure =
+        next_response(&mut socket_a, "healthy-during-backpressure").await;
+    assert!(matches!(
+        healthy_during_backpressure,
+        gateway::ProtocolResponse::DeviceList {
+            response: gateway::ResponsePayload::Ok { .. },
+            ..
+        }
+    ));
+    wait_for_active_sessions(&server, 1).await;
+    drop(stalled);
 
     send_request(
         &mut socket_a,
@@ -674,13 +820,24 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     assert_eq!(event_cursor(&events_a[0]), event_cursor(&event_b_one));
     assert_eq!(event_cursor(&events_a[1]), event_cursor(&event_b_two));
 
-    timeout(Duration::from_secs(1), async {
-        while server.active_session_count() != 2 {
-            tokio::task::yield_now().await;
+    let mut socket_a_second = client
+        .connect_websocket(&pairing_a.credential)
+        .await
+        .unwrap();
+    send_request(
+        &mut socket_a_second,
+        handshake_request("handshake-a-second", "client-a"),
+    )
+    .await;
+    let handshake_a_second = next_response(&mut socket_a_second, "handshake-a-second").await;
+    assert!(matches!(
+        handshake_a_second,
+        gateway::ProtocolResponse::ProtocolHandshake {
+            response: gateway::ResponsePayload::Ok { .. },
+            ..
         }
-    })
-    .await
-    .unwrap();
+    ));
+    wait_for_active_sessions(&server, 3).await;
     let (delete_status, delete_body) = client
         .json_request(
             "DELETE",
@@ -693,17 +850,9 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     let deleted: gateway::CurrentCredentialDeleteResponse =
         serde_json::from_value(delete_body).unwrap();
     assert!(deleted.revoked);
-    assert!(matches!(
-        timeout(Duration::from_secs(1), socket_a.next()).await,
-        Ok(Some(Ok(Message::Close(_)))) | Ok(None)
-    ));
-    timeout(Duration::from_secs(1), async {
-        while server.active_session_count() != 1 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    assert_close_reason(&mut socket_a, "credential_revoked").await;
+    assert_close_reason(&mut socket_a_second, "credential_revoked").await;
+    wait_for_active_sessions(&server, 1).await;
 
     let reconnect = client.connect_websocket(&pairing_a.credential).await;
     let Err(WebSocketError::Http(response)) = reconnect else {

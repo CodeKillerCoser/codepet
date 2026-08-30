@@ -41,7 +41,9 @@ QR 只编码 `PairingQrPayload`：`version/hostDeviceId/displayName/httpsBaseUrl
 
 `event.subscribe` 是每条 socket 的显式推送门。listener 在成功响应前先从现有 EventPublisher 建立 replay/live subscription，响应入队后才启动该 socket 的 event send loop；`GatewayEventSubscription` 以 cursor 去除 receiver 与 replay 窗口交叠，因此顺序是 replay 后 live 且不重复。每条 socket 最多成功订阅一次，未订阅 socket 不收到 server event，但仍可执行普通请求。
 
-`RemoteLanServerConfig::default()` 绑定 `0.0.0.0:0`，测试使用显式 loopback；handle 返回实际地址、端口、`httpsBaseUrl` 与 `gatewayUrl`。每条 socket 独立持有 credential clientId、握手状态、订阅和有界 outbound queue。`DELETE current` 只撤销发起 bearer，并按非敏感 credentialId 取消对应 listener-local sessions；其他 credential 的 socket 不受影响。显式 shutdown 先停止新 session、取消现有 socket，再有界关闭 server task；TLS handshake 自身也有小于 server shutdown 窗口的上限。坏 JSON、binary frame、超限 frame 和协议次序错误只产生固定 Gateway error 或 WebSocket close，不进入 panic 路径。
+`RemoteLanServerConfig::default()` 的 bind address 是 `0.0.0.0:0`，但 bind address 与客户端可见 authority 分离：wildcard bind 必须由调用方显式提供具体 `advertised_host`，否则 start fail-closed；listener 只把实际端口附到该 IP/DNS host，handle 与 pairing response 共用由此得到的 `httpsBaseUrl/gatewayUrl`，绝不发布 `0.0.0.0`。真实网络测试显式绑定 loopback 并传入 `127.0.0.1`；后续 mDNS/Tauri 负责提供真实 LAN host。
+
+每条 socket 独立持有 credential clientId、握手状态、订阅和容量为 64 的 outbound queue；writer 单次发送有一秒上限，response/event 入队有两秒上限，任一 transport backpressure 只取消该 session。listener 以全局 32 permit semaphore 限制并发 WSS session，超限 upgrade 返回稳定 503。`DELETE current` 只撤销发起 bearer，并按非敏感 credentialId 取消对应 listener-local sessions；同一 credential 的所有 socket 都关闭，其他 credential 不受影响。显式 shutdown 先停止新 session、取消现有 socket，再有界关闭 server task；TLS handshake 自身也有小于 server shutdown 窗口的上限。坏 JSON、binary frame、超限 frame 和协议次序错误只产生固定 Gateway error、WebSocket close 或安全断开，不进入 panic 路径。
 
 mDNS service type 为 `_codepet._tcp.local.`，TXT 仅允许 `id/name/vmin/vmax/pair`。SRV/A/AAAA 负责 endpoint 发现，TXT 不携带 certificate fingerprint、secret、credential、Provider、项目或会话。
 
@@ -60,8 +62,9 @@ mDNS service type 为 `_codepet._tcp.local.`，TXT 仅允许 `id/name/vmin/vmax/
 - 指纹格式漂移：schema pattern、fixture、Rust SDK 解码与 Host TLS 定向测试共同验证 64 位小写 hex。
 - `clientId` 出现同义字段：生成器测试断言 request 只有 `clientId`，无 `remoteClientId`；真实 WSS 负例验证 credential 绑定。
 - 无 identity 的进程内服务被误用于 LAN：Gateway v1 handshake fail-closed，listener start 拒绝与 manager identity 不一致的 service；loopback 测试核对真实 TLS leaf 指纹、pairing response 与 handshake identity 三者相同。
-- 慢客户端阻塞或消费其他客户端事件：每 socket 使用独立 subscription 与有界 send loop；双客户端测试验证未订阅连接保持静默、订阅连接各自收到同 cursor event，业务 response 不串 socket。
-- 撤销后旧 socket 继续使用：DELETE 先持久撤销 bearer，再取消对应 credentialId 的本地 sessions；测试验证有界断线、拒绝重连且其他 bearer 仍可请求。
+- wildcard bind 被误当作可访问 endpoint：start 在缺少 advertised host 时 fail-closed；测试分别验证 `0.0.0.0:0` bind 与 `listener.local:<actual-port>` handle URL，并用显式 `127.0.0.1` 完成真实网络闭环。
+- 慢客户端阻塞或消费其他客户端事件：每 socket 使用独立 subscription、send task 与有界 queue；真实 WSS 测试让一个客户端在握手后停止读取并持续发送合法的大响应请求，验证该 session 因 backpressure 有界退出，同时健康 socket 仍得到正常 response。双客户端订阅测试另行验证未订阅连接保持静默、订阅连接各自收到同 cursor event，业务 response 不串 socket。
+- 撤销后旧 socket 继续使用：DELETE 先持久撤销 bearer，再取消对应 credentialId 的本地 sessions；真实 WSS 测试以同一 credential 建立两个 socket，验证两者均有界断线、旧 bearer 拒绝重连且其他 bearer 仍可请求。
 - REST DTO 被误加成 Gateway method：生成器测试断言 pairing/credential 不出现在 method manifest。
 - compat 或桌宠链机械漂移：`protocol:check`、Tauri `cargo check --lib --locked` 与最终边界 diff 审计确认无改动。
 
@@ -71,7 +74,7 @@ mDNS service type 为 `_codepet._tcp.local.`，TXT 仅允许 `id/name/vmin/vmax/
 - `cargo test --manifest-path sdk/rust/Cargo.toml -p codepet-gateway-sdk`：handshake identity 与 LAN DTO fixture 解码。
 - `npm test --prefix sdk/typescript/codepet-gateway-sdk`：Gateway v1 TypeScript 生成类型编译。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-host --test manager_gateway`：Host 注入 identity 的 handshake 构造。
-- `cargo test --manifest-path crates/Cargo.toml -p codepet-host --test remote_lan_listener`：真实 loopback TLS、证书 pin、pairing、WSS dispatch、replay/live、多客户端、撤销和 shutdown。
+- `cargo test --manifest-path crates/Cargo.toml -p codepet-host --test remote_lan_listener`：真实 loopback TLS、证书 pin、advertised authority、pairing、WSS dispatch、binary/超限 frame、安全 backpressure 关闭、replay/live、多客户端、同 credential 双 socket 撤销和 shutdown。
 - `cargo check --manifest-path src-tauri/Cargo.toml --lib --locked`：兼容调用方与 Tauri 机械生成边界。
 
 ## 知识沉淀

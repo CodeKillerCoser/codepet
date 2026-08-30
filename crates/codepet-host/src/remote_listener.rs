@@ -17,7 +17,9 @@ use std::fmt::{Debug, Formatter};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc, watch, Notify};
+use tokio::sync::{
+    broadcast, mpsc, watch, Notify, OwnedSemaphorePermit, Semaphore,
+};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
@@ -28,20 +30,25 @@ const MAX_REST_BODY_BYTES: usize = 64 * 1024;
 const MAX_WEBSOCKET_FRAME_BYTES: usize = 256 * 1024;
 const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 256 * 1024;
 const OUTBOUND_QUEUE_CAPACITY: usize = 64;
+const MAX_CONCURRENT_WEBSOCKET_SESSIONS: usize = 32;
+const WEBSOCKET_SEND_TIMEOUT: Duration = Duration::from_secs(1);
+const OUTBOUND_ENQUEUE_TIMEOUT: Duration = Duration::from_secs(2);
 const CONNECTION_CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(1);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Socket binding for the TLS-only Remote Gateway listener.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Socket binding and client-visible host for the TLS-only Remote Gateway listener.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemoteLanServerConfig {
     pub bind_addr: SocketAddr,
+    pub advertised_host: Option<String>,
 }
 
 impl Default for RemoteLanServerConfig {
     fn default() -> Self {
         Self {
             bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+            advertised_host: None,
         }
     }
 }
@@ -50,7 +57,13 @@ impl RemoteLanServerConfig {
     pub fn loopback() -> Self {
         Self {
             bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            advertised_host: None,
         }
+    }
+
+    pub fn with_advertised_host(mut self, advertised_host: impl Into<String>) -> Self {
+        self.advertised_host = Some(advertised_host.into());
+        self
     }
 }
 
@@ -70,6 +83,10 @@ impl RemoteLanServer {
                 "Remote Gateway service identity must match the LAN TLS and Host identity",
             ));
         }
+        let advertised_host = resolve_advertised_host(
+            config.bind_addr.ip(),
+            config.advertised_host.as_deref(),
+        )?;
 
         let listener = TcpListener::bind(config.bind_addr).map_err(|error| {
             HostError::new(
@@ -107,9 +124,11 @@ impl RemoteLanServer {
             )
         })?;
 
-        let https_base_url = format!("https://{}", socket_url_authority(local_addr));
-        let gateway_url = format!("wss://{}{}", socket_url_authority(local_addr), GATEWAY_PATH);
-        let sessions = Arc::new(SessionRegistry::new());
+        let advertised_authority =
+            advertised_url_authority(&advertised_host, local_addr.port());
+        let https_base_url = format!("https://{advertised_authority}");
+        let gateway_url = format!("wss://{advertised_authority}{GATEWAY_PATH}");
+        let sessions = Arc::new(SessionRegistry::new(MAX_CONCURRENT_WEBSOCKET_SESSIONS));
         let state = Arc::new(RemoteLanState {
             remote_access,
             gateway,
@@ -290,7 +309,7 @@ async fn gateway_websocket(
     let registration = state
         .sessions
         .register(&credential.credential_id)
-        .ok_or_else(RestError::shutting_down)?;
+        .map_err(RestError::session_registration)?;
     state
         .remote_access
         .validate_bearer(bearer)
@@ -312,10 +331,17 @@ async fn run_gateway_socket(
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<Message>(OUTBOUND_QUEUE_CAPACITY);
     let (stop_tx, _) = watch::channel(false);
     let (writer_done_tx, mut writer_done) = watch::channel(false);
+    let (transport_failed_tx, mut transport_failed) = watch::channel(false);
+    let writer_failed = transport_failed_tx.clone();
     let writer = tokio::spawn(async move {
         while let Some(message) = outbound_rx.recv().await {
             let closing = matches!(message, Message::Close(_));
-            if sink.send(message).await.is_err() || closing {
+            let sent = timeout(WEBSOCKET_SEND_TIMEOUT, sink.send(message)).await;
+            if !matches!(sent, Ok(Ok(()))) {
+                let _ = writer_failed.send(true);
+                break;
+            }
+            if closing {
                 break;
             }
         }
@@ -339,6 +365,12 @@ async fn run_gateway_socket(
             changed = writer_done.changed() => {
                 let _ = changed;
                 break;
+            }
+            changed = transport_failed.changed() => {
+                if changed.is_err() || *transport_failed.borrow() {
+                    break;
+                }
+                continue;
             }
             next = source.next() => next,
         };
@@ -497,6 +529,7 @@ async fn run_gateway_socket(
             };
             subscribed = true;
             let event_outbound = outbound_tx.clone();
+            let event_transport_failed = transport_failed_tx.clone();
             let mut event_stop = stop_tx.subscribe();
             event_task = Some(tokio::spawn(async move {
                 loop {
@@ -512,22 +545,33 @@ async fn run_gateway_socket(
                     let event = match event {
                         Ok(event) => event,
                         Err(error) => {
-                            let _ = event_outbound
-                                .send(close_message(1011, error.code))
-                                .await;
+                            if !enqueue_outbound(
+                                &event_outbound,
+                                close_message(1011, error.code),
+                            )
+                            .await
+                            {
+                                let _ = event_transport_failed.send(true);
+                            }
                             break;
                         }
                     };
                     let text = match serde_json::to_string(&event) {
                         Ok(text) => text,
                         Err(_) => {
-                            let _ = event_outbound
-                                .send(close_message(1011, "gateway_event_encoding_failed"))
-                                .await;
+                            if !enqueue_outbound(
+                                &event_outbound,
+                                close_message(1011, "gateway_event_encoding_failed"),
+                            )
+                            .await
+                            {
+                                let _ = event_transport_failed.send(true);
+                            }
                             break;
                         }
                     };
-                    if event_outbound.send(Message::Text(text)).await.is_err() {
+                    if !enqueue_outbound(&event_outbound, Message::Text(text)).await {
+                        let _ = event_transport_failed.send(true);
                         break;
                     }
                 }
@@ -579,8 +623,15 @@ async fn queue_json<T: serde::Serialize>(
             let _ = cancellation;
             false
         }
-        sent = outbound.send(Message::Text(text)) => sent.is_ok(),
+        sent = enqueue_outbound(outbound, Message::Text(text)) => sent,
     }
+}
+
+async fn enqueue_outbound(outbound: &mpsc::Sender<Message>, message: Message) -> bool {
+    matches!(
+        timeout(OUTBOUND_ENQUEUE_TIMEOUT, outbound.send(message)).await,
+        Ok(Ok(()))
+    )
 }
 
 fn bearer_from_headers(headers: &HeaderMap) -> Result<&str, RestError> {
@@ -595,10 +646,57 @@ fn bearer_from_headers(headers: &HeaderMap) -> Result<&str, RestError> {
     Ok(bearer)
 }
 
-fn socket_url_authority(address: SocketAddr) -> String {
-    match address.ip() {
-        IpAddr::V4(ip) => format!("{ip}:{}", address.port()),
-        IpAddr::V6(ip) => format!("[{ip}]:{}", address.port()),
+fn resolve_advertised_host(
+    bind_ip: IpAddr,
+    configured_host: Option<&str>,
+) -> HostResult<String> {
+    let host = match configured_host {
+        Some(host) => host.trim(),
+        None if bind_ip.is_unspecified() => {
+            return Err(HostError::new(
+                "remote_lan_advertised_host_required",
+                "Remote LAN wildcard bindings require an explicit advertised host",
+            ));
+        }
+        None => return Ok(bind_ip.to_string()),
+    };
+    if host.is_empty() {
+        return Err(invalid_advertised_host());
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if ip.is_unspecified() {
+            return Err(invalid_advertised_host());
+        }
+        return Ok(ip.to_string());
+    }
+    if host.len() > 253
+        || !host.is_ascii()
+        || host.split('.').any(|label| {
+            label.is_empty()
+                || label.len() > 63
+                || label.starts_with('-')
+                || label.ends_with('-')
+                || !label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+    {
+        return Err(invalid_advertised_host());
+    }
+    Ok(host.to_string())
+}
+
+fn invalid_advertised_host() -> HostError {
+    HostError::new(
+        "invalid_remote_lan_advertised_host",
+        "Remote LAN advertised host must be a concrete IP address or DNS host without a port",
+    )
+}
+
+fn advertised_url_authority(host: &str, port: u16) -> String {
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V6(ip)) => format!("[{ip}]:{port}"),
+        _ => format!("{host}:{port}"),
     }
 }
 
@@ -711,14 +809,24 @@ impl RestError {
         }
     }
 
-    fn shutting_down() -> Self {
-        Self {
-            status: StatusCode::SERVICE_UNAVAILABLE,
-            error: protocol_error(
-                "remote_lan_listener_shutting_down",
-                "Remote LAN listener is shutting down",
-                true,
-            ),
+    fn session_registration(error: SessionRegistrationError) -> Self {
+        match error {
+            SessionRegistrationError::ShuttingDown => Self {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                error: protocol_error(
+                    "remote_lan_listener_shutting_down",
+                    "Remote LAN listener is shutting down",
+                    true,
+                ),
+            },
+            SessionRegistrationError::LimitReached => Self {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                error: protocol_error(
+                    "remote_lan_session_limit_reached",
+                    "Remote LAN listener session limit is reached",
+                    true,
+                ),
+            },
         }
     }
 }
@@ -749,10 +857,11 @@ struct SessionRegistryState {
 struct SessionRegistry {
     state: Mutex<SessionRegistryState>,
     empty: Notify,
+    slots: Arc<Semaphore>,
 }
 
 impl SessionRegistry {
-    fn new() -> Self {
+    fn new(max_sessions: usize) -> Self {
         Self {
             state: Mutex::new(SessionRegistryState {
                 groups: BTreeMap::new(),
@@ -760,13 +869,25 @@ impl SessionRegistry {
                 shutting_down: false,
             }),
             empty: Notify::new(),
+            slots: Arc::new(Semaphore::new(max_sessions)),
         }
     }
 
-    fn register(self: &Arc<Self>, credential_id: &str) -> Option<SessionRegistration> {
-        let mut state = self.state.lock().ok()?;
+    fn register(
+        self: &Arc<Self>,
+        credential_id: &str,
+    ) -> Result<SessionRegistration, SessionRegistrationError> {
+        let permit = self
+            .slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| SessionRegistrationError::LimitReached)?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| SessionRegistrationError::ShuttingDown)?;
         if state.shutting_down {
-            return None;
+            return Err(SessionRegistrationError::ShuttingDown);
         }
         let group = state.groups.entry(credential_id.to_string()).or_insert_with(|| {
             let (sender, _) = broadcast::channel(1);
@@ -776,11 +897,12 @@ impl SessionRegistry {
         let sender = group.sender.clone();
         let receiver = sender.subscribe();
         state.active += 1;
-        Some(SessionRegistration {
+        Ok(SessionRegistration {
             registry: self.clone(),
             credential_id: credential_id.to_string(),
             sender,
             receiver,
+            _permit: permit,
         })
     }
 
@@ -870,6 +992,13 @@ struct SessionRegistration {
     credential_id: String,
     sender: broadcast::Sender<SessionCancellation>,
     receiver: broadcast::Receiver<SessionCancellation>,
+    _permit: OwnedSemaphorePermit,
+}
+
+#[derive(Debug)]
+enum SessionRegistrationError {
+    ShuttingDown,
+    LimitReached,
 }
 
 impl SessionRegistration {
@@ -884,5 +1013,28 @@ impl SessionRegistration {
 impl Drop for SessionRegistration {
     fn drop(&mut self) {
         self.registry.unregister(&self.credential_id, &self.sender);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RestError, SessionRegistrationError, SessionRegistry};
+    use axum::http::StatusCode;
+    use std::sync::Arc;
+
+    #[test]
+    fn session_registry_enforces_the_global_limit() {
+        let registry = Arc::new(SessionRegistry::new(1));
+        let first = registry.register("credential-a").unwrap();
+        assert!(matches!(
+            registry.register("credential-b"),
+            Err(SessionRegistrationError::LimitReached)
+        ));
+        drop(first);
+        assert!(registry.register("credential-b").is_ok());
+        let limit_error =
+            RestError::session_registration(SessionRegistrationError::LimitReached);
+        assert_eq!(limit_error.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(limit_error.error.code, "remote_lan_session_limit_reached");
     }
 }

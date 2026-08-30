@@ -93,9 +93,9 @@ Catalog 仍只消费普通目录和 manifest，没有默认 Provider registry、
 
 ## 进程、Listener 与 shutdown
 
-`RemoteLanServer::start` 默认绑定 `0.0.0.0:0`，也允许测试显式绑定 loopback，并返回实际端口、HTTPS base URL 与 WSS Gateway URL。listener 启动时核对 transport 注入的 `RemoteHostIdentity` 与 `RemoteAccessManager` 的 device/TLS fingerprint 完全一致；普通无 identity 的 Gateway service 仍 fail closed。认证、credential clientId 与本地 session cancellation 不进入 `ProviderGatewayService`。
+`RemoteLanServer::start` 的默认 bind address 是 `0.0.0.0:0`，但 wildcard bind 只有在调用方另行提供具体 advertised IP/DNS host 时才允许启动；实际端口附到 advertised host 后形成 HTTPS base URL 与 WSS Gateway URL，因此不会发布 `0.0.0.0`。真实网络测试显式使用 `127.0.0.1`，mDNS/Tauri 尚未提供 LAN advertised host。listener 启动时核对 transport 注入的 `RemoteHostIdentity` 与 `RemoteAccessManager` 的 device/TLS fingerprint 完全一致；普通无 identity 的 Gateway service 仍 fail closed。认证、credential clientId 与本地 session cancellation 不进入 `ProviderGatewayService`。
 
-每条 WSS socket 独立完成 handshake、Gateway SDK dispatch、显式 event subscription 与有界 send loop。订阅前不推 event，订阅后复用现有 replay/live cursor 语义。DELETE current 持久撤销发起 bearer，并有界关闭相同 credential 的 socket；listener shutdown 取消全部 socket 并等待 server task，Tauri 后续必须持有 handle 并调用该入口。
+每条 WSS socket 独立完成 handshake、Gateway SDK dispatch、显式 event subscription 与有界 send loop；固定 writer/send-queue timeout 会关闭不读取或队列满的单个 session，全局 semaphore 把并发 session 限制为 32，超限 upgrade 返回 503。订阅前不推 event，订阅后复用现有 replay/live cursor 语义。DELETE current 持久撤销发起 bearer，并有界关闭相同 credential 的全部 socket；listener shutdown 取消全部 socket并等待 server task，Tauri 后续必须持有 handle 并调用该入口。真实 loopback 测试覆盖 binary、超限 text、安全 backpressure 关闭、健康客户端隔离与同 credential 双 socket 撤销。
 
 每个 `PluginProcess` 独占一个子进程及其 stdin/stdout/stderr：
 
