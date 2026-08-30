@@ -46,11 +46,13 @@ QR 只编码 `PairingQrPayload`：`version/hostDeviceId/displayName/httpsBaseUrl
 
 每条 socket 独立持有 credential clientId、握手状态、订阅和容量为 64 的 outbound queue；writer 单次发送有一秒上限，response/event 入队有两秒上限，任一 transport backpressure 只取消该 session。listener 以全局 32 permit semaphore 限制并发 WSS session，超限 upgrade 返回稳定 503。`DELETE current` 只撤销发起 bearer，并按非敏感 credentialId 取消对应 listener-local sessions；同一 credential 的所有 socket 都关闭，其他 credential 不受影响。显式 shutdown 先停止新 session、取消现有 socket，再有界关闭 server task；TLS handshake 自身也有小于 server shutdown 窗口的上限。坏 JSON、binary frame、超限 frame 和协议次序错误只产生固定 Gateway error、WebSocket close 或安全断开，不进入 panic 路径。
 
-mDNS 使用仍在维护且跨 macOS/Linux/Windows 的纯 Rust `mdns-sd 0.21`；Host 不需要异步或 logging feature。service type 精确为 `_codepet._tcp.local.`，TXT 精确且仅有 `id/name/vmin/vmax/pair`：`id/name` 来自同一个 `RemoteHostIdentity`，`vmin/vmax` 都是 Gateway `PROTOCOL_VERSION=1`，`pair=1` 只表示 Host 当前主动开放一次性 pairing，否则为 `0`。SRV/A/AAAA 使用 `RemoteLanServerHandle` 已确认的 advertised IP 和实际 TLS port；DNS host、unspecified/multicast/documentation IP、与具体 bind 不一致的 IP 或地址族均 fail-closed，不做 DNS 解析、接口地址自动探测或公网/loopback猜测，测试可显式使用匹配的 loopback。
+mDNS 使用仍在维护且跨 macOS/Linux/Windows 的纯 Rust `mdns-sd 0.21`；Host 不需要异步或 logging feature。service type 精确为 `_codepet._tcp.local.`，TXT 精确且仅有 `id/name/vmin/vmax/pair`：`id/name` 只读取 `RemoteLanServerHandle` 在 listener 启动时已核对并保存的 `RemoteHostIdentity`，advertiser API 不再接受另一份 manager，因此不能拼接 manager A 的 identity 与 listener B 的 endpoint；`vmin/vmax` 都是 Gateway `PROTOCOL_VERSION=1`，`pair=1` 只表示 Host 当前主动开放一次性 pairing，否则为 `0`。SRV/A/AAAA 使用同一 handle 的 advertised IP 和实际 TLS port；DNS host、unspecified/multicast/documentation IP、与具体 bind 不一致的 IP 或地址族均 fail-closed。显式 IP 还必须存在于 `if-addrs` 返回的 active 本机接口集合，接口枚举只做归属校验，不代替调用方猜公网、LAN 或 loopback 地址；测试可显式使用匹配的 loopback。
 
 instance name 由可读 display name 加 device id 的短哈希冲突后缀组成，hostname 使用相同冲突后缀；`mdns-sd` 默认 probe 继续处理极小概率的局域网名称冲突。instance、hostname 与 IP 都只是发现元数据，稳定身份只能读取 TXT `id`，TLS 信任仍只能来自 pairing 后的证书 pin 与 handshake 核对。TXT 不携带 certificate fingerprint、secret、credential、Provider、项目或会话。
 
-`RemoteLanMdnsAdvertiser::update_pairing_available` 只在值变化时以同一个 fullname 重注册 service，其他 endpoint/TXT 不变。下一阶段调用者必须在 pairing start、cancel、consume 时显式更新，不能由 advertiser 创建 listener 或轮询 pairing。`shutdown` 先注销 service 再停止 daemon，成功后的重复调用是 no-op，Drop 只做同样的 best-effort 收尾。
+`mdns-sd::ServiceDaemon::register` 只保证命令入队，因此 advertiser 在 start 和 pair 值变化后通过 daemon monitor 等待固定短窗口内目标 fullname 的 `DaemonEvent::Announce`；只有实际发送产生该事件才返回成功。`DaemonEvent::Error`、monitor 断开或超时都会注销 service 并停止 daemon；idle 期间积累的 error/断开由下一次 update（包括 pair 值未变）或 shutdown 读取并执行同样的 fail-closed 清理。
+
+`RemoteLanMdnsAdvertiser::update_pairing_available` 只在值变化时以同一个 fullname 重注册 service，其他 endpoint/TXT 不变。下一阶段调用者必须在 pairing start、cancel、consume 时显式更新，不能由 advertiser 创建 listener 或轮询 pairing。`shutdown` 检查 monitor 后注销 service 并停止 daemon，成功停止后的重复调用是 no-op，Drop 只做同样的 best-effort 收尾。
 
 ## 涉及模块
 
@@ -60,7 +62,7 @@ instance name 由可读 display name 加 device id 的短哈希冲突后缀组�
 - `crates/codepet-host/src/remote_access.rs`：消费生成 `PairingExchangeRequest`，不保留手写同义 DTO。
 - `crates/codepet-host/src/gateway.rs`：构造必需 handshake `device`；认证仍留在 transport 外层。
 - `crates/codepet-host/src/remote_listener.rs`：单 TLS listener、固定 REST/WSS route、per-socket 状态、撤销取消和有界 shutdown。
-- `crates/codepet-host/src/remote_mdns.rs`：从既有 Host identity 与 listener endpoint 构造唯一 service、更新 pairing availability 并持有 daemon 生命周期。
+- `crates/codepet-host/src/remote_mdns.rs`：只从 listener handle 的同源 identity/endpoint 构造唯一 service，以本机接口与 Announce 证明发布，并更新 pairing availability、持有 daemon 生命周期。
 - `crates/codepet-host/tests/remote_lan_listener.rs`：真实 loopback TLS pin 与完整 WSS/撤销/多客户端证据。
 
 ## 风险
@@ -70,7 +72,9 @@ instance name 由可读 display name 加 device id 的短哈希冲突后缀组�
 - 无 identity 的进程内服务被误用于 LAN：Gateway v1 handshake fail-closed，listener start 拒绝与 manager identity 不一致的 service；loopback 测试核对真实 TLS leaf 指纹、pairing response 与 handshake identity 三者相同。
 - wildcard bind 被误当作可访问 endpoint：start 在缺少 advertised host 时 fail-closed；测试分别验证 `0.0.0.0:0` bind 与 `listener.local:<actual-port>` handle URL，并用显式 `127.0.0.1` 完成真实网络闭环。
 - 发现数据被误当身份或泄露敏感上下文：构造测试断言 service type、实际 port 与 TXT exact set，并使用 sentinel fingerprint 证明不进入 service；文档和 review 继续要求客户端只信任 pairing/TLS/handshake。
-- 广告不可达或串到错误接口：advertiser 只接受与 listener bind 地址族一致的显式 unicast IP，并将 service 限定到该 IP 所属接口；确定性负例覆盖 DNS host、unspecified 与 bind mismatch。实际网卡切换和防火墙仍需下一阶段真机验证。
+- identity 与 endpoint provenance 被错误拼接：公开 start API 只接受 listener handle，编译形状测试固定该边界；真实 listener 测试核对 handle identity 等于启动它的 manager identity。
+- 广告不可达或串到错误接口：advertiser 只接受与 listener bind 匹配、存在于 active 本机接口集合的显式 unicast IP，并将 service 限定到该地址；确定性负例覆盖 DNS host、unspecified、bind mismatch 与非本机 IP，macOS smoke 对 start 和 `pair=0→1` 各等待目标 fullname 的真实 Announce。实际跨设备发现、网卡切换和防火墙仍需下一阶段真机验证。
+- daemon 入队被误报为发布成功：fake backend 覆盖 Announce、Error、超时、idle 断开、start/update 清理与重复 shutdown；真实 backend 只有 monitor 收到目标 fullname Announce 才让 start/update 返回成功。
 - 慢客户端阻塞或消费其他客户端事件：每 socket 使用独立 subscription、send task 与有界 queue；真实 WSS 测试让一个客户端在握手后停止读取并持续发送合法的大响应请求，验证该 session 因 backpressure 有界退出，同时健康 socket 仍得到正常 response。双客户端订阅测试另行验证未订阅连接保持静默、订阅连接各自收到同 cursor event，业务 response 不串 socket。
 - 撤销后旧 socket 继续使用：DELETE 先持久撤销 bearer，再取消对应 credentialId 的本地 sessions；真实 WSS 测试以同一 credential 建立两个 socket，验证两者均有界断线、旧 bearer 拒绝重连且其他 bearer 仍可请求。
 - REST DTO 被误加成 Gateway method：生成器测试断言 pairing/credential 不出现在 method manifest。
@@ -83,7 +87,7 @@ instance name 由可读 display name 加 device id 的短哈希冲突后缀组�
 - `npm test --prefix sdk/typescript/codepet-gateway-sdk`：Gateway v1 TypeScript 生成类型编译。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-host --test manager_gateway`：Host 注入 identity 的 handshake 构造。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-host --test remote_lan_listener`：真实 loopback TLS、证书 pin、advertised authority、pairing、WSS dispatch、binary/超限 frame、安全 backpressure 关闭、replay/live、多客户端、同 credential 双 socket 撤销和 shutdown。
-- `cargo test --manifest-path crates/Cargo.toml -p codepet-host --lib remote_mdns`：纯构造/校验、TXT exact set、实际 port、fail-closed endpoint、pair flip 与确定性 backend 生命周期；macOS 另运行不依赖 browse 的真实 daemon start/update/shutdown smoke。
+- `cargo test --manifest-path crates/Cargo.toml -p codepet-host --lib remote_mdns`：纯构造/校验、TXT exact set、实际 port、非本机 endpoint fail-closed、同源 API、pair flip，以及 Announce/Error/超时/idle 失败的确定性生命周期；macOS 同一测试集另以唯一 instance、不启动 browse，对 start 与 `pair=0→1` 更新分别等待真实 Announce 后 shutdown。
 - `cargo check --manifest-path src-tauri/Cargo.toml --lib --locked`：兼容调用方与 Tauri 机械生成边界。
 
 ## 知识沉淀

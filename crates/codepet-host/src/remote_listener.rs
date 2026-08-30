@@ -132,7 +132,7 @@ impl RemoteLanServer {
         let state = Arc::new(RemoteLanState {
             remote_access,
             gateway,
-            remote_identity,
+            remote_identity: remote_identity.clone(),
             gateway_url: gateway_url.clone(),
             sessions: sessions.clone(),
         });
@@ -155,6 +155,7 @@ impl RemoteLanServer {
         Ok(RemoteLanServerHandle {
             local_addr,
             advertised_host,
+            remote_identity,
             https_base_url,
             gateway_url,
             sessions,
@@ -168,6 +169,7 @@ impl RemoteLanServer {
 pub struct RemoteLanServerHandle {
     local_addr: SocketAddr,
     advertised_host: String,
+    remote_identity: gateway::RemoteHostIdentity,
     https_base_url: String,
     gateway_url: String,
     sessions: Arc<SessionRegistry>,
@@ -186,6 +188,11 @@ impl RemoteLanServerHandle {
 
     pub fn advertised_host(&self) -> &str {
         &self.advertised_host
+    }
+
+    /// Returns the immutable Host identity validated when this listener started.
+    pub fn remote_host_identity(&self) -> &gateway::RemoteHostIdentity {
+        &self.remote_identity
     }
 
     pub fn https_base_url(&self) -> &str {

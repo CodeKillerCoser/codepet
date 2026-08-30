@@ -440,6 +440,10 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     assert_ne!(server.port(), 0);
     assert_eq!(server.advertised_host(), "127.0.0.1");
     assert_eq!(
+        server.remote_host_identity(),
+        &host.remote_access.remote_host_identity()
+    );
+    assert_eq!(
         server.https_base_url(),
         format!("https://127.0.0.1:{}", server.port())
     );
