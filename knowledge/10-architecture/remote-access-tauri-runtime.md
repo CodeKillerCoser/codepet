@@ -1,0 +1,103 @@
+# Remote LAN Access 的 Tauri 生命周期与命令边界
+
+## 背景
+
+Host 已具备稳定设备身份、LAN TLS identity、一次性 pairing、credential store、HTTPS/WSS listener 与 mDNS advertiser，但此前 Code Pet App 不创建或持有这些对象。仅有 Host API 不等于产品运行时已开放远程访问：App 还需要复用 Provider Host 的唯一事实源、选择可发布 LAN IP、把 pairing 可用性同步到 mDNS，并在退出时有界释放网络与监控任务。
+
+本页记录 Phase 2B1 的实际后端接线。事实依据是 `crates/codepet-host/src/remote_access.rs`、`remote_listener.rs`、`remote_network.rs`，以及 `src-tauri/src/runtime_gateway/remote_access.rs` 和 `tauri_bridge.rs`。本阶段没有修改 frontend。
+
+## 目标
+
+- 让 Tauri 管理单个 `RemoteAccessRuntime`，后台启动 LAN listener 与 mDNS，网络失败不阻断窗口和 App core。
+- 复用 Provider Host 的同一个 `DeviceRegistry`、`PluginManager` 和 `ProviderGatewayService`，不创建第二套 Provider 进程、registry、event bus 或设备身份。
+- 通过显式命令提供状态、retry、配对、client 列表和 credential 撤销，同时不向前端返回 secret、bearer 或原始 QR JSON。
+- pairing start/cancel/consume/expire 自动驱动 mDNS `pair=1/0`，不依赖 UI 轮询。
+- App 退出时先有界停止 pairing monitor、mDNS、listener，再关闭 Provider Host。
+
+## 非目标
+
+- 不实现前端设置页、配对弹窗、QR 展示或 client 管理 UI。
+- 不修改 Gateway wire、Provider Protocol、Pet/activity、Desktop Companion IPC 或其事件投影。
+- 不实现 IPv6、多网卡选择 UI、网卡热切换、relay、E2EE、RBAC、refresh token 或 credential scope。
+- 不把 pairing secret、pairing outcome 或在线 session 持久化。
+
+## 现状理解
+
+`ProviderHostState` 是 App 内 Provider 生命周期入口。配置阶段先打开唯一的 `DeviceRegistry`，再把同一个 `Arc<DeviceRegistry>` 同时交给 `PluginManager::with_device_registry` 与 `RemoteAccessManager::open`。随后只构造一个 `ProviderGatewayService::with_remote_identity`；现有 compat `RuntimeGatewayState` 和新 LAN listener 都引用这个 service，所以 Manager 的单一 update receiver、Gateway replay/event sequence 和 Provider 进程事实不会分叉。
+
+`RemoteAccessRuntime` 由 Tauri `manage`。它持有 `RemoteAccessManager`、同一个 Gateway、运行中的 `RemoteLanServerHandle`、`RemoteLanMdnsAdvertiser`、安全诊断和 pairing monitor。setup 只调用 `start_in_background`；IP、bind 和 mDNS announce 失败只把 runtime 置为 `unavailable`，不会从 setup 返回错误。显式 retry 重新执行网络启动，但不会重建设备、TLS identity、credential store、Provider Manager 或 Gateway。
+
+## 实现路径
+
+### 生命周期与状态
+
+runtime 状态为 `starting / available / unavailable / stopping / stopped`。status 只返回 device id/display name、advertised host、HTTPS base URL、总在线 session 数、pairing availability 和不含 Host error details 的 `code/message/retryable` 诊断。启动中调用需要 listener 的命令返回可重试 `remote_access_starting`；不可用、停止中和已停止都有稳定错误，不 panic。
+
+启动顺序是：读取环境覆盖或执行 route probe；以 `0.0.0.0:0` bind listener；用 listener 的实际端口和选中 IPv4 构造 client URL；最后从同一个 handle 启动 mDNS。任何一步失败都会保持 App core 存活，并关闭已经创建的 listener。退出顺序是：通知并有界等待 pairing monitor；注销和关闭 mDNS；取消所有 session 并关闭 listener；然后 `handle_run_event` 才调用 Provider Host shutdown。ExitRequested、Exit 和托盘退出仍汇入同一条退出路径。
+
+### IPv4 选择
+
+v1 只发布 IPv4。若设置 `CODEPET_REMOTE_ADVERTISED_HOST`，值必须是具体 IPv4，且必须属于 `if-addrs` 枚举出的一个 active 本机接口；unspecified、multicast、documentation 地址和同一 IP 同时落在多个 active 接口上的歧义都会 fail-closed。
+
+没有覆盖时，Host 创建 IPv4 UDP socket，对 documentation target 执行 `connect` 以让操作系统选择路由，然后只读取 `local_addr`；代码不发送 datagram。route probe 失败、结果不是可发布 IPv4、结果不属于 active 接口或匹配多个 active 接口时都返回可诊断错误，不从“第一个网卡”或地址排序猜测。loopback 仅用于确定性自动化和显式本机调试；跨设备可达性仍需真机验证。
+
+### Pairing 状态与 mDNS
+
+同一时间只允许一个 active pairing。`RemoteAccessManager` 在单一 mutex 内保留 active session，以及最多 64 条、最长约 15 分钟的 `succeeded / expired / cancelled` 内存结果。Host 重启后这些状态消失；secret 和 outcome 都不落盘。cancel 对已经 cancelled 的 pairing 幂等；对 succeeded/expired 返回稳定的 not-active 错误。
+
+Manager 的最小 `watch` 值只有 pairing id、是否可用和单调 deadline。begin、cancel、成功 consume 与 expire 都更新 watch。Tauri monitor 等待 watch 变化或精确 deadline，不做高频轮询；变化后调用 `RemoteLanMdnsAdvertiser::update_pairing_available`。因此 listener 的真实 POST exchange 成功消费 secret 后，即使 UI 没有查询状态，mDNS 也会回到 `pair=0`，查询同一 pairing id 得到 `succeeded`。
+
+### Tauri commands
+
+命令均已加入 `tauri::generate_handler!`：
+
+- `remote_access_status`：读取安全运行状态与诊断。
+- `retry_remote_access`：串行重试不可用的 LAN runtime；available 时为 no-op。
+- `list_remote_clients`：返回 `credentialId/remoteClientId/clientName/platform/createdAt/lastSeenAt/revokedAt/onlineSessionCount`。
+- `start_remote_pairing`：只返回 `pairingId/expiresAt/qrSvgDataUrl`。
+- `get_remote_pairing_status`：按 pairing id 查询 `active/succeeded/expired/cancelled`。
+- `cancel_remote_pairing`：取消 active pairing；重复 cancelled 调用幂等。
+- `revoke_remote_credential`：按 credential id 持久撤销，并有界断开该 credential 的全部 socket。
+
+`start_remote_pairing` 直接构造生成 SDK 的 `PairingQrPayload`，对它做一次 `serde_json` 编码，再用 `qrcode` 生成 SVG 并以 base64 data URL 返回。普通响应、日志和 Debug 不包含 `pairingSecret`、bearer 或原始 JSON。QR 内部正文仍严格是协议生成类型要求的 JSON，这是 secret 唯一进入前端可见图片数据的路径。
+
+client online 数只读取 listener 的实际 session registry。未连接或已离线为 0；同一 credential 的多个 socket分别计数。撤销顺序固定为先更新 `RemoteCredentialStore`，再向该 credential 的 session group 广播取消并有界等待归零；其他 credential group 不受影响。重复撤销返回原 `revokedAt`，并再次确保残留 session 已断开。
+
+## 涉及模块
+
+- `crates/codepet-host/src/manager.rs`：让 Provider Manager 接受共享 `Arc<DeviceRegistry>`，避免复制 App 身份事实。
+- `crates/codepet-host/src/remote_access.rs`：增加 pairing watch、短期 outcome 查询、单 active 约束和按 credential id 幂等撤销。
+- `crates/codepet-host/src/remote_network.rs`：执行 IPv4 override/route probe/active-interface fail-closed 选择。
+- `crates/codepet-host/src/remote_listener.rs`：暴露按 credential 的实际 session 计数和有界定向断开。
+- `src-tauri/src/runtime_gateway/tauri_bridge.rs`：组合共享 device/manager、唯一带 remote identity 的 Gateway 与 RemoteAccessManager。
+- `src-tauri/src/runtime_gateway/remote_access.rs`：Tauri lifecycle、状态、commands、QR 和 pairing monitor。
+- `src-tauri/src/lib.rs`：manage、后台启动、invoke 注册和退出顺序。
+
+## 风险
+
+- 多网卡或 VPN 路由选择错误：route result 必须唯一匹配 active 接口；纯函数负例验证失败、非本机和重复接口，真机仍需覆盖 VPN/热点切换。
+- pairing secret 泄露：命令序列化测试断言 start 响应只有三个字段，解码 SVG 也不携带 JSON 文本；协议生成类型的 Debug 继续 redact secret。
+- consume 后 discovery 仍为 pair=1：真实 HTTPS exchange 测试验证 watch 从 1 到 0 且 outcome 为 succeeded；mDNS 单元测试验证相同 service 的 pair 更新。
+- 撤销影响其他 client：真实 WSS 测试以同 credential 多 socket 和另一 credential 并存，验证只关闭目标 group并保留另一连接。
+- shutdown 遗留 daemon/socket/task：runtime 测试验证 stopped 状态，Host listener/mDNS 测试验证有界关闭与重复 shutdown；Exit 测试固定 Remote 在 Provider 前关闭。
+- 网络启动拖垮 App：startup failure/retry 测试证明 Remote unavailable 时同一个 Host core 与 credential store 仍可访问，setup 源码只后台启动。
+
+## 测试计划
+
+- Host `remote_access` 单元测试：单 active、watch、四种状态、一次性 consume、重启丢失和幂等 credential revoke。
+- Host `remote_network` 单元测试：显式 loopback、route-selected 地址、probe failure、非本机、documentation 与歧义。
+- Host `remote_lan_listener` 真实 loopback 测试：HTTPS pairing exchange、WSS、在线计数、同 credential 多 socket 撤销、其他 client 隔离与 shutdown。
+- Tauri `remote_access` 单元测试：后台等价启动失败不影响 core、retry、QR 响应字段、watch 驱动状态、真实 HTTPS consume、client never-online、revoke 和 shutdown。
+- Tauri `tray_tests`：Remote state 参与退出，并验证七个命令全部进入 invoke handler。
+- 验收运行 Host all-targets、Gateway protocol、Tauri 定向测试与 `cargo check --lib --locked`，再执行 frontend 未改、schema 漂移和 `git diff --check` 检查。
+
+## 知识沉淀
+
+本页是 Phase 2B1 的当前事实入口。Gateway wire 与 mDNS 代际契约仍由 `gateway-v1-lan-generation-contract.md` 维护；Provider/companion 事件隔离仍由 `provider-host-device-and-plugin-runtime.md` 和 `codex-provider-channel-isolation.md` 维护。若真机验证暴露防火墙、网卡切换或权限问题，应新增对应 runbook；本阶段没有证据支持新增平台故障结论。
+
+## 未知项
+
+- frontend 尚未调用这些命令，也没有 QR/client 管理 UI。
+- 手机等真实设备的跨 LAN discovery、TLS pin、系统防火墙提示、睡眠唤醒和网卡切换尚未验证。
+- v1 只支持 IPv4；IPv6 地址选择与双栈 mDNS 发布未设计。
+- 运行中网卡变化不会自动重绑或重发广告；当前需显式 retry 或重启 App。

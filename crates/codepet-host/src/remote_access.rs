@@ -9,13 +9,14 @@ use rcgen::{
 };
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::{Debug, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
+use tokio::sync::watch;
 use x509_parser::parse_x509_certificate;
 
 const LAN_TLS_IDENTITY_VERSION: u32 = 1;
@@ -31,6 +32,8 @@ const MAX_CREDENTIAL_STORE_FILE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_REMOTE_CREDENTIALS: usize = 4096;
 
 pub const PAIRING_SESSION_TTL: Duration = Duration::from_secs(5 * 60);
+const PAIRING_STATUS_RETENTION: Duration = Duration::from_secs(15 * 60);
+const MAX_PAIRING_STATUS_RECORDS: usize = 64;
 
 type Clock = Arc<dyn Fn() -> TimestampMs + Send + Sync>;
 
@@ -174,6 +177,43 @@ impl Debug for PairingSession {
             .field("pairing_secret", &"<redacted>")
             .field("expires_at", &self.expires_at)
             .finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PairingStatusKind {
+    Active,
+    Succeeded,
+    Expired,
+    Cancelled,
+}
+
+/// Non-secret, process-local pairing outcome retained for short-term UI queries.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct PairingStatus {
+    pub pairing_id: String,
+    pub state: PairingStatusKind,
+    pub expires_at: TimestampMs,
+}
+
+/// Minimal Host-side signal used by lifecycle owners to synchronize discovery.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PairingWatchState {
+    pub pairing_id: Option<String>,
+    pub pairing_available: bool,
+    pub deadline: Option<Instant>,
+}
+
+impl PairingWatchState {
+    fn unavailable() -> Self {
+        Self {
+            pairing_id: None,
+            pairing_available: false,
+            deadline: None,
+        }
     }
 }
 
@@ -425,6 +465,42 @@ impl RemoteCredentialStore {
         Ok(revoked)
     }
 
+    /// Revokes one credential by its public id. Repeating a successful revoke is a no-op.
+    pub fn revoke_credential(&self, credential_id: &str) -> HostResult<RemoteCredential> {
+        validate_prefixed_random_id("credential", credential_id)?;
+        let now = (self.clock)();
+        let mut credentials = self
+            .credentials
+            .lock()
+            .map_err(|_| credential_store_lock_error())?;
+        let Some(existing) = credentials.get(credential_id) else {
+            return Err(HostError::new(
+                "remote_credential_not_found",
+                "Remote credential does not exist",
+            ));
+        };
+        if existing.revoked_at.is_some() {
+            return Ok(existing.public());
+        }
+        let mut updated = credentials.clone();
+        let credential = updated.get_mut(credential_id).ok_or_else(|| {
+            HostError::new(
+                "remote_credential_store_unavailable",
+                "remote credential disappeared from the credential store",
+            )
+            .retryable(true)
+        })?;
+        credential.revoked_at = Some(now.max(credential.created_at));
+        let revoked = credential.public();
+        persist_credentials(
+            &self.path,
+            &self.tls_certificate_fingerprint,
+            &updated,
+        )?;
+        *credentials = updated;
+        Ok(revoked)
+    }
+
     /// Revokes the active credential represented by the supplied bearer itself.
     pub fn revoke_current(&self, bearer_token: &str) -> HostResult<RemoteCredential> {
         validate_bearer_token(bearer_token)?;
@@ -518,6 +594,18 @@ struct ActivePairingSession {
     pairing_id: String,
     pairing_secret_sha256: [u8; 32],
     deadline: Instant,
+    expires_at: TimestampMs,
+}
+
+struct PairingOutcomeRecord {
+    status: PairingStatus,
+    recorded_at: Instant,
+}
+
+struct PairingState {
+    active: Option<ActivePairingSession>,
+    outcomes: BTreeMap<String, PairingOutcomeRecord>,
+    outcome_order: VecDeque<String>,
 }
 
 /// Host security boundary for a future LAN HTTP/WSS listener.
@@ -528,7 +616,8 @@ pub struct RemoteAccessManager {
     device: Arc<DeviceRegistry>,
     tls_identity: LanTlsIdentity,
     credential_store: RemoteCredentialStore,
-    active_pairing: Mutex<Option<ActivePairingSession>>,
+    pairing: Mutex<PairingState>,
+    pairing_watch: watch::Sender<PairingWatchState>,
     diagnostics: Vec<RemoteAccessDiagnostic>,
     clock: Clock,
 }
@@ -555,11 +644,17 @@ impl RemoteAccessManager {
             clock.clone(),
         )?;
         diagnostics.extend_from_slice(credential_store.diagnostics());
+        let (pairing_watch, _) = watch::channel(PairingWatchState::unavailable());
         Ok(Self {
             device,
             tls_identity,
             credential_store,
-            active_pairing: Mutex::new(None),
+            pairing: Mutex::new(PairingState {
+                active: None,
+                outcomes: BTreeMap::new(),
+                outcome_order: VecDeque::new(),
+            }),
+            pairing_watch,
             diagnostics,
             clock,
         })
@@ -590,12 +685,24 @@ impl RemoteAccessManager {
         }
     }
 
-    /// Replaces any earlier in-memory pairing session with a fresh five-minute session.
+    /// Opens one five-minute pairing session. A second active session is rejected.
     pub fn begin_pairing(&self) -> HostResult<PairingSession> {
         self.begin_pairing_with_ttl(PAIRING_SESSION_TTL)
     }
 
     fn begin_pairing_with_ttl(&self, ttl: Duration) -> HostResult<PairingSession> {
+        let mut pairing = self
+            .pairing
+            .lock()
+            .map_err(|_| pairing_session_lock_error())?;
+        self.expire_locked(&mut pairing, Instant::now());
+        if let Some(active) = pairing.active.as_ref() {
+            return Err(HostError::new(
+                "pairing_session_active",
+                "Only one remote pairing session may be active at a time",
+            )
+            .with_detail("pairingId", active.pairing_id.clone()));
+        }
         let pairing_id = random_prefixed_id("pairing")?;
         let pairing_secret = random_hex::<RANDOM_SECRET_BYTES>()?;
         let deadline = Instant::now().checked_add(ttl).ok_or_else(|| {
@@ -609,11 +716,14 @@ impl RemoteAccessManager {
             pairing_id: pairing_id.clone(),
             pairing_secret_sha256: sha256_bytes(pairing_secret.as_bytes()),
             deadline,
+            expires_at,
         };
-        *self
-            .active_pairing
-            .lock()
-            .map_err(|_| pairing_session_lock_error())? = Some(active);
+        pairing.active = Some(active);
+        self.pairing_watch.send_replace(PairingWatchState {
+            pairing_id: Some(pairing_id.clone()),
+            pairing_available: true,
+            deadline: Some(deadline),
+        });
         Ok(PairingSession {
             pairing_id,
             pairing_secret,
@@ -633,15 +743,15 @@ impl RemoteAccessManager {
             return Err(invalid_pairing_session());
         }
         let supplied_secret_hash = sha256_bytes(request.pairing_secret.as_bytes());
-        let mut active = self
-            .active_pairing
+        let mut pairing = self
+            .pairing
             .lock()
             .map_err(|_| pairing_session_lock_error())?;
-        let Some(session) = active.as_ref() else {
+        let Some(session) = pairing.active.as_ref() else {
             return Err(invalid_pairing_session());
         };
         if Instant::now() >= session.deadline {
-            *active = None;
+            self.expire_locked(&mut pairing, Instant::now());
             return Err(HostError::new(
                 "pairing_session_expired",
                 "remote pairing session has expired",
@@ -662,8 +772,178 @@ impl RemoteAccessManager {
         };
         client.validate()?;
         let issued = self.credential_store.issue(client)?;
-        *active = None;
+        let completed = pairing.active.take().ok_or_else(|| {
+            HostError::new(
+                "pairing_session_unavailable",
+                "Remote pairing session changed before it could be consumed",
+            )
+            .retryable(true)
+        })?;
+        self.record_outcome_locked(
+            &mut pairing,
+            PairingStatus {
+                pairing_id: completed.pairing_id,
+                state: PairingStatusKind::Succeeded,
+                expires_at: completed.expires_at,
+            },
+            Instant::now(),
+        );
+        self.pairing_watch
+            .send_replace(PairingWatchState::unavailable());
         Ok(issued)
+    }
+
+    pub fn subscribe_pairing_state(&self) -> watch::Receiver<PairingWatchState> {
+        self.pairing_watch.subscribe()
+    }
+
+    pub fn pairing_status(&self, pairing_id: &str) -> HostResult<PairingStatus> {
+        validate_prefixed_random_id("pairing", pairing_id)?;
+        let mut pairing = self
+            .pairing
+            .lock()
+            .map_err(|_| pairing_session_lock_error())?;
+        self.expire_locked(&mut pairing, Instant::now());
+        if let Some(active) = pairing
+            .active
+            .as_ref()
+            .filter(|active| active.pairing_id == pairing_id)
+        {
+            return Ok(PairingStatus {
+                pairing_id: active.pairing_id.clone(),
+                state: PairingStatusKind::Active,
+                expires_at: active.expires_at,
+            });
+        }
+        pairing
+            .outcomes
+            .get(pairing_id)
+            .map(|record| record.status.clone())
+            .ok_or_else(pairing_status_not_found)
+    }
+
+    pub fn cancel_pairing(&self, pairing_id: &str) -> HostResult<PairingStatus> {
+        validate_prefixed_random_id("pairing", pairing_id)?;
+        let mut pairing = self
+            .pairing
+            .lock()
+            .map_err(|_| pairing_session_lock_error())?;
+        self.expire_locked(&mut pairing, Instant::now());
+        if let Some(status) = pairing
+            .outcomes
+            .get(pairing_id)
+            .map(|record| record.status.clone())
+        {
+            return if status.state == PairingStatusKind::Cancelled {
+                Ok(status)
+            } else {
+                Err(pairing_not_active(&status))
+            };
+        }
+        let Some(active) = pairing.active.take() else {
+            return Err(pairing_status_not_found());
+        };
+        if active.pairing_id != pairing_id {
+            pairing.active = Some(active);
+            return Err(pairing_status_not_found());
+        }
+        let status = PairingStatus {
+            pairing_id: active.pairing_id,
+            state: PairingStatusKind::Cancelled,
+            expires_at: active.expires_at,
+        };
+        self.record_outcome_locked(&mut pairing, status.clone(), Instant::now());
+        self.pairing_watch
+            .send_replace(PairingWatchState::unavailable());
+        Ok(status)
+    }
+
+    pub fn expire_pairing(&self, pairing_id: &str) -> HostResult<PairingStatus> {
+        validate_prefixed_random_id("pairing", pairing_id)?;
+        let mut pairing = self
+            .pairing
+            .lock()
+            .map_err(|_| pairing_session_lock_error())?;
+        self.expire_locked(&mut pairing, Instant::now());
+        if let Some(active) = pairing
+            .active
+            .as_ref()
+            .filter(|active| active.pairing_id == pairing_id)
+        {
+            return Ok(PairingStatus {
+                pairing_id: active.pairing_id.clone(),
+                state: PairingStatusKind::Active,
+                expires_at: active.expires_at,
+            });
+        }
+        pairing
+            .outcomes
+            .get(pairing_id)
+            .map(|record| record.status.clone())
+            .ok_or_else(pairing_status_not_found)
+    }
+
+    fn expire_locked(&self, pairing: &mut PairingState, now: Instant) {
+        self.prune_outcomes_locked(pairing, now);
+        if !pairing
+            .active
+            .as_ref()
+            .is_some_and(|active| now >= active.deadline)
+        {
+            return;
+        }
+        let Some(expired) = pairing.active.take() else {
+            return;
+        };
+        self.record_outcome_locked(
+            pairing,
+            PairingStatus {
+                pairing_id: expired.pairing_id,
+                state: PairingStatusKind::Expired,
+                expires_at: expired.expires_at,
+            },
+            now,
+        );
+        self.pairing_watch
+            .send_replace(PairingWatchState::unavailable());
+    }
+
+    fn record_outcome_locked(
+        &self,
+        pairing: &mut PairingState,
+        status: PairingStatus,
+        now: Instant,
+    ) {
+        let pairing_id = status.pairing_id.clone();
+        pairing.outcomes.insert(
+            pairing_id.clone(),
+            PairingOutcomeRecord {
+                status,
+                recorded_at: now,
+            },
+        );
+        pairing.outcome_order.push_back(pairing_id);
+        self.prune_outcomes_locked(pairing, now);
+    }
+
+    fn prune_outcomes_locked(&self, pairing: &mut PairingState, now: Instant) {
+        while let Some(pairing_id) = pairing.outcome_order.front() {
+            let remove = pairing.outcome_order.len() > MAX_PAIRING_STATUS_RECORDS
+                || pairing
+                    .outcomes
+                    .get(pairing_id)
+                    .map_or(true, |record| {
+                        now.saturating_duration_since(record.recorded_at)
+                            >= PAIRING_STATUS_RETENTION
+                    });
+            if !remove {
+                break;
+            }
+            let Some(pairing_id) = pairing.outcome_order.pop_front() else {
+                break;
+            };
+            pairing.outcomes.remove(&pairing_id);
+        }
     }
 
     pub fn validate_bearer(&self, bearer_token: &str) -> HostResult<RemoteCredential> {
@@ -676,6 +956,10 @@ impl RemoteAccessManager {
 
     pub fn revoke_client(&self, client_id: &str) -> HostResult<Vec<RemoteCredential>> {
         self.credential_store.revoke_client(client_id)
+    }
+
+    pub fn revoke_credential(&self, credential_id: &str) -> HostResult<RemoteCredential> {
+        self.credential_store.revoke_credential(credential_id)
     }
 
     pub fn revoke_current_credential(
@@ -1109,6 +1393,21 @@ fn pairing_session_lock_error() -> HostError {
     .retryable(true)
 }
 
+fn pairing_status_not_found() -> HostError {
+    HostError::new(
+        "pairing_session_not_found",
+        "Remote pairing status is no longer available in this Host process",
+    )
+}
+
+fn pairing_not_active(status: &PairingStatus) -> HostError {
+    HostError::new(
+        "pairing_session_not_active",
+        "Remote pairing session is no longer active",
+    )
+    .with_detail("state", format!("{:?}", status.state).to_ascii_lowercase())
+}
+
 fn invalid_pairing_session() -> HostError {
     HostError::new(
         "invalid_pairing_session",
@@ -1430,6 +1729,71 @@ mod tests {
                 .code,
             "invalid_pairing_session"
         );
+        assert_eq!(
+            restarted
+                .pairing_status(&lost_pairing_id)
+                .unwrap_err()
+                .code,
+            "pairing_session_not_found"
+        );
+    }
+
+    #[test]
+    fn pairing_status_watch_and_single_active_session_are_process_local() {
+        let directory = tempfile::tempdir().unwrap();
+        let clock = TestClock::new(1_000);
+        let (_config, _device, manager) = open_manager(directory.path(), &clock);
+        let mut pairing_watch = manager.subscribe_pairing_state();
+
+        let cancelled_session = manager.begin_pairing().unwrap();
+        assert!(pairing_watch.borrow().pairing_available);
+        assert_eq!(
+            pairing_watch.borrow().pairing_id.as_deref(),
+            Some(cancelled_session.pairing_id.as_str())
+        );
+        assert_eq!(
+            manager.begin_pairing().unwrap_err().code,
+            "pairing_session_active"
+        );
+        let cancelled = manager
+            .cancel_pairing(&cancelled_session.pairing_id)
+            .unwrap();
+        assert_eq!(cancelled.state, PairingStatusKind::Cancelled);
+        assert!(!pairing_watch.borrow_and_update().pairing_available);
+        assert_eq!(
+            manager
+                .cancel_pairing(&cancelled_session.pairing_id)
+                .unwrap(),
+            cancelled
+        );
+
+        let expired_session = manager
+            .begin_pairing_with_ttl(Duration::ZERO)
+            .unwrap();
+        let expired = manager
+            .expire_pairing(&expired_session.pairing_id)
+            .unwrap();
+        assert_eq!(expired.state, PairingStatusKind::Expired);
+        assert!(!pairing_watch.borrow().pairing_available);
+
+        let succeeded_session = manager.begin_pairing().unwrap();
+        let succeeded_id = succeeded_session.pairing_id.clone();
+        manager
+            .complete_pairing(
+                &succeeded_id,
+                PairingExchangeRequest {
+                    pairing_secret: succeeded_session.pairing_secret,
+                    client_id: "status-client".to_string(),
+                    client_name: "Status Client".to_string(),
+                    platform: "test".to_string(),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            manager.pairing_status(&succeeded_id).unwrap().state,
+            PairingStatusKind::Succeeded
+        );
+        assert!(!pairing_watch.borrow().pairing_available);
     }
 
     #[test]
@@ -1453,6 +1817,13 @@ mod tests {
             .revoke_current_credential(&current.bearer_token)
             .unwrap();
         assert_eq!(revoked.revoked_at, Some(2_000));
+        assert_eq!(
+            manager
+                .revoke_credential(&current.credential.credential_id)
+                .unwrap()
+                .revoked_at,
+            Some(2_000)
+        );
         assert_eq!(
             manager
                 .validate_bearer(&current.bearer_token)

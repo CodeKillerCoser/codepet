@@ -207,6 +207,28 @@ impl RemoteLanServerHandle {
         self.sessions.active_count()
     }
 
+    pub fn active_session_count_for_credential(&self, credential_id: &str) -> usize {
+        self.sessions.credential_active_count(credential_id)
+    }
+
+    /// Cancels every socket authenticated by one credential and waits a bounded interval.
+    pub async fn disconnect_credential(&self, credential_id: &str) -> HostResult<usize> {
+        let active = self.sessions.cancel_credential(credential_id);
+        if self
+            .sessions
+            .wait_credential_empty(credential_id, CONNECTION_CLOSE_TIMEOUT)
+            .await
+        {
+            Ok(active)
+        } else {
+            Err(HostError::new(
+                "remote_lan_credential_disconnect_timeout",
+                "Remote credential sessions did not close within the bounded deadline",
+            )
+            .retryable(true))
+        }
+    }
+
     pub async fn shutdown(mut self) -> HostResult<()> {
         self.sessions.shutdown();
         self.server_handle
@@ -841,6 +863,14 @@ impl RestError {
                     true,
                 ),
             },
+            SessionRegistrationError::CredentialRevoked => Self {
+                status: StatusCode::UNAUTHORIZED,
+                error: protocol_error(
+                    "invalid_remote_credential",
+                    "Remote bearer credential is invalid or revoked",
+                    false,
+                ),
+            },
         }
     }
 }
@@ -860,6 +890,7 @@ enum SessionCancellation {
 struct SessionGroup {
     sender: broadcast::Sender<SessionCancellation>,
     active: usize,
+    cancelled: bool,
 }
 
 struct SessionRegistryState {
@@ -905,8 +936,15 @@ impl SessionRegistry {
         }
         let group = state.groups.entry(credential_id.to_string()).or_insert_with(|| {
             let (sender, _) = broadcast::channel(1);
-            SessionGroup { sender, active: 0 }
+            SessionGroup {
+                sender,
+                active: 0,
+                cancelled: false,
+            }
         });
+        if group.cancelled {
+            return Err(SessionRegistrationError::CredentialRevoked);
+        }
         group.active += 1;
         let sender = group.sender.clone();
         let receiver = sender.subscribe();
@@ -920,16 +958,24 @@ impl SessionRegistry {
         })
     }
 
-    fn cancel_credential(&self, credential_id: &str) {
-        let sender = self
+    fn cancel_credential(&self, credential_id: &str) -> usize {
+        let cancelled = self
             .state
             .lock()
             .ok()
-            .and_then(|mut state| state.groups.remove(credential_id))
-            .map(|group| group.sender);
-        if let Some(sender) = sender {
+            .and_then(|mut state| {
+                state.groups.get_mut(credential_id).map(|group| {
+                    group.cancelled = true;
+                    (group.sender.clone(), group.active)
+                })
+            });
+        let Some((sender, active)) = cancelled else {
+            return 0;
+        };
+        if active > 0 {
             let _ = sender.send(SessionCancellation::CredentialRevoked);
         }
+        active
     }
 
     fn shutdown(&self) {
@@ -955,6 +1001,30 @@ impl SessionRegistry {
         self.state.lock().map(|state| state.active).unwrap_or(0)
     }
 
+    fn credential_active_count(&self, credential_id: &str) -> usize {
+        self.state
+            .lock()
+            .ok()
+            .and_then(|state| state.groups.get(credential_id).map(|group| group.active))
+            .unwrap_or(0)
+    }
+
+    async fn wait_credential_empty(&self, credential_id: &str, duration: Duration) -> bool {
+        if self.credential_active_count(credential_id) == 0 {
+            return true;
+        }
+        let waited = timeout(duration, async {
+            loop {
+                self.empty.notified().await;
+                if self.credential_active_count(credential_id) == 0 {
+                    return;
+                }
+            }
+        })
+        .await;
+        waited.is_ok() || self.credential_active_count(credential_id) == 0
+    }
+
     async fn wait_empty(&self, duration: Duration) -> bool {
         if self.active_count() == 0 {
             return true;
@@ -972,7 +1042,7 @@ impl SessionRegistry {
     }
 
     fn unregister(&self, credential_id: &str, sender: &broadcast::Sender<SessionCancellation>) {
-        let notify = match self.state.lock() {
+        match self.state.lock() {
             Ok(mut state) => {
                 if state.active > 0 {
                     state.active -= 1;
@@ -991,13 +1061,10 @@ impl SessionRegistry {
                 if remove_group {
                     state.groups.remove(credential_id);
                 }
-                state.active == 0
             }
-            Err(_) => false,
-        };
-        if notify {
-            self.empty.notify_waiters();
+            Err(_) => return,
         }
+        self.empty.notify_waiters();
     }
 }
 
@@ -1013,6 +1080,7 @@ struct SessionRegistration {
 enum SessionRegistrationError {
     ShuttingDown,
     LimitReached,
+    CredentialRevoked,
 }
 
 impl SessionRegistration {

@@ -15,6 +15,7 @@ mod process;
 mod remote_access;
 mod remote_mdns;
 mod remote_listener;
+mod remote_network;
 
 pub use catalog::{
     CatalogDiagnostic, PluginCatalog, PluginCatalogConfig, PluginDescriptor,
@@ -32,11 +33,13 @@ pub use process::{
     PluginProcess, PluginProcessExit, PluginProcessOptions, ProviderRpcClient, StderrDiagnostic,
 };
 pub use remote_access::{
-    IssuedRemoteCredential, LanTlsIdentity, PairingSession, RemoteAccessConfig,
-    RemoteAccessDiagnostic, RemoteAccessManager, RemoteClientIdentity, RemoteCredential,
-    RemoteCredentialStore, PAIRING_SESSION_TTL,
+    IssuedRemoteCredential, LanTlsIdentity, PairingSession, PairingStatus,
+    PairingStatusKind, PairingWatchState, RemoteAccessConfig, RemoteAccessDiagnostic,
+    RemoteAccessManager, RemoteClientIdentity, RemoteCredential, RemoteCredentialStore,
+    PAIRING_SESSION_TTL,
 };
 pub use remote_mdns::{RemoteLanMdnsAdvertiser, REMOTE_LAN_MDNS_SERVICE_TYPE};
 pub use remote_listener::{
     RemoteLanServer, RemoteLanServerConfig, RemoteLanServerHandle,
 };
+pub use remote_network::select_remote_lan_ipv4;

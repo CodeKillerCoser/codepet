@@ -2,7 +2,7 @@
 
 ## 当前结论
 
-`crates/codepet-host` 已提供可复用的 Rust Provider Host：它从显式目录读取 manifest，为本机持久化稳定 `DeviceId`，按 manifest 启动独立 Provider 二进制，并通过生成的 `codepet-provider-sdk` 在独占 stdio 上通信。它同时实现内部 `codepet-gateway-sdk::ProtocolServer`、`RemoteAccessManager` 安全核心，以及共用同一 TLS identity 的 Gateway v1 HTTPS/WSS LAN listener。mDNS 与 Tauri/UI 启停接线仍未实现，因此当前 App 尚未开放该 listener。
+`crates/codepet-host` 已提供可复用的 Rust Provider Host：它从显式目录读取 manifest，为本机持久化稳定 `DeviceId`，按 manifest 启动独立 Provider 二进制，并通过生成的 `codepet-provider-sdk` 在独占 stdio 上通信。它同时实现内部 `codepet-gateway-sdk::ProtocolServer`、`RemoteAccessManager` 安全核心，以及共用同一 TLS identity 的 Gateway v1 HTTPS/WSS LAN listener。Tauri 后端现已通过单个 `RemoteAccessRuntime` 接入 listener、mDNS、pairing watch 与退出生命周期；frontend UI 尚未接入。
 
 Code Pet 发行包内置 `codepet-provider-codex`、`codepet-provider-opencode` 和 `codepet-provider-claude` 三个独立 adapter 二进制及其 manifest。内置的是 Code Pet 自有的 Provider adapter，不是 Codex、OpenCode 或 Claude runtime；runtime 仍由用户本机安装和配置，`AgentRuntimeService` 的检测/用户选择结果始终是 executable 权威。
 
@@ -33,7 +33,7 @@ Provider 事件进入 Gateway v1 replay，并由兼容适配发布到远程 `run
 
 - dylib/trait ABI、签名、沙箱、市场、下载、自动重启或 backoff；
 - 动态注册插件、动态创建生产实例或 Gateway instance lifecycle；
-- mDNS、Tauri/UI listener lifecycle、远程 frame/E2EE、持久 cursor 或权限模型；
+- frontend Remote UI、远程 frame/E2EE、持久 cursor 或权限模型；
 - 桌宠 UI、Pet 投影或桌宠动作接入 Provider Manager。
 
 ## 配置与持久化
@@ -93,9 +93,9 @@ Catalog 仍只消费普通目录和 manifest，没有默认 Provider registry、
 
 ## 进程、Listener 与 shutdown
 
-`RemoteLanServer::start` 的默认 bind address 是 `0.0.0.0:0`，但 wildcard bind 只有在调用方另行提供具体 advertised IP/DNS host 时才允许启动；实际端口附到 advertised host 后形成 HTTPS base URL 与 WSS Gateway URL，因此不会发布 `0.0.0.0`。真实网络测试显式使用 `127.0.0.1`，mDNS/Tauri 尚未提供 LAN advertised host。listener 启动时核对 transport 注入的 `RemoteHostIdentity` 与 `RemoteAccessManager` 的 device/TLS fingerprint 完全一致；普通无 identity 的 Gateway service 仍 fail closed。认证、credential clientId 与本地 session cancellation 不进入 `ProviderGatewayService`。
+`RemoteLanServer::start` 的默认 bind address 是 `0.0.0.0:0`，但 wildcard bind 只有在调用方另行提供具体 advertised IP/DNS host 时才允许启动；实际端口附到 advertised host 后形成 HTTPS base URL 与 WSS Gateway URL，因此不会发布 `0.0.0.0`。Tauri v1 只选择经 active 本机接口复核的 IPv4，并以环境覆盖或 no-send route probe fail-closed。listener 启动时核对 transport 注入的 `RemoteHostIdentity` 与 `RemoteAccessManager` 的 device/TLS fingerprint 完全一致；生产接线只构造一个 `ProviderGatewayService::with_remote_identity`，供 compat 和 LAN 共用。认证、credential clientId 与本地 session cancellation 不进入 `ProviderGatewayService`。
 
-每条 WSS socket 独立完成 handshake、Gateway SDK dispatch、显式 event subscription 与有界 send loop；固定 writer/send-queue timeout 会关闭不读取或队列满的单个 session，全局 semaphore 把并发 session 限制为 32，超限 upgrade 返回 503。订阅前不推 event，订阅后复用现有 replay/live cursor 语义。DELETE current 持久撤销发起 bearer，并有界关闭相同 credential 的全部 socket；listener shutdown 取消全部 socket并等待 server task，Tauri 后续必须持有 handle 并调用该入口。真实 loopback 测试覆盖 binary、超限 text、安全 backpressure 关闭、健康客户端隔离与同 credential 双 socket 撤销。
+每条 WSS socket 独立完成 handshake、Gateway SDK dispatch、显式 event subscription 与有界 send loop；固定 writer/send-queue timeout 会关闭不读取或队列满的单个 session，全局 semaphore 把并发 session 限制为 32，超限 upgrade 返回 503。订阅前不推 event，订阅后复用现有 replay/live cursor 语义。DELETE current 持久撤销发起 bearer，并向相同 credential 的全部 socket 广播取消；Tauri revoke command 同样先持久撤销，再有界等待该 credential 的 session group 归零。listener shutdown 取消全部 socket并等待 server task，Tauri runtime 持有 handle 并调用该入口。真实 loopback 测试覆盖 binary、超限 text、安全 backpressure 关闭、健康客户端隔离与同 credential 双 socket 撤销。
 
 每个 `PluginProcess` 独占一个子进程及其 stdin/stdout/stderr：
 
@@ -108,7 +108,7 @@ Catalog 仍只消费普通目录和 manifest，没有默认 Provider registry、
 - 进程只保留一个 `shutting_down` 状态，并统一使用配置的 `shutdown_timeout`。正常关闭先发 `provider.shutdown`，关闭 stdin，并允许 Provider 先关闭 stdout、延迟退出；真实 fixture 在 Unix 直接关闭 fd 1，并用独立 marker 证明 EOF 后 shutdown future 仍未完成，直到 200ms 后子进程正常退出；
 - malformed、oversized、EOF、crash、timeout、normal shutdown 和 Drop 共用同一张 current-thread Tokio case table，逐项验证 task、`Weak`、FD、pending 与 inbound 回收。
 
-Tauri 的 Exit/ExitRequested 和托盘退出共用 `ProviderHostState::shutdown_once`。它直接以配置的 `shutdown_timeout` 包住 Manager shutdown future；失败或超时取消后，调用绕过进程 shutdown gate 的 `force_kill_all`，逐个等待子进程退出后才标记完成。并发/重复调用都等待同一完成信号并得到相同完成结果。
+Tauri 的 Exit/ExitRequested 和托盘退出先共用 `RemoteAccessRuntime::shutdown_once`，有界停止 pairing monitor、mDNS 和 listener，再进入 `ProviderHostState::shutdown_once`。Provider shutdown 直接以配置的 `shutdown_timeout` 包住 Manager future；失败或超时取消后，调用绕过进程 shutdown gate 的 `force_kill_all`，逐个等待子进程退出后才标记完成。并发/重复调用都复用各自的 shutdown gate。
 
 Manager 在插件表写锁内设置 shutdown gate，之后拒绝新的 plugin start；`start_enabled` 与 shutdown 都使用顺序 loop，不创建可丢弃的 per-plugin lifecycle task。延迟 initialize 回归测试证明 shutdown 后后续 manifest 插件不会 spawn。
 
@@ -178,7 +178,7 @@ git diff --check
 ## 剩余风险
 
 - Gateway event replay 和 device last-seen 仍为进程内状态，重启恢复未定义。
-- Host listener 已完成真实 loopback TLS/WSS、连接关闭联动和证书 pin 测试；Tauri App 数据路径/生命周期、mDNS 发布、pairing UI 与真实移动设备跨 LAN pinning 尚待下一阶段接线。
+- Host listener 与 Tauri 后端生命周期已完成真实 loopback TLS/WSS、mDNS 状态同步、连接关闭联动和证书 pin 测试；pairing UI 与真实移动设备跨 LAN pinning 尚待后续阶段。
 - manifest 的 executable、args 和 env 是受信任本地配置；签名、权限隔离与资源配额尚未实现。
 - 内置 Provider adapter 随 App 一起打包，但不会安装或更新底层 Codex/OpenCode/Claude runtime；用户本机配置与版本兼容性仍决定实例能否启动。
 - 没有自动重启/backoff；故障实例需要显式重启 Host/插件。

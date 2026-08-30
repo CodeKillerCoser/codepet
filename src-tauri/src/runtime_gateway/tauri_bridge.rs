@@ -15,6 +15,7 @@ use crate::settings::{configured_app_data_dir, load_app_settings};
 use codepet_host::{
     DeviceRegistry, HostError, PluginCatalog, PluginCatalogConfig, PluginManager,
     PluginManagerConfig, ProviderGatewayService, ProviderInstanceRegistry,
+    RemoteAccessConfig, RemoteAccessManager,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -75,10 +76,13 @@ pub(crate) struct ProviderHostState {
 }
 
 impl ProviderHostState {
-    pub(crate) fn from_app<R: Runtime>(app: &AppHandle<R>) -> Result<Self, HostError> {
+    pub(crate) fn from_app<R: Runtime>(
+        app: &AppHandle<R>,
+    ) -> Result<(Self, Arc<RemoteAccessManager>), HostError> {
         let bundled_directory = bundled_provider_plugins_directory(app)?;
-        let (manager, gateway) = configured_provider_runtime(&bundled_directory)?;
-        Ok(Self::new(manager, gateway))
+        let (manager, gateway, remote_access) =
+            configured_provider_runtime(&bundled_directory)?;
+        Ok((Self::new(manager, gateway), remote_access))
     }
 
     pub(crate) fn new(
@@ -385,14 +389,21 @@ fn provider_catalog_config(
 
 fn configured_provider_runtime(
     bundled_provider_directory: &Path,
-) -> Result<(Arc<PluginManager>, Arc<ProviderGatewayService>), HostError> {
+) -> Result<
+    (
+        Arc<PluginManager>,
+        Arc<ProviderGatewayService>,
+        Arc<RemoteAccessManager>,
+    ),
+    HostError,
+> {
     let settings = load_app_settings().map_err(HostError::from)?;
     let data_directory = configured_app_data_dir(&settings);
     let provider_host_directory = data_directory.join("provider-host");
-    let device = DeviceRegistry::open(
+    let device = Arc::new(DeviceRegistry::open(
         provider_host_directory.join("device-identity.json"),
         "This Device",
-    )?;
+    )?);
     for diagnostic in device.diagnostics() {
         crate::app_log::error(
             "provider_host",
@@ -432,14 +443,21 @@ fn configured_provider_runtime(
         provider_host_directory.join("provider-instances.json"),
         device.identity().device_id.clone(),
     )?;
-    let manager = Arc::new(PluginManager::new(
+    let remote_access = Arc::new(RemoteAccessManager::open(
+        RemoteAccessConfig::for_data_directory(data_directory.join("remote-access")),
+        device.clone(),
+    )?);
+    let manager = Arc::new(PluginManager::with_device_registry(
         device,
         catalog,
         instances,
         PluginManagerConfig::default(),
     )?);
-    let gateway = Arc::new(ProviderGatewayService::new(manager.clone())?);
-    Ok((manager, gateway))
+    let gateway = Arc::new(ProviderGatewayService::with_remote_identity(
+        manager.clone(),
+        remote_access.remote_host_identity(),
+    )?);
+    Ok((manager, gateway, remote_access))
 }
 
 #[derive(Clone, Copy)]

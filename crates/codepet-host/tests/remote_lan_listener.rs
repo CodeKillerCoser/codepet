@@ -46,7 +46,7 @@ impl TestHost {
             .unwrap(),
         )
         .unwrap();
-        let device = DeviceRegistry::open(device_path, "unused").unwrap();
+        let device = Arc::new(DeviceRegistry::open(device_path, "unused").unwrap());
         let plugin_directory = directory.path().join("providers/fake");
         std::fs::create_dir_all(&plugin_directory).unwrap();
         let descriptor = fake_plugin();
@@ -70,7 +70,7 @@ impl TestHost {
         )
         .unwrap();
         let manager = Arc::new(
-            PluginManager::new(
+            PluginManager::with_device_registry(
                 device.clone(),
                 catalog,
                 instances,
@@ -90,7 +90,7 @@ impl TestHost {
         let remote_access = Arc::new(
             RemoteAccessManager::open(
                 RemoteAccessConfig::for_data_directory(remote_directory),
-                Arc::new(device),
+                device,
             )
             .unwrap(),
         );
@@ -239,6 +239,9 @@ async fn pair_client(
     client_id: &str,
 ) -> gateway::PairingExchangeResponse {
     let pairing = remote_access.begin_pairing().unwrap();
+    let pairing_id = pairing.pairing_id.clone();
+    let pairing_watch = remote_access.subscribe_pairing_state();
+    assert!(pairing_watch.borrow().pairing_available);
     let request = gateway::PairingExchangeRequest {
         pairing_secret: pairing.pairing_secret,
         client_id: client_id.to_string(),
@@ -251,6 +254,11 @@ async fn pair_client(
         .json_request("POST", &path, None, Some(&body))
         .await;
     assert_eq!(status, 200);
+    assert!(!pairing_watch.borrow().pairing_available);
+    assert_eq!(
+        remote_access.pairing_status(&pairing_id).unwrap().state,
+        codepet_host::PairingStatusKind::Succeeded
+    );
     serde_json::from_value(body).unwrap()
 }
 
@@ -476,6 +484,9 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     let oversized_error: gateway::ProtocolError =
         serde_json::from_value(oversized_response).unwrap();
     assert_eq!(oversized_error.code, "remote_request_too_large");
+    host.remote_access
+        .cancel_pairing(&invalid_pairing.pairing_id)
+        .unwrap();
 
     let pairing_a = pair_client(host.remote_access.as_ref(), &client, "client-a").await;
     assert_eq!(pairing_a.device, host.remote_access.remote_host_identity());
@@ -844,6 +855,22 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         }
     ));
     wait_for_active_sessions(&server, 3).await;
+    let credential_a = host
+        .remote_access
+        .validate_bearer(&pairing_a.credential)
+        .unwrap();
+    let credential_b = host
+        .remote_access
+        .validate_bearer(&pairing_b.credential)
+        .unwrap();
+    assert_eq!(
+        server.active_session_count_for_credential(&credential_a.credential_id),
+        2
+    );
+    assert_eq!(
+        server.active_session_count_for_credential(&credential_b.credential_id),
+        1
+    );
     let (delete_status, delete_body) = client
         .json_request(
             "DELETE",
@@ -859,6 +886,14 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     assert_close_reason(&mut socket_a, "credential_revoked").await;
     assert_close_reason(&mut socket_a_second, "credential_revoked").await;
     wait_for_active_sessions(&server, 1).await;
+    assert_eq!(
+        server.active_session_count_for_credential(&credential_a.credential_id),
+        0
+    );
+    assert_eq!(
+        server.active_session_count_for_credential(&credential_b.credential_id),
+        1
+    );
 
     let reconnect = client.connect_websocket(&pairing_a.credential).await;
     let Err(WebSocketError::Http(response)) = reconnect else {
@@ -883,6 +918,50 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
             ..
         }
     ));
+
+    let pairing_c = pair_client(host.remote_access.as_ref(), &client, "client-c").await;
+    let mut socket_c_first = client
+        .connect_websocket(&pairing_c.credential)
+        .await
+        .unwrap();
+    let mut socket_c_second = client
+        .connect_websocket(&pairing_c.credential)
+        .await
+        .unwrap();
+    send_request(
+        &mut socket_c_first,
+        handshake_request("handshake-c-first", "client-c"),
+    )
+    .await;
+    next_response(&mut socket_c_first, "handshake-c-first").await;
+    send_request(
+        &mut socket_c_second,
+        handshake_request("handshake-c-second", "client-c"),
+    )
+    .await;
+    next_response(&mut socket_c_second, "handshake-c-second").await;
+    wait_for_active_sessions(&server, 3).await;
+    let credential_c = host
+        .remote_access
+        .validate_bearer(&pairing_c.credential)
+        .unwrap();
+    host.remote_access
+        .revoke_credential(&credential_c.credential_id)
+        .unwrap();
+    assert_eq!(
+        server
+            .disconnect_credential(&credential_c.credential_id)
+            .await
+            .unwrap(),
+        2
+    );
+    assert_close_reason(&mut socket_c_first, "credential_revoked").await;
+    assert_close_reason(&mut socket_c_second, "credential_revoked").await;
+    wait_for_active_sessions(&server, 1).await;
+    assert_eq!(
+        server.active_session_count_for_credential(&credential_b.credential_id),
+        1
+    );
 
     let mut stalled_tls_handshake = TcpStream::connect(address).await.unwrap();
     timeout(Duration::from_secs(5), server.shutdown())

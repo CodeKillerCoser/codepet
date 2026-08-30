@@ -127,7 +127,7 @@ impl PluginEntry {
 }
 
 struct PluginManagerInner {
-    device: DeviceRegistry,
+    device: Arc<DeviceRegistry>,
     instances: ProviderInstanceRegistry,
     plugins: RwLock<BTreeMap<String, PluginEntry>>,
     updates: mpsc::Sender<HostUpdate>,
@@ -145,6 +145,16 @@ pub struct PluginManager {
 impl PluginManager {
     pub fn new(
         device: DeviceRegistry,
+        catalog: PluginCatalog,
+        instances: ProviderInstanceRegistry,
+        config: PluginManagerConfig,
+    ) -> HostResult<Self> {
+        Self::with_device_registry(Arc::new(device), catalog, instances, config)
+    }
+
+    /// Builds a Provider Manager around the App's shared device identity registry.
+    pub fn with_device_registry(
+        device: Arc<DeviceRegistry>,
         catalog: PluginCatalog,
         instances: ProviderInstanceRegistry,
         config: PluginManagerConfig,
@@ -213,6 +223,10 @@ impl PluginManager {
 
     pub(crate) fn device(&self) -> &DeviceRegistry {
         &self.inner.device
+    }
+
+    pub fn device_registry(&self) -> Arc<DeviceRegistry> {
+        self.inner.device.clone()
     }
 
     pub fn catalog_diagnostics(&self) -> &[CatalogDiagnostic] {

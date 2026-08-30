@@ -10,11 +10,11 @@
 - 保留 `HandshakeRequest.clientId` 作为 remote client 唯一协议身份，并要求 transport 将其与 pairing credential 绑定。
 - 让 handshake 和 pairing response 使用同一 `RemoteHostIdentity`，其中证书指纹语义唯一。
 - 以单个 TLS listener 落实固定 REST/WSS wire 边界，并通过 `_codepet._tcp.local.` 发布同一 listener 的实际 LAN IP 与 TLS port。
-- 保持 mDNS 只负责发现；Tauri/UI 启停与 pairing 状态接线仍留给下一阶段。
+- 保持 mDNS 只负责发现；Tauri 生命周期与 pairing 状态接线见 `remote-access-tauri-runtime.md`，frontend UI 仍留给后续阶段。
 
 ## 非目标
 
-- 不实现 Tauri/UI 启停接线或 Pet/Desktop IPC。
+- 不实现 frontend UI 或 Pet/Desktop IPC；Tauri 后端生命周期由 Phase 2B1 配套文档补充。
 - 不修改 `gateway/v1/compat-v0.*`、Desktop IPC companion、Pet、activity projection 或 Provider 业务 DTO。
 - 不增加 RBAC、credential scope、refresh token、证书轮换或权限模型。
 
@@ -42,7 +42,7 @@ QR 只编码 `PairingQrPayload`：`version/hostDeviceId/displayName/httpsBaseUrl
 
 `event.subscribe` 是每条 socket 的显式推送门。listener 在成功响应前先从现有 EventPublisher 建立 replay/live subscription，响应入队后才启动该 socket 的 event send loop；`GatewayEventSubscription` 以 cursor 去除 receiver 与 replay 窗口交叠，因此顺序是 replay 后 live 且不重复。每条 socket 最多成功订阅一次，未订阅 socket 不收到 server event，但仍可执行普通请求。
 
-`RemoteLanServerConfig::default()` 的 bind address 是 `0.0.0.0:0`，但 bind address 与客户端可见 authority 分离：wildcard bind 必须由调用方显式提供具体 `advertised_host`，否则 start fail-closed；listener 只把实际端口附到该 IP/DNS host，handle 与 pairing response 共用由此得到的 `httpsBaseUrl/gatewayUrl`，绝不发布 `0.0.0.0`。真实网络测试显式绑定 loopback 并传入 `127.0.0.1`；后续 mDNS/Tauri 负责提供真实 LAN host。
+`RemoteLanServerConfig::default()` 的 bind address 是 `0.0.0.0:0`，但 bind address 与客户端可见 authority 分离：wildcard bind 必须由调用方显式提供具体 `advertised_host`，否则 start fail-closed；listener 只把实际端口附到该 IP/DNS host，handle 与 pairing response 共用由此得到的 `httpsBaseUrl/gatewayUrl`，绝不发布 `0.0.0.0`。真实网络测试显式绑定 loopback 并传入 `127.0.0.1`；Tauri v1 通过环境覆盖或 no-send route probe 选择 active 本机 IPv4，细节见 `remote-access-tauri-runtime.md`。
 
 每条 socket 独立持有 credential clientId、握手状态、订阅和容量为 64 的 outbound queue；writer 单次发送有一秒上限，response/event 入队有两秒上限，任一 transport backpressure 只取消该 session。listener 以全局 32 permit semaphore 限制并发 WSS session，超限 upgrade 返回稳定 503。`DELETE current` 只撤销发起 bearer，并按非敏感 credentialId 取消对应 listener-local sessions；同一 credential 的所有 socket 都关闭，其他 credential 不受影响。显式 shutdown 先停止新 session、取消现有 socket，再有界关闭 server task；TLS handshake 自身也有小于 server shutdown 窗口的上限。坏 JSON、binary frame、超限 frame 和协议次序错误只产生固定 Gateway error、WebSocket close 或安全断开，不进入 panic 路径。
 
@@ -52,7 +52,7 @@ instance name 由可读 display name 加 device id 的短哈希冲突后缀组�
 
 `mdns-sd::ServiceDaemon::register` 只保证命令入队，因此 advertiser 在 start 和 pair 值变化后通过 daemon monitor 等待固定短窗口内目标 fullname 的 `DaemonEvent::Announce`；只有实际发送产生该事件才返回成功。`DaemonEvent::Error`、monitor 断开或超时都会注销 service 并停止 daemon；idle 期间积累的 error/断开由下一次值变化 update 或 shutdown 读取并执行同样的 fail-closed 清理。同值 update 是严格 no-op，不读取 backend。
 
-fullname 本身不能区分注册代际，旧 daemon 的 `RegisterResend` 可能在普通 drain 后产生同名 Announce。`RemoteLanMdnsAdvertiser::update_pairing_available` 因此在值变化时先等待旧 service 的 `UnregisterStatus::OK/NotFound` 终态 ack，再 drain ack 前的 monitor 事件、停止旧 daemon并创建新 daemon，最后以同一个 fullname 注册新 TXT 并等待新 monitor 的 Announce。endpoint 和除 `pair` 外的 TXT 不变；该顺序可证明不会把旧代 Announce 当成新代确认，但 unregister 到新 Announce 之间存在短暂发现空窗，不是原子或无缝更新。下一阶段调用者必须在 pairing start、cancel、consume 时显式更新，不能由 advertiser 创建 listener 或轮询 pairing。`shutdown` 检查 monitor 后注销 service 并停止 daemon，成功停止后的重复调用是 no-op，Drop 只做同样的 best-effort 收尾。
+fullname 本身不能区分注册代际，旧 daemon 的 `RegisterResend` 可能在普通 drain 后产生同名 Announce。`RemoteLanMdnsAdvertiser::update_pairing_available` 因此在值变化时先等待旧 service 的 `UnregisterStatus::OK/NotFound` 终态 ack，再 drain ack 前的 monitor 事件、停止旧 daemon并创建新 daemon，最后以同一个 fullname 注册新 TXT 并等待新 monitor 的 Announce。endpoint 和除 `pair` 外的 TXT 不变；该顺序可证明不会把旧代 Announce 当成新代确认，但 unregister 到新 Announce 之间存在短暂发现空窗，不是原子或无缝更新。Phase 2B1 的 Tauri pairing monitor 已在 start、cancel、consume、expire 时驱动该 update，不由 advertiser 创建 listener，也不高频轮询 pairing。`shutdown` 检查 monitor 后注销 service 并停止 daemon，成功停止后的重复调用是 no-op，Drop 只做同样的 best-effort 收尾。
 
 ## 涉及模块
 
@@ -92,9 +92,9 @@ fullname 本身不能区分注册代际，旧 daemon 的 `RegisterResend` 可能
 
 ## 知识沉淀
 
-本页记录 Phase 2A1 生成契约、Phase 2A2 listener 运行边界与 Phase 2A3 mDNS 发现边界。Tauri/UI 落地后只补接线与平台证据；若证书轮换或 credential 权限进入范围，另立架构决策，不在此 DTO 或 TXT 上追加隐式字段。
+本页记录 Phase 2A1 生成契约、Phase 2A2 listener 运行边界与 Phase 2A3 mDNS 发现边界。Phase 2B1 Tauri 后端接线见 `remote-access-tauri-runtime.md`；若证书轮换或 credential 权限进入范围，另立架构决策，不在此 DTO 或 TXT 上追加隐式字段。
 
 ## 未知项
 
-- Tauri 尚未创建、持有或按序 shutdown `RemoteLanServerHandle` 与 `RemoteLanMdnsAdvertiser`，也未在 pairing start/cancel/consume 时更新 `pair`；当前 Host 能力不代表 App 已开放 LAN 服务。
-- 手机等真实设备跨 LAN 的证书 pin、系统防火墙与网络切换行为仍待 mDNS/Tauri 阶段验证。
+- frontend 尚未调用 Tauri Remote commands；后端已创建、持有并按序 shutdown listener/mDNS，也已同步 pairing availability。
+- 手机等真实设备跨 LAN 的证书 pin、系统防火墙与网络切换行为仍待 frontend/真机阶段验证。

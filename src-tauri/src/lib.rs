@@ -53,6 +53,11 @@ use runtime_gateway::tauri_bridge::{
     start_codex_desktop_companion_event_bridge, start_runtime_gateway_event_bridge,
     CodexDesktopCompanionState, ProviderHostState, RuntimeGatewayState,
 };
+use runtime_gateway::remote_access::{
+    cancel_remote_pairing, get_remote_pairing_status, list_remote_clients,
+    remote_access_status, retry_remote_access, revoke_remote_credential,
+    start_remote_pairing, RemoteAccessRuntime,
+};
 use std::str::FromStr;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
@@ -451,24 +456,40 @@ pub fn run() {
             app_log::info("startup", "setup started");
             let handle = app.handle().clone();
             let state = app.state::<SharedState>().inner().clone();
-            let provider_host_state = match ProviderHostState::from_app(&handle) {
-                Ok(state) => state,
-                Err(error) => {
-                    app_log::error(
-                        "provider_host",
-                        &format!(
-                            "failed to initialize bundled Provider Host boundary error={error:?}"
-                        ),
-                    );
-                    ProviderHostState::unavailable()
-                }
-            };
+            let (provider_host_state, remote_access_runtime) =
+                match ProviderHostState::from_app(&handle) {
+                    Ok((state, remote_access)) => {
+                        let runtime = match state.gateway() {
+                            Some(gateway) => RemoteAccessRuntime::new(remote_access, gateway),
+                            None => RemoteAccessRuntime::unavailable(codepet_host::HostError::new(
+                                "remote_access_core_unavailable",
+                                "Remote access cannot run because the shared Provider Gateway is unavailable",
+                            )),
+                        };
+                        (state, runtime)
+                    }
+                    Err(error) => {
+                        app_log::error(
+                            "provider_host",
+                            &format!(
+                                "failed to initialize bundled Provider Host boundary error={error:?}"
+                            ),
+                        );
+                        (
+                            ProviderHostState::unavailable(),
+                            RemoteAccessRuntime::unavailable(error),
+                        )
+                    }
+                };
             let runtime_gateway_state = RuntimeGatewayState::new(provider_host_state.gateway());
             if !app.manage(runtime_gateway_state.clone()) {
                 return Err("Runtime Gateway state was already managed".into());
             }
             if !app.manage(provider_host_state.clone()) {
                 return Err("Provider Host state was already managed".into());
+            }
+            if !app.manage(remote_access_runtime.clone()) {
+                return Err("Remote Access runtime was already managed".into());
             }
             if let Err(error) = start_runtime_gateway_event_bridge(handle.clone(), &runtime_gateway_state) {
                 app_log::error(
@@ -477,6 +498,7 @@ pub fn run() {
                 );
             }
             provider_host_state.start_in_background();
+            remote_access_runtime.start_in_background();
             let desktop_companion_state = app.state::<CodexDesktopCompanionState>().inner().clone();
             if let Err(error) = start_codex_desktop_companion_event_bridge(handle.clone(), &desktop_companion_state) {
                 app_log::error(
@@ -585,6 +607,13 @@ pub fn run() {
             codex_desktop_companion_request,
             codex_desktop_companion_replay,
             codex_desktop_companion_snapshot,
+            remote_access_status,
+            retry_remote_access,
+            list_remote_clients,
+            start_remote_pairing,
+            get_remote_pairing_status,
+            cancel_remote_pairing,
+            revoke_remote_credential,
             updates::check_app_update,
             updates::install_app_update
         ])
@@ -667,12 +696,14 @@ fn handle_run_event(app: &AppHandle, event: tauri::RunEvent) {
     match event {
         tauri::RunEvent::ExitRequested { code, api, .. } => {
             let provider_host = app.state::<ProviderHostState>().inner().clone();
-            if provider_host.shutdown_completed() {
+            let remote_access = app.state::<RemoteAccessRuntime>().inner().clone();
+            if provider_host.shutdown_completed() && remote_access.shutdown_completed() {
                 return;
             }
             api.prevent_exit();
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
+                remote_access.shutdown_once().await;
                 if provider_host.shutdown_once().await {
                     request_app_exit(&app, code.unwrap_or(0));
                 }
@@ -680,8 +711,10 @@ fn handle_run_event(app: &AppHandle, event: tauri::RunEvent) {
         }
         tauri::RunEvent::Exit => {
             let provider_host = app.state::<ProviderHostState>().inner().clone();
-            if !provider_host.shutdown_completed() {
+            let remote_access = app.state::<RemoteAccessRuntime>().inner().clone();
+            if !provider_host.shutdown_completed() || !remote_access.shutdown_completed() {
                 tauri::async_runtime::block_on(async move {
+                    remote_access.shutdown_once().await;
                     provider_host.shutdown_once().await;
                 });
             }
