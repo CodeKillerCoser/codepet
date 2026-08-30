@@ -1,6 +1,6 @@
 # Runtime Gateway 与远程控制架构
 
-> 文档状态（2026-08-30）：长期远程设计仍保留。当前 Codex 使用隔离双链路：`CodexRemote` 已迁到进程外 `codepet-provider-codex`，经 Provider Protocol v1、Plugin Manager 与内部 Gateway v1 service 提供远程能力；`CodexDesktopCompanion / IPC` 只驱动桌宠本地投影和面向 Desktop owner 的安全动作。Claude 已有能力较小的独立 `codepet-provider-claude`，只接官方 CLI stream-json，不提供全局会话 CRUD、steer 或审批；OpenCode 只通过独立 `codepet-provider-opencode` 加入同一个 remote Provider Gateway，不存在 companion/Pet 支路。compat `RuntimeGatewayState` 只适配同一个 Provider Gateway，不再持有独立 Server runtime。`codepet-host::RemoteAccessManager` 已提供持久 LAN TLS identity、内存 pairing session 与 hashed bearer credential core，但尚无网络 listener、WSS 或 mDNS route。各链路不得共享 session、registry、event bus、sequence、owner/revision 或 unavailable 状态。
+> 文档状态（2026-08-30）：长期远程设计仍保留。当前 Codex 使用隔离双链路：`CodexRemote` 已迁到进程外 `codepet-provider-codex`，经 Provider Protocol v1、Plugin Manager 与内部 Gateway v1 service 提供远程能力；`CodexDesktopCompanion / IPC` 只驱动桌宠本地投影和面向 Desktop owner 的安全动作。Claude 已有能力较小的独立 `codepet-provider-claude`，只接官方 CLI stream-json，不提供全局会话 CRUD、steer 或审批；OpenCode 只通过独立 `codepet-provider-opencode` 加入同一个 remote Provider Gateway，不存在 companion/Pet 支路。compat `RuntimeGatewayState` 只适配同一个 Provider Gateway，不再持有独立 Server runtime。`codepet-host` 已提供持久 LAN TLS identity、pairing/credential core 与可复用 HTTPS/WSS listener，但 mDNS 和 Tauri/UI 生命周期尚未接线。各链路不得共享 session、registry、event bus、sequence、owner/revision 或 unavailable 状态。
 >
 > 当前事实入口：Codex 插件边界与协议矩阵见 `codex-provider-plugin-runtime.md`，Claude 见 `claude-provider-plugin-runtime.md`，OpenCode 见 `opencode-provider-plugin-runtime.md`，remote 领域见 `../30-domains/agent-control/codex-app-server.md`，companion 见 `../30-domains/agent-control/codex-desktop-companion.md`，Provider Host 见 `provider-host-device-and-plugin-runtime.md`；协议现状见 `protocol-layers-and-device-routing.md`、`../../protocol/provider/v1/manifest.json` 和 `../../protocol/gateway/v1/manifest.json`。下文的阶段规划和完整能力清单仍包含未实现的长期目标；旧目录、统一 wire envelope、方法名或已生成 Dart 的描述均视为 superseded，不是当前实现证据。
 
@@ -62,7 +62,7 @@ Provider Host/Gateway 与 companion state 各自持有 registry、event bus、re
 
 OpenCode Server 通过 `codepet-provider-opencode` 的 HTTP/SSE adapter 进入同一条 Provider remote bus；它不注册 Desktop companion adapter，也不向 `SharedState`、`pet-event` 或 `codex-desktop-companion-event` 发布数据。能力与版本边界见 `opencode-provider-plugin-runtime.md`。
 
-当前只有 Tauri 进程内 Gateway 调用面，尚无 WebSocket/P2P/relay 远程网络实现。Host 的 `RemoteAccessManager` 与 `ProviderGatewayService` 是并列边界：前者供未来 listener 读取 TLS identity、完成配对和校验/撤销 bearer，后者不感知 bearer 或 TLS。App Server 只在 Provider instance start 中初始化且有超时；它 unavailable 不阻塞 Desktop companion，Desktop socket unavailable 也不改变 remote Provider。
+当前 Tauri 仍只有进程内 Gateway 调用面；Host crate 已有真实 TLS/WSS listener，但 App 尚未启动或发布它，也没有 P2P/relay。`RemoteAccessManager`、listener transport 与 `ProviderGatewayService` 是分层边界：manager 持有 TLS/pairing/credential，listener 负责 Authorization、socket clientId 与撤销取消，Gateway service 不感知 bearer 或 TLS。App Server 只在 Provider instance start 中初始化且有超时；它 unavailable 不阻塞 Desktop companion，Desktop socket unavailable 也不改变 remote Provider。
 
 ## 历史基线（非现状）
 

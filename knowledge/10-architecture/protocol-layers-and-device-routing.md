@@ -19,7 +19,7 @@
 
 - 不实现自动安装、签名、市场或沙箱；Plugin Manager、显式目录发现与 Provider 进程生命周期已落到 `crates/codepet-host`，开发安装仍为显式复制 manifest/binary。
 - 不迁移 Desktop IPC adapter 到独立 Provider 二进制；Codex App Server 已迁到独立 Provider。
-- 只生成 LAN identity、QR 与 pairing/credential REST DTO；不实现 LAN listener、HTTP/WSS route、mDNS、认证接线、持久 event cursor 或 Remote UI。
+- LAN identity、QR 与 pairing/credential REST DTO 仍只由 Gateway SDK 生成；Host 已另阶段实现 TLS/HTTP/WSS listener，但不实现 mDNS、Tauri/UI 接线、持久 event cursor 或 Remote UI。
 - 不改桌宠展示、交互或 activity projection；本阶段只提供未来 Pet Protocol 的生成 SDK。
 - 不生成完整 Dart/Python SDK；只固定可复用的 generator interface 与 target manifest。
 

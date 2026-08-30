@@ -214,6 +214,10 @@ impl ProviderGatewayService {
         &self.server_version
     }
 
+    pub fn remote_host_identity(&self) -> Option<&gateway::RemoteHostIdentity> {
+        self.remote_host_identity.as_ref()
+    }
+
     pub fn current_event_cursor(&self) -> gateway::EventCursor {
         self.events.current_cursor()
     }

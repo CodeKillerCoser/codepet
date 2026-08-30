@@ -1,0 +1,759 @@
+use codepet_gateway_sdk as gateway;
+use codepet_host::{
+    DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor,
+    PluginInstanceConfig, PluginManager, PluginManagerConfig, PluginProcessOptions,
+    ProviderGatewayService, ProviderInstanceRegistry, RemoteAccessConfig,
+    RemoteAccessManager, RemoteLanServer, RemoteLanServerConfig,
+};
+use codepet_provider_sdk::JsonObject;
+use futures_util::{SinkExt, StreamExt};
+use rustls::pki_types::{CertificateDer, ServerName};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::Duration;
+use tempfile::TempDir;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tokio::time::timeout;
+use tokio_rustls::client::TlsStream;
+use tokio_rustls::TlsConnector;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode};
+use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
+use tokio_tungstenite::{client_async, WebSocketStream};
+
+type TestWebSocket = WebSocketStream<TlsStream<TcpStream>>;
+
+struct TestHost {
+    _directory: TempDir,
+    manager: Arc<PluginManager>,
+    remote_access: Arc<RemoteAccessManager>,
+    gateway: Arc<ProviderGatewayService>,
+}
+
+impl TestHost {
+    async fn start() -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let device_path = directory.path().join("device.json");
+        std::fs::write(
+            &device_path,
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "deviceId": "device-lan-listener",
+                "displayName": "LAN Listener Test Host",
+                "createdAt": 1
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let device = DeviceRegistry::open(device_path, "unused").unwrap();
+        let plugin_directory = directory.path().join("providers/fake");
+        std::fs::create_dir_all(&plugin_directory).unwrap();
+        let descriptor = fake_plugin();
+        let mut manifest = serde_json::to_value(descriptor).unwrap();
+        manifest
+            .as_object_mut()
+            .unwrap()
+            .insert("manifestVersion".to_string(), serde_json::json!(1));
+        std::fs::write(
+            plugin_directory.join("codepet-provider.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let catalog = PluginCatalog::discover(
+            PluginCatalogConfig::default()
+                .with_directory(directory.path().join("providers")),
+        );
+        let instances = ProviderInstanceRegistry::open(
+            directory.path().join("instances.json"),
+            device.identity().device_id.clone(),
+        )
+        .unwrap();
+        let manager = Arc::new(
+            PluginManager::new(
+                device.clone(),
+                catalog,
+                instances,
+                PluginManagerConfig {
+                    process: PluginProcessOptions {
+                        request_timeout: Duration::from_secs(2),
+                        shutdown_timeout: Duration::from_secs(2),
+                        ..PluginProcessOptions::default()
+                    },
+                    ..PluginManagerConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let remote_directory = directory.path().join("remote");
+        std::fs::create_dir_all(&remote_directory).unwrap();
+        let remote_access = Arc::new(
+            RemoteAccessManager::open(
+                RemoteAccessConfig::for_data_directory(remote_directory),
+                Arc::new(device),
+            )
+            .unwrap(),
+        );
+        let gateway = Arc::new(
+            ProviderGatewayService::with_remote_identity(
+                manager.clone(),
+                remote_access.remote_host_identity(),
+            )
+            .unwrap(),
+        );
+        assert!(gateway.start_event_forwarding());
+        let outcomes = manager.start_enabled().await;
+        assert_eq!(outcomes.len(), 1);
+        outcomes[0].1.as_ref().unwrap();
+        Self {
+            _directory: directory,
+            manager,
+            remote_access,
+            gateway,
+        }
+    }
+}
+
+fn fake_plugin() -> PluginDescriptor {
+    PluginDescriptor {
+        plugin_id: "dev.codepet.lan-listener".to_string(),
+        display_name: "LAN Listener Provider".to_string(),
+        executable: env!("CARGO_BIN_EXE_codepet-host-fake-provider").into(),
+        args: Vec::new(),
+        env: BTreeMap::from([(
+            "CODEPET_FAKE_PLUGIN_ID".to_string(),
+            "dev.codepet.lan-listener".to_string(),
+        )]),
+        enabled: true,
+        instances: vec![PluginInstanceConfig {
+            instance_id: Some("instance-lan-listener".to_string()),
+            instance_kind: "fake".to_string(),
+            display_name: "LAN Listener Instance".to_string(),
+            settings: JsonObject::new(),
+            enabled: true,
+        }],
+    }
+}
+
+struct PinnedTlsClient {
+    address: std::net::SocketAddr,
+    certificate_der: Vec<u8>,
+    config: Arc<rustls::ClientConfig>,
+}
+
+impl PinnedTlsClient {
+    fn new(address: std::net::SocketAddr, certificate_der: Vec<u8>) -> Self {
+        let mut roots = rustls::RootCertStore::empty();
+        roots
+            .add(CertificateDer::from(certificate_der.clone()))
+            .unwrap();
+        let mut config = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        Self {
+            address,
+            certificate_der,
+            config: Arc::new(config),
+        }
+    }
+
+    async fn connect_tls(&self) -> TlsStream<TcpStream> {
+        let tcp = TcpStream::connect(self.address).await.unwrap();
+        let server_name = ServerName::try_from("localhost").unwrap();
+        let tls = TlsConnector::from(self.config.clone())
+            .connect(server_name, tcp)
+            .await
+            .unwrap();
+        let peer = tls
+            .get_ref()
+            .1
+            .peer_certificates()
+            .unwrap()
+            .first()
+            .unwrap();
+        assert_eq!(peer.as_ref(), self.certificate_der.as_slice());
+        tls
+    }
+
+    async fn json_request(
+        &self,
+        method: &str,
+        path: &str,
+        bearer: Option<&str>,
+        body: Option<&str>,
+    ) -> (u16, serde_json::Value) {
+        let body = body.unwrap_or("");
+        let authorization = bearer
+            .map(|bearer| format!("Authorization: Bearer {bearer}\r\n"))
+            .unwrap_or_default();
+        let request = format!(
+            "{method} {path} HTTP/1.1\r\nHost: localhost:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{authorization}Connection: close\r\n\r\n{body}",
+            self.address.port(),
+            body.len(),
+        );
+        let mut tls = self.connect_tls().await;
+        tls.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        tls.read_to_end(&mut response).await.unwrap();
+        let header_end = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .unwrap();
+        let headers = std::str::from_utf8(&response[..header_end]).unwrap();
+        let status = headers
+            .lines()
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .parse::<u16>()
+            .unwrap();
+        let body = serde_json::from_slice(&response[header_end + 4..]).unwrap();
+        (status, body)
+    }
+
+    async fn connect_websocket(
+        &self,
+        bearer: &str,
+    ) -> Result<TestWebSocket, WebSocketError> {
+        let tls = self.connect_tls().await;
+        let mut request = format!(
+            "wss://localhost:{}/remote/v1/gateway",
+            self.address.port()
+        )
+        .into_client_request()
+        .unwrap();
+        request.headers_mut().insert(
+            "Authorization",
+            HeaderValue::from_str(&format!("Bearer {bearer}")).unwrap(),
+        );
+        client_async(request, tls).await.map(|(socket, _)| socket)
+    }
+}
+
+async fn pair_client(
+    remote_access: &RemoteAccessManager,
+    client: &PinnedTlsClient,
+    client_id: &str,
+) -> gateway::PairingExchangeResponse {
+    let pairing = remote_access.begin_pairing().unwrap();
+    let request = gateway::PairingExchangeRequest {
+        pairing_secret: pairing.pairing_secret,
+        client_id: client_id.to_string(),
+        client_name: format!("Client {client_id}"),
+        platform: "integration-test".to_string(),
+    };
+    let body = serde_json::to_string(&request).unwrap();
+    let path = format!("/remote/v1/pairings/{}/exchange", pairing.pairing_id);
+    let (status, body) = client
+        .json_request("POST", &path, None, Some(&body))
+        .await;
+    assert_eq!(status, 200);
+    serde_json::from_value(body).unwrap()
+}
+
+fn handshake_request(id: &str, client_id: &str) -> gateway::ProtocolRequest {
+    gateway::ProtocolRequest::ProtocolHandshake {
+        protocol_version: gateway::PROTOCOL_VERSION,
+        id: id.to_string(),
+        params: gateway::HandshakeRequest {
+            client_id: client_id.to_string(),
+            client_name: format!("Client {client_id}"),
+            client_version: "1.0.0".to_string(),
+            supported_versions: gateway::VersionRange {
+                min_version: gateway::PROTOCOL_VERSION,
+                max_version: gateway::PROTOCOL_VERSION,
+            },
+            last_event_cursor: None,
+        },
+    }
+}
+
+fn conversation_resource(native_id: &str) -> gateway::RoutedResourceId {
+    gateway::RoutedResourceId {
+        device_id: "device-lan-listener".to_string(),
+        provider_plugin_id: "dev.codepet.lan-listener".to_string(),
+        provider_instance_id: "instance-lan-listener".to_string(),
+        native_resource_id: native_id.to_string(),
+    }
+}
+
+async fn send_request(socket: &mut TestWebSocket, request: gateway::ProtocolRequest) {
+    socket
+        .send(Message::Text(serde_json::to_string(&request).unwrap()))
+        .await
+        .unwrap();
+}
+
+async fn next_value(socket: &mut TestWebSocket) -> serde_json::Value {
+    let message = timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let Message::Text(text) = message else {
+        panic!("expected a text Gateway frame");
+    };
+    serde_json::from_str(&text).unwrap()
+}
+
+async fn next_response(
+    socket: &mut TestWebSocket,
+    expected_id: &str,
+) -> gateway::ProtocolResponse {
+    let value = next_value(socket).await;
+    assert_eq!(value.get("id").and_then(|id| id.as_str()), Some(expected_id));
+    serde_json::from_value(value).unwrap()
+}
+
+fn event_cursor(event: &gateway::ProtocolEvent) -> &str {
+    match event {
+        gateway::ProtocolEvent::DeviceStatusChanged { event_cursor, .. }
+        | gateway::ProtocolEvent::ProviderStatusChanged { event_cursor, .. }
+        | gateway::ProtocolEvent::ConversationUpserted { event_cursor, .. }
+        | gateway::ProtocolEvent::TurnUpserted { event_cursor, .. }
+        | gateway::ProtocolEvent::TurnOutputDelta { event_cursor, .. }
+        | gateway::ProtocolEvent::ApprovalRequested { event_cursor, .. }
+        | gateway::ProtocolEvent::ApprovalResolved { event_cursor, .. } => event_cursor,
+    }
+}
+
+fn cursor_sequence(cursor: &str) -> u64 {
+    cursor.strip_prefix("event-").unwrap().parse().unwrap()
+}
+
+async fn collect_response_and_events(
+    socket: &mut TestWebSocket,
+    response_id: &str,
+    event_count: usize,
+) -> (gateway::ProtocolResponse, Vec<gateway::ProtocolEvent>) {
+    let mut response = None;
+    let mut events = Vec::new();
+    while response.is_none() || events.len() < event_count {
+        let value = next_value(socket).await;
+        if value.get("id").is_some() {
+            assert_eq!(value.get("id").and_then(|id| id.as_str()), Some(response_id));
+            response = Some(serde_json::from_value(value).unwrap());
+        } else {
+            events.push(serde_json::from_value(value).unwrap());
+        }
+    }
+    (response.unwrap(), events)
+}
+
+async fn assert_close_reason(socket: &mut TestWebSocket, expected: &str) {
+    let message = timeout(Duration::from_secs(1), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let Message::Close(Some(frame)) = message else {
+        panic!("expected a WebSocket close frame");
+    };
+    assert_eq!(frame.reason, expected);
+}
+
+#[tokio::test]
+async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_shutdown() {
+    assert_eq!(
+        RemoteLanServerConfig::default().bind_addr,
+        "0.0.0.0:0".parse().unwrap()
+    );
+    let host = TestHost::start().await;
+    let server = RemoteLanServer::start(
+        RemoteLanServerConfig::loopback(),
+        host.remote_access.clone(),
+        host.gateway.clone(),
+    )
+    .await
+    .unwrap();
+    assert_ne!(server.port(), 0);
+    assert_eq!(
+        server.https_base_url(),
+        format!("https://127.0.0.1:{}", server.port())
+    );
+    assert_eq!(
+        server.gateway_url(),
+        format!("wss://127.0.0.1:{}/remote/v1/gateway", server.port())
+    );
+    let address = server.local_addr();
+    let gateway_url = server.gateway_url().to_string();
+    let certificate_der = host.remote_access.tls_identity().certificate_der().to_vec();
+    let client = PinnedTlsClient::new(address, certificate_der.clone());
+
+    let invalid_pairing = host.remote_access.begin_pairing().unwrap();
+    let invalid_path = format!(
+        "/remote/v1/pairings/{}/exchange",
+        invalid_pairing.pairing_id
+    );
+    let (invalid_status, invalid_body) = client
+        .json_request("POST", &invalid_path, None, Some("{"))
+        .await;
+    assert_eq!(invalid_status, 400);
+    let invalid_error: gateway::ProtocolError =
+        serde_json::from_value(invalid_body).unwrap();
+    assert_eq!(invalid_error.code, "invalid_remote_request");
+    let oversized_body = "x".repeat(65 * 1024);
+    let (oversized_status, oversized_response) = client
+        .json_request("POST", &invalid_path, None, Some(&oversized_body))
+        .await;
+    assert_eq!(oversized_status, 413);
+    let oversized_error: gateway::ProtocolError =
+        serde_json::from_value(oversized_response).unwrap();
+    assert_eq!(oversized_error.code, "remote_request_too_large");
+
+    let pairing_a = pair_client(host.remote_access.as_ref(), &client, "client-a").await;
+    assert_eq!(pairing_a.device, host.remote_access.remote_host_identity());
+    assert_eq!(pairing_a.gateway_url, gateway_url);
+    let mut socket_a = client
+        .connect_websocket(&pairing_a.credential)
+        .await
+        .unwrap();
+    send_request(&mut socket_a, handshake_request("handshake-a", "client-a")).await;
+    let handshake = next_response(&mut socket_a, "handshake-a").await;
+    let gateway::ProtocolResponse::ProtocolHandshake {
+        response: gateway::ResponsePayload::Ok { result: handshake },
+        ..
+    } = handshake
+    else {
+        panic!("expected successful authenticated handshake");
+    };
+    let certificate_fingerprint = hex_sha256(&certificate_der);
+    assert_eq!(handshake.device.identity_fingerprint, certificate_fingerprint);
+    assert_eq!(handshake.device.identity_fingerprint, pairing_a.device.identity_fingerprint);
+    let initial_cursor = handshake.event_cursor.clone();
+
+    let mut malformed = client
+        .connect_websocket(&pairing_a.credential)
+        .await
+        .unwrap();
+    malformed
+        .send(Message::Text("{".to_string()))
+        .await
+        .unwrap();
+    assert_close_reason(&mut malformed, "invalid_gateway_json").await;
+
+    let mut missing_handshake = client
+        .connect_websocket(&pairing_a.credential)
+        .await
+        .unwrap();
+    send_request(
+        &mut missing_handshake,
+        gateway::ProtocolRequest::DeviceList {
+            protocol_version: gateway::PROTOCOL_VERSION,
+            id: "before-handshake".to_string(),
+            params: gateway::DeviceListRequest {},
+        },
+    )
+    .await;
+    assert_close_reason(&mut missing_handshake, "protocol_handshake_required").await;
+
+    send_request(
+        &mut socket_a,
+        gateway::ProtocolRequest::ConversationList {
+            protocol_version: gateway::PROTOCOL_VERSION,
+            id: "list-a".to_string(),
+            params: gateway::ConversationListRequest {
+                route: Some(gateway::GatewayProviderRoute {
+                    device_id: "device-lan-listener".to_string(),
+                    provider_plugin_id: "dev.codepet.lan-listener".to_string(),
+                    provider_instance_id: "instance-lan-listener".to_string(),
+                }),
+                cursor: None,
+                limit: Some(10),
+            },
+        },
+    )
+    .await;
+    let list = next_response(&mut socket_a, "list-a").await;
+    let gateway::ProtocolResponse::ConversationList {
+        response: gateway::ResponsePayload::Ok { result: list },
+        ..
+    } = list
+    else {
+        panic!("expected conversation.list response");
+    };
+    assert_eq!(list.conversations.len(), 1);
+
+    send_request(
+        &mut socket_a,
+        gateway::ProtocolRequest::ConversationGet {
+            protocol_version: gateway::PROTOCOL_VERSION,
+            id: "get-a".to_string(),
+            params: gateway::ConversationGetRequest {
+                conversation: conversation_resource("ordinary"),
+            },
+        },
+    )
+    .await;
+    let get = next_response(&mut socket_a, "get-a").await;
+    let gateway::ProtocolResponse::ConversationGet {
+        response: gateway::ResponsePayload::Ok { result: get },
+        ..
+    } = get
+    else {
+        panic!("expected conversation.get response");
+    };
+    assert_eq!(get.conversation.resource.native_resource_id, "ordinary");
+
+    send_request(
+        &mut socket_a,
+        gateway::ProtocolRequest::ConversationGet {
+            protocol_version: gateway::PROTOCOL_VERSION,
+            id: "pre-subscribe-event".to_string(),
+            params: gateway::ConversationGetRequest {
+                conversation: conversation_resource("event-first"),
+            },
+        },
+    )
+    .await;
+    next_response(&mut socket_a, "pre-subscribe-event").await;
+    assert!(timeout(Duration::from_millis(150), socket_a.next())
+        .await
+        .is_err());
+
+    send_request(
+        &mut socket_a,
+        gateway::ProtocolRequest::EventSubscribe {
+            protocol_version: gateway::PROTOCOL_VERSION,
+            id: "subscribe-a".to_string(),
+            params: gateway::EventSubscribeRequest {
+                after_cursor: initial_cursor,
+            },
+        },
+    )
+    .await;
+    let subscribed = next_response(&mut socket_a, "subscribe-a").await;
+    assert!(matches!(
+        subscribed,
+        gateway::ProtocolResponse::EventSubscribe {
+            response: gateway::ResponsePayload::Ok { .. },
+            ..
+        }
+    ));
+    let replay_one: gateway::ProtocolEvent = serde_json::from_value(next_value(&mut socket_a).await).unwrap();
+    let replay_two: gateway::ProtocolEvent = serde_json::from_value(next_value(&mut socket_a).await).unwrap();
+    let replay_sequences = [
+        cursor_sequence(event_cursor(&replay_one)),
+        cursor_sequence(event_cursor(&replay_two)),
+    ];
+    assert!(replay_sequences[0] < replay_sequences[1]);
+
+    send_request(
+        &mut socket_a,
+        gateway::ProtocolRequest::ConversationGet {
+            protocol_version: gateway::PROTOCOL_VERSION,
+            id: "live-event-a".to_string(),
+            params: gateway::ConversationGetRequest {
+                conversation: conversation_resource("event-first"),
+            },
+        },
+    )
+    .await;
+    let (_, live_events) = collect_response_and_events(&mut socket_a, "live-event-a", 2).await;
+    let live_sequences = live_events
+        .iter()
+        .map(|event| cursor_sequence(event_cursor(event)))
+        .collect::<Vec<_>>();
+    assert!(replay_sequences[1] < live_sequences[0]);
+    assert!(live_sequences[0] < live_sequences[1]);
+
+    send_request(
+        &mut socket_a,
+        gateway::ProtocolRequest::EventSubscribe {
+            protocol_version: gateway::PROTOCOL_VERSION,
+            id: "subscribe-a-again".to_string(),
+            params: gateway::EventSubscribeRequest {
+                after_cursor: event_cursor(live_events.last().unwrap()).to_string(),
+            },
+        },
+    )
+    .await;
+    let duplicate = next_response(&mut socket_a, "subscribe-a-again").await;
+    let gateway::ProtocolResponse::EventSubscribe {
+        response: gateway::ResponsePayload::Error { error },
+        ..
+    } = duplicate
+    else {
+        panic!("expected duplicate event.subscribe rejection");
+    };
+    assert_eq!(error.code, "gateway_event_already_subscribed");
+
+    let mut mismatch = client
+        .connect_websocket(&pairing_a.credential)
+        .await
+        .unwrap();
+    send_request(
+        &mut mismatch,
+        handshake_request("handshake-mismatch", "different-client"),
+    )
+    .await;
+    let mismatch_response = next_response(&mut mismatch, "handshake-mismatch").await;
+    let gateway::ProtocolResponse::ProtocolHandshake {
+        response: gateway::ResponsePayload::Error { error },
+        ..
+    } = mismatch_response
+    else {
+        panic!("expected clientId mismatch rejection");
+    };
+    assert_eq!(error.code, "gateway_client_identity_mismatch");
+    assert_close_reason(&mut mismatch, "gateway_client_identity_mismatch").await;
+
+    let pairing_b = pair_client(host.remote_access.as_ref(), &client, "client-b").await;
+    let mut socket_b = client
+        .connect_websocket(&pairing_b.credential)
+        .await
+        .unwrap();
+    send_request(&mut socket_b, handshake_request("handshake-b", "client-b")).await;
+    let handshake_b = next_response(&mut socket_b, "handshake-b").await;
+    let gateway::ProtocolResponse::ProtocolHandshake {
+        response: gateway::ResponsePayload::Ok { .. },
+        ..
+    } = handshake_b
+    else {
+        panic!("expected second client handshake");
+    };
+
+    send_request(
+        &mut socket_a,
+        gateway::ProtocolRequest::ConversationGet {
+            protocol_version: gateway::PROTOCOL_VERSION,
+            id: "client-a-only".to_string(),
+            params: gateway::ConversationGetRequest {
+                conversation: conversation_resource("event-first"),
+            },
+        },
+    )
+    .await;
+    let (_, client_a_events) =
+        collect_response_and_events(&mut socket_a, "client-a-only", 2).await;
+    assert!(timeout(Duration::from_millis(150), socket_b.next())
+        .await
+        .is_err());
+    let latest_cursor = event_cursor(client_a_events.last().unwrap()).to_string();
+
+    send_request(
+        &mut socket_b,
+        gateway::ProtocolRequest::EventSubscribe {
+            protocol_version: gateway::PROTOCOL_VERSION,
+            id: "subscribe-b".to_string(),
+            params: gateway::EventSubscribeRequest {
+                after_cursor: latest_cursor,
+            },
+        },
+    )
+    .await;
+    let subscribed_b = next_response(&mut socket_b, "subscribe-b").await;
+    assert!(matches!(
+        subscribed_b,
+        gateway::ProtocolResponse::EventSubscribe {
+            response: gateway::ResponsePayload::Ok { .. },
+            ..
+        }
+    ));
+
+    send_request(
+        &mut socket_a,
+        gateway::ProtocolRequest::ConversationGet {
+            protocol_version: gateway::PROTOCOL_VERSION,
+            id: "shared-event-source-a".to_string(),
+            params: gateway::ConversationGetRequest {
+                conversation: conversation_resource("event-first"),
+            },
+        },
+    )
+    .await;
+    let (_, events_a) =
+        collect_response_and_events(&mut socket_a, "shared-event-source-a", 2).await;
+    let event_b_one: gateway::ProtocolEvent =
+        serde_json::from_value(next_value(&mut socket_b).await).unwrap();
+    let event_b_two: gateway::ProtocolEvent =
+        serde_json::from_value(next_value(&mut socket_b).await).unwrap();
+    assert_eq!(event_cursor(&events_a[0]), event_cursor(&event_b_one));
+    assert_eq!(event_cursor(&events_a[1]), event_cursor(&event_b_two));
+
+    timeout(Duration::from_secs(1), async {
+        while server.active_session_count() != 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let (delete_status, delete_body) = client
+        .json_request(
+            "DELETE",
+            "/remote/v1/credentials/current",
+            Some(&pairing_a.credential),
+            None,
+        )
+        .await;
+    assert_eq!(delete_status, 200);
+    let deleted: gateway::CurrentCredentialDeleteResponse =
+        serde_json::from_value(delete_body).unwrap();
+    assert!(deleted.revoked);
+    assert!(matches!(
+        timeout(Duration::from_secs(1), socket_a.next()).await,
+        Ok(Some(Ok(Message::Close(_)))) | Ok(None)
+    ));
+    timeout(Duration::from_secs(1), async {
+        while server.active_session_count() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let reconnect = client.connect_websocket(&pairing_a.credential).await;
+    let Err(WebSocketError::Http(response)) = reconnect else {
+        panic!("revoked bearer must not reconnect");
+    };
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    send_request(
+        &mut socket_b,
+        gateway::ProtocolRequest::DeviceList {
+            protocol_version: gateway::PROTOCOL_VERSION,
+            id: "client-b-still-active".to_string(),
+            params: gateway::DeviceListRequest {},
+        },
+    )
+    .await;
+    let client_b_active = next_response(&mut socket_b, "client-b-still-active").await;
+    assert!(matches!(
+        client_b_active,
+        gateway::ProtocolResponse::DeviceList {
+            response: gateway::ResponsePayload::Ok { .. },
+            ..
+        }
+    ));
+
+    let mut stalled_tls_handshake = TcpStream::connect(address).await.unwrap();
+    timeout(Duration::from_secs(5), server.shutdown())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        timeout(Duration::from_secs(1), socket_b.next()).await,
+        Ok(Some(Ok(Message::Close(_)))) | Ok(None)
+    ));
+    let mut closed = [0_u8; 1];
+    assert!(matches!(
+        timeout(Duration::from_secs(1), stalled_tls_handshake.read(&mut closed)).await,
+        Ok(Ok(0)) | Ok(Err(_))
+    ));
+    assert!(TcpStream::connect(address).await.is_err());
+    host.manager.shutdown().await;
+}
+
+fn hex_sha256(value: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = ring::digest::digest(&ring::digest::SHA256, value);
+    let mut encoded = String::with_capacity(64);
+    for byte in digest.as_ref() {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
+}

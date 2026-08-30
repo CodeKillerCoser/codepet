@@ -2,7 +2,7 @@
 
 ## 当前结论
 
-`crates/codepet-host` 已提供可复用的 Rust Provider Host：它从显式目录读取 manifest，为本机持久化稳定 `DeviceId`，按 manifest 启动独立 Provider 二进制，并通过生成的 `codepet-provider-sdk` 在独占 stdio 上通信。它同时实现内部 `codepet-gateway-sdk::ProtocolServer`，以及供后续 LAN listener 调用的 `RemoteAccessManager` 安全与持久化核心；当前仍没有 Gateway v1 网络 listener、WSS 或 mDNS route。
+`crates/codepet-host` 已提供可复用的 Rust Provider Host：它从显式目录读取 manifest，为本机持久化稳定 `DeviceId`，按 manifest 启动独立 Provider 二进制，并通过生成的 `codepet-provider-sdk` 在独占 stdio 上通信。它同时实现内部 `codepet-gateway-sdk::ProtocolServer`、`RemoteAccessManager` 安全核心，以及共用同一 TLS identity 的 Gateway v1 HTTPS/WSS LAN listener。mDNS 与 Tauri/UI 启停接线仍未实现，因此当前 App 尚未开放该 listener。
 
 Code Pet 发行包内置 `codepet-provider-codex`、`codepet-provider-opencode` 和 `codepet-provider-claude` 三个独立 adapter 二进制及其 manifest。内置的是 Code Pet 自有的 Provider adapter，不是 Codex、OpenCode 或 Claude runtime；runtime 仍由用户本机安装和配置，`AgentRuntimeService` 的检测/用户选择结果始终是 executable 权威。
 
@@ -27,13 +27,13 @@ Provider 事件进入 Gateway v1 replay，并由兼容适配发布到远程 `run
 - 有界 JSON-lines、并发 request id 关联、事件分流、超时、崩溃隔离、stderr 诊断和有界 shutdown；
 - 内部 Gateway v1 的 device/provider/capability/conversation/turn/approval 与 event replay 边界。
 - 从 App Resources 的单一 `provider-plugins/` 目录自动发现三个默认 Provider adapter，并在 macOS/Windows 发布构建中 staging。
-- 持久化自签 LAN TLS identity、五分钟内存配对 session，以及只保存 bearer SHA-256 的可撤销远程 credential store；这些能力尚未接入网络 route。
+- 持久化自签 LAN TLS identity、五分钟内存配对 session、只保存 bearer SHA-256 的可撤销远程 credential store，以及固定 pairing/current-credential REST 与 Gateway WSS route。
 
 本阶段不实现：
 
 - dylib/trait ABI、签名、沙箱、市场、下载、自动重启或 backoff；
 - 动态注册插件、动态创建生产实例或 Gateway instance lifecycle；
-- Gateway v1 LAN listener、WSS/mDNS route、远程 frame/E2EE、持久 cursor 或权限模型；
+- mDNS、Tauri/UI listener lifecycle、远程 frame/E2EE、持久 cursor 或权限模型；
 - 桌宠 UI、Pet 投影或桌宠动作接入 Provider Manager。
 
 ## 配置与持久化
@@ -91,7 +91,11 @@ Agent executable 是 manifest 普通 setting 的受控例外：Codex 的 `appSer
 
 Catalog 仍只消费普通目录和 manifest，没有默认 Provider registry、市场、签名、沙箱、安装器或自动更新分支。Provider Protocol 事件仍只走 Host/Gateway；bundled discovery 不改变 Pet Protocol、Desktop IPC、companion 或 activity 链。
 
-## 进程与 shutdown
+## 进程、Listener 与 shutdown
+
+`RemoteLanServer::start` 默认绑定 `0.0.0.0:0`，也允许测试显式绑定 loopback，并返回实际端口、HTTPS base URL 与 WSS Gateway URL。listener 启动时核对 transport 注入的 `RemoteHostIdentity` 与 `RemoteAccessManager` 的 device/TLS fingerprint 完全一致；普通无 identity 的 Gateway service 仍 fail closed。认证、credential clientId 与本地 session cancellation 不进入 `ProviderGatewayService`。
+
+每条 WSS socket 独立完成 handshake、Gateway SDK dispatch、显式 event subscription 与有界 send loop。订阅前不推 event，订阅后复用现有 replay/live cursor 语义。DELETE current 持久撤销发起 bearer，并有界关闭相同 credential 的 socket；listener shutdown 取消全部 socket 并等待 server task，Tauri 后续必须持有 handle 并调用该入口。
 
 每个 `PluginProcess` 独占一个子进程及其 stdin/stdout/stderr：
 
@@ -174,7 +178,7 @@ git diff --check
 ## 剩余风险
 
 - Gateway event replay 和 device last-seen 仍为进程内状态，重启恢复未定义。
-- `RemoteAccessManager` 仍是未接线的 Host 核心；Tauri App 数据路径、LAN listener、WSS/mDNS route、连接关闭联动和移动端证书 pinning 尚待后续阶段实现。
+- Host listener 已完成真实 loopback TLS/WSS、连接关闭联动和证书 pin 测试；Tauri App 数据路径/生命周期、mDNS 发布、pairing UI 与真实移动设备跨 LAN pinning 尚待下一阶段接线。
 - manifest 的 executable、args 和 env 是受信任本地配置；签名、权限隔离与资源配额尚未实现。
 - 内置 Provider adapter 随 App 一起打包，但不会安装或更新底层 Codex/OpenCode/Claude runtime；用户本机配置与版本兼容性仍决定实例能否启动。
 - 没有自动重启/backoff；故障实例需要显式重启 Host/插件。

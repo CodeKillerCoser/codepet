@@ -13,6 +13,7 @@ mod manager;
 mod persistence;
 mod process;
 mod remote_access;
+mod remote_listener;
 
 pub use catalog::{
     CatalogDiagnostic, PluginCatalog, PluginCatalogConfig, PluginDescriptor,
@@ -33,4 +34,7 @@ pub use remote_access::{
     IssuedRemoteCredential, LanTlsIdentity, PairingSession, RemoteAccessConfig,
     RemoteAccessDiagnostic, RemoteAccessManager, RemoteClientIdentity, RemoteCredential,
     RemoteCredentialStore, PAIRING_SESSION_TTL,
+};
+pub use remote_listener::{
+    RemoteLanServer, RemoteLanServerConfig, RemoteLanServerHandle,
 };
