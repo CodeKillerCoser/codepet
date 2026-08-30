@@ -1,3 +1,8 @@
 [workspace]
-members = ["codepet-host", "providers/codepet-provider-codex", "providers/codepet-provider-claude"]
+members = [
+    "codepet-host",
+    "providers/codepet-provider-codex",
+    "providers/codepet-provider-claude",
+    "providers/codepet-provider-opencode",
+]
 resolver = "2"

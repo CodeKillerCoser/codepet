@@ -1,0 +1,17 @@
+[package]
+name = "codepet-provider-opencode"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+codepet-provider-sdk = { path = "../../../sdk/rust/codepet-provider-sdk", version = "0.1.0" }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json"] }
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[[bin]]
+name = "opencode-server-fixture"
+path = "tests/fixtures/server.rs"

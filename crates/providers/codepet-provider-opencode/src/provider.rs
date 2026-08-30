@@ -1,0 +1,1718 @@
+use crate::client::OpenCodeServerSession;
+use crate::mapper::{protocol_error, OpenCodeProtocolMapper};
+use crate::protocol::{
+    OpenCodeDelivery, OpenCodeDeltaEventData, OpenCodeEvent,
+    OpenCodeLocationRef, OpenCodePermissionAskedEventData, OpenCodePermissionRepliedEventData,
+    OpenCodePermissionReply, OpenCodePrompt, OpenCodePromptAdmittedEventData,
+    OpenCodePromptRequest, OpenCodeServerError, OpenCodeSession, OpenCodeSessionCreate,
+    OpenCodeSessionErrorEventData, OpenCodeSessionEventData, OpenCodeSessionIDEventData,
+    OpenCodeStepStartedEventData, OPENCODE_INSTANCE_KIND, OPENCODE_PERMISSION_LEVEL,
+    OPENCODE_PLUGIN_ID,
+};
+use codepet_provider_sdk::{
+    ApprovalDecision, ApprovalResolveRequest, ApprovalResolveResponse,
+    ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
+    ConversationGetResponse, ConversationListRequest, ConversationListResponse,
+    ConversationStatus,
+    InstanceCapabilitiesRequest, InstanceCapabilitiesResponse, InstanceCreateRequest,
+    InstanceCreateResponse, InstanceDestroyRequest, InstanceDestroyResponse,
+    InstanceStartRequest, InstanceStartResponse, InstanceStatus, InstanceStatusChangedEvent,
+    InstanceStopRequest, InstanceStopResponse, PageInfo, ProtocolError, ProtocolEvent,
+    ProtocolFuture, ProtocolServer, ProviderApproval, ProviderCapabilities,
+    ProviderDescribeRequest, ProviderDescribeResponse, ProviderInitializeRequest,
+    ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute,
+    ProviderPluginDescriptor, ProviderShutdownRequest, ProviderShutdownResponse,
+    ProviderTurn, RoutedResourceId, TurnInterruptRequest, TurnInterruptResponse,
+    TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest, TurnSteerResponse,
+    VersionRange, PROTOCOL_VERSION,
+};
+use serde::de::DeserializeOwned;
+use serde::Deserialize;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+struct OpenCodeInstanceSettings {
+    server_executable: PathBuf,
+    server_args: Vec<String>,
+    #[serde(default)]
+    workspace_root: Option<PathBuf>,
+}
+
+pub trait ProviderEventSink: Send + Sync + 'static {
+    fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError>;
+}
+
+impl<F> ProviderEventSink for F
+where
+    F: Fn(ProtocolEvent) -> Result<(), ProtocolError> + Send + Sync + 'static,
+{
+    fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError> {
+        self(event)
+    }
+}
+
+#[derive(Clone)]
+struct PendingApproval {
+    session_generation: String,
+    session_id: String,
+    request_id: String,
+    approval: ProviderApproval,
+}
+
+struct InstanceMutable {
+    status: InstanceStatus,
+    session: Option<OpenCodeServerSession>,
+    session_generation: Option<String>,
+    sessions: HashMap<String, OpenCodeSession>,
+    active_turns: HashMap<String, ProviderTurn>,
+    pending_approvals: HashMap<String, PendingApproval>,
+}
+
+struct OpenCodeInstanceRuntime {
+    route: ProviderInstanceRoute,
+    instance_kind: String,
+    display_name: String,
+    settings: OpenCodeInstanceSettings,
+    capabilities: ProviderCapabilities,
+    mutable: Mutex<InstanceMutable>,
+    mapper: OpenCodeProtocolMapper,
+    events: Arc<dyn ProviderEventSink>,
+}
+
+impl OpenCodeInstanceRuntime {
+    fn new(
+        request: InstanceCreateRequest,
+        settings: OpenCodeInstanceSettings,
+        events: Arc<dyn ProviderEventSink>,
+    ) -> Self {
+        Self {
+            route: request.route.clone(),
+            instance_kind: request.instance_kind,
+            display_name: request.display_name,
+            settings,
+            capabilities: OpenCodeProtocolMapper::capabilities(),
+            mutable: Mutex::new(InstanceMutable {
+                status: InstanceStatus::Created,
+                session: None,
+                session_generation: None,
+                sessions: HashMap::new(),
+                active_turns: HashMap::new(),
+                pending_approvals: HashMap::new(),
+            }),
+            mapper: OpenCodeProtocolMapper::new(request.route),
+            events,
+        }
+    }
+
+    fn snapshot(&self) -> ProviderInstance {
+        self.mapper.instance(
+            OPENCODE_PLUGIN_ID.to_string(),
+            self.instance_kind.clone(),
+            self.display_name.clone(),
+            lock(&self.mutable).status,
+            self.capabilities.clone(),
+        )
+    }
+
+    fn status(&self) -> InstanceStatus {
+        lock(&self.mutable).status
+    }
+
+    fn set_status(&self, status: InstanceStatus) -> Result<ProviderInstance, ProtocolError> {
+        let previous_status = {
+            let mut mutable = lock(&self.mutable);
+            if mutable.status == status {
+                None
+            } else {
+                let previous = mutable.status;
+                mutable.status = status;
+                Some(previous)
+            }
+        };
+        let instance = self.snapshot();
+        if let Some(previous_status) = previous_status {
+            self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
+                jsonrpc: "2.0".to_string(),
+                params: InstanceStatusChangedEvent {
+                    instance: instance.clone(),
+                    previous_status: Some(previous_status),
+                },
+            })?;
+        }
+        Ok(instance)
+    }
+
+    fn ready_session(&self) -> Result<OpenCodeServerSession, ProtocolError> {
+        let mutable = lock(&self.mutable);
+        if mutable.status != InstanceStatus::Ready {
+            return Err(protocol_error(
+                "provider_unavailable",
+                format!(
+                    "OpenCode Provider instance {} is not ready",
+                    self.route.provider_instance_id
+                ),
+                true,
+            ));
+        }
+        mutable.session.clone().ok_or_else(|| {
+            protocol_error(
+                "provider_unavailable",
+                "OpenCode Server session is unavailable".to_string(),
+                true,
+            )
+        })
+    }
+
+    fn start_event_forwarder(
+        self: &Arc<Self>,
+        generation: String,
+        incoming: Receiver<Result<OpenCodeEvent, OpenCodeServerError>>,
+    ) {
+        let runtime = Arc::downgrade(self);
+        thread::spawn(move || {
+            while let Ok(message) = incoming.recv() {
+                let Some(runtime) = runtime.upgrade() else {
+                    return;
+                };
+                let current = {
+                    let mutable = lock(&runtime.mutable);
+                    mutable.session_generation.as_deref() == Some(generation.as_str())
+                        && matches!(
+                            mutable.status,
+                            InstanceStatus::Ready | InstanceStatus::Starting
+                        )
+                };
+                if !current {
+                    return;
+                }
+                match message {
+                    Ok(event) => match runtime.map_event(&generation, event) {
+                        Ok(events) => {
+                            for event in events {
+                                if let Err(error) = runtime.events.publish(event) {
+                                    runtime.fail_from_event_forwarder(&generation, error);
+                                    return;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            runtime.fail_from_event_forwarder(&generation, error);
+                            return;
+                        }
+                    },
+                    Err(error) => {
+                        runtime.fail_from_event_forwarder(
+                            &generation,
+                            OpenCodeProtocolMapper::error(error),
+                        );
+                        return;
+                    }
+                }
+            }
+        });
+    }
+
+    fn map_event(
+        &self,
+        generation: &str,
+        event: OpenCodeEvent,
+    ) -> Result<Vec<ProtocolEvent>, ProtocolError> {
+        match event.kind.as_str() {
+            "session.created" | "session.updated" => {
+                let data: OpenCodeSessionEventData = decode_event(&event)?;
+                if data.session_id != data.info.id {
+                    return Err(event_shape_error(&event, "sessionID does not match info.id"));
+                }
+                validate_opencode_session(&data.info)?;
+                let (active_turn, waiting_approval) = {
+                    let mut mutable = lock(&self.mutable);
+                    mutable.sessions.insert(data.info.id.clone(), data.info.clone());
+                    (
+                        mutable.active_turns.get(&data.info.id).cloned(),
+                        has_pending_approval(&mutable.pending_approvals, &data.info.id),
+                    )
+                };
+                let conversation = self.mapper.conversation(
+                    &data.info,
+                    active_turn.is_some(),
+                    active_turn,
+                    waiting_approval,
+                );
+                Ok(vec![self.mapper.conversation_event(conversation)])
+            }
+            "session.deleted" => {
+                let data: OpenCodeSessionEventData = decode_event(&event)?;
+                if data.session_id != data.info.id {
+                    return Err(event_shape_error(&event, "sessionID does not match info.id"));
+                }
+                let session = data.info;
+                validate_opencode_session(&session)?;
+                let mut mutable = lock(&self.mutable);
+                mutable.sessions.remove(&session.id);
+                mutable.active_turns.remove(&session.id);
+                mutable
+                    .pending_approvals
+                    .retain(|_, approval| approval.session_id != session.id);
+                drop(mutable);
+                let mut conversation = self.mapper.conversation(&session, false, None, false);
+                conversation.status = ConversationStatus::Archived;
+                Ok(vec![self.mapper.conversation_event(conversation)])
+            }
+            "session.next.prompt.admitted" => {
+                let data: OpenCodePromptAdmittedEventData = decode_event(&event)?;
+                if data.delivery != "queue" && data.delivery != "steer" {
+                    return Err(event_shape_error(&event, "unknown prompt delivery"));
+                }
+                if data.delivery == "steer" {
+                    return Ok(Vec::new());
+                }
+                let turn = {
+                    let mut mutable = lock(&self.mutable);
+                    if let Some(turn) = mutable.active_turns.get_mut(&data.session_id) {
+                        turn.updated_at = Some(data.timestamp);
+                        turn.clone()
+                    } else {
+                        let turn = self.mapper.turn(
+                            &data.session_id,
+                            &data.message_id,
+                            TurnStatus::Queued,
+                            Some(data.timestamp),
+                            Some(data.timestamp),
+                            None,
+                        );
+                        mutable
+                            .active_turns
+                            .insert(data.session_id.clone(), turn.clone());
+                        turn
+                    }
+                };
+                Ok(vec![self.mapper.turn_event(turn)])
+            }
+            "session.next.step.started" => {
+                let data: OpenCodeStepStartedEventData = decode_event(&event)?;
+                let turn = {
+                    let mut mutable = lock(&self.mutable);
+                    if let Some(turn) = mutable.active_turns.get_mut(&data.session_id) {
+                        turn.status = TurnStatus::Running;
+                        turn.started_at = turn.started_at.or(Some(data.timestamp));
+                        turn.updated_at = Some(data.timestamp);
+                        turn.clone()
+                    } else {
+                        let turn = self.mapper.turn(
+                            &data.session_id,
+                            &data.assistant_message_id,
+                            TurnStatus::Running,
+                            Some(data.timestamp),
+                            Some(data.timestamp),
+                            None,
+                        );
+                        mutable
+                            .active_turns
+                            .insert(data.session_id.clone(), turn.clone());
+                        turn
+                    }
+                };
+                Ok(vec![self.mapper.turn_event(turn)])
+            }
+            "session.next.text.delta" | "session.next.reasoning.delta" => {
+                let data: OpenCodeDeltaEventData = decode_event(&event)?;
+                let turn = lock(&self.mutable)
+                    .active_turns
+                    .get(&data.session_id)
+                    .cloned();
+                let Some(turn) = turn else {
+                    return Ok(Vec::new());
+                };
+                let (output_id, kind) = if event.kind == "session.next.text.delta" {
+                    (data.text_id, "text")
+                } else {
+                    (data.reasoning_id, "reasoning")
+                };
+                let output_id = output_id.ok_or_else(|| {
+                    event_shape_error(&event, "delta event is missing its output identifier")
+                })?;
+                Ok(vec![self.mapper.delta_event(&turn, output_id, kind, data.delta)])
+            }
+            "session.next.step.failed" => {
+                let data: OpenCodeStepStartedEventData = decode_event(&event)?;
+                Ok(self.finish_turn(
+                    &data.session_id,
+                    TurnStatus::Failed,
+                    Some(data.timestamp),
+                ))
+            }
+            "session.error" => {
+                let data: OpenCodeSessionErrorEventData = decode_event(&event)?;
+                let Some(session_id) = data.session_id else {
+                    return Ok(Vec::new());
+                };
+                Ok(self.finish_turn(&session_id, TurnStatus::Failed, None))
+            }
+            "session.idle" => {
+                let data: OpenCodeSessionIDEventData = decode_event(&event)?;
+                Ok(self.finish_turn(
+                    &data.session_id,
+                    TurnStatus::Completed,
+                    None,
+                ))
+            }
+            "permission.v2.asked" => {
+                let data: OpenCodePermissionAskedEventData = decode_event(&event)?;
+                let source_message_id = data
+                    .source
+                    .as_ref()
+                    .filter(|source| source.kind == "tool")
+                    .map(|source| source.message_id.clone());
+                let turn = {
+                    let mut mutable = lock(&self.mutable);
+                    if let Some(turn) = mutable.active_turns.get_mut(&data.session_id) {
+                        turn.status = TurnStatus::WaitingApproval;
+                        Some(turn.clone())
+                    } else if let Some(message_id) = source_message_id {
+                        let turn = self.mapper.turn(
+                            &data.session_id,
+                            &message_id,
+                            TurnStatus::WaitingApproval,
+                            None,
+                            None,
+                            None,
+                        );
+                        mutable
+                            .active_turns
+                            .insert(data.session_id.clone(), turn.clone());
+                        Some(turn)
+                    } else {
+                        None
+                    }
+                };
+                let Some(turn) = turn else {
+                    let client = self.ready_session()?.client();
+                    client
+                        .reply_permission(
+                            &data.session_id,
+                            &data.id,
+                            OpenCodePermissionReply::Reject,
+                        )
+                        .map_err(OpenCodeProtocolMapper::error)?;
+                    eprintln!(
+                        "OpenCode Provider rejected unroutable permission request {}",
+                        data.id
+                    );
+                    return Ok(Vec::new());
+                };
+                let native_approval_id = approval_resource_id(generation, &data.id);
+                let approval = self.mapper.approval(
+                    &data,
+                    &turn,
+                    native_approval_id.clone(),
+                    now_ms(),
+                );
+                lock(&self.mutable).pending_approvals.insert(
+                    native_approval_id,
+                    PendingApproval {
+                        session_generation: generation.to_string(),
+                        session_id: data.session_id,
+                        request_id: data.id,
+                        approval: approval.clone(),
+                    },
+                );
+                Ok(vec![
+                    self.mapper.turn_event(turn),
+                    self.mapper.approval_requested_event(approval),
+                ])
+            }
+            "permission.v2.replied" => {
+                let data: OpenCodePermissionRepliedEventData = decode_event(&event)?;
+                let native_approval_id = approval_resource_id(generation, &data.request_id);
+                let pending = lock(&self.mutable)
+                    .pending_approvals
+                    .remove(&native_approval_id);
+                let Some(pending) = pending else {
+                    return Ok(Vec::new());
+                };
+                if pending.session_id != data.session_id {
+                    return Err(event_shape_error(
+                        &event,
+                        "permission reply sessionID does not match the pending request",
+                    ));
+                }
+                let decision = match data.reply.as_str() {
+                    "once" | "always" => ApprovalDecision::Approve,
+                    "reject" => ApprovalDecision::Deny,
+                    _ => return Err(event_shape_error(&event, "unknown permission reply")),
+                };
+                let (approval, approval_event) = self.mapper.resolve_approval(
+                    pending.approval,
+                    decision,
+                    None,
+                );
+                let mut events = vec![approval_event];
+                let turn = {
+                    let mut mutable = lock(&self.mutable);
+                    let still_waiting = has_pending_approval(
+                        &mutable.pending_approvals,
+                        &data.session_id,
+                    );
+                    mutable.active_turns.get_mut(&data.session_id).map(|turn| {
+                        if !still_waiting {
+                            turn.status = TurnStatus::Running;
+                        }
+                        if approval.resolved_at.is_some() {
+                            turn.updated_at = approval.resolved_at;
+                        }
+                        turn.clone()
+                    })
+                };
+                if let Some(turn) = turn {
+                    events.push(self.mapper.turn_event(turn));
+                }
+                Ok(events)
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
+
+    fn finish_turn(
+        &self,
+        session_id: &str,
+        status: TurnStatus,
+        completed_at: Option<u64>,
+    ) -> Vec<ProtocolEvent> {
+        let (turn, approvals) = {
+            let mut mutable = lock(&self.mutable);
+            let turn = mutable.active_turns.remove(session_id).map(|mut turn| {
+                if turn.status != TurnStatus::Interrupted {
+                    turn.status = status;
+                }
+                if completed_at.is_some() {
+                    turn.updated_at = completed_at;
+                }
+                turn.completed_at = completed_at;
+                turn
+            });
+            let mut approvals = Vec::new();
+            mutable.pending_approvals.retain(|_, pending| {
+                if pending.session_id == session_id {
+                    approvals.push(pending.approval.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+            (turn, approvals)
+        };
+        let mut events = turn
+            .into_iter()
+            .map(|turn| self.mapper.turn_event(turn))
+            .collect::<Vec<_>>();
+        events.extend(approvals.into_iter().map(|approval| {
+            self.mapper.expire_approval(approval, completed_at).1
+        }));
+        events
+    }
+
+    fn fail_from_event_forwarder(&self, generation: &str, error: ProtocolError) {
+        eprintln!("OpenCode Provider event forwarding failed: {}", error.message);
+        let now = now_ms();
+        let (previous_status, session, turns, approvals) = {
+            let mut mutable = lock(&self.mutable);
+            if mutable.session_generation.as_deref() != Some(generation)
+                || !matches!(
+                    mutable.status,
+                    InstanceStatus::Ready | InstanceStatus::Starting
+                )
+            {
+                return;
+            }
+            let previous_status = mutable.status;
+            mutable.status = InstanceStatus::Error;
+            mutable.session_generation = None;
+            let session = mutable.session.take();
+            let turns = mutable
+                .active_turns
+                .drain()
+                .map(|(_, mut turn)| {
+                    turn.status = TurnStatus::Failed;
+                    turn.updated_at = Some(now);
+                    turn.completed_at = Some(now);
+                    turn
+                })
+                .collect::<Vec<_>>();
+            let approvals = mutable
+                .pending_approvals
+                .drain()
+                .map(|(_, pending)| pending.approval)
+                .collect::<Vec<_>>();
+            (previous_status, session, turns, approvals)
+        };
+        if let Some(session) = session {
+            let _ = session.shutdown();
+        }
+        for turn in turns {
+            let _ = self.events.publish(self.mapper.turn_event(turn));
+        }
+        for approval in approvals {
+            let (_, event) = self.mapper.expire_approval(approval, Some(now));
+            let _ = self.events.publish(event);
+        }
+        let _ = self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
+            jsonrpc: "2.0".to_string(),
+            params: InstanceStatusChangedEvent {
+                instance: self.snapshot(),
+                previous_status: Some(previous_status),
+            },
+        });
+    }
+}
+
+struct ProviderState {
+    host_device_id: Option<String>,
+    initialized_client_id: Option<String>,
+    instances: HashMap<String, Arc<OpenCodeInstanceRuntime>>,
+}
+
+pub struct OpenCodeProvider {
+    state: Mutex<ProviderState>,
+    events: Arc<dyn ProviderEventSink>,
+    shutdown: AtomicBool,
+}
+
+impl OpenCodeProvider {
+    pub fn new(events: Arc<dyn ProviderEventSink>) -> Self {
+        Self {
+            state: Mutex::new(ProviderState {
+                host_device_id: None,
+                initialized_client_id: None,
+                instances: HashMap::new(),
+            }),
+            events,
+            shutdown: AtomicBool::new(false),
+        }
+    }
+
+    pub fn is_shutdown(&self) -> bool {
+        self.shutdown.load(Ordering::SeqCst)
+    }
+
+    fn descriptor() -> ProviderPluginDescriptor {
+        ProviderPluginDescriptor {
+            plugin_id: OPENCODE_PLUGIN_ID.to_string(),
+            display_name: "OpenCode".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            supported_versions: VersionRange {
+                min_version: PROTOCOL_VERSION,
+                max_version: PROTOCOL_VERSION,
+            },
+            instance_kinds: vec![OPENCODE_INSTANCE_KIND.to_string()],
+        }
+    }
+
+    fn instance(
+        &self,
+        route: &ProviderInstanceRoute,
+    ) -> Result<Arc<OpenCodeInstanceRuntime>, ProtocolError> {
+        if self.shutdown.load(Ordering::SeqCst) {
+            return Err(protocol_error(
+                "provider_shutdown",
+                "OpenCode Provider is shut down".to_string(),
+                false,
+            ));
+        }
+        validate_route(route)?;
+        let state = lock(&self.state);
+        let expected_device = state.host_device_id.as_deref().ok_or_else(|| {
+            protocol_error(
+                "provider_not_initialized",
+                "Provider must be initialized before using instances".to_string(),
+                false,
+            )
+        })?;
+        if route.device_id != expected_device {
+            return Err(protocol_error(
+                "wrong_device_route",
+                "Provider route targets a different Host device".to_string(),
+                false,
+            ));
+        }
+        state
+            .instances
+            .get(&route.provider_instance_id)
+            .cloned()
+            .ok_or_else(|| {
+                protocol_error(
+                    "unknown_provider_instance",
+                    format!(
+                        "unknown OpenCode Provider instance: {}",
+                        route.provider_instance_id
+                    ),
+                    false,
+                )
+            })
+    }
+
+    fn resource_instance(
+        &self,
+        resource: &RoutedResourceId,
+    ) -> Result<Arc<OpenCodeInstanceRuntime>, ProtocolError> {
+        validate_resource(resource)?;
+        self.instance(&ProviderInstanceRoute {
+            device_id: resource.device_id.clone(),
+            provider_plugin_id: resource.provider_plugin_id.clone(),
+            provider_instance_id: resource.provider_instance_id.clone(),
+        })
+    }
+}
+
+impl ProtocolServer for OpenCodeProvider {
+    fn provider_initialize<'a>(
+        &'a self,
+        request: ProviderInitializeRequest,
+    ) -> ProtocolFuture<'a, ProviderInitializeResponse> {
+        Box::pin(async move {
+            if request.supported_versions.min_version > request.supported_versions.max_version {
+                return Err(protocol_error(
+                    "invalid_protocol_range",
+                    "Host protocol range is invalid".to_string(),
+                    false,
+                ));
+            }
+            if PROTOCOL_VERSION < request.supported_versions.min_version
+                || PROTOCOL_VERSION > request.supported_versions.max_version
+            {
+                return Err(protocol_error(
+                    "unsupported_protocol_version",
+                    "Provider protocol v1 is outside the Host-supported range".to_string(),
+                    false,
+                ));
+            }
+            if request.host_client_id.trim().is_empty()
+                || request.host_device_id.trim().is_empty()
+                || request.host_version.trim().is_empty()
+            {
+                return Err(protocol_error(
+                    "invalid_host_identity",
+                    "Host client, device, and version must not be empty".to_string(),
+                    false,
+                ));
+            }
+            let mut state = lock(&self.state);
+            if let Some(device_id) = state.host_device_id.as_ref() {
+                if device_id != &request.host_device_id
+                    || state.initialized_client_id.as_ref() != Some(&request.host_client_id)
+                {
+                    return Err(protocol_error(
+                        "provider_already_initialized",
+                        "Provider process is already bound to another Host identity".to_string(),
+                        false,
+                    ));
+                }
+            } else {
+                state.host_device_id = Some(request.host_device_id);
+                state.initialized_client_id = Some(request.host_client_id);
+            }
+            Ok(ProviderInitializeResponse {
+                selected_version: PROTOCOL_VERSION,
+                plugin: Self::descriptor(),
+            })
+        })
+    }
+
+    fn provider_describe<'a>(
+        &'a self,
+        _request: ProviderDescribeRequest,
+    ) -> ProtocolFuture<'a, ProviderDescribeResponse> {
+        Box::pin(async move {
+            Ok(ProviderDescribeResponse {
+                plugin: Self::descriptor(),
+            })
+        })
+    }
+
+    fn instance_create<'a>(
+        &'a self,
+        request: InstanceCreateRequest,
+    ) -> ProtocolFuture<'a, InstanceCreateResponse> {
+        Box::pin(async move {
+            Self::descriptor().validate_instance_kind(&request.instance_kind)?;
+            validate_route(&request.route)?;
+            if request.display_name.trim().is_empty() {
+                return Err(protocol_error(
+                    "invalid_provider_instance",
+                    "Provider instance display name must not be empty".to_string(),
+                    false,
+                ));
+            }
+            let settings = decode_settings(request.settings.clone())?;
+            let mut state = lock(&self.state);
+            let host_device = state.host_device_id.as_deref().ok_or_else(|| {
+                protocol_error(
+                    "provider_not_initialized",
+                    "Provider must be initialized before creating instances".to_string(),
+                    false,
+                )
+            })?;
+            if request.route.device_id != host_device {
+                return Err(protocol_error(
+                    "wrong_device_route",
+                    "Provider instance targets a different Host device".to_string(),
+                    false,
+                ));
+            }
+            if let Some(existing) = state.instances.get(&request.route.provider_instance_id) {
+                if existing.route != request.route
+                    || existing.instance_kind != request.instance_kind
+                    || existing.display_name != request.display_name
+                    || existing.settings != settings
+                {
+                    return Err(protocol_error(
+                        "provider_instance_conflict",
+                        "Provider instance id was reused with different configuration".to_string(),
+                        false,
+                    ));
+                }
+                return Ok(InstanceCreateResponse {
+                    instance: existing.snapshot(),
+                });
+            }
+            let runtime = Arc::new(OpenCodeInstanceRuntime::new(
+                request,
+                settings,
+                self.events.clone(),
+            ));
+            let instance = runtime.snapshot();
+            state
+                .instances
+                .insert(runtime.route.provider_instance_id.clone(), runtime);
+            Ok(InstanceCreateResponse { instance })
+        })
+    }
+
+    fn instance_start<'a>(
+        &'a self,
+        request: InstanceStartRequest,
+    ) -> ProtocolFuture<'a, InstanceStartResponse> {
+        Box::pin(async move {
+            let runtime = self.instance(&request.route)?;
+            if runtime.status() == InstanceStatus::Ready {
+                return Ok(InstanceStartResponse {
+                    instance: runtime.snapshot(),
+                });
+            }
+            if runtime.status() == InstanceStatus::Starting {
+                return Err(protocol_error(
+                    "provider_instance_starting",
+                    "OpenCode Provider instance is already starting".to_string(),
+                    true,
+                ));
+            }
+            runtime.set_status(InstanceStatus::Starting)?;
+            let executable = runtime.settings.server_executable.clone();
+            let args = runtime.settings.server_args.clone();
+            let session = tokio::task::spawn_blocking(move || {
+                OpenCodeServerSession::spawn(&executable, &args)
+            })
+            .await
+            .map_err(provider_task_error)?;
+            let session = match session {
+                Ok(session) => session,
+                Err(error) => {
+                    let _ = runtime.set_status(InstanceStatus::Error);
+                    return Err(OpenCodeProtocolMapper::error(error));
+                }
+            };
+            let incoming = match session.subscribe() {
+                Ok(incoming) => incoming,
+                Err(error) => {
+                    let _ = session.shutdown();
+                    let _ = runtime.set_status(InstanceStatus::Error);
+                    return Err(OpenCodeProtocolMapper::error(error));
+                }
+            };
+            let generation = session.generation().to_string();
+            {
+                let mut mutable = lock(&runtime.mutable);
+                mutable.session = Some(session);
+                mutable.session_generation = Some(generation.clone());
+                mutable.sessions.clear();
+                mutable.active_turns.clear();
+                mutable.pending_approvals.clear();
+            }
+            let instance = runtime.set_status(InstanceStatus::Ready)?;
+            runtime.start_event_forwarder(generation, incoming);
+            Ok(InstanceStartResponse { instance })
+        })
+    }
+
+    fn instance_stop<'a>(
+        &'a self,
+        request: InstanceStopRequest,
+    ) -> ProtocolFuture<'a, InstanceStopResponse> {
+        Box::pin(async move {
+            let runtime = self.instance(&request.route)?;
+            if matches!(runtime.status(), InstanceStatus::Created | InstanceStatus::Stopped) {
+                return Ok(InstanceStopResponse {
+                    instance: runtime.set_status(InstanceStatus::Stopped)?,
+                });
+            }
+            runtime.set_status(InstanceStatus::Stopping)?;
+            let session = {
+                let mut mutable = lock(&runtime.mutable);
+                mutable.session_generation = None;
+                mutable.active_turns.clear();
+                mutable.pending_approvals.clear();
+                mutable.session.take()
+            };
+            if let Some(session) = session {
+                tokio::task::spawn_blocking(move || session.shutdown())
+                    .await
+                    .map_err(provider_task_error)?
+                    .map_err(OpenCodeProtocolMapper::error)?;
+            }
+            Ok(InstanceStopResponse {
+                instance: runtime.set_status(InstanceStatus::Stopped)?,
+            })
+        })
+    }
+
+    fn instance_destroy<'a>(
+        &'a self,
+        request: InstanceDestroyRequest,
+    ) -> ProtocolFuture<'a, InstanceDestroyResponse> {
+        Box::pin(async move {
+            let runtime = self.instance(&request.route)?;
+            if matches!(
+                runtime.status(),
+                InstanceStatus::Ready | InstanceStatus::Starting | InstanceStatus::Stopping
+            ) {
+                return Err(protocol_error(
+                    "provider_instance_running",
+                    "Stop the OpenCode Provider instance before destroying it".to_string(),
+                    false,
+                ));
+            }
+            lock(&self.state)
+                .instances
+                .remove(&request.route.provider_instance_id);
+            Ok(InstanceDestroyResponse { destroyed: true })
+        })
+    }
+
+    fn instance_capabilities<'a>(
+        &'a self,
+        request: InstanceCapabilitiesRequest,
+    ) -> ProtocolFuture<'a, InstanceCapabilitiesResponse> {
+        Box::pin(async move {
+            let runtime = self.instance(&request.route)?;
+            Ok(InstanceCapabilitiesResponse {
+                capabilities: runtime.capabilities.clone(),
+            })
+        })
+    }
+
+    fn conversation_list<'a>(
+        &'a self,
+        request: ConversationListRequest,
+    ) -> ProtocolFuture<'a, ConversationListResponse> {
+        Box::pin(async move {
+            if request.limit == Some(0) {
+                return Err(protocol_error(
+                    "invalid_request",
+                    "conversation list limit must be greater than zero".to_string(),
+                    false,
+                ));
+            }
+            let runtime = self.instance(&request.route)?;
+            let session = runtime.ready_session()?;
+            let client = session.client();
+            let cursor = request.cursor;
+            let limit = request.limit;
+            let (page, active) = tokio::task::spawn_blocking(move || {
+                let page = client.list_sessions(cursor.as_deref(), limit)?;
+                let active = client.active_sessions()?;
+                Ok::<_, OpenCodeServerError>((page, active))
+            })
+            .await
+            .map_err(provider_task_error)?
+            .map_err(OpenCodeProtocolMapper::error)?;
+            for session in page.data.iter() {
+                validate_opencode_session(session)?;
+            }
+            if active.keys().any(|session_id| session_id.trim().is_empty()) {
+                return Err(protocol_error(
+                    "opencode_protocol_error",
+                    "OpenCode active session map contains an empty session id".to_string(),
+                    false,
+                ));
+            }
+            let conversations = {
+                let mut mutable = lock(&runtime.mutable);
+                for session in page.data.iter() {
+                    mutable.sessions.insert(session.id.clone(), session.clone());
+                }
+                page.data
+                    .iter()
+                    .map(|session| {
+                        let turn = mutable.active_turns.get(&session.id).cloned();
+                        let waiting = has_pending_approval(
+                            &mutable.pending_approvals,
+                            &session.id,
+                        );
+                        runtime.mapper.conversation(
+                            session,
+                            active.contains_key(&session.id),
+                            turn,
+                            waiting,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            };
+            Ok(ConversationListResponse {
+                conversations,
+                page_info: PageInfo {
+                    next_cursor: page.cursor.next,
+                },
+            })
+        })
+    }
+
+    fn conversation_get<'a>(
+        &'a self,
+        request: ConversationGetRequest,
+    ) -> ProtocolFuture<'a, ConversationGetResponse> {
+        Box::pin(async move {
+            let runtime = self.resource_instance(&request.conversation)?;
+            let conversation_id = request.conversation.native_resource_id;
+            let session = runtime.ready_session()?;
+            let client = session.client();
+            let requested_id = conversation_id.clone();
+            let (session, active) = tokio::task::spawn_blocking(move || {
+                let session = client.get_session(&requested_id)?;
+                let active = client.active_sessions()?.contains_key(&requested_id);
+                Ok::<_, OpenCodeServerError>((session, active))
+            })
+            .await
+            .map_err(provider_task_error)?
+            .map_err(OpenCodeProtocolMapper::error)?;
+            if session.id != conversation_id {
+                return Err(protocol_error(
+                    "opencode_protocol_error",
+                    "OpenCode session response id does not match the requested id".to_string(),
+                    false,
+                ));
+            }
+            validate_opencode_session(&session)?;
+            let conversation = {
+                let mut mutable = lock(&runtime.mutable);
+                mutable.sessions.insert(session.id.clone(), session.clone());
+                let turn = mutable.active_turns.get(&session.id).cloned();
+                let waiting = has_pending_approval(&mutable.pending_approvals, &session.id);
+                runtime
+                    .mapper
+                    .conversation(&session, active, turn, waiting)
+            };
+            Ok(ConversationGetResponse { conversation })
+        })
+    }
+
+    fn conversation_create<'a>(
+        &'a self,
+        request: ConversationCreateRequest,
+    ) -> ProtocolFuture<'a, ConversationCreateResponse> {
+        Box::pin(async move {
+            if request.title.is_some() {
+                return Err(capability_unsupported(
+                    "OpenCode V2 session.create does not support setting a title",
+                ));
+            }
+            if request.model.is_some() {
+                return Err(capability_unsupported(
+                    "OpenCode Provider does not advertise model selection",
+                ));
+            }
+            if request.reasoning_effort.is_some() {
+                return Err(capability_unsupported(
+                    "OpenCode Provider does not support reasoning effort selection",
+                ));
+            }
+            if request.extension.is_some() {
+                return Err(capability_unsupported(
+                    "OpenCode Provider does not define conversation.create extensions",
+                ));
+            }
+            if request.permission_level != OPENCODE_PERMISSION_LEVEL {
+                return Err(protocol_error(
+                    "unsupported_permission_level",
+                    format!(
+                        "OpenCode Provider only supports permission level {OPENCODE_PERMISSION_LEVEL}"
+                    ),
+                    false,
+                ));
+            }
+            let runtime = self.instance(&request.route)?;
+            let workspace_root = request
+                .workspace_root
+                .map(PathBuf::from)
+                .or_else(|| runtime.settings.workspace_root.clone())
+                .ok_or_else(|| {
+                    protocol_error(
+                        "workspace_required",
+                        "OpenCode session.create requires an absolute workspaceRoot".to_string(),
+                        false,
+                    )
+                })?;
+            if !workspace_root.is_absolute() {
+                return Err(protocol_error(
+                    "invalid_workspace_root",
+                    "OpenCode workspaceRoot must be an absolute path".to_string(),
+                    false,
+                ));
+            }
+            let directory = workspace_root.to_string_lossy().to_string();
+            let session = runtime.ready_session()?;
+            let client = session.client();
+            let created = tokio::task::spawn_blocking(move || {
+                client.create_session(&OpenCodeSessionCreate {
+                    agent: None,
+                    model: None,
+                    location: OpenCodeLocationRef {
+                        directory,
+                        workspace_id: None,
+                    },
+                })
+            })
+            .await
+            .map_err(provider_task_error)?
+            .map_err(OpenCodeProtocolMapper::error)?;
+            validate_opencode_session(&created)?;
+            let conversation = runtime
+                .mapper
+                .conversation(&created, false, None, false);
+            lock(&runtime.mutable)
+                .sessions
+                .insert(created.id.clone(), created);
+            Ok(ConversationCreateResponse { conversation })
+        })
+    }
+
+    fn turn_start<'a>(
+        &'a self,
+        request: TurnStartRequest,
+    ) -> ProtocolFuture<'a, TurnStartResponse> {
+        Box::pin(async move {
+            if request.message.is_empty() {
+                return Err(protocol_error(
+                    "invalid_request",
+                    "turn.start message must not be empty".to_string(),
+                    false,
+                ));
+            }
+            let runtime = self.resource_instance(&request.conversation)?;
+            let conversation_id = request.conversation.native_resource_id;
+            let session = runtime.ready_session()?;
+            let client = session.client();
+            let active_client = client.clone();
+            let active_conversation_id = conversation_id.clone();
+            let server_active = tokio::task::spawn_blocking(move || {
+                active_client
+                    .active_sessions()
+                    .map(|active| active.contains_key(&active_conversation_id))
+            })
+            .await
+            .map_err(provider_task_error)?
+            .map_err(OpenCodeProtocolMapper::error)?;
+            if server_active || lock(&runtime.mutable).active_turns.contains_key(&conversation_id) {
+                return Err(protocol_error(
+                    "turn_already_active",
+                    "OpenCode session already has active execution".to_string(),
+                    false,
+                ));
+            }
+            let message_id = message_id("start", &request.client_message_id);
+            let provisional = runtime.mapper.turn(
+                &conversation_id,
+                &message_id,
+                TurnStatus::Queued,
+                Some(now_ms()),
+                Some(now_ms()),
+                None,
+            );
+            lock(&runtime.mutable)
+                .active_turns
+                .insert(conversation_id.clone(), provisional.clone());
+            let native_conversation_id = conversation_id.clone();
+            let sent_message_id = message_id.clone();
+            let admission = tokio::task::spawn_blocking(move || {
+                client.prompt(
+                    &native_conversation_id,
+                    &OpenCodePromptRequest {
+                        id: sent_message_id,
+                        prompt: OpenCodePrompt {
+                            text: request.message,
+                        },
+                        delivery: OpenCodeDelivery::Queue,
+                    },
+                )
+            })
+            .await
+            .map_err(provider_task_error)?;
+            let admission = match admission {
+                Ok(admission) => admission,
+                Err(error) => {
+                    lock(&runtime.mutable).active_turns.remove(&conversation_id);
+                    return Err(OpenCodeProtocolMapper::error(error));
+                }
+            };
+            if let Err(error) = validate_admission(
+                &admission,
+                &conversation_id,
+                &message_id,
+                "queue",
+            ) {
+                lock(&runtime.mutable).active_turns.remove(&conversation_id);
+                return Err(error);
+            }
+            let turn = {
+                let mut mutable = lock(&runtime.mutable);
+                let turn = mutable
+                    .active_turns
+                    .entry(conversation_id)
+                    .or_insert(provisional);
+                turn.started_at = Some(admission.time_created);
+                turn.updated_at = Some(admission.time_created);
+                turn.clone()
+            };
+            Ok(TurnStartResponse { turn })
+        })
+    }
+
+    fn turn_steer<'a>(
+        &'a self,
+        request: TurnSteerRequest,
+    ) -> ProtocolFuture<'a, TurnSteerResponse> {
+        Box::pin(async move {
+            validate_same_resource_route(&request.conversation, &request.turn)?;
+            if request.message.is_empty() {
+                return Err(protocol_error(
+                    "invalid_request",
+                    "turn.steer message must not be empty".to_string(),
+                    false,
+                ));
+            }
+            let runtime = self.resource_instance(&request.conversation)?;
+            let conversation_id = request.conversation.native_resource_id;
+            let expected_turn = {
+                let mutable = lock(&runtime.mutable);
+                mutable.active_turns.get(&conversation_id).cloned()
+            }
+            .ok_or_else(|| {
+                protocol_error(
+                    "turn_not_active",
+                    "OpenCode session has no active Provider turn to steer".to_string(),
+                    false,
+                )
+            })?;
+            if expected_turn.resource != request.turn {
+                return Err(protocol_error(
+                    "stale_turn",
+                    "turn.steer targets a stale OpenCode Provider turn".to_string(),
+                    false,
+                ));
+            }
+            let session = runtime.ready_session()?;
+            let client = session.client();
+            let message_id = message_id("steer", &request.client_message_id);
+            let native_conversation_id = conversation_id.clone();
+            let sent_message_id = message_id.clone();
+            let admission = tokio::task::spawn_blocking(move || {
+                client.prompt(
+                    &native_conversation_id,
+                    &OpenCodePromptRequest {
+                        id: sent_message_id,
+                        prompt: OpenCodePrompt {
+                            text: request.message,
+                        },
+                        delivery: OpenCodeDelivery::Steer,
+                    },
+                )
+            })
+            .await
+            .map_err(provider_task_error)?
+            .map_err(OpenCodeProtocolMapper::error)?;
+            validate_admission(&admission, &conversation_id, &message_id, "steer")?;
+            let turn = {
+                let mut mutable = lock(&runtime.mutable);
+                let turn = mutable.active_turns.get_mut(&conversation_id).ok_or_else(|| {
+                    protocol_error(
+                        "turn_not_active",
+                        "OpenCode turn completed while the steer request was in flight".to_string(),
+                        false,
+                    )
+                })?;
+                turn.updated_at = Some(admission.time_created);
+                turn.clone()
+            };
+            Ok(TurnSteerResponse { turn })
+        })
+    }
+
+    fn turn_interrupt<'a>(
+        &'a self,
+        request: TurnInterruptRequest,
+    ) -> ProtocolFuture<'a, TurnInterruptResponse> {
+        Box::pin(async move {
+            validate_same_resource_route(&request.conversation, &request.turn)?;
+            let runtime = self.resource_instance(&request.conversation)?;
+            let conversation_id = request.conversation.native_resource_id;
+            let active_turn = lock(&runtime.mutable)
+                .active_turns
+                .get(&conversation_id)
+                .cloned()
+                .ok_or_else(|| {
+                    protocol_error(
+                        "turn_not_active",
+                        "OpenCode session has no active Provider turn to interrupt".to_string(),
+                        false,
+                    )
+                })?;
+            if active_turn.resource != request.turn {
+                return Err(protocol_error(
+                    "stale_turn",
+                    "turn.interrupt targets a stale OpenCode Provider turn".to_string(),
+                    false,
+                ));
+            }
+            let session = runtime.ready_session()?;
+            {
+                let mut mutable = lock(&runtime.mutable);
+                if let Some(turn) = mutable.active_turns.get_mut(&conversation_id) {
+                    turn.status = TurnStatus::Interrupted;
+                    turn.updated_at = Some(now_ms());
+                }
+            }
+            let client = session.client();
+            let native_conversation_id = conversation_id.clone();
+            let interrupted = match tokio::task::spawn_blocking(move || {
+                client.interrupt(&native_conversation_id)
+            })
+            .await
+            {
+                Ok(interrupted) => interrupted,
+                Err(error) => {
+                    if let Some(turn) = lock(&runtime.mutable)
+                        .active_turns
+                        .get_mut(&conversation_id)
+                    {
+                        turn.status = active_turn.status;
+                        turn.updated_at = active_turn.updated_at;
+                    }
+                    return Err(provider_task_error(error));
+                }
+            };
+            if let Err(error) = interrupted {
+                if let Some(turn) = lock(&runtime.mutable)
+                    .active_turns
+                    .get_mut(&conversation_id)
+                {
+                    turn.status = active_turn.status;
+                    turn.updated_at = active_turn.updated_at;
+                }
+                return Err(OpenCodeProtocolMapper::error(error));
+            }
+            let completed_at = now_ms();
+            let (turn, publish_turn, expired_approvals) = {
+                let mut mutable = lock(&runtime.mutable);
+                let removed = mutable.active_turns.remove(&conversation_id);
+                let publish_turn = removed.is_some();
+                let mut turn = removed.unwrap_or(active_turn);
+                turn.status = TurnStatus::Interrupted;
+                turn.updated_at = Some(completed_at);
+                turn.completed_at = Some(completed_at);
+                let mut approvals = Vec::new();
+                mutable.pending_approvals.retain(|_, pending| {
+                    if pending.session_id == conversation_id {
+                        approvals.push(pending.approval.clone());
+                        false
+                    } else {
+                        true
+                    }
+                });
+                (turn, publish_turn, approvals)
+            };
+            if publish_turn {
+                runtime
+                    .events
+                    .publish(runtime.mapper.turn_event(turn.clone()))?;
+            }
+            for approval in expired_approvals {
+                runtime.events.publish(
+                    runtime
+                        .mapper
+                        .expire_approval(approval, Some(completed_at))
+                        .1,
+                )?;
+            }
+            Ok(TurnInterruptResponse { turn })
+        })
+    }
+
+    fn approval_resolve<'a>(
+        &'a self,
+        request: ApprovalResolveRequest,
+    ) -> ProtocolFuture<'a, ApprovalResolveResponse> {
+        Box::pin(async move {
+            let runtime = self.resource_instance(&request.approval)?;
+            let native_approval_id = request.approval.native_resource_id.clone();
+            let pending = lock(&runtime.mutable)
+                .pending_approvals
+                .get(&native_approval_id)
+                .cloned()
+                .ok_or_else(|| {
+                    protocol_error(
+                        "approval_not_found",
+                        format!(
+                            "approval {native_approval_id} is not pending in this Provider instance"
+                        ),
+                        false,
+                    )
+                })?;
+            if pending.approval.resource != request.approval {
+                return Err(protocol_error(
+                    "stale_approval_session",
+                    "approval route does not match the pending OpenCode permission".to_string(),
+                    false,
+                ));
+            }
+            let session = runtime.ready_session()?;
+            if pending.session_generation != session.generation() {
+                return Err(protocol_error(
+                    "stale_approval_session",
+                    "approval belongs to a previous OpenCode Server session".to_string(),
+                    false,
+                ));
+            }
+            let reply = match request.decision {
+                ApprovalDecision::Approve => OpenCodePermissionReply::Once,
+                ApprovalDecision::Deny => OpenCodePermissionReply::Reject,
+            };
+            let client = session.client();
+            let session_id = pending.session_id.clone();
+            let request_id = pending.request_id.clone();
+            tokio::task::spawn_blocking(move || {
+                client.reply_permission(&session_id, &request_id, reply)
+            })
+            .await
+            .map_err(provider_task_error)?
+            .map_err(OpenCodeProtocolMapper::error)?;
+            let removed = lock(&runtime.mutable)
+                .pending_approvals
+                .remove(&native_approval_id);
+            let (approval, event) = runtime.mapper.resolve_approval(
+                pending.approval,
+                request.decision,
+                Some(now_ms()),
+            );
+            if removed.is_some() {
+                let turn = {
+                    let mut mutable = lock(&runtime.mutable);
+                    let still_waiting = has_pending_approval(
+                        &mutable.pending_approvals,
+                        &pending.session_id,
+                    );
+                    mutable.active_turns.get_mut(&pending.session_id).map(|turn| {
+                        if !still_waiting {
+                            turn.status = TurnStatus::Running;
+                        }
+                        if approval.resolved_at.is_some() {
+                            turn.updated_at = approval.resolved_at;
+                        }
+                        turn.clone()
+                    })
+                };
+                runtime.events.publish(event)?;
+                if let Some(turn) = turn {
+                    runtime.events.publish(runtime.mapper.turn_event(turn))?;
+                }
+            }
+            Ok(ApprovalResolveResponse { approval })
+        })
+    }
+
+    fn provider_shutdown<'a>(
+        &'a self,
+        _request: ProviderShutdownRequest,
+    ) -> ProtocolFuture<'a, ProviderShutdownResponse> {
+        Box::pin(async move {
+            if self.shutdown.swap(true, Ordering::SeqCst) {
+                return Ok(ProviderShutdownResponse { accepted: true });
+            }
+            let instances = lock(&self.state)
+                .instances
+                .values()
+                .cloned()
+                .collect::<Vec<_>>();
+            for runtime in instances {
+                let session = {
+                    let mut mutable = lock(&runtime.mutable);
+                    mutable.status = InstanceStatus::Stopping;
+                    mutable.session_generation = None;
+                    mutable.active_turns.clear();
+                    mutable.pending_approvals.clear();
+                    mutable.session.take()
+                };
+                if let Some(session) = session {
+                    tokio::task::spawn_blocking(move || session.shutdown())
+                        .await
+                        .map_err(provider_task_error)?
+                        .map_err(OpenCodeProtocolMapper::error)?;
+                }
+                lock(&runtime.mutable).status = InstanceStatus::Stopped;
+            }
+            Ok(ProviderShutdownResponse { accepted: true })
+        })
+    }
+}
+
+fn decode_settings(
+    settings: codepet_provider_sdk::JsonObject,
+) -> Result<OpenCodeInstanceSettings, ProtocolError> {
+    let value = Value::Object(settings.into_iter().collect());
+    let settings: OpenCodeInstanceSettings = serde_json::from_value(value).map_err(|error| {
+        protocol_error(
+            "invalid_instance_settings",
+            format!("invalid OpenCode instance settings: {error}"),
+            false,
+        )
+    })?;
+    if !settings.server_executable.is_absolute() {
+        return Err(protocol_error(
+            "invalid_instance_settings",
+            "serverExecutable must be an absolute path resolved by the Host".to_string(),
+            false,
+        ));
+    }
+    if settings.server_args != ["serve"] {
+        return Err(protocol_error(
+            "invalid_instance_settings",
+            "serverArgs must be exactly [\"serve\"]".to_string(),
+            false,
+        ));
+    }
+    if settings
+        .workspace_root
+        .as_ref()
+        .is_some_and(|path| !path.is_absolute())
+    {
+        return Err(protocol_error(
+            "invalid_instance_settings",
+            "workspaceRoot must be an absolute path when configured".to_string(),
+            false,
+        ));
+    }
+    Ok(settings)
+}
+
+fn validate_route(route: &ProviderInstanceRoute) -> Result<(), ProtocolError> {
+    if route.device_id.trim().is_empty()
+        || route.provider_plugin_id.trim().is_empty()
+        || route.provider_instance_id.trim().is_empty()
+    {
+        return Err(protocol_error(
+            "invalid_provider_route",
+            "deviceId, providerPluginId, and providerInstanceId must not be empty".to_string(),
+            false,
+        ));
+    }
+    if route.provider_plugin_id != OPENCODE_PLUGIN_ID {
+        return Err(protocol_error(
+            "wrong_provider_plugin_route",
+            format!(
+                "OpenCode Provider cannot serve plugin {}",
+                route.provider_plugin_id
+            ),
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_resource(resource: &RoutedResourceId) -> Result<(), ProtocolError> {
+    validate_route(&ProviderInstanceRoute {
+        device_id: resource.device_id.clone(),
+        provider_plugin_id: resource.provider_plugin_id.clone(),
+        provider_instance_id: resource.provider_instance_id.clone(),
+    })?;
+    if resource.native_resource_id.trim().is_empty() {
+        return Err(protocol_error(
+            "invalid_provider_resource",
+            "nativeResourceId must not be empty".to_string(),
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_same_resource_route(
+    left: &RoutedResourceId,
+    right: &RoutedResourceId,
+) -> Result<(), ProtocolError> {
+    validate_resource(left)?;
+    validate_resource(right)?;
+    if left.device_id != right.device_id
+        || left.provider_plugin_id != right.provider_plugin_id
+        || left.provider_instance_id != right.provider_instance_id
+    {
+        return Err(protocol_error(
+            "mismatched_provider_route",
+            "resources must target the same device, Provider plugin, and Provider instance"
+                .to_string(),
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_admission(
+    admission: &crate::protocol::OpenCodePromptAdmission,
+    session_id: &str,
+    message_id: &str,
+    delivery: &str,
+) -> Result<(), ProtocolError> {
+    if admission.session_id != session_id
+        || admission.id != message_id
+        || admission.delivery != delivery
+    {
+        return Err(protocol_error(
+            "opencode_protocol_error",
+            "OpenCode prompt admission does not match the submitted prompt".to_string(),
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_opencode_session(session: &OpenCodeSession) -> Result<(), ProtocolError> {
+    if session.id.trim().is_empty() {
+        return Err(protocol_error(
+            "opencode_protocol_error",
+            "OpenCode session response contains an empty id".to_string(),
+            false,
+        ));
+    }
+    let workspace_root = session.workspace_root().ok_or_else(|| {
+        protocol_error(
+            "opencode_protocol_error",
+            "OpenCode session response contains neither location.directory nor directory"
+                .to_string(),
+            false,
+        )
+    })?;
+    if workspace_root.trim().is_empty() || !PathBuf::from(&workspace_root).is_absolute() {
+        return Err(protocol_error(
+            "opencode_protocol_error",
+            "OpenCode session response contains a non-absolute workspace directory".to_string(),
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn decode_event<T: DeserializeOwned>(event: &OpenCodeEvent) -> Result<T, ProtocolError> {
+    serde_json::from_value(event.data.clone()).map_err(|error| {
+        event_shape_error(event, &format!("invalid event data: {error}"))
+    })
+}
+
+fn event_shape_error(event: &OpenCodeEvent, message: &str) -> ProtocolError {
+    protocol_error(
+        "opencode_event_shape_invalid",
+        format!("OpenCode event {} ({}) {message}", event.id, event.kind),
+        false,
+    )
+}
+
+fn has_pending_approval(
+    approvals: &HashMap<String, PendingApproval>,
+    session_id: &str,
+) -> bool {
+    approvals
+        .values()
+        .any(|approval| approval.session_id == session_id)
+}
+
+fn approval_resource_id(generation: &str, request_id: &str) -> String {
+    format!("opencode-permission:{generation}:{request_id}")
+}
+
+fn message_id(kind: &str, client_message_id: &str) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in kind
+        .bytes()
+        .chain(std::iter::once(0))
+        .chain(client_message_id.bytes())
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("msg_codepet_{kind}_{hash:016x}")
+}
+
+fn capability_unsupported(message: &str) -> ProtocolError {
+    protocol_error("capability_unsupported", message.to_string(), false)
+}
+
+fn provider_task_error(error: tokio::task::JoinError) -> ProtocolError {
+    protocol_error(
+        "provider_task_failed",
+        format!("OpenCode Provider task failed: {error}"),
+        true,
+    )
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{approval_resource_id, decode_settings, message_id};
+    use serde_json::json;
+
+    #[test]
+    fn settings_require_host_resolved_absolute_executable() {
+        let missing = serde_json::from_value(json!({"serverArgs": ["serve"]})).unwrap();
+        assert!(decode_settings(missing).is_err());
+
+        let relative = serde_json::from_value(json!({
+            "serverExecutable": "opencode",
+            "serverArgs": ["serve"]
+        }))
+        .unwrap();
+        assert!(decode_settings(relative).is_err());
+    }
+
+    #[test]
+    fn provider_resource_ids_are_stable_and_session_scoped() {
+        assert_eq!(message_id("start", "request-1"), message_id("start", "request-1"));
+        assert_ne!(message_id("start", "request-1"), message_id("steer", "request-1"));
+        assert_ne!(
+            approval_resource_id("1", "per_1"),
+            approval_resource_id("2", "per_1")
+        );
+    }
+}

@@ -43,6 +43,7 @@
 8. `crates/codepet-host` 已消费生成 SDK 实现进程外 Provider client、Plugin Manager 和 `codepet-gateway-sdk::ProtocolServer` application boundary；Manager 到 Gateway 是只能领取一次的有界单消费者队列，不指向 companion bus。详见 `provider-host-device-and-plugin-runtime.md`。
 9. `crates/providers/codepet-provider-codex` 使用生成 Provider SDK 实现全部 v1 lifecycle/业务方法和事件，官方 App Server client 不再位于 Tauri。详见 `codex-provider-plugin-runtime.md`。
 10. `crates/providers/codepet-provider-claude` 使用同一生成 Provider SDK 与 Host lifecycle，只适配官方 CLI `stream-json` 可验证的 create/start/result/Unix interrupt；list/get/steer/approval 明确关闭。详见 `claude-provider-plugin-runtime.md`。
+11. `crates/providers/codepet-provider-opencode` 同样只使用生成 Provider SDK；OpenCode HTTP/SSE DTO 留在插件内部，Host resolver 是 Server executable 的唯一来源。详见 `opencode-provider-plugin-runtime.md`。
 
 ## 涉及模块
 
@@ -54,6 +55,7 @@
 - `frontend/lib/generated/runtimeGateway.ts`：只把 compat v0 TypeScript 类型暴露给当前前端。
 - `crates/providers/codepet-provider-codex/`：首个 production Provider binary；运行依赖只有 Provider SDK 与纯 Rust App Server adapter。
 - `crates/providers/codepet-provider-claude/`：Claude production Provider binary；运行依赖只有 Provider SDK 与纯 Rust CLI adapter。
+- `crates/providers/codepet-provider-opencode/`：OpenCode Server HTTP/SSE adapter 与独立 Provider binary；不依赖 Host、Gateway、Tauri 或 Pet。
 - `src-tauri/src/runtime_gateway/provider_host_compat.rs`：compat remote 到 Gateway v1 的薄适配。
 - `src-tauri/src/runtime_gateway/{gateway,event_bus,tauri_bridge}.rs`：companion 业务与 Host/Tauri bridge；`ProviderHostState` 负责启动和一次性有界 shutdown。
 
@@ -77,6 +79,7 @@
 - `cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_protocol_tests --test runtime_gateway_core_tests`：v0 wire 与双链路隔离。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --all-targets`：Provider v1、真实 App Server fixture 与实际 Provider 二进制回归。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-claude --all-targets`：Claude CLI fixture、真实输出映射、stdio framing、能力负例与依赖隔离。
+- `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-opencode --all-targets`：Provider framing、OpenCode V2 fixture 垂直映射与 Pet 隔离。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-host --all-targets`：Host 从 manifest 启动 Provider binary、Gateway 纵向 RPC、四段路由与 restart/fault isolation。
 - TypeScript 对兼容 SDK 执行独立 `tsc --noEmit`，并运行现有前端 protocol/component tests。
 - 测试后确认 `src-tauri/gen/schemas/macOS-schema.json` 无提交差异。
@@ -87,7 +90,7 @@
 
 ## 未知项
 
-- Provider Host 的进程生命周期与 manifest 身份映射已经实现；自动重启/backoff、签名和 sandbox 尚未实现。实例 settings/enabled 以 manifest 为基础且不持久为第二配置源；Codex 的 `appServerExecutable` 由 Host resolver 在内存中唯一覆盖。
+- Provider Host 的进程生命周期与 manifest 身份映射已经实现；自动重启/backoff、签名和 sandbox 尚未实现。实例 settings/enabled 以 manifest 为基础且不持久为第二配置源；Codex 的 `appServerExecutable` 与 OpenCode 的 `serverExecutable` 由 Host resolver 在内存中唯一覆盖。
 - 仓库当前没有 LICENSE 文件；SDK manifest 不虚构许可证，正式发布前需要所有者补充 license 决策。
 - Gateway v1 event cursor 的持久化格式、过期窗口和远程 session 恢复策略尚未确定。
 - Dart/Python adapter 尚未实现；registry 会拒绝显式选择。未来实现仍需决定 unknown enum、async stream 和 codec error 映射，并必须使用现有 generator interface 与同一 IDL。

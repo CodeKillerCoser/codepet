@@ -9,7 +9,7 @@ use crate::agent::codex_desktop_ipc::{
 };
 use crate::agent_runtime::{
     AgentRuntime, AgentRuntimeService, CLAUDE_RUNTIME_PROVIDER_ID,
-    CODEX_RUNTIME_PROVIDER_ID,
+    CODEX_RUNTIME_PROVIDER_ID, OPENCODE_RUNTIME_PROVIDER_ID,
 };
 use crate::settings::{configured_app_data_dir, load_app_settings};
 use codepet_host::{
@@ -64,6 +64,8 @@ pub(crate) struct ProviderHostState {
     codex_refresh_lock: Arc<AsyncMutex<()>>,
     claude_refresh_generation: Arc<AtomicU64>,
     claude_refresh_lock: Arc<AsyncMutex<()>>,
+    opencode_refresh_generation: Arc<AtomicU64>,
+    opencode_refresh_lock: Arc<AsyncMutex<()>>,
     shutdown_started: Arc<AtomicBool>,
     shutdown_completed: Arc<AtomicBool>,
     shutdown_notify: Arc<Notify>,
@@ -97,6 +99,8 @@ impl ProviderHostState {
             codex_refresh_lock: Arc::new(AsyncMutex::new(())),
             claude_refresh_generation: Arc::new(AtomicU64::new(0)),
             claude_refresh_lock: Arc::new(AsyncMutex::new(())),
+            opencode_refresh_generation: Arc::new(AtomicU64::new(0)),
+            opencode_refresh_lock: Arc::new(AsyncMutex::new(())),
             shutdown_started: Arc::new(AtomicBool::new(false)),
             shutdown_completed: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(Notify::new()),
@@ -112,6 +116,8 @@ impl ProviderHostState {
             codex_refresh_lock: Arc::new(AsyncMutex::new(())),
             claude_refresh_generation: Arc::new(AtomicU64::new(0)),
             claude_refresh_lock: Arc::new(AsyncMutex::new(())),
+            opencode_refresh_generation: Arc::new(AtomicU64::new(0)),
+            opencode_refresh_lock: Arc::new(AsyncMutex::new(())),
             shutdown_started: Arc::new(AtomicBool::new(false)),
             shutdown_completed: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(Notify::new()),
@@ -137,6 +143,10 @@ impl ProviderHostState {
             CLAUDE_RUNTIME_PROVIDER_ID => (
                 self.claude_refresh_generation.clone(),
                 self.claude_refresh_lock.clone(),
+            ),
+            OPENCODE_RUNTIME_PROVIDER_ID => (
+                self.opencode_refresh_generation.clone(),
+                self.opencode_refresh_lock.clone(),
             ),
             _ => return,
         };
@@ -338,7 +348,11 @@ fn configured_provider_runtime(
     }
     let mut catalog = PluginCatalog::discover(catalog_config);
     let runtime_service = AgentRuntimeService::default();
-    for provider_id in [CODEX_RUNTIME_PROVIDER_ID, CLAUDE_RUNTIME_PROVIDER_ID] {
+    for provider_id in [
+        CODEX_RUNTIME_PROVIDER_ID,
+        CLAUDE_RUNTIME_PROVIDER_ID,
+        OPENCODE_RUNTIME_PROVIDER_ID,
+    ] {
         let target = provider_runtime_target(provider_id).expect("known runtime Provider target");
         let runtime = runtime_service.detect(provider_id).map_err(|error| {
             HostError::new(
@@ -386,6 +400,12 @@ fn provider_runtime_target(provider_id: &str) -> Option<ProviderRuntimeTarget> {
             instance_kind: "claude",
             executable_setting: "claudeExecutable",
             display_name: "Claude",
+        }),
+        OPENCODE_RUNTIME_PROVIDER_ID => Some(ProviderRuntimeTarget {
+            plugin_id: "dev.codepet.opencode",
+            instance_kind: "opencode",
+            executable_setting: "serverExecutable",
+            display_name: "OpenCode",
         }),
         _ => None,
     }
@@ -578,6 +598,7 @@ mod tests {
     use super::{inject_runtime_executable, ProviderHostState, ProviderGatewayService};
     use crate::agent_runtime::{
         AgentRuntime, AgentRuntimeSource, AgentRuntimeStatus, CLAUDE_RUNTIME_PROVIDER_ID,
+        CODEX_RUNTIME_PROVIDER_ID, OPENCODE_RUNTIME_PROVIDER_ID,
     };
     use codepet_host::{
         DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor,
@@ -589,6 +610,159 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::Barrier;
+
+    #[test]
+    fn catalog_runtime_executables_are_overridden_by_resolver_values() {
+        let directory = tempfile::tempdir().unwrap();
+        let plugin_directory = directory.path().join("providers");
+        let descriptors = [
+            PluginDescriptor {
+                plugin_id: "dev.codepet.codex".to_string(),
+                display_name: "Codex".to_string(),
+                executable: directory.path().join("codepet-provider-codex"),
+                args: Vec::new(),
+                env: Default::default(),
+                enabled: true,
+                instances: vec![PluginInstanceConfig {
+                    instance_id: Some("codex".to_string()),
+                    instance_kind: "codex".to_string(),
+                    display_name: "Codex".to_string(),
+                    settings: [
+                        (
+                            "appServerExecutable".to_string(),
+                            serde_json::json!("manifest-codex"),
+                        ),
+                        ("preserved".to_string(), serde_json::json!(true)),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    enabled: true,
+                }],
+            },
+            PluginDescriptor {
+                plugin_id: "dev.codepet.opencode".to_string(),
+                display_name: "OpenCode".to_string(),
+                executable: directory.path().join("codepet-provider-opencode"),
+                args: Vec::new(),
+                env: Default::default(),
+                enabled: true,
+                instances: vec![PluginInstanceConfig {
+                    instance_id: Some("opencode".to_string()),
+                    instance_kind: "opencode".to_string(),
+                    display_name: "OpenCode".to_string(),
+                    settings: [
+                        (
+                            "serverExecutable".to_string(),
+                            serde_json::json!("manifest-opencode"),
+                        ),
+                        ("preserved".to_string(), serde_json::json!(true)),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    enabled: true,
+                }],
+            },
+        ];
+        for (index, descriptor) in descriptors.into_iter().enumerate() {
+            let directory = plugin_directory.join(index.to_string());
+            std::fs::create_dir_all(&directory).unwrap();
+            let mut manifest = serde_json::to_value(descriptor).unwrap();
+            manifest
+                .as_object_mut()
+                .unwrap()
+                .insert("manifestVersion".to_string(), serde_json::json!(1));
+            std::fs::write(
+                directory.join("codepet-provider.json"),
+                serde_json::to_vec(&manifest).unwrap(),
+            )
+            .unwrap();
+        }
+        let mut catalog = PluginCatalog::discover(
+            PluginCatalogConfig::default().with_directory(&plugin_directory),
+        );
+        let codex_executable = directory.path().join("resolved/codex");
+        let opencode_executable = directory.path().join("resolved/opencode");
+
+        for (provider_id, display_name, executable) in [
+            (
+                CODEX_RUNTIME_PROVIDER_ID,
+                "Codex",
+                codex_executable.to_string_lossy().to_string(),
+            ),
+            (
+                OPENCODE_RUNTIME_PROVIDER_ID,
+                "OpenCode",
+                opencode_executable.to_string_lossy().to_string(),
+            ),
+        ] {
+            let runtime = AgentRuntime {
+                provider_id: provider_id.to_string(),
+                display_name: display_name.to_string(),
+                status: AgentRuntimeStatus::Ready,
+                resolved_executable: Some(executable.clone()),
+                source: Some(AgentRuntimeSource::Configured),
+                configured_executable: Some(executable),
+                version: None,
+                diagnostic: None,
+            };
+            assert_eq!(inject_runtime_executable(&mut catalog, &runtime).unwrap(), 1);
+        }
+
+        let instances = ProviderInstanceRegistry::open(
+            directory.path().join("instances.json"),
+            "device-runtime-settings".to_string(),
+        )
+        .unwrap();
+        let records = instances.synchronize_catalog(&catalog).unwrap();
+        let codex = records
+            .iter()
+            .find(|record| record.plugin_id == "dev.codepet.codex")
+            .unwrap();
+        let opencode = records
+            .iter()
+            .find(|record| record.plugin_id == "dev.codepet.opencode")
+            .unwrap();
+        assert_eq!(
+            codex.settings["appServerExecutable"],
+            serde_json::json!(codex_executable)
+        );
+        assert_eq!(
+            opencode.settings["serverExecutable"],
+            serde_json::json!(opencode_executable)
+        );
+        assert_eq!(codex.settings["preserved"], serde_json::json!(true));
+        assert_eq!(opencode.settings["preserved"], serde_json::json!(true));
+
+        for (provider_id, display_name) in [
+            (CODEX_RUNTIME_PROVIDER_ID, "Codex"),
+            (OPENCODE_RUNTIME_PROVIDER_ID, "OpenCode"),
+        ] {
+            let runtime = AgentRuntime {
+                provider_id: provider_id.to_string(),
+                display_name: display_name.to_string(),
+                status: AgentRuntimeStatus::Unavailable,
+                resolved_executable: None,
+                source: None,
+                configured_executable: None,
+                version: None,
+                diagnostic: None,
+            };
+            assert_eq!(inject_runtime_executable(&mut catalog, &runtime).unwrap(), 1);
+        }
+        let records = instances.synchronize_catalog(&catalog).unwrap();
+        let codex = records
+            .iter()
+            .find(|record| record.plugin_id == "dev.codepet.codex")
+            .unwrap();
+        let opencode = records
+            .iter()
+            .find(|record| record.plugin_id == "dev.codepet.opencode")
+            .unwrap();
+        assert!(!codex.settings.contains_key("appServerExecutable"));
+        assert!(!opencode.settings.contains_key("serverExecutable"));
+        assert_eq!(codex.settings["preserved"], serde_json::json!(true));
+        assert_eq!(opencode.settings["preserved"], serde_json::json!(true));
+    }
 
     #[tokio::test]
     async fn claude_runtime_executable_is_injected_into_the_manifest_instance() {

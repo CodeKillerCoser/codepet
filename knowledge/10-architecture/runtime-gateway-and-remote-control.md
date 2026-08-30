@@ -1,8 +1,8 @@
 # Runtime Gateway 与远程控制架构
 
-> 文档状态（2026-08-30）：长期远程设计仍保留。当前 Codex 使用隔离双链路：`CodexRemote` 已迁到进程外 `codepet-provider-codex`，经 Provider Protocol v1、Plugin Manager 与内部 Gateway v1 service 提供远程能力；`CodexDesktopCompanion / IPC` 只驱动桌宠本地投影和面向 Desktop owner 的安全动作。Claude 已有能力较小的独立 `codepet-provider-claude`，只接官方 CLI stream-json，不提供全局会话 CRUD、steer 或审批。compat `RuntimeGatewayState` 只适配同一个 Provider Gateway，不再持有独立 App Server runtime。尚无网络 listener，也没有 OpenCode Provider。各链路不得共享 session、registry、event bus、sequence、owner/revision 或 unavailable 状态。
+> 文档状态（2026-08-30）：长期远程设计仍保留。当前 Codex 使用隔离双链路：`CodexRemote` 已迁到进程外 `codepet-provider-codex`，经 Provider Protocol v1、Plugin Manager 与内部 Gateway v1 service 提供远程能力；`CodexDesktopCompanion / IPC` 只驱动桌宠本地投影和面向 Desktop owner 的安全动作。Claude 已有能力较小的独立 `codepet-provider-claude`，只接官方 CLI stream-json，不提供全局会话 CRUD、steer 或审批；OpenCode 只通过独立 `codepet-provider-opencode` 加入同一个 remote Provider Gateway，不存在 companion/Pet 支路。compat `RuntimeGatewayState` 只适配同一个 Provider Gateway，不再持有独立 Server runtime。尚无网络 listener。各链路不得共享 session、registry、event bus、sequence、owner/revision 或 unavailable 状态。
 >
-> 当前事实入口：Codex 插件边界与协议矩阵见 `codex-provider-plugin-runtime.md`，Claude 见 `claude-provider-plugin-runtime.md`，remote 领域见 `../30-domains/agent-control/codex-app-server.md`，companion 见 `../30-domains/agent-control/codex-desktop-companion.md`，Provider Host 见 `provider-host-device-and-plugin-runtime.md`；协议现状见 `protocol-layers-and-device-routing.md`、`../../protocol/provider/v1/manifest.json` 和 `../../protocol/gateway/v1/manifest.json`。下文的阶段规划和完整能力清单仍包含未实现的长期目标；旧目录、统一 wire envelope、方法名或已生成 Dart 的描述均视为 superseded，不是当前实现证据。
+> 当前事实入口：Codex 插件边界与协议矩阵见 `codex-provider-plugin-runtime.md`，Claude 见 `claude-provider-plugin-runtime.md`，OpenCode 见 `opencode-provider-plugin-runtime.md`，remote 领域见 `../30-domains/agent-control/codex-app-server.md`，companion 见 `../30-domains/agent-control/codex-desktop-companion.md`，Provider Host 见 `provider-host-device-and-plugin-runtime.md`；协议现状见 `protocol-layers-and-device-routing.md`、`../../protocol/provider/v1/manifest.json` 和 `../../protocol/gateway/v1/manifest.json`。下文的阶段规划和完整能力清单仍包含未实现的长期目标；旧目录、统一 wire envelope、方法名或已生成 Dart 的描述均视为 superseded，不是当前实现证据。
 
 ## 背景
 
@@ -37,7 +37,7 @@ Code Pet 当前是一个面向本机 AI 编程工具的桌面宠物应用。它�
 - 不在本文定义项目排期、人员排班、版本发布日期或商业化部署计划。
 - 不在首轮实现云端模型执行；Provider 运行时和代码工作区仍位于电脑。
 
-## 当前两条隔离边界
+## 当前 remote 与 companion 隔离边界
 
 ```text
 Codex remote client
@@ -59,6 +59,8 @@ PetApp
 Codex Provider 实现 Provider v1 的完整 lifecycle、`conversation.list/get/create`、turn start/steer/interrupt、`approval.resolve` 和通知映射。Desktop companion 不广告 list/create，只把已 bootstrap 的本地 thread 投影到桌宠；回复、停止和审批继续使用 generation、owner、revision、request 与 handler 校验。
 
 Provider Host/Gateway 与 companion state 各自持有 registry、event bus、replay window 和 session。compat state 引用 Host 的同一个 Gateway service，但不拥有进程或第二个 remote bus。桌宠前端只引用 companion client/event，Provider conversation/turn/approval 不能进入 companion transport、thread scope/event 或 Pet projection。remote 与 Desktop 的同名 native thread 各自保留，不做跨链路排除或同步。Hook、audit、transcript 和文件监听不参与 Codex 桌宠数据。
+
+OpenCode Server 通过 `codepet-provider-opencode` 的 HTTP/SSE adapter 进入同一条 Provider remote bus；它不注册 Desktop companion adapter，也不向 `SharedState`、`pet-event` 或 `codex-desktop-companion-event` 发布数据。能力与版本边界见 `opencode-provider-plugin-runtime.md`。
 
 当前只有 Tauri 进程内 Gateway 调用面，尚无 WebSocket/P2P/relay 远程网络实现。App Server 只在 Provider instance start 中初始化且有超时；它 unavailable 不阻塞 Desktop companion，Desktop socket unavailable 也不改变 remote Provider。
 
@@ -680,9 +682,7 @@ Codex 增加无关字段时不要求 Code Pet 更新。只有调用参数变化�
 
 ### OpenCode
 
-OpenCode 是第二优先验证 adapter。`opencode serve` 提供 headless HTTP、OpenAPI 3.1 和 SSE，支持 project、session、message、diff、fork、abort、permission 和 session/message 事件。Provider 优先附着同一个 OpenCode Server，使桌面 UI 和 Code Pet 共享 session；未运行时可由 Code Pet 启动受控 headless server。OpenCode 原生端口仅绑定 loopback，由 Gateway 对外提供能力。
-
-OpenCode adapter 用于验证 Standard Protocol 没有被实现成只换名称的 Codex 协议。
+OpenCode 最小 adapter 已由独立 `codepet-provider-opencode` 落地。它使用正式 v1.18.25 发行包内的 V2 session HTTP/SSE API，覆盖 list/get/create、queue/steer/interrupt、二元 permission 和 live events。每个 Provider instance 只启动并持有自己的 loopback Server；不发现或附着外部 Server，也不用 Hook/transcript 猜测缺失能力。该实现验证了 Standard Protocol 能直接映射 REST/SSE Provider，而不是只替换 Codex 名称。详见 `opencode-provider-plugin-runtime.md`。
 
 ### Claude
 
@@ -826,7 +826,7 @@ Provider 状态和能力
 
 ### 阶段八：Provider 扩展验证
 
-- 优先实现 OpenCode Server adapter，验证 REST/SSE Provider 能映射到现有标准协议。
+- OpenCode Server adapter 已完成最小验证；后续只按正式 Server schema 扩展能力。
 - 再实现 Claude Agent SDK/runtime adapter，验证 sidecar、callback approval 和本地 session 模型。
 - 仅在真实差异无法通过 capability 或 extension 表达时扩展标准协议；不得把 Provider 分支散落到 UI。
 - 根据开放能力评估 Qoder 和其他 Provider。
@@ -838,6 +838,7 @@ Provider 状态和能力
 - `protocol/`、`tools/protocol-codegen/`、`sdk/rust/`、`sdk/typescript/`：当前协议事实来源、target adapters、测试和生成产物；旧 `protocol-codegen/`/`generated/` 根目录方案已 superseded。
 - `src-tauri/src/runtime_gateway/`：新增 Gateway、Application、Provider、Transport 和 projection store 边界。
 - `crates/providers/codepet-provider-codex/`：长期 remote App Server session、mapper、Provider v1 server 与 stdio 主循环；不得反向依赖 Tauri/Host/Pet SDK。
+- `crates/providers/codepet-provider-opencode/`：OpenCode Server HTTP/SSE client、mapper、Provider v1 server 与 stdio 主循环；同样不得反向依赖 Tauri/Host/Pet SDK。
 - `src-tauri/src/agent/codex_app_server.rs` 与同名目录：已删除；不得恢复进程内直连、旧一次性 `PetEvent` reply driver 或 fallback。
 - `src-tauri/src/agent/codex_desktop_ipc/`：独立 Desktop companion、Owner/Follower revision 状态机和安全动作。
 - `src-tauri/src/activity/collector.rs`：Agent Hook 数据入口删除；若其他本地非 Agent 功能仍需 HTTP 服务，应拆出独立用途后保留。
@@ -953,5 +954,5 @@ Provider 状态和能力
 - 远程首版采用 WSS relay 先行还是同时实现 WebRTC，需要在 Transport Spike 中根据中国大陆实测决定；业务协议不依赖该选择。
 - projection cache 是否在 Codex 阶段立即使用 SQLite，还是先用可重建内存 store，取决于手机断线重放和 App 重启恢复的最小需求。
 - Claude Agent SDK sidecar 的语言、进程托管和与现有 Claude Code UI 的 session 共享程度尚未验证。
-- OpenCode 当前运行实例的可靠发现方式和同一 server 多客户端行为需要在接入阶段确认。
+- OpenCode 外部 Server 发现与多客户端附着不是当前能力；若未来需要，必须先有官方可验证的 instance 身份和认证边界，不能在 Provider 内新增第二套权威探测。
 - 产品最终是否继续支持 Cursor，取决于其是否提供足够完整、稳定且可验证的运行时接口。

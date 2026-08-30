@@ -1,0 +1,20 @@
+{
+  "manifestVersion": 1,
+  "pluginId": "dev.codepet.opencode",
+  "displayName": "OpenCode",
+  "executable": "codepet-provider-opencode",
+  "args": [],
+  "env": {},
+  "enabled": true,
+  "instances": [
+    {
+      "instanceId": "opencode",
+      "instanceKind": "opencode",
+      "displayName": "OpenCode",
+      "settings": {
+        "serverArgs": ["serve"]
+      },
+      "enabled": true
+    }
+  ]
+}

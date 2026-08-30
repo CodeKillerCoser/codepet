@@ -32,7 +32,7 @@ pub use platform::macos_window;
 use agents::{AgentId, AgentView};
 use agent_runtime::{
     AgentRuntime, AgentRuntimeService, CLAUDE_RUNTIME_PROVIDER_ID,
-    CODEX_RUNTIME_PROVIDER_ID,
+    CODEX_RUNTIME_PROVIDER_ID, OPENCODE_RUNTIME_PROVIDER_ID,
 };
 use base64::Engine;
 use events::PetEvent;
@@ -129,7 +129,9 @@ fn refresh_agent_runtimes(
     for runtime in runtimes.iter().filter(|runtime| {
         matches!(
             runtime.provider_id.as_str(),
-            CODEX_RUNTIME_PROVIDER_ID | CLAUDE_RUNTIME_PROVIDER_ID
+            CODEX_RUNTIME_PROVIDER_ID
+                | CLAUDE_RUNTIME_PROVIDER_ID
+                | OPENCODE_RUNTIME_PROVIDER_ID
         )
     }) {
         restart_remote_runtime_provider(runtime, &provider_host);
@@ -175,7 +177,9 @@ fn restart_remote_runtime_provider(
 ) {
     if !matches!(
         runtime.provider_id.as_str(),
-        CODEX_RUNTIME_PROVIDER_ID | CLAUDE_RUNTIME_PROVIDER_ID
+        CODEX_RUNTIME_PROVIDER_ID
+            | CLAUDE_RUNTIME_PROVIDER_ID
+            | OPENCODE_RUNTIME_PROVIDER_ID
     ) {
         return;
     }
