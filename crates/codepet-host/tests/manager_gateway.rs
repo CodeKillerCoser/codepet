@@ -2,6 +2,7 @@ use codepet_gateway_sdk::{
     ConversationGetRequest as GatewayConversationGetRequest,
     ConversationListRequest as GatewayConversationListRequest, ProtocolEvent as GatewayEvent,
     ProtocolServer as GatewayProtocolServer, ProviderListRequest,
+    TurnSendRequest as GatewayTurnSendRequest,
 };
 use codepet_host::{
     DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor, PluginInstanceConfig,
@@ -156,6 +157,7 @@ async fn gateway_lists_devices_instances_capabilities_and_keeps_event_routes_mon
                 .contains(&codepet_gateway_sdk::GatewayCapability::ConversationGet)
     }));
 
+    wait_for_gateway_cursor(&gateway, 8).await;
     let lifecycle_cursor = gateway.current_event_cursor();
     let mut lifecycle_events = gateway
         .subscribe_events(Some(&lifecycle_cursor))
@@ -427,6 +429,69 @@ async fn gateway_reports_replay_and_live_subscription_gaps() {
     assert_eq!(restart_error.code, "provider_manager_shutting_down");
 }
 
+#[tokio::test]
+async fn shutdown_during_delayed_initialize_prevents_late_plugin_spawn() {
+    let directory = tempfile::tempdir().unwrap();
+    let initialize_marker = directory.path().join("initialize-a");
+    let first_pid = directory.path().join("pid-a");
+    let second_pid = directory.path().join("pid-b");
+    let mut first = plugin("dev.codepet.a-delayed", &["instance-a"]);
+    first.env.insert(
+        "CODEPET_FAKE_INITIALIZE_DELAY_MS".to_string(),
+        "300".to_string(),
+    );
+    first.env.insert(
+        "CODEPET_FAKE_INITIALIZE_MARKER".to_string(),
+        initialize_marker.display().to_string(),
+    );
+    first.env.insert(
+        "CODEPET_FAKE_PID_MARKER".to_string(),
+        first_pid.display().to_string(),
+    );
+    let mut second = plugin("dev.codepet.b-late", &["instance-b"]);
+    second.env.insert(
+        "CODEPET_FAKE_PID_MARKER".to_string(),
+        second_pid.display().to_string(),
+    );
+    let manager = build_manager("device-start-shutdown", vec![first, second]);
+    let startup_manager = manager.clone();
+    let startup = tokio::spawn(async move { startup_manager.start_enabled().await });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !initialize_marker.exists() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let shutdown = manager.shutdown().await;
+    assert!(shutdown.iter().all(|(_, outcome)| outcome.is_ok()));
+    let startup = startup.await.unwrap();
+    assert!(startup.iter().all(|(_, outcome)| outcome.is_err()));
+    assert!(!second_pid.exists(), "shutdown gate must prevent the later spawn");
+    let restart = manager
+        .start_plugin("dev.codepet.b-late")
+        .await
+        .unwrap_err();
+    assert_eq!(restart.code, "provider_manager_shutting_down");
+    #[cfg(unix)]
+    assert!(!pid_is_alive(&first_pid));
+}
+
+#[cfg(unix)]
+fn pid_is_alive(path: &std::path::Path) -> bool {
+    extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+
+    let pid = std::fs::read_to_string(path)
+        .unwrap()
+        .trim()
+        .parse::<i32>()
+        .unwrap();
+    unsafe { kill(pid, 0) == 0 }
+}
+
 async fn wait_for_gateway_cursor(gateway: &ProviderGatewayService, sequence: u64) {
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
@@ -496,6 +561,28 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
         .await
         .unwrap_err();
     assert_eq!(wrong_conversation.code, "provider_resource_identity_mismatch");
+
+    let wrong_steer_conversation = gateway
+        .turn_send(GatewayTurnSendRequest {
+            conversation: resource(
+                "device-identity",
+                "instance-identity",
+                "conversation-a",
+            ),
+            client_message_id: "message-steer".to_string(),
+            message: "continue".to_string(),
+            steer_turn: Some(resource(
+                "device-identity",
+                "instance-identity",
+                "steer-wrong-conversation",
+            )),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(
+        wrong_steer_conversation.code,
+        "provider_resource_identity_mismatch"
+    );
 
     let aggregate_cursor = gateway
         .conversation_list(GatewayConversationListRequest {

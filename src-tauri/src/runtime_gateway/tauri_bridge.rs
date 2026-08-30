@@ -18,7 +18,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::Notify;
 
 pub const RUNTIME_GATEWAY_EVENT: &str = "runtime-gateway-event";
@@ -134,7 +134,7 @@ impl RuntimeGatewayState {
 }
 
 #[derive(Clone)]
-pub struct ProviderHostState {
+pub(crate) struct ProviderHostState {
     manager: Option<Arc<PluginManager>>,
     gateway: Option<Arc<ProviderGatewayService>>,
     started: Arc<AtomicBool>,
@@ -159,7 +159,7 @@ impl Default for ProviderHostState {
 }
 
 impl ProviderHostState {
-    pub fn new(
+    pub(crate) fn new(
         manager: Arc<PluginManager>,
         gateway: Arc<ProviderGatewayService>,
     ) -> Self {
@@ -184,7 +184,7 @@ impl ProviderHostState {
         }
     }
 
-    pub fn start_in_background(&self) {
+    pub(crate) fn start_in_background(&self) {
         let (Some(manager), Some(gateway)) = (self.manager.clone(), self.gateway.clone()) else {
             return;
         };
@@ -232,11 +232,11 @@ impl ProviderHostState {
         });
     }
 
-    pub fn shutdown_completed(&self) -> bool {
+    pub(crate) fn shutdown_completed(&self) -> bool {
         self.shutdown_completed.load(Ordering::SeqCst)
     }
 
-    pub async fn shutdown_once(&self) -> bool {
+    pub(crate) async fn shutdown_once(&self) -> bool {
         if self
             .shutdown_started
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -249,13 +249,12 @@ impl ProviderHostState {
                 }
                 notified.await;
             }
-            return false;
+            return true;
         }
 
         if let Some(manager) = self.manager.as_ref() {
             let shutdown_timeout = manager.shutdown_timeout();
-            let bounded_shutdown = shutdown_timeout.saturating_mul(2);
-            let force_kill = match tokio::time::timeout(bounded_shutdown, manager.shutdown()).await {
+            let force_kill = match tokio::time::timeout(shutdown_timeout, manager.shutdown()).await {
                 Ok(outcomes) => {
                     let mut failed = false;
                     for (plugin_id, outcome) in outcomes {
@@ -280,12 +279,18 @@ impl ProviderHostState {
                 }
             };
             if force_kill {
-                let kill = manager.kill_all("Tauri Provider Host shutdown timeout");
-                if tokio::time::timeout(shutdown_timeout, kill).await.is_err() {
-                    crate::app_log::error(
-                        "provider_host",
-                        "Provider processes did not finish within the bounded kill window",
-                    );
+                for (plugin_id, outcome) in manager
+                    .force_kill_all("Tauri Provider Host shutdown timeout")
+                    .await
+                {
+                    if let Err(error) = outcome {
+                        crate::app_log::error(
+                            "provider_host",
+                            &format!(
+                                "Provider force kill failed plugin_id={plugin_id} error={error:?}"
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -459,8 +464,8 @@ pub fn codex_desktop_companion_snapshot(
     state.snapshot()
 }
 
-pub fn start_runtime_gateway_event_bridge(
-    app: AppHandle,
+pub fn start_runtime_gateway_event_bridge<R: Runtime>(
+    app: AppHandle<R>,
     state: &RuntimeGatewayState,
 ) -> Result<(), ProtocolError> {
     start_local_event_bridge(
@@ -472,8 +477,8 @@ pub fn start_runtime_gateway_event_bridge(
     )
 }
 
-pub fn start_codex_desktop_companion_event_bridge(
-    app: AppHandle,
+pub fn start_codex_desktop_companion_event_bridge<R: Runtime>(
+    app: AppHandle<R>,
     state: &CodexDesktopCompanionState,
 ) -> Result<(), ProtocolError> {
     let remote_threads = state.thread_scope.subscribe_remote_threads();
@@ -499,8 +504,8 @@ pub fn start_codex_desktop_companion_event_bridge(
     Ok(())
 }
 
-fn start_local_event_bridge(
-    app: AppHandle,
+fn start_local_event_bridge<R: Runtime>(
+    app: AppHandle<R>,
     gateway: &Arc<Gateway>,
     transport: &LocalTransport,
     event_name: &'static str,
@@ -525,4 +530,215 @@ fn start_local_event_bridge(
         }
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProviderHostState, ProviderGatewayService};
+    use codepet_host::{
+        DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor,
+        PluginInstanceConfig, PluginManager, PluginManagerConfig,
+        PluginRuntimeState, ProviderInstanceRegistry,
+    };
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::Barrier;
+
+    #[tokio::test]
+    async fn concurrent_provider_host_shutdown_force_kills_visible_startup_process() {
+        let directory = tempfile::tempdir().unwrap();
+        let initialize_marker = directory.path().join("initialize-received");
+        let shutdown_marker = directory.path().join("shutdown-received");
+        let pid_marker = directory.path().join("provider-pid");
+        let fixture_manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("crates/Cargo.toml");
+        let descriptor = PluginDescriptor {
+            plugin_id: "dev.codepet.shutdown-race".to_string(),
+            display_name: "Shutdown Race Fixture".to_string(),
+            executable: fake_provider_executable(&fixture_manifest),
+            args: Vec::new(),
+            env: [
+                (
+                    "CODEPET_FAKE_PLUGIN_ID".to_string(),
+                    "dev.codepet.shutdown-race".to_string(),
+                ),
+                (
+                    "CODEPET_FAKE_INITIALIZE_DELAY_MS".to_string(),
+                    "300".to_string(),
+                ),
+                (
+                    "CODEPET_FAKE_INITIALIZE_MARKER".to_string(),
+                    initialize_marker.display().to_string(),
+                ),
+                (
+                    "CODEPET_FAKE_SHUTDOWN_RESPONSE_DELAY_MS".to_string(),
+                    "500".to_string(),
+                ),
+                (
+                    "CODEPET_FAKE_SHUTDOWN_MARKER".to_string(),
+                    shutdown_marker.display().to_string(),
+                ),
+                (
+                    "CODEPET_FAKE_PID_MARKER".to_string(),
+                    pid_marker.display().to_string(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            enabled: true,
+            instances: vec![PluginInstanceConfig {
+                instance_id: Some("instance-shutdown-race".to_string()),
+                instance_kind: "fake".to_string(),
+                display_name: "Shutdown Race".to_string(),
+                settings: Default::default(),
+                enabled: true,
+            }],
+        };
+        let plugin_directory = directory.path().join("providers/race");
+        std::fs::create_dir_all(&plugin_directory).unwrap();
+        let mut manifest = serde_json::to_value(descriptor).unwrap();
+        manifest
+            .as_object_mut()
+            .unwrap()
+            .insert("manifestVersion".to_string(), serde_json::json!(1));
+        std::fs::write(
+            plugin_directory.join("codepet-provider.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let device = DeviceRegistry::open(directory.path().join("device.json"), "Race Device")
+            .unwrap();
+        let instances = ProviderInstanceRegistry::open(
+            directory.path().join("instances.json"),
+            device.identity().device_id.clone(),
+        )
+        .unwrap();
+        let catalog = PluginCatalog::discover(
+            PluginCatalogConfig::default().with_directory(directory.path().join("providers")),
+        );
+        let mut config = PluginManagerConfig::default();
+        config.process.request_timeout = Duration::from_secs(2);
+        config.process.shutdown_timeout = Duration::from_millis(100);
+        let manager = Arc::new(
+            PluginManager::new(device, catalog, instances, config).unwrap(),
+        );
+        let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+        assert!(gateway.start_event_forwarding());
+        let provider_host = ProviderHostState::new(manager.clone(), gateway);
+        let startup_manager = manager.clone();
+        let startup = tokio::spawn(async move { startup_manager.start_enabled().await });
+        wait_for_file(&initialize_marker).await;
+        wait_for_file(&pid_marker).await;
+
+        let barrier = Arc::new(Barrier::new(3));
+        let first_host = provider_host.clone();
+        let first_barrier = barrier.clone();
+        let first = tokio::spawn(async move {
+            first_barrier.wait().await;
+            let result = first_host.shutdown_once().await;
+            (result, first_host.shutdown_completed())
+        });
+        let second_host = provider_host.clone();
+        let second_barrier = barrier.clone();
+        let second = tokio::spawn(async move {
+            second_barrier.wait().await;
+            let result = second_host.shutdown_once().await;
+            (result, second_host.shutdown_completed())
+        });
+        barrier.wait().await;
+        let first = first.await.unwrap();
+        let second = second.await.unwrap();
+        assert_eq!(first, (true, true));
+        assert_eq!(second, (true, true));
+        assert!(shutdown_marker.exists());
+        assert!(provider_host.shutdown_completed());
+        assert!(provider_host.shutdown_once().await);
+        let startup = startup.await.unwrap();
+        assert!(startup[0].1.is_err());
+        let snapshot = manager
+            .snapshot("dev.codepet.shutdown-race")
+            .await
+            .unwrap();
+        assert_eq!(snapshot.state, PluginRuntimeState::Stopped);
+        assert!(snapshot
+            .process_exit
+            .as_ref()
+            .is_some_and(|exit| !exit.success));
+        let restart = manager
+            .start_plugin("dev.codepet.shutdown-race")
+            .await
+            .unwrap_err();
+        assert_eq!(restart.code, "provider_manager_shutting_down");
+        #[cfg(unix)]
+        assert!(!pid_is_alive(&pid_marker));
+    }
+
+    async fn wait_for_file(path: &Path) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !path.exists() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    fn cargo_executable() -> PathBuf {
+        let configured = std::env::var_os("CARGO")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("cargo"));
+        if configured.is_file() {
+            return configured;
+        }
+        std::env::var_os("PATH")
+            .into_iter()
+            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+            .map(|directory| directory.join(&configured))
+            .find(|candidate| candidate.is_file())
+            .expect("cargo executable must be available for the real Provider fixture")
+    }
+
+    fn fake_provider_executable(fixture_manifest: &Path) -> PathBuf {
+        let target_directory = fixture_manifest.parent().unwrap().join("target");
+        let status = Command::new(cargo_executable())
+            .arg("build")
+            .arg("--quiet")
+            .arg("--manifest-path")
+            .arg(fixture_manifest)
+            .arg("--target-dir")
+            .arg(&target_directory)
+            .arg("-p")
+            .arg("codepet-host")
+            .arg("--bin")
+            .arg("codepet-host-fake-provider")
+            .status()
+            .unwrap();
+        assert!(status.success(), "real Provider fixture must compile");
+        let executable = target_directory
+            .join("debug")
+            .join(format!(
+                "codepet-host-fake-provider{}",
+                std::env::consts::EXE_SUFFIX
+            ));
+        assert!(executable.is_file());
+        executable
+    }
+
+    #[cfg(unix)]
+    fn pid_is_alive(path: &Path) -> bool {
+        extern "C" {
+            fn kill(pid: i32, signal: i32) -> i32;
+        }
+
+        let pid = std::fs::read_to_string(path)
+            .unwrap()
+            .trim()
+            .parse::<i32>()
+            .unwrap();
+        unsafe { kill(pid, 0) == 0 }
+    }
 }

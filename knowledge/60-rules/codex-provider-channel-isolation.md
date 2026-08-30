@@ -46,7 +46,8 @@ Codex Remote/AppServer 与 Codex Desktop Companion/IPC 必须拥有独立 Provid
 ## 验证方式
 
 - 向 remote sink 发布 conversation、turn、approval，断言 companion replay 为空。
-- 真实 Provider fixture 依次触发 event、坏帧和 crash，断言 compat replay、companion replay/registry 与 activity store 不变，且 shutdown 仍走 Provider Host。
+- 用 Tauri mock runtime 的真实 `AppHandle` 同时监听 `runtime-gateway-event`、`codex-desktop-companion-event` 和 `pet-event`；真实 Provider fixture 依次触发 event、坏帧和 crash，断言三条 channel 都没有 Provider payload，compat/companion replay 与 activity store 不变，并断言 Desktop adapter 计数 spy 未被调用。
+- 用延迟 initialize/shutdown fixture 并发调用两次 `ProviderHostState::shutdown_once`，断言两次都等待相同完成结果、force kill 后子进程已结束（Unix 额外用 PID 复核），且 Manager shutdown gate 阻止后续 spawn。
 - 分别把 remote/companion 置 unavailable，断言另一侧仍可请求或保留状态。
 - remote list/create 路由 App Server；companion 不广告 list/create。
 - Desktop snapshot 仍驱动 running、approval 和 terminal activity。

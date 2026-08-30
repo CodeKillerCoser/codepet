@@ -57,7 +57,15 @@ impl ProtocolServer for FakeProvider {
         _request: ProviderInitializeRequest,
     ) -> ProtocolFuture<'a, ProviderInitializeResponse> {
         let descriptor = self.descriptor();
+        let delay = env_u64("CODEPET_FAKE_INITIALIZE_DELAY_MS", 0);
+        let marker = std::env::var("CODEPET_FAKE_INITIALIZE_MARKER").ok();
         Box::pin(async move {
+            if let Some(marker) = marker {
+                let _ = std::fs::write(marker, b"initialize received\n");
+            }
+            if delay > 0 {
+                tokio::time::sleep(Duration::from_millis(delay)).await;
+            }
             Ok(ProviderInitializeResponse {
                 selected_version: env_u32("CODEPET_FAKE_SELECTED_VERSION", 1),
                 plugin: descriptor,
@@ -237,11 +245,18 @@ impl ProtocolServer for FakeProvider {
         Box::pin(async move {
             let route = route_from_resource(&request.turn);
             self.instance(&route)?;
+            let conversation_id = if request.turn.native_resource_id
+                == "steer-wrong-conversation"
+            {
+                "conversation-b"
+            } else {
+                "conversation-event-first"
+            };
             Ok(TurnSteerResponse {
                 turn: turn(
                     &route,
                     &request.turn.native_resource_id,
-                    resource(&route, "conversation-event-first"),
+                    resource(&route, conversation_id),
                 ),
             })
         })
@@ -297,12 +312,21 @@ impl ProtocolServer for FakeProvider {
         &'a self,
         _request: ProviderShutdownRequest,
     ) -> ProtocolFuture<'a, ProviderShutdownResponse> {
-        Box::pin(async { Ok(ProviderShutdownResponse { accepted: true }) })
+        let delay = env_u64("CODEPET_FAKE_SHUTDOWN_RESPONSE_DELAY_MS", 0);
+        Box::pin(async move {
+            if delay > 0 {
+                tokio::time::sleep(Duration::from_millis(delay)).await;
+            }
+            Ok(ProviderShutdownResponse { accepted: true })
+        })
     }
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() {
+    if let Ok(path) = std::env::var("CODEPET_FAKE_PID_MARKER") {
+        let _ = std::fs::write(path, format!("{}\n", std::process::id()));
+    }
     let plugin_id = std::env::var("CODEPET_FAKE_PLUGIN_ID")
         .unwrap_or_else(|_| "dev.codepet.fake".to_string());
     let server = Arc::new(FakeProvider {
@@ -327,12 +351,15 @@ async fn main() {
             std::process::exit(3);
         };
         if matches!(request, ProtocolRequest::ProviderShutdown { .. }) {
-            let response = dispatch(server.as_ref(), request).await;
-            write_message(&output, codec, ProviderWireMessage::Response(response));
             if let Ok(path) = std::env::var("CODEPET_FAKE_SHUTDOWN_MARKER") {
                 let _ = std::fs::write(path, b"shutdown received\n");
             }
-            drop(output);
+            let response = dispatch(server.as_ref(), request).await;
+            write_message(&output, codec, ProviderWireMessage::Response(response));
+            close_stdout_pipe();
+            if let Ok(path) = std::env::var("CODEPET_FAKE_STDOUT_CLOSED_MARKER") {
+                let _ = std::fs::write(path, b"stdout closed\n");
+            }
             eprintln!("fixture shutdown stderr tail");
             std::thread::sleep(Duration::from_millis(env_u64(
                 "CODEPET_FAKE_SHUTDOWN_DELAY_MS",
@@ -419,6 +446,33 @@ fn env_u64(name: &str, fallback: u64) -> u64 {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(fallback)
+}
+
+#[cfg(unix)]
+fn close_stdout_pipe() {
+    extern "C" {
+        fn close(fd: i32) -> i32;
+    }
+
+    let result = unsafe { close(1) };
+    if result != 0 {
+        std::process::exit(4);
+    }
+}
+
+#[cfg(windows)]
+fn close_stdout_pipe() {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+
+    extern "system" {
+        fn CloseHandle(handle: *mut c_void) -> i32;
+    }
+
+    let handle = std::io::stdout().as_raw_handle();
+    if unsafe { CloseHandle(handle) } == 0 {
+        std::process::exit(4);
+    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]

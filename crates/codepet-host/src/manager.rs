@@ -23,12 +23,10 @@ use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PluginRuntimeState {
-    Discovered,
     Starting,
     Ready,
     Stopped,
     Crashed,
-    Disabled,
 }
 
 #[derive(Clone, Debug)]
@@ -39,7 +37,6 @@ pub struct ProviderInstanceRuntimeSnapshot {
 
 #[derive(Clone, Debug)]
 pub struct PluginRuntimeSnapshot {
-    pub plugin_id: String,
     pub catalog: PluginDescriptor,
     pub reported: Option<ProviderPluginDescriptor>,
     pub state: PluginRuntimeState,
@@ -109,7 +106,6 @@ struct PluginEntry {
 impl PluginEntry {
     fn snapshot(&self) -> PluginRuntimeSnapshot {
         PluginRuntimeSnapshot {
-            plugin_id: self.catalog.plugin_id.clone(),
             catalog: self.catalog.clone(),
             reported: self.reported.clone(),
             state: self.state,
@@ -189,11 +185,7 @@ impl PluginManager {
                 PluginEntry {
                     catalog: descriptor.clone(),
                     reported: None,
-                    state: if descriptor.enabled {
-                        PluginRuntimeState::Discovered
-                    } else {
-                        PluginRuntimeState::Disabled
-                    },
+                    state: PluginRuntimeState::Stopped,
                     diagnostic: None,
                     generation: 0,
                     process: None,
@@ -278,23 +270,21 @@ impl PluginManager {
             .filter(|entry| entry.catalog.enabled)
             .map(|entry| entry.catalog.plugin_id.clone())
             .collect::<Vec<_>>();
-        let mut tasks = Vec::new();
+        let mut outcomes = Vec::new();
         for plugin_id in plugin_ids {
-            let manager = self.clone();
-            let task_plugin_id = plugin_id.clone();
-            let task = tokio::spawn(async move {
-                manager.start_plugin(&task_plugin_id).await?;
+            let outcome = async {
+                self.start_plugin(&plugin_id).await?;
                 let mut first_error = None;
-                for record in manager
+                for record in self
                     .inner
                     .instances
-                    .list_for_plugin(&task_plugin_id)?
+                    .list_for_plugin(&plugin_id)?
                     .into_iter()
                     .filter(|record| record.enabled)
                 {
                     let result = async {
-                        manager.create_instance_record(&record).await?;
-                        manager.start_instance(&record.route()).await?;
+                        self.create_instance_record(&record).await?;
+                        self.start_instance(&record.route()).await?;
                         Ok::<(), HostError>(())
                     }
                     .await;
@@ -306,24 +296,15 @@ impl PluginManager {
                     return Err(error);
                 }
                 Ok(())
-            });
-            tasks.push((plugin_id, task));
-        }
-        let mut outcomes = Vec::new();
-        for (plugin_id, task) in tasks {
-            let outcome = task.await.unwrap_or_else(|error| {
-                Err(HostError::new(
-                    "provider_start_task_failed",
-                    format!("Provider startup task failed: {error}"),
-                ))
-            });
+            }
+            .await;
             outcomes.push((plugin_id, outcome));
         }
         outcomes
     }
 
     pub async fn start_plugin(&self, plugin_id: &str) -> HostResult<()> {
-        let (descriptor, generation, previous_state) = {
+        let preparation = {
             let mut plugins = self.inner.plugins.write().await;
             if self.inner.shutting_down.load(Ordering::SeqCst) {
                 return Err(HostError::new(
@@ -335,7 +316,7 @@ impl PluginManager {
             let entry = plugins
                 .get_mut(plugin_id)
                 .ok_or_else(|| unknown_plugin(plugin_id))?;
-            if !entry.catalog.enabled || entry.state == PluginRuntimeState::Disabled {
+            if !entry.catalog.enabled {
                 return Err(HostError::new(
                     "provider_plugin_disabled",
                     format!("Provider plugin is disabled: {plugin_id}"),
@@ -343,6 +324,13 @@ impl PluginManager {
             }
             if entry.state == PluginRuntimeState::Ready && entry.process.is_some() {
                 return Ok(());
+            }
+            if entry.process.is_some() {
+                return Err(HostError::new(
+                    "provider_plugin_starting",
+                    format!("Provider plugin already has a live process: {plugin_id}"),
+                )
+                .retryable(true));
             }
             let previous_state = entry.state;
             entry.generation = entry.generation.saturating_add(1);
@@ -353,18 +341,49 @@ impl PluginManager {
             for instance in entry.instances.values_mut() {
                 instance.instance = None;
             }
-            (entry.catalog.clone(), entry.generation, previous_state)
+            let descriptor = entry.catalog.clone();
+            match PluginProcess::spawn(&descriptor, self.inner.config.process.clone()) {
+                Ok(process) => {
+                    let process = Arc::new(process);
+                    entry.process = Some(process.clone());
+                    Ok((
+                        descriptor,
+                        entry.generation,
+                        process,
+                        HostUpdate::PluginStateChanged {
+                            snapshot: entry.snapshot(),
+                            previous_state,
+                        },
+                    ))
+                }
+                Err(error) => {
+                    entry.state = PluginRuntimeState::Crashed;
+                    entry.diagnostic = Some(error.clone());
+                    Err((
+                        error,
+                        HostUpdate::PluginStateChanged {
+                            snapshot: entry.snapshot(),
+                            previous_state,
+                        },
+                    ))
+                }
+            }
         };
-        self.publish_state(plugin_id, previous_state).await?;
-
-        let process = match PluginProcess::spawn(&descriptor, self.inner.config.process.clone()).await {
-            Ok(process) => Arc::new(process),
-            Err(error) => {
-                self.finish_start_failure(plugin_id, generation, error.clone(), Vec::new(), None)
-                    .await;
+        let (descriptor, generation, process, starting_update) = match preparation {
+            Ok(prepared) => prepared,
+            Err((error, update)) => {
+                if let Err(publish_error) = self.send_update(update).await {
+                    eprintln!("Provider Host failed to publish spawn failure: {publish_error}");
+                }
                 return Err(error);
             }
         };
+        if let Err(error) = self.send_update(starting_update).await {
+            self.fail_started_process(plugin_id, generation, process, error.clone())
+                .await;
+            return Err(error);
+        }
+
         let initialization = process
             .client()
             .provider_initialize(ProviderInitializeRequest {
@@ -387,18 +406,17 @@ impl PluginManager {
         let initialized_descriptor = match initialization {
             Ok(descriptor) => descriptor,
             Err(error) => {
-                let process_exit = process.kill("Provider initialize failed").await.ok();
-                self.finish_start_failure(
-                    plugin_id,
-                    generation,
-                    error.clone(),
-                    process.stderr_diagnostics(),
-                    process_exit,
-                )
-                .await;
+                self.fail_started_process(plugin_id, generation, process, error.clone())
+                    .await;
                 return Err(error);
             }
         };
+        if !self.startup_is_current(plugin_id, generation, &process).await {
+            let error = start_cancelled();
+            self.fail_started_process(plugin_id, generation, process, error.clone())
+                .await;
+            return Err(error);
+        }
         let described = process
             .client()
             .provider_describe(ProviderDescribeRequest {})
@@ -411,19 +429,19 @@ impl PluginManager {
         let reported = match described {
             Ok(reported) => reported,
             Err(error) => {
-                let process_exit = process.kill("Provider describe failed").await.ok();
-                self.finish_start_failure(
-                    plugin_id,
-                    generation,
-                    error.clone(),
-                    process.stderr_diagnostics(),
-                    process_exit,
-                )
-                .await;
+                self.fail_started_process(plugin_id, generation, process, error.clone())
+                    .await;
                 return Err(error);
             }
         };
-        let inbound = process.take_inbound().await?;
+        let inbound = match process.take_inbound().await {
+            Ok(inbound) => inbound,
+            Err(error) => {
+                self.fail_started_process(plugin_id, generation, process, error.clone())
+                    .await;
+                return Err(error);
+            }
+        };
         let exit = process.exit_receiver();
         let diagnostics = process.diagnostics_handle();
         let process_identity = Arc::as_ptr(&process) as usize;
@@ -433,10 +451,18 @@ impl PluginManager {
             let entry = plugins
                 .get_mut(plugin_id)
                 .ok_or_else(|| unknown_plugin(plugin_id))?;
-            if entry.generation != generation {
+            if self.inner.shutting_down.load(Ordering::SeqCst)
+                || entry.generation != generation
+                || !entry
+                    .process
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &process))
+            {
                 drop(plugins);
-                let _ = process.kill("Provider start generation was superseded").await;
-                return Ok(());
+                let error = start_cancelled();
+                self.fail_started_process(plugin_id, generation, process, error.clone())
+                    .await;
+                return Err(error);
             }
             let previous_state = entry.state;
             entry.reported = Some(reported);
@@ -445,7 +471,11 @@ impl PluginManager {
             entry.diagnostic = None;
             previous_state
         };
-        self.publish_state(plugin_id, previous_state).await?;
+        if let Err(error) = self.publish_state(plugin_id, previous_state).await {
+            self.fail_started_process(plugin_id, generation, process, error.clone())
+                .await;
+            return Err(error);
+        }
         self.spawn_process_tasks(
             plugin_id.to_string(),
             generation,
@@ -464,13 +494,12 @@ impl PluginManager {
             let entry = plugins
                 .get_mut(plugin_id)
                 .ok_or_else(|| unknown_plugin(plugin_id))?;
+            if entry.state == PluginRuntimeState::Stopped && entry.process.is_none() {
+                return Ok(());
+            }
             let previous_state = entry.state;
             entry.generation = entry.generation.saturating_add(1);
-            entry.state = if entry.catalog.enabled {
-                PluginRuntimeState::Stopped
-            } else {
-                PluginRuntimeState::Disabled
-            };
+            entry.state = PluginRuntimeState::Stopped;
             (entry.process.clone(), previous_state)
         };
         self.publish_state(plugin_id, previous_state).await?;
@@ -487,12 +516,23 @@ impl PluginManager {
                     }
                 }
                 Err(error) => {
-                    {
-                        let mut plugins = self.inner.plugins.write().await;
-                        if let Some(entry) = plugins.get_mut(plugin_id) {
-                            entry.stderr_diagnostics = stderr_diagnostics;
+                    let process_exit = process
+                        .force_kill("Provider graceful shutdown failed")
+                        .await
+                        .ok();
+                    let mut plugins = self.inner.plugins.write().await;
+                    if let Some(entry) = plugins.get_mut(plugin_id) {
+                        if entry
+                            .process
+                            .as_ref()
+                            .is_some_and(|current| Arc::ptr_eq(current, &process))
+                        {
+                            entry.process = None;
                         }
+                        entry.process_exit = process_exit;
+                        entry.stderr_diagnostics = stderr_diagnostics;
                     }
+                    drop(plugins);
                     self.set_plugin_state(
                         plugin_id,
                         PluginRuntimeState::Crashed,
@@ -507,66 +547,73 @@ impl PluginManager {
     }
 
     pub async fn shutdown(&self) -> Vec<(String, HostResult<()>)> {
-        self.inner.shutting_down.store(true, Ordering::SeqCst);
-        let plugin_ids = self
-            .inner
-            .plugins
-            .read()
-            .await
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>();
-        let mut tasks = Vec::new();
-        for plugin_id in plugin_ids {
-            let manager = self.clone();
-            let task_plugin_id = plugin_id.clone();
-            let task = tokio::spawn(async move { manager.stop_plugin(&task_plugin_id).await });
-            tasks.push((plugin_id, task));
-        }
+        let plugin_ids = {
+            let plugins = self.inner.plugins.write().await;
+            self.inner.shutting_down.store(true, Ordering::SeqCst);
+            plugins.keys().cloned().collect::<Vec<_>>()
+        };
         let mut outcomes = Vec::new();
-        for (plugin_id, task) in tasks {
-            let outcome = task.await.unwrap_or_else(|error| {
-                Err(HostError::new(
-                    "provider_shutdown_task_failed",
-                    format!("Provider shutdown task failed: {error}"),
-                ))
-            });
+        for plugin_id in plugin_ids {
+            let outcome = self.stop_plugin(&plugin_id).await;
             outcomes.push((plugin_id, outcome));
         }
         outcomes
     }
 
-    pub async fn kill_all(&self, reason: &str) -> Vec<(String, HostResult<PluginProcessExit>)> {
-        self.inner.shutting_down.store(true, Ordering::SeqCst);
-        let processes = self
-            .inner
-            .plugins
-            .read()
-            .await
-            .iter()
-            .filter_map(|(plugin_id, entry)| {
-                entry
-                    .process
-                    .clone()
-                    .map(|process| (plugin_id.clone(), process))
-            })
-            .collect::<Vec<_>>();
-        let mut tasks = Vec::new();
-        for (plugin_id, process) in processes {
-            let reason = format!("{reason}: {plugin_id}");
-            tasks.push((
-                plugin_id,
-                tokio::spawn(async move { process.kill(reason).await }),
-            ));
-        }
+    pub async fn force_kill_all(
+        &self,
+        reason: &str,
+    ) -> Vec<(String, HostResult<PluginProcessExit>)> {
+        let processes = {
+            let mut plugins = self.inner.plugins.write().await;
+            self.inner.shutting_down.store(true, Ordering::SeqCst);
+            plugins
+                .iter_mut()
+                .filter_map(|(plugin_id, entry)| {
+                    entry.process.clone().map(|process| {
+                        let previous_state = entry.state;
+                        entry.generation = entry.generation.saturating_add(1);
+                        entry.state = PluginRuntimeState::Stopped;
+                        let update = (previous_state != PluginRuntimeState::Stopped).then(|| {
+                            HostUpdate::PluginStateChanged {
+                                snapshot: entry.snapshot(),
+                                previous_state,
+                            }
+                        });
+                        (plugin_id.clone(), process, update)
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
         let mut outcomes = Vec::new();
-        for (plugin_id, task) in tasks {
-            let outcome = task.await.unwrap_or_else(|error| {
-                Err(HostError::new(
-                    "provider_kill_task_failed",
-                    format!("Provider kill task failed: {error}"),
-                ))
-            });
+        for (plugin_id, process, update) in processes {
+            if let Some(update) = update {
+                if let Err(error) = self.send_update(update).await {
+                    eprintln!("Provider Host failed to publish forced stop: {error}");
+                }
+            }
+            let outcome = process
+                .force_kill(format!("{reason}: {plugin_id}"))
+                .await;
+            let stderr_diagnostics = process.stderr_diagnostics();
+            let mut plugins = self.inner.plugins.write().await;
+            if let Some(entry) = plugins.get_mut(&plugin_id) {
+                if entry
+                    .process
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &process))
+                {
+                    entry.process = None;
+                }
+                entry.stderr_diagnostics = stderr_diagnostics;
+                match &outcome {
+                    Ok(exit) => entry.process_exit = Some(exit.clone()),
+                    Err(error) => {
+                        entry.state = PluginRuntimeState::Crashed;
+                        entry.diagnostic = Some(error.clone());
+                    }
+                }
+            }
             outcomes.push((plugin_id, outcome));
         }
         outcomes
@@ -966,6 +1013,48 @@ impl PluginManager {
         }
     }
 
+    async fn fail_started_process(
+        &self,
+        plugin_id: &str,
+        generation: u64,
+        process: Arc<PluginProcess>,
+        error: HostError,
+    ) {
+        if !self.startup_is_current(plugin_id, generation, &process).await {
+            return;
+        }
+        let process_exit = process
+            .force_kill(format!("Provider startup failed: {}", error.message))
+            .await
+            .ok();
+        self.finish_start_failure(
+            plugin_id,
+            generation,
+            error,
+            process.stderr_diagnostics(),
+            process_exit,
+        )
+        .await;
+    }
+
+    async fn startup_is_current(
+        &self,
+        plugin_id: &str,
+        generation: u64,
+        process: &Arc<PluginProcess>,
+    ) -> bool {
+        let plugins = self.inner.plugins.read().await;
+        !self.inner.shutting_down.load(Ordering::SeqCst)
+            && plugins.get(plugin_id).is_some_and(|entry| {
+                entry.generation == generation
+                    && entry.state == PluginRuntimeState::Starting
+                    && entry
+                        .process
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, process))
+            })
+    }
+
     async fn set_plugin_state(
         &self,
         plugin_id: &str,
@@ -1050,7 +1139,7 @@ impl PluginManager {
                         .await;
                     if let Some(process) = process.upgrade() {
                         let _ = process
-                            .kill(format!("invalid Provider event: {}", error.message))
+                            .force_kill(format!("invalid Provider event: {}", error.message))
                             .await;
                     }
                     return;
@@ -1087,7 +1176,7 @@ impl PluginManager {
                     entry.process_exit = Some(process_exit.clone());
                     entry.process = None;
                     entry.stderr_diagnostics = stderr_diagnostics;
-                    if matches!(entry.state, PluginRuntimeState::Stopped | PluginRuntimeState::Disabled) {
+                    if entry.state == PluginRuntimeState::Stopped {
                         None
                     } else if entry.state == PluginRuntimeState::Crashed {
                         None
@@ -1387,6 +1476,14 @@ fn route_from_resource(resource: &RoutedResourceId) -> ProviderInstanceRoute {
         device_id: resource.device_id.clone(),
         provider_instance_id: resource.provider_instance_id.clone(),
     }
+}
+
+fn start_cancelled() -> HostError {
+    HostError::new(
+        "provider_start_cancelled",
+        "Provider startup was superseded by shutdown",
+    )
+    .retryable(true)
 }
 
 fn unknown_plugin(plugin_id: &str) -> HostError {

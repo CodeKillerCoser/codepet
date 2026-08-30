@@ -5,6 +5,7 @@ use codepet_provider_sdk::{
     ProviderInitializeRequest, ProviderInstanceRoute, RoutedResourceId, VersionRange,
 };
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 fn descriptor(plugin_id: &str) -> PluginDescriptor {
@@ -33,7 +34,6 @@ fn options() -> PluginProcessOptions {
 
 async fn ready_process(plugin_id: &str, instance_id: &str) -> PluginProcess {
     let process = PluginProcess::spawn(&descriptor(plugin_id), options())
-        .await
         .unwrap();
     let initialized = process
         .client()
@@ -172,6 +172,7 @@ async fn real_stdio_lifecycle_correlates_concurrent_responses_and_separates_even
 async fn shutdown_waits_for_a_provider_that_closes_stdout_before_delayed_clean_exit() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("shutdown-received");
+    let stdout_closed = directory.path().join("stdout-closed");
     let mut descriptor = descriptor("dev.codepet.delayed-shutdown");
     descriptor.env.insert(
         "CODEPET_FAKE_SHUTDOWN_DELAY_MS".to_string(),
@@ -181,15 +182,18 @@ async fn shutdown_waits_for_a_provider_that_closes_stdout_before_delayed_clean_e
         "CODEPET_FAKE_SHUTDOWN_MARKER".to_string(),
         marker.display().to_string(),
     );
-    let process = PluginProcess::spawn(
+    descriptor.env.insert(
+        "CODEPET_FAKE_STDOUT_CLOSED_MARKER".to_string(),
+        stdout_closed.display().to_string(),
+    );
+    let process = Arc::new(PluginProcess::spawn(
         &descriptor,
         PluginProcessOptions {
             shutdown_timeout: Duration::from_secs(1),
             ..options()
         },
     )
-    .await
-    .unwrap();
+    .unwrap());
     process
         .client()
         .provider_initialize(ProviderInitializeRequest {
@@ -204,11 +208,24 @@ async fn shutdown_waits_for_a_provider_that_closes_stdout_before_delayed_clean_e
         .await
         .unwrap();
 
-    let started = std::time::Instant::now();
-    let exit = process.shutdown().await.unwrap();
-    assert!(exit.success, "delayed clean exit must not be killed: {exit:?}");
-    assert!(started.elapsed() >= Duration::from_millis(180));
+    let shutdown_process = process.clone();
+    let shutdown = tokio::spawn(async move { shutdown_process.shutdown().await });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !stdout_closed.exists() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
     assert!(marker.exists());
+    assert!(!shutdown.is_finished(), "stdout EOF must not complete shutdown");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        !shutdown.is_finished(),
+        "Provider remains alive during its configured clean-exit delay"
+    );
+    let exit = shutdown.await.unwrap().unwrap();
+    assert!(exit.success, "delayed clean exit must not be killed: {exit:?}");
     assert!(process
         .stderr_diagnostics()
         .iter()

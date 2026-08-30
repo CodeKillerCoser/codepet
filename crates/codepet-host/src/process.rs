@@ -372,7 +372,7 @@ pub struct PluginProcess {
 }
 
 impl PluginProcess {
-    pub async fn spawn(
+    pub fn spawn(
         descriptor: &PluginDescriptor,
         options: PluginProcessOptions,
     ) -> HostResult<Self> {
@@ -549,8 +549,10 @@ impl PluginProcess {
         Ok(exit)
     }
 
-    pub async fn kill(&self, reason: impl Into<String>) -> HostResult<PluginProcessExit> {
-        let _shutdown = self.shutdown_gate.lock().await;
+    pub(crate) async fn force_kill(
+        &self,
+        reason: impl Into<String>,
+    ) -> HostResult<PluginProcessExit> {
         if let Some(exit) = self.exit_status() {
             return Ok(exit);
         }
@@ -564,29 +566,8 @@ impl PluginProcess {
             reason.clone(),
             true,
         ));
-        if self
-            .control
-            .send(ProcessCommand::Kill { reason })
-            .await
-            .is_err()
-        {
-            if let Some(exit) = wait_for_exit(&self.exit, self.options.shutdown_timeout).await {
-                return Ok(exit);
-            }
-            return Err(HostError::new(
-                "provider_process_control_closed",
-                "Provider process control channel is closed",
-            ));
-        }
-        wait_for_exit(&self.exit, self.options.shutdown_timeout)
-            .await
-            .ok_or_else(|| {
-                HostError::new(
-                    "provider_kill_timeout",
-                    "Provider process did not exit after kill",
-                )
-                .retryable(true)
-            })
+        let _ = self.control.try_send(ProcessCommand::Kill { reason });
+        wait_for_exit_completion(&self.exit).await
     }
 }
 
@@ -874,13 +855,6 @@ async fn drain_task(mut task: JoinHandle<()>, deadline: Instant) {
     }
 }
 
-async fn wait_for_exit(
-    receiver: &watch::Receiver<Option<PluginProcessExit>>,
-    timeout: Duration,
-) -> Option<PluginProcessExit> {
-    wait_for_exit_until(receiver, Instant::now() + timeout).await
-}
-
 async fn wait_for_exit_until(
     receiver: &watch::Receiver<Option<PluginProcessExit>>,
     deadline: Instant,
@@ -900,6 +874,23 @@ async fn wait_for_exit_until(
         }
     };
     tokio::time::timeout_at(deadline, wait).await.ok().flatten()
+}
+
+async fn wait_for_exit_completion(
+    receiver: &watch::Receiver<Option<PluginProcessExit>>,
+) -> HostResult<PluginProcessExit> {
+    let mut receiver = receiver.clone();
+    loop {
+        if let Some(exit) = receiver.borrow().clone() {
+            return Ok(exit);
+        }
+        if receiver.changed().await.is_err() {
+            return Err(HostError::new(
+                "provider_process_monitor_closed",
+                "Provider process monitor closed before publishing an exit result",
+            ));
+        }
+    }
 }
 
 async fn read_bounded_frame<R: AsyncBufRead + Unpin>(
@@ -1117,7 +1108,10 @@ impl Drop for ActiveProcessTask {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{PluginProcess, PluginProcessOptions, ACTIVE_PROCESS_TASKS};
+    use super::{
+        wait_for_exit_completion, PluginProcess, PluginProcessOptions,
+        ACTIVE_PROCESS_TASKS,
+    };
     use crate::PluginDescriptor;
     use codepet_provider_sdk::ProviderDescribeRequest;
     use std::collections::BTreeMap;
@@ -1131,18 +1125,69 @@ mod tests {
             .unwrap_or(0)
     }
 
+    #[derive(Clone, Copy)]
+    enum TerminalAction {
+        RequestFailure,
+        Timeout,
+        Shutdown,
+        Drop,
+    }
+
+    struct TerminalCase {
+        name: &'static str,
+        script: &'static str,
+        action: TerminalAction,
+    }
+
     #[tokio::test(flavor = "current_thread")]
-    async fn repeated_protocol_failures_release_tasks_handles_and_pipes() {
+    async fn terminal_cases_release_tasks_handles_pending_inbound_and_pipes() {
         let baseline_tasks = ACTIVE_PROCESS_TASKS.load(Ordering::SeqCst);
         let baseline_fds = open_file_descriptors();
-        for index in 0..12 {
+        let cases = [
+            TerminalCase {
+                name: "malformed",
+                script: "IFS= read -r request; printf '{malformed-json}\\n'; sleep 1",
+                action: TerminalAction::RequestFailure,
+            },
+            TerminalCase {
+                name: "oversized",
+                script: "IFS= read -r request; printf '%20000s\\n' x; sleep 1",
+                action: TerminalAction::RequestFailure,
+            },
+            TerminalCase {
+                name: "eof",
+                script: "IFS= read -r request",
+                action: TerminalAction::RequestFailure,
+            },
+            TerminalCase {
+                name: "crash",
+                script: "IFS= read -r request; exit 17",
+                action: TerminalAction::RequestFailure,
+            },
+            TerminalCase {
+                name: "timeout",
+                script: "IFS= read -r request; sleep 1",
+                action: TerminalAction::Timeout,
+            },
+            TerminalCase {
+                name: "normal-shutdown",
+                script: "IFS= read -r request; printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":\"host-1\",\"result\":{\"accepted\":true}}'",
+                action: TerminalAction::Shutdown,
+            },
+            TerminalCase {
+                name: "drop",
+                script: "IFS= read -r request; sleep 1",
+                action: TerminalAction::Drop,
+            },
+        ];
+        for case in cases {
             let descriptor = PluginDescriptor {
-                plugin_id: format!("dev.codepet.failure-{index}"),
+                plugin_id: format!("dev.codepet.terminal-{}", case.name),
                 display_name: "Failure fixture".to_string(),
                 executable: "/bin/sh".into(),
                 args: vec![
                     "-c".to_string(),
-                    "IFS= read -r request; printf '{malformed-json}\\n'".to_string(),
+                    case.script.to_string(),
                 ],
                 env: BTreeMap::new(),
                 enabled: true,
@@ -1152,62 +1197,71 @@ mod tests {
                 PluginProcess::spawn(
                     &descriptor,
                     PluginProcessOptions {
-                        request_timeout: Duration::from_millis(500),
+                        max_frame_bytes: 1024,
+                        request_timeout: Duration::from_millis(50),
                         shutdown_timeout: Duration::from_millis(500),
                         ..PluginProcessOptions::default()
                     },
                 )
-                .await
                 .unwrap(),
             );
             let process_weak = Arc::downgrade(&process);
             let shared_weak = Arc::downgrade(&process.shared);
-            let error = process
-                .client()
-                .provider_describe(ProviderDescribeRequest {})
-                .await
-                .unwrap_err();
-            assert_eq!(error.code, "provider_invalid_frame");
-            let mut exit = process.exit_receiver();
-            while exit.borrow().is_none() {
-                exit.changed().await.unwrap();
+            let mut inbound = process.take_inbound().await.unwrap();
+            match case.action {
+                TerminalAction::RequestFailure => {
+                    process
+                        .client()
+                        .provider_describe(ProviderDescribeRequest {})
+                        .await
+                        .unwrap_err();
+                    wait_for_exit_completion(&process.exit).await.unwrap();
+                }
+                TerminalAction::Timeout => {
+                    let error = process
+                        .client()
+                        .provider_describe(ProviderDescribeRequest {})
+                        .await
+                        .unwrap_err();
+                    assert_eq!(error.code, "provider_request_timeout");
+                    assert!(process.shared.pending.lock().unwrap().is_empty());
+                    process.force_kill("terminal timeout test").await.unwrap();
+                }
+                TerminalAction::Shutdown => {
+                    assert!(process.shutdown().await.unwrap().success);
+                }
+                TerminalAction::Drop => {
+                    drop(process);
+                    tokio::time::timeout(Duration::from_secs(2), async {
+                        while process_weak.upgrade().is_some()
+                            || shared_weak.upgrade().is_some()
+                            || ACTIVE_PROCESS_TASKS.load(Ordering::SeqCst) != baseline_tasks
+                        {
+                            tokio::task::yield_now().await;
+                        }
+                    })
+                    .await
+                    .unwrap();
+                    assert!(inbound.recv().await.is_none());
+                    continue;
+                }
             }
+            assert!(process.shared.writer.lock().unwrap().is_none());
+            assert!(process.shared.pending.lock().unwrap().is_empty());
+            assert!(process.shared.inbound.lock().unwrap().is_none());
+            assert!(inbound.recv().await.is_none());
             drop(process);
-            tokio::task::yield_now().await;
-            assert!(process_weak.upgrade().is_none());
-            assert!(shared_weak.upgrade().is_none());
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while process_weak.upgrade().is_some()
+                    || shared_weak.upgrade().is_some()
+                    || ACTIVE_PROCESS_TASKS.load(Ordering::SeqCst) != baseline_tasks
+                {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
         }
-
-        let descriptor = PluginDescriptor {
-            plugin_id: "dev.codepet.drop-failure".to_string(),
-            display_name: "Drop fixture".to_string(),
-            executable: "/bin/sh".into(),
-            args: vec!["-c".to_string(), "IFS= read -r request".to_string()],
-            env: BTreeMap::new(),
-            enabled: true,
-            instances: Vec::new(),
-        };
-        let process = PluginProcess::spawn(
-            &descriptor,
-            PluginProcessOptions {
-                shutdown_timeout: Duration::from_millis(500),
-                ..PluginProcessOptions::default()
-            },
-        )
-        .await
-        .unwrap();
-        let dropped_shared = Arc::downgrade(&process.shared);
-        drop(process);
-
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while ACTIVE_PROCESS_TASKS.load(Ordering::SeqCst) != baseline_tasks
-                || dropped_shared.upgrade().is_some()
-            {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
         assert!(open_file_descriptors() <= baseline_fds.saturating_add(2));
     }
 }

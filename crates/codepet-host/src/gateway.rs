@@ -561,6 +561,7 @@ impl ProtocolServer for ProviderGatewayService {
         Box::pin(async move {
             if let Some(steer_turn) = request.steer_turn {
                 ensure_same_gateway_route(&request.conversation, &steer_turn)?;
+                let expected_conversation = request.conversation;
                 let response = self
                     .manager
                     .turn_steer(provider::TurnSteerRequest {
@@ -570,6 +571,10 @@ impl ProtocolServer for ProviderGatewayService {
                     })
                     .await
                     .map_err(gateway_error)?;
+                ensure_same_resource_identity(
+                    &response.turn.conversation,
+                    &expected_conversation,
+                )?;
                 return Ok(gateway::TurnSendResponse {
                     turn: map_turn(response.turn),
                 });
@@ -637,10 +642,10 @@ fn gateway_instance(
             device_id: runtime.record.device_id.clone(),
             provider_instance_id: runtime.record.instance_id.clone(),
         },
-        plugin_id: plugin.plugin_id.clone(),
+        plugin_id: plugin.catalog.plugin_id.clone(),
         display_name: runtime.record.display_name.clone(),
         version: plugin.reported.as_ref().map(|reported| reported.version.clone()),
-        status: if runtime.record.enabled {
+        status: if plugin.catalog.enabled && runtime.record.enabled {
             provider_runtime_status(plugin.state, runtime.instance.as_ref())
         } else {
             gateway::ProviderStatus::Unavailable
@@ -658,14 +663,11 @@ fn provider_runtime_status(
     instance: Option<&provider::ProviderInstance>,
 ) -> gateway::ProviderStatus {
     match state {
-        PluginRuntimeState::Discovered | PluginRuntimeState::Stopped => {
-            gateway::ProviderStatus::Disconnected
-        }
+        PluginRuntimeState::Stopped => gateway::ProviderStatus::Disconnected,
         PluginRuntimeState::Starting => gateway::ProviderStatus::Connecting,
         PluginRuntimeState::Ready => instance
             .map(|instance| instance_status_to_gateway(instance.status))
             .unwrap_or(gateway::ProviderStatus::Unavailable),
-        PluginRuntimeState::Disabled => gateway::ProviderStatus::Unavailable,
         PluginRuntimeState::Crashed => gateway::ProviderStatus::Error,
     }
 }
@@ -824,6 +826,22 @@ fn ensure_same_gateway_route(
     Err(gateway::ProtocolError {
         code: "gateway_route_mismatch".to_string(),
         message: "conversation and steer turn target different Provider routes".to_string(),
+        retryable: false,
+        details: None,
+    })
+}
+
+fn ensure_same_resource_identity(
+    actual: &gateway::RoutedResourceId,
+    expected: &gateway::RoutedResourceId,
+) -> Result<(), gateway::ProtocolError> {
+    validate_gateway_resource(actual)?;
+    if actual == expected {
+        return Ok(());
+    }
+    Err(gateway::ProtocolError {
+        code: "provider_resource_identity_mismatch".to_string(),
+        message: "Provider returned a turn for a different conversation".to_string(),
         retryable: false,
         details: None,
     })

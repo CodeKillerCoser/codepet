@@ -13,6 +13,6 @@ pub use gateway::Gateway;
 pub use provider::{ProviderAdapter, ProviderFuture};
 pub use registry::ProviderRegistry;
 pub use tauri_bridge::{
-    CodexDesktopCompanionState, ProviderHostState, RuntimeGatewayState,
+    CodexDesktopCompanionState, RuntimeGatewayState,
 };
 pub use transport::{LocalTransport, Transport, TransportFuture};

@@ -59,11 +59,6 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
         directory.path(),
     ));
     assert!(catalog.diagnostics().is_empty());
-    let descriptor = catalog.descriptor("dev.codepet.fake").unwrap();
-    assert_eq!(
-        descriptor.executable,
-        plugin_directory.join("bin/codepet-provider-fake")
-    );
 
     let registry_path = directory.path().join("provider-instances.json");
     let device = DeviceRegistry::open(directory.path().join("device.json"), "Device Test").unwrap();
@@ -73,6 +68,20 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
     assert_eq!(first.len(), 1);
     let first_id = first[0].instance_id.clone();
     assert!(first_id.starts_with("instance-"));
+    let discovered = PluginManager::new(
+        device.clone(),
+        catalog.clone(),
+        registry.clone(),
+        PluginManagerConfig::default(),
+    )
+    .unwrap()
+    .snapshot("dev.codepet.fake")
+    .await
+    .unwrap();
+    assert_eq!(
+        discovered.catalog.executable,
+        plugin_directory.join("bin/codepet-provider-fake")
+    );
 
     let reopened = ProviderInstanceRegistry::open(&registry_path, device_id.clone()).unwrap();
     let second = reopened.synchronize_catalog(&catalog).unwrap();

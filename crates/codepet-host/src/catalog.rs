@@ -141,10 +141,6 @@ impl PluginCatalog {
         self.descriptors.values()
     }
 
-    pub fn descriptor(&self, plugin_id: &str) -> Option<&PluginDescriptor> {
-        self.descriptors.get(plugin_id)
-    }
-
     pub fn diagnostics(&self) -> &[CatalogDiagnostic] {
         &self.diagnostics
     }

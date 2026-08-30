@@ -13,7 +13,7 @@ Provider binary
   -> ProviderGatewayService replay + subscribers
 ```
 
-Provider 事件不进入 `SharedState` activity store、compat-v0 replay、Desktop Companion replay 或 companion Tauri channel，也没有失败后回退到桌宠 IPC 的路径。真实 fixture 测试会依次触发 Provider event、坏帧和进程崩溃，并固定这些隔离断言。
+Provider 事件不进入 `SharedState` activity store、compat-v0 replay、Desktop Companion replay 或桌宠 Tauri channel，也没有失败后回退到桌宠 IPC 的路径。真实 fixture 与 Tauri mock `AppHandle` 测试会依次触发 Provider event、坏帧和进程崩溃，监听 `runtime-gateway-event`、`codex-desktop-companion-event`、`pet-event` 并断言三者都没有 Provider 数据；companion registry 内的计数 spy 同时证明 Desktop IPC adapter 没有被调用。
 
 ## 范围与非目标
 
@@ -73,28 +73,29 @@ manifest 是本阶段配置的唯一权威：
 
 每个 `PluginProcess` 独占一个子进程及其 stdin/stdout/stderr：
 
+- `PluginProcess::spawn` 是同步入口；Manager 在持有插件表写锁并复核 shutdown gate 后完成 spawn，立即把进程写入对应 entry，再释放锁执行 initialize/describe，因此不存在已 spawn 但 shutdown 不可见的窗口；
 - writer task 只持有 `Weak<RpcShared>`，不会与共享状态形成强引用环；
 - SDK 生成的 `ProtocolRequest::from_method_params` 负责把 typed method/params 构造成 wire request，Host 不枚举 envelope variant；
 - pending map 按 request id 关联响应；event/notification 进入唯一有界 inbound consumer，不会被当作 response；
 - frame、inbound/outbound queue 和 stderr 历史均有上限；坏帧、超限、EOF 或 backpressure 只终止对应进程；
 - 所有 terminal path 都关闭 inbound、完成 pending、结束 writer 并关闭 stdin；进程 monitor 在发布 exit 前有界等待 writer、reader 与 stderr task，因此末尾 stderr 已进入退出快照；
-- 进程只保留一个 `shutting_down` 状态，并统一使用配置的 `shutdown_timeout`。正常关闭先发 `provider.shutdown`，关闭 stdin，并允许 Provider 先关闭 stdout、延迟退出；到 deadline 才 kill。
+- 进程只保留一个 `shutting_down` 状态，并统一使用配置的 `shutdown_timeout`。正常关闭先发 `provider.shutdown`，关闭 stdin，并允许 Provider 先关闭 stdout、延迟退出；真实 fixture 在 Unix 直接关闭 fd 1，并用独立 marker 证明 EOF 后 shutdown future 仍未完成，直到 200ms 后子进程正常退出；
+- malformed、oversized、EOF、crash、timeout、normal shutdown 和 Drop 共用同一张 current-thread Tokio case table，逐项验证 task、`Weak`、FD、pending 与 inbound 回收。
 
-Tauri 的 Exit/ExitRequested 和托盘退出共用 `ProviderHostState::shutdown_once`。第一次调用有界等待全部插件 shutdown；失败或超时后才执行有界 `kill_all`。并发/重复退出请求等待同一次结果，不重复发送 shutdown。
+Tauri 的 Exit/ExitRequested 和托盘退出共用 `ProviderHostState::shutdown_once`。它直接以配置的 `shutdown_timeout` 包住 Manager shutdown future；失败或超时取消后，调用绕过进程 shutdown gate 的 `force_kill_all`，逐个等待子进程退出后才标记完成。并发/重复调用都等待同一完成信号并得到相同完成结果。
 
-Manager 开始 shutdown 后拒绝新的 plugin start，避免后台启动任务在 Tauri 已完成进程枚举后再生成子进程。
+Manager 在插件表写锁内设置 shutdown gate，之后拒绝新的 plugin start；`start_enabled` 与 shutdown 都使用顺序 loop，不创建可丢弃的 per-plugin lifecycle task。延迟 initialize 回归测试证明 shutdown 后后续 manifest 插件不会 spawn。
 
 ## 状态与实例事实源
 
 插件进程状态只有：
 
 ```text
-discovered -> starting -> ready -> stopped
-                    \-> crashed
-disabled
+stopped -> starting -> ready -> stopped
+                 \-> crashed
 ```
 
-不存在局部 `Degraded`。Gateway 状态即时由“插件进程状态 + SDK `ProviderInstance.status`”派生：`starting` 映射 Connecting，`ready` 但实例尚不存在或只有 Created 事实时映射 Unavailable，崩溃映射 Error。实例 create/start/stop/capability response 在同一写锁内替换 SDK instance，并只向 Host update queue 发布一次状态变更；失败不会留下 Host 自造的 Connecting 状态。
+不存在 `Discovered`、`Disabled` 或局部 `Degraded`。插件 enabled 直接读取 manifest；未启用插件保持 `Stopped`，Gateway 按 manifest enabled 映射为 Unavailable。其余 Gateway 状态即时由“插件进程状态 + SDK `ProviderInstance.status`”派生：`starting` 映射 Connecting，`ready` 但实例尚不存在或只有 Created 事实时映射 Unavailable，崩溃映射 Error。实例 create/start/stop/capability response 在同一写锁内替换 SDK instance，并只向 Host update queue 发布一次状态变更；失败不会留下 Host 自造的 Connecting 状态。
 
 实例集合来自 manifest。Manager 启动 enabled 插件后，为每个 enabled manifest instance 执行 create/start；一个实例失败会让该实例保持 Unavailable，但不会阻止同插件的其他 manifest instance 启动。当前没有生产动态创建入口，也不从 Gateway 暴露 lifecycle。
 
@@ -106,7 +107,7 @@ disabled
 deviceId + providerInstanceId + nativeResourceId
 ```
 
-三段任一为空即拒绝。registry 先核对 device、instance 与所属 plugin；Provider response/event 再核对完整 route。身份保持型 RPC 必须返回与 request 完全相同的资源 ID；`turn.start` 返回 turn 的 conversation 必须等于请求 conversation。route-less `conversation.list` 只在没有 Provider cursor 时聚合；带 cursor 直接返回 `aggregate_conversation_cursor_unsupported`，本阶段不定义复合分页。
+三段任一为空即拒绝。registry 先核对 device、instance 与所属 plugin；Provider response/event 再核对完整 route。身份保持型 RPC 必须返回与 request 完全相同的资源 ID；`turn.start` 返回 turn 的 conversation 必须等于请求 conversation；Gateway steer 还会保存原始 conversation，并要求 Provider 返回的 `turn.conversation` 与它完全相等。route-less `conversation.list` 只在没有 Provider cursor 时聚合；带 cursor 直接返回 `aggregate_conversation_cursor_unsupported`，本阶段不定义复合分页。
 
 Manager 到 Gateway 只有一个有界 `mpsc` receiver，且只能领取一次。Gateway 映射后写入单个有界 replay bus；订阅者 lag 会返回显式错误，旧 cursor 超出 replay 窗口会返回 `event_replay_unavailable`。Gateway 为事件分配 `event-<20 位序号>`，service 内严格单调，事件自身始终保留完整 route。
 
@@ -120,10 +121,11 @@ Host 只依赖 `codepet-provider-sdk` 和 `codepet-gateway-sdk`，不定义第�
 
 - 强引用环或 FD 泄漏：同一 current-thread Tokio runtime 循环制造坏帧，断言 task 计数、`Weak` 与 `/dev/fd` 回到基线。
 - request/event 串线：真实 fixture 并发乱序响应并在 response 前发送 event/notification，断言按 id 和通道分类。
-- shutdown 误杀：fixture 收到 shutdown 后关闭 stdout、输出末尾 stderr、等待 200ms 再成功退出；断言 marker、成功 exit 与完整诊断。
+- shutdown 误杀：fixture 响应 shutdown 后真实关闭 stdout fd，写 close marker、输出末尾 stderr、等待 200ms 再成功退出；marker 出现时及 100ms 后 future 均必须未完成，最终断言成功 exit 与完整诊断。
+- 启停竞态：initialize 延迟 fixture 与两个并发 `shutdown_once` 触发外层 timeout；断言两次调用都等到 force kill 完成、子进程已结束（Unix 额外用 PID 复核），且 shutdown gate 阻止后续 spawn。
 - 路由串流：两设备、两实例、错误 device/plugin/instance、空 ID、错误 response identity 和单调 cursor 均有定向测试。
 - 状态重复：stop/start lifecycle 后每次只收到一个 ProviderStatusChanged。
-- 通道污染：Tauri 真实 fixture 的 event、坏帧和 crash 都不改变 compat replay、companion replay、companion registry 或 `SharedState` activity。
+- 通道污染：Tauri mock runtime 真实监听三条 Tauri event；fixture 的 event、坏帧和 crash 均不产生 channel payload，不改变 compat/companion replay 或 `SharedState` activity，也不增加 Desktop adapter spy 调用。
 - 机械漂移：验收检查工作树，不提交 `src-tauri/gen/schemas/macOS-schema.json` 或构建产物。
 
 ## 验证命令

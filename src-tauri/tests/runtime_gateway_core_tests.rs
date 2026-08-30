@@ -15,7 +15,9 @@ use code_pet_lib::runtime_gateway::{
     Transport,
 };
 use code_pet_lib::runtime_gateway::tauri_bridge::{
-    CodexDesktopCompanionState, ProviderHostState, RuntimeGatewayState,
+    start_codex_desktop_companion_event_bridge, start_runtime_gateway_event_bridge,
+    CodexDesktopCompanionState, RuntimeGatewayState, CODEX_DESKTOP_COMPANION_EVENT,
+    RUNTIME_GATEWAY_EVENT,
 };
 use code_pet_lib::agent::codex_thread_scope::CodexThreadScope;
 use code_pet_lib::state::SharedState;
@@ -26,8 +28,10 @@ use codepet_host::{
 };
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tauri::Listener;
 
 struct FakeProvider {
     provider: Provider,
@@ -594,12 +598,11 @@ fn remote_events_never_enter_the_desktop_companion_transport() {
 }
 
 #[tokio::test]
-async fn real_provider_faults_stay_out_of_compat_companion_and_pet_activity_state() {
+async fn real_provider_faults_do_not_emit_tauri_pet_or_compat_channels_or_call_desktop_adapter() {
     let directory = tempfile::tempdir().unwrap();
     let device = DeviceRegistry::open(directory.path().join("device.json"), "Plugin Test Device")
         .unwrap();
     let device_id = device.identity().device_id.clone();
-    let marker = directory.path().join("shutdown-received");
     let fixture_manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -610,20 +613,10 @@ async fn real_provider_faults_stay_out_of_compat_companion_and_pet_activity_stat
         display_name: "Isolation Fixture".to_string(),
         executable: fixture_executable,
         args: Vec::new(),
-        env: [
-            (
-                "CODEPET_FAKE_PLUGIN_ID".to_string(),
-                "dev.codepet.isolation".to_string(),
-            ),
-            (
-                "CODEPET_FAKE_SHUTDOWN_MARKER".to_string(),
-                marker.to_string_lossy().to_string(),
-            ),
-            (
-                "CODEPET_FAKE_SHUTDOWN_DELAY_MS".to_string(),
-                "200".to_string(),
-            ),
-        ]
+        env: [(
+            "CODEPET_FAKE_PLUGIN_ID".to_string(),
+            "dev.codepet.isolation".to_string(),
+        )]
         .into_iter()
         .collect(),
         enabled: true,
@@ -664,11 +657,31 @@ async fn real_provider_faults_stay_out_of_compat_companion_and_pet_activity_stat
     );
     let provider_gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
     assert!(provider_gateway.start_event_forwarding());
-    let provider_host = ProviderHostState::new(manager.clone(), provider_gateway.clone());
     assert_start_enabled(&manager).await;
 
     let remote = RuntimeGatewayState::new(Arc::new(Gateway::default()));
     let companion = CodexDesktopCompanionState::new(Arc::new(Gateway::default()));
+    let desktop_spy = Arc::new(FakeProvider::new("desktop-spy", ProviderStatus::Ready));
+    companion
+        .gateway()
+        .registry()
+        .register(desktop_spy.clone())
+        .unwrap();
+    let app = tauri::test::mock_app();
+    let runtime_events = Arc::new(AtomicUsize::new(0));
+    let companion_events = Arc::new(AtomicUsize::new(0));
+    let pet_events = Arc::new(AtomicUsize::new(0));
+    for (event_name, counter) in [
+        (RUNTIME_GATEWAY_EVENT, runtime_events.clone()),
+        (CODEX_DESKTOP_COMPANION_EVENT, companion_events.clone()),
+        ("pet-event", pet_events.clone()),
+    ] {
+        app.listen(event_name, move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+    }
+    start_runtime_gateway_event_bridge(app.handle().clone(), &remote).unwrap();
+    start_codex_desktop_companion_event_bridge(app.handle().clone(), &companion).unwrap();
     let pet_activity = SharedState::default();
     let mut plugin_events = provider_gateway.subscribe_events(None).unwrap();
     let resource = codepet_host::gateway_sdk::RoutedResourceId {
@@ -729,22 +742,19 @@ async fn real_provider_faults_stay_out_of_compat_companion_and_pet_activity_stat
     assert!(crashed.code.contains("provider") || crashed.code.contains("rpc"));
     wait_for_plugin_state(&manager, PluginRuntimeState::Crashed).await;
 
-    assert_start_enabled(&manager).await;
-    assert!(provider_host.shutdown_once().await);
-    assert!(provider_host.shutdown_completed());
-    assert!(marker.exists());
-    let snapshot = manager.snapshot("dev.codepet.isolation").await.unwrap();
-    assert_eq!(snapshot.state, PluginRuntimeState::Stopped);
-    assert!(snapshot.process_exit.as_ref().is_some_and(|exit| exit.success));
-    assert!(snapshot
-        .stderr_diagnostics
-        .iter()
-        .any(|line| line.line.contains("fixture shutdown stderr tail")));
+    manager.shutdown().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     assert!(remote.transport().replay(None).unwrap().is_empty());
     assert!(companion.transport().replay(None).unwrap().is_empty());
     assert!(pet_activity.recent_events().is_empty());
-    assert!(companion.gateway().registry().list().unwrap().is_empty());
+    let companion_providers = companion.gateway().registry().list().unwrap();
+    assert_eq!(companion_providers.len(), 1);
+    assert_eq!(companion_providers[0].id, "desktop-spy");
+    assert!(desktop_spy.calls().is_empty());
+    assert_eq!(runtime_events.load(Ordering::SeqCst), 0);
+    assert_eq!(companion_events.load(Ordering::SeqCst), 0);
+    assert_eq!(pet_events.load(Ordering::SeqCst), 0);
 }
 
 fn cargo_executable() -> PathBuf {
