@@ -57,6 +57,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "codepet-provider-claude"
+version = "0.1.0"
+dependencies = [
+ "codepet-provider-sdk",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "codepet-provider-codex"
 version = "0.1.0"
 dependencies = [

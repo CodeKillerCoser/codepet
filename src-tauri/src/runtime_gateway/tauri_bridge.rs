@@ -7,7 +7,10 @@ use super::transport::{LocalTransport, Transport};
 use crate::agent::codex_desktop_ipc::{
     CodexDesktopCompanionAdapter, CodexDesktopCompanionSnapshot,
 };
-use crate::agent_runtime::{AgentRuntime, AgentRuntimeService, CODEX_RUNTIME_PROVIDER_ID};
+use crate::agent_runtime::{
+    AgentRuntime, AgentRuntimeService, CLAUDE_RUNTIME_PROVIDER_ID,
+    CODEX_RUNTIME_PROVIDER_ID,
+};
 use crate::settings::{configured_app_data_dir, load_app_settings};
 use codepet_host::{
     DeviceRegistry, HostError, PluginCatalog, PluginCatalogConfig, PluginManager,
@@ -59,6 +62,8 @@ pub(crate) struct ProviderHostState {
     started: Arc<AtomicBool>,
     codex_refresh_generation: Arc<AtomicU64>,
     codex_refresh_lock: Arc<AsyncMutex<()>>,
+    claude_refresh_generation: Arc<AtomicU64>,
+    claude_refresh_lock: Arc<AsyncMutex<()>>,
     shutdown_started: Arc<AtomicBool>,
     shutdown_completed: Arc<AtomicBool>,
     shutdown_notify: Arc<Notify>,
@@ -90,6 +95,8 @@ impl ProviderHostState {
             started: Arc::new(AtomicBool::new(false)),
             codex_refresh_generation: Arc::new(AtomicU64::new(0)),
             codex_refresh_lock: Arc::new(AsyncMutex::new(())),
+            claude_refresh_generation: Arc::new(AtomicU64::new(0)),
+            claude_refresh_lock: Arc::new(AsyncMutex::new(())),
             shutdown_started: Arc::new(AtomicBool::new(false)),
             shutdown_completed: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(Notify::new()),
@@ -103,6 +110,8 @@ impl ProviderHostState {
             started: Arc::new(AtomicBool::new(false)),
             codex_refresh_generation: Arc::new(AtomicU64::new(0)),
             codex_refresh_lock: Arc::new(AsyncMutex::new(())),
+            claude_refresh_generation: Arc::new(AtomicU64::new(0)),
+            claude_refresh_lock: Arc::new(AsyncMutex::new(())),
             shutdown_started: Arc::new(AtomicBool::new(false)),
             shutdown_completed: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(Notify::new()),
@@ -113,19 +122,30 @@ impl ProviderHostState {
         self.gateway.clone()
     }
 
-    pub(crate) fn refresh_codex_runtime_in_background(&self, runtime: AgentRuntime) {
+    pub(crate) fn refresh_runtime_in_background(&self, runtime: AgentRuntime) {
         let Some(manager) = self.manager.clone() else {
             return;
         };
-        let generation = self
-            .codex_refresh_generation
+        let Some(target) = provider_runtime_target(&runtime.provider_id) else {
+            return;
+        };
+        let (generation_counter, refresh_lock) = match runtime.provider_id.as_str() {
+            CODEX_RUNTIME_PROVIDER_ID => (
+                self.codex_refresh_generation.clone(),
+                self.codex_refresh_lock.clone(),
+            ),
+            CLAUDE_RUNTIME_PROVIDER_ID => (
+                self.claude_refresh_generation.clone(),
+                self.claude_refresh_lock.clone(),
+            ),
+            _ => return,
+        };
+        let generation = generation_counter
             .fetch_add(1, Ordering::SeqCst)
             .saturating_add(1);
-        let current_generation = self.codex_refresh_generation.clone();
-        let refresh_lock = self.codex_refresh_lock.clone();
         tauri::async_runtime::spawn(async move {
             let _refresh = refresh_lock.lock().await;
-            if current_generation.load(Ordering::SeqCst) != generation {
+            if generation_counter.load(Ordering::SeqCst) != generation {
                 return;
             }
             let executable = runtime
@@ -133,28 +153,34 @@ impl ProviderHostState {
                 .map(serde_json::Value::String);
             let updated = manager
                 .replace_instance_setting(
-                    "dev.codepet.codex",
-                    "codex",
-                    "appServerExecutable",
+                    target.plugin_id,
+                    target.instance_kind,
+                    target.executable_setting,
                     executable,
                 )
                 .await;
-            if current_generation.load(Ordering::SeqCst) != generation {
+            if generation_counter.load(Ordering::SeqCst) != generation {
                 return;
             }
             match updated {
                 Ok(0) => {}
                 Ok(_) => {
-                    if let Err(error) = manager.restart_plugin("dev.codepet.codex").await {
+                    if let Err(error) = manager.restart_plugin(target.plugin_id).await {
                         crate::app_log::error(
                             "provider_host",
-                            &format!("failed to refresh Codex Provider plugin error={error:?}"),
+                            &format!(
+                                "failed to refresh {} Provider plugin error={error:?}",
+                                target.display_name
+                            ),
                         );
                     }
                 }
                 Err(error) => crate::app_log::error(
                     "provider_host",
-                    &format!("failed to update Codex Provider instance settings error={error:?}"),
+                    &format!(
+                        "failed to update {} Provider instance settings error={error:?}",
+                        target.display_name
+                    ),
                 ),
             }
         });
@@ -311,27 +337,20 @@ fn configured_provider_runtime(
         }
     }
     let mut catalog = PluginCatalog::discover(catalog_config);
-    let runtime = AgentRuntimeService::default()
-        .detect(CODEX_RUNTIME_PROVIDER_ID)
-        .map_err(|error| {
+    let runtime_service = AgentRuntimeService::default();
+    for provider_id in [CODEX_RUNTIME_PROVIDER_ID, CLAUDE_RUNTIME_PROVIDER_ID] {
+        let target = provider_runtime_target(provider_id).expect("known runtime Provider target");
+        let runtime = runtime_service.detect(provider_id).map_err(|error| {
             HostError::new(
-                "codex_runtime_resolution_failed",
-                format!("failed to resolve Codex App Server executable: {error}"),
+                format!("{provider_id}_runtime_resolution_failed"),
+                format!(
+                    "failed to resolve {} executable: {error}",
+                    target.display_name
+                ),
             )
         })?;
-    catalog.update_instance_settings(
-        "dev.codepet.codex",
-        "codex",
-        |settings| {
-            settings.remove("appServerExecutable");
-            if let Some(executable) = runtime.resolved_executable.as_ref() {
-                settings.insert(
-                    "appServerExecutable".to_string(),
-                    serde_json::Value::String(executable.clone()),
-                );
-            }
-        },
-    )?;
+        inject_runtime_executable(&mut catalog, &runtime)?;
+    }
     let instances = ProviderInstanceRegistry::open(
         provider_host_directory.join("provider-instances.json"),
         device.identity().device_id.clone(),
@@ -344,6 +363,54 @@ fn configured_provider_runtime(
     )?);
     let gateway = Arc::new(ProviderGatewayService::new(manager.clone())?);
     Ok((manager, gateway))
+}
+
+#[derive(Clone, Copy)]
+struct ProviderRuntimeTarget {
+    plugin_id: &'static str,
+    instance_kind: &'static str,
+    executable_setting: &'static str,
+    display_name: &'static str,
+}
+
+fn provider_runtime_target(provider_id: &str) -> Option<ProviderRuntimeTarget> {
+    match provider_id {
+        CODEX_RUNTIME_PROVIDER_ID => Some(ProviderRuntimeTarget {
+            plugin_id: "dev.codepet.codex",
+            instance_kind: "codex",
+            executable_setting: "appServerExecutable",
+            display_name: "Codex",
+        }),
+        CLAUDE_RUNTIME_PROVIDER_ID => Some(ProviderRuntimeTarget {
+            plugin_id: "dev.codepet.claude",
+            instance_kind: "claude",
+            executable_setting: "claudeExecutable",
+            display_name: "Claude",
+        }),
+        _ => None,
+    }
+}
+
+fn inject_runtime_executable(
+    catalog: &mut PluginCatalog,
+    runtime: &AgentRuntime,
+) -> Result<usize, HostError> {
+    let Some(target) = provider_runtime_target(&runtime.provider_id) else {
+        return Ok(0);
+    };
+    catalog.update_instance_settings(
+        target.plugin_id,
+        target.instance_kind,
+        |settings| {
+            settings.remove(target.executable_setting);
+            if let Some(executable) = runtime.resolved_executable.as_ref() {
+                settings.insert(
+                    target.executable_setting.to_string(),
+                    serde_json::Value::String(executable.clone()),
+                );
+            }
+        },
+    )
 }
 
 #[derive(Clone)]
@@ -508,7 +575,10 @@ fn start_local_event_bridge<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use super::{ProviderHostState, ProviderGatewayService};
+    use super::{inject_runtime_executable, ProviderHostState, ProviderGatewayService};
+    use crate::agent_runtime::{
+        AgentRuntime, AgentRuntimeSource, AgentRuntimeStatus, CLAUDE_RUNTIME_PROVIDER_ID,
+    };
     use codepet_host::{
         DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor,
         PluginInstanceConfig, PluginManager, PluginManagerConfig,
@@ -519,6 +589,72 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::Barrier;
+
+    #[tokio::test]
+    async fn claude_runtime_executable_is_injected_into_the_manifest_instance() {
+        let directory = tempfile::tempdir().unwrap();
+        let plugin_directory = directory.path().join("providers/claude");
+        std::fs::create_dir_all(&plugin_directory).unwrap();
+        std::fs::write(
+            plugin_directory.join("codepet-provider.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "manifestVersion": 1,
+                "pluginId": "dev.codepet.claude",
+                "displayName": "Claude",
+                "executable": "codepet-provider-claude",
+                "enabled": true,
+                "instances": [{
+                    "instanceId": "claude",
+                    "instanceKind": "claude",
+                    "displayName": "Claude",
+                    "settings": { "claudeExecutable": "/stale/claude" },
+                    "enabled": true
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut catalog = PluginCatalog::discover(
+            PluginCatalogConfig::default().with_directory(directory.path().join("providers")),
+        );
+        let resolved = directory.path().join("resolved-claude");
+        let runtime = AgentRuntime {
+            provider_id: CLAUDE_RUNTIME_PROVIDER_ID.to_string(),
+            display_name: "Claude Code".to_string(),
+            status: AgentRuntimeStatus::Ready,
+            resolved_executable: Some(resolved.to_string_lossy().to_string()),
+            source: Some(AgentRuntimeSource::Configured),
+            configured_executable: Some(resolved.to_string_lossy().to_string()),
+            version: Some("2.1.251".to_string()),
+            diagnostic: None,
+        };
+        assert_eq!(inject_runtime_executable(&mut catalog, &runtime).unwrap(), 1);
+
+        let device = DeviceRegistry::open(directory.path().join("device.json"), "Test Device")
+            .unwrap();
+        let instances = ProviderInstanceRegistry::open(
+            directory.path().join("instances.json"),
+            device.identity().device_id.clone(),
+        )
+        .unwrap();
+        let manager = PluginManager::new(
+            device,
+            catalog,
+            instances,
+            PluginManagerConfig::default(),
+        )
+        .unwrap();
+        let snapshot = manager.snapshot("dev.codepet.claude").await.unwrap();
+        assert_eq!(snapshot.instances.len(), 1);
+        assert_eq!(
+            snapshot.instances[0]
+                .record
+                .settings
+                .get("claudeExecutable")
+                .and_then(serde_json::Value::as_str),
+            Some(resolved.to_string_lossy().as_ref())
+        );
+    }
 
     #[tokio::test]
     async fn concurrent_provider_host_shutdown_force_kills_visible_startup_process() {

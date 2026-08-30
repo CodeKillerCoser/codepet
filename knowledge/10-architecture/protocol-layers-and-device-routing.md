@@ -2,7 +2,7 @@
 
 ## 背景
 
-2026-08-30 的当前实现有两条隔离 Codex 链路：Provider Host 经独立 `codepet-provider-codex` 连接 App Server，`CodexDesktopCompanionState` 连接 Desktop 私有 IPC。`runtime_gateway_core_tests::real_provider_events_only_emit_remote_tauri_channel_and_never_call_desktop_adapter` 证明 Provider event 只进入 remote replay/event，companion/Pet/activity 与 Desktop adapter 不变；`frontend/PetApp.svelte` 只消费 companion channel。
+2026-08-30 的当前实现中，Provider Host 可启动独立 `codepet-provider-codex` 与能力较小的 `codepet-provider-claude`。Codex 另有完全隔离的 `CodexDesktopCompanionState` 私有 IPC 链路；Claude Provider 不接 Hook/transcript/Pet 链路。`runtime_gateway_core_tests::real_provider_events_only_emit_remote_tauri_channel_and_never_call_desktop_adapter` 证明任意 Provider event 只进入 remote replay/event，companion/Pet/activity 与 Desktop adapter 不变；`frontend/PetApp.svelte` 只消费 companion channel。
 
 旧协议事实集中在 `protocol/schemas/v0.json`，Rust 生成物位于 Tauri 源码目录，且一份模型同时承担现有进程内 gateway 和未来 Provider/Remote/Pet 契约。它已有可复用的 JSON Schema 子集校验、manifest method/event 配对、fixture 验证和 Rust/TypeScript 生成逻辑，但不能表达独立插件生命周期、设备路由或 Pet 与 Provider 的强隔离。
 
@@ -42,6 +42,7 @@
 7. Tauri 依赖 `codepet-host` 与 `codepet-gateway-sdk`，并继续通过 compat v0 re-export 使用原类型。`RuntimeGatewayState` 只适配 `ProviderHostState` 创建的 Gateway service；remote 与 companion 保持各自 EventBus/replay/Tauri event，Provider v1 event 经 Gateway 只发布到 remote channel。
 8. `crates/codepet-host` 已消费生成 SDK 实现进程外 Provider client、Plugin Manager 和 `codepet-gateway-sdk::ProtocolServer` application boundary；Manager 到 Gateway 是只能领取一次的有界单消费者队列，不指向 companion bus。详见 `provider-host-device-and-plugin-runtime.md`。
 9. `crates/providers/codepet-provider-codex` 使用生成 Provider SDK 实现全部 v1 lifecycle/业务方法和事件，官方 App Server client 不再位于 Tauri。详见 `codex-provider-plugin-runtime.md`。
+10. `crates/providers/codepet-provider-claude` 使用同一生成 Provider SDK 与 Host lifecycle，只适配官方 CLI `stream-json` 可验证的 create/start/result/Unix interrupt；list/get/steer/approval 明确关闭。详见 `claude-provider-plugin-runtime.md`。
 
 ## 涉及模块
 
@@ -52,6 +53,7 @@
 - `src-tauri/src/runtime_gateway/generated.rs`：只把 compat v0 SDK 暴露给现有手写 gateway。
 - `frontend/lib/generated/runtimeGateway.ts`：只把 compat v0 TypeScript 类型暴露给当前前端。
 - `crates/providers/codepet-provider-codex/`：首个 production Provider binary；运行依赖只有 Provider SDK 与纯 Rust App Server adapter。
+- `crates/providers/codepet-provider-claude/`：Claude production Provider binary；运行依赖只有 Provider SDK 与纯 Rust CLI adapter。
 - `src-tauri/src/runtime_gateway/provider_host_compat.rs`：compat remote 到 Gateway v1 的薄适配。
 - `src-tauri/src/runtime_gateway/{gateway,event_bus,tauri_bridge}.rs`：companion 业务与 Host/Tauri bridge；`ProviderHostState` 负责启动和一次性有界 shutdown。
 
@@ -74,13 +76,14 @@
 - `cargo package --manifest-path sdk/rust/Cargo.toml --workspace --allow-dirty`：Cargo 建立临时本地 registry，按依赖顺序打包并验证四个 SDK，无需先上传 core。
 - `cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_protocol_tests --test runtime_gateway_core_tests`：v0 wire 与双链路隔离。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --all-targets`：Provider v1、真实 App Server fixture 与实际 Provider 二进制回归。
+- `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-claude --all-targets`：Claude CLI fixture、真实输出映射、stdio framing、能力负例与依赖隔离。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-host --all-targets`：Host 从 manifest 启动 Provider binary、Gateway 纵向 RPC、四段路由与 restart/fault isolation。
 - TypeScript 对兼容 SDK 执行独立 `tsc --noEmit`，并运行现有前端 protocol/component tests。
 - 测试后确认 `src-tauri/gen/schemas/macOS-schema.json` 无提交差异。
 
 ## 知识沉淀
 
-本页记录可执行架构与验证路径。长期取舍见 `../50-decisions/language-neutral-protocol-idl-and-sdk-boundary.md`；禁止跨层依赖与 channel 污染的 review 规则见 `../60-rules/protocol-layer-and-channel-boundaries.md`。Codex binary 的实现边界见 `codex-provider-plugin-runtime.md`，remote/companion 隔离规则由 `../60-rules/codex-provider-channel-isolation.md` 约束。
+本页记录可执行架构与验证路径。长期取舍见 `../50-decisions/language-neutral-protocol-idl-and-sdk-boundary.md`；禁止跨层依赖与 channel 污染的 review 规则见 `../60-rules/protocol-layer-and-channel-boundaries.md`。Codex binary 的实现边界见 `codex-provider-plugin-runtime.md`，remote/companion 隔离规则由 `../60-rules/codex-provider-channel-isolation.md` 约束；Claude 的能力降级与机器接口见 `claude-provider-plugin-runtime.md` 和 `../60-rules/claude-provider-machine-interface.md`。
 
 ## 未知项
 

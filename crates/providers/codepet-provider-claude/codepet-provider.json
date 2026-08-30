@@ -1,0 +1,18 @@
+{
+  "manifestVersion": 1,
+  "pluginId": "dev.codepet.claude",
+  "displayName": "Claude",
+  "executable": "codepet-provider-claude",
+  "args": [],
+  "env": {},
+  "enabled": true,
+  "instances": [
+    {
+      "instanceId": "claude",
+      "instanceKind": "claude",
+      "displayName": "Claude",
+      "settings": {},
+      "enabled": true
+    }
+  ]
+}

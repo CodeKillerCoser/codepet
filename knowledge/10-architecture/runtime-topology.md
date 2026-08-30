@@ -8,9 +8,10 @@
 - 本地 collector：`src-tauri/src/activity/collector.rs` 在 `127.0.0.1:47621` 暴露 HTTP 路由。
 - Hook 脚本：`src-tauri/hooks/code-pet-hook.mjs` 由 `src-tauri/src/agent/hooks.rs` 安装到本地 app data 目录。
 - Codex Remote：`ProviderHostState` / `PluginManager`、独立 `codepet-provider-codex` 进程、`ProviderGatewayService`、compat `RuntimeGatewayState` 和 `runtime-gateway-event`。
+- Claude Remote：同一 Host/Gateway lifecycle、独立 `codepet-provider-claude` 进程与官方 CLI stream-json；只进入 `runtime-gateway-event`。
 - Codex Desktop Companion：`CodexDesktopCompanionState`、`~/.codex/ipc/ipc.sock` adapter 和 `codex-desktop-companion-event`。
 
-旧 Hook 拓扑当前只服务 Claude Code、Qoder 和 Cursor。Codex 在设置页保留无 Hook 的 disabled 占位项；启动时会清理遗留托管 Codex Hook，脚本、实时 collector 和 spool 回放也都会拒绝 Codex。Codex audit watcher 与启动回放已移除。历史 Token 用量扫描仍是独立路径，本阶段不变。
+旧 Hook 拓扑当前只服务 Claude Code、Qoder 和 Cursor。Claude 的 Hook/Pet 观察链与 remote Provider 是两个隔离入口：Provider 自己不读 Hook/transcript，且每次启动的 CLI turn 用官方 inline setting 关闭用户/项目 Hook，避免同一 remote turn 回灌 Pet。Codex 在设置页保留无 Hook 的 disabled 占位项；启动时会清理遗留托管 Codex Hook，脚本、实时 collector 和 spool 回放也都会拒绝 Codex。Codex audit watcher 与启动回放已移除。历史 Token 用量扫描仍是独立路径，本阶段不变。
 
 ## Codex 双链路
 
@@ -31,6 +32,8 @@ Codex Desktop Owner/Follower 状态
 两路各自拥有 registry、event bus、sequence、replay 和 unavailable 状态，且不共享 thread provenance 或投影状态。App Server 只在 Provider instance start 中初始化且有超时；失败不阻塞 companion。桌宠不订阅 `runtime-gateway-event`，remote conversation/turn/approval 不能进入 activity store。remote 与 Desktop 即使报告相同 native thread id，也分别留在各自通道；本阶段不做跨链路排除、去重或同步。
 
 App Server 自动让 Desktop 加载 thread 是产品协同，不改变双链路边界。Hook、audit、transcript 和文件监听不参与 Codex 数据。
+
+Claude remote 请求走 `runtime_gateway_request -> ProviderGatewayService -> PluginManager -> codepet-provider-claude -> claude --print stream-json`。它不进入 Claude Hook collector/Pet activity，也不尝试与 Agent View、CLI picker 或 transcript 中的其他 session 同步。
 
 ## 旧 Hook 流程
 

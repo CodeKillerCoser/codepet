@@ -30,7 +30,10 @@ pub use pet::theme_defaults;
 pub use platform::macos_window;
 
 use agents::{AgentId, AgentView};
-use agent_runtime::{AgentRuntime, AgentRuntimeService, CODEX_RUNTIME_PROVIDER_ID};
+use agent_runtime::{
+    AgentRuntime, AgentRuntimeService, CLAUDE_RUNTIME_PROVIDER_ID,
+    CODEX_RUNTIME_PROVIDER_ID,
+};
 use base64::Engine;
 use events::PetEvent;
 use pets::PetLibraryView;
@@ -123,10 +126,12 @@ fn refresh_agent_runtimes(
     provider_host: tauri::State<'_, ProviderHostState>,
 ) -> Result<Vec<AgentRuntime>, String> {
     let runtimes = service.list().map_err(|error| error.to_string())?;
-    if let Some(runtime) = runtimes
-        .iter()
-        .find(|runtime| runtime.provider_id == CODEX_RUNTIME_PROVIDER_ID)
-    {
+    for runtime in runtimes.iter().filter(|runtime| {
+        matches!(
+            runtime.provider_id.as_str(),
+            CODEX_RUNTIME_PROVIDER_ID | CLAUDE_RUNTIME_PROVIDER_ID
+        )
+    }) {
         restart_remote_runtime_provider(runtime, &provider_host);
     }
     let _ = app.emit("agent-runtimes-updated", runtimes.clone());
@@ -168,10 +173,13 @@ fn restart_remote_runtime_provider(
     runtime: &AgentRuntime,
     provider_host: &ProviderHostState,
 ) {
-    if runtime.provider_id != CODEX_RUNTIME_PROVIDER_ID {
+    if !matches!(
+        runtime.provider_id.as_str(),
+        CODEX_RUNTIME_PROVIDER_ID | CLAUDE_RUNTIME_PROVIDER_ID
+    ) {
         return;
     }
-    provider_host.refresh_codex_runtime_in_background(runtime.clone());
+    provider_host.refresh_runtime_in_background(runtime.clone());
 }
 
 fn emit_runtime_settings(app: &AppHandle, runtime: &AgentRuntime) {

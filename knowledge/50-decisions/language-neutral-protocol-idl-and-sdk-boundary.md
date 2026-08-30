@@ -42,7 +42,7 @@ JSON Schema Draft 2020-12 加 method/event manifest 能同时表达跨语言 DTO
 ## 后续观察
 
 - Provider Host 已使用 generated `ProtocolClient` 覆盖 initialize、describe、instance lifecycle、业务请求与 shutdown；进程启动、超时和生命周期监管仍属于 Host，而不是协议 SDK。
-- `codepet-provider-codex` 已使用 generated `ProtocolServer`、dispatcher 和 JSON-line codec 实现 production Provider v1；App Server 私有协议只存在于该插件内部。
+- `codepet-provider-codex` 与 `codepet-provider-claude` 已使用 generated `ProtocolServer`、dispatcher 和 JSON-line codec 实现 production Provider v1；各自的 App Server / CLI 私有协议只存在于对应插件内部。
 - Gateway v1 transport 对 event cursor、分页 cursor、断线恢复和版本不重叠错误的实现是否与 IDL 一致。
 - compat v0 使用点是否持续收敛；在 Pet v1 adapter 与真实 gateway v1 session 均完成前，不应提前删除。
 - 如出现 schema 子集不足，应先评估所有目标语言的可生成性，再扩展 generator；不得为单个 Rust 需求加入只能由 serde 表达的语义。

@@ -1,0 +1,23 @@
+[package]
+name = "codepet-provider-claude"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+codepet-provider-sdk = { path = "../../../sdk/rust/codepet-provider-sdk", version = "0.1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+[[bin]]
+name = "claude-stream-fixture"
+path = "tests/fixtures/claude_stream.rs"

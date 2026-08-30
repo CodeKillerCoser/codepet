@@ -27,7 +27,7 @@ Provider 事件进入 Gateway v1 replay，并由兼容适配发布到远程 `run
 
 本阶段不实现：
 
-- OpenCode 或 Claude Provider binary；Codex 已由 `crates/providers/codepet-provider-codex` 以普通 manifest/binary 接入；
+- OpenCode Provider binary；Codex 与 Claude 已分别由 `crates/providers/codepet-provider-codex`、`crates/providers/codepet-provider-claude` 以普通 manifest/binary 接入；
 - dylib/trait ABI、签名、沙箱、市场、下载、自动重启或 backoff；
 - 动态注册插件、动态创建生产实例或 Gateway instance lifecycle；
 - Gateway v1 LAN listener、认证、配对或持久 cursor；
@@ -68,7 +68,7 @@ manifest 是插件进程和普通实例设置的配置权威：
 
 `provider-instances.json` 只镜像 `instanceId + pluginId + instanceKind + displayName`，用于在重启后复用未显式给出的 `instanceId`。`settings` 与 `enabled` 每次都来自当前 manifest，不作为第二配置源；manifest 删除的实例会从映射中 prune。registry 损坏或 device id 不匹配时 fail closed。设备身份损坏时，原文件先隔离为 `.corrupt-<timestamp>`，再生成新的 `device-<uuid>` 并保留诊断；hostname 从不充当稳定 ID。
 
-Codex 的 `appServerExecutable` 是唯一例外：manifest 仍提供 `appServerArgs`，Tauri 在 Catalog 注册前删除 manifest 中的 executable setting，并只注入 `AgentRuntimeService` resolver 返回的绝对路径。runtime set/clear/refresh 通过 Manager 更新同一个实例 setting 并显式重启 Codex 插件；Provider 自身不搜索路径或补默认参数。详见 `codex-provider-plugin-runtime.md`。
+Agent executable 是 manifest 普通 setting 的受控例外：Codex 的 `appServerExecutable` 与 Claude 的 `claudeExecutable` 都由 Tauri 在 Catalog 注册前删除 manifest 同名值，再只注入 `AgentRuntimeService` 对应 resolver 返回的绝对路径。runtime set/clear/refresh 通过 Manager 更新目标实例 setting 并只重启对应插件；Provider 自身不搜索路径。Codex manifest 仍显式提供 `appServerArgs`，Claude manifest 不保存个人 executable。详见 `codex-provider-plugin-runtime.md` 与 `claude-provider-plugin-runtime.md`。
 
 `update_app_settings` 区分 `providerPlugins` 缺失和显式空数组：缺失保留现值，`{"providerPlugins":{"directories":[]}}` 才清空目录。前端完整 `AppSettings` 将该字段设为必填。
 
@@ -120,7 +120,7 @@ Manager 到 Gateway 只有一个有界 `mpsc` receiver，且只能领取一次�
 
 Host 只依赖 `codepet-provider-sdk` 和 `codepet-gateway-sdk`，不定义第二套 Provider/Gateway DTO。四个 Rust SDK 都具备 description/authors/repository metadata，不再 `publish = false`；内部 path dependency 同时声明 `version = "0.1.0"`，可用 `cargo package --allow-dirty` 检查包内容。仓库当前没有 LICENSE 文件，因此 manifest 不虚构 license 声明；正式发布前仍需仓库所有者补充许可证决策。
 
-Provider 包只依赖 Provider SDK，不能反向依赖 Host。Host 启动 manifest binary 的纵向测试位于 `codepet-host`；`codepet-provider-codex` 的 all-target/dev dependency graph 不含 Host、Gateway、Tauri 或 Pet SDK。默认 Provider 名称没有在 Host 预埋注册框架；后续 Provider 仍应以普通 manifest/binary 接入。
+Provider 包只依赖 Provider SDK，不能反向依赖 Host。Host 启动 manifest binary 的纵向测试位于 `codepet-host`；`codepet-provider-codex` 与 `codepet-provider-claude` 的 all-target/dev dependency graph 不含 Host、Gateway、Tauri 或 Pet SDK。默认 Provider 名称没有在 Host 预埋注册框架；后续 Provider 仍应以普通 manifest/binary 接入。
 
 ## 风险与验证证据
 
@@ -138,6 +138,7 @@ Provider 包只依赖 Provider SDK，不能反向依赖 Host。Host 启动 manif
 ```sh
 cargo test --manifest-path crates/Cargo.toml -p codepet-host --all-targets
 cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --all-targets
+cargo test --manifest-path crates/Cargo.toml -p codepet-provider-claude --all-targets
 cargo test --manifest-path sdk/rust/Cargo.toml
 npm run protocol:check
 cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_core_tests --test runtime_gateway_protocol_tests --test settings_tests --test tray_tests
@@ -152,4 +153,5 @@ git diff --check
 - manifest 的 executable、args 和 env 是受信任本地配置；签名、权限隔离与资源配额尚未实现。
 - 没有自动重启/backoff；故障实例需要显式重启 Host/插件。
 - Codex Provider 的 App Server 协议覆盖与明确限制见 `codex-provider-plugin-runtime.md`。
+- Claude Provider 的 CLI stream-json 能力与明确限制见 `claude-provider-plugin-runtime.md`。
 - 正式发布 SDK 前必须补齐仓库许可证决策，并确定 crate 发布顺序。

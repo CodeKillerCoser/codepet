@@ -5,6 +5,7 @@
 ## 当前规约
 
 - `bug-to-rule-promotion.md`
+- `claude-provider-machine-interface.md`
 - `codex-desktop-ipc-fail-closed.md`
 - `codex-provider-channel-isolation.md`
 - `codex-thread-title-source.md`
