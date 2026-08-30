@@ -417,6 +417,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     .await
     .unwrap();
     assert!(wildcard_server.local_addr().ip().is_unspecified());
+    assert_eq!(wildcard_server.advertised_host(), "listener.local");
     assert_eq!(
         wildcard_server.https_base_url(),
         format!("https://listener.local:{}", wildcard_server.port())
@@ -437,6 +438,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     .await
     .unwrap();
     assert_ne!(server.port(), 0);
+    assert_eq!(server.advertised_host(), "127.0.0.1");
     assert_eq!(
         server.https_base_url(),
         format!("https://127.0.0.1:{}", server.port())

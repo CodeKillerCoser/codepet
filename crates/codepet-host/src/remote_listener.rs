@@ -154,6 +154,7 @@ impl RemoteLanServer {
 
         Ok(RemoteLanServerHandle {
             local_addr,
+            advertised_host,
             https_base_url,
             gateway_url,
             sessions,
@@ -166,6 +167,7 @@ impl RemoteLanServer {
 /// Running listener metadata plus bounded shutdown ownership.
 pub struct RemoteLanServerHandle {
     local_addr: SocketAddr,
+    advertised_host: String,
     https_base_url: String,
     gateway_url: String,
     sessions: Arc<SessionRegistry>,
@@ -180,6 +182,10 @@ impl RemoteLanServerHandle {
 
     pub fn port(&self) -> u16 {
         self.local_addr.port()
+    }
+
+    pub fn advertised_host(&self) -> &str {
+        &self.advertised_host
     }
 
     pub fn https_base_url(&self) -> &str {
@@ -241,6 +247,7 @@ impl Debug for RemoteLanServerHandle {
         formatter
             .debug_struct("RemoteLanServerHandle")
             .field("local_addr", &self.local_addr)
+            .field("advertised_host", &self.advertised_host)
             .field("https_base_url", &self.https_base_url)
             .field("gateway_url", &self.gateway_url)
             .field("active_session_count", &self.active_session_count())

@@ -13,6 +13,7 @@ mod manager;
 mod persistence;
 mod process;
 mod remote_access;
+mod remote_mdns;
 mod remote_listener;
 
 pub use catalog::{
@@ -35,6 +36,7 @@ pub use remote_access::{
     RemoteAccessDiagnostic, RemoteAccessManager, RemoteClientIdentity, RemoteCredential,
     RemoteCredentialStore, PAIRING_SESSION_TTL,
 };
+pub use remote_mdns::{RemoteLanMdnsAdvertiser, REMOTE_LAN_MDNS_SERVICE_TYPE};
 pub use remote_listener::{
     RemoteLanServer, RemoteLanServerConfig, RemoteLanServerHandle,
 };

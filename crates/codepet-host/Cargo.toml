@@ -10,6 +10,7 @@ axum-server = { version = "0.7", default-features = false, features = ["tls-rust
 codepet-gateway-sdk = { path = "../../sdk/rust/codepet-gateway-sdk", version = "0.1.0" }
 codepet-provider-sdk = { path = "../../sdk/rust/codepet-provider-sdk", version = "0.1.0" }
 futures-util = "0.3"
+mdns-sd = { version = "0.21", default-features = false }
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
