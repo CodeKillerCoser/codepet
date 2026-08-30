@@ -117,9 +117,10 @@
     "ConversationGetResponse": {
       "type": "object",
       "properties": {
-        "conversation": { "$ref": "#/$defs/Conversation" }
+        "conversation": { "$ref": "#/$defs/Conversation" },
+        "snapshotCursor": { "$ref": "../../core/v1/schema.json#/$defs/EventCursor" }
       },
-      "required": ["conversation"],
+      "required": ["conversation", "snapshotCursor"],
       "additionalProperties": false
     },
     "ConversationListRequest": {
@@ -139,9 +140,9 @@
           "items": { "$ref": "#/$defs/Conversation" }
         },
         "pageInfo": { "$ref": "../../core/v1/schema.json#/$defs/PageInfo" },
-        "eventCursor": { "$ref": "../../core/v1/schema.json#/$defs/EventCursor" }
+        "snapshotCursor": { "$ref": "../../core/v1/schema.json#/$defs/EventCursor" }
       },
-      "required": ["conversations", "pageInfo", "eventCursor"],
+      "required": ["conversations", "pageInfo", "snapshotCursor"],
       "additionalProperties": false
     },
     "ConversationStatus": {
@@ -194,6 +195,22 @@
         "previousStatus": { "$ref": "#/$defs/DeviceStatus" }
       },
       "required": ["device"],
+      "additionalProperties": false
+    },
+    "EventSubscribeRequest": {
+      "type": "object",
+      "properties": {
+        "afterCursor": { "$ref": "../../core/v1/schema.json#/$defs/EventCursor" }
+      },
+      "required": ["afterCursor"],
+      "additionalProperties": false
+    },
+    "EventSubscribeResponse": {
+      "type": "object",
+      "properties": {
+        "subscribedAfterCursor": { "$ref": "../../core/v1/schema.json#/$defs/EventCursor" }
+      },
+      "required": ["subscribedAfterCursor"],
       "additionalProperties": false
     },
     "GatewayCapability": {

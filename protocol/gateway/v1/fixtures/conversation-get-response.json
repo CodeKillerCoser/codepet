@@ -1,0 +1,23 @@
+{
+  "protocolVersion": 1,
+  "id": "conversation-get-1",
+  "method": "conversation.get",
+  "response": {
+    "status": "ok",
+    "result": {
+      "conversation": {
+        "resource": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "title": "Gateway protocol foundation",
+        "status": "running",
+        "permissionLevel": "workspace-write",
+        "updatedAt": 1787700001000
+      },
+      "snapshotCursor": "opaque-gateway-cursor-U05BUFNIT1Q"
+    }
+  }
+}

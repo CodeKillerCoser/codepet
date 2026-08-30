@@ -24,6 +24,14 @@ Every public v1 initialize/handshake request carries an explicit supported `Vers
 
 The generator supports a deliberately small JSON Schema Draft 2020-12 subset. Unsupported keywords, unresolved references, duplicate method/event names, invalid fixtures, or undeclared cross-layer dependencies fail generation.
 
+## Gateway v1 snapshot and live-event boundary
+
+`EventCursor` is an opaque replay token. A client may persist it, compare it for equality, and return it to the Gateway, but must never parse, order, or increment it. In particular, clients must pass the exact last applied cursor as `event.subscribe.afterCursor`; they must not calculate a numeric `+1`. The Gateway acknowledges that exact boundary as `subscribedAfterCursor`, then the transport session delivers events after it. Whether one WebSocket may call `event.subscribe` more than once is a future transport-session policy, not part of the v1 IDL or Host service contract.
+
+`conversation.list` and `conversation.get` return `snapshotCursor`. The Host captures this cursor immediately before issuing the corresponding Provider query, never after the query completes. A client can therefore obtain the snapshot and subscribe after its returned cursor without losing events that arrived while the Provider query was in flight.
+
+Committed snapshot content and live output deltas have separate ownership. Gateway v1 `conversation.get` does not return in-progress response body text that may still be changed by `turn.outputDelta`; the current `Conversation` and `TurnTask` DTOs carry metadata and stable summary/state only. Live `turn.outputDelta` events exclusively carry the ongoing body stream. This phase does not add an authoritative body projection or revision-delta model. Metadata upserts remain idempotent and may restate state already visible in the snapshot.
+
 ## Generated SDKs
 
 Rust packages are located at:

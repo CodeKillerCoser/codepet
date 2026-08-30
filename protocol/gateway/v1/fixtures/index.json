@@ -1,6 +1,10 @@
 [
   { "file": "handshake-request.json", "kind": "request", "name": "protocol.handshake" },
   { "file": "handshake-response.json", "kind": "response", "name": "protocol.handshake" },
+  { "file": "event-subscribe-request.json", "kind": "request", "name": "event.subscribe" },
+  { "file": "event-subscribe-response.json", "kind": "response", "name": "event.subscribe" },
   { "file": "conversation-get-request.json", "kind": "request", "name": "conversation.get" },
+  { "file": "conversation-get-response.json", "kind": "response", "name": "conversation.get" },
+  { "file": "conversation-list-response.json", "kind": "response", "name": "conversation.list" },
   { "file": "conversation-upserted-event.json", "kind": "event", "name": "conversation.upserted" }
 ]

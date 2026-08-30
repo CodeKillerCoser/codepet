@@ -415,7 +415,10 @@ async fn main() {
                 RequestBehavior::Fast => tokio::time::sleep(Duration::from_millis(5)).await,
                 _ => {}
             }
-            if behavior == RequestBehavior::EventFirst {
+            if matches!(
+                behavior,
+                RequestBehavior::EventFirst | RequestBehavior::SnapshotRace
+            ) {
                 if let Some(route) = request_route(&request) {
                     let event = ProtocolEvent::EventConversationUpserted {
                         jsonrpc: "2.0".to_string(),
@@ -446,6 +449,9 @@ async fn main() {
                     };
                     write_message(&output, codec, ProviderWireMessage::Event(delta));
                 }
+            }
+            if behavior == RequestBehavior::SnapshotRace {
+                wait_for_snapshot_release().await;
             }
             let response = dispatch(server.as_ref(), request).await;
             write_message(&output, codec, ProviderWireMessage::Response(response));
@@ -500,6 +506,7 @@ enum RequestBehavior {
     Slow,
     Fast,
     EventFirst,
+    SnapshotRace,
     Timeout,
     Crash,
     Malformed,
@@ -517,11 +524,20 @@ fn request_behavior(request: &ProtocolRequest) -> RequestBehavior {
         Some("slow") => RequestBehavior::Slow,
         Some("fast") => RequestBehavior::Fast,
         Some("event-first") => RequestBehavior::EventFirst,
+        Some("snapshot-race") => RequestBehavior::SnapshotRace,
         Some("timeout") => RequestBehavior::Timeout,
         Some("crash") => RequestBehavior::Crash,
         Some("malformed") => RequestBehavior::Malformed,
         Some("oversized") => RequestBehavior::Oversized,
         _ => RequestBehavior::Normal,
+    }
+}
+
+async fn wait_for_snapshot_release() {
+    let marker = std::env::var("CODEPET_FAKE_SNAPSHOT_RELEASE_MARKER")
+        .expect("snapshot race fixture requires a release marker");
+    while !std::path::Path::new(&marker).exists() {
+        tokio::time::sleep(Duration::from_millis(1)).await;
     }
 }
 

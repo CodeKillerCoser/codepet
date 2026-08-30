@@ -86,7 +86,24 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
   const gateway = record(model, "gateway-v1");
   const methods = gateway.manifest.methods.map((method) => method.name);
   assert.equal(methods.some((method) => method.startsWith("instance.") || method === "provider.shutdown"), false);
+  assert(methods.includes("event.subscribe"));
   assert.equal(gateway.manifest.transport.eventCursorField, "eventCursor");
+  assert.equal(
+    gateway.schema.$defs.EventSubscribeRequest.properties.afterCursor.$ref,
+    "../../core/v1/schema.json#/$defs/EventCursor",
+  );
+  assert.equal(
+    gateway.schema.$defs.EventSubscribeResponse.properties.subscribedAfterCursor.$ref,
+    "../../core/v1/schema.json#/$defs/EventCursor",
+  );
+  assert.equal(gateway.schema.$defs.ConversationListResponse.properties.eventCursor, undefined);
+  for (const definition of ["ConversationListResponse", "ConversationGetResponse"]) {
+    assert.equal(
+      gateway.schema.$defs[definition].properties.snapshotCursor.$ref,
+      "../../core/v1/schema.json#/$defs/EventCursor",
+    );
+    assert(gateway.schema.$defs[definition].required.includes("snapshotCursor"));
+  }
   assert.equal(
     gateway.schema.$defs.ProviderInstance.properties.pluginId.$ref,
     "../../core/v1/schema.json#/$defs/ProviderPluginId",

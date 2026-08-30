@@ -1,8 +1,9 @@
 use codepet_gateway_sdk::{
     ConversationGetRequest as GatewayConversationGetRequest,
-    ConversationListRequest as GatewayConversationListRequest, ProtocolEvent as GatewayEvent,
-    ProtocolServer as GatewayProtocolServer, ProviderListRequest,
-    TurnSendRequest as GatewayTurnSendRequest,
+    ConversationListRequest as GatewayConversationListRequest, EventSubscribeRequest,
+    ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
+    ProtocolResponse as GatewayResponse, ProtocolServer as GatewayProtocolServer,
+    ProviderListRequest, ResponsePayload, TurnSendRequest as GatewayTurnSendRequest,
 };
 use codepet_host::{
     DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor, PluginInstanceConfig,
@@ -143,6 +144,54 @@ fn event_cursor_sequence(cursor: &str) -> u64 {
         .unwrap()
         .parse::<u64>()
         .unwrap()
+}
+
+#[tokio::test]
+async fn gateway_dispatches_event_subscribe_with_the_exact_cursor_boundary() {
+    let manager = build_manager("device-subscribe", Vec::new());
+    let gateway = ProviderGatewayService::new(manager.clone()).unwrap();
+    let after_cursor = gateway.current_event_cursor();
+
+    let response = codepet_gateway_sdk::dispatch(
+        &gateway,
+        GatewayRequest::EventSubscribe {
+            protocol_version: codepet_gateway_sdk::PROTOCOL_VERSION,
+            id: "subscribe-current".to_string(),
+            params: EventSubscribeRequest {
+                after_cursor: after_cursor.clone(),
+            },
+        },
+    )
+    .await;
+    let GatewayResponse::EventSubscribe {
+        response: ResponsePayload::Ok { result },
+        ..
+    } = response
+    else {
+        panic!("expected a successful event.subscribe response");
+    };
+    assert_eq!(result.subscribed_after_cursor, after_cursor);
+
+    let response = codepet_gateway_sdk::dispatch(
+        &gateway,
+        GatewayRequest::EventSubscribe {
+            protocol_version: codepet_gateway_sdk::PROTOCOL_VERSION,
+            id: "subscribe-ahead".to_string(),
+            params: EventSubscribeRequest {
+                after_cursor: "event-00000000000000000001".to_string(),
+            },
+        },
+    )
+    .await;
+    let GatewayResponse::EventSubscribe {
+        response: ResponsePayload::Error { error },
+        ..
+    } = response
+    else {
+        panic!("expected event.subscribe to reject an unknown future cursor");
+    };
+    assert_eq!(error.code, "invalid_event_cursor");
+    manager.shutdown().await;
 }
 
 #[tokio::test]
@@ -357,6 +406,85 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
     assert_eq!(response_b.conversation.resource.provider_instance_id, "instance-b1");
     manager.shutdown().await;
     device_b.shutdown().await;
+}
+
+#[tokio::test]
+async fn conversation_snapshot_cursors_precede_events_emitted_during_provider_queries() {
+    let release_directory = tempfile::tempdir().unwrap();
+    let release_marker = release_directory.path().join("release-snapshot-query");
+    let mut descriptor = plugin("dev.codepet.snapshot", &["instance-snapshot"]);
+    descriptor.env.insert(
+        "CODEPET_FAKE_SNAPSHOT_RELEASE_MARKER".to_string(),
+        release_marker.display().to_string(),
+    );
+    let manager = build_manager("device-snapshot", vec![descriptor]);
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+    gateway.start_event_forwarding();
+    assert!(manager.start_enabled().await[0].1.is_ok());
+    wait_for_gateway_cursor(&gateway, 4).await;
+
+    let before_list = gateway.current_event_cursor();
+    let list = gateway
+        .conversation_list(GatewayConversationListRequest {
+            route: Some(codepet_gateway_sdk::GatewayProviderRoute {
+                device_id: "device-snapshot".to_string(),
+                provider_plugin_id: "dev.codepet.snapshot".to_string(),
+                provider_instance_id: "instance-snapshot".to_string(),
+            }),
+            cursor: None,
+            limit: Some(10),
+        })
+        .await
+        .unwrap();
+    assert_eq!(list.snapshot_cursor, before_list);
+
+    let after_cursor = gateway.current_event_cursor();
+    let mut events = gateway.subscribe_events(Some(&after_cursor)).unwrap();
+    let query_gateway = gateway.clone();
+    let query = tokio::spawn(async move {
+        query_gateway
+            .conversation_get(GatewayConversationGetRequest {
+                conversation: resource(
+                    "device-snapshot",
+                    "dev.codepet.snapshot",
+                    "instance-snapshot",
+                    "snapshot-race",
+                ),
+            })
+            .await
+    });
+
+    let event_cursor = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let GatewayEvent::ConversationUpserted {
+                event_cursor,
+                payload,
+                ..
+            } = events.next_event().await.unwrap()
+            {
+                if payload.conversation.resource.native_resource_id
+                    == "conversation-event-first"
+                {
+                    return event_cursor;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!query.is_finished());
+    std::fs::write(&release_marker, b"release\n").unwrap();
+
+    let response = tokio::time::timeout(Duration::from_secs(2), query)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(
+        event_cursor_sequence(&response.snapshot_cursor)
+            < event_cursor_sequence(&event_cursor)
+    );
+    manager.shutdown().await;
 }
 
 #[tokio::test]

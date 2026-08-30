@@ -139,6 +139,7 @@ pub struct ConversationGetRequest {
 #[serde(deny_unknown_fields)]
 pub struct ConversationGetResponse {
     pub conversation: Conversation,
+    pub snapshot_cursor: EventCursor,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -159,7 +160,7 @@ pub struct ConversationListRequest {
 pub struct ConversationListResponse {
     pub conversations: Vec<Conversation>,
     pub page_info: PageInfo,
-    pub event_cursor: EventCursor,
+    pub snapshot_cursor: EventCursor,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -225,6 +226,20 @@ pub struct DeviceStatusChangedEvent {
     pub device: Device,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_status: Option<DeviceStatus>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct EventSubscribeRequest {
+    pub after_cursor: EventCursor,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct EventSubscribeResponse {
+    pub subscribed_after_cursor: EventCursor,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -425,6 +440,8 @@ pub struct TurnUpsertedEvent {
 pub enum ProtocolMethod {
     #[serde(rename = "protocol.handshake")]
     ProtocolHandshake,
+    #[serde(rename = "event.subscribe")]
+    EventSubscribe,
     #[serde(rename = "device.list")]
     DeviceList,
     #[serde(rename = "provider.list")]
@@ -447,6 +464,7 @@ impl ProtocolMethod {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ProtocolHandshake => "protocol.handshake",
+            Self::EventSubscribe => "event.subscribe",
             Self::DeviceList => "device.list",
             Self::ProviderList => "provider.list",
             Self::ConversationList => "conversation.list",
@@ -461,6 +479,7 @@ impl ProtocolMethod {
     pub const fn capability(self) -> Option<GatewayCapability> {
         match self {
             Self::ProtocolHandshake => None,
+            Self::EventSubscribe => None,
             Self::DeviceList => None,
             Self::ProviderList => None,
             Self::ConversationList => Some(GatewayCapability::ConversationList),
@@ -479,6 +498,7 @@ impl std::str::FromStr for ProtocolMethod {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "protocol.handshake" => Ok(Self::ProtocolHandshake),
+            "event.subscribe" => Ok(Self::EventSubscribe),
             "device.list" => Ok(Self::DeviceList),
             "provider.list" => Ok(Self::ProviderList),
             "conversation.list" => Ok(Self::ConversationList),
@@ -558,6 +578,13 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: HandshakeRequest,
     },
+    #[serde(rename = "event.subscribe")]
+    EventSubscribe {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: ProtocolVersion,
+        id: RequestId,
+        params: EventSubscribeRequest,
+    },
     #[serde(rename = "device.list")]
     DeviceList {
         #[serde(rename = "protocolVersion")]
@@ -625,6 +652,13 @@ pub enum ProtocolResponse {
         protocol_version: ProtocolVersion,
         id: RequestId,
         response: ResponsePayload<HandshakeResponse>,
+    },
+    #[serde(rename = "event.subscribe")]
+    EventSubscribe {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: ProtocolVersion,
+        id: RequestId,
+        response: ResponsePayload<EventSubscribeResponse>,
     },
     #[serde(rename = "device.list")]
     DeviceList {
@@ -752,6 +786,10 @@ pub trait ProtocolServer: Send + Sync {
         Box::pin(async { Err(method_not_implemented("protocol.handshake")) })
     }
 
+    fn event_subscribe<'a>(&'a self, _request: EventSubscribeRequest) -> ProtocolFuture<'a, EventSubscribeResponse> {
+        Box::pin(async { Err(method_not_implemented("event.subscribe")) })
+    }
+
     fn device_list<'a>(&'a self, _request: DeviceListRequest) -> ProtocolFuture<'a, DeviceListResponse> {
         Box::pin(async { Err(method_not_implemented("device.list")) })
     }
@@ -802,6 +840,13 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 Err(error) => ResponsePayload::Error { error },
             };
             ProtocolResponse::ProtocolHandshake { protocol_version, id, response }
+        },
+        ProtocolRequest::EventSubscribe { protocol_version, id, params } => {
+            let response = match server.event_subscribe(params).await {
+                Ok(result) => ResponsePayload::Ok { result },
+                Err(error) => ResponsePayload::Error { error },
+            };
+            ProtocolResponse::EventSubscribe { protocol_version, id, response }
         },
         ProtocolRequest::DeviceList { protocol_version, id, params } => {
             let response = match server.device_list(params).await {
@@ -907,6 +952,14 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             let result = self.transport.request(ProtocolMethod::ProtocolHandshake, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn event_subscribe<'a>(&'a self, request: EventSubscribeRequest) -> ProtocolFuture<'a, EventSubscribeResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::EventSubscribe, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

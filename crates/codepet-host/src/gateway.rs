@@ -428,6 +428,18 @@ impl ProtocolServer for ProviderGatewayService {
         })
     }
 
+    fn event_subscribe<'a>(
+        &'a self,
+        request: gateway::EventSubscribeRequest,
+    ) -> gateway::ProtocolFuture<'a, gateway::EventSubscribeResponse> {
+        Box::pin(async move {
+            self.events.replay(Some(&request.after_cursor))?;
+            Ok(gateway::EventSubscribeResponse {
+                subscribed_after_cursor: request.after_cursor,
+            })
+        })
+    }
+
     fn device_list<'a>(
         &'a self,
         _request: gateway::DeviceListRequest,
@@ -464,6 +476,7 @@ impl ProtocolServer for ProviderGatewayService {
                     details: None,
                 });
             }
+            let snapshot_cursor = self.current_event_cursor();
             let mut conversations = Vec::new();
             let mut next_cursor = None;
             if let Some(route) = request.route {
@@ -508,7 +521,7 @@ impl ProtocolServer for ProviderGatewayService {
             Ok(gateway::ConversationListResponse {
                 conversations,
                 page_info: gateway::PageInfo { next_cursor },
-                event_cursor: self.current_event_cursor(),
+                snapshot_cursor,
             })
         })
     }
@@ -518,6 +531,7 @@ impl ProtocolServer for ProviderGatewayService {
         request: gateway::ConversationGetRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ConversationGetResponse> {
         Box::pin(async move {
+            let snapshot_cursor = self.current_event_cursor();
             let response = self
                 .manager
                 .conversation_get(provider::ConversationGetRequest {
@@ -527,6 +541,7 @@ impl ProtocolServer for ProviderGatewayService {
                 .map_err(gateway_error)?;
             Ok(gateway::ConversationGetResponse {
                 conversation: map_conversation(response.conversation),
+                snapshot_cursor,
             })
         })
     }
