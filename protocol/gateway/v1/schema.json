@@ -304,7 +304,11 @@
     "PairingExchangeRequest": {
       "type": "object",
       "properties": {
-        "pairingSecret": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "pairingSecret": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "x-codepet-sensitive": true
+        },
         "clientId": { "$ref": "../../core/v1/schema.json#/$defs/ClientId" },
         "clientName": { "type": "string", "minLength": 1 },
         "platform": { "type": "string", "minLength": 1 }
@@ -317,7 +321,11 @@
       "properties": {
         "device": { "$ref": "#/$defs/RemoteHostIdentity" },
         "gatewayUrl": { "type": "string", "minLength": 1 },
-        "credential": { "type": "string", "minLength": 1 }
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "x-codepet-sensitive": true
+        }
       },
       "required": ["device", "gatewayUrl", "credential"],
       "additionalProperties": false
@@ -331,7 +339,11 @@
         "httpsBaseUrl": { "type": "string", "minLength": 1 },
         "certSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "pairingId": { "type": "string", "minLength": 1 },
-        "pairingSecret": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "pairingSecret": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "x-codepet-sensitive": true
+        },
         "expiresAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" }
       },
       "required": ["version", "hostDeviceId", "displayName", "httpsBaseUrl", "certSha256", "pairingId", "pairingSecret", "expiresAt"],

@@ -30,6 +30,26 @@
       "schema": "core/v1/schema.json",
       "manifest": "core/v1/manifest.json",
       "dependencies": [],
+      "publicTypes": [
+        "ClientId",
+        "Cursor",
+        "DeviceId",
+        "EventCursor",
+        "EventSequence",
+        "JsonObject",
+        "NativeResourceId",
+        "PageInfo",
+        "PageRequest",
+        "ProtocolError",
+        "ProtocolVersion",
+        "ProviderInstanceId",
+        "ProviderPluginId",
+        "RequestId",
+        "RoutedResourceId",
+        "RpcError",
+        "TimestampMs",
+        "VersionRange"
+      ],
       "outputs": {
         "rust": "sdk/rust/codepet-core-sdk/src/generated.rs",
         "typescript": "sdk/typescript/codepet-core-sdk/src/generated.ts"
@@ -64,6 +84,12 @@
       "schema": "gateway/v1/schema.json",
       "manifest": "gateway/v1/manifest.json",
       "dependencies": ["core-v1"],
+      "publicTypes": [
+        "CurrentCredentialDeleteResponse",
+        "PairingExchangeRequest",
+        "PairingExchangeResponse",
+        "PairingQrPayload"
+      ],
       "outputs": {
         "rust": "sdk/rust/codepet-gateway-sdk/src/generated.rs",
         "typescript": "sdk/typescript/codepet-gateway-sdk/src/generated.ts"

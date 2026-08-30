@@ -309,7 +309,7 @@ pub struct HandshakeResponse {
     pub event_cursor: EventCursor,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct PairingExchangeRequest {
@@ -319,7 +319,19 @@ pub struct PairingExchangeRequest {
     pub platform: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+impl std::fmt::Debug for PairingExchangeRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PairingExchangeRequest")
+            .field("pairing_secret", &"<redacted>")
+            .field("client_id", &self.client_id)
+            .field("client_name", &self.client_name)
+            .field("platform", &self.platform)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct PairingExchangeResponse {
@@ -328,7 +340,18 @@ pub struct PairingExchangeResponse {
     pub credential: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+impl std::fmt::Debug for PairingExchangeResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PairingExchangeResponse")
+            .field("device", &self.device)
+            .field("gateway_url", &self.gateway_url)
+            .field("credential", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct PairingQrPayload {
@@ -340,6 +363,22 @@ pub struct PairingQrPayload {
     pub pairing_id: String,
     pub pairing_secret: String,
     pub expires_at: TimestampMs,
+}
+
+impl std::fmt::Debug for PairingQrPayload {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PairingQrPayload")
+            .field("version", &self.version)
+            .field("host_device_id", &self.host_device_id)
+            .field("display_name", &self.display_name)
+            .field("https_base_url", &self.https_base_url)
+            .field("cert_sha256", &self.cert_sha256)
+            .field("pairing_id", &self.pairing_id)
+            .field("pairing_secret", &"<redacted>")
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

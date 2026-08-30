@@ -148,6 +148,33 @@ fn event_cursor_sequence(cursor: &str) -> u64 {
         .unwrap()
 }
 
+fn handshake_request() -> HandshakeRequest {
+    HandshakeRequest {
+        client_id: "remote-client-handshake".to_string(),
+        client_name: "Remote Test".to_string(),
+        client_version: "1.0.0".to_string(),
+        supported_versions: VersionRange {
+            min_version: codepet_gateway_sdk::PROTOCOL_VERSION,
+            max_version: codepet_gateway_sdk::PROTOCOL_VERSION,
+        },
+        last_event_cursor: None,
+    }
+}
+
+#[tokio::test]
+async fn gateway_handshake_without_a_transport_identity_fails_closed() {
+    let manager = build_manager("device-no-remote-identity", Vec::new());
+    let gateway = ProviderGatewayService::new(manager.clone()).unwrap();
+
+    let error = gateway
+        .protocol_handshake(handshake_request())
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "remote_host_identity_unavailable");
+    manager.shutdown().await;
+}
+
 #[tokio::test]
 async fn gateway_handshake_returns_the_transport_injected_remote_host_identity() {
     let manager = build_manager("device-handshake", Vec::new());
@@ -156,29 +183,48 @@ async fn gateway_handshake_returns_the_transport_injected_remote_host_identity()
         display_name: "Device device-handshake".to_string(),
         identity_fingerprint: "a".repeat(64),
     };
-    let gateway = ProviderGatewayService::new_with_remote_host_identity(
-        manager.clone(),
-        device.clone(),
-    )
-    .unwrap();
+    let gateway =
+        ProviderGatewayService::with_remote_identity(manager.clone(), device.clone()).unwrap();
 
     let response = gateway
-        .protocol_handshake(HandshakeRequest {
-            client_id: "remote-client-handshake".to_string(),
-            client_name: "Remote Test".to_string(),
-            client_version: "1.0.0".to_string(),
-            supported_versions: VersionRange {
-                min_version: codepet_gateway_sdk::PROTOCOL_VERSION,
-                max_version: codepet_gateway_sdk::PROTOCOL_VERSION,
-            },
-            last_event_cursor: None,
-        })
+        .protocol_handshake(handshake_request())
         .await
         .unwrap();
 
     assert_eq!(response.device, device);
     assert_eq!(response.devices.len(), 1);
     assert_eq!(response.devices[0].device_id, "device-handshake");
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn gateway_remote_identity_rejects_noncanonical_or_zero_fingerprints() {
+    let manager = build_manager("device-invalid-remote-identity", Vec::new());
+    for fingerprint in ["0".repeat(64), "A".repeat(64), "a".repeat(63)] {
+        let error = match ProviderGatewayService::with_remote_identity(
+            manager.clone(),
+            RemoteHostIdentity {
+                device_id: "device-invalid-remote-identity".to_string(),
+                display_name: "Device device-invalid-remote-identity".to_string(),
+                identity_fingerprint: fingerprint,
+            },
+        ) {
+            Ok(_) => panic!("expected invalid fingerprint to be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "invalid_remote_host_identity");
+    }
+
+    let gateway = ProviderGatewayService::with_remote_identity(
+        manager.clone(),
+        RemoteHostIdentity {
+            device_id: "device-invalid-remote-identity".to_string(),
+            display_name: "Device device-invalid-remote-identity".to_string(),
+            identity_fingerprint: "b".repeat(64),
+        },
+    )
+    .unwrap();
+    drop(gateway);
     manager.shutdown().await;
 }
 

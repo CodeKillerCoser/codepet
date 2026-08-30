@@ -55,6 +55,33 @@ fn gateway_lan_rest_fixtures_use_the_generated_dtos() {
 }
 
 #[test]
+fn gateway_lan_secret_fields_are_redacted_from_debug_output() {
+    let qr: PairingQrPayload = serde_json::from_slice(include_bytes!(
+        "../../../../protocol/gateway/v1/fixtures/pairing-qr-payload.json"
+    ))
+    .unwrap();
+    let qr_debug = format!("{qr:?}");
+    assert!(!qr_debug.contains(&qr.pairing_secret));
+    assert!(qr_debug.contains("<redacted>"));
+
+    let request: PairingExchangeRequest = serde_json::from_slice(include_bytes!(
+        "../../../../protocol/gateway/v1/fixtures/pairing-exchange-request.json"
+    ))
+    .unwrap();
+    let request_debug = format!("{request:?}");
+    assert!(!request_debug.contains(&request.pairing_secret));
+    assert!(request_debug.contains("<redacted>"));
+
+    let response: PairingExchangeResponse = serde_json::from_slice(include_bytes!(
+        "../../../../protocol/gateway/v1/fixtures/pairing-exchange-response.json"
+    ))
+    .unwrap();
+    let response_debug = format!("{response:?}");
+    assert!(!response_debug.contains(&response.credential));
+    assert!(response_debug.contains("<redacted>"));
+}
+
+#[test]
 fn gateway_event_subscription_preserves_the_exact_opaque_cursor() {
     let request = decode_request(include_bytes!(
         "../../../../protocol/gateway/v1/fixtures/event-subscribe-request.json"

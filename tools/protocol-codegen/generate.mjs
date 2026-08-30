@@ -30,6 +30,7 @@ const supportedKeywords = new Set([
   "minItems",
   "pattern",
   "uniqueItems",
+  "x-codepet-sensitive",
 ]);
 
 function fail(message) {
@@ -143,6 +144,9 @@ function validateSchemaNode(node, record, model, location) {
     } catch (error) {
       fail(`${location}.pattern is invalid: ${error.message}`);
     }
+  }
+  if (node["x-codepet-sensitive"] !== undefined) {
+    assert(node["x-codepet-sensitive"] === true, `${location}.x-codepet-sensitive must be true`);
   }
 }
 
@@ -490,6 +494,12 @@ export async function loadProtocolModel() {
     assert(["core", "pet", "provider", "gateway"].includes(packageConfig.layer), `${packageConfig.id} has invalid layer`);
     assert(Number.isInteger(packageConfig.version) && packageConfig.version >= 0, `${packageConfig.id} has invalid version`);
     assert(Array.isArray(packageConfig.dependencies), `${packageConfig.id} dependencies must be an array`);
+    const publicTypes = packageConfig.publicTypes ?? [];
+    assert(Array.isArray(publicTypes), `${packageConfig.id} publicTypes must be an array`);
+    assert(new Set(publicTypes).size === publicTypes.length, `${packageConfig.id} publicTypes contains duplicates`);
+    for (const name of publicTypes) {
+      assert(typeof name === "string" && /^[A-Z][A-Za-z0-9]*$/.test(name), `${packageConfig.id} publicTypes contains invalid type ${name}`);
+    }
     assert(isObject(packageConfig.outputs) && Object.keys(packageConfig.outputs).length > 0, `${packageConfig.id} outputs must be non-empty`);
     for (const target of Object.keys(packageConfig.outputs)) {
       assert(targetIds.has(target), `${packageConfig.id} uses undeclared generator target ${target}`);
@@ -503,6 +513,9 @@ export async function loadProtocolModel() {
       schema: await readJson(schemaPath),
       manifest: await readJson(manifestPath),
     };
+    for (const name of publicTypes) {
+      assert(record.schema.$defs?.[name], `${packageConfig.id} publicTypes references unknown definition ${name}`);
+    }
     records.push(record);
     schemasByPath.set(schemaPath, record);
   }
@@ -565,6 +578,45 @@ function typeScriptType(node, record, model) {
   fail(`cannot generate TypeScript type for ${record.packageConfig.id}: ${JSON.stringify(node)}`);
 }
 
+function reachableDefinitionSets(model) {
+  const reachable = new Map(model.records.map((record) => [record.packageConfig.id, new Set()]));
+  const pending = [];
+  const enqueue = (target) => {
+    const names = reachable.get(target.record.packageConfig.id);
+    if (names.has(target.name)) return;
+    names.add(target.name);
+    pending.push(target);
+  };
+  const enqueueReference = (reference, sourcePath, location) => {
+    enqueue(parseReference(reference, sourcePath, model, location));
+  };
+
+  for (const record of model.records) {
+    visitRefs(record.manifest, (reference) => {
+      enqueueReference(reference, record.manifestPath, `${record.packageConfig.id} manifest public root`);
+    });
+    for (const name of record.packageConfig.publicTypes ?? []) {
+      enqueue({ name, node: record.schema.$defs[name], record });
+    }
+  }
+
+  while (pending.length > 0) {
+    const target = pending.pop();
+    visitRefs(target.node, (reference) => {
+      enqueueReference(
+        reference,
+        target.record.schemaPath,
+        `${target.record.packageConfig.id}.${target.name} dependency`,
+      );
+    });
+  }
+  return reachable;
+}
+
+function reachableDefinitionNames(record, model) {
+  return [...reachableDefinitionSets(model).get(record.packageConfig.id)].sort();
+}
+
 function externalReferences(record, model) {
   const byPackage = new Map();
   const add = (reference, sourcePath) => {
@@ -573,8 +625,10 @@ function externalReferences(record, model) {
     if (!byPackage.has(target.record.packageConfig.id)) byPackage.set(target.record.packageConfig.id, new Set());
     byPackage.get(target.record.packageConfig.id).add(target.name);
   };
-  visitRefs(record.schema, (reference) => add(reference, record.schemaPath));
   visitRefs(record.manifest, (reference) => add(reference, record.manifestPath));
+  for (const name of reachableDefinitionNames(record, model)) {
+    visitRefs(record.schema.$defs[name], (reference) => add(reference, record.schemaPath));
+  }
   return byPackage;
 }
 
@@ -596,15 +650,35 @@ function rustImports(record, model) {
   return imports.join("\n");
 }
 
+function rustRedactedDebug(name, node) {
+  const fields = Object.entries(node.properties).map(([field, fieldSchema]) => {
+    const value = fieldSchema["x-codepet-sensitive"] === true
+      ? `&"<redacted>"`
+      : `&self.${snakeCase(field)}`;
+    return `            .field("${snakeCase(field)}", ${value})`;
+  }).join("\n");
+  return `impl std::fmt::Debug for ${name} {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("${name}")
+${fields}
+            .finish()
+    }
+}`;
+}
+
 function rustDefinitions(record, model) {
   const blocks = [];
-  for (const name of Object.keys(record.schema.$defs).sort()) {
+  for (const name of reachableDefinitionNames(record, model)) {
     const node = record.schema.$defs[name];
     if (node.enum) {
       const variants = node.enum.map((value) => `    #[serde(rename = "${value}")]\n    ${pascalCase(value)},`).join("\n");
       blocks.push(`#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]\npub enum ${name} {\n${variants}\n}`);
     } else if (node.type === "object" && node.properties !== undefined) {
       const required = new Set(node.required ?? []);
+      const hasSensitiveFields = Object.values(node.properties).some(
+        (property) => property["x-codepet-sensitive"] === true,
+      );
       const fields = Object.entries(node.properties).map(([field, fieldSchema]) => {
         const baseType = rustType(fieldSchema, record, model);
         const optional = !required.has(field);
@@ -612,7 +686,9 @@ function rustDefinitions(record, model) {
         return `${attribute}    pub ${snakeCase(field)}: ${optional ? `Option<${baseType}>` : baseType},`;
       }).join("\n");
       const denyUnknown = node.additionalProperties === false ? "\n#[serde(deny_unknown_fields)]" : "";
-      blocks.push(`#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]\n#[serde(rename_all = "camelCase")]${denyUnknown}\npub struct ${name} {\n${fields}\n}`);
+      const debugDerive = hasSensitiveFields ? "" : "Debug, ";
+      const debugImplementation = hasSensitiveFields ? `\n\n${rustRedactedDebug(name, node)}` : "";
+      blocks.push(`#[derive(Clone, ${debugDerive}PartialEq, Serialize, Deserialize)]\n#[serde(rename_all = "camelCase")]${denyUnknown}\npub struct ${name} {\n${fields}\n}${debugImplementation}`);
     } else {
       blocks.push(`pub type ${name} = ${rustType(node, record, model, name)};`);
     }
@@ -1505,7 +1581,7 @@ ${instanceKindBlock}${service}
 
 function typeScriptDefinitions(record, model) {
   const blocks = ["export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };"];
-  for (const name of Object.keys(record.schema.$defs).sort()) {
+  for (const name of reachableDefinitionNames(record, model)) {
     const node = record.schema.$defs[name];
     if (node.enum) {
       blocks.push(`export type ${name} = ${node.enum.map((value) => JSON.stringify(value)).join(" | ")};`);

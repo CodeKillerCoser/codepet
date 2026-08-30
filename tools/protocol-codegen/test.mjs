@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   GENERATOR_TARGET_INTERFACE,
   generateProtocol,
+  generatorTargetRegistry,
   loadProtocolModel,
   validateManifest,
   validatePackageReferences,
@@ -120,6 +121,12 @@ test("gateway LAN DTOs remain generated types outside the JSON-RPC method manife
   const model = await loadProtocolModel();
   const gateway = record(model, "gateway-v1");
   const definitions = gateway.schema.$defs;
+  assert.deepEqual(gateway.packageConfig.publicTypes, [
+    "CurrentCredentialDeleteResponse",
+    "PairingExchangeRequest",
+    "PairingExchangeResponse",
+    "PairingQrPayload",
+  ]);
   assert.equal(definitions.HandshakeRequest.properties.clientId.$ref, "../../core/v1/schema.json#/$defs/ClientId");
   assert.equal(definitions.HandshakeRequest.properties.remoteClientId, undefined);
   assert.equal(definitions.HandshakeResponse.properties.device.$ref, "#/$defs/RemoteHostIdentity");
@@ -136,11 +143,13 @@ test("gateway LAN DTOs remain generated types outside the JSON-RPC method manife
     "clientName",
     "platform",
   ]);
+  assert.equal(definitions.PairingExchangeRequest.properties.pairingSecret["x-codepet-sensitive"], true);
   assert.deepEqual(Object.keys(definitions.PairingExchangeResponse.properties), [
     "device",
     "gatewayUrl",
     "credential",
   ]);
+  assert.equal(definitions.PairingExchangeResponse.properties.credential["x-codepet-sensitive"], true);
   assert.deepEqual(Object.keys(definitions.PairingQrPayload.properties), [
     "version",
     "hostDeviceId",
@@ -152,11 +161,34 @@ test("gateway LAN DTOs remain generated types outside the JSON-RPC method manife
     "expiresAt",
   ]);
   assert.equal(definitions.PairingQrPayload.properties.certSha256.pattern, "^[0-9a-f]{64}$");
+  assert.equal(definitions.PairingQrPayload.properties.pairingSecret["x-codepet-sensitive"], true);
   assert.deepEqual(definitions.CurrentCredentialDeleteResponse.required, ["revoked"]);
   assert.equal(
     gateway.manifest.methods.some((method) => method.name.includes("pairing") || method.name.includes("credential")),
     false,
   );
+});
+
+test("Rust and TypeScript generators omit schema definitions outside the public reachability graph", async () => {
+  const model = await loadProtocolModel();
+  const gateway = record(model, "gateway-v1");
+  gateway.schema.$defs.InternalOnly = {
+    type: "object",
+    properties: {
+      value: { type: "string" },
+    },
+    required: ["value"],
+    additionalProperties: false,
+  };
+
+  const rust = generatorTargetRegistry.rust.render({ record: gateway, model });
+  const typescript = generatorTargetRegistry.typescript.render({ record: gateway, model });
+  assert.doesNotMatch(rust, /InternalOnly/);
+  assert.doesNotMatch(typescript, /InternalOnly/);
+  for (const publicType of gateway.packageConfig.publicTypes) {
+    assert.match(rust, new RegExp(`pub struct ${publicType}`));
+    assert.match(typescript, new RegExp(`export interface ${publicType}`));
+  }
 });
 
 test("future language generators share the same declared interface", async () => {

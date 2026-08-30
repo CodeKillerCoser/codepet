@@ -13,8 +13,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, mpsc};
 
 const EVENT_CURSOR_PREFIX: &str = "event-";
-const TRANSPORT_NEUTRAL_IDENTITY_FINGERPRINT: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000";
 
 struct GatewayEventState {
     sequence: u64,
@@ -175,26 +173,25 @@ pub struct ProviderGatewayService {
     forwarding_started: AtomicBool,
     server_name: String,
     server_version: String,
-    remote_host_identity: gateway::RemoteHostIdentity,
+    remote_host_identity: Option<gateway::RemoteHostIdentity>,
 }
 
 impl ProviderGatewayService {
-    /// Builds the in-process service with an explicit non-network identity placeholder.
-    /// A LAN listener must use `new_with_remote_host_identity` and inject the
-    /// persisted leaf-certificate fingerprint before accepting remote clients.
     pub fn new(manager: Arc<PluginManager>) -> HostResult<Self> {
-        let identity = manager.device().identity();
-        let remote_host_identity = gateway::RemoteHostIdentity {
-            device_id: identity.device_id.clone(),
-            display_name: identity.display_name.clone(),
-            identity_fingerprint: TRANSPORT_NEUTRAL_IDENTITY_FINGERPRINT.to_string(),
-        };
-        Self::new_with_remote_host_identity(manager, remote_host_identity)
+        Self::build(manager, None)
     }
 
-    pub fn new_with_remote_host_identity(
+    pub fn with_remote_identity(
         manager: Arc<PluginManager>,
         remote_host_identity: gateway::RemoteHostIdentity,
+    ) -> HostResult<Self> {
+        validate_remote_host_identity(&remote_host_identity)?;
+        Self::build(manager, Some(remote_host_identity))
+    }
+
+    fn build(
+        manager: Arc<PluginManager>,
+        remote_host_identity: Option<gateway::RemoteHostIdentity>,
     ) -> HostResult<Self> {
         let event_capacity = manager.event_capacity().max(1);
         let updates = manager.take_updates()?;
@@ -422,6 +419,15 @@ impl ProtocolServer for ProviderGatewayService {
         request: gateway::HandshakeRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::HandshakeResponse> {
         Box::pin(async move {
+            let remote_host_identity = self.remote_host_identity.clone().ok_or_else(|| {
+                gateway::ProtocolError {
+                    code: "remote_host_identity_unavailable".to_string(),
+                    message: "Remote Gateway handshake requires a transport-injected Host identity"
+                        .to_string(),
+                    retryable: false,
+                    details: None,
+                }
+            })?;
             validate_gateway_version_range(&request.supported_versions)?;
             if request.client_id.trim().is_empty()
                 || request.client_name.trim().is_empty()
@@ -441,7 +447,7 @@ impl ProtocolServer for ProviderGatewayService {
                 selected_version: gateway::PROTOCOL_VERSION,
                 server_name: self.server_name.clone(),
                 server_version: self.server_version.clone(),
-                device: self.remote_host_identity.clone(),
+                device: remote_host_identity,
                 devices: vec![self.local_device()],
                 providers: self.gateway_instances(None).await?,
                 event_cursor: self.current_event_cursor(),
@@ -893,6 +899,22 @@ fn ensure_same_resource_identity(
         retryable: false,
         details: None,
     })
+}
+
+fn validate_remote_host_identity(identity: &gateway::RemoteHostIdentity) -> HostResult<()> {
+    let fingerprint = identity.identity_fingerprint.as_bytes();
+    let is_lowercase_sha256 = fingerprint.len() == 64
+        && fingerprint
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte));
+    let is_all_zero = fingerprint.iter().all(|byte| *byte == b'0');
+    if !is_lowercase_sha256 || is_all_zero {
+        return Err(HostError::new(
+            "invalid_remote_host_identity",
+            "Remote Host identity fingerprint must be a non-zero 64-character lowercase hexadecimal SHA-256 digest",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_gateway_resource(
