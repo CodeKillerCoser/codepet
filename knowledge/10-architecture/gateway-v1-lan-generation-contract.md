@@ -35,7 +35,7 @@ DELETE /remote/v1/credentials/current
 
 QR 只编码 `PairingQrPayload`：`version/hostDeviceId/displayName/httpsBaseUrl/certSha256/pairingId/pairingSecret/expiresAt`。PairingOffer 的状态、倒计时等只留在 Host/UI 内存。`pairingSecret` 明文只能进入 QR encoder，不在普通 UI 文本、日志或持久文档中展示。
 
-`RemoteHostIdentity` 固定为 `deviceId/displayName/identityFingerprint`。`identityFingerprint` 与 QR `certSha256` 都是 leaf certificate DER SHA-256 的 64 位小写 hex。`HandshakeResponse.device` 必填，同时保留既有 `devices/providers`。当前进程内 Host 构造使用明确的全零 transport-neutral placeholder；该值不代表网络身份。未来 LAN listener 必须通过专用构造入口注入 `RemoteAccessManager` 的真实 fingerprint，再开放网络连接。
+`RemoteHostIdentity` 固定为 `deviceId/displayName/identityFingerprint`。`identityFingerprint` 与 QR `certSha256` 都是 leaf certificate DER SHA-256 的 64 位小写 hex。`HandshakeResponse.device` 必填，同时保留既有 `devices/providers`。普通 `ProviderGatewayService::new` 不携带 remote identity，因此 Gateway v1 `protocol.handshake` 必须以 `remote_host_identity_unavailable` fail-closed。未来 LAN listener 必须通过 `ProviderGatewayService::with_remote_identity` 显式注入 `RemoteAccessManager` 的真实 fingerprint，该构造入口会拒绝全零或非 64 位小写 hex 的 fingerprint，然后才可开放网络连接。
 
 连接次序固定：先验证 TLS peer leaf DER fingerprint；WSS Upgrade 校验 bearer；第一条业务请求必须是 `protocol.handshake`；listener 校验 handshake `clientId` 等于 credential 绑定的 `clientId`；客户端再核对 response `device.deviceId` 与 `device.identityFingerprint`。`ProviderGatewayService` 只接收已经构造好的 `RemoteHostIdentity`，不感知 bearer 或 Authorization header。
 
@@ -53,7 +53,7 @@ mDNS service type 为 `_codepet._tcp.local.`，TXT 仅允许 `id/name/vmin/vmax/
 
 - 指纹格式漂移：schema pattern、fixture、Rust SDK 解码与 Host TLS 定向测试共同验证 64 位小写 hex。
 - `clientId` 出现同义字段：生成器测试断言 request 只有 `clientId`，无 `remoteClientId`；listener 后续需验证 credential 绑定。
-- 进程内 placeholder 被误用于 LAN：构造入口注释和 manager_gateway 测试区分 placeholder 与注入 identity；listener 验收必须核对真实 TLS fingerprint。
+- 无 identity 的进程内服务被误用于 LAN：Gateway v1 handshake fail-closed，`with_remote_identity` 拒绝全零 fingerprint，manager_gateway 测试覆盖无 identity 与显式注入两条路径；listener 验收必须核对真实 TLS fingerprint。
 - REST DTO 被误加成 Gateway method：生成器测试断言 pairing/credential 不出现在 method manifest。
 - compat 或桌宠链机械漂移：`protocol:check`、Tauri `cargo check --lib --locked` 与最终边界 diff 审计确认无改动。
 

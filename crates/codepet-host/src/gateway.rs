@@ -206,6 +206,14 @@ impl ProviderGatewayService {
         })
     }
 
+    pub fn server_name(&self) -> &str {
+        &self.server_name
+    }
+
+    pub fn server_version(&self) -> &str {
+        &self.server_version
+    }
+
     pub fn current_event_cursor(&self) -> gateway::EventCursor {
         self.events.current_cursor()
     }

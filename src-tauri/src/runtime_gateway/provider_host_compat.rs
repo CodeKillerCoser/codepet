@@ -216,27 +216,32 @@ impl compat::ProtocolServer for CompatProviderGateway {
                     false,
                 ));
             }
-            let response = GatewayProtocolServer::protocol_handshake(
-                self.gateway()?.as_ref(),
-                gateway::HandshakeRequest {
-                    client_id: format!("compat-v0:{}", request.client_name),
-                    client_name: request.client_name,
-                    client_version: request.client_version,
-                    supported_versions: gateway::VersionRange {
-                        min_version: gateway::PROTOCOL_VERSION,
-                        max_version: gateway::PROTOCOL_VERSION,
-                    },
-                    last_event_cursor: request.last_event_sequence.map(event_cursor),
-                },
+            if request.client_name.trim().is_empty() || request.client_version.trim().is_empty() {
+                return Err(compat_error(
+                    "invalid_gateway_client",
+                    "Gateway client identity fields must not be empty".to_string(),
+                    false,
+                ));
+            }
+            let gateway = self.gateway()?;
+            if let Some(sequence) = request.last_event_sequence {
+                gateway
+                    .replay_events(Some(&event_cursor(sequence)))
+                    .map_err(map_error)?;
+            }
+            let providers = GatewayProtocolServer::provider_list(
+                gateway.as_ref(),
+                gateway::ProviderListRequest { device_id: None },
             )
             .await
-            .map_err(map_error)?;
+            .map_err(map_error)?
+            .providers;
             Ok(compat::HandshakeResponse {
                 protocol_version: compat::PROTOCOL_VERSION,
-                server_name: response.server_name,
-                server_version: response.server_version,
-                providers: response.providers.into_iter().map(map_provider).collect(),
-                event_sequence: event_sequence(&response.event_cursor)?,
+                server_name: gateway.server_name().to_string(),
+                server_version: gateway.server_version().to_string(),
+                providers: providers.into_iter().map(map_provider).collect(),
+                event_sequence: event_sequence(&gateway.current_event_cursor())?,
             })
         })
     }

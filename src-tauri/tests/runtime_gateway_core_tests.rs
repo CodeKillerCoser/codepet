@@ -1,8 +1,8 @@
 use code_pet_lib::runtime_gateway::generated::{
     Approval, ApprovalDecision, ApprovalResolveRequest, ApprovalResolveResponse, ApprovalStatus,
     Conversation, ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
-    ConversationGetResponse, ConversationListRequest, ConversationListResponse,
-    ConversationStatus, ConversationUpsertedEvent, PermissionLevel, ProtocolEvent,
+    ConversationGetResponse, ConversationListRequest, ConversationListResponse, ConversationStatus,
+    ConversationUpsertedEvent, HandshakeRequest, PermissionLevel, ProtocolEvent,
     ProtocolRequest, ProtocolResponse, ProtocolServer, Provider, ProviderCapabilities,
     ProviderListRequest, ProviderStatus, ResponsePayload, TurnInterruptRequest,
     TurnInterruptResponse, TurnSendRequest, TurnSendResponse, TurnTask, TurnTaskStatus,
@@ -502,6 +502,62 @@ async fn unavailable_provider_host_does_not_block_companion_construction() {
         .providers
         .remove(0);
     assert_eq!(companion_provider.id, "codex");
+}
+
+#[tokio::test]
+async fn provider_host_compat_handshake_succeeds_without_remote_identity() {
+    let directory = tempfile::tempdir().unwrap();
+    let device = DeviceRegistry::open(directory.path().join("device.json"), "Compat Test Device")
+        .unwrap();
+    let device_id = device.identity().device_id.clone();
+    let catalog = PluginCatalog::discover(
+        PluginCatalogConfig::default().with_directory(directory.path().join("providers")),
+    );
+    let instances = ProviderInstanceRegistry::open(
+        directory.path().join("instances.json"),
+        device_id,
+    )
+    .unwrap();
+    let manager = Arc::new(
+        PluginManager::new(
+            device,
+            catalog,
+            instances,
+            PluginManagerConfig::default(),
+        )
+        .unwrap(),
+    );
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+    let expected_server_name = gateway.server_name().to_string();
+    let expected_server_version = gateway.server_version().to_string();
+    let remote = RuntimeGatewayState::new(Some(gateway));
+
+    let response = remote
+        .request(ProtocolRequest::ProtocolHandshake {
+            protocol_version: PROTOCOL_VERSION,
+            id: "compat-handshake".to_string(),
+            params: HandshakeRequest {
+                client_name: "Compat Client".to_string(),
+                client_version: "1.0.0".to_string(),
+                min_protocol_version: PROTOCOL_VERSION,
+                max_protocol_version: PROTOCOL_VERSION,
+                last_event_sequence: None,
+            },
+        })
+        .await;
+
+    let ProtocolResponse::ProtocolHandshake {
+        response: ResponsePayload::Ok { result },
+        ..
+    } = response
+    else {
+        panic!("expected compat handshake to succeed: {response:?}");
+    };
+    assert_eq!(result.server_name, expected_server_name);
+    assert_eq!(result.server_version, expected_server_version);
+    assert!(result.providers.is_empty());
+    assert_eq!(result.event_sequence, 0);
+    manager.shutdown().await;
 }
 
 #[tokio::test]
