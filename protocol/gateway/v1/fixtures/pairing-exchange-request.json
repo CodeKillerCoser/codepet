@@ -1,0 +1,6 @@
+{
+  "pairingSecret": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+  "clientId": "remote-client-phone-1",
+  "clientName": "CodePet Mobile",
+  "platform": "android"
+}

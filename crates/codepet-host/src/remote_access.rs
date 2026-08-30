@@ -2,6 +2,7 @@ use crate::persistence::{
     persistence_io, protect_secret_file, write_secret_json_atomically,
 };
 use crate::{DeviceRegistry, HostError, HostResult};
+use codepet_gateway_sdk::PairingExchangeRequest;
 use codepet_provider_sdk::{ClientId, TimestampMs};
 use rcgen::{
     CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, KeyPair,
@@ -172,27 +173,6 @@ impl Debug for PairingSession {
             .field("pairing_id", &self.pairing_id)
             .field("pairing_secret", &"<redacted>")
             .field("expires_at", &self.expires_at)
-            .finish()
-    }
-}
-
-/// The pairing proof and client metadata supplied by a remote client.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct PairingExchangeRequest {
-    pub pairing_id: String,
-    pub pairing_secret: String,
-    pub client: RemoteClientIdentity,
-}
-
-impl Debug for PairingExchangeRequest {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("PairingExchangeRequest")
-            .field("pairing_id", &self.pairing_id)
-            .field("pairing_secret", &"<redacted>")
-            .field("client", &self.client)
             .finish()
     }
 }
@@ -635,9 +615,10 @@ impl RemoteAccessManager {
     /// Atomically consumes a valid pairing session and persists one new credential.
     pub fn complete_pairing(
         &self,
+        pairing_id: &str,
         request: PairingExchangeRequest,
     ) -> HostResult<IssuedRemoteCredential> {
-        if validate_prefixed_random_id("pairing", &request.pairing_id).is_err()
+        if validate_prefixed_random_id("pairing", pairing_id).is_err()
             || !is_canonical_hex(&request.pairing_secret, SHA256_HEX_LENGTH)
         {
             return Err(invalid_pairing_session());
@@ -657,7 +638,7 @@ impl RemoteAccessManager {
                 "remote pairing session has expired",
             ));
         }
-        if session.pairing_id != request.pairing_id
+        if session.pairing_id != pairing_id
             || !constant_time_equal(
                 &session.pairing_secret_sha256,
                 &supplied_secret_hash,
@@ -665,8 +646,13 @@ impl RemoteAccessManager {
         {
             return Err(invalid_pairing_session());
         }
-        request.client.validate()?;
-        let issued = self.credential_store.issue(request.client)?;
+        let client = RemoteClientIdentity {
+            client_id: request.client_id,
+            client_name: request.client_name,
+            platform: request.platform,
+        };
+        client.validate()?;
+        let issued = self.credential_store.issue(client)?;
         *active = None;
         Ok(issued)
     }
@@ -1180,15 +1166,13 @@ mod tests {
             &session.pairing_secret,
             RANDOM_SECRET_BYTES * 2
         ));
+        let pairing_id = session.pairing_id;
         manager
-            .complete_pairing(PairingExchangeRequest {
-                pairing_id: session.pairing_id,
+            .complete_pairing(&pairing_id, PairingExchangeRequest {
                 pairing_secret: session.pairing_secret,
-                client: RemoteClientIdentity {
-                    client_id: client_id.to_string(),
-                    client_name: format!("Client {client_id}"),
-                    platform: "test".to_string(),
-                },
+                client_id: client_id.to_string(),
+                client_name: format!("Client {client_id}"),
+                platform: "test".to_string(),
             })
             .unwrap()
     }
@@ -1350,14 +1334,12 @@ mod tests {
             session.expires_at,
             1_000 + duration_ms(PAIRING_SESSION_TTL)
         );
+        let pairing_id = session.pairing_id.clone();
         let request = PairingExchangeRequest {
-            pairing_id: session.pairing_id.clone(),
             pairing_secret: session.pairing_secret.clone(),
-            client: RemoteClientIdentity {
-                client_id: "client-once".to_string(),
-                client_name: "Once".to_string(),
-                platform: "ios".to_string(),
-            },
+            client_id: "client-once".to_string(),
+            client_name: "Once".to_string(),
+            platform: "ios".to_string(),
         };
         clock.set(u64::MAX);
         let mut wrong_request = request.clone();
@@ -1368,7 +1350,10 @@ mod tests {
         };
         wrong_request.pairing_secret.replace_range(0..1, replacement);
         assert_eq!(
-            manager.complete_pairing(wrong_request).unwrap_err().code,
+            manager
+                .complete_pairing(&pairing_id, wrong_request)
+                .unwrap_err()
+                .code,
             "invalid_pairing_session"
         );
         let barrier = Arc::new(std::sync::Barrier::new(3));
@@ -1376,10 +1361,11 @@ mod tests {
             .map(|_| {
                 let manager = manager.clone();
                 let barrier = barrier.clone();
+                let pairing_id = pairing_id.clone();
                 let request = request.clone();
                 std::thread::spawn(move || {
                     barrier.wait();
-                    manager.complete_pairing(request)
+                    manager.complete_pairing(&pairing_id, request)
                 })
             })
             .collect::<Vec<_>>();
@@ -1403,16 +1389,14 @@ mod tests {
             .begin_pairing_with_ttl(Duration::ZERO)
             .unwrap();
         assert_eq!(expired.expires_at, 10_000);
+        let expired_pairing_id = expired.pairing_id;
         assert_eq!(
             manager
-                .complete_pairing(PairingExchangeRequest {
-                    pairing_id: expired.pairing_id,
+                .complete_pairing(&expired_pairing_id, PairingExchangeRequest {
                     pairing_secret: expired.pairing_secret,
-                    client: RemoteClientIdentity {
-                        client_id: "client-expired".to_string(),
-                        client_name: "Expired".to_string(),
-                        platform: "android".to_string(),
-                    },
+                    client_id: "client-expired".to_string(),
+                    client_name: "Expired".to_string(),
+                    platform: "android".to_string(),
                 })
                 .unwrap_err()
                 .code,
@@ -1424,16 +1408,14 @@ mod tests {
         drop(manager);
         let restarted =
             RemoteAccessManager::open_with_clock(config, device, clock.clock()).unwrap();
+        let lost_pairing_id = lost_on_restart.pairing_id;
         assert_eq!(
             restarted
-                .complete_pairing(PairingExchangeRequest {
-                    pairing_id: lost_on_restart.pairing_id,
+                .complete_pairing(&lost_pairing_id, PairingExchangeRequest {
                     pairing_secret: lost_on_restart.pairing_secret,
-                    client: RemoteClientIdentity {
-                        client_id: "client-restart".to_string(),
-                        client_name: "Restart".to_string(),
-                        platform: "android".to_string(),
-                    },
+                    client_id: "client-restart".to_string(),
+                    client_name: "Restart".to_string(),
+                    platform: "android".to_string(),
                 })
                 .unwrap_err()
                 .code,

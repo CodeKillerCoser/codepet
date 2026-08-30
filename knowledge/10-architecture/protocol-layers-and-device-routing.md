@@ -19,13 +19,13 @@
 
 - 不实现自动安装、签名、市场或沙箱；Plugin Manager、显式目录发现与 Provider 进程生命周期已落到 `crates/codepet-host`，开发安装仍为显式复制 manifest/binary。
 - 不迁移 Desktop IPC adapter 到独立 Provider 二进制；Codex App Server 已迁到独立 Provider。
-- 不实现 LAN listener、配对、认证、加密、持久 event cursor 或 Remote UI。
+- 只生成 LAN identity、QR 与 pairing/credential REST DTO；不实现 LAN listener、HTTP/WSS route、mDNS、认证接线、持久 event cursor 或 Remote UI。
 - 不改桌宠展示、交互或 activity projection；本阶段只提供未来 Pet Protocol 的生成 SDK。
 - 不生成完整 Dart/Python SDK；只固定可复用的 generator interface 与 target manifest。
 
 ## 现状理解
 
-协议布局现在是 `protocol/{core,pet,provider,gateway}/v1`。`protocol/codegen.json` 记录包、依赖、输出与 `codepet.protocol.codegen/v1` target adapter 接口。Rust 和 TypeScript 有显式 adapter；Dart/Python 只有 fail-closed 的 planned registry entry，显式选择时在写文件前失败。Rust 输出位于 `sdk/rust/codepet-*-sdk`；TypeScript 只生成 core 和现有 Runtime Gateway v0 兼容面。
+协议布局现在是 `protocol/{core,pet,provider,gateway}/v1`。`protocol/codegen.json` 记录包、依赖、输出与 `codepet.protocol.codegen/v1` target adapter 接口。Rust 和 TypeScript 有显式 adapter；Dart/Python 只有 fail-closed 的 planned registry entry，显式选择时在写文件前失败。Rust 输出位于 `sdk/rust/codepet-*-sdk`；TypeScript 生成 core、Gateway v1 和现有 Runtime Gateway v0 兼容面。
 
 `core/v1` 只包含可安全共享的 ID、版本范围、时间戳、分页、错误、JSON 对象、JSON-RPC error 和 `RoutedResourceId`。`pet/v1` 只出现 PetTask/PetApproval/PetAction/Snapshot/Patch；schema 和 manifest 不引用 provider/gateway。`provider/v1` 拥有 initialize、describe、instance create/start/stop/destroy/capabilities、conversation、turn、approval、event 和 shutdown。`gateway/v1` 拥有 handshake、device/provider 枚举、conversation/turn/approval 与 replayable event cursor，不包含 instance 生命周期或 shutdown。
 
@@ -50,7 +50,7 @@
 - `protocol/`：唯一手写 schema、service manifest、transport discriminator、fixture 和 target manifest。
 - `tools/protocol-codegen/`：生成与 freshness/边界检查；不包含业务 handler。
 - `sdk/rust/`：四个可独立编译、可执行 `cargo package` 检查的 SDK；Provider 与 gateway 只依赖 core，pet 只依赖 core。path dependency 同时声明发布 version。
-- `sdk/typescript/`：现有前端兼容输入，不承担新的 Pet 或 Provider 业务。
+- `sdk/typescript/`：生成 Gateway v1 Remote Client 契约与现有前端 compat 输入，不承担 Pet 或 Provider 业务。
 - `src-tauri/src/runtime_gateway/generated.rs`：只把 compat v0 SDK 暴露给现有手写 gateway。
 - `frontend/lib/generated/runtimeGateway.ts`：只把 compat v0 TypeScript 类型暴露给当前前端。
 - `crates/providers/codepet-provider-codex/`：首个 production Provider binary；运行依赖只有 Provider SDK 与纯 Rust App Server adapter。

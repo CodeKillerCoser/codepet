@@ -1,9 +1,11 @@
 use codepet_gateway_sdk::{
     ConversationGetRequest as GatewayConversationGetRequest,
     ConversationListRequest as GatewayConversationListRequest, EventSubscribeRequest,
+    HandshakeRequest,
     ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
     ProtocolResponse as GatewayResponse, ProtocolServer as GatewayProtocolServer,
-    ProviderListRequest, ResponsePayload, TurnSendRequest as GatewayTurnSendRequest,
+    ProviderListRequest, RemoteHostIdentity, ResponsePayload,
+    TurnSendRequest as GatewayTurnSendRequest, VersionRange,
 };
 use codepet_host::{
     DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor, PluginInstanceConfig,
@@ -144,6 +146,40 @@ fn event_cursor_sequence(cursor: &str) -> u64 {
         .unwrap()
         .parse::<u64>()
         .unwrap()
+}
+
+#[tokio::test]
+async fn gateway_handshake_returns_the_transport_injected_remote_host_identity() {
+    let manager = build_manager("device-handshake", Vec::new());
+    let device = RemoteHostIdentity {
+        device_id: "device-handshake".to_string(),
+        display_name: "Device device-handshake".to_string(),
+        identity_fingerprint: "a".repeat(64),
+    };
+    let gateway = ProviderGatewayService::new_with_remote_host_identity(
+        manager.clone(),
+        device.clone(),
+    )
+    .unwrap();
+
+    let response = gateway
+        .protocol_handshake(HandshakeRequest {
+            client_id: "remote-client-handshake".to_string(),
+            client_name: "Remote Test".to_string(),
+            client_version: "1.0.0".to_string(),
+            supported_versions: VersionRange {
+                min_version: codepet_gateway_sdk::PROTOCOL_VERSION,
+                max_version: codepet_gateway_sdk::PROTOCOL_VERSION,
+            },
+            last_event_cursor: None,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(response.device, device);
+    assert_eq!(response.devices.len(), 1);
+    assert_eq!(response.devices[0].device_id, "device-handshake");
+    manager.shutdown().await;
 }
 
 #[tokio::test]

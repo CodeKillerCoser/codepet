@@ -9,7 +9,7 @@
     {
       "id": "typescript",
       "interface": "codepet.protocol.codegen/v1",
-      "status": "compatibility"
+      "status": "active"
     },
     {
       "id": "dart",
@@ -65,7 +65,8 @@
       "manifest": "gateway/v1/manifest.json",
       "dependencies": ["core-v1"],
       "outputs": {
-        "rust": "sdk/rust/codepet-gateway-sdk/src/generated.rs"
+        "rust": "sdk/rust/codepet-gateway-sdk/src/generated.rs",
+        "typescript": "sdk/typescript/codepet-gateway-sdk/src/generated.ts"
       }
     },
     {

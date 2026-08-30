@@ -13,6 +13,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, mpsc};
 
 const EVENT_CURSOR_PREFIX: &str = "event-";
+const TRANSPORT_NEUTRAL_IDENTITY_FINGERPRINT: &str =
+    "0000000000000000000000000000000000000000000000000000000000000000";
 
 struct GatewayEventState {
     sequence: u64,
@@ -173,10 +175,27 @@ pub struct ProviderGatewayService {
     forwarding_started: AtomicBool,
     server_name: String,
     server_version: String,
+    remote_host_identity: gateway::RemoteHostIdentity,
 }
 
 impl ProviderGatewayService {
+    /// Builds the in-process service with an explicit non-network identity placeholder.
+    /// A LAN listener must use `new_with_remote_host_identity` and inject the
+    /// persisted leaf-certificate fingerprint before accepting remote clients.
     pub fn new(manager: Arc<PluginManager>) -> HostResult<Self> {
+        let identity = manager.device().identity();
+        let remote_host_identity = gateway::RemoteHostIdentity {
+            device_id: identity.device_id.clone(),
+            display_name: identity.display_name.clone(),
+            identity_fingerprint: TRANSPORT_NEUTRAL_IDENTITY_FINGERPRINT.to_string(),
+        };
+        Self::new_with_remote_host_identity(manager, remote_host_identity)
+    }
+
+    pub fn new_with_remote_host_identity(
+        manager: Arc<PluginManager>,
+        remote_host_identity: gateway::RemoteHostIdentity,
+    ) -> HostResult<Self> {
         let event_capacity = manager.event_capacity().max(1);
         let updates = manager.take_updates()?;
         Ok(Self {
@@ -186,6 +205,7 @@ impl ProviderGatewayService {
             forwarding_started: AtomicBool::new(false),
             server_name: "codepet-provider-gateway".to_string(),
             server_version: env!("CARGO_PKG_VERSION").to_string(),
+            remote_host_identity,
         })
     }
 
@@ -421,6 +441,7 @@ impl ProtocolServer for ProviderGatewayService {
                 selected_version: gateway::PROTOCOL_VERSION,
                 server_name: self.server_name.clone(),
                 server_version: self.server_version.clone(),
+                device: self.remote_host_identity.clone(),
                 devices: vec![self.local_device()],
                 providers: self.gateway_instances(None).await?,
                 event_cursor: self.current_event_cursor(),

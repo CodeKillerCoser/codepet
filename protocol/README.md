@@ -11,7 +11,7 @@ The v1 layers are:
 - `provider/v1` — public Host ↔ independent Provider binary JSON-RPC 2.0 over newline-delimited stdio. It owns initialize, describe, instance lifecycle/capability, conversation, turn, approval, event, and shutdown contracts.
 - `gateway/v1` — Host ↔ Remote Client methods and replayable events. Resources use `deviceId + providerPluginId + providerInstanceId + nativeResourceId`; the gateway exposes neither plugin process lifecycle nor pet-private state.
 
-`codegen.json` declares packages, dependency direction, output targets, and the shared `codepet.protocol.codegen/v1` adapter interface for Rust, TypeScript, Dart, and Python. Rust is active for all four v1 layers. TypeScript currently covers core plus the Runtime Gateway compatibility surface. Dart and Python remain explicitly registered but unimplemented planned targets; selecting them fails closed before generation.
+`codegen.json` declares packages, dependency direction, output targets, and the shared `codepet.protocol.codegen/v1` adapter interface for Rust, TypeScript, Dart, and Python. Rust is active for all four v1 layers. TypeScript covers core, Gateway v1, and the Runtime Gateway compatibility surface. Dart and Python remain explicitly registered but unimplemented planned targets; selecting them fails closed before generation.
 
 ## Versioning and discriminators
 
@@ -23,6 +23,22 @@ Every public v1 initialize/handshake request carries an explicit supported `Vers
 - Union-like domain DTOs such as `PetAction` retain an explicit `kind`; receivers validate kind-specific optional fields.
 
 The generator supports a deliberately small JSON Schema Draft 2020-12 subset. Unsupported keywords, unresolved references, duplicate method/event names, invalid fixtures, or undeclared cross-layer dependencies fail generation.
+
+## Gateway v1 LAN generation contract
+
+The LAN transport uses three fixed routes without adding them as CodePet-envelope methods:
+
+- `POST /remote/v1/pairings/{pairingId}/exchange`
+- `GET /remote/v1/gateway` with WebSocket upgrade
+- `DELETE /remote/v1/credentials/current`
+
+Their bodies are generated from the same `gateway/v1/schema.json` as the Gateway envelopes. `PairingExchangeRequest` contains `pairingSecret`, the existing handshake `clientId`, `clientName`, and `platform`; `pairingId` remains the REST path parameter. `PairingExchangeResponse` contains the stable `device`, `gatewayUrl`, and opaque `credential`. `CurrentCredentialDeleteResponse` is the minimal current-credential revocation result. These types are not JSON-RPC or Gateway envelope methods.
+
+`PairingQrPayload` is the only encodable QR wire payload. Its fields are exactly `version`, `hostDeviceId`, `displayName`, `httpsBaseUrl`, `certSha256`, `pairingId`, `pairingSecret`, and `expiresAt`. The plaintext pairing secret may flow from Host memory into the QR encoder, but must not be rendered as ordinary UI text or logged. Pairing display state and countdown values remain Host/UI implementation state rather than remote schema fields.
+
+DNS-SD advertises `_codepet._tcp.local.` and its TXT record is limited to `id`, `name`, `vmin`, `vmax`, and `pair`. Discovery supplies an endpoint only; it does not establish trust and must never publish a certificate fingerprint, pairing secret, credential, Provider, project, or conversation data.
+
+The WSS upgrade authenticates the opaque bearer in the future LAN listener. The first business request is `protocol.handshake`, and its existing `clientId` must equal the client identity bound to that credential. `HandshakeResponse.device` is a required `RemoteHostIdentity { deviceId, displayName, identityFingerprint }`; `identityFingerprint` and QR `certSha256` are the 64-character lowercase hexadecimal SHA-256 of the leaf certificate DER. A client verifies the actual TLS peer certificate and then checks the handshake device identity against the paired identity. `ProviderGatewayService` receives only this transport-neutral host identity and never receives or validates bearer credentials.
 
 ## Gateway v1 snapshot and live-event boundary
 
@@ -57,6 +73,7 @@ This compatibility path preserves current dual-channel behavior: remote App Serv
 npm run protocol:generate
 npm run protocol:check
 cargo test --manifest-path sdk/rust/Cargo.toml
+npm test --prefix sdk/typescript/codepet-gateway-sdk
 node tools/protocol-codegen/generate.mjs --target=rust --check
 ```
 
@@ -65,5 +82,5 @@ node tools/protocol-codegen/generate.mjs --target=rust --check
 ## Current limits
 
 - A reusable Plugin Manager and process supervisor exists in `crates/codepet-host`, and Codex remote operations run through the standalone Provider binary. Signature, marketplace, sandbox, and automatic restart policy remain deliberately out of scope.
-- No LAN listener, pairing, remote authentication, remote UI, or persistent event-cursor store exists yet.
+- Gateway v1 now defines the LAN identity, QR, pairing REST bodies, and current-credential delete response, while `RemoteAccessManager` supplies the unconnected TLS/pairing/credential core. No LAN listener, HTTP/WSS route, mDNS publisher, remote UI wiring, or persistent event-cursor store exists yet.
 - The v0 compatibility profile remains in use by the desktop process until a later phase wires gateway v1 sessions and a separate pet-protocol adapter.

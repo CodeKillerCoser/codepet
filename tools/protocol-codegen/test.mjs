@@ -116,11 +116,54 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
   }
 });
 
+test("gateway LAN DTOs remain generated types outside the JSON-RPC method manifest", async () => {
+  const model = await loadProtocolModel();
+  const gateway = record(model, "gateway-v1");
+  const definitions = gateway.schema.$defs;
+  assert.equal(definitions.HandshakeRequest.properties.clientId.$ref, "../../core/v1/schema.json#/$defs/ClientId");
+  assert.equal(definitions.HandshakeRequest.properties.remoteClientId, undefined);
+  assert.equal(definitions.HandshakeResponse.properties.device.$ref, "#/$defs/RemoteHostIdentity");
+  assert(definitions.HandshakeResponse.required.includes("device"));
+  assert.deepEqual(Object.keys(definitions.RemoteHostIdentity.properties), [
+    "deviceId",
+    "displayName",
+    "identityFingerprint",
+  ]);
+  assert.equal(definitions.RemoteHostIdentity.properties.identityFingerprint.pattern, "^[0-9a-f]{64}$");
+  assert.deepEqual(Object.keys(definitions.PairingExchangeRequest.properties), [
+    "pairingSecret",
+    "clientId",
+    "clientName",
+    "platform",
+  ]);
+  assert.deepEqual(Object.keys(definitions.PairingExchangeResponse.properties), [
+    "device",
+    "gatewayUrl",
+    "credential",
+  ]);
+  assert.deepEqual(Object.keys(definitions.PairingQrPayload.properties), [
+    "version",
+    "hostDeviceId",
+    "displayName",
+    "httpsBaseUrl",
+    "certSha256",
+    "pairingId",
+    "pairingSecret",
+    "expiresAt",
+  ]);
+  assert.equal(definitions.PairingQrPayload.properties.certSha256.pattern, "^[0-9a-f]{64}$");
+  assert.deepEqual(definitions.CurrentCredentialDeleteResponse.required, ["revoked"]);
+  assert.equal(
+    gateway.manifest.methods.some((method) => method.name.includes("pairing") || method.name.includes("credential")),
+    false,
+  );
+});
+
 test("future language generators share the same declared interface", async () => {
   const model = await loadProtocolModel();
   const targets = new Map(model.config.targets.map((target) => [target.id, target]));
   assert.equal(targets.get("rust").status, "active");
-  assert.equal(targets.get("typescript").status, "compatibility");
+  assert.equal(targets.get("typescript").status, "active");
   assert.equal(targets.get("dart").status, "planned");
   assert.equal(targets.get("python").status, "planned");
   assert.deepEqual(new Set(model.config.targets.map((target) => target.interface)), new Set([GENERATOR_TARGET_INTERFACE]));
@@ -143,8 +186,14 @@ test("TypeScript adapter handles multiple packages and cross-schema imports", as
   const result = await generateProtocol({ checkMode: true, targets: ["typescript"] });
   assert.deepEqual(
     result.generated.map(({ packageId, targetId }) => [packageId, targetId]),
-    [["core-v1", "typescript"], ["gateway-compat-v0", "typescript"]],
+    [["core-v1", "typescript"], ["gateway-v1", "typescript"], ["gateway-compat-v0", "typescript"]],
   );
+  const gatewaySource = await readFile("sdk/typescript/codepet-gateway-sdk/src/generated.ts", "utf8");
+  assert.match(gatewaySource, /export interface RemoteHostIdentity/);
+  assert.match(gatewaySource, /export interface PairingExchangeRequest/);
+  assert.match(gatewaySource, /export interface PairingExchangeResponse/);
+  assert.match(gatewaySource, /export interface PairingQrPayload/);
+  assert.match(gatewaySource, /export interface CurrentCredentialDeleteResponse/);
   const source = await readFile("sdk/typescript/codepet-gateway-sdk/src/compat-v0.ts", "utf8");
   assert.match(source, /from "\.\.\/\.\.\/codepet-core-sdk\/src\/generated"/);
   assert.match(source, /import type \{ Cursor, EventSequence, JsonObject, ProtocolError, ProtocolVersion, RequestId, TimestampMs \}/);

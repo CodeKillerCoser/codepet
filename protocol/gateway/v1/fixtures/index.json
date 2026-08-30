@@ -1,6 +1,10 @@
 [
   { "file": "handshake-request.json", "kind": "request", "name": "protocol.handshake" },
   { "file": "handshake-response.json", "kind": "response", "name": "protocol.handshake" },
+  { "file": "pairing-qr-payload.json", "kind": "type", "name": "PairingQrPayload" },
+  { "file": "pairing-exchange-request.json", "kind": "type", "name": "PairingExchangeRequest" },
+  { "file": "pairing-exchange-response.json", "kind": "type", "name": "PairingExchangeResponse" },
+  { "file": "current-credential-delete-response.json", "kind": "type", "name": "CurrentCredentialDeleteResponse" },
   { "file": "event-subscribe-request.json", "kind": "request", "name": "event.subscribe" },
   { "file": "event-subscribe-response.json", "kind": "response", "name": "event.subscribe" },
   { "file": "conversation-get-request.json", "kind": "request", "name": "conversation.get" },

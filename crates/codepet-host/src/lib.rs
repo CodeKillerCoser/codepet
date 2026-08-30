@@ -1,6 +1,7 @@
 //! CodePet device identity, out-of-process Provider host, and Gateway v1 boundary.
 
 pub use codepet_gateway_sdk as gateway_sdk;
+pub use codepet_gateway_sdk::PairingExchangeRequest;
 pub use codepet_provider_sdk as provider_sdk;
 
 mod catalog;
@@ -29,7 +30,7 @@ pub use process::{
     PluginProcess, PluginProcessExit, PluginProcessOptions, ProviderRpcClient, StderrDiagnostic,
 };
 pub use remote_access::{
-    IssuedRemoteCredential, LanTlsIdentity, PairingExchangeRequest, PairingSession,
-    RemoteAccessConfig, RemoteAccessDiagnostic, RemoteAccessManager, RemoteClientIdentity,
-    RemoteCredential, RemoteCredentialStore, PAIRING_SESSION_TTL,
+    IssuedRemoteCredential, LanTlsIdentity, PairingSession, RemoteAccessConfig,
+    RemoteAccessDiagnostic, RemoteAccessManager, RemoteClientIdentity, RemoteCredential,
+    RemoteCredentialStore, PAIRING_SESSION_TTL,
 };

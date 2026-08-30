@@ -1,7 +1,58 @@
 use codepet_gateway_sdk::{
-    decode_event, decode_request, decode_response, ProtocolEvent, ProtocolRequest,
-    ProtocolResponse, ResponsePayload,
+    decode_event, decode_request, decode_response, CurrentCredentialDeleteResponse,
+    PairingExchangeRequest, PairingExchangeResponse, PairingQrPayload, ProtocolEvent,
+    ProtocolRequest, ProtocolResponse, ResponsePayload,
 };
+
+#[test]
+fn gateway_handshake_returns_a_dedicated_remote_host_identity() {
+    let response = decode_response(include_bytes!(
+        "../../../../protocol/gateway/v1/fixtures/handshake-response.json"
+    ))
+    .unwrap();
+    let ProtocolResponse::ProtocolHandshake {
+        response: ResponsePayload::Ok { result },
+        ..
+    } = response
+    else {
+        panic!("expected successful protocol.handshake response");
+    };
+    assert_eq!(result.device.device_id, "device-macbook-1");
+    assert_eq!(result.device.display_name, "MacBook");
+    assert_eq!(result.device.identity_fingerprint.len(), 64);
+    assert_eq!(result.devices[0].device_id, result.device.device_id);
+}
+
+#[test]
+fn gateway_lan_rest_fixtures_use_the_generated_dtos() {
+    let qr: PairingQrPayload = serde_json::from_slice(include_bytes!(
+        "../../../../protocol/gateway/v1/fixtures/pairing-qr-payload.json"
+    ))
+    .unwrap();
+    assert_eq!(qr.version, 1);
+    assert_eq!(qr.host_device_id, "device-macbook-1");
+    assert_eq!(qr.cert_sha256.len(), 64);
+
+    let request: PairingExchangeRequest = serde_json::from_slice(include_bytes!(
+        "../../../../protocol/gateway/v1/fixtures/pairing-exchange-request.json"
+    ))
+    .unwrap();
+    assert_eq!(request.client_id, "remote-client-phone-1");
+    assert_eq!(request.platform, "android");
+
+    let response: PairingExchangeResponse = serde_json::from_slice(include_bytes!(
+        "../../../../protocol/gateway/v1/fixtures/pairing-exchange-response.json"
+    ))
+    .unwrap();
+    assert_eq!(response.device.device_id, qr.host_device_id);
+    assert_eq!(response.gateway_url, "wss://192.168.1.10:49152/remote/v1/gateway");
+
+    let deleted: CurrentCredentialDeleteResponse = serde_json::from_slice(include_bytes!(
+        "../../../../protocol/gateway/v1/fixtures/current-credential-delete-response.json"
+    ))
+    .unwrap();
+    assert!(deleted.revoked);
+}
 
 #[test]
 fn gateway_event_subscription_preserves_the_exact_opaque_cursor() {

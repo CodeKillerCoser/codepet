@@ -189,6 +189,13 @@ pub struct ConversationUpsertedEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct CurrentCredentialDeleteResponse {
+    pub revoked: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct Device {
     pub device_id: DeviceId,
     pub display_name: String,
@@ -296,9 +303,43 @@ pub struct HandshakeResponse {
     pub selected_version: ProtocolVersion,
     pub server_name: String,
     pub server_version: String,
+    pub device: RemoteHostIdentity,
     pub devices: Vec<Device>,
     pub providers: Vec<ProviderInstance>,
     pub event_cursor: EventCursor,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct PairingExchangeRequest {
+    pub pairing_secret: String,
+    pub client_id: ClientId,
+    pub client_name: String,
+    pub platform: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct PairingExchangeResponse {
+    pub device: RemoteHostIdentity,
+    pub gateway_url: String,
+    pub credential: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct PairingQrPayload {
+    pub version: u64,
+    pub host_device_id: DeviceId,
+    pub display_name: String,
+    pub https_base_url: String,
+    pub cert_sha256: String,
+    pub pairing_id: String,
+    pub pairing_secret: String,
+    pub expires_at: TimestampMs,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -350,6 +391,15 @@ pub struct ProviderStatusChangedEvent {
     pub provider: ProviderInstance,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_status: Option<ProviderStatus>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct RemoteHostIdentity {
+    pub device_id: DeviceId,
+    pub display_name: String,
+    pub identity_fingerprint: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

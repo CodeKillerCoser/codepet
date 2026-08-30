@@ -8,6 +8,11 @@
       "selectedVersion": 1,
       "serverName": "CodePet Gateway",
       "serverVersion": "0.1.4",
+      "device": {
+        "deviceId": "device-macbook-1",
+        "displayName": "MacBook",
+        "identityFingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      },
       "devices": [
         {
           "deviceId": "device-macbook-1",

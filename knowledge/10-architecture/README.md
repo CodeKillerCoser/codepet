@@ -13,6 +13,7 @@ Code Pet 是一个 Tauri 2 应用，前端使用 Svelte，后端使用 Rust。�
 - `cross-platform-boundaries.md`：macOS、Windows 和不支持路径的边界。
 - `runtime-gateway-and-remote-control.md`：从 Hook 事件观察器升级到多 Provider Runtime Gateway、统一 IDL 和手机远程控制的目标架构与实施路径。
 - `protocol-layers-and-device-routing.md`：当前 core/pet/provider/gateway v1 IDL、SDK 生成、多设备资源路由和 Runtime Gateway 兼容边界。
+- `gateway-v1-lan-generation-contract.md`：Gateway v1 LAN 的 Host identity、QR/REST DTO、mDNS/WSS 约束及未实现 transport 边界。
 - `provider-host-device-and-plugin-runtime.md`：Provider Host 的设备身份、manifest、进程、实例与 Gateway 路由边界。
 - `codex-provider-plugin-runtime.md`：Codex 独立 Provider 二进制、App Server 映射、配置权威、协议覆盖与双链路隔离。
 - `claude-provider-plugin-runtime.md`：Claude 独立 Provider 二进制、官方 CLI stream-json 适配、能力降级与 Pet 隔离。

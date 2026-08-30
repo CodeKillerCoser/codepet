@@ -28,6 +28,7 @@ const supportedKeywords = new Set([
   "maximum",
   "minLength",
   "minItems",
+  "pattern",
   "uniqueItems",
 ]);
 
@@ -133,6 +134,15 @@ function validateSchemaNode(node, record, model, location) {
   }
   if (node.uniqueItems !== undefined) {
     assert(typeof node.uniqueItems === "boolean", `${location}.uniqueItems must be boolean`);
+  }
+  if (node.pattern !== undefined) {
+    assert(node.type === "string", `${location}.pattern is only supported for strings`);
+    assert(typeof node.pattern === "string", `${location}.pattern must be a string`);
+    try {
+      new RegExp(node.pattern);
+    } catch (error) {
+      fail(`${location}.pattern is invalid: ${error.message}`);
+    }
   }
 }
 
@@ -326,6 +336,7 @@ function validateValue(value, node, record, model, location) {
   if (node.type === "string") {
     assert(typeof value === "string", `${location} must be a string`);
     if (node.minLength !== undefined) assert(value.length >= node.minLength, `${location} is too short`);
+    if (node.pattern !== undefined) assert(new RegExp(node.pattern).test(value), `${location} does not match ${node.pattern}`);
   } else if (node.type === "integer") {
     assert(Number.isSafeInteger(value), `${location} must be a safe integer`);
     if (node.minimum !== undefined) assert(value >= node.minimum, `${location} is below minimum`);
@@ -360,6 +371,12 @@ async function validateFixtures(record, model) {
     assert(isObject(fixture) && typeof fixture.file === "string" && typeof fixture.kind === "string" && typeof fixture.name === "string", `${packageConfig.id} fixture entry is invalid`);
     const value = await readJson(resolve(dirname(fixtureIndexPath), fixture.file));
     const location = `${packageConfig.id} fixture ${fixture.file}`;
+    if (fixture.kind === "type") {
+      const target = record.schema.$defs[fixture.name];
+      assert(target, `${location} references unknown type ${fixture.name}`);
+      validateValue(value, target, record, model, location);
+      continue;
+    }
     const method = manifest.methods.find((entry) => entry.name === fixture.name);
     const event = manifest.events.find((entry) => entry.name === fixture.name);
     const requestId = referenceTarget(manifest.transport.requestId, manifestPath, model, `${location}.id`);

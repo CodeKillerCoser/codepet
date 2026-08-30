@@ -157,6 +157,14 @@
       "required": ["conversation"],
       "additionalProperties": false
     },
+    "CurrentCredentialDeleteResponse": {
+      "type": "object",
+      "properties": {
+        "revoked": { "type": "boolean" }
+      },
+      "required": ["revoked"],
+      "additionalProperties": false
+    },
     "Device": {
       "type": "object",
       "properties": {
@@ -279,6 +287,7 @@
         "selectedVersion": { "$ref": "../../core/v1/schema.json#/$defs/ProtocolVersion" },
         "serverName": { "type": "string", "minLength": 1 },
         "serverVersion": { "type": "string", "minLength": 1 },
+        "device": { "$ref": "#/$defs/RemoteHostIdentity" },
         "devices": {
           "type": "array",
           "items": { "$ref": "#/$defs/Device" }
@@ -289,7 +298,43 @@
         },
         "eventCursor": { "$ref": "../../core/v1/schema.json#/$defs/EventCursor" }
       },
-      "required": ["selectedVersion", "serverName", "serverVersion", "devices", "providers", "eventCursor"],
+      "required": ["selectedVersion", "serverName", "serverVersion", "device", "devices", "providers", "eventCursor"],
+      "additionalProperties": false
+    },
+    "PairingExchangeRequest": {
+      "type": "object",
+      "properties": {
+        "pairingSecret": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "clientId": { "$ref": "../../core/v1/schema.json#/$defs/ClientId" },
+        "clientName": { "type": "string", "minLength": 1 },
+        "platform": { "type": "string", "minLength": 1 }
+      },
+      "required": ["pairingSecret", "clientId", "clientName", "platform"],
+      "additionalProperties": false
+    },
+    "PairingExchangeResponse": {
+      "type": "object",
+      "properties": {
+        "device": { "$ref": "#/$defs/RemoteHostIdentity" },
+        "gatewayUrl": { "type": "string", "minLength": 1 },
+        "credential": { "type": "string", "minLength": 1 }
+      },
+      "required": ["device", "gatewayUrl", "credential"],
+      "additionalProperties": false
+    },
+    "PairingQrPayload": {
+      "type": "object",
+      "properties": {
+        "version": { "type": "integer", "minimum": 1, "maximum": 1 },
+        "hostDeviceId": { "$ref": "../../core/v1/schema.json#/$defs/DeviceId" },
+        "displayName": { "type": "string", "minLength": 1 },
+        "httpsBaseUrl": { "type": "string", "minLength": 1 },
+        "certSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "pairingId": { "type": "string", "minLength": 1 },
+        "pairingSecret": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "expiresAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" }
+      },
+      "required": ["version", "hostDeviceId", "displayName", "httpsBaseUrl", "certSha256", "pairingId", "pairingSecret", "expiresAt"],
       "additionalProperties": false
     },
     "ProviderInstance": {
@@ -334,6 +379,16 @@
         "previousStatus": { "$ref": "#/$defs/ProviderStatus" }
       },
       "required": ["provider"],
+      "additionalProperties": false
+    },
+    "RemoteHostIdentity": {
+      "type": "object",
+      "properties": {
+        "deviceId": { "$ref": "../../core/v1/schema.json#/$defs/DeviceId" },
+        "displayName": { "type": "string", "minLength": 1 },
+        "identityFingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "required": ["deviceId", "displayName", "identityFingerprint"],
       "additionalProperties": false
     },
     "TurnInterruptRequest": {
