@@ -420,10 +420,16 @@ async fn main() {
                 RequestBehavior::EventFirst | RequestBehavior::SnapshotRace
             ) {
                 if let Some(route) = request_route(&request) {
+                    let conversation_id = match &request {
+                        ProtocolRequest::ConversationList { .. } => {
+                            "conversation-list-event-first"
+                        }
+                        _ => "conversation-event-first",
+                    };
                     let event = ProtocolEvent::EventConversationUpserted {
                         jsonrpc: "2.0".to_string(),
                         params: ConversationUpsertedEvent {
-                            conversation: conversation(&route, "conversation-event-first"),
+                            conversation: conversation(&route, conversation_id),
                         },
                     };
                     write_message(&output, codec, ProviderWireMessage::Event(event));
@@ -440,7 +446,7 @@ async fn main() {
                         jsonrpc: "2.0".to_string(),
                         params: TurnOutputDeltaEvent {
                             turn: resource(&route, "turn-event-first"),
-                            conversation: resource(&route, "conversation-event-first"),
+                            conversation: resource(&route, conversation_id),
                             output_id: "output-1".to_string(),
                             kind: "text".to_string(),
                             delta: "hello".to_string(),
@@ -514,6 +520,12 @@ enum RequestBehavior {
 }
 
 fn request_behavior(request: &ProtocolRequest) -> RequestBehavior {
+    if matches!(request, ProtocolRequest::ConversationList { .. })
+        && std::env::var("CODEPET_FAKE_CONVERSATION_LIST_SNAPSHOT_RACE").as_deref()
+            == Ok("1")
+    {
+        return RequestBehavior::SnapshotRace;
+    }
     let native_id = match request {
         ProtocolRequest::ConversationGet { params, .. } => {
             Some(params.conversation.native_resource_id.as_str())
@@ -543,6 +555,7 @@ async fn wait_for_snapshot_release() {
 
 fn request_route(request: &ProtocolRequest) -> Option<ProviderInstanceRoute> {
     match request {
+        ProtocolRequest::ConversationList { params, .. } => Some(params.route.clone()),
         ProtocolRequest::ConversationGet { params, .. } => {
             Some(route_from_resource(&params.conversation))
         }

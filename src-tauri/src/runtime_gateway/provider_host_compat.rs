@@ -284,7 +284,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
                     .map(map_conversation)
                     .collect::<Result<Vec<_>, compat::ProtocolError>>()?,
                 next_cursor: response.page_info.next_cursor,
-                event_sequence: event_sequence(&response.event_cursor)?,
+                event_sequence: event_sequence(&response.snapshot_cursor)?,
             })
         })
     }

@@ -417,6 +417,10 @@ async fn conversation_snapshot_cursors_precede_events_emitted_during_provider_qu
         "CODEPET_FAKE_SNAPSHOT_RELEASE_MARKER".to_string(),
         release_marker.display().to_string(),
     );
+    descriptor.env.insert(
+        "CODEPET_FAKE_CONVERSATION_LIST_SNAPSHOT_RACE".to_string(),
+        "1".to_string(),
+    );
     let manager = build_manager("device-snapshot", vec![descriptor]);
     let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
     gateway.start_event_forwarding();
@@ -424,19 +428,53 @@ async fn conversation_snapshot_cursors_precede_events_emitted_during_provider_qu
     wait_for_gateway_cursor(&gateway, 4).await;
 
     let before_list = gateway.current_event_cursor();
-    let list = gateway
-        .conversation_list(GatewayConversationListRequest {
-            route: Some(codepet_gateway_sdk::GatewayProviderRoute {
-                device_id: "device-snapshot".to_string(),
-                provider_plugin_id: "dev.codepet.snapshot".to_string(),
-                provider_instance_id: "instance-snapshot".to_string(),
-            }),
-            cursor: None,
-            limit: Some(10),
-        })
+    let mut list_events = gateway.subscribe_events(Some(&before_list)).unwrap();
+    let list_gateway = gateway.clone();
+    let list_query = tokio::spawn(async move {
+        list_gateway
+            .conversation_list(GatewayConversationListRequest {
+                route: Some(codepet_gateway_sdk::GatewayProviderRoute {
+                    device_id: "device-snapshot".to_string(),
+                    provider_plugin_id: "dev.codepet.snapshot".to_string(),
+                    provider_instance_id: "instance-snapshot".to_string(),
+                }),
+                cursor: None,
+                limit: Some(10),
+            })
+            .await
+    });
+    let list_event_cursor = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let GatewayEvent::ConversationUpserted {
+                event_cursor,
+                payload,
+                ..
+            } = list_events.next_event().await.unwrap()
+            {
+                if payload.conversation.resource.native_resource_id
+                    == "conversation-list-event-first"
+                {
+                    return event_cursor;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!list_query.is_finished());
+    std::fs::write(&release_marker, b"release\n").unwrap();
+
+    let list = tokio::time::timeout(Duration::from_secs(2), list_query)
         .await
+        .unwrap()
+        .unwrap()
         .unwrap();
     assert_eq!(list.snapshot_cursor, before_list);
+    assert!(
+        event_cursor_sequence(&list.snapshot_cursor)
+            < event_cursor_sequence(&list_event_cursor)
+    );
+    std::fs::remove_file(&release_marker).unwrap();
 
     let after_cursor = gateway.current_event_cursor();
     let mut events = gateway.subscribe_events(Some(&after_cursor)).unwrap();
