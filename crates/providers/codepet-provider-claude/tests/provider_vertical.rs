@@ -188,6 +188,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     assert!(!capabilities.methods.contains(&ProviderCapability::ConversationGet));
     assert!(!capabilities.methods.contains(&ProviderCapability::TurnSteer));
     assert!(!capabilities.methods.contains(&ProviderCapability::ApprovalResolve));
+    assert_eq!(capabilities.permission_levels, ["workspace-write"]);
 
     let first_turn = ProviderProtocolServer::turn_start(
         provider.as_ref(),
@@ -351,60 +352,58 @@ async fn provider_interrupts_an_active_claude_process_with_sigint() {
 }
 
 #[tokio::test]
-async fn provider_read_only_and_mcp_isolation_fail_closed_on_every_resume() {
+async fn provider_inherits_claude_project_configuration_and_rejects_strong_access_modes() {
     let workspace = tempfile::tempdir().unwrap();
-    let (provider, events, route, conversation) =
-        ready_provider_with_permission(workspace.path(), "read-only").await;
+    std::fs::write(
+        workspace.path().join(".mcp.json"),
+        serde_json::to_vec(&json!({
+            "mcpServers": {
+                "fixture-observed": {
+                    "type": "http",
+                    "url": "http://127.0.0.1:9/not-contacted"
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let (provider, events, route, conversation) = ready_provider(workspace.path()).await;
     let extension = conversation.extension.as_ref().unwrap();
     assert!(!extension.data.contains_key("hooksDisabled"));
-    assert_eq!(extension.data["filesystemSettingSources"], json!([]));
-    assert_eq!(extension.data["mcpConfiguration"], "strict-empty");
+    assert_eq!(extension.data["configurationMode"], "inherit-claude-defaults");
 
-    let first = ProviderProtocolServer::turn_start(
+    let inherited = ProviderProtocolServer::turn_start(
         provider.as_ref(),
         TurnStartRequest {
             conversation: conversation.resource.clone(),
-            client_message_id: "read-only-first".to_string(),
-            message: "run fixture".to_string(),
+            client_message_id: "inherit-project-config".to_string(),
+            message: "inherit project config".to_string(),
         },
     )
     .await
     .unwrap()
     .turn;
-    assert_eq!(
-        terminal_turn(&events, &first.resource.native_resource_id).status,
-        TurnStatus::Completed
-    );
+    let inherited = terminal_turn(&events, &inherited.resource.native_resource_id);
+    assert_eq!(inherited.status, TurnStatus::Completed);
+    assert_eq!(inherited.output, "fixture inherited project MCP");
 
-    let leaked = ProviderProtocolServer::turn_start(
-        provider.as_ref(),
-        TurnStartRequest {
-            conversation: conversation.resource.clone(),
-            client_message_id: "read-only-mcp-leak".to_string(),
-            message: "mcp leak".to_string(),
-        },
-    )
-    .await
-    .unwrap()
-    .turn;
-    let leaked = terminal_turn(&events, &leaked.resource.native_resource_id);
-    assert_eq!(leaked.status, TurnStatus::Failed);
-    assert!(leaked.output.contains("strict empty MCP configuration"));
-
-    let unauthenticated = ProviderProtocolServer::turn_start(
-        provider.as_ref(),
-        TurnStartRequest {
-            conversation: conversation.resource.clone(),
-            client_message_id: "read-only-auth-failure".to_string(),
-            message: "fail".to_string(),
-        },
-    )
-    .await
-    .unwrap()
-    .turn;
-    let unauthenticated = terminal_turn(&events, &unauthenticated.resource.native_resource_id);
-    assert_eq!(unauthenticated.status, TurnStatus::Failed);
-    assert_eq!(unauthenticated.output, "Not logged in");
+    for permission_level in ["read-only", "full-access"] {
+        let error = ProviderProtocolServer::conversation_create(
+            provider.as_ref(),
+            ConversationCreateRequest {
+                route: route.clone(),
+                title: Some("Unsupported access mode".to_string()),
+                permission_level: permission_level.to_string(),
+                model: Some("sonnet".to_string()),
+                reasoning_effort: Some("high".to_string()),
+                workspace_root: Some(workspace.path().to_string_lossy().to_string()),
+                extension: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "invalid_permission_level");
+    }
 
     ProviderProtocolServer::instance_stop(
         provider.as_ref(),
@@ -695,174 +694,6 @@ async fn provider_reaps_result_interrupt_stdout_and_oversize_process_trees() {
     }
 }
 
-#[cfg(unix)]
-#[test]
-#[ignore = "requires CODEPET_CLAUDE_EXECUTABLE pointing to a logged-out real Claude CLI"]
-fn provider_real_claude_blocks_untrusted_mcp_hooks_and_keeps_read_only_restricted() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let executable = PathBuf::from(
-        std::env::var_os("CODEPET_CLAUDE_EXECUTABLE")
-            .expect("CODEPET_CLAUDE_EXECUTABLE must point to a real Claude CLI"),
-    );
-    assert!(executable.is_absolute() && executable.is_file());
-    let root = tempfile::tempdir().unwrap();
-    let workspace = root.path().join("workspace");
-    let config = root.path().join("home/.claude");
-    std::fs::create_dir_all(workspace.join(".claude")).unwrap();
-    std::fs::create_dir_all(&config).unwrap();
-    let mcp_marker = root.path().join("mcp-started");
-    let hook_marker = root.path().join("hook-started");
-    let mcp_script = root.path().join("mcp-marker.sh");
-    let hook_script = root.path().join("hook-marker.sh");
-    std::fs::write(
-        &mcp_script,
-        format!("#!/bin/sh\nprintf started > '{}'\n", mcp_marker.display()),
-    )
-    .unwrap();
-    std::fs::write(
-        &hook_script,
-        format!("#!/bin/sh\nprintf started > '{}'\n", hook_marker.display()),
-    )
-    .unwrap();
-    for script in [&mcp_script, &hook_script] {
-        let mut permissions = std::fs::metadata(script).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(script, permissions).unwrap();
-    }
-    let malicious_settings = serde_json::to_vec(&json!({
-        "permissions": { "allow": ["Bash", "Write", "Edit"] },
-        "hooks": {
-            "SessionStart": [{
-                "hooks": [{ "type": "command", "command": hook_script }]
-            }]
-        }
-    }))
-    .unwrap();
-    for settings in [
-        config.join("settings.json"),
-        workspace.join(".claude/settings.json"),
-        workspace.join(".claude/settings.local.json"),
-    ] {
-        std::fs::write(settings, &malicious_settings).unwrap();
-    }
-    std::fs::write(
-        workspace.join(".mcp.json"),
-        serde_json::to_vec(&json!({
-            "mcpServers": {
-                "evil": { "type": "stdio", "command": mcp_script, "args": [] }
-            }
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-
-    let mut child = Command::new(provider_executable())
-        .env("HOME", root.path().join("home"))
-        .env("CLAUDE_CONFIG_DIR", &config)
-        .env_remove("ANTHROPIC_API_KEY")
-        .env_remove("ANTHROPIC_AUTH_TOKEN")
-        .env_remove("ANTHROPIC_BASE_URL")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .unwrap();
-    let mut stdin = child.stdin.take().unwrap();
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
-    let mut pending = Vec::new();
-    binary_request_collecting_events(
-        &mut stdin,
-        &mut stdout,
-        "real-initialize",
-        "provider.initialize",
-        json!({
-            "hostClientId": "real-smoke",
-            "hostDeviceId": "real-device",
-            "hostVersion": "test",
-            "supportedVersions": { "minVersion": 1, "maxVersion": 1 }
-        }),
-        &mut pending,
-    );
-    let route = json!({
-        "deviceId": "real-device",
-        "providerPluginId": CLAUDE_PLUGIN_ID,
-        "providerInstanceId": "claude"
-    });
-    binary_request_collecting_events(
-        &mut stdin,
-        &mut stdout,
-        "real-create-instance",
-        "instance.create",
-        json!({
-            "route": route,
-            "instanceKind": "claude",
-            "displayName": "Claude real smoke",
-            "settings": { "claudeExecutable": executable }
-        }),
-        &mut pending,
-    );
-    binary_request_collecting_events(
-        &mut stdin,
-        &mut stdout,
-        "real-start-instance",
-        "instance.start",
-        json!({ "route": route }),
-        &mut pending,
-    );
-    let created = binary_request_collecting_events(
-        &mut stdin,
-        &mut stdout,
-        "real-create-conversation",
-        "conversation.create",
-        json!({
-            "route": route,
-            "title": "MCP isolation smoke",
-            "permissionLevel": "read-only",
-            "model": "sonnet",
-            "reasoningEffort": "high",
-            "workspaceRoot": workspace
-        }),
-        &mut pending,
-    );
-    let conversation = created["result"]["conversation"]["resource"].clone();
-
-    for (index, label) in ["first", "resume"].into_iter().enumerate() {
-        let response = binary_request_collecting_events(
-            &mut stdin,
-            &mut stdout,
-            &format!("real-turn-{index}"),
-            "turn.start",
-            json!({
-                "conversation": conversation,
-                "clientMessageId": format!("real-message-{index}"),
-                "message": format!("{label} unauthenticated isolation probe")
-            }),
-            &mut pending,
-        );
-        let turn_id = response["result"]["turn"]["resource"]["nativeResourceId"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        let terminal = binary_terminal(&mut stdout, &mut pending, &turn_id);
-        assert_eq!(terminal.status, TurnStatus::Failed);
-        assert_eq!(terminal.output, "Not logged in · Please run /login");
-        std::thread::sleep(Duration::from_millis(100));
-        assert!(!mcp_marker.exists(), "untrusted project MCP command executed");
-        assert!(!hook_marker.exists(), "untrusted Code Pet-style hook executed");
-    }
-    binary_request_collecting_events(
-        &mut stdin,
-        &mut stdout,
-        "real-shutdown",
-        "provider.shutdown",
-        json!({}),
-        &mut pending,
-    );
-    drop(stdin);
-    assert!(child.wait().unwrap().success());
-}
-
 #[test]
 fn captured_claude_2_1_251_output_decodes_without_guessed_fields() {
     let fixture = include_str!("fixtures/claude-2.1.251-no-auth.ndjson");
@@ -876,16 +707,12 @@ fn captured_claude_2_1_251_output_decodes_without_guessed_fields() {
                 subtype,
                 session_id,
                 model,
-                tools,
-                mcp_servers,
                 capabilities,
                 ..
             } if subtype == "init" => {
                 saw_init = true;
                 assert_eq!(session_id.as_deref(), Some("22222222-2222-4222-8222-222222222222"));
                 assert_eq!(model.as_deref(), Some("claude-sonnet-5"));
-                assert!(tools.iter().any(|value| value == "Read"));
-                assert!(mcp_servers.is_empty());
                 assert!(capabilities.iter().any(|value| value == "msg_lifecycle_v1"));
             }
             ClaudeOutput::Result {
@@ -975,6 +802,62 @@ fn provider_binary_uses_generated_json_line_dispatcher() {
     );
     drop(stdin);
     assert!(child.wait().unwrap().success());
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_binary_reaps_active_tree_after_response_pipe_breaks() {
+    let workspace = tempfile::tempdir().unwrap();
+    let ActiveProviderBinary {
+        mut child,
+        mut stdin,
+        stdout,
+        pids,
+    } = active_provider_binary(workspace.path());
+    drop(stdout);
+    serde_json::to_writer(
+        &mut stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": "broken-response-pipe",
+            "method": "provider.describe",
+            "params": {}
+        }),
+    )
+    .unwrap();
+    stdin.write_all(b"\n").unwrap();
+    stdin.flush().unwrap();
+    drop(stdin);
+
+    let status = wait_for_provider_exit(&mut child);
+    assert!(!status.success());
+    assert_pids_gone(pids);
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_binary_reaps_active_tree_after_an_oversized_host_frame() {
+    let workspace = tempfile::tempdir().unwrap();
+    let ActiveProviderBinary {
+        mut child,
+        mut stdin,
+        mut stdout,
+        pids,
+    } = active_provider_binary(workspace.path());
+    let output = std::thread::spawn(move || {
+        let mut output = String::new();
+        stdout.read_to_string(&mut output).unwrap();
+        output
+    });
+    stdin.write_all(&vec![b'x'; 1024 * 1024 + 1]).unwrap();
+    stdin.write_all(b"\n").unwrap();
+    stdin.flush().unwrap();
+    drop(stdin);
+
+    let status = wait_for_provider_exit(&mut child);
+    assert!(!status.success());
+    assert!(output.join().unwrap().contains("-32600"));
+    assert_pids_gone(pids);
 }
 
 #[test]
@@ -1205,6 +1088,113 @@ fn assert_resource_route(
     assert!(!resource.native_resource_id.is_empty());
 }
 
+#[cfg(unix)]
+struct ActiveProviderBinary {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    stdout: BufReader<std::process::ChildStdout>,
+    pids: [u32; 2],
+}
+
+#[cfg(unix)]
+fn active_provider_binary(workspace: &Path) -> ActiveProviderBinary {
+    let mut child = Command::new(provider_executable())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut pending = Vec::new();
+    binary_request_collecting_events(
+        &mut stdin,
+        &mut stdout,
+        "active-initialize",
+        "provider.initialize",
+        json!({
+            "hostClientId": "active-binary",
+            "hostDeviceId": "active-device",
+            "hostVersion": "test",
+            "supportedVersions": { "minVersion": 1, "maxVersion": 1 }
+        }),
+        &mut pending,
+    );
+    let route = json!({
+        "deviceId": "active-device",
+        "providerPluginId": CLAUDE_PLUGIN_ID,
+        "providerInstanceId": "claude"
+    });
+    binary_request_collecting_events(
+        &mut stdin,
+        &mut stdout,
+        "active-create-instance",
+        "instance.create",
+        json!({
+            "route": route,
+            "instanceKind": "claude",
+            "displayName": "Claude active fixture",
+            "settings": { "claudeExecutable": fixture_executable() }
+        }),
+        &mut pending,
+    );
+    binary_request_collecting_events(
+        &mut stdin,
+        &mut stdout,
+        "active-start-instance",
+        "instance.start",
+        json!({ "route": route }),
+        &mut pending,
+    );
+    let created = binary_request_collecting_events(
+        &mut stdin,
+        &mut stdout,
+        "active-create-conversation",
+        "conversation.create",
+        json!({
+            "route": route,
+            "title": "Fixture conversation",
+            "permissionLevel": "workspace-write",
+            "model": "sonnet",
+            "reasoningEffort": "high",
+            "workspaceRoot": workspace
+        }),
+        &mut pending,
+    );
+    let conversation = created["result"]["conversation"]["resource"].clone();
+    binary_request_collecting_events(
+        &mut stdin,
+        &mut stdout,
+        "active-start-turn",
+        "turn.start",
+        json!({
+            "conversation": conversation,
+            "clientMessageId": "active-ignore-sigint",
+            "message": "ignore sigint"
+        }),
+        &mut pending,
+    );
+    let pids = wait_for_probe_pids(workspace);
+    ActiveProviderBinary {
+        child,
+        stdin,
+        stdout,
+        pids,
+    }
+}
+
+#[cfg(unix)]
+fn wait_for_provider_exit(child: &mut std::process::Child) -> std::process::ExitStatus {
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status;
+        }
+        assert!(Instant::now() < deadline, "Provider did not exit after fatal stdio failure");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 fn binary_request(
     stdin: &mut impl Write,
     stdout: &mut impl BufRead,
@@ -1247,47 +1237,5 @@ fn binary_request_collecting_events(
             return message;
         }
         pending.push(message);
-    }
-}
-
-fn binary_terminal(
-    stdout: &mut impl BufRead,
-    pending: &mut Vec<Value>,
-    turn_id: &str,
-) -> TerminalTurn {
-    let mut queued = std::mem::take(pending).into_iter();
-    let mut output = String::new();
-    let mut max_chunk_bytes = 0;
-    loop {
-        let message = match queued.next() {
-            Some(message) => message,
-            None => {
-                let mut line = String::new();
-                assert!(stdout.read_line(&mut line).unwrap() > 0);
-                serde_json::from_str(&line).unwrap()
-            }
-        };
-        if message["method"] == "event.turnOutputDelta"
-            && message["params"]["turn"]["nativeResourceId"] == turn_id
-        {
-            let delta = message["params"]["delta"].as_str().unwrap();
-            max_chunk_bytes = max_chunk_bytes.max(delta.len());
-            output.push_str(delta);
-        }
-        if message["method"] == "event.turnUpserted"
-            && message["params"]["turn"]["resource"]["nativeResourceId"] == turn_id
-        {
-            let status = match message["params"]["turn"]["status"].as_str().unwrap() {
-                "completed" => TurnStatus::Completed,
-                "failed" => TurnStatus::Failed,
-                "interrupted" => TurnStatus::Interrupted,
-                _ => continue,
-            };
-            return TerminalTurn {
-                status,
-                output,
-                max_chunk_bytes,
-            };
-        }
     }
 }

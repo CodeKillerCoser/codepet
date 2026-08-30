@@ -2,7 +2,7 @@
 
 ## 背景
 
-2026-08-30 的当前实现中，Provider Host 可启动独立 `codepet-provider-codex` 与能力较小的 `codepet-provider-claude`。Codex 另有完全隔离的 `CodexDesktopCompanionState` 私有 IPC 链路；Claude Provider 不接 Hook/transcript/Pet 链路。`runtime_gateway_core_tests::real_provider_events_only_emit_remote_tauri_channel_and_never_call_desktop_adapter` 证明任意 Provider event 只进入 remote replay/event，companion/Pet/activity 与 Desktop adapter 不变；`frontend/PetApp.svelte` 只消费 companion channel。
+2026-08-30 的当前实现中，Provider Host 可启动独立 `codepet-provider-codex` 与能力较小的 `codepet-provider-claude`。Codex 另有完全隔离的 `CodexDesktopCompanionState` 私有 IPC 链路；Claude Provider 不消费 Hook/transcript，也不把 Provider event 写入 Pet 链。`runtime_gateway_core_tests::real_provider_events_only_emit_remote_tauri_channel_and_never_call_desktop_adapter` 证明任意 Provider event 只进入 remote replay/event，companion/Pet/activity 与 Desktop adapter 不变；`frontend/PetApp.svelte` 只消费 companion channel。Claude CLI 继承的本机 Hook 若自行调用旧 collector，仍属于独立 Hook 数据源。
 
 旧协议事实集中在 `protocol/schemas/v0.json`，Rust 生成物位于 Tauri 源码目录，且一份模型同时承担现有进程内 gateway 和未来 Provider/Remote/Pet 契约。它已有可复用的 JSON Schema 子集校验、manifest method/event 配对、fixture 验证和 Rust/TypeScript 生成逻辑，但不能表达独立插件生命周期、设备路由或 Pet 与 Provider 的强隔离。
 

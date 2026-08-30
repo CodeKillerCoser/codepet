@@ -1,7 +1,6 @@
 use codepet_provider_claude::ClaudeProvider;
 use codepet_provider_sdk::{
-    dispatch, JsonLineCodec, JsonRpcInboundRequest, ProtocolEvent, ProtocolServer,
-    ProviderShutdownRequest, ProviderWireMessage,
+    dispatch, JsonLineCodec, JsonRpcInboundRequest, ProtocolEvent, ProviderWireMessage,
 };
 use std::io::{BufReader, BufWriter, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -43,17 +42,38 @@ async fn run() -> Result<(), String> {
     let provider = Arc::new(ClaudeProvider::new(events));
     let mut reader = BufReader::new(std::io::stdin());
 
+    let service_result = run_service_loop(&provider, &codec, &writer, &mut reader).await;
+    let cleanup_result = provider
+        .reap_active_processes()
+        .map_err(|error| format!("reap Claude Provider processes: {}", error.message));
+    match service_result {
+        Err(error) => {
+            if let Err(cleanup_error) = cleanup_result {
+                eprintln!("Claude Provider cleanup also failed: {cleanup_error}");
+            }
+            Err(error)
+        }
+        Ok(()) => cleanup_result,
+    }
+}
+
+async fn run_service_loop(
+    provider: &ClaudeProvider,
+    codec: &JsonLineCodec,
+    writer: &Arc<Mutex<BufWriter<std::io::Stdout>>>,
+    reader: &mut BufReader<std::io::Stdin>,
+) -> Result<(), String> {
     loop {
-        let message = match codec.read_message(&mut reader) {
+        let message = match codec.read_message(&mut *reader) {
             Ok(Some(message)) => message,
             Ok(None) => break,
             Err(error) => {
                 let message = error.error.message.clone();
-                write_message(
-                    &codec,
-                    &writer,
+                let _ = write_message(
+                    codec,
+                    writer,
                     ProviderWireMessage::Response(error.into_response()),
-                )?;
+                );
                 return Err(message);
             }
         };
@@ -61,8 +81,8 @@ async fn run() -> Result<(), String> {
             ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request)) => request,
             ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(error)) => {
                 write_message(
-                    &codec,
-                    &writer,
+                    codec,
+                    writer,
                     ProviderWireMessage::Response(error.into_response()),
                 )?;
                 continue;
@@ -71,24 +91,15 @@ async fn run() -> Result<(), String> {
             | ProviderWireMessage::Notification(_)
             | ProviderWireMessage::Event(_) => continue,
         };
-        let response = dispatch(provider.as_ref(), request).await;
+        let response = dispatch(provider, request).await;
         write_message(
-            &codec,
-            &writer,
+            codec,
+            writer,
             ProviderWireMessage::Response(response),
         )?;
         if provider.is_shutdown() {
             break;
         }
-    }
-
-    if !provider.is_shutdown() {
-        ProtocolServer::provider_shutdown(
-            provider.as_ref(),
-            ProviderShutdownRequest {},
-        )
-        .await
-        .map_err(|error| format!("shutdown Claude Provider: {}", error.message))?;
     }
     Ok(())
 }

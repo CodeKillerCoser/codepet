@@ -9,8 +9,6 @@ use std::time::Duration;
 
 pub(crate) const MAX_CLAUDE_OUTPUT_LINE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_CLAUDE_STDERR_LINE_BYTES: usize = 64 * 1024;
-const EMPTY_MCP_CONFIG: &str = r#"{"mcpServers":{}}"#;
-const READ_ONLY_TOOLS: &str = "Read,Glob,Grep";
 const INTERRUPT_GRACE: Duration = Duration::from_millis(750);
 const TERMINATE_GRACE: Duration = Duration::from_millis(500);
 const KILL_WAIT: Duration = Duration::from_secs(2);
@@ -55,8 +53,6 @@ pub struct ClaudeTurnLaunch {
     pub user_message_id: String,
     pub message: String,
     pub title: Option<String>,
-    pub permission_mode: String,
-    pub read_only: bool,
     pub model: Option<String>,
     pub effort: Option<String>,
 }
@@ -195,22 +191,7 @@ impl ClaudeTurnLaunch {
             .arg("--output-format")
             .arg("stream-json")
             .arg("--verbose")
-            .arg("--include-partial-messages")
-            .arg("--safe-mode")
-            .arg("--setting-sources")
-            .arg("")
-            .arg("--strict-mcp-config")
-            .arg("--mcp-config")
-            .arg(EMPTY_MCP_CONFIG)
-            .arg("--permission-mode")
-            .arg(&self.permission_mode)
-            .env("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1");
-        if self.read_only {
-            command
-                .arg("--restricted")
-                .arg("--tools")
-                .arg(READ_ONLY_TOOLS);
-        }
+            .arg("--include-partial-messages");
         if self.resume {
             command.arg("--resume").arg(&self.session_id);
         } else {

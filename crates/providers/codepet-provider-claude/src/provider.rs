@@ -35,7 +35,6 @@ const CLAUDE_EXTENSION_NAMESPACE: &str = "dev.codepet.claude";
 const MAX_PROVIDER_TEXT_CHUNK_BYTES: usize = 64 * 1024;
 const MAX_CLAUDE_METADATA_BYTES: usize = 4 * 1024;
 const TURN_COMPLETION_WAIT: Duration = Duration::from_secs(4);
-const READ_ONLY_TOOLS: [&str; 3] = ["Read", "Glob", "Grep"];
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -107,8 +106,6 @@ struct ManagedConversation {
     conversation: ProviderConversation,
     workspace_root: PathBuf,
     title: Option<String>,
-    native_permission_mode: String,
-    read_only: bool,
     model: Option<String>,
     effort: Option<String>,
     materialized: bool,
@@ -201,8 +198,7 @@ impl ClaudeInstanceRuntime {
                 "conversation.create extension data is unsupported by the Claude CLI adapter",
             ));
         }
-        let native_permission_mode = native_permission_mode(&request.permission_level)?;
-        let read_only = request.permission_level == "read-only";
+        validate_permission_level(&request.permission_level)?;
         let workspace_root = request.workspace_root.as_ref().ok_or_else(|| {
             protocol_error(
                 "invalid_conversation_options",
@@ -262,9 +258,7 @@ impl ClaudeInstanceRuntime {
             extension: Some(extension([
                 ("nativeInterface", json!("claude-print-stream-json")),
                 ("sessionScope", json!("provider-managed")),
-                ("nativePermissionMode", json!(native_permission_mode)),
-                ("filesystemSettingSources", json!([])),
-                ("mcpConfiguration", json!("strict-empty")),
+                ("configurationMode", json!("inherit-claude-defaults")),
                 ("externalSessionDiscovery", json!(false)),
             ])),
         };
@@ -276,8 +270,6 @@ impl ClaudeInstanceRuntime {
                     conversation: conversation.clone(),
                     workspace_root,
                     title: request.title,
-                    native_permission_mode: native_permission_mode.to_string(),
-                    read_only,
                     model: request.model,
                     effort: request.reasoning_effort,
                     materialized: false,
@@ -331,8 +323,6 @@ impl ClaudeInstanceRuntime {
                 user_message_id,
                 message: request.message,
                 title: managed.title.clone(),
-                permission_mode: managed.native_permission_mode.clone(),
-                read_only: managed.read_only,
                 model: managed.model.clone(),
                 effort: managed.effort.clone(),
             }
@@ -432,19 +422,9 @@ impl ClaudeInstanceRuntime {
                 session_id,
                 cwd,
                 model,
-                tools,
-                mcp_servers,
                 ..
             } if subtype == "init" => {
                 validate_claude_session(conversation_id, session_id.as_deref())?;
-                if !mcp_servers.is_empty() {
-                    return Err(protocol_error(
-                        "claude_mcp_isolation_failed",
-                        "Claude initialized MCP servers despite strict empty MCP configuration"
-                            .to_string(),
-                        false,
-                    ));
-                }
                 if cwd
                     .as_ref()
                     .is_some_and(|value| value.len() > MAX_CLAUDE_METADATA_BYTES)
@@ -461,17 +441,6 @@ impl ClaudeInstanceRuntime {
                 let conversation = {
                     let mut mutable = lock(&self.mutable);
                     let managed = active_conversation_mut(&mut mutable, conversation_id, turn_id)?;
-                    if managed.read_only
-                        && tools
-                            .iter()
-                            .any(|tool| !READ_ONLY_TOOLS.contains(&tool.as_str()))
-                    {
-                        return Err(protocol_error(
-                            "claude_read_only_isolation_failed",
-                            "Claude exposed a non-read-only tool in read-only mode".to_string(),
-                            false,
-                        ));
-                    }
                     managed.materialized = true;
                     if let Some(cwd) = cwd {
                         managed.conversation.workspace_root = Some(cwd);
@@ -797,6 +766,36 @@ impl ClaudeInstanceRuntime {
         self.set_status(InstanceStatus::Stopped)
     }
 
+    fn reap_active_processes(&self) -> Result<(), ProtocolError> {
+        let controls = {
+            let mut mutable = lock(&self.mutable);
+            mutable
+                .conversations
+                .values_mut()
+                .filter_map(|managed| {
+                    let active = managed.active_turn.as_mut()?;
+                    active.requested_completion = Some(TurnCompletion {
+                        status: TurnStatus::Interrupted,
+                        result: None,
+                        stop_reason: None,
+                        terminal_reason: Some("provider_exit".to_string()),
+                    });
+                    Some(active.control.clone())
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut first_error = None;
+        for control in controls {
+            if let Err(error) = control.terminate() {
+                first_error.get_or_insert_with(|| cli_protocol_error(error));
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
     fn resource(&self, native_resource_id: String) -> RoutedResourceId {
         RoutedResourceId {
             device_id: self.route.device_id.clone(),
@@ -848,6 +847,24 @@ impl ClaudeProvider {
 
     pub fn is_shutdown(&self) -> bool {
         self.shutdown.load(Ordering::SeqCst)
+    }
+
+    pub fn reap_active_processes(&self) -> Result<(), ProtocolError> {
+        let instances = lock(&self.state)
+            .instances
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut first_error = None;
+        for instance in instances {
+            if let Err(error) = instance.reap_active_processes() {
+                first_error.get_or_insert(error);
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     fn descriptor() -> ProviderPluginDescriptor {
@@ -1195,11 +1212,7 @@ fn claude_capabilities() -> ProviderCapabilities {
     methods.push(ProviderCapability::TurnInterrupt);
     ProviderCapabilities {
         methods,
-        permission_levels: vec![
-            "read-only".to_string(),
-            "workspace-write".to_string(),
-            "full-access".to_string(),
-        ],
+        permission_levels: vec!["workspace-write".to_string()],
         models: vec![
             "sonnet".to_string(),
             "opus".to_string(),
@@ -1223,14 +1236,7 @@ fn claude_capabilities() -> ProviderCapabilities {
                 "unsupportedMethods",
                 json!(["conversation.list", "conversation.get", "turn.steer", "approval.resolve"]),
             ),
-            (
-                "permissionModeMapping",
-                json!({
-                    "read-only": "dontAsk",
-                    "workspace-write": "acceptEdits",
-                    "full-access": "bypassPermissions"
-                }),
-            ),
+            ("permissionModeMapping", json!({ "workspace-write": "inherited" })),
         ])],
     }
 }
@@ -1469,16 +1475,15 @@ fn result_status(subtype: &str, is_error: bool, terminal_reason: Option<&str>) -
     }
 }
 
-fn native_permission_mode(permission_level: &str) -> Result<&'static str, ProtocolError> {
-    match permission_level {
-        "read-only" => Ok("dontAsk"),
-        "workspace-write" => Ok("acceptEdits"),
-        "full-access" => Ok("bypassPermissions"),
-        _ => Err(protocol_error(
+fn validate_permission_level(permission_level: &str) -> Result<(), ProtocolError> {
+    if permission_level == "workspace-write" {
+        Ok(())
+    } else {
+        Err(protocol_error(
             "invalid_permission_level",
             format!("unsupported Claude permission level: {permission_level}"),
             false,
-        )),
+        ))
     }
 }
 

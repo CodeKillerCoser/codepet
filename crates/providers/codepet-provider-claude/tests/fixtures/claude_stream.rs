@@ -9,7 +9,6 @@ use std::time::Duration;
 struct Options {
     session_id: String,
     resumed: bool,
-    permission_mode: String,
 }
 
 fn main() {
@@ -32,14 +31,9 @@ fn main() {
     assert_eq!(input["message"]["role"], "user");
     assert!(input["parent_tool_use_id"].is_null());
 
-    let read_only = options.permission_mode == "dontAsk";
-    let tools = if read_only {
-        json!(["Glob", "Grep", "Read"])
-    } else {
-        json!(["Task", "Bash", "Edit", "Read", "Write"])
-    };
-    let mcp_servers = if message == "mcp leak" {
-        json!([{ "name": "evil-project-server", "status": "connected" }])
+    let inherited_project_mcp = project_mcp_is_visible();
+    let mcp_servers = if inherited_project_mcp {
+        json!([{ "name": "fixture-observed", "status": "connected" }])
     } else {
         json!([])
     };
@@ -62,8 +56,8 @@ fn main() {
             "cwd": std::env::current_dir().unwrap(),
             "session_id": options.session_id,
             "model": "claude-sonnet-5",
-            "permissionMode": options.permission_mode,
-            "tools": tools,
+            "permissionMode": "default",
+            "tools": ["Task", "Bash", "Edit", "Read", "Write"],
             "mcp_servers": mcp_servers,
             "capabilities": ["interrupt_receipt_v1", "msg_lifecycle_v1"],
             "uuid": "44444444-4444-4444-8444-444444444444"
@@ -79,11 +73,6 @@ fn main() {
             "uuid": "55555555-5555-4555-8555-555555555555"
         }),
     );
-
-    if message == "mcp leak" {
-        thread::sleep(Duration::from_secs(60));
-        return;
-    }
 
     #[cfg(unix)]
     if message == "ignore sigint" {
@@ -161,7 +150,10 @@ fn main() {
         return;
     }
 
-    let output = if options.resumed {
+    let output = if message == "inherit project config" {
+        assert!(inherited_project_mcp, "fixture project MCP config was not visible");
+        "fixture inherited project MCP"
+    } else if options.resumed {
         "fixture resumed"
     } else {
         "fixture output"
@@ -206,19 +198,22 @@ fn parse_options() -> Options {
     assert!(args.iter().any(|arg| arg == "--print"));
     assert!(args.iter().any(|arg| arg == "--verbose"));
     assert!(args.iter().any(|arg| arg == "--include-partial-messages"));
-    assert!(args.iter().any(|arg| arg == "--safe-mode"));
-    assert!(args.iter().any(|arg| arg == "--strict-mcp-config"));
     assert!(!args.iter().any(|arg| arg == "--include-hook-events"));
     assert!(!args.iter().any(|arg| arg == "--permission-prompt-tool"));
-    assert!(!args.iter().any(|arg| arg == "--settings"));
+    for inherited_flag in [
+        "--safe-mode",
+        "--setting-sources",
+        "--strict-mcp-config",
+        "--mcp-config",
+        "--settings",
+        "--restricted",
+        "--tools",
+        "--permission-mode",
+    ] {
+        assert!(!args.iter().any(|arg| arg == inherited_flag));
+    }
     assert_eq!(value_after(&args, "--input-format"), "stream-json");
     assert_eq!(value_after(&args, "--output-format"), "stream-json");
-    assert_eq!(value_after(&args, "--setting-sources"), "");
-    assert_eq!(value_after(&args, "--mcp-config"), r#"{"mcpServers":{}}"#);
-    assert_eq!(
-        std::env::var("CLAUDE_CODE_DISABLE_AUTO_MEMORY").as_deref(),
-        Ok("1")
-    );
 
     let session = args
         .iter()
@@ -238,25 +233,21 @@ fn parse_options() -> Options {
         assert!(!args.iter().any(|arg| arg == "--resume"));
         assert_eq!(value_after(&args, "--name"), "Fixture conversation");
     }
-    let permission_mode = value_after(&args, "--permission-mode").to_string();
-    match permission_mode.as_str() {
-        "dontAsk" => {
-            assert!(args.iter().any(|arg| arg == "--restricted"));
-            assert_eq!(value_after(&args, "--tools"), "Read,Glob,Grep");
-        }
-        "acceptEdits" | "bypassPermissions" => {
-            assert!(!args.iter().any(|arg| arg == "--restricted"));
-            assert!(!args.iter().any(|arg| arg == "--tools"));
-        }
-        other => panic!("unexpected fixture permission mode: {other}"),
-    }
     assert_eq!(value_after(&args, "--model"), "sonnet");
     assert_eq!(value_after(&args, "--effort"), "high");
     Options {
         session_id: session.0,
         resumed: session.1,
-        permission_mode,
     }
+}
+
+fn project_mcp_is_visible() -> bool {
+    let path = std::env::current_dir().unwrap().join(".mcp.json");
+    fs::read(path)
+        .ok()
+        .and_then(|contents| serde_json::from_slice::<Value>(&contents).ok())
+        .and_then(|config| config.pointer("/mcpServers/fixture-observed").cloned())
+        .is_some()
 }
 
 fn value_after<'a>(args: &'a [String], flag: &str) -> &'a str {

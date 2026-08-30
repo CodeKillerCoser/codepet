@@ -11,7 +11,7 @@
 - Claude Remote：同一 Host/Gateway lifecycle、独立 `codepet-provider-claude` 进程与官方 CLI stream-json；只进入 `runtime-gateway-event`。
 - Codex Desktop Companion：`CodexDesktopCompanionState`、`~/.codex/ipc/ipc.sock` adapter 和 `codex-desktop-companion-event`。
 
-旧 Hook 拓扑当前只服务 Claude Code、Qoder 和 Cursor。Claude 的 Hook/Pet 观察链与 remote Provider 是两个隔离入口：Provider 自己不读 Hook/transcript，且每次启动的 CLI turn 使用 safe mode、空 user/project/local setting sources 和 strict-empty MCP，避免普通 Hook 或 MCP 把同一 remote turn 回灌 Pet；managed policy Hook 仍由 Claude 组织策略控制。Codex 在设置页保留无 Hook 的 disabled 占位项；启动时会清理遗留托管 Codex Hook，脚本、实时 collector 和 spool 回放也都会拒绝 Codex。Codex audit watcher 与启动回放已移除。历史 Token 用量扫描仍是独立路径，本阶段不变。
+旧 Hook 拓扑当前只服务 Claude Code、Qoder 和 Cursor。Claude remote Provider 自己不读 Hook/transcript，也不把 Provider event 写入 Pet；但它按产品语义继承本机 Claude settings、MCP、Hook 与 plugin，因此用户已安装的 Code Pet Claude Hook 可以独立观察该 CLI turn并进入旧 collector。Provider/Gateway event 与 Hook/Pet event 仍是两条不同的数据链。Codex 在设置页保留无 Hook 的 disabled 占位项；启动时会清理遗留托管 Codex Hook，脚本、实时 collector 和 spool 回放也都会拒绝 Codex。Codex audit watcher 与启动回放已移除。历史 Token 用量扫描仍是独立路径，本阶段不变。
 
 ## Codex 双链路
 
