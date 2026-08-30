@@ -29,6 +29,7 @@ impl ProviderInstanceRecord {
     pub fn route(&self) -> ProviderInstanceRoute {
         ProviderInstanceRoute {
             device_id: self.device_id.clone(),
+            provider_plugin_id: self.plugin_id.clone(),
             provider_instance_id: self.instance_id.clone(),
         }
     }
@@ -265,6 +266,15 @@ impl ProviderInstanceRegistry {
                 route,
             ));
         }
+        if record.plugin_id != route.provider_plugin_id {
+            return Err(route_error(
+                "provider_instance_plugin_mismatch",
+                "Provider instance belongs to a different plugin",
+                route,
+            )
+            .with_detail("expectedPluginId", route.provider_plugin_id.clone())
+            .with_detail("actualPluginId", record.plugin_id));
+        }
         if let Some(expected_plugin_id) = expected_plugin_id {
             if expected_plugin_id.trim().is_empty() {
                 return Err(HostError::new(
@@ -373,10 +383,13 @@ fn validate_identity(identity: &InstanceIdentity) -> HostResult<()> {
 }
 
 fn validate_route(route: &ProviderInstanceRoute) -> HostResult<()> {
-    if route.device_id.trim().is_empty() || route.provider_instance_id.trim().is_empty() {
+    if route.device_id.trim().is_empty()
+        || route.provider_plugin_id.trim().is_empty()
+        || route.provider_instance_id.trim().is_empty()
+    {
         return Err(route_error(
             "invalid_provider_route",
-            "Provider route deviceId and providerInstanceId must not be empty",
+            "Provider route deviceId, providerPluginId, and providerInstanceId must not be empty",
             route,
         ));
     }
@@ -404,5 +417,6 @@ fn registry_lock_error() -> HostError {
 fn route_error(code: &str, message: &str, route: &ProviderInstanceRoute) -> HostError {
     HostError::new(code, message)
         .with_detail("deviceId", route.device_id.clone())
+        .with_detail("providerPluginId", route.provider_plugin_id.clone())
         .with_detail("providerInstanceId", route.provider_instance_id.clone())
 }

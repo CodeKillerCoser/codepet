@@ -87,15 +87,18 @@ pub struct Conversation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview: Option<String>,
     pub status: ConversationStatus,
-    pub permission_level: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_level: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<String>,
-    pub created_at: TimestampMs,
-    pub updated_at: TimestampMs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<TimestampMs>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<TimestampMs>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_turn: Option<TurnTask>,
 }
@@ -166,6 +169,8 @@ pub enum ConversationStatus {
     Running,
     #[serde(rename = "waiting-approval")]
     WaitingApproval,
+    #[serde(rename = "waiting-user-input")]
+    WaitingUserInput,
     #[serde(rename = "error")]
     Error,
     #[serde(rename = "archived")]
@@ -252,6 +257,7 @@ pub enum GatewayCapability {
 #[serde(deny_unknown_fields)]
 pub struct GatewayProviderRoute {
     pub device_id: DeviceId,
+    pub provider_plugin_id: ProviderPluginId,
     pub provider_instance_id: ProviderInstanceId,
 }
 
@@ -334,6 +340,7 @@ pub struct ProviderStatusChangedEvent {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct TurnInterruptRequest {
+    pub conversation: RoutedResourceId,
     pub turn: RoutedResourceId,
 }
 
@@ -349,6 +356,7 @@ pub struct TurnInterruptResponse {
 #[serde(deny_unknown_fields)]
 pub struct TurnOutputDeltaEvent {
     pub turn: RoutedResourceId,
+    pub conversation: RoutedResourceId,
     pub output_id: NativeResourceId,
     pub kind: String,
     pub delta: String,
@@ -399,7 +407,8 @@ pub struct TurnTask {
     pub display_summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub started_at: Option<TimestampMs>,
-    pub updated_at: TimestampMs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<TimestampMs>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<TimestampMs>,
 }

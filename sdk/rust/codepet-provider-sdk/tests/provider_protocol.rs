@@ -51,7 +51,7 @@ async fn json_rpc_dispatcher_routes_initialize_to_the_async_server_trait() {
 }
 
 #[test]
-fn provider_event_preserves_device_instance_and_native_resource_route() {
+fn provider_event_preserves_all_four_resource_route_dimensions() {
     let event = decode_event(include_bytes!(
         "../../../../protocol/provider/v1/fixtures/conversation-upserted-event.json"
     ))
@@ -60,6 +60,10 @@ fn provider_event_preserves_device_instance_and_native_resource_route() {
         panic!("expected conversation event");
     };
     assert_eq!(params.conversation.resource.device_id, "device-macbook-1");
+    assert_eq!(
+        params.conversation.resource.provider_plugin_id,
+        "dev.codepet.codex"
+    );
     assert_eq!(params.conversation.resource.provider_instance_id, "codex-work");
     assert_eq!(params.conversation.resource.native_resource_id, "thread-01");
 }
@@ -134,7 +138,7 @@ impl ProtocolServer for InstanceKindServer {
 #[tokio::test]
 async fn instance_create_server_can_fail_closed_on_unsupported_kind() {
     let request = decode_request(
-        br#"{"jsonrpc":"2.0","id":"instance-kind-1","method":"instance.create","params":{"route":{"deviceId":"device-1","providerInstanceId":"instance-1"},"instanceKind":"qoder","displayName":"Qoder","settings":{}}}"#,
+        br#"{"jsonrpc":"2.0","id":"instance-kind-1","method":"instance.create","params":{"route":{"deviceId":"device-1","providerPluginId":"dev.codepet.codex","providerInstanceId":"instance-1"},"instanceKind":"qoder","displayName":"Qoder","settings":{}}}"#,
     )
     .unwrap();
     let response = dispatch(

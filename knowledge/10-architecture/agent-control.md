@@ -16,7 +16,7 @@ Agent 开关和 hook 事件勾选是两个层级：开关决定是否安装 Code
 
 - 旧 Codex `PetEvent` 的回复和审批路径仍为 unsupported；Hook/audit/transcript 不得成为 Codex fallback。
 - Codex Remote 通过独立 App Server Provider 提供 list/get/create、turn 和 approval，面向远程控制；它的事件不进入桌宠。
-- Codex Desktop Companion 通过专用 Tauri channel 声明 get、start/steer/interrupt 与 command/file 二元审批；动作只对已 bootstrap、owner 仍有效且未被 remote provenance 排除的会话受理。
+- Codex Desktop Companion 通过专用 Tauri channel 声明 get、start/steer/interrupt 与 command/file 二元审批；动作只对已 bootstrap 且 owner 仍有效的 Desktop 会话受理，Provider 状态不参与其判定。
 - Qoder 当前没有经过验证的“向现有本机会话发送消息”路径。
 - 审批处理通过 collector 的等待路径解决 `waiting-approval` 事件。
 - 激活能力依赖平台，可使用应用名、bundle id、路径或 macOS 终端会话自动化。

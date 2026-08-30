@@ -17,7 +17,6 @@ use code_pet_lib::runtime_gateway::tauri_bridge::{
     CodexDesktopCompanionState, RuntimeGatewayState, CODEX_DESKTOP_COMPANION_EVENT,
     RUNTIME_GATEWAY_EVENT,
 };
-use code_pet_lib::agent::codex_thread_scope::CodexThreadScope;
 use code_pet_lib::state::SharedState;
 use codepet_host::{
     DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor, PluginInstanceConfig,
@@ -29,7 +28,10 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::Listener;
+
+const LEGACY_CODEX_DESKTOP_COMPANION_THREAD_EXCLUDED_EVENT: &str =
+    "codex-desktop-companion-thread-excluded";
+use tauri::{Listener, Manager};
 
 struct FakeProvider {
     provider: Provider,
@@ -478,9 +480,8 @@ async fn local_transport_dispatches_requests_and_subscribes_to_gateway_events() 
 
 #[tokio::test]
 async fn unavailable_provider_host_does_not_block_companion_construction() {
-    let thread_scope = CodexThreadScope::default();
-    let remote = RuntimeGatewayState::new(None, thread_scope.clone());
-    let companion = CodexDesktopCompanionState::with_thread_scope(thread_scope);
+    let remote = RuntimeGatewayState::new(None);
+    let companion = CodexDesktopCompanionState::default();
 
     let response = remote
         .request(ProtocolRequest::ProviderList {
@@ -565,10 +566,7 @@ async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desk
     assert!(provider_gateway.start_event_forwarding());
     assert_start_enabled(&manager).await;
 
-    let remote = RuntimeGatewayState::new(
-        Some(provider_gateway.clone()),
-        CodexThreadScope::default(),
-    );
+    let remote = RuntimeGatewayState::new(Some(provider_gateway.clone()));
     let companion = CodexDesktopCompanionState::new(Arc::new(Gateway::default()));
     let desktop_spy = Arc::new(FakeProvider::new("desktop-spy", ProviderStatus::Ready));
     companion
@@ -577,12 +575,19 @@ async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desk
         .register(desktop_spy.clone())
         .unwrap();
     let app = tauri::test::mock_app();
+    let pet_activity = SharedState::default();
+    app.manage(pet_activity.clone());
     let runtime_events = Arc::new(AtomicUsize::new(0));
     let companion_events = Arc::new(AtomicUsize::new(0));
+    let exclusion_events = Arc::new(AtomicUsize::new(0));
     let pet_events = Arc::new(AtomicUsize::new(0));
     for (event_name, counter) in [
         (RUNTIME_GATEWAY_EVENT, runtime_events.clone()),
         (CODEX_DESKTOP_COMPANION_EVENT, companion_events.clone()),
+        (
+            LEGACY_CODEX_DESKTOP_COMPANION_THREAD_EXCLUDED_EVENT,
+            exclusion_events.clone(),
+        ),
         ("pet-event", pet_events.clone()),
     ] {
         app.listen(event_name, move |_| {
@@ -591,10 +596,10 @@ async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desk
     }
     start_runtime_gateway_event_bridge(app.handle().clone(), &remote).unwrap();
     start_codex_desktop_companion_event_bridge(app.handle().clone(), &companion).unwrap();
-    let pet_activity = SharedState::default();
     let mut plugin_events = provider_gateway.subscribe_events(None).unwrap();
     let resource = codepet_host::gateway_sdk::RoutedResourceId {
         device_id: device_id.clone(),
+        provider_plugin_id: "dev.codepet.isolation".to_string(),
         provider_instance_id: "instance-plugin-test".to_string(),
         native_resource_id: "event-first".to_string(),
     };
@@ -695,6 +700,7 @@ async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desk
     assert!(desktop_spy.calls().is_empty());
     assert!(runtime_events.load(Ordering::SeqCst) > 0);
     assert_eq!(companion_events.load(Ordering::SeqCst), 0);
+    assert_eq!(exclusion_events.load(Ordering::SeqCst), 0);
     assert_eq!(pet_events.load(Ordering::SeqCst), 0);
 }
 
@@ -745,6 +751,7 @@ fn provider_resource(
 ) -> codepet_host::gateway_sdk::RoutedResourceId {
     codepet_host::gateway_sdk::RoutedResourceId {
         device_id: device_id.to_string(),
+        provider_plugin_id: "dev.codepet.isolation".to_string(),
         provider_instance_id: "instance-plugin-test".to_string(),
         native_resource_id: native_resource_id.to_string(),
     }

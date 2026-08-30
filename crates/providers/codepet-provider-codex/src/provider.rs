@@ -1,12 +1,13 @@
 use crate::client::CodexAppServerSession;
 use crate::mapper::{parse_permission_level, CodexProtocolMapper};
 use crate::protocol::{
-    CodexAppServerError, CodexApprovalRequest, CodexIncoming, CodexNotification,
-    CodexThreadListRequest, CodexThreadStartRequest, CodexTurnStartRequest,
-    CodexTurnSteerRequest, CODEX_INSTANCE_KIND, CODEX_PLUGIN_ID,
+    approval_generation, approval_resource_id, CodexAppServerError, CodexApprovalRequest,
+    CodexIncoming, CodexNotification, CodexThreadListRequest, CodexThreadStartRequest,
+    CodexTurnStartRequest, CodexTurnSteerRequest, CODEX_INSTANCE_KIND, CODEX_PLUGIN_ID,
 };
 use codepet_provider_sdk::{
-    ApprovalResolveRequest, ApprovalResolveResponse, ConversationCreateRequest,
+    ApprovalRequestedEvent, ApprovalResolveRequest, ApprovalResolveResponse,
+    ConversationCreateRequest,
     ConversationCreateResponse, ConversationGetRequest, ConversationGetResponse,
     ConversationListRequest, ConversationListResponse, InstanceCapabilitiesRequest,
     InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceCreateResponse,
@@ -14,7 +15,7 @@ use codepet_provider_sdk::{
     InstanceStartResponse, InstanceStatus, InstanceStatusChangedEvent, InstanceStopRequest,
     InstanceStopResponse, PageInfo, ProtocolError, ProtocolEvent, ProtocolFuture,
     ProtocolServer, ProviderCapabilities, ProviderDescribeRequest, ProviderDescribeResponse,
-    ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance,
+    ProviderApproval, ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance,
     ProviderInstanceRoute, ProviderPluginDescriptor, ProviderShutdownRequest,
     ProviderShutdownResponse, RoutedResourceId, TurnInterruptRequest, TurnInterruptResponse,
     TurnStartRequest, TurnStartResponse, TurnSteerRequest, TurnSteerResponse, VersionRange,
@@ -58,8 +59,14 @@ where
 struct InstanceMutable {
     status: InstanceStatus,
     session: Option<CodexAppServerSession>,
-    pending_approvals: HashMap<String, CodexApprovalRequest>,
-    turn_conversations: HashMap<String, String>,
+    session_generation: Option<String>,
+    pending_approvals: HashMap<String, PendingApproval>,
+}
+
+#[derive(Clone)]
+struct PendingApproval {
+    request: CodexApprovalRequest,
+    approval: ProviderApproval,
 }
 
 struct CodexInstanceRuntime {
@@ -92,8 +99,8 @@ impl CodexInstanceRuntime {
             mutable: Mutex::new(InstanceMutable {
                 status: InstanceStatus::Created,
                 session: None,
+                session_generation: None,
                 pending_approvals: HashMap::new(),
-                turn_conversations: HashMap::new(),
             }),
             mapper: Mutex::new(CodexProtocolMapper::new(request.route)),
             events,
@@ -161,39 +168,9 @@ impl CodexInstanceRuntime {
         })
     }
 
-    fn remember_turn(&self, turn_id: String, conversation_id: String) {
-        lock(&self.mutable)
-            .turn_conversations
-            .insert(turn_id, conversation_id);
-    }
-
-    fn remember_conversation(&self, conversation: &codepet_provider_sdk::ProviderConversation) {
-        if let Some(turn) = conversation.active_turn.as_ref() {
-            self.remember_turn(
-                turn.resource.native_resource_id.clone(),
-                conversation.resource.native_resource_id.clone(),
-            );
-        }
-    }
-
-    fn conversation_for_turn(&self, turn_id: &str) -> Result<String, ProtocolError> {
-        lock(&self.mutable)
-            .turn_conversations
-            .get(turn_id)
-            .cloned()
-            .ok_or_else(|| {
-                protocol_error(
-                    "turn_context_unavailable",
-                    format!(
-                        "Codex turn {turn_id} has not been observed in this Provider instance"
-                    ),
-                    false,
-                )
-            })
-    }
-
     fn start_event_forwarder(
         self: &Arc<Self>,
+        session_generation: String,
         incoming: Receiver<Result<CodexIncoming, CodexAppServerError>>,
     ) {
         let runtime = Arc::downgrade(self);
@@ -202,39 +179,43 @@ impl CodexInstanceRuntime {
                 let Some(runtime) = runtime.upgrade() else {
                     return;
                 };
+                let is_current_session = {
+                    let mutable = lock(&runtime.mutable);
+                    mutable.session_generation.as_deref() == Some(session_generation.as_str())
+                        && matches!(
+                            mutable.status,
+                            InstanceStatus::Ready | InstanceStatus::Starting
+                        )
+                };
+                if !is_current_session {
+                    return;
+                }
                 match message {
                     Ok(incoming) => {
-                        if !matches!(
-                            runtime.status(),
-                            InstanceStatus::Ready | InstanceStatus::Starting
-                        ) {
-                            return;
-                        }
-                        runtime.remember_incoming(&incoming);
-                        let events = lock(&runtime.mapper).events(incoming, now_ms());
+                        let events = runtime.map_incoming(incoming);
                         match events {
                             Ok(events) => {
                                 for event in events {
                                     if let Err(error) = runtime.events.publish(event) {
-                                        runtime.fail_from_event_forwarder(error);
+                                        runtime.fail_from_event_forwarder(
+                                            &session_generation,
+                                            error,
+                                        );
                                         return;
                                     }
                                 }
                             }
                             Err(error) => {
-                                runtime.fail_from_event_forwarder(error);
+                                runtime.fail_from_event_forwarder(&session_generation, error);
                                 return;
                             }
                         }
                     }
                     Err(error) => {
-                        let should_fail = {
-                            let mutable = lock(&runtime.mutable);
-                            matches!(mutable.status, InstanceStatus::Ready | InstanceStatus::Starting)
-                        };
-                        if should_fail {
-                            runtime.fail_from_event_forwarder(CodexProtocolMapper::error(error));
-                        }
+                        runtime.fail_from_event_forwarder(
+                            &session_generation,
+                            CodexProtocolMapper::error(error),
+                        );
                         return;
                     }
                 }
@@ -242,61 +223,72 @@ impl CodexInstanceRuntime {
         });
     }
 
-    fn remember_incoming(&self, incoming: &CodexIncoming) {
-        let mut mutable = lock(&self.mutable);
+    fn map_incoming(&self, incoming: CodexIncoming) -> Result<Vec<ProtocolEvent>, ProtocolError> {
         match incoming {
-            CodexIncoming::Notification(
-                CodexNotification::TurnStarted { thread_id, turn }
-                | CodexNotification::TurnCompleted { thread_id, turn },
-            ) => {
-                mutable
-                    .turn_conversations
-                    .insert(turn.id.clone(), thread_id.clone());
-            }
-            CodexIncoming::Notification(CodexNotification::OutputDelta {
-                thread_id,
-                turn_id,
-                ..
-            }) => {
-                mutable
-                    .turn_conversations
-                    .insert(turn_id.clone(), thread_id.clone());
-            }
-            CodexIncoming::ApprovalRequested(approval) => {
-                mutable
-                    .turn_conversations
-                    .insert(approval.turn_id.clone(), approval.thread_id.clone());
-                mutable
-                    .pending_approvals
-                    .insert(approval.approval_id(), approval.clone());
+            CodexIncoming::ApprovalRequested(request) => {
+                let approval = lock(&self.mapper).approval(&request);
+                let approval_id = approval.resource.native_resource_id.clone();
+                let mut mutable = lock(&self.mutable);
+                if mutable.session_generation.as_deref()
+                    != Some(request.session_generation.as_str())
+                {
+                    return Ok(Vec::new());
+                }
+                mutable.pending_approvals.insert(
+                    approval_id,
+                    PendingApproval {
+                        request,
+                        approval: approval.clone(),
+                    },
+                );
+                Ok(vec![ProtocolEvent::EventApprovalRequested {
+                    jsonrpc: "2.0".to_string(),
+                    params: ApprovalRequestedEvent { approval },
+                }])
             }
             CodexIncoming::Notification(CodexNotification::ServerRequestResolved {
                 request_id,
+                session_generation,
                 ..
             }) => {
-                mutable.pending_approvals.remove(&request_id.approval_id());
+                let approval_id = approval_resource_id(&session_generation, &request_id);
+                let pending = {
+                    let mut mutable = lock(&self.mutable);
+                    if mutable.session_generation.as_deref() != Some(&session_generation) {
+                        return Ok(Vec::new());
+                    }
+                    mutable.pending_approvals.remove(&approval_id)
+                };
+                let Some(pending) = pending else {
+                    return Ok(Vec::new());
+                };
+                let (_, event) = lock(&self.mapper).approval_expired(pending.approval, now_ms());
+                Ok(vec![event])
             }
-            CodexIncoming::Notification(CodexNotification::ThreadStarted { .. })
-            | CodexIncoming::Notification(CodexNotification::Unknown { .. })
-            | CodexIncoming::UnsupportedServerRequest { .. } => {}
+            incoming => lock(&self.mapper).events(incoming),
         }
     }
 
-    fn fail_from_event_forwarder(&self, error: ProtocolError) {
+    fn fail_from_event_forwarder(
+        &self,
+        session_generation: &str,
+        error: ProtocolError,
+    ) {
         eprintln!("Codex Provider event forwarding failed: {}", error.message);
         let previous_status = {
             let mut mutable = lock(&self.mutable);
-            if !matches!(mutable.status, InstanceStatus::Ready | InstanceStatus::Starting) {
+            if mutable.session_generation.as_deref() != Some(session_generation)
+                || !matches!(mutable.status, InstanceStatus::Ready | InstanceStatus::Starting)
+            {
                 return;
             }
             let previous = mutable.status;
             mutable.status = InstanceStatus::Error;
             mutable.session = None;
+            mutable.session_generation = None;
             mutable.pending_approvals.clear();
-            mutable.turn_conversations.clear();
             previous
         };
-        lock(&self.mapper).reset_session_state();
         let _ = self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
             jsonrpc: "2.0".to_string(),
             params: InstanceStatusChangedEvent {
@@ -386,6 +378,7 @@ impl CodexProvider {
         validate_resource(resource)?;
         self.instance(&ProviderInstanceRoute {
             device_id: resource.device_id.clone(),
+            provider_plugin_id: resource.provider_plugin_id.clone(),
             provider_instance_id: resource.provider_instance_id.clone(),
         })
     }
@@ -556,15 +549,25 @@ impl ProtocolServer for CodexProvider {
                 }
             };
             let incoming = session.subscribe();
+            if let Some(error) = session.terminal_fault() {
+                let _ = session.shutdown();
+                let _ = runtime.set_status(InstanceStatus::Error);
+                return Err(CodexProtocolMapper::error(error));
+            }
+            if !session.is_running() {
+                let _ = session.shutdown();
+                let _ = runtime.set_status(InstanceStatus::Error);
+                return Err(CodexProtocolMapper::error(CodexAppServerError::ProcessExited));
+            }
+            let session_generation = session.generation().to_string();
             {
                 let mut mutable = lock(&runtime.mutable);
                 mutable.session = Some(session);
+                mutable.session_generation = Some(session_generation.clone());
                 mutable.pending_approvals.clear();
-                mutable.turn_conversations.clear();
             }
-            lock(&runtime.mapper).reset_session_state();
-            runtime.start_event_forwarder(incoming);
             let instance = runtime.set_status(InstanceStatus::Ready)?;
+            runtime.start_event_forwarder(session_generation, incoming);
             Ok(InstanceStartResponse { instance })
         })
     }
@@ -584,7 +587,7 @@ impl ProtocolServer for CodexProvider {
             let session = {
                 let mut mutable = lock(&runtime.mutable);
                 mutable.pending_approvals.clear();
-                mutable.turn_conversations.clear();
+                mutable.session_generation = None;
                 mutable.session.take()
             };
             if let Some(session) = session {
@@ -602,9 +605,8 @@ impl ProtocolServer for CodexProvider {
             {
                 let mut mutable = lock(&runtime.mutable);
                 mutable.pending_approvals.clear();
-                mutable.turn_conversations.clear();
+                mutable.session_generation = None;
             }
-            lock(&runtime.mapper).reset_session_state();
             Ok(InstanceStopResponse {
                 instance: runtime.set_status(InstanceStatus::Stopped)?,
             })
@@ -674,9 +676,6 @@ impl ProtocolServer for CodexProvider {
                     .map(|snapshot| mapper.conversation(snapshot))
                     .collect::<Vec<_>>()
             };
-            for conversation in &conversations {
-                runtime.remember_conversation(conversation);
-            }
             Ok(ConversationListResponse {
                 conversations,
                 page_info: PageInfo {
@@ -699,7 +698,6 @@ impl ProtocolServer for CodexProvider {
                 .map_err(provider_task_error)?
                 .map_err(CodexProtocolMapper::error)?;
             let conversation = lock(&runtime.mapper).conversation(&snapshot);
-            runtime.remember_conversation(&conversation);
             Ok(ConversationGetResponse { conversation })
         })
     }
@@ -738,7 +736,6 @@ impl ProtocolServer for CodexProvider {
             .map_err(provider_task_error)?
             .map_err(CodexProtocolMapper::error)?;
             let conversation = lock(&runtime.mapper).conversation(&snapshot);
-            runtime.remember_conversation(&conversation);
             Ok(ConversationCreateResponse { conversation })
         })
     }
@@ -764,8 +761,7 @@ impl ProtocolServer for CodexProvider {
             .await
             .map_err(provider_task_error)?
             .map_err(CodexProtocolMapper::error)?;
-            runtime.remember_turn(turn.id.clone(), conversation_id.clone());
-            let mapped_turn = lock(&runtime.mapper).turn(&conversation_id, &turn, now_ms());
+            let mapped_turn = lock(&runtime.mapper).turn(&conversation_id, &turn);
             Ok(TurnStartResponse {
                 turn: mapped_turn,
             })
@@ -777,9 +773,10 @@ impl ProtocolServer for CodexProvider {
         request: TurnSteerRequest,
     ) -> ProtocolFuture<'a, TurnSteerResponse> {
         Box::pin(async move {
-            let runtime = self.resource_instance(&request.turn)?;
+            validate_same_resource_route(&request.conversation, &request.turn)?;
+            let runtime = self.resource_instance(&request.conversation)?;
             let turn_id = request.turn.native_resource_id;
-            let conversation_id = runtime.conversation_for_turn(&turn_id)?;
+            let conversation_id = request.conversation.native_resource_id;
             let session = runtime.ready_session()?;
             let native_conversation_id = conversation_id.clone();
             let expected_turn_id = turn_id.clone();
@@ -794,8 +791,7 @@ impl ProtocolServer for CodexProvider {
             .await
             .map_err(provider_task_error)?
             .map_err(CodexProtocolMapper::error)?;
-            runtime.remember_turn(turn.id.clone(), conversation_id.clone());
-            let mapped_turn = lock(&runtime.mapper).turn(&conversation_id, &turn, now_ms());
+            let mapped_turn = lock(&runtime.mapper).turn(&conversation_id, &turn);
             Ok(TurnSteerResponse {
                 turn: mapped_turn,
             })
@@ -807,9 +803,10 @@ impl ProtocolServer for CodexProvider {
         request: TurnInterruptRequest,
     ) -> ProtocolFuture<'a, TurnInterruptResponse> {
         Box::pin(async move {
-            let runtime = self.resource_instance(&request.turn)?;
+            validate_same_resource_route(&request.conversation, &request.turn)?;
+            let runtime = self.resource_instance(&request.conversation)?;
             let turn_id = request.turn.native_resource_id;
-            let conversation_id = runtime.conversation_for_turn(&turn_id)?;
+            let conversation_id = request.conversation.native_resource_id;
             let session = runtime.ready_session()?;
             let native_conversation_id = conversation_id.clone();
             let native_turn_id = turn_id.clone();
@@ -819,7 +816,7 @@ impl ProtocolServer for CodexProvider {
             .await
             .map_err(provider_task_error)?
             .map_err(CodexProtocolMapper::error)?;
-            let mapped_turn = lock(&runtime.mapper).turn(&conversation_id, &turn, now_ms());
+            let mapped_turn = lock(&runtime.mapper).turn(&conversation_id, &turn);
             Ok(TurnInterruptResponse {
                 turn: mapped_turn,
             })
@@ -832,14 +829,36 @@ impl ProtocolServer for CodexProvider {
     ) -> ProtocolFuture<'a, ApprovalResolveResponse> {
         Box::pin(async move {
             let runtime = self.resource_instance(&request.approval)?;
-            let approval_id = request.approval.native_resource_id;
+            let approval_id = request.approval.native_resource_id.clone();
             let session = runtime.ready_session()?;
-            let mut mapper = lock(&runtime.mapper);
-            let mut mutable = lock(&runtime.mutable);
-            let approval_request = mutable
-                .pending_approvals
-                .get(&approval_id)
-                .cloned()
+            let resource_generation = approval_generation(&approval_id).ok_or_else(|| {
+                protocol_error(
+                    "invalid_approval_resource",
+                    "approval nativeResourceId does not contain a session generation".to_string(),
+                    false,
+                )
+            })?;
+            let pending = {
+                let mutable = lock(&runtime.mutable);
+                let current_generation = mutable.session_generation.as_deref().ok_or_else(|| {
+                    protocol_error(
+                        "provider_unavailable",
+                        "Codex App Server session generation is unavailable".to_string(),
+                        true,
+                    )
+                })?;
+                if resource_generation != current_generation {
+                    return Err(protocol_error(
+                        "stale_approval_session",
+                        "approval belongs to a previous Codex App Server session".to_string(),
+                        false,
+                    ));
+                }
+                mutable
+                    .pending_approvals
+                    .get(&approval_id)
+                    .cloned()
+            }
                 .ok_or_else(|| {
                     protocol_error(
                         "approval_not_found",
@@ -847,17 +866,24 @@ impl ProtocolServer for CodexProvider {
                         false,
                     )
                 })?;
+            if pending.request.session_generation != resource_generation
+                || pending.approval.resource != request.approval
+            {
+                return Err(protocol_error(
+                    "stale_approval_session",
+                    "approval route does not match the owning Codex App Server session".to_string(),
+                    false,
+                ));
+            }
             session
-                .respond_to_approval(&approval_request, request.decision)
+                .respond_to_approval(&pending.request, request.decision)
                 .map_err(CodexProtocolMapper::error)?;
-            mutable.pending_approvals.remove(&approval_id);
-            let (approval, event) = mapper.approval_resolved(
-                &approval_id,
+            lock(&runtime.mutable).pending_approvals.remove(&approval_id);
+            let (approval, event) = lock(&runtime.mapper).approval_resolved(
+                pending.approval,
                 request.decision,
                 now_ms(),
             )?;
-            drop(mutable);
-            drop(mapper);
             runtime.events.publish(event)?;
             Ok(ApprovalResolveResponse { approval })
         })
@@ -898,10 +924,9 @@ impl ProtocolServer for CodexProvider {
                     {
                         let mut mutable = lock(&runtime.mutable);
                         mutable.status = InstanceStatus::Stopped;
+                        mutable.session_generation = None;
                         mutable.pending_approvals.clear();
-                        mutable.turn_conversations.clear();
                     }
-                    lock(&runtime.mapper).reset_session_state();
                 }
             }
             Ok(ProviderShutdownResponse { accepted: true })
@@ -944,10 +969,23 @@ fn ensure_unique_non_empty(values: &[String], field: &str) -> Result<(), Protoco
 }
 
 fn validate_route(route: &ProviderInstanceRoute) -> Result<(), ProtocolError> {
-    if route.device_id.trim().is_empty() || route.provider_instance_id.trim().is_empty() {
+    if route.device_id.trim().is_empty()
+        || route.provider_plugin_id.trim().is_empty()
+        || route.provider_instance_id.trim().is_empty()
+    {
         return Err(protocol_error(
             "invalid_provider_route",
-            "deviceId and providerInstanceId must not be empty".to_string(),
+            "deviceId, providerPluginId, and providerInstanceId must not be empty".to_string(),
+            false,
+        ));
+    }
+    if route.provider_plugin_id != CODEX_PLUGIN_ID {
+        return Err(protocol_error(
+            "wrong_provider_plugin_route",
+            format!(
+                "Codex Provider cannot serve plugin {}",
+                route.provider_plugin_id
+            ),
             false,
         ));
     }
@@ -957,12 +995,33 @@ fn validate_route(route: &ProviderInstanceRoute) -> Result<(), ProtocolError> {
 fn validate_resource(resource: &RoutedResourceId) -> Result<(), ProtocolError> {
     validate_route(&ProviderInstanceRoute {
         device_id: resource.device_id.clone(),
+        provider_plugin_id: resource.provider_plugin_id.clone(),
         provider_instance_id: resource.provider_instance_id.clone(),
     })?;
     if resource.native_resource_id.trim().is_empty() {
         return Err(protocol_error(
             "invalid_provider_resource",
             "nativeResourceId must not be empty".to_string(),
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_same_resource_route(
+    left: &RoutedResourceId,
+    right: &RoutedResourceId,
+) -> Result<(), ProtocolError> {
+    validate_resource(left)?;
+    validate_resource(right)?;
+    if left.device_id != right.device_id
+        || left.provider_plugin_id != right.provider_plugin_id
+        || left.provider_instance_id != right.provider_instance_id
+    {
+        return Err(protocol_error(
+            "mismatched_provider_route",
+            "resources must target the same device, Provider plugin, and Provider instance"
+                .to_string(),
             false,
         ));
     }

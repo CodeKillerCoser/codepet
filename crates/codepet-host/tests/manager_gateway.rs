@@ -53,6 +53,24 @@ fn build_manager_with_event_capacity(
     descriptors: Vec<PluginDescriptor>,
     event_capacity: usize,
 ) -> Arc<PluginManager> {
+    build_manager_with_options(
+        device_id,
+        descriptors,
+        event_capacity,
+        PluginProcessOptions {
+            request_timeout: Duration::from_secs(2),
+            shutdown_timeout: Duration::from_secs(2),
+            ..PluginProcessOptions::default()
+        },
+    )
+}
+
+fn build_manager_with_options(
+    device_id: &str,
+    descriptors: Vec<PluginDescriptor>,
+    event_capacity: usize,
+    process: PluginProcessOptions,
+) -> Arc<PluginManager> {
     let directory = tempfile::tempdir().unwrap();
     let device_path = directory.path().join("device.json");
     std::fs::write(
@@ -97,11 +115,7 @@ fn build_manager_with_event_capacity(
             instances,
             PluginManagerConfig {
                 event_capacity,
-                process: PluginProcessOptions {
-                    request_timeout: Duration::from_secs(2),
-                    shutdown_timeout: Duration::from_secs(2),
-                    ..PluginProcessOptions::default()
-                },
+                process,
                 ..PluginManagerConfig::default()
             },
         )
@@ -109,9 +123,15 @@ fn build_manager_with_event_capacity(
     )
 }
 
-fn resource(device_id: &str, instance_id: &str, native_id: &str) -> RoutedResourceId {
+fn resource(
+    device_id: &str,
+    plugin_id: &str,
+    instance_id: &str,
+    native_id: &str,
+) -> RoutedResourceId {
     RoutedResourceId {
         device_id: device_id.to_string(),
+        provider_plugin_id: plugin_id.to_string(),
         provider_instance_id: instance_id.to_string(),
         native_resource_id: native_id.to_string(),
     }
@@ -126,7 +146,7 @@ fn event_cursor_sequence(cursor: &str) -> u64 {
 }
 
 #[tokio::test]
-async fn gateway_lists_devices_instances_capabilities_and_keeps_event_routes_monotonic() {
+async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
     let manager = build_manager(
         "device-a",
         vec![plugin("dev.codepet.gateway", &["instance-a1", "instance-a2"])],
@@ -165,6 +185,7 @@ async fn gateway_lists_devices_instances_capabilities_and_keeps_event_routes_mon
     manager
         .stop_instance(&ProviderInstanceRoute {
             device_id: "device-a".to_string(),
+            provider_plugin_id: "dev.codepet.gateway".to_string(),
             provider_instance_id: "instance-a1".to_string(),
         })
         .await
@@ -186,6 +207,7 @@ async fn gateway_lists_devices_instances_capabilities_and_keeps_event_routes_mon
     manager
         .start_instance(&ProviderInstanceRoute {
             device_id: "device-a".to_string(),
+            provider_plugin_id: "dev.codepet.gateway".to_string(),
             provider_instance_id: "instance-a1".to_string(),
         })
         .await
@@ -200,7 +222,12 @@ async fn gateway_lists_devices_instances_capabilities_and_keeps_event_routes_mon
     let mut events = gateway.subscribe_events(Some(&after)).unwrap();
     let response = gateway
         .conversation_get(GatewayConversationGetRequest {
-            conversation: resource("device-a", "instance-a1", "event-first"),
+            conversation: resource(
+                "device-a",
+                "dev.codepet.gateway",
+                "instance-a1",
+                "event-first",
+            ),
         })
         .await
         .unwrap();
@@ -210,7 +237,12 @@ async fn gateway_lists_devices_instances_capabilities_and_keeps_event_routes_mon
     );
     let response = gateway
         .conversation_get(GatewayConversationGetRequest {
-            conversation: resource("device-a", "instance-a2", "event-first"),
+            conversation: resource(
+                "device-a",
+                "dev.codepet.gateway",
+                "instance-a2",
+                "event-first",
+            ),
         })
         .await
         .unwrap();
@@ -273,14 +305,24 @@ async fn gateway_lists_devices_instances_capabilities_and_keeps_event_routes_mon
 
     let wrong_instance = gateway
         .conversation_get(GatewayConversationGetRequest {
-            conversation: resource("device-a", "instance-missing", "conversation"),
+            conversation: resource(
+                "device-a",
+                "dev.codepet.gateway",
+                "instance-missing",
+                "conversation",
+            ),
         })
         .await
         .unwrap_err();
     assert_eq!(wrong_instance.code, "unknown_provider_instance");
     let wrong_device = gateway
         .conversation_get(GatewayConversationGetRequest {
-            conversation: resource("device-b", "instance-a1", "conversation"),
+            conversation: resource(
+                "device-b",
+                "dev.codepet.gateway",
+                "instance-a1",
+                "conversation",
+            ),
         })
         .await
         .unwrap_err();
@@ -302,7 +344,12 @@ async fn gateway_lists_devices_instances_capabilities_and_keeps_event_routes_mon
     assert!(device_b.start_enabled().await[0].1.is_ok());
     let response_b = gateway_b
         .conversation_get(GatewayConversationGetRequest {
-            conversation: resource("device-b", "instance-b1", "device-b-conversation"),
+            conversation: resource(
+                "device-b",
+                "dev.codepet.device-b",
+                "instance-b1",
+                "device-b-conversation",
+            ),
         })
         .await
         .unwrap();
@@ -346,6 +393,54 @@ async fn version_negotiation_rejects_a_plugin_with_an_inconsistent_reported_rang
         providers.providers[0].status,
         codepet_gateway_sdk::ProviderStatus::Error
     );
+}
+
+#[tokio::test]
+async fn explicit_restart_continues_after_graceful_stop_error_when_process_was_killed() {
+    let mut descriptor = plugin("dev.codepet.restart", &["instance-restart"]);
+    descriptor.env.insert(
+        "CODEPET_FAKE_SHUTDOWN_RESPONSE_DELAY_MS".to_string(),
+        "200".to_string(),
+    );
+    let manager = build_manager_with_options(
+        "device-restart",
+        vec![descriptor],
+        PluginManagerConfig::default().event_capacity,
+        PluginProcessOptions {
+            request_timeout: Duration::from_secs(5),
+            shutdown_timeout: Duration::from_millis(20),
+            ..PluginProcessOptions::default()
+        },
+    );
+    let initial_start = manager.start_enabled().await;
+    initial_start[0].1.as_ref().unwrap();
+
+    manager.restart_plugin("dev.codepet.restart").await.unwrap();
+
+    assert_eq!(
+        manager
+            .snapshot("dev.codepet.restart")
+            .await
+            .unwrap()
+            .state,
+        PluginRuntimeState::Ready
+    );
+    let response = manager
+        .conversation_get(ConversationGetRequest {
+            conversation: resource(
+                "device-restart",
+                "dev.codepet.restart",
+                "instance-restart",
+                "after-restart",
+            ),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        response.conversation.resource.native_resource_id,
+        "after-restart"
+    );
+    manager.shutdown().await;
 }
 
 #[tokio::test]
@@ -415,6 +510,7 @@ async fn gateway_reports_replay_and_live_subscription_gaps() {
     let mut subscription = gateway.subscribe_events(Some(&cursor)).unwrap();
     let route = ProviderInstanceRoute {
         device_id: "device-gap".to_string(),
+        provider_plugin_id: "dev.codepet.gap".to_string(),
         provider_instance_id: "instance-gap".to_string(),
     };
     for _ in 0..3 {
@@ -522,7 +618,12 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
     ] {
         let error = manager
             .conversation_get(ConversationGetRequest {
-                conversation: resource("device-identity", "instance-identity", native_id),
+                conversation: resource(
+                    "device-identity",
+                    "dev.codepet.identity",
+                    "instance-identity",
+                    native_id,
+                ),
             })
             .await
             .unwrap_err();
@@ -535,23 +636,46 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
     }
     let empty_native = manager
         .conversation_get(ConversationGetRequest {
-            conversation: resource("device-identity", "instance-identity", ""),
+            conversation: resource(
+                "device-identity",
+                "dev.codepet.identity",
+                "instance-identity",
+                "",
+            ),
         })
         .await
         .unwrap_err();
     assert_eq!(empty_native.code, "invalid_provider_resource");
     let empty_device = manager
         .conversation_get(ConversationGetRequest {
-            conversation: resource("", "instance-identity", "conversation"),
+            conversation: resource(
+                "",
+                "dev.codepet.identity",
+                "instance-identity",
+                "conversation",
+            ),
         })
         .await
         .unwrap_err();
     assert_eq!(empty_device.code, "invalid_provider_route");
+    let wrong_plugin = manager
+        .conversation_get(ConversationGetRequest {
+            conversation: resource(
+                "device-identity",
+                "dev.codepet.other",
+                "instance-identity",
+                "conversation",
+            ),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(wrong_plugin.code, "provider_instance_plugin_mismatch");
 
     let wrong_conversation = manager
         .turn_start(TurnStartRequest {
             conversation: resource(
                 "device-identity",
+                "dev.codepet.identity",
                 "instance-identity",
                 "response-wrong-conversation",
             ),
@@ -566,6 +690,7 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
         .turn_send(GatewayTurnSendRequest {
             conversation: resource(
                 "device-identity",
+                "dev.codepet.identity",
                 "instance-identity",
                 "conversation-a",
             ),
@@ -573,6 +698,7 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
             message: "continue".to_string(),
             steer_turn: Some(resource(
                 "device-identity",
+                "dev.codepet.identity",
                 "instance-identity",
                 "steer-wrong-conversation",
             )),
@@ -614,7 +740,12 @@ async fn a_crashed_plugin_does_not_change_another_plugin_or_instance_route() {
 
     let alpha_error = manager
         .conversation_get(ConversationGetRequest {
-            conversation: resource("device-isolation", "instance-alpha", "crash"),
+            conversation: resource(
+                "device-isolation",
+                "dev.codepet.alpha",
+                "instance-alpha",
+                "crash",
+            ),
         })
         .await
         .unwrap_err();
@@ -642,7 +773,12 @@ async fn a_crashed_plugin_does_not_change_another_plugin_or_instance_route() {
 
     let beta = manager
         .conversation_get(ConversationGetRequest {
-            conversation: resource("device-isolation", "instance-beta", "healthy"),
+            conversation: resource(
+                "device-isolation",
+                "dev.codepet.beta",
+                "instance-beta",
+                "healthy",
+            ),
         })
         .await
         .unwrap();

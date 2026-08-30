@@ -28,7 +28,7 @@ Host 是唯一进程与路由所有者：`PluginManager` 从 manifest 启动 Pro
 | 重写 | 旧 App Server mapper/provider | 按 Provider v1 的 routed resource、instance lifecycle、capability 和 event 类型实现；不再依赖 compat v0 Provider trait。 |
 | 删除 | Tauri 内 `codex_app_server` module 与 `CodexRemoteProviderAdapter` 生命周期 | Tauri 不再直接 spawn App Server，也不再拥有独立 remote registry/session/event source。 |
 | 保留 | `codex_desktop_ipc`、`CodexDesktopCompanionState`、companion snapshot/replay/event | 继续作为 Pet UI 的唯一 Codex 数据和动作来源。 |
-| 保留最小协调 | `CodexThreadScope` | 只记录 remote thread provenance 与瞬时动作 fence，用于阻止同一 thread 被 companion 投影；不传递 Provider payload、session 或 App Server 状态。 |
+| 删除 | Provider 到 `CodexThreadScope` / Desktop Companion 的来源协调 | remote 与 Desktop 允许出现同名 thread；Provider 不标记、排除或同步 Desktop 投影。 |
 | 薄适配 | `runtime_gateway/provider_host_compat.rs` | 把既有 v0 UI 调用映射到 `ProviderGatewayService`；不启动进程，不持有 App Server client，不产生第二份事件。 |
 
 ## 两条数据链路
@@ -59,7 +59,7 @@ Codex Desktop 私有 IPC
   -> Pet UI activity projection
 ```
 
-两条链路没有 payload、registry、event bus、replay、session、owner 或动作路由的交叉。Pet UI 不导入 remote client，不监听 `runtime-gateway-event`；Provider 事件不进入 `SharedState` activity、companion replay 或 `pet-event`。`CodexThreadScope` 只是一道来源排除栅栏，不是第三条数据链路。
+两条链路没有 payload、registry、event bus、replay、session、owner、来源排除状态或动作路由的交叉。Pet UI 不导入 remote client，不监听 `runtime-gateway-event`；Provider 事件不进入 `SharedState` activity、companion replay、PetProjection 或 `pet-event`。同名 remote/Desktop thread 暂时各自存在，任何一侧都不尝试排除或同步另一侧。
 
 ## 配置权威
 
@@ -89,20 +89,20 @@ Codex Desktop 私有 IPC
 | `conversation.get` | `thread/read(includeTurns=true)` | 支持。 |
 | `conversation.create` | `thread/start` | 支持 permission/model/reasoning/workspace；App Server 不支持 title 或 Provider extension，传入时明确返回 `capability_unsupported`。 |
 | `turn.start` | 必要时 `thread/resume`，再 `turn/start` | 支持，保留 `clientUserMessageId`。 |
-| `turn.steer` | 必要时 `thread/resume`，再 `turn/steer` | 支持；turn 必须已在同一实例观察并关联到 conversation。 |
-| `turn.interrupt` | 必要时 `thread/resume`，再 `turn/interrupt` | 支持。 |
-| `approval.resolve` | 对原 server request id 回写 command/file decision | 支持二元 approve/deny；只处理当前实例当前 session 的 pending approval。 |
+| `turn.steer` | 必要时 `thread/resume`，再 `turn/steer`，随后 `thread/read` | 支持；请求显式携带 conversation 与 turn 四段身份，响应使用权威 turn 状态。 |
+| `turn.interrupt` | 必要时 `thread/resume`，再 `turn/interrupt`，随后 `thread/read` | 支持；不根据 interrupt ack 伪造完整 Turn。 |
+| `approval.resolve` | 对原 server request id 回写 command/file decision | 仅支持普通 accept/decline 二元审批；只处理当前实例、当前 App Server session generation 的 pending approval。 |
 | `provider.shutdown` | 关闭全部实例的 App Server session，结束 stdio 主循环 | 支持且幂等。 |
 
 Gateway v1 的 `turn.send` 在 Host 中映射为 Provider `turn.start`；带 `steerTurn` 时映射为 `turn.steer`。兼容 v0 继续暴露既有 `turn.send` 调用形状，但只调用同一个 Gateway service。
 
-Provider 发送全部六种 v1 事件：`event.instanceStatusChanged`、`event.conversationUpserted`、`event.turnUpserted`、`event.turnOutputDelta`、`event.approvalRequested`、`event.approvalResolved`。App Server 的 thread/turn/delta 与 command/file approval 有真实映射；未知 notification 被忽略，未知或无法无损表达的 server request 使用原 request id 返回 JSON-RPC `-32601`，不会伪造 grant 或成功事件。
+Provider 发送全部六种 v1 事件：`event.instanceStatusChanged`、`event.conversationUpserted`、`event.turnUpserted`、`event.turnOutputDelta`、`event.approvalRequested`、`event.approvalResolved`。delta 自带 conversation route，不依赖 replay 顺序补状态。App Server 的 `waitingOnApproval` 与 `waitingOnUserInput` 分别映射为 v1 的 `waiting-approval` 与 `waiting-user-input`。未知 notification 被忽略；未知或无法无损表达的 server request 使用原 request id 返回 JSON-RPC `-32601`，不会发布可批准的 Approval。
 
 ## 身份与审批路由
 
-Provider/Gateway 的资源 route 是 `deviceId + providerInstanceId + nativeResourceId`。`PluginManager` 在接收事件时同时带着产生该事件的 `providerPluginId`，先用 instance registry 校验 plugin 归属，再允许进入 Gateway。Gateway provider 枚举保留 `pluginId`；兼容 v0 的 conversation、turn、delta 和 approval 输出通过 `codepet.gateway.route` extension 显式携带 `deviceId + providerPluginId + providerInstanceId + nativeResourceId`，旧对象自身的 `id` 也继续等于 `nativeResourceId`。provider 枚举没有原生资源 id，因此 extension 只携带前三项。
+Provider/Gateway 的语言中立 `RoutedResourceId` 是 `deviceId + providerPluginId + providerInstanceId + nativeResourceId` 四段身份。instance route 是前三段。SDK、Host、Gateway、Provider、compat extension 在每个请求、响应、事件和审批入口逐跳保留并校验四段；compat 不再通过 registry 事后回查 plugin id。旧 v0 对象自身的 `id` 继续等于 `nativeResourceId`，完整身份位于 `codepet.gateway.route` extension。
 
-每个 Provider instance 只持有一个 App Server session 和自己的 pending approval map。`approval.resolve` 先由 routed approval 定位实例，再查找该实例内的原生 request id，并在持有同一 mapper/session 锁的情况下回写；其他实例、旧 session 或未知 approval 都明确失败。
+每个 Provider instance 只持有一个 App Server session 和一张 pending approval map。每次 session 启动生成唯一 generation；approval 的 `nativeResourceId` 同时编码 generation 与原 JSON-RPC id。`approval.resolve` 先校验四段 route，再校验 generation 和 pending 记录，最后回写持有请求的同一 App Server 进程。即使新进程复用了相同 request id，旧 approval 也以 `stale_approval_session` 失败。
 
 ## 本地开发安装
 
@@ -125,13 +125,16 @@ Provider/Gateway 的资源 route 是 `deviceId + providerInstanceId + nativeReso
 - `crates/codepet-host/`：manifest settings 覆盖、实例设置更新、插件显式 restart、route 到 plugin identity 查询。
 - `src-tauri/src/runtime_gateway/provider_host_compat.rs`：既有 v0 调用面到 Gateway v1 的薄适配。
 - `src-tauri/src/runtime_gateway/tauri_bridge.rs`：Host/resolver 组合、远程 event bridge 与独立 companion state。
-- `src-tauri/src/agent/codex_desktop_ipc/`：保持不变，仍是桌宠 Codex 数据源。
+- `src-tauri/src/agent/codex_desktop_ipc/`：保留 Desktop IPC 状态与动作链路，只删除旧的 remote 来源协调入口；仍是桌宠 Codex 数据源。
 
 ## 风险与验证
 
-- App Server 协议漂移：Provider client 单元测试与 fixture 覆盖 initialize、乱序 response、resume、list/read/start/steer/interrupt、delta、approval 和未知 request fail-closed。
-- 路由或审批串实例：Host 校验 route/plugin，纵向测试从 manifest 启动真实 Provider binary，并完成 Gateway RPC、事件、审批和 interrupt。
-- Provider 污染桌宠：Tauri mock runtime 同时监听 remote、companion、pet 三个 channel，断言 Provider 只进入 remote replay/event，companion replay、activity store 与 Desktop adapter spy 不变化；PetApp 静态测试继续断言只导入 companion client。
+- App Server 协议漂移：Provider client 使用本机官方 schema 对 initialize、Thread、Turn、start/resume 和 approval 请求做严格解码；测试覆盖乱序 response、resume、list/read/start/steer/interrupt、真实状态、未知字段与 request fail-closed。
+- 路由或审批串实例：Host 测试从 manifest 启动真实 stdio fixture binary 并完成 Gateway RPC/事件/四段路由；Codex Provider 二进制测试独立完成 App Server 会话、审批和 interrupt 闭环。
+- Provider 污染桌宠：Tauri mock runtime 使用生产 bridge，同时监听 remote、companion、旧 thread-excluded 事件名与 pet channel，断言 Provider 只进入 remote replay/event，companion replay、activity store 与 Desktop adapter spy 不变化；PetApp 静态测试断言只导入 companion client，且不含 exclusion/tombstone 路径。
+- 审批 fail-open/串 session：真实 Provider 二进制测试证明 `additionalPermissions.network` 得到原 id 的 `-32601` 且无 Approval；stop/start 后复用相同 request id 时旧句柄不能批准新进程请求。
+- framing/lifecycle：App Server 与 Provider SDK 都完整 drain 超长物理行；App Server stdout fault 和 Provider Host frame 进入 fail-stop，超长 stderr 行关闭该 reader。late subscriber 能观察 initialize 后的 terminal fault，实例不会误报 Ready。
+- 显式 restart：Host 测试覆盖 graceful stop 报错但 force-kill 已确认结束时继续启动新配置；无法确认终止时保持 fail closed。
 - 配置漂移：Provider 拒绝非绝对 executable 和未知 settings；Tauri 每次只使用 resolver 覆盖该字段。
 - 机械生成漂移：运行 `npm run protocol:check` 与 `git diff --check`，不提交 Tauri build 自动改写的 schema。
 
@@ -143,6 +146,5 @@ Provider/Gateway 的资源 route 是 `deviceId + providerInstanceId + nativeReso
 - App Server 不支持在 `thread/start` 设置 title；Provider 明确拒绝该可选字段。
 - model/reasoning effort 列表来自显式 instance settings，尚未从 App Server 动态发现。
 - Gateway v1 capability 目前把 start/steer 合并为 `turn.send`，compat 层只能根据 Codex plugin identity 表达 `canSteer`；v1 schema 尚无独立 steer flag。
-- Gateway v1 的 output delta 不携带 conversation route；compat 层依赖先前的 turn response/upsert/approval 建立关联。没有任何可观察 turn 上下文的孤立 delta 会 fail closed 丢弃，而不是猜测 conversation。
-- Provider Protocol 当前不携带请求“未发送/明确拒绝/结果未知”的细分证据；compat 在 remote create/turn 调用返回歧义错误时采用保守来源隔离，可能暂时或永久排除同一窗口中的 Desktop 候选，而不会冒险把 remote thread 投影进桌宠。
-- remote thread provenance 仍是进程内状态；应用重启后的来源恢复尚未定义。
+- compat v0 的 conversation/turn 模型要求 permission 与时间戳，也没有 `waiting-user-input`；v1 无法确认这些字段或状态时 compat 明确返回 `compat_data_unrepresentable`，不会补默认值。
+- remote 与 Desktop 同名 thread 不做去重、来源排除或状态同步；两条链路在本阶段按独立资源展示和操作。

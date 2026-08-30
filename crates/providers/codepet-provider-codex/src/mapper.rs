@@ -1,7 +1,7 @@
 use crate::protocol::{
     CodexAppServerError, CodexApprovalRequest, CodexConversationSnapshot, CodexIncoming,
-    CodexNotification, CodexPermissionLevel, CodexThreadStatus, CodexTurn, CodexTurnStatus,
-    CODEX_EXTENSION_NAMESPACE,
+    CodexNotification, CodexPermissionLevel, CodexThreadActiveFlag, CodexThreadStatus,
+    CodexTurn, CodexTurnStatus, CODEX_EXTENSION_NAMESPACE,
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalRequestedEvent, ApprovalResolvedEvent, ApprovalStatus,
@@ -11,23 +11,15 @@ use codepet_provider_sdk::{
     ProviderTurn, RoutedResourceId, TurnOutputDeltaEvent, TurnStatus, TurnUpsertedEvent,
 };
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 pub struct CodexProtocolMapper {
     route: ProviderInstanceRoute,
-    pending_approvals: HashMap<String, ProviderApproval>,
 }
 
 impl CodexProtocolMapper {
     pub fn new(route: ProviderInstanceRoute) -> Self {
-        Self {
-            route,
-            pending_approvals: HashMap::new(),
-        }
-    }
-
-    pub fn reset_session_state(&mut self) {
-        self.pending_approvals.clear();
+        Self { route }
     }
 
     pub fn capabilities(
@@ -93,9 +85,6 @@ impl CodexProtocolMapper {
     }
 
     pub fn conversation(&self, snapshot: &CodexConversationSnapshot) -> ProviderConversation {
-        let permission_level = snapshot
-            .permission_level
-            .unwrap_or(CodexPermissionLevel::WorkspaceWrite);
         let active_turn = snapshot
             .thread
             .turns
@@ -103,39 +92,27 @@ impl CodexProtocolMapper {
             .rev()
             .find(|turn| turn.status == CodexTurnStatus::InProgress)
             .map(|turn| {
-                self.turn(
-                    &snapshot.thread.id,
-                    turn,
-                    seconds_to_ms(snapshot.thread.updated_at),
-                )
+                self.turn(&snapshot.thread.id, turn)
             });
-        let status = if active_turn.is_some() {
-            ConversationStatus::Running
-        } else {
-            match snapshot.thread.status {
-                CodexThreadStatus::Active { .. } => ConversationStatus::Running,
-                CodexThreadStatus::SystemError | CodexThreadStatus::Unknown => {
-                    ConversationStatus::Error
+        let status = match snapshot.thread.status {
+            CodexThreadStatus::Active { ref active_flags }
+                if active_flags.contains(&CodexThreadActiveFlag::WaitingOnApproval) => {
+                    ConversationStatus::WaitingApproval
                 }
-                CodexThreadStatus::NotLoaded | CodexThreadStatus::Idle => ConversationStatus::Idle,
-            }
+            CodexThreadStatus::Active { ref active_flags }
+                if active_flags.contains(&CodexThreadActiveFlag::WaitingOnUserInput) => {
+                    ConversationStatus::WaitingUserInput
+                }
+            CodexThreadStatus::Active { .. } => ConversationStatus::Running,
+            CodexThreadStatus::SystemError => ConversationStatus::Error,
+            CodexThreadStatus::NotLoaded | CodexThreadStatus::Idle => ConversationStatus::Idle,
         };
         let mut extension_data = BTreeMap::new();
         extension_data.insert(
             "nativeThreadStatus".to_string(),
             json!(thread_status_name(&snapshot.thread.status)),
         );
-        extension_data.insert(
-            "permissionSource".to_string(),
-            json!(if snapshot.permission_level.is_some() {
-                "app-server"
-            } else {
-                "provider-default"
-            }),
-        );
-        if let Some(cwd) = &snapshot.thread.cwd {
-            extension_data.insert("nativeCwd".to_string(), json!(cwd));
-        }
+        extension_data.insert("nativeCwd".to_string(), json!(snapshot.thread.cwd));
         ProviderConversation {
             resource: self.resource(snapshot.thread.id.clone()),
             title: snapshot
@@ -146,10 +123,13 @@ impl CodexProtocolMapper {
                 .or_else(|| {
                     (!snapshot.thread.preview.is_empty()).then(|| snapshot.thread.preview.clone())
                 })
-                .unwrap_or_else(|| "Codex conversation".to_string()),
+                .unwrap_or_else(|| snapshot.thread.id.clone()),
             preview: (!snapshot.thread.preview.is_empty()).then(|| snapshot.thread.preview.clone()),
             status,
-            permission_level: permission_level_name(permission_level).to_string(),
+            permission_level: snapshot
+                .permission_level
+                .map(permission_level_name)
+                .map(str::to_string),
             model: snapshot.model.clone(),
             reasoning_effort: snapshot.reasoning_effort.clone(),
             workspace_root: snapshot.workspace_root.clone(),
@@ -167,17 +147,16 @@ impl CodexProtocolMapper {
         &self,
         conversation_id: &str,
         turn: &CodexTurn,
-        observed_at_ms: u64,
     ) -> ProviderTurn {
-        let started_at = turn.started_at.map(seconds_to_ms);
-        let completed_at = turn.completed_at.map(seconds_to_ms);
+        let started_at = turn.started_at.and_then(seconds_to_ms);
+        let completed_at = turn.completed_at.and_then(seconds_to_ms);
         ProviderTurn {
             resource: self.resource(turn.id.clone()),
             conversation: self.resource(conversation_id.to_string()),
             status: turn_status(turn.status),
             display_summary: None,
             started_at,
-            updated_at: completed_at.or(started_at).unwrap_or(observed_at_ms),
+            updated_at: None,
             completed_at,
             extension: Some(extension([(
                 "nativeStatus",
@@ -187,20 +166,13 @@ impl CodexProtocolMapper {
     }
 
     pub fn events(
-        &mut self,
+        &self,
         incoming: CodexIncoming,
-        observed_at_ms: u64,
     ) -> Result<Vec<ProtocolEvent>, ProtocolError> {
         match incoming {
-            CodexIncoming::Notification(notification) => {
-                self.notification_events(notification, observed_at_ms)
-            }
+            CodexIncoming::Notification(notification) => self.notification_events(notification),
             CodexIncoming::ApprovalRequested(request) => {
                 let approval = self.approval(&request);
-                self.pending_approvals.insert(
-                    approval.resource.native_resource_id.clone(),
-                    approval.clone(),
-                );
                 Ok(vec![ProtocolEvent::EventApprovalRequested {
                     jsonrpc: "2.0".to_string(),
                     params: ApprovalRequestedEvent { approval },
@@ -214,19 +186,11 @@ impl CodexProtocolMapper {
     }
 
     pub fn approval_resolved(
-        &mut self,
-        approval_id: &str,
+        &self,
+        mut approval: ProviderApproval,
         decision: ApprovalDecision,
         resolved_at_ms: u64,
     ) -> Result<(ProviderApproval, ProtocolEvent), ProtocolError> {
-        let mut approval = self
-            .pending_approvals
-            .remove(approval_id)
-            .ok_or_else(|| protocol_error(
-                "approval_not_found",
-                format!("approval {approval_id} is not pending"),
-                false,
-            ))?;
         approval.status = match decision {
             ApprovalDecision::Approve => ApprovalStatus::Approved,
             ApprovalDecision::Deny => ApprovalStatus::Denied,
@@ -240,6 +204,22 @@ impl CodexProtocolMapper {
             },
         };
         Ok((approval, event))
+    }
+
+    pub fn approval_expired(
+        &self,
+        mut approval: ProviderApproval,
+        resolved_at_ms: u64,
+    ) -> (ProviderApproval, ProtocolEvent) {
+        approval.status = ApprovalStatus::Expired;
+        approval.resolved_at = Some(resolved_at_ms);
+        let event = ProtocolEvent::EventApprovalResolved {
+            jsonrpc: "2.0".to_string(),
+            params: ApprovalResolvedEvent {
+                approval: approval.clone(),
+            },
+        };
+        (approval, event)
     }
 
     pub fn error(error: CodexAppServerError) -> ProtocolError {
@@ -272,9 +252,8 @@ impl CodexProtocolMapper {
     }
 
     fn notification_events(
-        &mut self,
+        &self,
         notification: CodexNotification,
-        observed_at_ms: u64,
     ) -> Result<Vec<ProtocolEvent>, ProtocolError> {
         let event = match notification {
             CodexNotification::ThreadStarted { thread } => {
@@ -291,13 +270,13 @@ impl CodexProtocolMapper {
                 ProtocolEvent::EventTurnUpserted {
                     jsonrpc: "2.0".to_string(),
                     params: TurnUpsertedEvent {
-                        turn: self.turn(&thread_id, &turn, observed_at_ms),
+                        turn: self.turn(&thread_id, &turn),
                     },
                 }
             }
             CodexNotification::OutputDelta {
                 native_method,
-                thread_id: _,
+                thread_id,
                 turn_id,
                 item_id,
                 kind,
@@ -306,6 +285,7 @@ impl CodexProtocolMapper {
                 jsonrpc: "2.0".to_string(),
                 params: TurnOutputDeltaEvent {
                     turn: self.resource(turn_id),
+                    conversation: self.resource(thread_id),
                     output_id: item_id,
                     kind,
                     delta,
@@ -313,26 +293,14 @@ impl CodexProtocolMapper {
                 },
             },
             CodexNotification::ServerRequestResolved {
-                request_id,
-                thread_id: _,
-            } => {
-                let approval_id = request_id.approval_id();
-                let Some(mut approval) = self.pending_approvals.remove(&approval_id) else {
-                    return Ok(Vec::new());
-                };
-                approval.status = ApprovalStatus::Expired;
-                approval.resolved_at = Some(observed_at_ms);
-                ProtocolEvent::EventApprovalResolved {
-                    jsonrpc: "2.0".to_string(),
-                    params: ApprovalResolvedEvent { approval },
-                }
-            }
+                ..
+            } => return Ok(Vec::new()),
             CodexNotification::Unknown { .. } => return Ok(Vec::new()),
         };
         Ok(vec![event])
     }
 
-    fn approval(&self, request: &CodexApprovalRequest) -> ProviderApproval {
+    pub fn approval(&self, request: &CodexApprovalRequest) -> ProviderApproval {
         let decisions = approval_decisions(request);
         let mut decision_mapping = BTreeMap::new();
         if decisions.contains(&ApprovalDecision::Approve) {
@@ -371,6 +339,7 @@ impl CodexProtocolMapper {
     fn resource(&self, native_resource_id: String) -> RoutedResourceId {
         RoutedResourceId {
             device_id: self.route.device_id.clone(),
+            provider_plugin_id: self.route.provider_plugin_id.clone(),
             provider_instance_id: self.route.provider_instance_id.clone(),
             native_resource_id,
         }
@@ -378,21 +347,18 @@ impl CodexProtocolMapper {
 }
 
 fn approval_decisions(request: &CodexApprovalRequest) -> Vec<ApprovalDecision> {
-    let accepts_legacy_defaults = request.available_decisions.is_empty();
     let mut decisions = Vec::new();
-    if accepts_legacy_defaults
-        || request
-            .available_decisions
-            .iter()
-            .any(|decision| decision == "accept")
+    if request
+        .available_decisions
+        .iter()
+        .any(|decision| decision == "accept")
     {
         decisions.push(ApprovalDecision::Approve);
     }
-    if accepts_legacy_defaults
-        || request
-            .available_decisions
-            .iter()
-            .any(|decision| decision == "decline")
+    if request
+        .available_decisions
+        .iter()
+        .any(|decision| decision == "decline")
     {
         decisions.push(ApprovalDecision::Deny);
     }
@@ -423,7 +389,6 @@ fn thread_status_name(status: &CodexThreadStatus) -> &'static str {
         CodexThreadStatus::Idle => "idle",
         CodexThreadStatus::SystemError => "systemError",
         CodexThreadStatus::Active { .. } => "active",
-        CodexThreadStatus::Unknown => "unknown",
     }
 }
 
@@ -448,8 +413,8 @@ pub fn parse_permission_level(value: &str) -> Result<CodexPermissionLevel, Proto
     }
 }
 
-fn seconds_to_ms(value: i64) -> u64 {
-    u64::try_from(value).unwrap_or(0).saturating_mul(1_000)
+fn seconds_to_ms(value: i64) -> Option<u64> {
+    u64::try_from(value).ok().map(|value| value.saturating_mul(1_000))
 }
 
 fn protocol_error(code: &str, message: String, retryable: bool) -> ProtocolError {
@@ -472,5 +437,72 @@ fn extension<const N: usize>(entries: [(&str, Value); N]) -> ProviderExtension {
     ProviderExtension {
         namespace: CODEX_EXTENSION_NAMESPACE.to_string(),
         data: object(entries),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::CodexThread;
+
+    #[test]
+    fn active_thread_flags_keep_approval_and_user_input_states_distinct() {
+        let mapper = CodexProtocolMapper::new(ProviderInstanceRoute {
+            device_id: "device-test".to_string(),
+            provider_plugin_id: "dev.codepet.codex".to_string(),
+            provider_instance_id: "codex".to_string(),
+        });
+        let waiting_approval = mapper.conversation(&snapshot(
+            CodexThreadActiveFlag::WaitingOnApproval,
+        ));
+        let waiting_user = mapper.conversation(&snapshot(
+            CodexThreadActiveFlag::WaitingOnUserInput,
+        ));
+
+        assert_eq!(waiting_approval.status, ConversationStatus::WaitingApproval);
+        assert_eq!(waiting_user.status, ConversationStatus::WaitingUserInput);
+    }
+
+    #[test]
+    fn turn_does_not_invent_an_updated_timestamp() {
+        let mapper = CodexProtocolMapper::new(ProviderInstanceRoute {
+            device_id: "device-test".to_string(),
+            provider_plugin_id: "dev.codepet.codex".to_string(),
+            provider_instance_id: "codex".to_string(),
+        });
+        let turn = CodexTurn {
+            id: "turn-test".to_string(),
+            status: CodexTurnStatus::Completed,
+            started_at: Some(1),
+            completed_at: Some(2),
+            items: Vec::new(),
+        };
+
+        let mapped = mapper.turn("thread-test", &turn);
+
+        assert_eq!(mapped.started_at, Some(1_000));
+        assert_eq!(mapped.completed_at, Some(2_000));
+        assert_eq!(mapped.updated_at, None);
+    }
+
+    fn snapshot(flag: CodexThreadActiveFlag) -> CodexConversationSnapshot {
+        CodexConversationSnapshot::from_thread(CodexThread {
+            id: "thread-test".to_string(),
+            name: None,
+            preview: "fixture".to_string(),
+            cwd: "/fixture".to_string(),
+            created_at: 1,
+            updated_at: 2,
+            status: CodexThreadStatus::Active {
+                active_flags: vec![flag],
+            },
+            turns: Vec::new(),
+            cli_version: "0.151.0".to_string(),
+            ephemeral: false,
+            model_provider: "openai".to_string(),
+            project_id: Value::Null,
+            session_id: "session-test".to_string(),
+            source: json!("appServer"),
+        })
     }
 }

@@ -1,8 +1,3 @@
-use codepet_gateway_sdk::{self as gateway, ProtocolServer as GatewayProtocolServer};
-use codepet_host::{
-    DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginManager, PluginManagerConfig,
-    ProviderGatewayService, ProviderInstanceRegistry,
-};
 use codepet_provider_codex::{CodexProvider, CODEX_INSTANCE_KIND, CODEX_PLUGIN_ID};
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalResolveRequest, ConversationCreateRequest, ConversationListRequest,
@@ -13,10 +8,14 @@ use codepet_provider_sdk::{
     TurnSteerRequest, VersionRange, PROTOCOL_VERSION,
 };
 use serde_json::json;
+use serde_json::Value;
+use std::collections::VecDeque;
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn provider_executable() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_codepet-provider-codex"))
@@ -29,17 +28,26 @@ fn app_server_executable() -> PathBuf {
 fn route(device_id: &str) -> ProviderInstanceRoute {
     ProviderInstanceRoute {
         device_id: device_id.to_string(),
+        provider_plugin_id: CODEX_PLUGIN_ID.to_string(),
         provider_instance_id: "codex".to_string(),
     }
 }
 
-fn instance_settings(app_server: &Path) -> JsonObject {
+fn instance_settings(app_server: &Path, approval_mode: &str, marker: &Path) -> JsonObject {
     [
         (
             "appServerExecutable".to_string(),
             json!(app_server.to_string_lossy()),
         ),
-        ("appServerArgs".to_string(), json!([])),
+        (
+            "appServerArgs".to_string(),
+            json!([
+                "--approval-mode",
+                approval_mode,
+                "--marker",
+                marker.to_string_lossy()
+            ]),
+        ),
         ("models".to_string(), json!(["gpt-fixture"])),
         ("reasoningEfforts".to_string(), json!(["high"])),
     ]
@@ -51,7 +59,6 @@ fn instance_settings(app_server: &Path) -> JsonObject {
 async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("approval.txt");
-    std::env::set_var("CODEPET_FIXTURE_APPROVAL_MARKER", &marker);
     let (event_sender, event_receiver) = mpsc::channel();
     let provider = CodexProvider::new(Arc::new(move |event| {
         event_sender.send(event).map_err(|error| codepet_provider_sdk::ProtocolError {
@@ -86,7 +93,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
             route: route.clone(),
             instance_kind: CODEX_INSTANCE_KIND.to_string(),
             display_name: "Codex Fixture".to_string(),
-            settings: instance_settings(&app_server_executable()),
+            settings: instance_settings(&app_server_executable(), "normal", &marker),
         },
     )
     .await
@@ -240,6 +247,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let steered = ProviderProtocolServer::turn_steer(
         &provider,
         TurnSteerRequest {
+            conversation: conversation.resource.clone(),
             turn: turn.resource.clone(),
             client_message_id: "message-two".to_string(),
             message: "steer fixture".to_string(),
@@ -251,6 +259,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let interrupted = ProviderProtocolServer::turn_interrupt(
         &provider,
         TurnInterruptRequest {
+            conversation: conversation.resource,
             turn: turn.resource,
         },
     )
@@ -284,148 +293,314 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     .await
     .unwrap()
     .accepted);
-    std::env::remove_var("CODEPET_FIXTURE_APPROVAL_MARKER");
 }
 
-#[tokio::test]
-async fn host_launches_codex_manifest_and_completes_gateway_rpc() {
+#[test]
+fn provider_binary_rejects_additional_network_permission_without_publishing_approval() {
     let directory = tempfile::tempdir().unwrap();
-    let plugin_directory = directory.path().join("plugins/codex");
-    std::fs::create_dir_all(&plugin_directory).unwrap();
-    let marker = directory.path().join("host-approval.txt");
-    let manifest = json!({
-        "manifestVersion": 1,
-        "pluginId": CODEX_PLUGIN_ID,
-        "displayName": "Codex Fixture",
-        "executable": provider_executable(),
-        "args": [],
-        "env": {
-            "CODEPET_FIXTURE_APPROVAL_MARKER": marker
-        },
-        "enabled": true,
-        "instances": [{
-            "instanceId": "codex",
-            "instanceKind": CODEX_INSTANCE_KIND,
-            "displayName": "Codex Fixture",
-            "settings": instance_settings(&app_server_executable()),
-            "enabled": true
-        }]
-    });
-    std::fs::write(
-        plugin_directory.join("codepet-provider.json"),
-        serde_json::to_vec(&manifest).unwrap(),
-    )
-    .unwrap();
+    let marker = directory.path().join("unsupported-approval.txt");
+    let mut provider = ProviderBinary::spawn();
+    let conversation = provider.configure("additional-network", &marker);
 
-    let device = DeviceRegistry::open(directory.path().join("device.json"), "Fixture Device")
-        .unwrap();
-    let device_id = device.identity().device_id.clone();
-    let catalog = PluginCatalog::discover(
-        PluginCatalogConfig::default().with_directory(directory.path().join("plugins")),
+    provider.request(
+        "turn-unsafe",
+        "turn.start",
+        json!({
+            "conversation": conversation,
+            "clientMessageId": "message-unsafe",
+            "message": "request unsafe approval"
+        }),
     );
-    assert!(catalog.diagnostics().is_empty());
-    let instances = ProviderInstanceRegistry::open(
-        directory.path().join("instances.json"),
-        device_id.clone(),
+    wait_for_file_blocking(&marker);
+    provider.collect_for(Duration::from_millis(100));
+
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "error:-32601");
+    assert!(provider.buffered.iter().all(|message| {
+        message.get("method").and_then(Value::as_str) != Some("event.approvalRequested")
+    }));
+
+    provider.request("stop-unsafe", "instance.stop", json!({ "route": route_value() }));
+    provider.request("shutdown-unsafe", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_rejects_stale_approval_when_app_server_request_id_is_reused() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("approval-generation.txt");
+    let mut provider = ProviderBinary::spawn();
+    let first_conversation = provider.configure("normal", &marker);
+
+    provider.request(
+        "turn-first",
+        "turn.start",
+        json!({
+            "conversation": first_conversation,
+            "clientMessageId": "message-first",
+            "message": "first session"
+        }),
+    );
+    let first_approval = provider
+        .event("event.approvalRequested")
+        .pointer("/params/approval/resource")
+        .cloned()
+        .unwrap();
+
+    provider.request("stop-first", "instance.stop", json!({ "route": route_value() }));
+    provider.request("start-second", "instance.start", json!({ "route": route_value() }));
+    let second_conversation = provider.create_conversation("conversation-second");
+    provider.request(
+        "turn-second",
+        "turn.start",
+        json!({
+            "conversation": second_conversation,
+            "clientMessageId": "message-second",
+            "message": "second session"
+        }),
+    );
+    let second_approval = provider
+        .event("event.approvalRequested")
+        .pointer("/params/approval/resource")
+        .cloned()
+        .unwrap();
+
+    assert_ne!(
+        first_approval["nativeResourceId"],
+        second_approval["nativeResourceId"]
+    );
+    let stale = provider.request(
+        "resolve-stale",
+        "approval.resolve",
+        json!({ "approval": first_approval, "decision": "approve" }),
+    );
+    assert_eq!(
+        stale.pointer("/error/data/code").and_then(Value::as_str),
+        Some("stale_approval_session")
+    );
+    assert!(!marker.exists());
+
+    let resolved = provider.request(
+        "resolve-current",
+        "approval.resolve",
+        json!({ "approval": second_approval, "decision": "approve" }),
+    );
+    assert_eq!(
+        resolved
+            .pointer("/result/approval/status")
+            .and_then(Value::as_str),
+        Some("approved")
+    );
+    wait_for_file_blocking(&marker);
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "accept");
+
+    provider.request("stop-second", "instance.stop", json!({ "route": route_value() }));
+    provider.request("shutdown-second", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_fails_stop_after_an_oversized_host_frame() {
+    let mut child = Command::new(provider_executable())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(&vec![b'x'; 1024 * 1024 + 1]).unwrap();
+    stdin.write_all(b"\n").unwrap();
+    serde_json::to_writer(
+        &mut stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": "must-not-run",
+            "method": "provider.describe",
+            "params": {}
+        }),
     )
     .unwrap();
-    let mut config = PluginManagerConfig::default();
-    config.process.request_timeout = Duration::from_secs(5);
-    config.process.shutdown_timeout = Duration::from_secs(2);
-    let manager = Arc::new(PluginManager::new(device, catalog, instances, config).unwrap());
-    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
-    assert!(gateway.start_event_forwarding());
-    let outcomes = manager.start_enabled().await;
-    assert_eq!(outcomes.len(), 1);
-    outcomes.into_iter().next().unwrap().1.unwrap();
+    stdin.write_all(b"\n").unwrap();
+    stdin.flush().unwrap();
+    drop(stdin);
 
-    let listed = GatewayProtocolServer::conversation_list(
-        gateway.as_ref(),
-        gateway::ConversationListRequest {
-            route: Some(gateway::GatewayProviderRoute {
-                device_id: device_id.clone(),
-                provider_instance_id: "codex".to_string(),
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "Provider did not fail-stop");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert!(!status.success());
+    let mut output = String::new();
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut output)
+        .unwrap();
+    let frames = output.lines().collect::<Vec<_>>();
+    assert_eq!(frames.len(), 1);
+    let response: Value = serde_json::from_str(frames[0]).unwrap();
+    assert_eq!(response["error"]["code"], -32600);
+    assert_ne!(response["id"], "must-not-run");
+}
+
+struct ProviderBinary {
+    child: Child,
+    stdin: BufWriter<ChildStdin>,
+    messages: mpsc::Receiver<Value>,
+    buffered: VecDeque<Value>,
+}
+
+impl ProviderBinary {
+    fn spawn() -> Self {
+        let mut child = Command::new(provider_executable())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = BufWriter::new(child.stdin.take().unwrap());
+        let stdout = child.stdout.take().unwrap();
+        let (sender, messages) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let line = line.unwrap();
+                sender.send(serde_json::from_str(&line).unwrap()).unwrap();
+            }
+        });
+        Self {
+            child,
+            stdin,
+            messages,
+            buffered: VecDeque::new(),
+        }
+    }
+
+    fn configure(&mut self, approval_mode: &str, marker: &Path) -> Value {
+        self.request(
+            "initialize",
+            "provider.initialize",
+            json!({
+                "hostClientId": "provider-binary-test",
+                "hostDeviceId": "device-provider-binary",
+                "hostVersion": "test",
+                "supportedVersions": { "minVersion": 1, "maxVersion": 1 }
             }),
-            cursor: None,
-            limit: None,
-        },
-    )
-    .await
-    .unwrap();
-    assert_eq!(listed.conversations[0].resource.native_resource_id, "thread-listed");
-    let conversation = GatewayProtocolServer::conversation_create(
-        gateway.as_ref(),
-        gateway::ConversationCreateRequest {
-            route: gateway::GatewayProviderRoute {
-                device_id: device_id.clone(),
-                provider_instance_id: "codex".to_string(),
-            },
-            title: None,
-            permission_level: "workspace-write".to_string(),
-            model: Some("gpt-fixture".to_string()),
-            reasoning_effort: Some("high".to_string()),
-            workspace_root: Some("/fixture/workspace".to_string()),
-        },
-    )
-    .await
-    .unwrap()
-    .conversation;
-    let turn = GatewayProtocolServer::turn_send(
-        gateway.as_ref(),
-        gateway::TurnSendRequest {
-            conversation: conversation.resource,
-            client_message_id: "host-message".to_string(),
-            message: "host vertical".to_string(),
-            steer_turn: None,
-        },
-    )
-    .await
-    .unwrap()
-    .turn;
-    assert_eq!(turn.resource.native_resource_id, "turn-started");
+        );
+        self.request(
+            "create",
+            "instance.create",
+            json!({
+                "route": route_value(),
+                "instanceKind": CODEX_INSTANCE_KIND,
+                "displayName": "Codex Binary Fixture",
+                "settings": {
+                    "appServerExecutable": app_server_executable(),
+                    "appServerArgs": [
+                        "--approval-mode",
+                        approval_mode,
+                        "--marker",
+                        marker
+                    ],
+                    "models": ["gpt-fixture"],
+                    "reasoningEfforts": ["high"]
+                }
+            }),
+        );
+        self.request("start", "instance.start", json!({ "route": route_value() }));
+        self.create_conversation("conversation-first")
+    }
 
-    let mut events = gateway.subscribe_events(None).unwrap();
-    let approval = tokio::time::timeout(Duration::from_secs(5), async {
+    fn create_conversation(&mut self, id: &str) -> Value {
+        self.request(
+            id,
+            "conversation.create",
+            json!({
+                "route": route_value(),
+                "permissionLevel": "workspace-write",
+                "model": "gpt-fixture",
+                "reasoningEffort": "high",
+                "workspaceRoot": "/fixture/workspace"
+            }),
+        )
+        .pointer("/result/conversation/resource")
+        .cloned()
+        .unwrap()
+    }
+
+    fn request(&mut self, id: &str, method: &str, params: Value) -> Value {
+        serde_json::to_writer(
+            &mut self.stdin,
+            &json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }),
+        )
+        .unwrap();
+        self.stdin.write_all(b"\n").unwrap();
+        self.stdin.flush().unwrap();
+        self.receive(Duration::from_secs(5), |message| {
+            message.get("id").and_then(Value::as_str) == Some(id)
+        })
+    }
+
+    fn event(&mut self, method: &str) -> Value {
+        self.receive(Duration::from_secs(5), |message| {
+            message.get("method").and_then(Value::as_str) == Some(method)
+        })
+    }
+
+    fn receive<F>(&mut self, timeout: Duration, predicate: F) -> Value
+    where
+        F: Fn(&Value) -> bool,
+    {
+        if let Some(index) = self.buffered.iter().position(&predicate) {
+            return self.buffered.remove(index).unwrap();
+        }
+        let deadline = Instant::now() + timeout;
         loop {
-            if let gateway::ProtocolEvent::ApprovalRequested { payload, .. } =
-                events.next_event().await.unwrap()
-            {
-                return payload.approval;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let message = self.messages.recv_timeout(remaining).unwrap();
+            if predicate(&message) {
+                return message;
+            }
+            self.buffered.push_back(message);
+        }
+    }
+
+    fn collect_for(&mut self, duration: Duration) {
+        let deadline = Instant::now() + duration;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return;
+            }
+            match self.messages.recv_timeout(remaining) {
+                Ok(message) => self.buffered.push_back(message),
+                Err(mpsc::RecvTimeoutError::Timeout) => return,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
             }
         }
-    })
-    .await
-    .unwrap();
-    let resolved = GatewayProtocolServer::approval_resolve(
-        gateway.as_ref(),
-        gateway::ApprovalResolveRequest {
-            approval: approval.resource,
-            decision: gateway::ApprovalDecision::Deny,
-        },
-    )
-    .await
-    .unwrap();
-    assert_eq!(resolved.approval.status, gateway::ApprovalStatus::Denied);
-    wait_for_file(&marker).await;
-    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "decline");
-    let interrupted = GatewayProtocolServer::turn_interrupt(
-        gateway.as_ref(),
-        gateway::TurnInterruptRequest {
-            turn: turn.resource,
-        },
-    )
-    .await
-    .unwrap();
-    assert_eq!(interrupted.turn.status, gateway::TurnStatus::Interrupted);
+    }
+}
 
-    for (_, outcome) in manager.shutdown().await {
-        if let Err(error) = outcome {
-            let snapshot = manager.snapshot(CODEX_PLUGIN_ID).await.unwrap();
-            panic!(
-                "Codex Provider shutdown failed: {error:?}; stderr={:?}",
-                snapshot.stderr_diagnostics
-            );
-        }
+impl Drop for ProviderBinary {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn route_value() -> Value {
+    json!({
+        "deviceId": "device-provider-binary",
+        "providerPluginId": CODEX_PLUGIN_ID,
+        "providerInstanceId": "codex"
+    })
+}
+
+fn wait_for_file_blocking(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !path.is_file() {
+        assert!(Instant::now() < deadline, "fixture marker was not written");
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 

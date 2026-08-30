@@ -1,12 +1,24 @@
-# Codex Remote 与 Desktop Companion 必须按 Channel 隔离
+# Codex Provider 与 Desktop Companion 必须按 Channel 隔离
 
 ## 规则
 
-Codex Remote/Provider Host/App Server 与 Codex Desktop Companion/IPC 必须拥有独立的进程/session、registry、event bus、sequence/replay、Tauri command/event 和 unavailable 生命周期。桌宠 activity store 只能消费 companion channel；remote 标准事件不能因 provider id 相同而进入桌宠。
+Codex Provider/App Server 远程链路与 Codex Desktop Companion/私有 IPC 桌宠链路必须完全独立。两者不得共享 session、registry、event bus、replay、activity projection、来源排除状态或动作路由。remote 与 Desktop 出现相同 native thread id 时允许各自保留；本阶段不做去重、排除或同步。
 
-进程外 Provider Host 是 remote 的唯一运行时：`ProviderHostState` 管理 Plugin Manager 与 Gateway service，compat `RuntimeGatewayState` 只能薄适配这个 service。Provider 事件必须进入远程 `runtime-gateway-event`/replay，但不得进入 `codex-desktop-companion-event`、companion replay、`pet-event` 或 `SharedState` activity。插件失败不得回退到 Desktop IPC，桌宠动作不得调用 Plugin Manager。
+Provider 事件只能进入 `ProviderGatewayService` 的 cursor/replay 与 `runtime-gateway-event`。它不得：
 
-两路唯一允许共享的是最小 remote thread provenance 与 transient remote-operation fence。它们只能阻止 companion 投影/动作竞态，不得携带 App Server session、loaded-thread cache、Desktop owner、revision、request router 或原生 payload。
+- 写 `CodexThreadScope` 或调用 `CodexDesktopCompanionAdapter::exclude_remote_thread`；
+- 发 `codex-desktop-companion-thread-excluded`、`codex-desktop-companion-event` 或 `pet-event`；
+- 修改 `SharedState` activity、PetProjection 或 companion replay；
+- 让桌宠动作调用 Plugin Manager、Provider Protocol 或 App Server。
+
+桌宠 Codex 数据的唯一来源仍是：Codex Desktop IPC → Desktop Companion → Pet Protocol/compat projection → Pet UI。Provider 故障不得 fallback 到 Desktop IPC，Desktop IPC 故障也不得 fallback 到 Provider。
+
+## 证据边界
+
+- `RuntimeGatewayState` 只持有 `CompatProviderGateway`；compat 只调用 `ProviderGatewayService`，不持有 Pet/companion/scope 状态。
+- `TurnOutputDeltaEvent` 在 Provider/Gateway v1 中自带 conversation 四段 route，因此 compat 不需要 turn replay map。
+- Provider resource 直接携带 `deviceId + providerPluginId + providerInstanceId + nativeResourceId`；compat 不通过 registry 回查 plugin id。
+- 生产 `lib.rs` 分别构造 Provider Host/Gateway 和 Desktop Companion；Provider state 不接收 companion state。
 
 ## 适用场景
 
@@ -17,41 +29,31 @@ Codex Remote/Provider Host/App Server 与 Codex Desktop Companion/IPC 必须拥�
 
 ## 反例
 
-- 在同一个 registry 注册 AppServer 和 IPC，并依赖不同 provider id 或 UI 过滤。
-- PetApp 枚举 remote provider、监听 `runtime-gateway-event`，再隐藏不想显示的卡片。
+- Provider conversation/event 到达后调用 `mark_remote`，再删除 Desktop 卡片。
+- compat 为 delta 保存 `turn -> conversation` map，依赖早先 replay 来补路由。
+- PetApp 枚举 remote provider、监听 `runtime-gateway-event`，再在 UI 隐藏不想展示的卡片。
 - Desktop IPC unavailable 时把 App Server snapshot 填进 companion store。
-- 只删除 remote thread 当前卡片，不阻止 replay/snapshot 重新创建。
-- remote create 响应未确定时先发布 Desktop auto-load 事件，之后再撤下。
-- runtime executable refresh 重启 Desktop IPC 或清空其 projection。
+- Provider refresh 重启 Desktop IPC 或清空其 projection。
+- 为避免同名 thread 而建立跨链路 tombstone、quarantine 或 transient operation fence。
 
 ## 推荐做法
 
-- `RuntimeGatewayState` 只持有 `ProviderGatewayService` 的 compat 薄适配，不注册 Provider、不启动 App Server；`CodexDesktopCompanionState` 只注册 Desktop IPC。
-- `ProviderHostState` 持有 Plugin Manager 与 Gateway v1 service；Manager update 只有一个有界 Gateway consumer。
 - remote 使用 `runtime_gateway_*` 与 `runtime-gateway-event`；companion 使用 `codex_desktop_companion_*` 与 `codex-desktop-companion-event`。
+- Provider/Gateway event 自身携带完整 route；每一跳校验身份，不保存兼容层关联状态。
 - PetApp 只导入 companion client。交互 capability 同时校验 Desktop namespace/source marker。
-- remote create 进入 Gateway 后 quarantine 新 Desktop thread；成功/notification 标记 remote，调用返回错误则因标准协议缺少交付细分证据而保守按歧义失败排除。provider lookup 失败发生在 guard 之前，不得影响 Desktop 候选。
-- 历史 remote 动作先以 transient fence 阻止 Desktop 本地派发。Provider Protocol 当前没有跨进程携带 Success/NotSent/ExplicitRpcReject/SentOutcomeUnknown 细分证据；compat 对已进入 Gateway 的歧义错误保守标记 remote，不能重新引入 Tauri 内直连来恢复旧证据。若未来需要减少误排除，应先扩展标准协议错误证据并同步生成 SDK。
-- App Server loaded-thread 状态必须按 session 隔离；list/read 不等于 loaded，新 session 首次运行时动作必须重新 `thread/resume`。
-- 无法无损映射的 server request 不得发布为可操作 Approval。未知或当前不支持的 method 必须以同一 request id 返回 JSON-RPC error，不能伪造空 grant 或成功。
-- projection 对 excluded conversation 保存进程内 tombstone，过滤 snapshot 和全部 conversation-scoped event。
-- App Server 初始化只发生在 Provider `instance.start`。runtime refresh 只替换 Host instance setting 并显式重启 Codex 插件；任何故障只改变 remote Provider。
+- 无法无损映射的 App Server request 以原 id 返回 JSON-RPC error，不发布可操作 Approval。
+- runtime refresh 只替换 Host Codex instance setting 并显式 restart Provider；任何故障只改变 remote Provider。
+
+## 风险与验证
+
+- Provider 污染桌宠：Tauri mock runtime 使用生产 bridge，同时监听 `runtime-gateway-event`、`codex-desktop-companion-event`、旧 `codex-desktop-companion-thread-excluded` 事件名与 `pet-event`。真实 Provider fixture 产生正常事件、坏帧和 crash 后，只允许 remote channel/replay 有数据；companion replay、activity store、Desktop adapter spy 和其余三个事件计数必须不变。
+- Desktop 数据源被替换：Desktop IPC adapter 测试继续覆盖 bootstrap/snapshot/patch/owner/action；PetApp 静态测试只允许 companion snapshot/replay/event/request。
+- 路由状态回流：检查生产源码不包含 `CodexThreadScope`/`mark_remote`/companion exclusion producer，compat 不包含 `turn_conversations` 或 plugin registry lookup；四段 route 的 schema/generated/Host tests 必须通过。
+- 生命周期串扰：分别让 Provider 与 Desktop IPC unavailable，断言另一条链路不重启、不清空且仍使用自己的 transport。
 
 ## 来源
 
+- `../10-architecture/codex-provider-plugin-runtime.md`
 - `../50-decisions/codex-remote-and-desktop-companion-dual-channel.md`
 - `../30-domains/agent-control/codex-app-server.md`
 - `../30-domains/agent-control/codex-desktop-companion.md`
-
-## 验证方式
-
-- 向 remote sink 发布 conversation、turn、approval，断言 companion replay 为空。
-- 用 Tauri mock runtime 的真实 `AppHandle` 同时监听 `runtime-gateway-event`、`codex-desktop-companion-event` 和 `pet-event`；真实 Provider fixture 触发 event、坏帧和 crash，断言 Provider payload 只进入 remote event/replay，companion replay、activity store、companion/Pet event 与 Desktop adapter 计数 spy 不变。
-- 用延迟 initialize/shutdown fixture 并发调用两次 `ProviderHostState::shutdown_once`，断言两次都等待相同完成结果、force kill 后子进程已结束（Unix 额外用 PID 复核），且 Manager shutdown gate 阻止后续 spawn。
-- 分别把 remote/companion 置 unavailable，断言另一侧仍可请求或保留状态。
-- remote list/create 路由 App Server；companion 不广告 list/create。
-- Desktop snapshot 仍驱动 running、approval 和 terminal activity。
-- create race、notification、ambiguous outcome、并发本地 candidate 和 equal-revision quarantine 测试。
-- list/read → resume → action、真实 `-32600/no rollout`、写前 Shutdown、写后断线、并发失败 waiter、新 session 重载与 conservative remote-operation fence 测试。
-- permissions/未知 request `-32601`、无 Approval event 和 capability metadata 一致性测试。
-- PetApp 静态测试断言只监听/调用 companion；projection 测试断言 tombstone 拒绝 snapshot、conversation、turn、approval 和 output replay。

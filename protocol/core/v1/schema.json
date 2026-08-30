@@ -87,10 +87,11 @@
       "type": "object",
       "properties": {
         "deviceId": { "$ref": "#/$defs/DeviceId" },
+        "providerPluginId": { "$ref": "#/$defs/ProviderPluginId" },
         "providerInstanceId": { "$ref": "#/$defs/ProviderInstanceId" },
         "nativeResourceId": { "$ref": "#/$defs/NativeResourceId" }
       },
-      "required": ["deviceId", "providerInstanceId", "nativeResourceId"],
+      "required": ["deviceId", "providerPluginId", "providerInstanceId", "nativeResourceId"],
       "additionalProperties": false,
       "description": "Complete route for a provider-native resource."
     },

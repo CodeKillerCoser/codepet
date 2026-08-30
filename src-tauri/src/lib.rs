@@ -412,14 +412,9 @@ pub fn run() {
     app_log::log_app_start_banner();
     app_log::info("app", "tauri builder initializing");
 
-    let codex_thread_scope = agent::codex_thread_scope::CodexThreadScope::default();
     let provider_host_state = ProviderHostState::default();
-    let runtime_gateway_state = RuntimeGatewayState::new(
-        provider_host_state.gateway(),
-        codex_thread_scope.clone(),
-    );
-    let desktop_companion_state =
-        CodexDesktopCompanionState::with_thread_scope(codex_thread_scope);
+    let runtime_gateway_state = RuntimeGatewayState::new(provider_host_state.gateway());
+    let desktop_companion_state = CodexDesktopCompanionState::default();
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {

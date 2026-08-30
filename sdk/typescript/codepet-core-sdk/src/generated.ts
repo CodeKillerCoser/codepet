@@ -43,6 +43,7 @@ export type RequestId = string;
 
 export interface RoutedResourceId {
   deviceId: DeviceId;
+  providerPluginId: ProviderPluginId;
   providerInstanceId: ProviderInstanceId;
   nativeResourceId: NativeResourceId;
 }

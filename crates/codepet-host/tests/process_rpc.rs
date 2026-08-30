@@ -57,6 +57,7 @@ async fn ready_process(plugin_id: &str, instance_id: &str) -> PluginProcess {
     assert_eq!(described.plugin, initialized.plugin);
     let route = ProviderInstanceRoute {
         device_id: "device-test".to_string(),
+        provider_plugin_id: plugin_id.to_string(),
         provider_instance_id: instance_id.to_string(),
     };
     process
@@ -77,9 +78,10 @@ async fn ready_process(plugin_id: &str, instance_id: &str) -> PluginProcess {
     process
 }
 
-fn conversation(instance_id: &str, native_id: &str) -> RoutedResourceId {
+fn conversation(plugin_id: &str, instance_id: &str, native_id: &str) -> RoutedResourceId {
     RoutedResourceId {
         device_id: "device-test".to_string(),
+        provider_plugin_id: plugin_id.to_string(),
         provider_instance_id: instance_id.to_string(),
         native_resource_id: native_id.to_string(),
     }
@@ -92,12 +94,12 @@ async fn real_stdio_lifecycle_correlates_concurrent_responses_and_separates_even
     let slow = process
         .client()
         .conversation_get(ConversationGetRequest {
-            conversation: conversation("instance-concurrent", "slow"),
+            conversation: conversation("dev.codepet.concurrent", "instance-concurrent", "slow"),
         });
     let fast = process
         .client()
         .conversation_get(ConversationGetRequest {
-            conversation: conversation("instance-concurrent", "fast"),
+            conversation: conversation("dev.codepet.concurrent", "instance-concurrent", "fast"),
         });
     let (slow, fast) = tokio::join!(slow, fast);
     assert_eq!(
@@ -112,7 +114,11 @@ async fn real_stdio_lifecycle_correlates_concurrent_responses_and_separates_even
     let response = process
         .client()
         .conversation_get(ConversationGetRequest {
-            conversation: conversation("instance-concurrent", "event-first"),
+            conversation: conversation(
+                "dev.codepet.concurrent",
+                "instance-concurrent",
+                "event-first",
+            ),
         })
         .await
         .unwrap();
@@ -141,6 +147,7 @@ async fn real_stdio_lifecycle_correlates_concurrent_responses_and_separates_even
     ));
     let route = ProviderInstanceRoute {
         device_id: "device-test".to_string(),
+        provider_plugin_id: "dev.codepet.concurrent".to_string(),
         provider_instance_id: "instance-concurrent".to_string(),
     };
     let stopped = process
@@ -238,7 +245,7 @@ async fn timeout_does_not_poison_later_requests() {
     let error = process
         .client()
         .conversation_get(ConversationGetRequest {
-            conversation: conversation("instance-timeout", "timeout"),
+            conversation: conversation("dev.codepet.timeout", "instance-timeout", "timeout"),
         })
         .await
         .unwrap_err();
@@ -247,7 +254,11 @@ async fn timeout_does_not_poison_later_requests() {
     let recovered = process
         .client()
         .conversation_get(ConversationGetRequest {
-            conversation: conversation("instance-timeout", "after-timeout"),
+            conversation: conversation(
+                "dev.codepet.timeout",
+                "instance-timeout",
+                "after-timeout",
+            ),
         })
         .await
         .unwrap();
@@ -271,7 +282,11 @@ async fn malformed_oversized_and_crashed_plugins_close_only_their_process() {
         let error = process
             .client()
             .conversation_get(ConversationGetRequest {
-                conversation: conversation(&instance_id, native_id),
+                conversation: conversation(
+                    &format!("dev.codepet.{native_id}"),
+                    &instance_id,
+                    native_id,
+                ),
             })
             .await
             .unwrap_err();
@@ -287,7 +302,11 @@ async fn malformed_oversized_and_crashed_plugins_close_only_their_process() {
         let response = healthy
             .client()
             .conversation_get(ConversationGetRequest {
-                conversation: conversation(&healthy_instance, "healthy"),
+                conversation: conversation(
+                    &format!("dev.codepet.healthy-{native_id}"),
+                    &healthy_instance,
+                    "healthy",
+                ),
             })
             .await
             .unwrap();

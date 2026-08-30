@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   codexDesktopCompanionClient,
   codexDesktopCompanionEventName,
-  codexDesktopCompanionThreadExcludedEventName,
   readCodexDesktopCompanionSnapshot,
   replayCodexDesktopCompanionEvents,
 } from "./codexDesktopCompanion";
@@ -71,9 +70,6 @@ describe("Codex Desktop companion transport", () => {
       expect.objectContaining({ request: expect.objectContaining({ method: "provider.list" }) }),
     );
     expect(codexDesktopCompanionEventName).toBe("codex-desktop-companion-event");
-    expect(codexDesktopCompanionThreadExcludedEventName).toBe(
-      "codex-desktop-companion-thread-excluded",
-    );
     expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).not.toContain(
       "runtime_gateway_request",
     );

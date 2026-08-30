@@ -1,10 +1,9 @@
-use crate::agent::codex_thread_scope::CodexThreadScope;
 use codepet_gateway_sdk::compat_v0 as compat;
 use codepet_gateway_sdk::{self as gateway, ProtocolServer as GatewayProtocolServer};
 use codepet_host::{GatewayEventSubscription, ProviderGatewayService};
 use serde_json::json;
-use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 const CODEX_PLUGIN_ID: &str = "dev.codepet.codex";
 const ROUTE_EXTENSION_NAMESPACE: &str = "codepet.gateway.route";
@@ -12,20 +11,11 @@ const ROUTE_EXTENSION_NAMESPACE: &str = "codepet.gateway.route";
 #[derive(Clone)]
 pub struct CompatProviderGateway {
     gateway: Option<Arc<ProviderGatewayService>>,
-    thread_scope: CodexThreadScope,
-    turn_conversations: Arc<Mutex<HashMap<(String, String, String), gateway::RoutedResourceId>>>,
 }
 
 impl CompatProviderGateway {
-    pub fn new(
-        gateway: Option<Arc<ProviderGatewayService>>,
-        thread_scope: CodexThreadScope,
-    ) -> Self {
-        Self {
-            gateway,
-            thread_scope,
-            turn_conversations: Arc::new(Mutex::new(HashMap::new())),
-        }
+    pub fn new(gateway: Option<Arc<ProviderGatewayService>>) -> Self {
+        Self { gateway }
     }
 
     pub async fn request(&self, request: compat::ProtocolRequest) -> compat::ProtocolResponse {
@@ -103,18 +93,6 @@ impl CompatProviderGateway {
         }
     }
 
-    fn plugin_id_for_resource(
-        &self,
-        resource: &gateway::RoutedResourceId,
-    ) -> Result<String, compat::ProtocolError> {
-        self.gateway()?
-            .provider_plugin_id(&gateway::GatewayProviderRoute {
-                device_id: resource.device_id.clone(),
-                provider_instance_id: resource.provider_instance_id.clone(),
-            })
-            .map_err(map_error)
-    }
-
     fn map_event(
         &self,
         event: gateway::ProtocolEvent,
@@ -137,51 +115,32 @@ impl CompatProviderGateway {
                 event_cursor,
                 payload,
                 ..
-            } => {
-                let plugin_id =
-                    self.plugin_id_for_resource(&payload.conversation.resource)?;
-                self.thread_scope
-                    .mark_remote(payload.conversation.resource.native_resource_id.clone());
-                compat::ProtocolEvent::ConversationUpserted {
-                    protocol_version: compat::PROTOCOL_VERSION,
-                    event_sequence: event_sequence(&event_cursor)?,
-                    payload: compat::ConversationUpsertedEvent {
-                        conversation: map_conversation(payload.conversation, &plugin_id)?,
-                    },
-                }
-            }
+            } => compat::ProtocolEvent::ConversationUpserted {
+                protocol_version: compat::PROTOCOL_VERSION,
+                event_sequence: event_sequence(&event_cursor)?,
+                payload: compat::ConversationUpsertedEvent {
+                    conversation: map_conversation(payload.conversation)?,
+                },
+            },
             gateway::ProtocolEvent::TurnUpserted {
                 event_cursor,
                 payload,
                 ..
-            } => {
-                let plugin_id = self.plugin_id_for_resource(&payload.turn.resource)?;
-                self.remember_turn(&payload.turn);
-                self.thread_scope
-                    .mark_remote(payload.turn.conversation.native_resource_id.clone());
-                compat::ProtocolEvent::TurnUpserted {
-                    protocol_version: compat::PROTOCOL_VERSION,
-                    event_sequence: event_sequence(&event_cursor)?,
-                    payload: compat::TurnUpsertedEvent {
-                        turn: map_turn(payload.turn, &plugin_id),
-                    },
-                }
-            }
+            } => compat::ProtocolEvent::TurnUpserted {
+                protocol_version: compat::PROTOCOL_VERSION,
+                event_sequence: event_sequence(&event_cursor)?,
+                payload: compat::TurnUpsertedEvent {
+                    turn: map_turn(payload.turn)?,
+                },
+            },
             gateway::ProtocolEvent::TurnOutputDelta {
                 event_cursor,
                 payload,
                 ..
             } => {
-                let plugin_id = self.plugin_id_for_resource(&payload.turn)?;
-                let Some(conversation) = lock(&self.turn_conversations)
-                    .get(&resource_key(&payload.turn))
-                    .cloned()
-                else {
-                    return Ok(None);
-                };
                 let route = route_extension(
                     &payload.turn.device_id,
-                    Some(&plugin_id),
+                    &payload.turn.provider_plugin_id,
                     &payload.turn.provider_instance_id,
                     Some(&payload.turn.native_resource_id),
                 );
@@ -190,7 +149,7 @@ impl CompatProviderGateway {
                     event_sequence: event_sequence(&event_cursor)?,
                     payload: compat::TurnOutputDeltaEvent {
                         provider_id: payload.turn.provider_instance_id.clone(),
-                        conversation_id: conversation.native_resource_id,
+                        conversation_id: payload.conversation.native_resource_id,
                         turn_id: payload.turn.native_resource_id,
                         output_id: payload.output_id,
                         kind: payload.kind,
@@ -203,51 +162,26 @@ impl CompatProviderGateway {
                 event_cursor,
                 payload,
                 ..
-            } => {
-                let plugin_id = self.plugin_id_for_resource(&payload.approval.resource)?;
-                lock(&self.turn_conversations).insert(
-                    resource_key(&payload.approval.turn),
-                    payload.approval.conversation.clone(),
-                );
-                self.thread_scope
-                    .mark_remote(payload.approval.conversation.native_resource_id.clone());
-                compat::ProtocolEvent::ApprovalRequested {
-                    protocol_version: compat::PROTOCOL_VERSION,
-                    event_sequence: event_sequence(&event_cursor)?,
-                    payload: compat::ApprovalRequestedEvent {
-                        approval: map_approval(payload.approval, &plugin_id),
-                    },
-                }
-            }
+            } => compat::ProtocolEvent::ApprovalRequested {
+                protocol_version: compat::PROTOCOL_VERSION,
+                event_sequence: event_sequence(&event_cursor)?,
+                payload: compat::ApprovalRequestedEvent {
+                    approval: map_approval(payload.approval),
+                },
+            },
             gateway::ProtocolEvent::ApprovalResolved {
                 event_cursor,
                 payload,
                 ..
-            } => {
-                let plugin_id = self.plugin_id_for_resource(&payload.approval.resource)?;
-                lock(&self.turn_conversations).insert(
-                    resource_key(&payload.approval.turn),
-                    payload.approval.conversation.clone(),
-                );
-                self.thread_scope
-                    .mark_remote(payload.approval.conversation.native_resource_id.clone());
-                compat::ProtocolEvent::ApprovalResolved {
-                    protocol_version: compat::PROTOCOL_VERSION,
-                    event_sequence: event_sequence(&event_cursor)?,
-                    payload: compat::ApprovalResolvedEvent {
-                        approval: map_approval(payload.approval, &plugin_id),
-                    },
-                }
-            }
+            } => compat::ProtocolEvent::ApprovalResolved {
+                protocol_version: compat::PROTOCOL_VERSION,
+                event_sequence: event_sequence(&event_cursor)?,
+                payload: compat::ApprovalResolvedEvent {
+                    approval: map_approval(payload.approval),
+                },
+            },
         };
         Ok(Some(mapped))
-    }
-
-    fn remember_turn(&self, turn: &gateway::TurnTask) {
-        lock(&self.turn_conversations).insert(
-            resource_key(&turn.resource),
-            turn.conversation.clone(),
-        );
     }
 }
 
@@ -347,11 +281,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
                 conversations: response
                     .conversations
                     .into_iter()
-                    .map(|conversation| {
-                        let plugin_id =
-                            self.plugin_id_for_resource(&conversation.resource)?;
-                        map_conversation(conversation, &plugin_id)
-                    })
+                    .map(map_conversation)
                     .collect::<Result<Vec<_>, compat::ProtocolError>>()?,
                 next_cursor: response.page_info.next_cursor,
                 event_sequence: event_sequence(&response.event_cursor)?,
@@ -373,9 +303,8 @@ impl compat::ProtocolServer for CompatProviderGateway {
             )
             .await
             .map_err(map_error)?;
-            let plugin_id = self.plugin_id_for_resource(&response.conversation.resource)?;
             Ok(compat::ConversationGetResponse {
-                conversation: map_conversation(response.conversation, &plugin_id)?,
+                conversation: map_conversation(response.conversation)?,
             })
         })
     }
@@ -386,8 +315,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
     ) -> compat::ProtocolFuture<'a, compat::ConversationCreateResponse> {
         Box::pin(async move {
             let provider = self.provider_route(&request.provider_id).await?;
-            let creation = self.thread_scope.begin_remote_creation();
-            let result = GatewayProtocolServer::conversation_create(
+            let response = GatewayProtocolServer::conversation_create(
                 self.gateway()?.as_ref(),
                 gateway::ConversationCreateRequest {
                     route: provider.route,
@@ -398,21 +326,11 @@ impl compat::ProtocolServer for CompatProviderGateway {
                     workspace_root: request.workspace_root,
                 },
             )
-            .await;
-            match result {
-                Ok(response) => {
-                    self.thread_scope.mark_remote(
-                        response.conversation.resource.native_resource_id.clone(),
-                    );
-                    let plugin_id =
-                        self.plugin_id_for_resource(&response.conversation.resource)?;
-                    creation.settle_known();
-                    Ok(compat::ConversationCreateResponse {
-                        conversation: map_conversation(response.conversation, &plugin_id)?,
-                    })
-                }
-                Err(error) => Err(map_error(error)),
-            }
+            .await
+            .map_err(map_error)?;
+            Ok(compat::ConversationCreateResponse {
+                conversation: map_conversation(response.conversation)?,
+            })
         })
     }
 
@@ -430,12 +348,8 @@ impl compat::ProtocolServer for CompatProviderGateway {
             }
             let provider = self.provider_route(&request.provider_id).await?;
             let route = provider.route;
-            let conversation_id = request.conversation_id;
-            let conversation = routed_resource(route.clone(), conversation_id.clone());
-            let mut operation = self
-                .thread_scope
-                .begin_remote_operation(conversation_id.clone());
-            let result = GatewayProtocolServer::turn_send(
+            let conversation = routed_resource(route.clone(), request.conversation_id);
+            let response = GatewayProtocolServer::turn_send(
                 self.gateway()?.as_ref(),
                 gateway::TurnSendRequest {
                     conversation,
@@ -446,18 +360,11 @@ impl compat::ProtocolServer for CompatProviderGateway {
                         .map(|turn_id| routed_resource(route, turn_id)),
                 },
             )
-            .await;
-            match result {
-                Ok(response) => {
-                    self.remember_turn(&response.turn);
-                    let plugin_id = self.plugin_id_for_resource(&response.turn.resource)?;
-                    operation.commit_remote();
-                    Ok(compat::TurnSendResponse {
-                        turn: map_turn(response.turn, &plugin_id),
-                    })
-                }
-                Err(error) => Err(map_error(error)),
-            }
+            .await
+            .map_err(map_error)?;
+            Ok(compat::TurnSendResponse {
+                turn: map_turn(response.turn)?,
+            })
         })
     }
 
@@ -467,27 +374,22 @@ impl compat::ProtocolServer for CompatProviderGateway {
     ) -> compat::ProtocolFuture<'a, compat::TurnInterruptResponse> {
         Box::pin(async move {
             let provider = self.provider_route(&request.provider_id).await?;
-            let mut operation = self
-                .thread_scope
-                .begin_remote_operation(request.conversation_id.clone());
-            let result = GatewayProtocolServer::turn_interrupt(
+            let route = provider.route;
+            let response = GatewayProtocolServer::turn_interrupt(
                 self.gateway()?.as_ref(),
                 gateway::TurnInterruptRequest {
-                    turn: routed_resource(provider.route, request.turn_id),
+                    conversation: routed_resource(
+                        route.clone(),
+                        request.conversation_id,
+                    ),
+                    turn: routed_resource(route, request.turn_id),
                 },
             )
-            .await;
-            match result {
-                Ok(response) => {
-                    self.remember_turn(&response.turn);
-                    let plugin_id = self.plugin_id_for_resource(&response.turn.resource)?;
-                    operation.commit_remote();
-                    Ok(compat::TurnInterruptResponse {
-                        turn: map_turn(response.turn, &plugin_id),
-                    })
-                }
-                Err(error) => Err(map_error(error)),
-            }
+            .await
+            .map_err(map_error)?;
+            Ok(compat::TurnInterruptResponse {
+                turn: map_turn(response.turn)?,
+            })
         })
     }
 
@@ -509,11 +411,8 @@ impl compat::ProtocolServer for CompatProviderGateway {
             )
             .await
             .map_err(map_error)?;
-            self.thread_scope
-                .mark_remote(response.approval.conversation.native_resource_id.clone());
-            let plugin_id = self.plugin_id_for_resource(&response.approval.resource)?;
             Ok(compat::ApprovalResolveResponse {
-                approval: map_approval(response.approval, &plugin_id),
+                approval: map_approval(response.approval),
             })
         })
     }
@@ -567,7 +466,7 @@ fn map_provider(provider: gateway::ProviderInstance) -> compat::Provider {
         },
         extension: Some(route_extension(
             &provider.route.device_id,
-            Some(&provider.plugin_id),
+            &provider.route.provider_plugin_id,
             &provider.route.provider_instance_id,
             None,
         )),
@@ -576,61 +475,92 @@ fn map_provider(provider: gateway::ProviderInstance) -> compat::Provider {
 
 fn map_conversation(
     conversation: gateway::Conversation,
-    plugin_id: &str,
 ) -> Result<compat::Conversation, compat::ProtocolError> {
     let provider_id = conversation.resource.provider_instance_id.clone();
     let route = route_extension(
         &conversation.resource.device_id,
-        Some(plugin_id),
+        &conversation.resource.provider_plugin_id,
         &conversation.resource.provider_instance_id,
         Some(&conversation.resource.native_resource_id),
     );
-    let permission_level = map_permission_level(&conversation.permission_level).ok_or_else(|| {
+    let permission_level = conversation
+        .permission_level
+        .as_deref()
+        .and_then(map_permission_level)
+        .ok_or_else(|| {
+            compat_error(
+                "compat_data_unrepresentable",
+                "compat Runtime Gateway requires a known conversation permission level"
+                    .to_string(),
+                false,
+            )
+        })?;
+    let created_at = conversation.created_at.ok_or_else(|| {
         compat_error(
-            "capability_unsupported",
-            format!(
-                "compat Runtime Gateway cannot represent permission level {}",
-                conversation.permission_level
-            ),
+            "compat_data_unrepresentable",
+            "compat Runtime Gateway requires a confirmed conversation createdAt".to_string(),
+            false,
+        )
+    })?;
+    let updated_at = conversation.updated_at.ok_or_else(|| {
+        compat_error(
+            "compat_data_unrepresentable",
+            "compat Runtime Gateway requires a confirmed conversation updatedAt".to_string(),
             false,
         )
     })?;
     let active_turn = conversation
         .active_turn
-        .map(|turn| map_turn(turn, plugin_id));
+        .map(map_turn)
+        .transpose()?;
+    let status = match conversation.status {
+        gateway::ConversationStatus::Idle => compat::ConversationStatus::Idle,
+        gateway::ConversationStatus::Running => compat::ConversationStatus::Running,
+        gateway::ConversationStatus::WaitingApproval => {
+            compat::ConversationStatus::WaitingApproval
+        }
+        gateway::ConversationStatus::WaitingUserInput => {
+            return Err(compat_error(
+                "compat_data_unrepresentable",
+                "compat Runtime Gateway cannot represent waiting-user-input".to_string(),
+                false,
+            ));
+        }
+        gateway::ConversationStatus::Error => compat::ConversationStatus::Error,
+        gateway::ConversationStatus::Archived => compat::ConversationStatus::Archived,
+    };
     Ok(compat::Conversation {
         id: conversation.resource.native_resource_id,
         provider_id,
         title: conversation.title,
         preview: conversation.preview,
-        status: match conversation.status {
-            gateway::ConversationStatus::Idle => compat::ConversationStatus::Idle,
-            gateway::ConversationStatus::Running => compat::ConversationStatus::Running,
-            gateway::ConversationStatus::WaitingApproval => {
-                compat::ConversationStatus::WaitingApproval
-            }
-            gateway::ConversationStatus::Error => compat::ConversationStatus::Error,
-            gateway::ConversationStatus::Archived => compat::ConversationStatus::Archived,
-        },
+        status,
         permission_level,
         model: conversation.model,
         reasoning_effort: conversation.reasoning_effort,
         workspace_root: conversation.workspace_root,
-        created_at: conversation.created_at,
-        updated_at: conversation.updated_at,
+        created_at,
+        updated_at,
         active_turn,
         extension: Some(route),
     })
 }
 
-fn map_turn(turn: gateway::TurnTask, plugin_id: &str) -> compat::TurnTask {
+fn map_turn(turn: gateway::TurnTask) -> Result<compat::TurnTask, compat::ProtocolError> {
     let route = route_extension(
         &turn.resource.device_id,
-        Some(plugin_id),
+        &turn.resource.provider_plugin_id,
         &turn.resource.provider_instance_id,
         Some(&turn.resource.native_resource_id),
     );
-    compat::TurnTask {
+    let updated_at = turn.updated_at.ok_or_else(|| {
+        compat_error(
+            "compat_data_unrepresentable",
+            "compat Runtime Gateway requires a confirmed turn updatedAt".to_string(),
+            false,
+        )
+    })?;
+    Ok(compat::TurnTask {
         id: turn.resource.native_resource_id,
         provider_id: turn.resource.provider_instance_id.clone(),
         conversation_id: turn.conversation.native_resource_id,
@@ -644,16 +574,16 @@ fn map_turn(turn: gateway::TurnTask, plugin_id: &str) -> compat::TurnTask {
         },
         display_summary: turn.display_summary,
         started_at: turn.started_at,
-        updated_at: turn.updated_at,
+        updated_at,
         completed_at: turn.completed_at,
         extension: Some(route),
-    }
+    })
 }
 
-fn map_approval(approval: gateway::Approval, plugin_id: &str) -> compat::Approval {
+fn map_approval(approval: gateway::Approval) -> compat::Approval {
     let route = route_extension(
         &approval.resource.device_id,
-        Some(plugin_id),
+        &approval.resource.provider_plugin_id,
         &approval.resource.provider_instance_id,
         Some(&approval.resource.native_resource_id),
     );
@@ -722,22 +652,15 @@ fn routed_resource(
 ) -> gateway::RoutedResourceId {
     gateway::RoutedResourceId {
         device_id: route.device_id,
+        provider_plugin_id: route.provider_plugin_id,
         provider_instance_id: route.provider_instance_id,
         native_resource_id,
     }
 }
 
-fn resource_key(resource: &gateway::RoutedResourceId) -> (String, String, String) {
-    (
-        resource.device_id.clone(),
-        resource.provider_instance_id.clone(),
-        resource.native_resource_id.clone(),
-    )
-}
-
 fn route_extension(
     device_id: &str,
-    plugin_id: Option<&str>,
+    plugin_id: &str,
     provider_instance_id: &str,
     native_resource_id: Option<&str>,
 ) -> compat::ProviderExtension {
@@ -747,9 +670,7 @@ fn route_extension(
         "providerInstanceId".to_string(),
         json!(provider_instance_id),
     );
-    if let Some(plugin_id) = plugin_id {
-        data.insert("providerPluginId".to_string(), json!(plugin_id));
-    }
+    data.insert("providerPluginId".to_string(), json!(plugin_id));
     if let Some(native_resource_id) = native_resource_id {
         data.insert("nativeResourceId".to_string(), json!(native_resource_id));
     }
@@ -800,8 +721,4 @@ fn compat_error(code: &str, message: String, retryable: bool) -> compat::Protoco
         retryable,
         details: None,
     }
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }

@@ -37,7 +37,7 @@
 2. target registry 把 Rust、TypeScript、Dart、Python 映射到独立 adapter；未实现 adapter 不允许降级到其他语言。CodePet envelope 根据 manifest 的 `method`/`event` 与可选 event cursor 生成 tagged request/response/event。
 3. Provider 根据 JSON-RPC 2.0/stdio-json-lines 生成有界 `JsonLineCodec`、request/response/notification/event 入站分类、标准错误映射、含入站接口的 transport，以及 `ProtocolRequest::from_method_params` typed request-to-wire 入口。Host 调用该入口，不再手写 method 到 JSON-RPC envelope variant 的枚举。未知 method 与非法 params 保留 request id，分别映射 `-32601` 与 `-32602`；response 必须满足 result/error XOR。
 4. v1 initialize/handshake 通过 `VersionRange` 提交支持范围，并返回 selected version。manifest version、wire version 与生成常量由同一输入产生。
-5. Provider 和 gateway 的资源 ID 均使用 `RoutedResourceId { deviceId, providerInstanceId, nativeResourceId }`；Provider descriptor 的 `instanceKinds` 非空，create request/instance 都携带稳定 `instanceKind`，生成 helper 供服务实现 fail closed 选择。
+5. Provider 和 gateway 的资源 ID 均使用 `RoutedResourceId { deviceId, providerPluginId, providerInstanceId, nativeResourceId }`；Provider descriptor 的 `instanceKinds` 非空，create request/instance 都携带稳定 `instanceKind`，生成 helper 供服务实现 fail closed 选择。请求、响应、事件和审批必须逐跳校验四段身份，不能事后回查 plugin id 补齐 route。
 6. capability enum、capability container 与 method mapping 同时受 manifest/schema 校验，并生成 typed `ProtocolMethod::capability()`。
 7. Tauri 依赖 `codepet-host` 与 `codepet-gateway-sdk`，并继续通过 compat v0 re-export 使用原类型。`RuntimeGatewayState` 只适配 `ProviderHostState` 创建的 Gateway service；remote 与 companion 保持各自 EventBus/replay/Tauri event，Provider v1 event 经 Gateway 只发布到 remote channel。
 8. `crates/codepet-host` 已消费生成 SDK 实现进程外 Provider client、Plugin Manager 和 `codepet-gateway-sdk::ProtocolServer` application boundary；Manager 到 Gateway 是只能领取一次的有界单消费者队列，不指向 companion bus。详见 `provider-host-device-and-plugin-runtime.md`。
@@ -59,7 +59,7 @@
 
 - 风险：在 core 放入 Pet/Provider/Gateway 领域对象，导致层间重新耦合。验证：codegen dependency audit 与 Node 测试断言 core 无上行依赖。
 - 风险：Pet schema 或 manifest 偷用 Provider conversation/approval，未来再次把 remote 事件投影到桌宠。验证：统一 `$ref` audit 和 manifest 反向负例；现有双 transport Rust 测试继续运行。
-- 风险：资源只带 native ID，在多设备或多个同类 Provider instance 间碰撞。验证：Provider/Gateway fixture 和 Rust round-trip 测试断言三段路由同时存在。
+- 风险：资源漏掉 plugin identity，在相同 device/instance/native 组合间误路由。验证：core/provider/gateway fixture、生成 SDK 与 Host 负例测试断言四段身份同时存在且错误 plugin fail closed。
 - 风险：生成代码被手改或 Rust/TypeScript 输出漂移。验证：`npm run protocol:check` 比较完整内容并报告 stale file。
 - 风险：planned target 被错误交给 TypeScript 或静默无输出。验证：fake/Dart/Python fail-closed 测试与 TypeScript 多包跨 schema import 测试。
 - 风险：Provider stdio reader 无界增长、混淆 notification/event 或吞掉 JSON-RPC request id。验证：真实 line framing、超限、坏包、XOR、标准错误和 transport inbound 测试。
@@ -73,7 +73,8 @@
 - `cargo test --manifest-path sdk/rust/Cargo.toml`：四个 SDK 生成/编译、version、typed request-to-wire、JSON-RPC dispatcher/line framing/标准错误、instance kind、event cursor 和 route round-trip。
 - `cargo package --manifest-path sdk/rust/Cargo.toml --workspace --allow-dirty`：Cargo 建立临时本地 registry，按依赖顺序打包并验证四个 SDK，无需先上传 core。
 - `cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_protocol_tests --test runtime_gateway_core_tests`：v0 wire 与双链路隔离。
-- `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --all-targets`：Provider v1 与真实 fixture/Host 纵向闭环。
+- `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --all-targets`：Provider v1、真实 App Server fixture 与实际 Provider 二进制回归。
+- `cargo test --manifest-path crates/Cargo.toml -p codepet-host --all-targets`：Host 从 manifest 启动 Provider binary、Gateway 纵向 RPC、四段路由与 restart/fault isolation。
 - TypeScript 对兼容 SDK 执行独立 `tsc --noEmit`，并运行现有前端 protocol/component tests。
 - 测试后确认 `src-tauri/gen/schemas/macOS-schema.json` 无提交差异。
 

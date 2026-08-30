@@ -58,7 +58,7 @@ PetApp
 
 Codex Provider 实现 Provider v1 的完整 lifecycle、`conversation.list/get/create`、turn start/steer/interrupt、`approval.resolve` 和通知映射。Desktop companion 不广告 list/create，只把已 bootstrap 的本地 thread 投影到桌宠；回复、停止和审批继续使用 generation、owner、revision、request 与 handler 校验。
 
-Provider Host/Gateway 与 companion state 各自持有 registry、event bus、replay window 和 session。compat state 引用 Host 的同一个 Gateway service，但不拥有进程或第二个 remote bus。桌宠前端只引用 companion client/event，Provider conversation/turn/approval 不能进入 companion transport。`CodexThreadScope` 只共享 remote thread provenance：remote create 期间新 Desktop thread 先隔离，remote event/response 标记 id 后永久排除；未被标记的并发本地 thread 在 create 结束后重新发布。Hook、audit、transcript 和文件监听不参与 Codex 桌宠数据。
+Provider Host/Gateway 与 companion state 各自持有 registry、event bus、replay window 和 session。compat state 引用 Host 的同一个 Gateway service，但不拥有进程或第二个 remote bus。桌宠前端只引用 companion client/event，Provider conversation/turn/approval 不能进入 companion transport、thread scope、exclusion event 或 Pet projection。remote 与 Desktop 的同名 native thread 各自保留，不做跨链路排除或同步。Hook、audit、transcript 和文件监听不参与 Codex 桌宠数据。
 
 当前只有 Tauri 进程内 Gateway 调用面，尚无 WebSocket/P2P/relay 远程网络实现。App Server 只在 Provider instance start 中初始化且有超时；它 unavailable 不阻塞 Desktop companion，Desktop socket unavailable 也不改变 remote Provider。
 
@@ -668,7 +668,7 @@ Codex 的 thread 统一以 cwd 记录工作目录。Code Pet 使用规范化绝�
 - Managed conversation：由 Code Pet App Server 创建或恢复，Code Pet 拥有完整实时流和审批通道；
 - External conversation：由独立 Codex Desktop/CLI runtime 创建，可能只能通过 list/read 很快发现，实时 delta 和审批能力以实验结果为准。
 
-本项目不为此保留旧 Hook 架构。remote task 暂不投影到桌宠；Desktop companion 只处理 IPC 本地投影，并用 provenance scope 排除 remote-created/remote-controlled thread。如果 External conversation 无法完全附着，应在 remote capability 中明确限制，而不是用文件推断伪装权威状态。
+本项目不为此保留旧 Hook 架构。remote task 暂不投影到桌宠；Desktop companion 只处理 IPC 本地投影，不读取或排除 Provider thread。如果 External conversation 无法完全附着，应在 remote capability 中明确限制，而不是用文件推断伪装权威状态。
 
 ### 协议升级
 
@@ -840,7 +840,6 @@ Provider 状态和能力
 - `crates/providers/codepet-provider-codex/`：长期 remote App Server session、mapper、Provider v1 server 与 stdio 主循环；不得反向依赖 Tauri/Host/Pet SDK。
 - `src-tauri/src/agent/codex_app_server.rs` 与同名目录：已删除；不得恢复进程内直连、旧一次性 `PetEvent` reply driver 或 fallback。
 - `src-tauri/src/agent/codex_desktop_ipc/`：独立 Desktop companion、Owner/Follower revision 状态机和安全动作。
-- `src-tauri/src/agent/codex_thread_scope.rs`：remote thread provenance、create quarantine 和 companion exclusion。
 - `src-tauri/src/activity/collector.rs`：Agent Hook 数据入口删除；若其他本地非 Agent 功能仍需 HTTP 服务，应拆出独立用途后保留。
 - `src-tauri/src/activity/events.rs`：`PetEvent` 主模型被标准 protocol 和 Activity Projection 替代。
 - `src-tauri/src/activity/token_usage.rs`：扫描式 Agent 用量主路径被 Provider usage 替代；仅保留仍有独立产品价值的非 Provider 统计时才拆分保留。
@@ -948,7 +947,7 @@ Provider 状态和能力
 
 - 已验证 remote App Server 创建并完成的 thread 会被 Desktop 加载；App Server 对 Desktop-originated 实时 turn/item/approval 的可见程度仍未确认。
 - Desktop companion 当前使用私有 Owner/Follower IPC，其长期兼容承诺尚未确认；升级必须 fail closed 并重新验证。
-- remote thread provenance 当前只在进程内保存；跨应用重启后的历史来源仍无法可靠恢复。
+- remote 与 Desktop 的同名 thread 暂不去重；若未来增加跨链路 origin 协调，必须先在协议中定义可验证身份，不能从时间窗口或文件状态猜测。
 - Code Pet Standard Protocol 已采用 `tools/protocol-codegen` 自研最小生成器和 `codepet.protocol.codegen/v1` target adapter contract；未来只在现有 schema 子集无法表达跨语言需求时再评估 OpenRPC 等输入层。
 - Flutter 手机项目的最终状态管理、UI 组件和发布方式尚未确定，不影响 Dart protocol package 设计。
 - 远程首版采用 WSS relay 先行还是同时实现 WebRTC，需要在 Transport Spike 中根据中国大陆实测决定；业务协议不依赖该选择。

@@ -7,14 +7,12 @@ use super::transport::{LocalTransport, Transport};
 use crate::agent::codex_desktop_ipc::{
     CodexDesktopCompanionAdapter, CodexDesktopCompanionSnapshot,
 };
-use crate::agent::codex_thread_scope::CodexThreadScope;
 use crate::agent_runtime::{AgentRuntime, AgentRuntimeService, CODEX_RUNTIME_PROVIDER_ID};
 use crate::settings::{configured_app_data_dir, load_app_settings};
 use codepet_host::{
     DeviceRegistry, HostError, PluginCatalog, PluginCatalogConfig, PluginManager,
     PluginManagerConfig, ProviderGatewayService, ProviderInstanceRegistry,
 };
-use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -23,14 +21,6 @@ use tokio::sync::{Mutex as AsyncMutex, Notify};
 
 pub const RUNTIME_GATEWAY_EVENT: &str = "runtime-gateway-event";
 pub const CODEX_DESKTOP_COMPANION_EVENT: &str = "codex-desktop-companion-event";
-pub const CODEX_DESKTOP_COMPANION_THREAD_EXCLUDED_EVENT: &str =
-    "codex-desktop-companion-thread-excluded";
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexDesktopCompanionThreadExcluded {
-    pub conversation_id: String,
-}
 
 #[derive(Clone)]
 pub struct RuntimeGatewayState {
@@ -39,17 +29,14 @@ pub struct RuntimeGatewayState {
 
 impl Default for RuntimeGatewayState {
     fn default() -> Self {
-        Self::new(None, CodexThreadScope::default())
+        Self::new(None)
     }
 }
 
 impl RuntimeGatewayState {
-    pub fn new(
-        gateway: Option<Arc<ProviderGatewayService>>,
-        thread_scope: CodexThreadScope,
-    ) -> Self {
+    pub fn new(gateway: Option<Arc<ProviderGatewayService>>) -> Self {
         Self {
-            compat: CompatProviderGateway::new(gateway, thread_scope),
+            compat: CompatProviderGateway::new(gateway),
         }
     }
 
@@ -364,22 +351,12 @@ pub struct CodexDesktopCompanionState {
     gateway: Arc<Gateway>,
     transport: LocalTransport,
     codex_desktop: Option<Arc<CodexDesktopCompanionAdapter>>,
-    thread_scope: CodexThreadScope,
 }
 
 impl Default for CodexDesktopCompanionState {
     fn default() -> Self {
-        Self::with_thread_scope(CodexThreadScope::default())
-    }
-}
-
-impl CodexDesktopCompanionState {
-    pub fn with_thread_scope(thread_scope: CodexThreadScope) -> Self {
         let gateway = Arc::new(Gateway::default());
-        let codex_desktop = Arc::new(CodexDesktopCompanionAdapter::spawn_scoped(
-            gateway.event_sink(),
-            thread_scope.clone(),
-        ));
+        let codex_desktop = Arc::new(CodexDesktopCompanionAdapter::spawn(gateway.event_sink()));
         if let Err(error) = gateway.registry().register(codex_desktop.clone()) {
             crate::app_log::error(
                 "codex_desktop_companion",
@@ -390,16 +367,16 @@ impl CodexDesktopCompanionState {
             transport: LocalTransport::new(gateway.clone()),
             gateway,
             codex_desktop: Some(codex_desktop),
-            thread_scope,
         }
     }
+}
 
+impl CodexDesktopCompanionState {
     pub fn new(gateway: Arc<Gateway>) -> Self {
         Self {
             transport: LocalTransport::new(gateway.clone()),
             gateway,
             codex_desktop: None,
-            thread_scope: CodexThreadScope::default(),
         }
     }
 
@@ -492,27 +469,13 @@ pub fn start_codex_desktop_companion_event_bridge<R: Runtime>(
     app: AppHandle<R>,
     state: &CodexDesktopCompanionState,
 ) -> Result<(), ProtocolError> {
-    let remote_threads = state.thread_scope.subscribe_remote_threads();
-    let codex_desktop = state.codex_desktop.clone();
     start_local_event_bridge(
-        app.clone(),
+        app,
         state.gateway(),
         state.transport(),
         CODEX_DESKTOP_COMPANION_EVENT,
         "codex_desktop_companion",
-    )?;
-    std::thread::spawn(move || {
-        while let Ok(conversation_id) = remote_threads.recv() {
-            if let Some(adapter) = &codex_desktop {
-                adapter.exclude_remote_thread(&conversation_id);
-            }
-            let _ = app.emit(
-                CODEX_DESKTOP_COMPANION_THREAD_EXCLUDED_EVENT,
-                CodexDesktopCompanionThreadExcluded { conversation_id },
-            );
-        }
-    });
-    Ok(())
+    )
 }
 
 fn start_local_event_bridge<R: Runtime>(

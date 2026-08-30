@@ -21,7 +21,6 @@ export class RuntimeGatewayActivityProjection {
   private readonly approvalsById = new Map<string, Approval>();
   private readonly announcedApprovalIds = new Set<string>();
   private readonly outputByKey = new Map<string, string>();
-  private readonly excludedConversationIds = new Set<string>();
 
   replaceProviders(providers: Provider[]): void {
     this.providersById.clear();
@@ -38,9 +37,6 @@ export class RuntimeGatewayActivityProjection {
 
     const activities: PetEvent[] = [];
     for (const conversation of conversations) {
-      if (this.excludedConversationIds.has(conversation.id)) {
-        continue;
-      }
       this.rememberConversation(conversation);
       const activity = this.activityFromConversation(
         conversation,
@@ -66,18 +62,12 @@ export class RuntimeGatewayActivityProjection {
         return { activities: [], provider: event.payload.provider };
       case "conversation.upserted": {
         const conversation = event.payload.conversation;
-        if (this.excludedConversationIds.has(conversation.id)) {
-          return { activities: [] };
-        }
         this.rememberConversation(conversation);
         const activity = this.activityFromConversation(conversation, eventId, false, event);
         return { activities: activity ? [activity] : [] };
       }
       case "turn.upserted": {
         const turn = event.payload.turn;
-        if (this.excludedConversationIds.has(turn.conversationId)) {
-          return { activities: [] };
-        }
         this.rememberTurn(turn);
         if (isTerminalTurnStatus(turn.status)) {
           this.removeApprovalsForTurn(turn);
@@ -86,17 +76,11 @@ export class RuntimeGatewayActivityProjection {
         return { activities: activity ? [activity] : [] };
       }
       case "turn.outputDelta": {
-        if (this.excludedConversationIds.has(event.payload.conversationId)) {
-          return { activities: [] };
-        }
         const activity = this.activityFromOutput(event.payload, eventId, event);
         return { activities: activity ? [activity] : [] };
       }
       case "approval.requested": {
         const approval = event.payload.approval;
-        if (this.excludedConversationIds.has(approval.conversationId)) {
-          return { activities: [] };
-        }
         const shouldRing = !this.announcedApprovalIds.has(approval.id);
         this.announcedApprovalIds.add(approval.id);
         this.approvalsById.set(approval.id, approval);
@@ -105,9 +89,6 @@ export class RuntimeGatewayActivityProjection {
       }
       case "approval.resolved": {
         const approval = event.payload.approval;
-        if (this.excludedConversationIds.has(approval.conversationId)) {
-          return { activities: [] };
-        }
         this.announcedApprovalIds.delete(approval.id);
         this.approvalsById.delete(approval.id);
         const activity = this.activityFromResolvedApproval(approval, eventId, event);
@@ -120,34 +101,6 @@ export class RuntimeGatewayActivityProjection {
 
   providers(): Provider[] {
     return Array.from(this.providersById.values());
-  }
-
-  removeConversation(conversationId: string): void {
-    this.excludedConversationIds.add(conversationId);
-    for (const [key, conversation] of this.conversationsByKey) {
-      if (conversation.id === conversationId) {
-        this.conversationsByKey.delete(key);
-      }
-    }
-    for (const [key, turn] of this.turnsByKey) {
-      if (turn.conversationId === conversationId) {
-        this.turnsByKey.delete(key);
-      }
-    }
-    for (const [approvalId, approval] of this.approvalsById) {
-      if (approval.conversationId === conversationId) {
-        this.approvalsById.delete(approvalId);
-        this.announcedApprovalIds.delete(approvalId);
-      }
-    }
-    for (const provider of this.providersById.values()) {
-      const outputPrefix = `${provider.id}:${conversationId}:`;
-      for (const key of this.outputByKey.keys()) {
-        if (key.startsWith(outputPrefix)) {
-          this.outputByKey.delete(key);
-        }
-      }
-    }
   }
 
   refreshActivityProvider(activity: PetEvent): PetEvent {

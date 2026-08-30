@@ -315,21 +315,29 @@ impl PluginManager {
         Ok(records.len())
     }
 
-    pub fn provider_plugin_id(
-        &self,
-        route: &ProviderInstanceRoute,
-    ) -> HostResult<String> {
-        Ok(self
-            .inner
-            .instances
-            .resolve_route(route, None)?
-            .plugin_id)
-    }
-
     pub async fn restart_plugin(&self, plugin_id: &str) -> HostResult<()> {
-        self.stop_plugin(plugin_id).await?;
-        self.start_plugin(plugin_id).await?;
-        self.start_manifest_instances(plugin_id).await
+        let stop_error = self.stop_plugin(plugin_id).await.err();
+        if let Some(error) = stop_error.as_ref() {
+            let terminated = self
+                .inner
+                .plugins
+                .read()
+                .await
+                .get(plugin_id)
+                .is_some_and(|entry| entry.process.is_none());
+            if !terminated {
+                return Err(error.clone());
+            }
+            eprintln!(
+                "Provider {plugin_id} graceful stop failed before restart; the old process was force-terminated: {error}"
+            );
+        }
+        if let Err(error) = self.start_plugin(plugin_id).await {
+            return Err(with_restart_stop_diagnostic(error, stop_error.as_ref()));
+        }
+        self.start_manifest_instances(plugin_id)
+            .await
+            .map_err(|error| with_restart_stop_diagnostic(error, stop_error.as_ref()))
     }
 
     async fn start_manifest_instances(&self, plugin_id: &str) -> HostResult<()> {
@@ -570,30 +578,43 @@ impl PluginManager {
                     }
                 }
                 Err(error) => {
-                    let process_exit = process
+                    let forced = process
                         .force_kill("Provider graceful shutdown failed")
-                        .await
-                        .ok();
+                        .await;
                     let mut plugins = self.inner.plugins.write().await;
                     if let Some(entry) = plugins.get_mut(plugin_id) {
-                        if entry
-                            .process
-                            .as_ref()
-                            .is_some_and(|current| Arc::ptr_eq(current, &process))
-                        {
-                            entry.process = None;
+                        if let Ok(exit) = forced.as_ref() {
+                            if entry
+                                .process
+                                .as_ref()
+                                .is_some_and(|current| Arc::ptr_eq(current, &process))
+                            {
+                                entry.process = None;
+                            }
+                            entry.process_exit = Some(exit.clone());
                         }
-                        entry.process_exit = process_exit;
                         entry.stderr_diagnostics = stderr_diagnostics;
                     }
                     drop(plugins);
+                    let diagnostic = match forced {
+                        Ok(_) => error.clone(),
+                        Err(kill_error) => HostError::new(
+                            "provider_force_kill_failed",
+                            "Provider graceful shutdown and forced termination both failed",
+                        )
+                        .retryable(true)
+                        .with_detail("gracefulStopCode", error.code.clone())
+                        .with_detail("gracefulStopMessage", error.message.clone())
+                        .with_detail("forceKillCode", kill_error.code.clone())
+                        .with_detail("forceKillMessage", kill_error.message.clone()),
+                    };
                     self.set_plugin_state(
                         plugin_id,
                         PluginRuntimeState::Crashed,
-                        Some(error.clone()),
+                        Some(diagnostic.clone()),
                     )
                     .await?;
-                    return Err(error);
+                    return Err(diagnostic);
                 }
             }
         }
@@ -835,9 +856,12 @@ impl PluginManager {
     }
 
     pub async fn turn_steer(&self, request: TurnSteerRequest) -> HostResult<TurnSteerResponse> {
+        validate_resource_identity(&request.conversation)?;
         validate_resource_identity(&request.turn)?;
+        validate_same_resource_route(&request.conversation, &request.turn)?;
+        let expected_conversation = request.conversation.clone();
         let expected_turn = request.turn.clone();
-        let route = route_from_resource(&expected_turn);
+        let route = route_from_resource(&expected_conversation);
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::TurnSteer)?;
         let response = process
@@ -847,6 +871,11 @@ impl PluginManager {
             .map_err(HostError::from)?;
         validate_turn_routes(&response.turn, &route)?;
         validate_exact_resource(&response.turn.resource, &expected_turn, "turn.steer")?;
+        validate_exact_resource(
+            &response.turn.conversation,
+            &expected_conversation,
+            "turn.steer conversation",
+        )?;
         Ok(response)
     }
 
@@ -854,9 +883,12 @@ impl PluginManager {
         &self,
         request: TurnInterruptRequest,
     ) -> HostResult<TurnInterruptResponse> {
+        validate_resource_identity(&request.conversation)?;
         validate_resource_identity(&request.turn)?;
+        validate_same_resource_route(&request.conversation, &request.turn)?;
+        let expected_conversation = request.conversation.clone();
         let expected_turn = request.turn.clone();
-        let route = route_from_resource(&expected_turn);
+        let route = route_from_resource(&expected_conversation);
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::TurnInterrupt)?;
         let response = process
@@ -866,6 +898,11 @@ impl PluginManager {
             .map_err(HostError::from)?;
         validate_turn_routes(&response.turn, &route)?;
         validate_exact_resource(&response.turn.resource, &expected_turn, "turn.interrupt")?;
+        validate_exact_resource(
+            &response.turn.conversation,
+            &expected_conversation,
+            "turn.interrupt conversation",
+        )?;
         Ok(response)
     }
 
@@ -1408,7 +1445,8 @@ fn validate_event_routes(
             validate_turn_routes(&params.turn, route)
         }
         ProtocolEvent::EventTurnOutputDelta { params, .. } => {
-            validate_resource_route(&params.turn, route)
+            validate_resource_route(&params.turn, route)?;
+            validate_resource_route(&params.conversation, route)
         }
         ProtocolEvent::EventApprovalRequested { params, .. } => {
             validate_approval_routes(&params.approval, route)
@@ -1458,18 +1496,27 @@ fn validate_resource_route(
 ) -> HostResult<()> {
     validate_resource_identity(resource)?;
     if resource.device_id != route.device_id
+        || resource.provider_plugin_id != route.provider_plugin_id
         || resource.provider_instance_id != route.provider_instance_id
     {
         return Err(HostError::new(
             "provider_resource_route_mismatch",
-            "Provider returned a resource for a different device or instance",
+            "Provider returned a resource for a different device, plugin, or instance",
         )
         .with_detail("expectedDeviceId", route.device_id.clone())
+        .with_detail(
+            "expectedProviderPluginId",
+            route.provider_plugin_id.clone(),
+        )
         .with_detail(
             "expectedProviderInstanceId",
             route.provider_instance_id.clone(),
         )
         .with_detail("actualDeviceId", resource.device_id.clone())
+        .with_detail(
+            "actualProviderPluginId",
+            resource.provider_plugin_id.clone(),
+        )
         .with_detail(
             "actualProviderInstanceId",
             resource.provider_instance_id.clone(),
@@ -1479,12 +1526,16 @@ fn validate_resource_route(
 }
 
 fn validate_route_identity(route: &ProviderInstanceRoute) -> HostResult<()> {
-    if route.device_id.trim().is_empty() || route.provider_instance_id.trim().is_empty() {
+    if route.device_id.trim().is_empty()
+        || route.provider_plugin_id.trim().is_empty()
+        || route.provider_instance_id.trim().is_empty()
+    {
         return Err(HostError::new(
             "invalid_provider_route",
-            "Provider route deviceId and providerInstanceId must not be empty",
+            "Provider route deviceId, providerPluginId, and providerInstanceId must not be empty",
         )
         .with_detail("deviceId", route.device_id.clone())
+        .with_detail("providerPluginId", route.provider_plugin_id.clone())
         .with_detail(
             "providerInstanceId",
             route.provider_instance_id.clone(),
@@ -1501,6 +1552,7 @@ fn validate_resource_identity(resource: &RoutedResourceId) -> HostResult<()> {
             "Provider nativeResourceId must not be empty",
         )
         .with_detail("deviceId", resource.device_id.clone())
+        .with_detail("providerPluginId", resource.provider_plugin_id.clone())
         .with_detail(
             "providerInstanceId",
             resource.provider_instance_id.clone(),
@@ -1528,8 +1580,37 @@ fn validate_exact_resource(
 fn route_from_resource(resource: &RoutedResourceId) -> ProviderInstanceRoute {
     ProviderInstanceRoute {
         device_id: resource.device_id.clone(),
+        provider_plugin_id: resource.provider_plugin_id.clone(),
         provider_instance_id: resource.provider_instance_id.clone(),
     }
+}
+
+fn validate_same_resource_route(
+    left: &RoutedResourceId,
+    right: &RoutedResourceId,
+) -> HostResult<()> {
+    if left.device_id == right.device_id
+        && left.provider_plugin_id == right.provider_plugin_id
+        && left.provider_instance_id == right.provider_instance_id
+    {
+        return Ok(());
+    }
+    Err(HostError::new(
+        "provider_resource_route_mismatch",
+        "Provider resources target different device, plugin, or instance routes",
+    ))
+}
+
+fn with_restart_stop_diagnostic(
+    error: HostError,
+    stop_error: Option<&HostError>,
+) -> HostError {
+    let Some(stop_error) = stop_error else {
+        return error;
+    };
+    error
+        .with_detail("gracefulStopCode", stop_error.code.clone())
+        .with_detail("gracefulStopMessage", stop_error.message.clone())
 }
 
 fn start_cancelled() -> HostError {

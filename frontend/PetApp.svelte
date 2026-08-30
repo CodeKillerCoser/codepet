@@ -10,11 +10,9 @@
     codexDesktopCompanionClient,
     codexDesktopCompanionErrorMessage,
     codexDesktopCompanionEventName,
-    codexDesktopCompanionThreadExcludedEventName,
     createCodexDesktopCompanionClientMessageId,
     readCodexDesktopCompanionSnapshot,
     replayCodexDesktopCompanionEvents,
-    type CodexDesktopCompanionThreadExcluded,
   } from "./lib/codexDesktopCompanion";
   import { mergeEventFeed } from "./lib/eventFeed";
   import { PROTOCOL_VERSION, type ProtocolEvent, type Provider, type QuickReply } from "./lib/generated/runtimeGateway";
@@ -133,7 +131,6 @@
 
     let disposed = false;
     let unlistenGatewayEvent: (() => void) | null = null;
-    let unlistenExcludedThread: (() => void) | null = null;
     let unlistenSettings: (() => void) | null = null;
     let unlistenWindowMoved: (() => void) | null = null;
     let unlistenWindowResized: (() => void) | null = null;
@@ -180,21 +177,6 @@
       throw error;
     });
 
-    const excludedThreadListenerReady = listen<CodexDesktopCompanionThreadExcluded>(
-      codexDesktopCompanionThreadExcludedEventName,
-      (event) => {
-        if (!disposed) {
-          excludeRemoteCompanionThread(event.payload.conversationId);
-        }
-      },
-    ).then((unlisten) => {
-      if (disposed) {
-        unlisten();
-      } else {
-        unlistenExcludedThread = unlisten;
-      }
-    });
-
     void listen<AppSettings>("settings-updated", (event) => {
       settings = event.payload;
       rebuildActivitiesFromRecentEvents();
@@ -238,7 +220,7 @@
         fields: { activities: activities.length },
       }).catch(() => {});
       try {
-        await Promise.all([gatewayListenerReady, excludedThreadListenerReady]);
+        await gatewayListenerReady;
         if (!disposed) {
           await synchronizeRuntimeGateway();
         }
@@ -255,7 +237,6 @@
       disposed = true;
       media.removeEventListener("change", syncTheme);
       unlistenGatewayEvent?.();
-      unlistenExcludedThread?.();
       unlistenSettings?.();
       unlistenWindowMoved?.();
       unlistenWindowResized?.();
@@ -560,24 +541,6 @@
       replySubmitting = false;
     }
     clearRepeat();
-  }
-
-  function excludeRemoteCompanionThread(conversationId: string) {
-    runtimeGatewayProjection.removeConversation(conversationId);
-    recentEventCache = recentEventCache.filter(
-      (activity) => activity.runtimeGateway?.conversationId !== conversationId,
-    );
-    activities = activities.filter(
-      (activity) => activity.runtimeGateway?.conversationId !== conversationId,
-    );
-    if (replyingToId && !activities.some((activity) => activity.id === replyingToId)) {
-      replyingToId = null;
-      replyText = "";
-      replySubmitting = false;
-    }
-    if (repeatEvent?.runtimeGateway?.conversationId === conversationId) {
-      clearRepeat();
-    }
   }
 
   async function handleRing(event: PetEvent) {

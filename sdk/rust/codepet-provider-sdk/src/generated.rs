@@ -125,6 +125,8 @@ pub enum ConversationStatus {
     Running,
     #[serde(rename = "waiting-approval")]
     WaitingApproval,
+    #[serde(rename = "waiting-user-input")]
+    WaitingUserInput,
     #[serde(rename = "error")]
     Error,
     #[serde(rename = "archived")]
@@ -296,15 +298,18 @@ pub struct ProviderConversation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview: Option<String>,
     pub status: ConversationStatus,
-    pub permission_level: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_level: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<String>,
-    pub created_at: TimestampMs,
-    pub updated_at: TimestampMs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<TimestampMs>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<TimestampMs>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_turn: Option<ProviderTurn>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -370,6 +375,7 @@ pub type ProviderInstanceKind = String;
 #[serde(deny_unknown_fields)]
 pub struct ProviderInstanceRoute {
     pub device_id: DeviceId,
+    pub provider_plugin_id: ProviderPluginId,
     pub provider_instance_id: ProviderInstanceId,
 }
 
@@ -409,7 +415,8 @@ pub struct ProviderTurn {
     pub display_summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub started_at: Option<TimestampMs>,
-    pub updated_at: TimestampMs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<TimestampMs>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<TimestampMs>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -420,6 +427,7 @@ pub struct ProviderTurn {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct TurnInterruptRequest {
+    pub conversation: RoutedResourceId,
     pub turn: RoutedResourceId,
 }
 
@@ -435,6 +443,7 @@ pub struct TurnInterruptResponse {
 #[serde(deny_unknown_fields)]
 pub struct TurnOutputDeltaEvent {
     pub turn: RoutedResourceId,
+    pub conversation: RoutedResourceId,
     pub output_id: NativeResourceId,
     pub kind: String,
     pub delta: String,
@@ -478,6 +487,7 @@ pub enum TurnStatus {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct TurnSteerRequest {
+    pub conversation: RoutedResourceId,
     pub turn: RoutedResourceId,
     pub client_message_id: RequestId,
     pub message: String,
@@ -1713,11 +1723,15 @@ impl JsonLineCodec {
 
     pub fn read_message<R: BufRead>(&self, reader: &mut R) -> Result<Option<ProviderWireMessage>, JsonRpcInboundError> {
         let mut frame = Vec::with_capacity(self.max_frame_bytes.min(8192));
+        let mut oversized = false;
         loop {
             let (consumed, complete) = {
                 let available = reader.fill_buf()
                     .map_err(|error| inbound_error(None, JSON_RPC_INTERNAL_ERROR, format!("read JSON line frame: {error}")))?;
                 if available.is_empty() {
+                    if oversized {
+                        return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, format!("JSON line frame exceeds {} bytes", self.max_frame_bytes)));
+                    }
                     if frame.is_empty() {
                         return Ok(None);
                     }
@@ -1725,14 +1739,19 @@ impl JsonLineCodec {
                 }
                 let newline = available.iter().position(|byte| *byte == b'\n');
                 let payload_bytes = newline.unwrap_or(available.len());
-                if frame.len() + payload_bytes > self.max_frame_bytes {
-                    return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, format!("JSON line frame exceeds {} bytes", self.max_frame_bytes)));
+                if !oversized && frame.len().saturating_add(payload_bytes) > self.max_frame_bytes {
+                    oversized = true;
                 }
-                frame.extend_from_slice(&available[..payload_bytes]);
+                if !oversized {
+                    frame.extend_from_slice(&available[..payload_bytes]);
+                }
                 (newline.map_or(payload_bytes, |index| index + 1), newline.is_some())
             };
             reader.consume(consumed);
             if complete {
+                if oversized {
+                    return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, format!("JSON line frame exceeds {} bytes", self.max_frame_bytes)));
+                }
                 if frame.ends_with(b"\r") {
                     frame.pop();
                 }

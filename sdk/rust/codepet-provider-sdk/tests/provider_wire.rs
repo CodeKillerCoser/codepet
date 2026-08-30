@@ -61,9 +61,16 @@ fn json_line_codec_rejects_oversized_frames_without_unbounded_reads() {
     assert_eq!(error.error.code, JSON_RPC_INVALID_REQUEST);
     assert!(error.error.message.contains("exceeds 16 bytes"));
 
-    let mut input = Cursor::new(vec![b'x'; 64]);
+    let codec = JsonLineCodec::new(64).unwrap();
+    let mut framed = vec![b'x'; 128];
+    framed.extend_from_slice(
+        b"\n{\"jsonrpc\":\"2.0\",\"method\":\"provider.log\",\"params\":{}}\n",
+    );
+    let mut input = Cursor::new(framed);
     let error = codec.read_message(&mut input).unwrap_err();
     assert_eq!(error.error.code, JSON_RPC_INVALID_REQUEST);
+    let message = codec.read_message(&mut input).unwrap().unwrap();
+    assert!(matches!(message, ProviderWireMessage::Notification(_)));
 }
 
 #[test]

@@ -21,7 +21,7 @@ pub enum JsonRpcId {
 }
 
 impl JsonRpcId {
-    pub fn approval_id(&self) -> String {
+    fn resource_component(&self) -> String {
         match self {
             Self::String(value) => format!("codex-request:string:{value}"),
             Self::Number(value) => format!("codex-request:number:{value}"),
@@ -74,35 +74,39 @@ impl std::error::Error for CodexAppServerError {}
 #[serde(rename_all = "camelCase")]
 pub struct CodexThread {
     pub id: String,
-    #[serde(default)]
     pub name: Option<String>,
-    #[serde(default)]
     pub preview: String,
-    #[serde(default)]
-    pub cwd: Option<String>,
-    #[serde(default)]
+    pub cwd: String,
     pub created_at: i64,
-    #[serde(default)]
     pub updated_at: i64,
-    #[serde(default)]
     pub status: CodexThreadStatus,
-    #[serde(default)]
     pub turns: Vec<CodexTurn>,
+    pub cli_version: String,
+    pub ephemeral: bool,
+    pub model_provider: String,
+    pub project_id: Value,
+    pub session_id: String,
+    pub source: Value,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum CodexThreadStatus {
     NotLoaded,
-    #[default]
     Idle,
     SystemError,
     Active {
-        #[serde(default)]
-        active_flags: Vec<String>,
+        #[serde(rename = "activeFlags")]
+        active_flags: Vec<CodexThreadActiveFlag>,
     },
-    #[serde(other)]
-    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+pub enum CodexThreadActiveFlag {
+    #[serde(rename = "waitingOnApproval")]
+    WaitingOnApproval,
+    #[serde(rename = "waitingOnUserInput")]
+    WaitingOnUserInput,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -110,10 +114,9 @@ pub enum CodexThreadStatus {
 pub struct CodexTurn {
     pub id: String,
     pub status: CodexTurnStatus,
-    #[serde(default)]
     pub started_at: Option<i64>,
-    #[serde(default)]
     pub completed_at: Option<i64>,
+    pub items: Vec<Value>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -139,9 +142,10 @@ pub struct CodexConversationSnapshot {
 
 impl CodexConversationSnapshot {
     pub fn from_thread(thread: CodexThread) -> Self {
+        let workspace_root = Some(thread.cwd.clone());
         Self {
             thread,
-            workspace_root: None,
+            workspace_root,
             permission_level: None,
             model: None,
             reasoning_effort: None,
@@ -205,6 +209,7 @@ impl CodexApprovalKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CodexApprovalRequest {
     pub request_id: JsonRpcId,
+    pub session_generation: String,
     pub kind: CodexApprovalKind,
     pub thread_id: String,
     pub turn_id: String,
@@ -217,7 +222,7 @@ pub struct CodexApprovalRequest {
 
 impl CodexApprovalRequest {
     pub fn approval_id(&self) -> String {
-        self.request_id.approval_id()
+        approval_resource_id(&self.session_generation, &self.request_id)
     }
 
     pub const fn native_method(&self) -> &'static str {
@@ -226,6 +231,21 @@ impl CodexApprovalRequest {
             CodexApprovalKind::FileChange => "item/fileChange/requestApproval",
         }
     }
+}
+
+pub fn approval_resource_id(session_generation: &str, request_id: &JsonRpcId) -> String {
+    format!(
+        "codex-approval:{session_generation}:{}",
+        request_id.resource_component()
+    )
+}
+
+pub fn approval_generation(resource_id: &str) -> Option<&str> {
+    resource_id
+        .strip_prefix("codex-approval:")
+        .and_then(|value| value.split_once(':'))
+        .map(|(generation, _)| generation)
+        .filter(|generation| !generation.is_empty())
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -252,6 +272,7 @@ pub enum CodexNotification {
     ServerRequestResolved {
         request_id: JsonRpcId,
         thread_id: String,
+        session_generation: String,
     },
     Unknown {
         method: String,
@@ -272,38 +293,127 @@ pub enum CodexIncoming {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ThreadListResponse {
     pub data: Vec<CodexThread>,
-    #[serde(default)]
     pub next_cursor: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ThreadResponse {
+pub(crate) struct ThreadReadResponse {
     pub thread: CodexThread,
-    #[serde(default)]
-    pub model: Option<String>,
-    #[serde(default)]
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ThreadConfiguredResponse {
+    pub thread: CodexThread,
+    pub model: String,
+    #[serde(rename = "modelProvider")]
+    pub _model_provider: String,
+    pub cwd: String,
     pub reasoning_effort: Option<String>,
-    #[serde(default)]
-    pub sandbox: Option<CodexSandboxPolicy>,
+    pub sandbox: CodexSandboxPolicy,
+    #[serde(rename = "approvalPolicy")]
+    pub _approval_policy: Value,
+    #[serde(rename = "approvalsReviewer")]
+    pub _approvals_reviewer: Value,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(untagged)]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub(crate) enum CodexSandboxPolicy {
-    Structured {
-        #[serde(rename = "type")]
-        policy_type: String,
-    },
-    Legacy(String),
+    DangerFullAccess,
+    ReadOnly,
+    ExternalSandbox,
+    WorkspaceWrite,
 }
 
 impl CodexSandboxPolicy {
     fn policy_type(&self) -> &str {
         match self {
-            Self::Structured { policy_type } | Self::Legacy(policy_type) => policy_type,
+            Self::DangerFullAccess => "dangerFullAccess",
+            Self::ReadOnly => "readOnly",
+            Self::ExternalSandbox => "externalSandbox",
+            Self::WorkspaceWrite => "workspaceWrite",
         }
     }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub(crate) struct InitializeResponse {
+    pub codex_home: String,
+    pub platform_family: String,
+    pub platform_os: String,
+    pub user_agent: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CommandApprovalParams {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub item_id: String,
+    pub started_at_ms: i64,
+    pub command: Option<String>,
+    #[serde(rename = "cwd")]
+    pub _cwd: Option<String>,
+    pub reason: Option<String>,
+    #[serde(rename = "approvalId")]
+    pub _approval_id: Option<String>,
+    pub available_decisions: Option<Vec<Value>>,
+    #[serde(rename = "commandActions")]
+    pub _command_actions: Option<Vec<Value>>,
+    #[serde(rename = "environmentId")]
+    pub _environment_id: Option<String>,
+    pub kind: Option<String>,
+    pub additional_permissions: Option<Value>,
+    pub network_approval_context: Option<Value>,
+    pub proposed_execpolicy_amendment: Option<Vec<String>>,
+    pub proposed_network_policy_amendments: Option<Vec<Value>>,
+}
+
+impl CommandApprovalParams {
+    pub(crate) fn has_unsupported_semantics(&self) -> bool {
+        self.additional_permissions.is_some()
+            || self.network_approval_context.is_some()
+            || self.proposed_execpolicy_amendment.is_some()
+            || self.proposed_network_policy_amendments.is_some()
+            || matches!(self.kind.as_deref(), Some(kind) if kind != "command")
+            || matches!(
+                self.available_decisions.as_deref(),
+                Some(decisions)
+                    if decisions.len() != 2
+                        || !decisions.iter().any(|decision| decision == "accept")
+                        || !decisions.iter().any(|decision| decision == "decline")
+            )
+    }
+
+    pub(crate) fn binary_decisions(&self) -> Vec<String> {
+        self.available_decisions
+            .as_ref()
+            .map(|decisions| {
+                decisions
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_else(|| vec!["accept".to_string(), "decline".to_string()])
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FileApprovalParams {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub item_id: String,
+    pub started_at_ms: i64,
+    pub reason: Option<String>,
+    pub grant_root: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -394,12 +504,12 @@ pub(crate) fn permission_settings(permission: CodexPermissionLevel) -> (&'static
 }
 
 pub(crate) fn permission_from_sandbox(
-    sandbox: Option<&CodexSandboxPolicy>,
+    sandbox: &CodexSandboxPolicy,
 ) -> Option<CodexPermissionLevel> {
-    match sandbox.map(CodexSandboxPolicy::policy_type) {
-        Some("readOnly" | "read-only") => Some(CodexPermissionLevel::ReadOnly),
-        Some("workspaceWrite" | "workspace-write") => Some(CodexPermissionLevel::WorkspaceWrite),
-        Some("dangerFullAccess" | "danger-full-access") => Some(CodexPermissionLevel::FullAccess),
+    match sandbox.policy_type() {
+        "readOnly" => Some(CodexPermissionLevel::ReadOnly),
+        "workspaceWrite" => Some(CodexPermissionLevel::WorkspaceWrite),
+        "dangerFullAccess" => Some(CodexPermissionLevel::FullAccess),
         _ => None,
     }
 }

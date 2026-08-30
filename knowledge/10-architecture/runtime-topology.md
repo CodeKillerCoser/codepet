@@ -9,7 +9,6 @@
 - Hook 脚本：`src-tauri/hooks/code-pet-hook.mjs` 由 `src-tauri/src/agent/hooks.rs` 安装到本地 app data 目录。
 - Codex Remote：`ProviderHostState` / `PluginManager`、独立 `codepet-provider-codex` 进程、`ProviderGatewayService`、compat `RuntimeGatewayState` 和 `runtime-gateway-event`。
 - Codex Desktop Companion：`CodexDesktopCompanionState`、`~/.codex/ipc/ipc.sock` adapter 和 `codex-desktop-companion-event`。
-- `CodexThreadScope`：两路唯一共享的 remote thread provenance；不共享协议 session 或 owner/revision 状态。
 
 旧 Hook 拓扑当前只服务 Claude Code、Qoder 和 Cursor。Codex 在设置页保留无 Hook 的 disabled 占位项；启动时会清理遗留托管 Codex Hook，脚本、实时 collector 和 spool 回放也都会拒绝 Codex。Codex audit watcher 与启动回放已移除。历史 Token 用量扫描仍是独立路径，本阶段不变。
 
@@ -29,7 +28,7 @@ Codex Desktop Owner/Follower 状态
   → PetApp activity store
 ```
 
-两路各自拥有 registry、event bus、sequence、replay 和 unavailable 状态。App Server 只在 Provider instance start 中初始化且有超时；失败不阻塞 companion。桌宠不订阅 `runtime-gateway-event`，remote conversation/turn/approval 不能进入 activity store。remote create/turn/approval 产生的 thread id 会被 scope 标记；create 响应尚未确定时，Desktop 新 thread snapshot 先隔离，成功时排除已确认的 remote id，Gateway 调用后的错误因缺少跨进程交付证据而保守排除同 epoch 候选。
+两路各自拥有 registry、event bus、sequence、replay 和 unavailable 状态，且不共享 thread provenance 或投影状态。App Server 只在 Provider instance start 中初始化且有超时；失败不阻塞 companion。桌宠不订阅 `runtime-gateway-event`，remote conversation/turn/approval 不能进入 activity store。remote 与 Desktop 即使报告相同 native thread id，也分别留在各自通道；本阶段不做跨链路排除、去重或同步。
 
 App Server 自动让 Desktop 加载 thread 是产品协同，不改变双链路边界。Hook、audit、transcript 和文件监听不参与 Codex 数据。
 

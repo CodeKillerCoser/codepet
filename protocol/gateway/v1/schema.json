@@ -82,7 +82,7 @@
         "updatedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
         "activeTurn": { "$ref": "#/$defs/TurnTask" }
       },
-      "required": ["resource", "title", "status", "permissionLevel", "createdAt", "updatedAt"],
+      "required": ["resource", "title", "status"],
       "additionalProperties": false
     },
     "ConversationCreateRequest": {
@@ -146,7 +146,7 @@
     },
     "ConversationStatus": {
       "type": "string",
-      "enum": ["idle", "running", "waiting-approval", "error", "archived"]
+      "enum": ["idle", "running", "waiting-approval", "waiting-user-input", "error", "archived"]
     },
     "ConversationUpsertedEvent": {
       "type": "object",
@@ -238,9 +238,10 @@
       "type": "object",
       "properties": {
         "deviceId": { "$ref": "../../core/v1/schema.json#/$defs/DeviceId" },
+        "providerPluginId": { "$ref": "../../core/v1/schema.json#/$defs/ProviderPluginId" },
         "providerInstanceId": { "$ref": "../../core/v1/schema.json#/$defs/ProviderInstanceId" }
       },
-      "required": ["deviceId", "providerInstanceId"],
+      "required": ["deviceId", "providerPluginId", "providerInstanceId"],
       "additionalProperties": false
     },
     "HandshakeRequest": {
@@ -321,9 +322,10 @@
     "TurnInterruptRequest": {
       "type": "object",
       "properties": {
+        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
         "turn": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" }
       },
-      "required": ["turn"],
+      "required": ["conversation", "turn"],
       "additionalProperties": false
     },
     "TurnInterruptResponse": {
@@ -338,11 +340,12 @@
       "type": "object",
       "properties": {
         "turn": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
         "outputId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
         "kind": { "type": "string", "minLength": 1 },
         "delta": { "type": "string" }
       },
-      "required": ["turn", "outputId", "kind", "delta"],
+      "required": ["turn", "conversation", "outputId", "kind", "delta"],
       "additionalProperties": false
     },
     "TurnSendRequest": {
@@ -379,7 +382,7 @@
         "updatedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
         "completedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" }
       },
-      "required": ["resource", "conversation", "status", "updatedAt"],
+      "required": ["resource", "conversation", "status"],
       "additionalProperties": false
     },
     "TurnUpsertedEvent": {

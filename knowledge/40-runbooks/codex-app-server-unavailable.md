@@ -21,7 +21,7 @@
 4. 检查 Provider `instance.start`：它 spawn App Server 后执行 `initialize`/`initialized`，initialize 最多等待有界时间。silent child 应让实例转 error，不能阻塞 Tauri 或 Desktop companion。
 5. 检查长期 reader/writer 和 request id map。乱序 response 应按 id 关联；无匹配 id、非法 JSON-RPC 或 reader 退出会使当前 Provider instance fail closed。
 6. 若修改 executable 或点击刷新，确认 Host 更新同一个 Codex instance setting，并按 stop → start → manifest instance create/start 显式重启插件；Tauri 内不应出现第二个 App Server 进程。
-7. 对 timeout 或 process exit，不自动重放 create、turn、interrupt 或 approval。create 结果不确定时，Desktop 同期发现的新 thread 会保守排除，避免 remote task 进入桌宠。
+7. 对 timeout 或 process exit，不自动重放 create、turn、interrupt 或 approval。remote 结果不确定也不得触碰 Desktop companion；两条链路保持独立故障状态。
 8. 单独确认 Desktop companion：其 socket、owner/revision 和 activity projection 不应因 remote 故障清空、重启或改用 Hook/transcript。
 
 ## 结果判断
@@ -45,5 +45,5 @@
 
 - initialize 在有界 timeout 后仍留下无法终止的 Provider/App Server child。
 - 插件 restart 后旧 process 继续发布事件，或审批被路由到新实例/其他 App Server session。
-- remote task 通过 Desktop auto-load 进入桌宠，或 ambiguous create 后候选未被保守排除。
+- Provider event 进入 companion replay、exclusion event 或桌宠 activity；这表示生产 wiring 发生跨链路污染。
 - Codex CLI 升级改变核心 JSON-RPC request/notification 语义。

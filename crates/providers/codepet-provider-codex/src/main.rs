@@ -48,12 +48,13 @@ async fn run() -> Result<(), String> {
             Ok(Some(message)) => message,
             Ok(None) => break,
             Err(error) => {
+                let message = error.error.message.clone();
                 write_message(
                     &codec,
                     &writer,
                     ProviderWireMessage::Response(error.into_response()),
                 )?;
-                continue;
+                return Err(format!("invalid Host frame: {message}"));
             }
         };
         let response = match message {

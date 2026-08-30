@@ -14,7 +14,7 @@ Code Pet 需要展示并安全控制 Codex Desktop 当前活跃任务。Desktop 
 - 对已知或连接期间被公告的 thread 完成 owner discovery、following、历史和 snapshot bootstrap。
 - 严格按 revision 投影运行、等待、完成、失败、中断和可验证审批状态。
 - 将 start/steer、interrupt 和 command/file 二元审批精确定向当前 Desktop owner。
-- 通过 companion 专用 snapshot/replay/event 驱动桌宠，排除 remote App Server 来源的 thread。
+- 通过 companion 专用 snapshot/replay/event 驱动桌宠；不读取、排除或同步 remote Provider thread。
 - 把私有 DTO、方法版本、路由与重连逻辑限制在 desktop adapter 内。
 
 ## 非目标
@@ -52,17 +52,15 @@ adapter 只广告 `conversation.get`、`turn.send`、`turn.interrupt` 和 `appro
 
 ### 来源隔离
 
-remote Provider 的 `conversation.create` 进入 Gateway 时建立带 epoch 的 source quarantine；Desktop adapter 暂缓发布该 epoch 内来源未定的新 thread。断线或 follower reset 可以丢弃候选的旧 snapshot payload，但必须保留 candidate id 与 epoch 直至 settlement。response 或 notification 给出 id 后，`CodexThreadScope` 先标记 remote provenance 并发出 exclusion，再向调用方返回结果。Provider Protocol 当前不携带请求交付细分证据，因此 Gateway 调用开始后的错误保守按歧义结果排除同 epoch 候选；provider lookup 失败发生在 guard 之前，不影响 Desktop 候选。Desktop adapter 还会在 bootstrap、事件发布、snapshot 和动作入口检查该 scope，前端 projection 保存 exclusion tombstone，排队中的旧事件不能重新建卡。
+Desktop Companion 不接收 Provider/Gateway event、route 或 provenance。旧 `CodexThreadScope`、Desktop 排除入口、Tauri exclusion producer 与 Pet tombstone 已删除。remote 与 Desktop 如果报告相同 native thread id，会在各自独立 channel 中存在；本阶段不建立 quarantine、tombstone、动作 fence 或跨链路去重。
 
-这项来源协调只共享 thread provenance、create quarantine 和本地动作 permit，不共享协议 session 或 Desktop owner/revision。动作 permit 将最终 Desktop IPC dispatch 与 remote 标记线性化。remote conversation/turn/approval 事件始终停留在 remote event bus，不能从 companion replay 或 event bridge 到达桌宠。
+真正的隔离点是 wiring：Provider 只发布 `runtime-gateway-event`；companion 只从 Desktop IPC 形成自己的 snapshot/replay/event。Pet UI 只消费 companion channel，因此无需依赖“先污染、再排除”的补偿逻辑。
 
 ## 涉及模块
 
 - `src-tauri/src/agent/codex_desktop_ipc/`：私有 transport、协议、client、状态机、mapper 和 companion adapter。
-- `src-tauri/src/agent/codex_thread_scope.rs`：当前进程的 remote thread provenance 与排除通知。
 - `src-tauri/src/runtime_gateway/tauri_bridge.rs`：独立 `CodexDesktopCompanionState`、snapshot/replay/request 和 event bridge。
 - `frontend/lib/codexDesktopCompanion.ts`：桌宠唯一使用的 companion Tauri client。
-- `frontend/lib/runtimeGatewayActivity.ts`：标准事件投影及按 conversation 移除。
 - `frontend/PetApp.svelte`：只订阅 companion channel，并将回复、停止和审批发往 companion owner。
 - `frontend/lib/agentInteractions.ts`：动作除 capability 外还校验 `codepet.codex-desktop` namespace 和 `codex-desktop-private-ipc` source。
 
@@ -70,17 +68,15 @@ remote Provider 的 `conversation.create` 进入 Gateway 时建立带 epoch 的 
 
 - 私有协议版本漂移：升级 Desktop 后重跑 frame、bootstrap、revision、owner/handler 和动作测试；不兼容即 unavailable。
 - 晚加入时没有 thread id：UI 只描述已观察范围；不得扫描文件冒充目录。
-- remote-created thread 经 Desktop 再公告：Rust publication/snapshot/action 边界和 exclusion event 测试验证当前进程内排除；竞态测试覆盖 quarantine 后 projection reset、settlement 排队、断线和重连。
-- provenance 只在内存：应用重启后无法可靠识别历史 remote thread；开放远程网络前应评估持久化或官方 origin metadata。
-- App Server create 响应与 Desktop 公告竞态：epoch quarantine 阻止来源未定候选发布；歧义失败可能把同 epoch 的并发本地候选一并保守排除，后续应以官方 origin metadata 或更精确 correlation 降低误排。
+- remote/Desktop 同名 thread：两条链路暂时独立展示和操作，不保证去重；任何未来合并都必须基于官方 origin metadata，并作为独立协议阶段设计。
 - Owner ack 被误当成终态：Provider 测试验证 ack 不提前改 turn/approval，审批 resolved 需要 ack 与权威 request removal 两项证据。
 - remote event 污染桌宠：双 transport 测试发布 remote conversation/turn/approval 后断言 companion replay 为空，前端静态测试断言不监听 remote event。
 
 ## 测试计划
 
 - Rust adapter：socket/frame、路由、bootstrap、revision 缺口、重连、start/steer/interrupt、审批和 owner/revision/request/handler fail-closed。
-- Rust bridge：remote 与 companion lifecycle 独立；remote event 不进入 companion transport；Desktop snapshot 仍能产生任务和审批。
-- 前端：只调用 companion snapshot/replay/request、只监听 companion event、projection removal 和 source marker 失败关闭。
+- Rust bridge：remote 与 companion lifecycle 独立；remote event 不进入 companion transport/state 或 exclusion event；Desktop snapshot 仍能产生任务和审批。
+- 前端：只调用 companion snapshot/replay/request、只监听 companion event，并对动作 source marker 失败关闭。
 - 构建：相关 Rust tests、全量 Vitest 与前端 production build。
 
 ## 知识沉淀
@@ -93,5 +89,5 @@ remote Provider 的 `conversation.create` 进入 Gateway 时建立带 epoch 的 
 
 - 私有 IPC 仍没有完整任务目录或安全 create 方法。
 - 支持的 Desktop 版本范围需要随发布验证。
-- 跨重启 remote provenance 的可靠来源尚未确定。
+- remote/Desktop 同名资源的产品呈现策略尚未定义；当前不做跨链路协调。
 - 非二元审批和其他私有写操作仍无法由 v0 Standard Protocol 无损表达。

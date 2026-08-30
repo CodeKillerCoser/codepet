@@ -17,7 +17,7 @@
 ## 排查步骤
 
 1. 先确认正在排查的构建版本和 Provider capability，不要仅凭卡片状态推断支持回复。
-2. 若来自桌宠，确认请求使用 companion Tauri command，provider extension 是 `codepet.codex-desktop` 且 source 是 `codex-desktop-private-ipc`。会话必须已 bootstrap、owner 仍有效且未被 remote provenance 排除；活动 turn 走 steer，无活动 turn 走 start。
+2. 若来自桌宠，确认请求使用 companion Tauri command，provider extension 是 `codepet.codex-desktop` 且 source 是 `codex-desktop-private-ipc`。会话必须已 bootstrap 且 owner 仍有效；活动 turn 走 steer，无活动 turn 走 start。Provider route 或同名 remote thread 不参与判断。
 3. Qoder 现有会话回复仍是故意不支持；其他 Provider 只有在 Runtime Gateway 明确声明 `turn.send` 时才继续排查。
 4. 若来自远程控制，确认请求使用 `runtime_gateway_request` 并命中 App Server Provider；若来自桌宠，确认使用 `codex_desktop_companion_request`。标准请求必须包含正确 conversation identity，不得绕过 capability 或跨 channel 重试。
 5. 确认回复路径没有与审批或等待输入路径混淆；等待状态不等于可以发送普通回复。

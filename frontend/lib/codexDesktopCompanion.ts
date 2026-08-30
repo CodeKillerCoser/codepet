@@ -31,16 +31,10 @@ import {
 } from "./generated/runtimeGateway";
 
 export const codexDesktopCompanionEventName = "codex-desktop-companion-event";
-export const codexDesktopCompanionThreadExcludedEventName =
-  "codex-desktop-companion-thread-excluded";
 
 export interface CodexDesktopCompanionSnapshot {
   provider: Provider;
   conversations: Conversation[];
-}
-
-export interface CodexDesktopCompanionThreadExcluded {
-  conversationId: string;
 }
 
 let requestSequence = 0;

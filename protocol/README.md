@@ -6,10 +6,10 @@ Everything under `protocol/` is language-neutral, handwritten protocol input. Ge
 
 The v1 layers are:
 
-- `core/v1` — stable IDs, timestamps, versions, pagination, errors, JSON primitives, and routed resource identity.
+- `core/v1` — stable IDs, timestamps, versions, pagination, errors, JSON primitives, and four-part routed resource identity (`deviceId + providerPluginId + providerInstanceId + nativeResourceId`).
 - `pet/v1` — Desktop Companion-driven `PetTask`, `PetApproval`, `PetAction`, snapshot, and patch contracts. It does not reference Provider conversation, turn, or approval models.
 - `provider/v1` — public Host ↔ independent Provider binary JSON-RPC 2.0 over newline-delimited stdio. It owns initialize, describe, instance lifecycle/capability, conversation, turn, approval, event, and shutdown contracts.
-- `gateway/v1` — Host ↔ Remote Client methods and replayable events. Resources use `deviceId + providerInstanceId + nativeResourceId`; the gateway exposes neither plugin process lifecycle nor pet-private state.
+- `gateway/v1` — Host ↔ Remote Client methods and replayable events. Resources use `deviceId + providerPluginId + providerInstanceId + nativeResourceId`; the gateway exposes neither plugin process lifecycle nor pet-private state.
 
 `codegen.json` declares packages, dependency direction, output targets, and the shared `codepet.protocol.codegen/v1` adapter interface for Rust, TypeScript, Dart, and Python. Rust is active for all four v1 layers. TypeScript currently covers core plus the Runtime Gateway compatibility surface. Dart and Python remain explicitly registered but unimplemented planned targets; selecting them fails closed before generation.
 
@@ -35,13 +35,13 @@ Rust packages are located at:
 
 Service SDKs contain serde DTOs, method/event enums, async server traits, dispatchers, typed client/transport shells, wire envelopes, and codecs. Provider additionally generates `ProtocolRequest::from_method_params`, so a transport can turn the generated method plus typed-client params into the exact JSON-RPC request enum without maintaining a second method/envelope match. Provider/Gateway capability enums and `ProtocolMethod::capability()` are generated from checked manifest/schema metadata. Provider descriptors expose protocol validation for non-empty supported instance kinds, and `instance.create` plus returned instances carry the selected `instanceKind`. The generated packages remain transport contracts rather than business runtimes. The consuming implementation is now `crates/codepet-host`: it owns device/instance persistence, Provider process supervision, Plugin Manager behavior, and an internal Gateway v1 service without copying protocol DTOs back into the host.
 
-The four Rust SDK manifests are packageable crates rather than permanently private workspace crates. Their local path dependencies also declare version `0.1.0`, allowing local workspace development while preserving a publishable dependency graph. Repository tests are excluded from crate tarballs because they read the canonical fixtures outside each crate under `protocol/`; the tests still run from the SDK workspace, while published source remains self-contained without copying fixture facts. The repository currently has no license file; `cargo package` content checks can run, but the project should not publish until the repository owner makes an explicit license decision.
+The four Rust SDK manifests are packageable crates rather than permanently private workspace crates. Their local path dependencies also declare version `0.1.0`, allowing local workspace development while preserving a publishable dependency graph. Repository tests are excluded from crate tarballs because they read the canonical fixtures outside each crate under `protocol/`; the tests still run from the SDK workspace, while published source remains self-contained without copying fixture facts. The Provider SDK is consumed by the standalone `codepet-provider-codex` binary; its all-target dependency graph does not include Host or Gateway. The repository currently has no license file; `cargo package` content checks can run, but the project should not publish until the repository owner makes an explicit license decision.
 
 ## Runtime Gateway compatibility
 
 The existing in-process Runtime Gateway and Desktop Companion still use the unchanged v0 wire profile while v1 is introduced. That profile now lives at `gateway/v1/compat-v0.*` and is generated into `codepet-gateway-sdk::compat_v0` plus the TypeScript compatibility SDK. The Tauri and frontend files named `generated` are thin re-export shims only.
 
-This compatibility path preserves current dual-channel behavior: remote App Server events remain on the remote gateway bus, Desktop IPC remains on the companion bus, and neither channel is migrated into the public Provider plugin protocol in this phase. Provider Host events have a third, v1-only service boundary and never fall back into either compatibility channel.
+This compatibility path preserves current dual-channel behavior: remote App Server operations run only through Provider v1 and `codepet-host`, then map to the existing remote v0 Tauri surface; Desktop IPC remains on the companion bus. The compat layer is stateless, uses resource-carried four-part identity, and never forwards Provider events into companion/Pet channels.
 
 ## Commands
 
@@ -56,6 +56,6 @@ node tools/protocol-codegen/generate.mjs --target=rust --check
 
 ## Current limits
 
-- A reusable Plugin Manager and process supervisor exists in `crates/codepet-host`; no production Provider binary migration, signature, marketplace, sandbox, or automatic restart policy exists yet.
+- A reusable Plugin Manager and process supervisor exists in `crates/codepet-host`, and Codex remote operations run through the standalone Provider binary. Signature, marketplace, sandbox, and automatic restart policy remain deliberately out of scope.
 - No LAN listener, pairing, remote authentication, remote UI, or persistent event-cursor store exists yet.
 - The v0 compatibility profile remains in use by the desktop process until a later phase wires gateway v1 sessions and a separate pet-protocol adapter.

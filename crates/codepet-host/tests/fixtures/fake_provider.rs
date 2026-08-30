@@ -195,6 +195,7 @@ impl ProtocolServer for FakeProvider {
             let response_route = if request.conversation.native_resource_id == "response-wrong-route" {
                 ProviderInstanceRoute {
                     device_id: "device-other".to_string(),
+                    provider_plugin_id: route.provider_plugin_id.clone(),
                     provider_instance_id: route.provider_instance_id.clone(),
                 }
             } else {
@@ -245,18 +246,16 @@ impl ProtocolServer for FakeProvider {
         Box::pin(async move {
             let route = route_from_resource(&request.turn);
             self.instance(&route)?;
-            let conversation_id = if request.turn.native_resource_id
-                == "steer-wrong-conversation"
-            {
-                "conversation-b"
+            let conversation = if request.turn.native_resource_id == "steer-wrong-conversation" {
+                resource(&route, "conversation-b")
             } else {
-                "conversation-event-first"
+                request.conversation
             };
             Ok(TurnSteerResponse {
                 turn: turn(
                     &route,
                     &request.turn.native_resource_id,
-                    resource(&route, conversation_id),
+                    conversation,
                 ),
             })
         })
@@ -272,7 +271,7 @@ impl ProtocolServer for FakeProvider {
             let mut interrupted = turn(
                 &route,
                 &request.turn.native_resource_id,
-                resource(&route, "conversation-event-first"),
+                request.conversation,
             );
             interrupted.status = TurnStatus::Interrupted;
             Ok(TurnInterruptResponse { turn: interrupted })
@@ -419,6 +418,7 @@ async fn main() {
                         jsonrpc: "2.0".to_string(),
                         params: TurnOutputDeltaEvent {
                             turn: resource(&route, "turn-event-first"),
+                            conversation: resource(&route, "conversation-event-first"),
                             output_id: "output-1".to_string(),
                             kind: "text".to_string(),
                             delta: "hello".to_string(),
@@ -549,12 +549,12 @@ fn conversation(route: &ProviderInstanceRoute, native_id: &str) -> ProviderConve
         title: format!("Fake {native_id}"),
         preview: Some("fixture conversation".to_string()),
         status: ConversationStatus::Idle,
-        permission_level: "workspace-write".to_string(),
+        permission_level: Some("workspace-write".to_string()),
         model: Some("fake-model".to_string()),
         reasoning_effort: Some("medium".to_string()),
         workspace_root: Some("/fixture".to_string()),
-        created_at: 1,
-        updated_at: 2,
+        created_at: Some(1),
+        updated_at: Some(2),
         active_turn: None,
         extension: None,
     }
@@ -571,7 +571,7 @@ fn turn(
         status: TurnStatus::Running,
         display_summary: Some("fixture turn".to_string()),
         started_at: Some(2),
-        updated_at: 3,
+        updated_at: Some(3),
         completed_at: None,
         extension: None,
     }
@@ -580,6 +580,7 @@ fn turn(
 fn resource(route: &ProviderInstanceRoute, native_id: &str) -> RoutedResourceId {
     RoutedResourceId {
         device_id: route.device_id.clone(),
+        provider_plugin_id: route.provider_plugin_id.clone(),
         provider_instance_id: route.provider_instance_id.clone(),
         native_resource_id: native_id.to_string(),
     }
@@ -588,6 +589,7 @@ fn resource(route: &ProviderInstanceRoute, native_id: &str) -> RoutedResourceId 
 fn route_from_resource(resource: &RoutedResourceId) -> ProviderInstanceRoute {
     ProviderInstanceRoute {
         device_id: resource.device_id.clone(),
+        provider_plugin_id: resource.provider_plugin_id.clone(),
         provider_instance_id: resource.provider_instance_id.clone(),
     }
 }

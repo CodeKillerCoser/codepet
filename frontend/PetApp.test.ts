@@ -317,8 +317,8 @@ describe("PetApp activity helpers", () => {
     expect(syncBlock).toContain("codexDesktopCompanionClient.protocolHandshake({");
     expect(syncBlock).toContain("readCodexDesktopCompanionSnapshot()");
     expect(syncBlock).toContain("replayCodexDesktopCompanionEvents(lastGatewayEventSequence)");
-    expect(source).toContain("codexDesktopCompanionThreadExcludedEventName");
-    expect(source).toContain("excludeRemoteCompanionThread(event.payload.conversationId)");
+    expect(source).not.toContain("codex-desktop-companion-thread-excluded");
+    expect(source).not.toContain("excludeRemoteCompanionThread");
     expect(source).toContain("ingestRuntimeGatewayEvent(event)");
     expect(source).toContain("Codex Desktop companion 未注册");
     expect(source).toContain("Provider 不可用");

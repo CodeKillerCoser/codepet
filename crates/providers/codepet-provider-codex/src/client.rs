@@ -2,9 +2,10 @@ use super::protocol::{
     permission_from_sandbox, thread_list_params, thread_start_params, turn_start_params,
     turn_steer_params, CodexAppServerError, CodexApprovalKind, CodexApprovalRequest,
     CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexThreadListRequest,
-    CodexPermissionLevel, CodexThreadPage, CodexThreadStartRequest, CodexTurn,
-    CodexTurnStartRequest, CodexTurnStatus, CodexTurnSteerRequest, JsonRpcId,
-    ThreadListResponse, ThreadResponse, TurnResponse, TurnSteerResponse,
+    CodexThreadPage, CodexThreadStartRequest, CodexTurn,
+    CodexTurnStartRequest, CodexTurnSteerRequest, CommandApprovalParams, FileApprovalParams,
+    InitializeResponse, JsonRpcId, ThreadConfiguredResponse, ThreadListResponse,
+    ThreadReadResponse, TurnResponse, TurnSteerResponse,
 };
 use codepet_provider_sdk::ApprovalDecision;
 use serde::de::DeserializeOwned;
@@ -12,15 +13,18 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{self, Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_APP_SERVER_FRAME_BYTES: usize = 16 * 1024 * 1024;
+const MAX_APP_SERVER_STDERR_LINE_BYTES: usize = 64 * 1024;
+static NEXT_SESSION_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 pub trait JsonRpcReader: Send + 'static {
     fn read_message(&mut self) -> Result<Option<Value>, CodexAppServerError>;
@@ -48,17 +52,75 @@ impl<R: Read> JsonLineReader<R> {
 
 impl<R: Read + Send + 'static> JsonRpcReader for JsonLineReader<R> {
     fn read_message(&mut self) -> Result<Option<Value>, CodexAppServerError> {
-        let mut line = String::new();
-        let bytes = self
-            .reader
-            .read_line(&mut line)
-            .map_err(|error| CodexAppServerError::Io(error.to_string()))?;
-        if bytes == 0 {
+        let Some(line) = read_bounded_line(&mut self.reader, MAX_APP_SERVER_FRAME_BYTES)? else {
             return Ok(None);
-        }
-        serde_json::from_str(line.trim())
+        };
+        serde_json::from_slice(&line)
             .map(Some)
             .map_err(|error| CodexAppServerError::Protocol(format!("invalid JSON: {error}")))
+    }
+}
+
+fn read_bounded_line<R: BufRead>(
+    reader: &mut R,
+    limit: usize,
+) -> Result<Option<Vec<u8>>, CodexAppServerError> {
+    let mut captured = Vec::new();
+    let mut total = 0usize;
+    loop {
+        let available = reader
+            .fill_buf()
+            .map_err(|error| CodexAppServerError::Io(error.to_string()))?;
+        if available.is_empty() {
+            if total == 0 {
+                return Ok(None);
+            }
+            break;
+        }
+        let consumed = available
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map(|index| index + 1)
+            .unwrap_or(available.len());
+        total = total.checked_add(consumed).ok_or_else(|| {
+            CodexAppServerError::Protocol("App Server line length overflow".to_string())
+        })?;
+        if captured.len() < limit {
+            let remaining = limit - captured.len();
+            captured.extend_from_slice(&available[..consumed.min(remaining)]);
+        }
+        let ended = available[consumed - 1] == b'\n';
+        reader.consume(consumed);
+        if ended {
+            break;
+        }
+    }
+    if total > limit {
+        return Err(CodexAppServerError::Protocol(format!(
+            "App Server physical line exceeds {limit} bytes"
+        )));
+    }
+    Ok(Some(captured))
+}
+
+fn drain_stderr(stderr: impl Read) {
+    let mut reader = BufReader::new(stderr);
+    loop {
+        match read_bounded_line(&mut reader, MAX_APP_SERVER_STDERR_LINE_BYTES) {
+            Ok(Some(line)) => {
+                let line = String::from_utf8_lossy(&line);
+                eprintln!("Codex App Server: {}", line.trim_end());
+            }
+            Ok(None) => return,
+            Err(CodexAppServerError::Protocol(message)) => {
+                eprintln!("Codex App Server stderr discarded: {message}");
+                return;
+            }
+            Err(error) => {
+                eprintln!("Codex App Server stderr failed: {error}");
+                return;
+            }
+        }
     }
 }
 
@@ -107,6 +169,7 @@ impl SessionControl for ChildControl {
 }
 
 struct SessionInner {
+    generation: String,
     writer: Mutex<Option<Box<dyn JsonRpcWriter>>>,
     pending: Mutex<HashMap<JsonRpcId, Sender<Result<Value, CodexAppServerError>>>>,
     subscribers: Mutex<Vec<Sender<Result<CodexIncoming, CodexAppServerError>>>>,
@@ -115,6 +178,7 @@ struct SessionInner {
     next_load_evidence: AtomicU64,
     next_id: AtomicI64,
     running: AtomicBool,
+    terminal_fault: Mutex<Option<CodexAppServerError>>,
     control: Mutex<Option<Box<dyn SessionControl>>>,
     reader_thread: Mutex<Option<JoinHandle<()>>>,
 }
@@ -163,6 +227,9 @@ impl SessionInner {
     fn fail(&self, error: CodexAppServerError) {
         if !self.running.swap(false, Ordering::SeqCst) {
             return;
+        }
+        if let Ok(mut terminal_fault) = self.terminal_fault.lock() {
+            *terminal_fault = Some(error.clone());
         }
         if let Ok(mut pending) = self.pending.lock() {
             for (_, sender) in pending.drain() {
@@ -251,11 +318,7 @@ impl CodexAppServerSession {
             .take()
             .ok_or_else(|| CodexAppServerError::Spawn("stdout is unavailable".to_string()))?;
         if let Some(stderr) = child.stderr.take() {
-            thread::spawn(move || {
-                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                    eprintln!("Codex App Server: {line}");
-                }
-            });
+            thread::spawn(move || drain_stderr(stderr));
         }
         let session = Self::from_parts(
             Box::new(JsonLineReader::new(stdout)),
@@ -297,6 +360,7 @@ impl CodexAppServerSession {
         control: Option<Box<dyn SessionControl>>,
     ) -> Self {
         let inner = Arc::new(SessionInner {
+            generation: new_session_generation(),
             writer: Mutex::new(Some(writer)),
             pending: Mutex::new(HashMap::new()),
             subscribers: Mutex::new(Vec::new()),
@@ -305,6 +369,7 @@ impl CodexAppServerSession {
             next_load_evidence: AtomicU64::new(1),
             next_id: AtomicI64::new(1),
             running: AtomicBool::new(true),
+            terminal_fault: Mutex::new(None),
             control: Mutex::new(control),
             reader_thread: Mutex::new(None),
         });
@@ -343,12 +408,32 @@ impl CodexAppServerSession {
         self.inner.running.load(Ordering::SeqCst)
     }
 
+    pub fn generation(&self) -> &str {
+        &self.inner.generation
+    }
+
     pub fn subscribe(&self) -> Receiver<Result<CodexIncoming, CodexAppServerError>> {
         let (sender, receiver) = mpsc::channel();
-        if let Ok(mut subscribers) = self.inner.subscribers.lock() {
+        let terminal_fault = self
+            .inner
+            .terminal_fault
+            .lock()
+            .ok()
+            .and_then(|fault| fault.clone());
+        if let Some(error) = terminal_fault {
+            let _ = sender.send(Err(error));
+        } else if let Ok(mut subscribers) = self.inner.subscribers.lock() {
             subscribers.push(sender);
         }
         receiver
+    }
+
+    pub fn terminal_fault(&self) -> Option<CodexAppServerError> {
+        self.inner
+            .terminal_fault
+            .lock()
+            .ok()
+            .and_then(|fault| fault.clone())
     }
 
     pub fn shutdown(&self) -> Result<(), CodexAppServerError> {
@@ -381,19 +466,21 @@ impl CodexAppServerSession {
         &self,
         request: CodexThreadListRequest,
     ) -> Result<CodexThreadPage, CodexAppServerError> {
-        let workspace_root = request.workspace_root.clone();
         let response: ThreadListResponse =
             self.request("thread/list", thread_list_params(&request))?;
         Ok(CodexThreadPage {
             data: response
                 .data
                 .into_iter()
-                .map(|thread| CodexConversationSnapshot {
-                    thread,
-                    workspace_root: workspace_root.clone(),
-                    permission_level: None,
-                    model: None,
-                    reasoning_effort: None,
+                .map(|thread| {
+                    let native_workspace = thread.cwd.clone();
+                    CodexConversationSnapshot {
+                        thread,
+                        workspace_root: Some(native_workspace),
+                        permission_level: None,
+                        model: None,
+                        reasoning_effort: None,
+                    }
                 })
                 .collect(),
             next_cursor: response.next_cursor,
@@ -404,11 +491,11 @@ impl CodexAppServerSession {
         &self,
         thread_id: &str,
     ) -> Result<CodexConversationSnapshot, CodexAppServerError> {
-        let response: ThreadResponse = self.request(
+        let response: ThreadReadResponse = self.request(
             "thread/read",
             json!({ "threadId": thread_id, "includeTurns": true }),
         )?;
-        Ok(snapshot_from_response(response, None, None))
+        Ok(snapshot_from_thread(response.thread))
     }
 
     fn request_thread_resume_outcome(
@@ -416,8 +503,8 @@ impl CodexAppServerSession {
         thread_id: &str,
     ) -> CodexRequestOutcome<CodexConversationSnapshot> {
         self.request_outcome("thread/resume", json!({ "threadId": thread_id }))
-            .and_then(|response: ThreadResponse| {
-                let snapshot = snapshot_from_response(response, None, None);
+            .and_then(|response: ThreadConfiguredResponse| {
+                let snapshot = snapshot_from_configured_response(response);
                 if snapshot.thread.id != thread_id {
                     return CodexRequestOutcome::SentOutcomeUnknown(
                         CodexAppServerError::Protocol(format!(
@@ -536,12 +623,8 @@ impl CodexAppServerSession {
         request: CodexThreadStartRequest,
     ) -> CodexRequestOutcome<CodexConversationSnapshot> {
         self.request_outcome("thread/start", thread_start_params(&request))
-            .and_then(|response: ThreadResponse| {
-                let snapshot = snapshot_from_response(
-                    response,
-                    request.workspace_root,
-                    Some(request.permission_level),
-                );
+            .and_then(|response: ThreadConfiguredResponse| {
+                let snapshot = snapshot_from_configured_response(response);
                 self.inner.mark_thread_loaded(&snapshot.thread.id);
                 CodexRequestOutcome::Success(snapshot)
             })
@@ -564,12 +647,7 @@ impl CodexAppServerSession {
         self.ensure_thread_loaded(&request.thread_id)?;
         let response: TurnSteerResponse =
             self.request("turn/steer", turn_steer_params(&request))?;
-        Ok(CodexTurn {
-            id: response.turn_id,
-            status: CodexTurnStatus::InProgress,
-            started_at: None,
-            completed_at: None,
-        })
+        self.authoritative_turn(&request.thread_id, &response.turn_id)
     }
 
     pub fn turn_interrupt(
@@ -582,12 +660,7 @@ impl CodexAppServerSession {
             "turn/interrupt",
             json!({ "threadId": thread_id, "turnId": turn_id }),
         )?;
-        Ok(CodexTurn {
-            id: turn_id.to_string(),
-            status: CodexTurnStatus::Interrupted,
-            started_at: None,
-            completed_at: None,
-        })
+        self.authoritative_turn(thread_id, turn_id)
     }
 
     pub fn respond_to_approval(
@@ -636,10 +709,37 @@ impl CodexAppServerSession {
             }),
             timeout,
         )?;
-        let _: Value = serde_json::from_value(result).map_err(|error| {
+        let initialized: InitializeResponse = serde_json::from_value(result).map_err(|error| {
             CodexAppServerError::Protocol(format!("invalid initialize response: {error}"))
         })?;
+        if initialized.codex_home.is_empty()
+            || initialized.platform_family.is_empty()
+            || initialized.platform_os.is_empty()
+            || initialized.user_agent.is_empty()
+        {
+            return Err(CodexAppServerError::Protocol(
+                "initialize response contains an empty required field".to_string(),
+            ));
+        }
         self.notify("initialized", json!({}))
+    }
+
+    fn authoritative_turn(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+    ) -> Result<CodexTurn, CodexAppServerError> {
+        let snapshot = self.thread_read(thread_id)?;
+        snapshot
+            .thread
+            .turns
+            .into_iter()
+            .find(|turn| turn.id == turn_id)
+            .ok_or_else(|| {
+                CodexAppServerError::Protocol(format!(
+                    "thread/read did not return authoritative turn {turn_id}"
+                ))
+            })
     }
 
     fn request<T: DeserializeOwned>(
@@ -782,30 +882,62 @@ fn codex_app_server_command(binary: &Path, args: &[String]) -> Command {
     command
 }
 
-fn snapshot_from_response(
-    response: ThreadResponse,
-    workspace_root: Option<String>,
-    permission_level: Option<CodexPermissionLevel>,
+fn snapshot_from_thread(thread: super::protocol::CodexThread) -> CodexConversationSnapshot {
+    let workspace_root = Some(thread.cwd.clone());
+    CodexConversationSnapshot {
+        thread,
+        workspace_root,
+        permission_level: None,
+        model: None,
+        reasoning_effort: None,
+    }
+}
+
+fn snapshot_from_configured_response(
+    response: ThreadConfiguredResponse,
 ) -> CodexConversationSnapshot {
     CodexConversationSnapshot {
         thread: response.thread,
-        workspace_root,
-        permission_level: permission_level.or_else(|| permission_from_sandbox(response.sandbox.as_ref())),
-        model: response.model,
+        workspace_root: Some(response.cwd),
+        permission_level: permission_from_sandbox(&response.sandbox),
+        model: Some(response.model),
         reasoning_effort: response.reasoning_effort,
     }
 }
 
+fn new_session_generation() -> String {
+    let counter = NEXT_SESSION_GENERATION.fetch_add(1, Ordering::SeqCst);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("{:x}-{:x}-{counter:x}", process::id(), nanos)
+}
+
 fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppServerError> {
-    if let Some(version) = message.get("jsonrpc").and_then(Value::as_str) {
-        if version != "2.0" {
-            return Err(CodexAppServerError::Protocol(format!(
-                "unsupported JSON-RPC version {version}"
-            )));
-        }
+    let object = message.as_object().ok_or_else(|| {
+        CodexAppServerError::Protocol("JSON-RPC message must be an object".to_string())
+    })?;
+    if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+        return Err(CodexAppServerError::Protocol(
+            "jsonrpc must be exactly 2.0".to_string(),
+        ));
     }
-    if message.get("method").is_some() {
-        let incoming = parse_incoming(message)?;
+    if object.contains_key("method") {
+        if !object
+            .keys()
+            .all(|key| matches!(key.as_str(), "jsonrpc" | "id" | "method" | "params"))
+        {
+            return Err(CodexAppServerError::Protocol(
+                "JSON-RPC request or notification contains unknown fields".to_string(),
+            ));
+        }
+        if !object.contains_key("params") {
+            return Err(CodexAppServerError::Protocol(
+                "JSON-RPC request or notification is missing params".to_string(),
+            ));
+        }
+        let incoming = parse_incoming(message, &inner.generation)?;
         if let CodexIncoming::UnsupportedServerRequest {
             request_id,
             method,
@@ -833,13 +965,59 @@ fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppSe
         inner.broadcast(Ok(incoming));
         return Ok(());
     }
+    if !object
+        .keys()
+        .all(|key| matches!(key.as_str(), "jsonrpc" | "id" | "result" | "error"))
+    {
+        return Err(CodexAppServerError::Protocol(
+            "JSON-RPC response contains unknown fields".to_string(),
+        ));
+    }
+    let has_result = object.contains_key("result");
+    let has_error = object.contains_key("error");
+    if has_result == has_error {
+        return Err(CodexAppServerError::Protocol(
+            "JSON-RPC response must contain exactly one of result or error".to_string(),
+        ));
+    }
     let id: JsonRpcId = serde_json::from_value(
-        message
+        object
             .get("id")
             .cloned()
             .ok_or_else(|| CodexAppServerError::Protocol("response is missing id".to_string()))?,
     )
     .map_err(|error| CodexAppServerError::Protocol(format!("invalid response id: {error}")))?;
+    let response = if let Some(error) = object.get("error") {
+        let error = error.as_object().ok_or_else(|| {
+            CodexAppServerError::Protocol("JSON-RPC error must be an object".to_string())
+        })?;
+        if !error
+            .keys()
+            .all(|key| matches!(key.as_str(), "code" | "message" | "data"))
+        {
+            return Err(CodexAppServerError::Protocol(
+                "JSON-RPC error contains unknown fields".to_string(),
+            ));
+        }
+        let code = error.get("code").and_then(Value::as_i64).ok_or_else(|| {
+            CodexAppServerError::Protocol("JSON-RPC error is missing integer code".to_string())
+        })?;
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .filter(|message| !message.is_empty())
+            .ok_or_else(|| {
+                CodexAppServerError::Protocol(
+                    "JSON-RPC error is missing non-empty message".to_string(),
+                )
+            })?;
+        Err(CodexAppServerError::Rpc {
+            code,
+            message: message.to_string(),
+        })
+    } else {
+        Ok(object["result"].clone())
+    };
     let sender = inner
         .pending
         .lock()
@@ -848,18 +1026,6 @@ fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppSe
         .ok_or_else(|| {
             CodexAppServerError::Protocol(format!("response has no matching request id {id}"))
         })?;
-    let response = if let Some(error) = message.get("error") {
-        Err(CodexAppServerError::Rpc {
-            code: error.get("code").and_then(Value::as_i64).unwrap_or(-32603),
-            message: error
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown app-server error")
-                .to_string(),
-        })
-    } else {
-        Ok(message.get("result").cloned().unwrap_or(Value::Null))
-    };
     let _ = sender.send(response);
     Ok(())
 }
@@ -881,74 +1047,107 @@ fn incoming_thread_id(incoming: &CodexIncoming) -> Option<&str> {
     }
 }
 
-fn parse_incoming(message: Value) -> Result<CodexIncoming, CodexAppServerError> {
+fn parse_incoming(
+    message: Value,
+    session_generation: &str,
+) -> Result<CodexIncoming, CodexAppServerError> {
     let method = required_string(&message, "method")?;
-    let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
+    let params = message
+        .get("params")
+        .cloned()
+        .ok_or_else(|| CodexAppServerError::Protocol("message is missing params".to_string()))?;
     if let Some(id_value) = message.get("id") {
         let request_id: JsonRpcId = serde_json::from_value(id_value.clone()).map_err(|error| {
             CodexAppServerError::Protocol(format!("invalid server request id: {error}"))
         })?;
-        return parse_server_request(request_id, &method, &params);
+        return parse_server_request(request_id, &method, &params, session_generation);
     }
-    parse_notification(&method, params).map(CodexIncoming::Notification)
+    parse_notification(&method, params, session_generation).map(CodexIncoming::Notification)
 }
 
 fn parse_server_request(
     request_id: JsonRpcId,
     method: &str,
     params: &Value,
+    session_generation: &str,
 ) -> Result<CodexIncoming, CodexAppServerError> {
-    let kind = match method {
-        "item/commandExecution/requestApproval" => CodexApprovalKind::CommandExecution,
-        "item/fileChange/requestApproval" => CodexApprovalKind::FileChange,
-        _ => {
-            return Ok(CodexIncoming::UnsupportedServerRequest {
-                request_id,
-                method: method.to_string(),
-            })
-        }
+    let unsupported = || CodexIncoming::UnsupportedServerRequest {
+        request_id: request_id.clone(),
+        method: method.to_string(),
     };
-    let thread_id = required_string(params, "threadId")?;
-    let turn_id = required_string(params, "turnId")?;
-    let item_id = required_string(params, "itemId")?;
-    let requested_at_ms = params
-        .get("startedAtMs")
-        .and_then(Value::as_i64)
-        .and_then(|value| u64::try_from(value).ok())
-        .unwrap_or(0);
-    let available_decisions: Vec<String> = params
-        .get("availableDecisions")
-        .and_then(Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
-    if !available_decisions.is_empty()
-        && !available_decisions
-            .iter()
-            .any(|decision| decision == "accept" || decision == "decline")
-    {
-        return Ok(CodexIncoming::UnsupportedServerRequest {
-            request_id,
-            method: method.to_string(),
-        });
-    }
-    let (title, description) = match kind {
-        CodexApprovalKind::CommandExecution => (
-            "Run command".to_string(),
-            optional_string(params, "command").or_else(|| optional_string(params, "reason")),
-        ),
-        CodexApprovalKind::FileChange => (
-            "Apply file changes".to_string(),
-            optional_string(params, "reason"),
-        ),
-    };
+    let (kind, thread_id, turn_id, item_id, requested_at_ms, available_decisions, title, description) =
+        match method {
+            "item/commandExecution/requestApproval" => {
+                if has_any_key(
+                    params,
+                    &[
+                        "additionalPermissions",
+                        "networkApprovalContext",
+                        "proposedExecpolicyAmendment",
+                        "proposedNetworkPolicyAmendments",
+                    ],
+                ) {
+                    return Ok(unsupported());
+                }
+                let Ok(params) = serde_json::from_value::<CommandApprovalParams>(params.clone()) else {
+                    return Ok(unsupported());
+                };
+                if params.has_unsupported_semantics()
+                    || params.thread_id.is_empty()
+                    || params.turn_id.is_empty()
+                    || params.item_id.is_empty()
+                {
+                    return Ok(unsupported());
+                }
+                let Ok(requested_at_ms) = u64::try_from(params.started_at_ms) else {
+                    return Ok(unsupported());
+                };
+                let available_decisions = params.binary_decisions();
+                let description = params.command.clone().or(params.reason.clone());
+                (
+                    CodexApprovalKind::CommandExecution,
+                    params.thread_id,
+                    params.turn_id,
+                    params.item_id,
+                    requested_at_ms,
+                    available_decisions,
+                    "Run command".to_string(),
+                    description,
+                )
+            }
+            "item/fileChange/requestApproval" => {
+                if has_any_key(params, &["grantRoot"]) {
+                    return Ok(unsupported());
+                }
+                let Ok(params) = serde_json::from_value::<FileApprovalParams>(params.clone()) else {
+                    return Ok(unsupported());
+                };
+                if params.grant_root.is_some()
+                    || params.thread_id.is_empty()
+                    || params.turn_id.is_empty()
+                    || params.item_id.is_empty()
+                {
+                    return Ok(unsupported());
+                }
+                let Ok(requested_at_ms) = u64::try_from(params.started_at_ms) else {
+                    return Ok(unsupported());
+                };
+                (
+                    CodexApprovalKind::FileChange,
+                    params.thread_id,
+                    params.turn_id,
+                    params.item_id,
+                    requested_at_ms,
+                    vec!["accept".to_string(), "decline".to_string()],
+                    "Apply file changes".to_string(),
+                    params.reason,
+                )
+            }
+            _ => return Ok(unsupported()),
+        };
     Ok(CodexIncoming::ApprovalRequested(CodexApprovalRequest {
         request_id,
+        session_generation: session_generation.to_string(),
         kind,
         thread_id,
         turn_id,
@@ -960,9 +1159,16 @@ fn parse_server_request(
     }))
 }
 
+fn has_any_key(value: &Value, keys: &[&str]) -> bool {
+    value
+        .as_object()
+        .is_some_and(|object| keys.iter().any(|key| object.contains_key(*key)))
+}
+
 fn parse_notification(
     method: &str,
     params: Value,
+    session_generation: &str,
 ) -> Result<CodexNotification, CodexAppServerError> {
     match method {
         "thread/started" => Ok(CodexNotification::ThreadStarted {
@@ -999,6 +1205,7 @@ fn parse_notification(
         "serverRequest/resolved" => Ok(CodexNotification::ServerRequestResolved {
             request_id: deserialize_field(&params, "requestId")?,
             thread_id: required_string(&params, "threadId")?,
+            session_generation: session_generation.to_string(),
         }),
         _ => Ok(CodexNotification::Unknown {
             method: method.to_string(),
@@ -1013,14 +1220,6 @@ fn required_string(value: &Value, key: &str) -> Result<String, CodexAppServerErr
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .ok_or_else(|| CodexAppServerError::Protocol(format!("message is missing {key}")))
-}
-
-fn optional_string(value: &Value, key: &str) -> Option<String> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
 }
 
 fn deserialize_field<T: DeserializeOwned>(
@@ -1039,6 +1238,7 @@ fn deserialize_field<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::{CodexPermissionLevel, CodexTurnStatus};
     use std::sync::mpsc::{Receiver, Sender};
     use std::time::Duration;
 
@@ -1077,7 +1277,12 @@ mod tests {
                 .send(json!({
                     "jsonrpc": "2.0",
                     "id": initialize["id"],
-                    "result": { "userAgent": "codex-cli/fixture" }
+                    "result": {
+                        "codexHome": "/tmp/codex-home",
+                        "platformFamily": "unix",
+                        "platformOs": "macos",
+                        "userAgent": "codex-cli/fixture"
+                    }
                 }))
                 .unwrap();
             let initialized = peer_receiver.recv().unwrap();
@@ -1136,6 +1341,44 @@ mod tests {
         drop(incoming_sender);
 
         assert!(matches!(error, CodexAppServerError::Timeout(_)));
+    }
+
+    #[test]
+    fn empty_initialize_result_is_rejected() {
+        let (outgoing_sender, outgoing_receiver) = mpsc::channel::<Value>();
+        let (incoming_sender, incoming_receiver) = mpsc::channel::<Value>();
+        let peer = thread::spawn(move || {
+            let initialize = outgoing_receiver.recv().unwrap();
+            incoming_sender
+                .send(json!({
+                    "jsonrpc": "2.0",
+                    "id": initialize["id"],
+                    "result": {}
+                }))
+                .unwrap();
+        });
+
+        let error = CodexAppServerSession::connect(
+            Box::new(MockReader {
+                receiver: incoming_receiver,
+            }),
+            Box::new(MockWriter {
+                sender: outgoing_sender,
+            }),
+        )
+        .err()
+        .expect("an empty initialize result must fail closed");
+        peer.join().unwrap();
+
+        assert!(matches!(error, CodexAppServerError::Protocol(_)));
+    }
+
+    #[test]
+    fn oversized_physical_line_is_drained_before_error() {
+        let mut reader = BufReader::new(std::io::Cursor::new(b"12345\n{}\n"));
+        let error = read_bounded_line(&mut reader, 4).unwrap_err();
+        assert!(matches!(error, CodexAppServerError::Protocol(_)));
+        assert_eq!(read_bounded_line(&mut reader, 4).unwrap(), Some(b"{}\n".to_vec()));
     }
 
     #[test]
@@ -1210,6 +1453,26 @@ mod tests {
     }
 
     #[test]
+    fn terminal_fault_is_replayed_to_late_subscriber() {
+        let (session, _, peer_sender) = mock_session();
+        drop(peer_sender);
+        for _ in 0..100 {
+            if !session.is_running() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(!session.is_running());
+
+        let error = session
+            .subscribe()
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error, CodexAppServerError::ProcessExited);
+    }
+
+    #[test]
     fn stopped_session_reports_not_sent_without_allocating_or_writing() {
         let (session, peer_receiver, peer_sender) = mock_session();
         session.shutdown().unwrap();
@@ -1265,7 +1528,7 @@ mod tests {
                     reasoning_effort: None,
                 })
                 .unwrap();
-            assert_eq!(normal.workspace_root, None);
+            assert_eq!(normal.workspace_root.as_deref(), Some("/tmp"));
             assert_eq!(
                 normal.permission_level,
                 Some(CodexPermissionLevel::ReadOnly)
@@ -1349,6 +1612,10 @@ mod tests {
                 "result": {
                     "thread": thread_fixture("thread-normal", "/tmp", "idle", vec![]),
                     "model": "default",
+                    "modelProvider": "openai",
+                    "cwd": "/tmp",
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
                     "reasoningEffort": "medium",
                     "sandbox": {
                         "type": "readOnly",
@@ -1374,6 +1641,10 @@ mod tests {
                 "result": {
                     "thread": thread_fixture("thread-project", "/work/project", "idle", vec![]),
                     "model": "gpt-fixture",
+                    "modelProvider": "openai",
+                    "cwd": "/work/project",
+                    "approvalPolicy": "never",
+                    "approvalsReviewer": "user",
                     "reasoningEffort": "high",
                     "sandbox": {
                         "type": "dangerFullAccess"
@@ -1405,6 +1676,23 @@ mod tests {
             }))
             .unwrap();
 
+        let steer_read = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(steer_read["method"], "thread/read");
+        peer_sender
+            .send(json!({
+                "jsonrpc": "2.0",
+                "id": steer_read["id"],
+                "result": {
+                    "thread": thread_fixture(
+                        "thread-project",
+                        "/work/project",
+                        "active",
+                        vec![turn_fixture("turn-started", "inProgress")]
+                    )
+                }
+            }))
+            .unwrap();
+
         let interrupt = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(interrupt["method"], "turn/interrupt");
         assert_eq!(interrupt["params"]["turnId"], "turn-started");
@@ -1413,6 +1701,23 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": interrupt["id"],
                 "result": {}
+            }))
+            .unwrap();
+
+        let interrupt_read = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(interrupt_read["method"], "thread/read");
+        peer_sender
+            .send(json!({
+                "jsonrpc": "2.0",
+                "id": interrupt_read["id"],
+                "result": {
+                    "thread": thread_fixture(
+                        "thread-project",
+                        "/work/project",
+                        "idle",
+                        vec![turn_fixture("turn-started", "interrupted")]
+                    )
+                }
             }))
             .unwrap();
 
@@ -1455,6 +1760,12 @@ mod tests {
                             "idle",
                             vec![]
                         ),
+                        "model": "default",
+                        "modelProvider": "openai",
+                        "cwd": "/tmp/project",
+                        "approvalPolicy": "on-request",
+                        "approvalsReviewer": "user",
+                        "reasoningEffort": null,
                         "sandbox": {
                             "type": "workspaceWrite",
                             "writableRoots": [],
@@ -1569,16 +1880,45 @@ mod tests {
             }))
             .unwrap();
         let incoming = notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
+        assert!(matches!(
+            incoming,
+            CodexIncoming::UnsupportedServerRequest {
+                request_id: JsonRpcId::String(request_id),
+                method
+            } if request_id == "approval-one"
+                && method == "item/commandExecution/requestApproval"
+        ));
+        let response = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(response["id"], "approval-one");
+        assert_eq!(response["error"]["code"], -32601);
+
+        peer_sender
+            .send(json!({
+                "jsonrpc": "2.0",
+                "id": "approval-safe",
+                "method": "item/commandExecution/requestApproval",
+                "params": {
+                    "threadId": "thread-one",
+                    "turnId": "turn-one",
+                    "itemId": "item-one",
+                    "startedAtMs": 123,
+                    "command": "cargo test",
+                    "availableDecisions": ["accept", "decline"]
+                }
+            }))
+            .unwrap();
+        let incoming = notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
         let CodexIncoming::ApprovalRequested(approval) = incoming else {
-            panic!("expected approval request");
+            panic!("expected safe binary approval request");
         };
         assert_eq!(approval.kind, CodexApprovalKind::CommandExecution);
         assert_eq!(approval.description.as_deref(), Some("cargo test"));
+        assert_eq!(approval.session_generation, session.generation());
         session
             .respond_to_approval(&approval, ApprovalDecision::Approve)
             .unwrap();
         let response = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(response["id"], "approval-one");
+        assert_eq!(response["id"], "approval-safe");
         assert_eq!(response["result"]["decision"], "accept");
         assert!(response.get("method").is_none());
 
@@ -1641,14 +1981,25 @@ mod tests {
     }
 
     fn thread_fixture(id: &str, cwd: &str, status: &str, turns: Vec<Value>) -> Value {
+        let status = if status == "active" {
+            json!({ "type": status, "activeFlags": [] })
+        } else {
+            json!({ "type": status })
+        };
         json!({
             "id": id,
             "name": null,
             "preview": "fixture",
             "cwd": cwd,
+            "cliVersion": "0.151.0",
             "createdAt": 100,
+            "ephemeral": false,
+            "modelProvider": "openai",
+            "projectId": null,
+            "sessionId": format!("session-{id}"),
+            "source": "appServer",
             "updatedAt": 101,
-            "status": { "type": status },
+            "status": status,
             "turns": turns,
             "ignoredFutureField": { "mustNotLeak": true }
         })

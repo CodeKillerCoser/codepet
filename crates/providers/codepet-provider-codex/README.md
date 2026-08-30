@@ -2,6 +2,8 @@
 
 `codepet-provider-codex` 是独立的 Provider Protocol v1 / stdio JSON-lines 二进制。它由 `codepet-host` 启动，并在每个 Codex instance 内管理一个官方 Codex App Server 子进程。运行依赖不包含 Host、Tauri、Pet SDK 或 Desktop 私有 IPC。
 
+资源身份始终是 `deviceId + providerPluginId + providerInstanceId + nativeResourceId`。每次 App Server session 使用独立 generation；只有普通 command/file 的 accept/decline 二元审批会发布，额外权限、结构化 decision 和未知 server request 使用原 JSON-RPC id 返回 `-32601`。
+
 ## 构建
 
 ```sh

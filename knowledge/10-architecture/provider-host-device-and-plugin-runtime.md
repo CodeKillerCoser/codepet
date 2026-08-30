@@ -107,12 +107,12 @@ stopped -> starting -> ready -> stopped
 远程资源必须完整携带：
 
 ```text
-deviceId + providerInstanceId + nativeResourceId
+deviceId + providerPluginId + providerInstanceId + nativeResourceId
 ```
 
-三段任一为空即拒绝。registry 先核对 device、instance 与所属 plugin；Provider response/event 再核对完整 route。身份保持型 RPC 必须返回与 request 完全相同的资源 ID；`turn.start` 返回 turn 的 conversation 必须等于请求 conversation；Gateway steer 还会保存原始 conversation，并要求 Provider 返回的 `turn.conversation` 与它完全相等。route-less `conversation.list` 只在没有 Provider cursor 时聚合；带 cursor 直接返回 `aggregate_conversation_cursor_unsupported`，本阶段不定义复合分页。
+四段任一为空即拒绝。registry 先核对 device、plugin、instance 三段实例 route；Provider response/event 再核对完整资源 route。身份保持型 RPC 必须返回与 request 完全相同的资源 ID；`turn.start` 返回 turn 的 conversation 必须等于请求 conversation；Gateway steer/interrupt 都携带原始 conversation，并要求 Provider 返回的 `turn.conversation` 与它完全相等。route-less `conversation.list` 只在没有 Provider cursor 时聚合；带 cursor 直接返回 `aggregate_conversation_cursor_unsupported`，本阶段不定义复合分页。
 
-`providerPluginId` 由 instance registry 对上述 route 做唯一解析，并在 Gateway provider 枚举中显式返回。兼容 v0 输出通过 route extension 把 plugin id 与三段资源 route 一起物化，避免旧客户端丢失完整身份。
+`providerPluginId` 是 core IDL 中资源 route 的必填字段，不再由 compat 层事后查询 registry 补齐。兼容 v0 输出通过 route extension 原样物化四段资源身份，旧客户端对象自身的 `id` 仍只是 native id。
 
 Manager 到 Gateway 只有一个有界 `mpsc` receiver，且只能领取一次。Gateway 映射后写入单个有界 replay bus；订阅者 lag 会返回显式错误，旧 cursor 超出 replay 窗口会返回 `event_replay_unavailable`。Gateway 为事件分配 `event-<20 位序号>`，service 内严格单调，事件自身始终保留完整 route。
 
@@ -120,7 +120,7 @@ Manager 到 Gateway 只有一个有界 `mpsc` receiver，且只能领取一次�
 
 Host 只依赖 `codepet-provider-sdk` 和 `codepet-gateway-sdk`，不定义第二套 Provider/Gateway DTO。四个 Rust SDK 都具备 description/authors/repository metadata，不再 `publish = false`；内部 path dependency 同时声明 `version = "0.1.0"`，可用 `cargo package --allow-dirty` 检查包内容。仓库当前没有 LICENSE 文件，因此 manifest 不虚构 license 声明；正式发布前仍需仓库所有者补充许可证决策。
 
-Provider 包只依赖 Provider SDK，不能反向依赖 Host。`codepet-provider-codex` 的 Host 依赖只出现在纵向测试的 dev-dependency；运行二进制不依赖 Host、Tauri 或 Pet SDK。默认 Provider 名称没有在 Host 预埋注册框架；后续 Provider 仍应以普通 manifest/binary 接入。
+Provider 包只依赖 Provider SDK，不能反向依赖 Host。Host 启动 manifest binary 的纵向测试位于 `codepet-host`；`codepet-provider-codex` 的 all-target/dev dependency graph 不含 Host、Gateway、Tauri 或 Pet SDK。默认 Provider 名称没有在 Host 预埋注册框架；后续 Provider 仍应以普通 manifest/binary 接入。
 
 ## 风险与验证证据
 

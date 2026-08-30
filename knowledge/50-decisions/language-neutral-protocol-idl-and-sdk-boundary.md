@@ -36,7 +36,7 @@ JSON Schema Draft 2020-12 加 method/event manifest 能同时表达跨语言 DTO
 - Provider Host 使用生成的有界 JSON-line codec 与统一 wire classifier，不自行实现另一套宽松 response/notification parser。
 - Provider Host 使用生成的 `ProtocolRequest::from_method_params` 构造 JSON-RPC request enum，不在 Host 维护第二份 method/envelope 枚举。
 - Provider 事件与 Pet 事件使用不同生成 enum 和 server/client contract，不能通过同一个 event sink 互换。
-- 新远程资源必须包含 device、provider instance 与 native resource 三段 identity；单独 native ID 只允许在已绑定 route 的内部 adapter 中使用。
+- 新远程资源必须包含 device、provider plugin、provider instance 与 native resource 四段 identity；单独 native ID 只允许在已经绑定并逐跳校验完整 route 的 Provider 内部使用。
 - Dart/Python generator 可以后加，但只能消费 `protocol/codegen.json` 声明的同一接口和 IDL。
 
 ## 后续观察

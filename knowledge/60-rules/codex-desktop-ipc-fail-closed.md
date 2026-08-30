@@ -22,7 +22,7 @@ Desktop 私有 DTO、方法名、路由字段和原始 JSON 只能存在于 Code
 - 私有协议存在审批请求，就直接广告 `approval.resolve`，但没有验证目标路由和 Desktop 是否确认处理。
 - 写请求超时或断线后在新连接自动重放，导致一条回复、停止或审批决定作用两次。
 - 收到 `{ok: true}` 就手工删除 pending approval 或把 turn 标成 interrupted，不等待权威 snapshot/patch。
-- remote thread 已被 scope 标记后，仍允许 companion snapshot/event 或动作通过；或只从 UI 删除一次，却允许 replay 重新建卡。
+- Provider event 被送入 companion snapshot/event、Desktop action 或 Pet projection；两条链路即使 native thread id 相同也不得互相改写状态。
 - 把 permissions、MCP elicitation、user input 或 plan implementation 强行压成 v0 `approve`/`deny`，丢失原生语义。
 
 ## 推荐做法
@@ -38,8 +38,7 @@ Desktop 私有 DTO、方法名、路由字段和原始 JSON 只能存在于 Code
 - Owner 明确接受只结束本次请求；最终 turn 继续由权威 snapshot/patch 驱动，本地审批决定则需同时取得 Owner ack 与权威 request removal，顺序不限。非幂等写请求不自动重试或跨重连重放。
 - capability 只包含当前 adapter 已实现并测试的方法；`conversation.create` 等未接通能力继续 unsupported。
 - 无任务目录时明确报告覆盖限制，不用推断数据伪造目录。
-- companion snapshot/replay/event 只来自 Desktop adapter。remote create 未确定来源时先 quarantine；remote id 确认或 Gateway 调用返回歧义错误时排除。Provider Protocol 尚未携带交付细分证据，因此不能把调用后的错误猜成“明确未派发”并恢复候选。
-- 动作在实际 IPC dispatch 期间持有 local-thread permit，与 remote marking 线性化；approval 与 turn 动作都必须遵守相同 source fence。
+- companion snapshot/replay/event 只来自 Desktop adapter。Provider route/event 不得写 Desktop scope、触发 exclusion 或参与 Desktop action；同名 thread 维持两条独立状态。
 
 ## 来源
 
@@ -56,4 +55,4 @@ Desktop 私有 DTO、方法名、路由字段和原始 JSON 只能存在于 Code
 - mapper/Provider 测试覆盖 command/file Approval DTO、unsupported pending request 诊断、过期/重复保护，以及 ack 不提前发布最终状态。
 - Provider 与前端测试共同断言只展示已声明且当前状态允许的 send、interrupt、approve/deny；错误保留可诊断信息。
 - 静态检查确认 Desktop adapter 不调用 App Server fallback、PetApp 不引用 remote client/event，Desktop 私有方法名没有越过 adapter 边界。
-- source 测试覆盖 remote event bus 与 companion replay 隔离、create quarantine、歧义结果保守排除、前端 tombstone，以及 remote approval/send/interrupt fail closed。
+- source 测试使用生产 bridge wiring，同时监听 remote、companion、exclusion 与 Pet event，断言 Provider 只进入 remote bus；并覆盖 remote approval/send/interrupt fail closed。

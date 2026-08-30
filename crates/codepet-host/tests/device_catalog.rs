@@ -91,6 +91,7 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
         .resolve_route(
             &codepet_host::provider_sdk::ProviderInstanceRoute {
                 device_id: device_id.clone(),
+                provider_plugin_id: "dev.codepet.other".to_string(),
                 provider_instance_id: first_id.clone(),
             },
             Some("dev.codepet.other"),

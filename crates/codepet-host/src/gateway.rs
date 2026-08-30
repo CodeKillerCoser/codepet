@@ -193,18 +193,6 @@ impl ProviderGatewayService {
         self.events.current_cursor()
     }
 
-    pub fn provider_plugin_id(
-        &self,
-        route: &gateway::GatewayProviderRoute,
-    ) -> Result<String, gateway::ProtocolError> {
-        self.manager
-            .provider_plugin_id(&provider::ProviderInstanceRoute {
-                device_id: route.device_id.clone(),
-                provider_instance_id: route.provider_instance_id.clone(),
-            })
-            .map_err(gateway_error)
-    }
-
     pub fn replay_events(
         &self,
         after_cursor: Option<&str>,
@@ -337,6 +325,7 @@ impl ProviderGatewayService {
                     event_cursor: event_cursor(0),
                     payload: gateway::TurnOutputDeltaEvent {
                         turn: params.turn,
+                        conversation: params.conversation,
                         output_id: params.output_id,
                         kind: params.kind,
                         delta: params.delta,
@@ -577,6 +566,7 @@ impl ProtocolServer for ProviderGatewayService {
                 let response = self
                     .manager
                     .turn_steer(provider::TurnSteerRequest {
+                        conversation: expected_conversation.clone(),
                         turn: steer_turn,
                         client_message_id: request.client_message_id,
                         message: request.message,
@@ -611,9 +601,13 @@ impl ProtocolServer for ProviderGatewayService {
         request: gateway::TurnInterruptRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::TurnInterruptResponse> {
         Box::pin(async move {
+            ensure_same_gateway_route(&request.conversation, &request.turn)?;
             let response = self
                 .manager
-                .turn_interrupt(provider::TurnInterruptRequest { turn: request.turn })
+                .turn_interrupt(provider::TurnInterruptRequest {
+                    conversation: request.conversation,
+                    turn: request.turn,
+                })
                 .await
                 .map_err(gateway_error)?;
             Ok(gateway::TurnInterruptResponse {
@@ -652,6 +646,7 @@ fn gateway_instance(
     gateway::ProviderInstance {
         route: gateway::GatewayProviderRoute {
             device_id: runtime.record.device_id.clone(),
+            provider_plugin_id: plugin.catalog.plugin_id.clone(),
             provider_instance_id: runtime.record.instance_id.clone(),
         },
         plugin_id: plugin.catalog.plugin_id.clone(),
@@ -754,6 +749,9 @@ fn map_conversation(conversation: provider::ProviderConversation) -> gateway::Co
             provider::ConversationStatus::WaitingApproval => {
                 gateway::ConversationStatus::WaitingApproval
             }
+            provider::ConversationStatus::WaitingUserInput => {
+                gateway::ConversationStatus::WaitingUserInput
+            }
             provider::ConversationStatus::Error => gateway::ConversationStatus::Error,
             provider::ConversationStatus::Archived => gateway::ConversationStatus::Archived,
         },
@@ -820,6 +818,7 @@ fn map_approval(approval: provider::ProviderApproval) -> gateway::Approval {
 fn provider_route(route: gateway::GatewayProviderRoute) -> provider::ProviderInstanceRoute {
     provider::ProviderInstanceRoute {
         device_id: route.device_id,
+        provider_plugin_id: route.provider_plugin_id,
         provider_instance_id: route.provider_instance_id,
     }
 }
@@ -831,6 +830,7 @@ fn ensure_same_gateway_route(
     validate_gateway_resource(left)?;
     validate_gateway_resource(right)?;
     if left.device_id == right.device_id
+        && left.provider_plugin_id == right.provider_plugin_id
         && left.provider_instance_id == right.provider_instance_id
     {
         return Ok(());
@@ -863,13 +863,13 @@ fn validate_gateway_resource(
     resource: &gateway::RoutedResourceId,
 ) -> Result<(), gateway::ProtocolError> {
     if resource.device_id.trim().is_empty()
+        || resource.provider_plugin_id.trim().is_empty()
         || resource.provider_instance_id.trim().is_empty()
         || resource.native_resource_id.trim().is_empty()
     {
         return Err(gateway::ProtocolError {
             code: "invalid_gateway_resource".to_string(),
-            message: "deviceId, providerInstanceId, and nativeResourceId must not be empty"
-                .to_string(),
+            message: "deviceId, providerPluginId, providerInstanceId, and nativeResourceId must not be empty".to_string(),
             retryable: false,
             details: None,
         });

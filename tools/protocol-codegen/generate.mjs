@@ -1343,11 +1343,15 @@ impl JsonLineCodec {
 
     pub fn read_message<R: BufRead>(&self, reader: &mut R) -> Result<Option<ProviderWireMessage>, JsonRpcInboundError> {
         let mut frame = Vec::with_capacity(self.max_frame_bytes.min(8192));
+        let mut oversized = false;
         loop {
             let (consumed, complete) = {
                 let available = reader.fill_buf()
                     .map_err(|error| inbound_error(None, JSON_RPC_INTERNAL_ERROR, format!("read JSON line frame: {error}")))?;
                 if available.is_empty() {
+                    if oversized {
+                        return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, format!("JSON line frame exceeds {} bytes", self.max_frame_bytes)));
+                    }
                     if frame.is_empty() {
                         return Ok(None);
                     }
@@ -1355,14 +1359,19 @@ impl JsonLineCodec {
                 }
                 let newline = available.iter().position(|byte| *byte == b'\\n');
                 let payload_bytes = newline.unwrap_or(available.len());
-                if frame.len() + payload_bytes > self.max_frame_bytes {
-                    return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, format!("JSON line frame exceeds {} bytes", self.max_frame_bytes)));
+                if !oversized && frame.len().saturating_add(payload_bytes) > self.max_frame_bytes {
+                    oversized = true;
                 }
-                frame.extend_from_slice(&available[..payload_bytes]);
+                if !oversized {
+                    frame.extend_from_slice(&available[..payload_bytes]);
+                }
                 (newline.map_or(payload_bytes, |index| index + 1), newline.is_some())
             };
             reader.consume(consumed);
             if complete {
+                if oversized {
+                    return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, format!("JSON line frame exceeds {} bytes", self.max_frame_bytes)));
+                }
                 if frame.ends_with(b"\\r") {
                     frame.pop();
                 }
