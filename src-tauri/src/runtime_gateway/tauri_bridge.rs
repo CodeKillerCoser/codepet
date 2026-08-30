@@ -2,13 +2,13 @@ use super::gateway::Gateway;
 use super::generated::{
     EventSequence, ProtocolError, ProtocolEvent, ProtocolRequest, ProtocolResponse,
 };
+use super::provider_host_compat::CompatProviderGateway;
 use super::transport::{LocalTransport, Transport};
-use crate::agent::codex_app_server::CodexRemoteProviderAdapter;
 use crate::agent::codex_desktop_ipc::{
     CodexDesktopCompanionAdapter, CodexDesktopCompanionSnapshot,
 };
 use crate::agent::codex_thread_scope::CodexThreadScope;
-use crate::runtime_gateway::ProviderAdapter;
+use crate::agent_runtime::{AgentRuntime, AgentRuntimeService, CODEX_RUNTIME_PROVIDER_ID};
 use crate::settings::{configured_app_data_dir, load_app_settings};
 use codepet_host::{
     DeviceRegistry, HostError, PluginCatalog, PluginCatalogConfig, PluginManager,
@@ -17,9 +17,9 @@ use codepet_host::{
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Runtime};
-use tokio::sync::Notify;
+use tokio::sync::{Mutex as AsyncMutex, Notify};
 
 pub const RUNTIME_GATEWAY_EVENT: &str = "runtime-gateway-event";
 pub const CODEX_DESKTOP_COMPANION_EVENT: &str = "codex-desktop-companion-event";
@@ -34,102 +34,34 @@ pub struct CodexDesktopCompanionThreadExcluded {
 
 #[derive(Clone)]
 pub struct RuntimeGatewayState {
-    gateway: Arc<Gateway>,
-    transport: LocalTransport,
-    codex_remote: Arc<Mutex<Option<Arc<CodexRemoteProviderAdapter>>>>,
-    thread_scope: CodexThreadScope,
-    refresh_generation: Arc<AtomicU64>,
+    compat: CompatProviderGateway,
 }
 
 impl Default for RuntimeGatewayState {
     fn default() -> Self {
-        Self::with_thread_scope(CodexThreadScope::default())
+        Self::new(None, CodexThreadScope::default())
     }
 }
 
 impl RuntimeGatewayState {
-    pub fn with_thread_scope(thread_scope: CodexThreadScope) -> Self {
-        let gateway = Arc::new(Gateway::default());
-        let codex_remote = Arc::new(CodexRemoteProviderAdapter::initializing_scoped(
-            gateway.event_sink(),
-            thread_scope.clone(),
-        ));
-        if let Err(error) = gateway.registry().register(codex_remote.clone()) {
-            crate::app_log::error(
-                "runtime_gateway",
-                &format!("failed to register Codex App Server provider error={error:?}"),
-            );
-        }
+    pub fn new(
+        gateway: Option<Arc<ProviderGatewayService>>,
+        thread_scope: CodexThreadScope,
+    ) -> Self {
         Self {
-            transport: LocalTransport::new(gateway.clone()),
-            gateway,
-            codex_remote: Arc::new(Mutex::new(Some(codex_remote))),
-            thread_scope,
-            refresh_generation: Arc::new(AtomicU64::new(0)),
+            compat: CompatProviderGateway::new(gateway, thread_scope),
         }
     }
 
-    pub fn new(gateway: Arc<Gateway>) -> Self {
-        Self {
-            transport: LocalTransport::new(gateway.clone()),
-            gateway,
-            codex_remote: Arc::new(Mutex::new(None)),
-            thread_scope: CodexThreadScope::default(),
-            refresh_generation: Arc::new(AtomicU64::new(0)),
-        }
+    pub async fn request(&self, request: ProtocolRequest) -> ProtocolResponse {
+        self.compat.request(request).await
     }
 
-    pub fn gateway(&self) -> &Arc<Gateway> {
-        &self.gateway
-    }
-
-    pub fn transport(&self) -> &LocalTransport {
-        &self.transport
-    }
-
-    pub fn refresh_codex_remote_provider(&self) -> Result<(), ProtocolError> {
-        let generation = self
-            .refresh_generation
-            .fetch_add(1, Ordering::SeqCst)
-            .saturating_add(1);
-        let previous_provider = self
-            .codex_remote
-            .lock()
-            .map_err(|_| gateway_state_error())?
-            .as_ref()
-            .map(|adapter| adapter.provider());
-        let replacement = Arc::new(CodexRemoteProviderAdapter::spawn_scoped_paused(
-            self.gateway.event_sink(),
-            self.thread_scope.clone(),
-        ));
-        if self.refresh_generation.load(Ordering::SeqCst) != generation {
-            replacement.retire();
-            return Ok(());
-        }
-        let mut slot = self.codex_remote.lock().map_err(|_| gateway_state_error())?;
-        if self.refresh_generation.load(Ordering::SeqCst) != generation {
-            replacement.retire();
-            return Ok(());
-        }
-        if let Some(previous) = slot.take() {
-            previous.retire();
-        }
-        self.gateway.registry().register(replacement.clone())?;
-        *slot = Some(replacement.clone());
-        replacement.activate(previous_provider.map(|provider| provider.status));
-        Ok(())
-    }
-
-    pub fn refresh_codex_remote_provider_in_background(&self) {
-        let state = self.clone();
-        std::thread::spawn(move || {
-            if let Err(error) = state.refresh_codex_remote_provider() {
-                crate::app_log::error(
-                    "runtime_gateway",
-                    &format!("failed to initialize Codex App Server provider error={error:?}"),
-                );
-            }
-        });
+    pub fn replay(
+        &self,
+        after_event_sequence: Option<EventSequence>,
+    ) -> Result<Vec<ProtocolEvent>, ProtocolError> {
+        self.compat.replay(after_event_sequence)
     }
 }
 
@@ -138,6 +70,8 @@ pub(crate) struct ProviderHostState {
     manager: Option<Arc<PluginManager>>,
     gateway: Option<Arc<ProviderGatewayService>>,
     started: Arc<AtomicBool>,
+    codex_refresh_generation: Arc<AtomicU64>,
+    codex_refresh_lock: Arc<AsyncMutex<()>>,
     shutdown_started: Arc<AtomicBool>,
     shutdown_completed: Arc<AtomicBool>,
     shutdown_notify: Arc<Notify>,
@@ -167,6 +101,8 @@ impl ProviderHostState {
             manager: Some(manager),
             gateway: Some(gateway),
             started: Arc::new(AtomicBool::new(false)),
+            codex_refresh_generation: Arc::new(AtomicU64::new(0)),
+            codex_refresh_lock: Arc::new(AsyncMutex::new(())),
             shutdown_started: Arc::new(AtomicBool::new(false)),
             shutdown_completed: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(Notify::new()),
@@ -178,10 +114,63 @@ impl ProviderHostState {
             manager: None,
             gateway: None,
             started: Arc::new(AtomicBool::new(false)),
+            codex_refresh_generation: Arc::new(AtomicU64::new(0)),
+            codex_refresh_lock: Arc::new(AsyncMutex::new(())),
             shutdown_started: Arc::new(AtomicBool::new(false)),
             shutdown_completed: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(Notify::new()),
         }
+    }
+
+    pub(crate) fn gateway(&self) -> Option<Arc<ProviderGatewayService>> {
+        self.gateway.clone()
+    }
+
+    pub(crate) fn refresh_codex_runtime_in_background(&self, runtime: AgentRuntime) {
+        let Some(manager) = self.manager.clone() else {
+            return;
+        };
+        let generation = self
+            .codex_refresh_generation
+            .fetch_add(1, Ordering::SeqCst)
+            .saturating_add(1);
+        let current_generation = self.codex_refresh_generation.clone();
+        let refresh_lock = self.codex_refresh_lock.clone();
+        tauri::async_runtime::spawn(async move {
+            let _refresh = refresh_lock.lock().await;
+            if current_generation.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            let executable = runtime
+                .resolved_executable
+                .map(serde_json::Value::String);
+            let updated = manager
+                .replace_instance_setting(
+                    "dev.codepet.codex",
+                    "codex",
+                    "appServerExecutable",
+                    executable,
+                )
+                .await;
+            if current_generation.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            match updated {
+                Ok(0) => {}
+                Ok(_) => {
+                    if let Err(error) = manager.restart_plugin("dev.codepet.codex").await {
+                        crate::app_log::error(
+                            "provider_host",
+                            &format!("failed to refresh Codex Provider plugin error={error:?}"),
+                        );
+                    }
+                }
+                Err(error) => crate::app_log::error(
+                    "provider_host",
+                    &format!("failed to update Codex Provider instance settings error={error:?}"),
+                ),
+            }
+        });
     }
 
     pub(crate) fn start_in_background(&self) {
@@ -301,15 +290,6 @@ impl ProviderHostState {
     }
 }
 
-fn gateway_state_error() -> ProtocolError {
-    ProtocolError {
-        code: "gateway_state_error".to_string(),
-        message: "Codex App Server provider refresh lock is unavailable".to_string(),
-        retryable: true,
-        details: None,
-    }
-}
-
 fn configured_provider_runtime(
 ) -> Result<(Arc<PluginManager>, Arc<ProviderGatewayService>), HostError> {
     let settings = load_app_settings().map_err(HostError::from)?;
@@ -343,7 +323,28 @@ fn configured_provider_runtime(
             catalog_config = catalog_config.with_directory(directory);
         }
     }
-    let catalog = PluginCatalog::discover(catalog_config);
+    let mut catalog = PluginCatalog::discover(catalog_config);
+    let runtime = AgentRuntimeService::default()
+        .detect(CODEX_RUNTIME_PROVIDER_ID)
+        .map_err(|error| {
+            HostError::new(
+                "codex_runtime_resolution_failed",
+                format!("failed to resolve Codex App Server executable: {error}"),
+            )
+        })?;
+    catalog.update_instance_settings(
+        "dev.codepet.codex",
+        "codex",
+        |settings| {
+            settings.remove("appServerExecutable");
+            if let Some(executable) = runtime.resolved_executable.as_ref() {
+                settings.insert(
+                    "appServerExecutable".to_string(),
+                    serde_json::Value::String(executable.clone()),
+                );
+            }
+        },
+    )?;
     let instances = ProviderInstanceRegistry::open(
         provider_host_directory.join("provider-instances.json"),
         device.identity().device_id.clone(),
@@ -428,8 +429,7 @@ pub async fn runtime_gateway_request(
     state: tauri::State<'_, RuntimeGatewayState>,
     request: ProtocolRequest,
 ) -> Result<ProtocolResponse, ProtocolError> {
-    let transport = state.transport().clone();
-    Ok(transport.request(request).await)
+    Ok(state.request(request).await)
 }
 
 #[tauri::command]
@@ -437,7 +437,7 @@ pub fn runtime_gateway_replay(
     state: tauri::State<'_, RuntimeGatewayState>,
     after_event_sequence: Option<EventSequence>,
 ) -> Result<Vec<ProtocolEvent>, ProtocolError> {
-    state.transport().replay(after_event_sequence)
+    state.replay(after_event_sequence)
 }
 
 #[tauri::command]
@@ -468,13 +468,24 @@ pub fn start_runtime_gateway_event_bridge<R: Runtime>(
     app: AppHandle<R>,
     state: &RuntimeGatewayState,
 ) -> Result<(), ProtocolError> {
-    start_local_event_bridge(
-        app,
-        state.gateway(),
-        state.transport(),
-        RUNTIME_GATEWAY_EVENT,
-        "runtime_gateway",
-    )
+    let mut subscription = state.compat.subscribe_current()?;
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match subscription.next_event().await {
+                Ok(event) => {
+                    let _ = app.emit(RUNTIME_GATEWAY_EVENT, event);
+                }
+                Err(error) => {
+                    crate::app_log::error(
+                        "runtime_gateway",
+                        &format!("Provider Gateway compat event bridge stopped error={error:?}"),
+                    );
+                    break;
+                }
+            }
+        }
+    });
+    Ok(())
 }
 
 pub fn start_codex_desktop_companion_event_bridge<R: Runtime>(

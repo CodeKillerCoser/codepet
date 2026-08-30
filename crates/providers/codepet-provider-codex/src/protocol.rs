@@ -1,10 +1,17 @@
-use crate::runtime_gateway::generated::PermissionLevel;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fmt;
 
-pub const CODEX_PROVIDER_ID: &str = "codex";
+pub const CODEX_PLUGIN_ID: &str = "dev.codepet.codex";
+pub const CODEX_INSTANCE_KIND: &str = "codex";
 pub const CODEX_EXTENSION_NAMESPACE: &str = "codex.app-server";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CodexPermissionLevel {
+    ReadOnly,
+    WorkspaceWrite,
+    FullAccess,
+}
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -43,10 +50,6 @@ pub enum CodexAppServerError {
     },
     ProcessExited,
     Shutdown,
-    UnsupportedCapability {
-        capability: String,
-        message: String,
-    },
 }
 
 impl fmt::Display for CodexAppServerError {
@@ -61,10 +64,6 @@ impl fmt::Display for CodexAppServerError {
             }
             Self::ProcessExited => write!(formatter, "codex app-server process exited"),
             Self::Shutdown => write!(formatter, "codex app-server session is shut down"),
-            Self::UnsupportedCapability {
-                capability,
-                message,
-            } => write!(formatter, "unsupported codex capability {capability}: {message}"),
         }
     }
 }
@@ -133,7 +132,7 @@ pub enum CodexTurnStatus {
 pub struct CodexConversationSnapshot {
     pub thread: CodexThread,
     pub workspace_root: Option<String>,
-    pub permission_level: Option<PermissionLevel>,
+    pub permission_level: Option<CodexPermissionLevel>,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
 }
@@ -166,7 +165,7 @@ pub struct CodexThreadPage {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CodexThreadStartRequest {
     pub workspace_root: Option<String>,
-    pub permission_level: PermissionLevel,
+    pub permission_level: CodexPermissionLevel,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
 }
@@ -386,21 +385,21 @@ pub(crate) fn text_input(message: &str) -> Value {
     json!([{ "type": "text", "text": message, "text_elements": [] }])
 }
 
-pub(crate) fn permission_settings(permission: PermissionLevel) -> (&'static str, &'static str) {
+pub(crate) fn permission_settings(permission: CodexPermissionLevel) -> (&'static str, &'static str) {
     match permission {
-        PermissionLevel::ReadOnly => ("read-only", "on-request"),
-        PermissionLevel::WorkspaceWrite => ("workspace-write", "on-request"),
-        PermissionLevel::FullAccess => ("danger-full-access", "never"),
+        CodexPermissionLevel::ReadOnly => ("read-only", "on-request"),
+        CodexPermissionLevel::WorkspaceWrite => ("workspace-write", "on-request"),
+        CodexPermissionLevel::FullAccess => ("danger-full-access", "never"),
     }
 }
 
 pub(crate) fn permission_from_sandbox(
     sandbox: Option<&CodexSandboxPolicy>,
-) -> Option<PermissionLevel> {
+) -> Option<CodexPermissionLevel> {
     match sandbox.map(CodexSandboxPolicy::policy_type) {
-        Some("readOnly" | "read-only") => Some(PermissionLevel::ReadOnly),
-        Some("workspaceWrite" | "workspace-write") => Some(PermissionLevel::WorkspaceWrite),
-        Some("dangerFullAccess" | "danger-full-access") => Some(PermissionLevel::FullAccess),
+        Some("readOnly" | "read-only") => Some(CodexPermissionLevel::ReadOnly),
+        Some("workspaceWrite" | "workspace-write") => Some(CodexPermissionLevel::WorkspaceWrite),
+        Some("dangerFullAccess" | "danger-full-access") => Some(CodexPermissionLevel::FullAccess),
         _ => None,
     }
 }

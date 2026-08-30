@@ -1,0 +1,21 @@
+[package]
+name = "codepet-provider-codex"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+codepet-provider-sdk = { path = "../../../sdk/rust/codepet-provider-sdk", version = "0.1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+codepet-gateway-sdk = { path = "../../../sdk/rust/codepet-gateway-sdk", version = "0.1.0" }
+codepet-host = { path = "../../codepet-host" }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "process", "rt-multi-thread", "sync", "time"] }
+
+[[bin]]
+name = "codex-app-server-fixture"
+path = "tests/fixtures/app_server.rs"

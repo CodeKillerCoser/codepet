@@ -12,12 +12,12 @@ Code Pet 同时需要两类能力：远程端需要完整的项目/会话目录�
 
 Codex 使用两个彼此隔离的运行时通道：
 
-- `CodexRemote / AppServer`：Code Pet 持有长期官方 stdio JSON-RPC session，通过 `RuntimeGatewayState` 提供 `conversation.list/get/create`、turn start/steer/interrupt、`approval.resolve` 和通知事件。Codex executable 检测与配置只驱动这条生命周期。
+- `CodexRemote / AppServer`：进程外 `codepet-provider-codex` 持有长期官方 stdio JSON-RPC session，经 Provider Protocol v1、Plugin Manager 与 Provider Gateway 提供 `conversation.list/get/create`、turn start/steer/interrupt、`approval.resolve` 和通知事件。`RuntimeGatewayState` 只保留既有调用面的薄适配。Codex executable 检测与配置只驱动这条生命周期。
 - `CodexDesktopCompanion / IPC`：Code Pet 作为本机 Desktop Owner/Follower 的 follower，通过 `CodexDesktopCompanionState`、专用 snapshot/replay/request 和专用 Tauri event 驱动桌宠。它不广告 `conversation.list/create`；初始状态只由 companion snapshot 返回已验证、已 bootstrap 的本地投影。
 
-两条链路各自拥有 `Gateway`、`ProviderRegistry`、`GatewayEventBus`、event sequence/replay window、`LocalTransport`、adapter session 和 unavailable 状态。它们可以在各自 registry 中继续使用 provider id `codex`，但不得共享 provider slot、event sink、owner/revision/request 状态或重连策略。
+两条链路各自拥有 registry、event bus、event sequence/replay window、session 和 unavailable 状态。remote 使用 Provider Host/Gateway，companion 使用进程内 compat Gateway/LocalTransport；不得共享 provider slot、event sink、owner/revision/request 状态或重连策略。
 
-remote create 开始时先建立带 epoch 的 source quarantine；Desktop companion 对该 epoch 中尚未 known 的新 thread 暂缓发布。App Server response 或 notification 得到 id 后写入 `CodexThreadScope` 并永久排除；明确未派发的失败会释放同 epoch 的本地候选，可能已执行但响应丢失的歧义结果则保守排除候选。epoch 防止迟到 settlement 误处理下一批 create。Desktop companion 在 Rust publication/snapshot/action 边界继续检查 provenance；前端 projection 也保存排除 tombstone，已排队 event 不能重新建卡。
+remote create 进入 Gateway 前建立带 epoch 的 source quarantine；Desktop companion 对该 epoch 中尚未 known 的新 thread 暂缓发布。App Server response 或 notification 得到 id 后写入 `CodexThreadScope` 并永久排除。Provider Protocol 当前没有跨进程暴露请求交付细分证据，因此 Gateway 调用开始后的错误统一按歧义结果保守排除候选；provider lookup 失败发生在 guard 建立之前，不影响 Desktop 候选。epoch 防止迟到 settlement 误处理下一批 create。Desktop companion 在 Rust publication/snapshot/action 边界继续检查 provenance；前端 projection 也保存排除 tombstone，已排队 event 不能重新建卡。
 
 这项来源表只共享 thread provenance、本地 action permit 和 transient remote-operation fence，不共享任何协议 session、App Server loaded-thread cache 或 Desktop owner 状态。动作 permit/fence 将 Desktop dispatch 与有证据的 remote marking 线性化，避免检查后、写出前发生 source 切换。
 
@@ -33,7 +33,7 @@ Hook、audit、transcript 扫描和文件监听继续不得成为 Codex 桌宠�
 
 ## 取舍理由
 
-- 删除前的 App Server session/mapper/provider 已有 typed request map、长期 reader/writer、list/read/start、turn、approval 和通知测试，可以恢复而无需重写官方协议。
+- 删除前的 App Server session/mapper 已有 typed request map、长期 reader/writer、list/read/start、turn、approval 和通知测试，可以提取到独立 Provider，而无需在 Tauri 重写官方协议。
 - Desktop IPC 已有 socket 安全检查、Owner/Follower bootstrap、revision 连续性和写动作 fail-closed 测试；将它收窄为 companion 可以保留这些正确实现。
 - 两个独立 event bus 从 Rust transport 边界阻止远程 conversation/turn/approval 进入桌宠，强于 UI 隐藏或 provider id 过滤。
 - companion 专用 snapshot 如实表达“已跟随、已 bootstrap 的本地投影”，不会把缓存伪装成 Desktop thread directory。
@@ -41,15 +41,17 @@ Hook、audit、transcript 扫描和文件监听继续不得成为 Codex 桌宠�
 
 ## 影响范围
 
-- `src-tauri/src/agent/codex_app_server/`：恢复 remote session、mapper 和完整 Provider；不恢复旧 `PetEvent` driver 或第二个全局 reply session。
+- `crates/providers/codepet-provider-codex/`：承载 remote session、mapper、Provider v1 实现和 stdio 主循环；不依赖 Tauri、Host 或 Pet SDK。
+- `src-tauri/src/agent/codex_app_server/`：删除，不保留进程内直连或 fallback。
 - `src-tauri/src/agent/codex_desktop_ipc/`：保留私有协议与安全校验，移除 `conversation.list` capability，增加 companion snapshot 和来源排除。
 - `src-tauri/src/agent/codex_thread_scope.rs`：协调当前进程的 remote provenance、带 epoch 的 create quarantine、本地动作 permit 和排除通知。
-- `src-tauri/src/runtime_gateway/tauri_bridge.rs`：提供 remote 与 companion 两套 state、command、replay 和 event channel。
+- `src-tauri/src/runtime_gateway/provider_host_compat.rs`：把 remote v0 command/replay/event 薄适配到 Provider Gateway；不启动 App Server。
+- `src-tauri/src/runtime_gateway/tauri_bridge.rs`：组合 Provider Host/resolver，并保持 remote 与 companion 两套 command、replay 和 event channel。
 - `frontend/PetApp.svelte`：只订阅/调用 companion channel；remote `runtime-gateway-event` 不进入 activity store。
-- Agent runtime 设置：set/clear/refresh 只替换 App Server Provider，不重启 Desktop IPC。
+- Agent runtime 设置：set/clear/refresh 只更新 Host Codex instance setting 并重启该插件，不重启 Desktop IPC。
 - 运维：App Server 与 Desktop IPC 使用独立 unavailable runbook；排查时不能用另一路状态替代本路证据。
 
-回归验证包括：App Server fake peer 的 list/get/create/start/steer/interrupt/approval/notification 闭环；双 state 生命周期独立；remote conversation/turn/approval 发布后 companion replay 为空；Desktop snapshot 仍驱动任务和审批；前端只调用 companion command/event；create quarantine 的 success/known failure/ambiguous failure、epoch、projection reset、断线重连和 equal revision 竞态；remote thread id 在 activity publication 前被排除。
+回归验证包括：真实 fixture App Server 子进程下的 list/create/start/steer/interrupt/approval/notification 闭环；Host 从 manifest 启动真实 Provider binary 的纵向 RPC；remote conversation/turn/approval 只进入 remote event/replay，而 companion/Pet/activity 为空；Desktop snapshot 仍驱动任务和审批；前端只调用 companion command/event；remote thread id 在 activity publication 前被排除。
 
 ## 后续观察
 

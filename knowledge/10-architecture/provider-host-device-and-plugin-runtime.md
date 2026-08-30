@@ -4,16 +4,17 @@
 
 `crates/codepet-host` 已提供可复用的 Rust Provider Host：它从显式目录读取 manifest，为本机持久化稳定 `DeviceId`，按 manifest 启动独立 Provider 二进制，并通过生成的 `codepet-provider-sdk` 在独占 stdio 上通信。它同时实现内部 `codepet-gateway-sdk::ProtocolServer`，但当前没有 Gateway v1 网络 listener。
 
-Tauri 将 `ProviderHostState` 与 compat-v0 `RuntimeGatewayState` 并列管理。Provider 数据只有一条路径：
+Tauri 由 `ProviderHostState` 管理 Plugin Manager 与 Gateway service；compat-v0 `RuntimeGatewayState` 只持有同一个 service 的薄适配引用。Provider 数据只有一条远程路径：
 
 ```text
 Provider binary
   -> PluginProcess / PluginManager
   -> bounded single-consumer Host update queue
   -> ProviderGatewayService replay + subscribers
+  -> runtime_gateway_* / runtime-gateway-event
 ```
 
-Provider 事件不进入 `SharedState` activity store、compat-v0 replay、Desktop Companion replay 或桌宠 Tauri channel，也没有失败后回退到桌宠 IPC 的路径。真实 fixture 与 Tauri mock `AppHandle` 测试会依次触发 Provider event、坏帧和进程崩溃，监听 `runtime-gateway-event`、`codex-desktop-companion-event`、`pet-event` 并断言三者都没有 Provider 数据；companion registry 内的计数 spy 同时证明 Desktop IPC adapter 没有被调用。
+Provider 事件进入 Gateway v1 replay，并由兼容适配发布到远程 `runtime-gateway-event`；它们不进入 `SharedState` activity store、Desktop Companion replay、`codex-desktop-companion-event` 或 `pet-event`，也没有失败后回退到桌宠 IPC 的路径。真实 fixture 与 Tauri mock `AppHandle` 测试断言 remote event/replay 收到数据，同时 companion、Pet 与 Desktop adapter spy 保持不变。
 
 ## 范围与非目标
 
@@ -26,7 +27,7 @@ Provider 事件不进入 `SharedState` activity store、compat-v0 replay、Deskt
 
 本阶段不实现：
 
-- Codex、OpenCode 或 Claude Provider binary；
+- OpenCode 或 Claude Provider binary；Codex 已由 `crates/providers/codepet-provider-codex` 以普通 manifest/binary 接入；
 - dylib/trait ABI、签名、沙箱、市场、下载、自动重启或 backoff；
 - 动态注册插件、动态创建生产实例或 Gateway instance lifecycle；
 - Gateway v1 LAN listener、认证、配对或持久 cursor；
@@ -43,7 +44,7 @@ Tauri 以解析后的应用数据目录为根：
 
 Catalog 只接受目录，不接受运行时 descriptor 注入。每个目录可包含根 `codepet-provider.json`、子目录中的 `codepet-provider.json`，或 `*.codepet-provider.json`。`read_dir` 的目录错误和逐项读取错误都会形成诊断；不会静默丢弃条目。相对 executable 按 manifest 所在目录解析。
 
-manifest 是本阶段配置的唯一权威：
+manifest 是插件进程和普通实例设置的配置权威：
 
 ```json
 {
@@ -66,6 +67,8 @@ manifest 是本阶段配置的唯一权威：
 ```
 
 `provider-instances.json` 只镜像 `instanceId + pluginId + instanceKind + displayName`，用于在重启后复用未显式给出的 `instanceId`。`settings` 与 `enabled` 每次都来自当前 manifest，不作为第二配置源；manifest 删除的实例会从映射中 prune。registry 损坏或 device id 不匹配时 fail closed。设备身份损坏时，原文件先隔离为 `.corrupt-<timestamp>`，再生成新的 `device-<uuid>` 并保留诊断；hostname 从不充当稳定 ID。
+
+Codex 的 `appServerExecutable` 是唯一例外：manifest 仍提供 `appServerArgs`，Tauri 在 Catalog 注册前删除 manifest 中的 executable setting，并只注入 `AgentRuntimeService` resolver 返回的绝对路径。runtime set/clear/refresh 通过 Manager 更新同一个实例 setting 并显式重启 Codex 插件；Provider 自身不搜索路径或补默认参数。详见 `codex-provider-plugin-runtime.md`。
 
 `update_app_settings` 区分 `providerPlugins` 缺失和显式空数组：缺失保留现值，`{"providerPlugins":{"directories":[]}}` 才清空目录。前端完整 `AppSettings` 将该字段设为必填。
 
@@ -109,13 +112,15 @@ deviceId + providerInstanceId + nativeResourceId
 
 三段任一为空即拒绝。registry 先核对 device、instance 与所属 plugin；Provider response/event 再核对完整 route。身份保持型 RPC 必须返回与 request 完全相同的资源 ID；`turn.start` 返回 turn 的 conversation 必须等于请求 conversation；Gateway steer 还会保存原始 conversation，并要求 Provider 返回的 `turn.conversation` 与它完全相等。route-less `conversation.list` 只在没有 Provider cursor 时聚合；带 cursor 直接返回 `aggregate_conversation_cursor_unsupported`，本阶段不定义复合分页。
 
+`providerPluginId` 由 instance registry 对上述 route 做唯一解析，并在 Gateway provider 枚举中显式返回。兼容 v0 输出通过 route extension 把 plugin id 与三段资源 route 一起物化，避免旧客户端丢失完整身份。
+
 Manager 到 Gateway 只有一个有界 `mpsc` receiver，且只能领取一次。Gateway 映射后写入单个有界 replay bus；订阅者 lag 会返回显式错误，旧 cursor 超出 replay 窗口会返回 `event_replay_unavailable`。Gateway 为事件分配 `event-<20 位序号>`，service 内严格单调，事件自身始终保留完整 route。
 
 ## SDK 边界
 
 Host 只依赖 `codepet-provider-sdk` 和 `codepet-gateway-sdk`，不定义第二套 Provider/Gateway DTO。四个 Rust SDK 都具备 description/authors/repository metadata，不再 `publish = false`；内部 path dependency 同时声明 `version = "0.1.0"`，可用 `cargo package --allow-dirty` 检查包内容。仓库当前没有 LICENSE 文件，因此 manifest 不虚构 license 声明；正式发布前仍需仓库所有者补充许可证决策。
 
-未来 Provider 包只依赖 Provider SDK，不能反向依赖 Host。默认 Provider 名称没有在 Host 预埋常量或注册框架；具体 `codepet-provider-codex`、`codepet-provider-opencode`、`codepet-provider-claude` 应在实现时以普通 manifest/binary 接入。
+Provider 包只依赖 Provider SDK，不能反向依赖 Host。`codepet-provider-codex` 的 Host 依赖只出现在纵向测试的 dev-dependency；运行二进制不依赖 Host、Tauri 或 Pet SDK。默认 Provider 名称没有在 Host 预埋注册框架；后续 Provider 仍应以普通 manifest/binary 接入。
 
 ## 风险与验证证据
 
@@ -125,13 +130,14 @@ Host 只依赖 `codepet-provider-sdk` 和 `codepet-gateway-sdk`，不定义第�
 - 启停竞态：initialize 延迟 fixture 与两个并发 `shutdown_once` 触发外层 timeout；断言两次调用都等到 force kill 完成、子进程已结束（Unix 额外用 PID 复核），且 shutdown gate 阻止后续 spawn。
 - 路由串流：两设备、两实例、错误 device/plugin/instance、空 ID、错误 response identity 和单调 cursor 均有定向测试。
 - 状态重复：stop/start lifecycle 后每次只收到一个 ProviderStatusChanged。
-- 通道污染：Tauri mock runtime 真实监听三条 Tauri event；fixture 的 event、坏帧和 crash 均不产生 channel payload，不改变 compat/companion replay 或 `SharedState` activity，也不增加 Desktop adapter spy 调用。
+- 通道污染：Tauri mock runtime 真实监听三条 Tauri event；fixture 的 Provider event 只增加 remote event/replay，不改变 companion replay、`SharedState` activity、companion/Pet event 或 Desktop adapter spy。
 - 机械漂移：验收检查工作树，不提交 `src-tauri/gen/schemas/macOS-schema.json` 或构建产物。
 
 ## 验证命令
 
 ```sh
 cargo test --manifest-path crates/Cargo.toml -p codepet-host --all-targets
+cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --all-targets
 cargo test --manifest-path sdk/rust/Cargo.toml
 npm run protocol:check
 cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_core_tests --test runtime_gateway_protocol_tests --test settings_tests --test tray_tests
@@ -145,4 +151,5 @@ git diff --check
 - Gateway event replay 和 device last-seen 仍为进程内状态，重启恢复未定义。
 - manifest 的 executable、args 和 env 是受信任本地配置；签名、权限隔离与资源配额尚未实现。
 - 没有自动重启/backoff；故障实例需要显式重启 Host/插件。
+- Codex Provider 的 App Server 协议覆盖与明确限制见 `codex-provider-plugin-runtime.md`。
 - 正式发布 SDK 前必须补齐仓库许可证决策，并确定 crate 发布顺序。

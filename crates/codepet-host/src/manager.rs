@@ -14,6 +14,7 @@ use codepet_provider_sdk::{
     TurnInterruptResponse, TurnStartRequest, TurnStartResponse, TurnSteerRequest,
     TurnSteerResponse, VersionRange, PROTOCOL_VERSION,
 };
+use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -274,33 +275,86 @@ impl PluginManager {
         for plugin_id in plugin_ids {
             let outcome = async {
                 self.start_plugin(&plugin_id).await?;
-                let mut first_error = None;
-                for record in self
-                    .inner
-                    .instances
-                    .list_for_plugin(&plugin_id)?
-                    .into_iter()
-                    .filter(|record| record.enabled)
-                {
-                    let result = async {
-                        self.create_instance_record(&record).await?;
-                        self.start_instance(&record.route()).await?;
-                        Ok::<(), HostError>(())
-                    }
-                    .await;
-                    if first_error.is_none() {
-                        first_error = result.err();
-                    }
-                }
-                if let Some(error) = first_error {
-                    return Err(error);
-                }
-                Ok(())
+                self.start_manifest_instances(&plugin_id).await
             }
             .await;
             outcomes.push((plugin_id, outcome));
         }
         outcomes
+    }
+
+    pub async fn replace_instance_setting(
+        &self,
+        plugin_id: &str,
+        instance_kind: &str,
+        key: &str,
+        value: Option<Value>,
+    ) -> HostResult<usize> {
+        let records = self.inner.instances.replace_setting_for_kind(
+            plugin_id,
+            instance_kind,
+            key,
+            value,
+        )?;
+        if records.is_empty() {
+            return Ok(0);
+        }
+        let mut plugins = self.inner.plugins.write().await;
+        let entry = plugins
+            .get_mut(plugin_id)
+            .ok_or_else(|| unknown_plugin(plugin_id))?;
+        for record in &records {
+            let runtime = entry.instances.get_mut(&record.instance_id).ok_or_else(|| {
+                HostError::new(
+                    "unknown_provider_instance",
+                    "Provider instance setting targets an unknown manifest instance",
+                )
+            })?;
+            runtime.record = record.clone();
+        }
+        Ok(records.len())
+    }
+
+    pub fn provider_plugin_id(
+        &self,
+        route: &ProviderInstanceRoute,
+    ) -> HostResult<String> {
+        Ok(self
+            .inner
+            .instances
+            .resolve_route(route, None)?
+            .plugin_id)
+    }
+
+    pub async fn restart_plugin(&self, plugin_id: &str) -> HostResult<()> {
+        self.stop_plugin(plugin_id).await?;
+        self.start_plugin(plugin_id).await?;
+        self.start_manifest_instances(plugin_id).await
+    }
+
+    async fn start_manifest_instances(&self, plugin_id: &str) -> HostResult<()> {
+        let mut first_error = None;
+        for record in self
+            .inner
+            .instances
+            .list_for_plugin(plugin_id)?
+            .into_iter()
+            .filter(|record| record.enabled)
+        {
+            let result = async {
+                self.create_instance_record(&record).await?;
+                self.start_instance(&record.route()).await?;
+                Ok::<(), HostError>(())
+            }
+            .await;
+            if first_error.is_none() {
+                first_error = result.err();
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     pub async fn start_plugin(&self, plugin_id: &str) -> HostResult<()> {

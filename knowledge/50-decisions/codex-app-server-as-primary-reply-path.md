@@ -18,7 +18,7 @@ Code Pet 需要一种可靠方式，把任务卡片中的回复发送到 Codex �
 
 ## 取舍理由
 
-本机探测已验证 Codex app-server 可以把消息发送到 Codex app thread，并在 UI 上显示。当前后端通过 `src-tauri/src/agent/codex_app_server.rs` 路由 Codex 回复。
+本机探测已验证 Codex app-server 可以把消息发送到 Codex app thread，并在 UI 上显示。当前 remote 路由已经迁到 `codepet-provider-codex` 与 Provider Gateway；本页中的 Tauri 内一次性回复实现已删除。
 
 ## 影响范围
 

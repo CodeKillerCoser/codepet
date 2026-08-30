@@ -144,6 +144,31 @@ impl PluginCatalog {
     pub fn diagnostics(&self) -> &[CatalogDiagnostic] {
         &self.diagnostics
     }
+
+    pub fn update_instance_settings(
+        &mut self,
+        plugin_id: &str,
+        instance_kind: &str,
+        mut update: impl FnMut(&mut JsonObject),
+    ) -> HostResult<usize> {
+        if plugin_id.trim().is_empty() || instance_kind.trim().is_empty() {
+            return Err(HostError::new(
+                "invalid_provider_instance_selector",
+                "Provider plugin id and instance kind must not be empty",
+            ));
+        }
+        let Some(descriptor) = self.descriptors.get_mut(plugin_id) else {
+            return Ok(0);
+        };
+        let mut updated = 0;
+        for instance in &mut descriptor.instances {
+            if instance.instance_kind == instance_kind {
+                update(&mut instance.settings);
+                updated += 1;
+            }
+        }
+        Ok(updated)
+    }
 }
 
 fn discover_directory(

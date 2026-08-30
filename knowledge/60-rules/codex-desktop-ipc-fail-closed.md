@@ -38,7 +38,7 @@ Desktop 私有 DTO、方法名、路由字段和原始 JSON 只能存在于 Code
 - Owner 明确接受只结束本次请求；最终 turn 继续由权威 snapshot/patch 驱动，本地审批决定则需同时取得 Owner ack 与权威 request removal，顺序不限。非幂等写请求不自动重试或跨重连重放。
 - capability 只包含当前 adapter 已实现并测试的方法；`conversation.create` 等未接通能力继续 unsupported。
 - 无任务目录时明确报告覆盖限制，不用推断数据伪造目录。
-- companion snapshot/replay/event 只来自 Desktop adapter。remote create 未确定来源时先 quarantine；remote id 确认或结果歧义时排除，明确未派发时才恢复本地候选。
+- companion snapshot/replay/event 只来自 Desktop adapter。remote create 未确定来源时先 quarantine；remote id 确认或 Gateway 调用返回歧义错误时排除。Provider Protocol 尚未携带交付细分证据，因此不能把调用后的错误猜成“明确未派发”并恢复候选。
 - 动作在实际 IPC dispatch 期间持有 local-thread permit，与 remote marking 线性化；approval 与 turn 动作都必须遵守相同 source fence。
 
 ## 来源

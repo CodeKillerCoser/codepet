@@ -7,7 +7,7 @@
 - Tauri 后端：`src-tauri/src/lib.rs` 注册命令、托盘行为、插件、启动工作和窗口。
 - 本地 collector：`src-tauri/src/activity/collector.rs` 在 `127.0.0.1:47621` 暴露 HTTP 路由。
 - Hook 脚本：`src-tauri/hooks/code-pet-hook.mjs` 由 `src-tauri/src/agent/hooks.rs` 安装到本地 app data 目录。
-- Codex Remote：`RuntimeGatewayState`、独立 App Server adapter 和 `runtime-gateway-event`。
+- Codex Remote：`ProviderHostState` / `PluginManager`、独立 `codepet-provider-codex` 进程、`ProviderGatewayService`、compat `RuntimeGatewayState` 和 `runtime-gateway-event`。
 - Codex Desktop Companion：`CodexDesktopCompanionState`、`~/.codex/ipc/ipc.sock` adapter 和 `codex-desktop-companion-event`。
 - `CodexThreadScope`：两路唯一共享的 remote thread provenance；不共享协议 session 或 owner/revision 状态。
 
@@ -18,8 +18,9 @@
 ```text
 远程控制请求
   → runtime_gateway_request
-  → remote Gateway / AppServer Provider
-  → codex app-server --listen stdio://
+  → compat 薄适配 / ProviderGatewayService
+  → PluginManager / codepet-provider-codex
+  → 官方 Codex App Server stdio JSON-RPC
 
 Codex Desktop Owner/Follower 状态
   → ~/.codex/ipc/ipc.sock
@@ -28,7 +29,7 @@ Codex Desktop Owner/Follower 状态
   → PetApp activity store
 ```
 
-两路各自拥有 registry、event bus、sequence、replay 和 unavailable 状态。App Server 初始化在后台且有超时；失败不阻塞 companion。桌宠不订阅 `runtime-gateway-event`，remote conversation/turn/approval 不能进入 activity store。remote create/turn/approval 产生的 thread id 会被 scope 标记；create 响应尚未确定时，Desktop 新 thread snapshot 先隔离，来源明确后 remote 丢弃、本地重新发布。
+两路各自拥有 registry、event bus、sequence、replay 和 unavailable 状态。App Server 只在 Provider instance start 中初始化且有超时；失败不阻塞 companion。桌宠不订阅 `runtime-gateway-event`，remote conversation/turn/approval 不能进入 activity store。remote create/turn/approval 产生的 thread id 会被 scope 标记；create 响应尚未确定时，Desktop 新 thread snapshot 先隔离，成功时排除已确认的 remote id，Gateway 调用后的错误因缺少跨进程交付证据而保守排除同 epoch 候选。
 
 App Server 自动让 Desktop 加载 thread 是产品协同，不改变双链路边界。Hook、audit、transcript 和文件监听不参与 Codex 数据。
 

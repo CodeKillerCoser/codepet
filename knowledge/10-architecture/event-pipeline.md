@@ -8,10 +8,10 @@ Codex 不再进入这条活动管线：脚本消费 stdin 后直接退出，coll
 
 Codex 当前有两个标准协议事件源，但只有一个进入桌宠：
 
-- remote App Server event 只写入 `RuntimeGatewayState` 的 remote event bus，通过 `runtime-gateway-event` 面向远程客户端；PetApp 不监听该 event，也不读取 remote snapshot/replay。
+- remote App Server event 由 `codepet-provider-codex` 映射到 Provider v1，经 Plugin Manager 校验后只写入 `ProviderGatewayService` replay，并由 compat bridge 通过 `runtime-gateway-event` 面向既有远程客户端；PetApp 不监听该 event，也不读取 remote replay。
 - Desktop IPC event 只写入 `CodexDesktopCompanionState` 的 companion event bus，通过专用 snapshot/replay 与 `codex-desktop-companion-event` 驱动 PetApp。
 
-两套 event bus、sequence 和 LocalTransport 物理分离。remote thread provenance 在 Rust publication/snapshot/action 边界排除，并在前端 projection 形成不可逆 tombstone，防止已排队的 companion event 重新建卡。这是 activity store 之前的 source/channel 隔离，不是 UI 隐藏。
+Provider Gateway 与 companion event bus、sequence/replay 物理分离。remote thread provenance 在 Rust publication/snapshot/action 边界排除，并在前端 projection 形成不可逆 tombstone，防止已排队的 companion event 重新建卡。这是 activity store 之前的 source/channel 隔离，不是 UI 隐藏。
 
 ## 归一化
 

@@ -2,13 +2,11 @@ use super::protocol::{
     permission_from_sandbox, thread_list_params, thread_start_params, turn_start_params,
     turn_steer_params, CodexAppServerError, CodexApprovalKind, CodexApprovalRequest,
     CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexThreadListRequest,
-    CodexThreadPage, CodexThreadStartRequest, CodexTurn,
+    CodexPermissionLevel, CodexThreadPage, CodexThreadStartRequest, CodexTurn,
     CodexTurnStartRequest, CodexTurnStatus, CodexTurnSteerRequest, JsonRpcId,
     ThreadListResponse, ThreadResponse, TurnResponse, TurnSteerResponse,
 };
-use crate::app_log;
-use crate::agent_runtime::{AgentRuntimeService, CODEX_RUNTIME_PROVIDER_ID};
-use crate::runtime_gateway::generated::ApprovalDecision;
+use codepet_provider_sdk::ApprovalDecision;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -212,14 +210,6 @@ impl SessionInner {
         evidence
     }
 
-    fn forget_thread_loaded(&self, thread_id: &str, evidence: u64) {
-        if let Ok(mut loaded_threads) = self.loaded_threads.lock() {
-            if loaded_threads.get(thread_id) == Some(&ThreadLoadState::Loaded(evidence)) {
-                loaded_threads.remove(thread_id);
-                self.loaded_threads_changed.notify_all();
-            }
-        }
-    }
 }
 
 impl Drop for SessionInner {
@@ -242,32 +232,11 @@ pub struct CodexAppServerSession {
 }
 
 impl CodexAppServerSession {
-    pub fn spawn() -> Result<Self, CodexAppServerError> {
-        let runtime = AgentRuntimeService::default()
-            .detect(CODEX_RUNTIME_PROVIDER_ID)
-            .map_err(|error| {
-                CodexAppServerError::Spawn(format!(
-                    "failed to resolve the Codex runtime: {error}"
-                ))
-            })?;
-        let binary = runtime.resolved_executable.as_deref().ok_or_else(|| {
-            CodexAppServerError::Spawn(format!(
-                "Codex runtime is unavailable: {}",
-                runtime.unavailable_reason()
-            ))
-        })?;
-        Self::spawn_with_executable(Path::new(binary))
-    }
-
-    fn spawn_with_executable(binary: &Path) -> Result<Self, CodexAppServerError> {
-        app_log::info(
-            "codex_app_server",
-            &format!(
-                "starting persistent codex app-server binary={} args=app-server --listen stdio://",
-                binary.display()
-            ),
-        );
-        let mut child = codex_app_server_command(binary)
+    pub fn spawn(
+        executable: &Path,
+        args: &[String],
+    ) -> Result<Self, CodexAppServerError> {
+        let mut child = codex_app_server_command(executable, args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -284,7 +253,7 @@ impl CodexAppServerSession {
         if let Some(stderr) = child.stderr.take() {
             thread::spawn(move || {
                 for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                    app_log::info("codex_app_server_stderr", &line);
+                    eprintln!("Codex App Server: {line}");
                 }
             });
         }
@@ -300,6 +269,7 @@ impl CodexAppServerSession {
         Ok(session)
     }
 
+    #[cfg(test)]
     pub fn connect(
         reader: Box<dyn JsonRpcReader>,
         writer: Box<dyn JsonRpcWriter>,
@@ -307,6 +277,7 @@ impl CodexAppServerSession {
         Self::connect_with_initialize_timeout(reader, writer, INITIALIZE_TIMEOUT)
     }
 
+    #[cfg(test)]
     fn connect_with_initialize_timeout(
         reader: Box<dyn JsonRpcReader>,
         writer: Box<dyn JsonRpcWriter>,
@@ -440,15 +411,6 @@ impl CodexAppServerSession {
         Ok(snapshot_from_response(response, None, None))
     }
 
-    pub fn thread_resume(
-        &self,
-        thread_id: &str,
-    ) -> Result<CodexConversationSnapshot, CodexAppServerError> {
-        let snapshot = self.request_thread_resume_outcome(thread_id).into_result()?;
-        self.inner.mark_thread_loaded(thread_id);
-        Ok(snapshot)
-    }
-
     fn request_thread_resume_outcome(
         &self,
         thread_id: &str,
@@ -562,10 +524,6 @@ impl CodexAppServerSession {
         settled
     }
 
-    pub fn forget_thread_loaded(&self, thread_id: &str, evidence: u64) {
-        self.inner.forget_thread_loaded(thread_id, evidence);
-    }
-
     pub fn thread_start(
         &self,
         request: CodexThreadStartRequest,
@@ -644,6 +602,16 @@ impl CodexAppServerSession {
                 ApprovalDecision::Deny => "decline",
             },
         };
+        if !approval.available_decisions.is_empty()
+            && !approval
+                .available_decisions
+                .iter()
+                .any(|available| available == native_decision)
+        {
+            return Err(CodexAppServerError::Protocol(format!(
+                "Codex approval does not offer decision {native_decision}"
+            )));
+        }
         self.respond(&approval.request_id, json!({ "decision": native_decision }))
     }
 
@@ -808,16 +776,16 @@ impl CodexAppServerSession {
     }
 }
 
-fn codex_app_server_command(binary: &Path) -> Command {
+fn codex_app_server_command(binary: &Path, args: &[String]) -> Command {
     let mut command = Command::new(binary);
-    command.args(["app-server", "--listen", "stdio://"]);
+    command.args(args);
     command
 }
 
 fn snapshot_from_response(
     response: ThreadResponse,
     workspace_root: Option<String>,
-    permission_level: Option<crate::runtime_gateway::generated::PermissionLevel>,
+    permission_level: Option<CodexPermissionLevel>,
 ) -> CodexConversationSnapshot {
     CodexConversationSnapshot {
         thread: response.thread,
@@ -843,31 +811,20 @@ fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppSe
             method,
         } = &incoming
         {
-            let response = if method == "item/permissions/requestApproval" {
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "result": {
-                        "permissions": {},
-                        "scope": "turn"
+            let response = json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32601,
+                    "message": format!(
+                        "Code Pet does not support Codex server request {method}"
+                    ),
+                    "data": {
+                        "method": method,
+                        "reason": "unsupported_client_capability"
                     }
-                })
-            } else {
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {
-                        "code": -32601,
-                        "message": format!(
-                            "Code Pet does not support Codex server request {method}"
-                        ),
-                        "data": {
-                            "method": method,
-                            "reason": "unsupported_client_capability"
-                        }
-                    }
-                })
-            };
+                }
+            });
             inner.write(response)?;
         }
         if let Some(thread_id) = incoming_thread_id(&incoming) {
@@ -959,7 +916,7 @@ fn parse_server_request(
         .and_then(Value::as_i64)
         .and_then(|value| u64::try_from(value).ok())
         .unwrap_or(0);
-    let available_decisions = params
+    let available_decisions: Vec<String> = params
         .get("availableDecisions")
         .and_then(Value::as_array)
         .map(|values| {
@@ -970,6 +927,16 @@ fn parse_server_request(
                 .collect()
         })
         .unwrap_or_default();
+    if !available_decisions.is_empty()
+        && !available_decisions
+            .iter()
+            .any(|decision| decision == "accept" || decision == "decline")
+    {
+        return Ok(CodexIncoming::UnsupportedServerRequest {
+            request_id,
+            method: method.to_string(),
+        });
+    }
     let (title, description) = match kind {
         CodexApprovalKind::CommandExecution => (
             "Run command".to_string(),
@@ -1133,7 +1100,12 @@ mod tests {
     #[test]
     fn app_server_command_uses_the_resolved_executable_path() {
         let executable = Path::new("/resolved/runtime/codex");
-        let command = codex_app_server_command(executable);
+        let args = vec![
+            "app-server".to_string(),
+            "--listen".to_string(),
+            "stdio://".to_string(),
+        ];
+        let command = codex_app_server_command(executable, &args);
 
         assert_eq!(command.get_program(), executable.as_os_str());
         assert_eq!(
@@ -1288,8 +1260,7 @@ mod tests {
             let normal = operation_session
                 .thread_start(CodexThreadStartRequest {
                     workspace_root: None,
-                    permission_level:
-                        crate::runtime_gateway::generated::PermissionLevel::ReadOnly,
+                    permission_level: CodexPermissionLevel::ReadOnly,
                     model: None,
                     reasoning_effort: None,
                 })
@@ -1297,13 +1268,12 @@ mod tests {
             assert_eq!(normal.workspace_root, None);
             assert_eq!(
                 normal.permission_level,
-                Some(crate::runtime_gateway::generated::PermissionLevel::ReadOnly)
+                Some(CodexPermissionLevel::ReadOnly)
             );
             let project = operation_session
                 .thread_start(CodexThreadStartRequest {
                     workspace_root: Some("/work/project".to_string()),
-                    permission_level:
-                        crate::runtime_gateway::generated::PermissionLevel::FullAccess,
+                    permission_level: CodexPermissionLevel::FullAccess,
                     model: Some("gpt-fixture".to_string()),
                     reasoning_effort: Some("high".to_string()),
                 })
@@ -1311,7 +1281,7 @@ mod tests {
             assert_eq!(project.workspace_root.as_deref(), Some("/work/project"));
             assert_eq!(
                 project.permission_level,
-                Some(crate::runtime_gateway::generated::PermissionLevel::FullAccess)
+                Some(CodexPermissionLevel::FullAccess)
             );
             assert_eq!(project.model.as_deref(), Some("gpt-fixture"));
             assert_eq!(project.reasoning_effort.as_deref(), Some("high"));
@@ -1640,9 +1610,12 @@ mod tests {
         ));
         let response = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(response["id"], 2);
-        assert_eq!(response["result"]["permissions"], json!({}));
-        assert_eq!(response["result"]["scope"], "turn");
-        assert!(response.get("error").is_none());
+        assert_eq!(response["error"]["code"], -32601);
+        assert_eq!(
+            response["error"]["data"]["reason"],
+            "unsupported_client_capability"
+        );
+        assert!(response.get("result").is_none());
 
         peer_sender
             .send(json!({

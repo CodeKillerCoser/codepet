@@ -4,6 +4,7 @@ pub mod event_bus;
 pub mod gateway;
 pub mod generated;
 pub mod provider;
+pub mod provider_host_compat;
 pub mod registry;
 pub mod tauri_bridge;
 pub mod transport;

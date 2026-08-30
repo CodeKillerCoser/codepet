@@ -52,7 +52,7 @@ adapter 只广告 `conversation.get`、`turn.send`、`turn.interrupt` 和 `appro
 
 ### 来源隔离
 
-remote App Server `conversation.create` 开始时建立带 epoch 的 source quarantine；Desktop adapter 暂缓发布该 epoch 内来源未定的新 thread。断线或 follower reset 可以丢弃候选的旧 snapshot payload，但必须保留 candidate id 与 epoch 直至 settlement。response 或 notification 给出 id 后，`CodexThreadScope` 先标记 remote provenance 并发出 exclusion，再向调用方返回结果；明确未派发的失败释放已证明为本地的候选，可能已执行但响应丢失的歧义结果则保守排除同 epoch 候选。Desktop adapter 还会在 bootstrap、事件发布、snapshot 和动作入口检查该 scope，前端 projection 保存 exclusion tombstone，排队中的旧事件不能重新建卡。
+remote Provider 的 `conversation.create` 进入 Gateway 时建立带 epoch 的 source quarantine；Desktop adapter 暂缓发布该 epoch 内来源未定的新 thread。断线或 follower reset 可以丢弃候选的旧 snapshot payload，但必须保留 candidate id 与 epoch 直至 settlement。response 或 notification 给出 id 后，`CodexThreadScope` 先标记 remote provenance 并发出 exclusion，再向调用方返回结果。Provider Protocol 当前不携带请求交付细分证据，因此 Gateway 调用开始后的错误保守按歧义结果排除同 epoch 候选；provider lookup 失败发生在 guard 之前，不影响 Desktop 候选。Desktop adapter 还会在 bootstrap、事件发布、snapshot 和动作入口检查该 scope，前端 projection 保存 exclusion tombstone，排队中的旧事件不能重新建卡。
 
 这项来源协调只共享 thread provenance、create quarantine 和本地动作 permit，不共享协议 session 或 Desktop owner/revision。动作 permit 将最终 Desktop IPC dispatch 与 remote 标记线性化。remote conversation/turn/approval 事件始终停留在 remote event bus，不能从 companion replay 或 event bridge 到达桌宠。
 

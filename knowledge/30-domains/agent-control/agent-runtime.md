@@ -27,7 +27,7 @@ Finder、Dock 或登录项启动的进程通常没有交互式 shell 的完整 `
 - `unavailable`：没有可用自动候选。
 - `invalid-configured-executable`：保存的手动路径失效，不静默回退。
 
-Codex runtime `ready` 后，`src-tauri/src/lib.rs` 使用解析出的路径 spawn/refresh `CodexRemoteProviderAdapter`。runtime unavailable 或 App Server initialize 失败时，remote Provider unavailable；这不关闭或清空 `CodexDesktopCompanionState`。反之，Desktop socket 不可用也不改变 remote App Server。
+Codex runtime `ready` 后，Tauri 把 resolver 的绝对路径作为 `appServerExecutable` 注入 Codex manifest instance setting；只有 `codepet-provider-codex` 会使用它启动 App Server。runtime unavailable 或 App Server initialize 失败时，remote Provider unavailable；这不关闭或清空 `CodexDesktopCompanionState`。反之，Desktop socket 不可用也不改变 remote App Server。
 
 ## 实现路径
 
@@ -41,7 +41,7 @@ Codex runtime `ready` 后，`src-tauri/src/lib.rs` 使用解析出的路径 spaw
 
 运行时命令为 `list_agent_runtimes`、`detect_agent_runtime`、`refresh_agent_runtimes`、`set_agent_runtime_executable` 和 `clear_agent_runtime_executable`。
 
-应用启动、全量刷新、设置或清除 Codex executable 时，后端调用 `refresh_codex_remote_provider`：关闭旧 App Server adapter，基于最新 runtime 注册新的 remote adapter。这个动作只操作 `RuntimeGatewayState`。Desktop companion 在另一份 state/registry/event bus 中，由 socket 自行连接和重连，其 generation、owner、revision 和 projection 不变化。
+应用启动时，`configured_provider_runtime` 在 Catalog 注册前用 resolver 结果覆盖 Codex instance setting。全量刷新、设置或清除 Codex executable 时，`ProviderHostState::refresh_codex_runtime_in_background` 更新同一个 setting 并显式重启 `dev.codepet.codex` 插件。这个动作不创建 Tauri 内 App Server adapter，也不操作 companion。Desktop companion 在另一份 state/registry/event bus 中，由 socket 自行连接和重连，其 generation、owner、revision 和 projection 不变化。
 
 ### UI
 
@@ -51,8 +51,8 @@ Codex runtime `ready` 后，`src-tauri/src/lib.rs` 使用解析出的路径 spaw
 
 - `src-tauri/src/agent/runtime.rs`：descriptor、候选发现、验证和 DTO。
 - `src-tauri/src/app/settings.rs`：持久化 `agentRuntimes`。
-- `src-tauri/src/lib.rs`：运行时 commands 与 remote App Server refresh。
-- `src-tauri/src/agent/codex_app_server/`：消费已验证 executable 的 remote session。
+- `src-tauri/src/lib.rs`、`src-tauri/src/runtime_gateway/tauri_bridge.rs`：运行时 commands、Host instance setting 更新与插件 refresh。
+- `crates/providers/codepet-provider-codex/`：消费 Host 注入 executable 的 remote App Server session。
 - `src-tauri/src/agent/codex_desktop_ipc/`：完全独立的 Desktop socket/owner 生命周期。
 - `frontend/App.svelte`、`frontend/lib/api.ts`、`frontend/lib/agentRuntime.ts`：运行时设置 UI。
 
@@ -61,15 +61,15 @@ Codex runtime `ready` 后，`src-tauri/src/lib.rs` 使用解析出的路径 spaw
 - 登录 shell 或版本命令挂起：三秒超时测试。
 - 损坏的高优先级自动候选遮挡有效 app：resolver 测试验证继续尝试。
 - 无效手动路径覆盖旧配置：配置事务测试验证 settings 不变。
-- refresh 误重启 companion：双生命周期测试与 state 边界静态审查确认只替换 remote adapter。
+- refresh 误重启 companion：双生命周期测试与 state 边界静态审查确认只更新/restart Codex Provider plugin。
 - executable ready 被误当成 session ready：UI 文案和 Provider handshake 测试分别验证。
-- App Server refresh 期间请求中断：旧 adapter 先关闭，调用方得到 remote unavailable/error；不得转发到 companion。
+- App Server refresh 期间请求中断：旧 Provider process 先关闭，调用方得到 remote unavailable/error；不得转发到 companion。
 
 ## 测试计划
 
 - Rust resolver：配置优先、无候选、无效配置、自动候选继续和 settings round trip。
-- Rust bridge：remote 与 companion registry/lifecycle 独立；分别 unavailable 时另一侧仍工作。
-- App Server fake peer：initialize 与完整 remote Provider 请求闭环。
+- Rust bridge：Provider Host 与 companion registry/lifecycle 独立；分别 unavailable 时另一侧仍工作。
+- 真实 fixture subprocess：Host 从 manifest 启动 Provider binary，完成 initialize 与完整 remote Provider 请求闭环。
 - 前端 runtime 映射、Tauri 参数和 production build。
 
 ## 知识沉淀
@@ -77,6 +77,7 @@ Codex runtime `ready` 后，`src-tauri/src/lib.rs` 使用解析出的路径 spaw
 - remote App Server 见 `codex-app-server.md`。
 - Desktop companion 见 `codex-desktop-companion.md`。
 - 双链路决策见 `../../50-decisions/codex-remote-and-desktop-companion-dual-channel.md`。
+- Provider 配置权威与安装见 `../../10-architecture/codex-provider-plugin-runtime.md`。
 
 ## 未知项
 

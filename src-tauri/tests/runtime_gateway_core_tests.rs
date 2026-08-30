@@ -1,13 +1,11 @@
 use code_pet_lib::runtime_gateway::generated::{
     Approval, ApprovalDecision, ApprovalResolveRequest, ApprovalResolveResponse, ApprovalStatus,
-    ApprovalRequestedEvent,
     Conversation, ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
     ConversationGetResponse, ConversationListRequest, ConversationListResponse,
     ConversationStatus, ConversationUpsertedEvent, PermissionLevel, ProtocolEvent,
     ProtocolRequest, ProtocolResponse, ProtocolServer, Provider, ProviderCapabilities,
     ProviderListRequest, ProviderStatus, ResponsePayload, TurnInterruptRequest,
     TurnInterruptResponse, TurnSendRequest, TurnSendResponse, TurnTask, TurnTaskStatus,
-    TurnUpsertedEvent,
     PROTOCOL_VERSION,
 };
 use code_pet_lib::runtime_gateway::{
@@ -479,56 +477,22 @@ async fn local_transport_dispatches_requests_and_subscribes_to_gateway_events() 
 }
 
 #[tokio::test]
-async fn remote_and_desktop_companion_lifecycles_are_independent() {
-    let remote_registry = ProviderRegistry::default();
-    remote_registry
-        .register(Arc::new(FakeProvider::new("codex", ProviderStatus::Ready)))
-        .unwrap();
-    let companion_registry = ProviderRegistry::default();
-    companion_registry
-        .register(Arc::new(FakeProvider::new(
-            "codex",
-            ProviderStatus::Unavailable,
-        )))
-        .unwrap();
-    let remote = RuntimeGatewayState::new(Arc::new(Gateway::new(remote_registry)));
-    let companion = CodexDesktopCompanionState::new(Arc::new(Gateway::new(companion_registry)));
-
-    let listed = remote
-        .gateway()
-        .conversation_list(ConversationListRequest {
-            provider_id: Some("codex".to_string()),
-            cursor: None,
-            limit: None,
-        })
-        .await
-        .unwrap();
-    assert_eq!(listed.conversations.len(), 1);
-    assert_eq!(
-        companion
-            .gateway()
-            .provider_list(ProviderListRequest {})
-            .await
-            .unwrap()
-            .providers[0]
-            .status,
-        ProviderStatus::Unavailable
-    );
-}
-
-#[tokio::test]
-async fn remote_initialization_placeholder_does_not_block_companion_construction() {
+async fn unavailable_provider_host_does_not_block_companion_construction() {
     let thread_scope = CodexThreadScope::default();
-    let remote = RuntimeGatewayState::with_thread_scope(thread_scope.clone());
+    let remote = RuntimeGatewayState::new(None, thread_scope.clone());
     let companion = CodexDesktopCompanionState::with_thread_scope(thread_scope);
 
-    let remote_provider = remote
-        .gateway()
-        .provider_list(ProviderListRequest {})
-        .await
-        .unwrap()
-        .providers
-        .remove(0);
+    let response = remote
+        .request(ProtocolRequest::ProviderList {
+            protocol_version: PROTOCOL_VERSION,
+            id: "provider-list".to_string(),
+            params: ProviderListRequest {},
+        })
+        .await;
+    let ProtocolResponse::ProviderList { response, .. } = response else {
+        panic!("expected Provider list response");
+    };
+    assert!(matches!(response, ResponsePayload::Error { error } if error.code == "provider_host_unavailable"));
     let companion_provider = companion
         .gateway()
         .provider_list(ProviderListRequest {})
@@ -536,69 +500,11 @@ async fn remote_initialization_placeholder_does_not_block_companion_construction
         .unwrap()
         .providers
         .remove(0);
-
-    assert_eq!(remote_provider.status, ProviderStatus::Unavailable);
-    assert_eq!(remote_provider.id, "codex");
     assert_eq!(companion_provider.id, "codex");
 }
 
-#[test]
-fn remote_events_never_enter_the_desktop_companion_transport() {
-    let remote = RuntimeGatewayState::new(Arc::new(Gateway::default()));
-    let companion = CodexDesktopCompanionState::new(Arc::new(Gateway::default()));
-    let remote_turn = turn("codex");
-    let remote_approval = Approval {
-        id: "remote-approval".to_string(),
-        provider_id: "codex".to_string(),
-        conversation_id: "codex-conversation".to_string(),
-        turn_id: remote_turn.id.clone(),
-        kind: "command-execution".to_string(),
-        title: "Remote approval".to_string(),
-        description: None,
-        status: ApprovalStatus::Pending,
-        decisions: vec![ApprovalDecision::Approve, ApprovalDecision::Deny],
-        requested_at: 1,
-        resolved_at: None,
-        decision: None,
-        extension: None,
-    };
-
-    remote
-        .gateway()
-        .publish_event(conversation_event("codex"))
-        .unwrap();
-    remote
-        .gateway()
-        .publish_event(ProtocolEvent::TurnUpserted {
-            protocol_version: PROTOCOL_VERSION,
-            event_sequence: 0,
-            payload: TurnUpsertedEvent { turn: remote_turn },
-        })
-        .unwrap();
-    remote
-        .gateway()
-        .publish_event(ProtocolEvent::ApprovalRequested {
-            protocol_version: PROTOCOL_VERSION,
-            event_sequence: 0,
-            payload: ApprovalRequestedEvent {
-                approval: remote_approval,
-            },
-        })
-        .unwrap();
-
-    assert_eq!(remote.transport().replay(None).unwrap().len(), 3);
-    assert!(companion.transport().replay(None).unwrap().is_empty());
-
-    companion
-        .gateway()
-        .publish_event(conversation_event("codex"))
-        .unwrap();
-    assert_eq!(companion.transport().replay(None).unwrap().len(), 1);
-    assert_eq!(remote.transport().replay(None).unwrap().len(), 3);
-}
-
 #[tokio::test]
-async fn real_provider_faults_do_not_emit_tauri_pet_or_compat_channels_or_call_desktop_adapter() {
+async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desktop_adapter() {
     let directory = tempfile::tempdir().unwrap();
     let device = DeviceRegistry::open(directory.path().join("device.json"), "Plugin Test Device")
         .unwrap();
@@ -659,7 +565,10 @@ async fn real_provider_faults_do_not_emit_tauri_pet_or_compat_channels_or_call_d
     assert!(provider_gateway.start_event_forwarding());
     assert_start_enabled(&manager).await;
 
-    let remote = RuntimeGatewayState::new(Arc::new(Gateway::default()));
+    let remote = RuntimeGatewayState::new(
+        Some(provider_gateway.clone()),
+        CodexThreadScope::default(),
+    );
     let companion = CodexDesktopCompanionState::new(Arc::new(Gateway::default()));
     let desktop_spy = Arc::new(FakeProvider::new("desktop-spy", ProviderStatus::Ready));
     companion
@@ -745,14 +654,46 @@ async fn real_provider_faults_do_not_emit_tauri_pet_or_compat_channels_or_call_d
     manager.shutdown().await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    assert!(remote.transport().replay(None).unwrap().is_empty());
+    let remote_replay = remote.replay(None).unwrap();
+    let remote_conversation = remote_replay
+        .iter()
+        .find_map(|event| match event {
+            ProtocolEvent::ConversationUpserted { payload, .. }
+                if payload.conversation.id == "conversation-event-first" =>
+            {
+                Some(&payload.conversation)
+            }
+            _ => None,
+        })
+        .expect("Provider event must remain available on the remote replay channel");
+    let route = remote_conversation
+        .extension
+        .as_ref()
+        .expect("compat event must retain the Provider route identity");
+    assert_eq!(route.namespace, "codepet.gateway.route");
+    assert_eq!(
+        route.data.get("deviceId"),
+        Some(&serde_json::json!(device_id))
+    );
+    assert_eq!(
+        route.data.get("providerPluginId"),
+        Some(&serde_json::json!("dev.codepet.isolation"))
+    );
+    assert_eq!(
+        route.data.get("providerInstanceId"),
+        Some(&serde_json::json!("instance-plugin-test"))
+    );
+    assert_eq!(
+        route.data.get("nativeResourceId"),
+        Some(&serde_json::json!("conversation-event-first"))
+    );
     assert!(companion.transport().replay(None).unwrap().is_empty());
     assert!(pet_activity.recent_events().is_empty());
     let companion_providers = companion.gateway().registry().list().unwrap();
     assert_eq!(companion_providers.len(), 1);
     assert_eq!(companion_providers[0].id, "desktop-spy");
     assert!(desktop_spy.calls().is_empty());
-    assert_eq!(runtime_events.load(Ordering::SeqCst), 0);
+    assert!(runtime_events.load(Ordering::SeqCst) > 0);
     assert_eq!(companion_events.load(Ordering::SeqCst), 0);
     assert_eq!(pet_events.load(Ordering::SeqCst), 0);
 }

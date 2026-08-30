@@ -1,0 +1,20 @@
+{
+  "manifestVersion": 1,
+  "pluginId": "dev.codepet.codex",
+  "displayName": "Codex",
+  "executable": "codepet-provider-codex",
+  "args": [],
+  "env": {},
+  "enabled": true,
+  "instances": [
+    {
+      "instanceId": "codex",
+      "instanceKind": "codex",
+      "displayName": "Codex",
+      "settings": {
+        "appServerArgs": ["app-server", "--listen", "stdio://"]
+      },
+      "enabled": true
+    }
+  ]
+}

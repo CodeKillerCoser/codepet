@@ -7,7 +7,8 @@
 - `src-tauri/src/agent/actions.rs`：激活、回复和审批的 driver 抽象。
 - `codex-app-server.md`：独立 Codex App Server 的 remote session、完整 Provider 能力与 runtime 生命周期。
 - `codex-desktop-companion.md`：Codex Desktop 私有 IPC、Owner/Follower、revision、本地投影与安全动作边界。
-- `src-tauri/src/agent/codex_app_server/`：官方 App Server JSON-RPC client、mapper 和 remote Provider。
+- `crates/providers/codepet-provider-codex/`：官方 App Server JSON-RPC client、Provider v1 mapper 和独立 remote Provider binary。
+- `src-tauri/src/runtime_gateway/provider_host_compat.rs`：既有 remote 调用面到 Provider Gateway 的薄适配。
 - `src-tauri/src/agent/codex_desktop_ipc/`：私有 IPC transport、Owner/Follower bootstrap 和标准状态映射；私有 DTO 不得越过该边界。
 - `src-tauri/src/agent/codex_thread_scope.rs`：当前进程 remote thread provenance 和 companion 排除通知。
 - `src-tauri/src/agent/runtime.rs`：Agent executable 检测、验证、配置和诊断。

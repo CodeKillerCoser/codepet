@@ -5,6 +5,7 @@ use codepet_provider_sdk::{
     DeviceId, JsonObject, ProviderInstanceId, ProviderInstanceRoute, ProviderPluginId,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -186,6 +187,40 @@ impl ProviderInstanceRegistry {
     pub fn list(&self) -> HostResult<Vec<ProviderInstanceRecord>> {
         let state = self.state.read().map_err(|_| registry_lock_error())?;
         Ok(state.records.values().cloned().collect())
+    }
+
+    pub(crate) fn replace_setting_for_kind(
+        &self,
+        plugin_id: &str,
+        instance_kind: &str,
+        key: &str,
+        value: Option<Value>,
+    ) -> HostResult<Vec<ProviderInstanceRecord>> {
+        if plugin_id.trim().is_empty()
+            || instance_kind.trim().is_empty()
+            || key.trim().is_empty()
+        {
+            return Err(HostError::new(
+                "invalid_provider_instance_setting",
+                "Provider plugin id, instance kind, and setting key must not be empty",
+            ));
+        }
+        let mut state = self.state.write().map_err(|_| registry_lock_error())?;
+        let mut updated = Vec::new();
+        for record in state.records.values_mut() {
+            if record.plugin_id == plugin_id && record.instance_kind == instance_kind {
+                match value.as_ref() {
+                    Some(value) => {
+                        record.settings.insert(key.to_string(), value.clone());
+                    }
+                    None => {
+                        record.settings.remove(key);
+                    }
+                }
+                updated.push(record.clone());
+            }
+        }
+        Ok(updated)
     }
 
     pub(crate) fn list_for_plugin(&self, plugin_id: &str) -> HostResult<Vec<ProviderInstanceRecord>> {

@@ -193,6 +193,18 @@ impl ProviderGatewayService {
         self.events.current_cursor()
     }
 
+    pub fn provider_plugin_id(
+        &self,
+        route: &gateway::GatewayProviderRoute,
+    ) -> Result<String, gateway::ProtocolError> {
+        self.manager
+            .provider_plugin_id(&provider::ProviderInstanceRoute {
+                device_id: route.device_id.clone(),
+                provider_instance_id: route.provider_instance_id.clone(),
+            })
+            .map_err(gateway_error)
+    }
+
     pub fn replay_events(
         &self,
         after_cursor: Option<&str>,

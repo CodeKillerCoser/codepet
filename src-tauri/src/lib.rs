@@ -11,7 +11,6 @@ pub use activity::title_resolver;
 pub use activity::token_usage;
 pub use agent::actions as activity_actions;
 pub use agent::claude_transcript;
-pub use agent::codex_app_server;
 pub use agent::codex_desktop_ipc;
 pub use agent::control as agent_control;
 pub use agent::hooks;
@@ -121,10 +120,15 @@ fn detect_agent_runtime(
 fn refresh_agent_runtimes(
     app: AppHandle,
     service: tauri::State<'_, AgentRuntimeService>,
-    gateway: tauri::State<'_, RuntimeGatewayState>,
+    provider_host: tauri::State<'_, ProviderHostState>,
 ) -> Result<Vec<AgentRuntime>, String> {
-    restart_remote_runtime_provider(CODEX_RUNTIME_PROVIDER_ID, &gateway)?;
     let runtimes = service.list().map_err(|error| error.to_string())?;
+    if let Some(runtime) = runtimes
+        .iter()
+        .find(|runtime| runtime.provider_id == CODEX_RUNTIME_PROVIDER_ID)
+    {
+        restart_remote_runtime_provider(runtime, &provider_host);
+    }
     let _ = app.emit("agent-runtimes-updated", runtimes.clone());
     Ok(runtimes)
 }
@@ -133,14 +137,14 @@ fn refresh_agent_runtimes(
 fn set_agent_runtime_executable(
     app: AppHandle,
     service: tauri::State<'_, AgentRuntimeService>,
-    gateway: tauri::State<'_, RuntimeGatewayState>,
+    provider_host: tauri::State<'_, ProviderHostState>,
     provider_id: String,
     executable: String,
 ) -> Result<AgentRuntime, String> {
     let runtime = service
         .set_configured_executable(&provider_id, &executable)
         .map_err(|error| error.to_string())?;
-    restart_remote_runtime_provider(&provider_id, &gateway)?;
+    restart_remote_runtime_provider(&runtime, &provider_host);
     emit_runtime_settings(&app, &runtime);
     Ok(runtime)
 }
@@ -149,27 +153,25 @@ fn set_agent_runtime_executable(
 fn clear_agent_runtime_executable(
     app: AppHandle,
     service: tauri::State<'_, AgentRuntimeService>,
-    gateway: tauri::State<'_, RuntimeGatewayState>,
+    provider_host: tauri::State<'_, ProviderHostState>,
     provider_id: String,
 ) -> Result<AgentRuntime, String> {
     let runtime = service
         .clear_configured_executable(&provider_id)
         .map_err(|error| error.to_string())?;
-    restart_remote_runtime_provider(&provider_id, &gateway)?;
+    restart_remote_runtime_provider(&runtime, &provider_host);
     emit_runtime_settings(&app, &runtime);
     Ok(runtime)
 }
 
 fn restart_remote_runtime_provider(
-    provider_id: &str,
-    gateway: &RuntimeGatewayState,
-) -> Result<(), String> {
-    if provider_id != CODEX_RUNTIME_PROVIDER_ID {
-        return Ok(());
+    runtime: &AgentRuntime,
+    provider_host: &ProviderHostState,
+) {
+    if runtime.provider_id != CODEX_RUNTIME_PROVIDER_ID {
+        return;
     }
-    gateway
-        .refresh_codex_remote_provider()
-        .map_err(|error| error.message)
+    provider_host.refresh_codex_runtime_in_background(runtime.clone());
 }
 
 fn emit_runtime_settings(app: &AppHandle, runtime: &AgentRuntime) {
@@ -411,12 +413,13 @@ pub fn run() {
     app_log::info("app", "tauri builder initializing");
 
     let codex_thread_scope = agent::codex_thread_scope::CodexThreadScope::default();
-    let runtime_gateway_state =
-        RuntimeGatewayState::with_thread_scope(codex_thread_scope.clone());
+    let provider_host_state = ProviderHostState::default();
+    let runtime_gateway_state = RuntimeGatewayState::new(
+        provider_host_state.gateway(),
+        codex_thread_scope.clone(),
+    );
     let desktop_companion_state =
         CodexDesktopCompanionState::with_thread_scope(codex_thread_scope);
-    let provider_host_state = ProviderHostState::default();
-    runtime_gateway_state.refresh_codex_remote_provider_in_background();
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
