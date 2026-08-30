@@ -34,13 +34,15 @@ JSON Schema Draft 2020-12 加 method/event manifest 能同时表达跨语言 DTO
 - target adapter 未实现、没有 package output 或 interface/status 不一致时必须在写入前失败。
 - Rust 业务 crate 依赖 `codepet-*-sdk`；不得新增 `codepet-*-protocol` crate。
 - Provider Host 使用生成的有界 JSON-line codec 与统一 wire classifier，不自行实现另一套宽松 response/notification parser。
+- Provider Host 使用生成的 `ProtocolRequest::from_method_params` 构造 JSON-RPC request enum，不在 Host 维护第二份 method/envelope 枚举。
 - Provider 事件与 Pet 事件使用不同生成 enum 和 server/client contract，不能通过同一个 event sink 互换。
 - 新远程资源必须包含 device、provider instance 与 native resource 三段 identity；单独 native ID 只允许在已绑定 route 的内部 adapter 中使用。
 - Dart/Python generator 可以后加，但只能消费 `protocol/codegen.json` 声明的同一接口和 IDL。
 
 ## 后续观察
 
-- 下一阶段 Provider Host 是否能直接以 generated `ProtocolServer`/`ProtocolClient` 覆盖 process launch、initialize、instance lifecycle 与 shutdown。
+- Provider Host 已使用 generated `ProtocolClient` 覆盖 initialize、describe、instance lifecycle、业务请求与 shutdown；进程启动、超时和生命周期监管仍属于 Host，而不是协议 SDK。
 - Gateway v1 transport 对 event cursor、分页 cursor、断线恢复和版本不重叠错误的实现是否与 IDL 一致。
 - compat v0 使用点是否持续收敛；在 Pet v1 adapter 与真实 gateway v1 session 均完成前，不应提前删除。
 - 如出现 schema 子集不足，应先评估所有目标语言的可生成性，再扩展 generator；不得为单个 Rust 需求加入只能由 serde 表达的语义。
+- 四个 Rust SDK 已移除永久私有标记，并为 path dependency 同时声明版本。仓库尚无 LICENSE，正式发布前必须由所有者决定许可证，不能由实现阶段猜测。

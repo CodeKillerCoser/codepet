@@ -795,6 +795,91 @@ pub enum ProtocolRequest {
 }
 
 impl ProtocolRequest {
+    pub fn from_method_params(
+        method: ProtocolMethod,
+        id: RequestId,
+        params: serde_json::Value,
+    ) -> Result<Self, ProtocolError> {
+        let jsonrpc = "2.0".to_string();
+        match method {
+            ProtocolMethod::ProviderInitialize => Ok(Self::ProviderInitialize {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode provider.initialize request params", error))?,
+            }),
+            ProtocolMethod::ProviderDescribe => Ok(Self::ProviderDescribe {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode provider.describe request params", error))?,
+            }),
+            ProtocolMethod::InstanceCreate => Ok(Self::InstanceCreate {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode instance.create request params", error))?,
+            }),
+            ProtocolMethod::InstanceStart => Ok(Self::InstanceStart {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode instance.start request params", error))?,
+            }),
+            ProtocolMethod::InstanceStop => Ok(Self::InstanceStop {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode instance.stop request params", error))?,
+            }),
+            ProtocolMethod::InstanceDestroy => Ok(Self::InstanceDestroy {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode instance.destroy request params", error))?,
+            }),
+            ProtocolMethod::InstanceCapabilities => Ok(Self::InstanceCapabilities {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode instance.capabilities request params", error))?,
+            }),
+            ProtocolMethod::ConversationList => Ok(Self::ConversationList {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.list request params", error))?,
+            }),
+            ProtocolMethod::ConversationGet => Ok(Self::ConversationGet {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.get request params", error))?,
+            }),
+            ProtocolMethod::ConversationCreate => Ok(Self::ConversationCreate {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.create request params", error))?,
+            }),
+            ProtocolMethod::TurnStart => Ok(Self::TurnStart {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode turn.start request params", error))?,
+            }),
+            ProtocolMethod::TurnSteer => Ok(Self::TurnSteer {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode turn.steer request params", error))?,
+            }),
+            ProtocolMethod::TurnInterrupt => Ok(Self::TurnInterrupt {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode turn.interrupt request params", error))?,
+            }),
+            ProtocolMethod::ApprovalResolve => Ok(Self::ApprovalResolve {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode approval.resolve request params", error))?,
+            }),
+            ProtocolMethod::ProviderShutdown => Ok(Self::ProviderShutdown {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode provider.shutdown request params", error))?,
+            }),
+        }
+    }
+
     pub fn jsonrpc_version(&self) -> &str {
         match self {
             Self::ProviderInitialize { jsonrpc, .. } => jsonrpc,

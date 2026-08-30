@@ -17,7 +17,7 @@
 
 ## 非目标
 
-- 不实现插件安装、签名、市场、沙箱或 production Provider adapter；Plugin Manager、显式目录发现与 Provider 进程 supervisor 已在下一阶段落到 `crates/codepet-host`。
+- 不实现插件安装、签名、市场、沙箱或 production Provider adapter；Plugin Manager、显式目录发现与 Provider 进程 supervisor 已落到 `crates/codepet-host`。
 - 不迁移 Codex App Server 或 Desktop IPC adapter 到独立 Provider 二进制。
 - 不实现 LAN listener、配对、认证、加密、持久 event cursor 或 Remote UI。
 - 不改桌宠展示、交互或 activity projection；本阶段只提供未来 Pet Protocol 的生成 SDK。
@@ -35,22 +35,22 @@
 
 1. `tools/protocol-codegen/generate.mjs` 读取所有包，统一审计 schema 和 manifest 中的全部 `$ref`，验证 Draft 2020-12 子集、依赖声明、method/event/capability metadata、transport discriminator 和 fixture。
 2. target registry 把 Rust、TypeScript、Dart、Python 映射到独立 adapter；未实现 adapter 不允许降级到其他语言。CodePet envelope 根据 manifest 的 `method`/`event` 与可选 event cursor 生成 tagged request/response/event。
-3. Provider 根据 JSON-RPC 2.0/stdio-json-lines 生成有界 `JsonLineCodec`、request/response/notification/event 入站分类、标准错误映射和含入站接口的 transport。未知 method 与非法 params 保留 request id，分别映射 `-32601` 与 `-32602`；response 必须满足 result/error XOR。
+3. Provider 根据 JSON-RPC 2.0/stdio-json-lines 生成有界 `JsonLineCodec`、request/response/notification/event 入站分类、标准错误映射、含入站接口的 transport，以及 `ProtocolRequest::from_method_params` typed request-to-wire 入口。Host 调用该入口，不再手写 method 到 JSON-RPC envelope variant 的枚举。未知 method 与非法 params 保留 request id，分别映射 `-32601` 与 `-32602`；response 必须满足 result/error XOR。
 4. v1 initialize/handshake 通过 `VersionRange` 提交支持范围，并返回 selected version。manifest version、wire version 与生成常量由同一输入产生。
 5. Provider 和 gateway 的资源 ID 均使用 `RoutedResourceId { deviceId, providerInstanceId, nativeResourceId }`；Provider descriptor 的 `instanceKinds` 非空，create request/instance 都携带稳定 `instanceKind`，生成 helper 供服务实现 fail closed 选择。
 6. capability enum、capability container 与 method mapping 同时受 manifest/schema 校验，并生成 typed `ProtocolMethod::capability()`。
-7. Tauri 只增加 `codepet-gateway-sdk` path dependency，并继续通过 compat v0 re-export 使用原类型。remote 与 companion 保持各自 Gateway/EventBus/Tauri event；Provider v1 generated event 没有任何 Tauri publication 接线。
-8. `crates/codepet-host` 已消费生成 SDK 实现进程外 Provider client、Plugin Manager 和 `codepet-gateway-sdk::ProtocolServer` application boundary；插件 event sink 只指向该 v1 Gateway service，不指向 companion bus。详见 `provider-host-device-and-plugin-runtime.md`。
+7. Tauri 依赖 `codepet-host` 与 `codepet-gateway-sdk`，并继续通过 compat v0 re-export 使用原类型。`ProviderHostState` 与 compat `RuntimeGatewayState` 并列；remote 与 companion 保持各自 Gateway/EventBus/Tauri event，Provider v1 event 只进入内部 v1 service。
+8. `crates/codepet-host` 已消费生成 SDK 实现进程外 Provider client、Plugin Manager 和 `codepet-gateway-sdk::ProtocolServer` application boundary；Manager 到 Gateway 是只能领取一次的有界单消费者队列，不指向 companion bus。详见 `provider-host-device-and-plugin-runtime.md`。
 
 ## 涉及模块
 
 - `protocol/`：唯一手写 schema、service manifest、transport discriminator、fixture 和 target manifest。
 - `tools/protocol-codegen/`：生成与 freshness/边界检查；不包含业务 handler。
-- `sdk/rust/`：四个可独立编译 SDK；Provider 与 gateway 只依赖 core，pet 只依赖 core。
+- `sdk/rust/`：四个可独立编译、可执行 `cargo package` 检查的 SDK；Provider 与 gateway 只依赖 core，pet 只依赖 core。path dependency 同时声明发布 version。
 - `sdk/typescript/`：现有前端兼容输入，不承担新的 Pet 或 Provider 业务。
 - `src-tauri/src/runtime_gateway/generated.rs`：只把 compat v0 SDK 暴露给现有手写 gateway。
 - `frontend/lib/generated/runtimeGateway.ts`：只把 compat v0 TypeScript 类型暴露给当前前端。
-- `src-tauri/src/runtime_gateway/{gateway,event_bus,tauri_bridge}.rs`：未迁移业务，只用现有测试验证兼容和 channel isolation。
+- `src-tauri/src/runtime_gateway/{gateway,event_bus,tauri_bridge}.rs`：compat remote/companion 业务保持原样；`ProviderHostState` 作为并列 Tauri state 负责启动和一次性有界 shutdown。
 
 ## 风险
 
@@ -67,7 +67,8 @@
 ## 测试计划
 
 - `npm run protocol:check`：schema/manifest/fixture、自洽、联合层依赖、capability contract、target registry 与 freshness。
-- `cargo test --manifest-path sdk/rust/Cargo.toml`：四个 SDK 生成/编译、version、JSON-RPC dispatcher/line framing/标准错误、instance kind、event cursor 和 route round-trip。
+- `cargo test --manifest-path sdk/rust/Cargo.toml`：四个 SDK 生成/编译、version、typed request-to-wire、JSON-RPC dispatcher/line framing/标准错误、instance kind、event cursor 和 route round-trip。
+- `cargo package --manifest-path sdk/rust/Cargo.toml --workspace --allow-dirty`：Cargo 建立临时本地 registry，按依赖顺序打包并验证四个 SDK，无需先上传 core。
 - `cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_protocol_tests --test runtime_gateway_core_tests`：v0 wire 与双链路隔离。
 - TypeScript 对兼容 SDK执行独立 `tsc --noEmit`，并运行现有前端 protocol/component tests。
 - 测试后确认 `src-tauri/gen/schemas/macOS-schema.json` 无提交差异。
@@ -78,7 +79,8 @@
 
 ## 未知项
 
-- Provider Host 的进程 supervisor 与实例配置持久化已经实现；自动重启/backoff、签名和 sandbox 尚未实现。
+- Provider Host 的进程 supervisor 与 manifest 身份映射已经实现；自动重启/backoff、签名和 sandbox 尚未实现。实例 settings/enabled 只来自 manifest，不持久为第二配置源。
+- 仓库当前没有 LICENSE 文件；SDK manifest 不虚构许可证，正式发布前需要所有者补充 license 决策。
 - Gateway v1 event cursor 的持久化格式、过期窗口和远程 session 恢复策略尚未确定。
 - Dart/Python adapter 尚未实现；registry 会拒绝显式选择。未来实现仍需决定 unknown enum、async stream 和 codec error 映射，并必须使用现有 generator interface 与同一 IDL。
 - 现有 Desktop Companion 何时从 compat v0 映射到 Pet v1，需要独立阶段验证，不能顺带进入 Provider 协议。

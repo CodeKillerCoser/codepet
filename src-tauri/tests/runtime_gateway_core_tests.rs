@@ -15,21 +15,19 @@ use code_pet_lib::runtime_gateway::{
     Transport,
 };
 use code_pet_lib::runtime_gateway::tauri_bridge::{
-    CodexDesktopCompanionState, RuntimeGatewayState,
+    CodexDesktopCompanionState, ProviderHostState, RuntimeGatewayState,
 };
 use code_pet_lib::agent::codex_thread_scope::CodexThreadScope;
 use code_pet_lib::state::SharedState;
 use codepet_host::{
-    DeviceIdentity, DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor,
-    PluginInstanceConfig, PluginManager, PluginManagerConfig, ProviderGatewayService,
+    DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor, PluginInstanceConfig,
+    PluginManager, PluginManagerConfig, PluginRuntimeState, ProviderGatewayService,
     ProviderInstanceRegistry,
 };
-use codepet_host::provider_sdk::{
-    ConversationStatus as ProviderConversationStatus,
-    ConversationUpsertedEvent as ProviderConversationUpsertedEvent,
-    ProtocolEvent as ProviderProtocolEvent, ProviderConversation, RoutedResourceId,
-};
+use std::path::PathBuf;
+use std::process::Command;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 struct FakeProvider {
     provider: Provider,
@@ -596,91 +594,239 @@ fn remote_events_never_enter_the_desktop_companion_transport() {
 }
 
 #[tokio::test]
-async fn provider_plugin_events_stay_out_of_compat_companion_and_pet_activity_state() {
-    let device = DeviceRegistry::from_identity(DeviceIdentity {
-        version: 1,
-        device_id: "device-plugin-test".to_string(),
-        display_name: "Plugin Test Device".to_string(),
-        created_at: 1,
-    })
+async fn real_provider_faults_stay_out_of_compat_companion_and_pet_activity_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let device = DeviceRegistry::open(directory.path().join("device.json"), "Plugin Test Device")
+        .unwrap();
+    let device_id = device.identity().device_id.clone();
+    let marker = directory.path().join("shutdown-received");
+    let fixture_manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("crates/Cargo.toml");
+    let fixture_executable = fake_provider_executable(&fixture_manifest);
+    let descriptor = PluginDescriptor {
+        plugin_id: "dev.codepet.isolation".to_string(),
+        display_name: "Isolation Fixture".to_string(),
+        executable: fixture_executable,
+        args: Vec::new(),
+        env: [
+            (
+                "CODEPET_FAKE_PLUGIN_ID".to_string(),
+                "dev.codepet.isolation".to_string(),
+            ),
+            (
+                "CODEPET_FAKE_SHUTDOWN_MARKER".to_string(),
+                marker.to_string_lossy().to_string(),
+            ),
+            (
+                "CODEPET_FAKE_SHUTDOWN_DELAY_MS".to_string(),
+                "200".to_string(),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        enabled: true,
+        instances: vec![PluginInstanceConfig {
+            instance_id: Some("instance-plugin-test".to_string()),
+            instance_kind: "fake".to_string(),
+            display_name: "Plugin Instance".to_string(),
+            settings: Default::default(),
+            enabled: true,
+        }],
+    };
+    let plugin_root = directory.path().join("providers");
+    let plugin_directory = plugin_root.join("isolation");
+    std::fs::create_dir_all(&plugin_directory).unwrap();
+    let mut manifest = serde_json::to_value(descriptor).unwrap();
+    manifest
+        .as_object_mut()
+        .unwrap()
+        .insert("manifestVersion".to_string(), serde_json::json!(1));
+    std::fs::write(
+        plugin_directory.join("codepet-provider.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
     .unwrap();
     let catalog = PluginCatalog::discover(
-        PluginCatalogConfig::default().with_descriptor(PluginDescriptor {
-            plugin_id: "dev.codepet.isolation".to_string(),
-            display_name: "Isolation Fixture".to_string(),
-            executable: "/not-started/codepet-provider-fixture".into(),
-            args: Vec::new(),
-            env: Default::default(),
-            enabled: true,
-            instances: vec![PluginInstanceConfig {
-                instance_id: Some("instance-plugin-test".to_string()),
-                instance_kind: "fake".to_string(),
-                display_name: "Plugin Instance".to_string(),
-                settings: Default::default(),
-                enabled: true,
-            }],
-        }),
+        PluginCatalogConfig::default().with_directory(plugin_root),
     );
-    let instances = ProviderInstanceRegistry::in_memory("device-plugin-test".to_string()).unwrap();
+    let instances = ProviderInstanceRegistry::open(
+        directory.path().join("instances.json"),
+        device_id.clone(),
+    )
+    .unwrap();
+    let mut config = PluginManagerConfig::default();
+    config.process.request_timeout = Duration::from_secs(30);
+    config.process.shutdown_timeout = Duration::from_secs(2);
     let manager = Arc::new(
-        PluginManager::new(
-            device,
-            catalog,
-            instances,
-            PluginManagerConfig::default(),
-        )
-        .unwrap(),
+        PluginManager::new(device, catalog, instances, config).unwrap(),
     );
-    let provider_gateway = Arc::new(ProviderGatewayService::new(manager.clone()));
-    provider_gateway.start_event_forwarding();
-    let current_cursor = provider_gateway.current_event_cursor();
-    let mut plugin_events = provider_gateway
-        .subscribe_events(Some(&current_cursor))
-        .unwrap();
+    let provider_gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+    assert!(provider_gateway.start_event_forwarding());
+    let provider_host = ProviderHostState::new(manager.clone(), provider_gateway.clone());
+    assert_start_enabled(&manager).await;
 
-    let remote = RuntimeGatewayState::new(Arc::new(Gateway::default()))
-        .with_provider_gateway_v1(provider_gateway.clone());
+    let remote = RuntimeGatewayState::new(Arc::new(Gateway::default()));
     let companion = CodexDesktopCompanionState::new(Arc::new(Gateway::default()));
     let pet_activity = SharedState::default();
-    let resource = RoutedResourceId {
-        device_id: "device-plugin-test".to_string(),
+    let mut plugin_events = provider_gateway.subscribe_events(None).unwrap();
+    let resource = codepet_host::gateway_sdk::RoutedResourceId {
+        device_id: device_id.clone(),
         provider_instance_id: "instance-plugin-test".to_string(),
-        native_resource_id: "plugin-conversation".to_string(),
+        native_resource_id: "event-first".to_string(),
     };
-    manager
-        .accept_provider_event(
-            "dev.codepet.isolation",
-            ProviderProtocolEvent::EventConversationUpserted {
-                jsonrpc: "2.0".to_string(),
-                params: ProviderConversationUpsertedEvent {
-                    conversation: ProviderConversation {
-                        resource: resource.clone(),
-                        title: "Plugin conversation".to_string(),
-                        preview: None,
-                        status: ProviderConversationStatus::Idle,
-                        permission_level: "workspace-write".to_string(),
-                        model: None,
-                        reasoning_effort: None,
-                        workspace_root: None,
-                        created_at: 1,
-                        updated_at: 2,
-                        active_turn: None,
-                        extension: None,
-                    },
-                },
-            },
-        )
-        .await
-        .unwrap();
+    let response = codepet_host::gateway_sdk::ProtocolServer::conversation_get(
+        provider_gateway.as_ref(),
+        codepet_host::gateway_sdk::ConversationGetRequest {
+            conversation: resource,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.conversation.resource.native_resource_id, "event-first");
+    let plugin_event = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let event = plugin_events.next_event().await.unwrap();
+            if let codepet_host::gateway_sdk::ProtocolEvent::ConversationUpserted {
+                payload,
+                ..
+            } = event
+            {
+                if payload.conversation.resource.native_resource_id
+                    == "conversation-event-first"
+                {
+                    return payload.conversation.resource;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(plugin_event.device_id, device_id);
+    assert_eq!(plugin_event.provider_instance_id, "instance-plugin-test");
 
-    let event = plugin_events.next_event().await.unwrap();
-    let codepet_gateway_sdk::ProtocolEvent::ConversationUpserted { payload, .. } = event else {
-        panic!("expected v1 Provider conversation event");
-    };
-    assert_eq!(payload.conversation.resource, resource);
+    let malformed = codepet_host::gateway_sdk::ProtocolServer::conversation_get(
+        provider_gateway.as_ref(),
+        codepet_host::gateway_sdk::ConversationGetRequest {
+            conversation: provider_resource(&device_id, "malformed"),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(malformed.code.contains("provider") || malformed.code.contains("rpc"));
+    wait_for_plugin_state(&manager, PluginRuntimeState::Crashed).await;
+
+    assert_start_enabled(&manager).await;
+    let crashed = codepet_host::gateway_sdk::ProtocolServer::conversation_get(
+        provider_gateway.as_ref(),
+        codepet_host::gateway_sdk::ConversationGetRequest {
+            conversation: provider_resource(&device_id, "crash"),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(crashed.code.contains("provider") || crashed.code.contains("rpc"));
+    wait_for_plugin_state(&manager, PluginRuntimeState::Crashed).await;
+
+    assert_start_enabled(&manager).await;
+    assert!(provider_host.shutdown_once().await);
+    assert!(provider_host.shutdown_completed());
+    assert!(marker.exists());
+    let snapshot = manager.snapshot("dev.codepet.isolation").await.unwrap();
+    assert_eq!(snapshot.state, PluginRuntimeState::Stopped);
+    assert!(snapshot.process_exit.as_ref().is_some_and(|exit| exit.success));
+    assert!(snapshot
+        .stderr_diagnostics
+        .iter()
+        .any(|line| line.line.contains("fixture shutdown stderr tail")));
+
     assert!(remote.transport().replay(None).unwrap().is_empty());
     assert!(companion.transport().replay(None).unwrap().is_empty());
     assert!(pet_activity.recent_events().is_empty());
-    assert!(remote.provider_manager().is_some());
     assert!(companion.gateway().registry().list().unwrap().is_empty());
+}
+
+fn cargo_executable() -> PathBuf {
+    let configured = std::env::var_os("CARGO")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("cargo"));
+    if configured.is_file() {
+        return configured;
+    }
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .map(|directory| directory.join(&configured))
+        .find(|candidate| candidate.is_file())
+        .expect("cargo executable must be available for the real Provider fixture")
+}
+
+fn fake_provider_executable(fixture_manifest: &std::path::Path) -> PathBuf {
+    let target_directory = fixture_manifest.parent().unwrap().join("target");
+    let status = Command::new(cargo_executable())
+        .arg("build")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(fixture_manifest)
+        .arg("--target-dir")
+        .arg(&target_directory)
+        .arg("-p")
+        .arg("codepet-host")
+        .arg("--bin")
+        .arg("codepet-host-fake-provider")
+        .status()
+        .unwrap();
+    assert!(status.success(), "real Provider fixture must compile");
+    let executable = target_directory
+        .join("debug")
+        .join(format!(
+            "codepet-host-fake-provider{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+    assert!(executable.is_file());
+    executable
+}
+
+fn provider_resource(
+    device_id: &str,
+    native_resource_id: &str,
+) -> codepet_host::gateway_sdk::RoutedResourceId {
+    codepet_host::gateway_sdk::RoutedResourceId {
+        device_id: device_id.to_string(),
+        provider_instance_id: "instance-plugin-test".to_string(),
+        native_resource_id: native_resource_id.to_string(),
+    }
+}
+
+async fn assert_start_enabled(manager: &PluginManager) {
+    let outcomes = manager.start_enabled().await;
+    assert_eq!(outcomes.len(), 1);
+    if let Err(error) = outcomes.into_iter().next().unwrap().1 {
+        let snapshot = manager.snapshot("dev.codepet.isolation").await.unwrap();
+        panic!(
+            "real Provider fixture failed to start: {error:?}; stderr={:?}",
+            snapshot.stderr_diagnostics
+        );
+    }
+    wait_for_plugin_state(manager, PluginRuntimeState::Ready).await;
+}
+
+async fn wait_for_plugin_state(manager: &PluginManager, expected: PluginRuntimeState) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if manager
+                .snapshot("dev.codepet.isolation")
+                .await
+                .unwrap()
+                .state
+                == expected
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
 }

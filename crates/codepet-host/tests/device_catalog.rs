@@ -1,6 +1,6 @@
 use codepet_host::{
-    DeviceIdentity, DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginManager,
-    PluginManagerConfig, ProviderInstanceRegistry,
+    DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginManager, PluginManagerConfig,
+    ProviderInstanceRegistry,
 };
 use serde_json::json;
 use std::fs;
@@ -35,8 +35,9 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
     let plugin_directory = directory.path().join("provider-plugins").join("fake");
     fs::create_dir_all(&plugin_directory).unwrap();
     fs::write(plugin_directory.join("ignored-binary"), b"not executable discovery").unwrap();
+    let manifest_path = plugin_directory.join("codepet-provider.json");
     fs::write(
-        plugin_directory.join("codepet-provider.json"),
+        &manifest_path,
         serde_json::to_vec_pretty(&json!({
             "manifestVersion": 1,
             "pluginId": "dev.codepet.fake",
@@ -65,46 +66,55 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
     );
 
     let registry_path = directory.path().join("provider-instances.json");
-    let registry = ProviderInstanceRegistry::open(&registry_path, "device-test".to_string()).unwrap();
+    let device = DeviceRegistry::open(directory.path().join("device.json"), "Device Test").unwrap();
+    let device_id = device.identity().device_id.clone();
+    let registry = ProviderInstanceRegistry::open(&registry_path, device_id.clone()).unwrap();
     let first = registry.synchronize_catalog(&catalog).unwrap();
     assert_eq!(first.len(), 1);
     let first_id = first[0].instance_id.clone();
     assert!(first_id.starts_with("instance-"));
 
-    let reopened = ProviderInstanceRegistry::open(&registry_path, "device-test".to_string()).unwrap();
+    let reopened = ProviderInstanceRegistry::open(&registry_path, device_id.clone()).unwrap();
     let second = reopened.synchronize_catalog(&catalog).unwrap();
     assert_eq!(second[0].instance_id, first_id);
     assert_eq!(second[0].settings["profile"], json!("test"));
-
-    let dynamic = reopened
-        .create(
-            "dev.codepet.fake".to_string(),
-            "fake".to_string(),
-            "Dynamic Fake".to_string(),
-            Default::default(),
-            None,
-            true,
+    let plugin_mismatch = reopened
+        .resolve_route(
+            &codepet_host::provider_sdk::ProviderInstanceRoute {
+                device_id: device_id.clone(),
+                provider_instance_id: first_id.clone(),
+            },
+            Some("dev.codepet.other"),
         )
+        .unwrap_err();
+    assert_eq!(plugin_mismatch.code, "provider_instance_plugin_mismatch");
+
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
+    assert!(persisted["instances"][0].get("settings").is_none());
+    assert!(persisted["instances"][0].get("enabled").is_none());
+
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["instances"] = json!([]);
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let catalog_without_instances = PluginCatalog::discover(
+        PluginCatalogConfig::for_data_directory(directory.path()),
+    );
+    reopened
+        .synchronize_catalog(&catalog_without_instances)
         .unwrap();
-    let reopened = ProviderInstanceRegistry::open(&registry_path, "device-test".to_string()).unwrap();
+    assert!(reopened.list().unwrap().is_empty());
+    let reopened = ProviderInstanceRegistry::open(&registry_path, device_id).unwrap();
     let manager = PluginManager::new(
-        DeviceRegistry::from_identity(DeviceIdentity {
-            version: 1,
-            device_id: "device-test".to_string(),
-            display_name: "Device Test".to_string(),
-            created_at: 1,
-        })
-        .unwrap(),
-        catalog,
+        device,
+        catalog_without_instances,
         reopened,
         PluginManagerConfig::default(),
     )
     .unwrap();
     let snapshot = manager.snapshot("dev.codepet.fake").await.unwrap();
-    assert!(snapshot
-        .instances
-        .iter()
-        .any(|instance| instance.record.instance_id == dynamic.instance_id));
+    assert!(snapshot.instances.is_empty());
 }
 
 #[test]
@@ -115,17 +125,4 @@ fn instance_registry_rejects_a_different_device() {
     let error = ProviderInstanceRegistry::open(&path, "device-b".to_string()).unwrap_err();
     assert_eq!(error.code, "provider_instance_registry_device_mismatch");
 
-    let identity = DeviceIdentity {
-        version: 1,
-        device_id: "device-a".to_string(),
-        display_name: "Device A".to_string(),
-        created_at: 1,
-    };
-    assert_eq!(
-        DeviceRegistry::from_identity(identity)
-            .unwrap()
-            .identity()
-            .device_id,
-        "device-a"
-    );
 }

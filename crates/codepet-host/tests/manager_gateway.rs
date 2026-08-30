@@ -1,15 +1,15 @@
 use codepet_gateway_sdk::{
-    ConversationGetRequest as GatewayConversationGetRequest, ProtocolEvent as GatewayEvent,
+    ConversationGetRequest as GatewayConversationGetRequest,
+    ConversationListRequest as GatewayConversationListRequest, ProtocolEvent as GatewayEvent,
     ProtocolServer as GatewayProtocolServer, ProviderListRequest,
 };
 use codepet_host::{
-    event_cursor_sequence, DeviceIdentity, DeviceRegistry, PluginCatalog, PluginCatalogConfig,
-    PluginDescriptor, PluginInstanceConfig, PluginManager, PluginManagerConfig,
-    PluginProcessOptions, PluginRuntimeState, ProviderGatewayService,
-    ProviderInstanceRegistry,
+    DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor, PluginInstanceConfig,
+    PluginManager, PluginManagerConfig, PluginProcessOptions, PluginRuntimeState,
+    ProviderGatewayService, ProviderInstanceRegistry,
 };
 use codepet_provider_sdk::{
-    ConversationGetRequest, JsonObject, ProviderInstanceRoute, RoutedResourceId,
+    ConversationGetRequest, JsonObject, ProviderInstanceRoute, RoutedResourceId, TurnStartRequest,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -40,23 +40,62 @@ fn plugin(plugin_id: &str, instances: &[&str]) -> PluginDescriptor {
 }
 
 fn build_manager(device_id: &str, descriptors: Vec<PluginDescriptor>) -> Arc<PluginManager> {
-    let device = DeviceRegistry::from_identity(DeviceIdentity {
-        version: 1,
-        device_id: device_id.to_string(),
-        display_name: format!("Device {device_id}"),
-        created_at: 1,
-    })
+    build_manager_with_event_capacity(
+        device_id,
+        descriptors,
+        PluginManagerConfig::default().event_capacity,
+    )
+}
+
+fn build_manager_with_event_capacity(
+    device_id: &str,
+    descriptors: Vec<PluginDescriptor>,
+    event_capacity: usize,
+) -> Arc<PluginManager> {
+    let directory = tempfile::tempdir().unwrap();
+    let device_path = directory.path().join("device.json");
+    std::fs::write(
+        &device_path,
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "deviceId": device_id,
+            "displayName": format!("Device {device_id}"),
+            "createdAt": 1
+        }))
+        .unwrap(),
+    )
     .unwrap();
-    let mut catalog_config = PluginCatalogConfig::default();
-    catalog_config.descriptors = descriptors;
-    let catalog = PluginCatalog::discover(catalog_config);
-    let instances = ProviderInstanceRegistry::in_memory(device_id.to_string()).unwrap();
+    let device = DeviceRegistry::open(device_path, "unused").unwrap();
+    let plugin_directory = directory.path().join("providers");
+    for (index, descriptor) in descriptors.into_iter().enumerate() {
+        let directory = plugin_directory.join(index.to_string());
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut manifest = serde_json::to_value(descriptor).unwrap();
+        manifest
+            .as_object_mut()
+            .unwrap()
+            .insert("manifestVersion".to_string(), serde_json::json!(1));
+        std::fs::write(
+            directory.join("codepet-provider.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
+    let catalog = PluginCatalog::discover(
+        PluginCatalogConfig::default().with_directory(plugin_directory),
+    );
+    let instances = ProviderInstanceRegistry::open(
+        directory.path().join("instances.json"),
+        device_id.to_string(),
+    )
+    .unwrap();
     Arc::new(
         PluginManager::new(
             device,
             catalog,
             instances,
             PluginManagerConfig {
+                event_capacity,
                 process: PluginProcessOptions {
                     request_timeout: Duration::from_secs(2),
                     shutdown_timeout: Duration::from_secs(2),
@@ -77,13 +116,21 @@ fn resource(device_id: &str, instance_id: &str, native_id: &str) -> RoutedResour
     }
 }
 
+fn event_cursor_sequence(cursor: &str) -> u64 {
+    cursor
+        .strip_prefix("event-")
+        .unwrap()
+        .parse::<u64>()
+        .unwrap()
+}
+
 #[tokio::test]
 async fn gateway_lists_devices_instances_capabilities_and_keeps_event_routes_monotonic() {
     let manager = build_manager(
         "device-a",
         vec![plugin("dev.codepet.gateway", &["instance-a1", "instance-a2"])],
     );
-    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()));
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
     assert!(gateway.start_event_forwarding());
     let outcomes = manager.start_enabled().await;
     assert_eq!(outcomes.len(), 1);
@@ -108,6 +155,44 @@ async fn gateway_lists_devices_instances_capabilities_and_keeps_event_routes_mon
                 .methods
                 .contains(&codepet_gateway_sdk::GatewayCapability::ConversationGet)
     }));
+
+    let lifecycle_cursor = gateway.current_event_cursor();
+    let mut lifecycle_events = gateway
+        .subscribe_events(Some(&lifecycle_cursor))
+        .unwrap();
+    manager
+        .stop_instance(&ProviderInstanceRoute {
+            device_id: "device-a".to_string(),
+            provider_instance_id: "instance-a1".to_string(),
+        })
+        .await
+        .unwrap();
+    let stopped_event = lifecycle_events.next_event().await.unwrap();
+    let GatewayEvent::ProviderStatusChanged { payload, .. } = stopped_event else {
+        panic!("expected one lifecycle status event");
+    };
+    assert_eq!(
+        payload.provider.status,
+        codepet_gateway_sdk::ProviderStatus::Disconnected
+    );
+    assert!(tokio::time::timeout(
+        Duration::from_millis(50),
+        lifecycle_events.next_event()
+    )
+    .await
+    .is_err());
+    manager
+        .start_instance(&ProviderInstanceRoute {
+            device_id: "device-a".to_string(),
+            provider_instance_id: "instance-a1".to_string(),
+        })
+        .await
+        .unwrap();
+    let ready_event = lifecycle_events.next_event().await.unwrap();
+    let GatewayEvent::ProviderStatusChanged { payload, .. } = ready_event else {
+        panic!("expected one lifecycle status event");
+    };
+    assert_eq!(payload.provider.status, codepet_gateway_sdk::ProviderStatus::Ready);
 
     let after = gateway.current_event_cursor();
     let mut events = gateway.subscribe_events(Some(&after)).unwrap();
@@ -152,7 +237,7 @@ async fn gateway_lists_devices_instances_capabilities_and_keeps_event_routes_mon
                 routed_instances.push(
                     payload.conversation.resource.provider_instance_id.clone(),
                 );
-                routed_event_cursors.push(event_cursor_sequence(event_cursor).unwrap());
+                routed_event_cursors.push(event_cursor_sequence(event_cursor));
             }
             GatewayEvent::TurnOutputDelta {
                 event_cursor,
@@ -161,7 +246,7 @@ async fn gateway_lists_devices_instances_capabilities_and_keeps_event_routes_mon
             } => {
                 assert_eq!(payload.turn.device_id, "device-a");
                 routed_instances.push(payload.turn.provider_instance_id.clone());
-                routed_event_cursors.push(event_cursor_sequence(event_cursor).unwrap());
+                routed_event_cursors.push(event_cursor_sequence(event_cursor));
             }
             _ => {}
         }
@@ -210,7 +295,7 @@ async fn gateway_lists_devices_instances_capabilities_and_keeps_event_routes_mon
         "device-b",
         vec![plugin("dev.codepet.device-b", &["instance-b1"])],
     );
-    let gateway_b = Arc::new(ProviderGatewayService::new(device_b.clone()));
+    let gateway_b = Arc::new(ProviderGatewayService::new(device_b.clone()).unwrap());
     gateway_b.start_event_forwarding();
     assert!(device_b.start_enabled().await[0].1.is_ok());
     let response_b = gateway_b
@@ -221,10 +306,6 @@ async fn gateway_lists_devices_instances_capabilities_and_keeps_event_routes_mon
         .unwrap();
     assert_eq!(response_b.conversation.resource.device_id, "device-b");
     assert_eq!(response_b.conversation.resource.provider_instance_id, "instance-b1");
-    assert_ne!(
-        manager.device().identity().device_id,
-        device_b.device().identity().device_id
-    );
     manager.shutdown().await;
     device_b.shutdown().await;
 }
@@ -249,8 +330,186 @@ async fn version_negotiation_rejects_a_plugin_with_an_inconsistent_reported_rang
         .snapshot("dev.codepet.version-mismatch")
         .await
         .unwrap();
-    assert_eq!(snapshot.state, PluginRuntimeState::Degraded);
+    assert_eq!(snapshot.state, PluginRuntimeState::Crashed);
     assert!(snapshot.process_exit.is_some());
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+    gateway.start_event_forwarding();
+    let providers = gateway
+        .provider_list(ProviderListRequest {
+            device_id: Some("device-version".to_string()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        providers.providers[0].status,
+        codepet_gateway_sdk::ProviderStatus::Error
+    );
+}
+
+#[tokio::test]
+async fn failed_instance_start_is_unavailable_instead_of_stuck_connecting() {
+    let mut descriptor = plugin(
+        "dev.codepet.start-failure",
+        &["instance-start-failure", "instance-start-healthy"],
+    );
+    descriptor.env.insert(
+        "CODEPET_FAKE_INSTANCE_START_ERROR_ID".to_string(),
+        "instance-start-failure".to_string(),
+    );
+    let manager = build_manager("device-start-failure", vec![descriptor]);
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+    gateway.start_event_forwarding();
+
+    let outcomes = manager.start_enabled().await;
+    assert!(outcomes[0].1.is_err());
+    let providers = gateway
+        .provider_list(ProviderListRequest {
+            device_id: Some("device-start-failure".to_string()),
+        })
+        .await
+        .unwrap();
+    let failed = providers
+        .providers
+        .iter()
+        .find(|provider| provider.route.provider_instance_id == "instance-start-failure")
+        .unwrap();
+    let healthy = providers
+        .providers
+        .iter()
+        .find(|provider| provider.route.provider_instance_id == "instance-start-healthy")
+        .unwrap();
+    assert_eq!(failed.status, codepet_gateway_sdk::ProviderStatus::Unavailable);
+    assert_eq!(healthy.status, codepet_gateway_sdk::ProviderStatus::Ready);
+    assert_eq!(
+        manager
+            .snapshot("dev.codepet.start-failure")
+            .await
+            .unwrap()
+            .state,
+        PluginRuntimeState::Ready
+    );
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn gateway_reports_replay_and_live_subscription_gaps() {
+    let manager = build_manager_with_event_capacity(
+        "device-gap",
+        vec![plugin("dev.codepet.gap", &["instance-gap"])],
+        2,
+    );
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+    gateway.start_event_forwarding();
+    assert!(manager.start_enabled().await[0].1.is_ok());
+    wait_for_gateway_cursor(&gateway, 4).await;
+
+    let replay_error = gateway
+        .replay_events(Some("event-00000000000000000000"))
+        .unwrap_err();
+    assert_eq!(replay_error.code, "event_replay_unavailable");
+
+    let cursor = gateway.current_event_cursor();
+    let starting_sequence = event_cursor_sequence(&cursor);
+    let mut subscription = gateway.subscribe_events(Some(&cursor)).unwrap();
+    let route = ProviderInstanceRoute {
+        device_id: "device-gap".to_string(),
+        provider_instance_id: "instance-gap".to_string(),
+    };
+    for _ in 0..3 {
+        manager.stop_instance(&route).await.unwrap();
+        manager.start_instance(&route).await.unwrap();
+    }
+    wait_for_gateway_cursor(&gateway, starting_sequence + 6).await;
+    let live_error = subscription.next_event().await.unwrap_err();
+    assert_eq!(live_error.code, "gateway_event_subscription_lagged");
+    manager.shutdown().await;
+    let restart_error = manager.start_plugin("dev.codepet.gap").await.unwrap_err();
+    assert_eq!(restart_error.code, "provider_manager_shutting_down");
+}
+
+async fn wait_for_gateway_cursor(gateway: &ProviderGatewayService, sequence: u64) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if event_cursor_sequence(&gateway.current_event_cursor()) >= sequence {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn resource_identity_and_route_less_pagination_fail_closed() {
+    let manager = build_manager(
+        "device-identity",
+        vec![plugin("dev.codepet.identity", &["instance-identity"])],
+    );
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+    gateway.start_event_forwarding();
+    assert!(manager.start_enabled().await[0].1.is_ok());
+
+    for native_id in [
+        "response-wrong-native",
+        "response-empty-native",
+        "response-wrong-route",
+    ] {
+        let error = manager
+            .conversation_get(ConversationGetRequest {
+                conversation: resource("device-identity", "instance-identity", native_id),
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error.code.as_str(),
+            "provider_resource_identity_mismatch"
+                | "invalid_provider_resource"
+                | "provider_resource_route_mismatch"
+        ));
+    }
+    let empty_native = manager
+        .conversation_get(ConversationGetRequest {
+            conversation: resource("device-identity", "instance-identity", ""),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(empty_native.code, "invalid_provider_resource");
+    let empty_device = manager
+        .conversation_get(ConversationGetRequest {
+            conversation: resource("", "instance-identity", "conversation"),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(empty_device.code, "invalid_provider_route");
+
+    let wrong_conversation = manager
+        .turn_start(TurnStartRequest {
+            conversation: resource(
+                "device-identity",
+                "instance-identity",
+                "response-wrong-conversation",
+            ),
+            client_message_id: "message-1".to_string(),
+            message: "hello".to_string(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(wrong_conversation.code, "provider_resource_identity_mismatch");
+
+    let aggregate_cursor = gateway
+        .conversation_list(GatewayConversationListRequest {
+            route: None,
+            cursor: Some("provider-cursor".to_string()),
+            limit: Some(10),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(
+        aggregate_cursor.code,
+        "aggregate_conversation_cursor_unsupported"
+    );
+    manager.shutdown().await;
 }
 
 #[tokio::test]
@@ -317,16 +576,5 @@ async fn a_crashed_plugin_does_not_change_another_plugin_or_instance_route() {
         .iter()
         .any(|diagnostic| diagnostic.line.contains("fixture crash requested")));
 
-    let plugin_mismatch = manager
-        .instance_registry()
-        .resolve_route(
-            &ProviderInstanceRoute {
-                device_id: "device-isolation".to_string(),
-                provider_instance_id: "instance-beta".to_string(),
-            },
-            Some("dev.codepet.alpha"),
-        )
-        .unwrap_err();
-    assert_eq!(plugin_mismatch.code, "provider_instance_plugin_mismatch");
     manager.shutdown().await;
 }

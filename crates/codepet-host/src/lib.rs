@@ -14,17 +14,16 @@ mod process;
 
 pub use catalog::{
     CatalogDiagnostic, PluginCatalog, PluginCatalogConfig, PluginDescriptor,
-    PluginInstanceConfig, DEFAULT_PROVIDER_BINARY_NAMES, PLUGIN_MANIFEST_FILE_NAME,
+    PluginInstanceConfig, PLUGIN_MANIFEST_FILE_NAME,
 };
 pub use device::{DeviceDiagnostic, DeviceIdentity, DeviceRegistry};
 pub use error::{HostError, HostResult};
-pub use gateway::{event_cursor_sequence, GatewayEventSubscription, ProviderGatewayService};
+pub use gateway::{GatewayEventSubscription, ProviderGatewayService};
 pub use instance_registry::{ProviderInstanceRecord, ProviderInstanceRegistry};
 pub use manager::{
-    ManagerEvent, PluginManager, PluginManagerConfig, PluginRuntimeSnapshot,
-    PluginRuntimeState, ProviderInstanceRuntimeSnapshot,
+    PluginManager, PluginManagerConfig, PluginRuntimeSnapshot, PluginRuntimeState,
+    ProviderInstanceRuntimeSnapshot,
 };
 pub use process::{
-    PluginProcess, PluginProcessDiagnostics, PluginProcessExit, PluginProcessOptions,
-    ProviderRpcClient, StderrDiagnostic,
+    PluginProcess, PluginProcessExit, PluginProcessOptions, ProviderRpcClient, StderrDiagnostic,
 };

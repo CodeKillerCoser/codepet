@@ -1,26 +1,26 @@
 use crate::catalog::PluginDescriptor;
 use crate::{HostError, HostResult};
 use codepet_provider_sdk::{
-    ApprovalResolveRequest, ConversationCreateRequest, ConversationGetRequest,
-    ConversationListRequest, InstanceCapabilitiesRequest, InstanceCreateRequest,
-    InstanceDestroyRequest, InstanceStartRequest, InstanceStopRequest, JsonLineCodec,
-    JsonRpcInboundError, JsonRpcInboundRequest, JsonRpcResponsePayload, ProtocolClient,
-    ProtocolError, ProtocolInboundFuture, ProtocolMethod, ProtocolRequest, ProtocolTransport,
-    ProtocolTransportFuture, ProviderDescribeRequest,
-    ProviderShutdownRequest, ProviderWireMessage, RequestId, RpcError,
-    TurnInterruptRequest, TurnStartRequest, TurnSteerRequest,
+    JsonLineCodec, JsonRpcInboundError, JsonRpcInboundRequest, JsonRpcResponsePayload,
+    ProtocolClient, ProtocolError, ProtocolInboundFuture, ProtocolMethod, ProtocolRequest,
+    ProtocolTransport, ProtocolTransportFuture, ProviderShutdownRequest,
+    ProviderShutdownResponse, ProviderWireMessage, RequestId, RpcError,
 };
-use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::future::Future;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, Mutex as StdMutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStderr, ChildStdin, ChildStdout, Command};
-use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
+use tokio::sync::{mpsc, oneshot, watch, Mutex};
+use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 #[derive(Clone, Debug)]
 pub struct PluginProcessOptions {
@@ -61,20 +61,6 @@ pub struct StderrDiagnostic {
     pub truncated: bool,
 }
 
-#[derive(Clone)]
-pub struct PluginProcessDiagnostics {
-    inner: Arc<StdMutex<VecDeque<StderrDiagnostic>>>,
-}
-
-impl PluginProcessDiagnostics {
-    pub fn snapshot(&self) -> Vec<StderrDiagnostic> {
-        self.inner
-            .lock()
-            .map(|diagnostics| diagnostics.iter().cloned().collect())
-            .unwrap_or_default()
-    }
-}
-
 enum WriterCommand {
     Frame(Vec<u8>),
     Close,
@@ -86,26 +72,58 @@ enum ProcessCommand {
 
 struct RpcShared {
     codec: JsonLineCodec,
-    writer: mpsc::Sender<WriterCommand>,
-    pending: Mutex<HashMap<RequestId, oneshot::Sender<Result<Value, ProtocolError>>>>,
-    inbound: broadcast::Sender<ProviderWireMessage>,
+    writer: StdMutex<Option<mpsc::Sender<WriterCommand>>>,
+    pending: StdMutex<HashMap<RequestId, oneshot::Sender<Result<Value, ProtocolError>>>>,
+    inbound: StdMutex<Option<mpsc::Sender<ProviderWireMessage>>>,
     next_request_id: AtomicU64,
     request_timeout: Duration,
-    closed: AtomicBool,
+    shutting_down: AtomicBool,
     close_error: StdMutex<Option<ProtocolError>>,
 }
 
 impl RpcShared {
-    async fn close(&self, error: ProtocolError) {
-        if !self.closed.swap(true, Ordering::SeqCst) {
+    fn begin_shutdown(&self, error: ProtocolError) -> bool {
+        let started = self
+            .shutting_down
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok();
+        if started {
             if let Ok(mut close_error) = self.close_error.lock() {
                 *close_error = Some(error.clone());
             }
+            self.close_inbound();
+            self.fail_pending(error);
         }
-        let mut pending = self.pending.lock().await;
-        for (_, sender) in pending.drain() {
-            let _ = sender.send(Err(error.clone()));
+        started
+    }
+
+    fn terminate(&self, error: ProtocolError) {
+        self.begin_shutdown(error.clone());
+        self.close_inbound();
+        self.fail_pending(error);
+        if let Ok(mut writer) = self.writer.lock() {
+            if let Some(writer) = writer.take() {
+                let _ = writer.try_send(WriterCommand::Close);
+            }
         }
+    }
+
+    fn close_inbound(&self) {
+        if let Ok(mut inbound) = self.inbound.lock() {
+            inbound.take();
+        }
+    }
+
+    fn fail_pending(&self, error: ProtocolError) {
+        if let Ok(mut pending) = self.pending.lock() {
+            for (_, sender) in pending.drain() {
+                let _ = sender.send(Err(error.clone()));
+            }
+        }
+    }
+
+    fn is_shutting_down(&self) -> bool {
+        self.shutting_down.load(Ordering::SeqCst)
     }
 
     fn closed_error(&self) -> ProtocolError {
@@ -113,29 +131,130 @@ impl RpcShared {
             .lock()
             .ok()
             .and_then(|error| error.clone())
-            .unwrap_or_else(|| protocol_error(
-                "provider_process_closed",
-                "Provider process transport is closed",
+            .unwrap_or_else(|| {
+                protocol_error(
+                    "provider_process_closed",
+                    "Provider process transport is closed",
+                    true,
+                )
+            })
+    }
+
+    fn writer(&self) -> Result<mpsc::Sender<WriterCommand>, ProtocolError> {
+        self.writer
+            .lock()
+            .ok()
+            .and_then(|writer| writer.clone())
+            .ok_or_else(|| self.closed_error())
+    }
+
+    fn insert_pending(
+        &self,
+        request_id: RequestId,
+        sender: oneshot::Sender<Result<Value, ProtocolError>>,
+    ) -> Result<(), ProtocolError> {
+        self.pending
+            .lock()
+            .map_err(|_| {
+                protocol_error(
+                    "provider_pending_unavailable",
+                    "Provider pending request state is unavailable",
+                    true,
+                )
+            })?
+            .insert(request_id, sender);
+        Ok(())
+    }
+
+    fn remove_pending(&self, request_id: &str) {
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.remove(request_id);
+        }
+    }
+
+    fn take_pending(
+        &self,
+        request_id: &str,
+    ) -> Option<oneshot::Sender<Result<Value, ProtocolError>>> {
+        self.pending
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.remove(request_id))
+    }
+
+    fn send_inbound(&self, message: ProviderWireMessage) -> Result<(), ProtocolError> {
+        let sender = self
+            .inbound
+            .lock()
+            .ok()
+            .and_then(|sender| sender.clone())
+            .ok_or_else(|| self.closed_error())?;
+        sender.try_send(message).map_err(|error| {
+            protocol_error(
+                "provider_inbound_backpressure",
+                format!("Provider inbound event queue is unavailable: {error}"),
                 true,
-            ))
+            )
+        })
+    }
+
+    async fn close_writer(&self, deadline: Instant) -> Result<(), ProtocolError> {
+        let writer = self
+            .writer
+            .lock()
+            .ok()
+            .and_then(|mut writer| writer.take());
+        let Some(writer) = writer else {
+            return Ok(());
+        };
+        match tokio::time::timeout_at(deadline, writer.send(WriterCommand::Close)).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err(self.closed_error()),
+            Err(_) => Err(protocol_error(
+                "provider_writer_close_timeout",
+                "timed out closing Provider stdin",
+                true,
+            )),
+        }
+    }
+}
+
+struct PendingRequest {
+    shared: Weak<RpcShared>,
+    request_id: RequestId,
+}
+
+impl Drop for PendingRequest {
+    fn drop(&mut self) {
+        if let Some(shared) = self.shared.upgrade() {
+            shared.remove_pending(&self.request_id);
+        }
     }
 }
 
 pub struct ProviderRpcClient {
     shared: Arc<RpcShared>,
-    inbound: Mutex<broadcast::Receiver<ProviderWireMessage>>,
+    inbound: Mutex<Option<mpsc::Receiver<ProviderWireMessage>>>,
 }
 
 impl ProviderRpcClient {
-    fn new(shared: Arc<RpcShared>) -> Self {
+    fn new(shared: Arc<RpcShared>, inbound: mpsc::Receiver<ProviderWireMessage>) -> Self {
         Self {
-            inbound: Mutex::new(shared.inbound.subscribe()),
             shared,
+            inbound: Mutex::new(Some(inbound)),
         }
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<ProviderWireMessage> {
-        self.shared.inbound.subscribe()
+    async fn take_inbound(
+        &self,
+    ) -> Result<mpsc::Receiver<ProviderWireMessage>, ProtocolError> {
+        self.inbound.lock().await.take().ok_or_else(|| {
+            protocol_error(
+                "provider_inbound_already_taken",
+                "Provider inbound message stream already has a consumer",
+                false,
+            )
+        })
     }
 
     async fn request_value(
@@ -143,59 +262,78 @@ impl ProviderRpcClient {
         method: ProtocolMethod,
         params: Value,
     ) -> Result<Value, ProtocolError> {
-        if self.shared.closed.load(Ordering::SeqCst) {
+        self.request_value_until(
+            method,
+            params,
+            Instant::now() + self.shared.request_timeout,
+            false,
+        )
+        .await
+    }
+
+    async fn request_value_until(
+        &self,
+        method: ProtocolMethod,
+        params: Value,
+        deadline: Instant,
+        during_shutdown: bool,
+    ) -> Result<Value, ProtocolError> {
+        if self.shared.is_shutting_down() && !during_shutdown {
             return Err(self.shared.closed_error());
         }
+        let writer = self.shared.writer()?;
         let sequence = self.shared.next_request_id.fetch_add(1, Ordering::SeqCst);
         let request_id = format!("host-{sequence}");
-        let request = typed_request(method, request_id.clone(), params)?;
+        let request = ProtocolRequest::from_method_params(method, request_id.clone(), params)?;
         let message = ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request));
         let frame = self.shared.codec.encode_message(&message)?;
         let (response_sender, response_receiver) = oneshot::channel();
         self.shared
-            .pending
-            .lock()
-            .await
-            .insert(request_id.clone(), response_sender);
+            .insert_pending(request_id.clone(), response_sender)?;
+        let _pending = PendingRequest {
+            shared: Arc::downgrade(&self.shared),
+            request_id: request_id.clone(),
+        };
 
-        let send = self.shared.writer.send(WriterCommand::Frame(frame));
-        match tokio::time::timeout(self.shared.request_timeout, send).await {
+        match tokio::time::timeout_at(deadline, writer.send(WriterCommand::Frame(frame))).await {
             Ok(Ok(())) => {}
-            Ok(Err(_)) => {
-                self.shared.pending.lock().await.remove(&request_id);
-                return Err(self.shared.closed_error());
-            }
-            Err(_) => {
-                self.shared.pending.lock().await.remove(&request_id);
-                return Err(request_timeout_error(method, &request_id, "write queue"));
-            }
+            Ok(Err(_)) => return Err(self.shared.closed_error()),
+            Err(_) => return Err(request_timeout_error(method, &request_id, "write queue")),
         }
 
-        match tokio::time::timeout(self.shared.request_timeout, response_receiver).await {
+        match tokio::time::timeout_at(deadline, response_receiver).await {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => Err(self.shared.closed_error()),
-            Err(_) => {
-                self.shared.pending.lock().await.remove(&request_id);
-                Err(request_timeout_error(method, &request_id, "response"))
-            }
+            Err(_) => Err(request_timeout_error(method, &request_id, "response")),
         }
     }
 
-    async fn close_writer(&self) -> Result<(), ProtocolError> {
-        match tokio::time::timeout(
-            self.shared.request_timeout,
-            self.shared.writer.send(WriterCommand::Close),
-        )
-        .await
-        {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(_)) => Err(self.shared.closed_error()),
-            Err(_) => Err(protocol_error(
-                "provider_writer_close_timeout",
-                "timed out closing Provider stdin",
+    async fn provider_shutdown_until(
+        &self,
+        deadline: Instant,
+    ) -> Result<ProviderShutdownResponse, ProtocolError> {
+        let params = serde_json::to_value(ProviderShutdownRequest {}).map_err(|error| {
+            protocol_error(
+                "provider_request_encode_failed",
+                format!("encode provider.shutdown request params: {error}"),
+                false,
+            )
+        })?;
+        let response = self
+            .request_value_until(
+                ProtocolMethod::ProviderShutdown,
+                params,
+                deadline,
                 true,
-            )),
-        }
+            )
+            .await?;
+        serde_json::from_value(response).map_err(|error| {
+            protocol_error(
+                "provider_response_decode_failed",
+                format!("decode provider.shutdown response: {error}"),
+                false,
+            )
+        })
     }
 }
 
@@ -211,25 +349,25 @@ impl ProtocolTransport for ProviderRpcClient {
     fn next_message<'a>(&'a self) -> ProtocolInboundFuture<'a> {
         Box::pin(async move {
             let mut receiver = self.inbound.lock().await;
-            match receiver.recv().await {
-                Ok(message) => Ok(message),
-                Err(broadcast::error::RecvError::Lagged(skipped)) => Err(inbound_transport_error(
-                    format!("Provider inbound consumer skipped {skipped} messages"),
-                )),
-                Err(broadcast::error::RecvError::Closed) => {
-                    Err(inbound_transport_error(self.shared.closed_error().message))
-                }
-            }
+            receiver
+                .as_mut()
+                .ok_or_else(|| {
+                    inbound_transport_error("Provider inbound message stream already has a consumer")
+                })?
+                .recv()
+                .await
+                .ok_or_else(|| inbound_transport_error(self.shared.closed_error().message))
         })
     }
 }
 
 pub struct PluginProcess {
-    plugin_id: String,
     client: ProtocolClient<ProviderRpcClient>,
+    shared: Arc<RpcShared>,
     control: mpsc::Sender<ProcessCommand>,
     exit: watch::Receiver<Option<PluginProcessExit>>,
-    diagnostics: PluginProcessDiagnostics,
+    diagnostics: Arc<StdMutex<VecDeque<StderrDiagnostic>>>,
+    shutdown_gate: Mutex<()>,
     options: PluginProcessOptions,
 }
 
@@ -281,118 +419,151 @@ impl PluginProcess {
         })?;
 
         let (writer_sender, writer_receiver) = mpsc::channel(options.outbound_capacity.max(1));
-        let (inbound_sender, _) = broadcast::channel(options.inbound_capacity.max(1));
+        let (inbound_sender, inbound_receiver) = mpsc::channel(options.inbound_capacity.max(1));
         let (control_sender, control_receiver) = mpsc::channel(4);
         let (exit_sender, exit_receiver) = watch::channel(None);
-        let diagnostics = PluginProcessDiagnostics {
-            inner: Arc::new(StdMutex::new(VecDeque::with_capacity(
-                options.stderr_history_lines.max(1),
-            ))),
-        };
+        let diagnostics = Arc::new(StdMutex::new(VecDeque::with_capacity(
+            options.stderr_history_lines.max(1),
+        )));
         let shared = Arc::new(RpcShared {
             codec,
-            writer: writer_sender,
-            pending: Mutex::new(HashMap::new()),
-            inbound: inbound_sender,
+            writer: StdMutex::new(Some(writer_sender)),
+            pending: StdMutex::new(HashMap::new()),
+            inbound: StdMutex::new(Some(inbound_sender)),
             next_request_id: AtomicU64::new(1),
             request_timeout: options.request_timeout,
-            closed: AtomicBool::new(false),
+            shutting_down: AtomicBool::new(false),
             close_error: StdMutex::new(None),
         });
 
-        tokio::spawn(writer_loop(
+        let writer = spawn_tracked(writer_loop(
             stdin,
             writer_receiver,
-            shared.clone(),
+            Arc::downgrade(&shared),
             control_sender.clone(),
         ));
-        tokio::spawn(reader_loop(
+        let reader = spawn_tracked(reader_loop(
             stdout,
             shared.clone(),
             control_sender.clone(),
         ));
-        tokio::spawn(stderr_loop(
+        let stderr = spawn_tracked(stderr_loop(
             stderr,
-            diagnostics.inner.clone(),
+            diagnostics.clone(),
             options.stderr_line_bytes.max(1),
             options.stderr_history_lines.max(1),
         ));
-        tokio::spawn(process_monitor(
+        spawn_tracked(process_monitor(
             child,
             control_receiver,
             exit_sender,
             shared.clone(),
+            writer,
+            reader,
+            stderr,
+            options.shutdown_timeout,
         ));
 
         Ok(Self {
-            plugin_id: descriptor.plugin_id.clone(),
-            client: ProtocolClient::new(ProviderRpcClient::new(shared)),
+            client: ProtocolClient::new(ProviderRpcClient::new(
+                shared.clone(),
+                inbound_receiver,
+            )),
+            shared,
             control: control_sender,
             exit: exit_receiver,
             diagnostics,
+            shutdown_gate: Mutex::new(()),
             options,
         })
-    }
-
-    pub fn plugin_id(&self) -> &str {
-        &self.plugin_id
     }
 
     pub fn client(&self) -> &ProtocolClient<ProviderRpcClient> {
         &self.client
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<ProviderWireMessage> {
-        self.client.transport().subscribe()
-    }
-
     pub fn exit_receiver(&self) -> watch::Receiver<Option<PluginProcessExit>> {
         self.exit.clone()
     }
 
-    pub fn exit_status(&self) -> Option<PluginProcessExit> {
+    pub async fn take_inbound(
+        &self,
+    ) -> HostResult<mpsc::Receiver<ProviderWireMessage>> {
+        self.client
+            .transport()
+            .take_inbound()
+            .await
+            .map_err(HostError::from)
+    }
+
+    fn exit_status(&self) -> Option<PluginProcessExit> {
         self.exit.borrow().clone()
     }
 
     pub fn stderr_diagnostics(&self) -> Vec<StderrDiagnostic> {
-        self.diagnostics.snapshot()
+        self.diagnostics
+            .lock()
+            .map(|diagnostics| diagnostics.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
-    pub fn diagnostics(&self) -> PluginProcessDiagnostics {
+    pub(crate) fn diagnostics_handle(
+        &self,
+    ) -> Arc<StdMutex<VecDeque<StderrDiagnostic>>> {
         self.diagnostics.clone()
     }
 
     pub async fn shutdown(&self) -> HostResult<PluginProcessExit> {
+        let _shutdown = self.shutdown_gate.lock().await;
         if let Some(exit) = self.exit_status() {
             return Ok(exit);
         }
-        let shutdown_result = match self
-            .client
-            .provider_shutdown(ProviderShutdownRequest {})
-            .await
-        {
-            Ok(response) if response.accepted => Ok(()),
-            Ok(_) => Err(HostError::new(
-                "provider_shutdown_declined",
-                "Provider declined the shutdown request",
-            )),
-            Err(error) => Err(HostError::from(error)),
+        let deadline = Instant::now() + self.options.shutdown_timeout;
+        let shutdown_error = protocol_error(
+            "provider_shutting_down",
+            "Provider process is shutting down",
+            true,
+        );
+        let first = self.shared.begin_shutdown(shutdown_error);
+        let shutdown_result = if first {
+            match self.client.transport().provider_shutdown_until(deadline).await {
+                Ok(response) if response.accepted => Ok(()),
+                Ok(_) => Err(HostError::new(
+                    "provider_shutdown_declined",
+                    "Provider declined the shutdown request",
+                )),
+                Err(error) => Err(HostError::from(error)),
+            }
+        } else {
+            Ok(())
         };
-        let _ = self.client.transport().close_writer().await;
-        if let Some(exit) = wait_for_exit(&self.exit, self.options.shutdown_timeout).await {
+        let _ = self.shared.close_writer(deadline).await;
+        if let Some(exit) = wait_for_exit_until(&self.exit, deadline).await {
             shutdown_result?;
             return Ok(exit);
         }
-        let exit = self.kill("Provider did not exit after shutdown response").await?;
+        let exit = self
+            .kill_now("Provider did not exit before the configured shutdown timeout")
+            .await?;
         shutdown_result?;
         Ok(exit)
     }
 
     pub async fn kill(&self, reason: impl Into<String>) -> HostResult<PluginProcessExit> {
-        let reason = reason.into();
+        let _shutdown = self.shutdown_gate.lock().await;
         if let Some(exit) = self.exit_status() {
             return Ok(exit);
         }
+        self.kill_now(reason.into()).await
+    }
+
+    async fn kill_now(&self, reason: impl Into<String>) -> HostResult<PluginProcessExit> {
+        let reason = reason.into();
+        self.shared.terminate(protocol_error(
+            "provider_process_killed",
+            reason.clone(),
+            true,
+        ));
         if self
             .control
             .send(ProcessCommand::Kill { reason })
@@ -421,6 +592,11 @@ impl PluginProcess {
 
 impl Drop for PluginProcess {
     fn drop(&mut self) {
+        self.shared.terminate(protocol_error(
+            "provider_process_dropped",
+            "Provider process handle dropped",
+            true,
+        ));
         let _ = self.control.try_send(ProcessCommand::Kill {
             reason: "Provider process handle dropped".to_string(),
         });
@@ -430,7 +606,7 @@ impl Drop for PluginProcess {
 async fn writer_loop(
     mut stdin: ChildStdin,
     mut receiver: mpsc::Receiver<WriterCommand>,
-    shared: Arc<RpcShared>,
+    shared: Weak<RpcShared>,
     control: mpsc::Sender<ProcessCommand>,
 ) {
     while let Some(command) = receiver.recv().await {
@@ -442,31 +618,42 @@ async fn writer_loop(
             .await,
             WriterCommand::Close => {
                 let result = stdin.shutdown().await;
-                if result.is_err() {
-                    let _ = control
-                        .send(ProcessCommand::Kill {
-                            reason: "failed to close Provider stdin".to_string(),
-                        })
-                        .await;
+                if let Err(error) = result {
+                    if let Some(shared) = shared.upgrade() {
+                        let failure = protocol_error(
+                            "provider_stdin_close_failed",
+                            format!("close Provider stdin: {error}"),
+                            true,
+                        );
+                        shared.terminate(failure.clone());
+                        let _ = control
+                            .send(ProcessCommand::Kill {
+                                reason: failure.message,
+                            })
+                            .await;
+                    }
                 }
                 return;
             }
         };
         if let Err(error) = result {
-            let protocol_error = protocol_error(
-                "provider_stdin_write_failed",
-                format!("write Provider stdin: {error}"),
-                true,
-            );
-            shared.close(protocol_error.clone()).await;
-            let _ = control
-                .send(ProcessCommand::Kill {
-                    reason: protocol_error.message,
-                })
-                .await;
+            if let Some(shared) = shared.upgrade() {
+                let failure = protocol_error(
+                    "provider_stdin_write_failed",
+                    format!("write Provider stdin: {error}"),
+                    true,
+                );
+                shared.terminate(failure.clone());
+                let _ = control
+                    .send(ProcessCommand::Kill {
+                        reason: failure.message,
+                    })
+                    .await;
+            }
             return;
         }
     }
+    let _ = stdin.shutdown().await;
 }
 
 async fn reader_loop(
@@ -484,95 +671,103 @@ async fn reader_loop(
         .await
         {
             Ok(Some(frame)) => frame,
+            Ok(None) if shared.is_shutting_down() => return,
             Ok(None) => {
-                let error = protocol_error(
-                    "provider_stdout_eof",
-                    "Provider stdout reached EOF",
-                    true,
-                );
-                shared.close(error.clone()).await;
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    let _ = control
-                        .send(ProcessCommand::Kill {
-                            reason: error.message,
-                        })
-                        .await;
-                });
+                fail_transport(
+                    &shared,
+                    &control,
+                    protocol_error(
+                        "provider_stdout_eof",
+                        "Provider stdout reached EOF",
+                        true,
+                    ),
+                )
+                .await;
                 return;
             }
             Err(error) => {
-                shared.close(error.clone()).await;
-                let _ = control
-                    .send(ProcessCommand::Kill {
-                        reason: error.message,
-                    })
-                    .await;
+                fail_transport(&shared, &control, error).await;
                 return;
             }
         };
         let message = match shared.codec.decode_line(&frame) {
             Ok(message) => message,
             Err(error) => {
-                let error = inbound_error_to_protocol(error);
-                shared.close(error.clone()).await;
-                let _ = control
-                    .send(ProcessCommand::Kill {
-                        reason: error.message,
-                    })
-                    .await;
+                fail_transport(&shared, &control, inbound_error_to_protocol(error)).await;
                 return;
             }
         };
         match message {
             ProviderWireMessage::Response(response) => {
                 let Some(id) = response.id else {
-                    let error = protocol_error(
-                        "provider_response_missing_id",
-                        "Provider response did not contain a request id",
-                        false,
-                    );
-                    shared.close(error.clone()).await;
-                    let _ = control
-                        .send(ProcessCommand::Kill {
-                            reason: error.message,
-                        })
-                        .await;
+                    fail_transport(
+                        &shared,
+                        &control,
+                        protocol_error(
+                            "provider_response_missing_id",
+                            "Provider response did not contain a request id",
+                            false,
+                        ),
+                    )
+                    .await;
                     return;
                 };
-                let sender = shared.pending.lock().await.remove(&id);
-                if let Some(sender) = sender {
+                if let Some(sender) = shared.take_pending(&id) {
                     let result = match response.response {
                         JsonRpcResponsePayload::Ok { result } => Ok(result),
-                        JsonRpcResponsePayload::Error { error } => Err(rpc_error_to_protocol(error)),
+                        JsonRpcResponsePayload::Error { error } => {
+                            Err(rpc_error_to_protocol(error))
+                        }
                     };
                     let _ = sender.send(result);
                 }
             }
             ProviderWireMessage::Event(event) => {
-                let _ = shared.inbound.send(ProviderWireMessage::Event(event));
+                if let Err(error) = shared.send_inbound(ProviderWireMessage::Event(event)) {
+                    if !shared.is_shutting_down() {
+                        fail_transport(&shared, &control, error).await;
+                    }
+                    return;
+                }
             }
             ProviderWireMessage::Notification(notification) => {
-                let _ = shared
-                    .inbound
-                    .send(ProviderWireMessage::Notification(notification));
+                if let Err(error) = shared
+                    .send_inbound(ProviderWireMessage::Notification(notification))
+                {
+                    if !shared.is_shutting_down() {
+                        fail_transport(&shared, &control, error).await;
+                    }
+                    return;
+                }
             }
             ProviderWireMessage::Request(_) => {
-                let error = protocol_error(
-                    "unexpected_provider_request",
-                    "Provider sent a host-to-plugin request on stdout",
-                    false,
-                );
-                shared.close(error.clone()).await;
-                let _ = control
-                    .send(ProcessCommand::Kill {
-                        reason: error.message,
-                    })
-                    .await;
+                fail_transport(
+                    &shared,
+                    &control,
+                    protocol_error(
+                        "unexpected_provider_request",
+                        "Provider sent a host-to-plugin request on stdout",
+                        false,
+                    ),
+                )
+                .await;
                 return;
             }
         }
     }
+}
+
+async fn fail_transport(
+    shared: &RpcShared,
+    control: &mpsc::Sender<ProcessCommand>,
+    error: ProtocolError,
+) {
+    shared.terminate(error.clone());
+    let _ = control
+        .send(ProcessCommand::Kill {
+            reason: error.message,
+        })
+        .await;
 }
 
 async fn stderr_loop(
@@ -601,6 +796,10 @@ async fn process_monitor(
     mut control: mpsc::Receiver<ProcessCommand>,
     exit_sender: watch::Sender<Option<PluginProcessExit>>,
     shared: Arc<RpcShared>,
+    writer: JoinHandle<()>,
+    reader: JoinHandle<()>,
+    stderr: JoinHandle<()>,
+    drain_timeout: Duration,
 ) {
     let exit = tokio::select! {
         status = child.wait() => match status {
@@ -643,21 +842,48 @@ async fn process_monitor(
             }
         },
     };
-    shared
-        .close(protocol_error(
-            "provider_process_exited",
-            exit.reason
-                .clone()
-                .unwrap_or_else(|| "Provider process exited".to_string()),
-            !exit.success,
-        ))
-        .await;
+    shared.terminate(protocol_error(
+        "provider_process_exited",
+        exit.reason
+            .clone()
+            .unwrap_or_else(|| "Provider process exited".to_string()),
+        true,
+    ));
+    drain_io_tasks(writer, reader, stderr, drain_timeout).await;
     let _ = exit_sender.send(Some(exit));
+}
+
+async fn drain_io_tasks(
+    writer: JoinHandle<()>,
+    reader: JoinHandle<()>,
+    stderr: JoinHandle<()>,
+    timeout: Duration,
+) {
+    let deadline = Instant::now() + timeout;
+    tokio::join!(
+        drain_task(writer, deadline),
+        drain_task(reader, deadline),
+        drain_task(stderr, deadline),
+    );
+}
+
+async fn drain_task(mut task: JoinHandle<()>, deadline: Instant) {
+    if tokio::time::timeout_at(deadline, &mut task).await.is_err() {
+        task.abort();
+        let _ = task.await;
+    }
 }
 
 async fn wait_for_exit(
     receiver: &watch::Receiver<Option<PluginProcessExit>>,
     timeout: Duration,
+) -> Option<PluginProcessExit> {
+    wait_for_exit_until(receiver, Instant::now() + timeout).await
+}
+
+async fn wait_for_exit_until(
+    receiver: &watch::Receiver<Option<PluginProcessExit>>,
+    deadline: Instant,
 ) -> Option<PluginProcessExit> {
     if let Some(exit) = receiver.borrow().clone() {
         return Some(exit);
@@ -673,7 +899,7 @@ async fn wait_for_exit(
             }
         }
     };
-    tokio::time::timeout(timeout, wait).await.ok().flatten()
+    tokio::time::timeout_at(deadline, wait).await.ok().flatten()
 }
 
 async fn read_bounded_frame<R: AsyncBufRead + Unpin>(
@@ -763,104 +989,6 @@ async fn read_diagnostic_line<R: AsyncBufRead + Unpin>(
     }
 }
 
-fn typed_request(
-    method: ProtocolMethod,
-    id: RequestId,
-    params: Value,
-) -> Result<ProtocolRequest, ProtocolError> {
-    let jsonrpc = "2.0".to_string();
-    match method {
-        ProtocolMethod::ProviderInitialize => Ok(ProtocolRequest::ProviderInitialize {
-            jsonrpc,
-            id,
-            params: decode_params(method, params)?,
-        }),
-        ProtocolMethod::ProviderDescribe => Ok(ProtocolRequest::ProviderDescribe {
-            jsonrpc,
-            id,
-            params: decode_params::<ProviderDescribeRequest>(method, params)?,
-        }),
-        ProtocolMethod::InstanceCreate => Ok(ProtocolRequest::InstanceCreate {
-            jsonrpc,
-            id,
-            params: decode_params::<InstanceCreateRequest>(method, params)?,
-        }),
-        ProtocolMethod::InstanceStart => Ok(ProtocolRequest::InstanceStart {
-            jsonrpc,
-            id,
-            params: decode_params::<InstanceStartRequest>(method, params)?,
-        }),
-        ProtocolMethod::InstanceStop => Ok(ProtocolRequest::InstanceStop {
-            jsonrpc,
-            id,
-            params: decode_params::<InstanceStopRequest>(method, params)?,
-        }),
-        ProtocolMethod::InstanceDestroy => Ok(ProtocolRequest::InstanceDestroy {
-            jsonrpc,
-            id,
-            params: decode_params::<InstanceDestroyRequest>(method, params)?,
-        }),
-        ProtocolMethod::InstanceCapabilities => Ok(ProtocolRequest::InstanceCapabilities {
-            jsonrpc,
-            id,
-            params: decode_params::<InstanceCapabilitiesRequest>(method, params)?,
-        }),
-        ProtocolMethod::ConversationList => Ok(ProtocolRequest::ConversationList {
-            jsonrpc,
-            id,
-            params: decode_params::<ConversationListRequest>(method, params)?,
-        }),
-        ProtocolMethod::ConversationGet => Ok(ProtocolRequest::ConversationGet {
-            jsonrpc,
-            id,
-            params: decode_params::<ConversationGetRequest>(method, params)?,
-        }),
-        ProtocolMethod::ConversationCreate => Ok(ProtocolRequest::ConversationCreate {
-            jsonrpc,
-            id,
-            params: decode_params::<ConversationCreateRequest>(method, params)?,
-        }),
-        ProtocolMethod::TurnStart => Ok(ProtocolRequest::TurnStart {
-            jsonrpc,
-            id,
-            params: decode_params::<TurnStartRequest>(method, params)?,
-        }),
-        ProtocolMethod::TurnSteer => Ok(ProtocolRequest::TurnSteer {
-            jsonrpc,
-            id,
-            params: decode_params::<TurnSteerRequest>(method, params)?,
-        }),
-        ProtocolMethod::TurnInterrupt => Ok(ProtocolRequest::TurnInterrupt {
-            jsonrpc,
-            id,
-            params: decode_params::<TurnInterruptRequest>(method, params)?,
-        }),
-        ProtocolMethod::ApprovalResolve => Ok(ProtocolRequest::ApprovalResolve {
-            jsonrpc,
-            id,
-            params: decode_params::<ApprovalResolveRequest>(method, params)?,
-        }),
-        ProtocolMethod::ProviderShutdown => Ok(ProtocolRequest::ProviderShutdown {
-            jsonrpc,
-            id,
-            params: decode_params::<ProviderShutdownRequest>(method, params)?,
-        }),
-    }
-}
-
-fn decode_params<T: DeserializeOwned>(
-    method: ProtocolMethod,
-    params: Value,
-) -> Result<T, ProtocolError> {
-    serde_json::from_value(params).map_err(|error| {
-        protocol_error(
-            "provider_request_encode_failed",
-            format!("encode {} request params: {error}", method.as_str()),
-            false,
-        )
-    })
-}
-
 fn inbound_error_to_protocol(error: JsonRpcInboundError) -> ProtocolError {
     let mut details = error.error.data.unwrap_or_default();
     if let Some(id) = error.id {
@@ -905,8 +1033,14 @@ fn rpc_error_to_protocol(error: RpcError) -> ProtocolError {
 
 fn request_timeout_error(method: ProtocolMethod, request_id: &str, stage: &str) -> ProtocolError {
     let mut details = BTreeMap::new();
-    details.insert("method".to_string(), Value::String(method.as_str().to_string()));
-    details.insert("requestId".to_string(), Value::String(request_id.to_string()));
+    details.insert(
+        "method".to_string(),
+        Value::String(method.as_str().to_string()),
+    );
+    details.insert(
+        "requestId".to_string(),
+        Value::String(request_id.to_string()),
+    );
     details.insert("stage".to_string(), Value::String(stage.to_string()));
     ProtocolError {
         code: "provider_request_timeout".to_string(),
@@ -947,4 +1081,133 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+static ACTIVE_PROCESS_TASKS: AtomicUsize = AtomicUsize::new(0);
+
+fn spawn_tracked<F>(future: F) -> JoinHandle<()>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    tokio::spawn(async move {
+        #[cfg(test)]
+        let _task = ActiveProcessTask::new();
+        future.await;
+    })
+}
+
+#[cfg(test)]
+struct ActiveProcessTask;
+
+#[cfg(test)]
+impl ActiveProcessTask {
+    fn new() -> Self {
+        ACTIVE_PROCESS_TASKS.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for ActiveProcessTask {
+    fn drop(&mut self) {
+        ACTIVE_PROCESS_TASKS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::{PluginProcess, PluginProcessOptions, ACTIVE_PROCESS_TASKS};
+    use crate::PluginDescriptor;
+    use codepet_provider_sdk::ProviderDescribeRequest;
+    use std::collections::BTreeMap;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn open_file_descriptors() -> usize {
+        std::fs::read_dir("/dev/fd")
+            .map(|entries| entries.filter_map(Result::ok).count())
+            .unwrap_or(0)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn repeated_protocol_failures_release_tasks_handles_and_pipes() {
+        let baseline_tasks = ACTIVE_PROCESS_TASKS.load(Ordering::SeqCst);
+        let baseline_fds = open_file_descriptors();
+        for index in 0..12 {
+            let descriptor = PluginDescriptor {
+                plugin_id: format!("dev.codepet.failure-{index}"),
+                display_name: "Failure fixture".to_string(),
+                executable: "/bin/sh".into(),
+                args: vec![
+                    "-c".to_string(),
+                    "IFS= read -r request; printf '{malformed-json}\\n'".to_string(),
+                ],
+                env: BTreeMap::new(),
+                enabled: true,
+                instances: Vec::new(),
+            };
+            let process = Arc::new(
+                PluginProcess::spawn(
+                    &descriptor,
+                    PluginProcessOptions {
+                        request_timeout: Duration::from_millis(500),
+                        shutdown_timeout: Duration::from_millis(500),
+                        ..PluginProcessOptions::default()
+                    },
+                )
+                .await
+                .unwrap(),
+            );
+            let process_weak = Arc::downgrade(&process);
+            let shared_weak = Arc::downgrade(&process.shared);
+            let error = process
+                .client()
+                .provider_describe(ProviderDescribeRequest {})
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "provider_invalid_frame");
+            let mut exit = process.exit_receiver();
+            while exit.borrow().is_none() {
+                exit.changed().await.unwrap();
+            }
+            drop(process);
+            tokio::task::yield_now().await;
+            assert!(process_weak.upgrade().is_none());
+            assert!(shared_weak.upgrade().is_none());
+        }
+
+        let descriptor = PluginDescriptor {
+            plugin_id: "dev.codepet.drop-failure".to_string(),
+            display_name: "Drop fixture".to_string(),
+            executable: "/bin/sh".into(),
+            args: vec!["-c".to_string(), "IFS= read -r request".to_string()],
+            env: BTreeMap::new(),
+            enabled: true,
+            instances: Vec::new(),
+        };
+        let process = PluginProcess::spawn(
+            &descriptor,
+            PluginProcessOptions {
+                shutdown_timeout: Duration::from_millis(500),
+                ..PluginProcessOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+        let dropped_shared = Arc::downgrade(&process.shared);
+        drop(process);
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while ACTIVE_PROCESS_TASKS.load(Ordering::SeqCst) != baseline_tasks
+                || dropped_shared.upgrade().is_some()
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(open_file_descriptors() <= baseline_fds.saturating_add(2));
+    }
 }

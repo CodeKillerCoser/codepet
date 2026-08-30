@@ -49,7 +49,7 @@ use runtime_gateway::tauri_bridge::{
     codex_desktop_companion_snapshot,
     runtime_gateway_replay, runtime_gateway_request,
     start_codex_desktop_companion_event_bridge, start_runtime_gateway_event_bridge,
-    CodexDesktopCompanionState, RuntimeGatewayState,
+    CodexDesktopCompanionState, ProviderHostState, RuntimeGatewayState,
 };
 use std::str::FromStr;
 use tauri::menu::{Menu, MenuItem};
@@ -185,13 +185,31 @@ fn get_app_settings() -> Result<AppSettings, String> {
 }
 
 #[tauri::command]
-fn update_app_settings(app: AppHandle, mut settings: AppSettings) -> Result<AppSettings, String> {
-    // Runtime paths are executable inputs and may only change through the validating runtime API.
-    settings.agent_runtimes = load_app_settings()
-        .map_err(|error| error.to_string())?
-        .agent_runtimes;
+fn update_app_settings(
+    app: AppHandle,
+    settings: serde_json::Value,
+) -> Result<AppSettings, String> {
+    let current = load_app_settings().map_err(|error| error.to_string())?;
+    let settings = merge_app_settings_update(settings, current)?;
     save_app_settings(&settings).map_err(|error| error.to_string())?;
     let _ = app.emit("settings-updated", settings.clone());
+    Ok(settings)
+}
+
+fn merge_app_settings_update(
+    value: serde_json::Value,
+    current: AppSettings,
+) -> Result<AppSettings, String> {
+    let provider_plugins_present = value
+        .as_object()
+        .is_some_and(|settings| settings.contains_key("providerPlugins"));
+    let mut settings: AppSettings =
+        serde_json::from_value(value).map_err(|error| error.to_string())?;
+    // Runtime paths are executable inputs and may only change through the validating runtime API.
+    settings.agent_runtimes = current.agent_runtimes;
+    if !provider_plugins_present {
+        settings.provider_plugins = current.provider_plugins;
+    }
     Ok(settings)
 }
 
@@ -397,6 +415,7 @@ pub fn run() {
         RuntimeGatewayState::with_thread_scope(codex_thread_scope.clone());
     let desktop_companion_state =
         CodexDesktopCompanionState::with_thread_scope(codex_thread_scope);
+    let provider_host_state = ProviderHostState::default();
     runtime_gateway_state.refresh_codex_remote_provider_in_background();
 
     let builder = tauri::Builder::default()
@@ -420,6 +439,7 @@ pub fn run() {
         .manage(AgentRuntimeService::default())
         .manage(runtime_gateway_state)
         .manage(desktop_companion_state)
+        .manage(provider_host_state)
         .setup(|app| {
             let setup_span = app_log::PerfSpan::start("startup.total");
             app_log::info("startup", "setup started");
@@ -432,7 +452,7 @@ pub fn run() {
                     &format!("failed to start remote gateway local event bridge error={error:?}"),
                 );
             }
-            runtime_gateway_state.start_provider_plugins_in_background();
+            app.state::<ProviderHostState>().start_in_background();
             let desktop_companion_state = app.state::<CodexDesktopCompanionState>().inner().clone();
             if let Err(error) = start_codex_desktop_companion_event_bridge(handle.clone(), &desktop_companion_state) {
                 app_log::error(
@@ -496,7 +516,7 @@ pub fn run() {
                 if let Err(error) = collector::run_collector(collector_state, collector_handle.clone()).await {
                     crate::app_log::error("collector", &format!("collector exited error={error}"));
                     let _ = collector_handle.emit("collector-error", error.to_string());
-                    collector_handle.exit(1);
+                    request_app_exit(&collector_handle, 1);
                 }
             });
             app_log::info("startup", "setup finished");
@@ -563,7 +583,7 @@ fn install_tray_icon(app: &AppHandle) -> Result<(), String> {
             if event.id() == TRAY_MENU_OPEN {
                 let _ = open_main_window(app.clone());
             } else if event.id() == TRAY_MENU_QUIT {
-                app.exit(0);
+                request_app_exit(app, 0);
             }
         })
         .on_tray_icon_event(|tray, event| {
@@ -608,21 +628,47 @@ fn configure_pet_overlay_window(app: &AppHandle) {
 #[cfg(not(target_os = "macos"))]
 fn configure_pet_overlay_window(_app: &AppHandle) {}
 
-#[cfg(target_os = "macos")]
 fn handle_run_event(app: &AppHandle, event: tauri::RunEvent) {
+    #[cfg(target_os = "macos")]
     if let tauri::RunEvent::Reopen {
         has_visible_windows,
         ..
-    } = event
+    } = &event
     {
-        if should_restore_main_on_reopen(has_visible_windows) {
+        if should_restore_main_on_reopen(*has_visible_windows) {
             let _ = open_main_window(app.clone());
         }
     }
+
+    match event {
+        tauri::RunEvent::ExitRequested { code, api, .. } => {
+            let provider_host = app.state::<ProviderHostState>().inner().clone();
+            if provider_host.shutdown_completed() {
+                return;
+            }
+            api.prevent_exit();
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if provider_host.shutdown_once().await {
+                    request_app_exit(&app, code.unwrap_or(0));
+                }
+            });
+        }
+        tauri::RunEvent::Exit => {
+            let provider_host = app.state::<ProviderHostState>().inner().clone();
+            if !provider_host.shutdown_completed() {
+                tauri::async_runtime::block_on(async move {
+                    provider_host.shutdown_once().await;
+                });
+            }
+        }
+        _ => {}
+    }
 }
 
-#[cfg(not(target_os = "macos"))]
-fn handle_run_event(_app: &AppHandle, _event: tauri::RunEvent) {}
+fn request_app_exit(app: &AppHandle, code: i32) {
+    app.exit(code);
+}
 
 #[cfg(any(target_os = "macos", test))]
 fn should_restore_main_on_reopen(_has_visible_windows: bool) -> bool {
@@ -641,11 +687,30 @@ fn raise_existing_windows(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::should_restore_main_on_reopen;
+    use super::{merge_app_settings_update, should_restore_main_on_reopen};
+    use crate::settings::AppSettings;
 
     #[test]
     fn dock_reopen_restores_main_even_when_pet_window_is_visible() {
         assert!(should_restore_main_on_reopen(false));
         assert!(should_restore_main_on_reopen(true));
+    }
+
+    #[test]
+    fn settings_update_preserves_missing_provider_plugins_and_clears_explicit_empty() {
+        let mut current = AppSettings::default();
+        current.provider_plugins.directories = vec!["/configured/providers".to_string()];
+        let missing = merge_app_settings_update(serde_json::json!({}), current.clone()).unwrap();
+        assert_eq!(
+            missing.provider_plugins.directories,
+            vec!["/configured/providers"]
+        );
+
+        let cleared = merge_app_settings_update(
+            serde_json::json!({ "providerPlugins": { "directories": [] } }),
+            current,
+        )
+        .unwrap();
+        assert!(cleared.provider_plugins.directories.is_empty());
     }
 }

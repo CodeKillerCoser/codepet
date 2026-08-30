@@ -716,7 +716,7 @@
       },
     };
     nextSettings.providerPlugins = {
-      directories: [...(nextSettings.providerPlugins?.directories ?? [])],
+      directories: [...nextSettings.providerPlugins.directories],
     };
     nextSettings.updates = {
       ignoredVersion: nextSettings.updates?.ignoredVersion ?? null,

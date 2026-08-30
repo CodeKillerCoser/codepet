@@ -1,5 +1,5 @@
 use crate::manager::{
-    ManagerEvent, PluginManager, PluginRuntimeSnapshot, PluginRuntimeState,
+    HostUpdate, PluginManager, PluginRuntimeSnapshot, PluginRuntimeState,
     ProviderInstanceRuntimeSnapshot,
 };
 use crate::{HostError, HostResult};
@@ -10,9 +10,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
-const DEFAULT_GATEWAY_EVENT_CAPACITY: usize = 256;
 const EVENT_CURSOR_PREFIX: &str = "event-";
 
 struct GatewayEventState {
@@ -170,28 +169,24 @@ impl GatewayEventSubscription {
 pub struct ProviderGatewayService {
     manager: Arc<PluginManager>,
     events: Arc<GatewayEventBus>,
+    updates: Mutex<Option<mpsc::Receiver<HostUpdate>>>,
     forwarding_started: AtomicBool,
     server_name: String,
     server_version: String,
 }
 
 impl ProviderGatewayService {
-    pub fn new(manager: Arc<PluginManager>) -> Self {
-        Self::with_event_capacity(manager, DEFAULT_GATEWAY_EVENT_CAPACITY)
-    }
-
-    pub fn with_event_capacity(manager: Arc<PluginManager>, event_capacity: usize) -> Self {
-        Self {
+    pub fn new(manager: Arc<PluginManager>) -> HostResult<Self> {
+        let event_capacity = manager.event_capacity().max(1);
+        let updates = manager.take_updates()?;
+        Ok(Self {
             manager,
             events: Arc::new(GatewayEventBus::new(event_capacity)),
+            updates: Mutex::new(Some(updates)),
             forwarding_started: AtomicBool::new(false),
             server_name: "codepet-provider-gateway".to_string(),
             server_version: env!("CARGO_PKG_VERSION").to_string(),
-        }
-    }
-
-    pub fn manager(&self) -> &Arc<PluginManager> {
-        &self.manager
+        })
     }
 
     pub fn current_event_cursor(&self) -> gateway::EventCursor {
@@ -220,82 +215,91 @@ impl ProviderGatewayService {
         {
             return false;
         }
-        let mut manager_events = self.manager.subscribe();
+        let mut updates = match self.updates.lock() {
+            Ok(mut updates) => match updates.take() {
+                Some(updates) => updates,
+                None => return false,
+            },
+            Err(_) => return false,
+        };
         let service = Arc::downgrade(self);
         tokio::spawn(async move {
-            loop {
-                match manager_events.recv().await {
-                    Ok(event) => {
-                        let Some(service) = service.upgrade() else {
-                            return;
-                        };
-                        service.forward_manager_event(event).await;
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => return,
+            while let Some(update) = updates.recv().await {
+                let Some(service) = service.upgrade() else {
+                    return;
+                };
+                if let Err(error) = service.forward_host_update(update) {
+                    eprintln!("Provider Gateway failed to forward Host update: {error:?}");
                 }
             }
         });
         true
     }
 
-    async fn forward_manager_event(&self, event: ManagerEvent) {
-        match event {
-            ManagerEvent::ProviderEvent { plugin_id, event } => {
-                if let Ok(event) = self.map_provider_event(&plugin_id, event).await {
-                    let _ = self.events.publish(event);
-                }
+    fn forward_host_update(
+        &self,
+        update: HostUpdate,
+    ) -> Result<(), gateway::ProtocolError> {
+        match update {
+            HostUpdate::ProviderEvent(event) => {
+                self.events
+                    .publish(self.map_provider_event(event))
+                    ?;
             }
-            ManagerEvent::PluginStateChanged {
+            HostUpdate::PluginStateChanged {
                 snapshot,
                 previous_state,
             } => {
                 for instance in &snapshot.instances {
                     let provider = gateway_instance(&snapshot, instance);
-                    let previous_status = Some(plugin_state_to_gateway_status(previous_state));
-                    let _ = self.events.publish(gateway::ProtocolEvent::ProviderStatusChanged {
+                    let previous_status = Some(provider_runtime_status(
+                        previous_state,
+                        instance.instance.as_ref(),
+                    ));
+                    self.events.publish(gateway::ProtocolEvent::ProviderStatusChanged {
                         protocol_version: gateway::PROTOCOL_VERSION,
                         event_cursor: event_cursor(0),
                         payload: gateway::ProviderStatusChangedEvent {
                             provider,
                             previous_status,
                         },
-                    });
+                    })?;
                 }
             }
-            ManagerEvent::Diagnostic { .. } => {}
-        }
-    }
-
-    async fn map_provider_event(
-        &self,
-        plugin_id: &str,
-        event: provider::ProtocolEvent,
-    ) -> HostResult<gateway::ProtocolEvent> {
-        let mapped = match event {
-            provider::ProtocolEvent::EventInstanceStatusChanged { params, .. } => {
-                let snapshot = self.manager.snapshot(plugin_id).await?;
+            HostUpdate::InstanceChanged {
+                snapshot,
+                instance_id,
+                previous_status,
+            } => {
                 let runtime = snapshot
                     .instances
                     .iter()
-                    .find(|runtime| {
-                        runtime.record.instance_id
-                            == params.instance.route.provider_instance_id
-                    })
+                    .find(|runtime| runtime.record.instance_id == instance_id)
                     .ok_or_else(|| {
-                        HostError::new(
-                            "unknown_provider_instance",
-                            "Provider status event targets an unknown instance",
-                        )
+                        gateway::ProtocolError {
+                            code: "unknown_provider_instance".to_string(),
+                            message: "Provider instance update targets an unknown manifest instance".to_string(),
+                            retryable: false,
+                            details: None,
+                        }
                     })?;
-                gateway::ProtocolEvent::ProviderStatusChanged {
+                self.events.publish(gateway::ProtocolEvent::ProviderStatusChanged {
                     protocol_version: gateway::PROTOCOL_VERSION,
                     event_cursor: event_cursor(0),
                     payload: gateway::ProviderStatusChangedEvent {
                         provider: gateway_instance(&snapshot, runtime),
-                        previous_status: params.previous_status.map(instance_status_to_gateway),
+                        previous_status: previous_status.map(instance_status_to_gateway),
                     },
-                }
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    fn map_provider_event(&self, event: provider::ProtocolEvent) -> gateway::ProtocolEvent {
+        match event {
+            provider::ProtocolEvent::EventInstanceStatusChanged { .. } => {
+                unreachable!("instance status events are converted to one Host state update")
             }
             provider::ProtocolEvent::EventConversationUpserted { params, .. } => {
                 gateway::ProtocolEvent::ConversationUpserted {
@@ -345,8 +349,7 @@ impl ProviderGatewayService {
                     },
                 }
             }
-        };
-        Ok(mapped)
+        }
     }
 
     async fn gateway_instances(
@@ -451,6 +454,15 @@ impl ProtocolServer for ProviderGatewayService {
         request: gateway::ConversationListRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ConversationListResponse> {
         Box::pin(async move {
+            if request.route.is_none() && request.cursor.is_some() {
+                return Err(gateway::ProtocolError {
+                    code: "aggregate_conversation_cursor_unsupported".to_string(),
+                    message: "route-less conversation.list does not support Provider cursors"
+                        .to_string(),
+                    retryable: false,
+                    details: None,
+                });
+            }
             let mut conversations = Vec::new();
             let mut next_cursor = None;
             if let Some(route) = request.route {
@@ -652,23 +664,16 @@ fn provider_runtime_status(
         PluginRuntimeState::Starting => gateway::ProviderStatus::Connecting,
         PluginRuntimeState::Ready => instance
             .map(|instance| instance_status_to_gateway(instance.status))
-            .unwrap_or(gateway::ProviderStatus::Connecting),
-        PluginRuntimeState::Degraded | PluginRuntimeState::Disabled => {
-            gateway::ProviderStatus::Unavailable
-        }
+            .unwrap_or(gateway::ProviderStatus::Unavailable),
+        PluginRuntimeState::Disabled => gateway::ProviderStatus::Unavailable,
         PluginRuntimeState::Crashed => gateway::ProviderStatus::Error,
     }
 }
 
-fn plugin_state_to_gateway_status(state: PluginRuntimeState) -> gateway::ProviderStatus {
-    provider_runtime_status(state, None)
-}
-
 fn instance_status_to_gateway(status: provider::InstanceStatus) -> gateway::ProviderStatus {
     match status {
-        provider::InstanceStatus::Created | provider::InstanceStatus::Stopped => {
-            gateway::ProviderStatus::Disconnected
-        }
+        provider::InstanceStatus::Created => gateway::ProviderStatus::Unavailable,
+        provider::InstanceStatus::Stopped => gateway::ProviderStatus::Disconnected,
         provider::InstanceStatus::Starting | provider::InstanceStatus::Stopping => {
             gateway::ProviderStatus::Connecting
         }
@@ -809,6 +814,8 @@ fn ensure_same_gateway_route(
     left: &gateway::RoutedResourceId,
     right: &gateway::RoutedResourceId,
 ) -> Result<(), gateway::ProtocolError> {
+    validate_gateway_resource(left)?;
+    validate_gateway_resource(right)?;
     if left.device_id == right.device_id
         && left.provider_instance_id == right.provider_instance_id
     {
@@ -820,6 +827,24 @@ fn ensure_same_gateway_route(
         retryable: false,
         details: None,
     })
+}
+
+fn validate_gateway_resource(
+    resource: &gateway::RoutedResourceId,
+) -> Result<(), gateway::ProtocolError> {
+    if resource.device_id.trim().is_empty()
+        || resource.provider_instance_id.trim().is_empty()
+        || resource.native_resource_id.trim().is_empty()
+    {
+        return Err(gateway::ProtocolError {
+            code: "invalid_gateway_resource".to_string(),
+            message: "deviceId, providerInstanceId, and nativeResourceId must not be empty"
+                .to_string(),
+            retryable: false,
+            details: None,
+        });
+    }
+    Ok(())
 }
 
 fn validate_gateway_version_range(
@@ -854,7 +879,7 @@ fn event_cursor(sequence: u64) -> gateway::EventCursor {
     format!("{EVENT_CURSOR_PREFIX}{sequence:020}")
 }
 
-pub fn event_cursor_sequence(cursor: &str) -> Result<u64, gateway::ProtocolError> {
+fn event_cursor_sequence(cursor: &str) -> Result<u64, gateway::ProtocolError> {
     let sequence = cursor
         .strip_prefix(EVENT_CURSOR_PREFIX)
         .and_then(|value| value.parse::<u64>().ok())

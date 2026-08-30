@@ -29,7 +29,10 @@
 
 `providerPlugins.directories` 是 Plugin Catalog 的显式附加目录。相对路径按已解析应用数据目录解析，绝对路径保持不变。Host 始终同时检查该数据目录下的 `provider-plugins/`；设备身份和实例注册分别保存在同一目录下的 `provider-host/device-identity.json` 与 `provider-host/provider-instances.json`。这些记录不进入 pet activity 数据。
 
+`update_app_settings` 在后端接收完整 JSON 值并先检查字段是否出现，再反序列化为 `AppSettings`。`providerPlugins` 缺失表示旧 caller 没有发送该字段，后端保留当前目录；显式发送 `providerPlugins.directories: []` 才表示清空。前端 `AppSettings.providerPlugins` 是必填字段，保存完整设置时总会带上当前值。该区分避免旧前端或局部设置更新误清插件目录。
+
 ## 验证
 
 - 运行 `cargo test --manifest-path src-tauri/Cargo.toml settings`。
+- 运行 `cargo test --manifest-path src-tauri/Cargo.toml --lib settings_update_preserves_missing_provider_plugins_and_clears_explicit_empty`。
 - 运行会构造设置默认值的前端测试，尤其是声音和气泡颜色相关测试。

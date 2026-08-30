@@ -1,10 +1,13 @@
 [package]
 name = "codepet-gateway-sdk"
 version = "0.1.0"
+description = "Generated Rust SDK for the CodePet Runtime Gateway protocol"
+authors = ["Code Pet Contributors"]
+repository = "https://github.com/CodeKillerCoser/codepet"
 edition = "2021"
-publish = false
+exclude = ["tests"]
 
 [dependencies]
-codepet-core-sdk = { path = "../codepet-core-sdk" }
+codepet-core-sdk = { path = "../codepet-core-sdk", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

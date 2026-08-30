@@ -2,11 +2,33 @@ use std::io::Cursor;
 
 use codepet_provider_sdk::{
     decode_request, decode_wire_message, JsonLineCodec, JsonRpcInboundRequest,
-    JsonRpcNotification, ProtocolClient, ProtocolError,
+    JsonRpcNotification, ProtocolClient, ProtocolError, ProtocolRequest,
     ProtocolInboundFuture, ProtocolMethod, ProtocolTransport, ProtocolTransportFuture,
     ProviderWireMessage, JSON_RPC_INVALID_PARAMS, JSON_RPC_INVALID_REQUEST,
     JSON_RPC_METHOD_NOT_FOUND, JSON_RPC_PARSE_ERROR,
 };
+
+#[test]
+fn generated_sdk_builds_a_typed_wire_request_from_method_and_params() {
+    let params = serde_json::json!({
+        "hostClientId": "client-test",
+        "hostDeviceId": "device-test",
+        "hostVersion": "0.1.0",
+        "supportedVersions": { "minVersion": 1, "maxVersion": 1 }
+    });
+    let request = ProtocolRequest::from_method_params(
+        ProtocolMethod::ProviderInitialize,
+        "request-1".to_string(),
+        params,
+    )
+    .unwrap();
+
+    let ProtocolRequest::ProviderInitialize { id, params, .. } = request else {
+        panic!("expected typed initialize request");
+    };
+    assert_eq!(id, "request-1");
+    assert_eq!(params.host_device_id, "device-test");
+}
 
 #[test]
 fn json_line_codec_round_trips_one_bounded_request_frame() {

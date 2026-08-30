@@ -1,6 +1,6 @@
 # Runtime Gateway 与远程控制架构
 
-> 文档状态（2026-08-30）：长期远程设计仍保留。当前 Codex 继续使用隔离双链路：`CodexRemote / AppServer` 提供 compat-v0 远程能力，`CodexDesktopCompanion / IPC` 只驱动桌宠本地投影和面向 Desktop owner 的安全动作。另已新增进程外 Provider Host 与内部 Gateway v1 service；它是第三条隔离边界，尚无网络 listener，也没有迁移 Codex/OpenCode/Claude。三路不得共享 session、registry、event bus、sequence、owner/revision 或 unavailable 状态。
+> 文档状态（2026-08-30）：长期远程设计仍保留。当前 Codex 继续使用隔离双链路：`CodexRemote / AppServer` 提供 compat-v0 远程能力，`CodexDesktopCompanion / IPC` 只驱动桌宠本地投影和面向 Desktop owner 的安全动作。另已新增进程外 Provider Host 与内部 Gateway v1 service；它由并列的 `ProviderHostState` 持有，不再嵌入 compat `RuntimeGatewayState`，尚无网络 listener，也没有迁移 Codex/OpenCode/Claude。三路不得共享 session、registry、event bus、sequence、owner/revision 或 unavailable 状态。
 >
 > 当前事实入口：remote 见 `../30-domains/agent-control/codex-app-server.md`，companion 见 `../30-domains/agent-control/codex-desktop-companion.md`，Provider Host 见 `provider-host-device-and-plugin-runtime.md`；协议现状见 `protocol-layers-and-device-routing.md`、`../../protocol/provider/v1/manifest.json` 和 `../../protocol/gateway/v1/manifest.json`；架构决策见 `../50-decisions/codex-remote-and-desktop-companion-dual-channel.md`。下文的阶段规划和完整能力清单仍包含未实现的长期目标；旧目录、统一 wire envelope、方法名或已生成 Dart 的描述均视为 superseded，不是当前实现证据。
 
@@ -37,7 +37,7 @@ Code Pet 当前是一个面向本机 AI 编程工具的桌面宠物应用。它�
 - 不在本文定义项目排期、人员排班、版本发布日期或商业化部署计划。
 - 不在首轮实现云端模型执行；Provider 运行时和代码工作区仍位于电脑。
 
-## 当前双链路实现
+## 当前三条隔离边界
 
 ```text
 Codex remote client
@@ -52,11 +52,17 @@ PetApp
   → CodexDesktopCompanionState（companion registry/bus/sequence/transport）
   → Desktop IPC adapter
   → ~/.codex/ipc/ipc.sock → Desktop owner
+
+Provider manifest directories
+  → ProviderHostState（独立 Tauri state）
+  → PluginManager → 每插件独立 stdio process
+  → 单消费者 Host update queue
+  → internal ProviderGatewayService v1 replay
 ```
 
 remote App Server 实现 `conversation.list/get/create`、turn start/steer/interrupt、`approval.resolve` 和通知映射。Desktop companion 不广告 list/create，只把已 bootstrap 的本地 thread 投影到桌宠；回复、停止和审批继续使用 generation、owner、revision、request 与 handler 校验。
 
-两条 state 各自持有 Gateway、registry、event bus、replay window 和 LocalTransport。桌宠前端只引用 companion client/event，remote conversation/turn/approval 不能进入 companion transport。`CodexThreadScope` 只共享 remote thread provenance：remote create 期间新 Desktop thread 先隔离，remote notification/response 标记 id 后永久排除；未被标记的并发本地 thread 在 create 结束后重新发布。Hook、audit、transcript 和文件监听不参与 Codex 桌宠数据。
+compat remote 与 companion state 各自持有 Gateway、registry、event bus、replay window 和 LocalTransport。Provider Host 只持有自己的 Manager、进程与 v1 service，compat state 不引用它。桌宠前端只引用 companion client/event，remote 或 Provider conversation/turn/approval 不能进入 companion transport。`CodexThreadScope` 只共享 remote thread provenance：remote create 期间新 Desktop thread 先隔离，remote notification/response 标记 id 后永久排除；未被标记的并发本地 thread 在 create 结束后重新发布。Hook、audit、transcript 和文件监听不参与 Codex 桌宠数据。
 
 当前只有进程内 LocalTransport，尚无 WebSocket/P2P/relay 远程网络实现。App Server 初始化在后台进行且有超时；它 unavailable 不阻塞 Desktop companion，Desktop socket unavailable 也不改变 remote Provider。
 
@@ -272,7 +278,7 @@ manifest 中的方法条目直接引用同层 schema，并以 `capability` 映�
 - TypeScript core 与 compat-v0 类型、discriminated union、typed client 和 event map；
 - Dart/Python 当前只有 planned target adapter entry，显式选择会在写文件前失败，尚无生成包。
 
-Provider Rust SDK 还生成有界 JSON-line framing、统一 request/response/notification/event classifier、标准 JSON-RPC error mapping 与 inbound transport 接口。业务 handler、进程 supervisor、Provider manager 和 UI renderer仍然手写。
+Provider Rust SDK 还生成有界 JSON-line framing、统一 request/response/notification/event classifier、标准 JSON-RPC error mapping、inbound transport 接口与 typed request-to-wire 构造器。业务 handler、进程 supervisor、Provider manager 和 UI renderer 仍属于各自运行时。
 
 ### 跨语言 Schema 约束
 

@@ -20,7 +20,7 @@ pub struct DeviceIdentity {
 }
 
 impl DeviceIdentity {
-    pub fn generate(display_name: impl Into<String>) -> HostResult<Self> {
+    fn generate(display_name: impl Into<String>) -> HostResult<Self> {
         let display_name = display_name.into();
         if display_name.trim().is_empty() {
             return Err(HostError::new(
@@ -64,7 +64,6 @@ pub struct DeviceDiagnostic {
 #[derive(Clone, Debug)]
 pub struct DeviceRegistry {
     identity: DeviceIdentity,
-    path: Option<PathBuf>,
     diagnostics: Vec<DeviceDiagnostic>,
 }
 
@@ -77,7 +76,6 @@ impl DeviceRegistry {
             write_json_atomically(&path, &identity)?;
             return Ok(Self {
                 identity,
-                path: Some(path),
                 diagnostics: Vec::new(),
             });
         }
@@ -85,7 +83,6 @@ impl DeviceRegistry {
         match read_identity(&path) {
             Ok(identity) => Ok(Self {
                 identity,
-                path: Some(path),
                 diagnostics: Vec::new(),
             }),
             Err(error) => {
@@ -94,7 +91,6 @@ impl DeviceRegistry {
                 write_json_atomically(&path, &identity)?;
                 Ok(Self {
                     identity,
-                    path: Some(path.clone()),
                     diagnostics: vec![DeviceDiagnostic {
                         code: "device_identity_rebuilt".to_string(),
                         message: format!(
@@ -108,21 +104,8 @@ impl DeviceRegistry {
         }
     }
 
-    pub fn from_identity(identity: DeviceIdentity) -> HostResult<Self> {
-        identity.validate()?;
-        Ok(Self {
-            identity,
-            path: None,
-            diagnostics: Vec::new(),
-        })
-    }
-
     pub fn identity(&self) -> &DeviceIdentity {
         &self.identity
-    }
-
-    pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
     }
 
     pub fn diagnostics(&self) -> &[DeviceDiagnostic] {

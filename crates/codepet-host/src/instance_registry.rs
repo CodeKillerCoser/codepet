@@ -3,10 +3,9 @@ use crate::persistence::{persistence_io, write_json_atomically};
 use crate::{HostError, HostResult};
 use codepet_provider_sdk::{
     DeviceId, JsonObject, ProviderInstanceId, ProviderInstanceRoute, ProviderPluginId,
-    RoutedResourceId,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -14,9 +13,7 @@ use uuid::Uuid;
 
 const INSTANCE_REGISTRY_VERSION: u32 = 1;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ProviderInstanceRecord {
     pub instance_id: ProviderInstanceId,
     pub plugin_id: ProviderPluginId,
@@ -36,24 +33,35 @@ impl ProviderInstanceRecord {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+struct InstanceIdentity {
+    instance_id: ProviderInstanceId,
+    plugin_id: ProviderPluginId,
+    instance_kind: String,
+    display_name: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 struct InstanceRegistryDocument {
     version: u32,
     device_id: DeviceId,
-    instances: Vec<ProviderInstanceRecord>,
+    instances: Vec<InstanceIdentity>,
 }
 
 #[derive(Clone, Debug, Default)]
 struct InstanceRegistryState {
-    instances: BTreeMap<ProviderInstanceId, ProviderInstanceRecord>,
+    identities: BTreeMap<ProviderInstanceId, InstanceIdentity>,
+    records: BTreeMap<ProviderInstanceId, ProviderInstanceRecord>,
 }
 
 #[derive(Clone, Debug)]
 pub struct ProviderInstanceRegistry {
     device_id: DeviceId,
-    path: Option<PathBuf>,
+    path: PathBuf,
     state: Arc<RwLock<InstanceRegistryState>>,
 }
 
@@ -61,89 +69,129 @@ impl ProviderInstanceRegistry {
     pub fn open(path: impl Into<PathBuf>, device_id: DeviceId) -> HostResult<Self> {
         validate_device_id(&device_id)?;
         let path = path.into();
-        let state = if path.exists() {
+        let identities = if path.exists() {
             load_registry(&path, &device_id)?
         } else {
-            let state = InstanceRegistryState::default();
-            persist_registry(&path, &device_id, &state)?;
-            state
+            let identities = BTreeMap::new();
+            persist_registry(&path, &device_id, &identities)?;
+            identities
         };
         Ok(Self {
             device_id,
-            path: Some(path),
-            state: Arc::new(RwLock::new(state)),
+            path,
+            state: Arc::new(RwLock::new(InstanceRegistryState {
+                identities,
+                records: BTreeMap::new(),
+            })),
         })
     }
 
-    pub fn in_memory(device_id: DeviceId) -> HostResult<Self> {
-        validate_device_id(&device_id)?;
-        Ok(Self {
-            device_id,
-            path: None,
-            state: Arc::new(RwLock::new(InstanceRegistryState::default())),
-        })
-    }
-
-    pub fn device_id(&self) -> &str {
+    pub(crate) fn device_id(&self) -> &str {
         &self.device_id
     }
 
-    pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
-    }
-
-    pub fn synchronize_catalog(&self, catalog: &PluginCatalog) -> HostResult<Vec<ProviderInstanceRecord>> {
-        let mut synchronized = self.mutate(|next| {
-            let mut synchronized = Vec::new();
-            for descriptor in catalog.descriptors() {
-                for config in &descriptor.instances {
-                    let record = synchronize_instance(
-                        next,
-                        &self.device_id,
-                        &descriptor.plugin_id,
-                        config,
-                    )?;
-                    synchronized.push(record);
-                }
-            }
-            Ok(synchronized)
-        })?;
-        synchronized.sort_by(|left, right| left.instance_id.cmp(&right.instance_id));
-        Ok(synchronized)
-    }
-
-    pub fn create(
+    pub fn synchronize_catalog(
         &self,
-        plugin_id: ProviderPluginId,
-        instance_kind: String,
-        display_name: String,
-        settings: JsonObject,
-        requested_instance_id: Option<ProviderInstanceId>,
-        enabled: bool,
-    ) -> HostResult<ProviderInstanceRecord> {
-        let config = PluginInstanceConfig {
-            instance_id: requested_instance_id,
-            instance_kind,
-            display_name,
-            settings,
-            enabled,
-        };
-        self.mutate(|next| synchronize_instance(next, &self.device_id, &plugin_id, &config))
-    }
+        catalog: &PluginCatalog,
+    ) -> HostResult<Vec<ProviderInstanceRecord>> {
+        let mut state = self.state.write().map_err(|_| registry_lock_error())?;
+        let previous = state.identities.clone();
+        let mut identities = BTreeMap::new();
+        let mut records = BTreeMap::new();
+        let mut configured_keys = BTreeSet::new();
 
-    pub fn remove(&self, instance_id: &str) -> HostResult<Option<ProviderInstanceRecord>> {
-        self.mutate(|next| Ok(next.instances.remove(instance_id)))
+        for descriptor in catalog.descriptors() {
+            for config in &descriptor.instances {
+                validate_config(&descriptor.plugin_id, config)?;
+                let key = (
+                    descriptor.plugin_id.clone(),
+                    config.instance_kind.clone(),
+                    config.display_name.clone(),
+                );
+                if !configured_keys.insert(key.clone()) {
+                    return Err(HostError::new(
+                        "duplicate_provider_instance_config",
+                        "Provider manifest contains duplicate instance identity fields",
+                    )
+                    .with_detail("pluginId", descriptor.plugin_id.clone())
+                    .with_detail("instanceKind", config.instance_kind.clone())
+                    .with_detail("displayName", config.display_name.clone()));
+                }
+
+                let previous_id = previous.values().find_map(|identity| {
+                    (identity.plugin_id == key.0
+                        && identity.instance_kind == key.1
+                        && identity.display_name == key.2)
+                        .then(|| identity.instance_id.clone())
+                });
+                let instance_id = config
+                    .instance_id
+                    .clone()
+                    .or(previous_id)
+                    .unwrap_or_else(|| format!("instance-{}", Uuid::new_v4()));
+                if instance_id.trim().is_empty() {
+                    return Err(HostError::new(
+                        "invalid_provider_instance",
+                        "Provider instance id must not be empty",
+                    ));
+                }
+                if let Some(existing) = previous.get(&instance_id) {
+                    if existing.plugin_id != descriptor.plugin_id
+                        || existing.instance_kind != config.instance_kind
+                        || existing.display_name != config.display_name
+                    {
+                        return Err(HostError::new(
+                            "provider_instance_identity_conflict",
+                            format!("Provider instance id is already mapped: {instance_id}"),
+                        )
+                        .with_detail("instanceId", instance_id));
+                    }
+                }
+                let identity = InstanceIdentity {
+                    instance_id: instance_id.clone(),
+                    plugin_id: descriptor.plugin_id.clone(),
+                    instance_kind: config.instance_kind.clone(),
+                    display_name: config.display_name.clone(),
+                };
+                if identities
+                    .insert(instance_id.clone(), identity)
+                    .is_some()
+                {
+                    return Err(HostError::new(
+                        "duplicate_provider_instance",
+                        format!("Provider manifest reuses instance id: {instance_id}"),
+                    ));
+                }
+                records.insert(
+                    instance_id.clone(),
+                    ProviderInstanceRecord {
+                        instance_id,
+                        plugin_id: descriptor.plugin_id.clone(),
+                        instance_kind: config.instance_kind.clone(),
+                        device_id: self.device_id.clone(),
+                        display_name: config.display_name.clone(),
+                        settings: config.settings.clone(),
+                        enabled: config.enabled,
+                    },
+                );
+            }
+        }
+
+        persist_registry(&self.path, &self.device_id, &identities)?;
+        state.identities = identities;
+        state.records = records;
+        Ok(state.records.values().cloned().collect())
     }
 
     pub fn list(&self) -> HostResult<Vec<ProviderInstanceRecord>> {
         let state = self.state.read().map_err(|_| registry_lock_error())?;
-        Ok(state.instances.values().cloned().collect())
+        Ok(state.records.values().cloned().collect())
     }
 
-    pub fn list_for_plugin(&self, plugin_id: &str) -> HostResult<Vec<ProviderInstanceRecord>> {
+    pub(crate) fn list_for_plugin(&self, plugin_id: &str) -> HostResult<Vec<ProviderInstanceRecord>> {
         let state = self.state.read().map_err(|_| registry_lock_error())?;
         Ok(state
-            .instances
+            .records
             .values()
             .filter(|record| record.plugin_id == plugin_id)
             .cloned()
@@ -155,6 +203,7 @@ impl ProviderInstanceRegistry {
         route: &ProviderInstanceRoute,
         expected_plugin_id: Option<&str>,
     ) -> HostResult<ProviderInstanceRecord> {
+        validate_route(route)?;
         if route.device_id != self.device_id {
             return Err(route_error(
                 "wrong_device_route",
@@ -164,13 +213,13 @@ impl ProviderInstanceRegistry {
         }
         let state = self.state.read().map_err(|_| registry_lock_error())?;
         let record = state
-            .instances
+            .records
             .get(&route.provider_instance_id)
             .cloned()
             .ok_or_else(|| {
                 route_error(
                     "unknown_provider_instance",
-                    "Provider instance is not registered",
+                    "Provider instance is not configured by a manifest",
                     route,
                 )
             })?;
@@ -182,6 +231,12 @@ impl ProviderInstanceRegistry {
             ));
         }
         if let Some(expected_plugin_id) = expected_plugin_id {
+            if expected_plugin_id.trim().is_empty() {
+                return Err(HostError::new(
+                    "invalid_provider_plugin_route",
+                    "expected Provider plugin id must not be empty",
+                ));
+            }
             if record.plugin_id != expected_plugin_id {
                 return Err(route_error(
                     "provider_instance_plugin_mismatch",
@@ -194,37 +249,12 @@ impl ProviderInstanceRegistry {
         }
         Ok(record)
     }
-
-    pub fn resolve_resource(
-        &self,
-        resource: &RoutedResourceId,
-        expected_plugin_id: Option<&str>,
-    ) -> HostResult<ProviderInstanceRecord> {
-        self.resolve_route(
-            &ProviderInstanceRoute {
-                device_id: resource.device_id.clone(),
-                provider_instance_id: resource.provider_instance_id.clone(),
-            },
-            expected_plugin_id,
-        )
-    }
-
-    fn mutate<T>(
-        &self,
-        mutation: impl FnOnce(&mut InstanceRegistryState) -> HostResult<T>,
-    ) -> HostResult<T> {
-        let mut state = self.state.write().map_err(|_| registry_lock_error())?;
-        let mut next = state.clone();
-        let output = mutation(&mut next)?;
-        if let Some(path) = self.path.as_ref() {
-            persist_registry(path, &self.device_id, &next)?;
-        }
-        *state = next;
-        Ok(output)
-    }
 }
 
-fn load_registry(path: &Path, device_id: &str) -> HostResult<InstanceRegistryState> {
+fn load_registry(
+    path: &Path,
+    device_id: &str,
+) -> HostResult<BTreeMap<ProviderInstanceId, InstanceIdentity>> {
     let payload = fs::read(path)
         .map_err(|error| persistence_io("read Provider instance registry", path, error))?;
     let document: InstanceRegistryDocument = serde_json::from_slice(&payload).map_err(|error| {
@@ -251,46 +281,36 @@ fn load_registry(path: &Path, device_id: &str) -> HostResult<InstanceRegistrySta
         .with_detail("expectedDeviceId", device_id.to_string())
         .with_detail("actualDeviceId", document.device_id));
     }
-    let mut instances = BTreeMap::new();
-    for record in document.instances {
-        validate_record(&record)?;
-        if record.device_id != device_id {
-            return Err(HostError::new(
-                "provider_instance_registry_device_mismatch",
-                "Provider instance registry belongs to a different device",
-            )
-            .with_detail("expectedDeviceId", device_id.to_string())
-            .with_detail("actualDeviceId", record.device_id));
-        }
-        if instances.insert(record.instance_id.clone(), record).is_some() {
+    let mut identities = BTreeMap::new();
+    for identity in document.instances {
+        validate_identity(&identity)?;
+        if identities
+            .insert(identity.instance_id.clone(), identity)
+            .is_some()
+        {
             return Err(HostError::new(
                 "duplicate_provider_instance",
                 "Provider instance registry contains duplicate ids",
             ));
         }
     }
-    Ok(InstanceRegistryState { instances })
+    Ok(identities)
 }
 
 fn persist_registry(
     path: &Path,
     device_id: &str,
-    state: &InstanceRegistryState,
+    identities: &BTreeMap<ProviderInstanceId, InstanceIdentity>,
 ) -> HostResult<()> {
     let document = InstanceRegistryDocument {
         version: INSTANCE_REGISTRY_VERSION,
         device_id: device_id.to_string(),
-        instances: state.instances.values().cloned().collect(),
+        instances: identities.values().cloned().collect(),
     };
     write_json_atomically(path, &document)
 }
 
-fn synchronize_instance(
-    state: &mut InstanceRegistryState,
-    device_id: &str,
-    plugin_id: &str,
-    config: &PluginInstanceConfig,
-) -> HostResult<ProviderInstanceRecord> {
+fn validate_config(plugin_id: &str, config: &PluginInstanceConfig) -> HostResult<()> {
     if plugin_id.trim().is_empty()
         || config.instance_kind.trim().is_empty()
         || config.display_name.trim().is_empty()
@@ -300,59 +320,29 @@ fn synchronize_instance(
             "Provider instance plugin, kind, and display name must not be empty",
         ));
     }
-    let existing_match = state
-        .instances
-        .values()
-        .find(|record| {
-            record.plugin_id == plugin_id
-                && record.instance_kind == config.instance_kind
-                && record.display_name == config.display_name
-        })
-        .map(|record| record.instance_id.clone());
-    let instance_id = config
-        .instance_id
-        .clone()
-        .or(existing_match)
-        .unwrap_or_else(|| format!("instance-{}", Uuid::new_v4()));
-    if instance_id.trim().is_empty() {
-        return Err(HostError::new(
-            "invalid_provider_instance",
-            "Provider instance id must not be empty",
-        ));
-    }
-    if let Some(existing) = state.instances.get(&instance_id) {
-        if existing.plugin_id != plugin_id || existing.device_id != device_id {
-            return Err(HostError::new(
-                "provider_instance_identity_conflict",
-                format!("Provider instance id is already registered: {instance_id}"),
-            )
-            .with_detail("instanceId", instance_id));
-        }
-    }
-    let record = ProviderInstanceRecord {
-        instance_id: instance_id.clone(),
-        plugin_id: plugin_id.to_string(),
-        instance_kind: config.instance_kind.clone(),
-        device_id: device_id.to_string(),
-        display_name: config.display_name.clone(),
-        settings: config.settings.clone(),
-        enabled: config.enabled,
-    };
-    validate_record(&record)?;
-    state.instances.insert(instance_id, record.clone());
-    Ok(record)
+    Ok(())
 }
 
-fn validate_record(record: &ProviderInstanceRecord) -> HostResult<()> {
-    if record.instance_id.trim().is_empty()
-        || record.plugin_id.trim().is_empty()
-        || record.instance_kind.trim().is_empty()
-        || record.device_id.trim().is_empty()
-        || record.display_name.trim().is_empty()
+fn validate_identity(identity: &InstanceIdentity) -> HostResult<()> {
+    if identity.instance_id.trim().is_empty()
+        || identity.plugin_id.trim().is_empty()
+        || identity.instance_kind.trim().is_empty()
+        || identity.display_name.trim().is_empty()
     {
         return Err(HostError::new(
             "invalid_provider_instance",
-            "persisted Provider instance contains an empty identity field",
+            "persisted Provider instance mapping contains an empty identity field",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_route(route: &ProviderInstanceRoute) -> HostResult<()> {
+    if route.device_id.trim().is_empty() || route.provider_instance_id.trim().is_empty() {
+        return Err(route_error(
+            "invalid_provider_route",
+            "Provider route deviceId and providerInstanceId must not be empty",
+            route,
         ));
     }
     Ok(())

@@ -6,11 +6,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub const PLUGIN_MANIFEST_FILE_NAME: &str = "codepet-provider.json";
-pub const DEFAULT_PROVIDER_BINARY_NAMES: [&str; 3] = [
-    "codepet-provider-codex",
-    "codepet-provider-opencode",
-    "codepet-provider-claude",
-];
 
 fn default_true() -> bool {
     true
@@ -58,25 +53,18 @@ struct PluginManifest {
 
 #[derive(Clone, Debug, Default)]
 pub struct PluginCatalogConfig {
-    pub directories: Vec<PathBuf>,
-    pub descriptors: Vec<PluginDescriptor>,
+    directories: Vec<PathBuf>,
 }
 
 impl PluginCatalogConfig {
     pub fn for_data_directory(data_directory: impl AsRef<Path>) -> Self {
         Self {
             directories: vec![data_directory.as_ref().join("provider-plugins")],
-            descriptors: Vec::new(),
         }
     }
 
     pub fn with_directory(mut self, directory: impl Into<PathBuf>) -> Self {
         self.directories.push(directory.into());
-        self
-    }
-
-    pub fn with_descriptor(mut self, descriptor: PluginDescriptor) -> Self {
-        self.descriptors.push(descriptor);
         self
     }
 }
@@ -97,11 +85,7 @@ pub struct PluginCatalog {
 
 impl PluginCatalog {
     pub fn discover(config: PluginCatalogConfig) -> Self {
-        let mut candidates = config
-            .descriptors
-            .into_iter()
-            .map(|descriptor| (None, descriptor))
-            .collect::<Vec<_>>();
+        let mut candidates = Vec::new();
         let mut diagnostics = Vec::new();
 
         let mut discovered_directories = BTreeSet::new();
@@ -153,7 +137,7 @@ impl PluginCatalog {
         }
     }
 
-    pub fn descriptors(&self) -> impl Iterator<Item = &PluginDescriptor> {
+    pub(crate) fn descriptors(&self) -> impl Iterator<Item = &PluginDescriptor> {
         self.descriptors.values()
     }
 
@@ -190,7 +174,24 @@ fn discover_directory(
     }
 
     let mut entries = match fs::read_dir(directory) {
-        Ok(entries) => entries.filter_map(Result::ok).collect::<Vec<_>>(),
+        Ok(entries) => {
+            let mut readable = Vec::new();
+            for entry in entries {
+                match entry {
+                    Ok(entry) => readable.push(entry),
+                    Err(error) => diagnostics.push(CatalogDiagnostic {
+                        code: "plugin_directory_entry_read_failed".to_string(),
+                        message: format!(
+                            "read entry in Provider plugin directory {}: {error}",
+                            directory.display()
+                        ),
+                        path: Some(directory.to_path_buf()),
+                        plugin_id: None,
+                    }),
+                }
+            }
+            readable
+        }
         Err(error) => {
             diagnostics.push(CatalogDiagnostic {
                 code: "plugin_directory_read_failed".to_string(),

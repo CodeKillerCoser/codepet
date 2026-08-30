@@ -11,15 +11,15 @@ use crate::agent::codex_thread_scope::CodexThreadScope;
 use crate::runtime_gateway::ProviderAdapter;
 use crate::settings::{configured_app_data_dir, load_app_settings};
 use codepet_host::{
-    DeviceRegistry, HostError, ManagerEvent, PluginCatalog, PluginCatalogConfig,
-    PluginManager, PluginManagerConfig, PluginRuntimeState, ProviderGatewayService,
-    ProviderInstanceRegistry,
+    DeviceRegistry, HostError, PluginCatalog, PluginCatalogConfig, PluginManager,
+    PluginManagerConfig, ProviderGatewayService, ProviderInstanceRegistry,
 };
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
+use tokio::sync::Notify;
 
 pub const RUNTIME_GATEWAY_EVENT: &str = "runtime-gateway-event";
 pub const CODEX_DESKTOP_COMPANION_EVENT: &str = "codex-desktop-companion-event";
@@ -37,9 +37,6 @@ pub struct RuntimeGatewayState {
     gateway: Arc<Gateway>,
     transport: LocalTransport,
     codex_remote: Arc<Mutex<Option<Arc<CodexRemoteProviderAdapter>>>>,
-    provider_manager: Option<Arc<PluginManager>>,
-    provider_gateway_v1: Option<Arc<ProviderGatewayService>>,
-    provider_plugins_started: Arc<AtomicBool>,
     thread_scope: CodexThreadScope,
     refresh_generation: Arc<AtomicU64>,
 }
@@ -53,17 +50,6 @@ impl Default for RuntimeGatewayState {
 impl RuntimeGatewayState {
     pub fn with_thread_scope(thread_scope: CodexThreadScope) -> Self {
         let gateway = Arc::new(Gateway::default());
-        let provider_runtime = configured_provider_runtime();
-        if let Err(error) = provider_runtime.as_ref() {
-            crate::app_log::error(
-                "provider_host",
-                &format!("failed to initialize Provider Host boundary error={error:?}"),
-            );
-        }
-        let (provider_manager, provider_gateway_v1) = provider_runtime
-            .ok()
-            .map(|(manager, gateway)| (Some(manager), Some(gateway)))
-            .unwrap_or((None, None));
         let codex_remote = Arc::new(CodexRemoteProviderAdapter::initializing_scoped(
             gateway.event_sink(),
             thread_scope.clone(),
@@ -78,9 +64,6 @@ impl RuntimeGatewayState {
             transport: LocalTransport::new(gateway.clone()),
             gateway,
             codex_remote: Arc::new(Mutex::new(Some(codex_remote))),
-            provider_manager,
-            provider_gateway_v1,
-            provider_plugins_started: Arc::new(AtomicBool::new(false)),
             thread_scope,
             refresh_generation: Arc::new(AtomicU64::new(0)),
         }
@@ -91,9 +74,6 @@ impl RuntimeGatewayState {
             transport: LocalTransport::new(gateway.clone()),
             gateway,
             codex_remote: Arc::new(Mutex::new(None)),
-            provider_manager: None,
-            provider_gateway_v1: None,
-            provider_plugins_started: Arc::new(AtomicBool::new(false)),
             thread_scope: CodexThreadScope::default(),
             refresh_generation: Arc::new(AtomicU64::new(0)),
         }
@@ -105,104 +85,6 @@ impl RuntimeGatewayState {
 
     pub fn transport(&self) -> &LocalTransport {
         &self.transport
-    }
-
-    pub fn with_provider_gateway_v1(
-        mut self,
-        provider_gateway_v1: Arc<ProviderGatewayService>,
-    ) -> Self {
-        self.provider_manager = Some(provider_gateway_v1.manager().clone());
-        self.provider_gateway_v1 = Some(provider_gateway_v1);
-        self
-    }
-
-    pub fn provider_manager(&self) -> Option<&Arc<PluginManager>> {
-        self.provider_manager.as_ref()
-    }
-
-    pub fn provider_gateway_v1(&self) -> Option<&Arc<ProviderGatewayService>> {
-        self.provider_gateway_v1.as_ref()
-    }
-
-    pub fn start_provider_plugins_in_background(&self) {
-        let (Some(manager), Some(provider_gateway)) = (
-            self.provider_manager.clone(),
-            self.provider_gateway_v1.clone(),
-        ) else {
-            return;
-        };
-        if self
-            .provider_plugins_started
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return;
-        }
-        provider_gateway.start_event_forwarding();
-        for diagnostic in manager.catalog_diagnostics() {
-            crate::app_log::error(
-                "provider_host",
-                &format!("{} path={:?}", diagnostic.message, diagnostic.path),
-            );
-        }
-        let mut manager_events = manager.subscribe();
-        tauri::async_runtime::spawn(async move {
-            loop {
-                match manager_events.recv().await {
-                    Ok(ManagerEvent::PluginStateChanged { snapshot, .. })
-                        if matches!(
-                            snapshot.state,
-                            PluginRuntimeState::Degraded | PluginRuntimeState::Crashed
-                        ) =>
-                    {
-                        crate::app_log::error(
-                            "provider_host",
-                            &format!(
-                                "Provider plugin state changed plugin_id={} state={:?} diagnostic={:?} stderr={:?}",
-                                snapshot.plugin_id,
-                                snapshot.state,
-                                snapshot.diagnostic,
-                                snapshot.stderr_diagnostics.last()
-                            ),
-                        );
-                    }
-                    Ok(ManagerEvent::Diagnostic { plugin_id, error }) => {
-                        crate::app_log::error(
-                            "provider_host",
-                            &format!(
-                                "Provider plugin diagnostic plugin_id={plugin_id} error={error:?}"
-                            ),
-                        );
-                    }
-                    Ok(_) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        crate::app_log::error(
-                            "provider_host",
-                            &format!(
-                                "Provider diagnostic listener skipped events count={skipped}"
-                            ),
-                        );
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
-                }
-            }
-        });
-        tauri::async_runtime::spawn(async move {
-            for (plugin_id, outcome) in manager.start_enabled().await {
-                match outcome {
-                    Ok(()) => crate::app_log::info(
-                        "provider_host",
-                        &format!("Provider plugin initialized plugin_id={plugin_id}"),
-                    ),
-                    Err(error) => crate::app_log::error(
-                        "provider_host",
-                        &format!(
-                            "Provider plugin initialization failed plugin_id={plugin_id} error={error:?}"
-                        ),
-                    ),
-                }
-            }
-        });
     }
 
     pub fn refresh_codex_remote_provider(&self) -> Result<(), ProtocolError> {
@@ -248,6 +130,169 @@ impl RuntimeGatewayState {
                 );
             }
         });
+    }
+}
+
+#[derive(Clone)]
+pub struct ProviderHostState {
+    manager: Option<Arc<PluginManager>>,
+    gateway: Option<Arc<ProviderGatewayService>>,
+    started: Arc<AtomicBool>,
+    shutdown_started: Arc<AtomicBool>,
+    shutdown_completed: Arc<AtomicBool>,
+    shutdown_notify: Arc<Notify>,
+}
+
+impl Default for ProviderHostState {
+    fn default() -> Self {
+        match configured_provider_runtime() {
+            Ok((manager, gateway)) => Self::new(manager, gateway),
+            Err(error) => {
+                crate::app_log::error(
+                    "provider_host",
+                    &format!("failed to initialize Provider Host boundary error={error:?}"),
+                );
+                Self::unavailable()
+            }
+        }
+    }
+}
+
+impl ProviderHostState {
+    pub fn new(
+        manager: Arc<PluginManager>,
+        gateway: Arc<ProviderGatewayService>,
+    ) -> Self {
+        Self {
+            manager: Some(manager),
+            gateway: Some(gateway),
+            started: Arc::new(AtomicBool::new(false)),
+            shutdown_started: Arc::new(AtomicBool::new(false)),
+            shutdown_completed: Arc::new(AtomicBool::new(false)),
+            shutdown_notify: Arc::new(Notify::new()),
+        }
+    }
+
+    fn unavailable() -> Self {
+        Self {
+            manager: None,
+            gateway: None,
+            started: Arc::new(AtomicBool::new(false)),
+            shutdown_started: Arc::new(AtomicBool::new(false)),
+            shutdown_completed: Arc::new(AtomicBool::new(false)),
+            shutdown_notify: Arc::new(Notify::new()),
+        }
+    }
+
+    pub fn start_in_background(&self) {
+        let (Some(manager), Some(gateway)) = (self.manager.clone(), self.gateway.clone()) else {
+            return;
+        };
+        if self
+            .started
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+        if !gateway.start_event_forwarding() {
+            crate::app_log::error(
+                "provider_host",
+                "Provider Gateway event forwarding was already started or unavailable",
+            );
+        }
+        for diagnostic in manager.catalog_diagnostics() {
+            crate::app_log::error(
+                "provider_host",
+                &format!("{} path={:?}", diagnostic.message, diagnostic.path),
+            );
+        }
+        tauri::async_runtime::spawn(async move {
+            for (plugin_id, outcome) in manager.start_enabled().await {
+                match outcome {
+                    Ok(()) => crate::app_log::info(
+                        "provider_host",
+                        &format!("Provider plugin initialized plugin_id={plugin_id}"),
+                    ),
+                    Err(error) => {
+                        let snapshot = manager.snapshot(&plugin_id).await.ok();
+                        crate::app_log::error(
+                            "provider_host",
+                            &format!(
+                                "Provider plugin initialization failed plugin_id={plugin_id} error={error:?} state={:?} stderr={:?}",
+                                snapshot.as_ref().map(|snapshot| snapshot.state),
+                                snapshot
+                                    .as_ref()
+                                    .and_then(|snapshot| snapshot.stderr_diagnostics.last())
+                            ),
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    pub fn shutdown_completed(&self) -> bool {
+        self.shutdown_completed.load(Ordering::SeqCst)
+    }
+
+    pub async fn shutdown_once(&self) -> bool {
+        if self
+            .shutdown_started
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            loop {
+                let notified = self.shutdown_notify.notified();
+                if self.shutdown_completed() {
+                    break;
+                }
+                notified.await;
+            }
+            return false;
+        }
+
+        if let Some(manager) = self.manager.as_ref() {
+            let shutdown_timeout = manager.shutdown_timeout();
+            let bounded_shutdown = shutdown_timeout.saturating_mul(2);
+            let force_kill = match tokio::time::timeout(bounded_shutdown, manager.shutdown()).await {
+                Ok(outcomes) => {
+                    let mut failed = false;
+                    for (plugin_id, outcome) in outcomes {
+                        if let Err(error) = outcome {
+                            failed = true;
+                            crate::app_log::error(
+                                "provider_host",
+                                &format!(
+                                    "Provider shutdown failed plugin_id={plugin_id} error={error:?}"
+                                ),
+                            );
+                        }
+                    }
+                    failed
+                }
+                Err(_) => {
+                    crate::app_log::error(
+                        "provider_host",
+                        "Provider Manager exceeded its bounded shutdown window",
+                    );
+                    true
+                }
+            };
+            if force_kill {
+                let kill = manager.kill_all("Tauri Provider Host shutdown timeout");
+                if tokio::time::timeout(shutdown_timeout, kill).await.is_err() {
+                    crate::app_log::error(
+                        "provider_host",
+                        "Provider processes did not finish within the bounded kill window",
+                    );
+                }
+            }
+        }
+
+        self.shutdown_completed.store(true, Ordering::SeqCst);
+        self.shutdown_notify.notify_waiters();
+        true
     }
 }
 
@@ -304,7 +349,7 @@ fn configured_provider_runtime(
         instances,
         PluginManagerConfig::default(),
     )?);
-    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()));
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone())?);
     Ok((manager, gateway))
 }
 

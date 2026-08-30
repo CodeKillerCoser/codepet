@@ -1,8 +1,11 @@
 [package]
 name = "codepet-core-sdk"
 version = "0.1.0"
+description = "Generated Rust types for the CodePet core protocol"
+authors = ["Code Pet Contributors"]
+repository = "https://github.com/CodeKillerCoser/codepet"
 edition = "2021"
-publish = false
+exclude = ["tests"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

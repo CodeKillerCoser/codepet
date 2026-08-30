@@ -12,5 +12,7 @@ pub use event_bus::{event_sequence, EventSubscription, ProviderEventSink};
 pub use gateway::Gateway;
 pub use provider::{ProviderAdapter, ProviderFuture};
 pub use registry::ProviderRegistry;
-pub use tauri_bridge::{CodexDesktopCompanionState, RuntimeGatewayState};
+pub use tauri_bridge::{
+    CodexDesktopCompanionState, ProviderHostState, RuntimeGatewayState,
+};
 pub use transport::{LocalTransport, Transport, TransportFuture};

@@ -4,6 +4,8 @@
 
 Codex Remote/AppServer 与 Codex Desktop Companion/IPC 必须拥有独立 Provider registry、Gateway event bus、sequence/replay、LocalTransport、Tauri command/event 和 unavailable 生命周期。桌宠 activity store 只能消费 companion channel；remote 标准事件不能因 provider id 相同而进入桌宠。
 
+进程外 Provider Host 是第三条隔离边界：由并列的 `ProviderHostState` 管理，不能嵌入 compat `RuntimeGatewayState`，也不能发布到 `runtime-gateway-event`、`codex-desktop-companion-event`、companion replay 或 `SharedState` activity。插件失败不得回退到 AppServer/Desktop IPC，桌宠动作不得调用 Plugin Manager。
+
 两路唯一允许共享的是最小 remote thread provenance 与 transient remote-operation fence。它们只能阻止 companion 投影/动作竞态，不得携带 App Server session、loaded-thread cache、Desktop owner、revision、request router 或原生 payload。
 
 ## 适用场景
@@ -25,6 +27,7 @@ Codex Remote/AppServer 与 Codex Desktop Companion/IPC 必须拥有独立 Provid
 ## 推荐做法
 
 - `RuntimeGatewayState` 只注册 remote App Server；`CodexDesktopCompanionState` 只注册 Desktop IPC。
+- `ProviderHostState` 只持有 Plugin Manager 与内部 Gateway v1 service；Manager update 只有一个有界 Gateway consumer。
 - remote 使用 `runtime_gateway_*` 与 `runtime-gateway-event`；companion 使用 `codex_desktop_companion_*` 与 `codex-desktop-companion-event`。
 - PetApp 只导入 companion client。交互 capability 同时校验 Desktop namespace/source marker。
 - remote create 期间 quarantine 新 Desktop thread；成功/notification 标记 remote，歧义失败保守排除，明确未派发才释放本地候选。
@@ -43,6 +46,7 @@ Codex Remote/AppServer 与 Codex Desktop Companion/IPC 必须拥有独立 Provid
 ## 验证方式
 
 - 向 remote sink 发布 conversation、turn、approval，断言 companion replay 为空。
+- 真实 Provider fixture 依次触发 event、坏帧和 crash，断言 compat replay、companion replay/registry 与 activity store 不变，且 shutdown 仍走 Provider Host。
 - 分别把 remote/companion 置 unavailable，断言另一侧仍可请求或保留状态。
 - remote list/create 路由 App Server；companion 不广告 list/create。
 - Desktop snapshot 仍驱动 running、approval 和 terminal activity。

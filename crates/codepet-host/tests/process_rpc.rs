@@ -88,7 +88,7 @@ fn conversation(instance_id: &str, native_id: &str) -> RoutedResourceId {
 #[tokio::test]
 async fn real_stdio_lifecycle_correlates_concurrent_responses_and_separates_events() {
     let process = ready_process("dev.codepet.concurrent", "instance-concurrent").await;
-    let mut inbound = process.subscribe();
+    let mut inbound = process.take_inbound().await.unwrap();
     let slow = process
         .client()
         .conversation_get(ConversationGetRequest {
@@ -166,6 +166,53 @@ async fn real_stdio_lifecycle_correlates_concurrent_responses_and_separates_even
         .unwrap();
     assert!(destroyed.destroyed);
     assert!(process.shutdown().await.unwrap().success);
+}
+
+#[tokio::test]
+async fn shutdown_waits_for_a_provider_that_closes_stdout_before_delayed_clean_exit() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("shutdown-received");
+    let mut descriptor = descriptor("dev.codepet.delayed-shutdown");
+    descriptor.env.insert(
+        "CODEPET_FAKE_SHUTDOWN_DELAY_MS".to_string(),
+        "200".to_string(),
+    );
+    descriptor.env.insert(
+        "CODEPET_FAKE_SHUTDOWN_MARKER".to_string(),
+        marker.display().to_string(),
+    );
+    let process = PluginProcess::spawn(
+        &descriptor,
+        PluginProcessOptions {
+            shutdown_timeout: Duration::from_secs(1),
+            ..options()
+        },
+    )
+    .await
+    .unwrap();
+    process
+        .client()
+        .provider_initialize(ProviderInitializeRequest {
+            host_client_id: "client-test".to_string(),
+            host_device_id: "device-test".to_string(),
+            host_version: "test".to_string(),
+            supported_versions: VersionRange {
+                min_version: 1,
+                max_version: 1,
+            },
+        })
+        .await
+        .unwrap();
+
+    let started = std::time::Instant::now();
+    let exit = process.shutdown().await.unwrap();
+    assert!(exit.success, "delayed clean exit must not be killed: {exit:?}");
+    assert!(started.elapsed() >= Duration::from_millis(180));
+    assert!(marker.exists());
+    assert!(process
+        .stderr_diagnostics()
+        .iter()
+        .any(|diagnostic| diagnostic.line == "fixture shutdown stderr tail"));
 }
 
 #[tokio::test]

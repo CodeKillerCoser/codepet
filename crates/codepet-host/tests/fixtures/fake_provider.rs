@@ -99,6 +99,14 @@ impl ProtocolServer for FakeProvider {
         request: InstanceStartRequest,
     ) -> ProtocolFuture<'a, InstanceStartResponse> {
         Box::pin(async move {
+            if std::env::var("CODEPET_FAKE_INSTANCE_START_ERROR_ID").as_deref()
+                == Ok(request.route.provider_instance_id.as_str())
+            {
+                return Err(protocol_error(
+                    "fixture_instance_start_failed",
+                    "fixture rejected instance.start",
+                ));
+            }
             let mut instance = self.instance(&request.route)?;
             instance.status = InstanceStatus::Ready;
             self.instances
@@ -171,8 +179,21 @@ impl ProtocolServer for FakeProvider {
         Box::pin(async move {
             let route = route_from_resource(&request.conversation);
             self.instance(&route)?;
+            let native_id = match request.conversation.native_resource_id.as_str() {
+                "response-wrong-native" => "different-native-id",
+                "response-empty-native" => "",
+                native_id => native_id,
+            };
+            let response_route = if request.conversation.native_resource_id == "response-wrong-route" {
+                ProviderInstanceRoute {
+                    device_id: "device-other".to_string(),
+                    provider_instance_id: route.provider_instance_id.clone(),
+                }
+            } else {
+                route
+            };
             Ok(ConversationGetResponse {
-                conversation: conversation(&route, &request.conversation.native_resource_id),
+                conversation: conversation(&response_route, native_id),
             })
         })
     }
@@ -196,8 +217,15 @@ impl ProtocolServer for FakeProvider {
         Box::pin(async move {
             let route = route_from_resource(&request.conversation);
             self.instance(&route)?;
+            let conversation = if request.conversation.native_resource_id
+                == "response-wrong-conversation"
+            {
+                resource(&route, "different-conversation")
+            } else {
+                request.conversation
+            };
             Ok(TurnStartResponse {
-                turn: turn(&route, "turn-started", request.conversation),
+                turn: turn(&route, "turn-started", conversation),
             })
         })
     }
@@ -301,7 +329,16 @@ async fn main() {
         if matches!(request, ProtocolRequest::ProviderShutdown { .. }) {
             let response = dispatch(server.as_ref(), request).await;
             write_message(&output, codec, ProviderWireMessage::Response(response));
-            break;
+            if let Ok(path) = std::env::var("CODEPET_FAKE_SHUTDOWN_MARKER") {
+                let _ = std::fs::write(path, b"shutdown received\n");
+            }
+            drop(output);
+            eprintln!("fixture shutdown stderr tail");
+            std::thread::sleep(Duration::from_millis(env_u64(
+                "CODEPET_FAKE_SHUTDOWN_DELAY_MS",
+                0,
+            )));
+            return;
         }
         let behavior = request_behavior(&request);
         if behavior == RequestBehavior::Timeout {
@@ -371,6 +408,13 @@ async fn main() {
 }
 
 fn env_u32(name: &str, fallback: u32) -> u32 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(fallback)
+}
+
+fn env_u64(name: &str, fallback: u64) -> u64 {
     std::env::var(name)
         .ok()
         .and_then(|value| value.parse().ok())

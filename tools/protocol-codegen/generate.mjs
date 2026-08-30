@@ -888,6 +888,11 @@ function generateJsonRpc(record, model) {
         params: ${definitionName(event.payload, manifestPath, model)},
     },`).join("\n");
   const requestVersions = manifest.methods.map((method) => `            Self::${pascalCase(method.name)} { jsonrpc, .. } => jsonrpc,`).join("\n");
+  const requestConstructors = manifest.methods.map((method) => `            ProtocolMethod::${pascalCase(method.name)} => Ok(Self::${pascalCase(method.name)} {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode ${method.name} request params", error))?,
+            }),`).join("\n");
   const eventVersions = manifest.events.map((event) => `            Self::${pascalCase(event.name)} { jsonrpc, .. } => jsonrpc,`).join("\n");
   const dispatchArms = manifest.methods.map((method) => {
     const variant = pascalCase(method.name);
@@ -918,6 +923,17 @@ ${requestVariants}
 }
 
 impl ProtocolRequest {
+    pub fn from_method_params(
+        method: ProtocolMethod,
+        id: RequestId,
+        params: serde_json::Value,
+    ) -> Result<Self, ProtocolError> {
+        let jsonrpc = "${manifest.transport.jsonRpcVersion}".to_string();
+        match method {
+${requestConstructors}
+        }
+    }
+
     pub fn jsonrpc_version(&self) -> &str {
         match self {
 ${requestVersions}

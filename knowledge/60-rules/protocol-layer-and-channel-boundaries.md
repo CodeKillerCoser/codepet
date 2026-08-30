@@ -25,7 +25,7 @@
 - 先修改 `protocol/<layer>/vN`，运行 `npm run protocol:generate`，业务代码只 import SDK。
 - 新语言实现 `codepet.protocol.codegen/v1` adapter；在 package outputs 与负向测试就绪前保持 planned。
 - 共享资源使用 `RoutedResourceId`；实例级请求显式携带 deviceId 与 providerInstanceId。
-- Provider 使用生成 `JsonLineCodec`、wire classifier、typed capability mapping 和 instance-kind validation helper。
+- Provider 使用生成 `JsonLineCodec`、wire classifier、`ProtocolRequest::from_method_params`、typed capability mapping 和 instance-kind validation helper；Host 不枚举 request envelope variant。
 - Provider Host 将插件事件映射到 application/gateway channel；Desktop Companion 单独映射到 pet channel。
 - 兼容旧 wire 时，把 profile 放在同一 IDL 根并生成独立 module，业务侧只保留 re-export 或 adapter。
 

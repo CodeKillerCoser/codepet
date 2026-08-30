@@ -135,7 +135,7 @@ export interface AppSettings {
   activityFilters: ActivityFilterSettings;
   agents: AgentSettings;
   agentRuntimes: AgentRuntimeSettings;
-  providerPlugins?: ProviderPluginSettings;
+  providerPlugins: ProviderPluginSettings;
   updates: UpdateSettings;
 }
 
