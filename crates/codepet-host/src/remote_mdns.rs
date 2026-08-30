@@ -43,7 +43,10 @@ impl RemoteLanMdnsAdvertiser {
         Self::start_with_backend(service, pairing_available, backend)
     }
 
-    /// Re-announces the same service with only the `pair` TXT value changed.
+    /// Replaces the same service with only the `pair` TXT value changed.
+    ///
+    /// A changed value briefly removes the service while a fresh daemon generation
+    /// starts; this is a bounded discovery gap, not an atomic or seamless update.
     pub fn update_pairing_available(&mut self, pairing_available: bool) -> HostResult<()> {
         if self.daemon_stopped || !self.service_registered {
             return Err(HostError::new(
@@ -52,10 +55,21 @@ impl RemoteLanMdnsAdvertiser {
             ));
         }
         if self.pairing_available == pairing_available {
-            return self.observe_backend_health();
+            return Ok(());
         }
 
         let service = self.service.service_info(pairing_available)?;
+        self.observe_backend_health()?;
+        if let Err(message) = self.backend.unregister(&self.fullname) {
+            return Err(self.fail_closed("unregister", message));
+        }
+        self.service_registered = false;
+        self.observe_backend_health()?;
+        if let Err(message) = self.backend.restart() {
+            return Err(self.fail_closed("restart", message));
+        }
+
+        self.service_registered = true;
         if let Err(message) = self.backend.register(service) {
             return Err(self.fail_closed("register", message));
         }
@@ -373,6 +387,7 @@ trait MdnsBackend: Send {
     fn register(&mut self, service: ServiceInfo) -> Result<(), String>;
     fn health(&mut self) -> Result<(), String>;
     fn unregister(&mut self, fullname: &str) -> Result<(), String>;
+    fn restart(&mut self) -> Result<(), String>;
     fn shutdown(&mut self) -> Result<(), String>;
 }
 
@@ -383,8 +398,12 @@ struct ServiceDaemonBackend {
 
 impl ServiceDaemonBackend {
     fn new() -> HostResult<Self> {
+        Self::create().map_err(|message| mdns_backend_error("start", message))
+    }
+
+    fn create() -> Result<Self, String> {
         let daemon = ServiceDaemon::new().map_err(|error| {
-            mdns_backend_error("start", format!("create service daemon: {error}"))
+            format!("create service daemon: {error}")
         })?;
         let monitor = match daemon.monitor() {
             Ok(monitor) => monitor,
@@ -392,10 +411,7 @@ impl ServiceDaemonBackend {
                 if let Ok(receiver) = daemon.shutdown() {
                     let _ = receiver.recv_timeout(DAEMON_RESPONSE_TIMEOUT);
                 }
-                return Err(mdns_backend_error(
-                    "start",
-                    format!("create daemon monitor: {error}"),
-                ));
+                return Err(format!("create daemon monitor: {error}"));
             }
         };
         Ok(Self { daemon, monitor })
@@ -464,10 +480,19 @@ impl MdnsBackend for ServiceDaemonBackend {
             Err(MdnsError::DaemonShutdown) => return Ok(()),
             Err(error) => return Err(error.to_string()),
         };
+        // The daemon sends this terminal status only after processing the unregister
+        // command and removing the old service. Draining the monitor after this ack
+        // therefore separates old RegisterResend events from the next registration.
         match receiver.recv_timeout(DAEMON_RESPONSE_TIMEOUT) {
             Ok(UnregisterStatus::OK | UnregisterStatus::NotFound) => Ok(()),
             Err(error) => Err(format!("wait for service unregister: {error}")),
         }
+    }
+
+    fn restart(&mut self) -> Result<(), String> {
+        self.shutdown()?;
+        *self = Self::create()?;
+        Ok(())
     }
 
     fn shutdown(&mut self) -> Result<(), String> {
@@ -524,12 +549,20 @@ mod tests {
     enum BackendCall {
         Register(ServiceSnapshot),
         Unregister(String),
+        Restart,
         Shutdown,
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum RegisterOutcome {
         Announced,
+        DaemonError,
+        Timeout,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum UnregisterOutcome {
+        Acknowledged,
         DaemonError,
         Timeout,
     }
@@ -544,8 +577,11 @@ mod tests {
     struct FakeBackendState {
         calls: Vec<BackendCall>,
         register_outcomes: VecDeque<RegisterOutcome>,
+        unregister_outcomes: VecDeque<UnregisterOutcome>,
         idle_failure: Option<IdleFailure>,
-        fail_unregister: bool,
+        inject_stale_announce_on_next_unregister: bool,
+        pending_stale_announces: usize,
+        monitor_drains: Vec<usize>,
     }
 
     struct FakeBackend {
@@ -565,6 +601,12 @@ mod tests {
             if let Some(failure) = state.idle_failure.take() {
                 return Err(idle_failure_message(failure));
             }
+            // Model the bug under test: a fullname-only waiter would accept an
+            // undrained RegisterResend from the previous generation here.
+            if state.pending_stale_announces > 0 {
+                state.pending_stale_announces -= 1;
+                return Ok(());
+            }
             match state
                 .register_outcomes
                 .pop_front()
@@ -581,7 +623,11 @@ mod tests {
         }
 
         fn health(&mut self) -> Result<(), String> {
-            match self.state.lock().unwrap().idle_failure.take() {
+            let mut state = self.state.lock().unwrap();
+            let drained = state.pending_stale_announces;
+            state.pending_stale_announces = 0;
+            state.monitor_drains.push(drained);
+            match state.idle_failure.take() {
                 Some(failure) => Err(idle_failure_message(failure)),
                 None => Ok(()),
             }
@@ -592,11 +638,28 @@ mod tests {
             state
                 .calls
                 .push(BackendCall::Unregister(fullname.to_string()));
-            if state.fail_unregister {
-                Err("unregister failed".to_string())
-            } else {
-                Ok(())
+            if state.inject_stale_announce_on_next_unregister {
+                state.inject_stale_announce_on_next_unregister = false;
+                state.pending_stale_announces += 1;
             }
+            match state
+                .unregister_outcomes
+                .pop_front()
+                .unwrap_or(UnregisterOutcome::Acknowledged)
+            {
+                UnregisterOutcome::Acknowledged => Ok(()),
+                UnregisterOutcome::DaemonError => Err("unregister failed".to_string()),
+                UnregisterOutcome::Timeout => {
+                    Err("timed out waiting for unregister terminal status".to_string())
+                }
+            }
+        }
+
+        fn restart(&mut self) -> Result<(), String> {
+            let mut state = self.state.lock().unwrap();
+            state.calls.push(BackendCall::Restart);
+            state.pending_stale_announces = 0;
+            Ok(())
         }
 
         fn shutdown(&mut self) -> Result<(), String> {
@@ -758,15 +821,19 @@ mod tests {
         .unwrap();
 
         advertiser.update_pairing_available(true).unwrap();
+        let calls_before_noop = state.lock().unwrap().calls.len();
+        let drains_before_noop = state.lock().unwrap().monitor_drains.len();
         advertiser.update_pairing_available(true).unwrap();
+        assert_eq!(state.lock().unwrap().calls.len(), calls_before_noop);
+        assert_eq!(state.lock().unwrap().monitor_drains.len(), drains_before_noop);
         advertiser.shutdown().unwrap();
         advertiser.shutdown().unwrap();
         drop(advertiser);
 
         let state = state.lock().unwrap();
         let calls = &state.calls;
-        assert_eq!(calls.len(), 4);
-        let (first, second) = match (&calls[0], &calls[1]) {
+        assert_eq!(calls.len(), 6);
+        let (first, second) = match (&calls[0], &calls[3]) {
             (BackendCall::Register(first), BackendCall::Register(second)) => (first, second),
             other => panic!("unexpected register calls: {other:?}"),
         };
@@ -779,8 +846,10 @@ mod tests {
         let mut expected = first.properties.clone();
         expected.insert("pair".to_string(), "1".to_string());
         assert_eq!(second.properties, expected);
-        assert_eq!(calls[2], BackendCall::Unregister(first.fullname.clone()));
-        assert_eq!(calls[3], BackendCall::Shutdown);
+        assert_eq!(calls[1], BackendCall::Unregister(first.fullname.clone()));
+        assert_eq!(calls[2], BackendCall::Restart);
+        assert_eq!(calls[4], BackendCall::Unregister(first.fullname.clone()));
+        assert_eq!(calls[5], BackendCall::Shutdown);
     }
 
     #[test]
@@ -807,7 +876,7 @@ mod tests {
     }
 
     #[test]
-    fn update_announce_timeout_cleans_up_and_stops_the_advertiser() {
+    fn unregister_ack_and_new_daemon_discard_stale_resend_before_announce_wait() {
         let (backend, state) = fake_backend([
             RegisterOutcome::Announced,
             RegisterOutcome::Timeout,
@@ -818,14 +887,24 @@ mod tests {
             backend,
         )
         .unwrap();
+        {
+            let mut state = state.lock().unwrap();
+            state.inject_stale_announce_on_next_unregister = true;
+            state.monitor_drains.clear();
+        }
 
         let error = advertiser.update_pairing_available(true).unwrap_err();
         assert_eq!(error.code, "remote_lan_mdns_register_failed");
         advertiser.shutdown().unwrap();
+        let state = state.lock().unwrap();
+        assert_eq!(state.monitor_drains, vec![0, 1]);
+        assert_eq!(state.pending_stale_announces, 0);
         assert!(matches!(
-            state.lock().unwrap().calls.as_slice(),
+            state.calls.as_slice(),
             [
                 BackendCall::Register(_),
+                BackendCall::Unregister(_),
+                BackendCall::Restart,
                 BackendCall::Register(_),
                 BackendCall::Unregister(_),
                 BackendCall::Shutdown
@@ -849,7 +928,7 @@ mod tests {
             state.lock().unwrap().idle_failure = Some(failure);
 
             let error = if observe_with_update {
-                advertiser.update_pairing_available(false).unwrap_err()
+                advertiser.update_pairing_available(true).unwrap_err()
             } else {
                 advertiser.shutdown().unwrap_err()
             };
@@ -867,31 +946,39 @@ mod tests {
     }
 
     #[test]
-    fn unregister_failure_still_stops_the_daemon_and_repeated_shutdown_is_safe() {
-        let (backend, state) = fake_backend([RegisterOutcome::Announced]);
-        state.lock().unwrap().fail_unregister = true;
-        let mut advertiser = RemoteLanMdnsAdvertiser::start_with_backend(
-            service_spec("device-alpha", "Living Room"),
-            false,
-            backend,
-        )
-        .unwrap();
-        let error = advertiser.shutdown().unwrap_err();
-        assert_eq!(error.code, "remote_lan_mdns_unregister_failed");
-        advertiser.shutdown().unwrap();
-        assert!(matches!(
-            state.lock().unwrap().calls.as_slice(),
-            [
-                BackendCall::Register(_),
-                BackendCall::Unregister(_),
-                BackendCall::Shutdown
-            ]
-        ));
+    fn update_unregister_error_and_timeout_clean_up_fail_closed() {
+        for outcome in [
+            UnregisterOutcome::DaemonError,
+            UnregisterOutcome::Timeout,
+        ] {
+            let (backend, state) = fake_backend([RegisterOutcome::Announced]);
+            let mut advertiser = RemoteLanMdnsAdvertiser::start_with_backend(
+                service_spec("device-alpha", "Living Room"),
+                false,
+                backend,
+            )
+            .unwrap();
+            state.lock().unwrap().unregister_outcomes =
+                [outcome, UnregisterOutcome::Acknowledged].into_iter().collect();
+
+            let error = advertiser.update_pairing_available(true).unwrap_err();
+            assert_eq!(error.code, "remote_lan_mdns_unregister_failed");
+            advertiser.shutdown().unwrap();
+            assert!(matches!(
+                state.lock().unwrap().calls.as_slice(),
+                [
+                    BackendCall::Register(_),
+                    BackendCall::Unregister(_),
+                    BackendCall::Unregister(_),
+                    BackendCall::Shutdown
+                ]
+            ));
+        }
     }
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn macos_real_backend_confirms_start_and_pair_update_announces_then_shutdown() {
+    fn macos_real_backend_confirms_new_generation_pair_announce_then_shutdown() {
         let device_id = format!("device-smoke-{}", uuid::Uuid::new_v4());
         let service = MdnsServiceSpec::from_listener(
             &identity(&device_id, "CodePet Smoke"),
