@@ -20,7 +20,7 @@ export interface Approval {
   description?: string;
   status: ApprovalStatus;
   decisions: Array<ApprovalDecision>;
-  requestedAt: TimestampMs;
+  requestedAt?: TimestampMs;
   resolvedAt?: TimestampMs;
   decision?: ApprovalDecision;
   extension?: ProviderExtension;

@@ -5,7 +5,7 @@ use std::fmt;
 
 pub const OPENCODE_PLUGIN_ID: &str = "dev.codepet.opencode";
 pub const OPENCODE_INSTANCE_KIND: &str = "opencode";
-pub const OPENCODE_MINIMUM_SERVER_VERSION: &str = "1.18.25";
+pub const OPENCODE_VERIFIED_SERVER_VERSION: &str = "1.18.25";
 pub const OPENCODE_PERMISSION_LEVEL: &str = "opencode-default";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -44,7 +44,6 @@ impl std::error::Error for OpenCodeServerError {}
 #[serde(rename_all = "camelCase")]
 pub struct OpenCodeHealth {
     pub healthy: bool,
-    pub version: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -57,16 +56,12 @@ pub struct OpenCodeSession {
     pub model: Option<OpenCodeModelRef>,
     pub time: OpenCodeSessionTime,
     pub title: String,
-    pub location: Option<OpenCodeLocationRef>,
-    pub directory: Option<String>,
+    pub location: OpenCodeLocationRef,
 }
 
 impl OpenCodeSession {
-    pub fn workspace_root(&self) -> Option<String> {
-        self.location
-            .as_ref()
-            .map(|location| location.directory.clone())
-            .or_else(|| self.directory.clone())
+    pub fn workspace_root(&self) -> String {
+        self.location.directory.clone()
     }
 }
 
@@ -191,14 +186,6 @@ pub struct OpenCodeEvent {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenCodeSessionEventData {
-    #[serde(rename = "sessionID")]
-    pub session_id: String,
-    pub info: OpenCodeSession,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct OpenCodePromptAdmittedEventData {
     pub timestamp: u64,
     #[serde(rename = "sessionID")]
@@ -216,6 +203,9 @@ pub struct OpenCodeStepStartedEventData {
     pub session_id: String,
     #[serde(rename = "assistantMessageID")]
     pub assistant_message_id: String,
+    pub agent: String,
+    pub model: OpenCodeModelRef,
+    pub snapshot: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -235,17 +225,44 @@ pub struct OpenCodeDeltaEventData {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenCodeSessionIDEventData {
+pub struct OpenCodeStepEndedEventData {
+    pub timestamp: u64,
     #[serde(rename = "sessionID")]
     pub session_id: String,
+    #[serde(rename = "assistantMessageID")]
+    pub assistant_message_id: String,
+    pub finish: String,
+    pub cost: f64,
+    pub tokens: OpenCodeTokenUsage,
+    pub snapshot: Option<String>,
+    pub files: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenCodeSessionErrorEventData {
+pub struct OpenCodeStepFailedEventData {
+    pub timestamp: u64,
     #[serde(rename = "sessionID")]
-    pub session_id: Option<String>,
-    pub error: Option<Value>,
+    pub session_id: String,
+    #[serde(rename = "assistantMessageID")]
+    pub assistant_message_id: String,
+    pub error: Value,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeTokenUsage {
+    pub input: f64,
+    pub output: f64,
+    pub reasoning: f64,
+    pub cache: OpenCodeCacheUsage,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeCacheUsage {
+    pub read: f64,
+    pub write: f64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]

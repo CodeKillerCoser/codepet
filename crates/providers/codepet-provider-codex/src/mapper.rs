@@ -318,7 +318,7 @@ impl CodexProtocolMapper {
             description: request.description.clone(),
             status: ApprovalStatus::Pending,
             decisions,
-            requested_at: request.requested_at_ms,
+            requested_at: Some(request.requested_at_ms),
             resolved_at: None,
             decision: None,
             extension: Some(extension([

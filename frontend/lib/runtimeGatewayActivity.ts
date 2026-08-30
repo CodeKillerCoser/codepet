@@ -253,7 +253,7 @@ export class RuntimeGatewayActivityProjection {
       status: "waiting-approval",
       message: approval.description || approval.title,
       shouldRing: shouldRing && approval.status === "pending",
-      createdAt: approval.requestedAt,
+      createdAt: approval.requestedAt ?? turn?.updatedAt ?? conversation?.updatedAt,
       raw,
     });
   }
@@ -335,7 +335,9 @@ export class RuntimeGatewayActivityProjection {
         approval.conversationId === conversationId &&
         approval.turnId === turnId &&
         approval.status === "pending" &&
-        (!latest || approval.requestedAt >= latest.requestedAt)
+        (!latest ||
+          (approval.requestedAt !== undefined &&
+            (latest.requestedAt === undefined || approval.requestedAt >= latest.requestedAt)))
       ) {
         latest = approval;
       }

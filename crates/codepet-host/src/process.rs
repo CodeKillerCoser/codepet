@@ -386,6 +386,8 @@ impl PluginProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        #[cfg(unix)]
+        command.process_group(0);
         let mut child = command.spawn().map_err(|error| {
             HostError::new(
                 "provider_spawn_failed",
@@ -398,6 +400,12 @@ impl PluginProcess {
             .retryable(true)
             .with_detail("pluginId", descriptor.plugin_id.clone())
             .with_detail("executable", descriptor.executable.display().to_string())
+        })?;
+        let process_id = child.id().ok_or_else(|| {
+            HostError::new(
+                "provider_spawn_failed",
+                "Provider process did not expose a process id",
+            )
         })?;
         let stdin = child.stdin.take().ok_or_else(|| {
             HostError::new(
@@ -455,6 +463,7 @@ impl PluginProcess {
         ));
         spawn_tracked(process_monitor(
             child,
+            process_id,
             control_receiver,
             exit_sender,
             shared.clone(),
@@ -772,8 +781,77 @@ async fn stderr_loop(
     }
 }
 
+#[cfg(unix)]
+fn signal_process_group(process_id: u32) -> std::io::Result<()> {
+    let process_group = i32::try_from(process_id)
+        .map_err(|_| std::io::Error::other("Provider process id exceeds i32"))?;
+    let result = unsafe { libc::kill(-process_group, libc::SIGKILL) };
+    if result == 0 {
+        return Ok(());
+    }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(error)
+    }
+}
+
+#[cfg(unix)]
+async fn kill_process_tree(
+    child: &mut tokio::process::Child,
+    process_id: u32,
+) -> std::io::Result<()> {
+    match signal_process_group(process_id) {
+        Ok(()) => Ok(()),
+        Err(group_error) => {
+            if child.try_wait()?.is_none() {
+                child.kill().await
+            } else {
+                Err(group_error)
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+async fn kill_process_tree(
+    child: &mut tokio::process::Child,
+    process_id: u32,
+) -> std::io::Result<()> {
+    let status = Command::new("taskkill")
+        .args(["/PID", &process_id.to_string(), "/T", "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await?;
+    if status.success() || child.try_wait()?.is_some() {
+        Ok(())
+    } else {
+        child.kill().await
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+async fn kill_process_tree(
+    child: &mut tokio::process::Child,
+    _process_id: u32,
+) -> std::io::Result<()> {
+    child.kill().await
+}
+
+#[cfg(unix)]
+fn cleanup_descendants_after_exit(process_id: u32) {
+    let _ = signal_process_group(process_id);
+}
+
+#[cfg(not(unix))]
+fn cleanup_descendants_after_exit(_process_id: u32) {}
+
 async fn process_monitor(
     mut child: tokio::process::Child,
+    process_id: u32,
     mut control: mpsc::Receiver<ProcessCommand>,
     exit_sender: watch::Sender<Option<PluginProcessExit>>,
     shared: Arc<RpcShared>,
@@ -801,7 +879,7 @@ async fn process_monitor(
         },
         command = control.recv() => match command {
             Some(ProcessCommand::Kill { reason }) => {
-                let kill_error = child.kill().await.err();
+                let kill_error = kill_process_tree(&mut child, process_id).await.err();
                 let status = child.wait().await.ok();
                 PluginProcessExit {
                     success: false,
@@ -813,7 +891,7 @@ async fn process_monitor(
                 }
             }
             None => {
-                let _ = child.kill().await;
+                let _ = kill_process_tree(&mut child, process_id).await;
                 let status = child.wait().await.ok();
                 PluginProcessExit {
                     success: false,
@@ -823,6 +901,7 @@ async fn process_monitor(
             }
         },
     };
+    cleanup_descendants_after_exit(process_id);
     shared.terminate(protocol_error(
         "provider_process_exited",
         exit.reason
@@ -1263,5 +1342,58 @@ mod tests {
             .unwrap();
         }
         assert!(open_file_descriptors() <= baseline_fds.saturating_add(2));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn force_kill_terminates_the_provider_process_group() {
+        let directory = tempfile::tempdir().unwrap();
+        let descendant_pid = directory.path().join("descendant.pid");
+        let mut env = BTreeMap::new();
+        env.insert(
+            "CODEPET_DESCENDANT_PID".to_string(),
+            descendant_pid.display().to_string(),
+        );
+        let descriptor = PluginDescriptor {
+            plugin_id: "dev.codepet.process-tree".to_string(),
+            display_name: "Process tree fixture".to_string(),
+            executable: "/bin/sh".into(),
+            args: vec![
+                "-c".to_string(),
+                "sleep 30 & echo $! > \"$CODEPET_DESCENDANT_PID\"; wait".to_string(),
+            ],
+            env,
+            enabled: true,
+            instances: Vec::new(),
+        };
+        let process = PluginProcess::spawn(
+            &descriptor,
+            PluginProcessOptions {
+                shutdown_timeout: Duration::from_millis(500),
+                ..PluginProcessOptions::default()
+            },
+        )
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !descendant_pid.exists() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let pid = std::fs::read_to_string(&descendant_pid)
+            .unwrap()
+            .trim()
+            .parse::<i32>()
+            .unwrap();
+
+        process.force_kill("process tree test").await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while unsafe { libc::kill(pid, 0) } == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
     }
 }

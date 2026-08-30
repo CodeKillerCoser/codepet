@@ -43,7 +43,7 @@ Claude runtime `ready` 后，同一 Host boundary 把 resolver 的绝对路径�
 
 运行时命令为 `list_agent_runtimes`、`detect_agent_runtime`、`refresh_agent_runtimes`、`set_agent_runtime_executable` 和 `clear_agent_runtime_executable`。
 
-应用启动时，`configured_provider_runtime` 在 Catalog 注册前分别用 resolver 结果覆盖 Codex、Claude 与 OpenCode instance setting。全量刷新、设置或清除 executable 时，`ProviderHostState::refresh_runtime_in_background` 通过每个 Provider 独立的 generation/lock 更新对应 setting，并只重启 `dev.codepet.codex`、`dev.codepet.claude` 或 `dev.codepet.opencode` 中的目标插件。这个动作不创建 Tauri 内 Server/CLI adapter，也不操作 companion、Hook 或 Pet。Codex Desktop companion 在另一份 state/registry/event bus 中，由 socket 自行连接和重连，其 generation、owner、revision 和 projection 不变化。
+应用启动时，`configured_provider_runtime` 在 Catalog 注册前分别用 resolver 结果覆盖 Codex、Claude 与 OpenCode instance setting，其中 OpenCode 同时注入 executable/version。全量刷新、设置或清除 runtime 时，`ProviderHostState::refresh_runtime_in_background` 通过每个 Provider 独立的 generation/lock 更新对应 setting，并只重启 `dev.codepet.codex`、`dev.codepet.claude` 或 `dev.codepet.opencode` 中的目标插件。这个动作不创建 Tauri 内 Server/CLI adapter，也不操作 companion、Hook 或 Pet。Codex Desktop companion 在另一份 state/registry/event bus 中，由 socket 自行连接和重连，其 generation、owner、revision 和 projection 不变化。
 
 ### UI
 

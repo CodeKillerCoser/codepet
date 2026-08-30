@@ -161,14 +161,32 @@ impl ProviderHostState {
             let executable = runtime
                 .resolved_executable
                 .map(serde_json::Value::String);
-            let updated = manager
-                .replace_instance_setting(
-                    target.plugin_id,
-                    target.instance_kind,
-                    target.executable_setting,
-                    executable,
-                )
-                .await;
+            let version = runtime.version.map(serde_json::Value::String);
+            let updated = async {
+                let executable_updates = manager
+                    .replace_instance_setting(
+                        target.plugin_id,
+                        target.instance_kind,
+                        target.executable_setting,
+                        executable,
+                    )
+                    .await?;
+                let version_updates = match target.version_setting {
+                    Some(version_setting) => {
+                        manager
+                            .replace_instance_setting(
+                                target.plugin_id,
+                                target.instance_kind,
+                                version_setting,
+                                version,
+                            )
+                            .await?
+                    }
+                    None => 0,
+                };
+                Ok::<_, codepet_host::HostError>(executable_updates.max(version_updates))
+            }
+            .await;
             if generation_counter.load(Ordering::SeqCst) != generation {
                 return;
             }
@@ -384,6 +402,7 @@ struct ProviderRuntimeTarget {
     plugin_id: &'static str,
     instance_kind: &'static str,
     executable_setting: &'static str,
+    version_setting: Option<&'static str>,
     display_name: &'static str,
 }
 
@@ -393,18 +412,21 @@ fn provider_runtime_target(provider_id: &str) -> Option<ProviderRuntimeTarget> {
             plugin_id: "dev.codepet.codex",
             instance_kind: "codex",
             executable_setting: "appServerExecutable",
+            version_setting: None,
             display_name: "Codex",
         }),
         CLAUDE_RUNTIME_PROVIDER_ID => Some(ProviderRuntimeTarget {
             plugin_id: "dev.codepet.claude",
             instance_kind: "claude",
             executable_setting: "claudeExecutable",
+            version_setting: None,
             display_name: "Claude",
         }),
         OPENCODE_RUNTIME_PROVIDER_ID => Some(ProviderRuntimeTarget {
             plugin_id: "dev.codepet.opencode",
             instance_kind: "opencode",
             executable_setting: "serverExecutable",
+            version_setting: Some("serverVersion"),
             display_name: "OpenCode",
         }),
         _ => None,
@@ -428,6 +450,15 @@ fn inject_runtime_executable(
                     target.executable_setting.to_string(),
                     serde_json::Value::String(executable.clone()),
                 );
+            }
+            if let Some(version_setting) = target.version_setting {
+                settings.remove(version_setting);
+                if let Some(version) = runtime.version.as_ref() {
+                    settings.insert(
+                        version_setting.to_string(),
+                        serde_json::Value::String(version.clone()),
+                    );
+                }
             }
         },
     )
@@ -655,6 +686,10 @@ mod tests {
                             "serverExecutable".to_string(),
                             serde_json::json!("manifest-opencode"),
                         ),
+                        (
+                            "serverVersion".to_string(),
+                            serde_json::json!("manifest-version"),
+                        ),
                         ("preserved".to_string(), serde_json::json!(true)),
                     ]
                     .into_iter()
@@ -683,16 +718,18 @@ mod tests {
         let codex_executable = directory.path().join("resolved/codex");
         let opencode_executable = directory.path().join("resolved/opencode");
 
-        for (provider_id, display_name, executable) in [
+        for (provider_id, display_name, executable, version) in [
             (
                 CODEX_RUNTIME_PROVIDER_ID,
                 "Codex",
                 codex_executable.to_string_lossy().to_string(),
+                None,
             ),
             (
                 OPENCODE_RUNTIME_PROVIDER_ID,
                 "OpenCode",
                 opencode_executable.to_string_lossy().to_string(),
+                Some("1.18.25"),
             ),
         ] {
             let runtime = AgentRuntime {
@@ -702,7 +739,7 @@ mod tests {
                 resolved_executable: Some(executable.clone()),
                 source: Some(AgentRuntimeSource::Configured),
                 configured_executable: Some(executable),
-                version: None,
+                version: version.map(str::to_string),
                 diagnostic: None,
             };
             assert_eq!(inject_runtime_executable(&mut catalog, &runtime).unwrap(), 1);
@@ -730,6 +767,7 @@ mod tests {
             opencode.settings["serverExecutable"],
             serde_json::json!(opencode_executable)
         );
+        assert_eq!(opencode.settings["serverVersion"], serde_json::json!("1.18.25"));
         assert_eq!(codex.settings["preserved"], serde_json::json!(true));
         assert_eq!(opencode.settings["preserved"], serde_json::json!(true));
 
@@ -760,6 +798,7 @@ mod tests {
             .unwrap();
         assert!(!codex.settings.contains_key("appServerExecutable"));
         assert!(!opencode.settings.contains_key("serverExecutable"));
+        assert!(!opencode.settings.contains_key("serverVersion"));
         assert_eq!(codex.settings["preserved"], serde_json::json!(true));
         assert_eq!(opencode.settings["preserved"], serde_json::json!(true));
     }

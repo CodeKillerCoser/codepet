@@ -1,79 +1,101 @@
 # OpenCode Provider 插件运行时
 
-## 背景
+## 审计结论
 
-2026-08-30 审计基线是 OpenCode 正式发行版 v1.18.25。官方 Server 文档声明 `opencode serve`、`/global/health` 与 SSE；同版本源码的 `packages/protocol/src/groups/{session,event,permission}.ts` 进一步给出 `/api/session` 的 list/get/create/active/prompt/interrupt、`/api/event` 和 permission reply 的实际 schema。V1 session API 没有 steer；正式发行包内标记为 experimental 的 V2 API 有 `delivery: "queue" | "steer"`，因此 Provider 以 v1.18.25 为最低版本，完整使用同一套 V2 session 语义，不混搭两个版本。
+2026-08-30 的实现基线只接受 OpenCode 正式发行版 `1.18.25`。证据来自该 tag 的 V2 protocol 源码与本机同版本二进制：Provider 使用 `GET /api/health`、`/api/session` 的 list/get/create/active/prompt/wait/interrupt、`/api/event` SSE 和 permission reply。它不调用 `/global/*`，不使用 V1 DTO fallback，也不把 `session.idle`、`session.error` 当作 V2 turn 终态。
 
-仓库已有生成的 `codepet-provider-sdk`、`ProtocolServer`/dispatcher、四段 `RoutedResourceId`、manifest catalog、Plugin Manager lifecycle 与 Provider Gateway。OpenCode 只需要成为普通独立 Provider，不需要新的插件框架。审计机器最终解析到 `/opt/homebrew/bin/opencode` 1.18.25；除正式 tag 源码、官方文档与真实子进程 fixture 外，显式路径的真实 health/list/shutdown smoke 也已通过。测试仍保持 ignored，避免普通 CI 自行探测或依赖本机安装。
+正式 V2 shape 对本实现有三项直接约束：
 
-## 目标
+- `Session.location.directory` 是必填；缺失或非绝对路径属于 shape error，不能回退到旧 `directory` 字段。
+- 成功执行以 `session.next.step.ended` 提供的正式字段为证据，再由 `POST /api/session/:id/wait` 确认 session 已 authoritative completion；一个 Provider turn 只发布一次 terminal upsert。
+- `permission.v2.asked` 没有上游请求时间。Provider Protocol、Gateway Protocol 与 compat v0 的 `requestedAt` 因此改为可选；OpenCode Provider 返回 `None`，不以本机 `now` 冒充上游时间。
 
-- 提供独立 `codepet-provider-opencode`、显式 manifest 和 Provider Protocol v1 stdio JSON-RPC 接入。
-- 只使用 OpenCode Server 正式提供的 HTTP/SSE 能力，覆盖 lifecycle、session、turn、approval、事件与 shutdown。
-- 让 OpenCode executable 只有一个权威来源：Tauri `AgentRuntimeService` resolver 注入的 instance setting。
-- 保持 Provider 数据只进入 Host/Gateway remote 通道，永不进入 Pet、activity、Desktop companion 或私有 IPC。
+本机可复现基线是 `/opt/homebrew/bin/opencode --version` 输出 `1.18.25`。显式路径 smoke 只执行 health、session list 和 shutdown，没有创建 session 或发送消息；测试结束后没有残留 `opencode serve`。
 
-## 非目标
-
-- 不实现市场、下载、签名、沙箱、复杂依赖注入、自动重启/backoff 或兼容层。
-- 不使用 Hook、transcript、audit 文件或字段推断补充 Server 数据。
-- 不把 OpenCode HTTP/SSE DTO 写入 Provider IDL，也不复制 Provider SDK DTO。
-- 不把 OpenCode question 事件伪装成二元 approval，不保存 `always` 权限。
-
-## 现状理解
+## 架构边界
 
 运行数据链只有：
 
 ```text
 OpenCode Server（127.0.0.1 随机端口）
-  ↔ codepet-provider-opencode（HTTP + SSE）
+  ↔ codepet-provider-opencode（正式 V2 HTTP + SSE）
   ↔ Provider Protocol v1（JSON-RPC 2.0 / stdio JSON-lines）
   ↔ PluginManager / ProviderGatewayService
 ```
 
-`codepet-provider.json` 只声明 Provider executable 和 `serverArgs: ["serve"]`。Host 在 catalog 同步前删除任何 `serverExecutable`，然后只注入 resolver 返回的规范化绝对路径；runtime 刷新通过既有 Manager setting replacement 与 plugin restart 生命周期生效。Provider 对 settings 使用 `deny_unknown_fields`，要求绝对 executable 和精确 `serve` 参数，不做第二次发现。
+独立 manifest 只固定 `serverArgs: ["serve"]`。Tauri `AgentRuntimeService` resolver 是 executable 和 version 的唯一权威来源：Host 在 catalog 同步前删除 manifest 中的 `serverExecutable`、`serverVersion`，再注入 resolver 返回的规范化绝对路径和版本；runtime 刷新沿用既有 Manager setting replacement 与 plugin restart。Provider 要求路径为绝对路径、参数精确为 `serve`、版本精确为 `1.18.25`，不搜索 PATH、不再次探测版本，也不附着外部 Server。
 
-OpenCode 没有 Provider Protocol 原生 Turn。queue prompt 的官方 message ID 成为当前 `ProviderTurn` 的 native ID；step/delta/idle/error 事件更新该投影。steer 是同一活动 turn 的附加 prompt，不创建第二个 Provider turn。list/get 通过 `/api/session/active` 标记外部活动 session，但如果 SSE 没有提供可路由的 message ID，就诚实返回 running conversation 且不虚构 active turn。
+Provider crate 的生产依赖只包含生成的 Provider SDK 和 Server adapter 所需库。它不依赖 Host、Gateway、Pet SDK、Tauri、Desktop IPC、companion 或 activity store，也不发布任何 OpenCode 专用 Tauri/Pet 事件。
 
-permission request 只有在能关联当前 turn 或官方 tool source message ID 时才发布。无法路由的 permission 会立即以 `reject` fail closed，避免 OpenCode 永久等待。Provider approve 只发送 `once`，deny 发送 `reject`；permission resource 加入 Server generation，旧 instance session 的 approval 不能误命中新进程。
+## NO-GO 根因与修复
 
-## 实现路径
+### 正式终态
 
-1. `client.rs` 使用 Host 路径启动 `opencode serve --hostname 127.0.0.1 --port <ephemeral>`，轮询 health 并拒绝低于 v1.18.25 的版本；stdout 不继承，防止污染 Provider wire。
-2. `protocol.rs` 只定义经官方 tag 验证的 OpenCode HTTP/SSE 形状；已支持事件形状异常会终止 event forwarder，未知事件安全忽略。
-3. `mapper.rs` 把 Server session、当前执行、text/reasoning delta 与 permission 映射成生成的 Provider DTO；capability 只声明实际实现的方法、`opencode-default` 和空 model/reasoning/extension 集合。
-4. `provider.rs` 复用生成的 `ProtocolServer`，管理 instance、Server generation、active turn 与 pending approval。Server/SSE 故障进入 Error 且不自动重启。
-5. `main.rs` 只使用生成 dispatcher 与 `JsonLineCodec` 驱动 stdio；EOF 调用统一 shutdown，Provider shutdown 终止自己持有的 Server 子进程。
+旧实现依赖不属于正式 V2 的 `session.idle` / `session.error`，导致正常 turn 无法可靠完成。现在 `session.next.step.ended` 更新正式时间并为当前 turn 建立一个 pending completion；唯一 waiter 调用 `/api/session/:id/wait`。wait 成功后才移除 active turn/message/pending approvals 并发布一次 Completed。重复 Step.Ended 只更新同一 pending completion 的时间，不创建第二个 waiter；旧 waiter 还要同时匹配 instance generation、conversation 和 turn resource，不能完成下一轮执行。
 
-## 涉及模块
+### 生命周期与进程树
 
-- `crates/providers/codepet-provider-opencode/`：独立 binary、manifest、Server adapter、映射和必要测试。
-- `crates/Cargo.toml` / `crates/Cargo.lock`：把新 binary 纳入现有 Rust workspace。
-- `src-tauri/src/runtime_gateway/tauri_bridge.rs`：只负责把 resolver 结果注入 catalog/Manager instance setting，不承载 OpenCode 数据。
-- `src-tauri/src/lib.rs`：runtime 设置刷新时沿用 Plugin Manager restart lifecycle。
+Server startup 使用总计 10 秒 deadline；每次 health probe 的 timeout 是剩余预算与 250ms 的较小值，成功后只做至多 100ms 的 child 存活确认。startup 失败会在同一有界路径回收 child。
 
-## 风险
+shutdown 不调用不存在的 V2 dispose，也不先等待 30 秒 HTTP 请求。Provider 直接 kill/wait 自己持有的 child，shutdown 与 event subscriber 共用 3 秒 deadline。stdio EOF、正常 shutdown、坏帧和写失败都经过同一个 `provider_shutdown` cleanup。Unix Host 把 Provider 放进独立进程组，外层 timeout/force-kill 一次终止 Provider 及其 Server 后代；Windows 沿用 `taskkill /T /F` 的最小进程树终止。
 
-- 官方 V2 API 仍标记 experimental：最低版本固定到已审计 tag；真实形状 fixture 覆盖本 Provider 使用的每个关键端点和事件。
-- SSE 只有 live stream、没有全量 delta replay：断线时 instance 进入 Error，不伪造连续输出；恢复需要显式 restart。
-- 端口选择存在 bind 后交给子进程的短竞争窗口：启动 health 超时会终止子进程并返回可见错误，不改为复杂 socket handoff。
-- Provider/Pet 越界：crate 依赖与源码边界测试禁止 Host、Tauri、Pet、Desktop IPC、companion 和 activity 引用；现有 remote channel 隔离测试继续覆盖 Gateway 下游。
-- OpenCode 进程退出或 shutdown 卡住：Provider 拥有 child handle，shutdown 最终 kill/wait；Host 仍保留外层有界 shutdown 与 force-kill。
+### 路由资源与重复操作
 
-## 测试计划
+turn native ID 绑定当前 Server generation、conversation 和 `clientMessageId`；OpenCode prompt message ID 也绑定相同输入。approval native ID 绑定 generation、conversation 和上游 permission request ID。相同 client ID 在不同 session、stop/restart 后的 stale turn/approval，以及已成功 resolve 的 approval 都会被拒绝。approval resolve 在 HTTP 调用前从 pending map 原子占用，避免两个并发 resolve 同时发往上游；请求失败且 generation 未变化时才回填以允许重试。
 
-- `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-opencode --all-targets`：stdio framing、版本/settings fail closed、真实子进程 HTTP/SSE 垂直映射、approval/steer/interrupt 与隔离边界。
-- `cargo test --manifest-path src-tauri/Cargo.toml --lib catalog_runtime_executables_are_overridden_by_resolver_values`：Codex/OpenCode resolver setting 覆盖与清除。
-- `cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_core_tests`：Provider remote event 不进入 companion/Pet/activity。
-- `cargo check --manifest-path src-tauri/Cargo.toml --lib`、`npm run protocol:check` 与 `git diff --check`：跨模块编译、生成协议 freshness 与机械检查。
-- 本机存在 OpenCode 时，以 `CODEPET_OPENCODE_EXECUTABLE` 显式运行 ignored smoke；变量只属于测试，不进入 Provider 路径发现。
+### 身份与资源上限
 
-## 知识沉淀
+每次启动都生成新的随机 `OPENCODE_SERVER_PASSWORD`，显式注入 child，并由内部 client 使用 Basic authentication；不会继承环境中的权威凭据。端口被 foreign process 抢占时，认证必须失败且刚启动的 child 会被回收，Provider 不能误接入错误实例。
 
-长期跨层约束继续以 `../60-rules/protocol-layer-and-channel-boundaries.md` 为准；Host lifecycle 与 manifest 事实见 `provider-host-device-and-plugin-runtime.md`。本页是 OpenCode Server 版本、能力矩阵和故障语义的事实入口。
+资源上限保持固定且简单：
 
-## 未知项
+- Server JSON success body：4 MiB；error/no-content body：16 KiB。
+- SSE 单行：1 MiB；单 event 累计 data：4 MiB。
+- Server→Provider event queue：64 项，使用非阻塞固定容量 channel。
+- HTTP connect timeout：3 秒；普通 request/wait timeout：30 秒；超限、慢消费者、断连或 shape error 均使当前 instance fail closed 并清理 active/pending state。
 
-- v1.18.25 之后 experimental V2 schema 的兼容窗口尚无官方稳定性承诺；升级前必须重新比对正式 tag 的 protocol schema 与 fixture。
-- 当前只在 macOS 上完成真实 OpenCode 1.18.25 smoke；Windows/Linux 仍由跨平台 Rust 编译与 fixture 覆盖，尚无对应平台实机结果。
-- OpenCode question API 不是 Provider v1 二元 approval；在 Provider 协议扩展前保持不支持。
+这些限制同时覆盖 Content-Length 与 chunked body；SSE fixture 使用真正的 chunked transfer 并跨 chunk 拆分 frame。
+
+## 能力与明确不支持项
+
+Provider 诚实声明 session list/get/create、turn start/steer/interrupt 和 approval resolve。list/get/create 需要正式 V2 `location`；turn start 只用 `delivery: "queue"`，steer 只用 `delivery: "steer"`。无法关联本地 active turn 的 permission 会立即回复 `reject`，不会虚构 turn。
+
+当前不支持 create title、model/reasoning 选择、question 回答、历史 delta replay、断线恢复、自动重启、持久 `always` approval、V1 compatibility 或未来 OpenCode 版本。未知事件可忽略；已支持事件形状错误、SSE 断开、wait 失败或资源超限会让 instance 进入 Error。升级到 `1.18.26+` 前必须重新验证正式 tag schema 与 fixture，不能按 semver 猜测兼容。
+
+## 受影响模块
+
+- `crates/providers/codepet-provider-opencode/`：V2 client、正式 shape、generation state、stdio cleanup、fixture 与边界测试。
+- `protocol/{provider,gateway}/v1/` 与生成 SDK：把 approval `requestedAt` 改为可选，并通过既有 generator 更新 Rust/TypeScript。
+- `crates/codepet-host/src/process.rs`：Provider 进程组/进程树的有界强杀。
+- `src-tauri/src/runtime_gateway/tauri_bridge.rs`：只注入 resolver 的 executable/version，不承载 OpenCode 数据。
+- Gateway/compat/现有 Codex 调用方：适配可选 approval timestamp；已有真实 timestamp 的 Provider 继续返回 `Some`。
+
+## 可复现验证
+
+以下命令在 2026-08-30 当前 worktree 实际执行：
+
+```sh
+cargo test --manifest-path crates/Cargo.toml -p codepet-provider-opencode --all-targets
+cargo test --manifest-path crates/Cargo.toml -p codepet-host process::tests::force_kill_terminates_the_provider_process_group -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --lib runtime_gateway::tauri_bridge::tests::catalog_runtime_executables_are_overridden_by_resolver_values -- --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_core_tests
+cargo check --manifest-path crates/Cargo.toml --workspace --all-targets
+cargo check --manifest-path src-tauri/Cargo.toml --lib
+cargo clippy --manifest-path crates/Cargo.toml -p codepet-provider-opencode --all-targets -- -D warnings
+npm run protocol:check
+CODEPET_OPENCODE_EXECUTABLE=/opt/homebrew/bin/opencode cargo test --manifest-path crates/Cargo.toml -p codepet-provider-opencode --test provider_vertical provider_real_opencode_server_smoke -- --ignored --nocapture
+```
+
+fixture 覆盖正式 chunked SSE/framing、Step.Ended→wait 无 interrupt 成功、单次 terminal、下一 turn、generation/stale handle、重复 resolve、startup deadline、认证端口抢占、bounded body/line/event/queue、stop/restart、坏帧 cleanup 和 Pet/Desktop/Tauri 生产依赖隔离。真实 smoke 只验证同一 `opencode serve` 的 health/list/shutdown。
+
+`cargo check --manifest-path src-tauri/Cargo.toml --all-targets` 仍会被仓库既有缺失文件 `src/macos_window.rs` 阻断；本次受影响的 Tauri library 与 resolver 定向测试已通过。统一打包/发现由最终三 Provider 集成阶段处理，本分支不新增发行逻辑。
+
+## 回归防线与未知项
+
+- 版本 validator 同时拒绝 `1.18.24`、`1.18.26`、`v1.18.25` 和 development 字符串。
+- fixture 对所有请求验证随机 Basic auth；foreign port fixture 验证 401 不能被当作健康实例。
+- Provider boundary test 扫描 production manifest/source，禁止 Host、Pet、Desktop、Tauri 依赖和数据链引用。
+- 当前真实 smoke 只在 macOS/OpenCode 1.18.25 完成；Windows/Linux 的进程树行为仍需对应平台 CI/实机验证。
+- OpenCode V2 仍可能在未来版本变化；精确版本 fail closed 是当前安全边界，不是长期兼容承诺。
+
+长期跨层约束继续以 `../60-rules/protocol-layer-and-channel-boundaries.md` 为准；Host lifecycle 与 manifest 事实见 `provider-host-device-and-plugin-runtime.md`。

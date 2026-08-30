@@ -292,7 +292,7 @@ pub(crate) fn map_pending_approvals(
                 description: nonempty_string(params.get("reason")),
                 status: ApprovalStatus::Pending,
                 decisions: vec![ApprovalDecision::Approve, ApprovalDecision::Deny],
-                requested_at,
+                requested_at: Some(requested_at),
                 resolved_at: None,
                 decision: None,
                 extension: None,
@@ -959,7 +959,7 @@ mod tests {
             command.approval.decisions,
             vec![ApprovalDecision::Approve, ApprovalDecision::Deny]
         );
-        assert_eq!(command.approval.requested_at, 1_700_000_000_000_u64);
+        assert_eq!(command.approval.requested_at, Some(1_700_000_000_000_u64));
         assert_eq!(
             command.approval.description.as_deref(),
             Some("Run a harmless check")

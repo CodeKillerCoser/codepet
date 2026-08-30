@@ -5,15 +5,14 @@ use crate::protocol::{
     OpenCodeLocationRef, OpenCodePermissionAskedEventData, OpenCodePermissionRepliedEventData,
     OpenCodePermissionReply, OpenCodePrompt, OpenCodePromptAdmittedEventData,
     OpenCodePromptRequest, OpenCodeServerError, OpenCodeSession, OpenCodeSessionCreate,
-    OpenCodeSessionErrorEventData, OpenCodeSessionEventData, OpenCodeSessionIDEventData,
-    OpenCodeStepStartedEventData, OPENCODE_INSTANCE_KIND, OPENCODE_PERMISSION_LEVEL,
-    OPENCODE_PLUGIN_ID,
+    OpenCodeStepEndedEventData, OpenCodeStepFailedEventData, OpenCodeStepStartedEventData,
+    OPENCODE_INSTANCE_KIND, OPENCODE_PERMISSION_LEVEL, OPENCODE_PLUGIN_ID,
+    OPENCODE_VERIFIED_SERVER_VERSION,
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalResolveRequest, ApprovalResolveResponse,
     ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
     ConversationGetResponse, ConversationListRequest, ConversationListResponse,
-    ConversationStatus,
     InstanceCapabilitiesRequest, InstanceCapabilitiesResponse, InstanceCreateRequest,
     InstanceCreateResponse, InstanceDestroyRequest, InstanceDestroyResponse,
     InstanceStartRequest, InstanceStartResponse, InstanceStatus, InstanceStatusChangedEvent,
@@ -42,6 +41,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[serde(deny_unknown_fields)]
 struct OpenCodeInstanceSettings {
     server_executable: PathBuf,
+    server_version: String,
     server_args: Vec<String>,
     #[serde(default)]
     workspace_root: Option<PathBuf>,
@@ -68,12 +68,20 @@ struct PendingApproval {
     approval: ProviderApproval,
 }
 
+#[derive(Clone)]
+struct PendingCompletion {
+    turn_resource_id: String,
+    completed_at: u64,
+}
+
 struct InstanceMutable {
     status: InstanceStatus,
     session: Option<OpenCodeServerSession>,
     session_generation: Option<String>,
     sessions: HashMap<String, OpenCodeSession>,
     active_turns: HashMap<String, ProviderTurn>,
+    active_message_ids: HashMap<String, String>,
+    pending_completions: HashMap<String, PendingCompletion>,
     pending_approvals: HashMap<String, PendingApproval>,
 }
 
@@ -106,6 +114,8 @@ impl OpenCodeInstanceRuntime {
                 session_generation: None,
                 sessions: HashMap::new(),
                 active_turns: HashMap::new(),
+                active_message_ids: HashMap::new(),
+                pending_completions: HashMap::new(),
                 pending_approvals: HashMap::new(),
             }),
             mapper: OpenCodeProtocolMapper::new(request.route),
@@ -179,7 +189,34 @@ impl OpenCodeInstanceRuntime {
     ) {
         let runtime = Arc::downgrade(self);
         thread::spawn(move || {
-            while let Ok(message) = incoming.recv() {
+            loop {
+                let message = match incoming.recv() {
+                    Ok(message) => message,
+                    Err(_) => {
+                        let Some(runtime) = runtime.upgrade() else {
+                            return;
+                        };
+                        let current = {
+                            let mutable = lock(&runtime.mutable);
+                            mutable.session_generation.as_deref() == Some(generation.as_str())
+                                && matches!(
+                                    mutable.status,
+                                    InstanceStatus::Ready | InstanceStatus::Starting
+                                )
+                        };
+                        if current {
+                            runtime.fail_from_event_forwarder(
+                                &generation,
+                                protocol_error(
+                                    "opencode_event_stream_closed",
+                                    "OpenCode event stream closed unexpectedly".to_string(),
+                                    true,
+                                ),
+                            );
+                        }
+                        return;
+                    }
+                };
                 let Some(runtime) = runtime.upgrade() else {
                     return;
                 };
@@ -222,51 +259,11 @@ impl OpenCodeInstanceRuntime {
     }
 
     fn map_event(
-        &self,
+        self: &Arc<Self>,
         generation: &str,
         event: OpenCodeEvent,
     ) -> Result<Vec<ProtocolEvent>, ProtocolError> {
         match event.kind.as_str() {
-            "session.created" | "session.updated" => {
-                let data: OpenCodeSessionEventData = decode_event(&event)?;
-                if data.session_id != data.info.id {
-                    return Err(event_shape_error(&event, "sessionID does not match info.id"));
-                }
-                validate_opencode_session(&data.info)?;
-                let (active_turn, waiting_approval) = {
-                    let mut mutable = lock(&self.mutable);
-                    mutable.sessions.insert(data.info.id.clone(), data.info.clone());
-                    (
-                        mutable.active_turns.get(&data.info.id).cloned(),
-                        has_pending_approval(&mutable.pending_approvals, &data.info.id),
-                    )
-                };
-                let conversation = self.mapper.conversation(
-                    &data.info,
-                    active_turn.is_some(),
-                    active_turn,
-                    waiting_approval,
-                );
-                Ok(vec![self.mapper.conversation_event(conversation)])
-            }
-            "session.deleted" => {
-                let data: OpenCodeSessionEventData = decode_event(&event)?;
-                if data.session_id != data.info.id {
-                    return Err(event_shape_error(&event, "sessionID does not match info.id"));
-                }
-                let session = data.info;
-                validate_opencode_session(&session)?;
-                let mut mutable = lock(&self.mutable);
-                mutable.sessions.remove(&session.id);
-                mutable.active_turns.remove(&session.id);
-                mutable
-                    .pending_approvals
-                    .retain(|_, approval| approval.session_id != session.id);
-                drop(mutable);
-                let mut conversation = self.mapper.conversation(&session, false, None, false);
-                conversation.status = ConversationStatus::Archived;
-                Ok(vec![self.mapper.conversation_event(conversation)])
-            }
             "session.next.prompt.admitted" => {
                 let data: OpenCodePromptAdmittedEventData = decode_event(&event)?;
                 if data.delivery != "queue" && data.delivery != "steer" {
@@ -277,23 +274,24 @@ impl OpenCodeInstanceRuntime {
                 }
                 let turn = {
                     let mut mutable = lock(&self.mutable);
-                    if let Some(turn) = mutable.active_turns.get_mut(&data.session_id) {
-                        turn.updated_at = Some(data.timestamp);
-                        turn.clone()
-                    } else {
-                        let turn = self.mapper.turn(
-                            &data.session_id,
-                            &data.message_id,
-                            TurnStatus::Queued,
-                            Some(data.timestamp),
-                            Some(data.timestamp),
-                            None,
-                        );
-                        mutable
-                            .active_turns
-                            .insert(data.session_id.clone(), turn.clone());
-                        turn
+                    let expected_message = mutable.active_message_ids.get(&data.session_id);
+                    let Some(expected_message) = expected_message else {
+                        return Ok(Vec::new());
+                    };
+                    if expected_message != &data.message_id {
+                        return Err(event_shape_error(
+                            &event,
+                            "prompt messageID does not match the active Provider turn",
+                        ));
                     }
+                    let Some(turn) = mutable.active_turns.get_mut(&data.session_id) else {
+                        return Err(event_shape_error(
+                            &event,
+                            "prompt admission has a message without an active Provider turn",
+                        ));
+                    };
+                    turn.updated_at = Some(data.timestamp);
+                    turn.clone()
                 };
                 Ok(vec![self.mapper.turn_event(turn)])
             }
@@ -301,25 +299,13 @@ impl OpenCodeInstanceRuntime {
                 let data: OpenCodeStepStartedEventData = decode_event(&event)?;
                 let turn = {
                     let mut mutable = lock(&self.mutable);
-                    if let Some(turn) = mutable.active_turns.get_mut(&data.session_id) {
-                        turn.status = TurnStatus::Running;
-                        turn.started_at = turn.started_at.or(Some(data.timestamp));
-                        turn.updated_at = Some(data.timestamp);
-                        turn.clone()
-                    } else {
-                        let turn = self.mapper.turn(
-                            &data.session_id,
-                            &data.assistant_message_id,
-                            TurnStatus::Running,
-                            Some(data.timestamp),
-                            Some(data.timestamp),
-                            None,
-                        );
-                        mutable
-                            .active_turns
-                            .insert(data.session_id.clone(), turn.clone());
-                        turn
-                    }
+                    let Some(turn) = mutable.active_turns.get_mut(&data.session_id) else {
+                        return Ok(Vec::new());
+                    };
+                    turn.status = TurnStatus::Running;
+                    turn.started_at = turn.started_at.or(Some(data.timestamp));
+                    turn.updated_at = Some(data.timestamp);
+                    turn.clone()
                 };
                 Ok(vec![self.mapper.turn_event(turn)])
             }
@@ -342,54 +328,72 @@ impl OpenCodeInstanceRuntime {
                 })?;
                 Ok(vec![self.mapper.delta_event(&turn, output_id, kind, data.delta)])
             }
+            "session.next.step.ended" => {
+                let data: OpenCodeStepEndedEventData = decode_event(&event)?;
+                let (turn, should_start_waiter) = {
+                    let mut mutable = lock(&self.mutable);
+                    let Some(turn) = mutable.active_turns.get_mut(&data.session_id) else {
+                        return Ok(Vec::new());
+                    };
+                    turn.updated_at = Some(data.timestamp);
+                    let turn = turn.clone();
+                    let pending = mutable.pending_completions.get_mut(&data.session_id);
+                    let should_start_waiter = match pending {
+                        Some(pending)
+                            if pending.turn_resource_id
+                                == turn.resource.native_resource_id =>
+                        {
+                            pending.completed_at = data.timestamp;
+                            false
+                        }
+                        _ => {
+                            mutable.pending_completions.insert(
+                                data.session_id.clone(),
+                                PendingCompletion {
+                                    turn_resource_id: turn.resource.native_resource_id.clone(),
+                                    completed_at: data.timestamp,
+                                },
+                            );
+                            true
+                        }
+                    };
+                    (turn, should_start_waiter)
+                };
+                if should_start_waiter {
+                    self.start_completion_waiter(
+                        generation.to_string(),
+                        data.session_id,
+                        turn.resource.native_resource_id.clone(),
+                    )?;
+                }
+                Ok(vec![self.mapper.turn_event(turn)])
+            }
             "session.next.step.failed" => {
-                let data: OpenCodeStepStartedEventData = decode_event(&event)?;
+                let data: OpenCodeStepFailedEventData = decode_event(&event)?;
                 Ok(self.finish_turn(
                     &data.session_id,
+                    None,
                     TurnStatus::Failed,
                     Some(data.timestamp),
                 ))
             }
-            "session.error" => {
-                let data: OpenCodeSessionErrorEventData = decode_event(&event)?;
-                let Some(session_id) = data.session_id else {
-                    return Ok(Vec::new());
-                };
-                Ok(self.finish_turn(&session_id, TurnStatus::Failed, None))
-            }
-            "session.idle" => {
-                let data: OpenCodeSessionIDEventData = decode_event(&event)?;
-                Ok(self.finish_turn(
-                    &data.session_id,
-                    TurnStatus::Completed,
-                    None,
-                ))
-            }
             "permission.v2.asked" => {
                 let data: OpenCodePermissionAskedEventData = decode_event(&event)?;
-                let source_message_id = data
+                if data
                     .source
                     .as_ref()
-                    .filter(|source| source.kind == "tool")
-                    .map(|source| source.message_id.clone());
+                    .is_some_and(|source| source.kind != "tool")
+                {
+                    return Err(event_shape_error(
+                        &event,
+                        "permission source type is not the official tool variant",
+                    ));
+                }
                 let turn = {
                     let mut mutable = lock(&self.mutable);
                     if let Some(turn) = mutable.active_turns.get_mut(&data.session_id) {
                         turn.status = TurnStatus::WaitingApproval;
                         Some(turn.clone())
-                    } else if let Some(message_id) = source_message_id {
-                        let turn = self.mapper.turn(
-                            &data.session_id,
-                            &message_id,
-                            TurnStatus::WaitingApproval,
-                            None,
-                            None,
-                            None,
-                        );
-                        mutable
-                            .active_turns
-                            .insert(data.session_id.clone(), turn.clone());
-                        Some(turn)
                     } else {
                         None
                     }
@@ -409,12 +413,15 @@ impl OpenCodeInstanceRuntime {
                     );
                     return Ok(Vec::new());
                 };
-                let native_approval_id = approval_resource_id(generation, &data.id);
+                let native_approval_id = approval_resource_id(
+                    generation,
+                    &data.session_id,
+                    &data.id,
+                );
                 let approval = self.mapper.approval(
                     &data,
                     &turn,
                     native_approval_id.clone(),
-                    now_ms(),
                 );
                 lock(&self.mutable).pending_approvals.insert(
                     native_approval_id,
@@ -432,7 +439,11 @@ impl OpenCodeInstanceRuntime {
             }
             "permission.v2.replied" => {
                 let data: OpenCodePermissionRepliedEventData = decode_event(&event)?;
-                let native_approval_id = approval_resource_id(generation, &data.request_id);
+                let native_approval_id = approval_resource_id(
+                    generation,
+                    &data.session_id,
+                    &data.request_id,
+                );
                 let pending = lock(&self.mutable)
                     .pending_approvals
                     .remove(&native_approval_id);
@@ -481,14 +492,75 @@ impl OpenCodeInstanceRuntime {
         }
     }
 
+    fn start_completion_waiter(
+        self: &Arc<Self>,
+        generation: String,
+        session_id: String,
+        turn_resource_id: String,
+    ) -> Result<(), ProtocolError> {
+        let client = self.ready_session()?.client();
+        let runtime = Arc::downgrade(self);
+        thread::spawn(move || {
+            let result = client.wait_session(&session_id);
+            let Some(runtime) = runtime.upgrade() else {
+                return;
+            };
+            let current = {
+                let mutable = lock(&runtime.mutable);
+                mutable.session_generation.as_deref() == Some(generation.as_str())
+                    && mutable
+                        .pending_completions
+                        .get(&session_id)
+                        .is_some_and(|pending| pending.turn_resource_id == turn_resource_id)
+            };
+            if !current {
+                return;
+            }
+            match result {
+                Ok(()) => {
+                    let completed_at = lock(&runtime.mutable)
+                        .pending_completions
+                        .get(&session_id)
+                        .map(|pending| pending.completed_at);
+                    let events = runtime.finish_turn(
+                        &session_id,
+                        Some(&turn_resource_id),
+                        TurnStatus::Completed,
+                        completed_at,
+                    );
+                    for event in events {
+                        if let Err(error) = runtime.events.publish(event) {
+                            runtime.fail_from_event_forwarder(&generation, error);
+                            return;
+                        }
+                    }
+                }
+                Err(error) => runtime.fail_from_event_forwarder(
+                    &generation,
+                    OpenCodeProtocolMapper::error(error),
+                ),
+            }
+        });
+        Ok(())
+    }
+
     fn finish_turn(
         &self,
         session_id: &str,
+        expected_turn_resource_id: Option<&str>,
         status: TurnStatus,
         completed_at: Option<u64>,
     ) -> Vec<ProtocolEvent> {
         let (turn, approvals) = {
             let mut mutable = lock(&self.mutable);
+            if expected_turn_resource_id.is_some_and(|expected| {
+                mutable
+                    .active_turns
+                    .get(session_id)
+                    .is_none_or(|turn| turn.resource.native_resource_id != expected)
+            }) {
+                return Vec::new();
+            }
             let turn = mutable.active_turns.remove(session_id).map(|mut turn| {
                 if turn.status != TurnStatus::Interrupted {
                     turn.status = status;
@@ -499,6 +571,8 @@ impl OpenCodeInstanceRuntime {
                 turn.completed_at = completed_at;
                 turn
             });
+            mutable.active_message_ids.remove(session_id);
+            mutable.pending_completions.remove(session_id);
             let mut approvals = Vec::new();
             mutable.pending_approvals.retain(|_, pending| {
                 if pending.session_id == session_id {
@@ -547,6 +621,8 @@ impl OpenCodeInstanceRuntime {
                     turn
                 })
                 .collect::<Vec<_>>();
+            mutable.active_message_ids.clear();
+            mutable.pending_completions.clear();
             let approvals = mutable
                 .pending_approvals
                 .drain()
@@ -816,9 +892,10 @@ impl ProtocolServer for OpenCodeProvider {
             }
             runtime.set_status(InstanceStatus::Starting)?;
             let executable = runtime.settings.server_executable.clone();
+            let version = runtime.settings.server_version.clone();
             let args = runtime.settings.server_args.clone();
             let session = tokio::task::spawn_blocking(move || {
-                OpenCodeServerSession::spawn(&executable, &args)
+                OpenCodeServerSession::spawn(&executable, &args, &version)
             })
             .await
             .map_err(provider_task_error)?;
@@ -844,9 +921,24 @@ impl ProtocolServer for OpenCodeProvider {
                 mutable.session_generation = Some(generation.clone());
                 mutable.sessions.clear();
                 mutable.active_turns.clear();
+                mutable.active_message_ids.clear();
+                mutable.pending_completions.clear();
                 mutable.pending_approvals.clear();
             }
-            let instance = runtime.set_status(InstanceStatus::Ready)?;
+            let instance = match runtime.set_status(InstanceStatus::Ready) {
+                Ok(instance) => instance,
+                Err(error) => {
+                    let session = {
+                        let mut mutable = lock(&runtime.mutable);
+                        mutable.session_generation = None;
+                        mutable.session.take()
+                    };
+                    if let Some(session) = session {
+                        let _ = tokio::task::spawn_blocking(move || session.shutdown()).await;
+                    }
+                    return Err(error);
+                }
+            };
             runtime.start_event_forwarder(generation, incoming);
             Ok(InstanceStartResponse { instance })
         })
@@ -868,6 +960,8 @@ impl ProtocolServer for OpenCodeProvider {
                 let mut mutable = lock(&runtime.mutable);
                 mutable.session_generation = None;
                 mutable.active_turns.clear();
+                mutable.active_message_ids.clear();
+                mutable.pending_completions.clear();
                 mutable.pending_approvals.clear();
                 mutable.session.take()
             };
@@ -1118,6 +1212,7 @@ impl ProtocolServer for OpenCodeProvider {
             let runtime = self.resource_instance(&request.conversation)?;
             let conversation_id = request.conversation.native_resource_id;
             let session = runtime.ready_session()?;
+            let generation = session.generation().to_string();
             let client = session.client();
             let active_client = client.clone();
             let active_conversation_id = conversation_id.clone();
@@ -1136,18 +1231,34 @@ impl ProtocolServer for OpenCodeProvider {
                     false,
                 ));
             }
-            let message_id = message_id("start", &request.client_message_id);
+            let turn_resource_id = turn_resource_id(
+                &generation,
+                &conversation_id,
+                &request.client_message_id,
+            );
+            let message_id = message_id(
+                "start",
+                &generation,
+                &conversation_id,
+                &request.client_message_id,
+            );
             let provisional = runtime.mapper.turn(
                 &conversation_id,
-                &message_id,
+                &turn_resource_id,
                 TurnStatus::Queued,
-                Some(now_ms()),
-                Some(now_ms()),
+                None,
+                None,
                 None,
             );
-            lock(&runtime.mutable)
-                .active_turns
-                .insert(conversation_id.clone(), provisional.clone());
+            {
+                let mut mutable = lock(&runtime.mutable);
+                mutable
+                    .active_turns
+                    .insert(conversation_id.clone(), provisional.clone());
+                mutable
+                    .active_message_ids
+                    .insert(conversation_id.clone(), message_id.clone());
+            }
             let native_conversation_id = conversation_id.clone();
             let sent_message_id = message_id.clone();
             let admission = tokio::task::spawn_blocking(move || {
@@ -1167,7 +1278,9 @@ impl ProtocolServer for OpenCodeProvider {
             let admission = match admission {
                 Ok(admission) => admission,
                 Err(error) => {
-                    lock(&runtime.mutable).active_turns.remove(&conversation_id);
+                    let mut mutable = lock(&runtime.mutable);
+                    mutable.active_turns.remove(&conversation_id);
+                    mutable.active_message_ids.remove(&conversation_id);
                     return Err(OpenCodeProtocolMapper::error(error));
                 }
             };
@@ -1177,7 +1290,9 @@ impl ProtocolServer for OpenCodeProvider {
                 &message_id,
                 "queue",
             ) {
-                lock(&runtime.mutable).active_turns.remove(&conversation_id);
+                let mut mutable = lock(&runtime.mutable);
+                mutable.active_turns.remove(&conversation_id);
+                mutable.active_message_ids.remove(&conversation_id);
                 return Err(error);
             }
             let turn = {
@@ -1228,8 +1343,14 @@ impl ProtocolServer for OpenCodeProvider {
                 ));
             }
             let session = runtime.ready_session()?;
+            let generation = session.generation().to_string();
             let client = session.client();
-            let message_id = message_id("steer", &request.client_message_id);
+            let message_id = message_id(
+                "steer",
+                &generation,
+                &conversation_id,
+                &request.client_message_id,
+            );
             let native_conversation_id = conversation_id.clone();
             let sent_message_id = message_id.clone();
             let admission = tokio::task::spawn_blocking(move || {
@@ -1331,6 +1452,8 @@ impl ProtocolServer for OpenCodeProvider {
             let (turn, publish_turn, expired_approvals) = {
                 let mut mutable = lock(&runtime.mutable);
                 let removed = mutable.active_turns.remove(&conversation_id);
+                mutable.active_message_ids.remove(&conversation_id);
+                mutable.pending_completions.remove(&conversation_id);
                 let publish_turn = removed.is_some();
                 let mut turn = removed.unwrap_or(active_turn);
                 turn.status = TurnStatus::Interrupted;
@@ -1373,8 +1496,7 @@ impl ProtocolServer for OpenCodeProvider {
             let native_approval_id = request.approval.native_resource_id.clone();
             let pending = lock(&runtime.mutable)
                 .pending_approvals
-                .get(&native_approval_id)
-                .cloned()
+                .remove(&native_approval_id)
                 .ok_or_else(|| {
                     protocol_error(
                         "approval_not_found",
@@ -1406,41 +1528,45 @@ impl ProtocolServer for OpenCodeProvider {
             let client = session.client();
             let session_id = pending.session_id.clone();
             let request_id = pending.request_id.clone();
-            tokio::task::spawn_blocking(move || {
+            let reply_result = tokio::task::spawn_blocking(move || {
                 client.reply_permission(&session_id, &request_id, reply)
             })
             .await
-            .map_err(provider_task_error)?
-            .map_err(OpenCodeProtocolMapper::error)?;
-            let removed = lock(&runtime.mutable)
-                .pending_approvals
-                .remove(&native_approval_id);
+            .map_err(provider_task_error)?;
+            if let Err(error) = reply_result {
+                let mut mutable = lock(&runtime.mutable);
+                if mutable.session_generation.as_deref() == Some(pending.session_generation.as_str()) {
+                    mutable
+                        .pending_approvals
+                        .entry(native_approval_id)
+                        .or_insert(pending);
+                }
+                return Err(OpenCodeProtocolMapper::error(error));
+            }
             let (approval, event) = runtime.mapper.resolve_approval(
                 pending.approval,
                 request.decision,
                 Some(now_ms()),
             );
-            if removed.is_some() {
-                let turn = {
-                    let mut mutable = lock(&runtime.mutable);
-                    let still_waiting = has_pending_approval(
-                        &mutable.pending_approvals,
-                        &pending.session_id,
-                    );
-                    mutable.active_turns.get_mut(&pending.session_id).map(|turn| {
-                        if !still_waiting {
-                            turn.status = TurnStatus::Running;
-                        }
-                        if approval.resolved_at.is_some() {
-                            turn.updated_at = approval.resolved_at;
-                        }
-                        turn.clone()
-                    })
-                };
-                runtime.events.publish(event)?;
-                if let Some(turn) = turn {
-                    runtime.events.publish(runtime.mapper.turn_event(turn))?;
-                }
+            let turn = {
+                let mut mutable = lock(&runtime.mutable);
+                let still_waiting = has_pending_approval(
+                    &mutable.pending_approvals,
+                    &pending.session_id,
+                );
+                mutable.active_turns.get_mut(&pending.session_id).map(|turn| {
+                    if !still_waiting {
+                        turn.status = TurnStatus::Running;
+                    }
+                    if approval.resolved_at.is_some() {
+                        turn.updated_at = approval.resolved_at;
+                    }
+                    turn.clone()
+                })
+            };
+            runtime.events.publish(event)?;
+            if let Some(turn) = turn {
+                runtime.events.publish(runtime.mapper.turn_event(turn))?;
             }
             Ok(ApprovalResolveResponse { approval })
         })
@@ -1459,24 +1585,34 @@ impl ProtocolServer for OpenCodeProvider {
                 .values()
                 .cloned()
                 .collect::<Vec<_>>();
+            let mut cleanup_error = None;
             for runtime in instances {
                 let session = {
                     let mut mutable = lock(&runtime.mutable);
                     mutable.status = InstanceStatus::Stopping;
                     mutable.session_generation = None;
                     mutable.active_turns.clear();
+                    mutable.active_message_ids.clear();
+                    mutable.pending_completions.clear();
                     mutable.pending_approvals.clear();
                     mutable.session.take()
                 };
                 if let Some(session) = session {
-                    tokio::task::spawn_blocking(move || session.shutdown())
-                        .await
-                        .map_err(provider_task_error)?
-                        .map_err(OpenCodeProtocolMapper::error)?;
+                    let result = match tokio::task::spawn_blocking(move || session.shutdown()).await {
+                        Ok(result) => result.map_err(OpenCodeProtocolMapper::error),
+                        Err(error) => Err(provider_task_error(error)),
+                    };
+                    if cleanup_error.is_none() {
+                        cleanup_error = result.err();
+                    }
                 }
                 lock(&runtime.mutable).status = InstanceStatus::Stopped;
             }
-            Ok(ProviderShutdownResponse { accepted: true })
+            if let Some(error) = cleanup_error {
+                Err(error)
+            } else {
+                Ok(ProviderShutdownResponse { accepted: true })
+            }
         })
     }
 }
@@ -1496,6 +1632,15 @@ fn decode_settings(
         return Err(protocol_error(
             "invalid_instance_settings",
             "serverExecutable must be an absolute path resolved by the Host".to_string(),
+            false,
+        ));
+    }
+    if settings.server_version.trim() != OPENCODE_VERIFIED_SERVER_VERSION {
+        return Err(protocol_error(
+            "invalid_instance_settings",
+            format!(
+                "serverVersion must be exactly {OPENCODE_VERIFIED_SERVER_VERSION}"
+            ),
             false,
         ));
     }
@@ -1607,14 +1752,7 @@ fn validate_opencode_session(session: &OpenCodeSession) -> Result<(), ProtocolEr
             false,
         ));
     }
-    let workspace_root = session.workspace_root().ok_or_else(|| {
-        protocol_error(
-            "opencode_protocol_error",
-            "OpenCode session response contains neither location.directory nor directory"
-                .to_string(),
-            false,
-        )
-    })?;
+    let workspace_root = session.workspace_root();
     if workspace_root.trim().is_empty() || !PathBuf::from(&workspace_root).is_absolute() {
         return Err(protocol_error(
             "opencode_protocol_error",
@@ -1648,21 +1786,56 @@ fn has_pending_approval(
         .any(|approval| approval.session_id == session_id)
 }
 
-fn approval_resource_id(generation: &str, request_id: &str) -> String {
-    format!("opencode-permission:{generation}:{request_id}")
+fn approval_resource_id(
+    generation: &str,
+    conversation_id: &str,
+    request_id: &str,
+) -> String {
+    format!(
+        "opencode-permission:{generation}:{:016x}:{:016x}",
+        stable_hash(&[conversation_id]),
+        stable_hash(&[request_id]),
+    )
 }
 
-fn message_id(kind: &str, client_message_id: &str) -> String {
+fn turn_resource_id(
+    generation: &str,
+    conversation_id: &str,
+    client_message_id: &str,
+) -> String {
+    format!(
+        "opencode-turn:{generation}:{:016x}:{:016x}",
+        stable_hash(&[conversation_id]),
+        stable_hash(&[client_message_id]),
+    )
+}
+
+fn message_id(
+    kind: &str,
+    generation: &str,
+    conversation_id: &str,
+    client_message_id: &str,
+) -> String {
+    format!(
+        "msg_codepet_{:016x}",
+        stable_hash(&[
+            kind,
+            generation,
+            conversation_id,
+            client_message_id,
+        ])
+    )
+}
+
+fn stable_hash(parts: &[&str]) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
-    for byte in kind
-        .bytes()
-        .chain(std::iter::once(0))
-        .chain(client_message_id.bytes())
-    {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x100000001b3);
+    for part in parts {
+        for byte in part.bytes().chain(std::iter::once(0)) {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
     }
-    format!("msg_codepet_{kind}_{hash:016x}")
+    hash
 }
 
 fn capability_unsupported(message: &str) -> ProtocolError {
@@ -1690,7 +1863,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{approval_resource_id, decode_settings, message_id};
+    use super::{approval_resource_id, decode_settings, message_id, turn_resource_id};
     use serde_json::json;
 
     #[test]
@@ -1700,19 +1873,42 @@ mod tests {
 
         let relative = serde_json::from_value(json!({
             "serverExecutable": "opencode",
+            "serverVersion": "1.18.25",
             "serverArgs": ["serve"]
         }))
         .unwrap();
         assert!(decode_settings(relative).is_err());
+
+        let future = serde_json::from_value(json!({
+            "serverExecutable": "/absolute/opencode",
+            "serverVersion": "1.18.26",
+            "serverArgs": ["serve"]
+        }))
+        .unwrap();
+        assert!(decode_settings(future).is_err());
     }
 
     #[test]
     fn provider_resource_ids_are_stable_and_session_scoped() {
-        assert_eq!(message_id("start", "request-1"), message_id("start", "request-1"));
-        assert_ne!(message_id("start", "request-1"), message_id("steer", "request-1"));
+        assert_eq!(
+            message_id("start", "1", "ses_1", "request-1"),
+            message_id("start", "1", "ses_1", "request-1")
+        );
         assert_ne!(
-            approval_resource_id("1", "per_1"),
-            approval_resource_id("2", "per_1")
+            turn_resource_id("1", "ses_1", "same-client"),
+            turn_resource_id("1", "ses_2", "same-client")
+        );
+        assert_ne!(
+            turn_resource_id("1", "ses_1", "same-client"),
+            turn_resource_id("2", "ses_1", "same-client")
+        );
+        assert_ne!(
+            approval_resource_id("1", "ses_1", "per_1"),
+            approval_resource_id("2", "ses_1", "per_1")
+        );
+        assert_ne!(
+            approval_resource_id("1", "ses_1", "per_1"),
+            approval_resource_id("1", "ses_2", "per_1")
         );
     }
 }

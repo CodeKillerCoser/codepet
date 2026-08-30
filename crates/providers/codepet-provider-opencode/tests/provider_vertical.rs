@@ -48,6 +48,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
             "serverExecutable".to_string(),
             json!(env!("CARGO_BIN_EXE_opencode-server-fixture")),
         ),
+        ("serverVersion".to_string(), json!("1.18.25")),
         ("serverArgs".to_string(), json!(["serve"])),
     ]);
     let created = provider
@@ -124,15 +125,54 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         "ses_created"
     );
 
+    let successful_turn = provider
+        .turn_start(TurnStartRequest {
+            conversation: fixture_conversation.clone(),
+            client_message_id: "shared-client-id".to_string(),
+            message: "complete normally".to_string(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(successful_turn.turn.conversation, fixture_conversation);
+    let completed = wait_for_turn_status(
+        &event_receiver,
+        &successful_turn.turn.resource,
+        TurnStatus::Completed,
+    );
+    assert_eq!(completed.completed_at, Some(1_700_000_002_003));
+    assert_no_duplicate_turn_status(
+        &event_receiver,
+        &successful_turn.turn.resource,
+        TurnStatus::Completed,
+    );
+
+    let created_conversation = new_conversation.conversation.resource.clone();
+    let same_client_other_session = provider
+        .turn_start(TurnStartRequest {
+            conversation: created_conversation.clone(),
+            client_message_id: "shared-client-id".to_string(),
+            message: "complete normally".to_string(),
+        })
+        .await
+        .unwrap();
+    assert_ne!(
+        successful_turn.turn.resource,
+        same_client_other_session.turn.resource
+    );
+    wait_for_turn_status(
+        &event_receiver,
+        &same_client_other_session.turn.resource,
+        TurnStatus::Completed,
+    );
+
     let started_turn = provider
         .turn_start(TurnStartRequest {
             conversation: fixture_conversation.clone(),
-            client_message_id: "client-start-1".to_string(),
+            client_message_id: "client-start-approval".to_string(),
             message: "needs approval".to_string(),
         })
         .await
         .unwrap();
-    assert_eq!(started_turn.turn.conversation, fixture_conversation);
     assert!(matches!(
         started_turn.turn.status,
         TurnStatus::Queued | TurnStatus::Running | TurnStatus::WaitingApproval
@@ -162,15 +202,25 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     let approval = approval.expect("official permission.v2.asked shape was not mapped");
     assert_eq!(approval.kind, "bash");
     assert_eq!(approval.turn, started_turn.turn.resource);
+    assert_eq!(approval.requested_at, None);
 
+    let approval_resource = approval.resource.clone();
     let resolved = provider
         .approval_resolve(ApprovalResolveRequest {
-            approval: approval.resource,
+            approval: approval_resource.clone(),
             decision: ApprovalDecision::Approve,
         })
         .await
         .unwrap();
     assert_eq!(resolved.approval.decision, Some(ApprovalDecision::Approve));
+    let repeated = provider
+        .approval_resolve(ApprovalResolveRequest {
+            approval: approval_resource,
+            decision: ApprovalDecision::Approve,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(repeated.code, "approval_not_found");
 
     let steered = provider
         .turn_steer(TurnSteerRequest {
@@ -185,12 +235,57 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
 
     let interrupted = provider
         .turn_interrupt(TurnInterruptRequest {
-            conversation: fixture_conversation,
+            conversation: fixture_conversation.clone(),
             turn: started_turn.turn.resource,
         })
         .await
         .unwrap();
     assert_eq!(interrupted.turn.status, TurnStatus::Interrupted);
+
+    let stale_turn = provider
+        .turn_start(TurnStartRequest {
+            conversation: fixture_conversation.clone(),
+            client_message_id: "stale-after-restart".to_string(),
+            message: "needs approval".to_string(),
+        })
+        .await
+        .unwrap();
+    let stale_approval = loop {
+        let event = event_receiver
+            .recv_timeout(Duration::from_secs(3))
+            .expect("timed out waiting for stale approval fixture");
+        if let ProtocolEvent::EventApprovalRequested { params, .. } = event {
+            break params.approval.resource;
+        }
+    };
+    provider
+        .instance_stop(InstanceStopRequest {
+            route: route.clone(),
+        })
+        .await
+        .unwrap();
+    provider
+        .instance_start(InstanceStartRequest {
+            route: route.clone(),
+        })
+        .await
+        .unwrap();
+    let stale_approval_error = provider
+        .approval_resolve(ApprovalResolveRequest {
+            approval: stale_approval,
+            decision: ApprovalDecision::Deny,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(stale_approval_error.code, "approval_not_found");
+    let stale_turn_error = provider
+        .turn_interrupt(TurnInterruptRequest {
+            conversation: fixture_conversation.clone(),
+            turn: stale_turn.turn.resource,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(stale_turn_error.code, "turn_not_active");
 
     let stopped = provider
         .instance_stop(InstanceStopRequest { route })
@@ -200,7 +295,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
 }
 
 #[tokio::test]
-#[ignore = "requires CODEPET_OPENCODE_EXECUTABLE pointing to OpenCode 1.18.25 or newer"]
+#[ignore = "requires CODEPET_OPENCODE_EXECUTABLE pointing to OpenCode 1.18.25 exactly"]
 async fn provider_real_opencode_server_smoke() {
     let executable = std::env::var("CODEPET_OPENCODE_EXECUTABLE")
         .expect("CODEPET_OPENCODE_EXECUTABLE is required for the ignored smoke test");
@@ -230,6 +325,7 @@ async fn provider_real_opencode_server_smoke() {
             display_name: "OpenCode Real Smoke".to_string(),
             settings: BTreeMap::from([
                 ("serverExecutable".to_string(), json!(executable)),
+                ("serverVersion".to_string(), json!("1.18.25")),
                 ("serverArgs".to_string(), json!(["serve"])),
             ]),
         })
@@ -261,5 +357,45 @@ fn resource(route: &ProviderInstanceRoute, native_resource_id: &str) -> RoutedRe
         provider_plugin_id: route.provider_plugin_id.clone(),
         provider_instance_id: route.provider_instance_id.clone(),
         native_resource_id: native_resource_id.to_string(),
+    }
+}
+
+fn wait_for_turn_status(
+    receiver: &mpsc::Receiver<ProtocolEvent>,
+    resource: &RoutedResourceId,
+    status: TurnStatus,
+) -> codepet_provider_sdk::ProviderTurn {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let event = receiver
+            .recv_timeout(remaining)
+            .expect("timed out waiting for Provider turn status");
+        if let ProtocolEvent::EventTurnUpserted { params, .. } = event {
+            if params.turn.resource == *resource && params.turn.status == status {
+                return params.turn;
+            }
+        }
+    }
+    panic!("Provider turn did not reach {status:?}")
+}
+
+fn assert_no_duplicate_turn_status(
+    receiver: &mpsc::Receiver<ProtocolEvent>,
+    resource: &RoutedResourceId,
+    status: TurnStatus,
+) {
+    let deadline = Instant::now() + Duration::from_millis(100);
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let Ok(event) = receiver.recv_timeout(remaining) else {
+            return;
+        };
+        if let ProtocolEvent::EventTurnUpserted { params, .. } = event {
+            assert!(
+                params.turn.resource != *resource || params.turn.status != status,
+                "Provider emitted a duplicate terminal turn event"
+            );
+        }
     }
 }

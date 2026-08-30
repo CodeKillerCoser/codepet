@@ -4,7 +4,7 @@ use crate::protocol::{
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalRequestedEvent, ApprovalResolvedEvent, ApprovalStatus,
-    ConversationStatus, ConversationUpsertedEvent, InstanceStatus, ProtocolError,
+    ConversationStatus, InstanceStatus, ProtocolError,
     ProtocolEvent, ProviderApproval, ProviderCapabilities, ProviderCapability,
     ProviderConversation, ProviderInstance, ProviderInstanceRoute, ProviderTurn,
     RoutedResourceId, TurnOutputDeltaEvent, TurnStatus, TurnUpsertedEvent,
@@ -83,7 +83,7 @@ impl OpenCodeProtocolMapper {
             permission_level: Some(OPENCODE_PERMISSION_LEVEL.to_string()),
             model: None,
             reasoning_effort: None,
-            workspace_root: session.workspace_root(),
+            workspace_root: Some(session.workspace_root()),
             created_at: Some(session.time.created),
             updated_at: Some(session.time.updated),
             active_turn,
@@ -117,7 +117,6 @@ impl OpenCodeProtocolMapper {
         request: &OpenCodePermissionAskedEventData,
         turn: &ProviderTurn,
         approval_resource_id: String,
-        requested_at: u64,
     ) -> ProviderApproval {
         ProviderApproval {
             resource: self.resource(approval_resource_id),
@@ -128,17 +127,10 @@ impl OpenCodeProtocolMapper {
             description: (!request.resources.is_empty()).then(|| request.resources.join("\n")),
             status: ApprovalStatus::Pending,
             decisions: vec![ApprovalDecision::Approve, ApprovalDecision::Deny],
-            requested_at,
+            requested_at: None,
             resolved_at: None,
             decision: None,
             extension: None,
-        }
-    }
-
-    pub fn conversation_event(&self, conversation: ProviderConversation) -> ProtocolEvent {
-        ProtocolEvent::EventConversationUpserted {
-            jsonrpc: "2.0".to_string(),
-            params: ConversationUpsertedEvent { conversation },
         }
     }
 

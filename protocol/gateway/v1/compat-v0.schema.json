@@ -128,7 +128,7 @@
         "decision": { "$ref": "#/$defs/ApprovalDecision" },
         "extension": { "$ref": "#/$defs/ProviderExtension" }
       },
-      "required": ["id", "providerId", "conversationId", "turnId", "kind", "title", "status", "decisions", "requestedAt"],
+      "required": ["id", "providerId", "conversationId", "turnId", "kind", "title", "status", "decisions"],
       "additionalProperties": false
     },
     "HandshakeRequest": {

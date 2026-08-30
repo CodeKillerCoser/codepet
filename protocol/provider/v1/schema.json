@@ -237,7 +237,7 @@
         "decision": { "$ref": "#/$defs/ApprovalDecision" },
         "extension": { "$ref": "#/$defs/ProviderExtension" }
       },
-      "required": ["resource", "conversation", "turn", "kind", "title", "status", "decisions", "requestedAt"],
+      "required": ["resource", "conversation", "turn", "kind", "title", "status", "decisions"],
       "additionalProperties": false
     },
     "ProviderCapability": {

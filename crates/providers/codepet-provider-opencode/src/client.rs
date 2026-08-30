@@ -2,26 +2,31 @@ use crate::protocol::{
     OpenCodeActiveSessions, OpenCodeDataResponse, OpenCodeEvent, OpenCodeHealth,
     OpenCodePermissionReply, OpenCodePermissionReplyRequest, OpenCodePromptAdmission,
     OpenCodePromptRequest, OpenCodeServerError, OpenCodeSession, OpenCodeSessionCreate,
-    OpenCodeSessionPage, OPENCODE_MINIMUM_SERVER_VERSION,
+    OpenCodeSessionPage, OPENCODE_VERIFIED_SERVER_VERSION,
 };
 use reqwest::blocking::{Client, Response};
 use reqwest::Url;
-use semver::Version;
 use serde::de::DeserializeOwned;
 use std::io::{BufRead, BufReader, Read};
 use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
+const STARTUP_HEALTH_TIMEOUT: Duration = Duration::from_millis(250);
+const STARTUP_CONFIRM_DELAY: Duration = Duration::from_millis(100);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const STARTUP_RETRY_DELAY: Duration = Duration::from_millis(50);
+const EVENT_QUEUE_CAPACITY: usize = 64;
+const MAX_JSON_BODY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ERROR_BODY_BYTES: usize = 16 * 1024;
 const MAX_SSE_LINE_BYTES: usize = 1024 * 1024;
 const MAX_SSE_EVENT_BYTES: usize = 4 * 1024 * 1024;
@@ -36,7 +41,11 @@ pub struct OpenCodeClient {
 }
 
 impl OpenCodeClient {
-    fn new(base_url: Url) -> Result<Self, OpenCodeServerError> {
+    fn new(
+        base_url: Url,
+        username: String,
+        password: String,
+    ) -> Result<Self, OpenCodeServerError> {
         let requests = Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
@@ -46,23 +55,17 @@ impl OpenCodeClient {
             .connect_timeout(CONNECT_TIMEOUT)
             .build()
             .map_err(|error| OpenCodeServerError::Protocol(error.to_string()))?;
-        let auth = std::env::var("OPENCODE_SERVER_PASSWORD")
-            .ok()
-            .map(|password| {
-                let username = std::env::var("OPENCODE_SERVER_USERNAME")
-                    .unwrap_or_else(|_| "opencode".to_string());
-                (username, password)
-            });
         Ok(Self {
             base_url,
             requests,
             events,
-            auth,
+            auth: Some((username, password)),
         })
     }
 
-    pub fn health(&self) -> Result<OpenCodeHealth, OpenCodeServerError> {
-        let response = self.request(self.requests.get(self.url(&["global", "health"])?))
+    pub fn health(&self, timeout: Duration) -> Result<OpenCodeHealth, OpenCodeServerError> {
+        let response = self.request(self.requests.get(self.url(&["api", "health"])?))
+            .timeout(timeout)
             .send()
             .map_err(transport_error)?;
         decode_json(response)
@@ -143,6 +146,17 @@ impl OpenCodeClient {
         )
     }
 
+    pub fn wait_session(&self, session_id: &str) -> Result<(), OpenCodeServerError> {
+        decode_no_content(
+            self.request(
+                self.requests
+                    .post(self.url(&["api", "session", session_id, "wait"])?),
+            )
+            .send()
+            .map_err(transport_error)?,
+        )
+    }
+
     pub fn reply_permission(
         &self,
         session_id: &str,
@@ -170,14 +184,6 @@ impl OpenCodeClient {
             .send()
             .map_err(transport_error)?;
         ensure_success(response)
-    }
-
-    fn dispose(&self) -> Result<(), OpenCodeServerError> {
-        decode_no_content(
-            self.request(self.requests.post(self.url(&["global", "dispose"])?))
-                .send()
-                .map_err(transport_error)?,
-        )
     }
 
     fn request(&self, request: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
@@ -212,11 +218,27 @@ pub struct OpenCodeServerSession {
 }
 
 impl OpenCodeServerSession {
-    pub fn spawn(executable: &Path, args: &[String]) -> Result<Self, OpenCodeServerError> {
+    pub fn spawn(
+        executable: &Path,
+        args: &[String],
+        server_version: &str,
+    ) -> Result<Self, OpenCodeServerError> {
+        validate_server_version(server_version)?;
         let port = reserve_loopback_port()?;
+        Self::spawn_on_port(executable, args, port)
+    }
+
+    fn spawn_on_port(
+        executable: &Path,
+        args: &[String],
+        port: u16,
+    ) -> Result<Self, OpenCodeServerError> {
+        let deadline = Instant::now() + STARTUP_TIMEOUT;
         let base_url = Url::parse(&format!("http://127.0.0.1:{port}/"))
             .map_err(|error| OpenCodeServerError::Protocol(error.to_string()))?;
-        let client = OpenCodeClient::new(base_url)?;
+        let username = "codepet".to_string();
+        let password = Uuid::new_v4().to_string();
+        let client = OpenCodeClient::new(base_url, username.clone(), password.clone())?;
         let mut command = Command::new(executable);
         command
             .args(args)
@@ -224,15 +246,16 @@ impl OpenCodeServerSession {
             .arg("127.0.0.1")
             .arg("--port")
             .arg(port.to_string())
+            .env("OPENCODE_SERVER_USERNAME", username)
+            .env("OPENCODE_SERVER_PASSWORD", password)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());
         let mut child = command
             .spawn()
             .map_err(|error| OpenCodeServerError::Spawn(error.to_string()))?;
-        if let Err(error) = wait_for_ready(&client, &mut child) {
-            let _ = child.kill();
-            let _ = child.wait();
+        if let Err(error) = wait_for_ready(&client, &mut child, deadline) {
+            let _ = terminate_child(&mut child, Instant::now() + SHUTDOWN_TIMEOUT);
             return Err(error);
         }
         let generation = NEXT_SESSION_GENERATION
@@ -266,7 +289,7 @@ impl OpenCodeServerSession {
                 "OpenCode Server events are already subscribed".to_string(),
             ));
         }
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::sync_channel(EVENT_QUEUE_CAPACITY);
         let inner = self.inner.clone();
         *subscriber = Some(thread::spawn(move || {
             if inner.stopped.load(Ordering::SeqCst) {
@@ -274,11 +297,11 @@ impl OpenCodeServerSession {
             }
             if let Err(error) = inner.client.event_response().and_then(|response| {
                 read_sse(response, &inner.stopped, |event| {
-                    sender.send(Ok(event)).map_err(|_| OpenCodeServerError::Shutdown)
+                    send_event(&sender, event)
                 })
             }) {
                 if !inner.stopped.load(Ordering::SeqCst) {
-                    let _ = sender.send(Err(error));
+                    let _ = sender.try_send(Err(error));
                 }
             }
         }));
@@ -289,31 +312,37 @@ impl OpenCodeServerSession {
         if self.inner.stopped.swap(true, Ordering::SeqCst) {
             return Ok(());
         }
-        let _ = self.inner.client.dispose();
+        let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
         let child_result = {
             let mut child = lock(&self.inner.child);
             if let Some(mut child) = child.take() {
-                match child.try_wait() {
-                    Ok(Some(_)) => Ok(()),
-                    Ok(None) => child
-                        .kill()
-                        .and_then(|_| child.wait().map(|_| ()))
-                        .map_err(|error| OpenCodeServerError::Io(error.to_string())),
-                    Err(error) => Err(OpenCodeServerError::Io(error.to_string())),
-                }
+                terminate_child(&mut child, deadline)
             } else {
                 Ok(())
             }
         };
         if let Some(subscriber) = lock(&self.inner.subscriber).take() {
-            let _ = subscriber.join();
+            while !subscriber.is_finished() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            if subscriber.is_finished() {
+                let _ = subscriber.join();
+            } else if child_result.is_ok() {
+                return Err(OpenCodeServerError::Timeout(
+                    "OpenCode event subscriber did not stop before the shutdown deadline"
+                        .to_string(),
+                ));
+            }
         }
         child_result
     }
 }
 
-fn wait_for_ready(client: &OpenCodeClient, child: &mut Child) -> Result<(), OpenCodeServerError> {
-    let deadline = Instant::now() + STARTUP_TIMEOUT;
+fn wait_for_ready(
+    client: &OpenCodeClient,
+    child: &mut Child,
+    deadline: Instant,
+) -> Result<(), OpenCodeServerError> {
     loop {
         if let Some(status) = child
             .try_wait()
@@ -321,17 +350,39 @@ fn wait_for_ready(client: &OpenCodeClient, child: &mut Child) -> Result<(), Open
         {
             return Err(OpenCodeServerError::ProcessExited(status.to_string()));
         }
-        match client.health() {
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(OpenCodeServerError::Timeout(format!(
+                "server did not become healthy within {} seconds",
+                STARTUP_TIMEOUT.as_secs()
+            )));
+        }
+        let remaining = deadline.saturating_duration_since(now);
+        match client.health(remaining.min(STARTUP_HEALTH_TIMEOUT)) {
             Ok(health) => {
                 if !health.healthy {
                     return Err(OpenCodeServerError::Protocol(
                         "OpenCode health response reported healthy=false".to_string(),
                     ));
                 }
-                validate_server_version(&health.version)?;
+                thread::sleep(
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(STARTUP_CONFIRM_DELAY),
+                );
+                if let Some(status) = child
+                    .try_wait()
+                    .map_err(|error| OpenCodeServerError::Io(error.to_string()))?
+                {
+                    return Err(OpenCodeServerError::ProcessExited(status.to_string()));
+                }
                 return Ok(());
             }
-            Err(_) if Instant::now() < deadline => thread::sleep(STARTUP_RETRY_DELAY),
+            Err(_) if Instant::now() < deadline => thread::sleep(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(STARTUP_RETRY_DELAY),
+            ),
             Err(error) => {
                 return Err(OpenCodeServerError::Timeout(format!(
                     "server did not become healthy within {} seconds: {error}",
@@ -343,14 +394,9 @@ fn wait_for_ready(client: &OpenCodeClient, child: &mut Child) -> Result<(), Open
 }
 
 fn validate_server_version(version: &str) -> Result<(), OpenCodeServerError> {
-    let actual = Version::parse(version.trim_start_matches('v')).map_err(|error| {
-        OpenCodeServerError::Protocol(format!("invalid OpenCode Server version {version:?}: {error}"))
-    })?;
-    let minimum = Version::parse(OPENCODE_MINIMUM_SERVER_VERSION)
-        .map_err(|error| OpenCodeServerError::Protocol(error.to_string()))?;
-    if actual < minimum {
+    if version.trim() != OPENCODE_VERIFIED_SERVER_VERSION {
         return Err(OpenCodeServerError::Protocol(format!(
-            "OpenCode Server {actual} is unsupported; {minimum} or newer is required"
+            "OpenCode Server version {version:?} is unsupported; only {OPENCODE_VERIFIED_SERVER_VERSION} is verified"
         )));
     }
     Ok(())
@@ -360,6 +406,49 @@ fn reserve_loopback_port() -> Result<u16, OpenCodeServerError> {
     TcpListener::bind(("127.0.0.1", 0))
         .and_then(|listener| listener.local_addr().map(|address| address.port()))
         .map_err(|error| OpenCodeServerError::Io(error.to_string()))
+}
+
+fn terminate_child(
+    child: &mut Child,
+    deadline: Instant,
+) -> Result<(), OpenCodeServerError> {
+    if child
+        .try_wait()
+        .map_err(|error| OpenCodeServerError::Io(error.to_string()))?
+        .is_some()
+    {
+        return Ok(());
+    }
+    child
+        .kill()
+        .map_err(|error| OpenCodeServerError::Io(error.to_string()))?;
+    loop {
+        if child
+            .try_wait()
+            .map_err(|error| OpenCodeServerError::Io(error.to_string()))?
+            .is_some()
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(OpenCodeServerError::Timeout(
+                "OpenCode Server did not exit before the shutdown deadline".to_string(),
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn send_event(
+    sender: &SyncSender<Result<OpenCodeEvent, OpenCodeServerError>>,
+    event: OpenCodeEvent,
+) -> Result<(), OpenCodeServerError> {
+    sender.try_send(Ok(event)).map_err(|error| match error {
+        TrySendError::Full(_) => OpenCodeServerError::Protocol(format!(
+            "OpenCode event queue exceeded its fixed capacity of {EVENT_QUEUE_CAPACITY}"
+        )),
+        TrySendError::Disconnected(_) => OpenCodeServerError::Shutdown,
+    })
 }
 
 fn read_sse(
@@ -434,6 +523,12 @@ fn read_bounded_line<R: BufRead>(
         total = total.checked_add(consumed).ok_or_else(|| {
             OpenCodeServerError::Protocol("OpenCode SSE line length overflow".to_string())
         })?;
+        if total > limit {
+            reader.consume(consumed);
+            return Err(OpenCodeServerError::Protocol(format!(
+                "OpenCode SSE line exceeds {limit} bytes"
+            )));
+        }
         if captured.len() < limit {
             let remaining = limit - captured.len();
             captured.extend_from_slice(&available[..consumed.min(remaining)]);
@@ -444,22 +539,31 @@ fn read_bounded_line<R: BufRead>(
             break;
         }
     }
-    if total > limit {
-        return Err(OpenCodeServerError::Protocol(format!(
-            "OpenCode SSE line exceeds {limit} bytes"
-        )));
-    }
     Ok(Some(captured))
 }
 
 fn decode_json<T: DeserializeOwned>(response: Response) -> Result<T, OpenCodeServerError> {
-    ensure_success(response)?
-        .json::<T>()
+    let mut response = ensure_success(response)?;
+    let body = read_response_body(&mut response, MAX_JSON_BODY_BYTES, "JSON response")?;
+    serde_json::from_slice::<T>(&body)
         .map_err(|error| OpenCodeServerError::Protocol(format!("invalid JSON response: {error}")))
 }
 
 fn decode_no_content(response: Response) -> Result<(), OpenCodeServerError> {
-    ensure_success(response).map(|_| ())
+    let mut response = ensure_success(response)?;
+    if response.status() != reqwest::StatusCode::NO_CONTENT {
+        return Err(OpenCodeServerError::Protocol(format!(
+            "expected OpenCode 204 No Content, received {}",
+            response.status()
+        )));
+    }
+    let body = read_response_body(&mut response, MAX_ERROR_BODY_BYTES, "no-content response")?;
+    if !body.is_empty() {
+        return Err(OpenCodeServerError::Protocol(
+            "OpenCode no-content response contained a body".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn ensure_success(mut response: Response) -> Result<Response, OpenCodeServerError> {
@@ -467,12 +571,7 @@ fn ensure_success(mut response: Response) -> Result<Response, OpenCodeServerErro
     if status.is_success() {
         return Ok(response);
     }
-    let mut body = Vec::new();
-    response
-        .by_ref()
-        .take(MAX_ERROR_BODY_BYTES as u64)
-        .read_to_end(&mut body)
-        .map_err(|error| OpenCodeServerError::Io(error.to_string()))?;
+    let body = read_response_body(&mut response, MAX_ERROR_BODY_BYTES, "error response")?;
     let message = String::from_utf8_lossy(&body).trim().to_string();
     Err(OpenCodeServerError::Http {
         status: status.as_u16(),
@@ -482,6 +581,43 @@ fn ensure_success(mut response: Response) -> Result<Response, OpenCodeServerErro
             message
         },
     })
+}
+
+fn read_response_body(
+    response: &mut Response,
+    limit: usize,
+    label: &str,
+) -> Result<Vec<u8>, OpenCodeServerError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(OpenCodeServerError::Protocol(format!(
+            "OpenCode {label} exceeds {limit} bytes"
+        )));
+    }
+    read_bounded_body(response, limit, label)
+}
+
+fn read_bounded_body(
+    reader: &mut impl Read,
+    limit: usize,
+    label: &str,
+) -> Result<Vec<u8>, OpenCodeServerError> {
+    let read_limit = u64::try_from(limit)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut body = Vec::with_capacity(limit.min(16 * 1024));
+    reader
+        .take(read_limit)
+        .read_to_end(&mut body)
+        .map_err(|error| OpenCodeServerError::Io(error.to_string()))?;
+    if body.len() > limit {
+        return Err(OpenCodeServerError::Protocol(format!(
+            "OpenCode {label} exceeds {limit} bytes"
+        )));
+    }
+    Ok(body)
 }
 
 fn transport_error(error: reqwest::Error) -> OpenCodeServerError {
@@ -498,22 +634,27 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_bounded_line, read_sse, validate_server_version};
+    use super::{
+        read_bounded_body, read_bounded_line, read_sse, send_event,
+        validate_server_version,
+    };
     use crate::protocol::OpenCodeEvent;
+    use serde_json::json;
     use std::io::{BufReader, Cursor};
     use std::sync::atomic::AtomicBool;
 
     #[test]
-    fn validates_minimum_server_version() {
+    fn accepts_only_the_verified_server_version() {
         assert!(validate_server_version("1.18.25").is_ok());
-        assert!(validate_server_version("v1.19.0").is_ok());
+        assert!(validate_server_version("1.18.26").is_err());
+        assert!(validate_server_version("v1.18.25").is_err());
         assert!(validate_server_version("1.18.24").is_err());
         assert!(validate_server_version("development").is_err());
     }
 
     #[test]
     fn parses_official_sse_framing_and_heartbeats() {
-        let input = b": heartbeat\n\nevent: message\ndata: {\"id\":\"evt_1\",\"type\":\"session.idle\",\"data\":{\"sessionID\":\"ses_1\"}}\n\n";
+        let input = b": heartbeat\n\nevent: message\ndata: {\"id\":\"evt_1\",\"type\":\"server.connected\",\"data\":{}}\n\n";
         let stopped = AtomicBool::new(false);
         let mut events = Vec::<OpenCodeEvent>::new();
         let error = read_sse(Cursor::new(input.to_vec()), &stopped, |event| {
@@ -523,16 +664,134 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("stream ended"));
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].kind, "session.idle");
+        assert_eq!(events[0].kind, "server.connected");
     }
 
     #[test]
-    fn oversized_sse_line_is_drained_before_failure() {
-        let mut reader = BufReader::new(Cursor::new(b"12345\nnext\n"));
+    fn oversized_sse_line_fails_without_draining_the_unbounded_line() {
+        let mut reader = BufReader::with_capacity(3, Cursor::new(b"123456789\nnext\n"));
         assert!(read_bounded_line(&mut reader, 5).is_err());
         assert_eq!(
             read_bounded_line(&mut reader, 5).unwrap(),
-            Some(b"next\n".to_vec())
+            Some(b"789\n".to_vec())
         );
+    }
+
+    #[test]
+    fn bounded_body_rejects_content_beyond_the_limit() {
+        let mut accepted = Cursor::new(b"12345".to_vec());
+        assert_eq!(
+            read_bounded_body(&mut accepted, 5, "fixture").unwrap(),
+            b"12345"
+        );
+        let mut oversized = Cursor::new(b"123456".to_vec());
+        assert!(read_bounded_body(&mut oversized, 5, "fixture").is_err());
+    }
+
+    #[test]
+    fn event_queue_fails_closed_when_its_fixed_capacity_is_full() {
+        let (sender, _receiver) = std::sync::mpsc::sync_channel(1);
+        let event = OpenCodeEvent {
+            id: "evt_queue".to_string(),
+            kind: "server.connected".to_string(),
+            data: json!({}),
+            location: None,
+        };
+        send_event(&sender, event.clone()).unwrap();
+        let error = send_event(&sender, event).unwrap_err();
+        assert!(error.to_string().contains("fixed capacity"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn startup_health_probe_obeys_the_total_deadline() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        });
+        let client = super::OpenCodeClient::new(
+            reqwest::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),
+            "codepet".to_string(),
+            "deadline-secret".to_string(),
+        )
+        .unwrap();
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 5"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        let error = super::wait_for_ready(
+            &client,
+            &mut child,
+            started + std::time::Duration::from_millis(120),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("timeout"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        super::terminate_child(
+            &mut child,
+            std::time::Instant::now() + std::time::Duration::from_secs(1),
+        )
+        .unwrap();
+        server.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn occupied_port_with_foreign_auth_is_never_accepted() {
+        use std::io::{Read, Write};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let saw_basic_auth = Arc::new(AtomicBool::new(false));
+        let server_saw_auth = saw_basic_auth.clone();
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+                        let mut request = [0u8; 2048];
+                        let read = stream.read(&mut request).unwrap_or(0);
+                        let request = String::from_utf8_lossy(&request[..read]).to_ascii_lowercase();
+                        if request.contains("authorization: basic ") {
+                            server_saw_auth.store(true, Ordering::SeqCst);
+                        }
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(_) => return,
+                }
+            }
+        });
+        let error = match super::OpenCodeServerSession::spawn_on_port(
+            std::path::Path::new("/bin/sh"),
+            &["-c".to_string(), "sleep 0.25".to_string()],
+            port,
+        ) {
+            Ok(session) => {
+                let _ = session.shutdown();
+                panic!("foreign port was accepted as the owned OpenCode Server")
+            }
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            crate::protocol::OpenCodeServerError::ProcessExited(_)
+        ));
+        assert!(saw_basic_auth.load(Ordering::SeqCst));
+        server.join().unwrap();
     }
 }

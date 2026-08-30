@@ -23,7 +23,7 @@
         "resolvedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
         "decision": { "$ref": "#/$defs/ApprovalDecision" }
       },
-      "required": ["resource", "conversation", "turn", "kind", "title", "status", "decisions", "requestedAt"],
+      "required": ["resource", "conversation", "turn", "kind", "title", "status", "decisions"],
       "additionalProperties": false
     },
     "ApprovalDecision": {

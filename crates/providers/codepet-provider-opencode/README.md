@@ -2,7 +2,7 @@
 
 `codepet-provider-opencode` 是独立的 Provider Protocol v1 / stdio JSON-lines 二进制。它由 `codepet-host` 启动，并为每个 instance 管理一个仅监听 loopback 的官方 OpenCode Server 子进程。运行依赖不包含 Host、Gateway、Tauri、Pet SDK、Desktop IPC 或 activity store。
 
-Provider 与 Host 之间只使用生成的 `codepet-provider-sdk` DTO、dispatcher、四段 Route 和有界 `JsonLineCodec`；Provider 内部的 HTTP/SSE DTO 只描述 OpenCode v1.18.25 正式发行版实际提供的 `/api` Server 形状。OpenCode 可执行文件必须由 Host resolver 作为绝对 `serverExecutable` 注入，Provider 不搜索 PATH、应用目录或其他候选位置。
+Provider 与 Host 之间只使用生成的 `codepet-provider-sdk` DTO、dispatcher、四段 Route 和有界 `JsonLineCodec`；Provider 内部的 HTTP/SSE DTO 只描述 OpenCode v1.18.25 正式发行版实际提供的 V2 `/api` Server 形状。OpenCode 可执行文件和版本必须由 Host resolver 作为绝对 `serverExecutable` 与 `serverVersion` 注入，Provider 不搜索 PATH、应用目录或其他候选位置，也不再次探测版本。
 
 ## 构建与开发安装
 
@@ -14,15 +14,15 @@ cargo build --manifest-path crates/Cargo.toml -p codepet-provider-opencode
 
 ## 能力边界
 
-当前实现需要 OpenCode 1.18.25 或更新版本，并使用该发行版提供的 V2 `/api/session`、`/api/event` 与 permission reply 路由：
+当前实现只接受精确 OpenCode 1.18.25，并使用该发行版提供的 V2 `/api/health`、`/api/session`、`/api/event` 与 permission reply 路由。更早和未来版本都 fail closed：
 
 - 支持 session list/get/create、prompt queue、活跃 turn steer/interrupt、一次性 approve/deny 和实时 SSE 事件；
 - `opencode-default` 表示沿用 OpenCode 自己的权限规则，Provider 不构造第二套沙箱或权限策略；approve 只映射为 `once`，从不写入 `always`；
-- OpenCode 没有 Provider Protocol 的原生 Turn 对象；Provider 只把一个 session 当前活动执行投影成一个 `ProviderTurn`；
+- OpenCode 没有 Provider Protocol 的原生 Turn 对象；Provider 只把一个 session 当前活动执行投影成一个 `ProviderTurn`，用 `session.next.step.ended` 加 `/api/session/:id/wait` 确认一次成功终态；
 - 不支持 create title、model/reasoning 选择、Provider extension、question 回答、历史 delta replay、自动重启或断线补偿；这些请求返回标准错误，不伪造成功；
-- SSE 断开或已支持事件出现非法官方形状时，instance 进入 Error。未知 OpenCode 事件被忽略，不通过 Hook、transcript 或字段猜测补齐。
+- V2 `Session.location` 缺失、SSE 断开、资源超限或已支持事件出现非法官方形状时，instance 进入 Error。未知 OpenCode 事件被忽略，不通过 Hook、transcript 或字段猜测补齐。
 
-Provider 启动的 Server 继承官方 `OPENCODE_SERVER_USERNAME` / `OPENCODE_SERVER_PASSWORD` 环境；若配置了密码，内部 HTTP/SSE client 使用同一凭据，且不会输出密码。
+Provider 每次启动都生成随机 `OPENCODE_SERVER_PASSWORD`，显式注入唯一 child，并由内部 HTTP/SSE client 使用同一 Basic authentication。启动总预算为 10 秒；JSON body、SSE line/event 与事件队列都有固定上限。shutdown 不调用 `/global/dispose`，而是有界 kill/wait 自己持有的 Server。
 
 ## 验证
 
@@ -33,7 +33,7 @@ cargo test --manifest-path crates/Cargo.toml -p codepet-provider-opencode --all-
 必跑测试使用真实子进程 fixture 覆盖官方 v1.18.25 JSON/SSE 形状、turn/approval 垂直映射、stdio framing 和 Pet 隔离。若本机有 OpenCode，可显式提供 Host 等价的绝对路径运行只读 smoke；测试自身不探测路径：
 
 ```sh
-CODEPET_OPENCODE_EXECUTABLE=/absolute/path/to/opencode cargo test --manifest-path crates/Cargo.toml -p codepet-provider-opencode --test provider_vertical provider_real_opencode_server_smoke -- --ignored --exact
+CODEPET_OPENCODE_EXECUTABLE=/absolute/path/to/opencode cargo test --manifest-path crates/Cargo.toml -p codepet-provider-opencode --test provider_vertical provider_real_opencode_server_smoke -- --ignored --nocapture
 ```
 
 完整数据流、风险与限制见 `knowledge/10-architecture/opencode-provider-plugin-runtime.md`。

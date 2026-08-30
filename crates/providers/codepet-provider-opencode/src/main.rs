@@ -42,52 +42,60 @@ async fn run() -> Result<(), String> {
     })));
     let mut reader = BufReader::new(std::io::stdin());
 
-    loop {
-        let message = match codec.read_message(&mut reader) {
-            Ok(Some(message)) => message,
-            Ok(None) => break,
-            Err(error) => {
-                let detail = error.error.message.clone();
-                write_message(
-                    &codec,
-                    &writer,
-                    ProviderWireMessage::Response(error.into_response()),
-                )?;
-                return Err(format!("invalid Host frame: {detail}"));
+    let loop_result = async {
+        loop {
+            let message = match codec.read_message(&mut reader) {
+                Ok(Some(message)) => message,
+                Ok(None) => break,
+                Err(error) => {
+                    let detail = error.error.message.clone();
+                    write_message(
+                        &codec,
+                        &writer,
+                        ProviderWireMessage::Response(error.into_response()),
+                    )?;
+                    return Err(format!("invalid Host frame: {detail}"));
+                }
+            };
+            let response = match message {
+                ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request)) => {
+                    dispatch(provider.as_ref(), request).await
+                }
+                ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(rejection)) => {
+                    rejection.into_response()
+                }
+                ProviderWireMessage::Response(_)
+                | ProviderWireMessage::Notification(_)
+                | ProviderWireMessage::Event(_) => {
+                    eprintln!("OpenCode Provider ignored a non-request Host message");
+                    continue;
+                }
+            };
+            write_message(
+                &codec,
+                &writer,
+                ProviderWireMessage::Response(response),
+            )?;
+            if provider.is_shutdown() {
+                break;
             }
-        };
-        let response = match message {
-            ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request)) => {
-                dispatch(provider.as_ref(), request).await
-            }
-            ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(rejection)) => {
-                rejection.into_response()
-            }
-            ProviderWireMessage::Response(_)
-            | ProviderWireMessage::Notification(_)
-            | ProviderWireMessage::Event(_) => {
-                eprintln!("OpenCode Provider ignored a non-request Host message");
-                continue;
-            }
-        };
-        write_message(
-            &codec,
-            &writer,
-            ProviderWireMessage::Response(response),
-        )?;
-        if provider.is_shutdown() {
-            break;
         }
+        Ok(())
     }
+    .await;
 
-    if !provider.is_shutdown() {
-        let _ = ProtocolServer::provider_shutdown(
-            provider.as_ref(),
-            ProviderShutdownRequest {},
-        )
-        .await;
+    let cleanup_result = ProtocolServer::provider_shutdown(
+        provider.as_ref(),
+        ProviderShutdownRequest {},
+    )
+    .await
+    .map(|_| ())
+    .map_err(|error| format!("OpenCode Provider cleanup failed: {}", error.message));
+    match (loop_result, cleanup_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(error), Err(cleanup)) => Err(format!("{error}; {cleanup}")),
     }
-    Ok(())
 }
 
 fn write_message(

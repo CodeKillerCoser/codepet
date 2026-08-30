@@ -22,7 +22,8 @@ pub struct Approval {
     pub description: Option<String>,
     pub status: ApprovalStatus,
     pub decisions: Vec<ApprovalDecision>,
-    pub requested_at: TimestampMs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_at: Option<TimestampMs>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_at: Option<TimestampMs>,
     #[serde(skip_serializing_if = "Option::is_none")]

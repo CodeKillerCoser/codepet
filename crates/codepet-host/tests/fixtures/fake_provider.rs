@@ -316,7 +316,7 @@ impl ProtocolServer for FakeProvider {
                         ApprovalDecision::Deny => ApprovalStatus::Denied,
                     },
                     decisions: vec![ApprovalDecision::Approve, ApprovalDecision::Deny],
-                    requested_at: 1,
+                    requested_at: Some(1),
                     resolved_at: Some(2),
                     decision: Some(request.decision),
                     extension: None,
