@@ -219,41 +219,13 @@ impl ProviderHostState {
         {
             return;
         }
-        if !gateway.start_event_forwarding() {
-            crate::app_log::error(
-                "provider_host",
-                "Provider Gateway event forwarding was already started or unavailable",
-            );
-        }
         for diagnostic in manager.catalog_diagnostics() {
             crate::app_log::error(
                 "provider_host",
                 &format!("{} path={:?}", diagnostic.message, diagnostic.path),
             );
         }
-        tauri::async_runtime::spawn(async move {
-            for (plugin_id, outcome) in manager.start_enabled().await {
-                match outcome {
-                    Ok(()) => crate::app_log::info(
-                        "provider_host",
-                        &format!("Provider plugin initialized plugin_id={plugin_id}"),
-                    ),
-                    Err(error) => {
-                        let snapshot = manager.snapshot(&plugin_id).await.ok();
-                        crate::app_log::error(
-                            "provider_host",
-                            &format!(
-                                "Provider plugin initialization failed plugin_id={plugin_id} error={error:?} state={:?} stderr={:?}",
-                                snapshot.as_ref().map(|snapshot| snapshot.state),
-                                snapshot
-                                    .as_ref()
-                                    .and_then(|snapshot| snapshot.stderr_diagnostics.last())
-                            ),
-                        );
-                    }
-                }
-            }
-        });
+        spawn_provider_host_startup(manager, gateway);
     }
 
     pub(crate) fn shutdown_completed(&self) -> bool {
@@ -323,6 +295,41 @@ impl ProviderHostState {
         self.shutdown_notify.notify_waiters();
         true
     }
+}
+
+fn spawn_provider_host_startup(
+    manager: Arc<PluginManager>,
+    gateway: Arc<ProviderGatewayService>,
+) -> tauri::async_runtime::JoinHandle<()> {
+    tauri::async_runtime::spawn(async move {
+        if !gateway.start_event_forwarding() {
+            crate::app_log::error(
+                "provider_host",
+                "Provider Gateway event forwarding was already started or unavailable",
+            );
+        }
+        for (plugin_id, outcome) in manager.start_enabled().await {
+            match outcome {
+                Ok(()) => crate::app_log::info(
+                    "provider_host",
+                    &format!("Provider plugin initialized plugin_id={plugin_id}"),
+                ),
+                Err(error) => {
+                    let snapshot = manager.snapshot(&plugin_id).await.ok();
+                    crate::app_log::error(
+                        "provider_host",
+                        &format!(
+                            "Provider plugin initialization failed plugin_id={plugin_id} error={error:?} state={:?} stderr={:?}",
+                            snapshot.as_ref().map(|snapshot| snapshot.state),
+                            snapshot
+                                .as_ref()
+                                .and_then(|snapshot| snapshot.stderr_diagnostics.last())
+                        ),
+                    );
+                }
+            }
+        }
+    })
 }
 
 fn bundled_provider_plugins_directory<R: Runtime>(
@@ -665,8 +672,8 @@ fn start_local_event_bridge<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::{
-        inject_runtime_executable, provider_catalog_config, ProviderGatewayService,
-        ProviderHostState,
+        inject_runtime_executable, provider_catalog_config, spawn_provider_host_startup,
+        ProviderGatewayService, ProviderHostState,
     };
     use crate::agent_runtime::{
         AgentRuntime, AgentRuntimeSource, AgentRuntimeStatus, CLAUDE_RUNTIME_PROVIDER_ID,
@@ -682,6 +689,31 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::Barrier;
+
+    #[test]
+    fn provider_host_startup_enters_tauri_runtime_before_gateway_forwarding() {
+        let directory = tempfile::tempdir().unwrap();
+        let device = DeviceRegistry::open(directory.path().join("device.json"), "Test Device")
+            .unwrap();
+        let instances = ProviderInstanceRegistry::open(
+            directory.path().join("instances.json"),
+            device.identity().device_id.clone(),
+        )
+        .unwrap();
+        let manager = Arc::new(
+            PluginManager::new(
+                device,
+                PluginCatalog::discover(PluginCatalogConfig::default()),
+                instances,
+                PluginManagerConfig::default(),
+            )
+            .unwrap(),
+        );
+        let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+
+        let startup = spawn_provider_host_startup(manager, gateway);
+        tauri::async_runtime::block_on(startup).unwrap();
+    }
 
     #[test]
     fn catalog_discovers_all_three_providers_from_the_bundled_directory() {
