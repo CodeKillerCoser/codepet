@@ -75,9 +75,29 @@ fn write_json_atomically_with_mode<T: Serialize>(
         .as_file()
         .sync_all()
         .map_err(|error| persistence_io("sync temporary file", &temporary_path, error))?;
-    temporary
+    let persisted = temporary
         .persist(path)
         .map_err(|error| persistence_io("replace persistence file", path, error.error))?;
+    persisted
+        .sync_all()
+        .map_err(|error| persistence_io("sync replaced file", path, error))?;
+    sync_parent_after_replace(parent, path)?;
+    Ok(())
+}
+
+fn sync_parent_after_replace(parent: &Path, path: &Path) -> HostResult<()> {
+    #[cfg(unix)]
+    {
+        fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| persistence_io("sync parent after replace", path, error))?;
+    }
+    #[cfg(not(unix))]
+    {
+        // Stable Rust has no portable Windows directory fsync. The replaced
+        // file itself is synced above, which is the best available primitive.
+        let _ = (parent, path);
+    }
     Ok(())
 }
 

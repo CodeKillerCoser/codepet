@@ -13,7 +13,7 @@ use std::fmt::{Debug, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 use x509_parser::parse_x509_certificate;
 
@@ -161,6 +161,7 @@ impl RemoteClientIdentity {
 pub struct PairingSession {
     pub pairing_id: String,
     pub pairing_secret: String,
+    /// Wall-clock display hint for QR/UI; authorization uses a process-local monotonic deadline.
     pub expires_at: TimestampMs,
 }
 
@@ -536,7 +537,7 @@ impl RemoteCredentialStore {
 struct ActivePairingSession {
     pairing_id: String,
     pairing_secret_sha256: [u8; 32],
-    expires_at: TimestampMs,
+    deadline: Instant,
 }
 
 /// Host security boundary for a future LAN HTTP/WSS listener.
@@ -602,13 +603,23 @@ impl RemoteAccessManager {
 
     /// Replaces any earlier in-memory pairing session with a fresh five-minute session.
     pub fn begin_pairing(&self) -> HostResult<PairingSession> {
+        self.begin_pairing_with_ttl(PAIRING_SESSION_TTL)
+    }
+
+    fn begin_pairing_with_ttl(&self, ttl: Duration) -> HostResult<PairingSession> {
         let pairing_id = random_prefixed_id("pairing")?;
         let pairing_secret = random_hex::<RANDOM_SECRET_BYTES>()?;
-        let expires_at = (self.clock)().saturating_add(duration_ms(PAIRING_SESSION_TTL));
+        let deadline = Instant::now().checked_add(ttl).ok_or_else(|| {
+            HostError::new(
+                "invalid_pairing_ttl",
+                "remote pairing TTL exceeds the monotonic clock range",
+            )
+        })?;
+        let expires_at = (self.clock)().saturating_add(duration_ms(ttl));
         let active = ActivePairingSession {
             pairing_id: pairing_id.clone(),
             pairing_secret_sha256: sha256_bytes(pairing_secret.as_bytes()),
-            expires_at,
+            deadline,
         };
         *self
             .active_pairing
@@ -632,7 +643,6 @@ impl RemoteAccessManager {
             return Err(invalid_pairing_session());
         }
         let supplied_secret_hash = sha256_bytes(request.pairing_secret.as_bytes());
-        let now = (self.clock)();
         let mut active = self
             .active_pairing
             .lock()
@@ -640,7 +650,7 @@ impl RemoteAccessManager {
         let Some(session) = active.as_ref() else {
             return Err(invalid_pairing_session());
         };
-        if now >= session.expires_at {
+        if Instant::now() >= session.deadline {
             *active = None;
             return Err(HostError::new(
                 "pairing_session_expired",
@@ -1195,6 +1205,15 @@ mod tests {
         let certificate = manager.tls_identity().certificate_der().to_vec();
         let private_key = manager.tls_identity().private_key_der().to_vec();
         assert!(is_canonical_hex(&fingerprint, SHA256_HEX_LENGTH));
+        let independent_fingerprint = ring::digest::digest(
+            &ring::digest::SHA256,
+            &certificate,
+        )
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+        assert_eq!(fingerprint, independent_fingerprint);
         assert_eq!(manager.device_registry().identity(), device.identity());
         let issued = pair(&manager, "client-persisted");
         drop(manager);
@@ -1214,7 +1233,26 @@ mod tests {
         assert!(reopened.validate_bearer(&issued.bearer_token).is_ok());
         drop(reopened);
 
-        fs::write(&config.tls_identity_path, b"not-json").unwrap();
+        let mismatched_identity = generate_tls_identity(15_000).unwrap();
+        let mut mismatched_document: serde_json::Value = serde_json::from_slice(
+            &fs::read(&config.tls_identity_path).unwrap(),
+        )
+        .unwrap();
+        mismatched_document["privateKeyDer"] =
+            serde_json::json!(encode_hex(mismatched_identity.private_key_der()));
+        mismatched_document["privateKeySha256"] =
+            serde_json::json!(sha256_hex(mismatched_identity.private_key_der()));
+        fs::write(
+            &config.tls_identity_path,
+            serde_json::to_vec_pretty(&mismatched_document).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            load_tls_identity(&config.tls_identity_path)
+                .unwrap_err()
+                .code,
+            "invalid_lan_tls_identity"
+        );
         clock.set(20_000);
         let recovered = RemoteAccessManager::open_with_clock(
             config.clone(),
@@ -1272,8 +1310,37 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
-    fn pairing_secret_is_single_use_expires_and_does_not_survive_restart() {
+    fn tls_identity_symlink_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let clock = TestClock::new(1_000);
+        let device = Arc::new(
+            DeviceRegistry::open(directory.path().join("device.json"), "Symlink Test")
+                .unwrap(),
+        );
+        let config = RemoteAccessConfig::for_data_directory(
+            directory.path().join("remote-access"),
+        );
+        fs::create_dir_all(config.tls_identity_path.parent().unwrap()).unwrap();
+        let target = directory.path().join("tls-target.json");
+        fs::write(&target, b"{}").unwrap();
+        symlink(&target, &config.tls_identity_path).unwrap();
+
+        let error = RemoteAccessManager::open_with_clock(
+            config,
+            device,
+            clock.clock(),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.code, "invalid_secret_file_type");
+    }
+
+    #[test]
+    fn pairing_uses_monotonic_deadline_and_secret_is_not_consumed_on_error() {
         let directory = tempfile::tempdir().unwrap();
         let clock = TestClock::new(1_000);
         let (config, device, manager) = open_manager(directory.path(), &clock);
@@ -1292,6 +1359,18 @@ mod tests {
                 platform: "ios".to_string(),
             },
         };
+        clock.set(u64::MAX);
+        let mut wrong_request = request.clone();
+        let replacement = if wrong_request.pairing_secret.starts_with('0') {
+            "1"
+        } else {
+            "0"
+        };
+        wrong_request.pairing_secret.replace_range(0..1, replacement);
+        assert_eq!(
+            manager.complete_pairing(wrong_request).unwrap_err().code,
+            "invalid_pairing_session"
+        );
         let barrier = Arc::new(std::sync::Barrier::new(3));
         let attempts = (0..2)
             .map(|_| {
@@ -1319,8 +1398,11 @@ mod tests {
             vec!["invalid_pairing_session"]
         );
 
-        let expired = manager.begin_pairing().unwrap();
-        clock.set(expired.expires_at);
+        clock.set(10_000);
+        let expired = manager
+            .begin_pairing_with_ttl(Duration::ZERO)
+            .unwrap();
+        assert_eq!(expired.expires_at, 10_000);
         assert_eq!(
             manager
                 .complete_pairing(PairingExchangeRequest {
