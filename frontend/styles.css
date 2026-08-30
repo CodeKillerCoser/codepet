@@ -2017,13 +2017,30 @@ textarea {
 }
 
 .pair-device-dialog {
-  display: grid;
   width: min(480px, calc(100vw - 32px));
-  max-height: calc(100vh - 48px);
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  margin: auto;
   gap: 14px;
   overflow-y: auto;
   border-radius: 8px;
   padding: 18px;
+  color: var(--app-text);
+}
+
+.pair-device-dialog[open] {
+  display: grid;
+}
+
+.pair-device-dialog::backdrop {
+  background: color-mix(in srgb, var(--app-bg) 72%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.pair-device-dialog .panel-head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
 }
 
 .pair-device-dialog h3 {

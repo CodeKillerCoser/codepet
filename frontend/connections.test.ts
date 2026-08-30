@@ -41,4 +41,13 @@ describe("connections workspace", () => {
     expect(pairDialogSource).toContain("pairingCountdownLabel(display.remainingSeconds)");
     expect(pairDialogSource).not.toMatch(/pairing(Code|Credential|Payload)|<pre|<code/);
   });
+
+  it("opens as a native modal and handles both Tab directions inside it", () => {
+    expect(pairDialogSource).toContain("<dialog");
+    expect(pairDialogSource).toContain("dialogElement.showModal()");
+    expect(pairDialogSource).toContain("on:cancel={handleCancel}");
+    expect(pairDialogSource).toContain("wrappedDialogFocusIndex(activeIndex, focusableElements.length, event.shiftKey)");
+    expect(pairDialogSource).toContain('if (event.key === "Escape")');
+    expect(appSource).toContain("addDeviceButton?.focus()");
+  });
 });
