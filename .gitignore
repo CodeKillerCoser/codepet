@@ -3,6 +3,8 @@ dist/
 src-tauri/target/
 sdk/rust/target/
 crates/target/
+src-tauri/resources/provider-plugins/*
+!src-tauri/resources/provider-plugins/.gitkeep
 custom-pet-data/
 .local-secrets/
 __pycache__/

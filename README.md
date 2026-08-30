@@ -199,6 +199,15 @@ npm run build
 npm run tauri build
 ```
 
+Tauri bundle 会先构建并 staging Code Pet 自有的 Codex、OpenCode、Claude Provider adapter，再把 `provider-plugins/` 收录到 App Resources。它不会打包底层 Agent runtime；Codex/OpenCode/Claude 可执行文件仍来自用户本机检测或选择。仅验证 staging 可运行：
+
+```bash
+npm run providers:test
+npm run providers:stage
+```
+
+macOS universal 发布构建应设置 `CODEPET_PROVIDER_TARGET=universal-apple-darwin`；开发态可将 `CODEPET_BUNDLED_PROVIDER_PLUGINS_DIR` 设为 staging 目录的绝对路径。
+
 生成并验证 macOS 签名 DMG：
 
 ```bash

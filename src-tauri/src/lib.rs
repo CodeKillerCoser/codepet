@@ -424,8 +424,6 @@ pub fn run() {
     app_log::log_app_start_banner();
     app_log::info("app", "tauri builder initializing");
 
-    let provider_host_state = ProviderHostState::default();
-    let runtime_gateway_state = RuntimeGatewayState::new(provider_host_state.gateway());
     let desktop_companion_state = CodexDesktopCompanionState::default();
 
     let builder = tauri::Builder::default()
@@ -447,22 +445,38 @@ pub fn run() {
         .manage(SharedState::default())
         .manage(PendingAppUpdate::default())
         .manage(AgentRuntimeService::default())
-        .manage(runtime_gateway_state)
         .manage(desktop_companion_state)
-        .manage(provider_host_state)
         .setup(|app| {
             let setup_span = app_log::PerfSpan::start("startup.total");
             app_log::info("startup", "setup started");
             let handle = app.handle().clone();
             let state = app.state::<SharedState>().inner().clone();
-            let runtime_gateway_state = app.state::<RuntimeGatewayState>().inner().clone();
+            let provider_host_state = match ProviderHostState::from_app(&handle) {
+                Ok(state) => state,
+                Err(error) => {
+                    app_log::error(
+                        "provider_host",
+                        &format!(
+                            "failed to initialize bundled Provider Host boundary error={error:?}"
+                        ),
+                    );
+                    ProviderHostState::unavailable()
+                }
+            };
+            let runtime_gateway_state = RuntimeGatewayState::new(provider_host_state.gateway());
+            if !app.manage(runtime_gateway_state.clone()) {
+                return Err("Runtime Gateway state was already managed".into());
+            }
+            if !app.manage(provider_host_state.clone()) {
+                return Err("Provider Host state was already managed".into());
+            }
             if let Err(error) = start_runtime_gateway_event_bridge(handle.clone(), &runtime_gateway_state) {
                 app_log::error(
                     "runtime_gateway",
                     &format!("failed to start remote gateway local event bridge error={error:?}"),
                 );
             }
-            app.state::<ProviderHostState>().start_in_background();
+            provider_host_state.start_in_background();
             let desktop_companion_state = app.state::<CodexDesktopCompanionState>().inner().clone();
             if let Err(error) = start_codex_desktop_companion_event_bridge(handle.clone(), &desktop_companion_state) {
                 app_log::error(

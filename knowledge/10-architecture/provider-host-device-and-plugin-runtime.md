@@ -4,6 +4,8 @@
 
 `crates/codepet-host` 已提供可复用的 Rust Provider Host：它从显式目录读取 manifest，为本机持久化稳定 `DeviceId`，按 manifest 启动独立 Provider 二进制，并通过生成的 `codepet-provider-sdk` 在独占 stdio 上通信。它同时实现内部 `codepet-gateway-sdk::ProtocolServer`，但当前没有 Gateway v1 网络 listener。
 
+Code Pet 发行包内置 `codepet-provider-codex`、`codepet-provider-opencode` 和 `codepet-provider-claude` 三个独立 adapter 二进制及其 manifest。内置的是 Code Pet 自有的 Provider adapter，不是 Codex、OpenCode 或 Claude runtime；runtime 仍由用户本机安装和配置，`AgentRuntimeService` 的检测/用户选择结果始终是 executable 权威。
+
 Tauri 由 `ProviderHostState` 管理 Plugin Manager 与 Gateway service；compat-v0 `RuntimeGatewayState` 只持有同一个 service 的薄适配引用。Provider 数据只有一条远程路径：
 
 ```text
@@ -24,6 +26,7 @@ Provider 事件进入 Gateway v1 replay，并由兼容适配发布到远程 `run
 - 显式插件目录、进程启动、协议协商、实例启动、能力查询和业务路由；
 - 有界 JSON-lines、并发 request id 关联、事件分流、超时、崩溃隔离、stderr 诊断和有界 shutdown；
 - 内部 Gateway v1 的 device/provider/capability/conversation/turn/approval 与 event replay 边界。
+- 从 App Resources 的单一 `provider-plugins/` 目录自动发现三个默认 Provider adapter，并在 macOS/Windows 发布构建中 staging。
 
 本阶段不实现：
 
@@ -34,9 +37,10 @@ Provider 事件进入 Gateway v1 replay，并由兼容适配发布到远程 `run
 
 ## 配置与持久化
 
-Tauri 以解析后的应用数据目录为根：
+Tauri Catalog 合并以下目录来源：
 
-- `provider-plugins/`：默认 manifest 目录；
+- App Resources 的 `provider-plugins/`：发行包内置的三个默认 Provider adapter；
+- 应用数据目录的 `provider-plugins/`：既有本地 manifest 目录；
 - `settings.providerPlugins.directories`：附加显式目录，绝对路径保持不变，相对路径按应用数据目录解析；
 - `provider-host/device-identity.json`：稳定本机设备身份；
 - `provider-host/provider-instances.json`：manifest 实例的稳定身份映射。
@@ -70,6 +74,17 @@ manifest 是插件进程和普通实例设置的配置权威：
 Agent executable 是 manifest 普通 setting 的受控例外：Codex 的 `appServerExecutable`、Claude 的 `claudeExecutable`，以及 OpenCode 的 `serverExecutable` / `serverVersion` 都由 Tauri 在 Catalog 注册前删除 manifest 同名值，再只注入 `AgentRuntimeService` 对应 resolver 返回的绝对路径与已解析版本。runtime set/clear/refresh 通过 Manager 更新目标实例 setting 并只重启对应插件；Provider 自身不搜索路径、探测版本或补默认参数。Codex 与 OpenCode manifest 仍显式提供固定 Server args，Claude manifest 不保存个人 executable。详见 `codex-provider-plugin-runtime.md`、`claude-provider-plugin-runtime.md` 与 `opencode-provider-plugin-runtime.md`。
 
 `update_app_settings` 区分 `providerPlugins` 缺失和显式空数组：缺失保留现值，`{"providerPlugins":{"directories":[]}}` 才清空目录。前端完整 `AppSettings` 将该字段设为必填。
+
+## 内置资源与构建
+
+`scripts/stage_provider_plugins.mjs` 是唯一 staging 入口。它只构建三个 Provider crate 的主二进制，把每个二进制与源 manifest 放入 `src-tauri/resources/provider-plugins/<provider>/`，并让 `src-tauri/tauri.conf.json` 将该目录映射到 App Resources 根下的 `provider-plugins/`。staging 产物被 Git 忽略，只提交脚本、源 manifest 和目录占位。
+
+- macOS universal：分别构建 `aarch64-apple-darwin` 与 `x86_64-apple-darwin`，再逐个 `lipo -create`；App 主程序和三个 Provider 都必须通过双架构检查。
+- Windows x86_64：构建 `x86_64-pc-windows-msvc`，staging 时把 manifest 的相对 executable 改为对应 `.exe` 文件名；NSIS 继续使用同一 Tauri resources 配置。
+- 普通 Tauri bundle：`beforeBuildCommand` 调用 `npm run build:bundle`，先 staging 再构建前端。release workflow 通过 `CODEPET_PROVIDER_TARGET` 明确目标，避免交叉构建时猜架构。
+- 开发测试：先运行 `npm run providers:stage`，再以绝对路径设置 `CODEPET_BUNDLED_PROVIDER_PLUGINS_DIR` 指向 staging 目录。未设置时，运行态使用 Tauri `BaseDirectory::Resource` 解析发行资源，不硬编码安装位置或用户目录。
+
+Catalog 仍只消费普通目录和 manifest，没有默认 Provider registry、市场、签名、沙箱、安装器或自动更新分支。Provider Protocol 事件仍只走 Host/Gateway；bundled discovery 不改变 Pet Protocol、Desktop IPC、companion 或 activity 链。
 
 ## 进程与 shutdown
 
@@ -119,7 +134,7 @@ Manager 到 Gateway 只有一个有界 `mpsc` receiver，且只能领取一次�
 
 Host 只依赖 `codepet-provider-sdk` 和 `codepet-gateway-sdk`，不定义第二套 Provider/Gateway DTO。四个 Rust SDK 都具备 description/authors/repository metadata，不再 `publish = false`；内部 path dependency 同时声明 `version = "0.1.0"`，可用 `cargo package --allow-dirty` 检查包内容。仓库当前没有 LICENSE 文件，因此 manifest 不虚构 license 声明；正式发布前仍需仓库所有者补充许可证决策。
 
-Provider 包只依赖 Provider SDK，不能反向依赖 Host。Host 启动 manifest binary 的纵向测试位于 `codepet-host`；Codex、Claude 与 OpenCode Provider 的 all-target/dev dependency graph 都不含 Host、Gateway、Tauri 或 Pet SDK。默认 Provider 名称没有在 Host 预埋注册框架；后续 Provider 仍应以普通 manifest/binary 接入。
+Provider 包只依赖 Provider SDK，不能反向依赖 Host。Host 启动 manifest binary 的纵向测试位于 `codepet-host`；Codex、Claude 与 OpenCode Provider 的 all-target/dev dependency graph 都不含 Host、Gateway、Tauri 或 Pet SDK。三个默认 Provider 的名称只存在于各自普通 manifest 与 Tauri runtime-setting 映射中，Host 没有预埋第二套 registry；后续 Provider 仍应以普通 manifest/binary 接入。
 
 ## 风险与验证证据
 
@@ -130,6 +145,7 @@ Provider 包只依赖 Provider SDK，不能反向依赖 Host。Host 启动 manif
 - 路由串流：两设备、两实例、错误 device/plugin/instance、空 ID、错误 response identity 和单调 cursor 均有定向测试。
 - 状态重复：stop/start lifecycle 后每次只收到一个 ProviderStatusChanged。
 - 通道污染：Tauri mock runtime 真实监听三条 Tauri event；fixture 的 Provider event 只增加 remote event/replay，不改变 companion replay、`SharedState` activity、companion/Pet event 或 Desktop adapter spy。
+- bundled 资源缺失或架构不一致：staging 测试断言三 manifest/三平台 executable，macOS 产物检查 Resources 清单、可执行位与 `lipo -archs`，DMG 用 `hdiutil verify`。
 - 机械漂移：验收检查工作树，不提交 `src-tauri/gen/schemas/macOS-schema.json` 或构建产物。
 
 ## 验证命令
@@ -141,6 +157,8 @@ cargo test --manifest-path crates/Cargo.toml -p codepet-provider-claude --all-ta
 cargo test --manifest-path crates/Cargo.toml -p codepet-provider-opencode --all-targets
 cargo test --manifest-path sdk/rust/Cargo.toml
 npm run protocol:check
+npm run providers:test
+CODEPET_PROVIDER_TARGET=universal-apple-darwin npm run providers:stage
 cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_core_tests --test runtime_gateway_protocol_tests --test settings_tests --test tray_tests
 cargo check --manifest-path src-tauri/Cargo.toml --lib
 cargo package --manifest-path sdk/rust/Cargo.toml --workspace --allow-dirty
@@ -151,6 +169,7 @@ git diff --check
 
 - Gateway event replay 和 device last-seen 仍为进程内状态，重启恢复未定义。
 - manifest 的 executable、args 和 env 是受信任本地配置；签名、权限隔离与资源配额尚未实现。
+- 内置 Provider adapter 随 App 一起打包，但不会安装或更新底层 Codex/OpenCode/Claude runtime；用户本机配置与版本兼容性仍决定实例能否启动。
 - 没有自动重启/backoff；故障实例需要显式重启 Host/插件。
 - Codex Provider 的 App Server 协议覆盖与明确限制见 `codex-provider-plugin-runtime.md`。
 - Claude Provider 的 CLI stream-json 能力与明确限制见 `claude-provider-plugin-runtime.md`。

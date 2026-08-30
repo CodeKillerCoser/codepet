@@ -6,8 +6,11 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "vite build",
+    "build:bundle": "npm run providers:stage && npm run build",
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "tauri",
+    "providers:stage": "node scripts/stage_provider_plugins.mjs",
+    "providers:test": "node --test scripts/stage_provider_plugins.test.mjs",
     "package:signed": "python3 scripts/package_signed.py",
     "version:check": "node scripts/release_version.mjs",
     "version:sync": "node scripts/release_version.mjs --sync-version",

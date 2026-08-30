@@ -16,14 +16,17 @@ use codepet_host::{
     DeviceRegistry, HostError, PluginCatalog, PluginCatalogConfig, PluginManager,
     PluginManagerConfig, ProviderGatewayService, ProviderInstanceRegistry,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::path::BaseDirectory;
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 
 pub const RUNTIME_GATEWAY_EVENT: &str = "runtime-gateway-event";
 pub const CODEX_DESKTOP_COMPANION_EVENT: &str = "codex-desktop-companion-event";
+pub const BUNDLED_PROVIDER_PLUGINS_DIRECTORY_ENV: &str =
+    "CODEPET_BUNDLED_PROVIDER_PLUGINS_DIR";
 
 #[derive(Clone)]
 pub struct RuntimeGatewayState {
@@ -71,22 +74,13 @@ pub(crate) struct ProviderHostState {
     shutdown_notify: Arc<Notify>,
 }
 
-impl Default for ProviderHostState {
-    fn default() -> Self {
-        match configured_provider_runtime() {
-            Ok((manager, gateway)) => Self::new(manager, gateway),
-            Err(error) => {
-                crate::app_log::error(
-                    "provider_host",
-                    &format!("failed to initialize Provider Host boundary error={error:?}"),
-                );
-                Self::unavailable()
-            }
-        }
-    }
-}
-
 impl ProviderHostState {
+    pub(crate) fn from_app<R: Runtime>(app: &AppHandle<R>) -> Result<Self, HostError> {
+        let bundled_directory = bundled_provider_plugins_directory(app)?;
+        let (manager, gateway) = configured_provider_runtime(&bundled_directory)?;
+        Ok(Self::new(manager, gateway))
+    }
+
     pub(crate) fn new(
         manager: Arc<PluginManager>,
         gateway: Arc<ProviderGatewayService>,
@@ -107,7 +101,7 @@ impl ProviderHostState {
         }
     }
 
-    fn unavailable() -> Self {
+    pub(crate) fn unavailable() -> Self {
         Self {
             manager: None,
             gateway: None,
@@ -331,7 +325,59 @@ impl ProviderHostState {
     }
 }
 
+fn bundled_provider_plugins_directory<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<PathBuf, HostError> {
+    if let Some(configured) = std::env::var_os(BUNDLED_PROVIDER_PLUGINS_DIRECTORY_ENV)
+        .filter(|value| !value.is_empty())
+    {
+        let configured = PathBuf::from(configured);
+        if !configured.is_absolute() {
+            return Err(HostError::new(
+                "bundled_provider_directory_not_absolute",
+                format!(
+                    "{} must be an absolute path, received {}",
+                    BUNDLED_PROVIDER_PLUGINS_DIRECTORY_ENV,
+                    configured.display()
+                ),
+            ));
+        }
+        return Ok(configured);
+    }
+    app.path()
+        .resolve("provider-plugins", BaseDirectory::Resource)
+        .map_err(|error| {
+            HostError::new(
+                "bundled_provider_directory_resolution_failed",
+                format!("resolve bundled Provider plugin resource directory: {error}"),
+            )
+        })
+}
+
+fn provider_catalog_config(
+    data_directory: &Path,
+    bundled_provider_directory: &Path,
+    additional_directories: &[String],
+) -> PluginCatalogConfig {
+    let mut catalog_config = PluginCatalogConfig::for_data_directory(data_directory)
+        .with_directory(bundled_provider_directory);
+    for directory in additional_directories {
+        let directory = directory.trim();
+        if !directory.is_empty() {
+            let directory = PathBuf::from(directory);
+            let directory = if directory.is_absolute() {
+                directory
+            } else {
+                data_directory.join(directory)
+            };
+            catalog_config = catalog_config.with_directory(directory);
+        }
+    }
+    catalog_config
+}
+
 fn configured_provider_runtime(
+    bundled_provider_directory: &Path,
 ) -> Result<(Arc<PluginManager>, Arc<ProviderGatewayService>), HostError> {
     let settings = load_app_settings().map_err(HostError::from)?;
     let data_directory = configured_app_data_dir(&settings);
@@ -351,19 +397,11 @@ fn configured_provider_runtime(
             ),
         );
     }
-    let mut catalog_config = PluginCatalogConfig::for_data_directory(&data_directory);
-    for directory in settings.provider_plugins.directories {
-        let directory = directory.trim();
-        if !directory.is_empty() {
-            let directory = PathBuf::from(directory);
-            let directory = if directory.is_absolute() {
-                directory
-            } else {
-                data_directory.join(directory)
-            };
-            catalog_config = catalog_config.with_directory(directory);
-        }
-    }
+    let catalog_config = provider_catalog_config(
+        &data_directory,
+        bundled_provider_directory,
+        &settings.provider_plugins.directories,
+    );
     let mut catalog = PluginCatalog::discover(catalog_config);
     let runtime_service = AgentRuntimeService::default();
     for provider_id in [
@@ -626,7 +664,10 @@ fn start_local_event_bridge<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use super::{inject_runtime_executable, ProviderHostState, ProviderGatewayService};
+    use super::{
+        inject_runtime_executable, provider_catalog_config, ProviderGatewayService,
+        ProviderHostState,
+    };
     use crate::agent_runtime::{
         AgentRuntime, AgentRuntimeSource, AgentRuntimeStatus, CLAUDE_RUNTIME_PROVIDER_ID,
         CODEX_RUNTIME_PROVIDER_ID, OPENCODE_RUNTIME_PROVIDER_ID,
@@ -643,7 +684,68 @@ mod tests {
     use tokio::sync::Barrier;
 
     #[test]
-    fn catalog_runtime_executables_are_overridden_by_resolver_values() {
+    fn catalog_discovers_all_three_providers_from_the_bundled_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let data_directory = directory.path().join("data");
+        let bundled_directory = directory.path().join("bundled/provider-plugins");
+        for (name, plugin_id) in [
+            ("codex", "dev.codepet.codex"),
+            ("opencode", "dev.codepet.opencode"),
+            ("claude", "dev.codepet.claude"),
+        ] {
+            let provider_directory = bundled_directory.join(name);
+            std::fs::create_dir_all(&provider_directory).unwrap();
+            std::fs::write(
+                provider_directory.join("codepet-provider.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "manifestVersion": 1,
+                    "pluginId": plugin_id,
+                    "displayName": name,
+                    "executable": format!("codepet-provider-{name}"),
+                    "enabled": true,
+                    "instances": [{
+                        "instanceId": name,
+                        "instanceKind": name,
+                        "displayName": name,
+                        "settings": {},
+                        "enabled": true
+                    }]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+
+        let catalog = PluginCatalog::discover(provider_catalog_config(
+            &data_directory,
+            &bundled_directory,
+            &[],
+        ));
+        assert!(catalog.diagnostics().is_empty());
+        let registry = ProviderInstanceRegistry::open(
+            directory.path().join("instances.json"),
+            "device-bundled-catalog".to_string(),
+        )
+        .unwrap();
+        let mut plugin_ids = registry
+            .synchronize_catalog(&catalog)
+            .unwrap()
+            .into_iter()
+            .map(|record| record.plugin_id)
+            .collect::<Vec<_>>();
+        plugin_ids.sort();
+        assert_eq!(
+            plugin_ids,
+            [
+                "dev.codepet.claude",
+                "dev.codepet.codex",
+                "dev.codepet.opencode"
+            ]
+        );
+    }
+
+    #[test]
+    fn three_catalog_runtime_executables_are_overridden_by_resolver_values() {
         let directory = tempfile::tempdir().unwrap();
         let plugin_directory = directory.path().join("providers");
         let descriptors = [
@@ -697,6 +799,29 @@ mod tests {
                     enabled: true,
                 }],
             },
+            PluginDescriptor {
+                plugin_id: "dev.codepet.claude".to_string(),
+                display_name: "Claude".to_string(),
+                executable: directory.path().join("codepet-provider-claude"),
+                args: Vec::new(),
+                env: Default::default(),
+                enabled: true,
+                instances: vec![PluginInstanceConfig {
+                    instance_id: Some("claude".to_string()),
+                    instance_kind: "claude".to_string(),
+                    display_name: "Claude".to_string(),
+                    settings: [
+                        (
+                            "claudeExecutable".to_string(),
+                            serde_json::json!("manifest-claude"),
+                        ),
+                        ("preserved".to_string(), serde_json::json!(true)),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    enabled: true,
+                }],
+            },
         ];
         for (index, descriptor) in descriptors.into_iter().enumerate() {
             let directory = plugin_directory.join(index.to_string());
@@ -717,6 +842,7 @@ mod tests {
         );
         let codex_executable = directory.path().join("resolved/codex");
         let opencode_executable = directory.path().join("resolved/opencode");
+        let claude_executable = directory.path().join("resolved/claude");
 
         for (provider_id, display_name, executable, version) in [
             (
@@ -730,6 +856,12 @@ mod tests {
                 "OpenCode",
                 opencode_executable.to_string_lossy().to_string(),
                 Some("1.18.25"),
+            ),
+            (
+                CLAUDE_RUNTIME_PROVIDER_ID,
+                "Claude Code",
+                claude_executable.to_string_lossy().to_string(),
+                Some("2.1.251"),
             ),
         ] {
             let runtime = AgentRuntime {
@@ -759,6 +891,10 @@ mod tests {
             .iter()
             .find(|record| record.plugin_id == "dev.codepet.opencode")
             .unwrap();
+        let claude = records
+            .iter()
+            .find(|record| record.plugin_id == "dev.codepet.claude")
+            .unwrap();
         assert_eq!(
             codex.settings["appServerExecutable"],
             serde_json::json!(codex_executable)
@@ -768,12 +904,18 @@ mod tests {
             serde_json::json!(opencode_executable)
         );
         assert_eq!(opencode.settings["serverVersion"], serde_json::json!("1.18.25"));
+        assert_eq!(
+            claude.settings["claudeExecutable"],
+            serde_json::json!(claude_executable)
+        );
         assert_eq!(codex.settings["preserved"], serde_json::json!(true));
         assert_eq!(opencode.settings["preserved"], serde_json::json!(true));
+        assert_eq!(claude.settings["preserved"], serde_json::json!(true));
 
         for (provider_id, display_name) in [
             (CODEX_RUNTIME_PROVIDER_ID, "Codex"),
             (OPENCODE_RUNTIME_PROVIDER_ID, "OpenCode"),
+            (CLAUDE_RUNTIME_PROVIDER_ID, "Claude Code"),
         ] {
             let runtime = AgentRuntime {
                 provider_id: provider_id.to_string(),
@@ -796,77 +938,17 @@ mod tests {
             .iter()
             .find(|record| record.plugin_id == "dev.codepet.opencode")
             .unwrap();
+        let claude = records
+            .iter()
+            .find(|record| record.plugin_id == "dev.codepet.claude")
+            .unwrap();
         assert!(!codex.settings.contains_key("appServerExecutable"));
         assert!(!opencode.settings.contains_key("serverExecutable"));
         assert!(!opencode.settings.contains_key("serverVersion"));
+        assert!(!claude.settings.contains_key("claudeExecutable"));
         assert_eq!(codex.settings["preserved"], serde_json::json!(true));
         assert_eq!(opencode.settings["preserved"], serde_json::json!(true));
-    }
-
-    #[tokio::test]
-    async fn claude_runtime_executable_is_injected_into_the_manifest_instance() {
-        let directory = tempfile::tempdir().unwrap();
-        let plugin_directory = directory.path().join("providers/claude");
-        std::fs::create_dir_all(&plugin_directory).unwrap();
-        std::fs::write(
-            plugin_directory.join("codepet-provider.json"),
-            serde_json::to_vec(&serde_json::json!({
-                "manifestVersion": 1,
-                "pluginId": "dev.codepet.claude",
-                "displayName": "Claude",
-                "executable": "codepet-provider-claude",
-                "enabled": true,
-                "instances": [{
-                    "instanceId": "claude",
-                    "instanceKind": "claude",
-                    "displayName": "Claude",
-                    "settings": { "claudeExecutable": "/stale/claude" },
-                    "enabled": true
-                }]
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-        let mut catalog = PluginCatalog::discover(
-            PluginCatalogConfig::default().with_directory(directory.path().join("providers")),
-        );
-        let resolved = directory.path().join("resolved-claude");
-        let runtime = AgentRuntime {
-            provider_id: CLAUDE_RUNTIME_PROVIDER_ID.to_string(),
-            display_name: "Claude Code".to_string(),
-            status: AgentRuntimeStatus::Ready,
-            resolved_executable: Some(resolved.to_string_lossy().to_string()),
-            source: Some(AgentRuntimeSource::Configured),
-            configured_executable: Some(resolved.to_string_lossy().to_string()),
-            version: Some("2.1.251".to_string()),
-            diagnostic: None,
-        };
-        assert_eq!(inject_runtime_executable(&mut catalog, &runtime).unwrap(), 1);
-
-        let device = DeviceRegistry::open(directory.path().join("device.json"), "Test Device")
-            .unwrap();
-        let instances = ProviderInstanceRegistry::open(
-            directory.path().join("instances.json"),
-            device.identity().device_id.clone(),
-        )
-        .unwrap();
-        let manager = PluginManager::new(
-            device,
-            catalog,
-            instances,
-            PluginManagerConfig::default(),
-        )
-        .unwrap();
-        let snapshot = manager.snapshot("dev.codepet.claude").await.unwrap();
-        assert_eq!(snapshot.instances.len(), 1);
-        assert_eq!(
-            snapshot.instances[0]
-                .record
-                .settings
-                .get("claudeExecutable")
-                .and_then(serde_json::Value::as_str),
-            Some(resolved.to_string_lossy().as_ref())
-        );
+        assert_eq!(claude.settings["preserved"], serde_json::json!(true));
     }
 
     #[tokio::test]

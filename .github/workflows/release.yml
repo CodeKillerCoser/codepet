@@ -121,6 +121,7 @@ jobs:
             sleep $((ATTEMPT * 20))
           done
         env:
+          CODEPET_PROVIDER_TARGET: universal-apple-darwin
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - uses: actions/upload-artifact@v4
@@ -172,6 +173,7 @@ jobs:
             Start-Sleep -Seconds ($attempt * 20)
           }
         env:
+          CODEPET_PROVIDER_TARGET: x86_64-pc-windows-msvc
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - uses: actions/upload-artifact@v4

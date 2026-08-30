@@ -97,14 +97,14 @@ CODEPET_OPENCODE_EXECUTABLE=/opt/homebrew/bin/opencode cargo test --manifest-pat
 
 fixture 覆盖正式 chunked SSE/framing、prompt response 在 SSE 前后两种重排、延迟上一 turn Step.Ended、多 assistant step、Step.Ended→wait 无 interrupt 成功、单次 terminal、下一 turn、idle interrupt no-op、stop 时取消阻塞 wait、跨 restart stale handle、重复 resolve、startup deadline、端口抢占服务读取 Basic 后返回健康响应仍不被接入、chunked JSON 超限、bounded body/line/event/queue、坏帧 cleanup 和 Pet/Desktop/Tauri 生产依赖隔离。测试用 20ms 普通 request timeout 与 100ms wait 响应等比例证明 wait 不继承普通总 timeout，不真实等待 30 秒；垂直测试同时证明阻塞 wait 下 stop 小于 1 秒且 child 已退出。两个独立 Provider 二进制进程使用完全相同 route/session/clientMessageId 时，turn resource 仍不同。真实 smoke 只验证同一 `opencode serve` 的 health/list/shutdown。
 
-`cargo check --manifest-path src-tauri/Cargo.toml --all-targets` 仍会被仓库既有缺失文件 `src/macos_window.rs` 阻断；本次受影响的 Tauri library 与 resolver 定向测试已通过。统一打包/发现由最终三 Provider 集成阶段处理，本分支不新增发行逻辑。
+`cargo check --manifest-path src-tauri/Cargo.toml --all-targets` 在当时仍被仓库既有缺失文件 `src/macos_window.rs` 阻断；该轮受影响的 Tauri library 与 resolver 定向测试已通过。当前统一打包/发现由 `provider-host-device-and-plugin-runtime.md` 的 staging/resources 流程负责，发行包内置的是 OpenCode Provider adapter，不是 OpenCode runtime。
 
 ## 回归防线与未知项
 
 - 版本 validator 同时拒绝 `1.18.24`、`1.18.26`、`v1.18.25` 和 development 字符串。
 - fixture 对所有请求验证随机 Basic auth；foreign port fixture 即使读取该 header 并返回 200 healthy，也验证 Provider 只联系自有 child stdout 报告的端口。
 - Provider boundary test 扫描 production manifest/source，禁止 Host、Pet、Desktop、Tauri 依赖和数据链引用。
-- 当前真实 smoke 只在 macOS/OpenCode 1.18.25 完成；统一打包、三 Provider 发现与跨平台发行验证留给最终集成阶段，本分支不新增发行逻辑。
+- 当前真实 smoke 只在 macOS/OpenCode 1.18.25 完成；跨平台发行只保证 adapter binary/manifest 进入 bundle，OpenCode runtime 仍由用户本机 resolver 提供并按精确版本 fail closed。
 - OpenCode V2 仍可能在未来版本变化；精确版本 fail closed 是当前安全边界，不是长期兼容承诺。
 
 长期跨层约束继续以 `../60-rules/protocol-layer-and-channel-boundaries.md` 为准；Host lifecycle 与 manifest 事实见 `provider-host-device-and-plugin-runtime.md`。

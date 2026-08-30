@@ -44,7 +44,7 @@ Claude 默认 Provider 是独立 Rust 二进制 `crates/providers/codepet-provid
 - 不提供 Claude 配置、MCP、Hook、plugin 或 permission sandbox。
 - 不实现 Python/TypeScript SDK sidecar、MCP permission server、transcript scan、窗口控制、Claude Desktop IPC 或 Agent View。
 - 不伪造全局 list/get、Desktop 同步、进程重启恢复、turn steer 或 approval callback。
-- 不在本分支实现二进制/manifest 打包发现；三个 Provider 的 macOS universal/Windows 集成由后续任务统一处理。
+- 不把 Claude Code runtime 本身放进 App，也不绕过用户本机 runtime 配置；发行包只内置 Code Pet 自有 Provider adapter 与 manifest。
 
 ## 数据链与配置权威
 
@@ -123,4 +123,4 @@ Access mode：
 - 本机 Hook/MCP/plugin 的行为与风险由用户或组织 Claude 配置决定；CodePet 不做审计或隔离。
 - Windows 不广告 turn interrupt；stop/destroy/shutdown 使用系统 tree termination，本轮没有 Windows 实机。
 - Provider process 重启后不保存 conversation registry，也不扫描 transcript。
-- 三个 Provider 的正式打包、Catalog 默认发现、macOS universal 与 Windows 产物由后续统一集成任务负责。
+- 正式打包与 Catalog 默认发现由 `provider-host-device-and-plugin-runtime.md` 中的统一 staging/resources 流程负责；Claude runtime 仍来自用户本机 resolver。
