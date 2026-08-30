@@ -41,7 +41,7 @@ Gateway/既有远程 UI
   -> ProviderGatewayService
   -> PluginManager / PluginProcess
   -> codepet-provider-codex
-  -> 官方 Codex App Server stdio JSON-RPC
+  -> 官方 Codex App Server stdio wire
 
 Provider event
   -> PluginManager 校验 route
@@ -96,13 +96,13 @@ Codex Desktop 私有 IPC
 
 Gateway v1 的 `turn.send` 在 Host 中映射为 Provider `turn.start`；带 `steerTurn` 时映射为 `turn.steer`。兼容 v0 继续暴露既有 `turn.send` 调用形状，但只调用同一个 Gateway service。
 
-Provider 发送全部六种 v1 事件：`event.instanceStatusChanged`、`event.conversationUpserted`、`event.turnUpserted`、`event.turnOutputDelta`、`event.approvalRequested`、`event.approvalResolved`。delta 自带 conversation route，不依赖 replay 顺序补状态。App Server 的 `waitingOnApproval` 与 `waitingOnUserInput` 分别映射为 v1 的 `waiting-approval` 与 `waiting-user-input`。未知 notification 被忽略；未知或无法无损表达的 server request 使用原 request id 返回 JSON-RPC `-32601`，不会发布可批准的 Approval。
+Provider 发送全部六种 v1 事件：`event.instanceStatusChanged`、`event.conversationUpserted`、`event.turnUpserted`、`event.turnOutputDelta`、`event.approvalRequested`、`event.approvalResolved`。delta 自带 conversation route，不依赖 replay 顺序补状态。App Server 的 `waitingOnApproval` 与 `waitingOnUserInput` 分别映射为 v1 的 `waiting-approval` 与 `waiting-user-input`。未知 notification 被忽略；未知或无法无损表达的 server request 使用原 request id 返回上游 error `-32601`，不会发布可批准的 Approval。
 
 ## 身份与审批路由
 
 Provider/Gateway 的语言中立 `RoutedResourceId` 是 `deviceId + providerPluginId + providerInstanceId + nativeResourceId` 四段身份。instance route 是前三段。SDK、Host、Gateway、Provider、compat extension 在每个请求、响应、事件和审批入口逐跳保留并校验四段；compat 不再通过 registry 事后回查 plugin id。旧 v0 对象自身的 `id` 继续等于 `nativeResourceId`，完整身份位于 `codepet.gateway.route` extension。
 
-每个 Provider instance 只持有一个 App Server session 和一张 pending approval map。每次 session 启动生成唯一 generation；approval 的 `nativeResourceId` 同时编码 generation 与原 JSON-RPC id。`approval.resolve` 先校验四段 route，再校验 generation 和 pending 记录，最后回写持有请求的同一 App Server 进程。即使新进程复用了相同 request id，旧 approval 也以 `stale_approval_session` 失败。
+每个 Provider instance 只持有一个 App Server session 和一张 pending approval map。每次 session 启动生成唯一 generation；approval 的 `nativeResourceId` 同时编码 generation 与原 App Server request id。`approval.resolve` 先校验四段 route，再校验 generation 和 pending 记录，最后回写持有请求的同一 App Server 进程。即使新进程复用了相同 request id，旧 approval 也以 `stale_approval_session` 失败。
 
 ## 本地开发安装
 
@@ -129,12 +129,12 @@ Provider/Gateway 的语言中立 `RoutedResourceId` 是 `deviceId + providerPlug
 
 ## 风险与验证
 
-- App Server 协议漂移：Provider client 使用本机官方 schema 对 initialize、Thread、Turn、start/resume 和 approval 请求做严格解码；测试覆盖乱序 response、resume、list/read/start/steer/interrupt、真实状态、未知字段与 request fail-closed。
+- App Server 协议漂移：本机 `codex-cli 0.151.0-alpha.7.1` schema 和 smoke 证明上游 response/notification 不要求 `jsonrpc`，request/notification 的 `params` 可缺失，并允许 `trace`/`emittedAtMs` 元数据；fixture 与 typed DTO 覆盖 initialize、Thread、Turn、start/resume、approval 和 request fail-closed。Provider Protocol 自己仍严格使用 JSON-RPC 2.0。
 - 路由或审批串实例：Host 测试从 manifest 启动真实 stdio fixture binary 并完成 Gateway RPC/事件/四段路由；Codex Provider 二进制测试独立完成 App Server 会话、审批和 interrupt 闭环。
-- Provider 污染桌宠：Tauri mock runtime 使用生产 bridge，同时监听 remote、companion、旧 thread-excluded 事件名与 pet channel，断言 Provider 只进入 remote replay/event，companion replay、activity store 与 Desktop adapter spy 不变化；PetApp 静态测试断言只导入 companion client，且不含 exclusion/tombstone 路径。
+- Provider 污染桌宠：Tauri mock runtime 使用生产 bridge，断言 Provider 只进入 remote replay/event，companion replay、companion event、pet channel、activity store 与 Desktop adapter spy 不变化；PetApp 静态测试断言只导入 companion client，且不含跨链路同步路径。
 - 审批 fail-open/串 session：真实 Provider 二进制测试证明 `additionalPermissions.network` 得到原 id 的 `-32601` 且无 Approval；stop/start 后复用相同 request id 时旧句柄不能批准新进程请求。
-- framing/lifecycle：App Server 与 Provider SDK 都完整 drain 超长物理行；App Server stdout fault 和 Provider Host frame 进入 fail-stop，超长 stderr 行关闭该 reader。late subscriber 能观察 initialize 后的 terminal fault，实例不会误报 Ready。
-- 显式 restart：Host 测试覆盖 graceful stop 报错但 force-kill 已确认结束时继续启动新配置；无法确认终止时保持 fail closed。
+- framing/lifecycle：App Server stdout/stderr 与 Provider SDK 都完整 drain 超长物理行后 fail-stop。stdout/stderr fault 复用同一个 session terminal path，清空 pending 并终止 App Server；terminal fault 与 subscribers 在同一把锁下完成“读已有 fault / 注册未来 fault”，barrier 竞态测试与 late-subscriber 测试分别覆盖并发和已有 fault，实例不会误报 Ready。
+- 显式 restart：Host 测试先替换 instance setting，再制造 graceful stop 超时和 force-kill；确认旧进程结束后 replacement 的 RPC 返回新 setting。无法确认旧进程终止时保持 fail closed。
 - 配置漂移：Provider 拒绝非绝对 executable 和未知 settings；Tauri 每次只使用 resolver 覆盖该字段。
 - 机械生成漂移：运行 `npm run protocol:check` 与 `git diff --check`，不提交 Tauri build 自动改写的 schema。
 

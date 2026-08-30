@@ -414,7 +414,7 @@ pub fn parse_permission_level(value: &str) -> Result<CodexPermissionLevel, Proto
 }
 
 fn seconds_to_ms(value: i64) -> Option<u64> {
-    u64::try_from(value).ok().map(|value| value.saturating_mul(1_000))
+    u64::try_from(value).ok()?.checked_mul(1_000)
 }
 
 fn protocol_error(code: &str, message: String, retryable: bool) -> ProtocolError {
@@ -483,6 +483,13 @@ mod tests {
         assert_eq!(mapped.started_at, Some(1_000));
         assert_eq!(mapped.completed_at, Some(2_000));
         assert_eq!(mapped.updated_at, None);
+    }
+
+    #[test]
+    fn timestamp_overflow_is_unknown_instead_of_saturating() {
+        assert_eq!(seconds_to_ms(i64::MAX), None);
+        assert_eq!(seconds_to_ms(-1), None);
+        assert_eq!(seconds_to_ms(42), Some(42_000));
     }
 
     fn snapshot(flag: CodexThreadActiveFlag) -> CodexConversationSnapshot {

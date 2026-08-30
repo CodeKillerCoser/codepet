@@ -444,6 +444,68 @@ fn provider_binary_fails_stop_after_an_oversized_host_frame() {
     assert_ne!(response["id"], "must-not-run");
 }
 
+#[test]
+#[ignore = "requires CODEPET_CODEX_EXECUTABLE pointing to a real Codex CLI"]
+fn provider_real_codex_app_server_smoke() {
+    let executable = std::env::var_os("CODEPET_CODEX_EXECUTABLE")
+        .map(PathBuf::from)
+        .expect("CODEPET_CODEX_EXECUTABLE must point to the resolved Codex executable");
+    assert!(executable.is_absolute());
+    assert!(executable.is_file());
+    let mut provider = ProviderBinary::spawn();
+
+    provider.request(
+        "real-initialize",
+        "provider.initialize",
+        json!({
+            "hostClientId": "provider-real-codex-smoke",
+            "hostDeviceId": "device-provider-binary",
+            "hostVersion": "test",
+            "supportedVersions": { "minVersion": 1, "maxVersion": 1 }
+        }),
+    );
+    provider.request(
+        "real-create",
+        "instance.create",
+        json!({
+            "route": route_value(),
+            "instanceKind": CODEX_INSTANCE_KIND,
+            "displayName": "Codex Real Smoke",
+            "settings": {
+                "appServerExecutable": executable.to_string_lossy(),
+                "appServerArgs": ["app-server", "--listen", "stdio://"],
+                "models": [],
+                "reasoningEfforts": []
+            }
+        }),
+    );
+    let started = provider.request(
+        "real-start",
+        "instance.start",
+        json!({ "route": route_value() }),
+    );
+    assert_eq!(
+        started.pointer("/result/instance/status").and_then(Value::as_str),
+        Some("ready")
+    );
+    let listed = provider.request(
+        "real-list",
+        "conversation.list",
+        json!({ "route": route_value(), "limit": 1 }),
+    );
+    assert!(listed.pointer("/result/conversations").is_some());
+    let stopped = provider.request(
+        "real-stop",
+        "instance.stop",
+        json!({ "route": route_value() }),
+    );
+    assert_eq!(
+        stopped.pointer("/result/instance/status").and_then(Value::as_str),
+        Some("stopped")
+    );
+    provider.request("real-shutdown", "provider.shutdown", json!({}));
+}
+
 struct ProviderBinary {
     child: Child,
     stdin: BufWriter<ChildStdin>,

@@ -45,7 +45,7 @@ Codex remote client
   → RuntimeGatewayState（compat 薄适配）
   → ProviderGatewayService（remote bus/sequence/replay）
   → PluginManager / codepet-provider-codex
-  → 官方 Codex App Server stdio JSON-RPC
+  → 官方 Codex App Server stdio wire
 
 PetApp
   → codex_desktop_companion_snapshot / request / replay
@@ -58,7 +58,7 @@ PetApp
 
 Codex Provider 实现 Provider v1 的完整 lifecycle、`conversation.list/get/create`、turn start/steer/interrupt、`approval.resolve` 和通知映射。Desktop companion 不广告 list/create，只把已 bootstrap 的本地 thread 投影到桌宠；回复、停止和审批继续使用 generation、owner、revision、request 与 handler 校验。
 
-Provider Host/Gateway 与 companion state 各自持有 registry、event bus、replay window 和 session。compat state 引用 Host 的同一个 Gateway service，但不拥有进程或第二个 remote bus。桌宠前端只引用 companion client/event，Provider conversation/turn/approval 不能进入 companion transport、thread scope、exclusion event 或 Pet projection。remote 与 Desktop 的同名 native thread 各自保留，不做跨链路排除或同步。Hook、audit、transcript 和文件监听不参与 Codex 桌宠数据。
+Provider Host/Gateway 与 companion state 各自持有 registry、event bus、replay window 和 session。compat state 引用 Host 的同一个 Gateway service，但不拥有进程或第二个 remote bus。桌宠前端只引用 companion client/event，Provider conversation/turn/approval 不能进入 companion transport、thread scope/event 或 Pet projection。remote 与 Desktop 的同名 native thread 各自保留，不做跨链路排除或同步。Hook、audit、transcript 和文件监听不参与 Codex 桌宠数据。
 
 当前只有 Tauri 进程内 Gateway 调用面，尚无 WebSocket/P2P/relay 远程网络实现。App Server 只在 Provider instance start 中初始化且有超时；它 unavailable 不阻塞 Desktop companion，Desktop socket unavailable 也不改变 remote Provider。
 
@@ -474,7 +474,7 @@ Provider Host 已实现 gateway v1 application service。原 v0 wire profile 位
 - `event_bus.rs` 接收生成的 `ProtocolEvent`，覆盖其 wire version 和 sequence，分配进程内单调 sequence，并维护有界内存重放窗口。窗口之外的 cursor 返回 `event_replay_unavailable`，由客户端重新获取快照；该窗口不是持久化会话存储。
 - `transport.rs` 的 `Transport` contract 将 request/response dispatch 与 event subscribe/replay 分开；`LocalTransport` 是直接调用同一 Gateway 的 in-process 实现，不包含 WebSocket、P2P、认证或远程加密。
 - `provider_host_compat.rs` 把 remote v0 request/response/event 映射到 Provider Gateway v1；不得启动 Provider/App Server 或创建第二个 remote event bus。
-- `tauri_bridge.rs` 组合 Host/resolver 并传递生成的标准 DTO。remote 使用 `runtime_gateway_request/replay` 与 `runtime-gateway-event`；桌宠使用 `codex_desktop_companion_request/replay/snapshot`、`codex-desktop-companion-event` 和 thread exclusion event。两套 command、event bus 和 sequence 不得合并；Provider 原生 `Value` 不得穿过该边界。
+- `tauri_bridge.rs` 组合 Host/resolver 并传递生成的标准 DTO。remote 使用 `runtime_gateway_request/replay` 与 `runtime-gateway-event`；桌宠使用 `codex_desktop_companion_request/replay/snapshot` 与 `codex-desktop-companion-event`。两套 command、event bus 和 sequence 不得合并；Provider 原生 `Value` 不得穿过该边界。
 
 本地调用链为：
 
@@ -588,7 +588,7 @@ capabilities
 - pending、resolved、expired、unknown 状态；
 - 必要且经过过滤的 Provider 扩展数据。
 
-手机调用 `approval.resolve` 时只提交标准 decision id 和被 capability 允许的参数。Gateway 校验设备权限和当前审批状态，再由 adapter 转换为 Codex `accept`、`acceptForSession`、policy amendment 等原生响应。手机不得发送任意 Provider JSON-RPC response。
+手机调用 `approval.resolve` 时只提交标准 decision id 和被 capability 允许的参数。当前 Codex Provider 只把普通 command/file 的二元 approve/decline 映射为上游 `accept`/`decline`；额外权限、session/policy decision 与未知语义明确拒绝。手机不得发送任意 Provider JSON-RPC response。
 
 ### 用量
 
@@ -672,7 +672,7 @@ Codex 的 thread 统一以 cwd 记录工作目录。Code Pet 使用规范化绝�
 
 ### 协议升级
 
-Codex runtime 可以生成版本匹配的 TypeScript 和 JSON Schema。CI 使用生成 schema 做契约对比和 fixture 验证。Rust runtime 不必生成 App Server 的全部类型；它强类型化 JSON-RPC envelope、核心 thread/turn/status/usage/approval，并对其他 item 按 `type` 解析必要字段，同时保留未知 payload。
+Codex runtime 可以生成版本匹配的 TypeScript 和 JSON Schema。CI 使用生成 schema 做契约对比和 fixture 验证。Rust runtime 不必生成 App Server 的全部类型；它按官方 wire 分类 request/response/notification，强类型化核心 thread/turn/status/usage/approval，并对其他 item 按 `type` 解析必要字段，同时保留未知 payload。上游 wire 不要求 `jsonrpc`；下游 Provider Protocol 仍严格使用 JSON-RPC 2.0。
 
 Codex 增加无关字段时不要求 Code Pet 更新。只有调用参数变化、安全相关审批变化、已有字段语义破坏或产品决定展示新 item 时才更新 adapter。
 

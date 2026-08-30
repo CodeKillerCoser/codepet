@@ -7,7 +7,7 @@ Codex Provider/App Server 远程链路与 Codex Desktop Companion/私有 IPC 桌
 Provider 事件只能进入 `ProviderGatewayService` 的 cursor/replay 与 `runtime-gateway-event`。它不得：
 
 - 写 `CodexThreadScope` 或调用 `CodexDesktopCompanionAdapter::exclude_remote_thread`；
-- 发 `codex-desktop-companion-thread-excluded`、`codex-desktop-companion-event` 或 `pet-event`；
+- 发 `codex-desktop-companion-event` 或 `pet-event`；
 - 修改 `SharedState` activity、PetProjection 或 companion replay；
 - 让桌宠动作调用 Plugin Manager、Provider Protocol 或 App Server。
 
@@ -41,14 +41,14 @@ Provider 事件只能进入 `ProviderGatewayService` 的 cursor/replay 与 `runt
 - remote 使用 `runtime_gateway_*` 与 `runtime-gateway-event`；companion 使用 `codex_desktop_companion_*` 与 `codex-desktop-companion-event`。
 - Provider/Gateway event 自身携带完整 route；每一跳校验身份，不保存兼容层关联状态。
 - PetApp 只导入 companion client。交互 capability 同时校验 Desktop namespace/source marker。
-- 无法无损映射的 App Server request 以原 id 返回 JSON-RPC error，不发布可操作 Approval。
+- 无法无损映射的 App Server request 以原 id 返回上游 error，不发布可操作 Approval。
 - runtime refresh 只替换 Host Codex instance setting 并显式 restart Provider；任何故障只改变 remote Provider。
 
 ## 风险与验证
 
-- Provider 污染桌宠：Tauri mock runtime 使用生产 bridge，同时监听 `runtime-gateway-event`、`codex-desktop-companion-event`、旧 `codex-desktop-companion-thread-excluded` 事件名与 `pet-event`。真实 Provider fixture 产生正常事件、坏帧和 crash 后，只允许 remote channel/replay 有数据；companion replay、activity store、Desktop adapter spy 和其余三个事件计数必须不变。
+- Provider 污染桌宠：Tauri mock runtime 使用生产 bridge。真实 Provider fixture 产生正常事件、坏帧和 crash 后，只允许 remote channel/replay 有数据；companion replay/event、activity store、Desktop adapter spy 与 pet event 计数必须不变。
 - Desktop 数据源被替换：Desktop IPC adapter 测试继续覆盖 bootstrap/snapshot/patch/owner/action；PetApp 静态测试只允许 companion snapshot/replay/event/request。
-- 路由状态回流：检查生产源码不包含 `CodexThreadScope`/`mark_remote`/companion exclusion producer，compat 不包含 `turn_conversations` 或 plugin registry lookup；四段 route 的 schema/generated/Host tests 必须通过。
+- 路由状态回流：检查生产源码不包含 `CodexThreadScope`/`mark_remote` 或 companion 写入口，compat 不包含 `turn_conversations` 或 plugin registry lookup；四段 route 的 schema/generated/Host tests 必须通过。
 - 生命周期串扰：分别让 Provider 与 Desktop IPC unavailable，断言另一条链路不重启、不清空且仍使用自己的 transport。
 
 ## 来源

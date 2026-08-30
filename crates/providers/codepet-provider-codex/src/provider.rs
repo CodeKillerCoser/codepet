@@ -548,17 +548,14 @@ impl ProtocolServer for CodexProvider {
                     return Err(CodexProtocolMapper::error(error));
                 }
             };
-            let incoming = session.subscribe();
-            if let Some(error) = session.terminal_fault() {
-                let _ = session.shutdown();
-                let _ = runtime.set_status(InstanceStatus::Error);
-                return Err(CodexProtocolMapper::error(error));
-            }
-            if !session.is_running() {
-                let _ = session.shutdown();
-                let _ = runtime.set_status(InstanceStatus::Error);
-                return Err(CodexProtocolMapper::error(CodexAppServerError::ProcessExited));
-            }
+            let incoming = match session.subscribe() {
+                Ok(incoming) => incoming,
+                Err(error) => {
+                    let _ = session.shutdown();
+                    let _ = runtime.set_status(InstanceStatus::Error);
+                    return Err(CodexProtocolMapper::error(error));
+                }
+            };
             let session_generation = session.generation().to_string();
             {
                 let mut mutable = lock(&runtime.mutable);

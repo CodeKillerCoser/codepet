@@ -52,7 +52,7 @@ adapter 只广告 `conversation.get`、`turn.send`、`turn.interrupt` 和 `appro
 
 ### 来源隔离
 
-Desktop Companion 不接收 Provider/Gateway event、route 或 provenance。旧 `CodexThreadScope`、Desktop 排除入口、Tauri exclusion producer 与 Pet tombstone 已删除。remote 与 Desktop 如果报告相同 native thread id，会在各自独立 channel 中存在；本阶段不建立 quarantine、tombstone、动作 fence 或跨链路去重。
+Desktop Companion 不接收 Provider/Gateway event、route 或 provenance。remote 与 Desktop 如果报告相同 native thread id，会在各自独立 channel 中存在；本阶段不建立 quarantine、tombstone、动作 fence 或跨链路去重。
 
 真正的隔离点是 wiring：Provider 只发布 `runtime-gateway-event`；companion 只从 Desktop IPC 形成自己的 snapshot/replay/event。Pet UI 只消费 companion channel，因此无需依赖“先污染、再排除”的补偿逻辑。
 
@@ -75,7 +75,7 @@ Desktop Companion 不接收 Provider/Gateway event、route 或 provenance。旧 
 ## 测试计划
 
 - Rust adapter：socket/frame、路由、bootstrap、revision 缺口、重连、start/steer/interrupt、审批和 owner/revision/request/handler fail-closed。
-- Rust bridge：remote 与 companion lifecycle 独立；remote event 不进入 companion transport/state 或 exclusion event；Desktop snapshot 仍能产生任务和审批。
+- Rust bridge：remote 与 companion lifecycle 独立；remote event 不进入 companion transport/state/event；Desktop snapshot 仍能产生任务和审批。
 - 前端：只调用 companion snapshot/replay/request、只监听 companion event，并对动作 source marker 失败关闭。
 - 构建：相关 Rust tests、全量 Vitest 与前端 production build。
 

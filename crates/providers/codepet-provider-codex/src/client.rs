@@ -103,7 +103,7 @@ fn read_bounded_line<R: BufRead>(
     Ok(Some(captured))
 }
 
-fn drain_stderr(stderr: impl Read) {
+fn drain_stderr(stderr: impl Read) -> Result<(), CodexAppServerError> {
     let mut reader = BufReader::new(stderr);
     loop {
         match read_bounded_line(&mut reader, MAX_APP_SERVER_STDERR_LINE_BYTES) {
@@ -111,15 +111,8 @@ fn drain_stderr(stderr: impl Read) {
                 let line = String::from_utf8_lossy(&line);
                 eprintln!("Codex App Server: {}", line.trim_end());
             }
-            Ok(None) => return,
-            Err(CodexAppServerError::Protocol(message)) => {
-                eprintln!("Codex App Server stderr discarded: {message}");
-                return;
-            }
-            Err(error) => {
-                eprintln!("Codex App Server stderr failed: {error}");
-                return;
-            }
+            Ok(None) => return Ok(()),
+            Err(error) => return Err(error),
         }
     }
 }
@@ -172,15 +165,19 @@ struct SessionInner {
     generation: String,
     writer: Mutex<Option<Box<dyn JsonRpcWriter>>>,
     pending: Mutex<HashMap<JsonRpcId, Sender<Result<Value, CodexAppServerError>>>>,
-    subscribers: Mutex<Vec<Sender<Result<CodexIncoming, CodexAppServerError>>>>,
+    observers: Mutex<SessionObservers>,
     loaded_threads: Mutex<HashMap<String, ThreadLoadState>>,
     loaded_threads_changed: Condvar,
     next_load_evidence: AtomicU64,
     next_id: AtomicI64,
     running: AtomicBool,
-    terminal_fault: Mutex<Option<CodexAppServerError>>,
     control: Mutex<Option<Box<dyn SessionControl>>>,
     reader_thread: Mutex<Option<JoinHandle<()>>>,
+}
+
+struct SessionObservers {
+    terminal_fault: Option<CodexAppServerError>,
+    subscribers: Vec<Sender<Result<CodexIncoming, CodexAppServerError>>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -219,24 +216,51 @@ impl<T> CodexRequestOutcome<T> {
 
 impl SessionInner {
     fn broadcast(&self, message: Result<CodexIncoming, CodexAppServerError>) {
-        if let Ok(mut subscribers) = self.subscribers.lock() {
-            subscribers.retain(|subscriber| subscriber.send(message.clone()).is_ok());
+        let mut observers = self
+            .observers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !self.running.load(Ordering::SeqCst) || observers.terminal_fault.is_some() {
+            return;
         }
+        observers
+            .subscribers
+            .retain(|subscriber| subscriber.send(message.clone()).is_ok());
     }
 
     fn fail(&self, error: CodexAppServerError) {
         if !self.running.swap(false, Ordering::SeqCst) {
             return;
         }
-        if let Ok(mut terminal_fault) = self.terminal_fault.lock() {
-            *terminal_fault = Some(error.clone());
+        {
+            let mut observers = self
+                .observers
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            observers.terminal_fault = Some(error.clone());
+            observers
+                .subscribers
+                .retain(|subscriber| subscriber.send(Err(error.clone())).is_ok());
         }
         if let Ok(mut pending) = self.pending.lock() {
             for (_, sender) in pending.drain() {
                 let _ = sender.send(Err(error.clone()));
             }
         }
-        self.broadcast(Err(error));
+        if let Ok(mut writer) = self.writer.lock() {
+            writer.take();
+        }
+        let termination = self
+            .control
+            .lock()
+            .map_err(|_| CodexAppServerError::Protocol("process control lock is poisoned".to_string()))
+            .and_then(|mut control| match control.as_mut() {
+                Some(control) => control.shutdown(),
+                None => Ok(()),
+            });
+        if let Err(termination_error) = termination {
+            eprintln!("Codex App Server termination after terminal fault failed: {termination_error}");
+        }
     }
 
     fn write(&self, message: Value) -> Result<(), CodexAppServerError> {
@@ -317,14 +341,15 @@ impl CodexAppServerSession {
             .stdout
             .take()
             .ok_or_else(|| CodexAppServerError::Spawn("stdout is unavailable".to_string()))?;
-        if let Some(stderr) = child.stderr.take() {
-            thread::spawn(move || drain_stderr(stderr));
-        }
+        let stderr = child.stderr.take();
         let session = Self::from_parts(
             Box::new(JsonLineReader::new(stdout)),
             Box::new(JsonLineWriter::new(stdin)),
             Some(Box::new(ChildControl { child })),
         );
+        if let Some(stderr) = stderr {
+            session.start_stderr_monitor(stderr);
+        }
         if let Err(error) = session.initialize() {
             let _ = session.shutdown();
             return Err(error);
@@ -363,13 +388,15 @@ impl CodexAppServerSession {
             generation: new_session_generation(),
             writer: Mutex::new(Some(writer)),
             pending: Mutex::new(HashMap::new()),
-            subscribers: Mutex::new(Vec::new()),
+            observers: Mutex::new(SessionObservers {
+                terminal_fault: None,
+                subscribers: Vec::new(),
+            }),
             loaded_threads: Mutex::new(HashMap::new()),
             loaded_threads_changed: Condvar::new(),
             next_load_evidence: AtomicU64::new(1),
             next_id: AtomicI64::new(1),
             running: AtomicBool::new(true),
-            terminal_fault: Mutex::new(None),
             control: Mutex::new(control),
             reader_thread: Mutex::new(None),
         });
@@ -412,28 +439,33 @@ impl CodexAppServerSession {
         &self.inner.generation
     }
 
-    pub fn subscribe(&self) -> Receiver<Result<CodexIncoming, CodexAppServerError>> {
+    pub fn subscribe(
+        &self,
+    ) -> Result<Receiver<Result<CodexIncoming, CodexAppServerError>>, CodexAppServerError> {
         let (sender, receiver) = mpsc::channel();
-        let terminal_fault = self
+        let mut observers = self
             .inner
-            .terminal_fault
+            .observers
             .lock()
-            .ok()
-            .and_then(|fault| fault.clone());
-        if let Some(error) = terminal_fault {
-            let _ = sender.send(Err(error));
-        } else if let Ok(mut subscribers) = self.inner.subscribers.lock() {
-            subscribers.push(sender);
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(error) = observers.terminal_fault.clone() {
+            Err(error)
+        } else {
+            observers.subscribers.push(sender);
+            Ok(receiver)
         }
-        receiver
     }
 
-    pub fn terminal_fault(&self) -> Option<CodexAppServerError> {
-        self.inner
-            .terminal_fault
-            .lock()
-            .ok()
-            .and_then(|fault| fault.clone())
+    fn start_stderr_monitor(&self, stderr: impl Read + Send + 'static) {
+        let inner = Arc::downgrade(&self.inner);
+        thread::spawn(move || {
+            if let Err(error) = drain_stderr(stderr) {
+                eprintln!("Codex App Server stderr failed: {error}");
+                if let Some(inner) = inner.upgrade() {
+                    inner.fail(error);
+                }
+            }
+        });
     }
 
     pub fn shutdown(&self) -> Result<(), CodexAppServerError> {
@@ -806,7 +838,6 @@ impl CodexAppServerSession {
         pending.insert(id.clone(), sender);
         drop(pending);
         let write_outcome = self.inner.write_request(json!({
-            "jsonrpc": "2.0",
             "id": id,
             "method": method,
             "params": params,
@@ -857,7 +888,6 @@ impl CodexAppServerSession {
 
     fn notify(&self, method: &str, params: Value) -> Result<(), CodexAppServerError> {
         self.write(json!({
-            "jsonrpc": "2.0",
             "method": method,
             "params": params,
         }))
@@ -865,7 +895,6 @@ impl CodexAppServerSession {
 
     fn respond(&self, id: &JsonRpcId, result: Value) -> Result<(), CodexAppServerError> {
         self.write(json!({
-            "jsonrpc": "2.0",
             "id": id,
             "result": result,
         }))
@@ -916,27 +945,44 @@ fn new_session_generation() -> String {
 
 fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppServerError> {
     let object = message.as_object().ok_or_else(|| {
-        CodexAppServerError::Protocol("JSON-RPC message must be an object".to_string())
+        CodexAppServerError::Protocol("App Server message must be an object".to_string())
     })?;
-    if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+    if object
+        .get("jsonrpc")
+        .is_some_and(|version| version.as_str() != Some("2.0"))
+    {
         return Err(CodexAppServerError::Protocol(
-            "jsonrpc must be exactly 2.0".to_string(),
+            "App Server jsonrpc metadata must be exactly 2.0 when present".to_string(),
+        ));
+    }
+    if let Some(trace) = object.get("trace") {
+        if !trace.is_null() {
+            let trace = trace.as_object().ok_or_else(|| {
+                CodexAppServerError::Protocol(
+                    "App Server trace metadata must be an object or null".to_string(),
+                )
+            })?;
+            for field in ["traceparent", "tracestate"] {
+                if trace
+                    .get(field)
+                    .is_some_and(|value| !value.is_null() && !value.is_string())
+                {
+                    return Err(CodexAppServerError::Protocol(format!(
+                        "App Server trace {field} must be a string or null"
+                    )));
+                }
+            }
+        }
+    }
+    if object
+        .get("emittedAtMs")
+        .is_some_and(|emitted_at| emitted_at.as_i64().is_none())
+    {
+        return Err(CodexAppServerError::Protocol(
+            "App Server emittedAtMs metadata must be an integer".to_string(),
         ));
     }
     if object.contains_key("method") {
-        if !object
-            .keys()
-            .all(|key| matches!(key.as_str(), "jsonrpc" | "id" | "method" | "params"))
-        {
-            return Err(CodexAppServerError::Protocol(
-                "JSON-RPC request or notification contains unknown fields".to_string(),
-            ));
-        }
-        if !object.contains_key("params") {
-            return Err(CodexAppServerError::Protocol(
-                "JSON-RPC request or notification is missing params".to_string(),
-            ));
-        }
         let incoming = parse_incoming(message, &inner.generation)?;
         if let CodexIncoming::UnsupportedServerRequest {
             request_id,
@@ -944,7 +990,6 @@ fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppSe
         } = &incoming
         {
             let response = json!({
-                "jsonrpc": "2.0",
                 "id": request_id,
                 "error": {
                     "code": -32601,
@@ -965,19 +1010,11 @@ fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppSe
         inner.broadcast(Ok(incoming));
         return Ok(());
     }
-    if !object
-        .keys()
-        .all(|key| matches!(key.as_str(), "jsonrpc" | "id" | "result" | "error"))
-    {
-        return Err(CodexAppServerError::Protocol(
-            "JSON-RPC response contains unknown fields".to_string(),
-        ));
-    }
     let has_result = object.contains_key("result");
     let has_error = object.contains_key("error");
     if has_result == has_error {
         return Err(CodexAppServerError::Protocol(
-            "JSON-RPC response must contain exactly one of result or error".to_string(),
+            "App Server response must contain exactly one of result or error".to_string(),
         ));
     }
     let id: JsonRpcId = serde_json::from_value(
@@ -989,18 +1026,10 @@ fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppSe
     .map_err(|error| CodexAppServerError::Protocol(format!("invalid response id: {error}")))?;
     let response = if let Some(error) = object.get("error") {
         let error = error.as_object().ok_or_else(|| {
-            CodexAppServerError::Protocol("JSON-RPC error must be an object".to_string())
+            CodexAppServerError::Protocol("App Server error must be an object".to_string())
         })?;
-        if !error
-            .keys()
-            .all(|key| matches!(key.as_str(), "code" | "message" | "data"))
-        {
-            return Err(CodexAppServerError::Protocol(
-                "JSON-RPC error contains unknown fields".to_string(),
-            ));
-        }
         let code = error.get("code").and_then(Value::as_i64).ok_or_else(|| {
-            CodexAppServerError::Protocol("JSON-RPC error is missing integer code".to_string())
+            CodexAppServerError::Protocol("App Server error is missing integer code".to_string())
         })?;
         let message = error
             .get("message")
@@ -1008,7 +1037,7 @@ fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppSe
             .filter(|message| !message.is_empty())
             .ok_or_else(|| {
                 CodexAppServerError::Protocol(
-                    "JSON-RPC error is missing non-empty message".to_string(),
+                    "App Server error is missing non-empty message".to_string(),
                 )
             })?;
         Err(CodexAppServerError::Rpc {
@@ -1055,7 +1084,7 @@ fn parse_incoming(
     let params = message
         .get("params")
         .cloned()
-        .ok_or_else(|| CodexAppServerError::Protocol("message is missing params".to_string()))?;
+        .unwrap_or(Value::Null);
     if let Some(id_value) = message.get("id") {
         let request_id: JsonRpcId = serde_json::from_value(id_value.clone()).map_err(|error| {
             CodexAppServerError::Protocol(format!("invalid server request id: {error}"))
@@ -1086,7 +1115,10 @@ fn parse_server_request(
                         "proposedExecpolicyAmendment",
                         "proposedNetworkPolicyAmendments",
                     ],
-                ) {
+                ) || params
+                    .as_object()
+                    .is_some_and(|object| object.get("kind").is_some_and(Value::is_null))
+                {
                     return Ok(unsupported());
                 }
                 let Ok(params) = serde_json::from_value::<CommandApprovalParams>(params.clone()) else {
@@ -1240,6 +1272,7 @@ mod tests {
     use super::*;
     use crate::protocol::{CodexPermissionLevel, CodexTurnStatus};
     use std::sync::mpsc::{Receiver, Sender};
+    use std::sync::Barrier;
     use std::time::Duration;
 
     struct MockReader {
@@ -1267,15 +1300,26 @@ mod tests {
         }
     }
 
+    struct RecordingControl {
+        terminated: Arc<AtomicBool>,
+    }
+
+    impl SessionControl for RecordingControl {
+        fn shutdown(&mut self) -> Result<(), CodexAppServerError> {
+            self.terminated.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
     fn mock_session() -> (CodexAppServerSession, Receiver<Value>, Sender<Value>) {
         let (to_peer_sender, peer_receiver) = mpsc::channel::<Value>();
         let (peer_sender, client_receiver) = mpsc::channel::<Value>();
         let peer = thread::spawn(move || {
             let initialize = peer_receiver.recv().unwrap();
             assert_eq!(initialize["method"], "initialize");
+            assert!(initialize.get("jsonrpc").is_none());
             peer_sender
                 .send(json!({
-                    "jsonrpc": "2.0",
                     "id": initialize["id"],
                     "result": {
                         "codexHome": "/tmp/codex-home",
@@ -1287,6 +1331,7 @@ mod tests {
                 .unwrap();
             let initialized = peer_receiver.recv().unwrap();
             assert_eq!(initialized["method"], "initialized");
+            assert!(initialized.get("jsonrpc").is_none());
             (peer_receiver, peer_sender)
         });
         let session = CodexAppServerSession::connect(
@@ -1351,7 +1396,6 @@ mod tests {
             let initialize = outgoing_receiver.recv().unwrap();
             incoming_sender
                 .send(json!({
-                    "jsonrpc": "2.0",
                     "id": initialize["id"],
                     "result": {}
                 }))
@@ -1379,6 +1423,61 @@ mod tests {
         let error = read_bounded_line(&mut reader, 4).unwrap_err();
         assert!(matches!(error, CodexAppServerError::Protocol(_)));
         assert_eq!(read_bounded_line(&mut reader, 4).unwrap(), Some(b"{}\n".to_vec()));
+    }
+
+    #[test]
+    fn oversized_stderr_line_uses_the_session_terminal_path() {
+        let (outgoing_sender, _outgoing_receiver) = mpsc::channel::<Value>();
+        let (incoming_sender, incoming_receiver) = mpsc::channel::<Value>();
+        let terminated = Arc::new(AtomicBool::new(false));
+        let session = CodexAppServerSession::from_parts(
+            Box::new(MockReader {
+                receiver: incoming_receiver,
+            }),
+            Box::new(MockWriter {
+                sender: outgoing_sender,
+            }),
+            Some(Box::new(RecordingControl {
+                terminated: terminated.clone(),
+            })),
+        );
+        let notifications = session.subscribe().unwrap();
+        let (pending_sender, pending_receiver) = mpsc::channel();
+        session
+            .inner
+            .pending
+            .lock()
+            .unwrap()
+            .insert(JsonRpcId::Number(41), pending_sender);
+        let mut stderr = vec![b'x'; MAX_APP_SERVER_STDERR_LINE_BYTES + 1];
+        stderr.push(b'\n');
+
+        session.start_stderr_monitor(std::io::Cursor::new(stderr));
+
+        let error = notifications
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap_err();
+        assert!(matches!(error, CodexAppServerError::Protocol(_)));
+        assert_eq!(
+            pending_receiver.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Err(error.clone())
+        );
+        for _ in 0..100 {
+            if terminated.load(Ordering::SeqCst) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(terminated.load(Ordering::SeqCst));
+        let late_error = match session.subscribe() {
+            Err(error) => error,
+            Ok(_) => panic!("terminal fault was not retained"),
+        };
+        assert_eq!(late_error, error);
+        assert!(!session.is_running());
+        assert!(session.inner.pending.lock().unwrap().is_empty());
+        drop(incoming_sender);
     }
 
     #[test]
@@ -1419,12 +1518,11 @@ mod tests {
     #[test]
     fn session_keeps_reading_notifications_between_requests() {
         let (session, _, peer_sender) = mock_session();
-        let notifications = session.subscribe();
-        peer_sender
-            .send(json!({
-                "jsonrpc": "2.0",
-                "method": "turn/started",
-                "params": {
+        let notifications = session.subscribe().unwrap();
+            peer_sender
+                .send(json!({
+                    "method": "turn/started",
+                    "params": {
                     "threadId": "thread-one",
                     "turn": turn_fixture("turn-one", "inProgress")
                 }
@@ -1442,7 +1540,7 @@ mod tests {
     #[test]
     fn peer_exit_is_reported_to_subscribers_and_stops_the_session() {
         let (session, _, peer_sender) = mock_session();
-        let notifications = session.subscribe();
+        let notifications = session.subscribe().unwrap();
         drop(peer_sender);
         let error = notifications
             .recv_timeout(Duration::from_secs(1))
@@ -1464,12 +1562,167 @@ mod tests {
         }
         assert!(!session.is_running());
 
-        let error = session
-            .subscribe()
+        let error = match session.subscribe() {
+            Err(error) => error,
+            Ok(_) => panic!("late subscriber did not receive the terminal fault"),
+        };
+        assert_eq!(error, CodexAppServerError::ProcessExited);
+    }
+
+    #[test]
+    fn subscribe_racing_terminal_fault_always_observes_the_fault() {
+        let (session, _peer_receiver, peer_sender) = mock_session();
+        let subscriber_count = 32;
+        let barrier = Arc::new(Barrier::new(subscriber_count + 1));
+        let expected = CodexAppServerError::Protocol("forced concurrent fault".to_string());
+        let subscribers = (0..subscriber_count)
+            .map(|_| {
+                let session = session.clone();
+                let barrier = barrier.clone();
+                thread::spawn(move || {
+                    barrier.wait();
+                    match session.subscribe() {
+                        Ok(receiver) => receiver
+                            .recv_timeout(Duration::from_secs(1))
+                            .unwrap()
+                            .unwrap_err(),
+                        Err(error) => error,
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        barrier.wait();
+        session.inner.fail(expected.clone());
+
+        for subscriber in subscribers {
+            assert_eq!(subscriber.join().unwrap(), expected);
+        }
+        let late_error = match session.subscribe() {
+            Err(error) => error,
+            Ok(_) => panic!("terminal fault was not retained after the race"),
+        };
+        assert_eq!(late_error, expected);
+        drop(peer_sender);
+    }
+
+    #[test]
+    fn official_notification_metadata_and_missing_params_are_accepted() {
+        let (session, peer_receiver, peer_sender) = mock_session();
+        let notifications = session.subscribe().unwrap();
+        peer_sender
+            .send(json!({
+                "method": "remoteControl/status/changed",
+                "emittedAtMs": 1234
+            }))
+            .unwrap();
+        let incoming = notifications
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            incoming,
+            CodexIncoming::Notification(CodexNotification::Unknown { method })
+                if method == "remoteControl/status/changed"
+        ));
+
+        peer_sender
+            .send(json!({
+                "id": "future-request",
+                "method": "future/request",
+                "trace": { "traceparent": null, "tracestate": null }
+            }))
+            .unwrap();
+        let incoming = notifications
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            incoming,
+            CodexIncoming::UnsupportedServerRequest { request_id, method }
+                if request_id == JsonRpcId::String("future-request".to_string())
+                    && method == "future/request"
+        ));
+        let response = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(response["id"], "future-request");
+        assert_eq!(response["error"]["code"], -32601);
+        assert!(response.get("jsonrpc").is_none());
+        assert!(session.is_running());
+        session.shutdown().unwrap();
+    }
+
+    #[test]
+    fn invalid_optional_jsonrpc_metadata_fails_the_session() {
+        let (session, _peer_receiver, peer_sender) = mock_session();
+        let notifications = session.subscribe().unwrap();
+        peer_sender
+            .send(json!({
+                "jsonrpc": "1.0",
+                "method": "remoteControl/status/changed"
+            }))
+            .unwrap();
+
+        let error = notifications
             .recv_timeout(Duration::from_secs(1))
             .unwrap()
             .unwrap_err();
-        assert_eq!(error, CodexAppServerError::ProcessExited);
+        assert!(matches!(error, CodexAppServerError::Protocol(_)));
+        assert!(!session.is_running());
+    }
+
+    #[test]
+    fn command_approval_kind_null_is_unsupported_but_missing_kind_defaults_to_command() {
+        let (session, peer_receiver, peer_sender) = mock_session();
+        let notifications = session.subscribe().unwrap();
+        peer_sender
+            .send(json!({
+                "id": "kind-null",
+                "method": "item/commandExecution/requestApproval",
+                "params": {
+                    "threadId": "thread-one",
+                    "turnId": "turn-one",
+                    "itemId": "item-null",
+                    "startedAtMs": 123,
+                    "kind": null
+                }
+            }))
+            .unwrap();
+        assert!(matches!(
+            notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap(),
+            CodexIncoming::UnsupportedServerRequest {
+                request_id: JsonRpcId::String(request_id),
+                method
+            } if request_id == "kind-null"
+                && method == "item/commandExecution/requestApproval"
+        ));
+        let rejected = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(rejected["id"], "kind-null");
+        assert_eq!(rejected["error"]["code"], -32601);
+
+        peer_sender
+            .send(json!({
+                "id": "kind-missing",
+                "method": "item/commandExecution/requestApproval",
+                "params": {
+                    "threadId": "thread-one",
+                    "turnId": "turn-one",
+                    "itemId": "item-command",
+                    "startedAtMs": 124
+                }
+            }))
+            .unwrap();
+        let accepted = notifications
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            accepted,
+            CodexIncoming::ApprovalRequested(CodexApprovalRequest {
+                kind: CodexApprovalKind::CommandExecution,
+                ..
+            })
+        ));
+        session.shutdown().unwrap();
     }
 
     #[test]
@@ -1493,10 +1746,8 @@ mod tests {
     #[test]
     fn unmatched_response_id_is_a_protocol_error() {
         let (session, _, peer_sender) = mock_session();
-        let notifications = session.subscribe();
-        peer_sender
-            .send(json!({ "jsonrpc": "2.0", "id": 999, "result": {} }))
-            .unwrap();
+        let notifications = session.subscribe().unwrap();
+        peer_sender.send(json!({ "id": 999, "result": {} })).unwrap();
         let error = notifications
             .recv_timeout(Duration::from_secs(1))
             .unwrap()
@@ -1578,7 +1829,6 @@ mod tests {
         assert_eq!(list["params"]["cwd"], "/work/project");
         peer_sender
             .send(json!({
-                "jsonrpc": "2.0",
                 "id": list["id"],
                 "result": {
                     "data": [thread_fixture("thread-listed", "/work/project", "idle", vec![])],
@@ -1592,7 +1842,6 @@ mod tests {
         assert_eq!(read["params"]["includeTurns"], true);
         peer_sender
             .send(json!({
-                "jsonrpc": "2.0",
                 "id": read["id"],
                 "result": {
                     "thread": thread_fixture("thread-read", "/tmp", "idle", vec![])
@@ -1607,7 +1856,6 @@ mod tests {
         assert_eq!(normal["params"]["approvalPolicy"], "on-request");
         peer_sender
             .send(json!({
-                "jsonrpc": "2.0",
                 "id": normal["id"],
                 "result": {
                     "thread": thread_fixture("thread-normal", "/tmp", "idle", vec![]),
@@ -1636,7 +1884,6 @@ mod tests {
         );
         peer_sender
             .send(json!({
-                "jsonrpc": "2.0",
                 "id": project["id"],
                 "result": {
                     "thread": thread_fixture("thread-project", "/work/project", "idle", vec![]),
@@ -1659,7 +1906,6 @@ mod tests {
         assert_eq!(start["params"]["effort"], "high");
         peer_sender
             .send(json!({
-                "jsonrpc": "2.0",
                 "id": start["id"],
                 "result": { "turn": turn_fixture("turn-started", "inProgress") }
             }))
@@ -1670,7 +1916,6 @@ mod tests {
         assert_eq!(steer["params"]["expectedTurnId"], "turn-started");
         peer_sender
             .send(json!({
-                "jsonrpc": "2.0",
                 "id": steer["id"],
                 "result": { "turnId": "turn-started" }
             }))
@@ -1680,7 +1925,6 @@ mod tests {
         assert_eq!(steer_read["method"], "thread/read");
         peer_sender
             .send(json!({
-                "jsonrpc": "2.0",
                 "id": steer_read["id"],
                 "result": {
                     "thread": thread_fixture(
@@ -1698,7 +1942,6 @@ mod tests {
         assert_eq!(interrupt["params"]["turnId"], "turn-started");
         peer_sender
             .send(json!({
-                "jsonrpc": "2.0",
                 "id": interrupt["id"],
                 "result": {}
             }))
@@ -1708,7 +1951,6 @@ mod tests {
         assert_eq!(interrupt_read["method"], "thread/read");
         peer_sender
             .send(json!({
-                "jsonrpc": "2.0",
                 "id": interrupt_read["id"],
                 "result": {
                     "thread": thread_fixture(
@@ -1751,7 +1993,6 @@ mod tests {
             assert_eq!(resume["params"]["threadId"], "thread-historical");
             peer_sender
                 .send(json!({
-                    "jsonrpc": "2.0",
                     "id": resume["id"],
                     "result": {
                         "thread": thread_fixture(
@@ -1773,7 +2014,8 @@ mod tests {
                             "excludeTmpdirEnvVar": false,
                             "excludeSlashTmp": false
                         }
-                    }
+                    },
+                    "emittedAtMs": 1234
                 }))
                 .unwrap();
 
@@ -1786,7 +2028,6 @@ mod tests {
                 );
                 peer_sender
                     .send(json!({
-                        "jsonrpc": "2.0",
                         "id": start["id"],
                         "result": {
                             "turn": turn_fixture(
@@ -1823,7 +2064,6 @@ mod tests {
             .is_err());
         peer_sender
             .send(json!({
-                "jsonrpc": "2.0",
                 "id": first_resume["id"],
                 "error": {
                     "code": -32600,
@@ -1837,7 +2077,6 @@ mod tests {
         assert_eq!(second_resume["params"]["threadId"], "thread-missing");
         peer_sender
             .send(json!({
-                "jsonrpc": "2.0",
                 "id": second_resume["id"],
                 "error": {
                     "code": -32600,
@@ -1862,10 +2101,9 @@ mod tests {
     #[test]
     fn approval_and_unsupported_server_requests_receive_terminal_responses() {
         let (session, peer_receiver, peer_sender) = mock_session();
-        let notifications = session.subscribe();
+        let notifications = session.subscribe().unwrap();
         peer_sender
             .send(json!({
-                "jsonrpc": "2.0",
                 "id": "approval-one",
                 "method": "item/commandExecution/requestApproval",
                 "params": {
@@ -1894,7 +2132,6 @@ mod tests {
 
         peer_sender
             .send(json!({
-                "jsonrpc": "2.0",
                 "id": "approval-safe",
                 "method": "item/commandExecution/requestApproval",
                 "params": {
@@ -1924,7 +2161,6 @@ mod tests {
 
         peer_sender
             .send(json!({
-                "jsonrpc": "2.0",
                 "id": 2,
                 "method": "item/permissions/requestApproval",
                 "params": {
@@ -1959,7 +2195,6 @@ mod tests {
 
         peer_sender
             .send(json!({
-                "jsonrpc": "2.0",
                 "id": "unknown-one",
                 "method": "item/future/request",
                 "params": {}

@@ -4,7 +4,7 @@
 
 - 远程 Provider 显示 unavailable/error，list/create/turn/approval 返回 `provider_unavailable` 或 timeout。
 - Codex Desktop companion 和桌宠仍可工作。
-- 日志出现 executable 解析、spawn、initialize、进程退出或 JSON-RPC timeout。
+- 日志出现 executable 解析、spawn、initialize、进程退出或 App Server request timeout。
 
 ## 需要收集的证据
 
@@ -19,8 +19,8 @@
 2. 检查开发安装：`provider-plugins/codex/codepet-provider.json` 与相对 Provider executable 位于同一目录，`pluginId` 为 `dev.codepet.codex`，且没有重复 manifest。
 3. 区分两层启动配置：Provider executable/环境和 `appServerArgs` 来自 manifest；`appServerExecutable` 必须只由 Agent Runtime resolver 以绝对路径注入。Provider 不补默认参数，也不搜索用户目录。
 4. 检查 Provider `instance.start`：它 spawn App Server 后执行 `initialize`/`initialized`，initialize 最多等待有界时间。silent child 应让实例转 error，不能阻塞 Tauri 或 Desktop companion。
-5. 检查长期 reader/writer 和 request id map。乱序 response 应按 id 关联；无匹配 id、非法 JSON-RPC 或 reader 退出会使当前 Provider instance fail closed。
-6. 若修改 executable 或点击刷新，确认 Host 更新同一个 Codex instance setting，并按 stop → start → manifest instance create/start 显式重启插件；Tauri 内不应出现第二个 App Server 进程。
+5. 检查长期 reader/writer 和 request id map。乱序 response 应按 id 关联；无匹配 id、非法 App Server envelope 或 stdout/stderr 读取故障会使当前 session 走同一 terminal path，清空 pending 并终止子进程。超长物理行必须先完整 drain。
+6. 若修改 executable 或点击刷新，确认 Host 更新同一个 Codex instance setting，并按 stop → start → manifest instance create/start 显式重启插件；replacement 的 RPC 必须反映新 setting，Tauri 内不应出现第二个 App Server 进程。
 7. 对 timeout 或 process exit，不自动重放 create、turn、interrupt 或 approval。remote 结果不确定也不得触碰 Desktop companion；两条链路保持独立故障状态。
 8. 单独确认 Desktop companion：其 socket、owner/revision 和 activity projection 不应因 remote 故障清空、重启或改用 Hook/transcript。
 
@@ -45,5 +45,5 @@
 
 - initialize 在有界 timeout 后仍留下无法终止的 Provider/App Server child。
 - 插件 restart 后旧 process 继续发布事件，或审批被路由到新实例/其他 App Server session。
-- Provider event 进入 companion replay、exclusion event 或桌宠 activity；这表示生产 wiring 发生跨链路污染。
-- Codex CLI 升级改变核心 JSON-RPC request/notification 语义。
+- Provider event 进入 companion replay/event 或桌宠 activity；这表示生产 wiring 发生跨链路污染。
+- Codex CLI 升级改变 App Server request/response/notification wire 语义。

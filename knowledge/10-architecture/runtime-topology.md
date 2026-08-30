@@ -19,7 +19,7 @@
   → runtime_gateway_request
   → compat 薄适配 / ProviderGatewayService
   → PluginManager / codepet-provider-codex
-  → 官方 Codex App Server stdio JSON-RPC
+  → 官方 Codex App Server stdio wire
 
 Codex Desktop Owner/Follower 状态
   → ~/.codex/ipc/ipc.sock

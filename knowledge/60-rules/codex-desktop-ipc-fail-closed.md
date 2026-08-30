@@ -38,7 +38,7 @@ Desktop 私有 DTO、方法名、路由字段和原始 JSON 只能存在于 Code
 - Owner 明确接受只结束本次请求；最终 turn 继续由权威 snapshot/patch 驱动，本地审批决定则需同时取得 Owner ack 与权威 request removal，顺序不限。非幂等写请求不自动重试或跨重连重放。
 - capability 只包含当前 adapter 已实现并测试的方法；`conversation.create` 等未接通能力继续 unsupported。
 - 无任务目录时明确报告覆盖限制，不用推断数据伪造目录。
-- companion snapshot/replay/event 只来自 Desktop adapter。Provider route/event 不得写 Desktop scope、触发 exclusion 或参与 Desktop action；同名 thread 维持两条独立状态。
+- companion snapshot/replay/event 只来自 Desktop adapter。Provider route/event 不得写 Desktop scope 或参与 Desktop action；同名 thread 维持两条独立状态。
 
 ## 来源
 
@@ -55,4 +55,4 @@ Desktop 私有 DTO、方法名、路由字段和原始 JSON 只能存在于 Code
 - mapper/Provider 测试覆盖 command/file Approval DTO、unsupported pending request 诊断、过期/重复保护，以及 ack 不提前发布最终状态。
 - Provider 与前端测试共同断言只展示已声明且当前状态允许的 send、interrupt、approve/deny；错误保留可诊断信息。
 - 静态检查确认 Desktop adapter 不调用 App Server fallback、PetApp 不引用 remote client/event，Desktop 私有方法名没有越过 adapter 边界。
-- source 测试使用生产 bridge wiring，同时监听 remote、companion、exclusion 与 Pet event，断言 Provider 只进入 remote bus；并覆盖 remote approval/send/interrupt fail closed。
+- source 测试使用生产 bridge wiring，同时观测 remote、companion 与 Pet event，断言 Provider 只进入 remote bus；并覆盖 remote approval/send/interrupt fail closed。

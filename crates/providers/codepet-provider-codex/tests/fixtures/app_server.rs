@@ -132,7 +132,6 @@ fn main() {
             other => write_json(
                 &mut writer,
                 json!({
-                    "jsonrpc": "2.0",
                     "id": id,
                     "error": { "code": -32601, "message": format!("fixture method not found: {other}") }
                 }),
@@ -226,11 +225,14 @@ fn turn(id: &str, status: &str) -> Value {
 }
 
 fn respond(writer: &mut BufWriter<std::io::Stdout>, id: Value, result: Value) {
-    write_json(writer, json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+    write_json(writer, json!({ "id": id, "result": result }));
 }
 
 fn notify(writer: &mut BufWriter<std::io::Stdout>, method: &str, params: Value) {
-    write_json(writer, json!({ "jsonrpc": "2.0", "method": method, "params": params }));
+    write_json(
+        writer,
+        json!({ "method": method, "params": params, "emittedAtMs": 1234 }),
+    );
 }
 
 fn request(
@@ -241,7 +243,12 @@ fn request(
 ) {
     write_json(
         writer,
-        json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }),
+        json!({
+            "id": id,
+            "method": method,
+            "params": params,
+            "trace": { "traceparent": null, "tracestate": null }
+        }),
     );
 }
 

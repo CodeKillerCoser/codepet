@@ -6,8 +6,8 @@ use codepet_provider_sdk::{
     InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceCreateResponse,
     InstanceDestroyRequest, InstanceDestroyResponse, InstanceStartRequest,
     InstanceStartResponse, InstanceStatus, InstanceStopRequest, InstanceStopResponse,
-    JsonLineCodec, JsonRpcInboundRequest, JsonRpcNotification, PageInfo, ProtocolEvent, ProtocolFuture,
-    ProtocolRequest, ProtocolServer, ProviderApproval, ProviderCapabilities,
+    JsonLineCodec, JsonObject, JsonRpcInboundRequest, JsonRpcNotification, PageInfo, ProtocolEvent,
+    ProtocolFuture, ProtocolRequest, ProtocolServer, ProviderApproval, ProviderCapabilities,
     ProviderCapability, ProviderConversation, ProviderDescribeRequest,
     ProviderDescribeResponse, ProviderInitializeRequest, ProviderInitializeResponse,
     ProviderInstance, ProviderInstanceRoute, ProviderPluginDescriptor, ProviderShutdownRequest,
@@ -23,6 +23,7 @@ use std::time::Duration;
 struct FakeProvider {
     plugin_id: String,
     instances: Mutex<BTreeMap<String, ProviderInstance>>,
+    instance_settings: Mutex<BTreeMap<String, JsonObject>>,
 }
 
 impl FakeProvider {
@@ -86,6 +87,7 @@ impl ProtocolServer for FakeProvider {
         request: InstanceCreateRequest,
     ) -> ProtocolFuture<'a, InstanceCreateResponse> {
         Box::pin(async move {
+            let instance_id = request.route.provider_instance_id.clone();
             let instance = ProviderInstance {
                 route: request.route,
                 plugin_id: self.plugin_id.clone(),
@@ -98,6 +100,10 @@ impl ProtocolServer for FakeProvider {
                 .lock()
                 .map_err(|_| protocol_error("fake_state_error", "fake instance lock failed"))?
                 .insert(instance.route.provider_instance_id.clone(), instance.clone());
+            self.instance_settings
+                .lock()
+                .map_err(|_| protocol_error("fake_state_error", "fake settings lock failed"))?
+                .insert(instance_id, request.settings);
             Ok(InstanceCreateResponse { instance })
         })
     }
@@ -201,8 +207,20 @@ impl ProtocolServer for FakeProvider {
             } else {
                 route
             };
+            let configured_revision = self
+                .instance_settings
+                .lock()
+                .map_err(|_| protocol_error("fake_state_error", "fake settings lock failed"))?
+                .get(&response_route.provider_instance_id)
+                .and_then(|settings| settings.get("fixtureRevision"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string);
+            let mut configured = conversation(&response_route, native_id);
+            if let Some(configured_revision) = configured_revision {
+                configured.preview = Some(configured_revision);
+            }
             Ok(ConversationGetResponse {
-                conversation: conversation(&response_route, native_id),
+                conversation: configured,
             })
         })
     }
@@ -331,6 +349,7 @@ async fn main() {
     let server = Arc::new(FakeProvider {
         plugin_id,
         instances: Mutex::new(BTreeMap::new()),
+        instance_settings: Mutex::new(BTreeMap::new()),
     });
     let output = Arc::new(Mutex::new(std::io::stdout()));
     let codec = JsonLineCodec::default();

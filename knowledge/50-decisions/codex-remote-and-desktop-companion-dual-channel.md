@@ -12,12 +12,12 @@ Code Pet 同时需要两类能力：远程端需要完整的项目/会话目录�
 
 Codex 使用两个彼此隔离的运行时通道：
 
-- `CodexRemote / AppServer`：进程外 `codepet-provider-codex` 持有长期官方 stdio JSON-RPC session，经 Provider Protocol v1、Plugin Manager 与 Provider Gateway 提供 `conversation.list/get/create`、turn start/steer/interrupt、`approval.resolve` 和通知事件。`RuntimeGatewayState` 只保留既有调用面的薄适配。Codex executable 检测与配置只驱动这条生命周期。
+- `CodexRemote / AppServer`：进程外 `codepet-provider-codex` 持有长期官方 App Server stdio session，经 Provider Protocol v1、Plugin Manager 与 Provider Gateway 提供 `conversation.list/get/create`、turn start/steer/interrupt、`approval.resolve` 和通知事件。`RuntimeGatewayState` 只保留既有调用面的薄适配。Codex executable 检测与配置只驱动这条生命周期。
 - `CodexDesktopCompanion / IPC`：Code Pet 作为本机 Desktop Owner/Follower 的 follower，通过 `CodexDesktopCompanionState`、专用 snapshot/replay/request 和专用 Tauri event 驱动桌宠。它不广告 `conversation.list/create`；初始状态只由 companion snapshot 返回已验证、已 bootstrap 的本地投影。
 
 两条链路各自拥有 registry、event bus、event sequence/replay window、session 和 unavailable 状态。remote 使用 Provider Host/Gateway，companion 使用进程内 compat Gateway/LocalTransport；不得共享 provider slot、event sink、owner/revision/request 状态、thread provenance、projection 或重连策略。
 
-Provider route 和 event 不写 `CodexThreadScope`，不调用 Desktop adapter，不发布 companion exclusion event，也不修改 Pet projection。remote 与 Desktop 即使报告相同 native thread id，也分别保留在各自 channel；本阶段不建立 quarantine、tombstone、动作 fence、去重或同步。链路隔离依赖生产 wiring，而不是收到 Provider event 后再做来源推断。
+Provider route 和 event 不写 `CodexThreadScope`，不调用 Desktop adapter，也不修改 Pet projection。remote 与 Desktop 即使报告相同 native thread id，也分别保留在各自 channel；本阶段不建立 quarantine、tombstone、动作 fence、去重或同步。链路隔离依赖生产 wiring，而不是收到 Provider event 后再做来源推断。
 
 Hook、audit、transcript 扫描和文件监听继续不得成为 Codex 桌宠数据源或任一 Codex Provider 的 fallback。
 
@@ -48,11 +48,11 @@ Hook、audit、transcript 扫描和文件监听继续不得成为 Codex 桌宠�
 - Agent runtime 设置：set/clear/refresh 只更新 Host Codex instance setting 并重启该插件，不重启 Desktop IPC。
 - 运维：App Server 与 Desktop IPC 使用独立 unavailable runbook；排查时不能用另一路状态替代本路证据。
 
-回归验证包括：真实 fixture App Server 子进程下的 list/create/start/steer/interrupt/approval/notification 闭环；Host 从 manifest 启动 Provider binary 的纵向 RPC；remote conversation/turn/approval 只进入 remote event/replay，而 companion/Pet/activity 和 exclusion event 为空；Desktop snapshot 仍驱动任务和审批；前端只调用 companion command/event。
+回归验证包括：真实 fixture App Server 子进程下的 list/create/start/steer/interrupt/approval/notification 闭环；Host 从 manifest 启动 Provider binary 的纵向 RPC；remote conversation/turn/approval 只进入 remote event/replay，而 companion event/replay、Pet/activity 保持为空；Desktop snapshot 仍驱动任务和审批；前端只调用 companion command/event。
 
 ## 后续观察
 
 - 当前仓库仍只有进程内 `LocalTransport`，真实手机 WebSocket/P2P/relay transport 尚未实现；本决策恢复的是 remote Provider/runtime 边界，不宣称远程网络已完成。
 - remote 与 Desktop 的同名 thread 暂时独立显示在各自客户端；跨链路去重或 origin metadata 不属于本阶段。
 - App Server 进程退出目前变为 remote Provider unavailable，自动 supervisor/reconciliation 仍是后续增强；不能借 Desktop IPC 掩盖故障。
-- 每次 Codex Desktop 升级仍需复核私有 IPC 版本、owner/revision/write handler；每次 Codex CLI 升级需复核 App Server JSON-RPC mapper。
+- 每次 Codex Desktop 升级仍需复核私有 IPC 版本、owner/revision/write handler；每次 Codex CLI 升级需复核 App Server wire mapper。

@@ -398,6 +398,9 @@ async fn version_negotiation_rejects_a_plugin_with_an_inconsistent_reported_rang
 #[tokio::test]
 async fn explicit_restart_continues_after_graceful_stop_error_when_process_was_killed() {
     let mut descriptor = plugin("dev.codepet.restart", &["instance-restart"]);
+    descriptor.instances[0]
+        .settings
+        .insert("fixtureRevision".to_string(), serde_json::json!("before-restart"));
     descriptor.env.insert(
         "CODEPET_FAKE_SHUTDOWN_RESPONSE_DELAY_MS".to_string(),
         "200".to_string(),
@@ -414,6 +417,34 @@ async fn explicit_restart_continues_after_graceful_stop_error_when_process_was_k
     );
     let initial_start = manager.start_enabled().await;
     initial_start[0].1.as_ref().unwrap();
+
+    let before_restart = manager
+        .conversation_get(ConversationGetRequest {
+            conversation: resource(
+                "device-restart",
+                "dev.codepet.restart",
+                "instance-restart",
+                "before-restart",
+            ),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        before_restart.conversation.preview.as_deref(),
+        Some("before-restart")
+    );
+    assert_eq!(
+        manager
+            .replace_instance_setting(
+                "dev.codepet.restart",
+                "fake",
+                "fixtureRevision",
+                Some(serde_json::json!("after-restart")),
+            )
+            .await
+            .unwrap(),
+        1
+    );
 
     manager.restart_plugin("dev.codepet.restart").await.unwrap();
 
@@ -439,6 +470,10 @@ async fn explicit_restart_continues_after_graceful_stop_error_when_process_was_k
     assert_eq!(
         response.conversation.resource.native_resource_id,
         "after-restart"
+    );
+    assert_eq!(
+        response.conversation.preview.as_deref(),
+        Some("after-restart")
     );
     manager.shutdown().await;
 }
