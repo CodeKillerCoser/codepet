@@ -2,55 +2,52 @@
 
 ## 当前结论
 
-Claude 默认 Provider 已实现为独立 Rust 二进制 `crates/providers/codepet-provider-claude`。它只通过生成的 `codepet-provider-sdk` 与 Host 交换 Provider Protocol v1 JSON-RPC / stdio JSON-lines，并把 Host resolver 注入的 Claude executable 作为唯一启动路径。Provider crate 不依赖 Host、Gateway、Tauri、Pet SDK、Desktop IPC、Hook collector 或 activity store。
+Claude 默认 Provider 是独立 Rust 二进制 `crates/providers/codepet-provider-claude`。它只通过生成的 `codepet-provider-sdk` 与 Host 交换 Provider Protocol v1 JSON-RPC / stdio JSON-lines，并把 Host resolver 注入的绝对 Claude executable 作为唯一启动路径。Provider crate 不依赖 Host、Gateway、Tauri、Pet SDK、Desktop IPC、Hook collector 或 activity store。
 
-当前官方公开接口中未发现与 Codex App Server 等价、可由 Rust 直接消费的完整 Claude session server。当前诚实切面是官方 Claude Code CLI 的 `--print` + 双向 `stream-json`：Provider 管理自己创建的 session ID，一次 turn 启动一个 CLI 子进程，后续 turn 用 `--resume` 恢复。它不宣称能枚举、读取、附着或同步 Claude Desktop/CLI 的其他会话。
+当前官方公开接口中未发现与 Codex App Server 等价、可由 Rust 直接消费的完整 Claude session server。诚实切面是官方 Claude Code CLI 的 `--print` + 双向 `stream-json`：Provider 管理自己的 session ID，一次 turn 启动一个 CLI 子进程，后续 turn 用 `--resume`。它不宣称能枚举、读取、附着或同步其他 Claude Desktop/CLI 会话。
 
-## 审计证据
+## 安全复核证据与根因
 
-### 仓库事实
+独立 review 对初始提交 `3c86e507` 给出 NO-GO。源码复核确认四个根因：
 
-- `protocol/provider/v1` 与 `sdk/rust/codepet-provider-sdk` 已生成 Provider DTO、四段 `RoutedResourceId`、server trait、dispatcher 和有界 `JsonLineCodec`；Claude Provider 直接复用它们，没有复制协议类型。
-- `crates/codepet-host` 已按显式 manifest 管理独立 Provider 进程、instance lifecycle 与 Gateway event/replay；Claude 作为普通 `dev.codepet.claude` manifest 接入，没有新增注册市场或生命周期框架。
-- `src-tauri/src/agent/runtime.rs` 已有 Claude descriptor，负责候选发现、`--version` 验证和绝对路径 canonicalize。`tauri_bridge.rs` 只把这个 resolver 结果写入 `claudeExecutable`；Provider 内没有 PATH、应用目录或扩展目录探测。
-- 旧 Claude Hook、transcript 和桌宠 activity 代码仍属于 Pet/观察链路，不是 Provider 输入。Provider 每次调用 CLI 时使用官方单次运行设置关闭用户/项目 Hook，且不读取 transcript。
+- 只传 `--settings '{"disableAllHooks":true}'` 不会隔离工作区 `.mcp.json`、用户/项目/local settings 或 plugin MCP；`claude -p` 跳过 trust dialog，认证前即可启动 MCP 命令。
+- `read-only -> dontAsk` 仍允许外部 `permissions.allow` 预批准 Write/Edit/Bash，不能单独构成只读边界。
+- stdout reader 通过同一个 `Child` mutex 调用 `wait`；result 时又提前移除 active control，导致 stop/shutdown 可能等待死锁或留下已终态但仍运行的进程树。
+- Claude 上游允许 16 MiB 物理行，而生成 Provider codec 只允许 1 MiB。大 result 被单帧转发时，terminal event 也可能丢失，Host 永久 pending。
 
-### 官方接口
+引入历史已确认是 `3c86e507` 的首版 Claude Provider；旧仓库代码不存在该实现。
 
-- [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview) 明确 SDK 只有 Python/TypeScript；其他语言应以 `-p` 启动 CLI 子进程。因此没有引入 Node/Python SDK sidecar。
-- [CLI reference](https://code.claude.com/docs/en/cli-reference) 定义 `--print`、`--input-format stream-json`、`--output-format stream-json`、`--include-partial-messages`、`--session-id`、`--resume`、`--permission-mode`、model 与 effort 参数。
-- [Programmatic/headless guide](https://code.claude.com/docs/en/headless) 定义 NDJSON streaming、`system/init`、`stream_event` text delta、最终 `result`、按 session ID 恢复，以及 SIGINT 正常结束当前 turn 的语义。
-- [Hooks reference](https://code.claude.com/docs/en/hooks) 明确 `--settings '{"disableAllHooks":true}'` 可为单次运行覆盖用户、项目和本地 Hook；管理员托管 Hook 仍只能由托管设置关闭，这一限制不能被 Provider 伪装消除。
-- [Approval/user input guide](https://code.claude.com/docs/en/agent-sdk/user-input) 把可交互审批定义为 SDK `canUseTool` 回调；CLI 的 `--permission-prompt-tool` 又要求 MCP tool。当前边界禁止 SDK sidecar/MCP 审批桥，因此 `approval.resolve` 必须关闭。
+## 官方接口审计
 
-### 本机实测
+- [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview) 列出的 SDK 是 Python/TypeScript；Rust 应以 `-p` 启动 CLI 子进程，因此本实现不引入 SDK sidecar。
+- [CLI reference](https://code.claude.com/docs/en/cli-reference) 定义 `--print`、stream-json、`--session-id`、`--resume`、`--setting-sources`、`--strict-mcp-config`、`--mcp-config`、`--restricted`、`--tools` 与 permission mode。
+- [Settings reference](https://code.claude.com/docs/en/settings) 说明 user/project/local settings 的层级、数组权限规则会跨层合并，以及 managed policy 不能被命令行覆盖。
+- [MCP reference](https://code.claude.com/docs/en/mcp) 说明 MCP 可来自 user、project、local、plugin 与 managed 配置；CLI 的 strict 模式只采用显式 `--mcp-config`。
+- [Permission modes](https://code.claude.com/docs/en/permission-modes) 说明 `dontAsk` 只拒绝未预批准动作；[permission controls](https://code.claude.com/docs/en/agent-sdk/permissions) 明确 locked-down agent 需要显式工具集合配合 `dontAsk`。
+- [Environment variables](https://code.claude.com/docs/en/env-vars) 公开定义 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`，避免 Provider turn 加载或写入目录外的 auto memory。
+- [Hooks reference](https://code.claude.com/docs/en/hooks) 说明 managed hook 不能由普通 user/project/local 设置关闭。Provider 因此不发布“所有 Hook 已禁用”的元数据。
+- [Programmatic/headless guide](https://code.claude.com/docs/en/headless) 定义 NDJSON、`system/init`、text delta、最终 result、session resume 与 SIGINT。
 
-2026-08-30 在 VS Code 扩展内的官方 Claude Code 2.1.251 上独立验证：
-
-- `--version` 返回 `2.1.251 (Claude Code)`，`auth status --json` 返回未登录；PATH resolver 当前不会自动选择扩展私有 binary。
-- 使用临时、无持久化 session 运行真实 `stream-json` 后，依次观察到 `command_lifecycle`、`system/init`、`system/status`、带 `authentication_failed` 的 `assistant` 和最终 `result`。
-- 真实失败结果的 `subtype` 仍是 `success`，但 `is_error=true`、`terminal_reason=api_error` 且进程退出 1；映射必须以 `is_error` 为准，不能只猜 subtype。
-- 脱敏后的实际输出保存在 `tests/fixtures/claude-2.1.251-no-auth.ndjson`，路径、UUID 和非必要本机字段已替换，事件形状保持不变。
+本机 Claude Code 2.1.251 帮助和真实未登录 wire 已复核上述参数。本轮 smoke 在恶意 `.mcp.json`、user/project/local SessionStart Hook 和 `permissions.allow=[Bash,Write,Edit]` 下执行首 turn 与 resume：两次 `system/init.mcp_servers` 均为空，只读 tools 仅为 Glob/Grep/Read，MCP 与 Hook marker 均未出现，最终都是预期的未登录 result。没有执行收费模型请求。
 
 ## 目标与非目标
 
 目标：
 
-- 提供可安装的 `codepet-provider-claude`、一个显式 manifest 和完整 Provider instance lifecycle。
-- 支持 Provider 自己创建的会话、顺序 turn、主 agent 文本增量、终态、Unix SIGINT 和安全权限模式映射。
-- 未经验证的输出类型向前兼容忽略；route/session/JSON/framing 错误 fail closed。
+- 独立 binary、显式 manifest、生成 Provider SDK、四段 route 和 Host instance lifecycle。
+- Provider-managed create/顺序 turn、主 agent 文本增量、终态、Unix interrupt 和明确权限模式。
+- user/project/local/plugin MCP 与普通 Hook 不得进入 Provider-launched CLI；任何非空 `system/init.mcp_servers` fail closed。
+- result 只有在进程真实退出和 stdout 有界排空后才形成权威 terminal；所有生命周期动作有界回收进程组。
 - Provider event 只进入 Host/Gateway remote replay/event。
 
 非目标：
 
-- 不实现 SDK sidecar、MCP permission server、Hook、transcript scan、窗口控制、Claude Desktop IPC 或 Agent View 适配。
-- 不实现插件市场、签名、sandbox、自动重启/backoff、复杂 DI 或 Provider 协议兼容层。
-- 不伪造全局 conversation list/get、Desktop 同步、进程重启恢复、turn steer 或 approval callback。
-- 不把 Provider event 投影到 Pet Protocol、`SharedState` activity、companion replay 或 Tauri Pet event。
+- 不实现 Python/TypeScript SDK sidecar、MCP permission server、transcript scan、窗口控制、Claude Desktop IPC 或 Agent View。
+- 不实现市场、签名、sandbox、自动重启/backoff、复杂 DI 或 Provider 协议兼容层。
+- 不伪造全局 list/get、Desktop 同步、进程重启恢复、turn steer 或 approval callback。
+- 不在本分支实现二进制/manifest 打包发现；Codex/OpenCode/Claude 的统一 macOS universal/Windows 集成由后续集成任务处理。
 
 ## 数据链与配置权威
-
-唯一业务数据链：
 
 ```text
 Claude Code CLI 官方 stream-json
@@ -60,84 +57,79 @@ Claude Code CLI 官方 stream-json
   <-> ProviderGatewayService remote replay/event
 ```
 
-明确不存在的支路：
-
-```text
-Provider -X-> Claude Hook / transcript
-Provider -X-> Pet Protocol / activity store
-Provider -X-> CodexDesktopCompanionState / Desktop IPC
-Provider -X-> codex-desktop-companion-event / pet-event
-```
-
-配置权威分工：
+不存在 Provider 到 Hook/transcript、Pet Protocol/activity store、Desktop IPC/companion 或 Tauri Pet event 的支路。普通 Code Pet Claude Hook 位于 user settings；空 setting sources 与 safe mode 使 Provider-launched turn 不加载它。组织 managed hook 仍可能按 Claude 的 policy 层执行，这是外部管理边界，不能标记为已禁用。
 
 | 配置 | 唯一权威 | 行为 |
 | --- | --- | --- |
-| Provider binary 与 manifest | `codepet-provider.json` | Catalog 解析相对 binary 路径。 |
-| Claude executable | `AgentRuntimeService` Claude resolver | Host 注入绝对 `claudeExecutable`；无结果时删除该 setting，instance create/start 明确失败。 |
-| workspace、permission、model、effort | `conversation.create` 请求 | Provider 验证后转成当前 CLI 官方 flag；不写第二份全局配置。 |
-| native session ID | Provider process | create 时生成 UUID；首 turn 使用 `--session-id`，后续 turn 使用 `--resume`。 |
-
-应用启动、runtime refresh、set 和 clear 都通过同一 Host target 更新 `dev.codepet.claude` 的 `claude` instance setting，并只重启该 Provider。Claude Provider 自身从不搜索 PATH、VS Code 扩展或用户目录。
+| Provider binary/manifest | `codepet-provider.json` | Catalog 解析相对 binary。 |
+| Claude executable | `AgentRuntimeService` | Host 注入绝对 `claudeExecutable`；Provider 不探测。 |
+| workspace/permission/model/effort | `conversation.create` | 验证后转为 CLI flag。 |
+| native session ID | Provider process | 首 turn `--session-id`，后续 `--resume`。 |
+| filesystem settings | Provider 固定为空 | 每 turn `--setting-sources ""`、`--safe-mode` 与 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`。 |
+| MCP | Provider 固定为空 | `--strict-mcp-config --mcp-config '{"mcpServers":{}}'`，init 非空即失败。 |
 
 ## Provider v1 能力矩阵
 
 | 方法 | 状态 | 真实映射 |
 | --- | --- | --- |
-| `provider.initialize` / `provider.describe` | 支持 | 协商 v1，返回 `dev.codepet.claude` 与 `claude` kind。 |
-| `instance.create/start/stop/destroy/capabilities` | 支持 | 严格解码 Host setting，`--version` 验证，管理并终止活动子进程。 |
-| `conversation.create` | 支持但为 Provider-managed | 预留 UUID 和选项；第一条消息到达前不伪造上游已有完整 session。 |
-| `conversation.list` | 不支持 | CLI 没有覆盖 Provider print sessions 的稳定全局 CRUD/list API。 |
-| `conversation.get` | 不支持 | 不扫描 transcript，也不把本进程缓存伪装为上游权威 get。 |
-| `turn.start` | 支持 | 一条 raw user NDJSON；首 turn `--session-id`，后续 `--resume`；映射主 agent text delta 与 result。 |
-| `turn.interrupt` | Unix 支持，其他平台关闭 | 对当前 CLI 进程发送官方 SIGINT；Windows capability 不广告。 |
-| `turn.steer` | 不支持 | 一次一进程/一 turn；不把排队下一条消息伪装为 active-turn steering。 |
-| `approval.resolve` | 不支持 | 没有 SDK callback/MCP permission tool，返回 `capability_unsupported`。 |
-| `provider.shutdown` | 支持 | 停止全部实例和子进程后退出 stdio loop。 |
+| initialize/describe | 支持 | Provider v1、`dev.codepet.claude`、`claude` kind。 |
+| instance lifecycle/capabilities | 支持 | 严格 Host setting、`--version`、有界停止全部进程组。 |
+| conversation.create | Provider-managed | 预留 UUID 与选项；首消息前不伪造上游 session。 |
+| conversation.list/get | 不支持 | 不扫描 transcript 或缓存冒充上游 CRUD。 |
+| turn.start | 支持 | raw user NDJSON、首次 session ID、后续 resume。 |
+| turn.interrupt | Unix 支持 | SIGINT 750 ms grace，超时 SIGKILL process group；真实退出后才 terminal。 |
+| turn.steer | 不支持 | queued input 不等价于 active-turn steering。 |
+| approval.resolve | 不支持 | 无 SDK callback/MCP permission tool。 |
+| provider.shutdown | 支持 | 尝试回收所有 instance；任一回收失败则返回错误，不静默 accepted。 |
 
 权限映射：
 
-| Provider permission | Claude `--permission-mode` | 边界 |
+| Provider permission | CLI 参数 | 边界 |
 | --- | --- | --- |
-| `read-only` | `dontAsk` | 未预先允许的写入/命令由 CLI 拒绝，不向 Host 伪造审批。 |
-| `workspace-write` | `acceptEdits` | 只采用 CLI 自己的 accept-edits 规则；其他需要询问的动作仍被非交互模式拒绝。 |
-| `full-access` | `bypassPermissions` | 仅在调用方明确选择 full access 时启用。 |
+| read-only | `--restricted` + `dontAsk` + `--tools Read,Glob,Grep` | 不加载 user/project/local allow，移除命令执行工具并限制文件工具；init 出现任何其他 tool 即失败。 |
+| workspace-write | `acceptEdits` | 采用 CLI accept-edits 语义；没有 Host 审批回写。 |
+| full-access | `bypassPermissions` | 仅调用方明确选择时启用。 |
 
-model 广告使用官方 CLI 的稳定别名 `sonnet`、`opus`、`haiku`、`fable`；也允许 CLI 自己验证显式完整 model 名。effort 广告为本机帮助与官方文档共同确认的 `low`、`medium`、`high`、`xhigh`、`max`。
+## 进程与输出模型
 
-## 运行时映射
+- 每个 turn 建立独立 process group。一个后台 reaper 独占 `Child` 并负责 `wait`；control 只保存 PID/process-group ID 与 Condvar 退出通知，绝不在 wait 上持 child mutex。
+- stdout reader、child reaper 和完成协调相互独立。result/aborted 只记录 pending completion；进程真实退出、stdout 排空后才发布 terminal 并删除 active。此间下一 turn 必须返回 `turn_already_active`。
+- interrupt、instance.stop、destroy 和 shutdown 都保留 control，先给有界 grace，再杀整个 process group并等待 reaper。reaper 在 root 退出后再次清理 group 中的后代。
+- Claude stdout 单物理行硬限制为 4 MiB；超过限制且无换行时立即关闭 reader并杀进程组。stderr 单行限制 64 KiB。
+- Provider 生成 codec 的 frame 上限是 1 MiB。所有对外 text delta/result 按 UTF-8 边界切为最多 64 KiB；未知 usage 等任意 JSON 不复制进 terminal extension，终态 metadata 限制为 4 KiB。
+- 发送 output event 失败时 active 不会先删除；真实退出后改发尺寸安全的 failed terminal。terminal 自身发送失败则保留 exited active 并把错误返回给 lifecycle waiter，不能伪装成功。
 
-- 输入只序列化已实测的 raw user message：`type=user`、UUID、`message.role=user`、文本 content、`parent_tool_use_id=null`。
-- `system/init` 必须带匹配的 `session_id`；它更新 materialized、cwd 和 model。未知 system subtype 被忽略。
-- 只发布 `parent_tool_use_id=null` 的 `content_block_delta/text_delta`，避免把 subagent/tool 内部流伪装成主回答。
-- `result.is_error`、非 success subtype 或明确取消 reason 决定 terminal status；没有 delta 时才用 `result` 文本补一个最终 delta。
-- 输出物理行限制为 16 MiB，stderr 单行诊断限制为 64 KiB；Host framing 继续使用生成 SDK 的 1 MiB `JsonLineCodec` 和标准 JSON-RPC 错误。
-- 每个 conversation 同时最多一个活动 turn。route 与 output session 任一不匹配都停止对应 CLI 进程，不跨会话接收数据。
+## 涉及模块
 
-## 影响模块
+- `crates/providers/codepet-provider-claude/src/client.rs`：固定 CLI 隔离参数、process group、reaper、退出通知与上游 line limit。
+- `src/protocol.rs`：实际 wire 的 tools 与 mcp_servers 字段。
+- `src/provider.rs`：init 防线、只读工具验证、延迟终态、分块与生命周期回收。
+- `tests/fixtures/claude_stream.rs`、`tests/provider_vertical.rs`：真实参数、2 MiB、发送失败和进程探针。
+- `src-tauri/src/runtime_gateway/tauri_bridge.rs`：只负责 resolver setting 注入，本轮无新增逻辑。
+- Pet/activity/companion/Tauri event 模块未修改。
 
-- `crates/providers/codepet-provider-claude/`：binary、上游 Claude wire parser、process adapter、Provider server、manifest 与 fixture/tests。
-- `crates/Cargo.toml`、`crates/Cargo.lock`：Provider workspace member。
-- `src-tauri/src/runtime_gateway/tauri_bridge.rs`：把已有 Claude resolver 结果注入 manifest instance，并为 Claude/Codex 分别串行化 runtime refresh。
-- `src-tauri/src/lib.rs`：refresh/set/clear 时把 Claude runtime 交给同一 Host refresh 入口。
-- 未修改 `src-tauri/src/activity`、`pet`、`agent/claude_transcript`、Desktop companion 或前端事件消费。
+## 验证与回归防线
 
-## 风险、验证与未知项
-
-- 上游 wire 漂移：实际 2.1.251 fixture 覆盖未知 command lifecycle、init/status、auth error 和 counterintuitive result；未知 top-level/event delta 忽略，缺失/错误 session 或非法 JSON fail closed。
-- 假能力：capability 负例直接调用 list/get/steer/approval 并断言标准 `capability_unsupported`；Windows 构建不广告 interrupt。
-- session 串线：垂直 fixture 验证首 turn `--session-id`、第二 turn `--resume`、四段 route 与失败 result 映射。
-- Hook/Pet 污染：CLI 参数 fixture 要求 `disableAllHooks=true` 且禁止 hook output flag；Provider dependency metadata 必须不含 Host/Gateway/Pet/Tauri。生产 bridge 的既有隔离测试继续断言 Provider event 只进入 remote channel。
-- 本机未认证：只完成 `--version`、帮助、auth status 和无持久化真实 wire smoke，没有执行收费的成功模型请求；成功流由严格检查启动参数的真实子进程 fixture 覆盖。
-- 管理员托管 Hook 无法被非托管 `disableAllHooks` 覆盖，这是 Claude 官方限制；Code Pet 自己安装的用户 Hook 会被本次 inline setting 关闭。若组织强制 Hook，Provider 不能声称绝对隔离，应由管理员在托管设置中关闭。
-- Provider process 重启后不保存 conversation registry；即使 Claude transcript 仍在磁盘，也不扫描或恢复。外部 CLI/Desktop 对同一 session 的改变不会同步回 Provider。
+- `provider_read_only_and_mcp_isolation_fail_closed_on_every_resume`：首轮/read-only/resume/auth failure 参数与 init 防线。
+- `provider_real_claude_blocks_untrusted_mcp_hooks_and_keeps_read_only_restricted`：真实未登录 CLI 下恶意 MCP/Hook/permissions marker 均不执行。
+- `provider_reaps_result_interrupt_stdout_and_oversize_process_trees`：result-then-sleep、ignore-SIGINT、stdout-close、超长无换行，以及 stop/destroy/shutdown 的 root/child PID 消失。
+- `provider_chunks_two_mib_result_before_the_one_mib_provider_frame_limit`：2 MiB result 完整分块并抵达 terminal。
+- `provider_event_failure_still_publishes_a_small_failed_terminal`：output send failure 不留下 pending。
+- 生产依赖 metadata 继续断言只有生成 Provider/Core SDK 与纯 Rust serde/tokio/uuid/libc；Tauri 隔离测试继续断言 Provider event 不进入 Desktop/Pet adapter。
 
 验证命令：
 
 ```sh
 cargo test --manifest-path crates/Cargo.toml -p codepet-provider-claude --all-targets
-cargo test --manifest-path src-tauri/Cargo.toml claude_runtime_executable_is_injected_into_the_manifest_instance --lib
+CODEPET_CLAUDE_EXECUTABLE=/absolute/claude cargo test --manifest-path crates/Cargo.toml -p codepet-provider-claude --test provider_vertical provider_real_claude_blocks_untrusted_mcp_hooks_and_keeps_read_only_restricted -- --ignored --exact
 cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_core_tests real_provider_events_only_emit_remote_tauri_channel_and_never_call_desktop_adapter
-cargo tree --manifest-path crates/Cargo.toml -p codepet-provider-claude
+cargo tree --manifest-path crates/Cargo.toml -p codepet-provider-claude --edges normal
 git diff --check
 ```
+
+## 未知项
+
+- Claude managed policy hook 仍可能运行；Provider 不声称关闭它，也不发布 `hooksDisabled`。组织若要求 managed hook 也不执行，必须在管理员 policy 层处理。
+- Windows 不广告 turn interrupt；stop/destroy/shutdown 使用系统 tree termination，但本轮没有 Windows 实机。
+- Provider process 重启后不保存 conversation registry，也不扫描 transcript。
+- 三个 Provider 的正式打包、Catalog 默认发现、macOS universal 与 Windows 产物由后续统一集成任务负责。

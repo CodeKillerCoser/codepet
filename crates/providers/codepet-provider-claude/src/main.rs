@@ -83,11 +83,12 @@ async fn run() -> Result<(), String> {
     }
 
     if !provider.is_shutdown() {
-        let _ = ProtocolServer::provider_shutdown(
+        ProtocolServer::provider_shutdown(
             provider.as_ref(),
             ProviderShutdownRequest {},
         )
-        .await;
+        .await
+        .map_err(|error| format!("shutdown Claude Provider: {}", error.message))?;
     }
     Ok(())
 }

@@ -45,6 +45,10 @@ pub enum ClaudeOutput {
         #[serde(default)]
         model: Option<String>,
         #[serde(default)]
+        tools: Vec<String>,
+        #[serde(default)]
+        mcp_servers: Vec<Value>,
+        #[serde(default)]
         capabilities: Vec<String>,
     },
     #[serde(rename = "stream_event")]

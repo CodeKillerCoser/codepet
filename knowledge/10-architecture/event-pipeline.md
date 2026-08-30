@@ -13,7 +13,7 @@ Codex 当前有两个标准协议事件源，但只有一个进入桌宠：
 
 Provider Gateway 与 companion event bus、sequence/replay 物理分离。Provider event 只写 `runtime-gateway-event`，不写 Desktop companion 或 Pet 状态。隔离发生在生产 wiring，而不是靠 UI 过滤；remote 与 Desktop 的同名 native thread 不做跨链路协调。
 
-Claude remote Provider 复用同一 Provider Gateway 单向边界。它的 CLI `system/init`、text delta、result 和 instance/turn 状态只能形成 Provider v1 event；不经过 Claude Hook payload 归一化，也不写 `PetEvent`。Provider 启动的 CLI turn 显式关闭用户/项目 Hook，旧 Hook 拓扑只观察用户直接启动的 Claude session。
+Claude remote Provider 复用同一 Provider Gateway 单向边界。它的 CLI `system/init`、text delta、result 和 instance/turn 状态只能形成 Provider v1 event；不经过 Claude Hook payload 归一化，也不写 `PetEvent`。Provider 启动的 CLI turn 使用 safe mode、空 user/project/local setting sources 和 strict-empty MCP，普通用户/项目 Hook 不会执行；managed policy Hook 仍由 Claude 组织策略控制。旧 Hook 拓扑只观察用户直接启动的 Claude session。
 
 ## 归一化
 

@@ -1,5 +1,8 @@
 use serde_json::{json, Value};
+use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::path::Path;
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -29,6 +32,17 @@ fn main() {
     assert_eq!(input["message"]["role"], "user");
     assert!(input["parent_tool_use_id"].is_null());
 
+    let read_only = options.permission_mode == "dontAsk";
+    let tools = if read_only {
+        json!(["Glob", "Grep", "Read"])
+    } else {
+        json!(["Task", "Bash", "Edit", "Read", "Write"])
+    };
+    let mcp_servers = if message == "mcp leak" {
+        json!([{ "name": "evil-project-server", "status": "connected" }])
+    } else {
+        json!([])
+    };
     let mut writer = BufWriter::new(std::io::stdout());
     write_json(
         &mut writer,
@@ -49,6 +63,8 @@ fn main() {
             "session_id": options.session_id,
             "model": "claude-sonnet-5",
             "permissionMode": options.permission_mode,
+            "tools": tools,
+            "mcp_servers": mcp_servers,
             "capabilities": ["interrupt_receipt_v1", "msg_lifecycle_v1"],
             "uuid": "44444444-4444-4444-8444-444444444444"
         }),
@@ -63,6 +79,33 @@ fn main() {
             "uuid": "55555555-5555-4555-8555-555555555555"
         }),
     );
+
+    if message == "mcp leak" {
+        thread::sleep(Duration::from_secs(60));
+        return;
+    }
+
+    #[cfg(unix)]
+    if message == "ignore sigint" {
+        unsafe {
+            libc::signal(libc::SIGINT, libc::SIG_IGN);
+        }
+        write_process_probe(std::env::current_dir().unwrap().as_path());
+        thread::sleep(Duration::from_secs(60));
+        return;
+    }
+
+    #[cfg(unix)]
+    if message == "stdout close then sleep" {
+        write_process_probe(std::env::current_dir().unwrap().as_path());
+        writer.flush().unwrap();
+        drop(writer);
+        unsafe {
+            libc::close(libc::STDOUT_FILENO);
+        }
+        thread::sleep(Duration::from_secs(60));
+        return;
+    }
 
     if message == "wait for interrupt" {
         thread::sleep(Duration::from_secs(60));
@@ -85,21 +128,37 @@ fn main() {
                 "uuid": "66666666-6666-4666-8666-666666666666"
             }),
         );
-        write_json(
-            &mut writer,
-            json!({
-                "type": "result",
-                "subtype": "success",
-                "is_error": true,
-                "session_id": options.session_id,
-                "result": "Not logged in",
-                "stop_reason": "stop_sequence",
-                "terminal_reason": "api_error",
-                "usage": { "input_tokens": 0, "output_tokens": 0 },
-                "total_cost_usd": 0.0
-            }),
-        );
+        write_result(&mut writer, &options.session_id, "Not logged in", true);
         std::process::exit(1);
+    }
+
+    if message == "two mib result" {
+        write_result(
+            &mut writer,
+            &options.session_id,
+            &"x".repeat(2 * 1024 * 1024),
+            false,
+        );
+        return;
+    }
+
+    #[cfg(unix)]
+    if message == "oversized no newline" {
+        write_process_probe(std::env::current_dir().unwrap().as_path());
+        writer
+            .write_all(&vec![b'x'; 4 * 1024 * 1024 + 1])
+            .unwrap();
+        writer.flush().unwrap();
+        thread::sleep(Duration::from_secs(60));
+        return;
+    }
+
+    if message == "result then sleep" {
+        write_result(&mut writer, &options.session_id, "fixture delayed exit", false);
+        #[cfg(unix)]
+        write_process_probe(std::env::current_dir().unwrap().as_path());
+        thread::sleep(Duration::from_secs(60));
+        return;
     }
 
     let output = if options.resumed {
@@ -139,20 +198,7 @@ fn main() {
             "uuid": "88888888-8888-4888-8888-888888888888"
         }),
     );
-    write_json(
-        &mut writer,
-        json!({
-            "type": "result",
-            "subtype": "success",
-            "is_error": false,
-            "session_id": options.session_id,
-            "result": output,
-            "stop_reason": "end_turn",
-            "terminal_reason": null,
-            "usage": { "input_tokens": 10, "output_tokens": 2 },
-            "total_cost_usd": 0.001
-        }),
-    );
+    write_result(&mut writer, &options.session_id, output, false);
 }
 
 fn parse_options() -> Options {
@@ -160,11 +206,19 @@ fn parse_options() -> Options {
     assert!(args.iter().any(|arg| arg == "--print"));
     assert!(args.iter().any(|arg| arg == "--verbose"));
     assert!(args.iter().any(|arg| arg == "--include-partial-messages"));
+    assert!(args.iter().any(|arg| arg == "--safe-mode"));
+    assert!(args.iter().any(|arg| arg == "--strict-mcp-config"));
     assert!(!args.iter().any(|arg| arg == "--include-hook-events"));
     assert!(!args.iter().any(|arg| arg == "--permission-prompt-tool"));
+    assert!(!args.iter().any(|arg| arg == "--settings"));
     assert_eq!(value_after(&args, "--input-format"), "stream-json");
     assert_eq!(value_after(&args, "--output-format"), "stream-json");
-    assert_eq!(value_after(&args, "--settings"), r#"{"disableAllHooks":true}"#);
+    assert_eq!(value_after(&args, "--setting-sources"), "");
+    assert_eq!(value_after(&args, "--mcp-config"), r#"{"mcpServers":{}}"#);
+    assert_eq!(
+        std::env::var("CLAUDE_CODE_DISABLE_AUTO_MEMORY").as_deref(),
+        Ok("1")
+    );
 
     let session = args
         .iter()
@@ -184,13 +238,24 @@ fn parse_options() -> Options {
         assert!(!args.iter().any(|arg| arg == "--resume"));
         assert_eq!(value_after(&args, "--name"), "Fixture conversation");
     }
-    assert_eq!(value_after(&args, "--permission-mode"), "acceptEdits");
+    let permission_mode = value_after(&args, "--permission-mode").to_string();
+    match permission_mode.as_str() {
+        "dontAsk" => {
+            assert!(args.iter().any(|arg| arg == "--restricted"));
+            assert_eq!(value_after(&args, "--tools"), "Read,Glob,Grep");
+        }
+        "acceptEdits" | "bypassPermissions" => {
+            assert!(!args.iter().any(|arg| arg == "--restricted"));
+            assert!(!args.iter().any(|arg| arg == "--tools"));
+        }
+        other => panic!("unexpected fixture permission mode: {other}"),
+    }
     assert_eq!(value_after(&args, "--model"), "sonnet");
     assert_eq!(value_after(&args, "--effort"), "high");
     Options {
         session_id: session.0,
         resumed: session.1,
-        permission_mode: value_after(&args, "--permission-mode").to_string(),
+        permission_mode,
     }
 }
 
@@ -209,8 +274,44 @@ fn read_input() -> Value {
     input
 }
 
+fn write_result(
+    writer: &mut BufWriter<std::io::Stdout>,
+    session_id: &str,
+    result: &str,
+    is_error: bool,
+) {
+    write_json(
+        writer,
+        json!({
+            "type": "result",
+            "subtype": "success",
+            "is_error": is_error,
+            "session_id": session_id,
+            "result": result,
+            "stop_reason": "end_turn",
+            "terminal_reason": if is_error { Some("api_error") } else { None },
+            "usage": { "input_tokens": 10, "output_tokens": 2 },
+            "total_cost_usd": if is_error { 0.0 } else { 0.001 }
+        }),
+    );
+}
+
 fn write_json(writer: &mut BufWriter<std::io::Stdout>, value: Value) {
     serde_json::to_writer(&mut *writer, &value).unwrap();
     writer.write_all(b"\n").unwrap();
     writer.flush().unwrap();
+}
+
+#[cfg(unix)]
+fn write_process_probe(workspace: &Path) {
+    fs::write(workspace.join("fixture-root.pid"), std::process::id().to_string()).unwrap();
+    let child = Command::new("sleep")
+        .arg("60")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    fs::write(workspace.join("fixture-child.pid"), child.id().to_string()).unwrap();
+    drop(child);
 }

@@ -2,7 +2,11 @@
 
 `codepet-provider-claude` is an independent Provider Protocol v1 binary. The Host starts it from the adjacent `codepet-provider.json` manifest and injects the absolute, resolver-validated Claude executable as the instance setting `claudeExecutable`.
 
-The Provider runs the official Claude Code CLI in non-interactive `--print` mode with newline-delimited `stream-json` input and output. It creates provider-managed session IDs, resumes only those sessions with `--resume`, maps main-agent text deltas and terminal results, and uses SIGINT for interruption on Unix. User and project hooks are disabled for every Provider-launched turn so this remote path cannot re-enter Code Pet's Hook/Pet pipeline.
+The Provider runs the official Claude Code CLI in non-interactive `--print` mode with newline-delimited `stream-json` input and output. It creates provider-managed session IDs, resumes only those sessions with `--resume`, maps main-agent text deltas and terminal results, and uses a bounded SIGINT-to-SIGKILL sequence for interruption on Unix.
+
+Every turn uses `--safe-mode`, an empty `--setting-sources`, `--strict-mcp-config`, and an explicit empty `--mcp-config`. This excludes user/project/local settings and all ordinary or plugin MCP configuration. Read-only conversations additionally use `--restricted` and expose only `Read`, `Glob`, and `Grep`; the Provider rejects a `system/init` frame that reports any MCP server or non-read-only tool. Managed policy settings remain authoritative in Claude Code, so the Provider does not claim that managed hooks are disabled and publishes no `hooksDisabled` metadata.
+
+One background reaper owns each `Child`; controls hold only its PID/process group and exit notification. A result becomes terminal only after the process really exits. Instance stop/destroy/shutdown and interrupt use bounded process-group termination. Claude physical output lines are limited to 4 MiB, while outward text is split into at most 64 KiB chunks before entering the generated Provider codec's 1 MiB frame limit.
 
 The currently documented CLI does not expose an App Server-equivalent session API. Consequently this Provider does not advertise conversation list/get, external session discovery, turn steering, approval callbacks, or process-restart session reconstruction. Unsupported Provider Protocol methods return `capability_unsupported`.
 

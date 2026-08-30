@@ -3,12 +3,18 @@ use std::fmt;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{mpsc, Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
+use std::time::Duration;
 
-const MAX_CLAUDE_OUTPUT_LINE_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_CLAUDE_OUTPUT_LINE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_CLAUDE_STDERR_LINE_BYTES: usize = 64 * 1024;
-const DISABLE_HOOKS_SETTINGS: &str = r#"{"disableAllHooks":true}"#;
+const EMPTY_MCP_CONFIG: &str = r#"{"mcpServers":{}}"#;
+const READ_ONLY_TOOLS: &str = "Read,Glob,Grep";
+const INTERRUPT_GRACE: Duration = Duration::from_millis(750);
+const TERMINATE_GRACE: Duration = Duration::from_millis(500);
+const KILL_WAIT: Duration = Duration::from_secs(2);
+const STDOUT_DRAIN_WAIT: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClaudeCliError {
@@ -16,6 +22,7 @@ pub enum ClaudeCliError {
     Io(String),
     Protocol(String),
     ProcessExited(Option<i32>),
+    ProcessDidNotExit,
     InterruptUnsupported,
 }
 
@@ -25,8 +32,15 @@ impl fmt::Display for ClaudeCliError {
             Self::Spawn(message) => write!(formatter, "failed to start Claude CLI: {message}"),
             Self::Io(message) => write!(formatter, "Claude CLI I/O failed: {message}"),
             Self::Protocol(message) => write!(formatter, "invalid Claude CLI stream: {message}"),
-            Self::ProcessExited(code) => write!(formatter, "Claude CLI exited before a result (code {code:?})"),
-            Self::InterruptUnsupported => write!(formatter, "Claude CLI interrupt is unsupported on this platform"),
+            Self::ProcessExited(code) => {
+                write!(formatter, "Claude CLI exited before a result (code {code:?})")
+            }
+            Self::ProcessDidNotExit => {
+                write!(formatter, "Claude CLI process group did not exit after forced termination")
+            }
+            Self::InterruptUnsupported => {
+                write!(formatter, "Claude CLI interrupt is unsupported on this platform")
+            }
         }
     }
 }
@@ -42,39 +56,70 @@ pub struct ClaudeTurnLaunch {
     pub message: String,
     pub title: Option<String>,
     pub permission_mode: String,
+    pub read_only: bool,
     pub model: Option<String>,
     pub effort: Option<String>,
 }
 
-struct ProcessInner {
-    child: Mutex<Child>,
+#[derive(Default)]
+struct ProcessExitState {
+    exited: Mutex<bool>,
+    changed: Condvar,
 }
 
-impl Drop for ProcessInner {
-    fn drop(&mut self) {
-        if let Ok(child) = self.child.get_mut() {
-            if matches!(child.try_wait(), Ok(None)) {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
+impl ProcessExitState {
+    fn mark_exited(&self) {
+        *lock(&self.exited) = true;
+        self.changed.notify_all();
+    }
+
+    fn is_exited(&self) -> bool {
+        *lock(&self.exited)
+    }
+
+    fn wait(&self, timeout: Duration) -> bool {
+        let exited = lock(&self.exited);
+        if *exited {
+            return true;
         }
+        let (exited, _) = self
+            .changed
+            .wait_timeout_while(exited, timeout, |exited| !*exited)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *exited
     }
 }
 
 #[derive(Clone)]
 pub struct ClaudeProcessControl {
-    inner: Arc<ProcessInner>,
+    process_id: u32,
+    exit: Arc<ProcessExitState>,
 }
 
 impl ClaudeProcessControl {
+    pub fn process_id(&self) -> u32 {
+        self.process_id
+    }
+
+    pub fn is_exited(&self) -> bool {
+        self.exit.is_exited()
+    }
+
+    pub fn wait_for_exit(&self, timeout: Duration) -> bool {
+        self.exit.wait(timeout)
+    }
+
     #[cfg(unix)]
     pub fn interrupt(&self) -> Result<(), ClaudeCliError> {
-        let process_id = lock(&self.inner.child).id();
-        let result = unsafe { libc::kill(process_id as libc::pid_t, libc::SIGINT) };
-        if result == 0 {
+        signal_process_group(self.process_id, libc::SIGINT)?;
+        if self.wait_for_exit(INTERRUPT_GRACE) {
+            return Ok(());
+        }
+        self.force_kill()?;
+        if self.wait_for_exit(KILL_WAIT) {
             Ok(())
         } else {
-            Err(ClaudeCliError::Io(std::io::Error::last_os_error().to_string()))
+            Err(ClaudeCliError::ProcessDidNotExit)
         }
     }
 
@@ -84,31 +129,59 @@ impl ClaudeProcessControl {
     }
 
     pub fn terminate(&self) -> Result<(), ClaudeCliError> {
-        let mut child = lock(&self.inner.child);
-        match child.try_wait() {
-            Ok(Some(_)) => return Ok(()),
-            Ok(None) => {}
-            Err(error) => return Err(ClaudeCliError::Io(error.to_string())),
+        if !self.is_exited() {
+            self.request_terminate()?;
         }
-        child
-            .kill()
-            .map_err(|error| ClaudeCliError::Io(error.to_string()))?;
-        child
-            .wait()
-            .map_err(|error| ClaudeCliError::Io(error.to_string()))?;
-        Ok(())
+        if self.wait_for_exit(TERMINATE_GRACE) {
+            return Ok(());
+        }
+        self.force_kill()?;
+        if self.wait_for_exit(KILL_WAIT) {
+            Ok(())
+        } else {
+            Err(ClaudeCliError::ProcessDidNotExit)
+        }
     }
 
-    fn wait(&self) -> Result<ExitStatus, ClaudeCliError> {
-        lock(&self.inner.child)
-            .wait()
-            .map_err(|error| ClaudeCliError::Io(error.to_string()))
+    #[cfg(unix)]
+    fn request_terminate(&self) -> Result<(), ClaudeCliError> {
+        signal_process_group(self.process_id, libc::SIGTERM)
+    }
+
+    #[cfg(windows)]
+    fn request_terminate(&self) -> Result<(), ClaudeCliError> {
+        self.force_kill()
+    }
+
+    #[cfg(unix)]
+    fn force_kill(&self) -> Result<(), ClaudeCliError> {
+        signal_process_group(self.process_id, libc::SIGKILL)
+    }
+
+    #[cfg(windows)]
+    fn force_kill(&self) -> Result<(), ClaudeCliError> {
+        let status = Command::new("taskkill")
+            .args(["/PID", &self.process_id.to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|error| ClaudeCliError::Io(error.to_string()))?;
+        if status.success() || self.is_exited() {
+            Ok(())
+        } else {
+            Err(ClaudeCliError::Io(format!(
+                "taskkill failed for Claude process {}: {status}",
+                self.process_id
+            )))
+        }
     }
 }
 
 pub(crate) struct SpawnedClaudeTurn {
+    child: Child,
     control: ClaudeProcessControl,
-    stdout: Option<ChildStdout>,
+    stdout: ChildStdout,
     stderr: Option<ChildStderr>,
 }
 
@@ -123,10 +196,21 @@ impl ClaudeTurnLaunch {
             .arg("stream-json")
             .arg("--verbose")
             .arg("--include-partial-messages")
-            .arg("--settings")
-            .arg(DISABLE_HOOKS_SETTINGS)
+            .arg("--safe-mode")
+            .arg("--setting-sources")
+            .arg("")
+            .arg("--strict-mcp-config")
+            .arg("--mcp-config")
+            .arg(EMPTY_MCP_CONFIG)
             .arg("--permission-mode")
-            .arg(&self.permission_mode);
+            .arg(&self.permission_mode)
+            .env("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1");
+        if self.read_only {
+            command
+                .arg("--restricted")
+                .arg("--tools")
+                .arg(READ_ONLY_TOOLS);
+        }
         if self.resume {
             command.arg("--resume").arg(&self.session_id);
         } else {
@@ -141,6 +225,11 @@ impl ClaudeTurnLaunch {
         if let Some(effort) = self.effort.as_ref() {
             command.arg("--effort").arg(effort);
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
         let mut child = command
             .current_dir(&self.workspace_root)
             .stdin(Stdio::piped())
@@ -148,33 +237,39 @@ impl ClaudeTurnLaunch {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| ClaudeCliError::Spawn(error.to_string()))?;
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| ClaudeCliError::Spawn("stdin is unavailable".to_string()))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| ClaudeCliError::Spawn("stdout is unavailable".to_string()))?;
+        let process_id = child.id();
+        let mut stdin = match child.stdin.take() {
+            Some(stdin) => stdin,
+            None => return abort_spawn(child, process_id, "stdin is unavailable"),
+        };
+        let stdout = match child.stdout.take() {
+            Some(stdout) => stdout,
+            None => return abort_spawn(child, process_id, "stdout is unavailable"),
+        };
         let stderr = child.stderr.take();
         let input = ClaudeUserMessage::new(&self.user_message_id, &self.message);
         if let Err(error) = serde_json::to_writer(&mut stdin, &input)
             .map_err(|error| ClaudeCliError::Protocol(error.to_string()))
-            .and_then(|_| stdin.write_all(b"\n").map_err(|error| ClaudeCliError::Io(error.to_string())))
-            .and_then(|_| stdin.flush().map_err(|error| ClaudeCliError::Io(error.to_string())))
+            .and_then(|_| {
+                stdin
+                    .write_all(b"\n")
+                    .map_err(|error| ClaudeCliError::Io(error.to_string()))
+            })
+            .and_then(|_| {
+                stdin
+                    .flush()
+                    .map_err(|error| ClaudeCliError::Io(error.to_string()))
+            })
         {
-            let _ = child.kill();
-            let _ = child.wait();
+            terminate_unstarted_child(&mut child, process_id);
             return Err(error);
         }
         drop(stdin);
+        let exit = Arc::new(ProcessExitState::default());
         Ok(SpawnedClaudeTurn {
-            control: ClaudeProcessControl {
-                inner: Arc::new(ProcessInner {
-                    child: Mutex::new(child),
-                }),
-            },
-            stdout: Some(stdout),
+            child,
+            control: ClaudeProcessControl { process_id, exit },
+            stdout,
             stderr,
         })
     }
@@ -185,46 +280,90 @@ impl SpawnedClaudeTurn {
         self.control.clone()
     }
 
-    pub(crate) fn start<F, G>(mut self, on_output: F, on_exit: G)
+    pub(crate) fn start<F, G, H>(self, on_output: F, on_stream_error: G, on_exit: H)
     where
         F: Fn(ClaudeOutput) -> Result<(), ClaudeCliError> + Send + 'static,
-        G: Fn(Result<ExitStatus, ClaudeCliError>) + Send + 'static,
+        G: Fn(ClaudeCliError) + Send + Sync + 'static,
+        H: Fn(Result<ExitStatus, ClaudeCliError>) + Send + 'static,
     {
-        if let Some(stderr) = self.stderr.take() {
+        let SpawnedClaudeTurn {
+            mut child,
+            control,
+            stdout,
+            stderr,
+        } = self;
+        if let Some(stderr) = stderr {
             thread::spawn(move || drain_stderr(stderr));
         }
-        let Some(stdout) = self.stdout.take() else {
-            on_exit(Err(ClaudeCliError::Spawn("stdout is unavailable".to_string())));
-            return;
-        };
-        let control = self.control.clone();
+
+        let (stdout_sender, stdout_receiver) = mpsc::sync_channel(1);
+        let reaper_exit = control.exit.clone();
+        let process_id = control.process_id;
+        let stream_error: Arc<dyn Fn(ClaudeCliError) + Send + Sync> = Arc::new(on_stream_error);
+        let reader_error = stream_error.clone();
+        let reader_control = control;
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
+            let mut saw_terminal_frame = false;
             loop {
                 let line = match read_bounded_line(&mut reader, MAX_CLAUDE_OUTPUT_LINE_BYTES) {
                     Ok(Some(line)) => line,
-                    Ok(None) => break,
+                    Ok(None) => {
+                        if !saw_terminal_frame {
+                            reader_error(ClaudeCliError::Protocol(
+                                "Claude stdout closed before a terminal frame".to_string(),
+                            ));
+                            let _ = reader_control.force_kill();
+                        }
+                        break;
+                    }
                     Err(error) => {
-                        let _ = control.terminate();
-                        on_exit(Err(error));
-                        return;
+                        reader_error(error);
+                        let _ = reader_control.force_kill();
+                        break;
                     }
                 };
                 let output = match decode_claude_output(&line) {
                     Ok(output) => output,
                     Err(error) => {
-                        let _ = control.terminate();
-                        on_exit(Err(ClaudeCliError::Protocol(format!("invalid JSON: {error}"))));
-                        return;
+                        reader_error(ClaudeCliError::Protocol(format!(
+                            "invalid JSON: {error}"
+                        )));
+                        let _ = reader_control.force_kill();
+                        break;
                     }
                 };
+                let terminal = matches!(
+                    &output,
+                    ClaudeOutput::Result { .. }
+                        | ClaudeOutput::Assistant {
+                            aborted: Some(true),
+                            ..
+                        }
+                );
                 if let Err(error) = on_output(output) {
-                    let _ = control.terminate();
-                    on_exit(Err(error));
-                    return;
+                    reader_error(error);
+                    let _ = reader_control.force_kill();
+                    break;
                 }
+                saw_terminal_frame |= terminal;
             }
-            on_exit(control.wait());
+            let _ = stdout_sender.send(());
+        });
+
+        let reaper_error = stream_error;
+        thread::spawn(move || {
+            let outcome = child
+                .wait()
+                .map_err(|error| ClaudeCliError::Io(error.to_string()));
+            cleanup_process_group(process_id);
+            reaper_exit.mark_exited();
+            if stdout_receiver.recv_timeout(STDOUT_DRAIN_WAIT).is_err() {
+                reaper_error(ClaudeCliError::Protocol(
+                    "Claude stdout did not close after process exit".to_string(),
+                ));
+            }
+            on_exit(outcome);
         });
     }
 }
@@ -253,20 +392,17 @@ fn read_bounded_line<R: BufRead>(
         total = total
             .checked_add(consumed)
             .ok_or_else(|| ClaudeCliError::Protocol("line length overflow".to_string()))?;
-        if captured.len() < limit {
-            let remaining = limit - captured.len();
-            captured.extend_from_slice(&available[..consumed.min(remaining)]);
+        if total > limit {
+            return Err(ClaudeCliError::Protocol(format!(
+                "Claude output line exceeds {limit} bytes"
+            )));
         }
+        captured.extend_from_slice(&available[..consumed]);
         let ended = available[consumed - 1] == b'\n';
         reader.consume(consumed);
         if ended {
             break;
         }
-    }
-    if total > limit {
-        return Err(ClaudeCliError::Protocol(format!(
-            "Claude output line exceeds {limit} bytes"
-        )));
     }
     Ok(Some(captured))
 }
@@ -288,6 +424,49 @@ fn drain_stderr(stderr: impl Read) {
     }
 }
 
+fn abort_spawn<T>(
+    mut child: Child,
+    process_id: u32,
+    message: &str,
+) -> Result<T, ClaudeCliError> {
+    terminate_unstarted_child(&mut child, process_id);
+    Err(ClaudeCliError::Spawn(message.to_string()))
+}
+
+fn terminate_unstarted_child(child: &mut Child, process_id: u32) {
+    #[cfg(unix)]
+    let _ = signal_process_group(process_id, libc::SIGKILL);
+    #[cfg(windows)]
+    let _ = child.kill();
+    let _ = child.wait();
+    cleanup_process_group(process_id);
+}
+
+#[cfg(unix)]
+fn signal_process_group(process_id: u32, signal: libc::c_int) -> Result<(), ClaudeCliError> {
+    let process_group = -(process_id as libc::pid_t);
+    let result = unsafe { libc::kill(process_group, signal) };
+    if result == 0 {
+        return Ok(());
+    }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(ClaudeCliError::Io(error.to_string()))
+    }
+}
+
+#[cfg(unix)]
+fn cleanup_process_group(process_id: u32) {
+    let _ = signal_process_group(process_id, libc::SIGKILL);
+}
+
+#[cfg(windows)]
+fn cleanup_process_group(_process_id: u32) {}
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }

@@ -1,4 +1,6 @@
-use crate::client::{ClaudeCliError, ClaudeProcessControl, ClaudeTurnLaunch};
+use crate::client::{
+    ClaudeCliError, ClaudeProcessControl, ClaudeTurnLaunch, SpawnedClaudeTurn,
+};
 use crate::protocol::{ClaudeOutput, ClaudeStreamDelta, ClaudeStreamEvent};
 use codepet_provider_sdk::{
     ApprovalResolveRequest, ApprovalResolveResponse, ConversationCreateRequest,
@@ -22,7 +24,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -30,6 +32,10 @@ use uuid::Uuid;
 pub const CLAUDE_PLUGIN_ID: &str = "dev.codepet.claude";
 pub const CLAUDE_INSTANCE_KIND: &str = "claude";
 const CLAUDE_EXTENSION_NAMESPACE: &str = "dev.codepet.claude";
+const MAX_PROVIDER_TEXT_CHUNK_BYTES: usize = 64 * 1024;
+const MAX_CLAUDE_METADATA_BYTES: usize = 4 * 1024;
+const TURN_COMPLETION_WAIT: Duration = Duration::from_secs(4);
+const READ_ONLY_TOOLS: [&str; 3] = ["Read", "Glob", "Grep"];
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -55,14 +61,46 @@ struct ManagedTurn {
     turn: ProviderTurn,
     control: ClaudeProcessControl,
     saw_text_delta: bool,
+    pending_completion: Option<TurnCompletion>,
+    requested_completion: Option<TurnCompletion>,
+    stream_failure: Option<String>,
+    finished: Arc<TurnFinished>,
 }
 
+#[derive(Clone)]
 struct TurnCompletion {
     status: TurnStatus,
     result: Option<String>,
     stop_reason: Option<String>,
     terminal_reason: Option<String>,
-    metrics: Option<Value>,
+}
+
+#[derive(Default)]
+struct TurnFinished {
+    outcome: Mutex<Option<Result<ProviderTurn, ProtocolError>>>,
+    changed: Condvar,
+}
+
+impl TurnFinished {
+    fn complete(&self, outcome: Result<ProviderTurn, ProtocolError>) {
+        let mut stored = lock(&self.outcome);
+        if stored.is_none() {
+            *stored = Some(outcome);
+            self.changed.notify_all();
+        }
+    }
+
+    fn wait(&self, timeout: Duration) -> Option<Result<ProviderTurn, ProtocolError>> {
+        let stored = lock(&self.outcome);
+        if stored.is_some() {
+            return stored.clone();
+        }
+        let (stored, _) = self
+            .changed
+            .wait_timeout_while(stored, timeout, |stored| stored.is_none())
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        stored.clone()
+    }
 }
 
 struct ManagedConversation {
@@ -70,6 +108,7 @@ struct ManagedConversation {
     workspace_root: PathBuf,
     title: Option<String>,
     native_permission_mode: String,
+    read_only: bool,
     model: Option<String>,
     effort: Option<String>,
     materialized: bool,
@@ -163,6 +202,7 @@ impl ClaudeInstanceRuntime {
             ));
         }
         let native_permission_mode = native_permission_mode(&request.permission_level)?;
+        let read_only = request.permission_level == "read-only";
         let workspace_root = request.workspace_root.as_ref().ok_or_else(|| {
             protocol_error(
                 "invalid_conversation_options",
@@ -223,7 +263,8 @@ impl ClaudeInstanceRuntime {
                 ("nativeInterface", json!("claude-print-stream-json")),
                 ("sessionScope", json!("provider-managed")),
                 ("nativePermissionMode", json!(native_permission_mode)),
-                ("hooksDisabled", json!(true)),
+                ("filesystemSettingSources", json!([])),
+                ("mcpConfiguration", json!("strict-empty")),
                 ("externalSessionDiscovery", json!(false)),
             ])),
         };
@@ -236,6 +277,7 @@ impl ClaudeInstanceRuntime {
                     workspace_root,
                     title: request.title,
                     native_permission_mode: native_permission_mode.to_string(),
+                    read_only,
                     model: request.model,
                     effort: request.reasoning_effort,
                     materialized: false,
@@ -290,6 +332,7 @@ impl ClaudeInstanceRuntime {
                 message: request.message,
                 title: managed.title.clone(),
                 permission_mode: managed.native_permission_mode.clone(),
+                read_only: managed.read_only,
                 model: managed.model.clone(),
                 effort: managed.effort.clone(),
             }
@@ -309,24 +352,47 @@ impl ClaudeInstanceRuntime {
                     ("clientMessageId", json!(request.client_message_id)),
                 ])),
             };
+            let finished = Arc::new(TurnFinished::default());
             managed.active_turn = Some(ManagedTurn {
                 turn: turn.clone(),
                 control: spawned.control(),
                 saw_text_delta: false,
+                pending_completion: None,
+                requested_completion: None,
+                stream_failure: None,
+                finished,
             });
             managed.conversation.status = ConversationStatus::Running;
             managed.conversation.active_turn = Some(turn.clone());
             managed.conversation.updated_at = Some(now);
             (spawned, turn, managed.conversation.clone())
         };
-        if let Err(error) = self.publish_turn(turn.clone()).and_then(|_| self.publish_conversation(conversation)) {
-            self.remove_active_turn(&conversation_id, &turn_id);
-            let _ = spawned.control().terminate();
+        let control = spawned.control();
+        if let Err(error) = self
+            .publish_turn(turn.clone())
+            .and_then(|_| self.publish_conversation(conversation))
+        {
+            self.record_stream_failure(&conversation_id, &turn_id, error.message.clone());
+            self.monitor_turn(spawned, conversation_id, turn_id);
+            let _ = control.terminate();
             return Err(error);
         }
+        self.monitor_turn(spawned, conversation_id, turn_id);
+        Ok(turn)
+    }
+
+    fn monitor_turn(
+        self: &Arc<Self>,
+        spawned: SpawnedClaudeTurn,
+        conversation_id: String,
+        turn_id: String,
+    ) {
         let weak_for_output = Arc::downgrade(self);
         let output_conversation = conversation_id.clone();
         let output_turn = turn_id.clone();
+        let weak_for_error = Arc::downgrade(self);
+        let error_conversation = conversation_id.clone();
+        let error_turn = turn_id.clone();
         let weak_for_exit = Arc::downgrade(self);
         spawned.start(
             move |output| {
@@ -337,13 +403,21 @@ impl ClaudeInstanceRuntime {
                     .handle_output(&output_conversation, &output_turn, output)
                     .map_err(|error| ClaudeCliError::Protocol(error.message))
             },
+            move |error| {
+                if let Some(runtime) = weak_for_error.upgrade() {
+                    runtime.record_stream_failure(
+                        &error_conversation,
+                        &error_turn,
+                        error.to_string(),
+                    );
+                }
+            },
             move |outcome| {
                 if let Some(runtime) = weak_for_exit.upgrade() {
                     runtime.handle_exit(&conversation_id, &turn_id, outcome);
                 }
             },
         );
-        Ok(turn)
     }
 
     fn handle_output(
@@ -358,12 +432,46 @@ impl ClaudeInstanceRuntime {
                 session_id,
                 cwd,
                 model,
+                tools,
+                mcp_servers,
                 ..
             } if subtype == "init" => {
                 validate_claude_session(conversation_id, session_id.as_deref())?;
+                if !mcp_servers.is_empty() {
+                    return Err(protocol_error(
+                        "claude_mcp_isolation_failed",
+                        "Claude initialized MCP servers despite strict empty MCP configuration"
+                            .to_string(),
+                        false,
+                    ));
+                }
+                if cwd
+                    .as_ref()
+                    .is_some_and(|value| value.len() > MAX_CLAUDE_METADATA_BYTES)
+                    || model
+                        .as_ref()
+                        .is_some_and(|value| value.len() > MAX_CLAUDE_METADATA_BYTES)
+                {
+                    return Err(protocol_error(
+                        "claude_metadata_too_large",
+                        "Claude init metadata exceeds the Provider limit".to_string(),
+                        false,
+                    ));
+                }
                 let conversation = {
                     let mut mutable = lock(&self.mutable);
                     let managed = active_conversation_mut(&mut mutable, conversation_id, turn_id)?;
+                    if managed.read_only
+                        && tools
+                            .iter()
+                            .any(|tool| !READ_ONLY_TOOLS.contains(&tool.as_str()))
+                    {
+                        return Err(protocol_error(
+                            "claude_read_only_isolation_failed",
+                            "Claude exposed a non-read-only tool in read-only mode".to_string(),
+                            false,
+                        ));
+                    }
                     managed.materialized = true;
                     if let Some(cwd) = cwd {
                         managed.conversation.workspace_root = Some(cwd);
@@ -399,17 +507,14 @@ impl ClaudeInstanceRuntime {
                     managed.conversation.updated_at = Some(now);
                     (active.turn.clone(), managed.conversation.resource.clone())
                 };
-                self.events.publish(ProtocolEvent::EventTurnOutputDelta {
-                    jsonrpc: "2.0".to_string(),
-                    params: TurnOutputDeltaEvent {
-                        turn: turn.resource,
-                        conversation,
-                        output_id: format!("{turn_id}:text:{index}"),
-                        kind: "text".to_string(),
-                        delta: text,
-                        extension: Some(extension([("nativeEvent", json!("text_delta"))])),
-                    },
-                })
+                self.publish_text_chunks(
+                    &turn.resource,
+                    &conversation,
+                    &format!("{turn_id}:text:{index}"),
+                    "text",
+                    &text,
+                    "text_delta",
+                )
             }
             ClaudeOutput::Assistant {
                 session_id,
@@ -417,7 +522,7 @@ impl ClaudeInstanceRuntime {
                 ..
             } => {
                 validate_claude_session(conversation_id, session_id.as_deref())?;
-                self.finish_turn(
+                self.set_pending_completion(
                     conversation_id,
                     turn_id,
                     TurnCompletion {
@@ -425,10 +530,8 @@ impl ClaudeInstanceRuntime {
                         result: None,
                         stop_reason: None,
                         terminal_reason: None,
-                        metrics: None,
                     },
                 )
-                .map(|_| ())
             }
             ClaudeOutput::Result {
                 subtype,
@@ -437,12 +540,12 @@ impl ClaudeInstanceRuntime {
                 result,
                 stop_reason,
                 terminal_reason,
-                usage,
-                total_cost_usd,
+                usage: _,
+                total_cost_usd: _,
             } => {
                 validate_claude_session(conversation_id, session_id.as_deref())?;
                 let status = result_status(&subtype, is_error, terminal_reason.as_deref());
-                self.finish_turn(
+                self.set_pending_completion(
                     conversation_id,
                     turn_id,
                     TurnCompletion {
@@ -450,14 +553,38 @@ impl ClaudeInstanceRuntime {
                         result,
                         stop_reason,
                         terminal_reason,
-                        metrics: usage.map(|usage| {
-                            json!({ "usage": usage, "totalCostUsd": total_cost_usd })
-                        }),
                     },
                 )
-                .map(|_| ())
             }
             _ => Ok(()),
+        }
+    }
+
+    fn set_pending_completion(
+        &self,
+        conversation_id: &str,
+        turn_id: &str,
+        completion: TurnCompletion,
+    ) -> Result<(), ProtocolError> {
+        let mut mutable = lock(&self.mutable);
+        let managed = active_conversation_mut(&mut mutable, conversation_id, turn_id)?;
+        let active = managed.active_turn.as_mut().expect("active turn checked");
+        if active.pending_completion.is_none() {
+            active.pending_completion = Some(completion);
+        }
+        Ok(())
+    }
+
+    fn record_stream_failure(&self, conversation_id: &str, turn_id: &str, message: String) {
+        let mut mutable = lock(&self.mutable);
+        let Some(managed) = mutable.conversations.get_mut(conversation_id) else {
+            return;
+        };
+        let Some(active) = managed.active_turn.as_mut() else {
+            return;
+        };
+        if active.turn.resource.native_resource_id == turn_id && active.stream_failure.is_none() {
+            active.stream_failure = Some(truncate_text(&message, MAX_CLAUDE_METADATA_BYTES));
         }
     }
 
@@ -467,101 +594,117 @@ impl ClaudeInstanceRuntime {
         turn_id: &str,
         outcome: Result<std::process::ExitStatus, ClaudeCliError>,
     ) {
-        if !self.has_active_turn(conversation_id, turn_id) {
-            return;
-        }
-        let reason = match outcome {
-            Ok(status) if status.success() => "Claude CLI exited without a result frame".to_string(),
-            Ok(status) => format!("Claude CLI exited before a result frame: {:?}", status.code()),
-            Err(error) => error.to_string(),
-        };
-        let _ = self.finish_turn(
-            conversation_id,
-            turn_id,
-            TurnCompletion {
-                status: TurnStatus::Failed,
-                result: Some(reason),
-                stop_reason: None,
-                terminal_reason: Some("process_exit".to_string()),
-                metrics: None,
-            },
-        );
+        self.finish_turn_after_exit(conversation_id, turn_id, outcome);
     }
 
-    fn finish_turn(
+    fn finish_turn_after_exit(
         &self,
         conversation_id: &str,
         turn_id: &str,
-        completion: TurnCompletion,
-    ) -> Result<Option<ProviderTurn>, ProtocolError> {
-        let TurnCompletion {
-            status,
-            result,
-            stop_reason,
-            terminal_reason,
-            metrics,
-        } = completion;
-        let (fallback, turn, conversation) = {
+        outcome: Result<std::process::ExitStatus, ClaudeCliError>,
+    ) {
+        let snapshot = {
+            let mutable = lock(&self.mutable);
+            let Some(managed) = mutable.conversations.get(conversation_id) else {
+                return;
+            };
+            let Some(active) = managed.active_turn.as_ref() else {
+                return;
+            };
+            if active.turn.resource.native_resource_id != turn_id {
+                return;
+            }
+            let completion = completion_for_exit(active, &outcome);
+            (
+                active.turn.clone(),
+                managed.conversation.clone(),
+                active.saw_text_delta,
+                completion,
+                active.finished.clone(),
+            )
+        };
+        let (base_turn, base_conversation, saw_text_delta, mut completion, finished) = snapshot;
+        let fallback = (!saw_text_delta)
+            .then_some(completion.result.as_deref())
+            .flatten()
+            .filter(|value| !value.is_empty());
+        if let Some(delta) = fallback {
+            let kind = if completion.status == TurnStatus::Failed {
+                "error"
+            } else {
+                "text"
+            };
+            if let Err(error) = self.publish_text_chunks(
+                &base_turn.resource,
+                &base_turn.conversation,
+                &format!("{turn_id}:result"),
+                kind,
+                delta,
+                "result",
+            ) {
+                completion = TurnCompletion {
+                    status: TurnStatus::Failed,
+                    result: Some("Provider failed to publish Claude output".to_string()),
+                    stop_reason: None,
+                    terminal_reason: Some("provider_event_publish_failed".to_string()),
+                };
+                eprintln!("Claude Provider output event failed: {error:?}");
+            }
+        }
+        let (turn, conversation) = terminal_snapshot(base_turn, base_conversation, &completion);
+        if let Err(error) = self.publish_turn(turn.clone()) {
+            finished.complete(Err(error));
+            return;
+        }
+        {
             let mut mutable = lock(&self.mutable);
-            let managed = match mutable.conversations.get_mut(conversation_id) {
-                Some(managed) => managed,
-                None => return Ok(None),
+            let Some(managed) = mutable.conversations.get_mut(conversation_id) else {
+                finished.complete(Err(protocol_error(
+                    "unknown_conversation",
+                    "Claude conversation disappeared before terminal commit".to_string(),
+                    false,
+                )));
+                return;
             };
             if managed
                 .active_turn
                 .as_ref()
-                .map(|active| active.turn.resource.native_resource_id.as_str())
-                != Some(turn_id)
+                .is_none_or(|active| active.turn.resource.native_resource_id != turn_id)
             {
-                return Ok(None);
+                return;
             }
-            let mut active = managed.active_turn.take().expect("active turn checked");
-            let fallback = (!active.saw_text_delta)
-                .then(|| result.clone())
-                .flatten()
-                .filter(|value| !value.is_empty());
-            let now = now_ms();
-            active.turn.status = status;
-            active.turn.updated_at = Some(now);
-            active.turn.completed_at = Some(now);
-            let native_subtype = match status {
-                TurnStatus::Completed => "success",
-                TurnStatus::Interrupted => "interrupted",
-                _ => "error",
-            };
-            active.turn.extension = Some(extension([
-                ("nativeSubtype", json!(native_subtype)),
-                ("stopReason", json!(stop_reason)),
-                ("terminalReason", json!(terminal_reason)),
-                ("metrics", json!(metrics)),
-            ]));
-            managed.conversation.status = match status {
-                TurnStatus::Failed => ConversationStatus::Error,
-                _ => ConversationStatus::Idle,
-            };
-            managed.conversation.active_turn = None;
-            managed.conversation.updated_at = Some(now);
-            if let Some(result) = result.as_ref().filter(|value| !value.is_empty()) {
-                managed.conversation.preview = Some(result.chars().take(240).collect());
-            }
-            (fallback, active.turn, managed.conversation.clone())
-        };
-        if let Some(delta) = fallback {
+            managed.conversation = conversation.clone();
+            managed.active_turn = None;
+        }
+        if let Err(error) = self.publish_conversation(conversation) {
+            eprintln!("Claude Provider terminal conversation event failed: {error:?}");
+        }
+        finished.complete(Ok(turn));
+    }
+
+    fn publish_text_chunks(
+        &self,
+        turn: &RoutedResourceId,
+        conversation: &RoutedResourceId,
+        output_id: &str,
+        kind: &str,
+        text: &str,
+        native_event: &str,
+    ) -> Result<(), ProtocolError> {
+        for (chunk_index, chunk) in text_chunks(text).enumerate() {
             self.events.publish(ProtocolEvent::EventTurnOutputDelta {
                 jsonrpc: "2.0".to_string(),
                 params: TurnOutputDeltaEvent {
-                    turn: turn.resource.clone(),
-                    conversation: turn.conversation.clone(),
-                    output_id: format!("{turn_id}:result"),
-                    kind: if status == TurnStatus::Failed { "error" } else { "text" }.to_string(),
-                    delta,
-                    extension: Some(extension([("nativeEvent", json!("result"))])),
+                    turn: turn.clone(),
+                    conversation: conversation.clone(),
+                    output_id: format!("{output_id}:{chunk_index}"),
+                    kind: kind.to_string(),
+                    delta: chunk.to_string(),
+                    extension: Some(extension([("nativeEvent", json!(native_event))])),
                 },
             })?;
         }
-        self.publish_turn(turn.clone())?;
-        self.publish_conversation(conversation)?;
-        Ok(Some(turn))
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -569,13 +712,12 @@ impl ClaudeInstanceRuntime {
         validate_resource_for_instance(&request.conversation, &self.route)?;
         validate_resource_for_instance(&request.turn, &self.route)?;
         let conversation_id = request.conversation.native_resource_id.clone();
-        let turn_id = request.turn.native_resource_id.clone();
-        let control = {
-            let mutable = lock(&self.mutable);
-            let managed = mutable.conversations.get(&conversation_id).ok_or_else(|| {
+        let (control, finished) = {
+            let mut mutable = lock(&self.mutable);
+            let managed = mutable.conversations.get_mut(&conversation_id).ok_or_else(|| {
                 protocol_error("unknown_conversation", "unknown Claude conversation".to_string(), false)
             })?;
-            let active = managed.active_turn.as_ref().ok_or_else(|| {
+            let active = managed.active_turn.as_mut().ok_or_else(|| {
                 protocol_error("turn_not_active", "Claude turn is not active".to_string(), false)
             })?;
             if active.turn.resource != request.turn || active.turn.conversation != request.conversation {
@@ -585,90 +727,74 @@ impl ClaudeInstanceRuntime {
                     false,
                 ));
             }
-            active.control.clone()
-        };
-        control.interrupt().map_err(cli_protocol_error)?;
-        self.finish_turn(
-            &conversation_id,
-            &turn_id,
-            TurnCompletion {
+            active.requested_completion = Some(TurnCompletion {
                 status: TurnStatus::Interrupted,
                 result: None,
                 stop_reason: None,
-                terminal_reason: Some("sigint".to_string()),
-                metrics: None,
-            },
-        )?
-        .ok_or_else(|| {
+                terminal_reason: Some("interrupt_requested".to_string()),
+            });
+            (active.control.clone(), active.finished.clone())
+        };
+        control.interrupt().map_err(cli_protocol_error)?;
+        finished.wait(TURN_COMPLETION_WAIT).ok_or_else(|| {
             protocol_error(
-                "turn_not_active",
-                "Claude turn stopped before SIGINT completed".to_string(),
-                false,
+                "turn_completion_timeout",
+                "Claude process exited but the interrupted turn did not publish a terminal event"
+                    .to_string(),
+                true,
             )
-        })
+        })?
     }
 
     fn stop(&self) -> Result<ProviderInstance, ProtocolError> {
         if matches!(self.status(), InstanceStatus::Stopped | InstanceStatus::Created) {
             return self.set_status(InstanceStatus::Stopped);
         }
-        self.set_status(InstanceStatus::Stopping)?;
-        let (controls, updates) = {
+        let mut first_error = self.set_status(InstanceStatus::Stopping).err();
+        let active_turns = {
             let mut mutable = lock(&self.mutable);
-            let mut controls = Vec::new();
-            let mut updates = Vec::new();
+            let mut active_turns = Vec::new();
             for managed in mutable.conversations.values_mut() {
-                let active = managed.active_turn.take().map(|mut active| {
-                    let now = now_ms();
-                    active.turn.status = TurnStatus::Interrupted;
-                    active.turn.updated_at = Some(now);
-                    active.turn.completed_at = active.turn.updated_at;
-                    active.turn.extension = Some(extension([
-                        ("terminalReason", json!("instance_stop")),
-                    ]));
-                    active
-                });
-                managed.conversation.status = ConversationStatus::Idle;
-                managed.conversation.active_turn = None;
-                managed.conversation.updated_at = Some(now_ms());
-                if let Some(active) = active {
-                    controls.push(active.control);
-                    updates.push((active.turn, managed.conversation.clone()));
+                if let Some(active) = managed.active_turn.as_mut() {
+                    active.requested_completion = Some(TurnCompletion {
+                        status: TurnStatus::Interrupted,
+                        result: None,
+                        stop_reason: None,
+                        terminal_reason: Some("instance_stop".to_string()),
+                    });
+                    active_turns.push((active.control.clone(), active.finished.clone()));
                 }
             }
-            (controls, updates)
+            active_turns
         };
-        for control in controls {
-            let _ = control.terminate();
-        }
-        for (turn, conversation) in updates {
-            self.publish_turn(turn)?;
-            self.publish_conversation(conversation)?;
-        }
-        self.set_status(InstanceStatus::Stopped)
-    }
-
-    fn has_active_turn(&self, conversation_id: &str, turn_id: &str) -> bool {
-        lock(&self.mutable)
-            .conversations
-            .get(conversation_id)
-            .and_then(|managed| managed.active_turn.as_ref())
-            .is_some_and(|active| active.turn.resource.native_resource_id == turn_id)
-    }
-
-    fn remove_active_turn(&self, conversation_id: &str, turn_id: &str) {
-        let mut mutable = lock(&self.mutable);
-        if let Some(managed) = mutable.conversations.get_mut(conversation_id) {
-            if managed
-                .active_turn
-                .as_ref()
-                .is_some_and(|active| active.turn.resource.native_resource_id == turn_id)
-            {
-                managed.active_turn = None;
-                managed.conversation.active_turn = None;
-                managed.conversation.status = ConversationStatus::Error;
+        for (control, _) in &active_turns {
+            if let Err(error) = control.terminate() {
+                first_error.get_or_insert_with(|| cli_protocol_error(error));
             }
         }
+        for (_, finished) in active_turns {
+            match finished.wait(TURN_COMPLETION_WAIT) {
+                Some(Ok(_)) => {}
+                Some(Err(error)) => {
+                    first_error.get_or_insert(error);
+                }
+                None => {
+                    first_error.get_or_insert_with(|| {
+                        protocol_error(
+                            "turn_completion_timeout",
+                            "Claude process was terminated but its turn did not reach terminal"
+                                .to_string(),
+                            true,
+                        )
+                    });
+                }
+            }
+        }
+        if let Some(error) = first_error {
+            let _ = self.set_status(InstanceStatus::Error);
+            return Err(error);
+        }
+        self.set_status(InstanceStatus::Stopped)
     }
 
     fn resource(&self, native_resource_id: String) -> RoutedResourceId {
@@ -1045,8 +1171,14 @@ impl ProtocolServer for ClaudeProvider {
     ) -> ProtocolFuture<'a, ProviderShutdownResponse> {
         Box::pin(async move {
             let instances = lock(&self.state).instances.values().cloned().collect::<Vec<_>>();
+            let mut first_error = None;
             for instance in instances {
-                let _ = instance.stop();
+                if let Err(error) = instance.stop() {
+                    first_error.get_or_insert(error);
+                }
+            }
+            if let Some(error) = first_error {
+                return Err(error);
             }
             self.shutdown.store(true, Ordering::SeqCst);
             Ok(ProviderShutdownResponse { accepted: true })
@@ -1212,6 +1344,114 @@ fn validate_claude_session(expected: &str, actual: Option<&str>) -> Result<(), P
             false,
         )),
     }
+}
+
+fn completion_for_exit(
+    active: &ManagedTurn,
+    outcome: &Result<std::process::ExitStatus, ClaudeCliError>,
+) -> TurnCompletion {
+    if let Some(completion) = active.requested_completion.clone() {
+        return completion;
+    }
+    if let Some(message) = active.stream_failure.as_ref() {
+        return TurnCompletion {
+            status: TurnStatus::Failed,
+            result: Some(message.clone()),
+            stop_reason: None,
+            terminal_reason: Some("claude_stream_failed".to_string()),
+        };
+    }
+    if let Some(mut completion) = active.pending_completion.clone() {
+        if completion.status == TurnStatus::Completed
+            && !matches!(outcome, Ok(status) if status.success())
+        {
+            completion.status = TurnStatus::Failed;
+            completion.result = Some(process_exit_reason(outcome));
+            completion.terminal_reason = Some("process_exit".to_string());
+        }
+        return completion;
+    }
+    TurnCompletion {
+        status: TurnStatus::Failed,
+        result: Some(process_exit_reason(outcome)),
+        stop_reason: None,
+        terminal_reason: Some("process_exit".to_string()),
+    }
+}
+
+fn process_exit_reason(
+    outcome: &Result<std::process::ExitStatus, ClaudeCliError>,
+) -> String {
+    match outcome {
+        Ok(status) if status.success() => "Claude CLI exited without a result frame".to_string(),
+        Ok(status) => format!("Claude CLI exited before a result frame: {:?}", status.code()),
+        Err(error) => error.to_string(),
+    }
+}
+
+fn terminal_snapshot(
+    mut turn: ProviderTurn,
+    mut conversation: ProviderConversation,
+    completion: &TurnCompletion,
+) -> (ProviderTurn, ProviderConversation) {
+    let now = now_ms();
+    turn.status = completion.status;
+    turn.updated_at = Some(now);
+    turn.completed_at = Some(now);
+    let native_subtype = match completion.status {
+        TurnStatus::Completed => "success",
+        TurnStatus::Interrupted => "interrupted",
+        _ => "error",
+    };
+    let stop_reason = completion
+        .stop_reason
+        .as_deref()
+        .map(|value| truncate_text(value, MAX_CLAUDE_METADATA_BYTES));
+    let terminal_reason = completion
+        .terminal_reason
+        .as_deref()
+        .map(|value| truncate_text(value, MAX_CLAUDE_METADATA_BYTES));
+    turn.extension = Some(extension([
+        ("nativeSubtype", json!(native_subtype)),
+        ("stopReason", json!(stop_reason)),
+        ("terminalReason", json!(terminal_reason)),
+    ]));
+    conversation.status = match completion.status {
+        TurnStatus::Failed => ConversationStatus::Error,
+        _ => ConversationStatus::Idle,
+    };
+    conversation.active_turn = None;
+    conversation.updated_at = Some(now);
+    if let Some(result) = completion.result.as_ref().filter(|value| !value.is_empty()) {
+        conversation.preview = Some(result.chars().take(240).collect());
+    }
+    (turn, conversation)
+}
+
+fn text_chunks(mut text: &str) -> impl Iterator<Item = &str> {
+    std::iter::from_fn(move || {
+        if text.is_empty() {
+            return None;
+        }
+        let mut end = text.len().min(MAX_PROVIDER_TEXT_CHUNK_BYTES);
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let (chunk, remaining) = text.split_at(end);
+        text = remaining;
+        Some(chunk)
+    })
+}
+
+fn truncate_text(value: &str, limit: usize) -> String {
+    if value.len() <= limit {
+        return value.to_string();
+    }
+    let mut end = limit;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
 }
 
 fn result_status(subtype: &str, is_error: bool, terminal_reason: Option<&str>) -> TurnStatus {
