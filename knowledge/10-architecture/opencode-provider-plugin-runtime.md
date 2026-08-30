@@ -10,14 +10,14 @@
 - 成功执行以 `session.next.step.ended` 提供的正式字段为证据，再由 `POST /api/session/:id/wait` 确认 session 已 authoritative completion；一个 Provider turn 只发布一次 terminal upsert。
 - `permission.v2.asked` 没有上游请求时间。Provider Protocol、Gateway Protocol 与 compat v0 的 `requestedAt` 因此改为可选；OpenCode Provider 返回 `None`，不以本机 `now` 冒充上游时间。
 
-本机可复现基线是 `/opt/homebrew/bin/opencode --version` 输出 `1.18.25`。显式路径 smoke 只执行 health、session list 和 shutdown，没有创建 session 或发送消息；测试结束后没有残留 `opencode serve`。
+本机可复现基线是 `/opt/homebrew/bin/opencode --version` 输出 `1.18.25`。对该二进制的启动审计还确认：`--port 0` 仍输出并使用 `4096`，不是内核临时端口；不传 `--port` 时，正式 CLI 由 child 自己从 4096 起尝试绑定，并在 stdout 输出实际 `opencode server listening on http://127.0.0.1:<port>`。Provider 因此采用后者，不把 `--port 0` 当作不存在的能力。显式路径 smoke 只执行 health、session list 和 shutdown，没有创建 session 或发送消息；测试结束后没有残留 `opencode serve`。
 
 ## 架构边界
 
 运行数据链只有：
 
 ```text
-OpenCode Server（127.0.0.1 随机端口）
+OpenCode Server（child 自行绑定并报告的 127.0.0.1 端口）
   ↔ codepet-provider-opencode（正式 V2 HTTP + SSE）
   ↔ Provider Protocol v1（JSON-RPC 2.0 / stdio JSON-lines）
   ↔ PluginManager / ProviderGatewayService
@@ -31,30 +31,39 @@ Provider crate 的生产依赖只包含生成的 Provider SDK 和 Server adapter
 
 ### 正式终态
 
-旧实现依赖不属于正式 V2 的 `session.idle` / `session.error`，导致正常 turn 无法可靠完成。现在 `session.next.step.ended` 更新正式时间并为当前 turn 建立一个 pending completion；唯一 waiter 调用 `/api/session/:id/wait`。wait 成功后才移除 active turn/message/pending approvals 并发布一次 Completed。重复 Step.Ended 只更新同一 pending completion 的时间，不创建第二个 waiter；旧 waiter 还要同时匹配 instance generation、conversation 和 turn resource，不能完成下一轮执行。
+旧实现把 prompt HTTP、SSE step 与 waiter 分散在多个 map 中，prompt 返回还会用 `entry/or_insert` 复活已经完成的 turn；只按 session 关联 Step.Ended 也会让上一轮延迟事件完成下一轮。现在每个 conversation 只有一个锁内 `ActiveTurnState`，其中原子保存 turn epoch、Provider turn、prompt message ID、当前 assistant message ID 和 wait 状态。prompt HTTP 只能 `get_mut` 仍匹配 epoch/resource/message 且仍 active 的项，找不到就返回 `turn_not_active`，绝不重建状态。
+
+`session.next.step.started` 是 `startedAt` 的唯一来源，并原子绑定当前 assistant message ID；delta、Step.Ended、Step.Failed 必须匹配该 ID。`finish: "tool-calls"` 只结束当前 step，允许下一 assistant step；非 continuation Step.Ended 才启动唯一 `/api/session/:id/wait`。wait 与事件都再次匹配 generation、conversation、epoch 和 turn resource；完成/失败通过一次 remove 发布唯一 terminal upsert。上一轮延迟 Step.Ended、旧 waiter 或迟到的 prompt response 都不能命中下一轮。
 
 ### 生命周期与进程树
 
 Server startup 使用总计 10 秒 deadline；每次 health probe 的 timeout 是剩余预算与 250ms 的较小值，成功后只做至多 100ms 的 child 存活确认。startup 失败会在同一有界路径回收 child。
 
-shutdown 不调用不存在的 V2 dispose，也不先等待 30 秒 HTTP 请求。Provider 直接 kill/wait 自己持有的 child，shutdown 与 event subscriber 共用 3 秒 deadline。stdio EOF、正常 shutdown、坏帧和写失败都经过同一个 `provider_shutdown` cleanup。Unix Host 把 Provider 放进独立进程组，外层 timeout/force-kill 一次终止 Provider 及其 Server 后代；Windows 沿用 `taskkill /T /F` 的最小进程树终止。
+普通 V2 请求仍有 30 秒上限；`/api/session/:id/wait` 使用独立 client，只有 3 秒 connect timeout，没有会误杀长 turn 的 30 秒总 timeout。stop/restart/shutdown 先撤销 generation 与 active state，再直接终止自有 child，连接关闭会立即取消阻塞 wait。shutdown 不调用不存在的 V2 dispose。Provider 直接 kill/wait 自己持有的 child，shutdown、event subscriber 和 stdout reader 共用 3 秒 deadline。stdio EOF、正常 shutdown、坏帧和写失败都经过同一个 `provider_shutdown` cleanup。Unix Host 把 Provider 放进独立进程组，外层 timeout/force-kill 一次终止 Provider 及其 Server 后代；Windows 沿用 `taskkill /T /F` 的最小进程树终止。
 
 ### 路由资源与重复操作
 
-turn native ID 绑定当前 Server generation、conversation 和 `clientMessageId`；OpenCode prompt message ID 也绑定相同输入。approval native ID 绑定 generation、conversation 和上游 permission request ID。相同 client ID 在不同 session、stop/restart 后的 stale turn/approval，以及已成功 resolve 的 approval 都会被拒绝。approval resolve 在 HTTP 调用前从 pending map 原子占用，避免两个并发 resolve 同时发往上游；请求失败且 generation 未变化时才回填以允许重试。
+每个 Provider boot 生成随机 UUID；每次 instance start 再递增本 instance counter，二者共同组成 Server generation。turn native ID 绑定该 generation、per-turn epoch、conversation 和 `clientMessageId`；OpenCode prompt message ID 绑定相同输入。approval native ID 绑定 generation、conversation 和上游 permission request ID。即使 route/session/clientMessageId 全部相同，两个独立 Provider 进程也不会生成相同 turn handle。相同 client ID 在不同 session、stop/restart 后的 stale turn/approval，以及已成功 resolve 的 approval 都会被拒绝；旧 handle 遇到同 conversation 的新 active turn 明确返回 `stale_turn`。approval resolve 在 HTTP 调用前从 pending map 原子占用，避免两个并发 resolve 同时发往上游；请求失败且 generation 未变化时才回填以允许重试。
 
 ### 身份与资源上限
 
-每次启动都生成新的随机 `OPENCODE_SERVER_PASSWORD`，显式注入 child，并由内部 client 使用 Basic authentication；不会继承环境中的权威凭据。端口被 foreign process 抢占时，认证必须失败且刚启动的 child 会被回收，Provider 不能误接入错误实例。
+Basic auth 只认证 client，不能证明 server 身份。每次启动仍生成随机 `OPENCODE_SERVER_PASSWORD` 并显式注入 child，但端口所有权来自更直接的事实：Provider 不预选、不释放端口，也不传 `--port`；它只从自己刚启动 child 的有界 stdout pipe 接受正式 loopback listening URL，再对该 URL 做带认证的 `/api/health`。foreign process 即使先占候选端口、读取 Authorization 并返回 `200 {"healthy":true}`，也不会收到 Provider 请求；自有 child 会跳到下一端口并报告它实际持有的地址。
 
 资源上限保持固定且简单：
 
 - Server JSON success body：4 MiB；error/no-content body：16 KiB。
 - SSE 单行：1 MiB；单 event 累计 data：4 MiB。
+- child startup stdout 单行：16 KiB；只接受正式 loopback listening 行。
 - Server→Provider event queue：64 项，使用非阻塞固定容量 channel。
-- HTTP connect timeout：3 秒；普通 request/wait timeout：30 秒；超限、慢消费者、断连或 shape error 均使当前 instance fail closed 并清理 active/pending state。
+- HTTP connect timeout：3 秒；普通 request timeout：30 秒；wait 无总 timeout并由 lifecycle 取消。超限、慢消费者、断连或 shape error 均使当前 instance fail closed 并清理 active/pending state。
 
 这些限制同时覆盖 Content-Length 与 chunked body；SSE fixture 使用真正的 chunked transfer 并跨 chunk 拆分 frame。
+
+### 时间与 interrupt 语义
+
+prompt admission 的 `timeCreated` 只说明 prompt 被 Server 接纳，不能证明模型 step 已开始，因此只可推进 `updatedAt`，不能写入 `startedAt`。未知开始时间保持 `None`，直到正式 `session.next.step.started.timestamp` 到达。
+
+interrupt 在 V2 HTTP 成功前不修改本地 turn。它先读取正式 `/api/session/active`：Server 已 idle 时，后续 204 视为 no-op，返回仍匹配的本地 turn，不伪造 Interrupted；Server 确认 active 时，也只在 HTTP 返回后、同一 epoch/resource 仍 active 的条件下原子移除并标记 Interrupted。若完成/失败事件已先移除该 turn，interrupt 返回 `turn_not_active`，不能用旧快照覆盖 terminal 状态。
 
 ## 能力与明确不支持项
 
@@ -86,16 +95,16 @@ npm run protocol:check
 CODEPET_OPENCODE_EXECUTABLE=/opt/homebrew/bin/opencode cargo test --manifest-path crates/Cargo.toml -p codepet-provider-opencode --test provider_vertical provider_real_opencode_server_smoke -- --ignored --nocapture
 ```
 
-fixture 覆盖正式 chunked SSE/framing、Step.Ended→wait 无 interrupt 成功、单次 terminal、下一 turn、generation/stale handle、重复 resolve、startup deadline、认证端口抢占、bounded body/line/event/queue、stop/restart、坏帧 cleanup 和 Pet/Desktop/Tauri 生产依赖隔离。真实 smoke 只验证同一 `opencode serve` 的 health/list/shutdown。
+fixture 覆盖正式 chunked SSE/framing、prompt response 在 SSE 前后两种重排、延迟上一 turn Step.Ended、多 assistant step、Step.Ended→wait 无 interrupt 成功、单次 terminal、下一 turn、idle interrupt no-op、stop 时取消阻塞 wait、跨 restart stale handle、重复 resolve、startup deadline、端口抢占服务读取 Basic 后返回健康响应仍不被接入、chunked JSON 超限、bounded body/line/event/queue、坏帧 cleanup 和 Pet/Desktop/Tauri 生产依赖隔离。测试用 20ms 普通 request timeout 与 100ms wait 响应等比例证明 wait 不继承普通总 timeout，不真实等待 30 秒；垂直测试同时证明阻塞 wait 下 stop 小于 1 秒且 child 已退出。两个独立 Provider 二进制进程使用完全相同 route/session/clientMessageId 时，turn resource 仍不同。真实 smoke 只验证同一 `opencode serve` 的 health/list/shutdown。
 
 `cargo check --manifest-path src-tauri/Cargo.toml --all-targets` 仍会被仓库既有缺失文件 `src/macos_window.rs` 阻断；本次受影响的 Tauri library 与 resolver 定向测试已通过。统一打包/发现由最终三 Provider 集成阶段处理，本分支不新增发行逻辑。
 
 ## 回归防线与未知项
 
 - 版本 validator 同时拒绝 `1.18.24`、`1.18.26`、`v1.18.25` 和 development 字符串。
-- fixture 对所有请求验证随机 Basic auth；foreign port fixture 验证 401 不能被当作健康实例。
+- fixture 对所有请求验证随机 Basic auth；foreign port fixture 即使读取该 header 并返回 200 healthy，也验证 Provider 只联系自有 child stdout 报告的端口。
 - Provider boundary test 扫描 production manifest/source，禁止 Host、Pet、Desktop、Tauri 依赖和数据链引用。
-- 当前真实 smoke 只在 macOS/OpenCode 1.18.25 完成；Windows/Linux 的进程树行为仍需对应平台 CI/实机验证。
+- 当前真实 smoke 只在 macOS/OpenCode 1.18.25 完成；统一打包、三 Provider 发现与跨平台发行验证留给最终集成阶段，本分支不新增发行逻辑。
 - OpenCode V2 仍可能在未来版本变化；精确版本 fail closed 是当前安全边界，不是长期兼容承诺。
 
 长期跨层约束继续以 `../60-rules/protocol-layer-and-channel-boundaries.md` 为准；Host lifecycle 与 manifest 事实见 `provider-host-device-and-plugin-runtime.md`。

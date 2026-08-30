@@ -35,6 +35,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -69,19 +70,24 @@ struct PendingApproval {
 }
 
 #[derive(Clone)]
-struct PendingCompletion {
-    turn_resource_id: String,
-    completed_at: u64,
+struct ActiveTurnState {
+    epoch: u64,
+    turn: ProviderTurn,
+    prompt_message_id: String,
+    assistant_message_id: Option<String>,
+    wait_started: bool,
+    wait_confirmed: bool,
+    latest_step_ended_at: Option<u64>,
 }
 
 struct InstanceMutable {
     status: InstanceStatus,
     session: Option<OpenCodeServerSession>,
     session_generation: Option<String>,
+    generation_counter: u64,
+    next_turn_epoch: u64,
     sessions: HashMap<String, OpenCodeSession>,
-    active_turns: HashMap<String, ProviderTurn>,
-    active_message_ids: HashMap<String, String>,
-    pending_completions: HashMap<String, PendingCompletion>,
+    active_turns: HashMap<String, ActiveTurnState>,
     pending_approvals: HashMap<String, PendingApproval>,
 }
 
@@ -91,6 +97,7 @@ struct OpenCodeInstanceRuntime {
     display_name: String,
     settings: OpenCodeInstanceSettings,
     capabilities: ProviderCapabilities,
+    boot_id: String,
     mutable: Mutex<InstanceMutable>,
     mapper: OpenCodeProtocolMapper,
     events: Arc<dyn ProviderEventSink>,
@@ -100,6 +107,7 @@ impl OpenCodeInstanceRuntime {
     fn new(
         request: InstanceCreateRequest,
         settings: OpenCodeInstanceSettings,
+        boot_id: String,
         events: Arc<dyn ProviderEventSink>,
     ) -> Self {
         Self {
@@ -108,14 +116,15 @@ impl OpenCodeInstanceRuntime {
             display_name: request.display_name,
             settings,
             capabilities: OpenCodeProtocolMapper::capabilities(),
+            boot_id,
             mutable: Mutex::new(InstanceMutable {
                 status: InstanceStatus::Created,
                 session: None,
                 session_generation: None,
+                generation_counter: 0,
+                next_turn_epoch: 0,
                 sessions: HashMap::new(),
                 active_turns: HashMap::new(),
-                active_message_ids: HashMap::new(),
-                pending_completions: HashMap::new(),
                 pending_approvals: HashMap::new(),
             }),
             mapper: OpenCodeProtocolMapper::new(request.route),
@@ -274,24 +283,14 @@ impl OpenCodeInstanceRuntime {
                 }
                 let turn = {
                     let mut mutable = lock(&self.mutable);
-                    let expected_message = mutable.active_message_ids.get(&data.session_id);
-                    let Some(expected_message) = expected_message else {
+                    let Some(active) = mutable.active_turns.get_mut(&data.session_id) else {
                         return Ok(Vec::new());
                     };
-                    if expected_message != &data.message_id {
-                        return Err(event_shape_error(
-                            &event,
-                            "prompt messageID does not match the active Provider turn",
-                        ));
+                    if active.prompt_message_id != data.message_id {
+                        return Ok(Vec::new());
                     }
-                    let Some(turn) = mutable.active_turns.get_mut(&data.session_id) else {
-                        return Err(event_shape_error(
-                            &event,
-                            "prompt admission has a message without an active Provider turn",
-                        ));
-                    };
-                    turn.updated_at = Some(data.timestamp);
-                    turn.clone()
+                    active.turn.updated_at = Some(data.timestamp);
+                    active.turn.clone()
                 };
                 Ok(vec![self.mapper.turn_event(turn)])
             }
@@ -299,22 +298,33 @@ impl OpenCodeInstanceRuntime {
                 let data: OpenCodeStepStartedEventData = decode_event(&event)?;
                 let turn = {
                     let mut mutable = lock(&self.mutable);
-                    let Some(turn) = mutable.active_turns.get_mut(&data.session_id) else {
+                    let Some(active) = mutable.active_turns.get_mut(&data.session_id) else {
                         return Ok(Vec::new());
                     };
-                    turn.status = TurnStatus::Running;
-                    turn.started_at = turn.started_at.or(Some(data.timestamp));
-                    turn.updated_at = Some(data.timestamp);
-                    turn.clone()
+                    if active
+                        .assistant_message_id
+                        .as_ref()
+                        .is_some_and(|assistant| assistant != &data.assistant_message_id)
+                    {
+                        return Ok(Vec::new());
+                    }
+                    active.assistant_message_id = Some(data.assistant_message_id);
+                    active.turn.status = TurnStatus::Running;
+                    active.turn.started_at = active.turn.started_at.or(Some(data.timestamp));
+                    active.turn.updated_at = Some(data.timestamp);
+                    active.turn.clone()
                 };
                 Ok(vec![self.mapper.turn_event(turn)])
             }
             "session.next.text.delta" | "session.next.reasoning.delta" => {
                 let data: OpenCodeDeltaEventData = decode_event(&event)?;
-                let turn = lock(&self.mutable)
-                    .active_turns
-                    .get(&data.session_id)
-                    .cloned();
+                let turn = lock(&self.mutable).active_turns.get(&data.session_id).and_then(
+                    |active| {
+                        (active.assistant_message_id.as_deref()
+                            == Some(data.assistant_message_id.as_str()))
+                        .then(|| active.turn.clone())
+                    },
+                );
                 let Some(turn) = turn else {
                     return Ok(Vec::new());
                 };
@@ -330,49 +340,71 @@ impl OpenCodeInstanceRuntime {
             }
             "session.next.step.ended" => {
                 let data: OpenCodeStepEndedEventData = decode_event(&event)?;
-                let (turn, should_start_waiter) = {
+                let (turn, should_start_waiter, should_finish, epoch) = {
                     let mut mutable = lock(&self.mutable);
-                    let Some(turn) = mutable.active_turns.get_mut(&data.session_id) else {
+                    let Some(active) = mutable.active_turns.get_mut(&data.session_id) else {
                         return Ok(Vec::new());
                     };
-                    turn.updated_at = Some(data.timestamp);
-                    let turn = turn.clone();
-                    let pending = mutable.pending_completions.get_mut(&data.session_id);
-                    let should_start_waiter = match pending {
-                        Some(pending)
-                            if pending.turn_resource_id
-                                == turn.resource.native_resource_id =>
-                        {
-                            pending.completed_at = data.timestamp;
-                            false
-                        }
-                        _ => {
-                            mutable.pending_completions.insert(
-                                data.session_id.clone(),
-                                PendingCompletion {
-                                    turn_resource_id: turn.resource.native_resource_id.clone(),
-                                    completed_at: data.timestamp,
-                                },
-                            );
-                            true
-                        }
-                    };
-                    (turn, should_start_waiter)
+                    if active.assistant_message_id.as_deref()
+                        != Some(data.assistant_message_id.as_str())
+                    {
+                        return Ok(Vec::new());
+                    }
+                    active.assistant_message_id = None;
+                    active.turn.updated_at = Some(data.timestamp);
+                    active.latest_step_ended_at = Some(data.timestamp);
+                    let terminal_step = data.finish != "tool-calls";
+                    let should_finish = terminal_step && active.wait_confirmed;
+                    let should_start_waiter = terminal_step
+                        && !active.wait_started
+                        && !should_finish;
+                    if should_start_waiter {
+                        active.wait_started = true;
+                    }
+                    (
+                        active.turn.clone(),
+                        should_start_waiter,
+                        should_finish,
+                        active.epoch,
+                    )
                 };
-                if should_start_waiter {
+                let turn_resource_id = turn.resource.native_resource_id.clone();
+                if should_finish {
+                    let events = self.finish_turn(
+                        &data.session_id,
+                        &turn_resource_id,
+                        epoch,
+                        TurnStatus::Completed,
+                        Some(data.timestamp),
+                    );
+                    return Ok(events);
+                } else if should_start_waiter {
                     self.start_completion_waiter(
                         generation.to_string(),
                         data.session_id,
-                        turn.resource.native_resource_id.clone(),
+                        turn_resource_id,
+                        epoch,
                     )?;
                 }
                 Ok(vec![self.mapper.turn_event(turn)])
             }
             "session.next.step.failed" => {
                 let data: OpenCodeStepFailedEventData = decode_event(&event)?;
+                let expected = lock(&self.mutable)
+                    .active_turns
+                    .get(&data.session_id)
+                    .and_then(|active| {
+                        (active.assistant_message_id.as_deref()
+                            == Some(data.assistant_message_id.as_str()))
+                        .then(|| (active.turn.resource.native_resource_id.clone(), active.epoch))
+                    });
+                let Some((turn_resource_id, epoch)) = expected else {
+                    return Ok(Vec::new());
+                };
                 Ok(self.finish_turn(
                     &data.session_id,
-                    None,
+                    &turn_resource_id,
+                    epoch,
                     TurnStatus::Failed,
                     Some(data.timestamp),
                 ))
@@ -391,9 +423,9 @@ impl OpenCodeInstanceRuntime {
                 }
                 let turn = {
                     let mut mutable = lock(&self.mutable);
-                    if let Some(turn) = mutable.active_turns.get_mut(&data.session_id) {
-                        turn.status = TurnStatus::WaitingApproval;
-                        Some(turn.clone())
+                    if let Some(active) = mutable.active_turns.get_mut(&data.session_id) {
+                        active.turn.status = TurnStatus::WaitingApproval;
+                        Some(active.turn.clone())
                     } else {
                         None
                     }
@@ -473,14 +505,14 @@ impl OpenCodeInstanceRuntime {
                         &mutable.pending_approvals,
                         &data.session_id,
                     );
-                    mutable.active_turns.get_mut(&data.session_id).map(|turn| {
+                    mutable.active_turns.get_mut(&data.session_id).map(|active| {
                         if !still_waiting {
-                            turn.status = TurnStatus::Running;
+                            active.turn.status = TurnStatus::Running;
                         }
                         if approval.resolved_at.is_some() {
-                            turn.updated_at = approval.resolved_at;
+                            active.turn.updated_at = approval.resolved_at;
                         }
-                        turn.clone()
+                        active.turn.clone()
                     })
                 };
                 if let Some(turn) = turn {
@@ -497,6 +529,7 @@ impl OpenCodeInstanceRuntime {
         generation: String,
         session_id: String,
         turn_resource_id: String,
+        epoch: u64,
     ) -> Result<(), ProtocolError> {
         let client = self.ready_session()?.client();
         let runtime = Arc::downgrade(self);
@@ -505,26 +538,32 @@ impl OpenCodeInstanceRuntime {
             let Some(runtime) = runtime.upgrade() else {
                 return;
             };
-            let current = {
-                let mutable = lock(&runtime.mutable);
-                mutable.session_generation.as_deref() == Some(generation.as_str())
-                    && mutable
-                        .pending_completions
-                        .get(&session_id)
-                        .is_some_and(|pending| pending.turn_resource_id == turn_resource_id)
-            };
-            if !current {
-                return;
-            }
             match result {
                 Ok(()) => {
-                    let completed_at = lock(&runtime.mutable)
-                        .pending_completions
-                        .get(&session_id)
-                        .map(|pending| pending.completed_at);
+                    let completed_at = {
+                        let mut mutable = lock(&runtime.mutable);
+                        if mutable.session_generation.as_deref() != Some(generation.as_str()) {
+                            return;
+                        }
+                        let Some(active) = mutable.active_turns.get_mut(&session_id) else {
+                            return;
+                        };
+                        if active.epoch != epoch
+                            || active.turn.resource.native_resource_id != turn_resource_id
+                            || !active.wait_started
+                        {
+                            return;
+                        }
+                        if active.assistant_message_id.is_some() {
+                            active.wait_confirmed = true;
+                            return;
+                        }
+                        active.latest_step_ended_at
+                    };
                     let events = runtime.finish_turn(
                         &session_id,
-                        Some(&turn_resource_id),
+                        &turn_resource_id,
+                        epoch,
                         TurnStatus::Completed,
                         completed_at,
                     );
@@ -535,10 +574,22 @@ impl OpenCodeInstanceRuntime {
                         }
                     }
                 }
-                Err(error) => runtime.fail_from_event_forwarder(
-                    &generation,
-                    OpenCodeProtocolMapper::error(error),
-                ),
+                Err(error) => {
+                    let current = {
+                        let mutable = lock(&runtime.mutable);
+                        mutable.session_generation.as_deref() == Some(generation.as_str())
+                            && mutable.active_turns.get(&session_id).is_some_and(|active| {
+                                active.epoch == epoch
+                                    && active.turn.resource.native_resource_id == turn_resource_id
+                            })
+                    };
+                    if current {
+                        runtime.fail_from_event_forwarder(
+                            &generation,
+                            OpenCodeProtocolMapper::error(error),
+                        );
+                    }
+                }
             }
         });
         Ok(())
@@ -547,32 +598,28 @@ impl OpenCodeInstanceRuntime {
     fn finish_turn(
         &self,
         session_id: &str,
-        expected_turn_resource_id: Option<&str>,
+        expected_turn_resource_id: &str,
+        expected_epoch: u64,
         status: TurnStatus,
         completed_at: Option<u64>,
     ) -> Vec<ProtocolEvent> {
         let (turn, approvals) = {
             let mut mutable = lock(&self.mutable);
-            if expected_turn_resource_id.is_some_and(|expected| {
-                mutable
-                    .active_turns
-                    .get(session_id)
-                    .is_none_or(|turn| turn.resource.native_resource_id != expected)
+            if mutable.active_turns.get(session_id).is_none_or(|active| {
+                active.epoch != expected_epoch
+                    || active.turn.resource.native_resource_id != expected_turn_resource_id
             }) {
                 return Vec::new();
             }
-            let turn = mutable.active_turns.remove(session_id).map(|mut turn| {
-                if turn.status != TurnStatus::Interrupted {
-                    turn.status = status;
-                }
+            let turn = mutable.active_turns.remove(session_id).map(|active| {
+                let mut turn = active.turn;
+                turn.status = status;
                 if completed_at.is_some() {
                     turn.updated_at = completed_at;
                 }
                 turn.completed_at = completed_at;
                 turn
             });
-            mutable.active_message_ids.remove(session_id);
-            mutable.pending_completions.remove(session_id);
             let mut approvals = Vec::new();
             mutable.pending_approvals.retain(|_, pending| {
                 if pending.session_id == session_id {
@@ -614,15 +661,14 @@ impl OpenCodeInstanceRuntime {
             let turns = mutable
                 .active_turns
                 .drain()
-                .map(|(_, mut turn)| {
+                .map(|(_, active)| {
+                    let mut turn = active.turn;
                     turn.status = TurnStatus::Failed;
                     turn.updated_at = Some(now);
                     turn.completed_at = Some(now);
                     turn
                 })
                 .collect::<Vec<_>>();
-            mutable.active_message_ids.clear();
-            mutable.pending_completions.clear();
             let approvals = mutable
                 .pending_approvals
                 .drain()
@@ -659,6 +705,7 @@ struct ProviderState {
 pub struct OpenCodeProvider {
     state: Mutex<ProviderState>,
     events: Arc<dyn ProviderEventSink>,
+    boot_id: String,
     shutdown: AtomicBool,
 }
 
@@ -671,6 +718,7 @@ impl OpenCodeProvider {
                 instances: HashMap::new(),
             }),
             events,
+            boot_id: Uuid::new_v4().to_string(),
             shutdown: AtomicBool::new(false),
         }
     }
@@ -862,6 +910,7 @@ impl ProtocolServer for OpenCodeProvider {
             let runtime = Arc::new(OpenCodeInstanceRuntime::new(
                 request,
                 settings,
+                self.boot_id.clone(),
                 self.events.clone(),
             ));
             let instance = runtime.snapshot();
@@ -894,8 +943,19 @@ impl ProtocolServer for OpenCodeProvider {
             let executable = runtime.settings.server_executable.clone();
             let version = runtime.settings.server_version.clone();
             let args = runtime.settings.server_args.clone();
+            let generation = {
+                let mut mutable = lock(&runtime.mutable);
+                mutable.generation_counter = mutable.generation_counter.saturating_add(1);
+                format!("{}:{}", runtime.boot_id, mutable.generation_counter)
+            };
+            let session_generation = generation.clone();
             let session = tokio::task::spawn_blocking(move || {
-                OpenCodeServerSession::spawn(&executable, &args, &version)
+                OpenCodeServerSession::spawn(
+                    &executable,
+                    &args,
+                    &version,
+                    session_generation,
+                )
             })
             .await
             .map_err(provider_task_error)?;
@@ -921,8 +981,6 @@ impl ProtocolServer for OpenCodeProvider {
                 mutable.session_generation = Some(generation.clone());
                 mutable.sessions.clear();
                 mutable.active_turns.clear();
-                mutable.active_message_ids.clear();
-                mutable.pending_completions.clear();
                 mutable.pending_approvals.clear();
             }
             let instance = match runtime.set_status(InstanceStatus::Ready) {
@@ -960,8 +1018,6 @@ impl ProtocolServer for OpenCodeProvider {
                 let mut mutable = lock(&runtime.mutable);
                 mutable.session_generation = None;
                 mutable.active_turns.clear();
-                mutable.active_message_ids.clear();
-                mutable.pending_completions.clear();
                 mutable.pending_approvals.clear();
                 mutable.session.take()
             };
@@ -1055,7 +1111,10 @@ impl ProtocolServer for OpenCodeProvider {
                 page.data
                     .iter()
                     .map(|session| {
-                        let turn = mutable.active_turns.get(&session.id).cloned();
+                        let turn = mutable
+                            .active_turns
+                            .get(&session.id)
+                            .map(|active| active.turn.clone());
                         let waiting = has_pending_approval(
                             &mutable.pending_approvals,
                             &session.id,
@@ -1107,7 +1166,10 @@ impl ProtocolServer for OpenCodeProvider {
             let conversation = {
                 let mut mutable = lock(&runtime.mutable);
                 mutable.sessions.insert(session.id.clone(), session.clone());
-                let turn = mutable.active_turns.get(&session.id).cloned();
+                let turn = mutable
+                    .active_turns
+                    .get(&session.id)
+                    .map(|active| active.turn.clone());
                 let waiting = has_pending_approval(&mutable.pending_approvals, &session.id);
                 runtime
                     .mapper
@@ -1224,41 +1286,66 @@ impl ProtocolServer for OpenCodeProvider {
             .await
             .map_err(provider_task_error)?
             .map_err(OpenCodeProtocolMapper::error)?;
-            if server_active || lock(&runtime.mutable).active_turns.contains_key(&conversation_id) {
+            if server_active {
                 return Err(protocol_error(
                     "turn_already_active",
                     "OpenCode session already has active execution".to_string(),
                     false,
                 ));
             }
-            let turn_resource_id = turn_resource_id(
-                &generation,
-                &conversation_id,
-                &request.client_message_id,
-            );
-            let message_id = message_id(
-                "start",
-                &generation,
-                &conversation_id,
-                &request.client_message_id,
-            );
-            let provisional = runtime.mapper.turn(
-                &conversation_id,
-                &turn_resource_id,
-                TurnStatus::Queued,
-                None,
-                None,
-                None,
-            );
-            {
+            let (epoch, turn_resource_id, message_id) = {
                 let mut mutable = lock(&runtime.mutable);
-                mutable
-                    .active_turns
-                    .insert(conversation_id.clone(), provisional.clone());
-                mutable
-                    .active_message_ids
-                    .insert(conversation_id.clone(), message_id.clone());
-            }
+                if mutable.session_generation.as_deref() != Some(generation.as_str()) {
+                    return Err(protocol_error(
+                        "provider_unavailable",
+                        "OpenCode Server session changed while starting a turn".to_string(),
+                        true,
+                    ));
+                }
+                if mutable.active_turns.contains_key(&conversation_id) {
+                    return Err(protocol_error(
+                        "turn_already_active",
+                        "OpenCode session already has active execution".to_string(),
+                        false,
+                    ));
+                }
+                mutable.next_turn_epoch = mutable.next_turn_epoch.saturating_add(1);
+                let epoch = mutable.next_turn_epoch;
+                let turn_resource_id = turn_resource_id(
+                    &generation,
+                    epoch,
+                    &conversation_id,
+                    &request.client_message_id,
+                );
+                let message_id = message_id(
+                    "start",
+                    &generation,
+                    epoch,
+                    &conversation_id,
+                    &request.client_message_id,
+                );
+                let provisional = runtime.mapper.turn(
+                    &conversation_id,
+                    &turn_resource_id,
+                    TurnStatus::Queued,
+                    None,
+                    None,
+                    None,
+                );
+                mutable.active_turns.insert(
+                    conversation_id.clone(),
+                    ActiveTurnState {
+                        epoch,
+                        turn: provisional.clone(),
+                        prompt_message_id: message_id.clone(),
+                        assistant_message_id: None,
+                        wait_started: false,
+                        wait_confirmed: false,
+                        latest_step_ended_at: None,
+                    },
+                );
+                (epoch, turn_resource_id, message_id)
+            };
             let native_conversation_id = conversation_id.clone();
             let sent_message_id = message_id.clone();
             let admission = tokio::task::spawn_blocking(move || {
@@ -1279,8 +1366,12 @@ impl ProtocolServer for OpenCodeProvider {
                 Ok(admission) => admission,
                 Err(error) => {
                     let mut mutable = lock(&runtime.mutable);
-                    mutable.active_turns.remove(&conversation_id);
-                    mutable.active_message_ids.remove(&conversation_id);
+                    if mutable.active_turns.get(&conversation_id).is_some_and(|active| {
+                        active.epoch == epoch
+                            && active.turn.resource.native_resource_id == turn_resource_id
+                    }) {
+                        mutable.active_turns.remove(&conversation_id);
+                    }
                     return Err(OpenCodeProtocolMapper::error(error));
                 }
             };
@@ -1291,19 +1382,40 @@ impl ProtocolServer for OpenCodeProvider {
                 "queue",
             ) {
                 let mut mutable = lock(&runtime.mutable);
-                mutable.active_turns.remove(&conversation_id);
-                mutable.active_message_ids.remove(&conversation_id);
+                if mutable.active_turns.get(&conversation_id).is_some_and(|active| {
+                    active.epoch == epoch
+                        && active.turn.resource.native_resource_id == turn_resource_id
+                }) {
+                    mutable.active_turns.remove(&conversation_id);
+                }
                 return Err(error);
             }
             let turn = {
                 let mut mutable = lock(&runtime.mutable);
-                let turn = mutable
+                let active = mutable
                     .active_turns
-                    .entry(conversation_id)
-                    .or_insert(provisional);
-                turn.started_at = Some(admission.time_created);
-                turn.updated_at = Some(admission.time_created);
-                turn.clone()
+                    .get_mut(&conversation_id)
+                    .filter(|active| {
+                        active.epoch == epoch
+                            && active.turn.resource.native_resource_id == turn_resource_id
+                            && active.prompt_message_id == message_id
+                    })
+                    .ok_or_else(|| {
+                        protocol_error(
+                            "turn_not_active",
+                            "OpenCode turn completed while the prompt response was in flight"
+                                .to_string(),
+                            false,
+                        )
+                    })?;
+                active.turn.updated_at = Some(
+                    active
+                        .turn
+                        .updated_at
+                        .unwrap_or(0)
+                        .max(admission.time_created),
+                );
+                active.turn.clone()
             };
             Ok(TurnStartResponse { turn })
         })
@@ -1324,7 +1436,7 @@ impl ProtocolServer for OpenCodeProvider {
             }
             let runtime = self.resource_instance(&request.conversation)?;
             let conversation_id = request.conversation.native_resource_id;
-            let expected_turn = {
+            let expected_active = {
                 let mutable = lock(&runtime.mutable);
                 mutable.active_turns.get(&conversation_id).cloned()
             }
@@ -1335,7 +1447,7 @@ impl ProtocolServer for OpenCodeProvider {
                     false,
                 )
             })?;
-            if expected_turn.resource != request.turn {
+            if expected_active.turn.resource != request.turn {
                 return Err(protocol_error(
                     "stale_turn",
                     "turn.steer targets a stale OpenCode Provider turn".to_string(),
@@ -1348,6 +1460,7 @@ impl ProtocolServer for OpenCodeProvider {
             let message_id = message_id(
                 "steer",
                 &generation,
+                expected_active.epoch,
                 &conversation_id,
                 &request.client_message_id,
             );
@@ -1371,15 +1484,29 @@ impl ProtocolServer for OpenCodeProvider {
             validate_admission(&admission, &conversation_id, &message_id, "steer")?;
             let turn = {
                 let mut mutable = lock(&runtime.mutable);
-                let turn = mutable.active_turns.get_mut(&conversation_id).ok_or_else(|| {
-                    protocol_error(
-                        "turn_not_active",
-                        "OpenCode turn completed while the steer request was in flight".to_string(),
-                        false,
-                    )
-                })?;
-                turn.updated_at = Some(admission.time_created);
-                turn.clone()
+                let active = mutable
+                    .active_turns
+                    .get_mut(&conversation_id)
+                    .filter(|active| {
+                        active.epoch == expected_active.epoch
+                            && active.turn.resource == request.turn
+                    })
+                    .ok_or_else(|| {
+                        protocol_error(
+                            "turn_not_active",
+                            "OpenCode turn completed while the steer request was in flight"
+                                .to_string(),
+                            false,
+                        )
+                    })?;
+                active.turn.updated_at = Some(
+                    active
+                        .turn
+                        .updated_at
+                        .unwrap_or(0)
+                        .max(admission.time_created),
+                );
+                active.turn.clone()
             };
             Ok(TurnSteerResponse { turn })
         })
@@ -1393,7 +1520,7 @@ impl ProtocolServer for OpenCodeProvider {
             validate_same_resource_route(&request.conversation, &request.turn)?;
             let runtime = self.resource_instance(&request.conversation)?;
             let conversation_id = request.conversation.native_resource_id;
-            let active_turn = lock(&runtime.mutable)
+            let active = lock(&runtime.mutable)
                 .active_turns
                 .get(&conversation_id)
                 .cloned()
@@ -1404,7 +1531,7 @@ impl ProtocolServer for OpenCodeProvider {
                         false,
                     )
                 })?;
-            if active_turn.resource != request.turn {
+            if active.turn.resource != request.turn {
                 return Err(protocol_error(
                     "stale_turn",
                     "turn.interrupt targets a stale OpenCode Provider turn".to_string(),
@@ -1412,50 +1539,59 @@ impl ProtocolServer for OpenCodeProvider {
                 ));
             }
             let session = runtime.ready_session()?;
-            {
-                let mut mutable = lock(&runtime.mutable);
-                if let Some(turn) = mutable.active_turns.get_mut(&conversation_id) {
-                    turn.status = TurnStatus::Interrupted;
-                    turn.updated_at = Some(now_ms());
-                }
-            }
             let client = session.client();
             let native_conversation_id = conversation_id.clone();
-            let interrupted = match tokio::task::spawn_blocking(move || {
-                client.interrupt(&native_conversation_id)
+            let interrupted = tokio::task::spawn_blocking(move || {
+                let was_active = client
+                    .active_sessions()?
+                    .contains_key(&native_conversation_id);
+                client.interrupt(&native_conversation_id)?;
+                Ok::<_, OpenCodeServerError>(was_active)
             })
             .await
-            {
-                Ok(interrupted) => interrupted,
-                Err(error) => {
-                    if let Some(turn) = lock(&runtime.mutable)
-                        .active_turns
-                        .get_mut(&conversation_id)
-                    {
-                        turn.status = active_turn.status;
-                        turn.updated_at = active_turn.updated_at;
-                    }
-                    return Err(provider_task_error(error));
-                }
-            };
-            if let Err(error) = interrupted {
-                if let Some(turn) = lock(&runtime.mutable)
+            .map_err(provider_task_error)?
+            .map_err(OpenCodeProtocolMapper::error)?;
+            if !interrupted {
+                let turn = lock(&runtime.mutable)
                     .active_turns
-                    .get_mut(&conversation_id)
-                {
-                    turn.status = active_turn.status;
-                    turn.updated_at = active_turn.updated_at;
-                }
-                return Err(OpenCodeProtocolMapper::error(error));
+                    .get(&conversation_id)
+                    .filter(|current| {
+                        current.epoch == active.epoch && current.turn.resource == request.turn
+                    })
+                    .map(|current| current.turn.clone())
+                    .ok_or_else(|| {
+                        protocol_error(
+                            "turn_not_active",
+                            "OpenCode turn completed while the interrupt request was in flight"
+                                .to_string(),
+                            false,
+                        )
+                    })?;
+                return Ok(TurnInterruptResponse { turn });
             }
             let completed_at = now_ms();
-            let (turn, publish_turn, expired_approvals) = {
+            let (turn, expired_approvals) = {
                 let mut mutable = lock(&runtime.mutable);
-                let removed = mutable.active_turns.remove(&conversation_id);
-                mutable.active_message_ids.remove(&conversation_id);
-                mutable.pending_completions.remove(&conversation_id);
-                let publish_turn = removed.is_some();
-                let mut turn = removed.unwrap_or(active_turn);
+                let current = mutable.active_turns.get(&conversation_id).ok_or_else(|| {
+                    protocol_error(
+                        "turn_not_active",
+                        "OpenCode turn completed while the interrupt request was in flight"
+                            .to_string(),
+                        false,
+                    )
+                })?;
+                if current.epoch != active.epoch || current.turn.resource != request.turn {
+                    return Err(protocol_error(
+                        "stale_turn",
+                        "turn.interrupt targets a stale OpenCode Provider turn".to_string(),
+                        false,
+                    ));
+                }
+                let mut turn = mutable
+                    .active_turns
+                    .remove(&conversation_id)
+                    .expect("active turn was checked under the same lock")
+                    .turn;
                 turn.status = TurnStatus::Interrupted;
                 turn.updated_at = Some(completed_at);
                 turn.completed_at = Some(completed_at);
@@ -1468,13 +1604,11 @@ impl ProtocolServer for OpenCodeProvider {
                         true
                     }
                 });
-                (turn, publish_turn, approvals)
+                (turn, approvals)
             };
-            if publish_turn {
-                runtime
-                    .events
-                    .publish(runtime.mapper.turn_event(turn.clone()))?;
-            }
+            runtime
+                .events
+                .publish(runtime.mapper.turn_event(turn.clone()))?;
             for approval in expired_approvals {
                 runtime.events.publish(
                     runtime
@@ -1554,14 +1688,14 @@ impl ProtocolServer for OpenCodeProvider {
                     &mutable.pending_approvals,
                     &pending.session_id,
                 );
-                mutable.active_turns.get_mut(&pending.session_id).map(|turn| {
+                mutable.active_turns.get_mut(&pending.session_id).map(|active| {
                     if !still_waiting {
-                        turn.status = TurnStatus::Running;
+                        active.turn.status = TurnStatus::Running;
                     }
                     if approval.resolved_at.is_some() {
-                        turn.updated_at = approval.resolved_at;
+                        active.turn.updated_at = approval.resolved_at;
                     }
-                    turn.clone()
+                    active.turn.clone()
                 })
             };
             runtime.events.publish(event)?;
@@ -1592,8 +1726,6 @@ impl ProtocolServer for OpenCodeProvider {
                     mutable.status = InstanceStatus::Stopping;
                     mutable.session_generation = None;
                     mutable.active_turns.clear();
-                    mutable.active_message_ids.clear();
-                    mutable.pending_completions.clear();
                     mutable.pending_approvals.clear();
                     mutable.session.take()
                 };
@@ -1800,11 +1932,12 @@ fn approval_resource_id(
 
 fn turn_resource_id(
     generation: &str,
+    epoch: u64,
     conversation_id: &str,
     client_message_id: &str,
 ) -> String {
     format!(
-        "opencode-turn:{generation}:{:016x}:{:016x}",
+        "opencode-turn:{generation}:{epoch}:{:016x}:{:016x}",
         stable_hash(&[conversation_id]),
         stable_hash(&[client_message_id]),
     )
@@ -1813,14 +1946,17 @@ fn turn_resource_id(
 fn message_id(
     kind: &str,
     generation: &str,
+    epoch: u64,
     conversation_id: &str,
     client_message_id: &str,
 ) -> String {
+    let epoch = epoch.to_string();
     format!(
         "msg_codepet_{:016x}",
         stable_hash(&[
             kind,
             generation,
+            &epoch,
             conversation_id,
             client_message_id,
         ])
@@ -1891,16 +2027,20 @@ mod tests {
     #[test]
     fn provider_resource_ids_are_stable_and_session_scoped() {
         assert_eq!(
-            message_id("start", "1", "ses_1", "request-1"),
-            message_id("start", "1", "ses_1", "request-1")
+            message_id("start", "1", 1, "ses_1", "request-1"),
+            message_id("start", "1", 1, "ses_1", "request-1")
         );
         assert_ne!(
-            turn_resource_id("1", "ses_1", "same-client"),
-            turn_resource_id("1", "ses_2", "same-client")
+            turn_resource_id("1", 1, "ses_1", "same-client"),
+            turn_resource_id("1", 1, "ses_2", "same-client")
         );
         assert_ne!(
-            turn_resource_id("1", "ses_1", "same-client"),
-            turn_resource_id("2", "ses_1", "same-client")
+            turn_resource_id("1", 1, "ses_1", "same-client"),
+            turn_resource_id("2", 1, "ses_1", "same-client")
+        );
+        assert_ne!(
+            turn_resource_id("1", 1, "ses_1", "same-client"),
+            turn_resource_id("1", 2, "ses_1", "same-client")
         );
         assert_ne!(
             approval_resource_id("1", "ses_1", "per_1"),

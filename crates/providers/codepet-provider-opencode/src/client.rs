@@ -8,10 +8,9 @@ use reqwest::blocking::{Client, Response};
 use reqwest::Url;
 use serde::de::DeserializeOwned;
 use std::io::{BufRead, BufReader, Read};
-use std::net::TcpListener;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::process::{Child, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
@@ -30,12 +29,13 @@ const MAX_JSON_BODY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ERROR_BODY_BYTES: usize = 16 * 1024;
 const MAX_SSE_LINE_BYTES: usize = 1024 * 1024;
 const MAX_SSE_EVENT_BYTES: usize = 4 * 1024 * 1024;
-static NEXT_SESSION_GENERATION: AtomicU64 = AtomicU64::new(1);
+const MAX_STARTUP_OUTPUT_LINE_BYTES: usize = 16 * 1024;
 
 #[derive(Clone)]
 pub struct OpenCodeClient {
     base_url: Url,
     requests: Client,
+    waits: Client,
     events: Client,
     auth: Option<(String, String)>,
 }
@@ -46,9 +46,22 @@ impl OpenCodeClient {
         username: String,
         password: String,
     ) -> Result<Self, OpenCodeServerError> {
+        Self::new_with_request_timeout(base_url, username, password, REQUEST_TIMEOUT)
+    }
+
+    fn new_with_request_timeout(
+        base_url: Url,
+        username: String,
+        password: String,
+        request_timeout: Duration,
+    ) -> Result<Self, OpenCodeServerError> {
         let requests = Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
+            .timeout(request_timeout)
+            .build()
+            .map_err(|error| OpenCodeServerError::Protocol(error.to_string()))?;
+        let waits = Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
             .build()
             .map_err(|error| OpenCodeServerError::Protocol(error.to_string()))?;
         let events = Client::builder()
@@ -58,6 +71,7 @@ impl OpenCodeClient {
         Ok(Self {
             base_url,
             requests,
+            waits,
             events,
             auth: Some((username, password)),
         })
@@ -149,7 +163,7 @@ impl OpenCodeClient {
     pub fn wait_session(&self, session_id: &str) -> Result<(), OpenCodeServerError> {
         decode_no_content(
             self.request(
-                self.requests
+                self.waits
                     .post(self.url(&["api", "session", session_id, "wait"])?),
             )
             .send()
@@ -210,6 +224,7 @@ struct SessionInner {
     child: Mutex<Option<Child>>,
     stopped: AtomicBool,
     subscriber: Mutex<Option<JoinHandle<()>>>,
+    output: Mutex<Option<JoinHandle<()>>>,
 }
 
 #[derive(Clone)]
@@ -222,45 +237,51 @@ impl OpenCodeServerSession {
         executable: &Path,
         args: &[String],
         server_version: &str,
+        generation: String,
     ) -> Result<Self, OpenCodeServerError> {
         validate_server_version(server_version)?;
-        let port = reserve_loopback_port()?;
-        Self::spawn_on_port(executable, args, port)
-    }
-
-    fn spawn_on_port(
-        executable: &Path,
-        args: &[String],
-        port: u16,
-    ) -> Result<Self, OpenCodeServerError> {
         let deadline = Instant::now() + STARTUP_TIMEOUT;
-        let base_url = Url::parse(&format!("http://127.0.0.1:{port}/"))
-            .map_err(|error| OpenCodeServerError::Protocol(error.to_string()))?;
         let username = "codepet".to_string();
         let password = Uuid::new_v4().to_string();
-        let client = OpenCodeClient::new(base_url, username.clone(), password.clone())?;
         let mut command = Command::new(executable);
         command
             .args(args)
             .arg("--hostname")
             .arg("127.0.0.1")
-            .arg("--port")
-            .arg(port.to_string())
-            .env("OPENCODE_SERVER_USERNAME", username)
-            .env("OPENCODE_SERVER_PASSWORD", password)
+            .env("OPENCODE_SERVER_USERNAME", username.clone())
+            .env("OPENCODE_SERVER_PASSWORD", password.clone())
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
         let mut child = command
             .spawn()
             .map_err(|error| OpenCodeServerError::Spawn(error.to_string()))?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            OpenCodeServerError::Spawn("OpenCode Server stdout was not piped".to_string())
+        })?;
+        let (startup_sender, startup_receiver) = mpsc::sync_channel(1);
+        let output = thread::spawn(move || drain_server_output(stdout, startup_sender));
+        let base_url = match wait_for_listening_address(&startup_receiver, &mut child, deadline) {
+            Ok(base_url) => base_url,
+            Err(error) => {
+                let _ = terminate_child(&mut child, Instant::now() + SHUTDOWN_TIMEOUT);
+                let _ = output.join();
+                return Err(error);
+            }
+        };
+        let client = match OpenCodeClient::new(base_url, username, password) {
+            Ok(client) => client,
+            Err(error) => {
+                let _ = terminate_child(&mut child, Instant::now() + SHUTDOWN_TIMEOUT);
+                let _ = output.join();
+                return Err(error);
+            }
+        };
         if let Err(error) = wait_for_ready(&client, &mut child, deadline) {
             let _ = terminate_child(&mut child, Instant::now() + SHUTDOWN_TIMEOUT);
+            let _ = output.join();
             return Err(error);
         }
-        let generation = NEXT_SESSION_GENERATION
-            .fetch_add(1, Ordering::SeqCst)
-            .to_string();
         Ok(Self {
             inner: Arc::new(SessionInner {
                 generation,
@@ -268,6 +289,7 @@ impl OpenCodeServerSession {
                 child: Mutex::new(Some(child)),
                 stopped: AtomicBool::new(false),
                 subscriber: Mutex::new(None),
+                output: Mutex::new(Some(output)),
             }),
         })
     }
@@ -334,7 +356,136 @@ impl OpenCodeServerSession {
                 ));
             }
         }
+        if let Some(output) = lock(&self.inner.output).take() {
+            while !output.is_finished() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            if output.is_finished() {
+                let _ = output.join();
+            } else if child_result.is_ok() {
+                return Err(OpenCodeServerError::Timeout(
+                    "OpenCode output reader did not stop before the shutdown deadline".to_string(),
+                ));
+            }
+        }
         child_result
+    }
+}
+
+fn drain_server_output(
+    stdout: ChildStdout,
+    startup: SyncSender<Result<Url, OpenCodeServerError>>,
+) {
+    let mut reader = BufReader::new(stdout);
+    let mut reported = false;
+    loop {
+        match read_bounded_line(&mut reader, MAX_STARTUP_OUTPUT_LINE_BYTES) {
+            Ok(Some(line)) => {
+                if reported {
+                    continue;
+                }
+                let line = match std::str::from_utf8(&line) {
+                    Ok(line) => line.trim(),
+                    Err(error) => {
+                        let _ = startup.try_send(Err(OpenCodeServerError::Protocol(format!(
+                            "OpenCode startup output is not UTF-8: {error}"
+                        ))));
+                        return;
+                    }
+                };
+                match parse_listening_address(line) {
+                    Ok(Some(url)) => {
+                        let _ = startup.try_send(Ok(url));
+                        reported = true;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        let _ = startup.try_send(Err(error));
+                        return;
+                    }
+                }
+            }
+            Ok(None) => {
+                if !reported {
+                    let _ = startup.try_send(Err(OpenCodeServerError::Protocol(
+                        "OpenCode Server exited before reporting its listening address"
+                            .to_string(),
+                    )));
+                }
+                return;
+            }
+            Err(error) => {
+                if !reported {
+                    let _ = startup.try_send(Err(error));
+                }
+                return;
+            }
+        }
+    }
+}
+
+fn parse_listening_address(line: &str) -> Result<Option<Url>, OpenCodeServerError> {
+    let address = if let Some(address) = line.strip_prefix("opencode server listening on ") {
+        address
+    } else if let Some(address) = line.strip_prefix("server listening on ") {
+        address
+    } else {
+        return Ok(None);
+    };
+    let url = Url::parse(address.trim()).map_err(|error| {
+        OpenCodeServerError::Protocol(format!(
+            "invalid OpenCode Server listening address: {error}"
+        ))
+    })?;
+    if url.scheme() != "http"
+        || url.host_str() != Some("127.0.0.1")
+        || url.port().is_none_or(|port| port == 0)
+        || url.path() != "/"
+        || url.username() != ""
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(OpenCodeServerError::Protocol(
+            "OpenCode Server reported a non-loopback or malformed listening address".to_string(),
+        ));
+    }
+    Ok(Some(url))
+}
+
+fn wait_for_listening_address(
+    receiver: &Receiver<Result<Url, OpenCodeServerError>>,
+    child: &mut Child,
+    deadline: Instant,
+) -> Result<Url, OpenCodeServerError> {
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| OpenCodeServerError::Io(error.to_string()))?
+        {
+            return Err(OpenCodeServerError::ProcessExited(status.to_string()));
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(OpenCodeServerError::Timeout(format!(
+                "server did not report a listening address within {} seconds",
+                STARTUP_TIMEOUT.as_secs()
+            )));
+        }
+        match receiver.recv_timeout(
+            deadline
+                .saturating_duration_since(now)
+                .min(STARTUP_RETRY_DELAY),
+        ) {
+            Ok(result) => return result,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(OpenCodeServerError::Protocol(
+                    "OpenCode startup output closed before a listening address was reported"
+                        .to_string(),
+                ))
+            }
+        }
     }
 }
 
@@ -400,12 +551,6 @@ fn validate_server_version(version: &str) -> Result<(), OpenCodeServerError> {
         )));
     }
     Ok(())
-}
-
-fn reserve_loopback_port() -> Result<u16, OpenCodeServerError> {
-    TcpListener::bind(("127.0.0.1", 0))
-        .and_then(|listener| listener.local_addr().map(|address| address.port()))
-        .map_err(|error| OpenCodeServerError::Io(error.to_string()))
 }
 
 fn terminate_child(
@@ -543,8 +688,15 @@ fn read_bounded_line<R: BufRead>(
 }
 
 fn decode_json<T: DeserializeOwned>(response: Response) -> Result<T, OpenCodeServerError> {
+    decode_json_with_limit(response, MAX_JSON_BODY_BYTES)
+}
+
+fn decode_json_with_limit<T: DeserializeOwned>(
+    response: Response,
+    limit: usize,
+) -> Result<T, OpenCodeServerError> {
     let mut response = ensure_success(response)?;
-    let body = read_response_body(&mut response, MAX_JSON_BODY_BYTES, "JSON response")?;
+    let body = read_response_body(&mut response, limit, "JSON response")?;
     serde_json::from_slice::<T>(&body)
         .map_err(|error| OpenCodeServerError::Protocol(format!("invalid JSON response: {error}")))
 }
@@ -635,8 +787,8 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::{
-        read_bounded_body, read_bounded_line, read_sse, send_event,
-        validate_server_version,
+        decode_json_with_limit, parse_listening_address, read_bounded_body,
+        read_bounded_line, read_sse, send_event, validate_server_version,
     };
     use crate::protocol::OpenCodeEvent;
     use serde_json::json;
@@ -686,6 +838,80 @@ mod tests {
         );
         let mut oversized = Cursor::new(b"123456".to_vec());
         assert!(read_bounded_body(&mut oversized, 5, "fixture").is_err());
+    }
+
+    #[test]
+    fn accepts_only_owned_loopback_startup_addresses() {
+        assert_eq!(
+            parse_listening_address(
+                "opencode server listening on http://127.0.0.1:4097/"
+            )
+            .unwrap()
+            .unwrap()
+            .as_str(),
+            "http://127.0.0.1:4097/"
+        );
+        assert!(parse_listening_address("server listening on http://127.0.0.1:4098/")
+            .unwrap()
+            .is_some());
+        assert!(parse_listening_address("server listening on http://0.0.0.0:4096/")
+            .is_err());
+        assert!(parse_listening_address("unrelated log line").unwrap().is_none());
+    }
+
+    #[test]
+    fn chunked_json_response_is_bounded_after_decoding_transport_chunks() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\n{\"hea\r\nA\r\nlthy\":true\r\n1\r\n}\r\n0\r\n\r\n",
+                )
+                .unwrap();
+        });
+        let response = reqwest::blocking::get(format!("http://127.0.0.1:{port}/api/health"))
+            .unwrap();
+        let error = decode_json_with_limit::<serde_json::Value>(response, 8).unwrap_err();
+        assert!(error.to_string().contains("exceeds 8 bytes"));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn session_wait_does_not_inherit_the_normal_request_timeout() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 2048];
+            let read = stream.read(&mut request).unwrap();
+            assert!(String::from_utf8_lossy(&request[..read])
+                .starts_with("POST /api/session/ses_wait/wait "));
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            stream
+                .write_all(
+                    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+        });
+        let client = super::OpenCodeClient::new_with_request_timeout(
+            reqwest::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),
+            "codepet".to_string(),
+            "wait-secret".to_string(),
+            std::time::Duration::from_millis(20),
+        )
+        .unwrap();
+        let started = std::time::Instant::now();
+        client.wait_session("ses_wait").unwrap();
+        assert!(started.elapsed() >= std::time::Duration::from_millis(80));
+        server.join().unwrap();
     }
 
     #[test]
@@ -741,57 +967,4 @@ mod tests {
         server.join().unwrap();
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn occupied_port_with_foreign_auth_is_never_accepted() {
-        use std::io::{Read, Write};
-        use std::sync::atomic::{AtomicBool, Ordering};
-        use std::sync::Arc;
-
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        listener.set_nonblocking(true).unwrap();
-        let saw_basic_auth = Arc::new(AtomicBool::new(false));
-        let server_saw_auth = saw_basic_auth.clone();
-        let server = std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            while std::time::Instant::now() < deadline {
-                match listener.accept() {
-                    Ok((mut stream, _)) => {
-                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
-                        let mut request = [0u8; 2048];
-                        let read = stream.read(&mut request).unwrap_or(0);
-                        let request = String::from_utf8_lossy(&request[..read]).to_ascii_lowercase();
-                        if request.contains("authorization: basic ") {
-                            server_saw_auth.store(true, Ordering::SeqCst);
-                        }
-                        let _ = stream.write_all(
-                            b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                        );
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(std::time::Duration::from_millis(5));
-                    }
-                    Err(_) => return,
-                }
-            }
-        });
-        let error = match super::OpenCodeServerSession::spawn_on_port(
-            std::path::Path::new("/bin/sh"),
-            &["-c".to_string(), "sleep 0.25".to_string()],
-            port,
-        ) {
-            Ok(session) => {
-                let _ = session.shutdown();
-                panic!("foreign port was accepted as the owned OpenCode Server")
-            }
-            Err(error) => error,
-        };
-        assert!(matches!(
-            error,
-            crate::protocol::OpenCodeServerError::ProcessExited(_)
-        ));
-        assert!(saw_basic_auth.load(Ordering::SeqCst));
-        server.join().unwrap();
-    }
 }

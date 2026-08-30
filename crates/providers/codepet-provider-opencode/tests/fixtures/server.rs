@@ -10,14 +10,12 @@ struct FixtureState {
     sessions: HashMap<String, Value>,
     active: HashSet<String>,
     subscribers: Vec<Sender<String>>,
+    delayed_step_ended: Option<Value>,
 }
 
 fn main() {
     let args = std::env::args().collect::<Vec<_>>();
     let hostname = argument(&args, "--hostname").unwrap_or("127.0.0.1");
-    let port = argument(&args, "--port")
-        .and_then(|value| value.parse::<u16>().ok())
-        .expect("fixture requires --port");
     assert_eq!(args.get(1).map(String::as_str), Some("serve"));
     if let Ok(path) = std::env::var("OPENCODE_FIXTURE_PID_FILE") {
         std::fs::write(path, std::process::id().to_string()).unwrap();
@@ -36,8 +34,12 @@ fn main() {
         sessions: [("ses_fixture".to_string(), initial)].into_iter().collect(),
         active: HashSet::new(),
         subscribers: Vec::new(),
+        delayed_step_ended: None,
     }));
-    let listener = TcpListener::bind((hostname, port)).expect("bind fixture server");
+    let listener = bind_listener(hostname, argument(&args, "--port"));
+    let port = listener.local_addr().unwrap().port();
+    println!("opencode server listening on http://{hostname}:{port}/");
+    std::io::stdout().flush().unwrap();
     for stream in listener.incoming() {
         let Ok(stream) = stream else {
             continue;
@@ -45,6 +47,20 @@ fn main() {
         let state = state.clone();
         thread::spawn(move || handle_connection(stream, state));
     }
+}
+
+fn bind_listener(hostname: &str, explicit_port: Option<&str>) -> TcpListener {
+    if let Some(port) = explicit_port.and_then(|value| value.parse::<u16>().ok()) {
+        return TcpListener::bind((hostname, port)).expect("bind explicit fixture server port");
+    }
+    for port in 4096..=u16::MAX {
+        match TcpListener::bind((hostname, port)) {
+            Ok(listener) => return listener,
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
+            Err(error) => panic!("bind fixture server: {error}"),
+        }
+    }
+    panic!("no loopback port available for fixture server")
 }
 
 fn argument<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
@@ -156,95 +172,37 @@ fn route(
         let request: Value = serde_json::from_slice(body).unwrap();
         let message_id = request["id"].as_str().unwrap();
         let delivery = request["delivery"].as_str().unwrap();
+        let prompt = request["prompt"]["text"].as_str().unwrap().to_string();
         let timestamp = 1_700_000_002_000u64;
         if delivery == "queue" {
             lock(state).active.insert(session_id.to_string());
         }
-        broadcast(
-            state,
-            json!({
-                "id": format!("evt_admitted_{message_id}"),
-                "type": "session.next.prompt.admitted",
-                "data": {
-                    "timestamp": timestamp,
-                    "sessionID": session_id,
-                    "messageID": message_id,
-                    "prompt": {"text": request["prompt"]["text"]},
-                    "delivery": delivery
-                }
-            }),
-        );
-        if delivery == "queue" {
-            broadcast(
-                state,
-                json!({
-                    "id": "evt_step",
-                    "type": "session.next.step.started",
-                    "data": {
-                        "timestamp": timestamp + 1,
-                        "sessionID": session_id,
-                        "assistantMessageID": "msg_assistant_fixture",
-                        "agent": "build",
-                        "model": {"id": "fixture", "providerID": "fixture"}
-                    }
-                }),
+        let scheduled_state = state.clone();
+        let scheduled_session_id = session_id.to_string();
+        let scheduled_message_id = message_id.to_string();
+        let scheduled_delivery = delivery.to_string();
+        if prompt == "response after completion" {
+            run_prompt_scenario(
+                &scheduled_state,
+                &scheduled_session_id,
+                &scheduled_message_id,
+                &scheduled_delivery,
+                &prompt,
+                timestamp,
             );
-            broadcast(
-                state,
-                json!({
-                    "id": "evt_delta",
-                    "type": "session.next.text.delta",
-                    "data": {
-                        "timestamp": timestamp + 2,
-                        "sessionID": session_id,
-                        "assistantMessageID": "msg_assistant_fixture",
-                        "textID": "txt_fixture",
-                        "delta": "fixture output"
-                    }
-                }),
-            );
-            if request["prompt"]["text"] == "needs approval" {
-                broadcast(
-                    state,
-                    json!({
-                        "id": "evt_permission",
-                        "type": "permission.v2.asked",
-                        "data": {
-                            "id": "per_fixture",
-                            "sessionID": session_id,
-                            "action": "bash",
-                            "resources": ["echo fixture"],
-                            "source": {
-                                "type": "tool",
-                                "messageID": message_id,
-                                "callID": "call_fixture"
-                            }
-                        }
-                    }),
+            thread::sleep(std::time::Duration::from_millis(100));
+        } else {
+            thread::spawn(move || {
+                thread::sleep(std::time::Duration::from_millis(20));
+                run_prompt_scenario(
+                    &scheduled_state,
+                    &scheduled_session_id,
+                    &scheduled_message_id,
+                    &scheduled_delivery,
+                    &prompt,
+                    timestamp,
                 );
-            } else if request["prompt"]["text"] == "complete normally" {
-                broadcast(
-                    state,
-                    json!({
-                        "id": "evt_step_ended",
-                        "type": "session.next.step.ended",
-                        "data": {
-                            "timestamp": timestamp + 3,
-                            "sessionID": session_id,
-                            "assistantMessageID": "msg_assistant_fixture",
-                            "finish": "stop",
-                            "cost": 0,
-                            "tokens": {
-                                "input": 1,
-                                "output": 1,
-                                "reasoning": 0,
-                                "cache": {"read": 0, "write": 0}
-                            }
-                        }
-                    }),
-                );
-                lock(state).active.remove(session_id);
-            }
+            });
         }
         return (
             200,
@@ -274,13 +232,12 @@ fn route(
             .trim_start_matches("/api/session/")
             .trim_end_matches("/wait")
             .trim_end_matches('/');
-        for _ in 0..200 {
+        loop {
             if !lock(state).active.contains(session_id) {
                 return (204, String::new());
             }
             thread::sleep(std::time::Duration::from_millis(5));
         }
-        return (503, json!({"error": "fixture wait timed out"}).to_string());
     }
     if method == "POST" && path.ends_with("/reply") && path.contains("/permission/") {
         let segments = path.split('/').collect::<Vec<_>>();
@@ -302,6 +259,162 @@ fn route(
         return (204, String::new());
     }
     (404, json!({"error": "fixture route not found"}).to_string())
+}
+
+fn run_prompt_scenario(
+    state: &Arc<Mutex<FixtureState>>,
+    session_id: &str,
+    message_id: &str,
+    delivery: &str,
+    prompt: &str,
+    timestamp: u64,
+) {
+    broadcast(
+        state,
+        json!({
+            "id": format!("evt_admitted_{message_id}"),
+            "type": "session.next.prompt.admitted",
+            "data": {
+                "timestamp": timestamp,
+                "sessionID": session_id,
+                "messageID": message_id,
+                "delivery": delivery
+            }
+        }),
+    );
+    if delivery != "queue" {
+        return;
+    }
+
+    if prompt == "multiple steps" {
+        let first = format!("assistant_{message_id}_1");
+        let second = format!("assistant_{message_id}_2");
+        broadcast(state, step_started(session_id, &first, timestamp + 1));
+        broadcast(
+            state,
+            step_ended(session_id, &first, "tool-calls", timestamp + 3),
+        );
+        broadcast(state, step_started(session_id, &second, timestamp + 4));
+        lock(state).active.remove(session_id);
+        broadcast(state, step_ended(session_id, &second, "stop", timestamp + 5));
+        return;
+    }
+
+    let assistant_message_id = format!("assistant_{message_id}");
+    broadcast(
+        state,
+        step_started(session_id, &assistant_message_id, timestamp + 1),
+    );
+    broadcast(
+        state,
+        json!({
+            "id": format!("evt_delta_{message_id}"),
+            "type": "session.next.text.delta",
+            "data": {
+                "timestamp": timestamp + 2,
+                "sessionID": session_id,
+                "assistantMessageID": assistant_message_id,
+                "textID": format!("txt_{message_id}"),
+                "delta": "fixture output"
+            }
+        }),
+    );
+
+    match prompt {
+        "needs approval" => broadcast(
+            state,
+            json!({
+                "id": format!("evt_permission_{message_id}"),
+                "type": "permission.v2.asked",
+                "data": {
+                    "id": "per_fixture",
+                    "sessionID": session_id,
+                    "action": "bash",
+                    "resources": ["echo fixture"],
+                    "source": {
+                        "type": "tool",
+                        "messageID": message_id,
+                        "callID": "call_fixture"
+                    }
+                }
+            }),
+        ),
+        "delay previous step" => {
+            lock(state).delayed_step_ended = Some(step_ended(
+                session_id,
+                &assistant_message_id,
+                "stop",
+                timestamp + 50,
+            ));
+        }
+        "complete after delayed" => {
+            let delayed = { lock(state).delayed_step_ended.take() };
+            if let Some(delayed) = delayed {
+                broadcast(state, delayed);
+            }
+            lock(state).active.remove(session_id);
+            broadcast(
+                state,
+                step_ended(session_id, &assistant_message_id, "stop", timestamp + 3),
+            );
+        }
+        "wait until cancelled" => {
+            broadcast(
+                state,
+                step_ended(session_id, &assistant_message_id, "stop", timestamp + 3),
+            );
+        }
+        "idle interrupt" => {
+            lock(state).active.remove(session_id);
+        }
+        "complete normally" | "response after completion" => {
+            lock(state).active.remove(session_id);
+            broadcast(
+                state,
+                step_ended(session_id, &assistant_message_id, "stop", timestamp + 3),
+            );
+        }
+        _ => {}
+    }
+}
+
+fn step_started(session_id: &str, assistant_message_id: &str, timestamp: u64) -> Value {
+    json!({
+        "id": format!("evt_step_started_{assistant_message_id}"),
+        "type": "session.next.step.started",
+        "data": {
+            "timestamp": timestamp,
+            "sessionID": session_id,
+            "assistantMessageID": assistant_message_id,
+            "agent": "build",
+            "model": {"id": "fixture", "providerID": "fixture"}
+        }
+    })
+}
+
+fn step_ended(
+    session_id: &str,
+    assistant_message_id: &str,
+    finish: &str,
+    timestamp: u64,
+) -> Value {
+    json!({
+        "id": format!("evt_step_ended_{assistant_message_id}_{timestamp}"),
+        "type": "session.next.step.ended",
+        "data": {
+            "timestamp": timestamp,
+            "sessionID": session_id,
+            "assistantMessageID": assistant_message_id,
+            "finish": finish,
+            "cost": 0,
+            "tokens": {
+                "input": 1,
+                "output": 1,
+                "reasoning": 0,
+                "cache": {"read": 0, "write": 0}
+            }
+        }
+    })
 }
 
 fn session(id: &str, title: &str, directory: &str, timestamp: u64) -> Value {

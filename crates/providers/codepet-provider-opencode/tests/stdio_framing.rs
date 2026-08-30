@@ -57,6 +57,122 @@ fn standalone_binary_uses_provider_json_line_framing() {
     assert_eq!(responses[2]["result"]["accepted"], true);
 }
 
+#[test]
+fn turn_generation_is_unique_across_provider_processes() {
+    let first = start_turn_resource_from_fresh_provider();
+    let second = start_turn_resource_from_fresh_provider();
+    assert_ne!(first, second);
+}
+
+fn start_turn_resource_from_fresh_provider() -> String {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_codepet-provider-opencode"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let route = serde_json::json!({
+        "deviceId": "generation-device",
+        "providerPluginId": "dev.codepet.opencode",
+        "providerInstanceId": "generation-opencode"
+    });
+    let mut resource = None;
+    for frame in [
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "initialize",
+            "method": "provider.initialize",
+            "params": {
+                "hostClientId": "generation-host",
+                "hostDeviceId": "generation-device",
+                "hostVersion": "0.1.0",
+                "supportedVersions": {"minVersion": 1, "maxVersion": 1}
+            }
+        }),
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "create",
+            "method": "instance.create",
+            "params": {
+                "route": route,
+                "instanceKind": "opencode",
+                "displayName": "Generation OpenCode",
+                "settings": {
+                    "serverExecutable": env!("CARGO_BIN_EXE_opencode-server-fixture"),
+                    "serverVersion": "1.18.25",
+                    "serverArgs": ["serve"]
+                }
+            }
+        }),
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "start",
+            "method": "instance.start",
+            "params": {"route": route}
+        }),
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "turn",
+            "method": "turn.start",
+            "params": {
+                "conversation": {
+                    "deviceId": "generation-device",
+                    "providerPluginId": "dev.codepet.opencode",
+                    "providerInstanceId": "generation-opencode",
+                    "nativeResourceId": "ses_fixture"
+                },
+                "clientMessageId": "same-client-message",
+                "message": "needs approval"
+            }
+        }),
+    ] {
+        let expected_id = frame["id"].as_str().unwrap().to_string();
+        write_frame(&mut stdin, &frame);
+        let response = read_response(&mut stdout, &expected_id);
+        assert!(response.get("error").is_none(), "{response}");
+        if expected_id == "turn" {
+            resource = Some(
+                response["result"]["turn"]["resource"]["nativeResourceId"]
+                    .as_str()
+                    .unwrap()
+                    .to_string(),
+            );
+        }
+    }
+    let shutdown = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": "shutdown",
+        "method": "provider.shutdown",
+        "params": {}
+    });
+    write_frame(&mut stdin, &shutdown);
+    let response = read_response(&mut stdout, "shutdown");
+    assert_eq!(response["result"]["accepted"], true);
+    drop(stdin);
+    drop(stdout);
+    assert!(child.wait().unwrap().success());
+    resource.unwrap()
+}
+
+fn write_frame(stdin: &mut std::process::ChildStdin, frame: &Value) {
+    serde_json::to_writer(&mut *stdin, frame).unwrap();
+    stdin.write_all(b"\n").unwrap();
+    stdin.flush().unwrap();
+}
+
+fn read_response(stdout: &mut BufReader<std::process::ChildStdout>, id: &str) -> Value {
+    loop {
+        let mut line = String::new();
+        assert_ne!(stdout.read_line(&mut line).unwrap(), 0);
+        let response: Value = serde_json::from_str(&line).unwrap();
+        if response["id"] == id {
+            return response;
+        }
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn malformed_host_frame_still_cleans_up_the_owned_server() {
