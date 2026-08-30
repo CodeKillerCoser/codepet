@@ -94,7 +94,7 @@ Access mode：
 - 每个 turn 建立独立 process group。后台 reaper 独占 `Child` 并负责 `wait`；control 只保存 PID/process-group ID 与退出通知。
 - result/aborted 只记录 pending completion；进程真实退出、stdout 排空后才发布 terminal 并删除 active。此间下一 turn 返回 `turn_already_active`。
 - interrupt、instance.stop、destroy 和 protocol shutdown 先给有界 grace，再杀整个 process group并等待 reaper。
-- Provider binary 把服务循环结果与最终 cleanup 分开。无论正常 EOF、坏/超大 Host frame、response write 或 flush 失败，都会调用不发布 event、不依赖 stdout 的 `reap_active_processes`，然后返回原始服务结果。
+- Provider binary 把服务循环结果与最终 cleanup 分开。正常 EOF、response write 或 flush 失败都会调用不发布 event、不依赖 stdout 的 `reap_active_processes`。坏/超大 Host frame 直接把 fatal 结果交给外层，先 reap 再 fail-stop，当前不回写错误响应，避免不可写或背压 stdout 抢在 cleanup 前阻塞。
 - Claude stdout 单物理行硬限制为 4 MiB；超过限制且无换行时立即杀进程组。stderr 单行限制 64 KiB。
 - Provider codec frame 上限是 1 MiB。所有对外 text delta/result 按 UTF-8 边界切为最多 64 KiB；终态 metadata 限制为 4 KiB。
 - output event 失败时 active 不会先删除；正常 lifecycle 仍尝试尺寸安全的 failed terminal。致命 stdio cleanup 不等待 terminal event 成功，只等待进程退出。
@@ -112,7 +112,7 @@ Access mode：
 
 - `provider_inherits_claude_project_configuration_and_rejects_strong_access_modes`：命令行无隔离/permission flags，无害 `.mcp.json` 沿 workspace 默认路径可见，read-only/full-access fail closed。
 - `provider_binary_reaps_active_tree_after_response_pipe_breaks`：active ignore-SIGINT turn 下关闭 Provider stdout，Provider 非零退出且 root/child PID 消失。
-- `provider_binary_reaps_active_tree_after_an_oversized_host_frame`：active turn 下发送超大 Host frame，错误响应后 root/child PID 消失。
+- `provider_binary_reaps_active_tree_after_invalid_json_under_stdout_backpressure`、`provider_binary_reaps_active_tree_after_an_oversized_host_frame_under_stdout_backpressure`：预先填满且不读取 Provider stdout 后发送 fatal frame，Provider 非零退出且 root/child PID 消失。
 - `provider_reaps_result_interrupt_stdout_and_oversize_process_trees`：result-then-sleep、ignore-SIGINT、stdout-close、超长无换行及 stop/destroy/shutdown 回收。
 - `provider_chunks_two_mib_result_before_the_one_mib_provider_frame_limit`：2 MiB result 完整分块并抵达 terminal。
 - `provider_event_failure_still_publishes_a_small_failed_terminal`：正常 output send failure 不留下 pending。

@@ -14,6 +14,10 @@ use codepet_provider_sdk::{
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(unix)]
+use std::os::fd::OwnedFd;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -812,6 +816,7 @@ fn provider_binary_reaps_active_tree_after_response_pipe_breaks() {
         mut child,
         mut stdin,
         stdout,
+        stdout_backpressure: _,
         pids,
     } = active_provider_binary(workspace.path());
     drop(stdout);
@@ -836,19 +841,37 @@ fn provider_binary_reaps_active_tree_after_response_pipe_breaks() {
 
 #[cfg(unix)]
 #[test]
-fn provider_binary_reaps_active_tree_after_an_oversized_host_frame() {
+fn provider_binary_reaps_active_tree_after_invalid_json_under_stdout_backpressure() {
     let workspace = tempfile::tempdir().unwrap();
     let ActiveProviderBinary {
         mut child,
         mut stdin,
-        mut stdout,
+        stdout: _stdout,
+        mut stdout_backpressure,
         pids,
     } = active_provider_binary(workspace.path());
-    let output = std::thread::spawn(move || {
-        let mut output = String::new();
-        stdout.read_to_string(&mut output).unwrap();
-        output
-    });
+    saturate_provider_stdout(&mut stdout_backpressure);
+    stdin.write_all(b"{not-json}\n").unwrap();
+    stdin.flush().unwrap();
+    drop(stdin);
+
+    let status = wait_for_provider_exit(&mut child);
+    assert!(!status.success());
+    assert_pids_gone(pids);
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_binary_reaps_active_tree_after_an_oversized_host_frame_under_stdout_backpressure() {
+    let workspace = tempfile::tempdir().unwrap();
+    let ActiveProviderBinary {
+        mut child,
+        mut stdin,
+        stdout: _stdout,
+        mut stdout_backpressure,
+        pids,
+    } = active_provider_binary(workspace.path());
+    saturate_provider_stdout(&mut stdout_backpressure);
     stdin.write_all(&vec![b'x'; 1024 * 1024 + 1]).unwrap();
     stdin.write_all(b"\n").unwrap();
     stdin.flush().unwrap();
@@ -856,12 +879,11 @@ fn provider_binary_reaps_active_tree_after_an_oversized_host_frame() {
 
     let status = wait_for_provider_exit(&mut child);
     assert!(!status.success());
-    assert!(output.join().unwrap().contains("-32600"));
     assert_pids_gone(pids);
 }
 
 #[test]
-fn provider_binary_fails_stop_after_an_oversized_host_frame() {
+fn provider_binary_fail_stops_without_reply_after_an_oversized_host_frame() {
     let mut child = Command::new(provider_executable())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -901,11 +923,7 @@ fn provider_binary_fails_stop_after_an_oversized_host_frame() {
         .unwrap()
         .read_to_string(&mut output)
         .unwrap();
-    let frames = output.lines().collect::<Vec<_>>();
-    assert_eq!(frames.len(), 1);
-    let response: Value = serde_json::from_str(frames[0]).unwrap();
-    assert_eq!(response["error"]["code"], -32600);
-    assert_ne!(response["id"], "must-not-run");
+    assert!(output.is_empty());
 }
 
 #[test]
@@ -1092,20 +1110,24 @@ fn assert_resource_route(
 struct ActiveProviderBinary {
     child: std::process::Child,
     stdin: std::process::ChildStdin,
-    stdout: BufReader<std::process::ChildStdout>,
+    stdout: BufReader<UnixStream>,
+    stdout_backpressure: UnixStream,
     pids: [u32; 2],
 }
 
 #[cfg(unix)]
 fn active_provider_binary(workspace: &Path) -> ActiveProviderBinary {
+    let (provider_stdout, host_stdout) = UnixStream::pair().unwrap();
+    let stdout_backpressure = provider_stdout.try_clone().unwrap();
+    let provider_stdout: OwnedFd = provider_stdout.into();
     let mut child = Command::new(provider_executable())
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
+        .stdout(Stdio::from(provider_stdout))
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
     let mut stdin = child.stdin.take().unwrap();
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut stdout = BufReader::new(host_stdout);
     let mut pending = Vec::new();
     binary_request_collecting_events(
         &mut stdin,
@@ -1179,8 +1201,26 @@ fn active_provider_binary(workspace: &Path) -> ActiveProviderBinary {
         child,
         stdin,
         stdout,
+        stdout_backpressure,
         pids,
     }
+}
+
+#[cfg(unix)]
+fn saturate_provider_stdout(stdout: &mut UnixStream) {
+    stdout.set_nonblocking(true).unwrap();
+    let chunk = [b'x'; 16 * 1024];
+    let mut filled = 0usize;
+    loop {
+        match stdout.write(&chunk) {
+            Ok(0) => panic!("Provider stdout backpressure socket closed while filling"),
+            Ok(written) => filled += written,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(error) => panic!("fill Provider stdout backpressure socket: {error}"),
+        }
+    }
+    stdout.set_nonblocking(false).unwrap();
+    assert!(filled > 0, "Provider stdout socket did not accept test data");
 }
 
 #[cfg(unix)]

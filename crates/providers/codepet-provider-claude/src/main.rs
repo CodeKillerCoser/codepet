@@ -67,15 +67,7 @@ async fn run_service_loop(
         let message = match codec.read_message(&mut *reader) {
             Ok(Some(message)) => message,
             Ok(None) => break,
-            Err(error) => {
-                let message = error.error.message.clone();
-                let _ = write_message(
-                    codec,
-                    writer,
-                    ProviderWireMessage::Response(error.into_response()),
-                );
-                return Err(message);
-            }
+            Err(error) => return Err(error.error.message),
         };
         let request = match message {
             ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request)) => request,
