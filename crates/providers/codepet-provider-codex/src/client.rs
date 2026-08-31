@@ -503,11 +503,7 @@ impl CodexAppServerSession {
         let response: ThreadListResponse =
             self.request("thread/list", thread_list_params(&request))?;
         Ok(CodexThreadPage {
-            data: response
-                .data
-                .into_iter()
-                .map(CodexConversationSnapshot::from_thread)
-                .collect(),
+            data: CodexConversationSnapshot::from_threads(response.data),
             next_cursor: response.next_cursor,
         })
     }
@@ -1535,11 +1531,13 @@ mod tests {
     }
 
     #[test]
-    fn thread_list_projects_a_linked_worktree_from_the_wire() {
+    fn thread_list_projects_live_and_deleted_managed_worktrees_from_the_wire() {
         let temp = tempfile::tempdir().unwrap();
         let main = temp.path().join("main/project");
         let git_dir = main.join(".git/worktrees/linked");
-        let worktree = temp.path().join("worktrees/linked/project");
+        let managed_root = temp.path().join(".codex/worktrees");
+        let worktree = managed_root.join("linked/project");
+        let deleted = managed_root.join("deleted/project");
         fs::create_dir_all(&git_dir).unwrap();
         fs::create_dir_all(&worktree).unwrap();
         fs::write(git_dir.join("commondir"), "../..\n").unwrap();
@@ -1561,24 +1559,34 @@ mod tests {
             .send(json!({
                 "id": request["id"],
                 "result": {
-                    "data": [thread_fixture(
-                        "thread-worktree",
-                        worktree.to_str().unwrap(),
-                        "idle",
-                        vec![]
-                    )],
+                    "data": [
+                        thread_fixture(
+                            "thread-worktree",
+                            worktree.to_str().unwrap(),
+                            "idle",
+                            vec![]
+                        ),
+                        thread_fixture(
+                            "thread-deleted-worktree",
+                            deleted.to_str().unwrap(),
+                            "idle",
+                            vec![]
+                        )
+                    ],
                     "nextCursor": null
                 }
             }))
             .unwrap();
 
-        let snapshot = listed.join().unwrap().data.pop().unwrap();
+        let snapshots = listed.join().unwrap().data;
 
-        assert_eq!(snapshot.thread.cwd, worktree.to_str().unwrap());
+        assert_eq!(snapshots[0].thread.cwd, worktree.to_str().unwrap());
+        assert_eq!(snapshots[1].thread.cwd, deleted.to_str().unwrap());
         assert_eq!(
-            snapshot.workspace_root.as_deref(),
+            snapshots[0].workspace_root.as_deref(),
             fs::canonicalize(main).unwrap().to_str()
         );
+        assert_eq!(snapshots[0].workspace_root, snapshots[1].workspace_root);
         session.shutdown().unwrap();
     }
 

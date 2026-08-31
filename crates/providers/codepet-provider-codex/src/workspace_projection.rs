@@ -1,11 +1,176 @@
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+enum RepositoryIdentity {
+    Remote(String),
+    CommonDir(PathBuf),
+}
+
+#[derive(Clone, Debug)]
+struct RepositoryEvidence {
+    identity: RepositoryIdentity,
+    project_root: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct ManagedWorkspace {
+    managed_root: PathBuf,
+    project_name: String,
+}
+
+pub(crate) struct WorkspaceProjector {
+    managed_roots: Vec<PathBuf>,
+    repositories_by_name: BTreeMap<String, BTreeMap<RepositoryIdentity, PathBuf>>,
+    input_repositories: HashMap<PathBuf, RepositoryEvidence>,
+}
+
+impl WorkspaceProjector {
+    pub(crate) fn prepare<'a>(values: impl IntoIterator<Item = &'a str>) -> Self {
+        let workspaces = values
+            .into_iter()
+            .filter_map(|value| normalized_workspace(Some(value)).map(|(path, _)| path))
+            .collect::<Vec<_>>();
+        let mut managed_roots = known_managed_roots();
+        managed_roots.extend(
+            workspaces
+                .iter()
+                .filter_map(|workspace| inferred_codex_managed_root(workspace)),
+        );
+        managed_roots.sort();
+        managed_roots.dedup();
+        managed_roots.sort_by(|left, right| {
+            right
+                .components()
+                .count()
+                .cmp(&left.components().count())
+                .then_with(|| left.cmp(right))
+        });
+
+        let mut projector = Self {
+            managed_roots,
+            repositories_by_name: BTreeMap::new(),
+            input_repositories: HashMap::new(),
+        };
+        let mut managed_names = BTreeMap::<PathBuf, BTreeSet<String>>::new();
+        for workspace in &workspaces {
+            let managed = projector.managed_workspace(workspace);
+            if let Some(managed) = &managed {
+                managed_names
+                    .entry(managed.managed_root.clone())
+                    .or_default()
+                    .insert(managed.project_name.clone());
+            }
+            let Some(evidence) = discover_repository(workspace) else {
+                continue;
+            };
+            let project_name = managed
+                .map(|managed| managed.project_name)
+                .or_else(|| project_name(&evidence.project_root));
+            if let Some(project_name) = project_name {
+                projector.insert_repository(project_name, &evidence);
+            }
+            projector
+                .input_repositories
+                .insert(workspace.clone(), evidence);
+        }
+        for (managed_root, project_names) in managed_names {
+            projector.scan_managed_repositories(&managed_root, &project_names);
+        }
+        projector
+    }
+
+    pub(crate) fn project(&self, value: Option<&str>) -> Option<String> {
+        let (workspace, fallback) = normalized_workspace(value)?;
+        let managed = self.managed_workspace(&workspace);
+        if let Some(evidence) = self
+            .input_repositories
+            .get(&workspace)
+            .cloned()
+            .or_else(|| discover_repository(&workspace))
+        {
+            let name = managed
+                .as_ref()
+                .map(|managed| managed.project_name.clone())
+                .or_else(|| project_name(&evidence.project_root));
+            let project_root = name
+                .as_ref()
+                .and_then(|name| self.repositories_by_name.get(name))
+                .and_then(|repositories| repositories.get(&evidence.identity))
+                .unwrap_or(&evidence.project_root);
+            return path_string(project_root).or(Some(fallback));
+        }
+        if let Some(managed) = managed {
+            let repositories = self.repositories_by_name.get(&managed.project_name);
+            let project_root = match repositories.map(BTreeMap::len).unwrap_or(0) {
+                // Remove the ephemeral worktree id when no surviving metadata can identify it.
+                0 => managed.managed_root.join(&managed.project_name),
+                1 => repositories
+                    .and_then(|repositories| repositories.values().next())
+                    .cloned()
+                    .unwrap_or(workspace),
+                // Multiple proven identities make a deleted worktree ambiguous.
+                _ => workspace,
+            };
+            return path_string(&project_root).or(Some(fallback));
+        }
+        path_string(&workspace).or(Some(fallback))
+    }
+
+    fn managed_workspace(&self, workspace: &Path) -> Option<ManagedWorkspace> {
+        self.managed_roots.iter().find_map(|managed_root| {
+            let relative = workspace.strip_prefix(managed_root).ok()?;
+            let mut components = relative.components();
+            let Component::Normal(_) = components.next()? else {
+                return None;
+            };
+            let Component::Normal(project_name) = components.next()? else {
+                return None;
+            };
+            Some(ManagedWorkspace {
+                managed_root: managed_root.clone(),
+                project_name: project_name.to_str()?.to_string(),
+            })
+        })
+    }
+
+    fn insert_repository(&mut self, project_name: String, evidence: &RepositoryEvidence) {
+        let representative = self
+            .repositories_by_name
+            .entry(project_name)
+            .or_default()
+            .entry(evidence.identity.clone())
+            .or_insert_with(|| evidence.project_root.clone());
+        if evidence.project_root < *representative {
+            *representative = evidence.project_root.clone();
+        }
+    }
+
+    fn scan_managed_repositories(
+        &mut self,
+        managed_root: &Path,
+        project_names: &BTreeSet<String>,
+    ) {
+        let Ok(entries) = fs::read_dir(managed_root) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            for project_name in project_names {
+                let candidate = entry.path().join(project_name);
+                let Some(evidence) = discover_repository(&candidate) else {
+                    continue;
+                };
+                self.insert_repository(project_name.clone(), &evidence);
+            }
+        }
+    }
+}
+
 pub fn project_workspace_root(value: Option<&str>) -> Option<String> {
-    let (workspace, fallback) = normalized_workspace(value)?;
-    let project_root = discover_repository_root(&workspace).unwrap_or(workspace);
-    path_string(&project_root).or(Some(fallback))
+    let value = value?;
+    WorkspaceProjector::prepare([value]).project(Some(value))
 }
 
 fn normalized_workspace(value: Option<&str>) -> Option<(PathBuf, String)> {
@@ -24,7 +189,7 @@ fn normalized_workspace(value: Option<&str>) -> Option<(PathBuf, String)> {
     Some((lexical, fallback))
 }
 
-fn discover_repository_root(workspace: &Path) -> Option<PathBuf> {
+fn discover_repository(workspace: &Path) -> Option<RepositoryEvidence> {
     if !workspace.exists() {
         return None;
     }
@@ -38,11 +203,75 @@ fn discover_repository_root(workspace: &Path) -> Option<PathBuf> {
         resolve_git_file(&git_marker)?
     };
     let common_dir = resolve_common_dir(&git_dir)?;
-    if common_dir.file_name() == Some(OsStr::new(".git")) {
-        return common_dir.parent().map(Path::to_path_buf);
+    let project_root = if common_dir.file_name() == Some(OsStr::new(".git")) {
+        common_dir.parent().map(Path::to_path_buf)?
+    } else {
+        configured_worktree(&common_dir)
+            .or_else(|| fs::canonicalize(repository_root).ok())?
+    };
+    let identity = repository_remote_identity(&common_dir)
+        .map(RepositoryIdentity::Remote)
+        .unwrap_or_else(|| RepositoryIdentity::CommonDir(common_dir));
+    Some(RepositoryEvidence {
+        identity,
+        project_root,
+    })
+}
+
+fn project_name(project_root: &Path) -> Option<String> {
+    project_root.file_name()?.to_str().map(str::to_string)
+}
+
+fn known_managed_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(codex_home) = std::env::var_os("CODEX_HOME") {
+        roots.push(absolute_lexical(Path::new(&codex_home)).join("worktrees"));
     }
-    configured_worktree(&common_dir)
-        .or_else(|| fs::canonicalize(repository_root).ok())
+    if let Some(home) = std::env::var_os("HOME") {
+        roots.push(
+            absolute_lexical(Path::new(&home))
+                .join(".codex")
+                .join("worktrees"),
+        );
+    }
+    #[cfg(windows)]
+    if let Some(profile) = std::env::var_os("USERPROFILE") {
+        roots.push(
+            absolute_lexical(Path::new(&profile))
+                .join(".codex")
+                .join("worktrees"),
+        );
+    }
+    roots
+}
+
+fn inferred_codex_managed_root(path: &Path) -> Option<PathBuf> {
+    let components = path.components().collect::<Vec<_>>();
+    let mut prefix = PathBuf::new();
+    for (index, component) in components.iter().enumerate() {
+        prefix.push(component.as_os_str());
+        if !matches!(component, Component::Normal(value) if *value == OsStr::new(".codex")) {
+            continue;
+        }
+        let Some(Component::Normal(next)) = components.get(index + 1) else {
+            continue;
+        };
+        if *next == OsStr::new("worktrees") {
+            prefix.push(next);
+            return Some(prefix);
+        }
+    }
+    None
+}
+
+fn absolute_lexical(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        lexical_normalize(path)
+    } else if let Ok(current_dir) = std::env::current_dir() {
+        lexical_normalize(&current_dir.join(path))
+    } else {
+        path.to_path_buf()
+    }
 }
 
 fn resolve_git_file(marker: &Path) -> Option<PathBuf> {
@@ -79,6 +308,95 @@ fn resolve_common_dir(git_dir: &Path) -> Option<PathBuf> {
         git_dir.join(path)
     };
     fs::canonicalize(resolved).ok()
+}
+
+fn repository_remote_identity(common_dir: &Path) -> Option<String> {
+    let contents = fs::read_to_string(common_dir.join("config")).ok()?;
+    let mut current_remote = None;
+    let mut remotes = BTreeMap::<String, String>::new();
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            current_remote = remote_section_name(line);
+            continue;
+        }
+        let Some(remote) = current_remote.as_ref() else {
+            continue;
+        };
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim().eq_ignore_ascii_case("url") {
+            remotes.insert(remote.clone(), unquote(value.trim()).to_string());
+        }
+    }
+    let value = if let Some(origin) = remotes.get("origin") {
+        origin
+    } else if remotes.len() == 1 {
+        remotes.values().next()?
+    } else {
+        return None;
+    };
+    normalize_remote_identity(value)
+}
+
+fn remote_section_name(line: &str) -> Option<String> {
+    let section = line.strip_prefix('[')?.strip_suffix(']')?.trim();
+    let mut fields = section.splitn(2, char::is_whitespace);
+    if !fields.next()?.eq_ignore_ascii_case("remote") {
+        return None;
+    }
+    let name = unquote(fields.next()?.trim());
+    (!name.is_empty()).then(|| name.to_ascii_lowercase())
+}
+
+fn normalize_remote_identity(value: &str) -> Option<String> {
+    let value = value.trim().trim_end_matches('/');
+    if value.is_empty() {
+        return None;
+    }
+    if let Some((scheme, remainder)) = value.split_once("://") {
+        if !scheme.eq_ignore_ascii_case("file") {
+            if let Some((authority, path)) = remainder.split_once('/') {
+                let host = authority.rsplit('@').next()?.to_ascii_lowercase();
+                let path = trim_git_suffix(path.trim_matches('/'));
+                if !host.is_empty() && !path.is_empty() {
+                    return Some(format!("{host}/{path}"));
+                }
+            }
+        }
+    } else if let Some((authority, path)) = value.split_once(':') {
+        let is_windows_drive = authority.len() == 1
+            && authority
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphabetic);
+        if !is_windows_drive && !authority.contains('/') && !authority.contains('\\') {
+            let host = authority.rsplit('@').next()?.to_ascii_lowercase();
+            let path = trim_git_suffix(path.trim_matches('/'));
+            if !host.is_empty() && !path.is_empty() {
+                return Some(format!("{host}/{path}"));
+            }
+        }
+    }
+    let value = trim_git_suffix(value).trim_end_matches('/');
+    if value.starts_with("file://") || Path::new(value).is_absolute() {
+        return Some(value.to_string());
+    }
+    None
+}
+
+fn trim_git_suffix(value: &str) -> &str {
+    let Some(index) = value.len().checked_sub(4) else {
+        return value;
+    };
+    match value.get(index..) {
+        Some(suffix) if suffix.eq_ignore_ascii_case(".git") => &value[..index],
+        _ => value,
+    }
 }
 
 fn configured_worktree(common_dir: &Path) -> Option<PathBuf> {
@@ -185,24 +503,97 @@ mod tests {
     }
 
     #[test]
-    fn same_named_repositories_keep_distinct_project_roots() {
-        let first = RepositoryFixture::new("shared");
-        let second = RepositoryFixture::new("shared");
+    fn same_named_git_and_non_git_workspaces_stay_distinct() {
+        let repository = RepositoryFixture::new("shared");
+        let plain_temp = TempDir::new().unwrap();
+        let plain = plain_temp.path().join("shared");
+        fs::create_dir_all(&plain).unwrap();
+        let repository_path = repository.main.to_str().unwrap();
+        let plain_path = plain.to_str().unwrap();
+        let projector = WorkspaceProjector::prepare([repository_path, plain_path]);
 
         assert_ne!(
-            project_workspace_root(Some(first.main.to_str().unwrap())),
-            project_workspace_root(Some(second.main.to_str().unwrap()))
+            projector.project(Some(repository_path)),
+            projector.project(Some(plain_path))
         );
     }
 
     #[test]
-    fn missing_workspace_falls_back_to_its_normalized_path() {
+    fn same_named_repositories_keep_distinct_project_roots() {
+        let first = RepositoryFixture::new("shared");
+        let second = RepositoryFixture::new("shared");
+        let managed = TempDir::new().unwrap();
+        let missing = managed
+            .path()
+            .join(".codex/worktrees/deleted/shared");
+        let first_path = first.main.to_str().unwrap();
+        let second_path = second.main.to_str().unwrap();
+        let missing_path = missing.to_str().unwrap();
+        let projector = WorkspaceProjector::prepare([first_path, second_path, missing_path]);
+
+        assert_ne!(
+            projector.project(Some(first_path)),
+            projector.project(Some(second_path))
+        );
+        assert_eq!(
+            projector.project(Some(missing_path)),
+            path_string(&missing)
+        );
+    }
+
+    #[test]
+    fn deleted_managed_worktrees_share_a_stable_name_fallback() {
         let temp = TempDir::new().unwrap();
-        let missing = temp.path().join(".codex/worktrees/deleted/project");
+        let managed_root = temp.path().join(".codex/worktrees");
+        let first = managed_root.join("deleted-one/project");
+        let second = managed_root.join("deleted-two/project");
+        let first_path = first.to_str().unwrap();
+        let second_path = second.to_str().unwrap();
+        let projector = WorkspaceProjector::prepare([first_path, second_path]);
 
         assert_eq!(
-            project_workspace_root(Some(missing.to_str().unwrap())),
-            path_string(&lexical_normalize(&missing))
+            projector.project(Some(first_path)),
+            projector.project(Some(second_path))
+        );
+        assert_eq!(
+            projector.project(Some(first_path)),
+            path_string(&managed_root.join("project"))
+        );
+    }
+
+    #[test]
+    fn deleted_managed_worktree_uses_the_only_proven_repository() {
+        let fixture = RepositoryFixture::new("project");
+        let managed_root = fixture.temp.path().join(".codex/worktrees");
+        let live = fixture.linked_worktree_at(&managed_root, "live");
+        let missing = managed_root.join("deleted/project");
+        let live_path = live.to_str().unwrap();
+        let missing_path = missing.to_str().unwrap();
+        let projector = WorkspaceProjector::prepare([live_path, missing_path]);
+
+        assert_eq!(
+            projector.project(Some(live_path)),
+            projector.project(Some(missing_path))
+        );
+        assert_eq!(
+            projector.project(Some(missing_path)),
+            path_string(&fs::canonicalize(&fixture.main).unwrap())
+        );
+    }
+
+    #[test]
+    fn clones_with_the_same_remote_share_a_representative_root() {
+        let first = RepositoryFixture::new("shared");
+        let second = RepositoryFixture::new("shared");
+        first.set_remote("https://example.invalid/team/shared.git");
+        second.set_remote("git@example.invalid:team/shared.git");
+        let first_path = first.main.to_str().unwrap();
+        let second_path = second.main.to_str().unwrap();
+        let projector = WorkspaceProjector::prepare([first_path, second_path]);
+
+        assert_eq!(
+            projector.project(Some(first_path)),
+            projector.project(Some(second_path))
         );
     }
 
@@ -253,15 +644,14 @@ mod tests {
         }
 
         fn linked_worktree(&self, id: &str) -> PathBuf {
+            self.linked_worktree_at(&self.temp.path().join("worktrees"), id)
+        }
+
+        fn linked_worktree_at(&self, managed_root: &Path, id: &str) -> PathBuf {
             let git_dir = self.main.join(".git/worktrees").join(id);
             fs::create_dir_all(&git_dir).unwrap();
             fs::write(git_dir.join("commondir"), "../..\n").unwrap();
-            let worktree = self
-                .temp
-                .path()
-                .join("worktrees")
-                .join(id)
-                .join(self.main.file_name().unwrap());
+            let worktree = managed_root.join(id).join(self.main.file_name().unwrap());
             fs::create_dir_all(&worktree).unwrap();
             fs::write(
                 worktree.join(".git"),
@@ -269,6 +659,14 @@ mod tests {
             )
             .unwrap();
             worktree
+        }
+
+        fn set_remote(&self, remote: &str) {
+            fs::write(
+                self.main.join(".git/config"),
+                format!("[remote \"origin\"]\n\turl = {remote}\n"),
+            )
+            .unwrap();
         }
     }
 }

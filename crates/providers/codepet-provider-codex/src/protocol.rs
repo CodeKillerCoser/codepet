@@ -3,7 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use std::fmt;
 
-use crate::workspace_projection::project_workspace_root;
+use crate::workspace_projection::{project_workspace_root, WorkspaceProjector};
 
 pub const CODEX_PLUGIN_ID: &str = "dev.codepet.codex";
 pub const CODEX_INSTANCE_KIND: &str = "codex";
@@ -395,6 +395,25 @@ impl CodexConversationSnapshot {
             model: None,
             reasoning_effort: None,
         }
+    }
+
+    pub(crate) fn from_threads(threads: Vec<CodexThread>) -> Vec<Self> {
+        let projector = WorkspaceProjector::prepare(
+            threads.iter().map(|thread| thread.cwd.as_str()),
+        );
+        threads
+            .into_iter()
+            .map(|thread| {
+                let workspace_root = projector.project(Some(&thread.cwd));
+                Self {
+                    thread,
+                    workspace_root,
+                    permission_level: None,
+                    model: None,
+                    reasoning_effort: None,
+                }
+            })
+            .collect()
     }
 }
 
