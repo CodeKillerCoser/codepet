@@ -2,7 +2,7 @@ use codepet_gateway_sdk::{
     ConversationGetRequest as GatewayConversationGetRequest,
     ConversationListRequest as GatewayConversationListRequest, DeviceDescriptor,
     EventSubscribeRequest, HandshakeRequest,
-    ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
+    GatewayProviderRoute, ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
     ProtocolResponse as GatewayResponse, ProtocolServer as GatewayProtocolServer,
     ProviderListRequest, RemoteHostIdentity, ResponsePayload,
     TurnSendRequest as GatewayTurnSendRequest, VersionRange,
@@ -1118,5 +1118,97 @@ async fn a_crashed_plugin_does_not_change_another_plugin_or_instance_route() {
         .iter()
         .any(|diagnostic| diagnostic.line.contains("fixture crash requested")));
 
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn historical_routes_start_on_demand_and_recover_the_crashed_plugin_generation() {
+    let manager = build_manager(
+        "device-history-recovery",
+        vec![plugin("dev.codepet.history", &["instance-history"])],
+    );
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+    assert!(gateway.start_event_forwarding());
+    let route = GatewayProviderRoute {
+        device_id: "device-history-recovery".to_string(),
+        provider_plugin_id: "dev.codepet.history".to_string(),
+        provider_instance_id: "instance-history".to_string(),
+    };
+
+    let listed = gateway
+        .conversation_list(GatewayConversationListRequest {
+            route: Some(route.clone()),
+            cursor: None,
+            limit: Some(10),
+        })
+        .await
+        .unwrap();
+    assert_eq!(listed.conversations.len(), 1);
+    assert_eq!(
+        listed.conversations[0].resource.provider_plugin_id,
+        route.provider_plugin_id
+    );
+    assert_eq!(
+        listed.conversations[0].resource.provider_instance_id,
+        route.provider_instance_id
+    );
+    let initial_generation = manager
+        .snapshot("dev.codepet.history")
+        .await
+        .unwrap()
+        .generation;
+
+    let crashed = gateway
+        .conversation_get(GatewayConversationGetRequest {
+            conversation: resource(
+                "device-history-recovery",
+                "dev.codepet.history",
+                "instance-history",
+                "crash",
+            ),
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        crashed.code.as_str(),
+        "provider_stdout_eof" | "provider_process_exited"
+    ));
+
+    let recovered_list = gateway
+        .conversation_list(GatewayConversationListRequest {
+            route: Some(route.clone()),
+            cursor: None,
+            limit: Some(10),
+        })
+        .await
+        .unwrap();
+    assert_eq!(recovered_list.conversations.len(), 1);
+    let recovered = gateway
+        .conversation_get(GatewayConversationGetRequest {
+            conversation: resource(
+                "device-history-recovery",
+                "dev.codepet.history",
+                "instance-history",
+                "healthy-after-restart",
+            ),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        recovered.conversation.resource.provider_plugin_id,
+        route.provider_plugin_id
+    );
+    assert_eq!(
+        recovered.conversation.resource.provider_instance_id,
+        route.provider_instance_id
+    );
+    assert!(
+        manager
+            .snapshot("dev.codepet.history")
+            .await
+            .unwrap()
+            .generation
+            > initial_generation
+    );
     manager.shutdown().await;
 }

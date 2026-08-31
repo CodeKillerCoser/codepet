@@ -511,7 +511,12 @@ fn provider_binary_fails_stop_after_an_oversized_host_frame() {
         .spawn()
         .unwrap();
     let mut stdin = child.stdin.take().unwrap();
-    stdin.write_all(&vec![b'x'; 1024 * 1024 + 1]).unwrap();
+    stdin
+        .write_all(&vec![
+            b'x';
+            codepet_provider_sdk::MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES + 1
+        ])
+        .unwrap();
     stdin.write_all(b"\n").unwrap();
     serde_json::to_writer(
         &mut stdin,
@@ -548,6 +553,37 @@ fn provider_binary_fails_stop_after_an_oversized_host_frame() {
     let response: Value = serde_json::from_str(frames[0]).unwrap();
     assert_eq!(response["error"]["code"], -32600);
     assert_ne!(response["id"], "must-not-run");
+}
+
+#[test]
+fn provider_binary_transports_a_complete_history_larger_than_one_mebibyte() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("unused.txt");
+    let mut provider = ProviderBinary::spawn();
+    provider.configure("none", &marker);
+
+    let fetched = provider.request(
+        "large-history",
+        "conversation.get",
+        json!({
+            "conversation": {
+                "deviceId": "device-provider-binary",
+                "providerPluginId": CODEX_PLUGIN_ID,
+                "providerInstanceId": "codex",
+                "nativeResourceId": "thread-large"
+            }
+        }),
+    );
+    assert!(serde_json::to_vec(&fetched).unwrap().len() > 1024 * 1024);
+
+    let described = provider.request("after-large-history", "provider.describe", json!({}));
+    assert_eq!(
+        described
+            .pointer("/result/plugin/pluginId")
+            .and_then(Value::as_str),
+        Some(CODEX_PLUGIN_ID)
+    );
+    provider.request("large-history-shutdown", "provider.shutdown", json!({}));
 }
 
 #[test]

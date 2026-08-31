@@ -509,6 +509,10 @@ impl PluginProcess {
         self.exit.borrow().clone()
     }
 
+    pub(crate) fn is_available(&self) -> bool {
+        !self.shared.is_shutting_down() && self.exit_status().is_none()
+    }
+
     pub fn stderr_diagnostics(&self) -> Vec<StderrDiagnostic> {
         self.diagnostics
             .lock()

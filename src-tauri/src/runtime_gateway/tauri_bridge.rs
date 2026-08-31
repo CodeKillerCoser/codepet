@@ -389,6 +389,13 @@ fn provider_catalog_config(
     catalog_config
 }
 
+fn provider_manager_config() -> PluginManagerConfig {
+    let mut config = PluginManagerConfig::default();
+    config.process.max_frame_bytes =
+        codepet_host::provider_sdk::MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES;
+    config
+}
+
 fn configured_provider_runtime(
     bundled_provider_directory: &Path,
 ) -> Result<
@@ -455,7 +462,7 @@ fn configured_provider_runtime(
         device,
         catalog,
         instances,
-        PluginManagerConfig::default(),
+        provider_manager_config(),
     )?);
     let gateway = Arc::new(ProviderGatewayService::with_remote_identity(
         manager.clone(),
@@ -721,8 +728,8 @@ fn start_local_event_bridge<R: Runtime>(
 mod tests {
     use super::{
         inject_runtime_executable, local_device_descriptor, non_empty_system_value,
-        provider_catalog_config, spawn_provider_host_startup, ProviderGatewayService,
-        ProviderHostState,
+        provider_catalog_config, provider_manager_config, spawn_provider_host_startup,
+        ProviderGatewayService, ProviderHostState,
     };
     use crate::agent_runtime::{
         AgentRuntime, AgentRuntimeSource, AgentRuntimeStatus, CLAUDE_RUNTIME_PROVIDER_ID,
@@ -752,6 +759,18 @@ mod tests {
         assert_eq!(
             non_empty_system_value("  value  ".to_string(), "fallback"),
             "value"
+        );
+    }
+
+    #[test]
+    fn provider_host_accepts_bounded_complete_conversation_history_frames() {
+        assert_eq!(
+            provider_manager_config().process.max_frame_bytes,
+            codepet_host::provider_sdk::MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES
+        );
+        assert!(
+            provider_manager_config().process.max_frame_bytes
+                > codepet_host::provider_sdk::DEFAULT_MAX_JSON_LINE_BYTES
         );
     }
 

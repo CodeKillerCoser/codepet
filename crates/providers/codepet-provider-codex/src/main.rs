@@ -1,7 +1,7 @@
 use codepet_provider_codex::CodexProvider;
 use codepet_provider_sdk::{
     dispatch, JsonLineCodec, JsonRpcInboundRequest, ProtocolEvent, ProviderShutdownRequest,
-    ProviderWireMessage, ProtocolServer,
+    ProviderWireMessage, ProtocolServer, MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES,
 };
 use std::io::{BufReader, BufWriter, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -34,7 +34,8 @@ async fn main() {
 }
 
 async fn run() -> Result<(), String> {
-    let codec = JsonLineCodec::default();
+    let codec = JsonLineCodec::new(MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES)
+        .map_err(|error| error.message)?;
     let writer = Arc::new(Mutex::new(BufWriter::new(std::io::stdout())));
     let events = Arc::new(StdioEventSink {
         codec,

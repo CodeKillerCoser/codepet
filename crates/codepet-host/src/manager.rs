@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -130,6 +130,7 @@ struct PluginManagerInner {
     device: Arc<DeviceRegistry>,
     instances: ProviderInstanceRegistry,
     plugins: RwLock<BTreeMap<String, PluginEntry>>,
+    plugin_operations: BTreeMap<String, Arc<Mutex<()>>>,
     updates: mpsc::Sender<HostUpdate>,
     update_receiver: StdMutex<Option<mpsc::Receiver<HostUpdate>>>,
     shutting_down: AtomicBool,
@@ -206,12 +207,17 @@ impl PluginManager {
                 },
             );
         }
+        let plugin_operations = plugins
+            .keys()
+            .map(|plugin_id| (plugin_id.clone(), Arc::new(Mutex::new(()))))
+            .collect();
         let (updates, update_receiver) = mpsc::channel(config.event_capacity.max(1));
         Ok(Self {
             inner: Arc::new(PluginManagerInner {
                 device,
                 instances,
                 plugins: RwLock::new(plugins),
+                plugin_operations,
                 updates,
                 update_receiver: StdMutex::new(Some(update_receiver)),
                 shutting_down: AtomicBool::new(false),
@@ -287,11 +293,17 @@ impl PluginManager {
             .collect::<Vec<_>>();
         let mut outcomes = Vec::new();
         for plugin_id in plugin_ids {
-            let outcome = async {
-                self.start_plugin(&plugin_id).await?;
-                self.start_manifest_instances(&plugin_id).await
-            }
-            .await;
+            let outcome = match self.plugin_operation(&plugin_id) {
+                Ok(operation) => {
+                    let _operation = operation.lock().await;
+                    async {
+                        self.start_plugin(&plugin_id).await?;
+                        self.start_manifest_instances(&plugin_id).await
+                    }
+                    .await
+                }
+                Err(error) => Err(error),
+            };
             outcomes.push((plugin_id, outcome));
         }
         outcomes
@@ -330,6 +342,12 @@ impl PluginManager {
     }
 
     pub async fn restart_plugin(&self, plugin_id: &str) -> HostResult<()> {
+        let operation = self.plugin_operation(plugin_id)?;
+        let _operation = operation.lock().await;
+        self.restart_plugin_locked(plugin_id).await
+    }
+
+    async fn restart_plugin_locked(&self, plugin_id: &str) -> HostResult<()> {
         let stop_error = self.stop_plugin(plugin_id).await.err();
         if let Some(error) = stop_error.as_ref() {
             let terminated = self
@@ -352,6 +370,14 @@ impl PluginManager {
         self.start_manifest_instances(plugin_id)
             .await
             .map_err(|error| with_restart_stop_diagnostic(error, stop_error.as_ref()))
+    }
+
+    fn plugin_operation(&self, plugin_id: &str) -> HostResult<Arc<Mutex<()>>> {
+        self.inner
+            .plugin_operations
+            .get(plugin_id)
+            .cloned()
+            .ok_or_else(|| unknown_plugin(plugin_id))
     }
 
     async fn start_manifest_instances(&self, plugin_id: &str) -> HostResult<()> {
@@ -708,6 +734,47 @@ impl PluginManager {
         outcomes
     }
 
+    async fn ensure_historical_route_ready(
+        &self,
+        route: &ProviderInstanceRoute,
+    ) -> HostResult<()> {
+        validate_route_identity(route)?;
+        let record = self.inner.instances.resolve_route(route, None)?;
+        let operation = self.plugin_operation(&record.plugin_id)?;
+        let _operation = operation.lock().await;
+        if self.historical_route_is_ready(&record).await {
+            return Ok(());
+        }
+        self.restart_plugin_locked(&record.plugin_id).await?;
+        if self.historical_route_is_ready(&record).await {
+            return Ok(());
+        }
+        Err(HostError::new(
+            "provider_instance_unavailable",
+            format!(
+                "Provider instance did not become ready after recovery: {}",
+                record.instance_id
+            ),
+        )
+        .retryable(true)
+        .with_detail("pluginId", record.plugin_id)
+        .with_detail("providerInstanceId", record.instance_id))
+    }
+
+    async fn historical_route_is_ready(&self, record: &ProviderInstanceRecord) -> bool {
+        let plugins = self.inner.plugins.read().await;
+        let Some(entry) = plugins.get(&record.plugin_id) else {
+            return false;
+        };
+        entry.state == PluginRuntimeState::Ready
+            && entry.process.as_ref().is_some_and(|process| process.is_available())
+            && entry
+                .instances
+                .get(&record.instance_id)
+                .and_then(|runtime| runtime.instance.as_ref())
+                .is_some_and(|instance| instance.status == InstanceStatus::Ready)
+    }
+
     async fn create_instance_record(
         &self,
         record: &ProviderInstanceRecord,
@@ -800,6 +867,7 @@ impl PluginManager {
         request: ConversationListRequest,
     ) -> HostResult<ConversationListResponse> {
         let route = request.route.clone();
+        self.ensure_historical_route_ready(&route).await?;
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::ConversationList)?;
         let response = process
@@ -820,6 +888,7 @@ impl PluginManager {
         validate_resource_identity(&request.conversation)?;
         let expected = request.conversation.clone();
         let route = route_from_resource(&expected);
+        self.ensure_historical_route_ready(&route).await?;
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::ConversationGet)?;
         let response = process

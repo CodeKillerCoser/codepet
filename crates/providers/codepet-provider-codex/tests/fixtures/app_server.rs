@@ -51,6 +51,14 @@ fn main() {
             ),
             "thread/read" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
+                let turns = if thread_id == "thread-large" {
+                    vec![large_turn("turn-large", "completed")]
+                } else {
+                    turn_status
+                        .as_deref()
+                        .map(|status| vec![turn("turn-started", status)])
+                        .unwrap_or_else(|| vec![turn("turn-history", "completed")])
+                };
                 respond(
                     &mut writer,
                     id,
@@ -58,10 +66,7 @@ fn main() {
                         "thread": thread(
                             thread_id,
                             if turn_status.as_deref() == Some("inProgress") { "active" } else { "idle" },
-                            turn_status
-                                .as_deref()
-                                .map(|status| vec![turn("turn-started", status)])
-                                .unwrap_or_else(|| vec![turn("turn-history", "completed")])
+                            turns
                         )
                     }),
                 );
@@ -279,6 +284,12 @@ fn turn(id: &str, status: &str) -> Value {
             }
         ]
     })
+}
+
+fn large_turn(id: &str, status: &str) -> Value {
+    let mut value = turn(id, status);
+    value["items"][1]["text"] = Value::String("x".repeat(1024 * 1024 + 4096));
+    value
 }
 
 fn respond(writer: &mut BufWriter<std::io::Stdout>, id: Value, result: Value) {
