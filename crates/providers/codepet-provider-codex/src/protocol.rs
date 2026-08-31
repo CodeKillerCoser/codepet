@@ -3,6 +3,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use std::fmt;
 
+use crate::workspace_projection::project_workspace_root;
+
 pub const CODEX_PLUGIN_ID: &str = "dev.codepet.codex";
 pub const CODEX_INSTANCE_KIND: &str = "codex";
 pub const CODEX_EXTENSION_NAMESPACE: &str = "codex.app-server";
@@ -385,7 +387,7 @@ pub struct CodexConversationSnapshot {
 
 impl CodexConversationSnapshot {
     pub fn from_thread(thread: CodexThread) -> Self {
-        let workspace_root = Some(thread.cwd.clone());
+        let workspace_root = project_workspace_root(Some(&thread.cwd));
         Self {
             thread,
             workspace_root,
@@ -494,7 +496,7 @@ pub fn approval_generation(resource_id: &str) -> Option<&str> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum CodexNotification {
     ThreadStarted {
-        thread: CodexThread,
+        snapshot: CodexConversationSnapshot,
     },
     TurnStarted {
         thread_id: String,

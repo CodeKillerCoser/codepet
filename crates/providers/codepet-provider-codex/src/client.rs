@@ -8,6 +8,7 @@ use super::protocol::{
     InitializeResponse, JsonRpcId, ThreadConfiguredResponse, ThreadListResponse,
     ThreadReadResponse, TurnResponse, TurnSteerResponse,
 };
+use crate::workspace_projection::project_workspace_root;
 use codepet_provider_sdk::ApprovalDecision;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
@@ -505,16 +506,7 @@ impl CodexAppServerSession {
             data: response
                 .data
                 .into_iter()
-                .map(|thread| {
-                    let native_workspace = thread.cwd.clone();
-                    CodexConversationSnapshot {
-                        thread,
-                        workspace_root: Some(native_workspace),
-                        permission_level: None,
-                        model: None,
-                        reasoning_effort: None,
-                    }
-                })
+                .map(CodexConversationSnapshot::from_thread)
                 .collect(),
             next_cursor: response.next_cursor,
         })
@@ -924,22 +916,16 @@ fn codex_app_server_command(binary: &Path, args: &[String]) -> Command {
 }
 
 fn snapshot_from_thread(thread: super::protocol::CodexThread) -> CodexConversationSnapshot {
-    let workspace_root = Some(thread.cwd.clone());
-    CodexConversationSnapshot {
-        thread,
-        workspace_root,
-        permission_level: None,
-        model: None,
-        reasoning_effort: None,
-    }
+    CodexConversationSnapshot::from_thread(thread)
 }
 
 fn snapshot_from_configured_response(
     response: ThreadConfiguredResponse,
 ) -> CodexConversationSnapshot {
+    let workspace_root = project_workspace_root(Some(&response.cwd));
     CodexConversationSnapshot {
         thread: response.thread,
-        workspace_root: Some(response.cwd),
+        workspace_root,
         permission_level: permission_from_sandbox(&response.sandbox),
         model: Some(response.model),
         reasoning_effort: response.reasoning_effort,
@@ -1073,8 +1059,8 @@ fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppSe
 
 fn incoming_thread_id(incoming: &CodexIncoming) -> Option<&str> {
     match incoming {
-        CodexIncoming::Notification(CodexNotification::ThreadStarted { thread }) => {
-            Some(&thread.id)
+        CodexIncoming::Notification(CodexNotification::ThreadStarted { snapshot }) => {
+            Some(&snapshot.thread.id)
         }
         CodexIncoming::Notification(
             CodexNotification::TurnStarted { thread_id, .. }
@@ -1215,9 +1201,12 @@ fn parse_notification(
     session_generation: &str,
 ) -> Result<CodexNotification, CodexAppServerError> {
     match method {
-        "thread/started" => Ok(CodexNotification::ThreadStarted {
-            thread: deserialize_field(&params, "thread")?,
-        }),
+        "thread/started" => {
+            let thread = deserialize_field(&params, "thread")?;
+            Ok(CodexNotification::ThreadStarted {
+                snapshot: CodexConversationSnapshot::from_thread(thread),
+            })
+        }
         "turn/started" => Ok(CodexNotification::TurnStarted {
             thread_id: required_string(&params, "threadId")?,
             turn: deserialize_field(&params, "turn")?,
@@ -1300,6 +1289,7 @@ fn deserialize_field<T: DeserializeOwned>(
 mod tests {
     use super::*;
     use crate::protocol::{CodexPermissionLevel, CodexTurnStatus};
+    use std::fs;
     use std::sync::mpsc::{Receiver, Sender};
     use std::sync::Barrier;
     use std::time::Duration;
@@ -1542,6 +1532,54 @@ mod tests {
         assert!(session.is_running());
         session.shutdown().unwrap();
         assert!(!session.is_running());
+    }
+
+    #[test]
+    fn thread_list_projects_a_linked_worktree_from_the_wire() {
+        let temp = tempfile::tempdir().unwrap();
+        let main = temp.path().join("main/project");
+        let git_dir = main.join(".git/worktrees/linked");
+        let worktree = temp.path().join("worktrees/linked/project");
+        fs::create_dir_all(&git_dir).unwrap();
+        fs::create_dir_all(&worktree).unwrap();
+        fs::write(git_dir.join("commondir"), "../..\n").unwrap();
+        fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", git_dir.display()),
+        )
+        .unwrap();
+        let (session, peer_receiver, peer_sender) = mock_session();
+        let list_session = session.clone();
+        let listed = thread::spawn(move || {
+            list_session
+                .thread_list(CodexThreadListRequest::default())
+                .unwrap()
+        });
+        let request = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(request["method"], "thread/list");
+        peer_sender
+            .send(json!({
+                "id": request["id"],
+                "result": {
+                    "data": [thread_fixture(
+                        "thread-worktree",
+                        worktree.to_str().unwrap(),
+                        "idle",
+                        vec![]
+                    )],
+                    "nextCursor": null
+                }
+            }))
+            .unwrap();
+
+        let snapshot = listed.join().unwrap().data.pop().unwrap();
+
+        assert_eq!(snapshot.thread.cwd, worktree.to_str().unwrap());
+        assert_eq!(
+            snapshot.workspace_root.as_deref(),
+            fs::canonicalize(main).unwrap().to_str()
+        );
+        session.shutdown().unwrap();
     }
 
     #[test]

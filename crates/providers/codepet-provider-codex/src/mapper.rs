@@ -489,12 +489,11 @@ impl CodexProtocolMapper {
         notification: CodexNotification,
     ) -> Result<Vec<ProtocolEvent>, ProtocolError> {
         let event = match notification {
-            CodexNotification::ThreadStarted { thread } => {
+            CodexNotification::ThreadStarted { snapshot } => {
                 ProtocolEvent::EventConversationUpserted {
                     jsonrpc: "2.0".to_string(),
                     params: ConversationUpsertedEvent {
-                        conversation: self
-                            .conversation(&CodexConversationSnapshot::from_thread(thread)),
+                        conversation: self.conversation(&snapshot),
                     },
                 }
             }
@@ -724,6 +723,7 @@ fn extension<const N: usize>(entries: [(&str, Value); N]) -> ProviderExtension {
 mod tests {
     use super::*;
     use crate::protocol::CodexThread;
+    use std::fs;
 
     #[test]
     fn active_thread_flags_keep_approval_and_user_input_states_distinct() {
@@ -972,6 +972,57 @@ mod tests {
         });
         snapshot.workspace_root = Some("/fixture".to_string());
         snapshot
+    }
+
+    #[test]
+    fn workspace_projection_preserves_resource_identity_and_native_cwd() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir_all(project.join("nested")).unwrap();
+        let native_cwd = project.join("nested").join("..");
+        let native_cwd = native_cwd.to_string_lossy().into_owned();
+        let snapshot = CodexConversationSnapshot::from_thread(CodexThread {
+            id: "thread-stable".to_string(),
+            name: None,
+            preview: "fixture".to_string(),
+            cwd: native_cwd.clone(),
+            created_at: 1,
+            updated_at: 2,
+            status: CodexThreadStatus::Idle,
+            turns: Vec::new(),
+            cli_version: "0.151.0".to_string(),
+            ephemeral: false,
+            model_provider: "openai".to_string(),
+            project_id: Value::Null,
+            session_id: "session-stable".to_string(),
+            source: json!("appServer"),
+        });
+        let mapper = CodexProtocolMapper::new(ProviderInstanceRoute {
+            device_id: "device-stable".to_string(),
+            provider_plugin_id: "dev.codepet.codex".to_string(),
+            provider_instance_id: "codex-stable".to_string(),
+        });
+
+        let conversation = mapper.conversation(&snapshot);
+
+        assert_eq!(
+            conversation.workspace_root,
+            Some(project.to_string_lossy().into_owned())
+        );
+        assert_eq!(conversation.resource.native_resource_id, "thread-stable");
+        assert_eq!(conversation.resource.device_id, "device-stable");
+        assert_eq!(
+            conversation.resource.provider_plugin_id,
+            "dev.codepet.codex"
+        );
+        assert_eq!(
+            conversation.resource.provider_instance_id,
+            "codex-stable"
+        );
+        assert_eq!(
+            conversation.extension.unwrap().data["nativeCwd"],
+            json!(native_cwd)
+        );
     }
 
     fn snapshot(flag: CodexThreadActiveFlag) -> CodexConversationSnapshot {
