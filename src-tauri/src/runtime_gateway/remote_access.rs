@@ -341,7 +341,7 @@ impl RemoteAccessRuntime {
                 return Err(error);
             }
         };
-        if let Err(error) = self.sync_pairing_available(true).await {
+        if let Err(error) = self.sync_pairing_available().await {
             let _ = manager.cancel_pairing(&pairing.pairing_id);
             return Err(error);
         }
@@ -370,7 +370,7 @@ impl RemoteAccessRuntime {
             .ok_or_else(runtime_core_unavailable)?
             .cancel_pairing(pairing_id)
             .map_err(RemoteCommandError::from)?;
-        self.sync_pairing_available(false).await?;
+        self.sync_pairing_available().await?;
         Ok(status)
     }
 
@@ -517,8 +517,7 @@ impl RemoteAccessRuntime {
                         if changed.is_err() {
                             break;
                         }
-                        let desired = pairing.borrow().pairing_available;
-                        if let Err(error) = runtime.sync_pairing_available(desired).await {
+                        if let Err(error) = runtime.sync_pairing_available().await {
                             crate::app_log::error(
                                 "remote_access",
                                 &format!("failed to synchronize pairing discovery code={} message={}", error.code, error.message),
@@ -539,59 +538,69 @@ impl RemoteAccessRuntime {
         }));
     }
 
-    async fn sync_pairing_available(
-        &self,
-        pairing_available: bool,
-    ) -> Result<(), RemoteCommandError> {
+    fn current_pairing_available(&self) -> Result<bool, RemoteCommandError> {
+        let manager = self.manager.as_ref().ok_or_else(runtime_core_unavailable)?;
+        let pairing = manager.subscribe_pairing_state();
+        let pairing_available = pairing.borrow().pairing_available;
+        Ok(pairing_available)
+    }
+
+    async fn sync_pairing_available(&self) -> Result<(), RemoteCommandError> {
         let _lifecycle = self.lifecycle.lock().await;
-        let mut mdns = {
+        loop {
+            let pairing_available = self.current_pairing_available()?;
+            let mut mdns = {
+                let mut inner = self.inner.lock().await;
+                if inner.phase != RemoteAccessRuntimePhase::Available {
+                    return if pairing_available {
+                        Err(runtime_unavailable_error(&inner))
+                    } else {
+                        Ok(())
+                    };
+                }
+                if inner.pairing_available == pairing_available {
+                    return Ok(());
+                }
+                if !self.mdns_enabled {
+                    inner.pairing_available = pairing_available;
+                    return Ok(());
+                }
+                inner.mdns.take().ok_or_else(runtime_core_unavailable)?
+            };
+            let updated = tauri::async_runtime::spawn_blocking(move || {
+                let result = mdns.update_pairing_available(pairing_available);
+                (mdns, result)
+            })
+            .await;
+            let (returned, result) = match updated {
+                Ok(updated) => updated,
+                Err(error) => {
+                    let command_error = RemoteCommandError {
+                        code: "remote_lan_mdns_task_failed".to_string(),
+                        message: format!("Remote LAN mDNS update task failed: {error}"),
+                        retryable: true,
+                    };
+                    self.fail_running(command_error.clone()).await;
+                    return Err(command_error);
+                }
+            };
             let mut inner = self.inner.lock().await;
-            if inner.phase != RemoteAccessRuntimePhase::Available {
-                return if pairing_available {
-                    Err(runtime_unavailable_error(&inner))
-                } else {
-                    Ok(())
-                };
-            }
-            if inner.pairing_available == pairing_available {
-                return Ok(());
-            }
-            if !self.mdns_enabled {
-                inner.pairing_available = pairing_available;
-                return Ok(());
-            }
-            inner.mdns.take().ok_or_else(runtime_core_unavailable)?
-        };
-        let updated = tauri::async_runtime::spawn_blocking(move || {
-            let result = mdns.update_pairing_available(pairing_available);
-            (mdns, result)
-        })
-        .await;
-        let (returned, result) = match updated {
-            Ok(updated) => updated,
-            Err(error) => {
-                let command_error = RemoteCommandError {
-                    code: "remote_lan_mdns_task_failed".to_string(),
-                    message: format!("Remote LAN mDNS update task failed: {error}"),
-                    retryable: true,
-                };
-                self.fail_running(command_error.clone()).await;
-                return Err(command_error);
-            }
-        };
-        let mut inner = self.inner.lock().await;
-        match result {
-            Ok(()) => {
-                inner.mdns = Some(returned);
-                inner.pairing_available = pairing_available;
-                Ok(())
-            }
-            Err(error) => {
-                drop(inner);
-                drop(returned);
-                self.fail_running(RemoteCommandError::from(error.clone()))
-                    .await;
-                Err(error.into())
+            match result {
+                Ok(()) => {
+                    inner.mdns = Some(returned);
+                    inner.pairing_available = pairing_available;
+                    drop(inner);
+                    if self.current_pairing_available()? == pairing_available {
+                        return Ok(());
+                    }
+                }
+                Err(error) => {
+                    drop(inner);
+                    drop(returned);
+                    self.fail_running(RemoteCommandError::from(error.clone()))
+                        .await;
+                    return Err(error.into());
+                }
             }
         }
     }
@@ -990,6 +999,19 @@ mod tests {
         let pairing = test.remote_manager.begin_pairing().unwrap();
         let pairing_id = pairing.pairing_id.clone();
         wait_for_pairing_advertisement(&test.runtime, true).await;
+        assert_eq!(
+            test.runtime
+                .cancel_pairing(&started.pairing_id)
+                .await
+                .unwrap()
+                .state,
+            codepet_host::PairingStatusKind::Cancelled
+        );
+        assert_eq!(
+            test.runtime.pairing_status(&pairing_id).unwrap().state,
+            codepet_host::PairingStatusKind::Active
+        );
+        assert!(test.runtime.status().await.pairing_available);
         let port = test
             .runtime
             .inner

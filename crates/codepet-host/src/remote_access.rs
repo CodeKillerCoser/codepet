@@ -1767,6 +1767,24 @@ mod tests {
             cancelled
         );
 
+        let newer_session = manager.begin_pairing().unwrap();
+        assert_eq!(
+            manager
+                .cancel_pairing(&cancelled_session.pairing_id)
+                .unwrap(),
+            cancelled
+        );
+        assert_eq!(
+            manager.pairing_status(&newer_session.pairing_id).unwrap().state,
+            PairingStatusKind::Active
+        );
+        assert!(pairing_watch.borrow().pairing_available);
+        assert_eq!(
+            pairing_watch.borrow().pairing_id.as_deref(),
+            Some(newer_session.pairing_id.as_str())
+        );
+        manager.cancel_pairing(&newer_session.pairing_id).unwrap();
+
         let expired_session = manager
             .begin_pairing_with_ttl(Duration::ZERO)
             .unwrap();
