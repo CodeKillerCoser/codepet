@@ -2,12 +2,13 @@ use base64::Engine;
 use codepet_gateway_sdk::{DeviceDescriptor, PairingQrPayload, PROTOCOL_VERSION};
 use codepet_host::{
     select_remote_lan_ipv4, HostError, PairingStatus, ProviderGatewayService,
-    RemoteAccessManager, RemoteLanMdnsAdvertiser, RemoteLanServer,
-    RemoteLanServerConfig, RemoteLanServerHandle,
+    RemoteAccessManager, RemoteCredential, RemoteLanMdnsAdvertiser,
+    RemoteLanServer, RemoteLanServerConfig, RemoteLanServerHandle,
 };
 use qrcode::render::svg;
 use qrcode::QrCode;
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
@@ -422,49 +423,64 @@ impl RemoteAccessRuntime {
             .list_credentials()
             .map_err(RemoteCommandError::from)?;
         let inner = self.inner.lock().await;
-        Ok(credentials
-            .into_iter()
-            .map(|credential| RemoteClientView {
-                online_session_count: inner
-                    .listener
-                    .as_ref()
-                    .map(|listener| {
-                        listener.active_session_count_for_credential(&credential.credential_id)
-                    })
-                    .unwrap_or(0),
-                credential_id: credential.credential_id,
-                remote_client_id: credential.client_id,
-                descriptor: credential.descriptor,
-                created_at: credential.created_at,
-                last_seen_at: credential.last_seen_at,
-                revoked_at: credential.revoked_at,
-            })
-            .collect())
+        Ok(project_remote_clients(credentials, |credential_id| {
+            inner
+                .listener
+                .as_ref()
+                .map(|listener| {
+                    listener.active_session_count_for_credential(credential_id)
+                })
+                .unwrap_or(0)
+        }))
     }
 
     pub async fn revoke_credential(
         &self,
         credential_id: &str,
     ) -> Result<RemoteCredentialRevokeView, RemoteCommandError> {
-        let credential = self
+        let manager = self
             .manager
             .as_ref()
-            .ok_or_else(runtime_core_unavailable)?
-            .revoke_credential(credential_id)
+            .ok_or_else(runtime_core_unavailable)?;
+        let credentials = manager
+            .list_credentials()
             .map_err(RemoteCommandError::from)?;
+        let target = credentials
+            .iter()
+            .find(|credential| credential.credential_id == credential_id)
+            .ok_or_else(remote_credential_not_found)?;
+        let client_id = target.client_id.clone();
+        manager
+            .revoke_client(&client_id)
+            .map_err(RemoteCommandError::from)?;
+        let client_credentials = manager
+            .list_credentials()
+            .map_err(RemoteCommandError::from)?
+            .into_iter()
+            .filter(|credential| credential.client_id == client_id)
+            .collect::<Vec<_>>();
+        let revoked_at = client_credentials
+            .iter()
+            .find(|credential| credential.credential_id == credential_id)
+            .and_then(|credential| credential.revoked_at);
         let disconnected_session_count = {
             let inner = self.inner.lock().await;
-            match inner.listener.as_ref() {
-                Some(listener) => listener
-                    .disconnect_credential(credential_id)
-                    .await
-                    .map_err(RemoteCommandError::from)?,
-                None => 0,
+            let mut disconnected = 0_usize;
+            if let Some(listener) = inner.listener.as_ref() {
+                for credential in &client_credentials {
+                    disconnected = disconnected.saturating_add(
+                        listener
+                            .disconnect_credential(&credential.credential_id)
+                            .await
+                            .map_err(RemoteCommandError::from)?,
+                    );
+                }
             }
+            disconnected
         };
         Ok(RemoteCredentialRevokeView {
-            credential_id: credential.credential_id,
-            revoked_at: credential.revoked_at,
+            credential_id: credential_id.to_string(),
+            revoked_at,
             disconnected_session_count,
         })
     }
@@ -770,6 +786,71 @@ impl RemoteAccessRuntime {
     }
 }
 
+fn project_remote_clients(
+    credentials: Vec<RemoteCredential>,
+    active_session_count: impl Fn(&str) -> usize,
+) -> Vec<RemoteClientView> {
+    let mut grouped = BTreeMap::<String, Vec<RemoteCredential>>::new();
+    for credential in credentials {
+        grouped
+            .entry(credential.client_id.clone())
+            .or_default()
+            .push(credential);
+    }
+
+    let mut clients = grouped
+        .into_iter()
+        .filter_map(|(client_id, credentials)| {
+            let representative = credentials.iter().max_by(|left, right| {
+                left.revoked_at
+                    .is_none()
+                    .cmp(&right.revoked_at.is_none())
+                    .then_with(|| left.created_at.cmp(&right.created_at))
+                    .then_with(|| left.last_seen_at.cmp(&right.last_seen_at))
+                    .then_with(|| left.credential_id.cmp(&right.credential_id))
+            })?;
+            let created_at = credentials
+                .iter()
+                .map(|credential| credential.created_at)
+                .min()?;
+            let last_seen_at = credentials
+                .iter()
+                .filter(|credential| credential.last_seen_at > credential.created_at)
+                .map(|credential| credential.last_seen_at)
+                .max()
+                .unwrap_or(created_at);
+            let revoked_at = credentials
+                .iter()
+                .all(|credential| credential.revoked_at.is_some())
+                .then(|| {
+                    credentials
+                        .iter()
+                        .filter_map(|credential| credential.revoked_at)
+                        .max()
+                })
+                .flatten();
+            let online_session_count = credentials.iter().fold(0_usize, |total, credential| {
+                total.saturating_add(active_session_count(&credential.credential_id))
+            });
+            Some(RemoteClientView {
+                credential_id: representative.credential_id.clone(),
+                remote_client_id: client_id,
+                descriptor: representative.descriptor.clone(),
+                created_at,
+                last_seen_at,
+                revoked_at,
+                online_session_count,
+            })
+        })
+        .collect::<Vec<_>>();
+    clients.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.remote_client_id.cmp(&right.remote_client_id))
+    });
+    clients
+}
+
 fn select_advertised_host_from_environment() -> Result<std::net::Ipv4Addr, HostError> {
     let configured = std::env::var_os(REMOTE_ADVERTISED_HOST_ENV);
     let configured = configured
@@ -834,6 +915,14 @@ fn pairing_clipboard_write_failed() -> RemoteCommandError {
         message: "Code Pet could not write the active pairing JSON to the system clipboard"
             .to_string(),
         retryable: true,
+    }
+}
+
+fn remote_credential_not_found() -> RemoteCommandError {
+    RemoteCommandError {
+        code: "remote_credential_not_found".to_string(),
+        message: "Remote credential does not exist".to_string(),
+        retryable: false,
     }
 }
 
@@ -953,8 +1042,9 @@ mod tests {
     use super::*;
     use codepet_gateway_sdk::PairingExchangeRequest;
     use codepet_host::{
-        DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginManager,
-        PluginManagerConfig, ProviderInstanceRegistry, RemoteAccessConfig,
+        DeviceRegistry, IssuedRemoteCredential, PluginCatalog,
+        PluginCatalogConfig, PluginManager, PluginManagerConfig,
+        ProviderInstanceRegistry, RemoteAccessConfig,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::TempDir;
@@ -1024,6 +1114,28 @@ mod tests {
             remote_manager,
             runtime,
         }
+    }
+
+    fn pair_remote_client(
+        manager: &RemoteAccessManager,
+        client_id: &str,
+        device_name: &str,
+    ) -> IssuedRemoteCredential {
+        let pairing = manager.begin_pairing().unwrap();
+        manager
+            .complete_pairing(
+                &pairing.pairing_id,
+                PairingExchangeRequest {
+                    pairing_secret: pairing.pairing_secret,
+                    client_id: client_id.to_string(),
+                    device: DeviceDescriptor {
+                        device_name: device_name.to_string(),
+                        operating_system: "TestOS".to_string(),
+                        system_version: "1.0".to_string(),
+                    },
+                },
+            )
+            .unwrap()
     }
 
     async fn wait_for_pairing_advertisement(
@@ -1096,6 +1208,131 @@ mod tests {
             "remote_access_stopped"
         );
         assert!(test.runtime.pairing_monitor.lock().unwrap().is_none());
+        test.provider_manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn remote_clients_group_credentials_by_client_identity_and_revoke_the_group() {
+        let descriptor = DeviceDescriptor {
+            device_name: "Same Device Name".to_string(),
+            operating_system: "TestOS".to_string(),
+            system_version: "1.0".to_string(),
+        };
+        let projected = project_remote_clients(
+            vec![
+                RemoteCredential {
+                    credential_id: "credential-first".to_string(),
+                    client_id: "client-same".to_string(),
+                    descriptor: descriptor.clone(),
+                    created_at: 1_000,
+                    last_seen_at: 1_500,
+                    revoked_at: None,
+                },
+                RemoteCredential {
+                    credential_id: "credential-second".to_string(),
+                    client_id: "client-same".to_string(),
+                    descriptor: descriptor.clone(),
+                    created_at: 2_000,
+                    last_seen_at: 2_000,
+                    revoked_at: None,
+                },
+                RemoteCredential {
+                    credential_id: "credential-other".to_string(),
+                    client_id: "client-other".to_string(),
+                    descriptor,
+                    created_at: 3_000,
+                    last_seen_at: 3_000,
+                    revoked_at: None,
+                },
+            ],
+            |credential_id| match credential_id {
+                "credential-first" => 1,
+                "credential-second" => 2,
+                "credential-other" => 4,
+                _ => 0,
+            },
+        );
+        assert_eq!(projected.len(), 2);
+        let same_client = projected
+            .iter()
+            .find(|client| client.remote_client_id == "client-same")
+            .unwrap();
+        assert_eq!(same_client.credential_id, "credential-second");
+        assert_eq!(same_client.created_at, 1_000);
+        assert_eq!(same_client.last_seen_at, 1_500);
+        assert_eq!(same_client.online_session_count, 3);
+        let other_client = projected
+            .iter()
+            .find(|client| client.remote_client_id == "client-other")
+            .unwrap();
+        assert_eq!(other_client.online_session_count, 4);
+
+        let test = test_runtime(
+            Arc::new(|| Ok(std::net::Ipv4Addr::LOCALHOST)),
+            false,
+        );
+        let first = pair_remote_client(
+            test.remote_manager.as_ref(),
+            "client-same",
+            "Same Device Name",
+        );
+        let second = pair_remote_client(
+            test.remote_manager.as_ref(),
+            "client-same",
+            "Same Device Name",
+        );
+        let other = pair_remote_client(
+            test.remote_manager.as_ref(),
+            "client-other",
+            "Same Device Name",
+        );
+
+        let clients = test.runtime.list_clients().await.unwrap();
+        assert_eq!(clients.len(), 2);
+        let same_client = clients
+            .iter()
+            .find(|client| client.remote_client_id == "client-same")
+            .unwrap();
+        test.runtime
+            .revoke_credential(&same_client.credential_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            test.remote_manager
+                .validate_bearer(&first.bearer_token)
+                .unwrap_err()
+                .code,
+            "invalid_remote_credential"
+        );
+        assert_eq!(
+            test.remote_manager
+                .validate_bearer(&second.bearer_token)
+                .unwrap_err()
+                .code,
+            "invalid_remote_credential"
+        );
+        assert!(test
+            .remote_manager
+            .validate_bearer(&other.bearer_token)
+            .is_ok());
+        let clients = test.runtime.list_clients().await.unwrap();
+        assert_eq!(clients.len(), 2);
+        assert!(clients
+            .iter()
+            .find(|client| client.remote_client_id == "client-same")
+            .unwrap()
+            .revoked_at
+            .is_some());
+        assert_eq!(
+            clients
+                .iter()
+                .find(|client| client.remote_client_id == "client-other")
+                .unwrap()
+                .revoked_at,
+            None
+        );
+
+        test.runtime.shutdown_once().await;
         test.provider_manager.shutdown().await;
     }
 
