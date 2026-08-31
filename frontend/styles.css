@@ -528,6 +528,77 @@ select:focus-visible {
   line-height: var(--line-height-copy);
 }
 
+.remote-access-summary {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--app-surface-soft);
+}
+
+.remote-access-summary-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  color: var(--app-text);
+  background: var(--app-surface-strong);
+}
+
+.remote-access-summary > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.remote-access-summary strong,
+.remote-access-summary span {
+  min-width: 0;
+}
+
+.remote-access-summary strong {
+  color: var(--app-text);
+  font-size: var(--font-size-md);
+}
+
+.remote-access-summary > div > span {
+  overflow: hidden;
+  color: var(--app-muted);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-access-diagnostic {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.remote-access-diagnostic button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid color-mix(in srgb, var(--app-danger) 42%, var(--app-border));
+  border-radius: 8px;
+  padding: 0 11px;
+  color: var(--app-text);
+  background: var(--app-surface-strong);
+  font-weight: var(--font-weight-medium-strong);
+}
+
+.remote-access-diagnostic button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
 .remote-device-list {
   display: grid;
   gap: 10px;
@@ -579,6 +650,11 @@ select:focus-visible {
 .remote-device-copy span {
   color: var(--app-muted);
   font-size: var(--font-size-sm-plus);
+}
+
+.remote-device-copy .remote-device-platform {
+  color: var(--app-subtle);
+  font-size: var(--font-size-sm);
 }
 
 .remote-device-actions {
@@ -2126,6 +2202,17 @@ textarea {
   font-weight: var(--font-weight-semibold);
 }
 
+.pair-device-error {
+  border: 1px solid color-mix(in srgb, var(--app-danger) 42%, var(--app-border));
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: var(--app-danger);
+  background: color-mix(in srgb, var(--app-danger) 9%, var(--app-surface-strong));
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-copy);
+  overflow-wrap: anywhere;
+}
+
 .pair-device-success {
   display: grid;
   min-height: 260px;
@@ -3352,6 +3439,24 @@ textarea {
   }
 
   .connection-primary-button {
+    justify-self: start;
+  }
+
+  .remote-access-summary {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .remote-access-summary > .status-chip {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .remote-access-diagnostic {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .remote-access-diagnostic button {
+    grid-column: 1 / -1;
     justify-self: start;
   }
 

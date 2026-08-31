@@ -4,6 +4,8 @@
 
   export let devices: RemoteDevice[] = [];
   export let nowMs = Date.now();
+  export let loading = false;
+  export let unavailable = false;
   export let revokingDeviceId: string | null = null;
   export let onRevoke: ((device: RemoteDevice) => void | Promise<void>) | undefined = undefined;
 
@@ -34,6 +36,7 @@
 
         <div class="remote-device-copy">
           <strong>{device.clientName}</strong>
+          <span class="remote-device-platform">{device.platform || "未知平台"}</span>
           <span>{remoteDeviceConnectionLabel(device, nowMs)}</span>
         </div>
 
@@ -53,6 +56,18 @@
         </div>
       </article>
     {/each}
+  </div>
+{:else if loading}
+  <div class="empty-state compact remote-device-empty-state" role="status">
+    <CircleHelp size={22} />
+    <strong>正在读取已配对设备</strong>
+    <p>Remote Host 就绪后会在这里显示客户端。</p>
+  </div>
+{:else if unavailable}
+  <div class="empty-state compact remote-device-empty-state" role="status">
+    <CircleHelp size={22} />
+    <strong>暂时无法读取设备</strong>
+    <p>请查看上方 Remote Host 状态并重试。</p>
   </div>
 {:else}
   <div class="empty-state remote-device-empty-state">

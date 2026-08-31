@@ -40,7 +40,8 @@
   import PetAvatar from "./lib/PetAvatar.svelte";
   import PairDeviceDialog from "./lib/PairDeviceDialog.svelte";
   import RemoteDeviceList from "./lib/RemoteDeviceList.svelte";
-  import type { PairingDisplayState, RemoteDevice } from "./lib/remoteDevices";
+  import { cancelRemotePairing, getRemoteAccessStatus, getRemotePairingStatus, listRemoteClients, remoteCommandDiagnostic, retryRemoteAccess, revokeRemoteCredential, startRemotePairing, type RemoteAccessDiagnostic, type RemoteAccessStatus } from "./lib/remoteAccess";
+  import { pairingPhaseForStatus, pairingRemainingSeconds, remoteDeviceFromClient, type PairingDisplayState, type RemoteDevice } from "./lib/remoteDevices";
   import { playNotificationSound, playWhipReactionSound } from "./lib/sound";
   import { defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
   import { ignoredUpdateSettings, shouldPromptForUpdate, type UpdateCheckMode } from "./lib/updates";
@@ -61,7 +62,22 @@
     expiresAtMs: null,
     remainingSeconds: null,
     pairedClientName: null,
+    errorMessage: null,
   };
+  let remoteRuntimeStatus: RemoteAccessStatus | null = null;
+  let remoteCommandError: RemoteAccessDiagnostic | null = null;
+  let visibleRemoteDiagnostic: RemoteAccessDiagnostic | null = null;
+  let remoteClientsLoading = true;
+  let remoteClientsUnavailable = false;
+  let remoteRefreshInFlight = false;
+  let remoteRetryBusy = false;
+  let revokingRemoteCredentialId: string | null = null;
+  let remoteDevicesNowMs = Date.now();
+  let activePairingId: string | null = null;
+  let pairingRequestToken = 0;
+  let pairingKnownDeviceIds = new Set<string>();
+  let pairingPollTimer: number | null = null;
+  let pairingCountdownTimer: number | null = null;
   let settings: AppSettings | null = null;
   let petLibrary: PetLibraryView | null = null;
   let usage: TokenUsageSummary | null = null;
@@ -81,6 +97,8 @@
   let systemDark = false;
   let eventPollTimer: number | null = null;
   let updatePollTimer: number | null = null;
+  let remoteAccessPollTimer: number | null = null;
+  let remoteDeviceClockTimer: number | null = null;
   let updateCheckMode: UpdateCheckMode | null = null;
   let updatePromptMode: UpdateCheckMode = "auto";
   let availableUpdate: AppUpdate | null = null;
@@ -174,6 +192,9 @@
   const defaultPetOpacity = 1;
   const minPetOpacity = 0.25;
   const updateAutoIntervalMs = 6 * 60 * 60 * 1000;
+  const remoteAccessPollIntervalMs = 10_000;
+
+  $: visibleRemoteDiagnostic = remoteRuntimeStatus?.diagnostic ?? remoteCommandError;
 
   onMount(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -182,6 +203,13 @@
       systemDark = media.matches;
     };
     media.addEventListener("change", syncTheme);
+    void refreshRemoteAccess();
+    remoteAccessPollTimer = window.setInterval(() => {
+      if (tab === "connections") void refreshRemoteAccess();
+    }, remoteAccessPollIntervalMs);
+    remoteDeviceClockTimer = window.setInterval(() => {
+      remoteDevicesNowMs = Date.now();
+    }, 30_000);
 
     let disposed = false;
     let unlistenPetEvent: (() => void) | null = null;
@@ -230,6 +258,10 @@
       clearEventPoll();
       clearUpdatePoll();
       clearRunningBubbleSaveTimer();
+      clearRemoteAccessPoll();
+      clearRemoteDeviceClock();
+      clearPairingTimers();
+      pairingRequestToken += 1;
     };
   });
 
@@ -323,6 +355,20 @@
     if (updatePollTimer) {
       window.clearInterval(updatePollTimer);
       updatePollTimer = null;
+    }
+  }
+
+  function clearRemoteAccessPoll() {
+    if (remoteAccessPollTimer) {
+      window.clearInterval(remoteAccessPollTimer);
+      remoteAccessPollTimer = null;
+    }
+  }
+
+  function clearRemoteDeviceClock() {
+    if (remoteDeviceClockTimer) {
+      window.clearInterval(remoteDeviceClockTimer);
+      remoteDeviceClockTimer = null;
     }
   }
 
@@ -449,14 +495,327 @@
       : "当前提供检测与路径配置，Provider 协议尚未接入。";
   }
 
+  function showConnections() {
+    tab = "connections";
+    void refreshRemoteAccess();
+  }
+
+  async function refreshRemoteAccess() {
+    if (remoteRefreshInFlight) return;
+    remoteRefreshInFlight = true;
+    if (!remoteRuntimeStatus && remoteDevices.length === 0) remoteClientsLoading = true;
+
+    let statusFailed = false;
+    try {
+      remoteRuntimeStatus = await getRemoteAccessStatus();
+      remoteCommandError = null;
+    } catch (currentError) {
+      statusFailed = true;
+      remoteRuntimeStatus = null;
+      remoteCommandError = remoteCommandDiagnostic(currentError, "remote_access_status_unavailable");
+    }
+
+    try {
+      applyRemoteClientSnapshot(await listRemoteClients());
+      remoteClientsUnavailable = false;
+    } catch (currentError) {
+      remoteClientsUnavailable = true;
+      if (!remoteRuntimeStatus?.diagnostic && !statusFailed) {
+        remoteCommandError = remoteCommandDiagnostic(currentError, "remote_client_list_unavailable");
+      }
+    } finally {
+      remoteClientsLoading = false;
+      remoteRefreshInFlight = false;
+    }
+  }
+
+  function applyRemoteClientSnapshot(clients: Awaited<ReturnType<typeof listRemoteClients>>) {
+    remoteDevices = clients.map(remoteDeviceFromClient);
+    remoteDevicesNowMs = Date.now();
+  }
+
+  function remoteAccessPhaseMeta(status: RemoteAccessStatus | null, loading: boolean) {
+    if (!status) {
+      return {
+        label: loading ? "读取中" : "不可用",
+        title: loading ? "正在读取 Remote Host" : "Remote Host 未响应",
+        detail: loading ? "设备管理不会阻塞其他设置。" : "其他设置仍可继续使用。",
+        tone: loading ? "neutral" : "danger",
+      } as const;
+    }
+
+    if (status.phase === "available") {
+      return {
+        label: "已就绪",
+        title: status.displayName || "Remote Host 已就绪",
+        detail: `${status.activeSessionCount} 个在线会话，可安全添加 Remote 客户端。`,
+        tone: "ready",
+      } as const;
+    }
+    if (status.phase === "starting") {
+      return { label: "启动中", title: "Remote Host 正在启动", detail: "网络服务就绪后会自动刷新。", tone: "neutral" } as const;
+    }
+    if (status.phase === "unavailable") {
+      return { label: "不可用", title: "Remote Host 未就绪", detail: "设备管理暂不可用，其他设置不受影响。", tone: "danger" } as const;
+    }
+    if (status.phase === "stopping") {
+      return { label: "停止中", title: "Remote Host 正在停止", detail: "设备管理已暂停。", tone: "neutral" } as const;
+    }
+    return { label: "已停止", title: "Remote Host 已停止", detail: "重新启动 Code Pet 后可恢复设备管理。", tone: "neutral" } as const;
+  }
+
+  function remoteAccessCanRetry() {
+    return remoteRuntimeStatus?.phase !== "stopping" && remoteRuntimeStatus?.phase !== "stopped";
+  }
+
+  async function retryRemoteAccessRuntime() {
+    if (remoteRetryBusy) return;
+    remoteRetryBusy = true;
+    remoteCommandError = null;
+    try {
+      remoteRuntimeStatus = await retryRemoteAccess();
+    } catch (currentError) {
+      remoteCommandError = remoteCommandDiagnostic(currentError, "remote_access_retry_failed");
+    } finally {
+      remoteRetryBusy = false;
+    }
+    await refreshRemoteAccess();
+  }
+
+  async function revokeRemoteDevice(device: RemoteDevice) {
+    if (device.status === "revoked" || revokingRemoteCredentialId) return;
+    const confirmed = await confirmDialog(`撤销 ${device.clientName} 的访问权限？该客户端需要重新配对才能连接。`, {
+      title: "撤销 Remote 访问权限",
+      kind: "warning",
+    });
+    if (!confirmed) return;
+
+    revokingRemoteCredentialId = device.id;
+    remoteCommandError = null;
+    try {
+      await revokeRemoteCredential(device.id);
+      remoteDevices = remoteDevices.map((candidate) => candidate.id === device.id
+        ? { ...candidate, status: "revoked" }
+        : candidate);
+      applyRemoteClientSnapshot(await listRemoteClients());
+      remoteClientsUnavailable = false;
+    } catch (currentError) {
+      remoteCommandError = remoteCommandDiagnostic(currentError, "remote_credential_revoke_failed");
+    } finally {
+      revokingRemoteCredentialId = null;
+    }
+  }
+
   function openPairDeviceDialog() {
     pairDeviceDialogOpen = true;
+    void beginRemotePairing();
+  }
+
+  async function beginRemotePairing() {
+    const requestToken = ++pairingRequestToken;
+    clearPairingTimers();
+    activePairingId = null;
+    pairingKnownDeviceIds = new Set(remoteDevices.map((device) => device.id));
+    pairingDisplay = {
+      phase: "starting",
+      qrImageUrl: null,
+      expiresAtMs: null,
+      remainingSeconds: null,
+      pairedClientName: null,
+      errorMessage: null,
+    };
+
+    try {
+      const started = await startRemotePairing();
+      if (requestToken !== pairingRequestToken || !pairDeviceDialogOpen) {
+        void cancelRemotePairing(started.pairingId).catch(() => {});
+        return;
+      }
+
+      activePairingId = started.pairingId;
+      const remainingSeconds = pairingRemainingSeconds(started.expiresAt);
+      pairingDisplay = {
+        phase: remainingSeconds > 0 ? "waiting" : "expired",
+        qrImageUrl: started.qrSvgDataUrl,
+        expiresAtMs: started.expiresAt,
+        remainingSeconds,
+        pairedClientName: null,
+        errorMessage: null,
+      };
+      startPairingTimers(requestToken);
+    } catch (currentError) {
+      if (requestToken !== pairingRequestToken || !pairDeviceDialogOpen) return;
+      const diagnostic = remoteCommandDiagnostic(currentError, "remote_pairing_start_failed");
+      pairingDisplay = {
+        phase: "error",
+        qrImageUrl: null,
+        expiresAtMs: null,
+        remainingSeconds: null,
+        pairedClientName: null,
+        errorMessage: `${diagnostic.code}：${diagnostic.message}`,
+      };
+    }
+  }
+
+  function startPairingTimers(requestToken: number) {
+    updatePairingCountdown(requestToken);
+    pairingCountdownTimer = window.setInterval(() => updatePairingCountdown(requestToken), 1000);
+    schedulePairingStatusPoll(requestToken);
+  }
+
+  function updatePairingCountdown(requestToken: number) {
+    if (requestToken !== pairingRequestToken || !pairDeviceDialogOpen || pairingDisplay.expiresAtMs == null) return;
+    const remainingSeconds = pairingRemainingSeconds(pairingDisplay.expiresAtMs);
+    pairingDisplay = {
+      ...pairingDisplay,
+      phase: remainingSeconds > 0 && pairingDisplay.phase === "expired" ? "waiting" : remainingSeconds <= 0 ? "expired" : pairingDisplay.phase,
+      remainingSeconds,
+    };
+    if (remainingSeconds <= 0 && pairingCountdownTimer) {
+      window.clearInterval(pairingCountdownTimer);
+      pairingCountdownTimer = null;
+    }
+  }
+
+  function schedulePairingStatusPoll(requestToken: number) {
+    if (requestToken !== pairingRequestToken || !pairDeviceDialogOpen || !activePairingId) return;
+    pairingPollTimer = window.setTimeout(() => {
+      pairingPollTimer = null;
+      void pollRemotePairingStatus(requestToken);
+    }, 1000);
+  }
+
+  async function pollRemotePairingStatus(requestToken: number) {
+    const pairingId = activePairingId;
+    if (!pairingId || requestToken !== pairingRequestToken || !pairDeviceDialogOpen) return;
+
+    try {
+      const status = await getRemotePairingStatus(pairingId);
+      if (requestToken !== pairingRequestToken || pairingId !== activePairingId || !pairDeviceDialogOpen) return;
+      const remainingSeconds = pairingRemainingSeconds(status.expiresAt);
+      const phase = pairingPhaseForStatus(status.state, remainingSeconds);
+
+      if (phase === "success") {
+        clearPairingTimers();
+        activePairingId = null;
+        pairingDisplay = {
+          ...pairingDisplay,
+          phase: "success",
+          remainingSeconds: 0,
+          errorMessage: null,
+        };
+        await refreshRemoteClientsAfterPairing(requestToken);
+        return;
+      }
+
+      if ((phase === "expired" && status.state === "expired") || phase === "cancelled") {
+        clearPairingTimers();
+        activePairingId = null;
+        pairingDisplay = {
+          ...pairingDisplay,
+          phase,
+          expiresAtMs: status.expiresAt,
+          remainingSeconds,
+          errorMessage: null,
+        };
+        return;
+      }
+
+      pairingDisplay = {
+        ...pairingDisplay,
+        phase,
+        expiresAtMs: status.expiresAt,
+        remainingSeconds,
+        errorMessage: null,
+      };
+      schedulePairingStatusPoll(requestToken);
+    } catch (currentError) {
+      if (requestToken !== pairingRequestToken || pairingId !== activePairingId || !pairDeviceDialogOpen) return;
+      const diagnostic = remoteCommandDiagnostic(currentError, "remote_pairing_status_failed");
+      pairingDisplay = {
+        ...pairingDisplay,
+        phase: diagnostic.retryable ? pairingDisplay.phase : "error",
+        errorMessage: `${diagnostic.code}：${diagnostic.message}`,
+      };
+      if (diagnostic.retryable) schedulePairingStatusPoll(requestToken);
+    }
+  }
+
+  async function refreshRemoteClientsAfterPairing(requestToken: number) {
+    try {
+      const clients = await listRemoteClients();
+      if (requestToken !== pairingRequestToken || !pairDeviceDialogOpen) return;
+      applyRemoteClientSnapshot(clients);
+      remoteClientsUnavailable = false;
+      const pairedDevice = remoteDevices.find((device) => !pairingKnownDeviceIds.has(device.id) && device.status !== "revoked");
+      pairingDisplay = { ...pairingDisplay, pairedClientName: pairedDevice?.clientName ?? null };
+    } catch (currentError) {
+      if (requestToken === pairingRequestToken) {
+        remoteCommandError = remoteCommandDiagnostic(currentError, "remote_client_list_unavailable");
+      }
+    }
+  }
+
+  async function retryRemotePairing() {
+    const previousPairingId = activePairingId;
+    pairingRequestToken += 1;
+    clearPairingTimers();
+    activePairingId = null;
+    if (previousPairingId) {
+      try {
+        await cancelRemotePairing(previousPairingId);
+      } catch (currentError) {
+        const diagnostic = remoteCommandDiagnostic(currentError, "remote_pairing_cancel_failed");
+        if (!pairingCancellationAlreadyTerminal(diagnostic)) {
+          remoteCommandError = diagnostic;
+        }
+      }
+    }
+    if (pairDeviceDialogOpen) await beginRemotePairing();
   }
 
   async function closePairDeviceDialog() {
+    const pairingId = activePairingId;
+    const shouldCancel = pairingId != null && pairingDisplay.phase !== "success" && pairingDisplay.phase !== "expired" && pairingDisplay.phase !== "cancelled";
+    pairingRequestToken += 1;
+    clearPairingTimers();
+    activePairingId = null;
     pairDeviceDialogOpen = false;
+    pairingDisplay = {
+      phase: "unavailable",
+      qrImageUrl: null,
+      expiresAtMs: null,
+      remainingSeconds: null,
+      pairedClientName: null,
+      errorMessage: null,
+    };
+    if (shouldCancel && pairingId) {
+      try {
+        await cancelRemotePairing(pairingId);
+      } catch (currentError) {
+        const diagnostic = remoteCommandDiagnostic(currentError, "remote_pairing_cancel_failed");
+        if (!pairingCancellationAlreadyTerminal(diagnostic)) {
+          remoteCommandError = diagnostic;
+        }
+      }
+    }
     await tick();
     addDeviceButton?.focus();
+  }
+
+  function pairingCancellationAlreadyTerminal(diagnostic: RemoteAccessDiagnostic) {
+    return diagnostic.code === "pairing_session_not_active" || diagnostic.code === "pairing_session_not_found";
+  }
+
+  function clearPairingTimers() {
+    if (pairingPollTimer) {
+      window.clearTimeout(pairingPollTimer);
+      pairingPollTimer = null;
+    }
+    if (pairingCountdownTimer) {
+      window.clearInterval(pairingCountdownTimer);
+      pairingCountdownTimer = null;
+    }
   }
 
   async function saveSettings() {
@@ -1345,7 +1704,7 @@
       <button class:active={tab === "agents"} on:click={() => (tab = "agents")} aria-label="Agent 列表">
         <Bot size={18} /> Agent
       </button>
-      <button class:active={tab === "connections"} on:click={() => (tab = "connections")} aria-label="设备与本机运行时连接">
+      <button class:active={tab === "connections"} on:click={showConnections} aria-label="设备与本机运行时连接">
         <Cable size={18} /> 连接
       </button>
       <button class:active={tab === "usage"} on:click={() => (tab = "usage")} aria-label="用量统计">
@@ -1486,12 +1845,49 @@
               <h3>设备</h3>
               <p>管理已配对的 Remote 客户端及其访问权限。</p>
             </div>
-            <button bind:this={addDeviceButton} class="connection-primary-button" type="button" on:click={openPairDeviceDialog}>
+            <button bind:this={addDeviceButton} class="connection-primary-button" type="button" disabled={remoteRuntimeStatus?.phase !== "available" || pairDeviceDialogOpen} on:click={openPairDeviceDialog}>
               <Plus size={17} /> 添加设备
             </button>
           </header>
 
-          <RemoteDeviceList devices={remoteDevices} />
+          <div class="remote-access-summary" role="status">
+            <span class="remote-access-summary-icon" aria-hidden="true"><PlugZap size={19} /></span>
+            <div>
+              <strong>{remoteAccessPhaseMeta(remoteRuntimeStatus, remoteClientsLoading).title}</strong>
+              <span>{remoteAccessPhaseMeta(remoteRuntimeStatus, remoteClientsLoading).detail}</span>
+            </div>
+            <span
+              class:online={remoteAccessPhaseMeta(remoteRuntimeStatus, remoteClientsLoading).tone === "ready"}
+              class:runtime-danger={remoteAccessPhaseMeta(remoteRuntimeStatus, remoteClientsLoading).tone === "danger"}
+              class="status-chip"
+            >
+              {remoteAccessPhaseMeta(remoteRuntimeStatus, remoteClientsLoading).label}
+            </span>
+          </div>
+
+          {#if visibleRemoteDiagnostic}
+            <div class="runtime-diagnostic remote-access-diagnostic" role="alert">
+              <ShieldAlert size={17} />
+              <div>
+                <strong>{visibleRemoteDiagnostic.code}</strong>
+                <p>{visibleRemoteDiagnostic.message}</p>
+              </div>
+              {#if remoteAccessCanRetry()}
+                <button type="button" disabled={remoteRetryBusy} on:click={retryRemoteAccessRuntime}>
+                  <RefreshCw size={16} /> {remoteRetryBusy ? "重试中" : "重试"}
+                </button>
+              {/if}
+            </div>
+          {/if}
+
+          <RemoteDeviceList
+            devices={remoteDevices}
+            nowMs={remoteDevicesNowMs}
+            loading={remoteClientsLoading}
+            unavailable={remoteClientsUnavailable}
+            revokingDeviceId={revokingRemoteCredentialId}
+            onRevoke={revokeRemoteDevice}
+          />
         </section>
 
         <section class="runtime-section pixel-panel">
@@ -2217,7 +2613,7 @@
     {/if}
   </section>
 
-  <PairDeviceDialog open={pairDeviceDialogOpen} display={pairingDisplay} onClose={closePairDeviceDialog} />
+  <PairDeviceDialog open={pairDeviceDialogOpen} display={pairingDisplay} onClose={closePairDeviceDialog} onRetry={retryRemotePairing} />
 </main>
 
 {#if availableUpdate}

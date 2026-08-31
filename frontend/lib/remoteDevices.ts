@@ -1,3 +1,5 @@
+import type { RemoteClient, RemotePairingStatusKind } from "./remoteAccess";
+
 export type RemoteDeviceType = "phone" | "tablet" | "desktop" | "browser" | "unknown";
 
 export type RemoteDeviceStatus = "online" | "offline" | "never-connected" | "revoked";
@@ -5,12 +7,13 @@ export type RemoteDeviceStatus = "online" | "offline" | "never-connected" | "rev
 export interface RemoteDevice {
   id: string;
   clientName: string;
+  platform: string;
   deviceType: RemoteDeviceType;
   status: RemoteDeviceStatus;
   lastConnectedAtMs?: number | null;
 }
 
-export type PairingPhase = "unavailable" | "waiting" | "success" | "expired";
+export type PairingPhase = "unavailable" | "starting" | "waiting" | "success" | "expired" | "cancelled" | "error";
 
 export interface PairingDisplayState {
   phase: PairingPhase;
@@ -18,6 +21,7 @@ export interface PairingDisplayState {
   expiresAtMs?: number | null;
   remainingSeconds?: number | null;
   pairedClientName?: string | null;
+  errorMessage?: string | null;
 }
 
 export type RemoteDeviceTone = "ready" | "neutral" | "danger";
@@ -31,6 +35,34 @@ const statusMetadata: Record<RemoteDeviceStatus, { label: string; tone: RemoteDe
 
 export function remoteDeviceStatusMeta(status: RemoteDeviceStatus): { label: string; tone: RemoteDeviceTone } {
   return statusMetadata[status];
+}
+
+export function remoteDeviceFromClient(client: RemoteClient): RemoteDevice {
+  const status: RemoteDeviceStatus = client.revokedAt != null
+    ? "revoked"
+    : client.onlineSessionCount > 0
+      ? "online"
+      : client.lastSeenAt <= client.createdAt
+        ? "never-connected"
+        : "offline";
+
+  return {
+    id: client.credentialId,
+    clientName: client.clientName,
+    platform: client.platform,
+    deviceType: remoteDeviceTypeForPlatform(client.platform),
+    status,
+    lastConnectedAtMs: status === "never-connected" ? null : client.lastSeenAt,
+  };
+}
+
+export function remoteDeviceTypeForPlatform(platform: string): RemoteDeviceType {
+  const normalized = platform.trim().toLowerCase();
+  if (/ipad|tablet/.test(normalized)) return "tablet";
+  if (/iphone|ios|android|phone|mobile/.test(normalized)) return "phone";
+  if (/web|browser|chrome|firefox|edge|safari/.test(normalized)) return "browser";
+  if (/mac|windows|win32|linux|desktop/.test(normalized)) return "desktop";
+  return "unknown";
 }
 
 export function remoteDeviceConnectionLabel(device: RemoteDevice, nowMs = Date.now()): string {
@@ -61,4 +93,18 @@ export function pairingCountdownLabel(remainingSeconds: number): string {
   const minutes = Math.floor(safeSeconds / 60);
   const seconds = safeSeconds % 60;
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+export function pairingRemainingSeconds(expiresAtMs: number, nowMs = Date.now()): number {
+  return Math.max(0, Math.ceil((expiresAtMs - nowMs) / 1000));
+}
+
+export function pairingPhaseForStatus(
+  status: RemotePairingStatusKind,
+  remainingSeconds: number,
+): PairingPhase {
+  if (status === "succeeded") return "success";
+  if (status === "expired" || (status === "active" && remainingSeconds <= 0)) return "expired";
+  if (status === "cancelled") return "cancelled";
+  return "waiting";
 }

@@ -31,7 +31,19 @@ describe("connections workspace", () => {
     expect(deviceListSource).toContain("export let devices: RemoteDevice[] = [];");
     expect(deviceListSource).toContain("export let onRevoke:");
     expect(deviceListSource).toContain("remoteDeviceStatusMeta(device.status)");
+    expect(deviceListSource).toContain("{device.platform");
     expect(deviceListSource).toContain("撤销访问权限");
+    expect(appSource).toContain("await revokeRemoteCredential(device.id)");
+    expect(appSource).toContain("applyRemoteClientSnapshot(await listRemoteClients())");
+  });
+
+  it("isolates Remote Host failures and provides a retry without changing runtime state", () => {
+    expect(appSource).toContain("remoteRuntimeStatus = await getRemoteAccessStatus()");
+    expect(appSource).toContain("remoteRuntimeStatus = await retryRemoteAccess()");
+    expect(appSource).toContain("设备管理暂不可用，其他设置不受影响。");
+    expect(appSource).toContain("remoteCommandError = remoteCommandDiagnostic");
+    expect(appSource).not.toContain("agentRuntimes = await listRemoteClients");
+    expect(appSource).not.toContain("events = await listRemoteClients");
   });
 
   it("renders only a QR image and never a plaintext pairing payload", () => {
@@ -39,6 +51,11 @@ describe("connections workspace", () => {
     expect(pairDialogSource).toContain('<img src={display.qrImageUrl} alt="设备配对二维码" />');
     expect(pairDialogSource).toContain('display.phase === "success"');
     expect(pairDialogSource).toContain("pairingCountdownLabel(display.remainingSeconds)");
+    expect(pairDialogSource).toContain('display.phase === "cancelled"');
+    expect(pairDialogSource).toContain('display.phase === "error"');
+    expect(appSource).toContain("getRemotePairingStatus(pairingId)");
+    expect(appSource).toContain("await cancelRemotePairing(pairingId)");
+    expect(appSource).toContain('phase: "success"');
     expect(pairDialogSource).not.toMatch(/pairing(Code|Credential|Payload)|<pre|<code/);
   });
 
@@ -49,5 +66,17 @@ describe("connections workspace", () => {
     expect(pairDialogSource).toContain("wrappedDialogFocusIndex(activeIndex, focusableElements.length, event.shiftKey)");
     expect(pairDialogSource).toContain('if (event.key === "Escape")');
     expect(appSource).toContain("addDeviceButton?.focus()");
+  });
+
+  it("binds asynchronous cleanup to the old pairing id instead of mutable active state", () => {
+    const closeStart = appSource.indexOf("async function closePairDeviceDialog()");
+    const closeEnd = appSource.indexOf("function pairingCancellationAlreadyTerminal", closeStart);
+    const closeSource = appSource.slice(closeStart, closeEnd);
+
+    expect(closeSource).toContain("const pairingId = activePairingId;");
+    expect(closeSource).toContain("await cancelRemotePairing(pairingId)");
+    expect(closeSource).not.toContain("cancelRemotePairing(activePairingId)");
+    expect(appSource).toContain("cancelRemotePairing(started.pairingId)");
+    expect(appSource).not.toMatch(/cancelRemotePairing\(\s*\)/);
   });
 });

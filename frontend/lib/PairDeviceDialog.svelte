@@ -76,7 +76,7 @@
     </button>
   </header>
 
-  <p id="pair-device-dialog-description">配对服务接入后，可使用 Remote 客户端扫描二维码连接这台电脑。</p>
+  <p id="pair-device-dialog-description">使用 Remote 客户端扫描二维码，安全连接这台电脑。</p>
 
   {#if display.phase === "success"}
     <div class="pair-device-success" role="status">
@@ -85,15 +85,31 @@
       <p>{display.pairedClientName ? `${display.pairedClientName} 已完成安全配对。` : "Remote 客户端已完成安全配对。"}</p>
     </div>
   {:else}
-    <div class:expired={display.phase === "expired"} class="pair-device-qr-frame">
+    <div class:expired={display.phase === "expired" || display.phase === "cancelled" || display.phase === "error"} class="pair-device-qr-frame">
       {#if display.phase === "waiting" && display.qrImageUrl}
         <img src={display.qrImageUrl} alt="设备配对二维码" />
       {:else}
         <QrCode size={48} />
-        <strong>{display.phase === "expired" ? "二维码已过期" : display.phase === "waiting" ? "正在生成二维码" : "等待配对服务接入"}</strong>
-        <span>{display.phase === "unavailable" ? "此处不会显示配对凭据明文" : "请重新生成安全配对二维码"}</span>
+        <strong>
+          {display.phase === "expired"
+            ? "二维码已过期"
+            : display.phase === "cancelled"
+              ? "配对已取消"
+              : display.phase === "error"
+                ? "无法生成二维码"
+                : display.phase === "starting" || display.phase === "waiting"
+                  ? "正在生成二维码"
+                  : "Remote Host 尚未就绪"}
+        </strong>
+        <span>{display.phase === "starting" || display.phase === "waiting" ? "请稍候" : "可重试生成新的安全配对二维码"}</span>
       {/if}
     </div>
+
+    {#if display.errorMessage}
+      <div class="pair-device-error" role="alert">
+        <span>{display.errorMessage}</span>
+      </div>
+    {/if}
 
     <div class="pair-device-expiry" role="status" title={display.expiresAtMs ? new Date(display.expiresAtMs).toLocaleString("zh-CN") : undefined}>
       <Clock3 size={16} />
@@ -101,6 +117,10 @@
         <span>有效期 {pairingCountdownLabel(display.remainingSeconds)}</span>
       {:else if display.phase === "expired"}
         <span>当前二维码已失效</span>
+      {:else if display.phase === "cancelled"}
+        <span>当前配对已取消</span>
+      {:else if display.phase === "starting"}
+        <span>正在获取有效期</span>
       {:else if display.phase === "waiting"}
         <span>正在获取有效期</span>
       {:else}
@@ -110,7 +130,7 @@
   {/if}
 
   <div class="row-actions pair-device-dialog-actions">
-    {#if display.phase === "expired" && onRetry}
+    {#if (display.phase === "expired" || display.phase === "cancelled" || display.phase === "error") && onRetry}
       <button type="button" on:click={retry}><RotateCcw size={16} /> 重新生成</button>
     {/if}
     <button type="button" on:click={onClose}>{display.phase === "success" ? "完成" : "关闭"}</button>

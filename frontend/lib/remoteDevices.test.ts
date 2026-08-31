@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   pairingCountdownLabel,
+  pairingPhaseForStatus,
+  pairingRemainingSeconds,
   remoteDeviceConnectionLabel,
+  remoteDeviceFromClient,
   remoteDeviceStatusMeta,
   type RemoteDevice,
 } from "./remoteDevices";
@@ -10,6 +13,7 @@ function device(overrides: Partial<RemoteDevice> = {}): RemoteDevice {
   return {
     id: "device-one",
     clientName: "CodePet Remote",
+    platform: "iOS",
     deviceType: "phone",
     status: "offline",
     lastConnectedAtMs: 1_000_000,
@@ -33,9 +37,34 @@ describe("remote device display state", () => {
     expect(remoteDeviceConnectionLabel(device({ status: "never-connected" }), nowMs)).toBe("从未连接");
   });
 
-  it("formats pairing countdown values supplied by the future bridge", () => {
+  it("maps backend client metadata to online, offline, never-connected, and revoked devices", () => {
+    const client = {
+      credentialId: "credential-one",
+      remoteClientId: "client-one",
+      clientName: "My Phone",
+      platform: "iOS",
+      createdAt: 1_000,
+      lastSeenAt: 1_000,
+      revokedAt: null,
+      onlineSessionCount: 0,
+    };
+
+    expect(remoteDeviceFromClient(client)).toMatchObject({ deviceType: "phone", status: "never-connected", lastConnectedAtMs: null });
+    expect(remoteDeviceFromClient({ ...client, lastSeenAt: 2_000 })).toMatchObject({ status: "offline", lastConnectedAtMs: 2_000 });
+    expect(remoteDeviceFromClient({ ...client, onlineSessionCount: 2 })).toMatchObject({ status: "online" });
+    expect(remoteDeviceFromClient({ ...client, onlineSessionCount: 2, revokedAt: 3_000 })).toMatchObject({ status: "revoked" });
+    expect(remoteDeviceFromClient({ ...client, platform: "macOS" })).toMatchObject({ deviceType: "desktop", platform: "macOS" });
+    expect(remoteDeviceFromClient({ ...client, platform: "iPadOS" })).toMatchObject({ deviceType: "tablet" });
+  });
+
+  it("formats pairing countdown and maps every terminal pairing outcome", () => {
     expect(pairingCountdownLabel(299)).toBe("04:59");
     expect(pairingCountdownLabel(0)).toBe("00:00");
     expect(pairingCountdownLabel(-10)).toBe("00:00");
+    expect(pairingRemainingSeconds(301_000, 2_000)).toBe(299);
+    expect(pairingPhaseForStatus("active", 10)).toBe("waiting");
+    expect(pairingPhaseForStatus("succeeded", 10)).toBe("success");
+    expect(pairingPhaseForStatus("expired", 0)).toBe("expired");
+    expect(pairingPhaseForStatus("cancelled", 10)).toBe("cancelled");
   });
 });
