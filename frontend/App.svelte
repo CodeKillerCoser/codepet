@@ -40,8 +40,8 @@
   import PetAvatar from "./lib/PetAvatar.svelte";
   import PairDeviceDialog from "./lib/PairDeviceDialog.svelte";
   import RemoteDeviceList from "./lib/RemoteDeviceList.svelte";
-  import { cancelRemotePairing, getRemoteAccessStatus, getRemotePairingStatus, listRemoteClients, remoteCommandDiagnostic, retryRemoteAccess, revokeRemoteCredential, startRemotePairing, type RemoteAccessDiagnostic, type RemoteAccessStatus } from "./lib/remoteAccess";
-  import { pairingPhaseForStatus, pairingRemainingSeconds, remoteDeviceFromClient, type PairingDisplayState, type RemoteDevice } from "./lib/remoteDevices";
+  import { cancelRemotePairing, copyRemotePairingJson, getRemoteAccessStatus, getRemotePairingStatus, listRemoteClients, remoteCommandDiagnostic, retryRemoteAccess, revokeRemoteCredential, startRemotePairing, type RemoteAccessDiagnostic, type RemoteAccessStatus } from "./lib/remoteAccess";
+  import { pairingJsonCanBeCopied, pairingPhaseForStatus, pairingRemainingSeconds, remoteDeviceFromClient, type PairingCopyStatus, type PairingDisplayState, type RemoteDevice } from "./lib/remoteDevices";
   import { playNotificationSound, playWhipReactionSound } from "./lib/sound";
   import { defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
   import { ignoredUpdateSettings, shouldPromptForUpdate, type UpdateCheckMode } from "./lib/updates";
@@ -74,6 +74,8 @@
   let revokingRemoteCredentialId: string | null = null;
   let remoteDevicesNowMs = Date.now();
   let activePairingId: string | null = null;
+  let pairingCopyStatus: PairingCopyStatus = "idle";
+  let pairingCopyMessage: string | null = null;
   let pairingRequestToken = 0;
   let pairingKnownDeviceIds = new Set<string>();
   let pairingPollTimer: number | null = null;
@@ -615,6 +617,7 @@
     const requestToken = ++pairingRequestToken;
     clearPairingTimers();
     activePairingId = null;
+    resetPairingCopyFeedback();
     pairingKnownDeviceIds = new Set(remoteDevices.map((device) => device.id));
     pairingDisplay = {
       phase: "starting",
@@ -636,7 +639,7 @@
       const remainingSeconds = pairingRemainingSeconds(started.expiresAt);
       pairingDisplay = {
         phase: remainingSeconds > 0 ? "waiting" : "expired",
-        qrImageUrl: started.qrSvgDataUrl,
+        qrImageUrl: remainingSeconds > 0 ? started.qrSvgDataUrl : null,
         expiresAtMs: started.expiresAt,
         remainingSeconds,
         pairedClientName: null,
@@ -669,9 +672,11 @@
     pairingDisplay = {
       ...pairingDisplay,
       phase: remainingSeconds > 0 && pairingDisplay.phase === "expired" ? "waiting" : remainingSeconds <= 0 ? "expired" : pairingDisplay.phase,
+      qrImageUrl: remainingSeconds <= 0 ? null : pairingDisplay.qrImageUrl,
       remainingSeconds,
     };
     if (remainingSeconds <= 0 && pairingCountdownTimer) {
+      resetPairingCopyFeedback();
       window.clearInterval(pairingCountdownTimer);
       pairingCountdownTimer = null;
     }
@@ -698,9 +703,11 @@
       if (phase === "success") {
         clearPairingTimers();
         activePairingId = null;
+        resetPairingCopyFeedback();
         pairingDisplay = {
           ...pairingDisplay,
           phase: "success",
+          qrImageUrl: null,
           remainingSeconds: 0,
           errorMessage: null,
         };
@@ -711,9 +718,11 @@
       if ((phase === "expired" && status.state === "expired") || phase === "cancelled") {
         clearPairingTimers();
         activePairingId = null;
+        resetPairingCopyFeedback();
         pairingDisplay = {
           ...pairingDisplay,
           phase,
+          qrImageUrl: null,
           expiresAtMs: status.expiresAt,
           remainingSeconds,
           errorMessage: null,
@@ -724,6 +733,7 @@
       pairingDisplay = {
         ...pairingDisplay,
         phase,
+        qrImageUrl: phase === "waiting" ? pairingDisplay.qrImageUrl : null,
         expiresAtMs: status.expiresAt,
         remainingSeconds,
         errorMessage: null,
@@ -732,9 +742,11 @@
     } catch (currentError) {
       if (requestToken !== pairingRequestToken || pairingId !== activePairingId || !pairDeviceDialogOpen) return;
       const diagnostic = remoteCommandDiagnostic(currentError, "remote_pairing_status_failed");
+      if (!diagnostic.retryable) resetPairingCopyFeedback();
       pairingDisplay = {
         ...pairingDisplay,
         phase: diagnostic.retryable ? pairingDisplay.phase : "error",
+        qrImageUrl: diagnostic.retryable ? pairingDisplay.qrImageUrl : null,
         errorMessage: `${diagnostic.code}：${diagnostic.message}`,
       };
       if (diagnostic.retryable) schedulePairingStatusPoll(requestToken);
@@ -756,11 +768,47 @@
     }
   }
 
+  async function copyActivePairingJson() {
+    const pairingId = activePairingId;
+    const requestToken = pairingRequestToken;
+    if (!pairingId || !pairingJsonCanBeCopied(pairingDisplay) || pairingCopyStatus === "copying" || pairingCopyStatus === "unavailable") return;
+
+    pairingCopyStatus = "copying";
+    pairingCopyMessage = null;
+    try {
+      await copyRemotePairingJson(pairingId);
+      if (!pairingCopyRequestIsCurrent(requestToken, pairingId)) return;
+      pairingCopyStatus = "copied";
+      pairingCopyMessage = "配对 JSON 已复制，仅在当前倒计时内有效。";
+    } catch (currentError) {
+      if (!pairingCopyRequestIsCurrent(requestToken, pairingId)) return;
+      const diagnostic = remoteCommandDiagnostic(currentError, "remote_pairing_copy_failed");
+      const payloadUnavailable = diagnostic.code === "remote_pairing_payload_unavailable";
+      pairingCopyStatus = payloadUnavailable ? "unavailable" : "failed";
+      pairingCopyMessage = payloadUnavailable
+        ? "当前配对已失效，无法复制旧的配对 JSON。"
+        : "无法写入系统剪贴板，请检查权限后重试。";
+    }
+  }
+
+  function pairingCopyRequestIsCurrent(requestToken: number, pairingId: string) {
+    return requestToken === pairingRequestToken
+      && pairingId === activePairingId
+      && pairDeviceDialogOpen
+      && pairingJsonCanBeCopied(pairingDisplay);
+  }
+
+  function resetPairingCopyFeedback() {
+    pairingCopyStatus = "idle";
+    pairingCopyMessage = null;
+  }
+
   async function retryRemotePairing() {
     const previousPairingId = activePairingId;
     pairingRequestToken += 1;
     clearPairingTimers();
     activePairingId = null;
+    resetPairingCopyFeedback();
     if (previousPairingId) {
       try {
         await cancelRemotePairing(previousPairingId);
@@ -780,6 +828,7 @@
     pairingRequestToken += 1;
     clearPairingTimers();
     activePairingId = null;
+    resetPairingCopyFeedback();
     pairDeviceDialogOpen = false;
     pairingDisplay = {
       phase: "unavailable",
@@ -2613,7 +2662,16 @@
     {/if}
   </section>
 
-  <PairDeviceDialog open={pairDeviceDialogOpen} display={pairingDisplay} onClose={closePairDeviceDialog} onRetry={retryRemotePairing} />
+  <PairDeviceDialog
+    open={pairDeviceDialogOpen}
+    display={pairingDisplay}
+    canCopyPairingJson={activePairingId != null && pairingJsonCanBeCopied(pairingDisplay)}
+    copyStatus={pairingCopyStatus}
+    copyMessage={pairingCopyMessage}
+    onCopyPairingJson={copyActivePairingJson}
+    onClose={closePairDeviceDialog}
+    onRetry={retryRemotePairing}
+  />
 </main>
 
 {#if availableUpdate}

@@ -54,7 +54,7 @@ use runtime_gateway::tauri_bridge::{
     CodexDesktopCompanionState, ProviderHostState, RuntimeGatewayState,
 };
 use runtime_gateway::remote_access::{
-    cancel_remote_pairing, get_remote_pairing_status, list_remote_clients,
+    cancel_remote_pairing, copy_remote_pairing_json, get_remote_pairing_status, list_remote_clients,
     remote_access_status, retry_remote_access, revoke_remote_credential,
     start_remote_pairing, RemoteAccessRuntime,
 };
@@ -444,6 +444,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
@@ -612,6 +613,7 @@ pub fn run() {
             list_remote_clients,
             start_remote_pairing,
             get_remote_pairing_status,
+            copy_remote_pairing_json,
             cancel_remote_pairing,
             revoke_remote_credential,
             updates::check_app_update,

@@ -47,7 +47,7 @@ describe("connections workspace", () => {
     expect(appSource).not.toContain("events = await listRemoteClients");
   });
 
-  it("renders only a QR image and never a plaintext pairing payload", () => {
+  it("keeps pairing JSON behind an active-only copy control and never renders it as text", () => {
     expect(pairDialogSource).toContain("export let display: PairingDisplayState;");
     expect(pairDialogSource).toContain('<img src={display.qrImageUrl} alt="设备配对二维码" />');
     expect(pairDialogSource).toContain('display.phase === "success"');
@@ -55,9 +55,18 @@ describe("connections workspace", () => {
     expect(pairDialogSource).toContain('display.phase === "cancelled"');
     expect(pairDialogSource).toContain('display.phase === "error"');
     expect(appSource).toContain("getRemotePairingStatus(pairingId)");
+    expect(appSource).toContain("copyRemotePairingJson(pairingId)");
+    expect(appSource).toContain("pairingCopyRequestIsCurrent(requestToken, pairingId)");
     expect(appSource).toContain("await cancelRemotePairing(pairingId)");
     expect(appSource).toContain('phase: "success"');
+    expect(pairDialogSource).toContain("复制配对 JSON");
+    expect(pairDialogSource).toContain('copyStatus === "unavailable"');
+    expect(pairDialogSource).toContain("disabled={!canCopyPairingJson || copyStatus === \"copying\" || copyStatus === \"unavailable\"}");
+    expect(pairDialogSource).toContain("配对 JSON 已过期");
+    expect(pairDialogSource).toContain('copyStatus === "failed" || copyStatus === "unavailable" ? "alert" : "status"');
     expect(pairDialogSource).not.toMatch(/pairing(Code|Credential|Payload)|<pre|<code/);
+    expect(pairDialogSource).not.toContain("{pairingJson}");
+    expect(appSource).toContain("qrImageUrl: null");
   });
 
   it("opens as a native modal and handles both Tab directions inside it", () => {

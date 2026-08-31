@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   pairingCountdownLabel,
+  pairingJsonCanBeCopied,
   pairingPhaseForStatus,
   pairingRemainingSeconds,
   remoteDeviceConnectionLabel,
@@ -72,5 +73,18 @@ describe("remote device display state", () => {
     expect(pairingPhaseForStatus("succeeded", 10)).toBe("success");
     expect(pairingPhaseForStatus("expired", 0)).toBe("expired");
     expect(pairingPhaseForStatus("cancelled", 10)).toBe("cancelled");
+  });
+
+  it("allows copying only while the displayed pairing is still active", () => {
+    const display = {
+      phase: "waiting" as const,
+      remainingSeconds: 10,
+    };
+
+    expect(pairingJsonCanBeCopied(display)).toBe(true);
+    expect(pairingJsonCanBeCopied({ ...display, remainingSeconds: 0 })).toBe(false);
+    expect(pairingJsonCanBeCopied({ ...display, phase: "success" })).toBe(false);
+    expect(pairingJsonCanBeCopied({ ...display, phase: "expired" })).toBe(false);
+    expect(pairingJsonCanBeCopied({ ...display, phase: "cancelled" })).toBe(false);
   });
 });

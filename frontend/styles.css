@@ -2213,6 +2213,22 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.pair-device-copy-feedback {
+  border: 1px solid color-mix(in srgb, var(--app-good) 42%, var(--app-border));
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: var(--app-good);
+  background: color-mix(in srgb, var(--app-good) 9%, var(--app-surface-strong));
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-copy);
+}
+
+.pair-device-copy-feedback.failed {
+  border-color: color-mix(in srgb, var(--app-danger) 42%, var(--app-border));
+  color: var(--app-danger);
+  background: color-mix(in srgb, var(--app-danger) 9%, var(--app-surface-strong));
+}
+
 .pair-device-success {
   display: grid;
   min-height: 260px;
@@ -2242,6 +2258,12 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: 7px;
+}
+
+.pair-device-copy-button.copied {
+  border-color: color-mix(in srgb, var(--app-good) 50%, var(--app-border));
+  color: var(--app-good);
+  background: color-mix(in srgb, var(--app-good) 12%, var(--app-surface-soft));
 }
 
 .primary-action {

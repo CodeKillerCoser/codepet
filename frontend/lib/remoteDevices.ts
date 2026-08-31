@@ -16,6 +16,8 @@ export interface RemoteDevice {
 
 export type PairingPhase = "unavailable" | "starting" | "waiting" | "success" | "expired" | "cancelled" | "error";
 
+export type PairingCopyStatus = "idle" | "copying" | "copied" | "failed" | "unavailable";
+
 export interface PairingDisplayState {
   phase: PairingPhase;
   qrImageUrl?: string | null;
@@ -106,6 +108,10 @@ export function pairingCountdownLabel(remainingSeconds: number): string {
 
 export function pairingRemainingSeconds(expiresAtMs: number, nowMs = Date.now()): number {
   return Math.max(0, Math.ceil((expiresAtMs - nowMs) / 1000));
+}
+
+export function pairingJsonCanBeCopied(display: PairingDisplayState): boolean {
+  return display.phase === "waiting" && (display.remainingSeconds ?? 0) > 0;
 }
 
 export function pairingPhaseForStatus(

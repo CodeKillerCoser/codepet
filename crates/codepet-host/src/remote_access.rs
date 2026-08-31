@@ -860,6 +860,32 @@ impl RemoteAccessManager {
             .ok_or_else(pairing_status_not_found)
     }
 
+    /// Runs one synchronous operation while the matching pairing remains active.
+    /// Pairing completion, cancellation, and expiry wait for the operation to finish.
+    pub fn run_while_pairing_active<T, E>(
+        &self,
+        pairing_id: &str,
+        operation: impl FnOnce() -> Result<T, E>,
+    ) -> HostResult<Result<T, E>> {
+        validate_prefixed_random_id("pairing", pairing_id)?;
+        let mut pairing = self
+            .pairing
+            .lock()
+            .map_err(|_| pairing_session_lock_error())?;
+        self.expire_locked(&mut pairing, Instant::now());
+        if pairing
+            .active
+            .as_ref()
+            .is_some_and(|active| active.pairing_id == pairing_id)
+        {
+            return Ok(operation());
+        }
+        if let Some(record) = pairing.outcomes.get(pairing_id) {
+            return Err(pairing_not_active(&record.status));
+        }
+        Err(pairing_status_not_found())
+    }
+
     pub fn cancel_pairing(&self, pairing_id: &str) -> HostResult<PairingStatus> {
         validate_prefixed_random_id("pairing", pairing_id)?;
         let mut pairing = self
@@ -1963,6 +1989,13 @@ mod tests {
             .expire_pairing(&expired_session.pairing_id)
             .unwrap();
         assert_eq!(expired.state, PairingStatusKind::Expired);
+        assert_eq!(
+            manager
+                .run_while_pairing_active(&expired_session.pairing_id, || Ok::<(), ()>(()))
+                .unwrap_err()
+                .code,
+            "pairing_session_not_active"
+        );
         assert!(!pairing_watch.borrow().pairing_available);
 
         let succeeded_session = manager.begin_pairing().unwrap();

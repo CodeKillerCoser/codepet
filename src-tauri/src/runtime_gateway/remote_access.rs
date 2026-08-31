@@ -11,7 +11,8 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
-use tauri::State;
+use tauri::{AppHandle, State, WebviewWindow};
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tokio::sync::{watch, Mutex};
 use tokio::time::timeout;
 
@@ -114,11 +115,22 @@ struct RemoteAccessRuntimeInner {
     diagnostic: Option<RemoteAccessDiagnosticView>,
 }
 
+struct ActivePairingPayload {
+    pairing_id: String,
+    json: String,
+}
+
+struct EncodedPairingPayload {
+    json: String,
+    qr_svg_data_url: String,
+}
+
 #[derive(Clone)]
 pub struct RemoteAccessRuntime {
     manager: Option<Arc<RemoteAccessManager>>,
     gateway: Option<Arc<ProviderGatewayService>>,
     inner: Arc<Mutex<RemoteAccessRuntimeInner>>,
+    active_pairing_payload: Arc<StdMutex<Option<ActivePairingPayload>>>,
     lifecycle: Arc<Mutex<()>>,
     pairing_monitor: Arc<StdMutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
     pairing_shutdown: watch::Sender<bool>,
@@ -148,6 +160,7 @@ impl RemoteAccessRuntime {
                     retryable: true,
                 }),
             })),
+            active_pairing_payload: Arc::new(StdMutex::new(None)),
             lifecycle: Arc::new(Mutex::new(())),
             pairing_monitor: Arc::new(StdMutex::new(None)),
             pairing_shutdown,
@@ -169,6 +182,7 @@ impl RemoteAccessRuntime {
                 pairing_available: false,
                 diagnostic: Some(error.into()),
             })),
+            active_pairing_payload: Arc::new(StdMutex::new(None)),
             lifecycle: Arc::new(Mutex::new(())),
             pairing_monitor: Arc::new(StdMutex::new(None)),
             pairing_shutdown,
@@ -335,21 +349,29 @@ impl RemoteAccessRuntime {
             pairing_secret: pairing.pairing_secret,
             expires_at: pairing.expires_at,
         };
-        let qr_svg_data_url = match encode_pairing_qr(&payload) {
+        let encoded = match encode_pairing_payload(&payload) {
             Ok(value) => value,
             Err(error) => {
                 let _ = manager.cancel_pairing(&pairing.pairing_id);
                 return Err(error);
             }
         };
+        if self
+            .store_pairing_payload(&pairing.pairing_id, encoded.json)
+            .is_err()
+        {
+            let _ = manager.cancel_pairing(&pairing.pairing_id);
+            return Err(pairing_payload_unavailable());
+        }
         if let Err(error) = self.sync_pairing_available().await {
             let _ = manager.cancel_pairing(&pairing.pairing_id);
+            self.clear_pairing_payload(&pairing.pairing_id);
             return Err(error);
         }
         Ok(RemotePairingStartView {
             pairing_id: pairing.pairing_id,
             expires_at: pairing.expires_at,
-            qr_svg_data_url,
+            qr_svg_data_url: encoded.qr_svg_data_url,
         })
     }
 
@@ -359,6 +381,22 @@ impl RemoteAccessRuntime {
             .ok_or_else(runtime_core_unavailable)?
             .pairing_status(pairing_id)
             .map_err(RemoteCommandError::from)
+    }
+
+    pub fn copy_pairing_json(
+        &self,
+        pairing_id: &str,
+        write: impl FnOnce(&str) -> Result<(), RemoteCommandError>,
+    ) -> Result<(), RemoteCommandError> {
+        let json = self.pairing_payload(pairing_id)?;
+        let manager = self.manager.as_ref().ok_or_else(runtime_core_unavailable)?;
+        match manager.run_while_pairing_active(pairing_id, || write(&json)) {
+            Ok(result) => result,
+            Err(_) => {
+                self.clear_pairing_payload(pairing_id);
+                Err(pairing_payload_unavailable())
+            }
+        }
     }
 
     pub async fn cancel_pairing(
@@ -371,6 +409,7 @@ impl RemoteAccessRuntime {
             .ok_or_else(runtime_core_unavailable)?
             .cancel_pairing(pairing_id)
             .map_err(RemoteCommandError::from)?;
+        self.clear_pairing_payload(pairing_id);
         self.sync_pairing_available().await?;
         Ok(status)
     }
@@ -440,6 +479,7 @@ impl RemoteAccessRuntime {
             return true;
         }
         self.pairing_shutdown.send_replace(true);
+        self.clear_all_pairing_payload();
         let monitor = self
             .pairing_monitor
             .lock()
@@ -517,6 +557,7 @@ impl RemoteAccessRuntime {
                         if changed.is_err() {
                             break;
                         }
+                        runtime.clear_inactive_pairing_payload();
                         if let Err(error) = runtime.sync_pairing_available().await {
                             crate::app_log::error(
                                 "remote_access",
@@ -543,6 +584,67 @@ impl RemoteAccessRuntime {
         let pairing = manager.subscribe_pairing_state();
         let pairing_available = pairing.borrow().pairing_available;
         Ok(pairing_available)
+    }
+
+    fn store_pairing_payload(
+        &self,
+        pairing_id: &str,
+        json: String,
+    ) -> Result<(), RemoteCommandError> {
+        let mut payload = self
+            .active_pairing_payload
+            .lock()
+            .map_err(|_| pairing_payload_unavailable())?;
+        *payload = Some(ActivePairingPayload {
+            pairing_id: pairing_id.to_string(),
+            json,
+        });
+        Ok(())
+    }
+
+    fn pairing_payload(&self, pairing_id: &str) -> Result<String, RemoteCommandError> {
+        self.active_pairing_payload
+            .lock()
+            .map_err(|_| pairing_payload_unavailable())?
+            .as_ref()
+            .filter(|payload| payload.pairing_id == pairing_id)
+            .map(|payload| payload.json.clone())
+            .ok_or_else(pairing_payload_unavailable)
+    }
+
+    fn clear_pairing_payload(&self, pairing_id: &str) {
+        let Ok(mut payload) = self.active_pairing_payload.lock() else {
+            return;
+        };
+        if payload
+            .as_ref()
+            .is_some_and(|payload| payload.pairing_id == pairing_id)
+        {
+            *payload = None;
+        }
+    }
+
+    fn clear_all_pairing_payload(&self) {
+        if let Ok(mut payload) = self.active_pairing_payload.lock() {
+            *payload = None;
+        }
+    }
+
+    fn clear_inactive_pairing_payload(&self) {
+        let active_pairing_id = self.manager.as_ref().and_then(|manager| {
+            let pairing = manager.subscribe_pairing_state();
+            let snapshot = pairing.borrow().clone();
+            snapshot.pairing_available.then_some(snapshot.pairing_id).flatten()
+        });
+        let Ok(mut payload) = self.active_pairing_payload.lock() else {
+            return;
+        };
+        if payload
+            .as_ref()
+            .is_some_and(|payload| Some(&payload.pairing_id) != active_pairing_id.as_ref())
+        {
+            *payload = None;
+        }
     }
 
     async fn sync_pairing_available(&self) -> Result<(), RemoteCommandError> {
@@ -606,6 +708,7 @@ impl RemoteAccessRuntime {
     }
 
     async fn fail_running(&self, error: RemoteCommandError) {
+        self.clear_all_pairing_payload();
         let listener = {
             let mut inner = self.inner.lock().await;
             inner.phase = RemoteAccessRuntimePhase::Unavailable;
@@ -629,6 +732,7 @@ impl RemoteAccessRuntime {
     }
 
     async fn fail_start<T>(&self, error: HostError) -> Result<T, RemoteCommandError> {
+        self.clear_all_pairing_payload();
         let diagnostic = RemoteAccessDiagnosticView::from(error.clone());
         let mut inner = self.inner.lock().await;
         inner.phase = RemoteAccessRuntimePhase::Unavailable;
@@ -682,13 +786,15 @@ fn select_advertised_host_from_environment() -> Result<std::net::Ipv4Addr, HostE
     select_remote_lan_ipv4(configured)
 }
 
-fn encode_pairing_qr(payload: &PairingQrPayload) -> Result<String, RemoteCommandError> {
-    let json = serde_json::to_vec(payload).map_err(|error| RemoteCommandError {
+fn encode_pairing_payload(
+    payload: &PairingQrPayload,
+) -> Result<EncodedPairingPayload, RemoteCommandError> {
+    let json = serde_json::to_string(payload).map_err(|error| RemoteCommandError {
         code: "remote_pairing_qr_encoding_failed".to_string(),
         message: format!("encode the generated pairing QR payload: {error}"),
         retryable: false,
     })?;
-    let code = QrCode::new(json).map_err(|error| RemoteCommandError {
+    let code = QrCode::new(json.as_bytes()).map_err(|error| RemoteCommandError {
         code: "remote_pairing_qr_encoding_failed".to_string(),
         message: format!("encode the generated pairing QR code: {error}"),
         retryable: false,
@@ -699,7 +805,36 @@ fn encode_pairing_qr(payload: &PairingQrPayload) -> Result<String, RemoteCommand
         .quiet_zone(true)
         .build();
     let encoded = base64::engine::general_purpose::STANDARD.encode(svg.as_bytes());
-    Ok(format!("data:image/svg+xml;base64,{encoded}"))
+    Ok(EncodedPairingPayload {
+        json,
+        qr_svg_data_url: format!("data:image/svg+xml;base64,{encoded}"),
+    })
+}
+
+fn pairing_payload_unavailable() -> RemoteCommandError {
+    RemoteCommandError {
+        code: "remote_pairing_payload_unavailable".to_string(),
+        message: "Pairing JSON is only available while the matching pairing is active"
+            .to_string(),
+        retryable: false,
+    }
+}
+
+fn pairing_copy_window_not_allowed() -> RemoteCommandError {
+    RemoteCommandError {
+        code: "remote_pairing_copy_window_not_allowed".to_string(),
+        message: "Pairing JSON can only be copied from the main Code Pet window".to_string(),
+        retryable: false,
+    }
+}
+
+fn pairing_clipboard_write_failed() -> RemoteCommandError {
+    RemoteCommandError {
+        code: "remote_pairing_clipboard_write_failed".to_string(),
+        message: "Code Pet could not write the active pairing JSON to the system clipboard"
+            .to_string(),
+        retryable: true,
+    }
 }
 
 fn runtime_core_unavailable() -> RemoteCommandError {
@@ -778,6 +913,23 @@ pub fn get_remote_pairing_status(
     pairing_id: String,
 ) -> Result<PairingStatus, RemoteCommandError> {
     state.pairing_status(&pairing_id)
+}
+
+#[tauri::command]
+pub fn copy_remote_pairing_json(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, RemoteAccessRuntime>,
+    pairing_id: String,
+) -> Result<(), RemoteCommandError> {
+    if window.label() != "main" {
+        return Err(pairing_copy_window_not_allowed());
+    }
+    state.copy_pairing_json(&pairing_id, |json| {
+        app.clipboard()
+            .write_text(json.to_string())
+            .map_err(|_| pairing_clipboard_write_failed())
+    })
 }
 
 #[tauri::command]
@@ -948,7 +1100,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn qr_response_pairing_watch_client_listing_and_revoke_are_secret_safe() {
+    async fn pairing_json_is_active_only_and_remote_views_stay_secret_safe() {
         let test = test_runtime(
             Arc::new(|| Ok(std::net::Ipv4Addr::LOCALHOST)),
             true,
@@ -979,6 +1131,25 @@ mod tests {
         assert!(!svg.contains("pairingSecret"));
         assert_eq!(
             test.runtime
+                .copy_pairing_json(&started.pairing_id, |_| {
+                    Err(pairing_clipboard_write_failed())
+                })
+                .unwrap_err()
+                .code,
+            "remote_pairing_clipboard_write_failed"
+        );
+        test.runtime
+            .copy_pairing_json(&started.pairing_id, |json| {
+                let pairing_payload: PairingQrPayload = serde_json::from_str(json).unwrap();
+                assert_eq!(pairing_payload.pairing_id, started.pairing_id);
+                assert_eq!(pairing_payload.expires_at, started.expires_at);
+                assert_eq!(pairing_payload.version, u64::from(PROTOCOL_VERSION));
+                assert_eq!(pairing_payload.pairing_secret.len(), 64);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(
+            test.runtime
                 .pairing_status(&started.pairing_id)
                 .unwrap()
                 .state,
@@ -996,6 +1167,13 @@ mod tests {
         assert_eq!(cancelled.state, codepet_host::PairingStatusKind::Cancelled);
         assert_eq!(
             test.runtime
+                .copy_pairing_json(&started.pairing_id, |_| Ok(()))
+                .unwrap_err()
+                .code,
+            "remote_pairing_payload_unavailable"
+        );
+        assert_eq!(
+            test.runtime
                 .cancel_pairing(&started.pairing_id)
                 .await
                 .unwrap()
@@ -1003,8 +1181,13 @@ mod tests {
             codepet_host::PairingStatusKind::Cancelled
         );
 
-        let pairing = test.remote_manager.begin_pairing().unwrap();
+        let pairing = test.runtime.start_pairing().await.unwrap();
         let pairing_id = pairing.pairing_id.clone();
+        let pairing_json = {
+            let payload = test.runtime.active_pairing_payload.lock().unwrap();
+            payload.as_ref().unwrap().json.clone()
+        };
+        let pairing_payload: PairingQrPayload = serde_json::from_str(&pairing_json).unwrap();
         wait_for_pairing_advertisement(&test.runtime, true).await;
         assert_eq!(
             test.runtime
@@ -1018,6 +1201,10 @@ mod tests {
             test.runtime.pairing_status(&pairing_id).unwrap().state,
             codepet_host::PairingStatusKind::Active
         );
+        assert!(test
+            .runtime
+            .copy_pairing_json(&pairing_id, |_| Ok(()))
+            .is_ok());
         assert!(test.runtime.status().await.pairing_available);
         let port = test
             .runtime
@@ -1042,7 +1229,7 @@ mod tests {
                 "https://localhost:{port}/remote/v1/pairings/{pairing_id}/exchange"
             ))
             .json(&PairingExchangeRequest {
-                pairing_secret: pairing.pairing_secret,
+                pairing_secret: pairing_payload.pairing_secret,
                 client_id: "runtime-client".to_string(),
                 device: DeviceDescriptor {
                     device_name: "Runtime Client".to_string(),
@@ -1061,6 +1248,14 @@ mod tests {
             test.runtime.pairing_status(&pairing_id).unwrap().state,
             codepet_host::PairingStatusKind::Succeeded
         );
+        assert_eq!(
+            test.runtime
+                .copy_pairing_json(&pairing_id, |_| Ok(()))
+                .unwrap_err()
+                .code,
+            "remote_pairing_payload_unavailable"
+        );
+        assert!(test.runtime.active_pairing_payload.lock().unwrap().is_none());
         let clients = test.runtime.list_clients().await.unwrap();
         assert_eq!(clients.len(), 1);
         assert_eq!(clients[0].remote_client_id, "runtime-client");
@@ -1087,6 +1282,66 @@ mod tests {
         assert_eq!(
             test.runtime.list_clients().await.unwrap()[0].revoked_at,
             revoked.revoked_at
+        );
+
+        test.runtime.shutdown_once().await;
+        test.provider_manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn pairing_copy_finishes_before_concurrent_cancellation() {
+        let test = test_runtime(
+            Arc::new(|| Ok(std::net::Ipv4Addr::LOCALHOST)),
+            false,
+        );
+        test.runtime.retry().await.unwrap();
+        let pairing = test.runtime.start_pairing().await.unwrap();
+        let pairing_id = pairing.pairing_id;
+
+        let (copy_started_tx, copy_started_rx) = std::sync::mpsc::channel();
+        let (release_copy_tx, release_copy_rx) = std::sync::mpsc::channel();
+        let copy_runtime = test.runtime.clone();
+        let copy_pairing_id = pairing_id.clone();
+        let copy_thread = std::thread::spawn(move || {
+            copy_runtime.copy_pairing_json(&copy_pairing_id, |_| {
+                copy_started_tx.send(()).unwrap();
+                release_copy_rx.recv().unwrap();
+                Ok(())
+            })
+        });
+        copy_started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+
+        let (cancel_started_tx, cancel_started_rx) = std::sync::mpsc::channel();
+        let (cancel_finished_tx, cancel_finished_rx) = std::sync::mpsc::channel();
+        let cancel_manager = test.remote_manager.clone();
+        let cancel_pairing_id = pairing_id.clone();
+        let cancel_thread = std::thread::spawn(move || {
+            cancel_started_tx.send(()).unwrap();
+            let result = cancel_manager.cancel_pairing(&cancel_pairing_id);
+            cancel_finished_tx.send(()).unwrap();
+            result
+        });
+        cancel_started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        assert!(cancel_finished_rx
+            .recv_timeout(Duration::from_millis(100))
+            .is_err());
+
+        release_copy_tx.send(()).unwrap();
+        copy_thread.join().unwrap().unwrap();
+        assert_eq!(
+            cancel_thread.join().unwrap().unwrap().state,
+            codepet_host::PairingStatusKind::Cancelled
+        );
+        assert_eq!(
+            test.runtime
+                .copy_pairing_json(&pairing_id, |_| Ok(()))
+                .unwrap_err()
+                .code,
+            "remote_pairing_payload_unavailable"
         );
 
         test.runtime.shutdown_once().await;

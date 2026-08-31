@@ -1,13 +1,17 @@
 <script lang="ts">
-  import { CheckCircle2, Clock3, QrCode, RotateCcw, X } from "@lucide/svelte";
+  import { Check, CheckCircle2, Clock3, Copy, QrCode, RotateCcw, X } from "@lucide/svelte";
   import { tick } from "svelte";
   import { wrappedDialogFocusIndex } from "./dialogFocus";
-  import { pairingCountdownLabel, type PairingDisplayState } from "./remoteDevices";
+  import { pairingCountdownLabel, type PairingCopyStatus, type PairingDisplayState } from "./remoteDevices";
 
   export let open = false;
   export let display: PairingDisplayState;
   export let onClose: () => void;
   export let onRetry: (() => void | Promise<void>) | undefined = undefined;
+  export let canCopyPairingJson = false;
+  export let copyStatus: PairingCopyStatus = "idle";
+  export let copyMessage: string | null = null;
+  export let onCopyPairingJson: (() => void | Promise<void>) | undefined = undefined;
 
   let dialogElement: HTMLDialogElement | null = null;
   let closeButton: HTMLButtonElement | null = null;
@@ -56,6 +60,28 @@
   function retry() {
     if (onRetry) void onRetry();
   }
+
+  function copyPairingJson() {
+    if (onCopyPairingJson) void onCopyPairingJson();
+  }
+
+  $: copyButtonLabel = display.phase === "waiting"
+    ? copyStatus === "copying"
+      ? "复制中"
+      : copyStatus === "copied"
+        ? "已复制"
+        : copyStatus === "unavailable"
+          ? "配对 JSON 不可用"
+          : copyStatus === "failed"
+            ? "重试复制"
+            : "复制配对 JSON"
+    : display.phase === "expired"
+      ? "配对 JSON 已过期"
+      : display.phase === "cancelled"
+        ? "配对已取消"
+        : display.phase === "success"
+          ? "配对已完成"
+          : "配对 JSON 不可用";
 </script>
 
 <dialog
@@ -111,6 +137,12 @@
       </div>
     {/if}
 
+    {#if copyMessage}
+      <div class="pair-device-copy-feedback" class:failed={copyStatus === "failed" || copyStatus === "unavailable"} role={copyStatus === "failed" || copyStatus === "unavailable" ? "alert" : "status"}>
+        {copyStatus === "copied" ? "✓" : "!"} {copyMessage}
+      </div>
+    {/if}
+
     <div class="pair-device-expiry" role="status" title={display.expiresAtMs ? new Date(display.expiresAtMs).toLocaleString("zh-CN") : undefined}>
       <Clock3 size={16} />
       {#if display.phase === "waiting" && display.remainingSeconds != null}
@@ -130,6 +162,20 @@
   {/if}
 
   <div class="row-actions pair-device-dialog-actions">
+    <button
+      class="pair-device-copy-button"
+      class:copied={copyStatus === "copied"}
+      type="button"
+      disabled={!canCopyPairingJson || copyStatus === "copying" || copyStatus === "unavailable"}
+      on:click={copyPairingJson}
+    >
+      {#if copyStatus === "copied" && display.phase === "waiting"}
+        <Check size={16} />
+      {:else}
+        <Copy size={16} />
+      {/if}
+      {copyButtonLabel}
+    </button>
     {#if (display.phase === "expired" || display.phase === "cancelled" || display.phase === "error") && onRetry}
       <button type="button" on:click={retry}><RotateCcw size={16} /> 重新生成</button>
     {/if}

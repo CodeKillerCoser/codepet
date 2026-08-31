@@ -70,6 +70,10 @@ export async function getRemotePairingStatus(pairingId: string): Promise<RemoteP
   return invoke<RemotePairingStatus>("get_remote_pairing_status", { pairingId });
 }
 
+export async function copyRemotePairingJson(pairingId: string): Promise<void> {
+  await invoke("copy_remote_pairing_json", { pairingId });
+}
+
 export async function cancelRemotePairing(pairingId: string): Promise<RemotePairingStatus> {
   return invoke<RemotePairingStatus>("cancel_remote_pairing", { pairingId });
 }

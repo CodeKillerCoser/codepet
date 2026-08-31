@@ -22,6 +22,16 @@ fn tray_and_run_events_share_the_bounded_provider_shutdown_path() {
 #[test]
 fn remote_access_commands_are_registered_in_the_tauri_invoke_handler() {
     let lib_rs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs")).unwrap();
+    let remote_access_rs = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/runtime_gateway/remote_access.rs"
+    ))
+    .unwrap();
+    let default_capability = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/capabilities/default.json"
+    ))
+    .unwrap();
     let invoke_handler = lib_rs
         .split(".invoke_handler(tauri::generate_handler![")
         .nth(1)
@@ -34,6 +44,7 @@ fn remote_access_commands_are_registered_in_the_tauri_invoke_handler() {
         "list_remote_clients",
         "start_remote_pairing",
         "get_remote_pairing_status",
+        "copy_remote_pairing_json",
         "cancel_remote_pairing",
         "revoke_remote_credential",
     ] {
@@ -42,4 +53,7 @@ fn remote_access_commands_are_registered_in_the_tauri_invoke_handler() {
             "missing Tauri command {command}"
         );
     }
+
+    assert!(remote_access_rs.contains("window.label() != \"main\""));
+    assert!(!default_capability.contains("clipboard-manager:"));
 }

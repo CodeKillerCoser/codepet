@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
   cancelRemotePairing,
+  copyRemotePairingJson,
   getRemoteAccessStatus,
   getRemotePairingStatus,
   listRemoteClients,
@@ -19,7 +20,7 @@ describe("remote access command bridge", () => {
     vi.mocked(invoke).mockReset();
   });
 
-  it("uses only the seven dedicated RemoteAccessRuntime commands", async () => {
+  it("uses only the eight dedicated RemoteAccessRuntime commands", async () => {
     const status = {
       phase: "available",
       activeSessionCount: 0,
@@ -52,6 +53,7 @@ describe("remote access command bridge", () => {
       .mockResolvedValueOnce(clients)
       .mockResolvedValueOnce(pairing)
       .mockResolvedValueOnce(pairingStatus)
+      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ ...pairingStatus, state: "cancelled" })
       .mockResolvedValueOnce(revoked);
 
@@ -60,6 +62,7 @@ describe("remote access command bridge", () => {
     await expect(listRemoteClients()).resolves.toEqual(clients);
     await expect(startRemotePairing()).resolves.toEqual(pairing);
     await expect(getRemotePairingStatus("pairing-one")).resolves.toEqual(pairingStatus);
+    await expect(copyRemotePairingJson("pairing-one")).resolves.toBeUndefined();
     await expect(cancelRemotePairing("pairing-one")).resolves.toMatchObject({ state: "cancelled" });
     await expect(revokeRemoteCredential("credential-one")).resolves.toEqual(revoked);
 
@@ -68,8 +71,22 @@ describe("remote access command bridge", () => {
     expect(invoke).toHaveBeenNthCalledWith(3, "list_remote_clients");
     expect(invoke).toHaveBeenNthCalledWith(4, "start_remote_pairing");
     expect(invoke).toHaveBeenNthCalledWith(5, "get_remote_pairing_status", { pairingId: "pairing-one" });
-    expect(invoke).toHaveBeenNthCalledWith(6, "cancel_remote_pairing", { pairingId: "pairing-one" });
-    expect(invoke).toHaveBeenNthCalledWith(7, "revoke_remote_credential", { credentialId: "credential-one" });
+    expect(invoke).toHaveBeenNthCalledWith(6, "copy_remote_pairing_json", { pairingId: "pairing-one" });
+    expect(invoke).toHaveBeenNthCalledWith(7, "cancel_remote_pairing", { pairingId: "pairing-one" });
+    expect(invoke).toHaveBeenNthCalledWith(8, "revoke_remote_credential", { credentialId: "credential-one" });
+  });
+
+  it("keeps clipboard errors inside the native copy command boundary", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce({
+      code: "remote_pairing_clipboard_write_failed",
+      message: "clipboard unavailable",
+      retryable: true,
+    });
+
+    await expect(copyRemotePairingJson("pairing-one")).rejects.toMatchObject({
+      code: "remote_pairing_clipboard_write_failed",
+    });
+    expect(invoke).toHaveBeenCalledWith("copy_remote_pairing_json", { pairingId: "pairing-one" });
   });
 
   it("keeps delayed cleanup bound to the pairing id that created it", async () => {
