@@ -41,6 +41,38 @@ fn main() {
                     "userAgent": "codex-app-server-fixture/1"
                 }),
             ),
+            "model/list" => {
+                if params["includeHidden"] != false || params["limit"] != 100 {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": { "code": -32602, "message": "model/list discovery parameters were not preserved" }
+                        }),
+                    );
+                    continue;
+                }
+                respond(
+                    &mut writer,
+                    id,
+                    json!({
+                        "data": [{
+                            "id": "fixture-model-record",
+                            "model": "gpt-fixture",
+                            "displayName": "GPT Fixture",
+                            "description": "Fixture model",
+                            "hidden": false,
+                            "isDefault": true,
+                            "defaultReasoningEffort": "high",
+                            "supportedReasoningEfforts": [{
+                                "reasoningEffort": "high",
+                                "description": "Fixture reasoning"
+                            }]
+                        }],
+                        "nextCursor": null
+                    }),
+                );
+            }
             "thread/list" => {
                 if params["sortKey"] != "updated_at"
                     || params["sortDirection"] != "desc"

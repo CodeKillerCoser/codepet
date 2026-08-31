@@ -6,6 +6,8 @@
 
 资源身份始终是 `deviceId + providerPluginId + providerInstanceId + nativeResourceId`。每次 App Server session 使用独立 generation；只有普通 command/file 的 accept/decline 二元审批会发布，额外权限、结构化 decision 和未知 server request 使用原 JSON-RPC id 返回 `-32601`。
 
+instance 启动时会通过官方 `model/list` 获取当前可见模型、默认模型和 reasoning effort，并把 App Server initialize 返回的版本写入 `harness` 描述。该实时目录与 session generation 共同形成 capability revision；Remote 对已有空闲 conversation 发起 `turn.send` 时，Provider 会校验 revision 和选择项，再把 access mode、model、reasoning effort 与 `clientRequestId` 映射到官方 `turn/start`。成功响应返回 App Server 的权威 turn、其中的 canonical user message item，以及实际生效的 selection。
+
 ## 构建
 
 ```sh

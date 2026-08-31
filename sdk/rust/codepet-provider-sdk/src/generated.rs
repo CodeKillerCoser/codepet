@@ -62,6 +62,29 @@ pub enum ApprovalStatus {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ChoiceOption {
+    pub id: String,
+    pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ChoiceSet {
+    pub options: Vec<ChoiceOption>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ConversationContent {
     pub content_id: NativeResourceId,
     pub kind: ConversationContentKind,
@@ -257,6 +280,76 @@ pub struct ConversationUpsertedEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct FlatModelCatalog {
+    pub kind: FlatModelCatalogKind,
+    pub models: Vec<ChoiceOption>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_selection: Option<FlatModelSelection>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FlatModelCatalogKind {
+    #[serde(rename = "flat")]
+    Flat,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct FlatModelSelection {
+    pub kind: FlatModelCatalogKind,
+    pub model_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct GroupedModelCatalog {
+    pub kind: GroupedModelCatalogKind,
+    pub providers: Vec<GroupedModelProvider>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_selection: Option<GroupedModelSelection>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GroupedModelCatalogKind {
+    #[serde(rename = "grouped")]
+    Grouped,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct GroupedModelProvider {
+    pub id: String,
+    pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub models: Vec<ChoiceOption>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct GroupedModelSelection {
+    pub kind: GroupedModelCatalogKind,
+    pub provider_id: String,
+    pub model_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct HarnessDescriptor {
+    pub id: String,
+    pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct InstanceCapabilitiesRequest {
     pub route: ProviderInstanceRoute,
 }
@@ -353,6 +446,20 @@ pub struct InstanceStopResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ModelCatalog {
+    FlatModelCatalog(FlatModelCatalog),
+    GroupedModelCatalog(GroupedModelCatalog),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ModelSelection {
+    FlatModelSelection(FlatModelSelection),
+    GroupedModelSelection(GroupedModelSelection),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ProviderApproval {
@@ -379,10 +486,10 @@ pub struct ProviderApproval {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ProviderCapabilities {
+    pub revision: String,
     pub methods: Vec<ProviderCapability>,
-    pub permission_levels: Vec<String>,
-    pub models: Vec<String>,
-    pub reasoning_efforts: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_send: Option<TurnSendCapabilities>,
     pub extensions: Vec<ProviderExtension>,
 }
 
@@ -421,6 +528,8 @@ pub struct ProviderConversation {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<TurnSelection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -481,6 +590,7 @@ pub struct ProviderInstance {
     pub plugin_id: ProviderPluginId,
     pub instance_kind: ProviderInstanceKind,
     pub display_name: String,
+    pub harness: HarnessDescriptor,
     pub status: InstanceStatus,
     pub capabilities: ProviderCapabilities,
 }
@@ -543,6 +653,20 @@ pub struct ProviderTurn {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct TurnInput {
+    pub kind: TurnInputKind,
+    pub text: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TurnInputKind {
+    #[serde(rename = "text")]
+    Text,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct TurnInterruptRequest {
     pub conversation: RoutedResourceId,
     pub turn: RoutedResourceId,
@@ -572,17 +696,46 @@ pub struct TurnOutputDeltaEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct TurnSelection {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_mode_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelSelection>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct TurnSendCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_mode: Option<ChoiceSet>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ChoiceSet>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_catalog: Option<ModelCatalog>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct TurnStartRequest {
     pub conversation: RoutedResourceId,
-    pub client_message_id: RequestId,
-    pub message: String,
+    pub client_request_id: RequestId,
+    pub capability_revision: String,
+    pub input: TurnInput,
+    pub selection: TurnSelection,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct TurnStartResponse {
+    pub accepted: bool,
     pub turn: ProviderTurn,
+    pub user_item: ConversationItem,
+    pub effective_selection: TurnSelection,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

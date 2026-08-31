@@ -5,7 +5,6 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-const CODEX_PLUGIN_ID: &str = "dev.codepet.codex";
 const ROUTE_EXTENSION_NAMESPACE: &str = "codepet.gateway.route";
 
 #[derive(Clone)]
@@ -357,7 +356,15 @@ impl compat::ProtocolServer for CompatProviderGateway {
             if request.quick_reply_id.is_some() {
                 return Err(compat_error(
                     "capability_unsupported",
-                    "Codex Provider does not advertise quick replies".to_string(),
+                    "Provider Gateway does not advertise quick replies".to_string(),
+                    false,
+                ));
+            }
+            if request.steer_turn_id.is_some() {
+                return Err(compat_error(
+                    "capability_unsupported",
+                    "Gateway v1 turn.send starts a new turn and does not steer an active turn"
+                        .to_string(),
                     false,
                 ));
             }
@@ -367,12 +374,19 @@ impl compat::ProtocolServer for CompatProviderGateway {
             let response = GatewayProtocolServer::turn_send(
                 self.gateway()?.as_ref(),
                 gateway::TurnSendRequest {
+                    route,
                     conversation,
-                    client_message_id: request.client_message_id,
-                    message: request.message,
-                    steer_turn: request
-                        .steer_turn_id
-                        .map(|turn_id| routed_resource(route, turn_id)),
+                    client_request_id: request.client_message_id,
+                    capability_revision: provider.capabilities.revision,
+                    input: gateway::TurnInput {
+                        kind: gateway::TurnInputKind::Text,
+                        text: request.message,
+                    },
+                    selection: gateway::TurnSelection {
+                        access_mode_id: None,
+                        reasoning_effort_id: None,
+                        model: None,
+                    },
                 },
             )
             .await
@@ -454,11 +468,43 @@ fn map_provider(provider: gateway::ProviderInstance) -> compat::Provider {
         .capabilities
         .methods
         .contains(&gateway::GatewayCapability::TurnInterrupt);
-    let can_steer = provider.plugin_id == CODEX_PLUGIN_ID
-        && provider
-            .capabilities
-            .methods
-            .contains(&gateway::GatewayCapability::TurnSend);
+    let turn_send = provider.capabilities.turn_send.as_ref();
+    let permission_levels = turn_send
+        .and_then(|capabilities| capabilities.access_mode.as_ref())
+        .map(|choices| {
+            choices
+                .options
+                .iter()
+                .filter(|option| option.enabled != Some(false))
+                .filter_map(|option| map_permission_level(&option.id))
+                .collect()
+        })
+        .unwrap_or_default();
+    let models = turn_send
+        .and_then(|capabilities| capabilities.model_catalog.as_ref())
+        .and_then(|catalog| match catalog {
+            gateway::ModelCatalog::FlatModelCatalog(catalog) => Some(
+                catalog
+                    .models
+                    .iter()
+                    .filter(|option| option.enabled != Some(false))
+                    .map(|option| option.id.clone())
+                    .collect(),
+            ),
+            gateway::ModelCatalog::GroupedModelCatalog(_) => None,
+        })
+        .unwrap_or_default();
+    let reasoning_efforts = turn_send
+        .and_then(|capabilities| capabilities.reasoning_effort.as_ref())
+        .map(|choices| {
+            choices
+                .options
+                .iter()
+                .filter(|option| option.enabled != Some(false))
+                .map(|option| option.id.clone())
+                .collect()
+        })
+        .unwrap_or_default();
     compat::Provider {
         id: provider_id,
         provider_type: provider.plugin_id.clone(),
@@ -467,16 +513,11 @@ fn map_provider(provider: gateway::ProviderInstance) -> compat::Provider {
         status: map_provider_status(provider.status),
         capabilities: compat::ProviderCapabilities {
             methods,
-            permission_levels: provider
-                .capabilities
-                .permission_levels
-                .iter()
-                .filter_map(|level| map_permission_level(level))
-                .collect(),
-            models: provider.capabilities.models,
-            reasoning_efforts: provider.capabilities.reasoning_efforts,
+            permission_levels,
+            models,
+            reasoning_efforts,
             quick_replies: Vec::new(),
-            can_steer,
+            can_steer: false,
             can_interrupt,
             extension: None,
         },

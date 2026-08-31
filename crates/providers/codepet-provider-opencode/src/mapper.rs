@@ -4,10 +4,11 @@ use crate::protocol::{
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalRequestedEvent, ApprovalResolvedEvent, ApprovalStatus,
-    ConversationContentKind, ConversationStatus, InstanceStatus, ProtocolError,
-    ProtocolEvent, ProviderApproval, ProviderCapabilities, ProviderCapability,
-    ProviderConversation, ProviderInstance, ProviderInstanceRoute, ProviderTurn,
-    RoutedResourceId, TurnOutputDeltaEvent, TurnStatus, TurnUpsertedEvent,
+    ConversationContent, ConversationContentKind, ConversationItem, ConversationItemKind,
+    ConversationItemRole, ConversationItemStatus, ConversationStatus, HarnessDescriptor,
+    InstanceStatus, ProtocolError, ProtocolEvent, ProviderApproval, ProviderCapabilities,
+    ProviderCapability, ProviderConversation, ProviderInstance, ProviderInstanceRoute,
+    ProviderTurn, RoutedResourceId, TurnOutputDeltaEvent, TurnStatus, TurnUpsertedEvent,
 };
 
 pub struct OpenCodeProtocolMapper {
@@ -21,18 +22,16 @@ impl OpenCodeProtocolMapper {
 
     pub fn capabilities() -> ProviderCapabilities {
         ProviderCapabilities {
+            revision: "opencode-server-1.18.25".to_string(),
             methods: vec![
                 ProviderCapability::ConversationList,
                 ProviderCapability::ConversationGet,
                 ProviderCapability::ConversationCreate,
-                ProviderCapability::TurnStart,
                 ProviderCapability::TurnSteer,
                 ProviderCapability::TurnInterrupt,
                 ProviderCapability::ApprovalResolve,
             ],
-            permission_levels: vec![OPENCODE_PERMISSION_LEVEL.to_string()],
-            models: Vec::new(),
-            reasoning_efforts: Vec::new(),
+            turn_send: None,
             extensions: Vec::new(),
         }
     }
@@ -42,6 +41,7 @@ impl OpenCodeProtocolMapper {
         plugin_id: String,
         instance_kind: String,
         display_name: String,
+        harness: HarnessDescriptor,
         status: InstanceStatus,
         capabilities: ProviderCapabilities,
     ) -> ProviderInstance {
@@ -50,6 +50,7 @@ impl OpenCodeProtocolMapper {
             plugin_id,
             instance_kind,
             display_name,
+            harness,
             status,
             capabilities,
         }
@@ -83,11 +84,37 @@ impl OpenCodeProtocolMapper {
             permission_level: Some(OPENCODE_PERMISSION_LEVEL.to_string()),
             model: None,
             reasoning_effort: None,
+            selection: None,
             workspace_root: Some(session.workspace_root()),
             created_at: Some(session.time.created),
             updated_at: Some(session.time.updated),
             active_turn,
             extension: None,
+        }
+    }
+
+    pub fn user_message_item(
+        &self,
+        conversation: &RoutedResourceId,
+        turn: &ProviderTurn,
+        item_id: String,
+        text: String,
+    ) -> ConversationItem {
+        ConversationItem {
+            resource: self.resource(item_id.clone()),
+            turn: turn.resource.clone(),
+            conversation: conversation.clone(),
+            kind: ConversationItemKind::Message,
+            status: ConversationItemStatus::Completed,
+            role: Some(ConversationItemRole::User),
+            title: None,
+            contents: vec![ConversationContent {
+                content_id: format!("{item_id}:text"),
+                kind: ConversationContentKind::Text,
+                text,
+            }],
+            related_item: None,
+            approval: None,
         }
     }
 

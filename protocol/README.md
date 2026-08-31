@@ -50,6 +50,22 @@ The WSS upgrade authenticates the opaque bearer in the future LAN listener. The 
 
 The common history surface covers user and assistant messages, readable reasoning summaries, command/file/tool activity, and approval records actually observed by a Provider. It never exposes a native Provider DTO. Raw reasoning content is excluded, unknown native items become safe `unknown` activity without raw payload, and command completion must not be used to invent an approval that was never requested.
 
+## Provider descriptors and existing-conversation turns
+
+Every Provider instance exposes two separate identities: adapter metadata (`pluginId`, `displayName`, and adapter `version`) and a required `harness { id, displayName, version? }` supplied by the Provider runtime. Gateway maps this descriptor as data and never branches on a harness name. Capabilities carry a required opaque `revision`; a client must send that exact value with `turn.send`, and a changed runtime/catalog revision makes an older selection stale.
+
+`turnSend` contains only controls that the current Provider can honestly execute. Access mode and reasoning effort are option sets with stable IDs, user-facing labels, optional disabled state, and optional defaults. A model catalog is an explicit discriminated union: flat catalogs and selections use `kind: "flat"`, while grouped catalogs and selections use `kind: "grouped"` plus `providerId`. Remote clients render only advertised controls and return the selected shape unchanged; they must not infer a catalog shape from fields or from the harness descriptor.
+
+Gateway `turn.send` starts a new turn in an existing, idle conversation. Its request contains an explicit Provider route, the routed conversation, `clientRequestId`, capability revision, typed text input, and a complete selection object. Gateway validates route ownership, instance readiness, advertised method, revision, option membership/enabled state, and catalog/selection kind before calling Provider `turn.start`. A successful Provider response must return `accepted: true`, the authoritative turn, the canonical user message item, and the effective selection; Host rejects cross-route or inconsistent resources at the Provider boundary.
+
+Duplicate suppression is deliberately bounded to one running `ProviderGatewayService`: it retains the latest 1,024 `(route, clientRequestId)` outcomes in memory. An identical replay returns the cached success or error without sending another Provider request; reusing the same key with different payload is `client_request_conflict`. This is not a persistent, cross-restart idempotency guarantee, so clients must reconcile after reconnect using conversation history and live events.
+
+The current advertised execution matrix is intentionally conservative:
+
+- Codex discovers its live flat model/reasoning catalog through official `model/list`, includes the App Server version from initialize, advertises `turn.start`/Gateway `turn.send`, and applies selected access mode, model, and reasoning effort to official `turn/start`.
+- OpenCode 1.18.25 retains its existing Provider-internal prompt/control implementation, but does not advertise `turn.start` or Gateway `turn.send` because a complete user-selectable model/reasoning discovery contract is not yet established.
+- Claude Code retains its direct CLI execution implementation, but does not advertise `turn.start` or Gateway `turn.send`; its CLI stream surface has no App Server-equivalent discovery/control contract that can honestly populate these selectors.
+
 ## Generated SDKs
 
 Rust packages are located at:
@@ -86,3 +102,4 @@ node tools/protocol-codegen/generate.mjs --target=rust --check
 - A reusable Plugin Manager and process supervisor exists in `crates/codepet-host`, and Codex remote operations run through the standalone Provider binary. Signature, marketplace, sandbox, and automatic restart policy remain deliberately out of scope.
 - Gateway v1 defines the LAN identity, QR, pairing REST bodies, and current-credential delete response; `codepet-host` now supplies the reusable TLS/HTTP/WSS listener and mDNS advertiser over the same identity and actual endpoint. Tauri still does not own their lifecycle or update mDNS on pairing start/cancel/consume, so the App does not expose this Host capability yet; remote UI wiring and a persistent event-cursor store also remain absent.
 - The v0 compatibility profile remains in use by the desktop process until a later phase wires gateway v1 sessions and a separate pet-protocol adapter.
+- `turn.send` duplicate suppression is process-local and bounded; no persistent idempotency ledger exists yet.

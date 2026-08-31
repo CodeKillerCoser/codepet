@@ -4,8 +4,9 @@ use codepet_provider_sdk::{
     ConversationGetRequest, ConversationSearchRequest, InstanceCapabilitiesRequest, InstanceCreateRequest,
     InstanceDestroyRequest, InstanceStartRequest, InstanceStopRequest, JsonObject, ProtocolEvent,
     ProtocolServer as ProviderProtocolServer, ProviderInitializeRequest,
-    ProviderInstanceRoute, ProviderShutdownRequest, TurnInterruptRequest, TurnStartRequest,
-    TurnSteerRequest, VersionRange, PROTOCOL_VERSION,
+    FlatModelCatalogKind, FlatModelSelection, ModelSelection, ProviderInstanceRoute,
+    ProviderShutdownRequest, TurnInput, TurnInputKind, TurnInterruptRequest, TurnSelection,
+    TurnStartRequest, TurnSteerRequest, VersionRange, PROTOCOL_VERSION,
 };
 use serde_json::json;
 use serde_json::Value;
@@ -48,8 +49,6 @@ fn instance_settings(app_server: &Path, approval_mode: &str, marker: &Path) -> J
                 marker.to_string_lossy()
             ]),
         ),
-        ("models".to_string(), json!(["gpt-fixture"])),
-        ("reasoningEfforts".to_string(), json!(["high"])),
     ]
     .into_iter()
     .collect()
@@ -124,6 +123,11 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         .capabilities
         .methods
         .contains(&codepet_provider_sdk::ProviderCapability::ConversationSearch));
+    assert!(capabilities
+        .capabilities
+        .methods
+        .contains(&codepet_provider_sdk::ProviderCapability::TurnStart));
+    assert!(!capabilities.capabilities.revision.trim().is_empty());
 
     let listed = ProviderProtocolServer::conversation_list(
         &provider,
@@ -251,17 +255,34 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     .await
     .unwrap()
     .conversation;
-    let turn = ProviderProtocolServer::turn_start(
+    let started_turn = ProviderProtocolServer::turn_start(
         &provider,
         TurnStartRequest {
             conversation: conversation.resource.clone(),
-            client_message_id: "message-one".to_string(),
-            message: "run fixture".to_string(),
+            client_request_id: "message-one".to_string(),
+            capability_revision: capabilities.capabilities.revision.clone(),
+            input: TurnInput {
+                kind: TurnInputKind::Text,
+                text: "run fixture".to_string(),
+            },
+            selection: TurnSelection {
+                access_mode_id: Some("workspace-write".to_string()),
+                reasoning_effort_id: Some("high".to_string()),
+                model: Some(ModelSelection::FlatModelSelection(FlatModelSelection {
+                    kind: FlatModelCatalogKind::Flat,
+                    model_id: "gpt-fixture".to_string(),
+                })),
+            },
         },
     )
     .await
-    .unwrap()
-    .turn;
+    .unwrap();
+    assert!(started_turn.accepted);
+    assert_eq!(
+        started_turn.user_item.resource.native_resource_id,
+        "user-one"
+    );
+    let turn = started_turn.turn;
     assert_eq!(turn.resource.native_resource_id, "turn-started");
 
     let mut approval = None;
@@ -422,16 +443,17 @@ fn provider_binary_rejects_additional_network_permission_without_publishing_appr
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("unsupported-approval.txt");
     let mut provider = ProviderBinary::spawn();
-    let conversation = provider.configure("additional-network", &marker);
+    let (conversation, capability_revision) = provider.configure("additional-network", &marker);
 
     provider.request(
         "turn-unsafe",
         "turn.start",
-        json!({
-            "conversation": conversation,
-            "clientMessageId": "message-unsafe",
-            "message": "request unsafe approval"
-        }),
+        turn_start_params(
+            conversation,
+            "message-unsafe",
+            "request unsafe approval",
+            &capability_revision,
+        ),
     );
     wait_for_file_blocking(&marker);
     provider.collect_for(Duration::from_millis(100));
@@ -450,16 +472,17 @@ fn provider_binary_rejects_stale_approval_when_app_server_request_id_is_reused()
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("approval-generation.txt");
     let mut provider = ProviderBinary::spawn();
-    let first_conversation = provider.configure("normal", &marker);
+    let (first_conversation, first_capability_revision) = provider.configure("normal", &marker);
 
     provider.request(
         "turn-first",
         "turn.start",
-        json!({
-            "conversation": first_conversation,
-            "clientMessageId": "message-first",
-            "message": "first session"
-        }),
+        turn_start_params(
+            first_conversation,
+            "message-first",
+            "first session",
+            &first_capability_revision,
+        ),
     );
     let first_approval = provider
         .event("event.approvalRequested")
@@ -468,16 +491,26 @@ fn provider_binary_rejects_stale_approval_when_app_server_request_id_is_reused()
         .unwrap();
 
     provider.request("stop-first", "instance.stop", json!({ "route": route_value() }));
-    provider.request("start-second", "instance.start", json!({ "route": route_value() }));
+    let second_start = provider.request(
+        "start-second",
+        "instance.start",
+        json!({ "route": route_value() }),
+    );
+    let second_capability_revision = second_start
+        .pointer("/result/instance/capabilities/revision")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_string();
     let second_conversation = provider.create_conversation("conversation-second");
     provider.request(
         "turn-second",
         "turn.start",
-        json!({
-            "conversation": second_conversation.clone(),
-            "clientMessageId": "message-second",
-            "message": "second session"
-        }),
+        turn_start_params(
+            second_conversation.clone(),
+            "message-second",
+            "second session",
+            &second_capability_revision,
+        ),
     );
     let second_approval = provider
         .event("event.approvalRequested")
@@ -648,9 +681,7 @@ fn provider_real_codex_app_server_smoke() {
             "displayName": "Codex Real Smoke",
             "settings": {
                 "appServerExecutable": executable.to_string_lossy(),
-                "appServerArgs": ["app-server", "--listen", "stdio://"],
-                "models": [],
-                "reasoningEfforts": []
+                "appServerArgs": ["app-server", "--listen", "stdio://"]
             }
         }),
     );
@@ -713,7 +744,7 @@ impl ProviderBinary {
         }
     }
 
-    fn configure(&mut self, approval_mode: &str, marker: &Path) -> Value {
+    fn configure(&mut self, approval_mode: &str, marker: &Path) -> (Value, String) {
         self.request(
             "initialize",
             "provider.initialize",
@@ -738,14 +769,20 @@ impl ProviderBinary {
                         approval_mode,
                         "--marker",
                         marker
-                    ],
-                    "models": ["gpt-fixture"],
-                    "reasoningEfforts": ["high"]
+                    ]
                 }
             }),
         );
-        self.request("start", "instance.start", json!({ "route": route_value() }));
-        self.create_conversation("conversation-first")
+        let started = self.request("start", "instance.start", json!({ "route": route_value() }));
+        let capability_revision = started
+            .pointer("/result/instance/capabilities/revision")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        (
+            self.create_conversation("conversation-first"),
+            capability_revision,
+        )
     }
 
     fn create_conversation(&mut self, id: &str) -> Value {
@@ -830,6 +867,21 @@ fn route_value() -> Value {
         "deviceId": "device-provider-binary",
         "providerPluginId": CODEX_PLUGIN_ID,
         "providerInstanceId": "codex"
+    })
+}
+
+fn turn_start_params(
+    conversation: Value,
+    client_request_id: &str,
+    text: &str,
+    capability_revision: &str,
+) -> Value {
+    json!({
+        "conversation": conversation,
+        "clientRequestId": client_request_id,
+        "capabilityRevision": capability_revision,
+        "input": { "kind": "text", "text": text },
+        "selection": {}
     })
 }
 

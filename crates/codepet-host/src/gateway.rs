@@ -10,9 +10,50 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex};
 
 const EVENT_CURSOR_PREFIX: &str = "event-";
+const TURN_SEND_CACHE_CAPACITY: usize = 1_024;
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct TurnSendKey {
+    device_id: String,
+    provider_plugin_id: String,
+    provider_instance_id: String,
+    client_request_id: String,
+}
+
+#[derive(Clone)]
+struct TurnSendCacheEntry {
+    request: gateway::TurnSendRequest,
+    result: Result<gateway::TurnSendResponse, gateway::ProtocolError>,
+}
+
+struct TurnSendCache {
+    entries: BTreeMap<TurnSendKey, TurnSendCacheEntry>,
+    order: VecDeque<TurnSendKey>,
+}
+
+impl TurnSendCache {
+    fn new() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn insert(&mut self, key: TurnSendKey, entry: TurnSendCacheEntry) {
+        if !self.entries.contains_key(&key) {
+            self.order.push_back(key.clone());
+        }
+        self.entries.insert(key, entry);
+        while self.entries.len() > TURN_SEND_CACHE_CAPACITY {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+            }
+        }
+    }
+}
 
 struct GatewayEventState {
     sequence: u64,
@@ -174,6 +215,7 @@ pub struct ProviderGatewayService {
     server_name: String,
     server_version: String,
     remote_host_identity: Option<gateway::RemoteHostIdentity>,
+    turn_sends: AsyncMutex<TurnSendCache>,
 }
 
 impl ProviderGatewayService {
@@ -203,6 +245,7 @@ impl ProviderGatewayService {
             server_name: "codepet-provider-gateway".to_string(),
             server_version: env!("CARGO_PKG_VERSION").to_string(),
             remote_host_identity,
+            turn_sends: AsyncMutex::new(TurnSendCache::new()),
         })
     }
 
@@ -423,6 +466,124 @@ impl ProviderGatewayService {
             status: gateway::DeviceStatus::Online,
             last_seen_at: Some(now_ms()),
         }
+    }
+
+    async fn perform_turn_send(
+        &self,
+        request: gateway::TurnSendRequest,
+    ) -> Result<gateway::TurnSendResponse, gateway::ProtocolError> {
+        validate_gateway_resource(&request.conversation)?;
+        ensure_route_matches_resource(&request.route, &request.conversation)?;
+        let expected_conversation = request.conversation.clone();
+        if request.input.text.trim().is_empty() {
+            return Err(gateway::ProtocolError {
+                code: "invalid_turn_input".to_string(),
+                message: "turn.send text input must not be empty".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+        let provider_instance = self
+            .gateway_instances(Some(&request.route.device_id))
+            .await?
+            .into_iter()
+            .find(|provider| provider.route == request.route)
+            .ok_or_else(|| gateway::ProtocolError {
+                code: "unknown_provider_instance".to_string(),
+                message: "turn.send route does not identify a registered Provider instance"
+                    .to_string(),
+                retryable: false,
+                details: None,
+            })?;
+        if provider_instance.status != gateway::ProviderStatus::Ready {
+            return Err(gateway::ProtocolError {
+                code: "provider_instance_unavailable".to_string(),
+                message: "turn.send Provider instance is not ready".to_string(),
+                retryable: true,
+                details: None,
+            });
+        }
+        if !provider_instance
+            .capabilities
+            .methods
+            .contains(&gateway::GatewayCapability::TurnSend)
+        {
+            return Err(gateway::ProtocolError {
+                code: "provider_capability_unsupported".to_string(),
+                message: "Provider instance does not advertise turn.send".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+        if provider_instance.capabilities.revision != request.capability_revision {
+            return Err(gateway::ProtocolError {
+                code: "stale_capability_revision".to_string(),
+                message: "turn.send capabilityRevision no longer matches the Provider route"
+                    .to_string(),
+                retryable: true,
+                details: None,
+            });
+        }
+        validate_gateway_turn_selection(
+            &provider_instance.capabilities,
+            &request.selection,
+        )?;
+        let conversation_snapshot = self
+            .manager
+            .conversation_get(provider::ConversationGetRequest {
+                conversation: request.conversation.clone(),
+            })
+            .await
+            .map_err(gateway_error)?;
+        if conversation_snapshot.conversation.active_turn.is_some() {
+            return Err(gateway::ProtocolError {
+                code: "turn_already_active".to_string(),
+                message: "turn.send requires an idle conversation".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+        let response = self
+            .manager
+            .turn_start(provider::TurnStartRequest {
+                conversation: request.conversation,
+                client_request_id: request.client_request_id,
+                capability_revision: request.capability_revision,
+                input: map_turn_input_to_provider(request.input),
+                selection: map_turn_selection_to_provider(request.selection),
+            })
+            .await
+            .map_err(gateway_error)?;
+        if !response.accepted {
+            return Err(gateway::ProtocolError {
+                code: "provider_response_invalid".to_string(),
+                message: "Provider returned a successful turn.start response that was not accepted"
+                    .to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+        ensure_same_resource_identity(&response.turn.conversation, &expected_conversation)?;
+        ensure_same_resource_identity(&response.user_item.conversation, &expected_conversation)?;
+        ensure_same_resource_identity(&response.user_item.turn, &response.turn.resource)?;
+        ensure_same_gateway_route(&response.user_item.resource, &expected_conversation)?;
+        if response.user_item.role != Some(provider::ConversationItemRole::User) {
+            return Err(gateway::ProtocolError {
+                code: "provider_response_invalid".to_string(),
+                message: "Provider turn.start response must include a canonical user item"
+                    .to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+        let effective_selection = map_turn_selection_to_gateway(response.effective_selection);
+        validate_gateway_turn_selection(&provider_instance.capabilities, &effective_selection)?;
+        Ok(gateway::TurnSendResponse {
+            accepted: true,
+            turn: map_turn(response.turn),
+            user_item: map_conversation_item(response.user_item),
+            effective_selection,
+        })
     }
 }
 
@@ -667,39 +828,29 @@ impl ProtocolServer for ProviderGatewayService {
         request: gateway::TurnSendRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::TurnSendResponse> {
         Box::pin(async move {
-            if let Some(steer_turn) = request.steer_turn {
-                ensure_same_gateway_route(&request.conversation, &steer_turn)?;
-                let expected_conversation = request.conversation;
-                let response = self
-                    .manager
-                    .turn_steer(provider::TurnSteerRequest {
-                        conversation: expected_conversation.clone(),
-                        turn: steer_turn,
-                        client_message_id: request.client_message_id,
-                        message: request.message,
-                    })
-                    .await
-                    .map_err(gateway_error)?;
-                ensure_same_resource_identity(
-                    &response.turn.conversation,
-                    &expected_conversation,
-                )?;
-                return Ok(gateway::TurnSendResponse {
-                    turn: map_turn(response.turn),
-                });
+            let key = turn_send_key(&request)?;
+            let mut cache = self.turn_sends.lock().await;
+            if let Some(entry) = cache.entries.get(&key) {
+                if entry.request != request {
+                    return Err(gateway::ProtocolError {
+                        code: "client_request_conflict".to_string(),
+                        message: "clientRequestId was already used with a different turn.send request"
+                            .to_string(),
+                        retryable: false,
+                        details: None,
+                    });
+                }
+                return entry.result.clone();
             }
-            let response = self
-                .manager
-                .turn_start(provider::TurnStartRequest {
-                    conversation: request.conversation,
-                    client_message_id: request.client_message_id,
-                    message: request.message,
-                })
-                .await
-                .map_err(gateway_error)?;
-            Ok(gateway::TurnSendResponse {
-                turn: map_turn(response.turn),
-            })
+            let result = self.perform_turn_send(request.clone()).await;
+            cache.insert(
+                key,
+                TurnSendCacheEntry {
+                    request,
+                    result: result.clone(),
+                },
+            );
+            result
         })
     }
 
@@ -759,6 +910,15 @@ fn gateway_instance(
         plugin_id: plugin.catalog.plugin_id.clone(),
         display_name: runtime.record.display_name.clone(),
         version: plugin.reported.as_ref().map(|reported| reported.version.clone()),
+        harness: runtime
+            .instance
+            .as_ref()
+            .map(|instance| map_harness(&instance.harness))
+            .unwrap_or_else(|| gateway::HarnessDescriptor {
+                id: runtime.record.instance_kind.clone(),
+                display_name: runtime.record.display_name.clone(),
+                version: None,
+            }),
         status: if plugin.catalog.enabled && runtime.record.enabled {
             provider_runtime_status(plugin.state, runtime.instance.as_ref())
         } else {
@@ -768,7 +928,12 @@ fn gateway_instance(
             .instance
             .as_ref()
             .map(|instance| map_capabilities(&instance.capabilities))
-            .unwrap_or_else(empty_gateway_capabilities),
+            .unwrap_or_else(|| {
+                empty_gateway_capabilities(format!(
+                    "provider-unavailable-{}",
+                    plugin.generation
+                ))
+            }),
     }
 }
 
@@ -832,19 +997,105 @@ fn map_capabilities(capabilities: &provider::ProviderCapabilities) -> gateway::G
         }
     }
     gateway::GatewayCapabilities {
+        revision: capabilities.revision.clone(),
         methods,
-        permission_levels: capabilities.permission_levels.clone(),
-        models: capabilities.models.clone(),
-        reasoning_efforts: capabilities.reasoning_efforts.clone(),
+        turn_send: capabilities.turn_send.as_ref().map(map_turn_send_capabilities),
     }
 }
 
-fn empty_gateway_capabilities() -> gateway::GatewayCapabilities {
+fn empty_gateway_capabilities(revision: String) -> gateway::GatewayCapabilities {
     gateway::GatewayCapabilities {
+        revision,
         methods: Vec::new(),
-        permission_levels: Vec::new(),
-        models: Vec::new(),
-        reasoning_efforts: Vec::new(),
+        turn_send: None,
+    }
+}
+
+fn map_harness(harness: &provider::HarnessDescriptor) -> gateway::HarnessDescriptor {
+    gateway::HarnessDescriptor {
+        id: harness.id.clone(),
+        display_name: harness.display_name.clone(),
+        version: harness.version.clone(),
+    }
+}
+
+fn map_turn_send_capabilities(
+    capabilities: &provider::TurnSendCapabilities,
+) -> gateway::TurnSendCapabilities {
+    gateway::TurnSendCapabilities {
+        access_mode: capabilities.access_mode.as_ref().map(map_choice_set),
+        reasoning_effort: capabilities.reasoning_effort.as_ref().map(map_choice_set),
+        model_catalog: capabilities.model_catalog.as_ref().map(map_model_catalog),
+    }
+}
+
+fn map_choice_set(choice_set: &provider::ChoiceSet) -> gateway::ChoiceSet {
+    gateway::ChoiceSet {
+        options: choice_set.options.iter().map(map_choice_option).collect(),
+        default_id: choice_set.default_id.clone(),
+    }
+}
+
+fn map_choice_option(option: &provider::ChoiceOption) -> gateway::ChoiceOption {
+    gateway::ChoiceOption {
+        id: option.id.clone(),
+        display_name: option.display_name.clone(),
+        description: option.description.clone(),
+        enabled: option.enabled,
+        disabled_reason: option.disabled_reason.clone(),
+    }
+}
+
+fn map_model_catalog(catalog: &provider::ModelCatalog) -> gateway::ModelCatalog {
+    match catalog {
+        provider::ModelCatalog::FlatModelCatalog(catalog) => {
+            gateway::ModelCatalog::FlatModelCatalog(gateway::FlatModelCatalog {
+                kind: gateway::FlatModelCatalogKind::Flat,
+                models: catalog.models.iter().map(map_choice_option).collect(),
+                default_selection: catalog
+                    .default_selection
+                    .as_ref()
+                    .map(map_flat_model_selection_to_gateway),
+            })
+        }
+        provider::ModelCatalog::GroupedModelCatalog(catalog) => {
+            gateway::ModelCatalog::GroupedModelCatalog(gateway::GroupedModelCatalog {
+                kind: gateway::GroupedModelCatalogKind::Grouped,
+                providers: catalog
+                    .providers
+                    .iter()
+                    .map(|group| gateway::GroupedModelProvider {
+                        id: group.id.clone(),
+                        display_name: group.display_name.clone(),
+                        description: group.description.clone(),
+                        models: group.models.iter().map(map_choice_option).collect(),
+                    })
+                    .collect(),
+                default_selection: catalog
+                    .default_selection
+                    .as_ref()
+                    .map(map_grouped_model_selection_to_gateway),
+            })
+        }
+    }
+}
+
+fn map_flat_model_selection_to_gateway(
+    selection: &provider::FlatModelSelection,
+) -> gateway::FlatModelSelection {
+    gateway::FlatModelSelection {
+        kind: gateway::FlatModelCatalogKind::Flat,
+        model_id: selection.model_id.clone(),
+    }
+}
+
+fn map_grouped_model_selection_to_gateway(
+    selection: &provider::GroupedModelSelection,
+) -> gateway::GroupedModelSelection {
+    gateway::GroupedModelSelection {
+        kind: gateway::GroupedModelCatalogKind::Grouped,
+        provider_id: selection.provider_id.clone(),
+        model_id: selection.model_id.clone(),
     }
 }
 
@@ -868,6 +1119,7 @@ fn map_conversation(conversation: provider::ProviderConversation) -> gateway::Co
         permission_level: conversation.permission_level,
         model: conversation.model,
         reasoning_effort: conversation.reasoning_effort,
+        selection: conversation.selection.map(map_turn_selection_to_gateway),
         workspace_root: conversation.workspace_root,
         created_at: conversation.created_at,
         updated_at: conversation.updated_at,
@@ -1002,6 +1254,222 @@ fn provider_route(route: gateway::GatewayProviderRoute) -> provider::ProviderIns
         provider_plugin_id: route.provider_plugin_id,
         provider_instance_id: route.provider_instance_id,
     }
+}
+
+fn map_turn_input_to_provider(input: gateway::TurnInput) -> provider::TurnInput {
+    provider::TurnInput {
+        kind: match input.kind {
+            gateway::TurnInputKind::Text => provider::TurnInputKind::Text,
+        },
+        text: input.text,
+    }
+}
+
+fn map_turn_selection_to_provider(selection: gateway::TurnSelection) -> provider::TurnSelection {
+    provider::TurnSelection {
+        access_mode_id: selection.access_mode_id,
+        reasoning_effort_id: selection.reasoning_effort_id,
+        model: selection.model.map(|model| match model {
+            gateway::ModelSelection::FlatModelSelection(selection) => {
+                provider::ModelSelection::FlatModelSelection(provider::FlatModelSelection {
+                    kind: provider::FlatModelCatalogKind::Flat,
+                    model_id: selection.model_id,
+                })
+            }
+            gateway::ModelSelection::GroupedModelSelection(selection) => {
+                provider::ModelSelection::GroupedModelSelection(provider::GroupedModelSelection {
+                    kind: provider::GroupedModelCatalogKind::Grouped,
+                    provider_id: selection.provider_id,
+                    model_id: selection.model_id,
+                })
+            }
+        }),
+    }
+}
+
+fn map_turn_selection_to_gateway(selection: provider::TurnSelection) -> gateway::TurnSelection {
+    gateway::TurnSelection {
+        access_mode_id: selection.access_mode_id,
+        reasoning_effort_id: selection.reasoning_effort_id,
+        model: selection.model.map(|model| match model {
+            provider::ModelSelection::FlatModelSelection(selection) => {
+                gateway::ModelSelection::FlatModelSelection(gateway::FlatModelSelection {
+                    kind: gateway::FlatModelCatalogKind::Flat,
+                    model_id: selection.model_id,
+                })
+            }
+            provider::ModelSelection::GroupedModelSelection(selection) => {
+                gateway::ModelSelection::GroupedModelSelection(gateway::GroupedModelSelection {
+                    kind: gateway::GroupedModelCatalogKind::Grouped,
+                    provider_id: selection.provider_id,
+                    model_id: selection.model_id,
+                })
+            }
+        }),
+    }
+}
+
+fn turn_send_key(
+    request: &gateway::TurnSendRequest,
+) -> Result<TurnSendKey, gateway::ProtocolError> {
+    validate_gateway_route(&request.route)?;
+    if request.client_request_id.trim().is_empty() {
+        return Err(gateway::ProtocolError {
+            code: "invalid_client_request_id".to_string(),
+            message: "turn.send clientRequestId must not be empty".to_string(),
+            retryable: false,
+            details: None,
+        });
+    }
+    Ok(TurnSendKey {
+        device_id: request.route.device_id.clone(),
+        provider_plugin_id: request.route.provider_plugin_id.clone(),
+        provider_instance_id: request.route.provider_instance_id.clone(),
+        client_request_id: request.client_request_id.clone(),
+    })
+}
+
+fn ensure_route_matches_resource(
+    route: &gateway::GatewayProviderRoute,
+    resource: &gateway::RoutedResourceId,
+) -> Result<(), gateway::ProtocolError> {
+    validate_gateway_route(route)?;
+    validate_gateway_resource(resource)?;
+    if route.device_id == resource.device_id
+        && route.provider_plugin_id == resource.provider_plugin_id
+        && route.provider_instance_id == resource.provider_instance_id
+    {
+        return Ok(());
+    }
+    Err(gateway::ProtocolError {
+        code: "gateway_route_mismatch".to_string(),
+        message: "turn.send route and conversation target different Provider instances"
+            .to_string(),
+        retryable: false,
+        details: None,
+    })
+}
+
+fn validate_gateway_turn_selection(
+    capabilities: &gateway::GatewayCapabilities,
+    selection: &gateway::TurnSelection,
+) -> Result<(), gateway::ProtocolError> {
+    let turn_send = capabilities.turn_send.as_ref();
+    validate_choice_selection(
+        "access mode",
+        selection.access_mode_id.as_deref(),
+        turn_send.and_then(|capabilities| capabilities.access_mode.as_ref()),
+    )?;
+    validate_choice_selection(
+        "reasoning effort",
+        selection.reasoning_effort_id.as_deref(),
+        turn_send.and_then(|capabilities| capabilities.reasoning_effort.as_ref()),
+    )?;
+    let catalog = turn_send.and_then(|capabilities| capabilities.model_catalog.as_ref());
+    match (&selection.model, catalog) {
+        (None, _) => Ok(()),
+        (Some(_), None) => Err(gateway::ProtocolError {
+            code: "unsupported_turn_control".to_string(),
+            message: "Provider does not advertise a model selector for turn.send".to_string(),
+            retryable: false,
+            details: None,
+        }),
+        (
+            Some(gateway::ModelSelection::FlatModelSelection(selection)),
+            Some(gateway::ModelCatalog::FlatModelCatalog(catalog)),
+        ) => validate_choice_option("model", &selection.model_id, &catalog.models),
+        (
+            Some(gateway::ModelSelection::GroupedModelSelection(selection)),
+            Some(gateway::ModelCatalog::GroupedModelCatalog(catalog)),
+        ) => {
+            let group = catalog
+                .providers
+                .iter()
+                .find(|group| group.id == selection.provider_id)
+                .ok_or_else(|| gateway::ProtocolError {
+                    code: "unknown_turn_selection".to_string(),
+                    message: format!(
+                        "Provider does not advertise model provider {}",
+                        selection.provider_id
+                    ),
+                    retryable: false,
+                    details: None,
+                })?;
+            validate_choice_option("model", &selection.model_id, &group.models)
+        }
+        _ => Err(gateway::ProtocolError {
+            code: "turn_model_shape_mismatch".to_string(),
+            message: "turn.send model selection kind does not match the advertised model catalog"
+                .to_string(),
+            retryable: false,
+            details: None,
+        }),
+    }
+}
+
+fn validate_choice_selection(
+    label: &str,
+    selected_id: Option<&str>,
+    choices: Option<&gateway::ChoiceSet>,
+) -> Result<(), gateway::ProtocolError> {
+    let Some(selected_id) = selected_id else {
+        return Ok(());
+    };
+    let Some(choices) = choices else {
+        return Err(gateway::ProtocolError {
+            code: "unsupported_turn_control".to_string(),
+            message: format!("Provider does not advertise a {label} selector for turn.send"),
+            retryable: false,
+            details: None,
+        });
+    };
+    validate_choice_option(label, selected_id, &choices.options)
+}
+
+fn validate_choice_option(
+    label: &str,
+    selected_id: &str,
+    options: &[gateway::ChoiceOption],
+) -> Result<(), gateway::ProtocolError> {
+    let option = options
+        .iter()
+        .find(|option| option.id == selected_id)
+        .ok_or_else(|| gateway::ProtocolError {
+            code: "unknown_turn_selection".to_string(),
+            message: format!("Provider does not advertise {label} {selected_id}"),
+            retryable: false,
+            details: None,
+        })?;
+    if option.enabled == Some(false) {
+        return Err(gateway::ProtocolError {
+            code: "disabled_turn_selection".to_string(),
+            message: option
+                .disabled_reason
+                .clone()
+                .unwrap_or_else(|| format!("Provider disabled {label} {selected_id}")),
+            retryable: false,
+            details: None,
+        });
+    }
+    Ok(())
+}
+
+fn validate_gateway_route(
+    route: &gateway::GatewayProviderRoute,
+) -> Result<(), gateway::ProtocolError> {
+    if route.device_id.trim().is_empty()
+        || route.provider_plugin_id.trim().is_empty()
+        || route.provider_instance_id.trim().is_empty()
+    {
+        return Err(gateway::ProtocolError {
+            code: "invalid_gateway_route".to_string(),
+            message: "deviceId, providerPluginId, and providerInstanceId must not be empty"
+                .to_string(),
+            retryable: false,
+            details: None,
+        });
+    }
+    Ok(())
 }
 
 fn ensure_same_gateway_route(

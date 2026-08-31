@@ -2,8 +2,9 @@ use super::protocol::{
     permission_from_sandbox, thread_list_params, thread_start_params, turn_start_params,
     turn_steer_params, output_content_id, reasoning_summary_content_id, text_content_id,
     CodexAppServerError, CodexApprovalKind, CodexApprovalRequest, CodexContentKind,
-    CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexThreadListRequest,
-    CodexThreadPage, CodexThreadStartRequest, CodexTurn,
+    CodexConversationSnapshot, CodexIncoming, CodexModel, CodexModelListResponse,
+    CodexNotification, CodexPermissionLevel, CodexThreadListRequest, CodexThreadPage,
+    CodexThreadStartRequest, CodexTurn,
     CodexTurnItemsView, CodexTurnStartRequest, CodexTurnSteerRequest, CommandApprovalParams, FileApprovalParams,
     InitializeResponse, JsonRpcId, ThreadConfiguredResponse, ThreadListResponse,
     ThreadReadResponse, TurnResponse, TurnSteerResponse,
@@ -169,12 +170,14 @@ struct SessionInner {
     pending: Mutex<HashMap<JsonRpcId, Sender<Result<Value, CodexAppServerError>>>>,
     observers: Mutex<SessionObservers>,
     loaded_threads: Mutex<HashMap<String, ThreadLoadState>>,
+    thread_configurations: Mutex<HashMap<String, ThreadConfiguration>>,
     loaded_threads_changed: Condvar,
     next_load_evidence: AtomicU64,
     next_id: AtomicI64,
     running: AtomicBool,
     control: Mutex<Option<Box<dyn SessionControl>>>,
     reader_thread: Mutex<Option<JoinHandle<()>>>,
+    harness_version: Mutex<Option<String>>,
 }
 
 struct SessionObservers {
@@ -186,6 +189,32 @@ struct SessionObservers {
 enum ThreadLoadState {
     Resuming,
     Loaded(u64),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ThreadConfiguration {
+    workspace_root: Option<String>,
+    permission_level: Option<CodexPermissionLevel>,
+    model: Option<String>,
+    reasoning_effort: Option<String>,
+}
+
+impl ThreadConfiguration {
+    fn from_snapshot(snapshot: &CodexConversationSnapshot) -> Self {
+        Self {
+            workspace_root: snapshot.workspace_root.clone(),
+            permission_level: snapshot.permission_level,
+            model: snapshot.model.clone(),
+            reasoning_effort: snapshot.reasoning_effort.clone(),
+        }
+    }
+
+    fn apply_to(&self, snapshot: &mut CodexConversationSnapshot) {
+        snapshot.workspace_root = self.workspace_root.clone();
+        snapshot.permission_level = self.permission_level;
+        snapshot.model = self.model.clone();
+        snapshot.reasoning_effort = self.reasoning_effort.clone();
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -303,6 +332,39 @@ impl SessionInner {
         evidence
     }
 
+    fn record_configuration(&self, snapshot: &CodexConversationSnapshot) {
+        if let Ok(mut configurations) = self.thread_configurations.lock() {
+            configurations.insert(
+                snapshot.thread.id.clone(),
+                ThreadConfiguration::from_snapshot(snapshot),
+            );
+        }
+    }
+
+    fn apply_configuration(&self, snapshot: &mut CodexConversationSnapshot) {
+        if let Ok(configurations) = self.thread_configurations.lock() {
+            if let Some(configuration) = configurations.get(&snapshot.thread.id) {
+                configuration.apply_to(snapshot);
+            }
+        }
+    }
+
+    fn update_turn_configuration(&self, request: &CodexTurnStartRequest) {
+        if let Ok(mut configurations) = self.thread_configurations.lock() {
+            if let Some(configuration) = configurations.get_mut(&request.thread_id) {
+                if request.permission_level.is_some() {
+                    configuration.permission_level = request.permission_level;
+                }
+                if request.model.is_some() {
+                    configuration.model = request.model.clone();
+                }
+                if request.reasoning_effort.is_some() {
+                    configuration.reasoning_effort = request.reasoning_effort.clone();
+                }
+            }
+        }
+    }
+
 }
 
 impl Drop for SessionInner {
@@ -395,12 +457,14 @@ impl CodexAppServerSession {
                 subscribers: Vec::new(),
             }),
             loaded_threads: Mutex::new(HashMap::new()),
+            thread_configurations: Mutex::new(HashMap::new()),
             loaded_threads_changed: Condvar::new(),
             next_load_evidence: AtomicU64::new(1),
             next_id: AtomicI64::new(1),
             running: AtomicBool::new(true),
             control: Mutex::new(control),
             reader_thread: Mutex::new(None),
+            harness_version: Mutex::new(None),
         });
         let weak_inner = Arc::downgrade(&inner);
         let handle = thread::spawn(move || loop {
@@ -439,6 +503,14 @@ impl CodexAppServerSession {
 
     pub fn generation(&self) -> &str {
         &self.inner.generation
+    }
+
+    pub fn harness_version(&self) -> Option<String> {
+        self.inner
+            .harness_version
+            .lock()
+            .ok()
+            .and_then(|version| version.clone())
     }
 
     pub fn subscribe(
@@ -527,7 +599,41 @@ impl CodexAppServerSession {
                 turn.id
             )));
         }
-        Ok(snapshot_from_thread(response.thread))
+        let mut snapshot = snapshot_from_thread(response.thread);
+        self.inner.apply_configuration(&mut snapshot);
+        Ok(snapshot)
+    }
+
+    pub fn model_list(&self) -> Result<Vec<CodexModel>, CodexAppServerError> {
+        const PAGE_LIMIT: u32 = 100;
+        const MAX_PAGES: usize = 100;
+        let mut cursor = None;
+        let mut models = Vec::new();
+        for _ in 0..MAX_PAGES {
+            let response: CodexModelListResponse = self.request(
+                "model/list",
+                json!({
+                    "cursor": cursor,
+                    "limit": PAGE_LIMIT,
+                    "includeHidden": false,
+                }),
+            )?;
+            models.extend(response.data);
+            match response.next_cursor {
+                Some(next_cursor) if Some(&next_cursor) != cursor.as_ref() => {
+                    cursor = Some(next_cursor);
+                }
+                Some(_) => {
+                    return Err(CodexAppServerError::Protocol(
+                        "model/list returned a repeated cursor".to_string(),
+                    ));
+                }
+                None => return Ok(models),
+            }
+        }
+        Err(CodexAppServerError::Protocol(
+            "model/list exceeded the bounded pagination limit".to_string(),
+        ))
     }
 
     fn request_thread_resume_outcome(
@@ -545,6 +651,7 @@ impl CodexAppServerSession {
                         )),
                     );
                 }
+                self.inner.record_configuration(&snapshot);
                 CodexRequestOutcome::Success(snapshot)
             })
     }
@@ -657,6 +764,7 @@ impl CodexAppServerSession {
         self.request_outcome("thread/start", thread_start_params(&request))
             .and_then(|response: ThreadConfiguredResponse| {
                 let snapshot = snapshot_from_configured_response(response);
+                self.inner.record_configuration(&snapshot);
                 self.inner.mark_thread_loaded(&snapshot.thread.id);
                 CodexRequestOutcome::Success(snapshot)
             })
@@ -669,6 +777,7 @@ impl CodexAppServerSession {
         self.ensure_thread_loaded(&request.thread_id)?;
         let response: TurnResponse =
             self.request("turn/start", turn_start_params(&request))?;
+        self.inner.update_turn_configuration(&request);
         Ok(response.turn)
     }
 
@@ -752,6 +861,9 @@ impl CodexAppServerSession {
             return Err(CodexAppServerError::Protocol(
                 "initialize response contains an empty required field".to_string(),
             ));
+        }
+        if let Ok(mut version) = self.inner.harness_version.lock() {
+            *version = harness_version_from_user_agent(&initialized.user_agent);
         }
         self.notify("initialized", json!({}))
     }
@@ -935,6 +1047,15 @@ fn new_session_generation() -> String {
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
     format!("{:x}-{:x}-{counter:x}", process::id(), nanos)
+}
+
+fn harness_version_from_user_agent(user_agent: &str) -> Option<String> {
+    user_agent
+        .split_whitespace()
+        .next()
+        .and_then(|product| product.rsplit_once('/').map(|(_, version)| version))
+        .filter(|version| !version.trim().is_empty())
+        .map(str::to_string)
 }
 
 fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppServerError> {
@@ -1954,6 +2075,7 @@ mod tests {
                     thread_id: "thread-project".to_string(),
                     message: "hello".to_string(),
                     client_message_id: Some("message-one".to_string()),
+                    permission_level: Some(CodexPermissionLevel::FullAccess),
                     model: Some("gpt-fixture".to_string()),
                     reasoning_effort: Some("high".to_string()),
                 })
@@ -2057,6 +2179,10 @@ mod tests {
         let start = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(start["method"], "turn/start");
         assert_eq!(start["params"]["input"][0]["text"], "hello");
+        assert_eq!(start["params"]["clientUserMessageId"], "message-one");
+        assert_eq!(start["params"]["sandboxPolicy"]["type"], "dangerFullAccess");
+        assert_eq!(start["params"]["approvalPolicy"], "never");
+        assert_eq!(start["params"]["model"], "gpt-fixture");
         assert_eq!(start["params"]["effort"], "high");
         peer_sender
             .send(json!({
@@ -2135,6 +2261,7 @@ mod tests {
                             client_message_id: Some(format!(
                                 "session-{session_number}-message-{message_number}"
                             )),
+                            permission_level: None,
                             model: None,
                             reasoning_effort: None,
                         })

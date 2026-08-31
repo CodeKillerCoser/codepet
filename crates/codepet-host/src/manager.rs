@@ -1087,12 +1087,38 @@ impl PluginManager {
             .turn_start(request)
             .await
             .map_err(HostError::from)?;
+        if !response.accepted {
+            return Err(HostError::new(
+                "provider_response_invalid",
+                "Provider returned a successful turn.start response that was not accepted",
+            ));
+        }
         validate_turn_routes(&response.turn, &route)?;
         validate_exact_resource(
             &response.turn.conversation,
             &expected_conversation,
             "turn.start conversation",
         )?;
+        validate_conversation_items(
+            std::slice::from_ref(&response.user_item),
+            &expected_conversation,
+            &route,
+        )?;
+        validate_exact_resource(
+            &response.user_item.turn,
+            &response.turn.resource,
+            "turn.start user item turn",
+        )?;
+        if response.user_item.kind != ConversationItemKind::Message
+            || response.user_item.role
+                != Some(codepet_provider_sdk::ConversationItemRole::User)
+            || response.user_item.contents.is_empty()
+        {
+            return Err(HostError::new(
+                "provider_response_invalid",
+                "Provider turn.start response must include a canonical user message item",
+            ));
+        }
         Ok(response)
     }
 

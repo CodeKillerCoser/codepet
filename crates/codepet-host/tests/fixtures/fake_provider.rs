@@ -1,6 +1,6 @@
 use codepet_provider_sdk::{
     dispatch, ApprovalDecision, ApprovalResolveRequest, ApprovalResolveResponse, ApprovalStatus,
-    ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
+    ChoiceOption, ChoiceSet, ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
     ConversationGetResponse, ConversationListRequest, ConversationListResponse,
     ConversationSearchRequest, ConversationSearchResponse, ConversationContent,
     ConversationContentKind, ConversationItem, ConversationItemKind,
@@ -9,14 +9,15 @@ use codepet_provider_sdk::{
     InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceCreateResponse,
     InstanceDestroyRequest, InstanceDestroyResponse, InstanceStartRequest,
     InstanceStartResponse, InstanceStatus, InstanceStopRequest, InstanceStopResponse,
-    JsonLineCodec, JsonObject, JsonRpcInboundRequest, JsonRpcNotification, PageInfo, ProtocolEvent,
+    FlatModelCatalog, FlatModelCatalogKind, FlatModelSelection, HarnessDescriptor, JsonLineCodec,
+    JsonObject, JsonRpcInboundRequest, JsonRpcNotification, ModelCatalog, ModelSelection, PageInfo, ProtocolEvent,
     ProtocolFuture, ProtocolRequest, ProtocolServer, ProviderApproval, ProviderCapabilities,
     ProviderCapability, ProviderConversation, ProviderDescribeRequest,
     ProviderDescribeResponse, ProviderInitializeRequest, ProviderInitializeResponse,
     ProviderInstance, ProviderInstanceRoute, ProviderPluginDescriptor, ProviderShutdownRequest,
     ProviderShutdownResponse, ProviderTurn, ProviderWireMessage, RoutedResourceId,
-    TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent, TurnStartRequest,
-    TurnStartResponse, TurnStatus, TurnSteerRequest, TurnSteerResponse, VersionRange,
+    TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent, TurnSendCapabilities,
+    TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest, TurnSteerResponse, VersionRange,
 };
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -96,6 +97,11 @@ impl ProtocolServer for FakeProvider {
                 plugin_id: self.plugin_id.clone(),
                 instance_kind: request.instance_kind,
                 display_name: request.display_name,
+                harness: HarnessDescriptor {
+                    id: "fake-harness".to_string(),
+                    display_name: "Fake Harness".to_string(),
+                    version: Some("1.0.0-fixture".to_string()),
+                },
                 status: InstanceStatus::Created,
                 capabilities: capabilities(),
             };
@@ -279,6 +285,15 @@ impl ProtocolServer for FakeProvider {
         request: TurnStartRequest,
     ) -> ProtocolFuture<'a, TurnStartResponse> {
         Box::pin(async move {
+            if let Ok(path) = std::env::var("CODEPET_FAKE_TURN_START_MARKER") {
+                if let Ok(mut marker) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                {
+                    let _ = writeln!(marker, "{}", request.client_request_id);
+                }
+            }
             let route = route_from_resource(&request.conversation);
             self.instance(&route)?;
             let conversation = if request.conversation.native_resource_id
@@ -288,8 +303,28 @@ impl ProtocolServer for FakeProvider {
             } else {
                 request.conversation
             };
+            let turn = turn(&route, "turn-started", conversation.clone());
+            let user_item = ConversationItem {
+                resource: resource(&route, &format!("user-{}", request.client_request_id)),
+                turn: turn.resource.clone(),
+                conversation,
+                kind: ConversationItemKind::Message,
+                status: ConversationItemStatus::Completed,
+                role: Some(ConversationItemRole::User),
+                title: None,
+                contents: vec![ConversationContent {
+                    content_id: format!("{}:input:0", request.client_request_id),
+                    kind: ConversationContentKind::Text,
+                    text: request.input.text,
+                }],
+                related_item: None,
+                approval: None,
+            };
             Ok(TurnStartResponse {
-                turn: turn(&route, "turn-started", conversation),
+                accepted: true,
+                turn,
+                user_item,
+                effective_selection: request.selection,
             })
         })
     }
@@ -613,6 +648,7 @@ fn write_message(
 
 fn capabilities() -> ProviderCapabilities {
     ProviderCapabilities {
+        revision: "fake-capabilities-v1".to_string(),
         methods: vec![
             ProviderCapability::ConversationList,
             ProviderCapability::ConversationSearch,
@@ -623,10 +659,35 @@ fn capabilities() -> ProviderCapabilities {
             ProviderCapability::TurnInterrupt,
             ProviderCapability::ApprovalResolve,
         ],
-        permission_levels: vec!["workspace-write".to_string()],
-        models: vec!["fake-model".to_string()],
-        reasoning_efforts: vec!["medium".to_string()],
+        turn_send: Some(TurnSendCapabilities {
+            access_mode: Some(ChoiceSet {
+                options: vec![choice("workspace-write", "Workspace write")],
+                default_id: Some("workspace-write".to_string()),
+            }),
+            reasoning_effort: Some(ChoiceSet {
+                options: vec![choice("medium", "Medium")],
+                default_id: Some("medium".to_string()),
+            }),
+            model_catalog: Some(ModelCatalog::FlatModelCatalog(FlatModelCatalog {
+                kind: FlatModelCatalogKind::Flat,
+                models: vec![choice("fake-model", "Fake model")],
+                default_selection: Some(FlatModelSelection {
+                    kind: FlatModelCatalogKind::Flat,
+                    model_id: "fake-model".to_string(),
+                }),
+            })),
+        }),
         extensions: Vec::new(),
+    }
+}
+
+fn choice(id: &str, display_name: &str) -> ChoiceOption {
+    ChoiceOption {
+        id: id.to_string(),
+        display_name: display_name.to_string(),
+        description: None,
+        enabled: Some(true),
+        disabled_reason: None,
     }
 }
 
@@ -639,6 +700,14 @@ fn conversation(route: &ProviderInstanceRoute, native_id: &str) -> ProviderConve
         permission_level: Some("workspace-write".to_string()),
         model: Some("fake-model".to_string()),
         reasoning_effort: Some("medium".to_string()),
+        selection: Some(codepet_provider_sdk::TurnSelection {
+            access_mode_id: Some("workspace-write".to_string()),
+            reasoning_effort_id: Some("medium".to_string()),
+            model: Some(ModelSelection::FlatModelSelection(FlatModelSelection {
+                kind: FlatModelCatalogKind::Flat,
+                model_id: "fake-model".to_string(),
+            })),
+        }),
         workspace_root: Some("/fixture".to_string()),
         created_at: Some(1),
         updated_at: Some(2),

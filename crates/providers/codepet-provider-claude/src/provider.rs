@@ -3,10 +3,11 @@ use crate::client::{
 };
 use crate::protocol::{ClaudeOutput, ClaudeStreamDelta, ClaudeStreamEvent};
 use codepet_provider_sdk::{
-    ApprovalResolveRequest, ApprovalResolveResponse, ConversationCreateRequest,
+    ApprovalResolveRequest, ApprovalResolveResponse, ConversationContent, ConversationCreateRequest,
     ConversationContentKind, ConversationCreateResponse, ConversationGetRequest,
     ConversationGetResponse, ConversationListRequest, ConversationListResponse,
-    ConversationStatus,
+    ConversationItem, ConversationItemKind, ConversationItemRole, ConversationItemStatus,
+    ConversationStatus, HarnessDescriptor,
     ConversationUpsertedEvent, InstanceCapabilitiesRequest, InstanceCapabilitiesResponse,
     InstanceCreateRequest, InstanceCreateResponse, InstanceDestroyRequest,
     InstanceDestroyResponse, InstanceStartRequest, InstanceStartResponse, InstanceStatus,
@@ -154,6 +155,11 @@ impl ClaudeInstanceRuntime {
             plugin_id: CLAUDE_PLUGIN_ID.to_string(),
             instance_kind: self.instance_kind.clone(),
             display_name: self.display_name.clone(),
+            harness: HarnessDescriptor {
+                id: self.instance_kind.clone(),
+                display_name: "Claude Code".to_string(),
+                version: None,
+            },
             status: lock(&self.mutable).status,
             capabilities: self.capabilities.clone(),
         }
@@ -252,6 +258,7 @@ impl ClaudeInstanceRuntime {
             permission_level: Some(request.permission_level.clone()),
             model: request.model.clone(),
             reasoning_effort: request.reasoning_effort.clone(),
+            selection: None,
             workspace_root: Some(workspace_root.to_string_lossy().to_string()),
             created_at: Some(now),
             updated_at: Some(now),
@@ -287,7 +294,7 @@ impl ClaudeInstanceRuntime {
         request: TurnStartRequest,
     ) -> Result<ProviderTurn, ProtocolError> {
         validate_resource_for_instance(&request.conversation, &self.route)?;
-        if request.message.trim().is_empty() || request.client_message_id.trim().is_empty() {
+        if request.input.text.trim().is_empty() || request.client_request_id.trim().is_empty() {
             return Err(protocol_error(
                 "invalid_turn_request",
                 "turn message and clientMessageId must not be empty".to_string(),
@@ -296,7 +303,25 @@ impl ClaudeInstanceRuntime {
         }
         let conversation_id = request.conversation.native_resource_id.clone();
         let turn_id = Uuid::new_v4().to_string();
-        let user_message_id = Uuid::new_v4().to_string();
+        if request.capability_revision != "claude-cli-stream-json-v1" {
+            return Err(protocol_error(
+                "stale_capability_revision",
+                "turn.start capabilityRevision no longer matches the Provider instance"
+                    .to_string(),
+                true,
+            ));
+        }
+        if request.selection.access_mode_id.is_some()
+            || request.selection.reasoning_effort_id.is_some()
+            || request.selection.model.is_some()
+        {
+            return Err(protocol_error(
+                "unsupported_turn_control",
+                "Claude Provider does not advertise turn selection controls".to_string(),
+                false,
+            ));
+        }
+        let user_message_id = request.client_request_id.clone();
         let (spawned, turn, conversation) = {
             let mut mutable = lock(&self.mutable);
             if mutable.status != InstanceStatus::Ready {
@@ -322,7 +347,7 @@ impl ClaudeInstanceRuntime {
                 session_id: conversation_id.clone(),
                 resume: managed.materialized,
                 user_message_id,
-                message: request.message,
+                message: request.input.text,
                 title: managed.title.clone(),
                 model: managed.model.clone(),
                 effort: managed.effort.clone(),
@@ -340,7 +365,7 @@ impl ClaudeInstanceRuntime {
                 completed_at: None,
                 extension: Some(extension([
                     ("nativeInterface", json!("claude-print-stream-json")),
-                    ("clientMessageId", json!(request.client_message_id)),
+                    ("clientRequestId", json!(request.client_request_id)),
                 ])),
             };
             let finished = Arc::new(TurnFinished::default());
@@ -1151,8 +1176,31 @@ impl ProtocolServer for ClaudeProvider {
     ) -> ProtocolFuture<'a, TurnStartResponse> {
         Box::pin(async move {
             let runtime = self.resource_instance(&request.conversation)?;
+            let conversation = request.conversation.clone();
+            let item_id = request.client_request_id.clone();
+            let input_text = request.input.text.clone();
+            let effective_selection = request.selection.clone();
+            let turn = runtime.start_turn(request)?;
             Ok(TurnStartResponse {
-                turn: runtime.start_turn(request)?,
+                accepted: true,
+                user_item: ConversationItem {
+                    resource: runtime.resource(item_id.clone()),
+                    turn: turn.resource.clone(),
+                    conversation,
+                    kind: ConversationItemKind::Message,
+                    status: ConversationItemStatus::Completed,
+                    role: Some(ConversationItemRole::User),
+                    title: None,
+                    contents: vec![ConversationContent {
+                        content_id: format!("{item_id}:text"),
+                        kind: ConversationContentKind::Text,
+                        text: input_text,
+                    }],
+                    related_item: None,
+                    approval: None,
+                },
+                turn,
+                effective_selection,
             })
         })
     }
@@ -1213,28 +1261,13 @@ impl ProtocolServer for ClaudeProvider {
 }
 
 fn claude_capabilities() -> ProviderCapabilities {
-    let mut methods = vec![
-        ProviderCapability::ConversationCreate,
-        ProviderCapability::TurnStart,
-    ];
+    let mut methods = vec![ProviderCapability::ConversationCreate];
     #[cfg(unix)]
     methods.push(ProviderCapability::TurnInterrupt);
     ProviderCapabilities {
+        revision: "claude-cli-stream-json-v1".to_string(),
         methods,
-        permission_levels: vec!["workspace-write".to_string()],
-        models: vec![
-            "sonnet".to_string(),
-            "opus".to_string(),
-            "haiku".to_string(),
-            "fable".to_string(),
-        ],
-        reasoning_efforts: vec![
-            "low".to_string(),
-            "medium".to_string(),
-            "high".to_string(),
-            "xhigh".to_string(),
-            "max".to_string(),
-        ],
+        turn_send: None,
         extensions: vec![extension([
             ("nativeInterface", json!("claude-print-stream-json")),
             (

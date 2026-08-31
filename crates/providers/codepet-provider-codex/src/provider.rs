@@ -16,11 +16,12 @@ use codepet_provider_sdk::{
     InstanceStartResponse, InstanceStatus, InstanceStatusChangedEvent, InstanceStopRequest,
     InstanceStopResponse, PageInfo, ProtocolError, ProtocolEvent, ProtocolFuture,
     ProtocolServer, ProviderCapabilities, ProviderDescribeRequest, ProviderDescribeResponse,
-    ProviderApproval, ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance,
+    FlatModelCatalogKind, FlatModelSelection, HarnessDescriptor, ModelCatalog, ModelSelection, ProviderApproval,
+    ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance,
     ProviderInstanceRoute, ProviderPluginDescriptor, ProviderShutdownRequest,
     ProviderShutdownResponse, RoutedResourceId, TurnInterruptRequest, TurnInterruptResponse,
-    TurnStartRequest, TurnStartResponse, TurnSteerRequest, TurnSteerResponse, VersionRange,
-    PROTOCOL_VERSION,
+    TurnSelection, TurnStartRequest, TurnStartResponse, TurnSteerRequest, TurnSteerResponse,
+    VersionRange, PROTOCOL_VERSION,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -38,10 +39,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 struct CodexInstanceSettings {
     app_server_executable: PathBuf,
     app_server_args: Vec<String>,
-    #[serde(default)]
-    models: Vec<String>,
-    #[serde(default)]
-    reasoning_efforts: Vec<String>,
 }
 
 pub trait ProviderEventSink: Send + Sync + 'static {
@@ -59,6 +56,8 @@ where
 
 struct InstanceMutable {
     status: InstanceStatus,
+    capabilities: ProviderCapabilities,
+    harness: HarnessDescriptor,
     session: Option<CodexAppServerSession>,
     session_generation: Option<String>,
     pending_approvals: HashMap<String, PendingApproval>,
@@ -82,7 +81,6 @@ struct CodexInstanceRuntime {
     instance_kind: String,
     display_name: String,
     settings: CodexInstanceSettings,
-    capabilities: ProviderCapabilities,
     mutable: Mutex<InstanceMutable>,
     mapper: Mutex<CodexProtocolMapper>,
     events: Arc<dyn ProviderEventSink>,
@@ -94,18 +92,21 @@ impl CodexInstanceRuntime {
         settings: CodexInstanceSettings,
         events: Arc<dyn ProviderEventSink>,
     ) -> Self {
-        let capabilities = CodexProtocolMapper::capabilities(
-            settings.models.clone(),
-            settings.reasoning_efforts.clone(),
-        );
         Self {
             route: request.route.clone(),
             instance_kind: request.instance_kind,
             display_name: request.display_name,
             settings,
-            capabilities,
             mutable: Mutex::new(InstanceMutable {
                 status: InstanceStatus::Created,
+                capabilities: CodexProtocolMapper::unavailable_capabilities(
+                    "codex-not-ready".to_string(),
+                ),
+                harness: HarnessDescriptor {
+                    id: CODEX_INSTANCE_KIND.to_string(),
+                    display_name: "Codex".to_string(),
+                    version: None,
+                },
                 session: None,
                 session_generation: None,
                 pending_approvals: HashMap::new(),
@@ -117,13 +118,14 @@ impl CodexInstanceRuntime {
     }
 
     fn snapshot(&self) -> ProviderInstance {
-        let status = lock(&self.mutable).status;
+        let mutable = lock(&self.mutable);
         lock(&self.mapper).instance(
             CODEX_PLUGIN_ID.to_string(),
             self.instance_kind.clone(),
             self.display_name.clone(),
-            status,
-            self.capabilities.clone(),
+            mutable.harness.clone(),
+            mutable.status,
+            mutable.capabilities.clone(),
         )
     }
 
@@ -564,6 +566,34 @@ impl ProtocolServer for CodexProvider {
                     return Err(CodexProtocolMapper::error(error));
                 }
             };
+            let discovery_session = session.clone();
+            let models = match tokio::task::spawn_blocking(move || discovery_session.model_list())
+                .await
+                .map_err(provider_task_error)?
+            {
+                Ok(models) => models,
+                Err(error) => {
+                    let _ = session.shutdown();
+                    let _ = runtime.set_status(InstanceStatus::Error);
+                    return Err(CodexProtocolMapper::error(error));
+                }
+            };
+            let capabilities = match CodexProtocolMapper::capabilities(
+                session.generation().to_string(),
+                models,
+            ) {
+                Ok(capabilities) => capabilities,
+                Err(error) => {
+                    let _ = session.shutdown();
+                    let _ = runtime.set_status(InstanceStatus::Error);
+                    return Err(error);
+                }
+            };
+            let harness = HarnessDescriptor {
+                id: CODEX_INSTANCE_KIND.to_string(),
+                display_name: "Codex".to_string(),
+                version: session.harness_version(),
+            };
             let incoming = match session.subscribe() {
                 Ok(incoming) => incoming,
                 Err(error) => {
@@ -575,6 +605,8 @@ impl ProtocolServer for CodexProvider {
             let session_generation = session.generation().to_string();
             {
                 let mut mutable = lock(&runtime.mutable);
+                mutable.capabilities = capabilities;
+                mutable.harness = harness;
                 mutable.session = Some(session);
                 mutable.session_generation = Some(session_generation.clone());
                 mutable.pending_approvals.clear();
@@ -655,8 +687,9 @@ impl ProtocolServer for CodexProvider {
     ) -> ProtocolFuture<'a, InstanceCapabilitiesResponse> {
         Box::pin(async move {
             let runtime = self.instance(&request.route)?;
+            let capabilities = lock(&runtime.mutable).capabilities.clone();
             Ok(InstanceCapabilitiesResponse {
-                capabilities: runtime.capabilities.clone(),
+                capabilities,
             })
         })
     }
@@ -758,7 +791,10 @@ impl ProtocolServer for CodexProvider {
             let runtime = self.resource_instance(&request.conversation)?;
             let conversation_id = request.conversation.native_resource_id;
             let session = runtime.ready_session()?;
-            let snapshot = tokio::task::spawn_blocking(move || session.thread_read(&conversation_id))
+            let snapshot = tokio::task::spawn_blocking(move || {
+                session.ensure_thread_loaded(&conversation_id)?;
+                session.thread_read(&conversation_id)
+            })
                 .await
                 .map_err(provider_task_error)?
                 .map_err(CodexProtocolMapper::error)?;
@@ -825,23 +861,104 @@ impl ProtocolServer for CodexProvider {
         Box::pin(async move {
             let runtime = self.resource_instance(&request.conversation)?;
             let conversation_id = request.conversation.native_resource_id;
+            let capabilities = lock(&runtime.mutable).capabilities.clone();
+            if request.capability_revision != capabilities.revision {
+                return Err(protocol_error(
+                    "stale_capability_revision",
+                    "turn.start capabilityRevision no longer matches the Provider instance"
+                        .to_string(),
+                    true,
+                ));
+            }
             let session = runtime.ready_session()?;
+            let snapshot_session = session.clone();
+            let snapshot_conversation_id = conversation_id.clone();
+            let snapshot = tokio::task::spawn_blocking(move || {
+                snapshot_session.ensure_thread_loaded(&snapshot_conversation_id)?;
+                snapshot_session.thread_read(&snapshot_conversation_id)
+            })
+            .await
+            .map_err(provider_task_error)?
+            .map_err(CodexProtocolMapper::error)?;
+            if snapshot
+                .thread
+                .turns
+                .iter()
+                .any(|turn| turn.status == crate::protocol::CodexTurnStatus::InProgress)
+            {
+                return Err(protocol_error(
+                    "turn_already_active",
+                    "Codex conversation already has an active turn".to_string(),
+                    false,
+                ));
+            }
+            let effective_selection = resolve_turn_selection(
+                &capabilities,
+                request.selection,
+                TurnSelection {
+                    access_mode_id: snapshot
+                        .permission_level
+                        .map(permission_level_id)
+                        .map(str::to_string),
+                    reasoning_effort_id: snapshot.reasoning_effort,
+                    model: snapshot.model.map(|model_id| {
+                        ModelSelection::FlatModelSelection(FlatModelSelection {
+                            kind: FlatModelCatalogKind::Flat,
+                            model_id,
+                        })
+                    }),
+                },
+            )?;
+            let permission_level = effective_selection
+                .access_mode_id
+                .as_deref()
+                .map(parse_permission_level)
+                .transpose()?;
+            let model = match effective_selection.model.as_ref() {
+                Some(ModelSelection::FlatModelSelection(selection)) => {
+                    Some(selection.model_id.clone())
+                }
+                Some(ModelSelection::GroupedModelSelection(_)) => {
+                    return Err(protocol_error(
+                        "invalid_model_selection",
+                        "Codex Provider requires a flat model selection".to_string(),
+                        false,
+                    ));
+                }
+                None => None,
+            };
+            if request.input.text.trim().is_empty() {
+                return Err(protocol_error(
+                    "invalid_turn_input",
+                    "turn.start text input must not be empty".to_string(),
+                    false,
+                ));
+            }
             let native_conversation_id = conversation_id.clone();
+            let input_text = request.input.text;
+            let client_request_id = request.client_request_id;
+            let reasoning_effort = effective_selection.reasoning_effort_id.clone();
             let turn = tokio::task::spawn_blocking(move || {
                 session.turn_start(CodexTurnStartRequest {
                     thread_id: native_conversation_id,
-                    message: request.message,
-                    client_message_id: Some(request.client_message_id),
-                    model: None,
-                    reasoning_effort: None,
+                    message: input_text,
+                    client_message_id: Some(client_request_id),
+                    permission_level,
+                    model,
+                    reasoning_effort,
                 })
             })
             .await
             .map_err(provider_task_error)?
             .map_err(CodexProtocolMapper::error)?;
-            let mapped_turn = lock(&runtime.mapper).turn(&conversation_id, &turn);
+            let mapper = lock(&runtime.mapper);
+            let user_item = mapper.turn_user_item(&conversation_id, &turn)?;
+            let mapped_turn = mapper.turn(&conversation_id, &turn);
             Ok(TurnStartResponse {
+                accepted: true,
                 turn: mapped_turn,
+                user_item,
+                effective_selection,
             })
         })
     }
@@ -1040,6 +1157,153 @@ fn update_recorded_approval(mutable: &mut InstanceMutable, approval: &ProviderAp
     }
 }
 
+fn permission_level_id(permission: crate::protocol::CodexPermissionLevel) -> &'static str {
+    match permission {
+        crate::protocol::CodexPermissionLevel::ReadOnly => "read-only",
+        crate::protocol::CodexPermissionLevel::WorkspaceWrite => "workspace-write",
+        crate::protocol::CodexPermissionLevel::FullAccess => "full-access",
+    }
+}
+
+fn resolve_turn_selection(
+    capabilities: &ProviderCapabilities,
+    requested: TurnSelection,
+    current: TurnSelection,
+) -> Result<TurnSelection, ProtocolError> {
+    let turn_send = capabilities.turn_send.as_ref().ok_or_else(|| {
+        protocol_error(
+            "capability_unsupported",
+            "Provider does not advertise turn.start controls".to_string(),
+            false,
+        )
+    })?;
+    let access_mode_id = resolve_choice(
+        turn_send.access_mode.as_ref(),
+        requested.access_mode_id,
+        current.access_mode_id,
+        "accessModeId",
+    )?;
+    let reasoning_effort_id = resolve_choice(
+        turn_send.reasoning_effort.as_ref(),
+        requested.reasoning_effort_id,
+        current.reasoning_effort_id,
+        "reasoningEffortId",
+    )?;
+    let model = match turn_send.model_catalog.as_ref() {
+        None => {
+            if requested.model.is_some() {
+                return Err(protocol_error(
+                    "unsupported_turn_control",
+                    "model must be omitted when modelCatalog is unavailable".to_string(),
+                    false,
+                ));
+            }
+            None
+        }
+        Some(ModelCatalog::FlatModelCatalog(catalog)) => {
+            let requested_model = match requested.model {
+                Some(ModelSelection::FlatModelSelection(selection)) => Some(selection.model_id),
+                Some(ModelSelection::GroupedModelSelection(_)) => {
+                    return Err(protocol_error(
+                        "invalid_model_selection",
+                        "flat modelCatalog requires modelId without providerId".to_string(),
+                        false,
+                    ));
+                }
+                None => None,
+            };
+            let current_model = match current.model {
+                Some(ModelSelection::FlatModelSelection(selection)) => Some(selection.model_id),
+                _ => None,
+            };
+            let model_id = requested_model
+                .or_else(|| {
+                    current_model.filter(|id| catalog.models.iter().any(|option| option.id == *id))
+                })
+                .or_else(|| {
+                    catalog
+                        .default_selection
+                        .as_ref()
+                        .map(|selection| selection.model_id.clone())
+                });
+            match model_id {
+                Some(model_id) => {
+                    validate_choice(&catalog.models, &model_id, "model")?;
+                    Some(ModelSelection::FlatModelSelection(FlatModelSelection {
+                        kind: FlatModelCatalogKind::Flat,
+                        model_id,
+                    }))
+                }
+                None => None,
+            }
+        }
+        Some(ModelCatalog::GroupedModelCatalog(_)) => {
+            return Err(protocol_error(
+                "provider_capability_invalid",
+                "Codex Provider cannot execute a grouped modelCatalog".to_string(),
+                false,
+            ));
+        }
+    };
+    Ok(TurnSelection {
+        access_mode_id,
+        reasoning_effort_id,
+        model,
+    })
+}
+
+fn resolve_choice(
+    control: Option<&codepet_provider_sdk::ChoiceSet>,
+    requested: Option<String>,
+    current: Option<String>,
+    field: &str,
+) -> Result<Option<String>, ProtocolError> {
+    let Some(control) = control else {
+        if requested.is_some() {
+            return Err(protocol_error(
+                "unsupported_turn_control",
+                format!("{field} must be omitted when its control is unavailable"),
+                false,
+            ));
+        }
+        return Ok(None);
+    };
+    let selected = requested
+        .or_else(|| {
+            current.filter(|id| control.options.iter().any(|option| option.id == *id))
+        })
+        .or_else(|| control.default_id.clone());
+    if let Some(selected) = selected.as_deref() {
+        validate_choice(&control.options, selected, field)?;
+    }
+    Ok(selected)
+}
+
+fn validate_choice(
+    options: &[codepet_provider_sdk::ChoiceOption],
+    selected: &str,
+    field: &str,
+) -> Result<(), ProtocolError> {
+    let option = options.iter().find(|option| option.id == selected).ok_or_else(|| {
+        protocol_error(
+            "invalid_turn_selection",
+            format!("unknown {field} selection: {selected}"),
+            false,
+        )
+    })?;
+    if option.enabled == Some(false) {
+        return Err(protocol_error(
+            "disabled_turn_selection",
+            option
+                .disabled_reason
+                .clone()
+                .unwrap_or_else(|| format!("{field} selection {selected} is disabled")),
+            false,
+        ));
+    }
+    Ok(())
+}
+
 fn decode_settings(settings: codepet_provider_sdk::JsonObject) -> Result<CodexInstanceSettings, ProtocolError> {
     let value = Value::Object(settings.into_iter().collect());
     let settings: CodexInstanceSettings = serde_json::from_value(value).map_err(|error| {
@@ -1056,22 +1320,7 @@ fn decode_settings(settings: codepet_provider_sdk::JsonObject) -> Result<CodexIn
             false,
         ));
     }
-    ensure_unique_non_empty(&settings.models, "models")?;
-    ensure_unique_non_empty(&settings.reasoning_efforts, "reasoningEfforts")?;
     Ok(settings)
-}
-
-fn ensure_unique_non_empty(values: &[String], field: &str) -> Result<(), ProtocolError> {
-    for (index, value) in values.iter().enumerate() {
-        if value.trim().is_empty() || values[..index].contains(value) {
-            return Err(protocol_error(
-                "invalid_instance_settings",
-                format!("{field} must contain unique non-empty strings"),
-                false,
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn validate_route(route: &ProviderInstanceRoute) -> Result<(), ProtocolError> {

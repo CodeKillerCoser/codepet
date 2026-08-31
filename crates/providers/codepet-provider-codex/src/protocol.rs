@@ -431,6 +431,33 @@ pub struct CodexThreadPage {
     pub next_cursor: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexModel {
+    pub id: String,
+    pub model: String,
+    pub display_name: String,
+    pub description: String,
+    pub hidden: bool,
+    pub is_default: bool,
+    pub default_reasoning_effort: String,
+    pub supported_reasoning_efforts: Vec<CodexReasoningEffortOption>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexReasoningEffortOption {
+    pub reasoning_effort: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CodexModelListResponse {
+    pub data: Vec<CodexModel>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CodexThreadStartRequest {
     pub workspace_root: Option<String>,
@@ -444,6 +471,7 @@ pub struct CodexTurnStartRequest {
     pub thread_id: String,
     pub message: String,
     pub client_message_id: Option<String>,
+    pub permission_level: Option<CodexPermissionLevel>,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
 }
@@ -637,7 +665,7 @@ impl CodexSandboxPolicy {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub(crate) struct InitializeResponse {
@@ -772,6 +800,16 @@ pub(crate) fn turn_start_params(request: &CodexTurnStartRequest) -> Value {
     params.insert("input".to_string(), text_input(&request.message));
     if let Some(client_message_id) = &request.client_message_id {
         params.insert("clientUserMessageId".to_string(), json!(client_message_id));
+    }
+    if let Some(permission_level) = request.permission_level {
+        let (_, approval_policy) = permission_settings(permission_level);
+        let sandbox_policy = match permission_level {
+            CodexPermissionLevel::ReadOnly => json!({ "type": "readOnly" }),
+            CodexPermissionLevel::WorkspaceWrite => json!({ "type": "workspaceWrite" }),
+            CodexPermissionLevel::FullAccess => json!({ "type": "dangerFullAccess" }),
+        };
+        params.insert("sandboxPolicy".to_string(), sandbox_policy);
+        params.insert("approvalPolicy".to_string(), json!(approval_policy));
     }
     if let Some(model) = &request.model {
         params.insert("model".to_string(), json!(model));

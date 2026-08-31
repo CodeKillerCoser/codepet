@@ -6,8 +6,8 @@ use codepet_provider_sdk::{
     ConversationGetRequest, ConversationListRequest, InstanceCreateRequest,
     InstanceStartRequest, InstanceStatus, InstanceStopRequest, ProtocolEvent,
     ProtocolServer, ProviderInitializeRequest, ProviderInstanceRoute, RoutedResourceId,
-    TurnInterruptRequest, TurnStartRequest, TurnStatus, TurnSteerRequest, VersionRange,
-    PROTOCOL_VERSION,
+    TurnInput, TurnInputKind, TurnInterruptRequest, TurnSelection, TurnStartRequest, TurnStatus,
+    TurnSteerRequest, VersionRange, PROTOCOL_VERSION,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -18,6 +18,27 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+fn turn_start_request(
+    conversation: RoutedResourceId,
+    client_request_id: &str,
+    message: &str,
+) -> TurnStartRequest {
+    TurnStartRequest {
+        conversation,
+        client_request_id: client_request_id.to_string(),
+        capability_revision: "opencode-server-1.18.25".to_string(),
+        input: TurnInput {
+            kind: TurnInputKind::Text,
+            text: message.to_string(),
+        },
+        selection: TurnSelection {
+            access_mode_id: None,
+            reasoning_effort_id: None,
+            model: None,
+        },
+    }
+}
 
 #[tokio::test]
 async fn official_v2_shapes_map_through_the_provider_protocol() {
@@ -65,14 +86,17 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
             display_name: "OpenCode Fixture".to_string(),
             settings,
         })
-        .await
-        .unwrap();
+    .await
+    .unwrap();
     assert_eq!(created.instance.status, InstanceStatus::Created);
-    assert_eq!(created.instance.capabilities.models, Vec::<String>::new());
-    assert_eq!(
-        created.instance.capabilities.permission_levels,
-        vec!["opencode-default".to_string()]
-    );
+    assert_eq!(created.instance.capabilities.revision, "opencode-server-1.18.25");
+    assert!(created.instance.capabilities.turn_send.is_none());
+    assert!(!created
+        .instance
+        .capabilities
+        .methods
+        .contains(&codepet_provider_sdk::ProviderCapability::TurnStart));
+    assert_eq!(created.instance.harness.version.as_deref(), Some("1.18.25"));
 
     let started = provider
         .instance_start(InstanceStartRequest {
@@ -135,11 +159,11 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     );
 
     let successful_turn = provider
-        .turn_start(TurnStartRequest {
-            conversation: fixture_conversation.clone(),
-            client_message_id: "shared-client-id".to_string(),
-            message: "complete normally".to_string(),
-        })
+        .turn_start(turn_start_request(
+            fixture_conversation.clone(),
+            "shared-client-id",
+            "complete normally",
+        ))
         .await
         .unwrap();
     assert_eq!(successful_turn.turn.conversation, fixture_conversation);
@@ -159,11 +183,11 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
 
     let created_conversation = new_conversation.conversation.resource.clone();
     let same_client_other_session = provider
-        .turn_start(TurnStartRequest {
-            conversation: created_conversation.clone(),
-            client_message_id: "shared-client-id".to_string(),
-            message: "complete normally".to_string(),
-        })
+        .turn_start(turn_start_request(
+            created_conversation.clone(),
+            "shared-client-id",
+            "complete normally",
+        ))
         .await
         .unwrap();
     assert_ne!(
@@ -177,11 +201,11 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     );
 
     let multi_step = provider
-        .turn_start(TurnStartRequest {
-            conversation: fixture_conversation.clone(),
-            client_message_id: "client-multiple-steps".to_string(),
-            message: "multiple steps".to_string(),
-        })
+        .turn_start(turn_start_request(
+            fixture_conversation.clone(),
+            "client-multiple-steps",
+            "multiple steps",
+        ))
         .await
         .unwrap();
     let multi_step_completed = wait_for_turn_status(
@@ -197,20 +221,20 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     );
 
     let reordered = provider
-        .turn_start(TurnStartRequest {
-            conversation: fixture_conversation.clone(),
-            client_message_id: "client-response-after-completion".to_string(),
-            message: "response after completion".to_string(),
-        })
+        .turn_start(turn_start_request(
+            fixture_conversation.clone(),
+            "client-response-after-completion",
+            "response after completion",
+        ))
         .await
         .unwrap_err();
     assert_eq!(reordered.code, "turn_not_active");
     let after_reordered = provider
-        .turn_start(TurnStartRequest {
-            conversation: fixture_conversation.clone(),
-            client_message_id: "client-after-reordered".to_string(),
-            message: "complete normally".to_string(),
-        })
+        .turn_start(turn_start_request(
+            fixture_conversation.clone(),
+            "client-after-reordered",
+            "complete normally",
+        ))
         .await
         .unwrap();
     wait_for_turn_status(
@@ -220,11 +244,11 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     );
 
     let delayed = provider
-        .turn_start(TurnStartRequest {
-            conversation: fixture_conversation.clone(),
-            client_message_id: "client-delayed-old".to_string(),
-            message: "delay previous step".to_string(),
-        })
+        .turn_start(turn_start_request(
+            fixture_conversation.clone(),
+            "client-delayed-old",
+            "delay previous step",
+        ))
         .await
         .unwrap();
     wait_for_turn_status(&event_receiver, &delayed.turn.resource, TurnStatus::Running);
@@ -237,11 +261,11 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         .await
         .unwrap();
     let after_delayed = provider
-        .turn_start(TurnStartRequest {
-            conversation: fixture_conversation.clone(),
-            client_message_id: "client-after-delayed".to_string(),
-            message: "complete after delayed".to_string(),
-        })
+        .turn_start(turn_start_request(
+            fixture_conversation.clone(),
+            "client-after-delayed",
+            "complete after delayed",
+        ))
         .await
         .unwrap();
     let after_delayed_completed = wait_for_turn_status(
@@ -257,11 +281,11 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     );
 
     let started_turn = provider
-        .turn_start(TurnStartRequest {
-            conversation: fixture_conversation.clone(),
-            client_message_id: "client-start-approval".to_string(),
-            message: "needs approval".to_string(),
-        })
+        .turn_start(turn_start_request(
+            fixture_conversation.clone(),
+            "client-start-approval",
+            "needs approval",
+        ))
         .await
         .unwrap();
     assert!(matches!(
@@ -345,11 +369,11 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     assert_eq!(interrupted.turn.status, TurnStatus::Interrupted);
 
     let idle_turn = provider
-        .turn_start(TurnStartRequest {
-            conversation: created_conversation.clone(),
-            client_message_id: "idle-interrupt".to_string(),
-            message: "idle interrupt".to_string(),
-        })
+        .turn_start(turn_start_request(
+            created_conversation.clone(),
+            "idle-interrupt",
+            "idle interrupt",
+        ))
         .await
         .unwrap();
     wait_for_turn_status(&event_receiver, &idle_turn.turn.resource, TurnStatus::Running);
@@ -364,11 +388,11 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     assert_eq!(idle_interrupt.turn.completed_at, None);
 
     let stale_turn = provider
-        .turn_start(TurnStartRequest {
-            conversation: fixture_conversation.clone(),
-            client_message_id: "stale-after-restart".to_string(),
-            message: "needs approval".to_string(),
-        })
+        .turn_start(turn_start_request(
+            fixture_conversation.clone(),
+            "stale-after-restart",
+            "needs approval",
+        ))
         .await
         .unwrap();
     let stale_approval = loop {
@@ -401,11 +425,11 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     attacker.assert_never_contacted();
 
     let current_turn = provider
-        .turn_start(TurnStartRequest {
-            conversation: fixture_conversation.clone(),
-            client_message_id: "stale-after-restart".to_string(),
-            message: "needs approval".to_string(),
-        })
+        .turn_start(turn_start_request(
+            fixture_conversation.clone(),
+            "stale-after-restart",
+            "needs approval",
+        ))
         .await
         .unwrap();
     assert_ne!(stale_turn.turn.resource, current_turn.turn.resource);
@@ -434,11 +458,11 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         .unwrap();
 
     let long_wait = provider
-        .turn_start(TurnStartRequest {
-            conversation: fixture_conversation,
-            client_message_id: "long-wait-cancel".to_string(),
-            message: "wait until cancelled".to_string(),
-        })
+        .turn_start(turn_start_request(
+            fixture_conversation,
+            "long-wait-cancel",
+            "wait until cancelled",
+        ))
         .await
         .unwrap();
     wait_for_turn_status(&event_receiver, &long_wait.turn.resource, TurnStatus::Running);

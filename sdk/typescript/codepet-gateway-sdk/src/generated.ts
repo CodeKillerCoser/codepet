@@ -45,6 +45,19 @@ export interface ApprovalResolvedEvent {
 
 export type ApprovalStatus = "pending" | "approved" | "denied" | "expired";
 
+export interface ChoiceOption {
+  id: string;
+  displayName: string;
+  description?: string;
+  enabled?: boolean;
+  disabledReason?: string;
+}
+
+export interface ChoiceSet {
+  options: Array<ChoiceOption>;
+  defaultId?: string;
+}
+
 export interface Conversation {
   resource: RoutedResourceId;
   title: string;
@@ -53,6 +66,7 @@ export interface Conversation {
   permissionLevel?: string;
   model?: string;
   reasoningEffort?: string;
+  selection?: TurnSelection;
   workspaceRoot?: string;
   createdAt?: TimestampMs;
   updatedAt?: TimestampMs;
@@ -180,11 +194,23 @@ export interface EventSubscribeResponse {
   subscribedAfterCursor: EventCursor;
 }
 
+export interface FlatModelCatalog {
+  kind: FlatModelCatalogKind;
+  models: Array<ChoiceOption>;
+  defaultSelection?: FlatModelSelection;
+}
+
+export type FlatModelCatalogKind = "flat";
+
+export interface FlatModelSelection {
+  kind: FlatModelCatalogKind;
+  modelId: string;
+}
+
 export interface GatewayCapabilities {
+  revision: string;
   methods: Array<GatewayCapability>;
-  permissionLevels: Array<string>;
-  models: Array<string>;
-  reasoningEfforts: Array<string>;
+  turnSend?: TurnSendCapabilities;
 }
 
 export type GatewayCapability = "conversation.list" | "conversation.search" | "conversation.get" | "conversation.create" | "turn.send" | "turn.interrupt" | "approval.resolve";
@@ -193,6 +219,27 @@ export interface GatewayProviderRoute {
   deviceId: DeviceId;
   providerPluginId: ProviderPluginId;
   providerInstanceId: ProviderInstanceId;
+}
+
+export interface GroupedModelCatalog {
+  kind: GroupedModelCatalogKind;
+  providers: Array<GroupedModelProvider>;
+  defaultSelection?: GroupedModelSelection;
+}
+
+export type GroupedModelCatalogKind = "grouped";
+
+export interface GroupedModelProvider {
+  id: string;
+  displayName: string;
+  description?: string;
+  models: Array<ChoiceOption>;
+}
+
+export interface GroupedModelSelection {
+  kind: GroupedModelCatalogKind;
+  providerId: string;
+  modelId: string;
 }
 
 export interface HandshakeRequest {
@@ -212,6 +259,16 @@ export interface HandshakeResponse {
   providers: Array<ProviderInstance>;
   eventCursor: EventCursor;
 }
+
+export interface HarnessDescriptor {
+  id: string;
+  displayName: string;
+  version?: string;
+}
+
+export type ModelCatalog = FlatModelCatalog | GroupedModelCatalog;
+
+export type ModelSelection = FlatModelSelection | GroupedModelSelection;
 
 export interface PairingExchangeRequest {
   pairingSecret: string;
@@ -241,6 +298,7 @@ export interface ProviderInstance {
   pluginId: ProviderPluginId;
   displayName: string;
   version?: string;
+  harness: HarnessDescriptor;
   status: ProviderStatus;
   capabilities: GatewayCapabilities;
 }
@@ -266,6 +324,13 @@ export interface RemoteHostIdentity {
   identityFingerprint: string;
 }
 
+export interface TurnInput {
+  kind: TurnInputKind;
+  text: string;
+}
+
+export type TurnInputKind = "text";
+
 export interface TurnInterruptRequest {
   conversation: RoutedResourceId;
   turn: RoutedResourceId;
@@ -284,15 +349,32 @@ export interface TurnOutputDeltaEvent {
   delta: string;
 }
 
+export interface TurnSelection {
+  accessModeId?: string;
+  reasoningEffortId?: string;
+  model?: ModelSelection;
+}
+
+export interface TurnSendCapabilities {
+  accessMode?: ChoiceSet;
+  reasoningEffort?: ChoiceSet;
+  modelCatalog?: ModelCatalog;
+}
+
 export interface TurnSendRequest {
+  route: GatewayProviderRoute;
   conversation: RoutedResourceId;
-  clientMessageId: RequestId;
-  message: string;
-  steerTurn?: RoutedResourceId;
+  clientRequestId: RequestId;
+  capabilityRevision: string;
+  input: TurnInput;
+  selection: TurnSelection;
 }
 
 export interface TurnSendResponse {
+  accepted: boolean;
   turn: TurnTask;
+  userItem: ConversationItem;
+  effectiveSelection: TurnSelection;
 }
 
 export type TurnStatus = "queued" | "running" | "waiting-approval" | "completed" | "failed" | "interrupted";

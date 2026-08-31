@@ -146,6 +146,57 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
   );
 });
 
+test("provider descriptors and turn controls are explicit discriminated protocol data", async () => {
+  const model = await loadProtocolModel();
+  const gatewayTurnSend = record(model, "gateway-v1").manifest.methods.find(
+    (method) => method.name === "turn.send",
+  );
+  assert.equal(gatewayTurnSend.idempotency, "idempotent");
+  for (const packageId of ["provider-v1", "gateway-v1"]) {
+    const definitions = record(model, packageId).schema.$defs;
+    const instance = definitions.ProviderInstance;
+    assert(instance.required.includes("harness"));
+    assert.equal(instance.properties.harness.$ref, "#/$defs/HarnessDescriptor");
+
+    const capabilities = packageId === "provider-v1"
+      ? definitions.ProviderCapabilities
+      : definitions.GatewayCapabilities;
+    assert(capabilities.required.includes("revision"));
+    assert.equal(capabilities.properties.turnSend.$ref, "#/$defs/TurnSendCapabilities");
+
+    assert.deepEqual(definitions.ModelCatalog.oneOf, [
+      { $ref: "#/$defs/FlatModelCatalog" },
+      { $ref: "#/$defs/GroupedModelCatalog" },
+    ]);
+    assert.deepEqual(definitions.ModelSelection.oneOf, [
+      { $ref: "#/$defs/FlatModelSelection" },
+      { $ref: "#/$defs/GroupedModelSelection" },
+    ]);
+    assert.deepEqual(definitions.FlatModelSelection.required, ["kind", "modelId"]);
+    assert.deepEqual(definitions.GroupedModelSelection.required, ["kind", "providerId", "modelId"]);
+    assert.equal(definitions.FlatModelSelection.properties.kind.$ref, "#/$defs/FlatModelCatalogKind");
+    assert.equal(definitions.GroupedModelSelection.properties.kind.$ref, "#/$defs/GroupedModelCatalogKind");
+  }
+
+  const gatewayRust = await readFile("sdk/rust/codepet-gateway-sdk/src/generated.rs", "utf8");
+  const providerRust = await readFile("sdk/rust/codepet-provider-sdk/src/generated.rs", "utf8");
+  for (const source of [gatewayRust, providerRust]) {
+    assert.match(source, /#\[serde\(untagged\)\]\npub enum ModelCatalog/);
+    assert.match(source, /pub kind: FlatModelCatalogKind/);
+    assert.match(source, /pub kind: GroupedModelCatalogKind/);
+  }
+  const gatewayTypescript = await readFile(
+    "sdk/typescript/codepet-gateway-sdk/src/generated.ts",
+    "utf8",
+  );
+  assert.match(
+    gatewayTypescript,
+    /export type ModelSelection = FlatModelSelection \| GroupedModelSelection/,
+  );
+  assert.match(gatewayTypescript, /export interface FlatModelSelection \{\n  kind: FlatModelCatalogKind;/);
+  assert.match(gatewayTypescript, /export interface GroupedModelSelection \{\n  kind: GroupedModelCatalogKind;/);
+});
+
 test("gateway LAN DTOs remain generated types outside the JSON-RPC method manifest", async () => {
   const model = await loadProtocolModel();
   const gateway = record(model, "gateway-v1");

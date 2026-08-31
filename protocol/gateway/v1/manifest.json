@@ -87,7 +87,7 @@
     {
       "name": "turn.send",
       "direction": "clientToGateway",
-      "idempotency": "nonIdempotent",
+      "idempotency": "idempotent",
       "capability": "turn.send",
       "request": { "$ref": "./schema.json#/$defs/TurnSendRequest" },
       "response": { "$ref": "./schema.json#/$defs/TurnSendResponse" }

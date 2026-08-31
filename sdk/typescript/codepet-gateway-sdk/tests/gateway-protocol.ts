@@ -5,9 +5,13 @@ import type {
   ConversationSearchResponse,
   HandshakeRequest,
   HandshakeResponse,
+  ModelCatalog,
+  ModelSelection,
   PairingExchangeRequest,
   PairingExchangeResponse,
   PairingQrPayload,
+  TurnSendRequest,
+  TurnSendResponse,
   TurnOutputDeltaEvent,
 } from "../src/generated";
 
@@ -124,4 +128,58 @@ const delta: TurnOutputDeltaEvent = {
   delta: " delta",
 };
 
-void [exchange, exchangeResponse, deleted, searchRequest, searchResponse, history, delta];
+const flatCatalog: ModelCatalog = {
+  kind: "flat",
+  models: [{ id: "gpt-5", displayName: "GPT-5", enabled: true }],
+  defaultSelection: { kind: "flat", modelId: "gpt-5" },
+};
+
+const groupedCatalog: ModelCatalog = {
+  kind: "grouped",
+  providers: [
+    {
+      id: "openai",
+      displayName: "OpenAI",
+      models: [{ id: "gpt-5", displayName: "GPT-5" }],
+    },
+  ],
+  defaultSelection: { kind: "grouped", providerId: "openai", modelId: "gpt-5" },
+};
+
+const selectedModel: ModelSelection = { kind: "flat", modelId: "gpt-5" };
+const send: TurnSendRequest = {
+  route: searchRequest.route,
+  conversation: history[0].conversation,
+  clientRequestId: "remote-turn-01",
+  capabilityRevision: "codex-session-42",
+  input: { kind: "text", text: "Continue" },
+  selection: { model: selectedModel },
+};
+const accepted: TurnSendResponse = {
+  accepted: true,
+  turn: {
+    resource: history[0].turn,
+    conversation: history[0].conversation,
+    status: "running",
+  },
+  userItem: {
+    ...history[0],
+    resource: { ...history[0].resource, nativeResourceId: "message-user-02" },
+    role: "user",
+  },
+  effectiveSelection: send.selection,
+};
+
+void [
+  exchange,
+  exchangeResponse,
+  deleted,
+  searchRequest,
+  searchResponse,
+  history,
+  delta,
+  flatCatalog,
+  groupedCatalog,
+  send,
+  accepted,
+];

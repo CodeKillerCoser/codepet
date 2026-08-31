@@ -123,8 +123,10 @@ fn start_turn_resource_from_fresh_provider() -> String {
                     "providerInstanceId": "generation-opencode",
                     "nativeResourceId": "ses_fixture"
                 },
-                "clientMessageId": "same-client-message",
-                "message": "needs approval"
+                "clientRequestId": "same-client-message",
+                "capabilityRevision": "opencode-server-1.18.25",
+                "input": { "kind": "text", "text": "needs approval" },
+                "selection": {}
             }
         }),
     ] {

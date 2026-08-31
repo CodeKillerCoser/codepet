@@ -1,0 +1,32 @@
+{
+  "kind": "grouped",
+  "providers": [
+    {
+      "id": "openai",
+      "displayName": "OpenAI",
+      "models": [
+        {
+          "id": "gpt-5",
+          "displayName": "GPT-5",
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "id": "anthropic",
+      "displayName": "Anthropic",
+      "models": [
+        {
+          "id": "claude-sonnet",
+          "displayName": "Claude Sonnet",
+          "enabled": true
+        }
+      ]
+    }
+  ],
+  "defaultSelection": {
+    "kind": "grouped",
+    "providerId": "openai",
+    "modelId": "gpt-5"
+  }
+}

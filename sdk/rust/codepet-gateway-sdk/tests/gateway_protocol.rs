@@ -2,7 +2,7 @@ use codepet_gateway_sdk::{
     decode_event, decode_request, decode_response, CurrentCredentialDeleteResponse,
     ConversationContentKind, ConversationItemKind, ConversationItemRole, PairingExchangeRequest,
     PairingExchangeResponse, PairingQrPayload, ProtocolEvent, ProtocolRequest, ProtocolResponse,
-    ResponsePayload, GatewayCapability, ProtocolMethod,
+    ResponsePayload, GatewayCapability, ModelCatalog, ModelSelection, ProtocolMethod,
 };
 
 #[test]
@@ -35,6 +35,83 @@ fn gateway_handshake_exchanges_device_descriptors() {
     assert_eq!(result.device.descriptor.system_version, "15.6");
     assert_eq!(result.device.identity_fingerprint.len(), 64);
     assert_eq!(result.devices[0].device_id, result.device.device_id);
+    assert_eq!(result.providers[0].harness.id, "codex");
+    assert_eq!(result.providers[0].harness.version.as_deref(), Some("0.151.0"));
+    assert_eq!(result.providers[0].capabilities.revision, "codex-session-42");
+    let Some(turn_send) = result.providers[0].capabilities.turn_send.as_ref() else {
+        panic!("expected advertised turn.send controls");
+    };
+    let Some(ModelCatalog::FlatModelCatalog(catalog)) = turn_send.model_catalog.as_ref() else {
+        panic!("expected flat model catalog");
+    };
+    assert_eq!(catalog.default_selection.as_ref().unwrap().model_id, "gpt-5");
+}
+
+#[test]
+fn gateway_turn_send_preserves_revision_selection_and_canonical_user_item() {
+    let request = decode_request(include_bytes!(
+        "../../../../protocol/gateway/v1/fixtures/turn-send-request.json"
+    ))
+    .unwrap();
+    let ProtocolRequest::TurnSend { params, .. } = request else {
+        panic!("expected turn.send request");
+    };
+    assert_eq!(params.client_request_id, "remote-turn-01");
+    assert_eq!(params.capability_revision, "codex-session-42");
+    let Some(ModelSelection::FlatModelSelection(model)) = params.selection.model else {
+        panic!("expected flat model selection");
+    };
+    assert_eq!(model.model_id, "gpt-5");
+
+    let response = decode_response(include_bytes!(
+        "../../../../protocol/gateway/v1/fixtures/turn-send-response.json"
+    ))
+    .unwrap();
+    let ProtocolResponse::TurnSend {
+        response: ResponsePayload::Ok { result },
+        ..
+    } = response
+    else {
+        panic!("expected successful turn.send response");
+    };
+    assert!(result.accepted);
+    assert_eq!(result.user_item.role, Some(ConversationItemRole::User));
+    assert_eq!(result.user_item.turn, result.turn.resource);
+    assert_eq!(result.user_item.conversation, result.turn.conversation);
+    let Some(ModelSelection::FlatModelSelection(model)) = result.effective_selection.model else {
+        panic!("expected effective flat model selection");
+    };
+    assert_eq!(model.model_id, "gpt-5");
+}
+
+#[test]
+fn model_catalog_fixtures_cover_both_discriminated_shapes() {
+    let flat: ModelCatalog = serde_json::from_slice(include_bytes!(
+        "../../../../protocol/gateway/v1/fixtures/model-catalog-flat.json"
+    ))
+    .unwrap();
+    let ModelCatalog::FlatModelCatalog(flat) = flat else {
+        panic!("expected flat catalog");
+    };
+    assert_eq!(flat.models[0].id, "gpt-5");
+
+    let grouped: ModelCatalog = serde_json::from_slice(include_bytes!(
+        "../../../../protocol/gateway/v1/fixtures/model-catalog-grouped.json"
+    ))
+    .unwrap();
+    let ModelCatalog::GroupedModelCatalog(grouped) = grouped else {
+        panic!("expected grouped catalog");
+    };
+    assert_eq!(grouped.providers[1].id, "anthropic");
+    assert_eq!(
+        grouped.default_selection.as_ref().unwrap().provider_id,
+        "openai"
+    );
+
+    assert!(serde_json::from_value::<ModelSelection>(serde_json::json!({
+        "modelId": "gpt-5"
+    }))
+    .is_err());
 }
 
 #[test]

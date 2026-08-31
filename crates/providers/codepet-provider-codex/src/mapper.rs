@@ -2,17 +2,19 @@ use crate::protocol::{
     activity_summary_content_id, command_content_id, output_content_id,
     reasoning_summary_content_id, text_content_id, user_input_content_id,
     CodexAppServerError, CodexApprovalRequest, CodexContentKind, CodexConversationSnapshot,
-    CodexIncoming, CodexNotification, CodexPermissionLevel, CodexThreadActiveFlag,
+    CodexIncoming, CodexModel, CodexNotification, CodexPermissionLevel, CodexThreadActiveFlag,
     CodexThreadItem, CodexThreadStatus, CodexTurn, CodexTurnStatus, CODEX_EXTENSION_NAMESPACE,
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalRequestedEvent, ApprovalResolvedEvent, ApprovalStatus,
-    ConversationContent, ConversationContentKind, ConversationItem, ConversationItemKind,
-    ConversationItemRole, ConversationItemStatus, ConversationStatus,
-    ConversationUpsertedEvent, InstanceStatus, JsonObject, ProtocolError, ProtocolEvent,
-    ProviderApproval, ProviderCapabilities, ProviderCapability, ProviderConversation,
-    ProviderExtension, ProviderInstance, ProviderInstanceRoute, ProviderTurn, RoutedResourceId,
-    TurnOutputDeltaEvent, TurnStatus, TurnUpsertedEvent,
+    ChoiceOption, ChoiceSet, ConversationContent, ConversationContentKind, ConversationItem,
+    ConversationItemKind, ConversationItemRole, ConversationItemStatus, ConversationStatus,
+    ConversationUpsertedEvent, FlatModelCatalog, FlatModelCatalogKind, FlatModelSelection,
+    HarnessDescriptor, InstanceStatus, JsonObject, ModelCatalog, ModelSelection, ProtocolError,
+    ProtocolEvent, ProviderApproval, ProviderCapabilities, ProviderCapability,
+    ProviderConversation, ProviderExtension, ProviderInstance, ProviderInstanceRoute,
+    ProviderTurn, RoutedResourceId, TurnOutputDeltaEvent, TurnSelection,
+    TurnSendCapabilities, TurnStatus, TurnUpsertedEvent,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -26,28 +28,19 @@ impl CodexProtocolMapper {
         Self { route }
     }
 
-    pub fn capabilities(
-        models: Vec<String>,
-        reasoning_efforts: Vec<String>,
-    ) -> ProviderCapabilities {
+    pub fn unavailable_capabilities(revision: String) -> ProviderCapabilities {
         ProviderCapabilities {
+            revision,
             methods: vec![
                 ProviderCapability::ConversationList,
                 ProviderCapability::ConversationSearch,
                 ProviderCapability::ConversationGet,
                 ProviderCapability::ConversationCreate,
-                ProviderCapability::TurnStart,
                 ProviderCapability::TurnSteer,
                 ProviderCapability::TurnInterrupt,
                 ProviderCapability::ApprovalResolve,
             ],
-            permission_levels: vec![
-                "read-only".to_string(),
-                "workspace-write".to_string(),
-                "full-access".to_string(),
-            ],
-            models,
-            reasoning_efforts,
+            turn_send: None,
             extensions: vec![extension([
                 (
                     "nativeMethods",
@@ -56,6 +49,7 @@ impl CodexProtocolMapper {
                         "thread/read",
                         "thread/resume",
                         "thread/start",
+                        "model/list",
                         "turn/start",
                         "turn/steer",
                         "turn/interrupt",
@@ -71,11 +65,122 @@ impl CodexProtocolMapper {
         }
     }
 
+    pub fn capabilities(
+        revision: String,
+        models: Vec<CodexModel>,
+    ) -> Result<ProviderCapabilities, ProtocolError> {
+        let visible_models = models
+            .into_iter()
+            .filter(|model| !model.hidden)
+            .collect::<Vec<_>>();
+        if visible_models.is_empty() {
+            return Err(protocol_error(
+                "capability_discovery_failed",
+                "Codex model/list returned no visible models".to_string(),
+                true,
+            ));
+        }
+        let mut model_options = Vec::with_capacity(visible_models.len());
+        let mut reasoning_options = Vec::new();
+        let mut default_model = None;
+        let mut default_reasoning = None;
+        for model in visible_models {
+            if model.model.trim().is_empty() || model.display_name.trim().is_empty() {
+                return Err(protocol_error(
+                    "capability_discovery_failed",
+                    "Codex model/list returned an empty model id or display name".to_string(),
+                    false,
+                ));
+            }
+            if model_options
+                .iter()
+                .any(|option: &ChoiceOption| option.id == model.model)
+            {
+                return Err(protocol_error(
+                    "capability_discovery_failed",
+                    format!("Codex model/list returned duplicate model {}", model.model),
+                    false,
+                ));
+            }
+            if model.is_default {
+                if default_model.is_some() {
+                    return Err(protocol_error(
+                        "capability_discovery_failed",
+                        "Codex model/list returned multiple default models".to_string(),
+                        false,
+                    ));
+                }
+                default_model = Some(FlatModelSelection {
+                    kind: FlatModelCatalogKind::Flat,
+                    model_id: model.model.clone(),
+                });
+                default_reasoning = Some(model.default_reasoning_effort.clone());
+            }
+            model_options.push(ChoiceOption {
+                id: model.model,
+                display_name: model.display_name,
+                description: (!model.description.trim().is_empty()).then_some(model.description),
+                enabled: Some(true),
+                disabled_reason: None,
+            });
+            for effort in model.supported_reasoning_efforts {
+                if effort.reasoning_effort.trim().is_empty() {
+                    return Err(protocol_error(
+                        "capability_discovery_failed",
+                        "Codex model/list returned an empty reasoning effort".to_string(),
+                        false,
+                    ));
+                }
+                if !reasoning_options
+                    .iter()
+                    .any(|option: &ChoiceOption| option.id == effort.reasoning_effort)
+                {
+                    reasoning_options.push(ChoiceOption {
+                        display_name: choice_display_name(&effort.reasoning_effort),
+                        id: effort.reasoning_effort,
+                        description: (!effort.description.trim().is_empty())
+                            .then_some(effort.description),
+                        enabled: Some(true),
+                        disabled_reason: None,
+                    });
+                }
+            }
+        }
+        let mut methods = Self::unavailable_capabilities(revision.clone()).methods;
+        methods.push(ProviderCapability::TurnStart);
+        let reasoning_effort = (!reasoning_options.is_empty()).then(|| ChoiceSet {
+            options: reasoning_options,
+            default_id: default_reasoning,
+        });
+        Ok(ProviderCapabilities {
+            revision,
+            methods,
+            turn_send: Some(TurnSendCapabilities {
+                access_mode: Some(ChoiceSet {
+                    options: vec![
+                        choice("read-only", "Read only"),
+                        choice("workspace-write", "Workspace write"),
+                        choice("full-access", "Full access"),
+                    ],
+                    default_id: None,
+                }),
+                reasoning_effort,
+                model_catalog: Some(ModelCatalog::FlatModelCatalog(FlatModelCatalog {
+                    kind: FlatModelCatalogKind::Flat,
+                    models: model_options,
+                    default_selection: default_model,
+                })),
+            }),
+            extensions: Self::unavailable_capabilities("unused".to_string()).extensions,
+        })
+    }
+
     pub fn instance(
         &self,
         plugin_id: String,
         instance_kind: String,
         display_name: String,
+        harness: HarnessDescriptor,
         status: InstanceStatus,
         capabilities: ProviderCapabilities,
     ) -> ProviderInstance {
@@ -84,6 +189,7 @@ impl CodexProtocolMapper {
             plugin_id,
             instance_kind,
             display_name,
+            harness,
             status,
             capabilities,
         }
@@ -137,6 +243,7 @@ impl CodexProtocolMapper {
                 .map(str::to_string),
             model: snapshot.model.clone(),
             reasoning_effort: snapshot.reasoning_effort.clone(),
+            selection: snapshot_selection(snapshot),
             workspace_root: snapshot.workspace_root.clone(),
             created_at: seconds_to_ms(snapshot.thread.created_at),
             updated_at: seconds_to_ms(snapshot.thread.updated_at),
@@ -146,6 +253,26 @@ impl CodexProtocolMapper {
                 data: extension_data,
             }),
         }
+    }
+
+    pub fn turn_user_item(
+        &self,
+        conversation_id: &str,
+        turn: &CodexTurn,
+    ) -> Result<ConversationItem, ProtocolError> {
+        let conversation = self.resource(conversation_id.to_string());
+        turn.items
+            .iter()
+            .find(|item| matches!(item, CodexThreadItem::UserMessage { .. }))
+            .map(|item| self.conversation_item(turn, item, &conversation))
+            .ok_or_else(|| {
+                protocol_error(
+                    "invalid_turn_response",
+                    "Codex turn/start response did not contain the canonical user message item"
+                        .to_string(),
+                    false,
+                )
+            })
     }
 
     pub fn turn(
@@ -678,6 +805,50 @@ fn permission_level_name(permission: CodexPermissionLevel) -> &'static str {
         CodexPermissionLevel::WorkspaceWrite => "workspace-write",
         CodexPermissionLevel::FullAccess => "full-access",
     }
+}
+
+fn snapshot_selection(snapshot: &CodexConversationSnapshot) -> Option<TurnSelection> {
+    let selection = TurnSelection {
+        access_mode_id: snapshot
+            .permission_level
+            .map(permission_level_name)
+            .map(str::to_string),
+        reasoning_effort_id: snapshot.reasoning_effort.clone(),
+        model: snapshot.model.clone().map(|model_id| {
+            ModelSelection::FlatModelSelection(FlatModelSelection {
+                kind: FlatModelCatalogKind::Flat,
+                model_id,
+            })
+        }),
+    };
+    (selection.access_mode_id.is_some()
+        || selection.reasoning_effort_id.is_some()
+        || selection.model.is_some())
+        .then_some(selection)
+}
+
+fn choice(id: &str, display_name: &str) -> ChoiceOption {
+    ChoiceOption {
+        id: id.to_string(),
+        display_name: display_name.to_string(),
+        description: None,
+        enabled: Some(true),
+        disabled_reason: None,
+    }
+}
+
+fn choice_display_name(id: &str) -> String {
+    let mut words = id
+        .split(['-', '_'])
+        .filter(|word| !word.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if let Some(first) = words.first_mut() {
+        if let Some(initial) = first.get_mut(0..1) {
+            initial.make_ascii_uppercase();
+        }
+    }
+    words.join(" ")
 }
 
 pub fn parse_permission_level(value: &str) -> Result<CodexPermissionLevel, ProtocolError> {

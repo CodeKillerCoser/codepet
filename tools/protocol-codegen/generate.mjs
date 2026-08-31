@@ -20,6 +20,7 @@ const supportedKeywords = new Set([
   "description",
   "type",
   "enum",
+  "oneOf",
   "properties",
   "required",
   "additionalProperties",
@@ -87,6 +88,15 @@ function validateSchemaNode(node, record, model, location) {
   if (node.$ref !== undefined) {
     exactKeys(node, ["$ref"], location);
     parseReference(node.$ref, record.schemaPath, model, location);
+    return;
+  }
+
+  if (node.oneOf !== undefined) {
+    assert(node.type === undefined && node.enum === undefined, `${location}.oneOf cannot be combined with type or enum`);
+    assert(Array.isArray(node.oneOf) && node.oneOf.length >= 2, `${location}.oneOf must contain at least two variants`);
+    node.oneOf.forEach((variant, index) => {
+      referenceTarget(variant, record.schemaPath, model, `${location}.oneOf[${index}]`);
+    });
     return;
   }
 
@@ -167,7 +177,7 @@ function validateSchema(record, model) {
   validateSchemaNode(schema, record, model, `${packageConfig.id}.schema`);
   for (const [name, definition] of Object.entries(schema.$defs)) {
     assert(/^[A-Z][A-Za-z0-9]*$/.test(name), `${packageConfig.id} definition ${name} must be PascalCase`);
-    assert(definition.$ref || definition.type, `${packageConfig.id} definition ${name} must declare a type or ref`);
+    assert(definition.$ref || definition.type || definition.oneOf, `${packageConfig.id} definition ${name} must declare a type, ref, or oneOf`);
     validateSchemaNode(definition, record, model, `${packageConfig.id}.schema.$defs.${name}`);
   }
 
@@ -335,6 +345,19 @@ function validateValue(value, node, record, model, location) {
   if (node.$ref) {
     const target = parseReference(node.$ref, record.schemaPath, model, location);
     return validateValue(value, target.node, target.record, model, location);
+  }
+  if (node.oneOf) {
+    let matches = 0;
+    for (const variant of node.oneOf) {
+      try {
+        validateValue(value, variant, record, model, location);
+        matches += 1;
+      } catch {
+        // A oneOf fixture must match exactly one closed variant.
+      }
+    }
+    assert(matches === 1, `${location} must match exactly one oneOf variant`);
+    return;
   }
   if (node.enum) assert(node.enum.includes(value), `${location} must be one of ${node.enum.join(", ")}`);
   if (node.type === "string") {
@@ -671,7 +694,13 @@ function rustDefinitions(record, model) {
   const blocks = [];
   for (const name of reachableDefinitionNames(record, model)) {
     const node = record.schema.$defs[name];
-    if (node.enum) {
+    if (node.oneOf) {
+      const variants = node.oneOf.map((variant) => {
+        const target = parseReference(variant.$ref, record.schemaPath, model, `Rust oneOf ${name}`);
+        return `    ${target.name}(${target.name}),`;
+      }).join("\n");
+      blocks.push(`#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]\n#[serde(untagged)]\npub enum ${name} {\n${variants}\n}`);
+    } else if (node.enum) {
       const variants = node.enum.map((value) => `    #[serde(rename = "${value}")]\n    ${pascalCase(value)},`).join("\n");
       blocks.push(`#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]\npub enum ${name} {\n${variants}\n}`);
     } else if (node.type === "object" && node.properties !== undefined) {
@@ -1583,7 +1612,9 @@ function typeScriptDefinitions(record, model) {
   const blocks = ["export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };"];
   for (const name of reachableDefinitionNames(record, model)) {
     const node = record.schema.$defs[name];
-    if (node.enum) {
+    if (node.oneOf) {
+      blocks.push(`export type ${name} = ${node.oneOf.map((variant) => parseReference(variant.$ref, record.schemaPath, model, `TypeScript oneOf ${name}`).name).join(" | ")};`);
+    } else if (node.enum) {
       blocks.push(`export type ${name} = ${node.enum.map((value) => JSON.stringify(value)).join(" | ")};`);
     } else if (node.type === "object" && node.properties !== undefined) {
       const required = new Set(node.required ?? []);

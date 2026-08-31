@@ -3,10 +3,13 @@ use codepet_gateway_sdk::{
     ConversationListRequest as GatewayConversationListRequest,
     ConversationSearchRequest as GatewayConversationSearchRequest, DeviceDescriptor,
     EventSubscribeRequest, HandshakeRequest,
-    GatewayProviderRoute, ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
+    FlatModelCatalogKind, FlatModelSelection, GatewayProviderRoute,
+    GroupedModelCatalogKind, GroupedModelSelection, ModelCatalog, ModelSelection,
+    ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
     ProtocolResponse as GatewayResponse, ProtocolServer as GatewayProtocolServer,
     ProviderListRequest, RemoteHostIdentity, ResponsePayload,
-    TurnSendRequest as GatewayTurnSendRequest, VersionRange,
+    TurnInput as GatewayTurnInput, TurnInputKind as GatewayTurnInputKind,
+    TurnSelection as GatewayTurnSelection, TurnSendRequest as GatewayTurnSendRequest, VersionRange,
 };
 use codepet_host::{
     DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor, PluginInstanceConfig,
@@ -14,7 +17,8 @@ use codepet_host::{
     ProviderGatewayService, ProviderInstanceRegistry,
 };
 use codepet_provider_sdk::{
-    ConversationGetRequest, JsonObject, ProviderInstanceRoute, RoutedResourceId, TurnStartRequest,
+    ConversationGetRequest, JsonObject, ProviderInstanceRoute, RoutedResourceId, TurnInput,
+    TurnInputKind, TurnSelection, TurnStartRequest,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -1011,6 +1015,108 @@ async fn conversation_search_is_route_scoped_and_preserves_pagination_and_snapsh
 }
 
 #[tokio::test]
+async fn gateway_turn_send_validates_controls_and_deduplicates_client_requests() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("turn-starts.txt");
+    let mut descriptor = plugin("dev.codepet.turn-send", &["instance-turn-send"]);
+    descriptor.env.insert(
+        "CODEPET_FAKE_TURN_START_MARKER".to_string(),
+        marker.to_string_lossy().to_string(),
+    );
+    let manager = build_manager("device-turn-send", vec![descriptor]);
+    let gateway = ProviderGatewayService::new(manager.clone()).unwrap();
+    assert!(manager.start_enabled().await[0].1.is_ok());
+
+    let provider = gateway
+        .provider_list(ProviderListRequest {
+            device_id: Some("device-turn-send".to_string()),
+        })
+        .await
+        .unwrap()
+        .providers
+        .remove(0);
+    assert_eq!(provider.harness.id, "fake-harness");
+    assert_eq!(provider.capabilities.revision, "fake-capabilities-v1");
+    let Some(turn_send) = provider.capabilities.turn_send.as_ref() else {
+        panic!("expected turn.send controls");
+    };
+    assert!(matches!(turn_send.model_catalog, Some(ModelCatalog::FlatModelCatalog(_))));
+
+    let route = provider.route;
+    let conversation = resource(
+        "device-turn-send",
+        "dev.codepet.turn-send",
+        "instance-turn-send",
+        "conversation-turn-send",
+    );
+    let request = GatewayTurnSendRequest {
+        route: route.clone(),
+        conversation: conversation.clone(),
+        client_request_id: "remote-request-1".to_string(),
+        capability_revision: "fake-capabilities-v1".to_string(),
+        input: GatewayTurnInput {
+            kind: GatewayTurnInputKind::Text,
+            text: "hello".to_string(),
+        },
+        selection: GatewayTurnSelection {
+            access_mode_id: Some("workspace-write".to_string()),
+            reasoning_effort_id: Some("medium".to_string()),
+            model: Some(ModelSelection::FlatModelSelection(FlatModelSelection {
+                kind: FlatModelCatalogKind::Flat,
+                model_id: "fake-model".to_string(),
+            })),
+        },
+    };
+    let accepted = gateway.turn_send(request.clone()).await.unwrap();
+    assert!(accepted.accepted);
+    assert_eq!(accepted.user_item.turn, accepted.turn.resource);
+    assert_eq!(accepted.user_item.conversation, conversation);
+    assert_eq!(gateway.turn_send(request.clone()).await.unwrap(), accepted);
+    assert_eq!(std::fs::read_to_string(&marker).unwrap().lines().count(), 1);
+
+    let mut conflict = request.clone();
+    conflict.input.text = "different".to_string();
+    assert_eq!(
+        gateway.turn_send(conflict).await.unwrap_err().code,
+        "client_request_conflict"
+    );
+
+    let mut stale = request.clone();
+    stale.client_request_id = "remote-request-stale".to_string();
+    stale.capability_revision = "stale".to_string();
+    assert_eq!(
+        gateway.turn_send(stale).await.unwrap_err().code,
+        "stale_capability_revision"
+    );
+
+    let mut unknown = request.clone();
+    unknown.client_request_id = "remote-request-unknown".to_string();
+    unknown.selection.model = Some(ModelSelection::FlatModelSelection(FlatModelSelection {
+        kind: FlatModelCatalogKind::Flat,
+        model_id: "missing-model".to_string(),
+    }));
+    assert_eq!(
+        gateway.turn_send(unknown).await.unwrap_err().code,
+        "unknown_turn_selection"
+    );
+
+    let mut wrong_shape = request;
+    wrong_shape.client_request_id = "remote-request-shape".to_string();
+    wrong_shape.selection.model = Some(ModelSelection::GroupedModelSelection(
+        GroupedModelSelection {
+            kind: GroupedModelCatalogKind::Grouped,
+            provider_id: "openai".to_string(),
+            model_id: "fake-model".to_string(),
+        },
+    ));
+    assert_eq!(
+        gateway.turn_send(wrong_shape).await.unwrap_err().code,
+        "turn_model_shape_mismatch"
+    );
+    manager.shutdown().await;
+}
+
+#[tokio::test]
 async fn resource_identity_and_route_less_pagination_fail_closed() {
     let manager = build_manager(
         "device-identity",
@@ -1103,34 +1209,51 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
                 "instance-identity",
                 "response-wrong-conversation",
             ),
-            client_message_id: "message-1".to_string(),
-            message: "hello".to_string(),
+            client_request_id: "message-1".to_string(),
+            capability_revision: "fake-capabilities-v1".to_string(),
+            input: TurnInput {
+                kind: TurnInputKind::Text,
+                text: "hello".to_string(),
+            },
+            selection: TurnSelection {
+                access_mode_id: None,
+                reasoning_effort_id: None,
+                model: None,
+            },
         })
         .await
         .unwrap_err();
     assert_eq!(wrong_conversation.code, "provider_resource_identity_mismatch");
 
-    let wrong_steer_conversation = gateway
+    let wrong_gateway_conversation = gateway
         .turn_send(GatewayTurnSendRequest {
             conversation: resource(
                 "device-identity",
                 "dev.codepet.identity",
                 "instance-identity",
-                "conversation-a",
+                "response-wrong-conversation",
             ),
-            client_message_id: "message-steer".to_string(),
-            message: "continue".to_string(),
-            steer_turn: Some(resource(
-                "device-identity",
-                "dev.codepet.identity",
-                "instance-identity",
-                "steer-wrong-conversation",
-            )),
+            route: GatewayProviderRoute {
+                device_id: "device-identity".to_string(),
+                provider_plugin_id: "dev.codepet.identity".to_string(),
+                provider_instance_id: "instance-identity".to_string(),
+            },
+            client_request_id: "message-gateway".to_string(),
+            capability_revision: "fake-capabilities-v1".to_string(),
+            input: GatewayTurnInput {
+                kind: GatewayTurnInputKind::Text,
+                text: "continue".to_string(),
+            },
+            selection: GatewayTurnSelection {
+                access_mode_id: None,
+                reasoning_effort_id: None,
+                model: None,
+            },
         })
         .await
         .unwrap_err();
     assert_eq!(
-        wrong_steer_conversation.code,
+        wrong_gateway_conversation.code,
         "provider_resource_identity_mismatch"
     );
 

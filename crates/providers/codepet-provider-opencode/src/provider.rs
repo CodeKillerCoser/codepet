@@ -17,7 +17,7 @@ use codepet_provider_sdk::{
     InstanceCapabilitiesRequest, InstanceCapabilitiesResponse, InstanceCreateRequest,
     InstanceCreateResponse, InstanceDestroyRequest, InstanceDestroyResponse,
     InstanceStartRequest, InstanceStartResponse, InstanceStatus, InstanceStatusChangedEvent,
-    InstanceStopRequest, InstanceStopResponse, PageInfo, ProtocolError, ProtocolEvent,
+    HarnessDescriptor, InstanceStopRequest, InstanceStopResponse, PageInfo, ProtocolError, ProtocolEvent,
     ProtocolFuture, ProtocolServer, ProviderApproval, ProviderCapabilities,
     ProviderDescribeRequest, ProviderDescribeResponse, ProviderInitializeRequest,
     ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute,
@@ -138,6 +138,11 @@ impl OpenCodeInstanceRuntime {
             OPENCODE_PLUGIN_ID.to_string(),
             self.instance_kind.clone(),
             self.display_name.clone(),
+            HarnessDescriptor {
+                id: self.instance_kind.clone(),
+                display_name: "OpenCode".to_string(),
+                version: Some(self.settings.server_version.clone()),
+            },
             lock(&self.mutable).status,
             self.capabilities.clone(),
         )
@@ -1279,13 +1284,35 @@ impl ProtocolServer for OpenCodeProvider {
         request: TurnStartRequest,
     ) -> ProtocolFuture<'a, TurnStartResponse> {
         Box::pin(async move {
-            if request.message.is_empty() {
+            if request.input.text.is_empty() {
                 return Err(protocol_error(
                     "invalid_request",
                     "turn.start message must not be empty".to_string(),
                     false,
                 ));
             }
+            if request.capability_revision != "opencode-server-1.18.25" {
+                return Err(protocol_error(
+                    "stale_capability_revision",
+                    "turn.start capabilityRevision no longer matches the Provider instance"
+                        .to_string(),
+                    true,
+                ));
+            }
+            if request.selection.access_mode_id.is_some()
+                || request.selection.reasoning_effort_id.is_some()
+                || request.selection.model.is_some()
+            {
+                return Err(protocol_error(
+                    "unsupported_turn_control",
+                    "OpenCode Provider does not advertise turn selection controls".to_string(),
+                    false,
+                ));
+            }
+            let effective_selection = request.selection;
+            let input_text = request.input.text;
+            let client_request_id = request.client_request_id;
+            let conversation_resource = request.conversation.clone();
             let runtime = self.resource_instance(&request.conversation)?;
             let conversation_id = request.conversation.native_resource_id;
             let session = runtime.ready_session()?;
@@ -1330,14 +1357,14 @@ impl ProtocolServer for OpenCodeProvider {
                     &generation,
                     epoch,
                     &conversation_id,
-                    &request.client_message_id,
+                    &client_request_id,
                 );
                 let message_id = message_id(
                     "start",
                     &generation,
                     epoch,
                     &conversation_id,
-                    &request.client_message_id,
+                    &client_request_id,
                 );
                 let provisional = runtime.mapper.turn(
                     &conversation_id,
@@ -1363,13 +1390,14 @@ impl ProtocolServer for OpenCodeProvider {
             };
             let native_conversation_id = conversation_id.clone();
             let sent_message_id = message_id.clone();
+            let sent_text = input_text.clone();
             let admission = tokio::task::spawn_blocking(move || {
                 client.prompt(
                     &native_conversation_id,
                     &OpenCodePromptRequest {
                         id: sent_message_id,
                         prompt: OpenCodePrompt {
-                            text: request.message,
+                            text: sent_text,
                         },
                         delivery: OpenCodeDelivery::Queue,
                     },
@@ -1432,7 +1460,18 @@ impl ProtocolServer for OpenCodeProvider {
                 );
                 active.turn.clone()
             };
-            Ok(TurnStartResponse { turn })
+            let user_item = runtime.mapper.user_message_item(
+                &conversation_resource,
+                &turn,
+                message_id,
+                input_text,
+            );
+            Ok(TurnStartResponse {
+                accepted: true,
+                turn,
+                user_item,
+                effective_selection,
+            })
         })
     }
 

@@ -2,8 +2,8 @@ use codepet_provider_sdk::{
     decode_event, decode_request, decode_response, dispatch, ConversationContentKind,
     ConversationGetResponse, ConversationItemKind, ConversationItemStatus, InstanceCreateRequest,
     InstanceCreateResponse, JsonRpcResponsePayload, ProtocolEvent, ProtocolFuture, ProtocolMethod,
-    ProtocolRequest, ProtocolServer, ProviderCapability, ProviderInitializeRequest,
-    ProviderInitializeResponse, ProviderPluginDescriptor, VersionRange,
+    ModelSelection, ProtocolRequest, ProtocolServer, ProviderCapability, ProviderInitializeRequest,
+    ProviderInitializeResponse, ProviderPluginDescriptor, TurnStartResponse, VersionRange,
 };
 
 struct InitializeServer;
@@ -167,6 +167,41 @@ fn instance_kind_is_required_across_descriptor_request_and_instance_response() {
         panic!("expected instance.create result");
     };
     assert_eq!(result["instance"]["instanceKind"], "codex");
+    assert_eq!(result["instance"]["harness"]["id"], "codex");
+    assert_eq!(result["instance"]["capabilities"]["revision"], "codex-catalog-1");
+}
+
+#[test]
+fn turn_start_fixture_preserves_selection_and_provider_canonical_user_item() {
+    let request = decode_request(include_bytes!(
+        "../../../../protocol/provider/v1/fixtures/turn-start-request.json"
+    ))
+    .unwrap();
+    let ProtocolRequest::TurnStart { params, .. } = request else {
+        panic!("expected turn.start request");
+    };
+    assert_eq!(params.client_request_id, "remote-turn-01");
+    assert_eq!(params.capability_revision, "codex-session-42");
+    let Some(ModelSelection::FlatModelSelection(model)) = params.selection.model else {
+        panic!("expected flat model selection");
+    };
+    assert_eq!(model.model_id, "gpt-5");
+
+    let response = decode_response(include_bytes!(
+        "../../../../protocol/provider/v1/fixtures/turn-start-response.json"
+    ))
+    .unwrap();
+    let JsonRpcResponsePayload::Ok { result } = response.response else {
+        panic!("expected turn.start result");
+    };
+    let response: TurnStartResponse = serde_json::from_value(result).unwrap();
+    assert!(response.accepted);
+    assert_eq!(response.user_item.turn, response.turn.resource);
+    assert_eq!(response.user_item.conversation, response.turn.conversation);
+    assert_eq!(
+        response.user_item.role,
+        Some(codepet_provider_sdk::ConversationItemRole::User)
+    );
 }
 
 struct InstanceKindServer {
