@@ -12,7 +12,7 @@ use axum_server::tls_rustls::RustlsConfig;
 use codepet_gateway_sdk as gateway;
 use futures_util::{SinkExt, StreamExt};
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Debug, Formatter};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::sync::{Arc, Mutex};
@@ -89,11 +89,13 @@ impl RemoteLanServer {
         )?;
 
         let listener = TcpListener::bind(config.bind_addr).map_err(|error| {
-            HostError::new(
-                "remote_lan_listener_bind_failed",
-                format!("bind Remote LAN listener: {error}"),
-            )
-            .retryable(true)
+            let code = if error.kind() == std::io::ErrorKind::AddrInUse {
+                "remote_lan_listener_address_in_use"
+            } else {
+                "remote_lan_listener_bind_failed"
+            };
+            HostError::new(code, format!("bind Remote LAN listener: {error}"))
+                .retryable(true)
         })?;
         listener.set_nonblocking(true).map_err(|error| {
             HostError::new(
@@ -213,19 +215,34 @@ impl RemoteLanServerHandle {
 
     /// Cancels every socket authenticated by one credential and waits a bounded interval.
     pub async fn disconnect_credential(&self, credential_id: &str) -> HostResult<usize> {
-        let active = self.sessions.cancel_credential(credential_id);
-        if self
+        self.disconnect_credentials([credential_id]).await
+    }
+
+    /// Cancels every socket in a credential group before waiting on one shared deadline.
+    pub async fn disconnect_credentials<I, S>(&self, credential_ids: I) -> HostResult<usize>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let credential_ids = credential_ids
+            .into_iter()
+            .map(|credential_id| credential_id.as_ref().to_string())
+            .collect::<BTreeSet<_>>();
+        let outcome = self
             .sessions
-            .wait_credential_empty(credential_id, CONNECTION_CLOSE_TIMEOUT)
-            .await
-        {
-            Ok(active)
+            .cancel_and_wait_credentials(&credential_ids, CONNECTION_CLOSE_TIMEOUT)
+            .await;
+        if outcome.remaining == 0 {
+            Ok(outcome.active)
         } else {
             Err(HostError::new(
                 "remote_lan_credential_disconnect_timeout",
-                "Remote credential sessions did not close within the bounded deadline",
+                "Remote credential sessions did not close within the shared bounded deadline",
             )
-            .retryable(true))
+            .retryable(true)
+            .with_detail("credentialCount", credential_ids.len() as u64)
+            .with_detail("activeSessionCount", outcome.active as u64)
+            .with_detail("remainingCredentialCount", outcome.remaining as u64))
         }
     }
 
@@ -938,6 +955,12 @@ struct SessionRegistry {
     slots: Arc<Semaphore>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct CredentialGroupDisconnectOutcome {
+    active: usize,
+    remaining: usize,
+}
+
 impl SessionRegistry {
     fn new(max_sessions: usize) -> Self {
         Self {
@@ -1042,20 +1065,55 @@ impl SessionRegistry {
             .unwrap_or(0)
     }
 
-    async fn wait_credential_empty(&self, credential_id: &str, duration: Duration) -> bool {
-        if self.credential_active_count(credential_id) == 0 {
+    async fn cancel_and_wait_credentials(
+        &self,
+        credential_ids: &BTreeSet<String>,
+        duration: Duration,
+    ) -> CredentialGroupDisconnectOutcome {
+        let active = credential_ids.iter().fold(0_usize, |total, credential_id| {
+            total.saturating_add(self.cancel_credential(credential_id))
+        });
+        let drained = self
+            .wait_credentials_empty(credential_ids, duration)
+            .await;
+        let remaining = if drained {
+            0
+        } else {
+            credential_ids
+                .iter()
+                .filter(|credential_id| self.credential_active_count(credential_id) > 0)
+                .count()
+        };
+        CredentialGroupDisconnectOutcome { active, remaining }
+    }
+
+    async fn wait_credentials_empty(
+        &self,
+        credential_ids: &BTreeSet<String>,
+        duration: Duration,
+    ) -> bool {
+        if credential_ids
+            .iter()
+            .all(|credential_id| self.credential_active_count(credential_id) == 0)
+        {
             return true;
         }
         let waited = timeout(duration, async {
             loop {
                 self.empty.notified().await;
-                if self.credential_active_count(credential_id) == 0 {
+                if credential_ids
+                    .iter()
+                    .all(|credential_id| self.credential_active_count(credential_id) == 0)
+                {
                     return;
                 }
             }
         })
         .await;
-        waited.is_ok() || self.credential_active_count(credential_id) == 0
+        waited.is_ok()
+            || credential_ids
+                .iter()
+                .all(|credential_id| self.credential_active_count(credential_id) == 0)
     }
 
     async fn wait_empty(&self, duration: Duration) -> bool {
@@ -1133,9 +1191,13 @@ impl Drop for SessionRegistration {
 
 #[cfg(test)]
 mod tests {
-    use super::{RestError, SessionRegistrationError, SessionRegistry};
+    use super::{
+        RestError, SessionCancellation, SessionRegistrationError, SessionRegistry,
+    };
     use axum::http::StatusCode;
+    use std::collections::BTreeSet;
     use std::sync::Arc;
+    use std::time::Duration;
 
     #[test]
     fn session_registry_enforces_the_global_limit() {
@@ -1151,5 +1213,35 @@ mod tests {
             RestError::session_registration(SessionRegistrationError::LimitReached);
         assert_eq!(limit_error.status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(limit_error.error.code, "remote_lan_session_limit_reached");
+    }
+
+    #[tokio::test]
+    async fn credential_group_cancel_reaches_later_session_before_shared_timeout() {
+        let registry = Arc::new(SessionRegistry::new(2));
+        let stalled = registry.register("credential-a").unwrap();
+        let mut later = registry.register("credential-b").unwrap();
+        let later_cancelled = tokio::spawn(async move {
+            matches!(
+                later.cancelled().await,
+                SessionCancellation::CredentialRevoked
+            )
+        });
+        let credential_ids = [
+            "credential-a".to_string(),
+            "credential-b".to_string(),
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+
+        let outcome = registry
+            .cancel_and_wait_credentials(&credential_ids, Duration::from_millis(25))
+            .await;
+
+        assert!(later_cancelled.await.unwrap());
+        assert_eq!(outcome.active, 2);
+        assert_eq!(outcome.remaining, 1);
+        assert_eq!(registry.credential_active_count("credential-a"), 1);
+        assert_eq!(registry.credential_active_count("credential-b"), 0);
+        drop(stalled);
     }
 }

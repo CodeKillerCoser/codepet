@@ -18,6 +18,7 @@ use tokio::sync::{watch, Mutex};
 use tokio::time::timeout;
 
 pub const REMOTE_ADVERTISED_HOST_ENV: &str = "CODEPET_REMOTE_ADVERTISED_HOST";
+const REMOTE_LAN_STABLE_PORT: u16 = 47_622;
 const PAIRING_MONITOR_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
 const MDNS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -138,6 +139,7 @@ pub struct RemoteAccessRuntime {
     shutdown_completed: Arc<AtomicBool>,
     advertised_host_resolver:
         Arc<dyn Fn() -> Result<std::net::Ipv4Addr, HostError> + Send + Sync>,
+    preferred_port: u16,
     mdns_enabled: bool,
 }
 
@@ -167,6 +169,7 @@ impl RemoteAccessRuntime {
             pairing_shutdown,
             shutdown_completed: Arc::new(AtomicBool::new(false)),
             advertised_host_resolver: Arc::new(select_advertised_host_from_environment),
+            preferred_port: REMOTE_LAN_STABLE_PORT,
             mdns_enabled: true,
         }
     }
@@ -194,6 +197,7 @@ impl RemoteAccessRuntime {
                     "Remote access cannot run because the shared Provider Host core is unavailable",
                 ))
             }),
+            preferred_port: REMOTE_LAN_STABLE_PORT,
             mdns_enabled: true,
         }
     }
@@ -209,6 +213,7 @@ impl RemoteAccessRuntime {
     ) -> Self {
         let mut runtime = Self::new(manager, gateway);
         runtime.advertised_host_resolver = advertised_host_resolver;
+        runtime.preferred_port = 0;
         runtime.mdns_enabled = mdns_enabled;
         runtime
     }
@@ -281,10 +286,41 @@ impl RemoteAccessRuntime {
             Ok(host) => host,
             Err(error) => return self.fail_start(error).await,
         };
-        let config = RemoteLanServerConfig::default()
-            .with_advertised_host(advertised_host.to_string());
-        let listener = match RemoteLanServer::start(config, manager.clone(), gateway).await {
-            Ok(listener) => listener,
+        let config = RemoteLanServerConfig {
+            bind_addr: std::net::SocketAddr::new(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                self.preferred_port,
+            ),
+            advertised_host: Some(advertised_host.to_string()),
+        };
+        let (listener, listener_diagnostic) = match RemoteLanServer::start(
+            config,
+            manager.clone(),
+            gateway.clone(),
+        )
+        .await
+        {
+            Ok(listener) => (listener, None),
+            Err(error)
+                if self.preferred_port != 0
+                    && error.code == "remote_lan_listener_address_in_use" =>
+            {
+                let diagnostic = RemoteAccessDiagnosticView {
+                    code: "remote_lan_stable_port_unavailable".to_string(),
+                    message: format!(
+                        "Remote LAN port {} is occupied; this launch uses an ephemeral port advertised through QR and mDNS",
+                        self.preferred_port
+                    ),
+                    retryable: true,
+                };
+                crate::app_log::warn("remote_access", &diagnostic.message);
+                let fallback = RemoteLanServerConfig::default()
+                    .with_advertised_host(advertised_host.to_string());
+                match RemoteLanServer::start(fallback, manager.clone(), gateway).await {
+                    Ok(listener) => (listener, Some(diagnostic)),
+                    Err(error) => return self.fail_start(error).await,
+                }
+            }
             Err(error) => return self.fail_start(error).await,
         };
         let pairing_available = manager
@@ -321,7 +357,7 @@ impl RemoteAccessRuntime {
         inner.listener = Some(listener);
         inner.mdns = mdns;
         inner.pairing_available = pairing_available;
-        inner.diagnostic = None;
+        inner.diagnostic = listener_diagnostic;
         Ok(self.status_locked(&inner))
     }
 
@@ -465,18 +501,17 @@ impl RemoteAccessRuntime {
             .and_then(|credential| credential.revoked_at);
         let disconnected_session_count = {
             let inner = self.inner.lock().await;
-            let mut disconnected = 0_usize;
-            if let Some(listener) = inner.listener.as_ref() {
-                for credential in &client_credentials {
-                    disconnected = disconnected.saturating_add(
-                        listener
-                            .disconnect_credential(&credential.credential_id)
-                            .await
-                            .map_err(RemoteCommandError::from)?,
-                    );
-                }
+            match inner.listener.as_ref() {
+                Some(listener) => listener
+                    .disconnect_credentials(
+                        client_credentials
+                            .iter()
+                            .map(|credential| credential.credential_id.as_str()),
+                    )
+                    .await
+                    .map_err(RemoteCommandError::from)?,
+                None => 0,
             }
-            disconnected
         };
         Ok(RemoteCredentialRevokeView {
             credential_id: credential_id.to_string(),
@@ -1209,6 +1244,77 @@ mod tests {
         );
         assert!(test.runtime.pairing_monitor.lock().unwrap().is_none());
         test.provider_manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn preferred_listener_port_is_stable_and_address_in_use_falls_back() {
+        assert_eq!(REMOTE_LAN_STABLE_PORT, 47_622);
+
+        let reserved = std::net::TcpListener::bind((
+            std::net::Ipv4Addr::UNSPECIFIED,
+            0,
+        ))
+        .unwrap();
+        let preferred_port = reserved.local_addr().unwrap().port();
+        drop(reserved);
+        let mut stable = test_runtime(
+            Arc::new(|| Ok(std::net::Ipv4Addr::LOCALHOST)),
+            false,
+        );
+        stable.runtime.preferred_port = preferred_port;
+        let stable_status = stable.runtime.retry().await.unwrap();
+        assert_eq!(stable_status.phase, RemoteAccessRuntimePhase::Available);
+        assert_eq!(stable_status.diagnostic, None);
+        assert_eq!(
+            stable
+                .runtime
+                .inner
+                .lock()
+                .await
+                .listener
+                .as_ref()
+                .unwrap()
+                .port(),
+            preferred_port
+        );
+        stable.runtime.shutdown_once().await;
+        stable.provider_manager.shutdown().await;
+
+        let occupied = std::net::TcpListener::bind((
+            std::net::Ipv4Addr::UNSPECIFIED,
+            0,
+        ))
+        .unwrap();
+        let occupied_port = occupied.local_addr().unwrap().port();
+        let mut fallback = test_runtime(
+            Arc::new(|| Ok(std::net::Ipv4Addr::LOCALHOST)),
+            false,
+        );
+        fallback.runtime.preferred_port = occupied_port;
+        let fallback_status = fallback.runtime.retry().await.unwrap();
+        assert_eq!(fallback_status.phase, RemoteAccessRuntimePhase::Available);
+        assert_eq!(
+            fallback_status
+                .diagnostic
+                .as_ref()
+                .map(|diagnostic| diagnostic.code.as_str()),
+            Some("remote_lan_stable_port_unavailable")
+        );
+        assert_ne!(
+            fallback
+                .runtime
+                .inner
+                .lock()
+                .await
+                .listener
+                .as_ref()
+                .unwrap()
+                .port(),
+            occupied_port
+        );
+        fallback.runtime.shutdown_once().await;
+        fallback.provider_manager.shutdown().await;
+        drop(occupied);
     }
 
     #[tokio::test]

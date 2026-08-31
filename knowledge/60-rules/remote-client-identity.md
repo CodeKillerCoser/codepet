@@ -16,7 +16,7 @@ Remote 设备列表必须以协议 `clientId` 作为逻辑设备身份。credent
 
 - 按完整 `clientId` 分组，不按名称、系统或 credential id 猜设备身份。
 - 选择最新 active credential 作为动作代表；`createdAt` 取首次配对，`lastSeenAt` 取真实连接记录最大值，在线 session 数求和。
-- 设备撤销先按 client 原子撤销全部 active credential，再逐 credential 断开残留 session。
+- 设备撤销先按 client 原子撤销全部 active credential，再向全部 credential session group 广播取消，最后用一个共享期限等待；任何单组超时都不得阻止其余组收到取消。
 - 不为此修改 pairing/WSS wire、bearer 校验或消息 Schema。
 
 ## 来源
@@ -25,4 +25,4 @@ Remote 设备列表必须以协议 `clientId` 作为逻辑设备身份。credent
 
 ## 验证方式
 
-Tauri 定向测试必须覆盖同 client 多 credential 聚合和 online count 求和、同名不同 client 不合并、client 级撤销使该 client 全部 bearer 失效且不影响其他 client。
+Tauri 定向测试必须覆盖同 client 多 credential 聚合和 online count 求和、同名不同 client 不合并、client 级撤销使该 client 全部 bearer 失效且不影响其他 client。listener 测试还必须保留一个不退出的首组 session，并断言后续 credential 在共享期限结束前已经收到取消。

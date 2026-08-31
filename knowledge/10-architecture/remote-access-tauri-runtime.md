@@ -33,7 +33,7 @@ Host 已具备稳定设备身份、LAN TLS identity、一次性 pairing、creden
 
 runtime 状态为 `starting / available / unavailable / stopping / stopped`。status 只返回 device id/display name、advertised host、HTTPS base URL、总在线 session 数、pairing availability 和不含 Host error details 的 `code/message/retryable` 诊断。启动中调用需要 listener 的命令返回可重试 `remote_access_starting`；不可用、停止中和已停止都有稳定错误，不 panic。
 
-启动顺序是：读取环境覆盖或执行 route probe；以 `0.0.0.0:0` bind listener；用 listener 的实际端口和选中 IPv4 构造 client URL；最后从同一个 handle 启动 mDNS。任何一步失败都会保持 App core 存活，并关闭已经创建的 listener。退出顺序是：通知并有界等待 pairing monitor；注销和关闭 mDNS；取消所有 session 并关闭 listener；然后 `handle_run_event` 才调用 Provider Host shutdown。ExitRequested、Exit 和托盘退出仍汇入同一条退出路径。
+启动顺序是：读取环境覆盖或执行 route probe；产品 runtime 优先以 `0.0.0.0:47622` bind listener；用 listener 的实际端口和选中 IPv4 构造 client URL；最后从同一个 handle 启动 mDNS。只有明确的 `AddrInUse` 才记录 `remote_lan_stable_port_unavailable` 告警并回退 `0.0.0.0:0`，QR 与 mDNS 始终发布 handle 的实际端口；其他 bind/config 错误继续 fail closed。`codepet-host` 的默认 config 和并行测试仍使用 port 0。退出顺序是：通知并有界等待 pairing monitor；注销和关闭 mDNS；取消所有 session 并关闭 listener；然后 `handle_run_event` 才调用 Provider Host shutdown。ExitRequested、Exit 和托盘退出仍汇入同一条退出路径。
 
 ### IPv4 选择
 
@@ -58,13 +58,13 @@ Manager 的最小 `watch` 值只有 pairing id、是否可用和单调 deadline�
 - `get_remote_pairing_status`：按 pairing id 查询 `active/succeeded/expired/cancelled`。
 - `copy_remote_pairing_json`：只接受主窗口的用户显式复制；在 Host pairing mutex 内确认匹配 pairing 为 `active` 并同步写系统剪贴板，只返回成功或安全错误，终态、旧 id 和非主窗口均 fail closed。
 - `cancel_remote_pairing`：取消 active pairing；重复 cancelled 调用幂等。
-- `revoke_remote_credential`：用列表代表 credential id 解析逻辑 client，原子撤销该 client 的全部 active credential，并有界断开这些 credential 的全部 socket。
+- `revoke_remote_credential`：用列表代表 credential id 解析逻辑 client，原子撤销该 client 的全部 active credential；listener 先向整组 credential 广播取消，再用一个共享期限等待并统一返回总断开数或剩余组数错误。
 
 `start_remote_pairing` 直接构造生成 SDK 的 `PairingQrPayload`，对它做一次 `serde_json` 编码，再让同一字符串进入 `qrcode` 并生成 base64 SVG。start 响应、状态响应、日志和 Debug 不包含 `pairingSecret`、bearer 或原始 JSON。原始 JSON 的第二个出口仅是用户点击“复制配对 JSON”后的原生命令：命令拒绝 `main` 之外的 WebView，`RemoteAccessManager::run_while_pairing_active` 在同一 pairing mutex 内完成 active 校验和同步剪贴板写入，使成功 consume、cancel 和 expire 必须在线性顺序上发生在复制之前或之后，不能插入校验与写入之间。clipboard plugin 只供 Rust extension 使用，默认 WebView capability 不授予它的直接命令。WebView 只得到成功或固定错误，JSON 不进入 JavaScript、DOM、ARIA、错误消息或持久化状态。
 
 暂存 payload 在 cancel、consume、expire、runtime fail-closed 和 shutdown 时清除。清理按 pairing id 匹配；旧 pairing 的延迟 cancel 不得删除新 pairing 的 payload。pairing monitor 以 manager watch 的最新值收敛缓存，即使 UI 没有继续轮询也会在终态清除。前端在 success/cancelled/expired、retry、close 和新 generation 开始时重置复制反馈；本地倒计时为 0 时立即禁用复制，而 Host 命令仍做最终权威校验。
 
-client online 数只读取 listener 的实际 session registry。同一 `clientId` 的所有 credential session 求和，因此重复配对不会产生“旧记录离线、新记录在线”的重复设备；不同 `clientId` 即使 descriptor 同名也分别展示。credential store 仍保留逐 credential 的授权与审计记录，pairing/WSS wire 不变。设备撤销先按 `clientId` 原子撤销全部 active credential，再逐 credential 广播取消并有界等待归零；其他 client 不受影响，重复撤销仍返回代表记录原有的 `revokedAt`。
+client online 数只读取 listener 的实际 session registry。同一 `clientId` 的所有 credential session 求和，因此重复配对不会产生“旧记录离线、新记录在线”的重复设备；不同 `clientId` 即使 descriptor 同名也分别展示。credential store 仍保留逐 credential 的授权与审计记录，pairing/WSS wire 不变。设备撤销先按 `clientId` 原子撤销全部 active credential，再对全部 session group 广播取消，最后用共享有界期限等待归零；某个顽固 session 超时不得阻止后续 credential 收到取消。其他 client 不受影响，重复撤销仍返回代表记录原有的 `revokedAt`。
 
 ## 涉及模块
 
@@ -79,10 +79,11 @@ client online 数只读取 listener 的实际 session registry。同一 `clientI
 ## 风险
 
 - 多网卡或 VPN 路由选择错误：route result 必须唯一匹配 active 接口；纯函数负例验证失败、非本机和重复接口，真机仍需覆盖 VPN/热点切换。
+- 稳定端口被其他进程占用：runtime 测试占用首选端口并验证明确诊断、ephemeral 回退和实际 endpoint；非 `AddrInUse` 错误不得静默回退。
 - pairing secret 泄露：命令序列化测试继续断言 start 响应只有三个字段，解码 SVG 也不携带 JSON 文本；active-only 测试只解析字段并检查非敏感元数据，不 snapshot 或打印 payload；前端源码测试断言弹窗没有明文 JSON 容器，截图使用脱敏预览。
 - 终态或旧 generation 仍可复制：Tauri 测试覆盖 cancel、成功 consume、旧 cancel 不影响新 pairing，以及复制与 cancel 竞争时由 Host mutex 线性化；前端纯状态测试覆盖倒计时为 0、success、expired、cancelled 均不可复制，并用 request token 与 pairing id 防止旧请求反馈污染新弹窗。
 - consume 后 discovery 仍为 pair=1：真实 HTTPS exchange 测试验证 watch 从 1 到 0 且 outcome 为 succeeded；mDNS 单元测试验证相同 service 的 pair 更新。
-- client 聚合或撤销越界：Tauri 定向测试覆盖同 client 多 credential 聚合、在线数求和、同名不同 client 不合并，并验证设备撤销覆盖同 client 全部 bearer、保留其他 client。
+- client 聚合或撤销越界：Tauri 定向测试覆盖同 client 多 credential 聚合、在线数求和、同名不同 client 不合并，并验证设备撤销覆盖同 client 全部 bearer、保留其他 client；listener 可控 session 测试让首组超时并断言后续组仍先收到取消。
 - shutdown 遗留 daemon/socket/task：runtime 测试验证 stopped 状态，Host listener/mDNS 测试验证有界关闭与重复 shutdown；Exit 测试固定 Remote 在 Provider 前关闭。
 - 网络启动拖垮 App：startup failure/retry 测试证明 Remote unavailable 时同一个 Host core 与 credential store 仍可访问，setup 源码只后台启动。
 
@@ -91,7 +92,7 @@ client online 数只读取 listener 的实际 session registry。同一 `clientI
 - Host `remote_access` 单元测试：单 active、watch、四种状态、一次性 consume、重启丢失和幂等 credential revoke。
 - Host `remote_network` 单元测试：显式 loopback、route-selected 地址、probe failure、非本机、documentation 与歧义。
 - Host `remote_lan_listener` 真实 loopback 测试：HTTPS pairing exchange、WSS、在线计数、同 credential 多 socket 撤销、其他 client 隔离与 shutdown。
-- Tauri `remote_access` 单元测试：后台等价启动失败不影响 core、retry、QR 响应字段、原生 active-only copy、copy/cancel 线性化、watch 驱动清理、真实 HTTPS consume、同 client 多 credential 的逻辑设备聚合与 client 级 revoke，以及 shutdown。
+- Tauri `remote_access` 单元测试：后台等价启动失败不影响 core、stable port 成功与占用回退、retry、QR 响应字段、原生 active-only copy、copy/cancel 线性化、watch 驱动清理、真实 HTTPS consume、同 client 多 credential 的逻辑设备聚合与 client 级 revoke，以及 shutdown。
 - Tauri `tray_tests`：Remote state 参与退出，并验证八个命令全部进入 invoke handler。
 - Frontend `remoteAccess/connections/remoteDevices`：bridge 参数、原生复制成功/失败反馈、active-only 显示、终态禁用和普通 UI 不渲染 payload；`npm run build` 验证 Svelte 编译。
 - 验收运行 Host all-targets、Gateway protocol、Tauri 定向测试与 `cargo check --lib --locked`，再执行 frontend 未改、schema 漂移和 `git diff --check` 检查。
