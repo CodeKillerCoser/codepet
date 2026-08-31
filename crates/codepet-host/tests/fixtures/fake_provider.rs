@@ -115,6 +115,15 @@ impl ProtocolServer for FakeProvider {
         request: InstanceStartRequest,
     ) -> ProtocolFuture<'a, InstanceStartResponse> {
         Box::pin(async move {
+            if let Ok(path) = std::env::var("CODEPET_FAKE_INSTANCE_START_MARKER") {
+                if let Ok(mut marker) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                {
+                    let _ = writeln!(marker, "{}", request.route.provider_instance_id);
+                }
+            }
             if std::env::var("CODEPET_FAKE_INSTANCE_START_ERROR_ID").as_deref()
                 == Ok(request.route.provider_instance_id.as_str())
             {

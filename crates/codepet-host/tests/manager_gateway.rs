@@ -749,6 +749,8 @@ async fn explicit_restart_continues_after_graceful_stop_error_when_process_was_k
 
 #[tokio::test]
 async fn failed_instance_start_is_unavailable_instead_of_stuck_connecting() {
+    let marker_directory = tempfile::tempdir().unwrap();
+    let start_marker = marker_directory.path().join("instance-starts");
     let mut descriptor = plugin(
         "dev.codepet.start-failure",
         &["instance-start-failure", "instance-start-healthy"],
@@ -756,6 +758,10 @@ async fn failed_instance_start_is_unavailable_instead_of_stuck_connecting() {
     descriptor.env.insert(
         "CODEPET_FAKE_INSTANCE_START_ERROR_ID".to_string(),
         "instance-start-failure".to_string(),
+    );
+    descriptor.env.insert(
+        "CODEPET_FAKE_INSTANCE_START_MARKER".to_string(),
+        start_marker.display().to_string(),
     );
     let manager = build_manager("device-start-failure", vec![descriptor]);
     let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
@@ -781,13 +787,53 @@ async fn failed_instance_start_is_unavailable_instead_of_stuck_connecting() {
         .unwrap();
     assert_eq!(failed.status, codepet_gateway_sdk::ProviderStatus::Unavailable);
     assert_eq!(healthy.status, codepet_gateway_sdk::ProviderStatus::Ready);
-    assert_eq!(
-        manager
-            .snapshot("dev.codepet.start-failure")
+    let initial_snapshot = manager
+        .snapshot("dev.codepet.start-failure")
+        .await
+        .unwrap();
+    assert_eq!(initial_snapshot.state, PluginRuntimeState::Ready);
+
+    let failed_route = GatewayProviderRoute {
+        device_id: "device-start-failure".to_string(),
+        provider_plugin_id: "dev.codepet.start-failure".to_string(),
+        provider_instance_id: "instance-start-failure".to_string(),
+    };
+    for _ in 0..2 {
+        let error = gateway
+            .conversation_list(GatewayConversationListRequest {
+                route: Some(failed_route.clone()),
+                cursor: None,
+                limit: Some(10),
+            })
             .await
-            .unwrap()
-            .state,
-        PluginRuntimeState::Ready
+            .unwrap_err();
+        assert_eq!(error.code, "fixture_instance_start_failed");
+    }
+    let healthy_history = gateway
+        .conversation_list(GatewayConversationListRequest {
+            route: Some(GatewayProviderRoute {
+                provider_instance_id: "instance-start-healthy".to_string(),
+                ..failed_route
+            }),
+            cursor: None,
+            limit: Some(10),
+        })
+        .await
+        .unwrap();
+    assert_eq!(healthy_history.conversations.len(), 1);
+    let final_snapshot = manager
+        .snapshot("dev.codepet.start-failure")
+        .await
+        .unwrap();
+    assert_eq!(final_snapshot.generation, initial_snapshot.generation);
+    let starts = std::fs::read_to_string(&start_marker).unwrap();
+    assert_eq!(starts.lines().count(), 2);
+    assert_eq!(
+        starts
+            .lines()
+            .filter(|instance| *instance == "instance-start-failure")
+            .count(),
+        1
     );
     manager.shutdown().await;
 }
@@ -1122,7 +1168,7 @@ async fn a_crashed_plugin_does_not_change_another_plugin_or_instance_route() {
 }
 
 #[tokio::test]
-async fn historical_routes_start_on_demand_and_recover_the_crashed_plugin_generation() {
+async fn aggregate_history_starts_on_demand_and_recovers_the_crashed_plugin_generation() {
     let manager = build_manager(
         "device-history-recovery",
         vec![plugin("dev.codepet.history", &["instance-history"])],
@@ -1137,7 +1183,7 @@ async fn historical_routes_start_on_demand_and_recover_the_crashed_plugin_genera
 
     let listed = gateway
         .conversation_list(GatewayConversationListRequest {
-            route: Some(route.clone()),
+            route: None,
             cursor: None,
             limit: Some(10),
         })
@@ -1176,7 +1222,7 @@ async fn historical_routes_start_on_demand_and_recover_the_crashed_plugin_genera
 
     let recovered_list = gateway
         .conversation_list(GatewayConversationListRequest {
-            route: Some(route.clone()),
+            route: None,
             cursor: None,
             limit: Some(10),
         })
@@ -1211,4 +1257,276 @@ async fn historical_routes_start_on_demand_and_recover_the_crashed_plugin_genera
             > initial_generation
     );
     manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn aggregate_history_keeps_healthy_providers_and_reports_an_all_failed_error() {
+    let mut failing = plugin("dev.codepet.aggregate-failing", &["instance-aggregate-failing"]);
+    failing.env.insert(
+        "CODEPET_FAKE_INSTANCE_START_ERROR_ID".to_string(),
+        "instance-aggregate-failing".to_string(),
+    );
+    let manager = build_manager(
+        "device-aggregate-partial",
+        vec![
+            failing,
+            plugin("dev.codepet.aggregate-healthy", &["instance-aggregate-healthy"]),
+        ],
+    );
+    let gateway = ProviderGatewayService::new(manager.clone()).unwrap();
+
+    let response = gateway
+        .conversation_list(GatewayConversationListRequest {
+            route: None,
+            cursor: None,
+            limit: Some(10),
+        })
+        .await
+        .unwrap();
+    assert_eq!(response.conversations.len(), 1);
+    assert_eq!(
+        response.conversations[0].resource.provider_instance_id,
+        "instance-aggregate-healthy"
+    );
+    manager.shutdown().await;
+
+    let mut only_failing = plugin(
+        "dev.codepet.aggregate-all-failing",
+        &["instance-aggregate-all-failing"],
+    );
+    only_failing.env.insert(
+        "CODEPET_FAKE_INSTANCE_START_ERROR_ID".to_string(),
+        "instance-aggregate-all-failing".to_string(),
+    );
+    let all_failed_manager = build_manager("device-aggregate-all-failed", vec![only_failing]);
+    let all_failed_gateway = ProviderGatewayService::new(all_failed_manager.clone()).unwrap();
+    let error = all_failed_gateway
+        .conversation_list(GatewayConversationListRequest {
+            route: None,
+            cursor: None,
+            limit: Some(10),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "fixture_instance_start_failed");
+    all_failed_manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn historical_recovery_fails_closed_for_disabled_plugin_and_instance() {
+    let mut disabled_plugin = plugin(
+        "dev.codepet.disabled-plugin",
+        &["instance-disabled-plugin"],
+    );
+    disabled_plugin.enabled = false;
+    let mut disabled_instance = plugin(
+        "dev.codepet.disabled-instance",
+        &["instance-disabled-instance"],
+    );
+    disabled_instance.instances[0].enabled = false;
+    let manager = build_manager(
+        "device-disabled-history",
+        vec![disabled_plugin, disabled_instance],
+    );
+    let gateway = ProviderGatewayService::new(manager.clone()).unwrap();
+
+    for (plugin_id, instance_id, expected_code) in [
+        (
+            "dev.codepet.disabled-plugin",
+            "instance-disabled-plugin",
+            "provider_plugin_disabled",
+        ),
+        (
+            "dev.codepet.disabled-instance",
+            "instance-disabled-instance",
+            "provider_instance_disabled",
+        ),
+    ] {
+        let error = gateway
+            .conversation_list(GatewayConversationListRequest {
+                route: Some(GatewayProviderRoute {
+                    device_id: "device-disabled-history".to_string(),
+                    provider_plugin_id: plugin_id.to_string(),
+                    provider_instance_id: instance_id.to_string(),
+                }),
+                cursor: None,
+                limit: Some(10),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, expected_code);
+        assert_eq!(manager.snapshot(plugin_id).await.unwrap().generation, 0);
+    }
+    let aggregate = gateway
+        .conversation_list(GatewayConversationListRequest {
+            route: None,
+            cursor: None,
+            limit: Some(10),
+        })
+        .await
+        .unwrap();
+    assert!(aggregate.conversations.is_empty());
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn nonretryable_plugin_misconfiguration_is_not_restarted_by_history() {
+    let mut descriptor = plugin(
+        "dev.codepet.history-misconfigured",
+        &["instance-history-misconfigured"],
+    );
+    descriptor.env.insert(
+        "CODEPET_FAKE_SUPPORTED_MIN_VERSION".to_string(),
+        "2".to_string(),
+    );
+    descriptor.env.insert(
+        "CODEPET_FAKE_SUPPORTED_MAX_VERSION".to_string(),
+        "2".to_string(),
+    );
+    let manager = build_manager("device-history-misconfigured", vec![descriptor]);
+    let gateway = ProviderGatewayService::new(manager.clone()).unwrap();
+    let request = || GatewayConversationListRequest {
+        route: Some(GatewayProviderRoute {
+            device_id: "device-history-misconfigured".to_string(),
+            provider_plugin_id: "dev.codepet.history-misconfigured".to_string(),
+            provider_instance_id: "instance-history-misconfigured".to_string(),
+        }),
+        cursor: None,
+        limit: Some(10),
+    };
+
+    let first = gateway.conversation_list(request()).await.unwrap_err();
+    assert_eq!(first.code, "provider_protocol_version_mismatch");
+    let generation = manager
+        .snapshot("dev.codepet.history-misconfigured")
+        .await
+        .unwrap()
+        .generation;
+    let second = gateway.conversation_list(request()).await.unwrap_err();
+    assert_eq!(second.code, "provider_protocol_version_mismatch");
+    assert_eq!(
+        manager
+            .snapshot("dev.codepet.history-misconfigured")
+            .await
+            .unwrap()
+            .generation,
+        generation
+    );
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn concurrent_history_requests_start_one_plugin_generation() {
+    let mut descriptor = plugin(
+        "dev.codepet.concurrent-history",
+        &["instance-concurrent-history"],
+    );
+    descriptor.env.insert(
+        "CODEPET_FAKE_INITIALIZE_DELAY_MS".to_string(),
+        "100".to_string(),
+    );
+    let manager = build_manager("device-concurrent-history", vec![descriptor]);
+    let gateway = ProviderGatewayService::new(manager.clone()).unwrap();
+    let request = || GatewayConversationListRequest {
+        route: Some(GatewayProviderRoute {
+            device_id: "device-concurrent-history".to_string(),
+            provider_plugin_id: "dev.codepet.concurrent-history".to_string(),
+            provider_instance_id: "instance-concurrent-history".to_string(),
+        }),
+        cursor: None,
+        limit: Some(10),
+    };
+
+    let (first, second) = tokio::join!(
+        gateway.conversation_list(request()),
+        gateway.conversation_list(request())
+    );
+    assert_eq!(first.unwrap().conversations.len(), 1);
+    assert_eq!(second.unwrap().conversations.len(), 1);
+    assert_eq!(
+        manager
+            .snapshot("dev.codepet.concurrent-history")
+            .await
+            .unwrap()
+            .generation,
+        1
+    );
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn history_recovery_racing_shutdown_does_not_resurrect_the_plugin() {
+    let directory = tempfile::tempdir().unwrap();
+    let initialize_marker = directory.path().join("history-initialize");
+    let pid_marker = directory.path().join("history-pid");
+    let mut descriptor = plugin(
+        "dev.codepet.history-shutdown",
+        &["instance-history-shutdown"],
+    );
+    descriptor.env.insert(
+        "CODEPET_FAKE_INITIALIZE_DELAY_MS".to_string(),
+        "300".to_string(),
+    );
+    descriptor.env.insert(
+        "CODEPET_FAKE_INITIALIZE_MARKER".to_string(),
+        initialize_marker.display().to_string(),
+    );
+    descriptor.env.insert(
+        "CODEPET_FAKE_PID_MARKER".to_string(),
+        pid_marker.display().to_string(),
+    );
+    let manager = build_manager("device-history-shutdown", vec![descriptor]);
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+    let query_gateway = gateway.clone();
+    let query = tokio::spawn(async move {
+        query_gateway
+            .conversation_list(GatewayConversationListRequest {
+                route: Some(GatewayProviderRoute {
+                    device_id: "device-history-shutdown".to_string(),
+                    provider_plugin_id: "dev.codepet.history-shutdown".to_string(),
+                    provider_instance_id: "instance-history-shutdown".to_string(),
+                }),
+                cursor: None,
+                limit: Some(10),
+            })
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !initialize_marker.exists() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    assert!(manager
+        .shutdown()
+        .await
+        .iter()
+        .all(|(_, outcome)| outcome.is_ok()));
+    assert!(query.await.unwrap().is_err());
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(
+        manager
+            .snapshot("dev.codepet.history-shutdown")
+            .await
+            .unwrap()
+            .state,
+        PluginRuntimeState::Stopped
+    );
+    let retry = gateway
+        .conversation_list(GatewayConversationListRequest {
+            route: Some(GatewayProviderRoute {
+                device_id: "device-history-shutdown".to_string(),
+                provider_plugin_id: "dev.codepet.history-shutdown".to_string(),
+                provider_instance_id: "instance-history-shutdown".to_string(),
+            }),
+            cursor: None,
+            limit: Some(10),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(retry.code, "provider_manager_shutting_down");
+    #[cfg(unix)]
+    assert!(!pid_is_alive(&pid_marker));
 }

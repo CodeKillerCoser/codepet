@@ -90,6 +90,13 @@ impl Default for PluginManagerConfig {
 struct ManagedInstance {
     record: ProviderInstanceRecord,
     instance: Option<ProviderInstance>,
+    diagnostic: Option<HostError>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HistoricalRouteRecovery {
+    Plugin,
+    Instance,
 }
 
 struct PluginEntry {
@@ -188,6 +195,7 @@ impl PluginManager {
                         ManagedInstance {
                             record,
                             instance: None,
+                            diagnostic: None,
                         },
                     )
                 })
@@ -271,6 +279,23 @@ impl PluginManager {
             .collect()
     }
 
+    pub(crate) async fn enabled_historical_routes(
+        &self,
+    ) -> HostResult<Vec<ProviderInstanceRoute>> {
+        let records = self.inner.instances.list()?;
+        let plugins = self.inner.plugins.read().await;
+        Ok(records
+            .into_iter()
+            .filter(|record| record.enabled)
+            .filter(|record| {
+                plugins
+                    .get(&record.plugin_id)
+                    .is_some_and(|entry| entry.catalog.enabled)
+            })
+            .map(|record| record.route())
+            .collect())
+    }
+
     pub async fn snapshot(&self, plugin_id: &str) -> HostResult<PluginRuntimeSnapshot> {
         self.inner
             .plugins
@@ -337,6 +362,7 @@ impl PluginManager {
                 )
             })?;
             runtime.record = record.clone();
+            runtime.diagnostic = None;
         }
         Ok(records.len())
     }
@@ -389,12 +415,7 @@ impl PluginManager {
             .into_iter()
             .filter(|record| record.enabled)
         {
-            let result = async {
-                self.create_instance_record(&record).await?;
-                self.start_instance(&record.route()).await?;
-                Ok::<(), HostError>(())
-            }
-            .await;
+            let result = self.recover_instance_record(&record).await;
             if first_error.is_none() {
                 first_error = result.err();
             }
@@ -740,12 +761,30 @@ impl PluginManager {
     ) -> HostResult<()> {
         validate_route_identity(route)?;
         let record = self.inner.instances.resolve_route(route, None)?;
+        if !record.enabled {
+            return Err(provider_instance_disabled(&record));
+        }
         let operation = self.plugin_operation(&record.plugin_id)?;
         let _operation = operation.lock().await;
-        if self.historical_route_is_ready(&record).await {
-            return Ok(());
+        let recovery = self.historical_route_recovery(&record).await?;
+        match recovery {
+            None => return Ok(()),
+            Some(HistoricalRouteRecovery::Plugin) => {
+                let recovery_error = self.restart_plugin_locked(&record.plugin_id).await.err();
+                if self.historical_route_is_ready(&record).await {
+                    return Ok(());
+                }
+                if let Some(error) = self.instance_diagnostic(&record).await? {
+                    return Err(error);
+                }
+                if let Some(error) = recovery_error {
+                    return Err(error);
+                }
+            }
+            Some(HistoricalRouteRecovery::Instance) => {
+                self.recover_instance_record(&record).await?;
+            }
         }
-        self.restart_plugin_locked(&record.plugin_id).await?;
         if self.historical_route_is_ready(&record).await {
             return Ok(());
         }
@@ -759,6 +798,66 @@ impl PluginManager {
         .retryable(true)
         .with_detail("pluginId", record.plugin_id)
         .with_detail("providerInstanceId", record.instance_id))
+    }
+
+    async fn historical_route_recovery(
+        &self,
+        record: &ProviderInstanceRecord,
+    ) -> HostResult<Option<HistoricalRouteRecovery>> {
+        if self.inner.shutting_down.load(Ordering::SeqCst) {
+            return Err(provider_manager_shutting_down());
+        }
+        let plugins = self.inner.plugins.read().await;
+        let entry = plugins
+            .get(&record.plugin_id)
+            .ok_or_else(|| unknown_plugin(&record.plugin_id))?;
+        if !entry.catalog.enabled {
+            return Err(provider_plugin_disabled(&record.plugin_id));
+        }
+        let runtime = entry.instances.get(&record.instance_id).ok_or_else(|| {
+            HostError::new(
+                "unknown_provider_instance",
+                "Provider instance is not configured by the current plugin catalog",
+            )
+            .with_detail("pluginId", record.plugin_id.clone())
+            .with_detail("providerInstanceId", record.instance_id.clone())
+        })?;
+        match entry.state {
+            PluginRuntimeState::Stopped => Ok(Some(HistoricalRouteRecovery::Plugin)),
+            PluginRuntimeState::Starting => Err(HostError::new(
+                "provider_plugin_starting",
+                format!("Provider plugin is still starting: {}", record.plugin_id),
+            )
+            .retryable(true)),
+            PluginRuntimeState::Crashed => match entry.diagnostic.as_ref() {
+                Some(error) if !error.retryable => Err(error.clone()),
+                _ => Ok(Some(HistoricalRouteRecovery::Plugin)),
+            },
+            PluginRuntimeState::Ready => {
+                if !entry
+                    .process
+                    .as_ref()
+                    .is_some_and(|process| process.is_available())
+                {
+                    return Ok(Some(HistoricalRouteRecovery::Plugin));
+                }
+                if runtime
+                    .instance
+                    .as_ref()
+                    .is_some_and(|instance| instance.status == InstanceStatus::Ready)
+                {
+                    return Ok(None);
+                }
+                if let Some(error) = runtime
+                    .diagnostic
+                    .as_ref()
+                    .filter(|error| !error.retryable)
+                {
+                    return Err(error.clone());
+                }
+                Ok(Some(HistoricalRouteRecovery::Instance))
+            }
+        }
     }
 
     async fn historical_route_is_ready(&self, record: &ProviderInstanceRecord) -> bool {
@@ -779,34 +878,41 @@ impl PluginManager {
         &self,
         record: &ProviderInstanceRecord,
     ) -> HostResult<ProviderInstance> {
-        let process = self.process_for_plugin(&record.plugin_id).await?;
-        let reported = self
-            .snapshot(&record.plugin_id)
-            .await?
-            .reported
-            .ok_or_else(|| {
-                HostError::new(
-                    "provider_not_initialized",
-                    format!("Provider plugin is not initialized: {}", record.plugin_id),
-                )
-            })?;
-        reported
-            .validate_instance_kind(&record.instance_kind)
-            .map_err(HostError::from)?;
-        let response = process
-            .client()
-            .instance_create(InstanceCreateRequest {
-                route: record.route(),
-                instance_kind: record.instance_kind.clone(),
-                display_name: record.display_name.clone(),
-                settings: record.settings.clone(),
-            })
-            .await
-            .map_err(HostError::from)?;
-        validate_instance_response(record, &response.instance)?;
-        self.set_runtime_instance(&record.plugin_id, response.instance.clone())
-            .await?;
-        Ok(response.instance)
+        let result: HostResult<ProviderInstance> = async {
+            let process = self.process_for_plugin(&record.plugin_id).await?;
+            let reported = self
+                .snapshot(&record.plugin_id)
+                .await?
+                .reported
+                .ok_or_else(|| {
+                    HostError::new(
+                        "provider_not_initialized",
+                        format!("Provider plugin is not initialized: {}", record.plugin_id),
+                    )
+                })?;
+            reported
+                .validate_instance_kind(&record.instance_kind)
+                .map_err(HostError::from)?;
+            let response = process
+                .client()
+                .instance_create(InstanceCreateRequest {
+                    route: record.route(),
+                    instance_kind: record.instance_kind.clone(),
+                    display_name: record.display_name.clone(),
+                    settings: record.settings.clone(),
+                })
+                .await
+                .map_err(HostError::from)?;
+            validate_instance_response(record, &response.instance)?;
+            self.set_runtime_instance(&record.plugin_id, response.instance.clone())
+                .await?;
+            Ok(response.instance)
+        }
+        .await;
+        if let Err(error) = result.as_ref() {
+            self.set_instance_diagnostic(record, Some(error.clone())).await?;
+        }
+        result
     }
 
     pub async fn start_instance(
@@ -814,17 +920,48 @@ impl PluginManager {
         route: &ProviderInstanceRoute,
     ) -> HostResult<ProviderInstance> {
         let (record, process, _) = self.instance_context(route).await?;
-        let response = process
-            .client()
-            .instance_start(InstanceStartRequest {
-                route: route.clone(),
-            })
+        let result: HostResult<ProviderInstance> = async {
+            let response = process
+                .client()
+                .instance_start(InstanceStartRequest {
+                    route: route.clone(),
+                })
+                .await
+                .map_err(HostError::from)?;
+            validate_instance_response(&record, &response.instance)?;
+            self.set_runtime_instance(&record.plugin_id, response.instance.clone())
+                .await?;
+            Ok(response.instance)
+        }
+        .await;
+        if let Err(error) = result.as_ref() {
+            self.set_instance_diagnostic(&record, Some(error.clone())).await?;
+        }
+        result
+    }
+
+    async fn recover_instance_record(&self, record: &ProviderInstanceRecord) -> HostResult<()> {
+        if let Some(error) = self
+            .instance_diagnostic(record)
+            .await?
+            .filter(|error| !error.retryable)
+        {
+            return Err(error);
+        }
+        let needs_create = self
+            .inner
+            .plugins
+            .read()
             .await
-            .map_err(HostError::from)?;
-        validate_instance_response(&record, &response.instance)?;
-        self.set_runtime_instance(&record.plugin_id, response.instance.clone())
-            .await?;
-        Ok(response.instance)
+            .get(&record.plugin_id)
+            .and_then(|entry| entry.instances.get(&record.instance_id))
+            .and_then(|runtime| runtime.instance.as_ref())
+            .is_none();
+        if needs_create {
+            self.create_instance_record(record).await?;
+        }
+        self.start_instance(&record.route()).await?;
+        Ok(())
     }
 
     pub async fn stop_instance(
@@ -1146,6 +1283,9 @@ impl PluginManager {
             })?;
             let previous_status = runtime.instance.as_ref().map(|instance| instance.status);
             runtime.instance = instance;
+            if runtime.instance.is_some() {
+                runtime.diagnostic = None;
+            }
             (entry.snapshot(), previous_status)
         };
         self.send_update(HostUpdate::InstanceChanged {
@@ -1154,6 +1294,49 @@ impl PluginManager {
             previous_status,
         })
         .await
+    }
+
+    async fn instance_diagnostic(
+        &self,
+        record: &ProviderInstanceRecord,
+    ) -> HostResult<Option<HostError>> {
+        let plugins = self.inner.plugins.read().await;
+        let entry = plugins
+            .get(&record.plugin_id)
+            .ok_or_else(|| unknown_plugin(&record.plugin_id))?;
+        entry
+            .instances
+            .get(&record.instance_id)
+            .map(|runtime| runtime.diagnostic.clone())
+            .ok_or_else(|| {
+                HostError::new(
+                    "unknown_provider_instance",
+                    "Provider instance is not configured by the current plugin catalog",
+                )
+                .with_detail("pluginId", record.plugin_id.clone())
+                .with_detail("providerInstanceId", record.instance_id.clone())
+            })
+    }
+
+    async fn set_instance_diagnostic(
+        &self,
+        record: &ProviderInstanceRecord,
+        diagnostic: Option<HostError>,
+    ) -> HostResult<()> {
+        let mut plugins = self.inner.plugins.write().await;
+        let entry = plugins
+            .get_mut(&record.plugin_id)
+            .ok_or_else(|| unknown_plugin(&record.plugin_id))?;
+        let runtime = entry.instances.get_mut(&record.instance_id).ok_or_else(|| {
+            HostError::new(
+                "unknown_provider_instance",
+                "Provider instance is not configured by the current plugin catalog",
+            )
+            .with_detail("pluginId", record.plugin_id.clone())
+            .with_detail("providerInstanceId", record.instance_id.clone())
+        })?;
+        runtime.diagnostic = diagnostic;
+        Ok(())
     }
 
     async fn finish_start_failure(
@@ -1769,6 +1952,31 @@ fn start_cancelled() -> HostError {
         "Provider startup was superseded by shutdown",
     )
     .retryable(true)
+}
+
+fn provider_manager_shutting_down() -> HostError {
+    HostError::new(
+        "provider_manager_shutting_down",
+        "Provider Manager is shutting down",
+    )
+    .retryable(true)
+}
+
+fn provider_plugin_disabled(plugin_id: &str) -> HostError {
+    HostError::new(
+        "provider_plugin_disabled",
+        format!("Provider plugin is disabled: {plugin_id}"),
+    )
+    .with_detail("pluginId", plugin_id.to_string())
+}
+
+fn provider_instance_disabled(record: &ProviderInstanceRecord) -> HostError {
+    HostError::new(
+        "provider_instance_disabled",
+        format!("Provider instance is disabled: {}", record.instance_id),
+    )
+    .with_detail("pluginId", record.plugin_id.clone())
+    .with_detail("providerInstanceId", record.instance_id.clone())
 }
 
 fn unknown_plugin(plugin_id: &str) -> HostError {

@@ -533,27 +533,39 @@ impl ProtocolServer for ProviderGatewayService {
                 conversations.extend(response.conversations.into_iter().map(map_conversation));
                 next_cursor = response.page_info.next_cursor;
             } else {
-                let providers = self.gateway_instances(None).await?;
-                for instance in providers
-                    .into_iter()
-                    .filter(|instance| instance.status == gateway::ProviderStatus::Ready)
-                    .filter(|instance| {
-                        instance
-                            .capabilities
-                            .methods
-                            .contains(&gateway::GatewayCapability::ConversationList)
-                    })
-                {
-                    let response = self
+                let routes = self
+                    .manager
+                    .enabled_historical_routes()
+                    .await
+                    .map_err(gateway_error)?;
+                let mut successful_providers = 0usize;
+                let mut diagnostic_error = None;
+                for route in routes {
+                    match self
                         .manager
                         .conversation_list(provider::ConversationListRequest {
-                            route: provider_route(instance.route),
+                            route,
                             cursor: request.cursor.clone(),
                             limit: request.limit,
                         })
                         .await
-                        .map_err(gateway_error)?;
-                    conversations.extend(response.conversations.into_iter().map(map_conversation));
+                    {
+                        Ok(response) => {
+                            successful_providers = successful_providers.saturating_add(1);
+                            conversations.extend(
+                                response.conversations.into_iter().map(map_conversation),
+                            );
+                        }
+                        Err(error) if error.code == "provider_capability_unsupported" => {}
+                        Err(error) => {
+                            retain_more_diagnostic_error(&mut diagnostic_error, error);
+                        }
+                    }
+                }
+                if successful_providers == 0 {
+                    if let Some(error) = diagnostic_error {
+                        return Err(gateway_error(error));
+                    }
                 }
                 if let Some(limit) = request.limit.and_then(|limit| usize::try_from(limit).ok()) {
                     conversations.truncate(limit);
@@ -1057,6 +1069,27 @@ fn validate_gateway_version_range(
 
 fn gateway_error(error: HostError) -> gateway::ProtocolError {
     error.into_protocol_error()
+}
+
+fn retain_more_diagnostic_error(current: &mut Option<HostError>, candidate: HostError) {
+    let candidate_score = aggregate_error_score(&candidate);
+    let replace = current
+        .as_ref()
+        .map(|error| candidate_score > aggregate_error_score(error))
+        .unwrap_or(true);
+    if replace {
+        *current = Some(candidate);
+    }
+}
+
+fn aggregate_error_score(error: &HostError) -> u8 {
+    let specific = !matches!(
+        error.code.as_str(),
+        "provider_plugin_unavailable"
+            | "provider_process_unavailable"
+            | "provider_instance_unavailable"
+    );
+    u8::from(!error.retryable) * 2 + u8::from(specific) + u8::from(error.details.is_some())
 }
 
 fn event_cursor(sequence: u64) -> gateway::EventCursor {
