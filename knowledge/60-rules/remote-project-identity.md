@@ -4,7 +4,7 @@
 
 Remote 项目投影不得直接把 Codex `thread.cwd` 当作项目身份。现存 Git workspace 必须从 `.git`/`commondir` 和 remote URL 提取仓库身份；同一 common-dir 的主 checkout 与 linked worktree 共享项目，同一 remote 的不同 clone 也归入同一逻辑项目。普通非 Git workspace 以规范化绝对路径为身份。
 
-`<CODEX_HOME>/worktrees/<id>/<project-name>`、`~/.codex/worktrees/<id>/<project-name>` 及从 cwd 明确识别出的 Codex managed worktree，即使目录已经删除，也必须形成稳定的逻辑项目键。批次或当前 managed 根只有一个同名仓库身份时使用其代表 root；没有仓库证据时使用 `managed-root/project-name` 兜底。若已经证明存在多个同名但不同的仓库身份，无法归属的历史 cwd 保留原路径，不能误并。项目归并只改变 workspace/project projection，不得改写 native conversation id、四段 `RoutedResourceId`、事件通道或历史消息。
+`<CODEX_HOME>/worktrees/<id>/<project-name>`、`~/.codex/worktrees/<id>/<project-name>` 及从 cwd 明确识别出的 Codex managed worktree，即使目录已经删除，也必须形成稳定的逻辑项目键。只有同一 managed 根内存在唯一同名仓库身份时，失效 worktree 才能使用其代表 root；其他 managed 根或普通批次条目的单个同名仓库不能作为归属证据。没有同根仓库证据时使用 `managed-root/project-name` 兜底。若同根证据或批次内多个不同仓库身份已经证明 basename 有歧义，无法归属的历史 cwd 保留原路径，不能误并。项目归并只改变 workspace/project projection，不得改写 native conversation id、四段 `RoutedResourceId`、事件通道或历史消息。
 
 ## 适用场景
 
@@ -27,7 +27,7 @@ Remote 项目投影不得直接把 Codex `thread.cwd` 当作项目身份。现�
 - 从 Git config 优先读取 `origin`，只有一个 remote 时读取该 remote；相同规范化 remote 的 clone 选择确定性的代表 root。没有 remote 时使用 common-dir 区分仓库。
 - remote URL 只作为进程内比较证据，不写入 `workspaceRoot`、Provider extension 或日志。
 - `conversation.list` 必须按返回批次准备投影证据，并扫描该批次涉及的 managed worktree 根；这样分页中只出现已删除 cwd 时，也能利用当前仍存在的同名 worktree 找回仓库身份。
-- 对失效 managed cwd 使用有限的 basename fallback：无身份反证时按 `managed-root/project-name` 归并；发现多个仓库身份时保守保留无法归属的原路径。这是为“历史项目只显示一次”接受的产品权衡，不适用于普通目录。
+- 对失效 managed cwd 使用同根限定的 basename fallback：先只查看相同 `managed-root/project-name` 下扫描到的仓库身份；同根无证据时按 `managed-root/project-name` 归并，不能借用另一个 managed 根或普通 checkout 的单个同名身份做正向归属；批次中若已经出现多个同名但不同的仓库身份，则把它们作为歧义反证，保守保留无法归属的原路径。这是为“历史项目只显示一次”接受的产品权衡，不适用于普通目录。
 - 保留原始 cwd 到 Provider extension 的 `nativeCwd`，只把逻辑项目 root 写入 `workspaceRoot`。
 - basename fallback 生成的逻辑 root 可能不存在，不能作为文件系统执行目录；会话操作仍通过原生 resource identity 路由，原始目录由 `nativeCwd` 保留。
 - 项目索引保持为可重建投影，不新增通用项目数据库。
@@ -40,11 +40,11 @@ Remote 项目投影不得直接把 Codex `thread.cwd` 当作项目身份。现�
 
 ## 来源
 
-2026-08-31 实机复现：CodePet Remote 首屏 50 条 `conversation.list` 会话产生 49 个原始 workspace 项目，其中 47 条来自不同的 Codex `codepet` managed worktree；样本 `projectId` 全为 `null`。Provider 原样透传 cwd，Remote 再按完整路径分组，是重复项目的直接原因。仅依赖现存 common-dir 时只能得到 37 个项目，因为 34 个历史 worktree 已删除；加入受限 managed basename fallback 后得到 3 个逻辑组，会话数为 47/2/1。`codepet` 的 47 条归为 1 组；`codepet-remote` 保持 2 组，因为匿名文件系统证据分别是“现存 Git root，2 条”和“现存非 Git root，1 条”，不是同一仓库的 worktree。长期边界见 `knowledge/10-architecture/runtime-gateway-and-remote-control.md` 的“项目和普通聊天”。Bug 的引入提交未确认。
+2026-08-31 实机复现：CodePet Remote 首屏 50 条 `conversation.list` 会话产生 49 个原始 workspace 项目，其中 47 条来自不同的 Codex `codepet` managed worktree；样本 `projectId` 全为 `null`。Provider 原样透传 cwd，Remote 再按完整路径分组，是重复项目的直接原因。仅依赖现存 common-dir 时只能得到 37 个项目，因为 34 个历史 worktree 已删除；加入受限 managed basename fallback 后得到 3 个逻辑组，会话数为 47/2/1。`codepet` 的 47 条归为 1 组；`codepet-remote` 保持 2 组，因为匿名文件系统证据分别是“现存 Git root，2 条”和“现存非 Git root，1 条”，不是同一仓库的 worktree。二轮独立审查进一步用隔离 fixture 证明：若 fallback 把批次内任意单个同名仓库当作正向证据，另一个 managed 根的仓库会被误当作失效 worktree 的归属，而且同一会话在“失效 cwd + 一个范围外同名仓库”的批量投影与单条投影间会改变 `workspaceRoot`；因此正向证据范围收窄到同一 managed 根，同时保留多个不同身份作为安全歧义反证。长期边界见 `knowledge/10-architecture/runtime-gateway-and-remote-control.md` 的“项目和普通聊天”。最初重复项目 Bug 的引入提交未确认。
 
 ## 验证方式
 
-- 单测覆盖主 checkout/linked worktree、separate git-dir、非 Git 路径、同 remote clone、同名不同仓库、全删除 managed fallback，以及存在一个或多个仓库证据时的失效 cwd 行为。
+- 单测覆盖主 checkout/linked worktree、separate git-dir、非 Git 路径、同 remote clone、同名不同仓库、全删除 managed fallback、跨 managed root 单一同名仓库隔离、单个范围外同名仓库下的批量/单条投影稳定性，以及存在唯一同根证据或多个身份反证时的失效 cwd 行为。
 - wire 测试必须覆盖同一个 `thread/list` 返回中的现存与已删除 managed worktree，防止批次准备接线丢失。
 - mapper 测试同时断言规范化后的 `workspaceRoot`、原始 `nativeCwd` 和完整四段 resource identity。
 - 用真实 Codex Provider 重跑首屏 `conversation.list`，只记录会话数、原始/投影项目数、匿名分组依据与 route mismatch 数，不输出消息正文、origin 或完整路径。

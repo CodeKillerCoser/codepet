@@ -24,6 +24,8 @@ struct ManagedWorkspace {
 pub(crate) struct WorkspaceProjector {
     managed_roots: Vec<PathBuf>,
     repositories_by_name: BTreeMap<String, BTreeMap<RepositoryIdentity, PathBuf>>,
+    repositories_by_managed_project:
+        BTreeMap<(PathBuf, String), BTreeMap<RepositoryIdentity, PathBuf>>,
     input_repositories: HashMap<PathBuf, RepositoryEvidence>,
 }
 
@@ -52,6 +54,7 @@ impl WorkspaceProjector {
         let mut projector = Self {
             managed_roots,
             repositories_by_name: BTreeMap::new(),
+            repositories_by_managed_project: BTreeMap::new(),
             input_repositories: HashMap::new(),
         };
         let mut managed_names = BTreeMap::<PathBuf, BTreeSet<String>>::new();
@@ -67,10 +70,18 @@ impl WorkspaceProjector {
                 continue;
             };
             let project_name = managed
-                .map(|managed| managed.project_name)
+                .as_ref()
+                .map(|managed| managed.project_name.clone())
                 .or_else(|| project_name(&evidence.project_root));
             if let Some(project_name) = project_name {
-                projector.insert_repository(project_name, &evidence);
+                projector.insert_repository(project_name.clone(), &evidence);
+                if let Some(managed) = managed.as_ref() {
+                    projector.insert_managed_repository(
+                        managed.managed_root.clone(),
+                        project_name,
+                        &evidence,
+                    );
+                }
             }
             projector
                 .input_repositories
@@ -103,12 +114,29 @@ impl WorkspaceProjector {
             return path_string(project_root).or(Some(fallback));
         }
         if let Some(managed) = managed {
-            let repositories = self.repositories_by_name.get(&managed.project_name);
+            let repositories = self.repositories_by_managed_project.get(&(
+                managed.managed_root.clone(),
+                managed.project_name.clone(),
+            ));
+            let global_repository_count = self
+                .repositories_by_name
+                .get(&managed.project_name)
+                .map(BTreeMap::len)
+                .unwrap_or(0);
             let project_root = match repositories.map(BTreeMap::len).unwrap_or(0) {
+                // Out-of-root repositories cannot prove attribution, but multiple identities still
+                // prove that collapsing every deleted worktree by basename would be ambiguous.
+                0 if global_repository_count > 1 => workspace,
                 // Remove the ephemeral worktree id when no surviving metadata can identify it.
                 0 => managed.managed_root.join(&managed.project_name),
                 1 => repositories
-                    .and_then(|repositories| repositories.values().next())
+                    .and_then(|repositories| repositories.iter().next())
+                    .and_then(|(identity, local_root)| {
+                        self.repositories_by_name
+                            .get(&managed.project_name)
+                            .and_then(|repositories| repositories.get(identity))
+                            .or(Some(local_root))
+                    })
                     .cloned()
                     .unwrap_or(workspace),
                 // Multiple proven identities make a deleted worktree ambiguous.
@@ -148,6 +176,23 @@ impl WorkspaceProjector {
         }
     }
 
+    fn insert_managed_repository(
+        &mut self,
+        managed_root: PathBuf,
+        project_name: String,
+        evidence: &RepositoryEvidence,
+    ) {
+        let representative = self
+            .repositories_by_managed_project
+            .entry((managed_root, project_name))
+            .or_default()
+            .entry(evidence.identity.clone())
+            .or_insert_with(|| evidence.project_root.clone());
+        if evidence.project_root < *representative {
+            *representative = evidence.project_root.clone();
+        }
+    }
+
     fn scan_managed_repositories(
         &mut self,
         managed_root: &Path,
@@ -163,6 +208,11 @@ impl WorkspaceProjector {
                     continue;
                 };
                 self.insert_repository(project_name.clone(), &evidence);
+                self.insert_managed_repository(
+                    managed_root.to_path_buf(),
+                    project_name.clone(),
+                    &evidence,
+                );
             }
         }
     }
@@ -578,6 +628,46 @@ mod tests {
         assert_eq!(
             projector.project(Some(missing_path)),
             path_string(&fs::canonicalize(&fixture.main).unwrap())
+        );
+    }
+
+    #[test]
+    fn deleted_managed_worktree_does_not_borrow_another_managed_roots_repository() {
+        let fixture = RepositoryFixture::new("project");
+        let first_managed_root = fixture.temp.path().join("first/.codex/worktrees");
+        let second_managed_root = fixture.temp.path().join("second/.codex/worktrees");
+        let live = fixture.linked_worktree_at(&first_managed_root, "live");
+        let missing = second_managed_root.join("deleted/project");
+        let live_path = live.to_str().unwrap();
+        let missing_path = missing.to_str().unwrap();
+        let projector = WorkspaceProjector::prepare([live_path, missing_path]);
+
+        assert_ne!(
+            projector.project(Some(live_path)),
+            projector.project(Some(missing_path))
+        );
+        assert_eq!(
+            projector.project(Some(missing_path)),
+            path_string(&second_managed_root.join("project"))
+        );
+    }
+
+    #[test]
+    fn deleted_managed_fallback_is_stable_between_batch_and_single_projection() {
+        let fixture = RepositoryFixture::new("project");
+        let managed_root = fixture.temp.path().join("empty/.codex/worktrees");
+        let missing = managed_root.join("deleted/project");
+        let main_path = fixture.main.to_str().unwrap();
+        let missing_path = missing.to_str().unwrap();
+        let batch = WorkspaceProjector::prepare([main_path, missing_path]);
+
+        assert_eq!(
+            batch.project(Some(missing_path)),
+            project_workspace_root(Some(missing_path))
+        );
+        assert_eq!(
+            batch.project(Some(missing_path)),
+            path_string(&managed_root.join("project"))
         );
     }
 
