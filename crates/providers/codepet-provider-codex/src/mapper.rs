@@ -33,6 +33,7 @@ impl CodexProtocolMapper {
         ProviderCapabilities {
             methods: vec![
                 ProviderCapability::ConversationList,
+                ProviderCapability::ConversationSearch,
                 ProviderCapability::ConversationGet,
                 ProviderCapability::ConversationCreate,
                 ProviderCapability::TurnStart,

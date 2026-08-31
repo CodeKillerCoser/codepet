@@ -9,8 +9,9 @@ use codepet_provider_sdk::{
     ApprovalRequestedEvent, ApprovalResolveRequest, ApprovalResolveResponse,
     ConversationCreateRequest,
     ConversationCreateResponse, ConversationGetRequest, ConversationGetResponse,
-    ConversationListRequest, ConversationListResponse, InstanceCapabilitiesRequest,
-    InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceCreateResponse,
+    ConversationListRequest, ConversationListResponse, ConversationSearchRequest,
+    ConversationSearchResponse, InstanceCapabilitiesRequest, InstanceCapabilitiesResponse,
+    InstanceCreateRequest, InstanceCreateResponse,
     InstanceDestroyRequest, InstanceDestroyResponse, InstanceStartRequest,
     InstanceStartResponse, InstanceStatus, InstanceStatusChangedEvent, InstanceStopRequest,
     InstanceStopResponse, PageInfo, ProtocolError, ProtocolEvent, ProtocolFuture,
@@ -679,6 +680,7 @@ impl ProtocolServer for CodexProvider {
                     cursor: request.cursor,
                     limit,
                     workspace_root: None,
+                    search_term: None,
                 })
             })
             .await
@@ -692,6 +694,54 @@ impl ProtocolServer for CodexProvider {
                     .collect::<Vec<_>>()
             };
             Ok(ConversationListResponse {
+                conversations,
+                page_info: PageInfo {
+                    next_cursor: page.next_cursor,
+                },
+            })
+        })
+    }
+
+    fn conversation_search<'a>(
+        &'a self,
+        request: ConversationSearchRequest,
+    ) -> ProtocolFuture<'a, ConversationSearchResponse> {
+        Box::pin(async move {
+            let runtime = self.instance(&request.route)?;
+            if request.search_term.trim().is_empty() {
+                return Err(protocol_error(
+                    "invalid_request",
+                    "conversation.search requires a non-empty searchTerm".to_string(),
+                    false,
+                ));
+            }
+            let limit = request.limit.map(u32::try_from).transpose().map_err(|_| {
+                protocol_error(
+                    "invalid_request",
+                    "conversation search limit exceeds the Codex App Server range".to_string(),
+                    false,
+                )
+            })?;
+            let session = runtime.ready_session()?;
+            let page = tokio::task::spawn_blocking(move || {
+                session.thread_list(CodexThreadListRequest {
+                    cursor: request.cursor,
+                    limit,
+                    workspace_root: None,
+                    search_term: Some(request.search_term),
+                })
+            })
+            .await
+            .map_err(provider_task_error)?
+            .map_err(CodexProtocolMapper::error)?;
+            let conversations = {
+                let mapper = lock(&runtime.mapper);
+                page.data
+                    .iter()
+                    .map(|snapshot| mapper.conversation(snapshot))
+                    .collect::<Vec<_>>()
+            };
+            Ok(ConversationSearchResponse {
                 conversations,
                 page_info: PageInfo {
                     next_cursor: page.next_cursor,

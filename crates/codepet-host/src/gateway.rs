@@ -579,6 +579,44 @@ impl ProtocolServer for ProviderGatewayService {
         })
     }
 
+    fn conversation_search<'a>(
+        &'a self,
+        request: gateway::ConversationSearchRequest,
+    ) -> gateway::ProtocolFuture<'a, gateway::ConversationSearchResponse> {
+        Box::pin(async move {
+            if request.search_term.trim().is_empty() {
+                return Err(gateway::ProtocolError {
+                    code: "invalid_request".to_string(),
+                    message: "conversation.search requires a non-empty searchTerm".to_string(),
+                    retryable: false,
+                    details: None,
+                });
+            }
+            let snapshot_cursor = self.current_event_cursor();
+            let response = self
+                .manager
+                .conversation_search(provider::ConversationSearchRequest {
+                    route: provider_route(request.route),
+                    search_term: request.search_term,
+                    cursor: request.cursor,
+                    limit: request.limit,
+                })
+                .await
+                .map_err(gateway_error)?;
+            Ok(gateway::ConversationSearchResponse {
+                conversations: response
+                    .conversations
+                    .into_iter()
+                    .map(map_conversation)
+                    .collect(),
+                page_info: gateway::PageInfo {
+                    next_cursor: response.page_info.next_cursor,
+                },
+                snapshot_cursor,
+            })
+        })
+    }
+
     fn conversation_get<'a>(
         &'a self,
         request: gateway::ConversationGetRequest,
@@ -766,6 +804,9 @@ fn map_capabilities(capabilities: &provider::ProviderCapabilities) -> gateway::G
         let mapped = match method {
             provider::ProviderCapability::ConversationList => {
                 Some(gateway::GatewayCapability::ConversationList)
+            }
+            provider::ProviderCapability::ConversationSearch => {
+                Some(gateway::GatewayCapability::ConversationSearch)
             }
             provider::ProviderCapability::ConversationGet => {
                 Some(gateway::GatewayCapability::ConversationGet)

@@ -1,6 +1,7 @@
 use codepet_gateway_sdk::{
     ConversationGetRequest as GatewayConversationGetRequest,
-    ConversationListRequest as GatewayConversationListRequest, DeviceDescriptor,
+    ConversationListRequest as GatewayConversationListRequest,
+    ConversationSearchRequest as GatewayConversationSearchRequest, DeviceDescriptor,
     EventSubscribeRequest, HandshakeRequest,
     GatewayProviderRoute, ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
     ProtocolResponse as GatewayResponse, ProtocolServer as GatewayProtocolServer,
@@ -949,6 +950,64 @@ async fn wait_for_gateway_cursor(gateway: &ProviderGatewayService, sequence: u64
     })
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn conversation_search_is_route_scoped_and_preserves_pagination_and_snapshot_cursor() {
+    let manager = build_manager(
+        "device-search",
+        vec![plugin("dev.codepet.search", &["instance-search"])],
+    );
+    let gateway = ProviderGatewayService::new(manager.clone()).unwrap();
+    assert!(manager.start_enabled().await[0].1.is_ok());
+
+    let providers = gateway
+        .provider_list(ProviderListRequest {
+            device_id: Some("device-search".to_string()),
+        })
+        .await
+        .unwrap();
+    assert!(providers.providers[0]
+        .capabilities
+        .methods
+        .contains(&codepet_gateway_sdk::GatewayCapability::ConversationSearch));
+
+    let snapshot_cursor = gateway.current_event_cursor();
+    let response = gateway
+        .conversation_search(GatewayConversationSearchRequest {
+            route: GatewayProviderRoute {
+                device_id: "device-search".to_string(),
+                provider_plugin_id: "dev.codepet.search".to_string(),
+                provider_instance_id: "instance-search".to_string(),
+            },
+            search_term: "gateway protocol".to_string(),
+            cursor: Some("search-cursor".to_string()),
+            limit: Some(7),
+        })
+        .await
+        .unwrap();
+    assert_eq!(response.snapshot_cursor, snapshot_cursor);
+    assert_eq!(response.page_info.next_cursor.as_deref(), Some("search-next"));
+    assert_eq!(
+        response.conversations[0].resource.native_resource_id,
+        "conversation-search"
+    );
+
+    let empty = gateway
+        .conversation_search(GatewayConversationSearchRequest {
+            route: GatewayProviderRoute {
+                device_id: "device-search".to_string(),
+                provider_plugin_id: "dev.codepet.search".to_string(),
+                provider_instance_id: "instance-search".to_string(),
+            },
+            search_term: String::new(),
+            cursor: None,
+            limit: None,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(empty.code, "invalid_request");
+    manager.shutdown().await;
 }
 
 #[tokio::test]

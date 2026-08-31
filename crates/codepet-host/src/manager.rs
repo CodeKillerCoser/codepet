@@ -6,7 +6,8 @@ use crate::{
 use codepet_provider_sdk::{
     ApprovalResolveRequest, ApprovalResolveResponse, ClientId, ConversationCreateRequest,
     ConversationCreateResponse, ConversationGetRequest, ConversationGetResponse,
-    ConversationItemKind, ConversationListRequest, ConversationListResponse, InstanceCapabilitiesRequest,
+    ConversationItemKind, ConversationListRequest, ConversationListResponse,
+    ConversationSearchRequest, ConversationSearchResponse, InstanceCapabilitiesRequest,
     InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceStartRequest, InstanceStatus,
     InstanceStopRequest, ProtocolEvent, ProtocolMethod,
     ProviderDescribeRequest, ProviderInitializeRequest, ProviderInstance, ProviderInstanceRoute,
@@ -1010,6 +1011,25 @@ impl PluginManager {
         let response = process
             .client()
             .conversation_list(request)
+            .await
+            .map_err(HostError::from)?;
+        for conversation in &response.conversations {
+            validate_conversation_routes(conversation, &route)?;
+        }
+        Ok(response)
+    }
+
+    pub async fn conversation_search(
+        &self,
+        request: ConversationSearchRequest,
+    ) -> HostResult<ConversationSearchResponse> {
+        let route = request.route.clone();
+        self.ensure_historical_route_ready(&route).await?;
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::ConversationSearch)?;
+        let response = process
+            .client()
+            .conversation_search(request)
             .await
             .map_err(HostError::from)?;
         for conversation in &response.conversations {

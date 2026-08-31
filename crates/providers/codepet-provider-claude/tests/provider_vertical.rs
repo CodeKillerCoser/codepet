@@ -189,6 +189,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     #[cfg(unix)]
     assert!(capabilities.methods.contains(&ProviderCapability::TurnInterrupt));
     assert!(!capabilities.methods.contains(&ProviderCapability::ConversationList));
+    assert!(!capabilities.methods.contains(&ProviderCapability::ConversationSearch));
     assert!(!capabilities.methods.contains(&ProviderCapability::ConversationGet));
     assert!(!capabilities.methods.contains(&ProviderCapability::TurnSteer));
     assert!(!capabilities.methods.contains(&ProviderCapability::ApprovalResolve));

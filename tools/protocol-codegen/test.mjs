@@ -74,6 +74,7 @@ test("provider is JSON-RPC over stdio and owns plugin instance lifecycle", async
     "instance.destroy",
     "instance.capabilities",
     "conversation.list",
+    "conversation.search",
     "turn.start",
     "approval.resolve",
     "provider.shutdown",
@@ -91,6 +92,10 @@ test("provider history items carry routed conversation ownership", async () => {
   );
   assert(definitions.ConversationItem.required.includes("conversation"));
   assert(definitions.ConversationGetResponse.required.includes("items"));
+  assert.equal(definitions.ConversationSearchRequest.properties.route.$ref, "#/$defs/ProviderInstanceRoute");
+  assert.equal(definitions.ConversationSearchRequest.properties.searchTerm.minLength, 1);
+  assert.deepEqual(definitions.ConversationSearchRequest.required, ["route", "searchTerm"]);
+  assert.equal(definitions.ConversationSearchResponse.properties.pageInfo.$ref, "../../core/v1/schema.json#/$defs/PageInfo");
 });
 
 test("gateway resources are routed while plugin lifecycle stays private", async () => {
@@ -99,6 +104,7 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
   const methods = gateway.manifest.methods.map((method) => method.name);
   assert.equal(methods.some((method) => method.startsWith("instance.") || method === "provider.shutdown"), false);
   assert(methods.includes("event.subscribe"));
+  assert(methods.includes("conversation.search"));
   assert.equal(gateway.manifest.transport.eventCursorField, "eventCursor");
   assert.equal(
     gateway.schema.$defs.EventSubscribeRequest.properties.afterCursor.$ref,
@@ -109,13 +115,16 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
     "../../core/v1/schema.json#/$defs/EventCursor",
   );
   assert.equal(gateway.schema.$defs.ConversationListResponse.properties.eventCursor, undefined);
-  for (const definition of ["ConversationListResponse", "ConversationGetResponse"]) {
+  for (const definition of ["ConversationListResponse", "ConversationSearchResponse", "ConversationGetResponse"]) {
     assert.equal(
       gateway.schema.$defs[definition].properties.snapshotCursor.$ref,
       "../../core/v1/schema.json#/$defs/EventCursor",
     );
     assert(gateway.schema.$defs[definition].required.includes("snapshotCursor"));
   }
+  assert.equal(gateway.schema.$defs.ConversationSearchRequest.properties.route.$ref, "#/$defs/GatewayProviderRoute");
+  assert.equal(gateway.schema.$defs.ConversationSearchRequest.properties.searchTerm.minLength, 1);
+  assert.deepEqual(gateway.schema.$defs.ConversationSearchRequest.required, ["route", "searchTerm"]);
   assert.equal(
     gateway.schema.$defs.ProviderInstance.properties.pluginId.$ref,
     "../../core/v1/schema.json#/$defs/ProviderPluginId",

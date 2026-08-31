@@ -5,7 +5,7 @@ import type { ClientId, Cursor, DeviceId, EventCursor, NativeResourceId, PageInf
 export type { ClientId, Cursor, DeviceId, EventCursor, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RoutedResourceId, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
 
 export const PROTOCOL_VERSION = 1 as const;
-export const PROTOCOL_METHODS = ["protocol.handshake", "event.subscribe", "device.list", "provider.list", "conversation.list", "conversation.get", "conversation.create", "turn.send", "turn.interrupt", "approval.resolve"] as const;
+export const PROTOCOL_METHODS = ["protocol.handshake", "event.subscribe", "device.list", "provider.list", "conversation.list", "conversation.search", "conversation.get", "conversation.create", "turn.send", "turn.interrupt", "approval.resolve"] as const;
 export const PROTOCOL_EVENTS = ["device.statusChanged", "provider.statusChanged", "conversation.upserted", "turn.upserted", "turn.outputDelta", "approval.requested", "approval.resolved"] as const;
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -121,6 +121,19 @@ export interface ConversationListResponse {
   snapshotCursor: EventCursor;
 }
 
+export interface ConversationSearchRequest {
+  route: GatewayProviderRoute;
+  searchTerm: string;
+  cursor?: Cursor;
+  limit?: number;
+}
+
+export interface ConversationSearchResponse {
+  conversations: Array<Conversation>;
+  pageInfo: PageInfo;
+  snapshotCursor: EventCursor;
+}
+
 export type ConversationStatus = "idle" | "running" | "waiting-approval" | "waiting-user-input" | "error" | "archived";
 
 export interface ConversationUpsertedEvent {
@@ -174,7 +187,7 @@ export interface GatewayCapabilities {
   reasoningEfforts: Array<string>;
 }
 
-export type GatewayCapability = "conversation.list" | "conversation.get" | "conversation.create" | "turn.send" | "turn.interrupt" | "approval.resolve";
+export type GatewayCapability = "conversation.list" | "conversation.search" | "conversation.get" | "conversation.create" | "turn.send" | "turn.interrupt" | "approval.resolve";
 
 export interface GatewayProviderRoute {
   deviceId: DeviceId;
@@ -304,6 +317,7 @@ export interface ProtocolRequestMap {
   "device.list": DeviceListRequest;
   "provider.list": ProviderListRequest;
   "conversation.list": ConversationListRequest;
+  "conversation.search": ConversationSearchRequest;
   "conversation.get": ConversationGetRequest;
   "conversation.create": ConversationCreateRequest;
   "turn.send": TurnSendRequest;
@@ -317,6 +331,7 @@ export interface ProtocolResponseMap {
   "device.list": DeviceListResponse;
   "provider.list": ProviderListResponse;
   "conversation.list": ConversationListResponse;
+  "conversation.search": ConversationSearchResponse;
   "conversation.get": ConversationGetResponse;
   "conversation.create": ConversationCreateResponse;
   "turn.send": TurnSendResponse;
@@ -344,6 +359,7 @@ export type ProtocolRequest =
   | { protocolVersion: ProtocolVersion; id: RequestId; method: "device.list"; params: DeviceListRequest }
   | { protocolVersion: ProtocolVersion; id: RequestId; method: "provider.list"; params: ProviderListRequest }
   | { protocolVersion: ProtocolVersion; id: RequestId; method: "conversation.list"; params: ConversationListRequest }
+  | { protocolVersion: ProtocolVersion; id: RequestId; method: "conversation.search"; params: ConversationSearchRequest }
   | { protocolVersion: ProtocolVersion; id: RequestId; method: "conversation.get"; params: ConversationGetRequest }
   | { protocolVersion: ProtocolVersion; id: RequestId; method: "conversation.create"; params: ConversationCreateRequest }
   | { protocolVersion: ProtocolVersion; id: RequestId; method: "turn.send"; params: TurnSendRequest }
@@ -356,6 +372,7 @@ export type ProtocolResponse =
   | { protocolVersion: ProtocolVersion; id: RequestId; method: "device.list"; response: ResponsePayload<DeviceListResponse> }
   | { protocolVersion: ProtocolVersion; id: RequestId; method: "provider.list"; response: ResponsePayload<ProviderListResponse> }
   | { protocolVersion: ProtocolVersion; id: RequestId; method: "conversation.list"; response: ResponsePayload<ConversationListResponse> }
+  | { protocolVersion: ProtocolVersion; id: RequestId; method: "conversation.search"; response: ResponsePayload<ConversationSearchResponse> }
   | { protocolVersion: ProtocolVersion; id: RequestId; method: "conversation.get"; response: ResponsePayload<ConversationGetResponse> }
   | { protocolVersion: ProtocolVersion; id: RequestId; method: "conversation.create"; response: ResponsePayload<ConversationCreateResponse> }
   | { protocolVersion: ProtocolVersion; id: RequestId; method: "turn.send"; response: ResponsePayload<TurnSendResponse> }
@@ -377,6 +394,7 @@ export interface ProtocolClient {
   deviceList(request: DeviceListRequest): Promise<DeviceListResponse>;
   providerList(request: ProviderListRequest): Promise<ProviderListResponse>;
   conversationList(request: ConversationListRequest): Promise<ConversationListResponse>;
+  conversationSearch(request: ConversationSearchRequest): Promise<ConversationSearchResponse>;
   conversationGet(request: ConversationGetRequest): Promise<ConversationGetResponse>;
   conversationCreate(request: ConversationCreateRequest): Promise<ConversationCreateResponse>;
   turnSend(request: TurnSendRequest): Promise<TurnSendResponse>;

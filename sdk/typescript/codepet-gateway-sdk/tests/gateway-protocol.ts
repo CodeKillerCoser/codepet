@@ -1,6 +1,8 @@
 import type {
   CurrentCredentialDeleteResponse,
   ConversationGetResponse,
+  ConversationSearchRequest,
+  ConversationSearchResponse,
   HandshakeRequest,
   HandshakeResponse,
   PairingExchangeRequest,
@@ -63,6 +65,23 @@ const exchangeResponse: PairingExchangeResponse = {
 
 const deleted: CurrentCredentialDeleteResponse = { revoked: true };
 
+const searchRequest: ConversationSearchRequest = {
+  route: {
+    deviceId: "device-macbook-1",
+    providerPluginId: "dev.codepet.codex",
+    providerInstanceId: "codex-work",
+  },
+  searchTerm: "gateway protocol",
+  cursor: "search-cursor",
+  limit: 20,
+};
+
+const searchResponse: ConversationSearchResponse = {
+  conversations: [],
+  pageInfo: { nextCursor: "search-next" },
+  snapshotCursor: "event-0",
+};
+
 const history: ConversationGetResponse["items"] = [
   {
     resource: {
@@ -105,4 +124,4 @@ const delta: TurnOutputDeltaEvent = {
   delta: " delta",
 };
 
-void [exchange, exchangeResponse, deleted, history, delta];
+void [exchange, exchangeResponse, deleted, searchRequest, searchResponse, history, delta];

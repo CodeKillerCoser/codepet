@@ -211,6 +211,26 @@ pub struct ConversationListResponse {
     pub page_info: PageInfo,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationSearchRequest {
+    pub route: ProviderInstanceRoute,
+    pub search_term: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<Cursor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationSearchResponse {
+    pub conversations: Vec<ProviderConversation>,
+    pub page_info: PageInfo,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConversationStatus {
     #[serde(rename = "idle")]
@@ -370,6 +390,8 @@ pub struct ProviderCapabilities {
 pub enum ProviderCapability {
     #[serde(rename = "conversation.list")]
     ConversationList,
+    #[serde(rename = "conversation.search")]
+    ConversationSearch,
     #[serde(rename = "conversation.get")]
     ConversationGet,
     #[serde(rename = "conversation.create")]
@@ -670,6 +692,8 @@ pub enum ProtocolMethod {
     InstanceCapabilities,
     #[serde(rename = "conversation.list")]
     ConversationList,
+    #[serde(rename = "conversation.search")]
+    ConversationSearch,
     #[serde(rename = "conversation.get")]
     ConversationGet,
     #[serde(rename = "conversation.create")]
@@ -697,6 +721,7 @@ impl ProtocolMethod {
             Self::InstanceDestroy => "instance.destroy",
             Self::InstanceCapabilities => "instance.capabilities",
             Self::ConversationList => "conversation.list",
+            Self::ConversationSearch => "conversation.search",
             Self::ConversationGet => "conversation.get",
             Self::ConversationCreate => "conversation.create",
             Self::TurnStart => "turn.start",
@@ -717,6 +742,7 @@ impl ProtocolMethod {
             Self::InstanceDestroy => None,
             Self::InstanceCapabilities => None,
             Self::ConversationList => Some(ProviderCapability::ConversationList),
+            Self::ConversationSearch => Some(ProviderCapability::ConversationSearch),
             Self::ConversationGet => Some(ProviderCapability::ConversationGet),
             Self::ConversationCreate => Some(ProviderCapability::ConversationCreate),
             Self::TurnStart => Some(ProviderCapability::TurnStart),
@@ -741,6 +767,7 @@ impl std::str::FromStr for ProtocolMethod {
             "instance.destroy" => Ok(Self::InstanceDestroy),
             "instance.capabilities" => Ok(Self::InstanceCapabilities),
             "conversation.list" => Ok(Self::ConversationList),
+            "conversation.search" => Ok(Self::ConversationSearch),
             "conversation.get" => Ok(Self::ConversationGet),
             "conversation.create" => Ok(Self::ConversationCreate),
             "turn.start" => Ok(Self::TurnStart),
@@ -856,6 +883,12 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: ConversationListRequest,
     },
+    #[serde(rename = "conversation.search")]
+    ConversationSearch {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationSearchRequest,
+    },
     #[serde(rename = "conversation.get")]
     ConversationGet {
         jsonrpc: String,
@@ -948,6 +981,11 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.list request params", error))?,
             }),
+            ProtocolMethod::ConversationSearch => Ok(Self::ConversationSearch {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.search request params", error))?,
+            }),
             ProtocolMethod::ConversationGet => Ok(Self::ConversationGet {
                 jsonrpc,
                 id,
@@ -996,6 +1034,7 @@ impl ProtocolRequest {
             Self::InstanceDestroy { jsonrpc, .. } => jsonrpc,
             Self::InstanceCapabilities { jsonrpc, .. } => jsonrpc,
             Self::ConversationList { jsonrpc, .. } => jsonrpc,
+            Self::ConversationSearch { jsonrpc, .. } => jsonrpc,
             Self::ConversationGet { jsonrpc, .. } => jsonrpc,
             Self::ConversationCreate { jsonrpc, .. } => jsonrpc,
             Self::TurnStart { jsonrpc, .. } => jsonrpc,
@@ -1179,6 +1218,10 @@ pub trait ProtocolServer: Send + Sync {
         Box::pin(async { Err(method_not_implemented("conversation.list")) })
     }
 
+    fn conversation_search<'a>(&'a self, _request: ConversationSearchRequest) -> ProtocolFuture<'a, ConversationSearchResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.search")) })
+    }
+
     fn conversation_get<'a>(&'a self, _request: ConversationGetRequest) -> ProtocolFuture<'a, ConversationGetResponse> {
         Box::pin(async { Err(method_not_implemented("conversation.get")) })
     }
@@ -1291,6 +1334,16 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
         },
         ProtocolRequest::ConversationList { jsonrpc, id, params } => {
             let response = match server.conversation_list(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationSearch { jsonrpc, id, params } => {
+            let response = match server.conversation_search(params).await {
                 Ok(result) => match serde_json::to_value(result) {
                     Ok(result) => JsonRpcResponsePayload::Ok { result },
                     Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
@@ -1476,6 +1529,14 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             let result = self.transport.request(ProtocolMethod::ConversationList, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_search<'a>(&'a self, request: ConversationSearchRequest) -> ProtocolFuture<'a, ConversationSearchResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationSearch, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

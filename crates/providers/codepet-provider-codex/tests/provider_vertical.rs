@@ -1,7 +1,7 @@
 use codepet_provider_codex::{CodexProvider, CODEX_INSTANCE_KIND, CODEX_PLUGIN_ID};
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalResolveRequest, ConversationCreateRequest, ConversationListRequest,
-    ConversationGetRequest, InstanceCapabilitiesRequest, InstanceCreateRequest,
+    ConversationGetRequest, ConversationSearchRequest, InstanceCapabilitiesRequest, InstanceCreateRequest,
     InstanceDestroyRequest, InstanceStartRequest, InstanceStopRequest, JsonObject, ProtocolEvent,
     ProtocolServer as ProviderProtocolServer, ProviderInitializeRequest,
     ProviderInstanceRoute, ProviderShutdownRequest, TurnInterruptRequest, TurnStartRequest,
@@ -120,6 +120,10 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         .capabilities
         .methods
         .contains(&codepet_provider_sdk::ProviderCapability::ApprovalResolve));
+    assert!(capabilities
+        .capabilities
+        .methods
+        .contains(&codepet_provider_sdk::ProviderCapability::ConversationSearch));
 
     let listed = ProviderProtocolServer::conversation_list(
         &provider,
@@ -140,6 +144,35 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         listed.conversations[0].resource.native_resource_id,
         "thread-listed"
     );
+    let searched = ProviderProtocolServer::conversation_search(
+        &provider,
+        ConversationSearchRequest {
+            route: route.clone(),
+            search_term: "gateway protocol".to_string(),
+            cursor: Some("search-cursor".to_string()),
+            limit: Some(7),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        searched.conversations[0].resource.native_resource_id,
+        "thread-search-result"
+    );
+    assert_eq!(searched.page_info.next_cursor.as_deref(), Some("search-next"));
+
+    let empty_search = ProviderProtocolServer::conversation_search(
+        &provider,
+        ConversationSearchRequest {
+            route: route.clone(),
+            search_term: " ".to_string(),
+            cursor: None,
+            limit: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(empty_search.code, "invalid_request");
     let fetched = ProviderProtocolServer::conversation_get(
         &provider,
         ConversationGetRequest {

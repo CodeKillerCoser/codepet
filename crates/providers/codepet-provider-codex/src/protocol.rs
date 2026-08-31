@@ -422,6 +422,7 @@ pub struct CodexThreadListRequest {
     pub cursor: Option<String>,
     pub limit: Option<u32>,
     pub workspace_root: Option<String>,
+    pub search_term: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -590,6 +591,8 @@ pub enum CodexIncoming {
 pub(crate) struct ThreadListResponse {
     pub data: Vec<CodexThread>,
     pub next_cursor: Option<String>,
+    #[serde(rename = "backwardsCursor")]
+    pub _backwards_cursor: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -734,6 +737,12 @@ pub(crate) fn thread_list_params(request: &CodexThreadListRequest) -> Value {
     if let Some(cwd) = &request.workspace_root {
         params.insert("cwd".to_string(), json!(cwd));
     }
+    if let Some(search_term) = &request.search_term {
+        params.insert("searchTerm".to_string(), json!(search_term));
+    }
+    params.insert("sortKey".to_string(), json!("updated_at"));
+    params.insert("sortDirection".to_string(), json!("desc"));
+    params.insert("useStateDbOnly".to_string(), json!(true));
     Value::Object(params)
 }
 
@@ -813,6 +822,24 @@ pub(crate) fn permission_from_sandbox(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thread_list_params_use_state_db_and_updated_at_order_for_list_and_search() {
+        let list = thread_list_params(&CodexThreadListRequest::default());
+        assert_eq!(list["sortKey"], "updated_at");
+        assert_eq!(list["sortDirection"], "desc");
+        assert_eq!(list["useStateDbOnly"], true);
+        assert!(list.get("searchTerm").is_none());
+
+        let search = thread_list_params(&CodexThreadListRequest {
+            search_term: Some("gateway protocol".to_string()),
+            ..CodexThreadListRequest::default()
+        });
+        assert_eq!(search["searchTerm"], "gateway protocol");
+        assert_eq!(search["sortKey"], "updated_at");
+        assert_eq!(search["sortDirection"], "desc");
+        assert_eq!(search["useStateDbOnly"], true);
+    }
 
     #[test]
     fn thread_item_decoder_keeps_safe_history_fields_and_drops_raw_reasoning() {

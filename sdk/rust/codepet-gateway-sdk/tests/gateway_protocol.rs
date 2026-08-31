@@ -2,7 +2,7 @@ use codepet_gateway_sdk::{
     decode_event, decode_request, decode_response, CurrentCredentialDeleteResponse,
     ConversationContentKind, ConversationItemKind, ConversationItemRole, PairingExchangeRequest,
     PairingExchangeResponse, PairingQrPayload, ProtocolEvent, ProtocolRequest, ProtocolResponse,
-    ResponsePayload,
+    ResponsePayload, GatewayCapability, ProtocolMethod,
 };
 
 #[test]
@@ -144,6 +144,14 @@ fn gateway_request_routes_by_all_four_resource_dimensions() {
     );
     assert_eq!(params.conversation.provider_instance_id, "codex-work");
     assert_eq!(params.conversation.native_resource_id, "thread-01");
+}
+
+#[test]
+fn gateway_conversation_search_has_a_typed_capability() {
+    assert_eq!(
+        ProtocolMethod::ConversationSearch.capability(),
+        Some(GatewayCapability::ConversationSearch)
+    );
 }
 
 #[test]

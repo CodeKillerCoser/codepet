@@ -257,6 +257,27 @@ pub struct ConversationListResponse {
     pub snapshot_cursor: EventCursor,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationSearchRequest {
+    pub route: GatewayProviderRoute,
+    pub search_term: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<Cursor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationSearchResponse {
+    pub conversations: Vec<Conversation>,
+    pub page_info: PageInfo,
+    pub snapshot_cursor: EventCursor,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConversationStatus {
     #[serde(rename = "idle")]
@@ -366,6 +387,8 @@ pub struct GatewayCapabilities {
 pub enum GatewayCapability {
     #[serde(rename = "conversation.list")]
     ConversationList,
+    #[serde(rename = "conversation.search")]
+    ConversationSearch,
     #[serde(rename = "conversation.get")]
     ConversationGet,
     #[serde(rename = "conversation.create")]
@@ -639,6 +662,8 @@ pub enum ProtocolMethod {
     ProviderList,
     #[serde(rename = "conversation.list")]
     ConversationList,
+    #[serde(rename = "conversation.search")]
+    ConversationSearch,
     #[serde(rename = "conversation.get")]
     ConversationGet,
     #[serde(rename = "conversation.create")]
@@ -659,6 +684,7 @@ impl ProtocolMethod {
             Self::DeviceList => "device.list",
             Self::ProviderList => "provider.list",
             Self::ConversationList => "conversation.list",
+            Self::ConversationSearch => "conversation.search",
             Self::ConversationGet => "conversation.get",
             Self::ConversationCreate => "conversation.create",
             Self::TurnSend => "turn.send",
@@ -674,6 +700,7 @@ impl ProtocolMethod {
             Self::DeviceList => None,
             Self::ProviderList => None,
             Self::ConversationList => Some(GatewayCapability::ConversationList),
+            Self::ConversationSearch => Some(GatewayCapability::ConversationSearch),
             Self::ConversationGet => Some(GatewayCapability::ConversationGet),
             Self::ConversationCreate => Some(GatewayCapability::ConversationCreate),
             Self::TurnSend => Some(GatewayCapability::TurnSend),
@@ -693,6 +720,7 @@ impl std::str::FromStr for ProtocolMethod {
             "device.list" => Ok(Self::DeviceList),
             "provider.list" => Ok(Self::ProviderList),
             "conversation.list" => Ok(Self::ConversationList),
+            "conversation.search" => Ok(Self::ConversationSearch),
             "conversation.get" => Ok(Self::ConversationGet),
             "conversation.create" => Ok(Self::ConversationCreate),
             "turn.send" => Ok(Self::TurnSend),
@@ -797,6 +825,13 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: ConversationListRequest,
     },
+    #[serde(rename = "conversation.search")]
+    ConversationSearch {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: ProtocolVersion,
+        id: RequestId,
+        params: ConversationSearchRequest,
+    },
     #[serde(rename = "conversation.get")]
     ConversationGet {
         #[serde(rename = "protocolVersion")]
@@ -871,6 +906,13 @@ pub enum ProtocolResponse {
         protocol_version: ProtocolVersion,
         id: RequestId,
         response: ResponsePayload<ConversationListResponse>,
+    },
+    #[serde(rename = "conversation.search")]
+    ConversationSearch {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: ProtocolVersion,
+        id: RequestId,
+        response: ResponsePayload<ConversationSearchResponse>,
     },
     #[serde(rename = "conversation.get")]
     ConversationGet {
@@ -993,6 +1035,10 @@ pub trait ProtocolServer: Send + Sync {
         Box::pin(async { Err(method_not_implemented("conversation.list")) })
     }
 
+    fn conversation_search<'a>(&'a self, _request: ConversationSearchRequest) -> ProtocolFuture<'a, ConversationSearchResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.search")) })
+    }
+
     fn conversation_get<'a>(&'a self, _request: ConversationGetRequest) -> ProtocolFuture<'a, ConversationGetResponse> {
         Box::pin(async { Err(method_not_implemented("conversation.get")) })
     }
@@ -1059,6 +1105,13 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 Err(error) => ResponsePayload::Error { error },
             };
             ProtocolResponse::ConversationList { protocol_version, id, response }
+        },
+        ProtocolRequest::ConversationSearch { protocol_version, id, params } => {
+            let response = match server.conversation_search(params).await {
+                Ok(result) => ResponsePayload::Ok { result },
+                Err(error) => ResponsePayload::Error { error },
+            };
+            ProtocolResponse::ConversationSearch { protocol_version, id, response }
         },
         ProtocolRequest::ConversationGet { protocol_version, id, params } => {
             let response = match server.conversation_get(params).await {
@@ -1175,6 +1228,14 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             let result = self.transport.request(ProtocolMethod::ConversationList, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_search<'a>(&'a self, request: ConversationSearchRequest) -> ProtocolFuture<'a, ConversationSearchResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationSearch, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

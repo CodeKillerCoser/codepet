@@ -2,7 +2,8 @@ use codepet_provider_sdk::{
     dispatch, ApprovalDecision, ApprovalResolveRequest, ApprovalResolveResponse, ApprovalStatus,
     ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
     ConversationGetResponse, ConversationListRequest, ConversationListResponse,
-    ConversationContent, ConversationContentKind, ConversationItem, ConversationItemKind,
+    ConversationSearchRequest, ConversationSearchResponse, ConversationContent,
+    ConversationContentKind, ConversationItem, ConversationItemKind,
     ConversationItemRole, ConversationItemStatus, ConversationStatus, ConversationUpsertedEvent,
     InstanceCapabilitiesRequest,
     InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceCreateResponse,
@@ -193,6 +194,30 @@ impl ProtocolServer for FakeProvider {
             Ok(ConversationListResponse {
                 conversations: vec![conversation(&request.route, "conversation-list")],
                 page_info: PageInfo { next_cursor: None },
+            })
+        })
+    }
+
+    fn conversation_search<'a>(
+        &'a self,
+        request: ConversationSearchRequest,
+    ) -> ProtocolFuture<'a, ConversationSearchResponse> {
+        Box::pin(async move {
+            self.instance(&request.route)?;
+            if request.search_term != "gateway protocol"
+                || request.cursor.as_deref() != Some("search-cursor")
+                || request.limit != Some(7)
+            {
+                return Err(protocol_error(
+                    "fixture_search_params_mismatch",
+                    "conversation.search params were not preserved",
+                ));
+            }
+            Ok(ConversationSearchResponse {
+                conversations: vec![conversation(&request.route, "conversation-search")],
+                page_info: PageInfo {
+                    next_cursor: Some("search-next".to_string()),
+                },
             })
         })
     }
@@ -590,6 +615,7 @@ fn capabilities() -> ProviderCapabilities {
     ProviderCapabilities {
         methods: vec![
             ProviderCapability::ConversationList,
+            ProviderCapability::ConversationSearch,
             ProviderCapability::ConversationGet,
             ProviderCapability::ConversationCreate,
             ProviderCapability::TurnStart,

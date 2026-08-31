@@ -195,6 +195,30 @@
       "required": ["conversations", "pageInfo", "snapshotCursor"],
       "additionalProperties": false
     },
+    "ConversationSearchRequest": {
+      "type": "object",
+      "properties": {
+        "route": { "$ref": "#/$defs/GatewayProviderRoute" },
+        "searchTerm": { "type": "string", "minLength": 1 },
+        "cursor": { "$ref": "../../core/v1/schema.json#/$defs/Cursor" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+      },
+      "required": ["route", "searchTerm"],
+      "additionalProperties": false
+    },
+    "ConversationSearchResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Conversation" }
+        },
+        "pageInfo": { "$ref": "../../core/v1/schema.json#/$defs/PageInfo" },
+        "snapshotCursor": { "$ref": "../../core/v1/schema.json#/$defs/EventCursor" }
+      },
+      "required": ["conversations", "pageInfo", "snapshotCursor"],
+      "additionalProperties": false
+    },
     "ConversationStatus": {
       "type": "string",
       "enum": ["idle", "running", "waiting-approval", "waiting-user-input", "error", "archived"]
@@ -285,6 +309,7 @@
       "type": "string",
       "enum": [
         "conversation.list",
+        "conversation.search",
         "conversation.get",
         "conversation.create",
         "turn.send",

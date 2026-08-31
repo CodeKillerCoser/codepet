@@ -41,14 +41,50 @@ fn main() {
                     "userAgent": "codex-app-server-fixture/1"
                 }),
             ),
-            "thread/list" => respond(
-                &mut writer,
-                id,
-                json!({
-                    "data": [thread("thread-listed", "idle", Vec::new())],
-                    "nextCursor": null
-                }),
-            ),
+            "thread/list" => {
+                if params["sortKey"] != "updated_at"
+                    || params["sortDirection"] != "desc"
+                    || params["useStateDbOnly"] != true
+                {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": { "code": -32602, "message": "thread/list must use state DB updated_at descending" }
+                        }),
+                    );
+                    continue;
+                }
+                let (data, next_cursor) = if params.get("searchTerm")
+                    == Some(&json!("gateway protocol"))
+                {
+                    if params["cursor"] != "search-cursor" || params["limit"] != 7 {
+                        write_json(
+                            &mut writer,
+                            json!({
+                                "id": id,
+                                "error": { "code": -32602, "message": "search pagination was not preserved" }
+                            }),
+                        );
+                        continue;
+                    }
+                    (
+                        vec![thread("thread-search-result", "idle", Vec::new())],
+                        Some("search-next"),
+                    )
+                } else {
+                    (vec![thread("thread-listed", "idle", Vec::new())], None)
+                };
+                respond(
+                    &mut writer,
+                    id,
+                    json!({
+                        "data": data,
+                        "nextCursor": next_cursor,
+                        "backwardsCursor": "search-back"
+                    }),
+                );
+            }
             "thread/read" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
                 let turns = if thread_id == "thread-large" {

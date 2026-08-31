@@ -215,5 +215,9 @@ fn generated_method_capability_mapping_is_typed() {
         ProtocolMethod::ConversationList.capability(),
         Some(ProviderCapability::ConversationList)
     );
+    assert_eq!(
+        ProtocolMethod::ConversationSearch.capability(),
+        Some(ProviderCapability::ConversationSearch)
+    );
     assert_eq!(ProtocolMethod::ProviderInitialize.capability(), None);
 }

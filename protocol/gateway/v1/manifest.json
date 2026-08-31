@@ -61,6 +61,14 @@
       "response": { "$ref": "./schema.json#/$defs/ConversationListResponse" }
     },
     {
+      "name": "conversation.search",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "conversation.search",
+      "request": { "$ref": "./schema.json#/$defs/ConversationSearchRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ConversationSearchResponse" }
+    },
+    {
       "name": "conversation.get",
       "direction": "clientToGateway",
       "idempotency": "safe",

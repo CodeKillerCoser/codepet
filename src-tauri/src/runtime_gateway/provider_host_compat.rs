@@ -439,13 +439,14 @@ fn map_provider(provider: gateway::ProviderInstance) -> compat::Provider {
         .capabilities
         .methods
         .iter()
-        .map(|method| match method {
-            gateway::GatewayCapability::ConversationList => "conversation.list",
-            gateway::GatewayCapability::ConversationGet => "conversation.get",
-            gateway::GatewayCapability::ConversationCreate => "conversation.create",
-            gateway::GatewayCapability::TurnSend => "turn.send",
-            gateway::GatewayCapability::TurnInterrupt => "turn.interrupt",
-            gateway::GatewayCapability::ApprovalResolve => "approval.resolve",
+        .filter_map(|method| match method {
+            gateway::GatewayCapability::ConversationList => Some("conversation.list"),
+            gateway::GatewayCapability::ConversationSearch => None,
+            gateway::GatewayCapability::ConversationGet => Some("conversation.get"),
+            gateway::GatewayCapability::ConversationCreate => Some("conversation.create"),
+            gateway::GatewayCapability::TurnSend => Some("turn.send"),
+            gateway::GatewayCapability::TurnInterrupt => Some("turn.interrupt"),
+            gateway::GatewayCapability::ApprovalResolve => Some("approval.resolve"),
         })
         .map(str::to_string)
         .collect::<Vec<_>>();

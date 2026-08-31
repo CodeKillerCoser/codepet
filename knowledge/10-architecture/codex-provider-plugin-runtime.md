@@ -85,7 +85,8 @@ Codex Desktop 私有 IPC
 | `instance.stop` | 关闭同一 App Server session/process | 支持且幂等。 |
 | `instance.destroy` | 删除已停止实例 | 支持；运行中明确拒绝。 |
 | `instance.capabilities` | 返回当前真实 method/permission/model/reasoning 列表 | 支持。 |
-| `conversation.list` | `thread/list` | 支持 cursor/limit。 |
+| `conversation.list` | `thread/list` | 支持 cursor/limit；固定 `updated_at desc` 且 `useStateDbOnly=true`。 |
+| `conversation.search` | `thread/list(searchTerm)` | 支持 route-scoped cursor/limit；与 list 相同固定 `updated_at desc` 和 state DB only，不做跨 Provider 聚合或本地过滤。 |
 | `conversation.get` | `thread/read(includeTurns=true)` | 支持。 |
 | `conversation.create` | `thread/start` | 支持 permission/model/reasoning/workspace；App Server 不支持 title 或 Provider extension，传入时明确返回 `capability_unsupported`。 |
 | `turn.start` | 必要时 `thread/resume`，再 `turn/start` | 支持，保留 `clientUserMessageId`。 |

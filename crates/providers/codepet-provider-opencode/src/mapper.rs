@@ -257,6 +257,18 @@ impl OpenCodeProtocolMapper {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capabilities_do_not_advertise_unimplemented_conversation_search() {
+        assert!(!OpenCodeProtocolMapper::capabilities()
+            .methods
+            .contains(&ProviderCapability::ConversationSearch));
+    }
+}
+
 pub fn protocol_error(code: &str, message: String, retryable: bool) -> ProtocolError {
     ProtocolError {
         code: code.to_string(),

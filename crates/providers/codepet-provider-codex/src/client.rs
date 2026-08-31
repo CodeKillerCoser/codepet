@@ -1915,6 +1915,7 @@ mod tests {
                     cursor: Some("cursor-one".to_string()),
                     limit: Some(20),
                     workspace_root: Some("/work/project".to_string()),
+                    search_term: None,
                 })
                 .unwrap();
             assert_eq!(page.data.len(), 1);
@@ -1976,6 +1977,10 @@ mod tests {
         let list = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(list["method"], "thread/list");
         assert_eq!(list["params"]["cwd"], "/work/project");
+        assert_eq!(list["params"]["sortKey"], "updated_at");
+        assert_eq!(list["params"]["sortDirection"], "desc");
+        assert_eq!(list["params"]["useStateDbOnly"], true);
+        assert!(list["params"].get("searchTerm").is_none());
         peer_sender
             .send(json!({
                 "id": list["id"],
