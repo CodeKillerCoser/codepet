@@ -10,7 +10,11 @@
       "serverVersion": "0.1.4",
       "device": {
         "deviceId": "device-macbook-1",
-        "displayName": "MacBook",
+        "descriptor": {
+          "deviceName": "MacBook",
+          "operatingSystem": "macOS",
+          "systemVersion": "15.6"
+        },
         "identityFingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
       },
       "devices": [

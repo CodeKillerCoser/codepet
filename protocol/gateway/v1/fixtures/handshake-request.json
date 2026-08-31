@@ -4,7 +4,11 @@
   "method": "protocol.handshake",
   "params": {
     "clientId": "remote-client-phone-1",
-    "clientName": "CodePet Mobile",
+    "device": {
+      "deviceName": "Alice's Pixel",
+      "operatingSystem": "Android",
+      "systemVersion": "16"
+    },
     "clientVersion": "1.0.0",
     "supportedVersions": {
       "minVersion": 1,

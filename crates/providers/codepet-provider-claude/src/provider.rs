@@ -4,8 +4,9 @@ use crate::client::{
 use crate::protocol::{ClaudeOutput, ClaudeStreamDelta, ClaudeStreamEvent};
 use codepet_provider_sdk::{
     ApprovalResolveRequest, ApprovalResolveResponse, ConversationCreateRequest,
-    ConversationCreateResponse, ConversationGetRequest, ConversationGetResponse,
-    ConversationListRequest, ConversationListResponse, ConversationStatus,
+    ConversationContentKind, ConversationCreateResponse, ConversationGetRequest,
+    ConversationGetResponse, ConversationListRequest, ConversationListResponse,
+    ConversationStatus,
     ConversationUpsertedEvent, InstanceCapabilitiesRequest, InstanceCapabilitiesResponse,
     InstanceCreateRequest, InstanceCreateResponse, InstanceDestroyRequest,
     InstanceDestroyResponse, InstanceStartRequest, InstanceStartResponse, InstanceStatus,
@@ -476,11 +477,14 @@ impl ClaudeInstanceRuntime {
                     managed.conversation.updated_at = Some(now);
                     (active.turn.clone(), managed.conversation.resource.clone())
                 };
+                let item_id = format!("{turn_id}:text:{index}");
+                let content_id = format!("{item_id}:text");
                 self.publish_text_chunks(
                     &turn.resource,
                     &conversation,
-                    &format!("{turn_id}:text:{index}"),
-                    "text",
+                    &item_id,
+                    &content_id,
+                    ConversationContentKind::Text,
                     &text,
                     "text_delta",
                 )
@@ -598,15 +602,18 @@ impl ClaudeInstanceRuntime {
             .flatten()
             .filter(|value| !value.is_empty());
         if let Some(delta) = fallback {
-            let kind = if completion.status == TurnStatus::Failed {
-                "error"
+            let (kind, content_suffix) = if completion.status == TurnStatus::Failed {
+                (ConversationContentKind::ActivitySummary, "summary")
             } else {
-                "text"
+                (ConversationContentKind::Text, "text")
             };
+            let item_id = format!("{turn_id}:result");
+            let content_id = format!("{item_id}:{content_suffix}");
             if let Err(error) = self.publish_text_chunks(
                 &base_turn.resource,
                 &base_turn.conversation,
-                &format!("{turn_id}:result"),
+                &item_id,
+                &content_id,
                 kind,
                 delta,
                 "result",
@@ -655,19 +662,21 @@ impl ClaudeInstanceRuntime {
         &self,
         turn: &RoutedResourceId,
         conversation: &RoutedResourceId,
-        output_id: &str,
-        kind: &str,
+        item_id: &str,
+        content_id: &str,
+        kind: ConversationContentKind,
         text: &str,
         native_event: &str,
     ) -> Result<(), ProtocolError> {
-        for (chunk_index, chunk) in text_chunks(text).enumerate() {
+        for chunk in text_chunks(text) {
             self.events.publish(ProtocolEvent::EventTurnOutputDelta {
                 jsonrpc: "2.0".to_string(),
                 params: TurnOutputDeltaEvent {
                     turn: turn.clone(),
                     conversation: conversation.clone(),
-                    output_id: format!("{output_id}:{chunk_index}"),
-                    kind: kind.to_string(),
+                    item_id: item_id.to_string(),
+                    content_id: content_id.to_string(),
+                    kind,
                     delta: chunk.to_string(),
                     extension: Some(extension([("nativeEvent", json!(native_event))])),
                 },

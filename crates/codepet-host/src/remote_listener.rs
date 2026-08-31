@@ -351,15 +351,25 @@ async fn gateway_websocket(
         .validate_bearer(bearer)
         .map_err(RestError::authorization)?;
     let gateway = state.gateway.clone();
+    let remote_access = state.remote_access.clone();
     Ok(websocket
         .max_frame_size(MAX_WEBSOCKET_FRAME_BYTES)
         .max_message_size(MAX_WEBSOCKET_MESSAGE_BYTES)
-        .on_upgrade(move |socket| run_gateway_socket(socket, gateway, credential, registration)))
+        .on_upgrade(move |socket| {
+            run_gateway_socket(
+                socket,
+                gateway,
+                remote_access,
+                credential,
+                registration,
+            )
+        }))
 }
 
 async fn run_gateway_socket(
     socket: WebSocket,
     gateway: Arc<ProviderGatewayService>,
+    remote_access: Arc<RemoteAccessManager>,
     credential: RemoteCredential,
     mut registration: SessionRegistration,
 ) {
@@ -465,30 +475,53 @@ async fn run_gateway_socket(
                 close_frame = Some(close_message(1008, "gateway_client_identity_mismatch"));
                 break;
             }
+            let device_descriptor = params.device.clone();
+            let response_id = id.clone();
             let request = gateway::ProtocolRequest::ProtocolHandshake {
                 protocol_version,
                 id,
                 params,
             };
-            let response = tokio::select! {
+            let mut response = tokio::select! {
                 cancellation = registration.cancelled() => {
                     close_frame = Some(cancellation_close(cancellation));
                     break;
                 }
                 response = gateway::dispatch(gateway.as_ref(), request) => response,
             };
-            let succeeded = matches!(
+            let mut succeeded = matches!(
                 &response,
                 gateway::ProtocolResponse::ProtocolHandshake {
                     response: gateway::ResponsePayload::Ok { .. },
                     ..
                 }
             );
+            if succeeded {
+                if let Err(error) = remote_access.update_credential_descriptor(
+                    &credential.credential_id,
+                    device_descriptor,
+                ) {
+                    response = gateway::ProtocolResponse::ProtocolHandshake {
+                        protocol_version,
+                        id: response_id,
+                        response: gateway::ResponsePayload::Error {
+                            error: error.into_protocol_error(),
+                        },
+                    };
+                    succeeded = false;
+                    close_frame = Some(close_message(
+                        1008,
+                        "gateway_client_descriptor_persistence_failed",
+                    ));
+                }
+            }
             if !queue_json(&outbound_tx, &response, &mut registration).await {
                 break;
             }
             if !succeeded {
-                close_frame = Some(close_message(1008, "protocol_handshake_rejected"));
+                if close_frame.is_none() {
+                    close_frame = Some(close_message(1008, "protocol_handshake_rejected"));
+                }
                 break;
             }
             handshaken = true;

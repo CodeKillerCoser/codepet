@@ -1,6 +1,6 @@
 <script lang="ts">
   import { CircleHelp, Globe2, Monitor, Smartphone, Tablet, Trash2 } from "@lucide/svelte";
-  import { remoteDeviceConnectionLabel, remoteDeviceStatusMeta, type RemoteDevice } from "./remoteDevices";
+  import { remoteDeviceConnectionLabel, remoteDeviceStatusMeta, remoteDeviceSystemLabel, type RemoteDevice } from "./remoteDevices";
 
   export let devices: RemoteDevice[] = [];
   export let nowMs = Date.now();
@@ -35,8 +35,8 @@
         </span>
 
         <div class="remote-device-copy">
-          <strong>{device.clientName}</strong>
-          <span class="remote-device-platform">{device.platform || "未知平台"}</span>
+          <strong>{device.deviceName}</strong>
+          <span class="remote-device-platform">{remoteDeviceSystemLabel(device)}</span>
           <span>{remoteDeviceConnectionLabel(device, nowMs)}</span>
         </div>
 
@@ -49,7 +49,7 @@
             type="button"
             disabled={!onRevoke || revokingDeviceId === device.id || device.status === "revoked"}
             on:click={() => revoke(device)}
-            aria-label={`撤销 ${device.clientName} 的访问权限`}
+            aria-label={`撤销 ${device.deviceName} 的访问权限`}
           >
             <Trash2 size={15} /> {revokingDeviceId === device.id ? "撤销中" : "撤销访问权限"}
           </button>

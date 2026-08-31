@@ -4,7 +4,7 @@ use crate::protocol::{
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalRequestedEvent, ApprovalResolvedEvent, ApprovalStatus,
-    ConversationStatus, InstanceStatus, ProtocolError,
+    ConversationContentKind, ConversationStatus, InstanceStatus, ProtocolError,
     ProtocolEvent, ProviderApproval, ProviderCapabilities, ProviderCapability,
     ProviderConversation, ProviderInstance, ProviderInstanceRoute, ProviderTurn,
     RoutedResourceId, TurnOutputDeltaEvent, TurnStatus, TurnUpsertedEvent,
@@ -144,8 +144,9 @@ impl OpenCodeProtocolMapper {
     pub fn delta_event(
         &self,
         turn: &ProviderTurn,
-        output_id: String,
-        kind: &str,
+        item_id: String,
+        content_id: String,
+        kind: ConversationContentKind,
         delta: String,
     ) -> ProtocolEvent {
         ProtocolEvent::EventTurnOutputDelta {
@@ -153,8 +154,9 @@ impl OpenCodeProtocolMapper {
             params: TurnOutputDeltaEvent {
                 turn: turn.resource.clone(),
                 conversation: turn.conversation.clone(),
-                output_id,
-                kind: kind.to_string(),
+                item_id,
+                content_id,
+                kind,
                 delta,
                 extension: None,
             },

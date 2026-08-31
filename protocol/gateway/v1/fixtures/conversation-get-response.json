@@ -17,6 +17,196 @@
         "permissionLevel": "workspace-write",
         "updatedAt": 1787700001000
       },
+      "items": [
+        {
+          "resource": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "message-user-01"
+          },
+          "turn": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "turn-01"
+          },
+          "conversation": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "thread-01"
+          },
+          "kind": "message",
+          "status": "completed",
+          "role": "user",
+          "contents": [
+            {
+              "contentId": "message-user-01:input:0",
+              "kind": "text",
+              "text": "Show the Gateway history."
+            }
+          ]
+        },
+        {
+          "resource": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "reasoning-01"
+          },
+          "turn": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "turn-01"
+          },
+          "conversation": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "thread-01"
+          },
+          "kind": "reasoning",
+          "status": "completed",
+          "contents": [
+            {
+              "contentId": "reasoning-01:summary:0",
+              "kind": "reasoning-summary",
+              "text": "Inspecting the stored thread items."
+            }
+          ]
+        },
+        {
+          "resource": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "command-01"
+          },
+          "turn": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "turn-01"
+          },
+          "conversation": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "thread-01"
+          },
+          "kind": "command",
+          "status": "completed",
+          "title": "Run git status --short",
+          "contents": [
+            {
+              "contentId": "command-01:command",
+              "kind": "command",
+              "text": "git status --short"
+            },
+            {
+              "contentId": "command-01:output",
+              "kind": "output",
+              "text": ""
+            }
+          ]
+        },
+        {
+          "resource": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "approval-command-01"
+          },
+          "turn": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "turn-01"
+          },
+          "conversation": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "thread-01"
+          },
+          "kind": "approval",
+          "status": "approved",
+          "title": "Approve command",
+          "contents": [
+            {
+              "contentId": "approval-command-01:summary",
+              "kind": "activity-summary",
+              "text": "Run git status --short"
+            }
+          ],
+          "relatedItem": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "command-01"
+          },
+          "approval": {
+            "resource": {
+              "deviceId": "device-macbook-1",
+              "providerPluginId": "dev.codepet.codex",
+              "providerInstanceId": "codex-work",
+              "nativeResourceId": "approval-command-01"
+            },
+            "conversation": {
+              "deviceId": "device-macbook-1",
+              "providerPluginId": "dev.codepet.codex",
+              "providerInstanceId": "codex-work",
+              "nativeResourceId": "thread-01"
+            },
+            "turn": {
+              "deviceId": "device-macbook-1",
+              "providerPluginId": "dev.codepet.codex",
+              "providerInstanceId": "codex-work",
+              "nativeResourceId": "turn-01"
+            },
+            "kind": "command",
+            "title": "Approve command",
+            "description": "Run git status --short",
+            "status": "approved",
+            "decisions": ["approve", "deny"],
+            "requestedAt": 1787700000100,
+            "resolvedAt": 1787700000200,
+            "decision": "approve"
+          }
+        },
+        {
+          "resource": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "message-agent-01"
+          },
+          "turn": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "turn-01"
+          },
+          "conversation": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "thread-01"
+          },
+          "kind": "message",
+          "status": "completed",
+          "role": "assistant",
+          "contents": [
+            {
+              "contentId": "message-agent-01:text",
+              "kind": "text",
+              "text": "The committed history is ready."
+            }
+          ]
+        }
+      ],
       "snapshotCursor": "opaque-gateway-cursor-U05BUFNIT1Q"
     }
   }

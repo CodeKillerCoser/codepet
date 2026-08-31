@@ -3,5 +3,8 @@
   { "file": "initialize-response.json", "kind": "response", "name": "provider.initialize" },
   { "file": "instance-create-request.json", "kind": "request", "name": "instance.create" },
   { "file": "instance-create-response.json", "kind": "response", "name": "instance.create" },
-  { "file": "conversation-upserted-event.json", "kind": "event", "name": "event.conversationUpserted" }
+  { "file": "conversation-get-request.json", "kind": "request", "name": "conversation.get" },
+  { "file": "conversation-get-response.json", "kind": "response", "name": "conversation.get" },
+  { "file": "conversation-upserted-event.json", "kind": "event", "name": "event.conversationUpserted" },
+  { "file": "turn-output-delta-event.json", "kind": "event", "name": "event.turnOutputDelta" }
 ]

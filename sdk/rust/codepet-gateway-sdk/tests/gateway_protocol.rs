@@ -1,11 +1,23 @@
 use codepet_gateway_sdk::{
     decode_event, decode_request, decode_response, CurrentCredentialDeleteResponse,
-    PairingExchangeRequest, PairingExchangeResponse, PairingQrPayload, ProtocolEvent,
-    ProtocolRequest, ProtocolResponse, ResponsePayload,
+    ConversationContentKind, ConversationItemKind, ConversationItemRole, PairingExchangeRequest,
+    PairingExchangeResponse, PairingQrPayload, ProtocolEvent, ProtocolRequest, ProtocolResponse,
+    ResponsePayload,
 };
 
 #[test]
-fn gateway_handshake_returns_a_dedicated_remote_host_identity() {
+fn gateway_handshake_exchanges_device_descriptors() {
+    let request = decode_request(include_bytes!(
+        "../../../../protocol/gateway/v1/fixtures/handshake-request.json"
+    ))
+    .unwrap();
+    let ProtocolRequest::ProtocolHandshake { params, .. } = request else {
+        panic!("expected protocol.handshake request");
+    };
+    assert_eq!(params.device.device_name, "Alice's Pixel");
+    assert_eq!(params.device.operating_system, "Android");
+    assert_eq!(params.device.system_version, "16");
+
     let response = decode_response(include_bytes!(
         "../../../../protocol/gateway/v1/fixtures/handshake-response.json"
     ))
@@ -18,7 +30,9 @@ fn gateway_handshake_returns_a_dedicated_remote_host_identity() {
         panic!("expected successful protocol.handshake response");
     };
     assert_eq!(result.device.device_id, "device-macbook-1");
-    assert_eq!(result.device.display_name, "MacBook");
+    assert_eq!(result.device.descriptor.device_name, "MacBook");
+    assert_eq!(result.device.descriptor.operating_system, "macOS");
+    assert_eq!(result.device.descriptor.system_version, "15.6");
     assert_eq!(result.device.identity_fingerprint.len(), 64);
     assert_eq!(result.devices[0].device_id, result.device.device_id);
 }
@@ -38,13 +52,18 @@ fn gateway_lan_rest_fixtures_use_the_generated_dtos() {
     ))
     .unwrap();
     assert_eq!(request.client_id, "remote-client-phone-1");
-    assert_eq!(request.platform, "android");
+    assert_eq!(request.device.device_name, "Alice's Pixel");
+    assert_eq!(request.device.operating_system, "Android");
+    assert_eq!(request.device.system_version, "16");
 
     let response: PairingExchangeResponse = serde_json::from_slice(include_bytes!(
         "../../../../protocol/gateway/v1/fixtures/pairing-exchange-response.json"
     ))
     .unwrap();
     assert_eq!(response.device.device_id, qr.host_device_id);
+    assert_eq!(response.device.descriptor.device_name, qr.display_name);
+    assert_eq!(response.device.descriptor.operating_system, "macOS");
+    assert_eq!(response.device.descriptor.system_version, "15.6");
     assert_eq!(response.gateway_url, "wss://192.168.1.10:49152/remote/v1/gateway");
 
     let deleted: CurrentCredentialDeleteResponse = serde_json::from_slice(include_bytes!(
@@ -168,6 +187,29 @@ fn gateway_conversation_snapshots_carry_the_query_boundary_cursor() {
         result.snapshot_cursor,
         "opaque-gateway-cursor-U05BUFNIT1Q"
     );
+    assert_eq!(result.items.len(), 5);
+    assert!(result.items.iter().all(|item| {
+        item.conversation == result.conversation.resource
+    }));
+    assert_eq!(result.items[0].kind, ConversationItemKind::Message);
+    assert_eq!(result.items[0].role, Some(ConversationItemRole::User));
+    assert_eq!(
+        result.items[0].contents[0].content_id,
+        "message-user-01:input:0"
+    );
+    assert_eq!(
+        result.items[1].contents[0].kind,
+        ConversationContentKind::ReasoningSummary
+    );
+    assert_eq!(
+        result.items[3]
+            .related_item
+            .as_ref()
+            .unwrap()
+            .native_resource_id,
+        "command-01"
+    );
+    assert!(result.items[3].approval.is_some());
 
     let list = decode_response(include_bytes!(
         "../../../../protocol/gateway/v1/fixtures/conversation-list-response.json"

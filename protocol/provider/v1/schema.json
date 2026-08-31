@@ -77,10 +77,71 @@
     "ConversationGetResponse": {
       "type": "object",
       "properties": {
-        "conversation": { "$ref": "#/$defs/ProviderConversation" }
+        "conversation": { "$ref": "#/$defs/ProviderConversation" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ConversationItem" }
+        }
       },
-      "required": ["conversation"],
+      "required": ["conversation", "items"],
       "additionalProperties": false
+    },
+    "ConversationContent": {
+      "type": "object",
+      "properties": {
+        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "kind": { "$ref": "#/$defs/ConversationContentKind" },
+        "text": { "type": "string" }
+      },
+      "required": ["contentId", "kind", "text"],
+      "additionalProperties": false
+    },
+    "ConversationContentKind": {
+      "type": "string",
+      "enum": ["text", "reasoning-summary", "command", "output", "activity-summary"]
+    },
+    "ConversationItem": {
+      "type": "object",
+      "properties": {
+        "resource": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "turn": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "kind": { "$ref": "#/$defs/ConversationItemKind" },
+        "status": { "$ref": "#/$defs/ConversationItemStatus" },
+        "role": { "$ref": "#/$defs/ConversationItemRole" },
+        "title": { "type": "string", "minLength": 1 },
+        "contents": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ConversationContent" }
+        },
+        "relatedItem": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "approval": { "$ref": "#/$defs/ProviderApproval" }
+      },
+      "required": ["resource", "turn", "conversation", "kind", "status", "contents"],
+      "additionalProperties": false
+    },
+    "ConversationItemKind": {
+      "type": "string",
+      "enum": ["message", "reasoning", "command", "file-change", "tool", "approval", "unknown"]
+    },
+    "ConversationItemRole": {
+      "type": "string",
+      "enum": ["user", "assistant"]
+    },
+    "ConversationItemStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "interrupted",
+        "declined",
+        "approved",
+        "denied",
+        "expired",
+        "unknown"
+      ]
     },
     "ConversationListRequest": {
       "type": "object",
@@ -434,12 +495,13 @@
       "properties": {
         "turn": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
         "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
-        "outputId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "kind": { "type": "string", "minLength": 1 },
+        "itemId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "kind": { "$ref": "#/$defs/ConversationContentKind" },
         "delta": { "type": "string" },
         "extension": { "$ref": "#/$defs/ProviderExtension" }
       },
-      "required": ["turn", "conversation", "outputId", "kind", "delta"],
+      "required": ["turn", "conversation", "itemId", "contentId", "kind", "delta"],
       "additionalProperties": false
     },
     "TurnStartRequest": {

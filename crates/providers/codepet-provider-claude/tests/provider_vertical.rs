@@ -3,7 +3,7 @@ use codepet_provider_claude::{
     CLAUDE_INSTANCE_KIND, CLAUDE_PLUGIN_ID,
 };
 use codepet_provider_sdk::{
-    ApprovalDecision, ApprovalResolveRequest, ConversationCreateRequest,
+    ApprovalDecision, ApprovalResolveRequest, ConversationContentKind, ConversationCreateRequest,
     ConversationGetRequest, ConversationListRequest, InstanceCapabilitiesRequest,
     InstanceCreateRequest, InstanceDestroyRequest, InstanceStartRequest, InstanceStopRequest,
     JsonLineCodec, JsonObject, ProtocolEvent, ProtocolServer as ProviderProtocolServer,
@@ -210,6 +210,13 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     let first = terminal_turn(&events, &first_turn.resource.native_resource_id);
     assert_eq!(first.status, TurnStatus::Completed);
     assert_eq!(first.output, "fixture output");
+    assert_eq!(first.deltas.len(), 2);
+    for (index, delta) in first.deltas.iter().enumerate() {
+        let item_id = format!("{}:text:{index}", first_turn.resource.native_resource_id);
+        assert_eq!(delta.item_id, item_id);
+        assert_eq!(delta.content_id, format!("{item_id}:text"));
+        assert_eq!(delta.kind, ConversationContentKind::Text);
+    }
 
     let second_turn = ProviderProtocolServer::turn_start(
         provider.as_ref(),
@@ -240,6 +247,11 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     let failed = terminal_turn(&events, &failed_turn.resource.native_resource_id);
     assert_eq!(failed.status, TurnStatus::Failed);
     assert_eq!(failed.output, "Not logged in");
+    assert_eq!(failed.deltas.len(), 1);
+    let failed_item_id = format!("{}:result", failed_turn.resource.native_resource_id);
+    assert_eq!(failed.deltas[0].item_id, failed_item_id);
+    assert_eq!(failed.deltas[0].content_id, format!("{failed_item_id}:summary"));
+    assert_eq!(failed.deltas[0].kind, ConversationContentKind::ActivitySummary);
 
     let list_error = ProviderProtocolServer::conversation_list(
         provider.as_ref(),
@@ -443,6 +455,13 @@ async fn provider_chunks_two_mib_result_before_the_one_mib_provider_frame_limit(
     assert_eq!(terminal.output.len(), 2 * 1024 * 1024);
     assert!(terminal.output.bytes().all(|byte| byte == b'x'));
     assert!(terminal.max_chunk_bytes <= 64 * 1024);
+    let item_id = format!("{}:result", turn.resource.native_resource_id);
+    assert!(!terminal.deltas.is_empty());
+    assert!(terminal.deltas.iter().all(|delta| {
+        delta.item_id == item_id
+            && delta.content_id == format!("{item_id}:text")
+            && delta.kind == ConversationContentKind::Text
+    }));
 
     ProviderProtocolServer::instance_stop(
         provider.as_ref(),
@@ -980,12 +999,20 @@ struct TerminalTurn {
     status: TurnStatus,
     output: String,
     max_chunk_bytes: usize,
+    deltas: Vec<CapturedDelta>,
+}
+
+struct CapturedDelta {
+    item_id: String,
+    content_id: String,
+    kind: ConversationContentKind,
 }
 
 fn terminal_turn(events: &mpsc::Receiver<ProtocolEvent>, turn_id: &str) -> TerminalTurn {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut output = String::new();
     let mut max_chunk_bytes = 0;
+    let mut deltas = Vec::new();
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let event = events.recv_timeout(remaining).unwrap();
@@ -995,6 +1022,11 @@ fn terminal_turn(events: &mpsc::Receiver<ProtocolEvent>, turn_id: &str) -> Termi
             {
                 max_chunk_bytes = max_chunk_bytes.max(params.delta.len());
                 output.push_str(&params.delta);
+                deltas.push(CapturedDelta {
+                    item_id: params.item_id,
+                    content_id: params.content_id,
+                    kind: params.kind,
+                });
             }
             ProtocolEvent::EventTurnUpserted { params, .. }
                 if params.turn.resource.native_resource_id == turn_id
@@ -1007,6 +1039,7 @@ fn terminal_turn(events: &mpsc::Receiver<ProtocolEvent>, turn_id: &str) -> Termi
                     status: params.turn.status,
                     output,
                     max_chunk_bytes,
+                    deltas,
                 };
             }
             _ => {}

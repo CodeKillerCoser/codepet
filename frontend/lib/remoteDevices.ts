@@ -6,8 +6,9 @@ export type RemoteDeviceStatus = "online" | "offline" | "never-connected" | "rev
 
 export interface RemoteDevice {
   id: string;
-  clientName: string;
-  platform: string;
+  deviceName: string;
+  operatingSystem: string;
+  systemVersion: string;
   deviceType: RemoteDeviceType;
   status: RemoteDeviceStatus;
   lastConnectedAtMs?: number | null;
@@ -48,21 +49,29 @@ export function remoteDeviceFromClient(client: RemoteClient): RemoteDevice {
 
   return {
     id: client.credentialId,
-    clientName: client.clientName,
-    platform: client.platform,
-    deviceType: remoteDeviceTypeForPlatform(client.platform),
+    deviceName: client.descriptor.deviceName,
+    operatingSystem: client.descriptor.operatingSystem,
+    systemVersion: client.descriptor.systemVersion,
+    deviceType: remoteDeviceTypeForOperatingSystem(client.descriptor.operatingSystem),
     status,
     lastConnectedAtMs: status === "never-connected" ? null : client.lastSeenAt,
   };
 }
 
-export function remoteDeviceTypeForPlatform(platform: string): RemoteDeviceType {
-  const normalized = platform.trim().toLowerCase();
+export function remoteDeviceTypeForOperatingSystem(operatingSystem: string): RemoteDeviceType {
+  const normalized = operatingSystem.trim().toLowerCase();
   if (/ipad|tablet/.test(normalized)) return "tablet";
   if (/iphone|ios|android|phone|mobile/.test(normalized)) return "phone";
   if (/web|browser|chrome|firefox|edge|safari/.test(normalized)) return "browser";
   if (/mac|windows|win32|linux|desktop/.test(normalized)) return "desktop";
   return "unknown";
+}
+
+export function remoteDeviceSystemLabel(device: RemoteDevice): string {
+  return [device.operatingSystem, device.systemVersion]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(" ") || "未知系统";
 }
 
 export function remoteDeviceConnectionLabel(device: RemoteDevice, nowMs = Date.now()): string {

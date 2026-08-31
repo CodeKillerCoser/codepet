@@ -2,7 +2,7 @@ use crate::persistence::{
     persistence_io, protect_secret_file, write_secret_json_atomically,
 };
 use crate::{DeviceRegistry, HostError, HostResult};
-use codepet_gateway_sdk::{PairingExchangeRequest, RemoteHostIdentity};
+use codepet_gateway_sdk::{DeviceDescriptor, PairingExchangeRequest, RemoteHostIdentity};
 use codepet_provider_sdk::{ClientId, TimestampMs};
 use rcgen::{
     CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, KeyPair,
@@ -20,13 +20,14 @@ use tokio::sync::watch;
 use x509_parser::parse_x509_certificate;
 
 const LAN_TLS_IDENTITY_VERSION: u32 = 1;
-const REMOTE_CREDENTIAL_STORE_VERSION: u32 = 1;
+const REMOTE_CREDENTIAL_STORE_VERSION: u32 = 2;
 const RANDOM_SECRET_BYTES: usize = 32;
 const RANDOM_ID_BYTES: usize = 16;
 const SHA256_HEX_LENGTH: usize = 64;
 const MAX_CLIENT_ID_LENGTH: usize = 256;
-const MAX_CLIENT_NAME_LENGTH: usize = 256;
-const MAX_PLATFORM_LENGTH: usize = 128;
+const MAX_DEVICE_NAME_LENGTH: usize = 256;
+const MAX_OPERATING_SYSTEM_LENGTH: usize = 128;
+const MAX_SYSTEM_VERSION_LENGTH: usize = 128;
 const MAX_TLS_IDENTITY_FILE_BYTES: usize = 64 * 1024;
 const MAX_CREDENTIAL_STORE_FILE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_REMOTE_CREDENTIALS: usize = 4096;
@@ -133,13 +134,12 @@ struct LanTlsIdentityDocument {
 }
 
 /// Client metadata bound to every issued remote credential.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct RemoteClientIdentity {
     pub client_id: ClientId,
-    pub client_name: String,
-    pub platform: String,
+    pub descriptor: DeviceDescriptor,
 }
 
 impl RemoteClientIdentity {
@@ -149,12 +149,7 @@ impl RemoteClientIdentity {
             &self.client_id,
             MAX_CLIENT_ID_LENGTH,
         )?;
-        validate_text_field(
-            "clientName",
-            &self.client_name,
-            MAX_CLIENT_NAME_LENGTH,
-        )?;
-        validate_text_field("platform", &self.platform, MAX_PLATFORM_LENGTH)
+        validate_device_descriptor(&self.descriptor)
     }
 }
 
@@ -190,7 +185,7 @@ pub enum PairingStatusKind {
 }
 
 /// Non-secret, process-local pairing outcome retained for short-term UI queries.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct PairingStatus {
@@ -218,21 +213,20 @@ impl PairingWatchState {
 }
 
 /// Public credential metadata. Bearer hashes are never exposed through this type.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct RemoteCredential {
     pub credential_id: String,
     pub client_id: ClientId,
-    pub client_name: String,
-    pub platform: String,
+    pub descriptor: DeviceDescriptor,
     pub created_at: TimestampMs,
     pub last_seen_at: TimestampMs,
     pub revoked_at: Option<TimestampMs>,
 }
 
 /// A bearer returned exactly once after a successful pairing exchange.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct IssuedRemoteCredential {
@@ -256,8 +250,7 @@ impl Debug for IssuedRemoteCredential {
 struct StoredRemoteCredential {
     credential_id: String,
     client_id: ClientId,
-    client_name: String,
-    platform: String,
+    descriptor: DeviceDescriptor,
     bearer_sha256: String,
     created_at: TimestampMs,
     last_seen_at: TimestampMs,
@@ -269,8 +262,7 @@ impl StoredRemoteCredential {
         RemoteCredential {
             credential_id: self.credential_id.clone(),
             client_id: self.client_id.clone(),
-            client_name: self.client_name.clone(),
-            platform: self.platform.clone(),
+            descriptor: self.descriptor.clone(),
             created_at: self.created_at,
             last_seen_at: self.last_seen_at,
             revoked_at: self.revoked_at,
@@ -281,8 +273,7 @@ impl StoredRemoteCredential {
         validate_prefixed_random_id("credential", &self.credential_id)?;
         RemoteClientIdentity {
             client_id: self.client_id.clone(),
-            client_name: self.client_name.clone(),
-            platform: self.platform.clone(),
+            descriptor: self.descriptor.clone(),
         }
         .validate()?;
         validate_sha256_hex("bearerSha256", &self.bearer_sha256)?;
@@ -538,6 +529,45 @@ impl RemoteCredentialStore {
         Ok(revoked)
     }
 
+    fn update_descriptor(
+        &self,
+        credential_id: &str,
+        descriptor: DeviceDescriptor,
+    ) -> HostResult<RemoteCredential> {
+        validate_prefixed_random_id("credential", credential_id)?;
+        validate_device_descriptor(&descriptor)?;
+        let mut credentials = self
+            .credentials
+            .lock()
+            .map_err(|_| credential_store_lock_error())?;
+        let Some(existing) = credentials.get(credential_id) else {
+            return Err(HostError::new(
+                "remote_credential_not_found",
+                "Remote credential does not exist",
+            ));
+        };
+        if existing.descriptor == descriptor {
+            return Ok(existing.public());
+        }
+        let mut updated = credentials.clone();
+        let credential = updated.get_mut(credential_id).ok_or_else(|| {
+            HostError::new(
+                "remote_credential_store_unavailable",
+                "remote credential disappeared from the credential store",
+            )
+            .retryable(true)
+        })?;
+        credential.descriptor = descriptor;
+        let refreshed = credential.public();
+        persist_credentials(
+            &self.path,
+            &self.tls_certificate_fingerprint,
+            &updated,
+        )?;
+        *credentials = updated;
+        Ok(refreshed)
+    }
+
     fn issue(&self, client: RemoteClientIdentity) -> HostResult<IssuedRemoteCredential> {
         client.validate()?;
         let credential_id = random_prefixed_id("credential")?;
@@ -547,8 +577,7 @@ impl RemoteCredentialStore {
         let stored = StoredRemoteCredential {
             credential_id: credential_id.clone(),
             client_id: client.client_id,
-            client_name: client.client_name,
-            platform: client.platform,
+            descriptor: client.descriptor,
             bearer_sha256,
             created_at,
             last_seen_at: created_at,
@@ -614,6 +643,7 @@ struct PairingState {
 /// state is process-local and credentials are persisted only as SHA-256 hashes.
 pub struct RemoteAccessManager {
     device: Arc<DeviceRegistry>,
+    local_device_descriptor: DeviceDescriptor,
     tls_identity: LanTlsIdentity,
     credential_store: RemoteCredentialStore,
     pairing: Mutex<PairingState>,
@@ -626,16 +656,24 @@ impl RemoteAccessManager {
     pub fn open(
         config: RemoteAccessConfig,
         device: Arc<DeviceRegistry>,
+        local_device_descriptor: DeviceDescriptor,
     ) -> HostResult<Self> {
-        Self::open_with_clock(config, device, Arc::new(now_ms))
+        Self::open_with_clock(
+            config,
+            device,
+            local_device_descriptor,
+            Arc::new(now_ms),
+        )
     }
 
     fn open_with_clock(
         config: RemoteAccessConfig,
         device: Arc<DeviceRegistry>,
+        local_device_descriptor: DeviceDescriptor,
         clock: Clock,
     ) -> HostResult<Self> {
         config.validate()?;
+        validate_device_descriptor(&local_device_descriptor)?;
         let (tls_identity, mut diagnostics) =
             open_tls_identity(&config.tls_identity_path, clock.clone())?;
         let credential_store = RemoteCredentialStore::open_with_clock(
@@ -647,6 +685,7 @@ impl RemoteAccessManager {
         let (pairing_watch, _) = watch::channel(PairingWatchState::unavailable());
         Ok(Self {
             device,
+            local_device_descriptor,
             tls_identity,
             credential_store,
             pairing: Mutex::new(PairingState {
@@ -680,7 +719,7 @@ impl RemoteAccessManager {
         let device = self.device.identity();
         RemoteHostIdentity {
             device_id: device.device_id.clone(),
-            display_name: device.display_name.clone(),
+            descriptor: self.local_device_descriptor.clone(),
             identity_fingerprint: self.tls_identity.certificate_fingerprint.clone(),
         }
     }
@@ -767,8 +806,7 @@ impl RemoteAccessManager {
         }
         let client = RemoteClientIdentity {
             client_id: request.client_id,
-            client_name: request.client_name,
-            platform: request.platform,
+            descriptor: request.device,
         };
         client.validate()?;
         let issued = self.credential_store.issue(client)?;
@@ -952,6 +990,15 @@ impl RemoteAccessManager {
 
     pub fn list_credentials(&self) -> HostResult<Vec<RemoteCredential>> {
         self.credential_store.list()
+    }
+
+    pub fn update_credential_descriptor(
+        &self,
+        credential_id: &str,
+        descriptor: DeviceDescriptor,
+    ) -> HostResult<RemoteCredential> {
+        self.credential_store
+            .update_descriptor(credential_id, descriptor)
     }
 
     pub fn revoke_client(&self, client_id: &str) -> HostResult<Vec<RemoteCredential>> {
@@ -1254,6 +1301,24 @@ fn validate_text_field(field: &str, value: &str, maximum_length: usize) -> HostR
     Ok(())
 }
 
+fn validate_device_descriptor(descriptor: &DeviceDescriptor) -> HostResult<()> {
+    validate_text_field(
+        "deviceName",
+        &descriptor.device_name,
+        MAX_DEVICE_NAME_LENGTH,
+    )?;
+    validate_text_field(
+        "operatingSystem",
+        &descriptor.operating_system,
+        MAX_OPERATING_SYSTEM_LENGTH,
+    )?;
+    validate_text_field(
+        "systemVersion",
+        &descriptor.system_version,
+        MAX_SYSTEM_VERSION_LENGTH,
+    )
+}
+
 fn validate_prefixed_random_id(prefix: &str, value: &str) -> HostResult<()> {
     let expected_prefix = format!("{prefix}-");
     let suffix = value.strip_prefix(&expected_prefix).unwrap_or_default();
@@ -1459,10 +1524,27 @@ mod tests {
         let manager = RemoteAccessManager::open_with_clock(
             config.clone(),
             device.clone(),
+            device_descriptor("Remote Test Device", "TestOS", "1.0"),
             clock.clock(),
         )
         .unwrap();
         (config, device, manager)
+    }
+
+    fn device_descriptor(
+        device_name: &str,
+        operating_system: &str,
+        system_version: &str,
+    ) -> DeviceDescriptor {
+        DeviceDescriptor {
+            device_name: device_name.to_string(),
+            operating_system: operating_system.to_string(),
+            system_version: system_version.to_string(),
+        }
+    }
+
+    fn paired_device_descriptor(client_id: &str) -> DeviceDescriptor {
+        device_descriptor(&format!("Client {client_id}"), "TestOS", "1.0")
     }
 
     fn pair(
@@ -1479,8 +1561,7 @@ mod tests {
             .complete_pairing(&pairing_id, PairingExchangeRequest {
                 pairing_secret: session.pairing_secret,
                 client_id: client_id.to_string(),
-                client_name: format!("Client {client_id}"),
-                platform: "test".to_string(),
+                device: paired_device_descriptor(client_id),
             })
             .unwrap()
     }
@@ -1513,6 +1594,7 @@ mod tests {
         let reopened = RemoteAccessManager::open_with_clock(
             config.clone(),
             device.clone(),
+            device_descriptor("Remote Test Device", "TestOS", "1.0"),
             clock.clock(),
         )
         .unwrap();
@@ -1549,6 +1631,7 @@ mod tests {
         let recovered = RemoteAccessManager::open_with_clock(
             config.clone(),
             device,
+            device_descriptor("Remote Test Device", "TestOS", "1.0"),
             clock.clock(),
         )
         .unwrap();
@@ -1624,6 +1707,7 @@ mod tests {
         let error = RemoteAccessManager::open_with_clock(
             config,
             device,
+            device_descriptor("Symlink Test", "TestOS", "1.0"),
             clock.clock(),
         )
         .err()
@@ -1646,8 +1730,7 @@ mod tests {
         let request = PairingExchangeRequest {
             pairing_secret: session.pairing_secret.clone(),
             client_id: "client-once".to_string(),
-            client_name: "Once".to_string(),
-            platform: "ios".to_string(),
+            device: device_descriptor("Once", "iOS", "18.0"),
         };
         clock.set(u64::MAX);
         let mut wrong_request = request.clone();
@@ -1663,6 +1746,15 @@ mod tests {
                 .unwrap_err()
                 .code,
             "invalid_pairing_session"
+        );
+        let mut invalid_descriptor_request = request.clone();
+        invalid_descriptor_request.device.system_version.clear();
+        assert_eq!(
+            manager
+                .complete_pairing(&pairing_id, invalid_descriptor_request)
+                .unwrap_err()
+                .code,
+            "invalid_remote_client_identity"
         );
         let barrier = Arc::new(std::sync::Barrier::new(3));
         let attempts = (0..2)
@@ -1703,8 +1795,7 @@ mod tests {
                 .complete_pairing(&expired_pairing_id, PairingExchangeRequest {
                     pairing_secret: expired.pairing_secret,
                     client_id: "client-expired".to_string(),
-                    client_name: "Expired".to_string(),
-                    platform: "android".to_string(),
+                    device: device_descriptor("Expired", "Android", "15"),
                 })
                 .unwrap_err()
                 .code,
@@ -1714,16 +1805,20 @@ mod tests {
         clock.set(500_000);
         let lost_on_restart = manager.begin_pairing().unwrap();
         drop(manager);
-        let restarted =
-            RemoteAccessManager::open_with_clock(config, device, clock.clock()).unwrap();
+        let restarted = RemoteAccessManager::open_with_clock(
+            config,
+            device,
+            device_descriptor("Remote Test Device", "TestOS", "1.0"),
+            clock.clock(),
+        )
+        .unwrap();
         let lost_pairing_id = lost_on_restart.pairing_id;
         assert_eq!(
             restarted
                 .complete_pairing(&lost_pairing_id, PairingExchangeRequest {
                     pairing_secret: lost_on_restart.pairing_secret,
                     client_id: "client-restart".to_string(),
-                    client_name: "Restart".to_string(),
-                    platform: "android".to_string(),
+                    device: device_descriptor("Restart", "Android", "15"),
                 })
                 .unwrap_err()
                 .code,
@@ -1735,6 +1830,82 @@ mod tests {
                 .unwrap_err()
                 .code,
             "pairing_session_not_found"
+        );
+    }
+
+    #[test]
+    fn remote_device_descriptor_persists_refreshes_and_rejects_v1_store() {
+        let directory = tempfile::tempdir().unwrap();
+        let clock = TestClock::new(1_000);
+        let (config, device, manager) = open_manager(directory.path(), &clock);
+        let issued = pair(&manager, "descriptor-client");
+        assert_eq!(
+            issued.credential.descriptor,
+            paired_device_descriptor("descriptor-client")
+        );
+
+        let refreshed = device_descriptor("Renamed Device", "TestOS", "2.0");
+        assert_eq!(
+            manager
+                .update_credential_descriptor(
+                    &issued.credential.credential_id,
+                    refreshed.clone(),
+                )
+                .unwrap()
+                .descriptor,
+            refreshed
+        );
+        let persisted_after_refresh =
+            fs::read_to_string(&config.credential_store_path).unwrap();
+        manager
+            .update_credential_descriptor(
+                &issued.credential.credential_id,
+                refreshed.clone(),
+            )
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(&config.credential_store_path).unwrap(),
+            persisted_after_refresh
+        );
+        drop(manager);
+
+        let reopened = RemoteAccessManager::open_with_clock(
+            config.clone(),
+            device.clone(),
+            device_descriptor("Remote Test Device", "TestOS", "1.0"),
+            clock.clock(),
+        )
+        .unwrap();
+        assert_eq!(
+            reopened.list_credentials().unwrap()[0].descriptor,
+            refreshed
+        );
+        drop(reopened);
+
+        let mut legacy_document: serde_json::Value = serde_json::from_slice(
+            &fs::read(&config.credential_store_path).unwrap(),
+        )
+        .unwrap();
+        legacy_document["version"] = serde_json::json!(1);
+        fs::write(
+            &config.credential_store_path,
+            serde_json::to_vec_pretty(&legacy_document).unwrap(),
+        )
+        .unwrap();
+        let reset = RemoteAccessManager::open_with_clock(
+            config,
+            device,
+            device_descriptor("Remote Test Device", "TestOS", "1.0"),
+            clock.clock(),
+        )
+        .unwrap();
+        assert!(reset.list_credentials().unwrap().is_empty());
+        assert_eq!(
+            reset.diagnostics()
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["remote_credentials_rebuilt"]
         );
     }
 
@@ -1802,8 +1973,7 @@ mod tests {
                 PairingExchangeRequest {
                     pairing_secret: succeeded_session.pairing_secret,
                     client_id: "status-client".to_string(),
-                    client_name: "Status Client".to_string(),
-                    platform: "test".to_string(),
+                    device: device_descriptor("Status Client", "TestOS", "1.0"),
                 },
             )
             .unwrap();
@@ -1827,6 +1997,10 @@ mod tests {
         let persisted = fs::read_to_string(&config.credential_store_path).unwrap();
         assert!(!persisted.contains(&current.bearer_token));
         assert!(persisted.contains(&sha256_hex(current.bearer_token.as_bytes())));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&persisted).unwrap()["version"],
+            REMOTE_CREDENTIAL_STORE_VERSION
+        );
 
         clock.set(2_000);
         let validated = manager.validate_bearer(&current.bearer_token).unwrap();
@@ -1891,8 +2065,10 @@ mod tests {
             })
             .unwrap();
         assert_eq!(persisted_current.client_id, "client-current");
-        assert_eq!(persisted_current.client_name, "Client client-current");
-        assert_eq!(persisted_current.platform, "test");
+        assert_eq!(
+            persisted_current.descriptor,
+            paired_device_descriptor("client-current")
+        );
         assert_eq!(persisted_current.last_seen_at, 2_000);
         assert_eq!(persisted_current.revoked_at, Some(2_000));
         assert_eq!(

@@ -2,7 +2,9 @@ use codepet_provider_sdk::{
     dispatch, ApprovalDecision, ApprovalResolveRequest, ApprovalResolveResponse, ApprovalStatus,
     ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
     ConversationGetResponse, ConversationListRequest, ConversationListResponse,
-    ConversationStatus, ConversationUpsertedEvent, InstanceCapabilitiesRequest,
+    ConversationContent, ConversationContentKind, ConversationItem, ConversationItemKind,
+    ConversationItemRole, ConversationItemStatus, ConversationStatus, ConversationUpsertedEvent,
+    InstanceCapabilitiesRequest,
     InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceCreateResponse,
     InstanceDestroyRequest, InstanceDestroyResponse, InstanceStartRequest,
     InstanceStartResponse, InstanceStatus, InstanceStopRequest, InstanceStopResponse,
@@ -221,6 +223,7 @@ impl ProtocolServer for FakeProvider {
             }
             Ok(ConversationGetResponse {
                 conversation: configured,
+                items: history_items(&response_route, native_id),
             })
         })
     }
@@ -447,8 +450,9 @@ async fn main() {
                         params: TurnOutputDeltaEvent {
                             turn: resource(&route, "turn-event-first"),
                             conversation: resource(&route, conversation_id),
-                            output_id: "output-1".to_string(),
-                            kind: "text".to_string(),
+                            item_id: "output-1".to_string(),
+                            content_id: "output-1:text".to_string(),
+                            kind: ConversationContentKind::Text,
                             delta: "hello".to_string(),
                             extension: None,
                         },
@@ -606,6 +610,54 @@ fn conversation(route: &ProviderInstanceRoute, native_id: &str) -> ProviderConve
         active_turn: None,
         extension: None,
     }
+}
+
+fn history_items(route: &ProviderInstanceRoute, native_id: &str) -> Vec<ConversationItem> {
+    let turn = resource(route, &format!("{native_id}-turn"));
+    let conversation = resource(
+        route,
+        if native_id == "response-wrong-item-conversation" {
+            "different-thread"
+        } else {
+            native_id
+        },
+    );
+    let user_item_id = format!("{native_id}-user");
+    let assistant_item_id = format!("{native_id}-assistant");
+    vec![
+        ConversationItem {
+            resource: resource(route, &user_item_id),
+            turn: turn.clone(),
+            conversation: conversation.clone(),
+            kind: ConversationItemKind::Message,
+            status: ConversationItemStatus::Completed,
+            role: Some(ConversationItemRole::User),
+            title: None,
+            contents: vec![ConversationContent {
+                content_id: format!("{user_item_id}:input:0"),
+                kind: ConversationContentKind::Text,
+                text: "fixture user message".to_string(),
+            }],
+            related_item: None,
+            approval: None,
+        },
+        ConversationItem {
+            resource: resource(route, &assistant_item_id),
+            turn,
+            conversation,
+            kind: ConversationItemKind::Message,
+            status: ConversationItemStatus::Completed,
+            role: Some(ConversationItemRole::Assistant),
+            title: None,
+            contents: vec![ConversationContent {
+                content_id: format!("{assistant_item_id}:text"),
+                kind: ConversationContentKind::Text,
+                text: "fixture assistant message".to_string(),
+            }],
+            related_item: None,
+            approval: None,
+        },
+    ]
 }
 
 fn turn(

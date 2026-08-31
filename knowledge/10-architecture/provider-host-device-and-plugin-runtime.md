@@ -48,7 +48,7 @@ Tauri Catalog 合并以下目录来源：
 
 `RemoteAccessConfig::for_data_directory` 在调用方指定的 App 数据目录下使用 `lan-tls-identity.json` 与 `remote-credentials.json`。`RemoteAccessManager` 持有 `Arc<DeviceRegistry>` 并只转发其 identity；它不生成、复制或持久化第二份 `deviceId/displayName`。TLS 文件包含 leaf certificate DER 与 PKCS#8 private key DER，Unix 原子替换后的权限为 `0600`；证书 SHA-256 指纹使用 64 位小写 hex。载入时会校验证书 DER、自签签名、私钥 DER、证书/私钥匹配与 checksum，损坏文件先隔离为 `.corrupt-<timestamp>` 再重建。
 
-远程 credential 文档绑定当前 TLS certificate fingerprint。TLS identity 丢失、损坏或变化时，旧 credential 文档会被隔离并重建为空，因此必须重新配对。credential 记录只保存 opaque 256-bit bearer 的 SHA-256，不保存 bearer 本身；同时保存 `credentialId/clientId/clientName/platform/createdAt/lastSeenAt/revokedAt`。配对 session 只存在于 Host 内存：本地显式开启后生成随机 pairing id 与 32-byte secret，五分钟过期，重启即失效，并在一次成功 credential 交换后由同一互斥区原子作废。
+远程 credential 文档绑定当前 TLS certificate fingerprint。TLS identity 丢失、损坏或变化时，旧 credential 文档会被隔离并重建为空，因此必须重新配对。credential store v2 只保存 opaque 256-bit bearer 的 SHA-256，不保存 bearer 本身；每条记录保存 `credentialId/clientId/descriptor/createdAt/lastSeenAt/revokedAt`，descriptor 使用 Gateway 生成的 `deviceName/operatingSystem/systemVersion`。旧 v1 文档不做字段兼容，会被隔离并要求重新配对。pairing 成功写入初始 descriptor；同一 credential 的已认证 handshake 在发送成功响应前原子刷新 descriptor，相同值不重写文件。配对 session 只存在于 Host 内存：本地显式开启后生成随机 pairing id 与 32-byte secret，五分钟过期，重启即失效，并在一次成功 credential 交换后由同一互斥区原子作废。
 
 Catalog 只接受目录，不接受运行时 descriptor 注入。每个目录可包含根 `codepet-provider.json`、子目录中的 `codepet-provider.json`，或 `*.codepet-provider.json`。`read_dir` 的目录错误和逐项读取错误都会形成诊断；不会静默丢弃条目。相对 executable 按 manifest 所在目录解析。
 

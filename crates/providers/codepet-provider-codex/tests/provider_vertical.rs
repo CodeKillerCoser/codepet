@@ -152,6 +152,40 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         fetched.conversation.resource.native_resource_id,
         "thread-listed"
     );
+    assert_eq!(
+        fetched
+            .items
+            .iter()
+            .map(|item| item.resource.native_resource_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "user-one",
+            "agent-one",
+            "reasoning-one",
+            "command-one",
+            "file-one",
+            "mcp-one",
+            "dynamic-one",
+            "unknown-one"
+        ]
+    );
+    assert_eq!(fetched.items[0].contents[0].content_id, "user-one:input:0");
+    assert_eq!(
+        fetched.items[2].contents[0].content_id,
+        "reasoning-one:summary:0"
+    );
+    assert_eq!(
+        fetched.items[7].kind,
+        codepet_provider_sdk::ConversationItemKind::Unknown
+    );
+    assert!(fetched.items.iter().all(|item| {
+        item.kind != codepet_provider_sdk::ConversationItemKind::Approval
+    }));
+    let fetched_json = serde_json::to_string(&fetched).unwrap();
+    assert!(!fetched_json.contains("private raw reasoning"));
+    assert!(!fetched_json.contains("must not escape"));
+    assert!(!fetched_json.contains("data:image/png"));
+    assert!(!fetched_json.contains("private-a"));
 
     let unsupported_title = ProviderProtocolServer::conversation_create(
         &provider,
@@ -203,7 +237,9 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         let event = event_receiver.recv_timeout(Duration::from_secs(2)).unwrap();
         match event {
             ProtocolEvent::EventTurnOutputDelta { params, .. } => {
-                saw_delta = params.delta == "fixture output";
+                saw_delta = params.delta == "fixture output"
+                    && params.item_id == "agent-one"
+                    && params.content_id == "agent-one:text";
             }
             ProtocolEvent::EventApprovalRequested { params, .. } => {
                 approval = Some(params.approval);
@@ -243,6 +279,59 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     assert!(saw_resolved_event);
     wait_for_file(&marker).await;
     assert_eq!(std::fs::read_to_string(&marker).unwrap(), "accept");
+
+    let active_history = ProviderProtocolServer::conversation_get(
+        &provider,
+        ConversationGetRequest {
+            conversation: conversation.resource.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    let agent = active_history
+        .items
+        .iter()
+        .find(|item| item.resource.native_resource_id == "agent-one")
+        .unwrap();
+    let reasoning = active_history
+        .items
+        .iter()
+        .find(|item| item.resource.native_resource_id == "reasoning-one")
+        .unwrap();
+    let command = active_history
+        .items
+        .iter()
+        .find(|item| item.resource.native_resource_id == "command-one")
+        .unwrap();
+    let approval_item = active_history
+        .items
+        .iter()
+        .find(|item| item.kind == codepet_provider_sdk::ConversationItemKind::Approval)
+        .unwrap();
+    assert!(agent.contents.is_empty());
+    assert!(reasoning.contents.is_empty());
+    assert_eq!(command.contents.len(), 1);
+    assert_eq!(
+        approval_item.status,
+        codepet_provider_sdk::ConversationItemStatus::Approved
+    );
+    assert_eq!(
+        approval_item
+            .related_item
+            .as_ref()
+            .unwrap()
+            .native_resource_id,
+        "command-one"
+    );
+    assert_eq!(
+        approval_item
+            .approval
+            .as_ref()
+            .unwrap()
+            .resource
+            .native_resource_id,
+        resolved_approval_id
+    );
 
     let steered = ProviderProtocolServer::turn_steer(
         &provider,
@@ -352,7 +441,7 @@ fn provider_binary_rejects_stale_approval_when_app_server_request_id_is_reused()
         "turn-second",
         "turn.start",
         json!({
-            "conversation": second_conversation,
+            "conversation": second_conversation.clone(),
             "clientMessageId": "message-second",
             "message": "second session"
         }),
@@ -366,6 +455,23 @@ fn provider_binary_rejects_stale_approval_when_app_server_request_id_is_reused()
     assert_ne!(
         first_approval["nativeResourceId"],
         second_approval["nativeResourceId"]
+    );
+    let history = provider.request(
+        "history-second",
+        "conversation.get",
+        json!({ "conversation": second_conversation }),
+    );
+    let approval_items = history
+        .pointer("/result/items")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .filter(|item| item.get("kind").and_then(Value::as_str) == Some("approval"))
+        .collect::<Vec<_>>();
+    assert_eq!(approval_items.len(), 1);
+    assert_eq!(
+        approval_items[0].pointer("/resource/nativeResourceId"),
+        second_approval.get("nativeResourceId")
     );
     let stale = provider.request(
         "resolve-stale",

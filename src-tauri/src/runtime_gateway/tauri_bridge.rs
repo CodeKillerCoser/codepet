@@ -12,6 +12,7 @@ use crate::agent_runtime::{
     CODEX_RUNTIME_PROVIDER_ID, OPENCODE_RUNTIME_PROVIDER_ID,
 };
 use crate::settings::{configured_app_data_dir, load_app_settings};
+use codepet_gateway_sdk::DeviceDescriptor;
 use codepet_host::{
     DeviceRegistry, HostError, PluginCatalog, PluginCatalogConfig, PluginManager,
     PluginManagerConfig, ProviderGatewayService, ProviderInstanceRegistry,
@@ -443,9 +444,11 @@ fn configured_provider_runtime(
         provider_host_directory.join("provider-instances.json"),
         device.identity().device_id.clone(),
     )?;
+    let local_device_descriptor = local_device_descriptor(&device.identity().display_name);
     let remote_access = Arc::new(RemoteAccessManager::open(
         RemoteAccessConfig::for_data_directory(data_directory.join("remote-access")),
         device.clone(),
+        local_device_descriptor,
     )?);
     let manager = Arc::new(PluginManager::with_device_registry(
         device,
@@ -458,6 +461,32 @@ fn configured_provider_runtime(
         remote_access.remote_host_identity(),
     )?);
     Ok((manager, gateway, remote_access))
+}
+
+fn local_device_descriptor(device_name: &str) -> DeviceDescriptor {
+    let info = os_info::get();
+    let operating_system = match info.os_type() {
+        os_info::Type::Unknown => std::env::consts::OS.to_string(),
+        os_type => os_type.to_string(),
+    };
+    let system_version = match info.version() {
+        os_info::Version::Unknown => "unknown".to_string(),
+        version => version.to_string(),
+    };
+    DeviceDescriptor {
+        device_name: device_name.to_string(),
+        operating_system: non_empty_system_value(operating_system, std::env::consts::OS),
+        system_version: non_empty_system_value(system_version, "unknown"),
+    }
+}
+
+fn non_empty_system_value(value: String, fallback: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("unknown") {
+        fallback.to_string()
+    } else {
+        value.to_string()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -690,8 +719,9 @@ fn start_local_event_bridge<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::{
-        inject_runtime_executable, provider_catalog_config, spawn_provider_host_startup,
-        ProviderGatewayService, ProviderHostState,
+        inject_runtime_executable, local_device_descriptor, non_empty_system_value,
+        provider_catalog_config, spawn_provider_host_startup, ProviderGatewayService,
+        ProviderHostState,
     };
     use crate::agent_runtime::{
         AgentRuntime, AgentRuntimeSource, AgentRuntimeStatus, CLAUDE_RUNTIME_PROVIDER_ID,
@@ -707,6 +737,22 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::Barrier;
+
+    #[test]
+    fn local_device_descriptor_has_stable_name_and_non_empty_system_fields() {
+        let descriptor = local_device_descriptor("Test Device");
+        assert_eq!(descriptor.device_name, "Test Device");
+        assert!(!descriptor.operating_system.trim().is_empty());
+        assert!(!descriptor.system_version.trim().is_empty());
+        assert_eq!(
+            non_empty_system_value("Unknown".to_string(), "fallback"),
+            "fallback"
+        );
+        assert_eq!(
+            non_empty_system_value("  value  ".to_string(), "fallback"),
+            "value"
+        );
+    }
 
     #[test]
     fn provider_host_startup_enters_tauri_runtime_before_gateway_forwarding() {

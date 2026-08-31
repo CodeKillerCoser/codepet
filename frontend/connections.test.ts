@@ -31,7 +31,8 @@ describe("connections workspace", () => {
     expect(deviceListSource).toContain("export let devices: RemoteDevice[] = [];");
     expect(deviceListSource).toContain("export let onRevoke:");
     expect(deviceListSource).toContain("remoteDeviceStatusMeta(device.status)");
-    expect(deviceListSource).toContain("{device.platform");
+    expect(deviceListSource).toContain("{device.deviceName}");
+    expect(deviceListSource).toContain("remoteDeviceSystemLabel(device)");
     expect(deviceListSource).toContain("撤销访问权限");
     expect(appSource).toContain("await revokeRemoteCredential(device.id)");
     expect(appSource).toContain("applyRemoteClientSnapshot(await listRemoteClients())");

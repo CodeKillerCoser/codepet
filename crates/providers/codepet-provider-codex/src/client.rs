@@ -1,9 +1,10 @@
 use super::protocol::{
     permission_from_sandbox, thread_list_params, thread_start_params, turn_start_params,
-    turn_steer_params, CodexAppServerError, CodexApprovalKind, CodexApprovalRequest,
+    turn_steer_params, output_content_id, reasoning_summary_content_id, text_content_id,
+    CodexAppServerError, CodexApprovalKind, CodexApprovalRequest, CodexContentKind,
     CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexThreadListRequest,
     CodexThreadPage, CodexThreadStartRequest, CodexTurn,
-    CodexTurnStartRequest, CodexTurnSteerRequest, CommandApprovalParams, FileApprovalParams,
+    CodexTurnItemsView, CodexTurnStartRequest, CodexTurnSteerRequest, CommandApprovalParams, FileApprovalParams,
     InitializeResponse, JsonRpcId, ThreadConfiguredResponse, ThreadListResponse,
     ThreadReadResponse, TurnResponse, TurnSteerResponse,
 };
@@ -527,6 +528,17 @@ impl CodexAppServerSession {
             "thread/read",
             json!({ "threadId": thread_id, "includeTurns": true }),
         )?;
+        if let Some(turn) = response
+            .thread
+            .turns
+            .iter()
+            .find(|turn| turn.items_view != CodexTurnItemsView::Full)
+        {
+            return Err(CodexAppServerError::Protocol(format!(
+                "thread/read returned non-full items for turn {}",
+                turn.id
+            )));
+        }
         Ok(snapshot_from_thread(response.thread))
     }
 
@@ -1215,22 +1227,31 @@ fn parse_notification(
             turn: deserialize_field(&params, "turn")?,
         }),
         "item/agentMessage/delta"
+        | "item/plan/delta"
         | "item/commandExecution/outputDelta"
         | "item/fileChange/outputDelta"
-        | "item/reasoning/textDelta"
         | "item/reasoning/summaryTextDelta" => {
-            let kind = match method {
-                "item/agentMessage/delta" => "assistant-message",
-                "item/commandExecution/outputDelta" => "command-output",
-                "item/fileChange/outputDelta" => "file-change-output",
-                _ => "reasoning",
+            let item_id = required_string(&params, "itemId")?;
+            let (content_id, kind) = match method {
+                "item/agentMessage/delta" | "item/plan/delta" => {
+                    (text_content_id(&item_id), CodexContentKind::Text)
+                }
+                "item/reasoning/summaryTextDelta" => {
+                    let summary_index = required_usize(&params, "summaryIndex")?;
+                    (
+                        reasoning_summary_content_id(&item_id, summary_index),
+                        CodexContentKind::ReasoningSummary,
+                    )
+                }
+                _ => (output_content_id(&item_id), CodexContentKind::Output),
             };
             Ok(CodexNotification::OutputDelta {
                 native_method: method.to_string(),
                 thread_id: required_string(&params, "threadId")?,
                 turn_id: required_string(&params, "turnId")?,
-                item_id: required_string(&params, "itemId")?,
-                kind: kind.to_string(),
+                item_id,
+                content_id,
+                kind,
                 delta: required_string(&params, "delta")?,
             })
         }
@@ -1251,6 +1272,14 @@ fn required_string(value: &Value, key: &str) -> Result<String, CodexAppServerErr
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+        .ok_or_else(|| CodexAppServerError::Protocol(format!("message is missing {key}")))
+}
+
+fn required_usize(value: &Value, key: &str) -> Result<usize, CodexAppServerError> {
+    value
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
         .ok_or_else(|| CodexAppServerError::Protocol(format!("message is missing {key}")))
 }
 
@@ -1648,6 +1677,80 @@ mod tests {
         assert_eq!(response["error"]["code"], -32601);
         assert!(response.get("jsonrpc").is_none());
         assert!(session.is_running());
+        session.shutdown().unwrap();
+    }
+
+    #[test]
+    fn output_delta_uses_channel_specific_content_ids_and_ignores_raw_reasoning() {
+        let summary = parse_notification(
+            "item/reasoning/summaryTextDelta",
+            json!({
+                "threadId": "thread-one",
+                "turnId": "turn-one",
+                "itemId": "reasoning-one",
+                "summaryIndex": 2,
+                "delta": "summary"
+            }),
+            "generation-one",
+        )
+        .unwrap();
+        assert!(matches!(
+            summary,
+            CodexNotification::OutputDelta {
+                item_id,
+                content_id,
+                kind: CodexContentKind::ReasoningSummary,
+                ..
+            } if item_id == "reasoning-one" && content_id == "reasoning-one:summary:2"
+        ));
+
+        let raw = parse_notification(
+            "item/reasoning/textDelta",
+            json!({
+                "threadId": "thread-one",
+                "turnId": "turn-one",
+                "itemId": "reasoning-one",
+                "contentIndex": 0,
+                "delta": "private raw reasoning"
+            }),
+            "generation-one",
+        )
+        .unwrap();
+        assert!(matches!(
+            raw,
+            CodexNotification::Unknown { method }
+                if method == "item/reasoning/textDelta"
+        ));
+    }
+
+    #[test]
+    fn thread_read_rejects_non_full_turn_items() {
+        let (session, peer_receiver, peer_sender) = mock_session();
+        let request_session = session.clone();
+        let request = thread::spawn(move || request_session.thread_read("thread-one"));
+        let read = peer_receiver.recv().unwrap();
+        let mut turn = turn_fixture("turn-one", "completed");
+        turn["itemsView"] = json!("summary");
+        peer_sender
+            .send(json!({
+                "id": read["id"],
+                "result": {
+                    "thread": thread_fixture(
+                        "thread-one",
+                        "/tmp/project",
+                        "idle",
+                        vec![turn]
+                    )
+                }
+            }))
+            .unwrap();
+
+        let error = request.join().unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            CodexAppServerError::Protocol(message)
+                if message.contains("non-full items for turn turn-one")
+        ));
         session.shutdown().unwrap();
     }
 

@@ -1,7 +1,7 @@
 use codepet_gateway_sdk::{
     ConversationGetRequest as GatewayConversationGetRequest,
-    ConversationListRequest as GatewayConversationListRequest, EventSubscribeRequest,
-    HandshakeRequest,
+    ConversationListRequest as GatewayConversationListRequest, DeviceDescriptor,
+    EventSubscribeRequest, HandshakeRequest,
     ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
     ProtocolResponse as GatewayResponse, ProtocolServer as GatewayProtocolServer,
     ProviderListRequest, RemoteHostIdentity, ResponsePayload,
@@ -151,13 +151,21 @@ fn event_cursor_sequence(cursor: &str) -> u64 {
 fn handshake_request() -> HandshakeRequest {
     HandshakeRequest {
         client_id: "remote-client-handshake".to_string(),
-        client_name: "Remote Test".to_string(),
+        device: device_descriptor("Remote Test"),
         client_version: "1.0.0".to_string(),
         supported_versions: VersionRange {
             min_version: codepet_gateway_sdk::PROTOCOL_VERSION,
             max_version: codepet_gateway_sdk::PROTOCOL_VERSION,
         },
         last_event_cursor: None,
+    }
+}
+
+fn device_descriptor(name: &str) -> DeviceDescriptor {
+    DeviceDescriptor {
+        device_name: name.to_string(),
+        operating_system: "Test OS".to_string(),
+        system_version: "1.0".to_string(),
     }
 }
 
@@ -180,7 +188,7 @@ async fn gateway_handshake_returns_the_transport_injected_remote_host_identity()
     let manager = build_manager("device-handshake", Vec::new());
     let device = RemoteHostIdentity {
         device_id: "device-handshake".to_string(),
-        display_name: "Device device-handshake".to_string(),
+        descriptor: device_descriptor("Device device-handshake"),
         identity_fingerprint: "a".repeat(64),
     };
     let gateway =
@@ -205,7 +213,7 @@ async fn gateway_remote_identity_rejects_noncanonical_or_zero_fingerprints() {
             manager.clone(),
             RemoteHostIdentity {
                 device_id: "device-invalid-remote-identity".to_string(),
-                display_name: "Device device-invalid-remote-identity".to_string(),
+                descriptor: device_descriptor("Device device-invalid-remote-identity"),
                 identity_fingerprint: fingerprint,
             },
         ) {
@@ -219,7 +227,7 @@ async fn gateway_remote_identity_rejects_noncanonical_or_zero_fingerprints() {
         manager.clone(),
         RemoteHostIdentity {
             device_id: "device-invalid-remote-identity".to_string(),
-            display_name: "Device device-invalid-remote-identity".to_string(),
+            descriptor: device_descriptor("Device device-invalid-remote-identity"),
             identity_fingerprint: "b".repeat(64),
         },
     )
@@ -365,6 +373,19 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
     assert_eq!(
         response.conversation.resource.provider_instance_id,
         "instance-a1"
+    );
+    assert_eq!(response.items.len(), 2);
+    assert_eq!(
+        response.items[0].resource.native_resource_id,
+        "event-first-user"
+    );
+    assert_eq!(
+        response.items[0].contents[0].content_id,
+        "event-first-user:input:0"
+    );
+    assert_eq!(
+        response.items[1].contents[0].content_id,
+        "event-first-assistant:text"
     );
     let response = gateway
         .conversation_get(GatewayConversationGetRequest {
@@ -917,6 +938,21 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
                 | "provider_resource_route_mismatch"
         ));
     }
+    let wrong_history_conversation = manager
+        .conversation_get(ConversationGetRequest {
+            conversation: resource(
+                "device-identity",
+                "dev.codepet.identity",
+                "instance-identity",
+                "response-wrong-item-conversation",
+            ),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(
+        wrong_history_conversation.code,
+        "provider_resource_identity_mismatch"
+    );
     let empty_native = manager
         .conversation_get(ConversationGetRequest {
             conversation: resource(

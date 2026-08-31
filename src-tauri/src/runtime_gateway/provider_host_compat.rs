@@ -151,8 +151,8 @@ impl CompatProviderGateway {
                         provider_id: payload.turn.provider_instance_id.clone(),
                         conversation_id: payload.conversation.native_resource_id,
                         turn_id: payload.turn.native_resource_id,
-                        output_id: payload.output_id,
-                        kind: payload.kind,
+                        output_id: payload.content_id,
+                        kind: map_content_kind(payload.kind).to_string(),
                         delta: payload.delta,
                         extension: Some(route),
                     },
@@ -182,6 +182,16 @@ impl CompatProviderGateway {
             },
         };
         Ok(Some(mapped))
+    }
+}
+
+fn map_content_kind(kind: gateway::ConversationContentKind) -> &'static str {
+    match kind {
+        gateway::ConversationContentKind::Text => "text",
+        gateway::ConversationContentKind::ReasoningSummary => "reasoning-summary",
+        gateway::ConversationContentKind::Command => "command",
+        gateway::ConversationContentKind::Output => "output",
+        gateway::ConversationContentKind::ActivitySummary => "activity-summary",
     }
 }
 

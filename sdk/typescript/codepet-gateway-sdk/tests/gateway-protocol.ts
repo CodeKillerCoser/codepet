@@ -1,15 +1,21 @@
 import type {
   CurrentCredentialDeleteResponse,
+  ConversationGetResponse,
   HandshakeRequest,
   HandshakeResponse,
   PairingExchangeRequest,
   PairingExchangeResponse,
   PairingQrPayload,
+  TurnOutputDeltaEvent,
 } from "../src/generated";
 
 const client: HandshakeRequest = {
   clientId: "remote-client-phone-1",
-  clientName: "CodePet Mobile",
+  device: {
+    deviceName: "Alice's Pixel",
+    operatingSystem: "Android",
+    systemVersion: "16",
+  },
   clientVersion: "1.0.0",
   supportedVersions: { minVersion: 1, maxVersion: 1 },
 };
@@ -28,8 +34,7 @@ const qr: PairingQrPayload = {
 const exchange: PairingExchangeRequest = {
   pairingSecret: qr.pairingSecret,
   clientId: client.clientId,
-  clientName: client.clientName,
-  platform: "android",
+  device: client.device,
 };
 
 const handshake: HandshakeResponse = {
@@ -38,7 +43,11 @@ const handshake: HandshakeResponse = {
   serverVersion: "0.1.4",
   device: {
     deviceId: qr.hostDeviceId,
-    displayName: qr.displayName,
+    descriptor: {
+      deviceName: qr.displayName,
+      operatingSystem: "macOS",
+      systemVersion: "15.6",
+    },
     identityFingerprint: qr.certSha256,
   },
   devices: [],
@@ -54,4 +63,46 @@ const exchangeResponse: PairingExchangeResponse = {
 
 const deleted: CurrentCredentialDeleteResponse = { revoked: true };
 
-void [exchange, exchangeResponse, deleted];
+const history: ConversationGetResponse["items"] = [
+  {
+    resource: {
+      deviceId: "device-macbook-1",
+      providerPluginId: "dev.codepet.codex",
+      providerInstanceId: "codex-work",
+      nativeResourceId: "message-agent-01",
+    },
+    turn: {
+      deviceId: "device-macbook-1",
+      providerPluginId: "dev.codepet.codex",
+      providerInstanceId: "codex-work",
+      nativeResourceId: "turn-01",
+    },
+    conversation: {
+      deviceId: "device-macbook-1",
+      providerPluginId: "dev.codepet.codex",
+      providerInstanceId: "codex-work",
+      nativeResourceId: "thread-01",
+    },
+    kind: "message",
+    status: "completed",
+    role: "assistant",
+    contents: [
+      {
+        contentId: "message-agent-01:text",
+        kind: "text",
+        text: "Committed assistant text",
+      },
+    ],
+  },
+];
+
+const delta: TurnOutputDeltaEvent = {
+  turn: history[0].turn,
+  conversation: history[0].conversation,
+  itemId: history[0].resource.nativeResourceId,
+  contentId: history[0].contents[0].contentId,
+  kind: history[0].contents[0].kind,
+  delta: " delta",
+};
+
+void [exchange, exchangeResponse, deleted, history, delta];

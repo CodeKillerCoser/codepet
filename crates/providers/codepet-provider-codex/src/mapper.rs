@@ -1,14 +1,18 @@
 use crate::protocol::{
-    CodexAppServerError, CodexApprovalRequest, CodexConversationSnapshot, CodexIncoming,
-    CodexNotification, CodexPermissionLevel, CodexThreadActiveFlag, CodexThreadStatus,
-    CodexTurn, CodexTurnStatus, CODEX_EXTENSION_NAMESPACE,
+    activity_summary_content_id, command_content_id, output_content_id,
+    reasoning_summary_content_id, text_content_id, user_input_content_id,
+    CodexAppServerError, CodexApprovalRequest, CodexContentKind, CodexConversationSnapshot,
+    CodexIncoming, CodexNotification, CodexPermissionLevel, CodexThreadActiveFlag,
+    CodexThreadItem, CodexThreadStatus, CodexTurn, CodexTurnStatus, CODEX_EXTENSION_NAMESPACE,
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalRequestedEvent, ApprovalResolvedEvent, ApprovalStatus,
-    ConversationStatus, ConversationUpsertedEvent, InstanceStatus, JsonObject, ProtocolError,
-    ProtocolEvent, ProviderApproval, ProviderCapabilities, ProviderCapability,
-    ProviderConversation, ProviderExtension, ProviderInstance, ProviderInstanceRoute,
-    ProviderTurn, RoutedResourceId, TurnOutputDeltaEvent, TurnStatus, TurnUpsertedEvent,
+    ConversationContent, ConversationContentKind, ConversationItem, ConversationItemKind,
+    ConversationItemRole, ConversationItemStatus, ConversationStatus,
+    ConversationUpsertedEvent, InstanceStatus, JsonObject, ProtocolError, ProtocolEvent,
+    ProviderApproval, ProviderCapabilities, ProviderCapability, ProviderConversation,
+    ProviderExtension, ProviderInstance, ProviderInstanceRoute, ProviderTurn, RoutedResourceId,
+    TurnOutputDeltaEvent, TurnStatus, TurnUpsertedEvent,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -165,6 +169,235 @@ impl CodexProtocolMapper {
         }
     }
 
+    pub fn conversation_items(
+        &self,
+        snapshot: &CodexConversationSnapshot,
+        approvals: &[(String, ProviderApproval)],
+    ) -> Vec<ConversationItem> {
+        let mut items = Vec::new();
+        let conversation = self.resource(snapshot.thread.id.clone());
+        let mut emitted_approvals = vec![false; approvals.len()];
+        for turn in &snapshot.thread.turns {
+            for item in &turn.items {
+                items.push(self.conversation_item(turn, item, &conversation));
+                for (index, (related_item_id, approval)) in approvals.iter().enumerate() {
+                    if !emitted_approvals[index]
+                        && approval.turn.native_resource_id == turn.id
+                        && related_item_id == item.id()
+                    {
+                        items.push(self.approval_item(related_item_id, approval));
+                        emitted_approvals[index] = true;
+                    }
+                }
+            }
+            for (index, (related_item_id, approval)) in approvals.iter().enumerate() {
+                if !emitted_approvals[index] && approval.turn.native_resource_id == turn.id {
+                    items.push(self.approval_item(related_item_id, approval));
+                    emitted_approvals[index] = true;
+                }
+            }
+        }
+        for (index, (related_item_id, approval)) in approvals.iter().enumerate() {
+            if !emitted_approvals[index] {
+                items.push(self.approval_item(related_item_id, approval));
+            }
+        }
+        items
+    }
+
+    fn conversation_item(
+        &self,
+        turn: &CodexTurn,
+        item: &CodexThreadItem,
+        conversation: &RoutedResourceId,
+    ) -> ConversationItem {
+        let resource = self.resource(item.id().to_string());
+        let turn_resource = self.resource(turn.id.clone());
+        let mutable_text = turn.status == CodexTurnStatus::InProgress;
+        match item {
+            CodexThreadItem::UserMessage { id, text_inputs } => ConversationItem {
+                resource,
+                turn: turn_resource,
+                conversation: conversation.clone(),
+                kind: ConversationItemKind::Message,
+                status: ConversationItemStatus::Completed,
+                role: Some(ConversationItemRole::User),
+                title: None,
+                contents: text_inputs
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, text)| {
+                        text.as_ref().map(|text| ConversationContent {
+                            content_id: user_input_content_id(id, index),
+                            kind: ConversationContentKind::Text,
+                            text: text.clone(),
+                        })
+                    })
+                    .collect(),
+                related_item: None,
+                approval: None,
+            },
+            CodexThreadItem::AgentMessage { id, text } => ConversationItem {
+                resource,
+                turn: turn_resource,
+                conversation: conversation.clone(),
+                kind: ConversationItemKind::Message,
+                status: mutable_content_status(turn.status),
+                role: Some(ConversationItemRole::Assistant),
+                title: None,
+                contents: (!mutable_text)
+                    .then(|| ConversationContent {
+                        content_id: text_content_id(id),
+                        kind: ConversationContentKind::Text,
+                        text: text.clone(),
+                    })
+                    .into_iter()
+                    .collect(),
+                related_item: None,
+                approval: None,
+            },
+            CodexThreadItem::Plan { id, text } => ConversationItem {
+                resource,
+                turn: turn_resource,
+                conversation: conversation.clone(),
+                kind: ConversationItemKind::Message,
+                status: mutable_content_status(turn.status),
+                role: Some(ConversationItemRole::Assistant),
+                title: Some("Plan".to_string()),
+                contents: (!mutable_text)
+                    .then(|| ConversationContent {
+                        content_id: text_content_id(id),
+                        kind: ConversationContentKind::Text,
+                        text: text.clone(),
+                    })
+                    .into_iter()
+                    .collect(),
+                related_item: None,
+                approval: None,
+            },
+            CodexThreadItem::Reasoning { id, summary } => ConversationItem {
+                resource,
+                turn: turn_resource,
+                conversation: conversation.clone(),
+                kind: ConversationItemKind::Reasoning,
+                status: mutable_content_status(turn.status),
+                role: Some(ConversationItemRole::Assistant),
+                title: None,
+                contents: if mutable_text {
+                    Vec::new()
+                } else {
+                    summary
+                        .iter()
+                        .enumerate()
+                        .map(|(index, text)| ConversationContent {
+                            content_id: reasoning_summary_content_id(id, index),
+                            kind: ConversationContentKind::ReasoningSummary,
+                            text: text.clone(),
+                        })
+                        .collect()
+                },
+                related_item: None,
+                approval: None,
+            },
+            CodexThreadItem::CommandExecution {
+                id,
+                command,
+                status,
+                aggregated_output,
+            } => {
+                let status = activity_status(status);
+                let mut contents = vec![ConversationContent {
+                    content_id: command_content_id(id),
+                    kind: ConversationContentKind::Command,
+                    text: command.clone(),
+                }];
+                if status != ConversationItemStatus::Running {
+                    if let Some(output) = aggregated_output {
+                        contents.push(ConversationContent {
+                            content_id: output_content_id(id),
+                            kind: ConversationContentKind::Output,
+                            text: output.clone(),
+                        });
+                    }
+                }
+                ConversationItem {
+                    resource,
+                    turn: turn_resource,
+                    conversation: conversation.clone(),
+                    kind: ConversationItemKind::Command,
+                    status,
+                    role: None,
+                    title: Some("Command".to_string()),
+                    contents,
+                    related_item: None,
+                    approval: None,
+                }
+            }
+            CodexThreadItem::FileChange {
+                id,
+                status,
+                change_count,
+            } => ConversationItem {
+                resource,
+                turn: turn_resource,
+                conversation: conversation.clone(),
+                kind: ConversationItemKind::FileChange,
+                status: activity_status(status),
+                role: None,
+                title: Some("File changes".to_string()),
+                contents: vec![ConversationContent {
+                    content_id: activity_summary_content_id(id),
+                    kind: ConversationContentKind::ActivitySummary,
+                    text: format!("{change_count} file change(s)"),
+                }],
+                related_item: None,
+                approval: None,
+            },
+            CodexThreadItem::ToolActivity { title, status, .. } => ConversationItem {
+                resource,
+                turn: turn_resource,
+                conversation: conversation.clone(),
+                kind: ConversationItemKind::Tool,
+                status: status
+                    .as_deref()
+                    .map(activity_status)
+                    .unwrap_or_else(|| item_status_from_turn(turn.status)),
+                role: None,
+                title: Some(title.clone()),
+                contents: Vec::new(),
+                related_item: None,
+                approval: None,
+            },
+            CodexThreadItem::Unknown { .. } => ConversationItem {
+                resource,
+                turn: turn_resource,
+                conversation: conversation.clone(),
+                kind: ConversationItemKind::Unknown,
+                status: item_status_from_turn(turn.status),
+                role: None,
+                title: Some("Unknown Codex activity".to_string()),
+                contents: Vec::new(),
+                related_item: None,
+                approval: None,
+            },
+        }
+    }
+
+    fn approval_item(&self, related_item_id: &str, approval: &ProviderApproval) -> ConversationItem {
+        ConversationItem {
+            resource: approval.resource.clone(),
+            turn: approval.turn.clone(),
+            conversation: approval.conversation.clone(),
+            kind: ConversationItemKind::Approval,
+            status: approval_item_status(approval.status),
+            role: None,
+            title: Some(approval.title.clone()),
+            contents: Vec::new(),
+            related_item: Some(self.resource(related_item_id.to_string())),
+            approval: Some(approval.clone()),
+        }
+    }
+
     pub fn events(
         &self,
         incoming: CodexIncoming,
@@ -279,6 +512,7 @@ impl CodexProtocolMapper {
                 thread_id,
                 turn_id,
                 item_id,
+                content_id,
                 kind,
                 delta,
             } => ProtocolEvent::EventTurnOutputDelta {
@@ -286,8 +520,9 @@ impl CodexProtocolMapper {
                 params: TurnOutputDeltaEvent {
                     turn: self.resource(turn_id),
                     conversation: self.resource(thread_id),
-                    output_id: item_id,
-                    kind,
+                    item_id,
+                    content_id,
+                    kind: content_kind(kind),
                     delta,
                     extension: Some(extension([("nativeMethod", json!(native_method))])),
                 },
@@ -363,6 +598,51 @@ fn approval_decisions(request: &CodexApprovalRequest) -> Vec<ApprovalDecision> {
         decisions.push(ApprovalDecision::Deny);
     }
     decisions
+}
+
+fn content_kind(kind: CodexContentKind) -> ConversationContentKind {
+    match kind {
+        CodexContentKind::Text => ConversationContentKind::Text,
+        CodexContentKind::ReasoningSummary => ConversationContentKind::ReasoningSummary,
+        CodexContentKind::Output => ConversationContentKind::Output,
+    }
+}
+
+fn mutable_content_status(status: CodexTurnStatus) -> ConversationItemStatus {
+    match status {
+        CodexTurnStatus::InProgress => ConversationItemStatus::Running,
+        _ => ConversationItemStatus::Completed,
+    }
+}
+
+fn item_status_from_turn(status: CodexTurnStatus) -> ConversationItemStatus {
+    match status {
+        CodexTurnStatus::InProgress => ConversationItemStatus::Running,
+        CodexTurnStatus::Completed => ConversationItemStatus::Completed,
+        CodexTurnStatus::Failed => ConversationItemStatus::Failed,
+        CodexTurnStatus::Interrupted => ConversationItemStatus::Interrupted,
+    }
+}
+
+fn activity_status(status: &str) -> ConversationItemStatus {
+    match status {
+        "pending" => ConversationItemStatus::Pending,
+        "inProgress" | "running" => ConversationItemStatus::Running,
+        "completed" => ConversationItemStatus::Completed,
+        "failed" => ConversationItemStatus::Failed,
+        "interrupted" | "cancelled" | "canceled" => ConversationItemStatus::Interrupted,
+        "declined" => ConversationItemStatus::Declined,
+        _ => ConversationItemStatus::Unknown,
+    }
+}
+
+fn approval_item_status(status: ApprovalStatus) -> ConversationItemStatus {
+    match status {
+        ApprovalStatus::Pending => ConversationItemStatus::Pending,
+        ApprovalStatus::Approved => ConversationItemStatus::Approved,
+        ApprovalStatus::Denied => ConversationItemStatus::Denied,
+        ApprovalStatus::Expired => ConversationItemStatus::Expired,
+    }
 }
 
 fn turn_status(status: CodexTurnStatus) -> TurnStatus {
@@ -475,6 +755,7 @@ mod tests {
             status: CodexTurnStatus::Completed,
             started_at: Some(1),
             completed_at: Some(2),
+            items_view: crate::protocol::CodexTurnItemsView::Full,
             items: Vec::new(),
         };
 
@@ -490,6 +771,207 @@ mod tests {
         assert_eq!(seconds_to_ms(i64::MAX), None);
         assert_eq!(seconds_to_ms(-1), None);
         assert_eq!(seconds_to_ms(42), Some(42_000));
+    }
+
+    #[test]
+    fn completed_history_preserves_item_order_and_stable_content_ids() {
+        let mapper = test_mapper();
+        let snapshot = history_snapshot(
+            CodexTurnStatus::Completed,
+            vec![
+                CodexThreadItem::UserMessage {
+                    id: "user-one".to_string(),
+                    text_inputs: vec![Some("hello".to_string()), None],
+                },
+                CodexThreadItem::AgentMessage {
+                    id: "agent-one".to_string(),
+                    text: "answer".to_string(),
+                },
+                CodexThreadItem::Reasoning {
+                    id: "reasoning-one".to_string(),
+                    summary: vec!["summary".to_string()],
+                },
+                CodexThreadItem::CommandExecution {
+                    id: "command-one".to_string(),
+                    command: "cargo test".to_string(),
+                    status: "completed".to_string(),
+                    aggregated_output: Some("ok".to_string()),
+                },
+                CodexThreadItem::FileChange {
+                    id: "file-one".to_string(),
+                    status: "completed".to_string(),
+                    change_count: 2,
+                },
+                CodexThreadItem::ToolActivity {
+                    id: "tool-one".to_string(),
+                    title: "server/tool".to_string(),
+                    status: Some("completed".to_string()),
+                },
+                CodexThreadItem::Unknown {
+                    id: "unknown-one".to_string(),
+                },
+            ],
+        );
+
+        let items = mapper.conversation_items(&snapshot, &[]);
+
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.resource.native_resource_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "user-one",
+                "agent-one",
+                "reasoning-one",
+                "command-one",
+                "file-one",
+                "tool-one",
+                "unknown-one"
+            ]
+        );
+        assert_eq!(items[0].contents[0].content_id, "user-one:input:0");
+        assert_eq!(items[1].contents[0].content_id, "agent-one:text");
+        assert_eq!(
+            items[2].contents[0].content_id,
+            "reasoning-one:summary:0"
+        );
+        assert_eq!(items[3].contents[0].content_id, "command-one:command");
+        assert_eq!(items[3].contents[1].content_id, "command-one:output");
+        assert_eq!(items[6].kind, ConversationItemKind::Unknown);
+        assert!(items[6].contents.is_empty());
+        assert!(items.iter().all(|item| {
+            item.conversation.native_resource_id == "thread-history"
+        }));
+    }
+
+    #[test]
+    fn in_progress_snapshot_omits_mutable_assistant_reasoning_and_output_bodies() {
+        let mapper = test_mapper();
+        let snapshot = history_snapshot(
+            CodexTurnStatus::InProgress,
+            vec![
+                CodexThreadItem::AgentMessage {
+                    id: "agent-live".to_string(),
+                    text: "partial answer".to_string(),
+                },
+                CodexThreadItem::Reasoning {
+                    id: "reasoning-live".to_string(),
+                    summary: vec!["partial summary".to_string()],
+                },
+                CodexThreadItem::CommandExecution {
+                    id: "command-live".to_string(),
+                    command: "cargo test".to_string(),
+                    status: "inProgress".to_string(),
+                    aggregated_output: Some("partial output".to_string()),
+                },
+            ],
+        );
+
+        let items = mapper.conversation_items(&snapshot, &[]);
+
+        assert!(items[0].contents.is_empty());
+        assert!(items[1].contents.is_empty());
+        assert_eq!(items[2].contents.len(), 1);
+        assert_eq!(items[2].contents[0].kind, ConversationContentKind::Command);
+        assert_eq!(items[2].status, ConversationItemStatus::Running);
+        let committed_content_ids = items
+            .iter()
+            .flat_map(|item| item.contents.iter())
+            .map(|content| content.content_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(!committed_content_ids.contains(&"agent-live:text"));
+        assert!(!committed_content_ids.contains(&"reasoning-live:summary:0"));
+        assert!(!committed_content_ids.contains(&"command-live:output"));
+    }
+
+    #[test]
+    fn observed_approval_is_inserted_after_its_related_command() {
+        let mapper = test_mapper();
+        let snapshot = history_snapshot(
+            CodexTurnStatus::Completed,
+            vec![CodexThreadItem::CommandExecution {
+                id: "command-one".to_string(),
+                command: "cargo test".to_string(),
+                status: "completed".to_string(),
+                aggregated_output: None,
+            }],
+        );
+        let request = CodexApprovalRequest {
+            request_id: crate::protocol::JsonRpcId::String("approval-one".to_string()),
+            session_generation: "generation-one".to_string(),
+            kind: crate::protocol::CodexApprovalKind::CommandExecution,
+            thread_id: "thread-history".to_string(),
+            turn_id: "turn-history".to_string(),
+            item_id: "command-one".to_string(),
+            title: "Run command".to_string(),
+            description: None,
+            requested_at_ms: 10,
+            available_decisions: vec!["accept".to_string(), "decline".to_string()],
+        };
+        let approval = mapper.approval(&request);
+
+        let items = mapper.conversation_items(
+            &snapshot,
+            &[("command-one".to_string(), approval.clone())],
+        );
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[1].kind, ConversationItemKind::Approval);
+        assert_eq!(items[1].approval.as_ref(), Some(&approval));
+        assert_eq!(
+            items[1]
+                .related_item
+                .as_ref()
+                .unwrap()
+                .native_resource_id,
+            "command-one"
+        );
+    }
+
+    fn test_mapper() -> CodexProtocolMapper {
+        CodexProtocolMapper::new(ProviderInstanceRoute {
+            device_id: "device-test".to_string(),
+            provider_plugin_id: "dev.codepet.codex".to_string(),
+            provider_instance_id: "codex".to_string(),
+        })
+    }
+
+    fn history_snapshot(
+        status: CodexTurnStatus,
+        items: Vec<CodexThreadItem>,
+    ) -> CodexConversationSnapshot {
+        let mut snapshot = CodexConversationSnapshot::from_thread(CodexThread {
+            id: "thread-history".to_string(),
+            name: None,
+            preview: "history".to_string(),
+            cwd: "/fixture".to_string(),
+            created_at: 1,
+            updated_at: 2,
+            status: if status == CodexTurnStatus::InProgress {
+                CodexThreadStatus::Active {
+                    active_flags: Vec::new(),
+                }
+            } else {
+                CodexThreadStatus::Idle
+            },
+            turns: vec![CodexTurn {
+                id: "turn-history".to_string(),
+                status,
+                started_at: Some(1),
+                completed_at: (status != CodexTurnStatus::InProgress).then_some(2),
+                items_view: crate::protocol::CodexTurnItemsView::Full,
+                items,
+            }],
+            cli_version: "0.151.0".to_string(),
+            ephemeral: false,
+            model_provider: "openai".to_string(),
+            project_id: Value::Null,
+            session_id: "session-history".to_string(),
+            source: json!("appServer"),
+        });
+        snapshot.workspace_root = Some("/fixture".to_string());
+        snapshot
     }
 
     fn snapshot(flag: CodexThreadActiveFlag) -> CodexConversationSnapshot {

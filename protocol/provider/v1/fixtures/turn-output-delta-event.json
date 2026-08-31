@@ -1,0 +1,22 @@
+{
+  "jsonrpc": "2.0",
+  "method": "event.turnOutputDelta",
+  "params": {
+    "turn": {
+      "deviceId": "device-macbook-1",
+      "providerPluginId": "dev.codepet.codex",
+      "providerInstanceId": "codex-work",
+      "nativeResourceId": "turn-one"
+    },
+    "conversation": {
+      "deviceId": "device-macbook-1",
+      "providerPluginId": "dev.codepet.codex",
+      "providerInstanceId": "codex-work",
+      "nativeResourceId": "thread-01"
+    },
+    "itemId": "agent-one",
+    "contentId": "agent-one:text",
+    "kind": "text",
+    "delta": "Done"
+  }
+}

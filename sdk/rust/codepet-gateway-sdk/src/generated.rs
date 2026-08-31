@@ -107,6 +107,29 @@ pub struct Conversation {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ConversationContent {
+    pub content_id: NativeResourceId,
+    pub kind: ConversationContentKind,
+    pub text: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConversationContentKind {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "reasoning-summary")]
+    ReasoningSummary,
+    #[serde(rename = "command")]
+    Command,
+    #[serde(rename = "output")]
+    Output,
+    #[serde(rename = "activity-summary")]
+    ActivitySummary,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ConversationCreateRequest {
     pub route: GatewayProviderRoute,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -139,7 +162,78 @@ pub struct ConversationGetRequest {
 #[serde(deny_unknown_fields)]
 pub struct ConversationGetResponse {
     pub conversation: Conversation,
+    pub items: Vec<ConversationItem>,
     pub snapshot_cursor: EventCursor,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationItem {
+    pub resource: RoutedResourceId,
+    pub turn: RoutedResourceId,
+    pub conversation: RoutedResourceId,
+    pub kind: ConversationItemKind,
+    pub status: ConversationItemStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<ConversationItemRole>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub contents: Vec<ConversationContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub related_item: Option<RoutedResourceId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval: Option<Approval>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConversationItemKind {
+    #[serde(rename = "message")]
+    Message,
+    #[serde(rename = "reasoning")]
+    Reasoning,
+    #[serde(rename = "command")]
+    Command,
+    #[serde(rename = "file-change")]
+    FileChange,
+    #[serde(rename = "tool")]
+    Tool,
+    #[serde(rename = "approval")]
+    Approval,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConversationItemRole {
+    #[serde(rename = "user")]
+    User,
+    #[serde(rename = "assistant")]
+    Assistant,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConversationItemStatus {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "interrupted")]
+    Interrupted,
+    #[serde(rename = "declined")]
+    Declined,
+    #[serde(rename = "approved")]
+    Approved,
+    #[serde(rename = "denied")]
+    Denied,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "unknown")]
+    Unknown,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -202,6 +296,15 @@ pub struct Device {
     pub status: DeviceStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_seen_at: Option<TimestampMs>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct DeviceDescriptor {
+    pub device_name: String,
+    pub operating_system: String,
+    pub system_version: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -289,7 +392,7 @@ pub struct GatewayProviderRoute {
 #[serde(deny_unknown_fields)]
 pub struct HandshakeRequest {
     pub client_id: ClientId,
-    pub client_name: String,
+    pub device: DeviceDescriptor,
     pub client_version: String,
     pub supported_versions: VersionRange,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -315,8 +418,7 @@ pub struct HandshakeResponse {
 pub struct PairingExchangeRequest {
     pub pairing_secret: String,
     pub client_id: ClientId,
-    pub client_name: String,
-    pub platform: String,
+    pub device: DeviceDescriptor,
 }
 
 impl std::fmt::Debug for PairingExchangeRequest {
@@ -325,8 +427,7 @@ impl std::fmt::Debug for PairingExchangeRequest {
             .debug_struct("PairingExchangeRequest")
             .field("pairing_secret", &"<redacted>")
             .field("client_id", &self.client_id)
-            .field("client_name", &self.client_name)
-            .field("platform", &self.platform)
+            .field("device", &self.device)
             .finish()
     }
 }
@@ -437,7 +538,7 @@ pub struct ProviderStatusChangedEvent {
 #[serde(deny_unknown_fields)]
 pub struct RemoteHostIdentity {
     pub device_id: DeviceId,
-    pub display_name: String,
+    pub descriptor: DeviceDescriptor,
     pub identity_fingerprint: String,
 }
 
@@ -462,8 +563,9 @@ pub struct TurnInterruptResponse {
 pub struct TurnOutputDeltaEvent {
     pub turn: RoutedResourceId,
     pub conversation: RoutedResourceId,
-    pub output_id: NativeResourceId,
-    pub kind: String,
+    pub item_id: NativeResourceId,
+    pub content_id: NativeResourceId,
+    pub kind: ConversationContentKind,
     pub delta: String,
 }
 

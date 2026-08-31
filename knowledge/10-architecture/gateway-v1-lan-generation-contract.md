@@ -7,8 +7,8 @@
 ## 目标
 
 - 从 `protocol/gateway/v1/schema.json` 同时生成 Rust 与 TypeScript 的 LAN DTO。
-- 保留 `HandshakeRequest.clientId` 作为 remote client 唯一协议身份，并要求 transport 将其与 pairing credential 绑定。
-- 让 handshake 和 pairing response 使用同一 `RemoteHostIdentity`，其中证书指纹语义唯一。
+- 保留 `HandshakeRequest.clientId` 作为 remote client 唯一协议身份，并要求 transport 将其与 pairing credential 绑定；设备展示信息统一使用 `DeviceDescriptor`，不重复造 ID。
+- 让 pairing exchange 与 handshake 双向都使用同一最小 descriptor，并让 response 复用同一 `RemoteHostIdentity`，其中证书指纹语义唯一。
 - 以单个 TLS listener 落实固定 REST/WSS wire 边界，并通过 `_codepet._tcp.local.` 发布同一 listener 的实际 LAN IP 与 TLS port。
 - 保持 mDNS 只负责发现；Tauri 生命周期与 pairing 状态接线见 `remote-access-tauri-runtime.md`，frontend UI 仍留给后续阶段。
 
@@ -20,7 +20,7 @@
 
 ## 现状理解
 
-`DeviceRegistry` 仍是 `deviceId/displayName` 唯一事实来源；`RemoteAccessManager` 持有 leaf certificate DER 与 fingerprint、pairing session 和 credential store。`ProviderGatewayService` 实现 Gateway v1 业务 dispatch，listener 只在 transport 层验证 bearer、绑定 socket clientId 和维护撤销取消；服务层不接收 bearer 或 TLS 状态。现有 `devices/providers` handshake 集合保持不变。
+`DeviceRegistry` 仍是稳定 `deviceId/displayName` 唯一事实来源；Tauri 启动时把该 display name 与一次 OS/system version 探测组合为进程内稳定 `DeviceDescriptor`，再注入 `RemoteAccessManager`。Manager 持有 leaf certificate DER 与 fingerprint、pairing session、descriptor 和 credential store。`ProviderGatewayService` 实现 Gateway v1 业务 dispatch，listener 只在 transport 层验证 bearer、绑定 socket clientId 和维护撤销取消；服务层不接收 bearer 或 TLS 状态。现有 `devices/providers` handshake 集合保持不变。
 
 ## 实现路径
 
@@ -32,13 +32,13 @@ GET    /remote/v1/gateway                    # WSS Upgrade
 DELETE /remote/v1/credentials/current
 ```
 
-`PairingExchangeRequest` 只包含 `pairingSecret/clientId/clientName/platform`；`pairingId` 来自 path。响应只包含 `device/gatewayUrl/credential`，credential 对客户端 opaque。DELETE 返回最小 `{ revoked }` DTO。以上类型属于同一 Gateway schema 的独立生成类型，不进入 envelope method manifest。
+`PairingExchangeRequest` 只包含 `pairingSecret/clientId/device`；`device` 精确为 `DeviceDescriptor { deviceName, operatingSystem, systemVersion }`，`pairingId` 来自 path。响应只包含 `device/gatewayUrl/credential`，其中 Host identity 内嵌相同 descriptor，credential 对客户端 opaque。DELETE 返回最小 `{ revoked }` DTO。以上类型属于同一 Gateway schema 的独立生成类型，不进入 envelope method manifest。
 
 QR 只编码 `PairingQrPayload`：`version/hostDeviceId/displayName/httpsBaseUrl/certSha256/pairingId/pairingSecret/expiresAt`。PairingOffer 的状态、倒计时等只留在 Host/UI 内存。`pairingSecret` 明文只能进入 QR encoder，不在普通 UI 文本、日志或持久文档中展示。
 
-`RemoteHostIdentity` 固定为 `deviceId/displayName/identityFingerprint`。`identityFingerprint` 与 QR `certSha256` 都是 leaf certificate DER SHA-256 的 64 位小写 hex。`HandshakeResponse.device` 必填，同时保留既有 `devices/providers`。普通 `ProviderGatewayService::new` 不携带 remote identity，因此 Gateway v1 `protocol.handshake` 继续以 `remote_host_identity_unavailable` fail-closed。LAN listener 启动前要求调用方通过 `ProviderGatewayService::with_remote_identity` 显式注入 `RemoteAccessManager::remote_host_identity()`，并再次核对完整 identity；TLS 配置直接读取同一个 manager 已持久化的 certificate/private key DER。
+`RemoteHostIdentity` 固定为 `deviceId/descriptor/identityFingerprint`。`identityFingerprint` 与 QR `certSha256` 都是 leaf certificate DER SHA-256 的 64 位小写 hex。`HandshakeRequest.device` 与 pairing request 使用同一个生成类型；`HandshakeResponse.device` 必填，同时保留既有 `devices/providers`。普通 `ProviderGatewayService::new` 不携带 remote identity，因此 Gateway v1 `protocol.handshake` 继续以 `remote_host_identity_unavailable` fail-closed。LAN listener 启动前要求调用方通过 `ProviderGatewayService::with_remote_identity` 显式注入 `RemoteAccessManager::remote_host_identity()`，并再次核对完整 identity；TLS 配置直接读取同一个 manager 已持久化的 certificate/private key DER。
 
-连接次序固定：客户端先 pin TLS peer leaf DER；WSS Upgrade 必须携带有效 bearer；第一条业务请求必须是 `protocol.handshake`；listener 校验 handshake `clientId` 等于 credential 绑定的 `clientId`；客户端再核对 response `device.deviceId` 与 `device.identityFingerprint`。后续请求统一交给生成 SDK 的 envelope dispatcher，不在 listener 复制 conversation/turn/approval 路由。
+连接次序固定：客户端先 pin TLS peer leaf DER；WSS Upgrade 必须携带有效 bearer；第一条业务请求必须是 `protocol.handshake`；listener 校验 handshake `clientId` 等于 credential 绑定的 `clientId`，并在成功响应发送前原子刷新该 credential 的 descriptor；客户端再核对 response `device.deviceId`、`device.descriptor` 与 `device.identityFingerprint`。后续请求统一交给生成 SDK 的 envelope dispatcher，不在 listener 复制 conversation/turn/approval 路由。
 
 `event.subscribe` 是每条 socket 的显式推送门。listener 在成功响应前先从现有 EventPublisher 建立 replay/live subscription，响应入队后才启动该 socket 的 event send loop；`GatewayEventSubscription` 以 cursor 去除 receiver 与 replay 窗口交叠，因此顺序是 replay 后 live 且不重复。每条 socket 最多成功订阅一次，未订阅 socket 不收到 server event，但仍可执行普通请求。
 
@@ -48,7 +48,7 @@ QR 只编码 `PairingQrPayload`：`version/hostDeviceId/displayName/httpsBaseUrl
 
 mDNS 使用仍在维护且跨 macOS/Linux/Windows 的纯 Rust `mdns-sd 0.21`；Host 不需要异步或 logging feature。service type 精确为 `_codepet._tcp.local.`，TXT 精确且仅有 `id/name/vmin/vmax/pair`：`id/name` 只读取 `RemoteLanServerHandle` 在 listener 启动时已核对并保存的 `RemoteHostIdentity`，advertiser API 不再接受另一份 manager，因此不能拼接 manager A 的 identity 与 listener B 的 endpoint；`vmin/vmax` 都是 Gateway `PROTOCOL_VERSION=1`，`pair=1` 只表示 Host 当前主动开放一次性 pairing，否则为 `0`。SRV/A/AAAA 使用同一 handle 的 advertised IP 和实际 TLS port；DNS host、unspecified/multicast/documentation IP、与具体 bind 不一致的 IP 或地址族均 fail-closed。显式 IP 还必须存在于 `if-addrs` 返回的 active 本机接口集合，接口枚举只做归属校验，不代替调用方猜公网、LAN 或 loopback 地址；测试可显式使用匹配的 loopback。
 
-instance name 由可读 display name 加 device id 的短哈希冲突后缀组成，hostname 使用相同冲突后缀；`mdns-sd` 默认 probe 继续处理极小概率的局域网名称冲突。instance、hostname 与 IP 都只是发现元数据，稳定身份只能读取 TXT `id`，TLS 信任仍只能来自 pairing 后的证书 pin 与 handshake 核对。TXT 不携带 certificate fingerprint、secret、credential、Provider、项目或会话。
+instance name 由 Host descriptor 的可读 `deviceName` 加 device id 的短哈希冲突后缀组成，hostname 使用相同冲突后缀；`mdns-sd` 默认 probe 继续处理极小概率的局域网名称冲突。instance、hostname 与 IP 都只是发现元数据，稳定身份只能读取 TXT `id`，TLS 信任仍只能来自 pairing 后的证书 pin 与 handshake 核对。TXT 不携带 OS/version、certificate fingerprint、secret、credential、Provider、项目或会话。
 
 `mdns-sd::ServiceDaemon::register` 只保证命令入队，因此 advertiser 在 start 和 pair 值变化后通过 daemon monitor 等待固定短窗口内目标 fullname 的 `DaemonEvent::Announce`；只有实际发送产生该事件才返回成功。`DaemonEvent::Error`、monitor 断开或超时都会注销 service 并停止 daemon；idle 期间积累的 error/断开由下一次值变化 update 或 shutdown 读取并执行同样的 fail-closed 清理。同值 update 是严格 no-op，不读取 backend。
 

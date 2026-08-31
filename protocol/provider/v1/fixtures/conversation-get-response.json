@@ -1,0 +1,184 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-get-1",
+  "result": {
+    "conversation": {
+      "resource": {
+        "deviceId": "device-macbook-1",
+        "providerPluginId": "dev.codepet.codex",
+        "providerInstanceId": "codex-work",
+        "nativeResourceId": "thread-01"
+      },
+      "title": "Provider protocol foundation",
+      "status": "idle",
+      "createdAt": 1787700000000,
+      "updatedAt": 1787700001000
+    },
+    "items": [
+      {
+        "resource": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "user-one"
+        },
+        "turn": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "turn-one"
+        },
+        "conversation": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "kind": "message",
+        "status": "completed",
+        "role": "user",
+        "contents": [
+          { "contentId": "user-one:input:0", "kind": "text", "text": "Run the checks" }
+        ]
+      },
+      {
+        "resource": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "reasoning-one"
+        },
+        "turn": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "turn-one"
+        },
+        "conversation": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "kind": "reasoning",
+        "status": "completed",
+        "role": "assistant",
+        "contents": [
+          {
+            "contentId": "reasoning-one:summary:0",
+            "kind": "reasoning-summary",
+            "text": "Checked the relevant modules"
+          }
+        ]
+      },
+      {
+        "resource": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "command-one"
+        },
+        "turn": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "turn-one"
+        },
+        "conversation": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "kind": "command",
+        "status": "completed",
+        "title": "Command",
+        "contents": [
+          { "contentId": "command-one:command", "kind": "command", "text": "cargo test" },
+          { "contentId": "command-one:output", "kind": "output", "text": "tests passed" }
+        ]
+      },
+      {
+        "resource": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "approval-session-1"
+        },
+        "turn": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "turn-one"
+        },
+        "conversation": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "kind": "approval",
+        "status": "approved",
+        "title": "Run command",
+        "contents": [],
+        "relatedItem": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "command-one"
+        },
+        "approval": {
+          "resource": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "approval-session-1"
+          },
+          "conversation": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "thread-01"
+          },
+          "turn": {
+            "deviceId": "device-macbook-1",
+            "providerPluginId": "dev.codepet.codex",
+            "providerInstanceId": "codex-work",
+            "nativeResourceId": "turn-one"
+          },
+          "kind": "command-execution",
+          "title": "Run command",
+          "status": "approved",
+          "decisions": ["approve", "deny"],
+          "requestedAt": 1787700000100,
+          "resolvedAt": 1787700000200,
+          "decision": "approve"
+        }
+      },
+      {
+        "resource": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "unknown-one"
+        },
+        "turn": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "turn-one"
+        },
+        "conversation": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "kind": "unknown",
+        "status": "completed",
+        "title": "Unknown provider activity",
+        "contents": []
+      }
+    ]
+  }
+}

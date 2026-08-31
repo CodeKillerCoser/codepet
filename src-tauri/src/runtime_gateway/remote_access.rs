@@ -1,5 +1,5 @@
 use base64::Engine;
-use codepet_gateway_sdk::{PairingQrPayload, PROTOCOL_VERSION};
+use codepet_gateway_sdk::{DeviceDescriptor, PairingQrPayload, PROTOCOL_VERSION};
 use codepet_host::{
     select_remote_lan_ipv4, HostError, PairingStatus, ProviderGatewayService,
     RemoteAccessManager, RemoteLanMdnsAdvertiser, RemoteLanServer,
@@ -68,13 +68,12 @@ pub struct RemotePairingStartView {
     pub qr_svg_data_url: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteClientView {
     pub credential_id: String,
     pub remote_client_id: String,
-    pub client_name: String,
-    pub platform: String,
+    pub descriptor: DeviceDescriptor,
     pub created_at: u64,
     pub last_seen_at: u64,
     pub revoked_at: Option<u64>,
@@ -221,7 +220,9 @@ impl RemoteAccessRuntime {
         RemoteAccessStatusView {
             phase: inner.phase,
             host_device_id: identity.as_ref().map(|identity| identity.device_id.clone()),
-            display_name: identity.as_ref().map(|identity| identity.display_name.clone()),
+            display_name: identity
+                .as_ref()
+                .map(|identity| identity.descriptor.device_name.clone()),
             advertised_host: inner
                 .listener
                 .as_ref()
@@ -327,7 +328,7 @@ impl RemoteAccessRuntime {
         let payload = PairingQrPayload {
             version: u64::from(PROTOCOL_VERSION),
             host_device_id: identity.device_id,
-            display_name: identity.display_name,
+            display_name: identity.descriptor.device_name,
             https_base_url,
             cert_sha256: identity.identity_fingerprint,
             pairing_id: pairing.pairing_id.clone(),
@@ -394,8 +395,7 @@ impl RemoteAccessRuntime {
                     .unwrap_or(0),
                 credential_id: credential.credential_id,
                 remote_client_id: credential.client_id,
-                client_name: credential.client_name,
-                platform: credential.platform,
+                descriptor: credential.descriptor,
                 created_at: credential.created_at,
                 last_seen_at: credential.last_seen_at,
                 revoked_at: credential.revoked_at,
@@ -644,7 +644,9 @@ impl RemoteAccessRuntime {
         RemoteAccessStatusView {
             phase: inner.phase,
             host_device_id: identity.as_ref().map(|identity| identity.device_id.clone()),
-            display_name: identity.as_ref().map(|identity| identity.display_name.clone()),
+            display_name: identity
+                .as_ref()
+                .map(|identity| identity.descriptor.device_name.clone()),
             advertised_host: inner
                 .listener
                 .as_ref()
@@ -839,6 +841,11 @@ mod tests {
             RemoteAccessManager::open(
                 RemoteAccessConfig::for_data_directory(directory.path().join("remote")),
                 device.clone(),
+                DeviceDescriptor {
+                    device_name: "Runtime Test".to_string(),
+                    operating_system: "TestOS".to_string(),
+                    system_version: "1.0".to_string(),
+                },
             )
             .unwrap(),
         );
@@ -1037,8 +1044,11 @@ mod tests {
             .json(&PairingExchangeRequest {
                 pairing_secret: pairing.pairing_secret,
                 client_id: "runtime-client".to_string(),
-                client_name: "Runtime Client".to_string(),
-                platform: "test".to_string(),
+                device: DeviceDescriptor {
+                    device_name: "Runtime Client".to_string(),
+                    operating_system: "TestOS".to_string(),
+                    system_version: "2.0".to_string(),
+                },
             })
             .send()
             .await
@@ -1054,6 +1064,9 @@ mod tests {
         let clients = test.runtime.list_clients().await.unwrap();
         assert_eq!(clients.len(), 1);
         assert_eq!(clients[0].remote_client_id, "runtime-client");
+        assert_eq!(clients[0].descriptor.device_name, "Runtime Client");
+        assert_eq!(clients[0].descriptor.operating_system, "TestOS");
+        assert_eq!(clients[0].descriptor.system_version, "2.0");
         assert_eq!(clients[0].online_session_count, 0);
         assert_eq!(clients[0].revoked_at, None);
         assert!(!exchange.credential.is_empty());

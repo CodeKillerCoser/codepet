@@ -61,11 +61,18 @@ struct InstanceMutable {
     session: Option<CodexAppServerSession>,
     session_generation: Option<String>,
     pending_approvals: HashMap<String, PendingApproval>,
+    approval_history: Vec<ObservedApproval>,
 }
 
 #[derive(Clone)]
 struct PendingApproval {
     request: CodexApprovalRequest,
+    approval: ProviderApproval,
+}
+
+#[derive(Clone)]
+struct ObservedApproval {
+    item_id: String,
     approval: ProviderApproval,
 }
 
@@ -101,6 +108,7 @@ impl CodexInstanceRuntime {
                 session: None,
                 session_generation: None,
                 pending_approvals: HashMap::new(),
+                approval_history: Vec::new(),
             }),
             mapper: Mutex::new(CodexProtocolMapper::new(request.route)),
             events,
@@ -228,6 +236,7 @@ impl CodexInstanceRuntime {
             CodexIncoming::ApprovalRequested(request) => {
                 let approval = lock(&self.mapper).approval(&request);
                 let approval_id = approval.resource.native_resource_id.clone();
+                let item_id = request.item_id.clone();
                 let mut mutable = lock(&self.mutable);
                 if mutable.session_generation.as_deref()
                     != Some(request.session_generation.as_str())
@@ -235,12 +244,13 @@ impl CodexInstanceRuntime {
                     return Ok(Vec::new());
                 }
                 mutable.pending_approvals.insert(
-                    approval_id,
+                    approval_id.clone(),
                     PendingApproval {
                         request,
                         approval: approval.clone(),
                     },
                 );
+                record_approval(&mut mutable, item_id, approval.clone());
                 Ok(vec![ProtocolEvent::EventApprovalRequested {
                     jsonrpc: "2.0".to_string(),
                     params: ApprovalRequestedEvent { approval },
@@ -262,7 +272,11 @@ impl CodexInstanceRuntime {
                 let Some(pending) = pending else {
                     return Ok(Vec::new());
                 };
-                let (_, event) = lock(&self.mapper).approval_expired(pending.approval, now_ms());
+                let (approval, event) = lock(&self.mapper).approval_expired(pending.approval, now_ms());
+                {
+                    let mut mutable = lock(&self.mutable);
+                    update_recorded_approval(&mut mutable, &approval);
+                }
                 Ok(vec![event])
             }
             incoming => lock(&self.mapper).events(incoming),
@@ -287,6 +301,7 @@ impl CodexInstanceRuntime {
             mutable.session = None;
             mutable.session_generation = None;
             mutable.pending_approvals.clear();
+            mutable.approval_history.clear();
             previous
         };
         let _ = self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
@@ -562,6 +577,7 @@ impl ProtocolServer for CodexProvider {
                 mutable.session = Some(session);
                 mutable.session_generation = Some(session_generation.clone());
                 mutable.pending_approvals.clear();
+                mutable.approval_history.clear();
             }
             let instance = runtime.set_status(InstanceStatus::Ready)?;
             runtime.start_event_forwarder(session_generation, incoming);
@@ -584,6 +600,7 @@ impl ProtocolServer for CodexProvider {
             let session = {
                 let mut mutable = lock(&runtime.mutable);
                 mutable.pending_approvals.clear();
+                mutable.approval_history.clear();
                 mutable.session_generation = None;
                 mutable.session.take()
             };
@@ -602,6 +619,7 @@ impl ProtocolServer for CodexProvider {
             {
                 let mut mutable = lock(&runtime.mutable);
                 mutable.pending_approvals.clear();
+                mutable.approval_history.clear();
                 mutable.session_generation = None;
             }
             Ok(InstanceStopResponse {
@@ -694,8 +712,21 @@ impl ProtocolServer for CodexProvider {
                 .await
                 .map_err(provider_task_error)?
                 .map_err(CodexProtocolMapper::error)?;
-            let conversation = lock(&runtime.mapper).conversation(&snapshot);
-            Ok(ConversationGetResponse { conversation })
+            let approvals = {
+                let mutable = lock(&runtime.mutable);
+                mutable
+                    .approval_history
+                    .iter()
+                    .filter(|observed| {
+                        observed.approval.conversation.native_resource_id == snapshot.thread.id
+                    })
+                    .map(|observed| (observed.item_id.clone(), observed.approval.clone()))
+                    .collect::<Vec<_>>()
+            };
+            let mapper = lock(&runtime.mapper);
+            let conversation = mapper.conversation(&snapshot);
+            let items = mapper.conversation_items(&snapshot, &approvals);
+            Ok(ConversationGetResponse { conversation, items })
         })
     }
 
@@ -881,6 +912,10 @@ impl ProtocolServer for CodexProvider {
                 request.decision,
                 now_ms(),
             )?;
+            {
+                let mut mutable = lock(&runtime.mutable);
+                update_recorded_approval(&mut mutable, &approval);
+            }
             runtime.events.publish(event)?;
             Ok(ApprovalResolveResponse { approval })
         })
@@ -923,11 +958,35 @@ impl ProtocolServer for CodexProvider {
                         mutable.status = InstanceStatus::Stopped;
                         mutable.session_generation = None;
                         mutable.pending_approvals.clear();
+                        mutable.approval_history.clear();
                     }
                 }
             }
             Ok(ProviderShutdownResponse { accepted: true })
         })
+    }
+}
+
+fn record_approval(
+    mutable: &mut InstanceMutable,
+    item_id: String,
+    approval: ProviderApproval,
+) {
+    if let Some(observed) = mutable.approval_history.iter_mut().find(|observed| {
+        observed.approval.resource.native_resource_id == approval.resource.native_resource_id
+    }) {
+        observed.item_id = item_id;
+        observed.approval = approval;
+    } else {
+        mutable.approval_history.push(ObservedApproval { item_id, approval });
+    }
+}
+
+fn update_recorded_approval(mutable: &mut InstanceMutable, approval: &ProviderApproval) {
+    if let Some(observed) = mutable.approval_history.iter_mut().find(|observed| {
+        observed.approval.resource.native_resource_id == approval.resource.native_resource_id
+    }) {
+        observed.approval = approval.clone();
     }
 }
 

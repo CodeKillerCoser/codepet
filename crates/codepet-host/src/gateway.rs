@@ -355,8 +355,9 @@ impl ProviderGatewayService {
                     payload: gateway::TurnOutputDeltaEvent {
                         turn: params.turn,
                         conversation: params.conversation,
-                        output_id: params.output_id,
-                        kind: params.kind,
+                        item_id: params.item_id,
+                        content_id: params.content_id,
+                        kind: map_conversation_content_kind(params.kind),
                         delta: params.delta,
                     },
                 }
@@ -442,12 +443,13 @@ impl ProtocolServer for ProviderGatewayService {
             })?;
             validate_gateway_version_range(&request.supported_versions)?;
             if request.client_id.trim().is_empty()
-                || request.client_name.trim().is_empty()
                 || request.client_version.trim().is_empty()
+                || !device_descriptor_is_valid(&request.device)
             {
                 return Err(gateway::ProtocolError {
                     code: "invalid_gateway_client".to_string(),
-                    message: "Gateway client identity fields must not be empty".to_string(),
+                    message: "Gateway client identity and device descriptor fields must not be empty"
+                        .to_string(),
                     retryable: false,
                     details: None,
                 });
@@ -580,6 +582,7 @@ impl ProtocolServer for ProviderGatewayService {
                 .map_err(gateway_error)?;
             Ok(gateway::ConversationGetResponse {
                 conversation: map_conversation(response.conversation),
+                items: response.items.into_iter().map(map_conversation_item).collect(),
                 snapshot_cursor,
             })
         })
@@ -838,6 +841,77 @@ fn map_turn(turn: provider::ProviderTurn) -> gateway::TurnTask {
     }
 }
 
+fn map_conversation_item(item: provider::ConversationItem) -> gateway::ConversationItem {
+    gateway::ConversationItem {
+        resource: item.resource,
+        turn: item.turn,
+        conversation: item.conversation,
+        kind: match item.kind {
+            provider::ConversationItemKind::Message => gateway::ConversationItemKind::Message,
+            provider::ConversationItemKind::Reasoning => gateway::ConversationItemKind::Reasoning,
+            provider::ConversationItemKind::Command => gateway::ConversationItemKind::Command,
+            provider::ConversationItemKind::FileChange => {
+                gateway::ConversationItemKind::FileChange
+            }
+            provider::ConversationItemKind::Tool => gateway::ConversationItemKind::Tool,
+            provider::ConversationItemKind::Approval => gateway::ConversationItemKind::Approval,
+            provider::ConversationItemKind::Unknown => gateway::ConversationItemKind::Unknown,
+        },
+        status: match item.status {
+            provider::ConversationItemStatus::Pending => gateway::ConversationItemStatus::Pending,
+            provider::ConversationItemStatus::Running => gateway::ConversationItemStatus::Running,
+            provider::ConversationItemStatus::Completed => {
+                gateway::ConversationItemStatus::Completed
+            }
+            provider::ConversationItemStatus::Failed => gateway::ConversationItemStatus::Failed,
+            provider::ConversationItemStatus::Interrupted => {
+                gateway::ConversationItemStatus::Interrupted
+            }
+            provider::ConversationItemStatus::Declined => {
+                gateway::ConversationItemStatus::Declined
+            }
+            provider::ConversationItemStatus::Approved => {
+                gateway::ConversationItemStatus::Approved
+            }
+            provider::ConversationItemStatus::Denied => gateway::ConversationItemStatus::Denied,
+            provider::ConversationItemStatus::Expired => gateway::ConversationItemStatus::Expired,
+            provider::ConversationItemStatus::Unknown => gateway::ConversationItemStatus::Unknown,
+        },
+        role: item.role.map(|role| match role {
+            provider::ConversationItemRole::User => gateway::ConversationItemRole::User,
+            provider::ConversationItemRole::Assistant => gateway::ConversationItemRole::Assistant,
+        }),
+        title: item.title,
+        contents: item
+            .contents
+            .into_iter()
+            .map(|content| gateway::ConversationContent {
+                content_id: content.content_id,
+                kind: map_conversation_content_kind(content.kind),
+                text: content.text,
+            })
+            .collect(),
+        related_item: item.related_item,
+        approval: item.approval.map(map_approval),
+    }
+}
+
+fn map_conversation_content_kind(
+    kind: provider::ConversationContentKind,
+) -> gateway::ConversationContentKind {
+    match kind {
+        provider::ConversationContentKind::Text => gateway::ConversationContentKind::Text,
+        provider::ConversationContentKind::ReasoningSummary => {
+            gateway::ConversationContentKind::ReasoningSummary
+        }
+        provider::ConversationContentKind::Command => gateway::ConversationContentKind::Command,
+        provider::ConversationContentKind::Output => gateway::ConversationContentKind::Output,
+        provider::ConversationContentKind::ActivitySummary => {
+            gateway::ConversationContentKind::ActivitySummary
+        }
+    }
+}
+
 fn map_approval(approval: provider::ProviderApproval) -> gateway::Approval {
     gateway::Approval {
         resource: approval.resource,
@@ -920,13 +994,23 @@ fn validate_remote_host_identity(identity: &gateway::RemoteHostIdentity) -> Host
             .iter()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte));
     let is_all_zero = fingerprint.iter().all(|byte| *byte == b'0');
-    if !is_lowercase_sha256 || is_all_zero {
+    if identity.device_id.trim().is_empty()
+        || !device_descriptor_is_valid(&identity.descriptor)
+        || !is_lowercase_sha256
+        || is_all_zero
+    {
         return Err(HostError::new(
             "invalid_remote_host_identity",
-            "Remote Host identity fingerprint must be a non-zero 64-character lowercase hexadecimal SHA-256 digest",
+            "Remote Host identity requires a device ID, complete descriptor, and non-zero lowercase SHA-256 fingerprint",
         ));
     }
     Ok(())
+}
+
+fn device_descriptor_is_valid(descriptor: &gateway::DeviceDescriptor) -> bool {
+    !descriptor.device_name.trim().is_empty()
+        && !descriptor.operating_system.trim().is_empty()
+        && !descriptor.system_version.trim().is_empty()
 }
 
 fn validate_gateway_resource(

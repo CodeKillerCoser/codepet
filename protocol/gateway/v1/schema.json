@@ -118,10 +118,60 @@
       "type": "object",
       "properties": {
         "conversation": { "$ref": "#/$defs/Conversation" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ConversationItem" }
+        },
         "snapshotCursor": { "$ref": "../../core/v1/schema.json#/$defs/EventCursor" }
       },
-      "required": ["conversation", "snapshotCursor"],
+      "required": ["conversation", "items", "snapshotCursor"],
       "additionalProperties": false
+    },
+    "ConversationContent": {
+      "type": "object",
+      "properties": {
+        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "kind": { "$ref": "#/$defs/ConversationContentKind" },
+        "text": { "type": "string" }
+      },
+      "required": ["contentId", "kind", "text"],
+      "additionalProperties": false
+    },
+    "ConversationContentKind": {
+      "type": "string",
+      "enum": ["text", "reasoning-summary", "command", "output", "activity-summary"]
+    },
+    "ConversationItem": {
+      "type": "object",
+      "properties": {
+        "resource": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "turn": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "kind": { "$ref": "#/$defs/ConversationItemKind" },
+        "status": { "$ref": "#/$defs/ConversationItemStatus" },
+        "role": { "$ref": "#/$defs/ConversationItemRole" },
+        "title": { "type": "string", "minLength": 1 },
+        "contents": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ConversationContent" }
+        },
+        "relatedItem": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "approval": { "$ref": "#/$defs/Approval" }
+      },
+      "required": ["resource", "turn", "conversation", "kind", "status", "contents"],
+      "additionalProperties": false
+    },
+    "ConversationItemKind": {
+      "type": "string",
+      "enum": ["message", "reasoning", "command", "file-change", "tool", "approval", "unknown"]
+    },
+    "ConversationItemRole": {
+      "type": "string",
+      "enum": ["user", "assistant"]
+    },
+    "ConversationItemStatus": {
+      "type": "string",
+      "enum": ["pending", "running", "completed", "failed", "interrupted", "declined", "approved", "denied", "expired", "unknown"]
     },
     "ConversationListRequest": {
       "type": "object",
@@ -174,6 +224,16 @@
         "lastSeenAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" }
       },
       "required": ["deviceId", "displayName", "status"],
+      "additionalProperties": false
+    },
+    "DeviceDescriptor": {
+      "type": "object",
+      "properties": {
+        "deviceName": { "type": "string", "minLength": 1 },
+        "operatingSystem": { "type": "string", "minLength": 1 },
+        "systemVersion": { "type": "string", "minLength": 1 }
+      },
+      "required": ["deviceName", "operatingSystem", "systemVersion"],
       "additionalProperties": false
     },
     "DeviceListRequest": {
@@ -273,12 +333,12 @@
       "type": "object",
       "properties": {
         "clientId": { "$ref": "../../core/v1/schema.json#/$defs/ClientId" },
-        "clientName": { "type": "string", "minLength": 1 },
+        "device": { "$ref": "#/$defs/DeviceDescriptor" },
         "clientVersion": { "type": "string", "minLength": 1 },
         "supportedVersions": { "$ref": "../../core/v1/schema.json#/$defs/VersionRange" },
         "lastEventCursor": { "$ref": "../../core/v1/schema.json#/$defs/EventCursor" }
       },
-      "required": ["clientId", "clientName", "clientVersion", "supportedVersions"],
+      "required": ["clientId", "device", "clientVersion", "supportedVersions"],
       "additionalProperties": false
     },
     "HandshakeResponse": {
@@ -310,10 +370,9 @@
           "x-codepet-sensitive": true
         },
         "clientId": { "$ref": "../../core/v1/schema.json#/$defs/ClientId" },
-        "clientName": { "type": "string", "minLength": 1 },
-        "platform": { "type": "string", "minLength": 1 }
+        "device": { "$ref": "#/$defs/DeviceDescriptor" }
       },
-      "required": ["pairingSecret", "clientId", "clientName", "platform"],
+      "required": ["pairingSecret", "clientId", "device"],
       "additionalProperties": false
     },
     "PairingExchangeResponse": {
@@ -397,10 +456,10 @@
       "type": "object",
       "properties": {
         "deviceId": { "$ref": "../../core/v1/schema.json#/$defs/DeviceId" },
-        "displayName": { "type": "string", "minLength": 1 },
+        "descriptor": { "$ref": "#/$defs/DeviceDescriptor" },
         "identityFingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       },
-      "required": ["deviceId", "displayName", "identityFingerprint"],
+      "required": ["deviceId", "descriptor", "identityFingerprint"],
       "additionalProperties": false
     },
     "TurnInterruptRequest": {
@@ -425,11 +484,12 @@
       "properties": {
         "turn": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
         "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
-        "outputId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "kind": { "type": "string", "minLength": 1 },
+        "itemId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "kind": { "$ref": "#/$defs/ConversationContentKind" },
         "delta": { "type": "string" }
       },
-      "required": ["turn", "conversation", "outputId", "kind", "delta"],
+      "required": ["turn", "conversation", "itemId", "contentId", "kind", "delta"],
       "additionalProperties": false
     },
     "TurnSendRequest": {

@@ -6,14 +6,16 @@ import {
   remoteDeviceConnectionLabel,
   remoteDeviceFromClient,
   remoteDeviceStatusMeta,
+  remoteDeviceSystemLabel,
   type RemoteDevice,
 } from "./remoteDevices";
 
 function device(overrides: Partial<RemoteDevice> = {}): RemoteDevice {
   return {
     id: "device-one",
-    clientName: "CodePet Remote",
-    platform: "iOS",
+    deviceName: "CodePet Remote",
+    operatingSystem: "iOS",
+    systemVersion: "18.0",
     deviceType: "phone",
     status: "offline",
     lastConnectedAtMs: 1_000_000,
@@ -41,8 +43,11 @@ describe("remote device display state", () => {
     const client = {
       credentialId: "credential-one",
       remoteClientId: "client-one",
-      clientName: "My Phone",
-      platform: "iOS",
+      descriptor: {
+        deviceName: "My Phone",
+        operatingSystem: "iOS",
+        systemVersion: "18.0",
+      },
       createdAt: 1_000,
       lastSeenAt: 1_000,
       revokedAt: null,
@@ -53,8 +58,9 @@ describe("remote device display state", () => {
     expect(remoteDeviceFromClient({ ...client, lastSeenAt: 2_000 })).toMatchObject({ status: "offline", lastConnectedAtMs: 2_000 });
     expect(remoteDeviceFromClient({ ...client, onlineSessionCount: 2 })).toMatchObject({ status: "online" });
     expect(remoteDeviceFromClient({ ...client, onlineSessionCount: 2, revokedAt: 3_000 })).toMatchObject({ status: "revoked" });
-    expect(remoteDeviceFromClient({ ...client, platform: "macOS" })).toMatchObject({ deviceType: "desktop", platform: "macOS" });
-    expect(remoteDeviceFromClient({ ...client, platform: "iPadOS" })).toMatchObject({ deviceType: "tablet" });
+    expect(remoteDeviceFromClient({ ...client, descriptor: { ...client.descriptor, operatingSystem: "macOS" } })).toMatchObject({ deviceType: "desktop", operatingSystem: "macOS" });
+    expect(remoteDeviceFromClient({ ...client, descriptor: { ...client.descriptor, operatingSystem: "iPadOS" } })).toMatchObject({ deviceType: "tablet" });
+    expect(remoteDeviceSystemLabel(remoteDeviceFromClient(client))).toBe("iOS 18.0");
   });
 
   it("formats pairing countdown and maps every terminal pairing outcome", () => {

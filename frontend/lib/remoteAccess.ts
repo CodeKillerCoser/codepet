@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { DeviceDescriptor } from "../../sdk/typescript/codepet-gateway-sdk/src/generated";
 
 export type RemoteAccessRuntimePhase = "starting" | "available" | "unavailable" | "stopping" | "stopped";
 
@@ -22,8 +23,7 @@ export interface RemoteAccessStatus {
 export interface RemoteClient {
   credentialId: string;
   remoteClientId: string;
-  clientName: string;
-  platform: string;
+  descriptor: DeviceDescriptor;
   createdAt: number;
   lastSeenAt: number;
   revokedAt?: number | null;

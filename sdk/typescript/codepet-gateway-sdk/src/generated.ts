@@ -59,6 +59,14 @@ export interface Conversation {
   activeTurn?: TurnTask;
 }
 
+export interface ConversationContent {
+  contentId: NativeResourceId;
+  kind: ConversationContentKind;
+  text: string;
+}
+
+export type ConversationContentKind = "text" | "reasoning-summary" | "command" | "output" | "activity-summary";
+
 export interface ConversationCreateRequest {
   route: GatewayProviderRoute;
   title?: string;
@@ -78,8 +86,28 @@ export interface ConversationGetRequest {
 
 export interface ConversationGetResponse {
   conversation: Conversation;
+  items: Array<ConversationItem>;
   snapshotCursor: EventCursor;
 }
+
+export interface ConversationItem {
+  resource: RoutedResourceId;
+  turn: RoutedResourceId;
+  conversation: RoutedResourceId;
+  kind: ConversationItemKind;
+  status: ConversationItemStatus;
+  role?: ConversationItemRole;
+  title?: string;
+  contents: Array<ConversationContent>;
+  relatedItem?: RoutedResourceId;
+  approval?: Approval;
+}
+
+export type ConversationItemKind = "message" | "reasoning" | "command" | "file-change" | "tool" | "approval" | "unknown";
+
+export type ConversationItemRole = "user" | "assistant";
+
+export type ConversationItemStatus = "pending" | "running" | "completed" | "failed" | "interrupted" | "declined" | "approved" | "denied" | "expired" | "unknown";
 
 export interface ConversationListRequest {
   route?: GatewayProviderRoute;
@@ -108,6 +136,12 @@ export interface Device {
   displayName: string;
   status: DeviceStatus;
   lastSeenAt?: TimestampMs;
+}
+
+export interface DeviceDescriptor {
+  deviceName: string;
+  operatingSystem: string;
+  systemVersion: string;
 }
 
 export interface DeviceListRequest {
@@ -150,7 +184,7 @@ export interface GatewayProviderRoute {
 
 export interface HandshakeRequest {
   clientId: ClientId;
-  clientName: string;
+  device: DeviceDescriptor;
   clientVersion: string;
   supportedVersions: VersionRange;
   lastEventCursor?: EventCursor;
@@ -169,8 +203,7 @@ export interface HandshakeResponse {
 export interface PairingExchangeRequest {
   pairingSecret: string;
   clientId: ClientId;
-  clientName: string;
-  platform: string;
+  device: DeviceDescriptor;
 }
 
 export interface PairingExchangeResponse {
@@ -216,7 +249,7 @@ export interface ProviderStatusChangedEvent {
 
 export interface RemoteHostIdentity {
   deviceId: DeviceId;
-  displayName: string;
+  descriptor: DeviceDescriptor;
   identityFingerprint: string;
 }
 
@@ -232,8 +265,9 @@ export interface TurnInterruptResponse {
 export interface TurnOutputDeltaEvent {
   turn: RoutedResourceId;
   conversation: RoutedResourceId;
-  outputId: NativeResourceId;
-  kind: string;
+  itemId: NativeResourceId;
+  contentId: NativeResourceId;
+  kind: ConversationContentKind;
   delta: string;
 }
 

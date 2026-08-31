@@ -35,8 +35,11 @@ describe("remote access command bridge", () => {
     const clients = [{
       credentialId: "credential-one",
       remoteClientId: "client-one",
-      clientName: "My Phone",
-      platform: "iOS",
+      descriptor: {
+        deviceName: "My Phone",
+        operatingSystem: "iOS",
+        systemVersion: "18.0",
+      },
       createdAt: 1_000,
       lastSeenAt: 1_000,
       revokedAt: null,

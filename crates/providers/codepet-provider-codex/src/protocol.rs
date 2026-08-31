@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use std::fmt;
 
@@ -116,7 +117,249 @@ pub struct CodexTurn {
     pub status: CodexTurnStatus,
     pub started_at: Option<i64>,
     pub completed_at: Option<i64>,
-    pub items: Vec<Value>,
+    #[serde(default)]
+    pub items_view: CodexTurnItemsView,
+    pub items: Vec<CodexThreadItem>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum CodexTurnItemsView {
+    NotLoaded,
+    Summary,
+    #[default]
+    Full,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum CodexThreadItem {
+    UserMessage {
+        id: String,
+        text_inputs: Vec<Option<String>>,
+    },
+    AgentMessage {
+        id: String,
+        text: String,
+    },
+    Plan {
+        id: String,
+        text: String,
+    },
+    Reasoning {
+        id: String,
+        summary: Vec<String>,
+    },
+    CommandExecution {
+        id: String,
+        command: String,
+        status: String,
+        aggregated_output: Option<String>,
+    },
+    FileChange {
+        id: String,
+        status: String,
+        change_count: usize,
+    },
+    ToolActivity {
+        id: String,
+        title: String,
+        status: Option<String>,
+    },
+    Unknown {
+        id: String,
+    },
+}
+
+impl CodexThreadItem {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::UserMessage { id, .. }
+            | Self::AgentMessage { id, .. }
+            | Self::Plan { id, .. }
+            | Self::Reasoning { id, .. }
+            | Self::CommandExecution { id, .. }
+            | Self::FileChange { id, .. }
+            | Self::ToolActivity { id, .. }
+            | Self::Unknown { id } => id,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for CodexThreadItem {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        parse_thread_item(&value).map_err(D::Error::custom)
+    }
+}
+
+fn parse_thread_item(value: &Value) -> Result<CodexThreadItem, String> {
+    let id = thread_item_string(value, "id")?;
+    let item_type = thread_item_string(value, "type")?;
+    match item_type.as_str() {
+        "userMessage" => {
+            let content = value
+                .get("content")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "userMessage item is missing content".to_string())?;
+            let mut text_inputs = Vec::with_capacity(content.len());
+            for input in content {
+                let text = match input.get("type").and_then(Value::as_str) {
+                    Some("text") => Some(
+                        input
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| {
+                                "userMessage text input is missing text".to_string()
+                            })?
+                            .to_string(),
+                    ),
+                    _ => None,
+                };
+                text_inputs.push(text);
+            }
+            Ok(CodexThreadItem::UserMessage { id, text_inputs })
+        }
+        "agentMessage" => Ok(CodexThreadItem::AgentMessage {
+            id,
+            text: thread_item_string(value, "text")?,
+        }),
+        "plan" => Ok(CodexThreadItem::Plan {
+            id,
+            text: thread_item_string(value, "text")?,
+        }),
+        "reasoning" => {
+            let summary = value
+                .get("summary")
+                .and_then(Value::as_array)
+                .map(|parts| {
+                    parts
+                        .iter()
+                        .map(|part| {
+                            part.as_str().map(str::to_string).ok_or_else(|| {
+                                "reasoning summary contains a non-string value".to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?
+                .unwrap_or_default();
+            Ok(CodexThreadItem::Reasoning { id, summary })
+        }
+        "commandExecution" => Ok(CodexThreadItem::CommandExecution {
+            id,
+            command: thread_item_string(value, "command")?,
+            status: thread_item_string(value, "status")?,
+            aggregated_output: optional_thread_item_string(value, "aggregatedOutput")?,
+        }),
+        "fileChange" => Ok(CodexThreadItem::FileChange {
+            id,
+            status: thread_item_string(value, "status")?,
+            change_count: value
+                .get("changes")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "fileChange item is missing changes".to_string())?
+                .len(),
+        }),
+        "mcpToolCall" => Ok(CodexThreadItem::ToolActivity {
+            id,
+            title: format!(
+                "{}/{}",
+                thread_item_string(value, "server")?,
+                thread_item_string(value, "tool")?
+            ),
+            status: Some(thread_item_string(value, "status")?),
+        }),
+        "dynamicToolCall" => {
+            let tool = thread_item_string(value, "tool")?;
+            let title = optional_thread_item_string(value, "namespace")?
+                .map(|namespace| format!("{namespace}/{tool}"))
+                .unwrap_or(tool);
+            Ok(CodexThreadItem::ToolActivity {
+                id,
+                title,
+                status: Some(thread_item_string(value, "status")?),
+            })
+        }
+        "functionCallOutput" => {
+            let name = thread_item_string(value, "name")?;
+            let title = optional_thread_item_string(value, "namespace")?
+                .map(|namespace| format!("{namespace}/{name}"))
+                .unwrap_or(name);
+            Ok(CodexThreadItem::ToolActivity {
+                id,
+                title,
+                status: Some("completed".to_string()),
+            })
+        }
+        "collabAgentToolCall" => Ok(CodexThreadItem::ToolActivity {
+            id,
+            title: thread_item_string(value, "tool")?,
+            status: Some(thread_item_string(value, "status")?),
+        }),
+        "subAgentActivity" => Ok(CodexThreadItem::ToolActivity {
+            id,
+            title: "Sub-agent activity".to_string(),
+            status: Some("completed".to_string()),
+        }),
+        "webSearch" => Ok(CodexThreadItem::ToolActivity {
+            id,
+            title: "Web search".to_string(),
+            status: Some("completed".to_string()),
+        }),
+        "imageView" => Ok(CodexThreadItem::ToolActivity {
+            id,
+            title: "Image view".to_string(),
+            status: Some("completed".to_string()),
+        }),
+        "sleep" => Ok(CodexThreadItem::ToolActivity {
+            id,
+            title: "Wait".to_string(),
+            status: optional_thread_item_string(value, "status")?
+                .or_else(|| Some("completed".to_string())),
+        }),
+        "imageGeneration" => Ok(CodexThreadItem::ToolActivity {
+            id,
+            title: "Image generation".to_string(),
+            status: optional_thread_item_string(value, "status")?
+                .or_else(|| Some("completed".to_string())),
+        }),
+        "enteredReviewMode" => Ok(CodexThreadItem::ToolActivity {
+            id,
+            title: "Entered review mode".to_string(),
+            status: Some("completed".to_string()),
+        }),
+        "exitedReviewMode" => Ok(CodexThreadItem::ToolActivity {
+            id,
+            title: "Exited review mode".to_string(),
+            status: Some("completed".to_string()),
+        }),
+        "contextCompaction" => Ok(CodexThreadItem::ToolActivity {
+            id,
+            title: "Context compaction".to_string(),
+            status: Some("completed".to_string()),
+        }),
+        _ => Ok(CodexThreadItem::Unknown { id }),
+    }
+}
+
+fn thread_item_string(value: &Value, key: &str) -> Result<String, String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| format!("thread item is missing {key}"))
+}
+
+fn optional_thread_item_string(value: &Value, key: &str) -> Result<Option<String>, String> {
+    match value.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(format!("thread item {key} is not a string or null")),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -266,7 +509,8 @@ pub enum CodexNotification {
         thread_id: String,
         turn_id: String,
         item_id: String,
-        kind: String,
+        content_id: String,
+        kind: CodexContentKind,
         delta: String,
     },
     ServerRequestResolved {
@@ -277,6 +521,37 @@ pub enum CodexNotification {
     Unknown {
         method: String,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CodexContentKind {
+    Text,
+    ReasoningSummary,
+    Output,
+}
+
+pub fn user_input_content_id(item_id: &str, index: usize) -> String {
+    format!("{item_id}:input:{index}")
+}
+
+pub fn text_content_id(item_id: &str) -> String {
+    format!("{item_id}:text")
+}
+
+pub fn reasoning_summary_content_id(item_id: &str, index: usize) -> String {
+    format!("{item_id}:summary:{index}")
+}
+
+pub fn command_content_id(item_id: &str) -> String {
+    format!("{item_id}:command")
+}
+
+pub fn output_content_id(item_id: &str) -> String {
+    format!("{item_id}:output")
+}
+
+pub fn activity_summary_content_id(item_id: &str) -> String {
+    format!("{item_id}:summary")
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -511,5 +786,81 @@ pub(crate) fn permission_from_sandbox(
         "workspaceWrite" => Some(CodexPermissionLevel::WorkspaceWrite),
         "dangerFullAccess" => Some(CodexPermissionLevel::FullAccess),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thread_item_decoder_keeps_safe_history_fields_and_drops_raw_reasoning() {
+        let turn: CodexTurn = serde_json::from_value(json!({
+            "id": "turn-one",
+            "itemsView": "full",
+            "status": "completed",
+            "startedAt": 1,
+            "completedAt": 2,
+            "items": [
+                {
+                    "type": "userMessage",
+                    "id": "user-one",
+                    "content": [
+                        { "type": "text", "text": "hello" },
+                        { "type": "image", "imageUrl": "private" }
+                    ]
+                },
+                {
+                    "type": "reasoning",
+                    "id": "reasoning-one",
+                    "summary": ["safe summary"],
+                    "content": ["private raw reasoning"]
+                },
+                {
+                    "type": "futureItem",
+                    "id": "future-one",
+                    "privatePayload": "private"
+                }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(turn.items_view, CodexTurnItemsView::Full);
+        assert_eq!(
+            turn.items[0],
+            CodexThreadItem::UserMessage {
+                id: "user-one".to_string(),
+                text_inputs: vec![Some("hello".to_string()), None]
+            }
+        );
+        assert_eq!(
+            turn.items[1],
+            CodexThreadItem::Reasoning {
+                id: "reasoning-one".to_string(),
+                summary: vec!["safe summary".to_string()]
+            }
+        );
+        assert_eq!(
+            turn.items[2],
+            CodexThreadItem::Unknown {
+                id: "future-one".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn content_ids_are_stable_and_channel_specific() {
+        assert_eq!(user_input_content_id("item-one", 2), "item-one:input:2");
+        assert_eq!(text_content_id("item-one"), "item-one:text");
+        assert_eq!(
+            reasoning_summary_content_id("item-one", 1),
+            "item-one:summary:1"
+        );
+        assert_eq!(command_content_id("item-one"), "item-one:command");
+        assert_eq!(output_content_id("item-one"), "item-one:output");
+        assert_ne!(
+            reasoning_summary_content_id("item-one", 0),
+            output_content_id("item-one")
+        );
     }
 }

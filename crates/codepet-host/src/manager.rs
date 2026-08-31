@@ -6,7 +6,7 @@ use crate::{
 use codepet_provider_sdk::{
     ApprovalResolveRequest, ApprovalResolveResponse, ClientId, ConversationCreateRequest,
     ConversationCreateResponse, ConversationGetRequest, ConversationGetResponse,
-    ConversationListRequest, ConversationListResponse, InstanceCapabilitiesRequest,
+    ConversationItemKind, ConversationListRequest, ConversationListResponse, InstanceCapabilitiesRequest,
     InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceStartRequest, InstanceStatus,
     InstanceStopRequest, ProtocolEvent, ProtocolMethod,
     ProviderDescribeRequest, ProviderInitializeRequest, ProviderInstance, ProviderInstanceRoute,
@@ -15,7 +15,7 @@ use codepet_provider_sdk::{
     TurnSteerResponse, VersionRange, PROTOCOL_VERSION,
 };
 use serde_json::Value;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
@@ -829,6 +829,7 @@ impl PluginManager {
             .map_err(HostError::from)?;
         validate_conversation_routes(&response.conversation, &route)?;
         validate_exact_resource(&response.conversation.resource, &expected, "conversation.get")?;
+        validate_conversation_items(&response.items, &expected, &route)?;
         Ok(response)
     }
 
@@ -1460,7 +1461,14 @@ fn validate_event_routes(
         }
         ProtocolEvent::EventTurnOutputDelta { params, .. } => {
             validate_resource_route(&params.turn, route)?;
-            validate_resource_route(&params.conversation, route)
+            validate_resource_route(&params.conversation, route)?;
+            if params.item_id.trim().is_empty() || params.content_id.trim().is_empty() {
+                return Err(HostError::new(
+                    "invalid_turn_output_delta",
+                    "Provider output deltas require non-empty item and content identities",
+                ));
+            }
+            Ok(())
         }
         ProtocolEvent::EventApprovalRequested { params, .. } => {
             validate_approval_routes(&params.approval, route)
@@ -1483,6 +1491,65 @@ fn validate_conversation_routes(
             &conversation.resource,
             "conversation active turn",
         )?;
+    }
+    Ok(())
+}
+
+fn validate_conversation_items(
+    items: &[codepet_provider_sdk::ConversationItem],
+    conversation: &RoutedResourceId,
+    route: &ProviderInstanceRoute,
+) -> HostResult<()> {
+    let mut item_ids = BTreeSet::new();
+    let mut content_ids = BTreeSet::new();
+    for item in items {
+        validate_resource_route(&item.resource, route)?;
+        validate_resource_route(&item.turn, route)?;
+        validate_resource_route(&item.conversation, route)?;
+        validate_exact_resource(
+            &item.conversation,
+            conversation,
+            "conversation history item",
+        )?;
+        if !item_ids.insert(item.resource.native_resource_id.as_str()) {
+            return Err(HostError::new(
+                "duplicate_conversation_item",
+                "Provider conversation history contains a duplicate item identity",
+            ));
+        }
+        for content in &item.contents {
+            if content.content_id.trim().is_empty() {
+                return Err(HostError::new(
+                    "invalid_conversation_content",
+                    "Provider conversation history contains an empty content identity",
+                ));
+            }
+            if !content_ids.insert(content.content_id.as_str()) {
+                return Err(HostError::new(
+                    "duplicate_conversation_content",
+                    "Provider conversation history contains a duplicate content identity",
+                ));
+            }
+        }
+        if let Some(related_item) = item.related_item.as_ref() {
+            validate_resource_route(related_item, route)?;
+        }
+        if let Some(approval) = item.approval.as_ref() {
+            if item.kind != ConversationItemKind::Approval {
+                return Err(HostError::new(
+                    "invalid_conversation_approval",
+                    "Only approval history items may carry approval details",
+                ));
+            }
+            validate_approval_routes(approval, route)?;
+            validate_exact_resource(&approval.resource, &item.resource, "history approval")?;
+            validate_exact_resource(&approval.turn, &item.turn, "history approval turn")?;
+            validate_exact_resource(
+                &approval.conversation,
+                conversation,
+                "history approval conversation",
+            )?;
+        }
     }
     Ok(())
 }

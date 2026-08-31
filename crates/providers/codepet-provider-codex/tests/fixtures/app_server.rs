@@ -61,7 +61,7 @@ fn main() {
                             turn_status
                                 .as_deref()
                                 .map(|status| vec![turn("turn-started", status)])
-                                .unwrap_or_default()
+                                .unwrap_or_else(|| vec![turn("turn-history", "completed")])
                         )
                     }),
                 );
@@ -95,7 +95,7 @@ fn main() {
                     json!({
                         "threadId": thread_id,
                         "turnId": "turn-started",
-                        "itemId": "output-one",
+                        "itemId": "agent-one",
                         "delta": "fixture output"
                     }),
                 );
@@ -215,12 +215,69 @@ fn thread(id: &str, status: &str, turns: Vec<Value>) -> Value {
 }
 
 fn turn(id: &str, status: &str) -> Value {
+    let activity_status = if status == "inProgress" { "inProgress" } else { "completed" };
     json!({
         "id": id,
         "status": status,
         "startedAt": 30,
         "completedAt": if status == "inProgress" { Value::Null } else { json!(31) },
-        "items": []
+        "itemsView": "full",
+        "items": [
+            {
+                "type": "userMessage",
+                "id": "user-one",
+                "clientId": "message-one",
+                "content": [
+                    { "type": "text", "text": "run fixture" },
+                    { "type": "image", "imageUrl": "data:image/png;base64,private" }
+                ]
+            },
+            {
+                "type": "agentMessage",
+                "id": "agent-one",
+                "text": "fixture answer"
+            },
+            {
+                "type": "reasoning",
+                "id": "reasoning-one",
+                "summary": ["Checked the fixture"],
+                "content": ["private raw reasoning"]
+            },
+            {
+                "type": "commandExecution",
+                "id": "command-one",
+                "command": "cargo test",
+                "status": activity_status,
+                "aggregatedOutput": if status == "inProgress" { Value::Null } else { json!("tests passed") }
+            },
+            {
+                "type": "fileChange",
+                "id": "file-one",
+                "status": activity_status,
+                "changes": [{ "path": "private-a" }, { "path": "private-b" }]
+            },
+            {
+                "type": "mcpToolCall",
+                "id": "mcp-one",
+                "server": "fixture-server",
+                "tool": "lookup",
+                "status": activity_status,
+                "arguments": { "private": true }
+            },
+            {
+                "type": "dynamicToolCall",
+                "id": "dynamic-one",
+                "namespace": "fixture",
+                "tool": "inspect",
+                "status": activity_status,
+                "arguments": { "private": true }
+            },
+            {
+                "type": "futureCodexItem",
+                "id": "unknown-one",
+                "privatePayload": "must not escape"
+            }
+        ]
     })
 }
 

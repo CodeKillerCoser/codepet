@@ -11,8 +11,9 @@ use crate::protocol::{
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalResolveRequest, ApprovalResolveResponse,
-    ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
-    ConversationGetResponse, ConversationListRequest, ConversationListResponse,
+    ConversationContentKind, ConversationCreateRequest, ConversationCreateResponse,
+    ConversationGetRequest, ConversationGetResponse, ConversationListRequest,
+    ConversationListResponse,
     InstanceCapabilitiesRequest, InstanceCapabilitiesResponse, InstanceCreateRequest,
     InstanceCreateResponse, InstanceDestroyRequest, InstanceDestroyResponse,
     InstanceStartRequest, InstanceStartResponse, InstanceStatus, InstanceStatusChangedEvent,
@@ -328,15 +329,26 @@ impl OpenCodeInstanceRuntime {
                 let Some(turn) = turn else {
                     return Ok(Vec::new());
                 };
-                let (output_id, kind) = if event.kind == "session.next.text.delta" {
-                    (data.text_id, "text")
+                let (item_id, content_suffix, kind) = if event.kind == "session.next.text.delta" {
+                    (data.text_id, "text", ConversationContentKind::Text)
                 } else {
-                    (data.reasoning_id, "reasoning")
+                    (
+                        data.reasoning_id,
+                        "summary:0",
+                        ConversationContentKind::ReasoningSummary,
+                    )
                 };
-                let output_id = output_id.ok_or_else(|| {
-                    event_shape_error(&event, "delta event is missing its output identifier")
+                let item_id = item_id.ok_or_else(|| {
+                    event_shape_error(&event, "delta event is missing its item identifier")
                 })?;
-                Ok(vec![self.mapper.delta_event(&turn, output_id, kind, data.delta)])
+                let content_id = format!("{item_id}:{content_suffix}");
+                Ok(vec![self.mapper.delta_event(
+                    &turn,
+                    item_id,
+                    content_id,
+                    kind,
+                    data.delta,
+                )])
             }
             "session.next.step.ended" => {
                 let data: OpenCodeStepEndedEventData = decode_event(&event)?;
@@ -1175,7 +1187,10 @@ impl ProtocolServer for OpenCodeProvider {
                     .mapper
                     .conversation(&session, active, turn, waiting)
             };
-            Ok(ConversationGetResponse { conversation })
+            Ok(ConversationGetResponse {
+                conversation,
+                items: Vec::new(),
+            })
         })
     }
 

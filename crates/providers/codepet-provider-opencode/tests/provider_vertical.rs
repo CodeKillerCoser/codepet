@@ -2,7 +2,7 @@ use codepet_provider_opencode::{
     OpenCodeProvider, OPENCODE_INSTANCE_KIND, OPENCODE_PLUGIN_ID,
 };
 use codepet_provider_sdk::{
-    ApprovalDecision, ApprovalResolveRequest, ConversationCreateRequest,
+    ApprovalDecision, ApprovalResolveRequest, ConversationContentKind, ConversationCreateRequest,
     ConversationGetRequest, ConversationListRequest, InstanceCreateRequest,
     InstanceStartRequest, InstanceStatus, InstanceStopRequest, ProtocolEvent,
     ProtocolServer, ProviderInitializeRequest, ProviderInstanceRoute, RoutedResourceId,
@@ -271,17 +271,27 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
 
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut saw_delta = false;
+    let mut saw_reasoning = false;
     let mut approval = None;
-    while Instant::now() < deadline && (!saw_delta || approval.is_none()) {
+    while Instant::now() < deadline && (!saw_delta || !saw_reasoning || approval.is_none()) {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let Ok(event) = event_receiver.recv_timeout(remaining) else {
             break;
         };
         match event {
             ProtocolEvent::EventTurnOutputDelta { params, .. }
-                if params.delta == "fixture output" && params.kind == "text" =>
-            {
+                if params.delta == "fixture output"
+                    && params.kind == ConversationContentKind::Text => {
+                assert!(params.item_id.starts_with("txt_"));
+                assert_eq!(params.content_id, format!("{}:text", params.item_id));
                 saw_delta = true;
+            }
+            ProtocolEvent::EventTurnOutputDelta { params, .. }
+                if params.delta == "fixture reasoning"
+                    && params.kind == ConversationContentKind::ReasoningSummary => {
+                assert!(params.item_id.starts_with("reasoning_"));
+                assert_eq!(params.content_id, format!("{}:summary:0", params.item_id));
+                saw_reasoning = true;
             }
             ProtocolEvent::EventApprovalRequested { params, .. } => {
                 approval = Some(params.approval);
@@ -290,6 +300,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         }
     }
     assert!(saw_delta, "official text delta shape was not mapped");
+    assert!(saw_reasoning, "official reasoning delta shape was not mapped");
     let approval = approval.expect("official permission.v2.asked shape was not mapped");
     assert_eq!(approval.kind, "bash");
     assert_eq!(approval.turn, started_turn.turn.resource);

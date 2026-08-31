@@ -1,8 +1,9 @@
 use codepet_provider_sdk::{
-    decode_event, decode_request, decode_response, dispatch, JsonRpcResponsePayload, ProtocolEvent,
-    InstanceCreateRequest, InstanceCreateResponse, ProtocolFuture, ProtocolMethod, ProtocolRequest,
-    ProtocolServer, ProviderCapability, ProviderInitializeRequest, ProviderInitializeResponse,
-    ProviderPluginDescriptor, VersionRange,
+    decode_event, decode_request, decode_response, dispatch, ConversationContentKind,
+    ConversationGetResponse, ConversationItemKind, ConversationItemStatus, InstanceCreateRequest,
+    InstanceCreateResponse, JsonRpcResponsePayload, ProtocolEvent, ProtocolFuture, ProtocolMethod,
+    ProtocolRequest, ProtocolServer, ProviderCapability, ProviderInitializeRequest,
+    ProviderInitializeResponse, ProviderPluginDescriptor, VersionRange,
 };
 
 struct InitializeServer;
@@ -66,6 +67,56 @@ fn provider_event_preserves_all_four_resource_route_dimensions() {
     );
     assert_eq!(params.conversation.resource.provider_instance_id, "codex-work");
     assert_eq!(params.conversation.resource.native_resource_id, "thread-01");
+}
+
+#[test]
+fn conversation_get_fixture_preserves_ordered_items_and_stable_content_ids() {
+    let response = decode_response(include_bytes!(
+        "../../../../protocol/provider/v1/fixtures/conversation-get-response.json"
+    ))
+    .unwrap();
+    let JsonRpcResponsePayload::Ok { result } = response.response else {
+        panic!("expected conversation.get result");
+    };
+    let response: ConversationGetResponse = serde_json::from_value(result).unwrap();
+
+    assert_eq!(response.items[0].resource.native_resource_id, "user-one");
+    assert!(response.items.iter().all(|item| {
+        item.conversation == response.conversation.resource
+    }));
+    assert_eq!(response.items[0].kind, ConversationItemKind::Message);
+    assert_eq!(response.items[0].contents[0].content_id, "user-one:input:0");
+    assert_eq!(response.items[1].kind, ConversationItemKind::Reasoning);
+    assert_eq!(
+        response.items[1].contents[0].kind,
+        ConversationContentKind::ReasoningSummary
+    );
+    assert_eq!(response.items[2].resource.native_resource_id, "command-one");
+    assert_eq!(response.items[3].kind, ConversationItemKind::Approval);
+    assert_eq!(response.items[3].status, ConversationItemStatus::Approved);
+    assert_eq!(
+        response.items[3]
+            .related_item
+            .as_ref()
+            .unwrap()
+            .native_resource_id,
+        "command-one"
+    );
+    assert_eq!(response.items[4].kind, ConversationItemKind::Unknown);
+}
+
+#[test]
+fn turn_output_delta_fixture_addresses_both_item_and_content() {
+    let event = decode_event(include_bytes!(
+        "../../../../protocol/provider/v1/fixtures/turn-output-delta-event.json"
+    ))
+    .unwrap();
+    let ProtocolEvent::EventTurnOutputDelta { params, .. } = event else {
+        panic!("expected turn output delta");
+    };
+    assert_eq!(params.item_id, "agent-one");
+    assert_eq!(params.content_id, "agent-one:text");
+    assert_eq!(params.kind, ConversationContentKind::Text);
 }
 
 #[test]

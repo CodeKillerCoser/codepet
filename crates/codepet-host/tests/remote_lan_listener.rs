@@ -91,6 +91,11 @@ impl TestHost {
             RemoteAccessManager::open(
                 RemoteAccessConfig::for_data_directory(remote_directory),
                 device,
+                gateway::DeviceDescriptor {
+                    device_name: "LAN Listener Test Host".to_string(),
+                    operating_system: "TestOS".to_string(),
+                    system_version: "1.0".to_string(),
+                },
             )
             .unwrap(),
         );
@@ -245,8 +250,7 @@ async fn pair_client(
     let request = gateway::PairingExchangeRequest {
         pairing_secret: pairing.pairing_secret,
         client_id: client_id.to_string(),
-        client_name: format!("Client {client_id}"),
-        platform: "integration-test".to_string(),
+        device: client_descriptor(client_id, "1.0"),
     };
     let body = serde_json::to_string(&request).unwrap();
     let path = format!("/remote/v1/pairings/{}/exchange", pairing.pairing_id);
@@ -263,12 +267,20 @@ async fn pair_client(
 }
 
 fn handshake_request(id: &str, client_id: &str) -> gateway::ProtocolRequest {
+    handshake_request_with_descriptor(id, client_id, client_descriptor(client_id, "1.0"))
+}
+
+fn handshake_request_with_descriptor(
+    id: &str,
+    client_id: &str,
+    device: gateway::DeviceDescriptor,
+) -> gateway::ProtocolRequest {
     gateway::ProtocolRequest::ProtocolHandshake {
         protocol_version: gateway::PROTOCOL_VERSION,
         id: id.to_string(),
         params: gateway::HandshakeRequest {
             client_id: client_id.to_string(),
-            client_name: format!("Client {client_id}"),
+            device,
             client_version: "1.0.0".to_string(),
             supported_versions: gateway::VersionRange {
                 min_version: gateway::PROTOCOL_VERSION,
@@ -276,6 +288,14 @@ fn handshake_request(id: &str, client_id: &str) -> gateway::ProtocolRequest {
             },
             last_event_cursor: None,
         },
+    }
+}
+
+fn client_descriptor(client_id: &str, system_version: &str) -> gateway::DeviceDescriptor {
+    gateway::DeviceDescriptor {
+        device_name: format!("Client {client_id}"),
+        operating_system: "TestOS".to_string(),
+        system_version: system_version.to_string(),
     }
 }
 
@@ -495,7 +515,16 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         .connect_websocket(&pairing_a.credential)
         .await
         .unwrap();
-    send_request(&mut socket_a, handshake_request("handshake-a", "client-a")).await;
+    let refreshed_client_a = client_descriptor("client-a", "2.0");
+    send_request(
+        &mut socket_a,
+        handshake_request_with_descriptor(
+            "handshake-a",
+            "client-a",
+            refreshed_client_a.clone(),
+        ),
+    )
+    .await;
     let handshake = next_response(&mut socket_a, "handshake-a").await;
     let gateway::ProtocolResponse::ProtocolHandshake {
         response: gateway::ResponsePayload::Ok { result: handshake },
@@ -507,6 +536,24 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     let certificate_fingerprint = hex_sha256(&certificate_der);
     assert_eq!(handshake.device.identity_fingerprint, certificate_fingerprint);
     assert_eq!(handshake.device.identity_fingerprint, pairing_a.device.identity_fingerprint);
+    assert_eq!(
+        handshake.device.descriptor,
+        gateway::DeviceDescriptor {
+            device_name: "LAN Listener Test Host".to_string(),
+            operating_system: "TestOS".to_string(),
+            system_version: "1.0".to_string(),
+        }
+    );
+    assert_eq!(
+        host.remote_access
+            .list_credentials()
+            .unwrap()
+            .into_iter()
+            .find(|credential| credential.client_id == "client-a")
+            .unwrap()
+            .descriptor,
+        refreshed_client_a
+    );
     let initial_cursor = handshake.event_cursor.clone();
 
     let mut malformed = client
@@ -744,6 +791,13 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     };
     assert_eq!(error.code, "gateway_event_already_subscribed");
 
+    let descriptor_before_mismatch = host.remote_access
+        .list_credentials()
+        .unwrap()
+        .into_iter()
+        .find(|credential| credential.client_id == "client-a")
+        .unwrap()
+        .descriptor;
     let mut mismatch = client
         .connect_websocket(&pairing_a.credential)
         .await
@@ -763,6 +817,16 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     };
     assert_eq!(error.code, "gateway_client_identity_mismatch");
     assert_close_reason(&mut mismatch, "gateway_client_identity_mismatch").await;
+    assert_eq!(
+        host.remote_access
+            .list_credentials()
+            .unwrap()
+            .into_iter()
+            .find(|credential| credential.client_id == "client-a")
+            .unwrap()
+            .descriptor,
+        descriptor_before_mismatch
+    );
 
     let pairing_b = pair_client(host.remote_access.as_ref(), &client, "client-b").await;
     let mut socket_b = client

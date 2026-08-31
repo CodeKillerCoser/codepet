@@ -308,6 +308,20 @@ fn run_prompt_scenario(
     broadcast(
         state,
         json!({
+            "id": format!("evt_reasoning_{message_id}"),
+            "type": "session.next.reasoning.delta",
+            "data": {
+                "timestamp": timestamp + 2,
+                "sessionID": session_id,
+                "assistantMessageID": assistant_message_id,
+                "reasoningID": format!("reasoning_{message_id}"),
+                "delta": "fixture reasoning"
+            }
+        }),
+    );
+    broadcast(
+        state,
+        json!({
             "id": format!("evt_delta_{message_id}"),
             "type": "session.next.text.delta",
             "data": {

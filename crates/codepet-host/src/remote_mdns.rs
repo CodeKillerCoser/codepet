@@ -214,7 +214,9 @@ impl MdnsServiceSpec {
         local_addr: SocketAddr,
         local_addresses: &[IpAddr],
     ) -> HostResult<Self> {
-        if identity.device_id.trim().is_empty() || identity.display_name.trim().is_empty() {
+        if identity.device_id.trim().is_empty()
+            || identity.descriptor.device_name.trim().is_empty()
+        {
             return Err(HostError::new(
                 "invalid_remote_lan_mdns_identity",
                 "Remote LAN mDNS identity requires a device id and display name",
@@ -239,12 +241,12 @@ impl MdnsServiceSpec {
         }
 
         let suffix = identity_suffix(&identity.device_id);
-        let instance_name = instance_name(&identity.display_name, &suffix);
+        let instance_name = instance_name(&identity.descriptor.device_name, &suffix);
         let hostname = format!("codepet-{suffix}.local.");
 
         Ok(Self {
             device_id: identity.device_id.clone(),
-            display_name: identity.display_name.clone(),
+            display_name: identity.descriptor.device_name.clone(),
             instance_name,
             hostname,
             address,
@@ -512,6 +514,7 @@ impl MdnsBackend for ServiceDaemonBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codepet_gateway_sdk::DeviceDescriptor;
     use std::collections::{BTreeMap, VecDeque};
     use std::sync::{Arc, Mutex};
 
@@ -690,7 +693,11 @@ mod tests {
     fn identity(device_id: &str, display_name: &str) -> RemoteHostIdentity {
         RemoteHostIdentity {
             device_id: device_id.to_string(),
-            display_name: display_name.to_string(),
+            descriptor: DeviceDescriptor {
+                device_name: display_name.to_string(),
+                operating_system: "TestOS".to_string(),
+                system_version: "1.0".to_string(),
+            },
             identity_fingerprint: "must-not-leak-fingerprint".to_string(),
         }
     }

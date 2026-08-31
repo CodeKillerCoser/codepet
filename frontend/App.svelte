@@ -584,7 +584,7 @@
 
   async function revokeRemoteDevice(device: RemoteDevice) {
     if (device.status === "revoked" || revokingRemoteCredentialId) return;
-    const confirmed = await confirmDialog(`撤销 ${device.clientName} 的访问权限？该客户端需要重新配对才能连接。`, {
+    const confirmed = await confirmDialog(`撤销 ${device.deviceName} 的访问权限？该客户端需要重新配对才能连接。`, {
       title: "撤销 Remote 访问权限",
       kind: "warning",
     });
@@ -748,7 +748,7 @@
       applyRemoteClientSnapshot(clients);
       remoteClientsUnavailable = false;
       const pairedDevice = remoteDevices.find((device) => !pairingKnownDeviceIds.has(device.id) && device.status !== "revoked");
-      pairingDisplay = { ...pairingDisplay, pairedClientName: pairedDevice?.clientName ?? null };
+      pairingDisplay = { ...pairingDisplay, pairedClientName: pairedDevice?.deviceName ?? null };
     } catch (currentError) {
       if (requestToken === pairingRequestToken) {
         remoteCommandError = remoteCommandDiagnostic(currentError, "remote_client_list_unavailable");

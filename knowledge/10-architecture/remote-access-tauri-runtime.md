@@ -53,7 +53,7 @@ Manager 的最小 `watch` 值只有 pairing id、是否可用和单调 deadline�
 
 - `remote_access_status`：读取安全运行状态与诊断。
 - `retry_remote_access`：串行重试不可用的 LAN runtime；available 时为 no-op。
-- `list_remote_clients`：返回 `credentialId/remoteClientId/clientName/platform/createdAt/lastSeenAt/revokedAt/onlineSessionCount`。
+- `list_remote_clients`：返回 `credentialId/remoteClientId/descriptor/createdAt/lastSeenAt/revokedAt/onlineSessionCount`；`descriptor` 是持久化的 `DeviceDescriptor`，连接页直接展示设备名、OS 与系统版本。
 - `start_remote_pairing`：只返回 `pairingId/expiresAt/qrSvgDataUrl`。
 - `get_remote_pairing_status`：按 pairing id 查询 `active/succeeded/expired/cancelled`。
 - `cancel_remote_pairing`：取消 active pairing；重复 cancelled 调用幂等。
@@ -97,7 +97,7 @@ client online 数只读取 listener 的实际 session registry。未连接或已
 
 ## 未知项
 
-- frontend 尚未调用这些命令，也没有 QR/client 管理 UI。
+- 连接页已经消费 remote client 列表并展示持久 descriptor；手机侧对称消费 Host descriptor、真实跨 LAN pairing 与握手仍需独立验证。
 - 手机等真实设备的跨 LAN discovery、TLS pin、系统防火墙提示、睡眠唤醒和网卡切换尚未验证。
 - v1 只支持 IPv4；IPv6 地址选择与双栈 mDNS 发布未设计。
 - 运行中网卡变化不会自动重绑或重发广告；当前需显式 retry 或重启 App。

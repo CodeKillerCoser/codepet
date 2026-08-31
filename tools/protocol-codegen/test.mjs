@@ -82,6 +82,17 @@ test("provider is JSON-RPC over stdio and owns plugin instance lifecycle", async
   }
 });
 
+test("provider history items carry routed conversation ownership", async () => {
+  const model = await loadProtocolModel();
+  const definitions = record(model, "provider-v1").schema.$defs;
+  assert.equal(
+    definitions.ConversationItem.properties.conversation.$ref,
+    "../../core/v1/schema.json#/$defs/RoutedResourceId",
+  );
+  assert(definitions.ConversationItem.required.includes("conversation"));
+  assert(definitions.ConversationGetResponse.required.includes("items"));
+});
+
 test("gateway resources are routed while plugin lifecycle stays private", async () => {
   const model = await loadProtocolModel();
   const gateway = record(model, "gateway-v1");
@@ -115,6 +126,15 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
       "../../core/v1/schema.json#/$defs/RoutedResourceId",
     );
   }
+  assert.equal(
+    gateway.schema.$defs.ConversationItem.properties.conversation.$ref,
+    "../../core/v1/schema.json#/$defs/RoutedResourceId",
+  );
+  assert(gateway.schema.$defs.ConversationItem.required.includes("conversation"));
+  assert.deepEqual(
+    Object.keys(gateway.schema.$defs.TurnOutputDeltaEvent.properties),
+    ["turn", "conversation", "itemId", "contentId", "kind", "delta"],
+  );
 });
 
 test("gateway LAN DTOs remain generated types outside the JSON-RPC method manifest", async () => {
@@ -129,20 +149,35 @@ test("gateway LAN DTOs remain generated types outside the JSON-RPC method manife
   ]);
   assert.equal(definitions.HandshakeRequest.properties.clientId.$ref, "../../core/v1/schema.json#/$defs/ClientId");
   assert.equal(definitions.HandshakeRequest.properties.remoteClientId, undefined);
+  assert.equal(definitions.HandshakeRequest.properties.clientName, undefined);
+  assert.equal(definitions.HandshakeRequest.properties.device.$ref, "#/$defs/DeviceDescriptor");
+  assert(definitions.HandshakeRequest.required.includes("device"));
   assert.equal(definitions.HandshakeResponse.properties.device.$ref, "#/$defs/RemoteHostIdentity");
   assert(definitions.HandshakeResponse.required.includes("device"));
+  assert.deepEqual(Object.keys(definitions.DeviceDescriptor.properties), [
+    "deviceName",
+    "operatingSystem",
+    "systemVersion",
+  ]);
+  assert.deepEqual(definitions.DeviceDescriptor.required, [
+    "deviceName",
+    "operatingSystem",
+    "systemVersion",
+  ]);
   assert.deepEqual(Object.keys(definitions.RemoteHostIdentity.properties), [
     "deviceId",
-    "displayName",
+    "descriptor",
     "identityFingerprint",
   ]);
+  assert.equal(definitions.RemoteHostIdentity.properties.descriptor.$ref, "#/$defs/DeviceDescriptor");
   assert.equal(definitions.RemoteHostIdentity.properties.identityFingerprint.pattern, "^[0-9a-f]{64}$");
   assert.deepEqual(Object.keys(definitions.PairingExchangeRequest.properties), [
     "pairingSecret",
     "clientId",
-    "clientName",
-    "platform",
+    "device",
   ]);
+  assert.equal(definitions.PairingExchangeRequest.properties.device.$ref, "#/$defs/DeviceDescriptor");
+  assert(definitions.PairingExchangeRequest.required.includes("device"));
   assert.equal(definitions.PairingExchangeRequest.properties.pairingSecret["x-codepet-sensitive"], true);
   assert.deepEqual(Object.keys(definitions.PairingExchangeResponse.properties), [
     "device",
