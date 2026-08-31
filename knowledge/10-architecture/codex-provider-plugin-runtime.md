@@ -70,7 +70,7 @@ Codex Desktop 私有 IPC
 | Provider 二进制路径、Provider 参数与环境变量 | `codepet-provider.json` | Catalog 将相对 `executable` 按 manifest 目录解析后交给 `PluginManager`。 |
 | Codex App Server executable | Tauri `AgentRuntimeService` 的 Codex resolver | Host 在内存中的 Codex instance settings 覆盖 `appServerExecutable`，必须是绝对路径。manifest 中的同名字段会先被移除。 |
 | Codex App Server 启动参数 | Codex Provider manifest 的 `appServerArgs` | Host 原样放入 instance settings；Provider 不补默认参数。 |
-| 可广告的 model/reasoning effort | manifest instance settings | 可选 `models`、`reasoningEfforts`；Provider 不猜测或硬编码列表。 |
+| 可广告的 model/reasoning effort | 当前 App Server session 的官方 `model/list` | model 使用全部可见项；全局 reasoning control 只发布所有已广告 model 的共同支持交集，Provider 不猜测或硬编码列表。 |
 
 应用启动和 runtime set/clear/refresh 都使用同一个 resolver 结果更新 Codex instance setting，然后显式重启该 Provider 插件。Desktop IPC connection、owner、revision 和 companion projection 不受影响。没有 resolver 结果时 `appServerExecutable` 缺失，实例 create 明确失败；不会搜索用户目录、调用 Desktop IPC 或启动备用 App Server。
 
@@ -95,7 +95,7 @@ Codex Desktop 私有 IPC
 | `approval.resolve` | 对原 server request id 回写 command/file decision | 仅支持普通 accept/decline 二元审批；只处理当前实例、当前 App Server session generation 的 pending approval。 |
 | `provider.shutdown` | 关闭全部实例的 App Server session，结束 stdio 主循环 | 支持且幂等。 |
 
-Gateway v1 的 `turn.send` 在 Host 中映射为 Provider `turn.start`；带 `steerTurn` 时映射为 `turn.steer`。兼容 v0 继续暴露既有 `turn.send` 调用形状，但只调用同一个 Gateway service。
+Gateway v1 的 `turn.send` 只对已有空闲 conversation 启动新 turn，并在 Host 中映射为 Provider `turn.start`。Provider v1 的 `turn.steer` 仍是独立内部能力，不由 Gateway `turn.send` 自动选择。兼容 v0 继续暴露既有 `turn.send` 调用形状，但 `canSteer=false`，也不会根据 Codex `pluginId` 推断 steering 能力。
 
 Provider 发送全部六种 v1 事件：`event.instanceStatusChanged`、`event.conversationUpserted`、`event.turnUpserted`、`event.turnOutputDelta`、`event.approvalRequested`、`event.approvalResolved`。delta 自带 conversation route，不依赖 replay 顺序补状态。App Server 的 `waitingOnApproval` 与 `waitingOnUserInput` 分别映射为 v1 的 `waiting-approval` 与 `waiting-user-input`。未知 notification 被忽略；未知或无法无损表达的 server request 使用原 request id 返回上游 error `-32601`，不会发布可批准的 Approval。
 
@@ -145,7 +145,7 @@ Provider/Gateway 的语言中立 `RoutedResourceId` 是 `deviceId + providerPlug
 - 没有自动重启、backoff、签名、沙箱或插件市场；这些是明确非目标。
 - 只无损支持 command execution 与 file change 的二元审批。permissions、tool user input、MCP elicitation 不广告为可操作审批。
 - App Server 不支持在 `thread/start` 设置 title；Provider 明确拒绝该可选字段。
-- model/reasoning effort 列表来自显式 instance settings，尚未从 App Server 动态发现。
-- Gateway v1 capability 目前把 start/steer 合并为 `turn.send`，compat 层只能根据 Codex plugin identity 表达 `canSteer`；v1 schema 尚无独立 steer flag。
+- model 列表来自当前 session 的官方 `model/list`；reasoning control 因 Gateway v1 尚未表达 per-model effort，只能发布所有可见 model 的共同支持交集。
+- Gateway v1 `turn.send` 只表示空闲 conversation 的新 turn。compat 不按 Provider 或 harness 身份推断 catalog/selection 形状，也不按 Codex `pluginId` 推断 `canSteer`。
 - compat v0 的 conversation/turn 模型要求 permission 与时间戳，也没有 `waiting-user-input`；v1 无法确认这些字段或状态时 compat 明确返回 `compat_data_unrepresentable`，不会补默认值。
 - remote 与 Desktop 同名 thread 不做去重、来源排除或状态同步；两条链路在本阶段按独立资源展示和操作。

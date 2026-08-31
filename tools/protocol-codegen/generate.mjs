@@ -79,6 +79,17 @@ function referenceTarget(referenceObject, sourcePath, model, location) {
   return parseReference(referenceObject.$ref, sourcePath, model, location);
 }
 
+function nullableReferenceVariant(node) {
+  if (!Array.isArray(node.oneOf) || node.oneOf.length !== 2) return undefined;
+  const reference = node.oneOf.find(
+    (variant) => isObject(variant) && typeof variant.$ref === "string" && Object.keys(variant).length === 1,
+  );
+  const nullVariant = node.oneOf.find(
+    (variant) => isObject(variant) && variant.type === "null" && Object.keys(variant).length === 1,
+  );
+  return reference && nullVariant ? reference : undefined;
+}
+
 function validateSchemaNode(node, record, model, location) {
   assert(isObject(node), `${location} must be a schema object`);
   for (const keyword of Object.keys(node)) {
@@ -94,14 +105,21 @@ function validateSchemaNode(node, record, model, location) {
   if (node.oneOf !== undefined) {
     assert(node.type === undefined && node.enum === undefined, `${location}.oneOf cannot be combined with type or enum`);
     assert(Array.isArray(node.oneOf) && node.oneOf.length >= 2, `${location}.oneOf must contain at least two variants`);
-    node.oneOf.forEach((variant, index) => {
-      referenceTarget(variant, record.schemaPath, model, `${location}.oneOf[${index}]`);
-    });
+    const nullableReference = nullableReferenceVariant(node);
+    if (nullableReference) {
+      node.oneOf.forEach((variant, index) => {
+        validateSchemaNode(variant, record, model, `${location}.oneOf[${index}]`);
+      });
+    } else {
+      node.oneOf.forEach((variant, index) => {
+        referenceTarget(variant, record.schemaPath, model, `${location}.oneOf[${index}]`);
+      });
+    }
     return;
   }
 
   if (node.type !== undefined) {
-    assert(["object", "array", "string", "integer", "boolean"].includes(node.type), `${location} has unsupported type ${node.type}`);
+    assert(["object", "array", "string", "integer", "boolean", "null"].includes(node.type), `${location} has unsupported type ${node.type}`);
   }
   if (node.enum !== undefined) {
     assert(node.type === "string", `${location} only supports string enums`);
@@ -370,6 +388,8 @@ function validateValue(value, node, record, model, location) {
     if (node.maximum !== undefined) assert(value <= node.maximum, `${location} is above maximum`);
   } else if (node.type === "boolean") {
     assert(typeof value === "boolean", `${location} must be boolean`);
+  } else if (node.type === "null") {
+    assert(value === null, `${location} must be null`);
   } else if (node.type === "array") {
     assert(Array.isArray(value), `${location} must be an array`);
     if (node.minItems !== undefined) assert(value.length >= node.minItems, `${location} has too few items`);
@@ -578,6 +598,8 @@ function definitionName(referenceObject, sourcePath, model) {
 
 function rustType(node, record, model, definition) {
   if (node.$ref) return parseReference(node.$ref, record.schemaPath, model, "Rust type").name;
+  const nullableReference = nullableReferenceVariant(node);
+  if (nullableReference) return `Option<${rustType(nullableReference, record, model)}>`;
   if (node.type === "string") return "String";
   if (node.type === "boolean") return "bool";
   if (node.type === "integer") {
@@ -585,6 +607,7 @@ function rustType(node, record, model, definition) {
     return node.minimum !== undefined && node.minimum >= 0 ? "u64" : "i64";
   }
   if (node.type === "array") return `Vec<${rustType(node.items, record, model)}>`;
+  if (node.type === "null") return "()";
   if (node.type === "object" && node.properties === undefined && node.additionalProperties === true) {
     return "BTreeMap<String, serde_json::Value>";
   }
@@ -593,10 +616,13 @@ function rustType(node, record, model, definition) {
 
 function typeScriptType(node, record, model) {
   if (node.$ref) return parseReference(node.$ref, record.schemaPath, model, "TypeScript type").name;
+  const nullableReference = nullableReferenceVariant(node);
+  if (nullableReference) return `${typeScriptType(nullableReference, record, model)} | null`;
   if (node.type === "string") return "string";
   if (node.type === "boolean") return "boolean";
   if (node.type === "integer") return "number";
   if (node.type === "array") return `Array<${typeScriptType(node.items, record, model)}>`;
+  if (node.type === "null") return "null";
   if (node.type === "object" && node.properties === undefined && node.additionalProperties === true) return "Record<string, JsonValue>";
   fail(`cannot generate TypeScript type for ${record.packageConfig.id}: ${JSON.stringify(node)}`);
 }

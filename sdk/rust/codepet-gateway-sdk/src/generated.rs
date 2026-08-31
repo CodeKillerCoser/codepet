@@ -758,7 +758,7 @@ pub struct TurnSendRequest {
 pub struct TurnSendResponse {
     pub accepted: bool,
     pub turn: TurnTask,
-    pub user_item: ConversationItem,
+    pub user_item: Option<ConversationItem>,
     pub effective_selection: TurnSelection,
 }
 

@@ -172,7 +172,7 @@ fn instance_kind_is_required_across_descriptor_request_and_instance_response() {
 }
 
 #[test]
-fn turn_start_fixture_preserves_selection_and_provider_canonical_user_item() {
+fn turn_start_fixture_preserves_selection_and_allows_deferred_user_item() {
     let request = decode_request(include_bytes!(
         "../../../../protocol/provider/v1/fixtures/turn-start-request.json"
     ))
@@ -196,12 +196,8 @@ fn turn_start_fixture_preserves_selection_and_provider_canonical_user_item() {
     };
     let response: TurnStartResponse = serde_json::from_value(result).unwrap();
     assert!(response.accepted);
-    assert_eq!(response.user_item.turn, response.turn.resource);
-    assert_eq!(response.user_item.conversation, response.turn.conversation);
-    assert_eq!(
-        response.user_item.role,
-        Some(codepet_provider_sdk::ConversationItemRole::User)
-    );
+    assert!(response.user_item.is_none());
+    assert_eq!(serde_json::to_value(&response).unwrap()["userItem"], serde_json::Value::Null);
 }
 
 struct InstanceKindServer {

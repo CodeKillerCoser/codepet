@@ -672,7 +672,12 @@
       "properties": {
         "accepted": { "type": "boolean" },
         "turn": { "$ref": "#/$defs/TurnTask" },
-        "userItem": { "$ref": "#/$defs/ConversationItem" },
+        "userItem": {
+          "oneOf": [
+            { "$ref": "#/$defs/ConversationItem" },
+            { "type": "null" }
+          ]
+        },
         "effectiveSelection": { "$ref": "#/$defs/TurnSelection" }
       },
       "required": ["accepted", "turn", "userItem", "effectiveSelection"],

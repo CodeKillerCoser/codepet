@@ -952,7 +952,7 @@ impl ProtocolServer for CodexProvider {
             .map_err(provider_task_error)?
             .map_err(CodexProtocolMapper::error)?;
             let mapper = lock(&runtime.mapper);
-            let user_item = mapper.turn_user_item(&conversation_id, &turn)?;
+            let user_item = mapper.turn_user_item(&conversation_id, &turn);
             let mapped_turn = mapper.turn(&conversation_id, &turn);
             Ok(TurnStartResponse {
                 accepted: true,

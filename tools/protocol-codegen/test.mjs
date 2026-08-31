@@ -151,7 +151,7 @@ test("provider descriptors and turn controls are explicit discriminated protocol
   const gatewayTurnSend = record(model, "gateway-v1").manifest.methods.find(
     (method) => method.name === "turn.send",
   );
-  assert.equal(gatewayTurnSend.idempotency, "idempotent");
+  assert.equal(gatewayTurnSend.idempotency, "nonIdempotent");
   for (const packageId of ["provider-v1", "gateway-v1"]) {
     const definitions = record(model, packageId).schema.$defs;
     const instance = definitions.ProviderInstance;
@@ -172,6 +172,14 @@ test("provider descriptors and turn controls are explicit discriminated protocol
       { $ref: "#/$defs/FlatModelSelection" },
       { $ref: "#/$defs/GroupedModelSelection" },
     ]);
+    const turnResponse = packageId === "provider-v1"
+      ? definitions.TurnStartResponse
+      : definitions.TurnSendResponse;
+    assert(turnResponse.required.includes("userItem"));
+    assert.deepEqual(turnResponse.properties.userItem.oneOf, [
+      { $ref: "#/$defs/ConversationItem" },
+      { type: "null" },
+    ]);
     assert.deepEqual(definitions.FlatModelSelection.required, ["kind", "modelId"]);
     assert.deepEqual(definitions.GroupedModelSelection.required, ["kind", "providerId", "modelId"]);
     assert.equal(definitions.FlatModelSelection.properties.kind.$ref, "#/$defs/FlatModelCatalogKind");
@@ -184,6 +192,7 @@ test("provider descriptors and turn controls are explicit discriminated protocol
     assert.match(source, /#\[serde\(untagged\)\]\npub enum ModelCatalog/);
     assert.match(source, /pub kind: FlatModelCatalogKind/);
     assert.match(source, /pub kind: GroupedModelCatalogKind/);
+    assert.match(source, /pub user_item: Option<ConversationItem>/);
   }
   const gatewayTypescript = await readFile(
     "sdk/typescript/codepet-gateway-sdk/src/generated.ts",
@@ -195,6 +204,7 @@ test("provider descriptors and turn controls are explicit discriminated protocol
   );
   assert.match(gatewayTypescript, /export interface FlatModelSelection \{\n  kind: FlatModelCatalogKind;/);
   assert.match(gatewayTypescript, /export interface GroupedModelSelection \{\n  kind: GroupedModelCatalogKind;/);
+  assert.match(gatewayTypescript, /userItem: ConversationItem \| null/);
 });
 
 test("gateway LAN DTOs remain generated types outside the JSON-RPC method manifest", async () => {

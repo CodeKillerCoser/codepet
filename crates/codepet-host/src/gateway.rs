@@ -14,9 +14,11 @@ use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex};
 
 const EVENT_CURSOR_PREFIX: &str = "event-";
 const TURN_SEND_CACHE_CAPACITY: usize = 1_024;
+const DEFAULT_TURN_SEND_CALLER_SCOPE: &str = "provider-gateway-protocol-default";
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct TurnSendKey {
+    caller_scope: String,
     device_id: String,
     provider_plugin_id: String,
     provider_instance_id: String,
@@ -277,6 +279,64 @@ impl ProviderGatewayService {
         after_cursor: Option<&str>,
     ) -> Result<GatewayEventSubscription, gateway::ProtocolError> {
         self.events.subscribe(after_cursor)
+    }
+
+    pub async fn dispatch_for_caller_scope(
+        &self,
+        caller_scope: &str,
+        request: gateway::ProtocolRequest,
+    ) -> gateway::ProtocolResponse {
+        match request {
+            gateway::ProtocolRequest::TurnSend {
+                protocol_version,
+                id,
+                params,
+            } => {
+                let response = match self
+                    .turn_send_for_caller_scope(caller_scope, params)
+                    .await
+                {
+                    Ok(result) => gateway::ResponsePayload::Ok { result },
+                    Err(error) => gateway::ResponsePayload::Error { error },
+                };
+                gateway::ProtocolResponse::TurnSend {
+                    protocol_version,
+                    id,
+                    response,
+                }
+            }
+            request => gateway::dispatch(self, request).await,
+        }
+    }
+
+    pub async fn turn_send_for_caller_scope(
+        &self,
+        caller_scope: &str,
+        request: gateway::TurnSendRequest,
+    ) -> Result<gateway::TurnSendResponse, gateway::ProtocolError> {
+        let key = turn_send_key(caller_scope, &request)?;
+        let mut cache = self.turn_sends.lock().await;
+        if let Some(entry) = cache.entries.get(&key) {
+            if entry.request != request {
+                return Err(gateway::ProtocolError {
+                    code: "client_request_conflict".to_string(),
+                    message: "clientRequestId was already used with a different turn.send request"
+                        .to_string(),
+                    retryable: false,
+                    details: None,
+                });
+            }
+            return entry.result.clone();
+        }
+        let result = self.perform_turn_send(request.clone()).await;
+        cache.insert(
+            key,
+            TurnSendCacheEntry {
+                request,
+                result: result.clone(),
+            },
+        );
+        result
     }
 
     pub fn start_event_forwarding(self: &Arc<Self>) -> bool {
@@ -564,24 +624,26 @@ impl ProviderGatewayService {
             });
         }
         ensure_same_resource_identity(&response.turn.conversation, &expected_conversation)?;
-        ensure_same_resource_identity(&response.user_item.conversation, &expected_conversation)?;
-        ensure_same_resource_identity(&response.user_item.turn, &response.turn.resource)?;
-        ensure_same_gateway_route(&response.user_item.resource, &expected_conversation)?;
-        if response.user_item.role != Some(provider::ConversationItemRole::User) {
-            return Err(gateway::ProtocolError {
-                code: "provider_response_invalid".to_string(),
-                message: "Provider turn.start response must include a canonical user item"
-                    .to_string(),
-                retryable: false,
-                details: None,
-            });
+        if let Some(user_item) = response.user_item.as_ref() {
+            ensure_same_resource_identity(&user_item.conversation, &expected_conversation)?;
+            ensure_same_resource_identity(&user_item.turn, &response.turn.resource)?;
+            ensure_same_gateway_route(&user_item.resource, &expected_conversation)?;
+            if user_item.role != Some(provider::ConversationItemRole::User) {
+                return Err(gateway::ProtocolError {
+                    code: "provider_response_invalid".to_string(),
+                    message: "Provider turn.start userItem must be canonical when present"
+                        .to_string(),
+                    retryable: false,
+                    details: None,
+                });
+            }
         }
         let effective_selection = map_turn_selection_to_gateway(response.effective_selection);
         validate_gateway_turn_selection(&provider_instance.capabilities, &effective_selection)?;
         Ok(gateway::TurnSendResponse {
             accepted: true,
             turn: map_turn(response.turn),
-            user_item: map_conversation_item(response.user_item),
+            user_item: response.user_item.map(map_conversation_item),
             effective_selection,
         })
     }
@@ -828,29 +890,8 @@ impl ProtocolServer for ProviderGatewayService {
         request: gateway::TurnSendRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::TurnSendResponse> {
         Box::pin(async move {
-            let key = turn_send_key(&request)?;
-            let mut cache = self.turn_sends.lock().await;
-            if let Some(entry) = cache.entries.get(&key) {
-                if entry.request != request {
-                    return Err(gateway::ProtocolError {
-                        code: "client_request_conflict".to_string(),
-                        message: "clientRequestId was already used with a different turn.send request"
-                            .to_string(),
-                        retryable: false,
-                        details: None,
-                    });
-                }
-                return entry.result.clone();
-            }
-            let result = self.perform_turn_send(request.clone()).await;
-            cache.insert(
-                key,
-                TurnSendCacheEntry {
-                    request,
-                    result: result.clone(),
-                },
-            );
-            result
+            self.turn_send_for_caller_scope(DEFAULT_TURN_SEND_CALLER_SCOPE, request)
+                .await
         })
     }
 
@@ -1310,8 +1351,17 @@ fn map_turn_selection_to_gateway(selection: provider::TurnSelection) -> gateway:
 }
 
 fn turn_send_key(
+    caller_scope: &str,
     request: &gateway::TurnSendRequest,
 ) -> Result<TurnSendKey, gateway::ProtocolError> {
+    if caller_scope.trim().is_empty() {
+        return Err(gateway::ProtocolError {
+            code: "invalid_caller_scope".to_string(),
+            message: "turn.send internal caller scope must not be empty".to_string(),
+            retryable: false,
+            details: None,
+        });
+    }
     validate_gateway_route(&request.route)?;
     if request.client_request_id.trim().is_empty() {
         return Err(gateway::ProtocolError {
@@ -1322,6 +1372,7 @@ fn turn_send_key(
         });
     }
     Ok(TurnSendKey {
+        caller_scope: caller_scope.to_string(),
         device_id: request.route.device_id.clone(),
         provider_plugin_id: request.route.provider_plugin_id.clone(),
         provider_instance_id: request.route.provider_instance_id.clone(),

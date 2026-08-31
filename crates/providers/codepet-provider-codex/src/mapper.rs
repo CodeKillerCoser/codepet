@@ -81,9 +81,9 @@ impl CodexProtocolMapper {
             ));
         }
         let mut model_options = Vec::with_capacity(visible_models.len());
-        let mut reasoning_options = Vec::new();
+        let mut reasoning_options: Option<Vec<ChoiceOption>> = None;
         let mut default_model = None;
-        let mut default_reasoning = None;
+        let mut default_reasoning_candidate = None;
         for model in visible_models {
             if model.model.trim().is_empty() || model.display_name.trim().is_empty() {
                 return Err(protocol_error(
@@ -92,6 +92,7 @@ impl CodexProtocolMapper {
                     false,
                 ));
             }
+            let model_id = model.model.clone();
             if model_options
                 .iter()
                 .any(|option: &ChoiceOption| option.id == model.model)
@@ -114,7 +115,7 @@ impl CodexProtocolMapper {
                     kind: FlatModelCatalogKind::Flat,
                     model_id: model.model.clone(),
                 });
-                default_reasoning = Some(model.default_reasoning_effort.clone());
+                default_reasoning_candidate = Some(model.default_reasoning_effort.clone());
             }
             model_options.push(ChoiceOption {
                 id: model.model,
@@ -123,6 +124,7 @@ impl CodexProtocolMapper {
                 enabled: Some(true),
                 disabled_reason: None,
             });
+            let mut model_reasoning_options = Vec::new();
             for effort in model.supported_reasoning_efforts {
                 if effort.reasoning_effort.trim().is_empty() {
                     return Err(protocol_error(
@@ -131,21 +133,43 @@ impl CodexProtocolMapper {
                         false,
                     ));
                 }
-                if !reasoning_options
+                if model_reasoning_options
                     .iter()
                     .any(|option: &ChoiceOption| option.id == effort.reasoning_effort)
                 {
-                    reasoning_options.push(ChoiceOption {
-                        display_name: choice_display_name(&effort.reasoning_effort),
-                        id: effort.reasoning_effort,
-                        description: (!effort.description.trim().is_empty())
-                            .then_some(effort.description),
-                        enabled: Some(true),
-                        disabled_reason: None,
-                    });
+                    return Err(protocol_error(
+                        "capability_discovery_failed",
+                        format!(
+                            "Codex model/list returned duplicate reasoning effort {} for model {}",
+                            effort.reasoning_effort, model_id
+                        ),
+                        false,
+                    ));
                 }
+                model_reasoning_options.push(ChoiceOption {
+                    display_name: choice_display_name(&effort.reasoning_effort),
+                    id: effort.reasoning_effort,
+                    description: (!effort.description.trim().is_empty())
+                        .then_some(effort.description),
+                    enabled: Some(true),
+                    disabled_reason: None,
+                });
+            }
+            match reasoning_options.as_mut() {
+                None => reasoning_options = Some(model_reasoning_options),
+                Some(common) => common.retain(|option| {
+                    model_reasoning_options
+                        .iter()
+                        .any(|candidate| candidate.id == option.id)
+                }),
             }
         }
+        let reasoning_options = reasoning_options.unwrap_or_default();
+        let default_reasoning = default_reasoning_candidate.filter(|candidate| {
+            reasoning_options
+                .iter()
+                .any(|option| option.id == *candidate)
+        });
         let mut methods = Self::unavailable_capabilities(revision.clone()).methods;
         methods.push(ProviderCapability::TurnStart);
         let reasoning_effort = (!reasoning_options.is_empty()).then(|| ChoiceSet {
@@ -259,20 +283,12 @@ impl CodexProtocolMapper {
         &self,
         conversation_id: &str,
         turn: &CodexTurn,
-    ) -> Result<ConversationItem, ProtocolError> {
+    ) -> Option<ConversationItem> {
         let conversation = self.resource(conversation_id.to_string());
         turn.items
             .iter()
             .find(|item| matches!(item, CodexThreadItem::UserMessage { .. }))
             .map(|item| self.conversation_item(turn, item, &conversation))
-            .ok_or_else(|| {
-                protocol_error(
-                    "invalid_turn_response",
-                    "Codex turn/start response did not contain the canonical user message item"
-                        .to_string(),
-                    false,
-                )
-            })
     }
 
     pub fn turn(
@@ -939,10 +955,80 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_control_is_the_intersection_of_visible_model_efforts() {
+        let capabilities = CodexProtocolMapper::capabilities(
+            "revision-test".to_string(),
+            vec![
+                test_model("model-a", true, "high", &["low", "high"]),
+                test_model("model-b", false, "medium", &["high", "medium"]),
+            ],
+        )
+        .unwrap();
+        let reasoning = capabilities
+            .turn_send
+            .as_ref()
+            .and_then(|turn_send| turn_send.reasoning_effort.as_ref())
+            .unwrap();
+
+        assert_eq!(
+            reasoning
+                .options
+                .iter()
+                .map(|option| option.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["high"]
+        );
+        assert_eq!(reasoning.default_id.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn reasoning_control_is_omitted_when_models_have_no_common_effort() {
+        let capabilities = CodexProtocolMapper::capabilities(
+            "revision-test".to_string(),
+            vec![
+                test_model("model-a", true, "low", &["low"]),
+                test_model("model-b", false, "high", &["high"]),
+            ],
+        )
+        .unwrap();
+
+        assert!(capabilities
+            .turn_send
+            .as_ref()
+            .unwrap()
+            .reasoning_effort
+            .is_none());
+    }
+
+    #[test]
     fn timestamp_overflow_is_unknown_instead_of_saturating() {
         assert_eq!(seconds_to_ms(i64::MAX), None);
         assert_eq!(seconds_to_ms(-1), None);
         assert_eq!(seconds_to_ms(42), Some(42_000));
+    }
+
+    fn test_model(
+        model: &str,
+        is_default: bool,
+        default_reasoning_effort: &str,
+        reasoning_efforts: &[&str],
+    ) -> CodexModel {
+        CodexModel {
+            id: format!("record-{model}"),
+            model: model.to_string(),
+            display_name: model.to_string(),
+            description: String::new(),
+            hidden: false,
+            is_default,
+            default_reasoning_effort: default_reasoning_effort.to_string(),
+            supported_reasoning_efforts: reasoning_efforts
+                .iter()
+                .map(|effort| crate::protocol::CodexReasoningEffortOption {
+                    reasoning_effort: (*effort).to_string(),
+                    description: String::new(),
+                })
+                .collect(),
+        }
     }
 
     #[test]

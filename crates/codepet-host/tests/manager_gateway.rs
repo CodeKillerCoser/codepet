@@ -1067,17 +1067,39 @@ async fn gateway_turn_send_validates_controls_and_deduplicates_client_requests()
             })),
         },
     };
-    let accepted = gateway.turn_send(request.clone()).await.unwrap();
+    let accepted = gateway
+        .turn_send_for_caller_scope("remote-client-a", request.clone())
+        .await
+        .unwrap();
     assert!(accepted.accepted);
-    assert_eq!(accepted.user_item.turn, accepted.turn.resource);
-    assert_eq!(accepted.user_item.conversation, conversation);
-    assert_eq!(gateway.turn_send(request.clone()).await.unwrap(), accepted);
+    let user_item = accepted.user_item.as_ref().unwrap();
+    assert_eq!(user_item.turn, accepted.turn.resource);
+    assert_eq!(user_item.conversation, conversation);
+    assert_eq!(
+        gateway
+            .turn_send_for_caller_scope("remote-client-a", request.clone())
+            .await
+            .unwrap(),
+        accepted
+    );
     assert_eq!(std::fs::read_to_string(&marker).unwrap().lines().count(), 1);
+    assert_eq!(
+        gateway
+            .turn_send_for_caller_scope("remote-client-b", request.clone())
+            .await
+            .unwrap(),
+        accepted
+    );
+    assert_eq!(std::fs::read_to_string(&marker).unwrap().lines().count(), 2);
 
     let mut conflict = request.clone();
     conflict.input.text = "different".to_string();
     assert_eq!(
-        gateway.turn_send(conflict).await.unwrap_err().code,
+        gateway
+            .turn_send_for_caller_scope("remote-client-a", conflict)
+            .await
+            .unwrap_err()
+            .code,
         "client_request_conflict"
     );
 
@@ -1085,7 +1107,11 @@ async fn gateway_turn_send_validates_controls_and_deduplicates_client_requests()
     stale.client_request_id = "remote-request-stale".to_string();
     stale.capability_revision = "stale".to_string();
     assert_eq!(
-        gateway.turn_send(stale).await.unwrap_err().code,
+        gateway
+            .turn_send_for_caller_scope("remote-client-a", stale)
+            .await
+            .unwrap_err()
+            .code,
         "stale_capability_revision"
     );
 
@@ -1096,7 +1122,11 @@ async fn gateway_turn_send_validates_controls_and_deduplicates_client_requests()
         model_id: "missing-model".to_string(),
     }));
     assert_eq!(
-        gateway.turn_send(unknown).await.unwrap_err().code,
+        gateway
+            .turn_send_for_caller_scope("remote-client-a", unknown)
+            .await
+            .unwrap_err()
+            .code,
         "unknown_turn_selection"
     );
 
@@ -1110,7 +1140,11 @@ async fn gateway_turn_send_validates_controls_and_deduplicates_client_requests()
         },
     ));
     assert_eq!(
-        gateway.turn_send(wrong_shape).await.unwrap_err().code,
+        gateway
+            .turn_send_for_caller_scope("remote-client-a", wrong_shape)
+            .await
+            .unwrap_err()
+            .code,
         "turn_model_shape_mismatch"
     );
     manager.shutdown().await;
@@ -1224,6 +1258,33 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
         .await
         .unwrap_err();
     assert_eq!(wrong_conversation.code, "provider_resource_identity_mismatch");
+
+    let wrong_user_item_conversation = manager
+        .turn_start(TurnStartRequest {
+            conversation: resource(
+                "device-identity",
+                "dev.codepet.identity",
+                "instance-identity",
+                "response-wrong-user-item-conversation",
+            ),
+            client_request_id: "message-wrong-user-item".to_string(),
+            capability_revision: "fake-capabilities-v1".to_string(),
+            input: TurnInput {
+                kind: TurnInputKind::Text,
+                text: "hello".to_string(),
+            },
+            selection: TurnSelection {
+                access_mode_id: None,
+                reasoning_effort_id: None,
+                model: None,
+            },
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(
+        wrong_user_item_conversation.code,
+        "provider_resource_identity_mismatch"
+    );
 
     let wrong_gateway_conversation = gateway
         .turn_send(GatewayTurnSendRequest {

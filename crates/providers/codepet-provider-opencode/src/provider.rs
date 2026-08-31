@@ -1469,7 +1469,7 @@ impl ProtocolServer for OpenCodeProvider {
             Ok(TurnStartResponse {
                 accepted: true,
                 turn,
-                user_item,
+                user_item: Some(user_item),
                 effective_selection,
             })
         })

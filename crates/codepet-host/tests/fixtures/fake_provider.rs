@@ -296,6 +296,8 @@ impl ProtocolServer for FakeProvider {
             }
             let route = route_from_resource(&request.conversation);
             self.instance(&route)?;
+            let wrong_user_item_conversation = request.conversation.native_resource_id
+                == "response-wrong-user-item-conversation";
             let conversation = if request.conversation.native_resource_id
                 == "response-wrong-conversation"
             {
@@ -304,10 +306,15 @@ impl ProtocolServer for FakeProvider {
                 request.conversation
             };
             let turn = turn(&route, "turn-started", conversation.clone());
+            let user_item_conversation = if wrong_user_item_conversation {
+                resource(&route, "different-user-item-conversation")
+            } else {
+                conversation
+            };
             let user_item = ConversationItem {
                 resource: resource(&route, &format!("user-{}", request.client_request_id)),
                 turn: turn.resource.clone(),
-                conversation,
+                conversation: user_item_conversation,
                 kind: ConversationItemKind::Message,
                 status: ConversationItemStatus::Completed,
                 role: Some(ConversationItemRole::User),
@@ -323,7 +330,7 @@ impl ProtocolServer for FakeProvider {
             Ok(TurnStartResponse {
                 accepted: true,
                 turn,
-                user_item,
+                user_item: Some(user_item),
                 effective_selection: request.selection,
             })
         })

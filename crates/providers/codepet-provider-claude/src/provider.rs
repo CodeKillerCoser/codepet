@@ -1183,7 +1183,7 @@ impl ProtocolServer for ClaudeProvider {
             let turn = runtime.start_turn(request)?;
             Ok(TurnStartResponse {
                 accepted: true,
-                user_item: ConversationItem {
+                user_item: Some(ConversationItem {
                     resource: runtime.resource(item_id.clone()),
                     turn: turn.resource.clone(),
                     conversation,
@@ -1198,7 +1198,7 @@ impl ProtocolServer for ClaudeProvider {
                     }],
                     related_item: None,
                     approval: None,
-                },
+                }),
                 turn,
                 effective_selection,
             })

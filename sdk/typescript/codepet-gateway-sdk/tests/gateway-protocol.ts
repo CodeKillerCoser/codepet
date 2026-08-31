@@ -169,6 +169,12 @@ const accepted: TurnSendResponse = {
   },
   effectiveSelection: send.selection,
 };
+const acceptedWithoutImmediateItem: TurnSendResponse = {
+  accepted: true,
+  turn: accepted.turn,
+  userItem: null,
+  effectiveSelection: send.selection,
+};
 
 void [
   exchange,
@@ -182,4 +188,5 @@ void [
   groupedCatalog,
   send,
   accepted,
+  acceptedWithoutImmediateItem,
 ];

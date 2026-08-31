@@ -19,36 +19,7 @@
       "status": "running",
       "startedAt": 1787700002000
     },
-    "userItem": {
-      "resource": {
-        "deviceId": "device-macbook-1",
-        "providerPluginId": "dev.codepet.codex",
-        "providerInstanceId": "codex-work",
-        "nativeResourceId": "message-user-02"
-      },
-      "turn": {
-        "deviceId": "device-macbook-1",
-        "providerPluginId": "dev.codepet.codex",
-        "providerInstanceId": "codex-work",
-        "nativeResourceId": "turn-02"
-      },
-      "conversation": {
-        "deviceId": "device-macbook-1",
-        "providerPluginId": "dev.codepet.codex",
-        "providerInstanceId": "codex-work",
-        "nativeResourceId": "thread-01"
-      },
-      "kind": "message",
-      "status": "completed",
-      "role": "user",
-      "contents": [
-        {
-          "contentId": "message-user-02:input:0",
-          "kind": "text",
-          "text": "Continue with the implementation"
-        }
-      ]
-    },
+    "userItem": null,
     "effectiveSelection": {
       "accessModeId": "workspace-write",
       "reasoningEffortId": "high",

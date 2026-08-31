@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 const ROUTE_EXTENSION_NAMESPACE: &str = "codepet.gateway.route";
+const TURN_SEND_CALLER_SCOPE: &str = "tauri-runtime-gateway-compat-v0";
 
 #[derive(Clone)]
 pub struct CompatProviderGateway {
@@ -371,8 +372,8 @@ impl compat::ProtocolServer for CompatProviderGateway {
             let provider = self.provider_route(&request.provider_id).await?;
             let route = provider.route;
             let conversation = routed_resource(route.clone(), request.conversation_id);
-            let response = GatewayProtocolServer::turn_send(
-                self.gateway()?.as_ref(),
+            let response = self.gateway()?.turn_send_for_caller_scope(
+                TURN_SEND_CALLER_SCOPE,
                 gateway::TurnSendRequest {
                     route,
                     conversation,

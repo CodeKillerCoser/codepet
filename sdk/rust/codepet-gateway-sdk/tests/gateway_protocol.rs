@@ -48,7 +48,7 @@ fn gateway_handshake_exchanges_device_descriptors() {
 }
 
 #[test]
-fn gateway_turn_send_preserves_revision_selection_and_canonical_user_item() {
+fn gateway_turn_send_preserves_revision_selection_and_allows_deferred_user_item() {
     let request = decode_request(include_bytes!(
         "../../../../protocol/gateway/v1/fixtures/turn-send-request.json"
     ))
@@ -75,13 +75,14 @@ fn gateway_turn_send_preserves_revision_selection_and_canonical_user_item() {
         panic!("expected successful turn.send response");
     };
     assert!(result.accepted);
-    assert_eq!(result.user_item.role, Some(ConversationItemRole::User));
-    assert_eq!(result.user_item.turn, result.turn.resource);
-    assert_eq!(result.user_item.conversation, result.turn.conversation);
-    let Some(ModelSelection::FlatModelSelection(model)) = result.effective_selection.model else {
+    assert!(result.user_item.is_none());
+    let Some(ModelSelection::FlatModelSelection(model)) =
+        result.effective_selection.model.as_ref()
+    else {
         panic!("expected effective flat model selection");
     };
     assert_eq!(model.model_id, "gpt-5");
+    assert_eq!(serde_json::to_value(&result).unwrap()["userItem"], serde_json::Value::Null);
 }
 
 #[test]

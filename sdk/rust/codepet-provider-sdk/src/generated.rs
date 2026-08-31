@@ -734,7 +734,7 @@ pub struct TurnStartRequest {
 pub struct TurnStartResponse {
     pub accepted: bool,
     pub turn: ProviderTurn,
-    pub user_item: ConversationItem,
+    pub user_item: Option<ConversationItem>,
     pub effective_selection: TurnSelection,
 }
 

@@ -1099,25 +1099,27 @@ impl PluginManager {
             &expected_conversation,
             "turn.start conversation",
         )?;
-        validate_conversation_items(
-            std::slice::from_ref(&response.user_item),
-            &expected_conversation,
-            &route,
-        )?;
-        validate_exact_resource(
-            &response.user_item.turn,
-            &response.turn.resource,
-            "turn.start user item turn",
-        )?;
-        if response.user_item.kind != ConversationItemKind::Message
-            || response.user_item.role
-                != Some(codepet_provider_sdk::ConversationItemRole::User)
-            || response.user_item.contents.is_empty()
-        {
-            return Err(HostError::new(
-                "provider_response_invalid",
-                "Provider turn.start response must include a canonical user message item",
-            ));
+        if let Some(user_item) = response.user_item.as_ref() {
+            validate_conversation_items(
+                std::slice::from_ref(user_item),
+                &expected_conversation,
+                &route,
+            )?;
+            validate_exact_resource(
+                &user_item.turn,
+                &response.turn.resource,
+                "turn.start user item turn",
+            )?;
+            if user_item.kind != ConversationItemKind::Message
+                || user_item.role
+                    != Some(codepet_provider_sdk::ConversationItemRole::User)
+                || user_item.contents.is_empty()
+            {
+                return Err(HostError::new(
+                    "provider_response_invalid",
+                    "Provider turn.start userItem must be a canonical user message when present",
+                ));
+            }
         }
         Ok(response)
     }

@@ -128,6 +128,20 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         .methods
         .contains(&codepet_provider_sdk::ProviderCapability::TurnStart));
     assert!(!capabilities.capabilities.revision.trim().is_empty());
+    let reasoning = capabilities
+        .capabilities
+        .turn_send
+        .as_ref()
+        .and_then(|turn_send| turn_send.reasoning_effort.as_ref())
+        .unwrap();
+    assert_eq!(
+        reasoning
+            .options
+            .iter()
+            .map(|option| option.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["high"]
+    );
 
     let listed = ProviderProtocolServer::conversation_list(
         &provider,
@@ -255,6 +269,29 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     .await
     .unwrap()
     .conversation;
+    let rejected_reasoning = ProviderProtocolServer::turn_start(
+        &provider,
+        TurnStartRequest {
+            conversation: conversation.resource.clone(),
+            client_request_id: "message-rejected".to_string(),
+            capability_revision: capabilities.capabilities.revision.clone(),
+            input: TurnInput {
+                kind: TurnInputKind::Text,
+                text: "must not start".to_string(),
+            },
+            selection: TurnSelection {
+                access_mode_id: Some("workspace-write".to_string()),
+                reasoning_effort_id: Some("low".to_string()),
+                model: Some(ModelSelection::FlatModelSelection(FlatModelSelection {
+                    kind: FlatModelCatalogKind::Flat,
+                    model_id: "gpt-fixture".to_string(),
+                })),
+            },
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(rejected_reasoning.code, "invalid_turn_selection");
     let started_turn = ProviderProtocolServer::turn_start(
         &provider,
         TurnStartRequest {
@@ -278,10 +315,19 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     .await
     .unwrap();
     assert!(started_turn.accepted);
-    assert_eq!(
-        started_turn.user_item.resource.native_resource_id,
-        "user-one"
-    );
+    assert!(started_turn.user_item.is_none());
+    let refreshed = ProviderProtocolServer::conversation_get(
+        &provider,
+        ConversationGetRequest {
+            conversation: conversation.resource.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(refreshed
+        .items
+        .iter()
+        .any(|item| item.resource.native_resource_id == "user-one"));
     let turn = started_turn.turn;
     assert_eq!(turn.resource.native_resource_id, "turn-started");
 
@@ -445,7 +491,7 @@ fn provider_binary_rejects_additional_network_permission_without_publishing_appr
     let mut provider = ProviderBinary::spawn();
     let (conversation, capability_revision) = provider.configure("additional-network", &marker);
 
-    provider.request(
+    let started = provider.request(
         "turn-unsafe",
         "turn.start",
         turn_start_params(
@@ -455,6 +501,7 @@ fn provider_binary_rejects_additional_network_permission_without_publishing_appr
             &capability_revision,
         ),
     );
+    assert_eq!(started.pointer("/result/userItem"), Some(&Value::Null));
     wait_for_file_blocking(&marker);
     provider.collect_for(Duration::from_millis(100));
 

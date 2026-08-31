@@ -64,10 +64,34 @@ fn main() {
                             "hidden": false,
                             "isDefault": true,
                             "defaultReasoningEffort": "high",
-                            "supportedReasoningEfforts": [{
-                                "reasoningEffort": "high",
-                                "description": "Fixture reasoning"
-                            }]
+                            "supportedReasoningEfforts": [
+                                {
+                                    "reasoningEffort": "low",
+                                    "description": "Fixture low reasoning"
+                                },
+                                {
+                                    "reasoningEffort": "high",
+                                    "description": "Fixture high reasoning"
+                                }
+                            ]
+                        }, {
+                            "id": "fixture-model-secondary-record",
+                            "model": "gpt-fixture-secondary",
+                            "displayName": "GPT Fixture Secondary",
+                            "description": "Second fixture model",
+                            "hidden": false,
+                            "isDefault": false,
+                            "defaultReasoningEffort": "medium",
+                            "supportedReasoningEfforts": [
+                                {
+                                    "reasoningEffort": "high",
+                                    "description": "Fixture high reasoning"
+                                },
+                                {
+                                    "reasoningEffort": "medium",
+                                    "description": "Fixture medium reasoning"
+                                }
+                            ]
                         }],
                         "nextCursor": null
                     }),
@@ -155,12 +179,23 @@ fn main() {
             "turn/start" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-created");
                 turn_status = Some("inProgress".to_string());
-                let started_turn = turn("turn-started", "inProgress");
-                respond(&mut writer, id, json!({ "turn": started_turn }));
+                let mut started_turn = turn("turn-started", "inProgress");
+                let started_user_item = started_turn["items"][0].clone();
+                started_turn["items"] = json!([]);
+                respond(&mut writer, id, json!({ "turn": started_turn.clone() }));
                 notify(
                     &mut writer,
                     "turn/started",
-                    json!({ "threadId": thread_id, "turn": turn("turn-started", "inProgress") }),
+                    json!({ "threadId": thread_id, "turn": started_turn }),
+                );
+                notify(
+                    &mut writer,
+                    "item/started",
+                    json!({
+                        "threadId": thread_id,
+                        "turnId": "turn-started",
+                        "item": started_user_item
+                    }),
                 );
                 notify(
                     &mut writer,

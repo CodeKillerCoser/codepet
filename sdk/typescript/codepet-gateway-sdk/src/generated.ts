@@ -373,7 +373,7 @@ export interface TurnSendRequest {
 export interface TurnSendResponse {
   accepted: boolean;
   turn: TurnTask;
-  userItem: ConversationItem;
+  userItem: ConversationItem | null;
   effectiveSelection: TurnSelection;
 }
 

@@ -415,6 +415,7 @@ async fn run_gateway_socket(
     let mut subscribed = false;
     let mut event_task: Option<JoinHandle<()>> = None;
     let mut close_frame = None;
+    let caller_scope = format!("remote-client:{}", credential.client_id);
 
     loop {
         let next = tokio::select! {
@@ -504,7 +505,7 @@ async fn run_gateway_socket(
                     close_frame = Some(cancellation_close(cancellation));
                     break;
                 }
-                response = gateway::dispatch(gateway.as_ref(), request) => response,
+                response = gateway.dispatch_for_caller_scope(&caller_scope, request) => response,
             };
             let mut succeeded = matches!(
                 &response,
@@ -670,7 +671,7 @@ async fn run_gateway_socket(
                 close_frame = Some(cancellation_close(cancellation));
                 break;
             }
-            response = gateway::dispatch(gateway.as_ref(), request) => response,
+            response = gateway.dispatch_for_caller_scope(&caller_scope, request) => response,
         };
         if !queue_json(&outbound_tx, &response, &mut registration).await {
             break;

@@ -604,7 +604,7 @@ Codex 以 `thread/tokenUsage/updated`、resume 恢复事件、`account/usage/rea
 
 ## Codex Provider
 
-> 当前实现边界：App Server 只属于独立 Codex Provider，已接通 Provider v1 全部 lifecycle/业务方法与六种事件；Gateway/compat 提供 list/get/create、turn send/steer/interrupt 和二元 approval。下文涉及 account/usage、fork/archive、permission/user-input/MCP approval、supervisor/reconciliation 的内容是长期设计，尚不能作为当前 capability。完整矩阵见 `codex-provider-plugin-runtime.md`。
+> 当前实现边界：App Server 只属于独立 Codex Provider，已接通 Provider v1 全部 lifecycle/业务方法与六种事件；Gateway/compat 提供 list/get/create、空闲 conversation 的新 turn send、interrupt 和二元 approval，不把 `turn.send` 自动切换成 steer。下文涉及 account/usage、fork/archive、permission/user-input/MCP approval、supervisor/reconciliation 的内容是长期设计，尚不能作为当前 capability。完整矩阵见 `codex-provider-plugin-runtime.md`。
 
 ### 接入点
 
