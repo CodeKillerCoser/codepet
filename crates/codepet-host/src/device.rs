@@ -22,18 +22,32 @@ pub struct DeviceIdentity {
 impl DeviceIdentity {
     fn generate(display_name: impl Into<String>) -> HostResult<Self> {
         let display_name = display_name.into();
-        if display_name.trim().is_empty() {
-            return Err(HostError::new(
-                "invalid_device_identity",
-                "device display name must not be empty",
-            ));
-        }
+        Self::validate_display_name(&display_name)?;
         Ok(Self {
             version: DEVICE_IDENTITY_VERSION,
             device_id: format!("device-{}", Uuid::new_v4()),
             display_name,
             created_at: now_ms(),
         })
+    }
+
+    fn validate_display_name(display_name: &str) -> HostResult<()> {
+        if display_name.trim().is_empty() {
+            return Err(HostError::new(
+                "invalid_device_identity",
+                "device display name must not be empty",
+            ));
+        }
+        Ok(())
+    }
+
+    fn update_display_name(&mut self, display_name: String) -> HostResult<bool> {
+        Self::validate_display_name(&display_name)?;
+        if self.display_name == display_name {
+            return Ok(false);
+        }
+        self.display_name = display_name;
+        Ok(true)
     }
 
     fn validate(&self) -> HostResult<()> {
@@ -71,6 +85,7 @@ impl DeviceRegistry {
     pub fn open(path: impl Into<PathBuf>, display_name: impl Into<String>) -> HostResult<Self> {
         let path = path.into();
         let display_name = display_name.into();
+        DeviceIdentity::validate_display_name(&display_name)?;
         if !path.exists() {
             let identity = DeviceIdentity::generate(display_name)?;
             write_json_atomically(&path, &identity)?;
@@ -81,10 +96,15 @@ impl DeviceRegistry {
         }
 
         match read_identity(&path) {
-            Ok(identity) => Ok(Self {
-                identity,
-                diagnostics: Vec::new(),
-            }),
+            Ok(mut identity) => {
+                if identity.update_display_name(display_name)? {
+                    write_json_atomically(&path, &identity)?;
+                }
+                Ok(Self {
+                    identity,
+                    diagnostics: Vec::new(),
+                })
+            }
             Err(error) => {
                 let recovered_path = quarantine_corrupt_identity(&path)?;
                 let identity = DeviceIdentity::generate(display_name)?;

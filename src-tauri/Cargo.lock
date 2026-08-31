@@ -675,6 +675,7 @@ dependencies = [
  "chrono",
  "codepet-gateway-sdk",
  "codepet-host",
+ "core-foundation",
  "core-graphics",
  "dirs 5.0.1",
  "hmac",

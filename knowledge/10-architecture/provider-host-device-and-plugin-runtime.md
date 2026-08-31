@@ -74,7 +74,7 @@ manifest 是插件进程和普通实例设置的配置权威：
 }
 ```
 
-`provider-instances.json` 只镜像 `instanceId + pluginId + instanceKind + displayName`，用于在重启后复用未显式给出的 `instanceId`。`settings` 与 `enabled` 每次都来自当前 manifest，不作为第二配置源；manifest 删除的实例会从映射中 prune。registry 损坏或 device id 不匹配时 fail closed。设备身份损坏时，原文件先隔离为 `.corrupt-<timestamp>`，再生成新的 `device-<uuid>` 并保留诊断；hostname 从不充当稳定 ID。
+`provider-instances.json` 只镜像 `instanceId + pluginId + instanceKind + displayName`，用于在重启后复用未显式给出的 `instanceId`。`settings` 与 `enabled` 每次都来自当前 manifest，不作为第二配置源；manifest 删除的实例会从映射中 prune。registry 损坏或 device id 不匹配时 fail closed。设备身份损坏时，原文件先隔离为 `.corrupt-<timestamp>`，再生成新的 `device-<uuid>` 并保留诊断。macOS 的设备显示名由 Tauri 通过原生 ComputerName API 读取并在打开 registry 时刷新，但保留原 `deviceId/createdAt`；hostname 和 display name 都不充当稳定 ID。
 
 Agent executable 是 manifest 普通 setting 的受控例外：Codex 的 `appServerExecutable`、Claude 的 `claudeExecutable`，以及 OpenCode 的 `serverExecutable` / `serverVersion` 都由 Tauri 在 Catalog 注册前删除 manifest 同名值，再只注入 `AgentRuntimeService` 对应 resolver 返回的绝对路径与已解析版本。runtime set/clear/refresh 通过 Manager 更新目标实例 setting 并只重启对应插件；Provider 自身不搜索路径、探测版本或补默认参数。Codex 与 OpenCode manifest 仍显式提供固定 Server args，Claude manifest 不保存个人 executable。详见 `codex-provider-plugin-runtime.md`、`claude-provider-plugin-runtime.md` 与 `opencode-provider-plugin-runtime.md`。
 

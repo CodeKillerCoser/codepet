@@ -11,6 +11,7 @@ use crate::agent_runtime::{
     AgentRuntime, AgentRuntimeService, CLAUDE_RUNTIME_PROVIDER_ID,
     CODEX_RUNTIME_PROVIDER_ID, OPENCODE_RUNTIME_PROVIDER_ID,
 };
+use crate::platform::host_identity::computer_name;
 use crate::settings::{configured_app_data_dir, load_app_settings};
 use codepet_gateway_sdk::DeviceDescriptor;
 use codepet_host::{
@@ -403,7 +404,7 @@ fn configured_provider_runtime(
     let provider_host_directory = data_directory.join("provider-host");
     let device = Arc::new(DeviceRegistry::open(
         provider_host_directory.join("device-identity.json"),
-        "This Device",
+        computer_name(),
     )?);
     for diagnostic in device.diagnostics() {
         crate::app_log::error(

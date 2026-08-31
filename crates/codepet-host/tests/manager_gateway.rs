@@ -87,7 +87,7 @@ fn build_manager_with_options(
         .unwrap(),
     )
     .unwrap();
-    let device = DeviceRegistry::open(device_path, "unused").unwrap();
+    let device = DeviceRegistry::open(device_path, format!("Device {device_id}")).unwrap();
     let plugin_directory = directory.path().join("providers");
     for (index, descriptor) in descriptors.into_iter().enumerate() {
         let directory = plugin_directory.join(index.to_string());

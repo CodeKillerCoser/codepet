@@ -11,11 +11,17 @@ fn device_identity_persists_and_corruption_is_rebuilt_with_diagnostics() {
     let path = directory.path().join("device-identity.json");
     let first = DeviceRegistry::open(&path, "Test Device").unwrap();
     let first_id = first.identity().device_id.clone();
+    let first_created_at = first.identity().created_at;
     assert!(first_id.starts_with("device-"));
 
     let reopened = DeviceRegistry::open(&path, "Renamed Device").unwrap();
     assert_eq!(reopened.identity().device_id, first_id);
-    assert_eq!(reopened.identity().display_name, "Test Device");
+    assert_eq!(reopened.identity().display_name, "Renamed Device");
+    assert_eq!(reopened.identity().created_at, first_created_at);
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(persisted["deviceId"], first_id);
+    assert_eq!(persisted["displayName"], "Renamed Device");
 
     fs::write(&path, b"not-json").unwrap();
     let rebuilt = DeviceRegistry::open(&path, "Recovered Device").unwrap();

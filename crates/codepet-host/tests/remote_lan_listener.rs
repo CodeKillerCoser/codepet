@@ -46,7 +46,9 @@ impl TestHost {
             .unwrap(),
         )
         .unwrap();
-        let device = Arc::new(DeviceRegistry::open(device_path, "unused").unwrap());
+        let device = Arc::new(
+            DeviceRegistry::open(device_path, "LAN Listener Test Host").unwrap(),
+        );
         let plugin_directory = directory.path().join("providers/fake");
         std::fs::create_dir_all(&plugin_directory).unwrap();
         let descriptor = fake_plugin();
@@ -535,7 +537,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     };
     let certificate_fingerprint = hex_sha256(&certificate_der);
     assert_eq!(handshake.device.identity_fingerprint, certificate_fingerprint);
-    assert_eq!(handshake.device.identity_fingerprint, pairing_a.device.identity_fingerprint);
+    assert_eq!(handshake.device, pairing_a.device);
     assert_eq!(
         handshake.device.descriptor,
         gateway::DeviceDescriptor {
@@ -543,6 +545,10 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
             operating_system: "TestOS".to_string(),
             system_version: "1.0".to_string(),
         }
+    );
+    assert_eq!(
+        handshake.devices[0].display_name,
+        handshake.device.descriptor.device_name
     );
     assert_eq!(
         host.remote_access

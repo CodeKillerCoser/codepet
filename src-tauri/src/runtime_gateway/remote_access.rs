@@ -1138,12 +1138,22 @@ mod tests {
                 .code,
             "remote_pairing_clipboard_write_failed"
         );
+        let remote_identity = test.remote_manager.remote_host_identity();
         test.runtime
             .copy_pairing_json(&started.pairing_id, |json| {
                 let pairing_payload: PairingQrPayload = serde_json::from_str(json).unwrap();
                 assert_eq!(pairing_payload.pairing_id, started.pairing_id);
                 assert_eq!(pairing_payload.expires_at, started.expires_at);
                 assert_eq!(pairing_payload.version, u64::from(PROTOCOL_VERSION));
+                assert_eq!(pairing_payload.host_device_id, remote_identity.device_id);
+                assert_eq!(
+                    pairing_payload.display_name,
+                    remote_identity.descriptor.device_name
+                );
+                assert_eq!(
+                    pairing_payload.cert_sha256,
+                    remote_identity.identity_fingerprint
+                );
                 assert_eq!(pairing_payload.pairing_secret.len(), 64);
                 Ok(())
             })

@@ -1614,13 +1614,24 @@ mod tests {
         .collect::<String>();
         assert_eq!(fingerprint, independent_fingerprint);
         assert_eq!(manager.device_registry().identity(), device.identity());
+        let device_id = device.identity().device_id.clone();
         let issued = pair(&manager, "client-persisted");
         drop(manager);
 
+        let renamed_device = Arc::new(
+            DeviceRegistry::open(
+                directory.path().join("device.json"),
+                "Renamed Remote Test Device",
+            )
+            .unwrap(),
+        );
+        assert_eq!(renamed_device.identity().device_id, device_id);
+        let renamed_descriptor =
+            device_descriptor("Renamed Remote Test Device", "TestOS", "1.0");
         let reopened = RemoteAccessManager::open_with_clock(
             config.clone(),
-            device.clone(),
-            device_descriptor("Remote Test Device", "TestOS", "1.0"),
+            renamed_device.clone(),
+            renamed_descriptor.clone(),
             clock.clock(),
         )
         .unwrap();
@@ -1630,6 +1641,10 @@ mod tests {
         );
         assert_eq!(reopened.tls_identity().certificate_der(), certificate);
         assert_eq!(reopened.tls_identity().private_key_der(), private_key);
+        let renamed_identity = reopened.remote_host_identity();
+        assert_eq!(renamed_identity.device_id, device_id);
+        assert_eq!(renamed_identity.descriptor, renamed_descriptor);
+        assert_eq!(renamed_identity.identity_fingerprint, fingerprint);
         assert!(reopened.validate_bearer(&issued.bearer_token).is_ok());
         drop(reopened);
 
@@ -1656,8 +1671,8 @@ mod tests {
         clock.set(20_000);
         let recovered = RemoteAccessManager::open_with_clock(
             config.clone(),
-            device,
-            device_descriptor("Remote Test Device", "TestOS", "1.0"),
+            renamed_device,
+            renamed_descriptor,
             clock.clock(),
         )
         .unwrap();
