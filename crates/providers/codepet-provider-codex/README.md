@@ -1,8 +1,10 @@
 # CodePet Codex Provider
 
-`codepet-provider-codex` 是独立的 Provider Protocol v1 / stdio JSON-lines 二进制。它由 `codepet-host` 启动，并在每个 Codex instance 内管理一个官方 Codex App Server 子进程。运行依赖不包含 Host、Tauri、Pet SDK 或 Desktop 私有 IPC。
+`codepet-provider-codex` 是独立的 Provider Protocol v1 / stdio JSON-lines 二进制。它由 `codepet-host` 启动；每个 Codex instance 长期持有一个纯读 observer App Server，`conversation.create` 使用完成即关闭的一次性 App Server，历史 conversation 的写操作则使用按 conversation 隔离、随 active turn 终态关闭的 execution App Server。运行依赖不包含 Host、Tauri、Pet SDK 或 Desktop 私有 IPC。
 
 两层 wire 不相同：Provider 与 Host 之间严格使用 JSON-RPC 2.0；上游 App Server 按官方 schema 使用 `id/method/result/error`，不要求 `jsonrpc`，并允许 request 的 `trace`、notification 的 `emittedAtMs` 和缺失的 `params`。具体 method 的参数仍由 typed DTO 严格校验。
+
+Provider 的 Host stdio reader 不逐条等待 RPC：最多并发执行 16 个 request，额外 frame 在容量为 32 的有界队列处背压；response 允许按完成顺序乱序返回，但始终保留原 JSON-RPC id，并与 event 共用串行 stdout writer。stdin EOF 或 fatal frame 会先关闭 Provider/App Server，再在有界时间内回收或中止 dispatch task。
 
 资源身份始终是 `deviceId + providerPluginId + providerInstanceId + nativeResourceId`。每次 App Server session 使用独立 generation；只有普通 command/file 的 accept/decline 二元审批会发布，额外权限、结构化 decision 和未知 server request 使用原 JSON-RPC id 返回 `-32601`。
 

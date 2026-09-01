@@ -50,6 +50,7 @@ pub enum CodexAppServerError {
     Rpc {
         code: i64,
         message: String,
+        data: Option<Value>,
     },
     ProcessExited,
     Shutdown,
@@ -62,7 +63,7 @@ impl fmt::Display for CodexAppServerError {
             Self::Io(message) => write!(formatter, "codex app-server I/O error: {message}"),
             Self::Timeout(message) => write!(formatter, "codex app-server timeout: {message}"),
             Self::Protocol(message) => write!(formatter, "codex app-server protocol error: {message}"),
-            Self::Rpc { code, message } => {
+            Self::Rpc { code, message, .. } => {
                 write!(formatter, "codex app-server RPC error {code}: {message}")
             }
             Self::ProcessExited => write!(formatter, "codex app-server process exited"),

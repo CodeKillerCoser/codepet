@@ -1,4 +1,6 @@
-use codepet_provider_codex::{CodexProvider, CODEX_INSTANCE_KIND, CODEX_PLUGIN_ID};
+use codepet_provider_codex::{
+    CodexProvider, ProviderEventSink, CODEX_INSTANCE_KIND, CODEX_PLUGIN_ID,
+};
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalResolveRequest, ConversationCreateRequest, ConversationListRequest,
     ConversationGetRequest, ConversationSearchRequest, InstanceCapabilitiesRequest, InstanceCreateRequest,
@@ -15,7 +17,7 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 
 fn provider_executable() -> PathBuf {
@@ -58,7 +60,15 @@ async fn configured_direct_provider(
     approval_mode: &str,
     marker: &Path,
 ) -> (Arc<CodexProvider>, ProviderInstanceRoute, String) {
-    let provider = Arc::new(CodexProvider::new(Arc::new(|_| Ok(()))));
+    configured_direct_provider_with_events(approval_mode, marker, Arc::new(|_| Ok(()))).await
+}
+
+async fn configured_direct_provider_with_events(
+    approval_mode: &str,
+    marker: &Path,
+    events: Arc<dyn ProviderEventSink>,
+) -> (Arc<CodexProvider>, ProviderInstanceRoute, String) {
+    let provider = Arc::new(CodexProvider::new(events));
     let route = route("device-provider-direct");
     ProviderProtocolServer::provider_initialize(
         provider.as_ref(),
@@ -802,12 +812,11 @@ fn provider_binary_reuses_one_execution_session_until_authoritative_terminal_sta
 
     let resume_pids = session_pids(&marker, "thread/resume", "thread-created");
     assert_eq!(resume_pids.len(), 2);
-    let first_execution = resume_pids[0];
+    let approval_pids = session_pids(&marker, "approval/response", "thread-created");
+    assert_eq!(approval_pids.len(), 1);
+    let first_execution = approval_pids[0];
+    assert!(resume_pids.contains(&first_execution));
     assert_ne!(observer_pid, first_execution);
-    assert_eq!(
-        session_pids(&marker, "approval/response", "thread-created"),
-        vec![first_execution]
-    );
     assert_eq!(
         session_pids(&marker, "turn/steer", "thread-created"),
         vec![first_execution]
@@ -1014,6 +1023,195 @@ fn provider_binary_terminal_notification_releases_only_its_conversation() {
     let _ = turn_a;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn terminal_cleanup_hides_the_closing_slot_before_publishing_the_terminal_event() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("terminal-closing-race.txt");
+    let terminal_entered = Arc::new(Barrier::new(2));
+    let terminal_release = Arc::new(Barrier::new(2));
+    let sink_entered = terminal_entered.clone();
+    let sink_release = terminal_release.clone();
+    let (event_sender, event_receiver) = mpsc::channel();
+    let events = Arc::new(move |event: ProtocolEvent| {
+        let is_terminal = matches!(
+            &event,
+            ProtocolEvent::EventTurnUpserted { params, .. }
+                if params.turn.status == codepet_provider_sdk::TurnStatus::Completed
+                    && params.turn.conversation.native_resource_id == "thread-terminal-race"
+        );
+        event_sender.send(event).map_err(|error| codepet_provider_sdk::ProtocolError {
+            code: "test_event_sink_closed".to_string(),
+            message: error.to_string(),
+            retryable: false,
+            details: None,
+        })?;
+        if is_terminal {
+            sink_entered.wait();
+            sink_release.wait();
+        }
+        Ok(())
+    });
+    let (provider, route, capability_revision) = configured_direct_provider_with_events(
+        "complete-on-approval",
+        &marker,
+        events,
+    )
+    .await;
+    clear_session_log(&marker);
+    let conversation = conversation_resource(&route, "thread-terminal-race");
+    ProviderProtocolServer::turn_start(
+        provider.as_ref(),
+        TurnStartRequest {
+            conversation: conversation.clone(),
+            client_request_id: "terminal-race-first".to_string(),
+            capability_revision: capability_revision.clone(),
+            input: TurnInput {
+                kind: TurnInputKind::Text,
+                text: "finish the first turn".to_string(),
+            },
+            selection: TurnSelection {
+                access_mode_id: None,
+                reasoning_effort_id: None,
+                model: None,
+            },
+        },
+    )
+    .await
+    .unwrap();
+    let approval = loop {
+        let event = event_receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        if let ProtocolEvent::EventApprovalRequested { params, .. } = event {
+            break params.approval.resource;
+        }
+    };
+    ProviderProtocolServer::approval_resolve(
+        provider.as_ref(),
+        ApprovalResolveRequest {
+            approval,
+            decision: ApprovalDecision::Approve,
+        },
+    )
+    .await
+    .unwrap();
+    let entered = terminal_entered.clone();
+    tokio::task::spawn_blocking(move || entered.wait())
+        .await
+        .unwrap();
+
+    let next_provider = provider.clone();
+    let next_conversation = conversation.clone();
+    let next = tokio::spawn(async move {
+        ProviderProtocolServer::turn_start(
+            next_provider.as_ref(),
+            TurnStartRequest {
+                conversation: next_conversation,
+                client_request_id: "terminal-race-second".to_string(),
+                capability_revision,
+                input: TurnInput {
+                    kind: TurnInputKind::Text,
+                    text: "start after terminal cleanup".to_string(),
+                },
+                selection: TurnSelection {
+                    access_mode_id: None,
+                    reasoning_effort_id: None,
+                    model: None,
+                },
+            },
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!next.is_finished());
+    assert_eq!(
+        session_pids(&marker, "thread/resume", "thread-terminal-race").len(),
+        1
+    );
+
+    let release = terminal_release.clone();
+    tokio::task::spawn_blocking(move || release.wait())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), next)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let execution_pids = session_pids(&marker, "thread/resume", "thread-terminal-race");
+    assert_eq!(execution_pids.len(), 2);
+    assert_ne!(execution_pids[0], execution_pids[1]);
+
+    ProviderProtocolServer::instance_stop(
+        provider.as_ref(),
+        InstanceStopRequest { route: route.clone() },
+    )
+    .await
+    .unwrap();
+    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {})
+        .await
+        .unwrap();
+}
+
+#[test]
+fn terminal_release_and_per_process_session_evidence_are_stable_under_repetition() {
+    const ITERATIONS: usize = 64;
+
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("terminal-stress.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (_, capability_revision) = provider.configure("complete-on-approval", &marker);
+    clear_session_log(&marker);
+
+    for index in 0..ITERATIONS {
+        let thread_id = format!("thread-terminal-stress-{index}");
+        let conversation = conversation_resource_value(&thread_id);
+        let started = provider.request(
+            &format!("terminal-stress-start-{index}"),
+            "turn.start",
+            turn_start_params(
+                conversation,
+                &format!("terminal-stress-message-{index}"),
+                "complete this turn",
+                &capability_revision,
+            ),
+        );
+        assert!(started.get("error").is_none());
+        let approval = provider
+            .event("event.approvalRequested")
+            .pointer("/params/approval/resource")
+            .cloned()
+            .unwrap();
+        let resolved = provider.request(
+            &format!("terminal-stress-resolve-{index}"),
+            "approval.resolve",
+            json!({ "approval": approval, "decision": "approve" }),
+        );
+        assert!(resolved.get("error").is_none());
+        provider.receive(Duration::from_secs(2), |message| {
+            message.get("method").and_then(Value::as_str) == Some("event.turnUpserted")
+                && message
+                    .pointer("/params/turn/conversation/nativeResourceId")
+                    .and_then(Value::as_str)
+                    == Some(thread_id.as_str())
+                && message.pointer("/params/turn/status").and_then(Value::as_str)
+                    == Some("completed")
+        });
+        let resume_pids = session_pids(&marker, "thread/resume", &thread_id);
+        assert_eq!(resume_pids.len(), 1, "iteration {index} lost resume PID evidence");
+        assert_eq!(
+            session_pids(&marker, "approval/response", &thread_id),
+            resume_pids,
+            "iteration {index} crossed execution process evidence"
+        );
+    }
+    assert_eq!(
+        session_pids(&marker, "process/start", "").len(),
+        ITERATIONS
+    );
+
+    provider.request("terminal-stress-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("terminal-stress-shutdown", "provider.shutdown", json!({}));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_first_turn_start_shares_one_resume_and_one_active_turn() {
     let directory = tempfile::tempdir().unwrap();
@@ -1129,6 +1327,191 @@ async fn provider_stop_interrupts_an_execution_still_waiting_for_resume() {
         .unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn provider_stop_cancels_an_execution_still_waiting_for_initialize() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("stop-during-initialize.txt");
+    let (provider, route, capability_revision) =
+        configured_direct_provider("execution-initialize-no-response", &marker).await;
+    let baseline_pids = session_pids(&marker, "process/start", "");
+    let baseline_initialize_count = session_method_count(&marker, "initialize");
+    let conversation = conversation_resource(&route, "thread-initialize-pending");
+    let operation_provider = provider.clone();
+    let operation = tokio::spawn(async move {
+        ProviderProtocolServer::turn_start(
+            operation_provider.as_ref(),
+            TurnStartRequest {
+                conversation,
+                client_request_id: "initialize-pending-message".to_string(),
+                capability_revision,
+                input: TurnInput {
+                    kind: TurnInputKind::Text,
+                    text: "wait for initialize".to_string(),
+                },
+                selection: TurnSelection {
+                    access_mode_id: None,
+                    reasoning_effort_id: None,
+                    model: None,
+                },
+            },
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while session_method_count(&marker, "initialize") <= baseline_initialize_count {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let execution_pids = session_pids(&marker, "process/start", "")
+        .into_iter()
+        .filter(|process_id| !baseline_pids.contains(process_id))
+        .collect::<Vec<_>>();
+    assert_eq!(execution_pids.len(), 1);
+
+    let stopped = tokio::time::timeout(
+        Duration::from_secs(2),
+        ProviderProtocolServer::instance_stop(
+            provider.as_ref(),
+            InstanceStopRequest { route: route.clone() },
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(stopped.instance.status, codepet_provider_sdk::InstanceStatus::Stopped);
+    let operation_error = tokio::time::timeout(Duration::from_secs(2), operation)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(operation_error.code, "provider_unavailable");
+    assert!(session_pids(&marker, "thread/resume", "thread-initialize-pending").is_empty());
+    wait_for_processes_to_exit(&execution_pids, Duration::from_secs(2));
+
+    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {})
+        .await
+        .unwrap();
+}
+
+#[test]
+fn provider_binary_dispatches_other_conversations_and_stop_while_resume_hangs() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("stdio-concurrent-stop.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (_, capability_revision) = provider.configure("resume-no-response", &marker);
+    clear_session_log(&marker);
+    let blocked_conversation = conversation_resource_value("thread-resume-pending-a");
+    let other_conversation = conversation_resource_value("thread-b");
+
+    provider.send_request(
+        "stdio-blocked-a",
+        "turn.start",
+        turn_start_params(
+            blocked_conversation,
+            "stdio-blocked-message-a",
+            "block A resume",
+            &capability_revision,
+        ),
+    );
+    wait_for_file_method(
+        &marker,
+        "thread/resume",
+        "thread-resume-pending-a",
+        Duration::from_secs(2),
+    );
+    provider.send_request(
+        "stdio-other-b",
+        "turn.start",
+        turn_start_params(
+            other_conversation,
+            "stdio-other-message-b",
+            "run B",
+            &capability_revision,
+        ),
+    );
+    let other_response = provider.receive(Duration::from_secs(2), |message| {
+        message.get("id").and_then(Value::as_str) == Some("stdio-other-b")
+    });
+    assert_eq!(other_response["id"], "stdio-other-b");
+    assert!(other_response.get("error").is_none());
+    wait_for_file_method(
+        &marker,
+        "thread/resume",
+        "thread-b",
+        Duration::from_secs(2),
+    );
+    let execution_pids = session_pids(&marker, "process/start", "");
+    assert_eq!(execution_pids.len(), 2);
+
+    provider.send_request("stdio-stop", "instance.stop", json!({ "route": route_value() }));
+    let stopped = provider.receive(Duration::from_secs(2), |message| {
+        message.get("id").and_then(Value::as_str) == Some("stdio-stop")
+    });
+    assert_eq!(stopped["id"], "stdio-stop");
+    assert_eq!(
+        stopped.pointer("/result/instance/status").and_then(Value::as_str),
+        Some("stopped")
+    );
+    let blocked_response = provider.receive(Duration::from_secs(2), |message| {
+        message.get("id").and_then(Value::as_str) == Some("stdio-blocked-a")
+    });
+    assert_eq!(blocked_response["id"], "stdio-blocked-a");
+    assert!(blocked_response.get("error").is_some());
+    wait_for_processes_to_exit(&execution_pids, Duration::from_secs(2));
+
+    provider.request("stdio-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_bounds_concurrency_and_reaps_blocked_requests_on_eof() {
+    const MAX_CONCURRENT_HOST_REQUESTS: usize = 16;
+
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("stdio-concurrency-limit.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (_, capability_revision) = provider.configure("resume-no-response", &marker);
+    clear_session_log(&marker);
+
+    for index in 0..=MAX_CONCURRENT_HOST_REQUESTS {
+        provider.send_request(
+            &format!("bounded-request-{index}"),
+            "turn.start",
+            turn_start_params(
+                conversation_resource_value(&format!("thread-resume-pending-{index}")),
+                &format!("bounded-message-{index}"),
+                "hold bounded dispatch",
+                &capability_revision,
+            ),
+        );
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while session_method_count(&marker, "thread/resume") < MAX_CONCURRENT_HOST_REQUESTS {
+        assert!(Instant::now() < deadline, "bounded requests did not reach the dispatch limit");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        session_method_count(&marker, "thread/resume"),
+        MAX_CONCURRENT_HOST_REQUESTS
+    );
+    assert!(
+        session_pids(
+            &marker,
+            "thread/resume",
+            &format!("thread-resume-pending-{MAX_CONCURRENT_HOST_REQUESTS}")
+        )
+        .is_empty()
+    );
+    let execution_pids = session_pids(&marker, "process/start", "");
+    assert_eq!(execution_pids.len(), MAX_CONCURRENT_HOST_REQUESTS);
+
+    let status = provider.close_input_and_wait(Duration::from_secs(2));
+    assert!(status.success());
+    wait_for_processes_to_exit(&execution_pids, Duration::from_secs(2));
+}
+
 #[tokio::test]
 async fn execution_initialize_failure_removes_the_conversation_slot() {
     let directory = tempfile::tempdir().unwrap();
@@ -1180,7 +1563,7 @@ fn provider_binary_standardizes_writer_conflict_and_removes_failed_execution() {
     let mut provider = ProviderBinary::spawn();
     let (_, capability_revision) = provider.configure("none", &marker);
     clear_session_log(&marker);
-    let conversation = conversation_resource_value("thread-writer-held");
+    let conversation = conversation_resource_value("thread-active-writer");
 
     for (id, client_request_id) in [
         ("writer-conflict-first", "writer-conflict-message-one"),
@@ -1219,17 +1602,53 @@ fn provider_binary_standardizes_writer_conflict_and_removes_failed_execution() {
             Some("owned-by-other-runtime")
         );
         let encoded = serde_json::to_string(&response).unwrap();
-        assert!(!encoded.contains("writer is held"));
-        assert!(!encoded.contains("another process"));
-        assert!(!encoded.contains("another client"));
+        assert!(!encoded.contains("thread-active-writer already has an active writer"));
     }
-    let resume_pids = session_pids(&marker, "thread/resume", "thread-writer-held");
+    let resume_pids = session_pids(&marker, "thread/resume", "thread-active-writer");
     assert_eq!(resume_pids.len(), 2);
     assert_ne!(resume_pids[0], resume_pids[1]);
-    assert!(session_pids(&marker, "turn/start", "thread-writer-held").is_empty());
+    assert!(session_pids(&marker, "turn/start", "thread-active-writer").is_empty());
 
     provider.request("writer-conflict-stop", "instance.stop", json!({ "route": route_value() }));
     provider.request("writer-conflict-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_does_not_guess_writer_conflicts_from_near_match_errors() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("writer-conflict-near-matches.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (_, capability_revision) = provider.configure("none", &marker);
+    clear_session_log(&marker);
+
+    for (index, thread_id) in [
+        "thread-active-writer-wrong-code",
+        "thread-active-writer-wrong-message",
+        "thread-active-writer-with-data",
+        "thread-active-writer-other-thread",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let response = provider.request(
+            &format!("writer-near-match-{index}"),
+            "turn.start",
+            turn_start_params(
+                conversation_resource_value(thread_id),
+                &format!("writer-near-match-message-{index}"),
+                "writer near match",
+                &capability_revision,
+            ),
+        );
+        assert_eq!(
+            response.pointer("/error/data/code").and_then(Value::as_str),
+            Some("provider_error"),
+            "near match {thread_id} must retain the ordinary Provider error"
+        );
+    }
+
+    provider.request("writer-near-match-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("writer-near-match-shutdown", "provider.shutdown", json!({}));
 }
 
 #[test]
@@ -1484,7 +1903,7 @@ fn provider_real_codex_app_server_smoke() {
 
 struct ProviderBinary {
     child: Child,
-    stdin: BufWriter<ChildStdin>,
+    stdin: Option<BufWriter<ChildStdin>>,
     messages: mpsc::Receiver<Value>,
     buffered: VecDeque<Value>,
 }
@@ -1508,7 +1927,7 @@ impl ProviderBinary {
         });
         Self {
             child,
-            stdin,
+            stdin: Some(stdin),
             messages,
             buffered: VecDeque::new(),
         }
@@ -1587,16 +2006,33 @@ impl ProviderBinary {
     }
 
     fn request(&mut self, id: &str, method: &str, params: Value) -> Value {
-        serde_json::to_writer(
-            &mut self.stdin,
-            &json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }),
-        )
-        .unwrap();
-        self.stdin.write_all(b"\n").unwrap();
-        self.stdin.flush().unwrap();
+        self.send_request(id, method, params);
         self.receive(Duration::from_secs(5), |message| {
             message.get("id").and_then(Value::as_str) == Some(id)
         })
+    }
+
+    fn send_request(&mut self, id: &str, method: &str, params: Value) {
+        let stdin = self.stdin.as_mut().expect("Provider stdin is closed");
+        serde_json::to_writer(
+            &mut *stdin,
+            &json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }),
+        )
+        .unwrap();
+        stdin.write_all(b"\n").unwrap();
+        stdin.flush().unwrap();
+    }
+
+    fn close_input_and_wait(&mut self, timeout: Duration) -> std::process::ExitStatus {
+        drop(self.stdin.take());
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                return status;
+            }
+            assert!(Instant::now() < deadline, "Provider did not exit after stdin EOF");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     fn event(&mut self, method: &str) -> Value {
@@ -1670,25 +2106,118 @@ fn conversation_resource(route: &ProviderInstanceRoute, native_resource_id: &str
 }
 
 fn clear_session_log(marker: &Path) {
-    std::fs::write(marker.with_extension("sessions"), "").unwrap();
+    for path in session_log_paths(marker) {
+        std::fs::remove_file(path).unwrap();
+    }
 }
 
 fn session_pids(marker: &Path, method: &str, thread_id: &str) -> Vec<u32> {
-    let contents = std::fs::read_to_string(marker.with_extension("sessions")).unwrap();
     let mut pids = Vec::new();
-    for line in contents.lines() {
-        let mut fields = line.splitn(3, '\t');
-        let Some(pid) = fields.next().and_then(|value| value.parse::<u32>().ok()) else {
+    for path in session_log_paths(marker) {
+        let Ok(contents) = std::fs::read_to_string(path) else {
             continue;
         };
-        if fields.next() != Some(method) || fields.next() != Some(thread_id) {
-            continue;
-        }
-        if !pids.contains(&pid) {
-            pids.push(pid);
+        for line in contents.lines() {
+            let mut fields = line.splitn(3, '\t');
+            let Some(pid) = fields.next().and_then(|value| value.parse::<u32>().ok()) else {
+                continue;
+            };
+            if fields.next() != Some(method) || fields.next() != Some(thread_id) {
+                continue;
+            }
+            if !pids.contains(&pid) {
+                pids.push(pid);
+            }
         }
     }
     pids
+}
+
+fn session_log_paths(marker: &Path) -> Vec<PathBuf> {
+    let Some(parent) = marker.parent() else {
+        return Vec::new();
+    };
+    let Some(stem) = marker.file_stem().and_then(|stem| stem.to_str()) else {
+        return Vec::new();
+    };
+    let prefix = format!("{stem}.sessions.");
+    let mut paths = std::fs::read_dir(parent)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with(&prefix))
+                .then(|| entry.path())
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
+}
+
+fn session_method_count(marker: &Path, method: &str) -> usize {
+    session_log_paths(marker)
+        .into_iter()
+        .filter_map(|path| std::fs::read_to_string(path).ok())
+        .flat_map(|contents| {
+            contents
+                .lines()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|line| line.split('\t').nth(1) == Some(method))
+        .count()
+}
+
+fn wait_for_file_method(marker: &Path, method: &str, thread_id: &str, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while session_pids(marker, method, thread_id).is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "fixture did not record {method} for {thread_id}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(unix)]
+fn process_is_running(process_id: u32) -> bool {
+    Command::new("/bin/kill")
+        .arg("-0")
+        .arg(process_id.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(windows)]
+fn process_is_running(process_id: u32) -> bool {
+    Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {process_id}"), "/FO", "CSV", "/NH"])
+        .output()
+        .is_ok_and(|output| String::from_utf8_lossy(&output.stdout).contains(&process_id.to_string()))
+}
+
+fn wait_for_processes_to_exit(process_ids: &[u32], timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let running = process_ids
+            .iter()
+            .copied()
+            .filter(|process_id| process_is_running(*process_id))
+            .collect::<Vec<_>>();
+        if running.is_empty() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "App Server processes did not exit: {running:?}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 fn turn_start_params(

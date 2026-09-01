@@ -20,10 +20,10 @@
 2. 检查开发安装：`provider-plugins/codex/codepet-provider.json` 与相对 Provider executable 位于同一目录，`pluginId` 为 `dev.codepet.codex`，且没有重复 manifest。
 3. 区分两层启动配置：Provider executable/环境和 `appServerArgs` 来自 manifest；`appServerExecutable` 必须只由 Agent Runtime resolver 以绝对路径注入。Provider 不补默认参数，也不搜索用户目录。
 4. 检查 Provider `instance.start`：它只 spawn observer App Server，执行 `initialize`/`initialized` 与 `model/list`。observer 只应出现 `thread/list`/`thread/read`，不得出现 `thread/start`、`thread/resume` 或 turn/approval 写操作。silent child 应让实例转 error，不能阻塞 Tauri 或 Desktop companion。
-5. 对 turn 故障检查 conversation execution：首次写应单独 spawn、subscribe、`thread/resume`；同 active turn 的 steer/interrupt/approval 必须落在同 generation。不同 conversation 使用不同进程，同 conversation 并发首次 send 只能有一次 resume。
-6. 检查 reader/writer 和 request id map。乱序 response 应按 id 关联；无匹配 id、非法 envelope、stdout/stderr 读取故障、明确 RPC reject 或 sent-outcome-unknown 都应关闭 owning execution、清空 pending 并移除 conversation map。超长物理行必须先完整 drain；不得自动重放 `turn/start`。
-7. 检查释放点：running、waiting approval、waiting user input 与 Remote/WSS 断开不能释放；completed/failed/interrupted notification 或权威 terminal snapshot 必须关闭子进程。终态后若 Desktop 仍无法 resume，检查旧 execution pid 是否仍存活。
-8. 若 `thread/resume` 明确报告其他 runtime 持有 writer，对外只能是 retryable `conversation_write_conflict`，details 为 `operation=thread/resume` 与 `reason=owned-by-other-runtime`。不得把原生进程/客户端身份写入 ProtocolError 或日志。
+5. 对 turn 故障检查 conversation execution：首次写应单独 spawn、在 initialize 前登记 Creating session、subscribe、`thread/resume`；同 active turn 的 steer/interrupt/approval 必须落在同 generation。不同 conversation 使用不同进程，同 conversation 并发首次 send 只能有一次 resume。stop 时 pending initialize/resume 都应在 2 秒检查窗内退出，且取消后不得再出现 resume/start 记录。
+6. 检查两层并发：Provider Host stdio 最多并发 dispatch 16 个 request、reader queue 容量 32，response 可乱序但必须按原 id 关联；conversation operation 仍由 per-slot lock 串行。A 的 App Server RPC 悬挂时，B 与 `instance.stop` 应在 2 秒内响应。无匹配 App Server response id、非法 envelope、stdout/stderr 读取故障、明确 RPC reject 或 sent-outcome-unknown 都应关闭 owning execution、清空 pending；不得自动重放 `turn/start`。
+7. 检查释放点：running、waiting approval、waiting user input 与 Remote/WSS 断开不能释放；completed/failed/interrupted notification 必须先把槽切成 Closing，再发布 terminal event、关闭子进程、删除同 generation 槽并唤醒等待者。terminal event 发布被阻塞时，新请求应等待而不能取得旧 handle。权威 terminal snapshot 使用同一关闭语义。
+8. 只在 `thread/resume` reject 同时满足 `code=-32600`、`data` 缺失/null 且 message 精确为 `thread <当前 conversation id> already has an active writer` 时，对外返回 retryable `conversation_write_conflict`，details 为 `operation=thread/resume` 与 `reason=owned-by-other-runtime`。wrong code、近似 message、其他 thread id 或非空 data 必须保留普通 Provider error；不得把原生 owner message 写入标准冲突错误或日志。
 9. 若修改 executable 或点击刷新，确认 Host 更新同一个 Codex instance setting，并按 stop → start → manifest instance create/start 显式重启插件；replacement 的 RPC 必须反映新 setting，Tauri 内不应出现第二个 observer。
 10. 对 timeout 或 process exit，不自动重放 create、turn、interrupt 或 approval。remote 结果不确定也不得触碰 Desktop companion；两条链路保持独立故障状态。
 11. 单独确认 Desktop companion：其 socket、owner/revision 和 activity projection 不应因 remote 故障清空、重启或改用 Hook/transcript。
@@ -44,6 +44,8 @@
 - remote Provider 从 unavailable 变为当前 replacement 的真实 ready 状态。
 - `conversation.list/get/create`、turn start/steer/interrupt、approval 和通知通过真实 fixture App Server 子进程与 manifest-launched Provider binary 闭环。
 - 重复 `conversation.get` 不创建 execution；active turn 操作复用同一 pid；terminal 后下一次写使用新 pid；释放 A 不改变 B。
+- stdio 悬挂探针中 B 与 `instance.stop` 都在 2 秒内按各自 request id 返回；17 个悬挂请求只有 16 个进入 App Server，关闭 stdin 后 Provider 与全部已记录子进程在 2 秒内退出。
+- fixture session 证据来自每 PID 独立日志；运行 64 轮 terminal/approval 释放压力测试，不应出现 PID 记录丢失或交叉。
 - remote conversation/turn/approval 只出现在 remote replay；companion replay 与桌宠 activity store 不变。
 - Desktop companion 在整个 refresh/故障期间保持自己的 provider/session/sequence。
 - 未启动 Hook、audit、transcript 或文件监听 fallback。

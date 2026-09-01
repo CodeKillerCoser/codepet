@@ -28,11 +28,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static NEXT_EXECUTION_ATTEMPT: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -76,11 +78,14 @@ struct ExecutionSession {
 enum ExecutionSlotState {
     Creating(Option<CodexAppServerSession>),
     Ready(ExecutionSession),
+    Closing(ExecutionSession),
     Failed(ProtocolError),
     Closed,
 }
 
 struct ExecutionSlot {
+    attempt_generation: u64,
+    cancelled: AtomicBool,
     state: Mutex<ExecutionSlotState>,
     changed: Condvar,
     operation: Mutex<()>,
@@ -96,53 +101,63 @@ struct ExecutionHandle {
 impl ExecutionSlot {
     fn new() -> Self {
         Self {
+            attempt_generation: NEXT_EXECUTION_ATTEMPT.fetch_add(1, Ordering::SeqCst),
+            cancelled: AtomicBool::new(false),
             state: Mutex::new(ExecutionSlotState::Creating(None)),
             changed: Condvar::new(),
             operation: Mutex::new(()),
         }
     }
 
-    fn wait_ready(self: &Arc<Self>) -> Result<ExecutionHandle, ProtocolError> {
+    fn wait_ready(self: &Arc<Self>) -> Result<Option<ExecutionHandle>, ProtocolError> {
         let mut state = lock(&self.state);
         loop {
             match &*state {
-                ExecutionSlotState::Creating(_) => {
+                ExecutionSlotState::Creating(_) | ExecutionSlotState::Closing(_) => {
                     state = self
                         .changed
                         .wait(state)
                         .unwrap_or_else(|poisoned| poisoned.into_inner());
                 }
                 ExecutionSlotState::Ready(execution) => {
-                    return Ok(ExecutionHandle {
+                    return Ok(Some(ExecutionHandle {
                         slot: self.clone(),
                         session: execution.session.clone(),
                         generation: execution.generation.clone(),
-                    });
+                    }));
                 }
                 ExecutionSlotState::Failed(error) => return Err(error.clone()),
-                ExecutionSlotState::Closed => {
-                    return Err(protocol_error(
-                        "provider_unavailable",
-                        "Codex execution session was closed".to_string(),
-                        true,
-                    ));
-                }
+                ExecutionSlotState::Closed => return Ok(None),
             }
         }
     }
 
     fn set_starting_session(&self, session: CodexAppServerSession) -> bool {
+        if self.cancelled.load(Ordering::SeqCst) {
+            return false;
+        }
         let mut state = lock(&self.state);
         let ExecutionSlotState::Creating(starting) = &mut *state else {
             return false;
         };
+        if starting.is_some() || self.cancelled.load(Ordering::SeqCst) {
+            return false;
+        }
         *starting = Some(session);
         true
     }
 
     fn set_ready(&self, execution: ExecutionSession) -> bool {
+        if self.cancelled.load(Ordering::SeqCst) {
+            return false;
+        }
         let mut state = lock(&self.state);
-        if !matches!(*state, ExecutionSlotState::Creating(_)) {
+        if !matches!(
+            &*state,
+            ExecutionSlotState::Creating(Some(session))
+                if session.generation() == execution.generation
+        ) || self.cancelled.load(Ordering::SeqCst)
+        {
             return false;
         }
         *state = ExecutionSlotState::Ready(execution);
@@ -158,14 +173,62 @@ impl ExecutionSlot {
         }
     }
 
-    fn close(&self) -> Option<CodexAppServerSession> {
+    fn force_close(&self) -> Option<CodexAppServerSession> {
+        self.cancelled.store(true, Ordering::SeqCst);
         let mut state = lock(&self.state);
         let previous = std::mem::replace(&mut *state, ExecutionSlotState::Closed);
         self.changed.notify_all();
         match previous {
             ExecutionSlotState::Ready(execution) => Some(execution.session),
+            ExecutionSlotState::Closing(execution) => Some(execution.session),
             ExecutionSlotState::Creating(session) => session,
             ExecutionSlotState::Failed(_) | ExecutionSlotState::Closed => None,
+        }
+    }
+
+    fn creation_is_current(&self, attempt_generation: u64, session_generation: &str) -> bool {
+        self.attempt_generation == attempt_generation
+            && !self.cancelled.load(Ordering::SeqCst)
+            && matches!(
+                &*lock(&self.state),
+                ExecutionSlotState::Creating(Some(session))
+                    if session.generation() == session_generation
+            )
+    }
+
+    fn begin_closing(&self, generation: &str) -> bool {
+        let mut state = lock(&self.state);
+        let previous = std::mem::replace(&mut *state, ExecutionSlotState::Closed);
+        match previous {
+            ExecutionSlotState::Ready(execution) if execution.generation == generation => {
+                self.cancelled.store(true, Ordering::SeqCst);
+                *state = ExecutionSlotState::Closing(execution);
+                true
+            }
+            previous => {
+                *state = previous;
+                false
+            }
+        }
+    }
+
+    fn closing_session(&self, generation: &str) -> Option<CodexAppServerSession> {
+        match &*lock(&self.state) {
+            ExecutionSlotState::Closing(execution) if execution.generation == generation => {
+                Some(execution.session.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn finish_closing(&self, generation: &str) {
+        let mut state = lock(&self.state);
+        if matches!(
+            &*state,
+            ExecutionSlotState::Closing(execution) if execution.generation == generation
+        ) {
+            *state = ExecutionSlotState::Closed;
+            self.changed.notify_all();
         }
     }
 
@@ -317,100 +380,161 @@ impl CodexInstanceRuntime {
         self: &Arc<Self>,
         conversation_id: &str,
     ) -> Result<ExecutionHandle, ProtocolError> {
-        let (slot, creator) = {
-            let mut mutable = lock(&self.mutable);
-            if mutable.status != InstanceStatus::Ready || mutable.observer_session.is_none() {
-                return Err(protocol_error(
-                    "provider_unavailable",
-                    format!(
-                        "Codex Provider instance {} is not ready",
-                        self.route.provider_instance_id
-                    ),
-                    true,
-                ));
-            }
-            match mutable.executions.get(conversation_id) {
-                Some(slot) => (slot.clone(), false),
-                None => {
-                    let slot = Arc::new(ExecutionSlot::new());
-                    mutable
-                        .executions
-                        .insert(conversation_id.to_string(), slot.clone());
-                    (slot, true)
+        loop {
+            let (slot, creator) = {
+                let mut mutable = lock(&self.mutable);
+                if mutable.status != InstanceStatus::Ready || mutable.observer_session.is_none() {
+                    return Err(protocol_error(
+                        "provider_unavailable",
+                        format!(
+                            "Codex Provider instance {} is not ready",
+                            self.route.provider_instance_id
+                        ),
+                        true,
+                    ));
                 }
+                match mutable.executions.get(conversation_id) {
+                    Some(slot) => (slot.clone(), false),
+                    None => {
+                        let slot = Arc::new(ExecutionSlot::new());
+                        mutable
+                            .executions
+                            .insert(conversation_id.to_string(), slot.clone());
+                        (slot, true)
+                    }
+                }
+            };
+            if !creator {
+                if let Some(handle) = slot.wait_ready()? {
+                    return Ok(handle);
+                }
+                continue;
             }
-        };
-        if !creator {
-            return slot.wait_ready();
-        }
 
-        let executable = self.settings.app_server_executable.clone();
-        let args = self.settings.app_server_args.clone();
-        let session = match CodexAppServerSession::spawn(&executable, &args) {
-            Ok(session) => session,
-            Err(error) => {
-                let error = CodexProtocolMapper::error(error);
+            let attempt_generation = slot.attempt_generation;
+            let executable = self.settings.app_server_executable.clone();
+            let args = self.settings.app_server_args.clone();
+            let session = match CodexAppServerSession::spawn_uninitialized(&executable, &args) {
+                Ok(session) => session,
+                Err(error) => {
+                    let error = CodexProtocolMapper::error(error);
+                    self.fail_execution_creation(conversation_id, &slot, error.clone());
+                    return Err(error);
+                }
+            };
+            let registered = {
+                let mutable = lock(&self.mutable);
+                mutable.status == InstanceStatus::Ready
+                    && mutable
+                        .executions
+                        .get(conversation_id)
+                        .is_some_and(|current| Arc::ptr_eq(current, &slot))
+                    && slot.attempt_generation == attempt_generation
+                    && slot.set_starting_session(session.clone())
+            };
+            if !registered {
+                let _ = session.shutdown();
+                let error = execution_start_cancelled_error();
                 self.fail_execution_creation(conversation_id, &slot, error.clone());
                 return Err(error);
             }
-        };
-        if !slot.set_starting_session(session.clone()) {
-            let _ = session.shutdown();
-            return Err(protocol_error(
-                "provider_unavailable",
-                "Codex Provider stopped while the execution session was starting".to_string(),
-                true,
-            ));
-        }
-        let incoming = match session.subscribe() {
-            Ok(incoming) => incoming,
-            Err(error) => {
+            if let Err(error) = session.initialize() {
                 let error = CodexProtocolMapper::error(error);
                 let _ = session.shutdown();
                 self.fail_execution_creation(conversation_id, &slot, error.clone());
                 return Err(error);
             }
-        };
-        if let outcome @ (CodexRequestOutcome::NotSent(_)
-        | CodexRequestOutcome::ExplicitRpcReject(_)
-        | CodexRequestOutcome::SentOutcomeUnknown(_)) =
-            session.ensure_thread_loaded_outcome(conversation_id)
-        {
-            let error = execution_outcome_error("thread/resume", outcome);
-            let _ = session.shutdown();
-            self.fail_execution_creation(conversation_id, &slot, error.clone());
-            return Err(error);
-        }
-        let generation = session.generation().to_string();
-        let installed = {
-            let mutable = lock(&self.mutable);
-            mutable.status == InstanceStatus::Ready
-                && mutable
-                    .executions
-                    .get(conversation_id)
-                    .is_some_and(|current| Arc::ptr_eq(current, &slot))
-                && slot.set_ready(ExecutionSession {
-                    session: session.clone(),
-                    generation: generation.clone(),
-                    active_turn_id: None,
-                })
-        };
-        if !installed {
-            let _ = session.shutdown();
-            let error = protocol_error(
-                "provider_unavailable",
-                "Codex Provider stopped while the execution session was starting".to_string(),
-                true,
+            let generation = session.generation().to_string();
+            if !self.execution_creation_is_current(
+                conversation_id,
+                &slot,
+                attempt_generation,
+                &generation,
+            ) {
+                let _ = session.shutdown();
+                let error = execution_start_cancelled_error();
+                self.fail_execution_creation(conversation_id, &slot, error.clone());
+                return Err(error);
+            }
+            let incoming = match session.subscribe() {
+                Ok(incoming) => incoming,
+                Err(error) => {
+                    let error = CodexProtocolMapper::error(error);
+                    let _ = session.shutdown();
+                    self.fail_execution_creation(conversation_id, &slot, error.clone());
+                    return Err(error);
+                }
+            };
+            if !self.execution_creation_is_current(
+                conversation_id,
+                &slot,
+                attempt_generation,
+                &generation,
+            ) {
+                let _ = session.shutdown();
+                let error = execution_start_cancelled_error();
+                self.fail_execution_creation(conversation_id, &slot, error.clone());
+                return Err(error);
+            }
+            if let outcome @ (CodexRequestOutcome::NotSent(_)
+            | CodexRequestOutcome::ExplicitRpcReject(_)
+            | CodexRequestOutcome::SentOutcomeUnknown(_)) =
+                session.ensure_thread_loaded_outcome(conversation_id)
+            {
+                let error = execution_outcome_error(
+                    "thread/resume",
+                    Some(conversation_id),
+                    outcome,
+                );
+                let _ = session.shutdown();
+                self.fail_execution_creation(conversation_id, &slot, error.clone());
+                return Err(error);
+            }
+            let installed = {
+                let mutable = lock(&self.mutable);
+                mutable.status == InstanceStatus::Ready
+                    && mutable
+                        .executions
+                        .get(conversation_id)
+                        .is_some_and(|current| Arc::ptr_eq(current, &slot))
+                    && slot.attempt_generation == attempt_generation
+                    && slot.set_ready(ExecutionSession {
+                        session: session.clone(),
+                        generation: generation.clone(),
+                        active_turn_id: None,
+                    })
+            };
+            if !installed {
+                let _ = session.shutdown();
+                let error = execution_start_cancelled_error();
+                slot.fail(error.clone());
+                return Err(error);
+            }
+            self.start_execution_event_forwarder(
+                conversation_id.to_string(),
+                generation,
+                incoming,
             );
-            slot.fail(error.clone());
-            return Err(error);
+            if let Some(handle) = slot.wait_ready()? {
+                return Ok(handle);
+            }
         }
-        self.start_execution_event_forwarder(
-            conversation_id.to_string(),
-            generation,
-            incoming,
-        );
-        slot.wait_ready()
+    }
+
+    fn execution_creation_is_current(
+        &self,
+        conversation_id: &str,
+        slot: &Arc<ExecutionSlot>,
+        attempt_generation: u64,
+        session_generation: &str,
+    ) -> bool {
+        let mutable = lock(&self.mutable);
+        mutable.status == InstanceStatus::Ready
+            && mutable
+                .executions
+                .get(conversation_id)
+                .is_some_and(|current| Arc::ptr_eq(current, slot))
+            && slot.creation_is_current(attempt_generation, session_generation)
     }
 
     fn fail_execution_creation(
@@ -450,15 +574,23 @@ impl CodexInstanceRuntime {
     }
 
     fn release_execution(&self, conversation_id: &str, generation: &str) {
+        let Some((slot, expired)) = self.begin_execution_close(conversation_id, generation) else {
+            return;
+        };
+        self.finish_execution_close(conversation_id, generation, slot, expired);
+    }
+
+    fn begin_execution_close(
+        &self,
+        conversation_id: &str,
+        generation: &str,
+    ) -> Option<(Arc<ExecutionSlot>, Vec<PendingApproval>)> {
         let (slot, expired) = {
             let mut mutable = lock(&self.mutable);
-            let Some(slot) = mutable.executions.get(conversation_id).cloned() else {
-                return;
-            };
-            if !slot.matches_generation(generation) {
-                return;
+            let slot = mutable.executions.get(conversation_id)?.clone();
+            if !slot.matches_generation(generation) || !slot.begin_closing(generation) {
+                return None;
             }
-            mutable.executions.remove(conversation_id);
             let approval_ids = mutable
                 .pending_approvals
                 .iter()
@@ -471,11 +603,33 @@ impl CodexInstanceRuntime {
                 .collect::<Vec<_>>();
             (slot, expired)
         };
-        if let Some(session) = slot.close() {
-            if let Err(error) = session.shutdown() {
-                eprintln!("Codex execution session shutdown failed: {error}");
+        Some((slot, expired))
+    }
+
+    fn finish_execution_close(
+        &self,
+        conversation_id: &str,
+        generation: &str,
+        slot: Arc<ExecutionSlot>,
+        expired: Vec<PendingApproval>,
+    ) {
+        let Some(session) = slot.closing_session(generation) else {
+            return;
+        };
+        if let Err(error) = session.shutdown() {
+            eprintln!("Codex execution session shutdown failed: {error}");
+        }
+        {
+            let mut mutable = lock(&self.mutable);
+            if mutable
+                .executions
+                .get(conversation_id)
+                .is_some_and(|current| Arc::ptr_eq(current, &slot))
+            {
+                mutable.executions.remove(conversation_id);
             }
         }
+        slot.finish_closing(generation);
         for pending in expired {
             let (approval, event) =
                 lock(&self.mapper).approval_expired(pending.approval, now_ms());
@@ -555,19 +709,70 @@ impl CodexInstanceRuntime {
                                 thread_id,
                                 turn,
                             }) if turn.status != CodexTurnStatus::InProgress => {
-                                Some((thread_id.clone(), turn.id.clone()))
+                                if thread_id != &conversation_id {
+                                    eprintln!(
+                                        "Codex execution session emitted a terminal event for another conversation"
+                                    );
+                                    runtime.release_execution(
+                                        &conversation_id,
+                                        &session_generation,
+                                    );
+                                    return;
+                                }
+                                true
                             }
                             CodexIncoming::Notification(CodexNotification::TurnCompleted {
                                 ..
                             }) => {
+                                eprintln!(
+                                    "Codex execution session emitted turn/completed with an in-progress turn"
+                                );
                                 runtime.release_execution(
                                     &conversation_id,
                                     &session_generation,
                                 );
                                 return;
                             }
-                            _ => None,
+                            _ => false,
                         };
+                        if terminal_turn {
+                            let Some((closing_slot, expired)) = runtime.begin_execution_close(
+                                &conversation_id,
+                                &session_generation,
+                            ) else {
+                                return;
+                            };
+                            match runtime.map_execution_incoming(
+                                &conversation_id,
+                                &session_generation,
+                                incoming,
+                            ) {
+                                Ok(events) => {
+                                    for event in events {
+                                        if let Err(error) = runtime.events.publish(event) {
+                                            eprintln!(
+                                                "Codex execution event forwarding failed: {}",
+                                                error.message
+                                            );
+                                            break;
+                                        }
+                                    }
+                                }
+                                Err(error) => {
+                                    eprintln!(
+                                        "Codex execution event mapping failed: {}",
+                                        error.message
+                                    );
+                                }
+                            }
+                            runtime.finish_execution_close(
+                                &conversation_id,
+                                &session_generation,
+                                closing_slot,
+                                expired,
+                            );
+                            return;
+                        }
                         let events = runtime.map_execution_incoming(
                             &conversation_id,
                             &session_generation,
@@ -599,21 +804,6 @@ impl CodexInstanceRuntime {
                                 );
                                 return;
                             }
-                        }
-                        if let Some((thread_id, turn_id)) = terminal_turn {
-                            if thread_id != conversation_id {
-                                runtime.release_execution(
-                                    &conversation_id,
-                                    &session_generation,
-                                );
-                                return;
-                            }
-                            slot.mark_active_turn(&session_generation, &turn_id);
-                            runtime.release_execution(
-                                &conversation_id,
-                                &session_generation,
-                            );
-                            return;
                         }
                     }
                     Err(error) => {
@@ -736,7 +926,7 @@ impl CodexInstanceRuntime {
             let _ = observer.shutdown();
         }
         for slot in execution_slots {
-            if let Some(session) = slot.close() {
+            if let Some(session) = slot.force_close() {
                 let _ = session.shutdown();
             }
         }
@@ -1103,7 +1293,7 @@ impl ProtocolServer for CodexProvider {
             };
             let mut sessions = observer.into_iter().collect::<Vec<_>>();
             for slot in execution_slots {
-                if let Some(session) = slot.close() {
+                if let Some(session) = slot.force_close() {
                     sessions.push(session);
                 }
             }
@@ -1317,7 +1507,7 @@ impl ProtocolServer for CodexProvider {
                 });
                 let result = match outcome {
                     CodexRequestOutcome::Success(snapshot) => Ok(snapshot),
-                    outcome => Err(execution_outcome_error("thread/start", outcome)),
+                    outcome => Err(execution_outcome_error("thread/start", None, outcome)),
                 };
                 if let Err(error) = session.shutdown() {
                     eprintln!("Codex conversation creation session shutdown failed: {error}");
@@ -1472,7 +1662,11 @@ impl ProtocolServer for CodexProvider {
                                 &operation_conversation_id,
                                 &handle.generation,
                             );
-                            return Err(execution_outcome_error("turn/start", outcome));
+                            return Err(execution_outcome_error(
+                                "turn/start",
+                                Some(&operation_conversation_id),
+                                outcome,
+                            ));
                         }
                     }
                 }
@@ -1530,7 +1724,11 @@ impl ProtocolServer for CodexProvider {
                             &operation_conversation_id,
                             &handle.generation,
                         );
-                        Err(execution_outcome_error("turn/steer", outcome))
+                        Err(execution_outcome_error(
+                            "turn/steer",
+                            Some(&operation_conversation_id),
+                            outcome,
+                        ))
                     }
                 }
             })
@@ -1579,7 +1777,11 @@ impl ProtocolServer for CodexProvider {
                             &operation_conversation_id,
                             &handle.generation,
                         );
-                        Err(execution_outcome_error("turn/interrupt", outcome))
+                        Err(execution_outcome_error(
+                            "turn/interrupt",
+                            Some(&operation_conversation_id),
+                            outcome,
+                        ))
                     }
                 }
             })
@@ -1646,7 +1848,13 @@ impl ProtocolServer for CodexProvider {
                         false,
                     )
                 })?;
-            let handle = slot.wait_ready()?;
+            let handle = slot.wait_ready()?.ok_or_else(|| {
+                protocol_error(
+                    "stale_approval_session",
+                    "approval belongs to a closed Codex execution session".to_string(),
+                    false,
+                )
+            })?;
             let operation_runtime = runtime.clone();
             let operation_conversation_id = conversation_id.clone();
             let pending_request = pending.request.clone();
@@ -1683,7 +1891,11 @@ impl ProtocolServer for CodexProvider {
                             &operation_conversation_id,
                             &handle.generation,
                         );
-                        Err(execution_outcome_error("approval/resolve", outcome))
+                        Err(execution_outcome_error(
+                            "approval/resolve",
+                            Some(&operation_conversation_id),
+                            outcome,
+                        ))
                     }
                 }
             })
@@ -1724,7 +1936,7 @@ impl ProtocolServer for CodexProvider {
                 };
                 sessions.extend(observer);
                 for slot in execution_slots {
-                    if let Some(session) = slot.close() {
+                    if let Some(session) = slot.force_close() {
                         sessions.push(session);
                     }
                 }
@@ -1752,11 +1964,15 @@ impl ProtocolServer for CodexProvider {
 
 fn execution_outcome_error<T>(
     operation: &str,
+    conversation_id: Option<&str>,
     outcome: CodexRequestOutcome<T>,
 ) -> ProtocolError {
     match outcome {
         CodexRequestOutcome::ExplicitRpcReject(error @ CodexAppServerError::Rpc { .. })
-            if operation == "thread/resume" && is_writer_owned_by_other_runtime(&error) =>
+            if operation == "thread/resume"
+                && conversation_id.is_some_and(|conversation_id| {
+                    is_active_writer_conflict(&error, conversation_id)
+                }) =>
         {
             ProtocolError {
                 code: "conversation_write_conflict".to_string(),
@@ -1779,22 +1995,26 @@ fn execution_outcome_error<T>(
     }
 }
 
-fn is_writer_owned_by_other_runtime(error: &CodexAppServerError) -> bool {
-    let CodexAppServerError::Rpc { message, .. } = error else {
+fn is_active_writer_conflict(error: &CodexAppServerError, conversation_id: &str) -> bool {
+    let CodexAppServerError::Rpc {
+        code,
+        message,
+        data,
+    } = error
+    else {
         return false;
     };
-    let message = message.to_ascii_lowercase();
-    let writer_ownership = message.contains("writer")
-        && (message.contains("held")
-            || message.contains("owned")
-            || message.contains("in use"));
-    let other_runtime = message.contains("another runtime")
-        || message.contains("other runtime")
-        || message.contains("another process")
-        || message.contains("other process")
-        || message.contains("another client")
-        || message.contains("other client");
-    writer_ownership && other_runtime
+    *code == -32600
+        && data.is_none()
+        && message == &format!("thread {conversation_id} already has an active writer")
+}
+
+fn execution_start_cancelled_error() -> ProtocolError {
+    protocol_error(
+        "provider_unavailable",
+        "Codex Provider stopped while the execution session was starting".to_string(),
+        true,
+    )
 }
 
 fn incoming_conversation_id(incoming: &CodexIncoming) -> Option<&str> {

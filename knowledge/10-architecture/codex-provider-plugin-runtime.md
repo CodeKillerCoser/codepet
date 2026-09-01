@@ -2,7 +2,7 @@
 
 ## 当前结论
 
-远程 Codex 能力已经从 Tauri 进程内直连实现迁到独立二进制 `crates/providers/codepet-provider-codex`。二进制只依赖生成的 `codepet-provider-sdk`，通过 Provider Protocol v1 的 JSON-RPC 2.0 / stdio JSON-lines 与 `codepet-host` 通信；它不依赖 `codepet-host`、Tauri、Pet SDK 或 Desktop 私有 IPC。每个 Provider instance 长期持有一个纯读 observer App Server；真正取得 thread writer 的 App Server 则按 conversation/active turn 独立创建并在 turn 终态立即退出。
+远程 Codex 能力已经从 Tauri 进程内直连实现迁到独立二进制 `crates/providers/codepet-provider-codex`。二进制只依赖生成的 `codepet-provider-sdk`，通过 Provider Protocol v1 的 JSON-RPC 2.0 / stdio JSON-lines 与 `codepet-host` 通信；它不依赖 `codepet-host`、Tauri、Pet SDK 或 Desktop 私有 IPC。每个 Provider instance 长期持有一个纯读 observer App Server；`conversation.create` 使用一次性 App Server；真正取得历史 thread writer 的 App Server 则按 conversation/active turn 独立创建并在 turn 终态立即退出。Host stdio 最多并发 dispatch 16 个 request，并用容量 32 的 reader queue 施加背压，response 通过原 id 允许乱序返回。
 
 Host 是唯一进程与路由所有者：`PluginManager` 从 manifest 启动 Provider、创建并启动实例，`ProviderGatewayService` 把 Gateway v1 请求路由到实例，并把 Provider 事件变成可 replay 的远程事件。兼容 v0 的 Tauri command/event 只是一层 Gateway DTO 适配，不再拥有或启动 Codex App Server。
 
@@ -93,7 +93,7 @@ Codex Desktop 私有 IPC
 | `turn.steer` | 同一 conversation 执行 App Server `turn/steer`，随后 `thread/read` | 支持；请求显式携带 conversation 与 turn 四段身份，响应使用权威 turn 状态。 |
 | `turn.interrupt` | 同一 conversation 执行 App Server `turn/interrupt`，随后 `thread/read` | 支持；不根据 interrupt ack 伪造完整 Turn，权威 terminal snapshot 会触发会话退出。 |
 | `approval.resolve` | 对 owning execution session 的原 server request id 回写 command/file decision | 仅支持普通 accept/decline 二元审批；generation 与 pending approval 必须同时匹配，不能换进程回写。 |
-| `provider.shutdown` | 关闭全部实例的 observer 与执行 App Server，结束 stdio 主循环 | 支持且幂等；即使某个 shutdown 失败也会先尝试关闭其他 session。 |
+| `provider.shutdown` | 关闭全部实例的 observer 与执行 App Server，结束 stdio 主循环 | 支持且幂等；即使某个 shutdown 失败也会先尝试关闭其他 session。stdio EOF/fatal 同样先调用该清理，再在 2 秒 drain 边界后中止未收敛的 dispatch task。 |
 
 Gateway v1 的 `turn.send` 只对已有空闲 conversation 启动新 turn，并在 Host 中映射为 Provider `turn.start`。Provider v1 的 `turn.steer` 仍是独立内部能力，不由 Gateway `turn.send` 自动选择。兼容 v0 继续暴露既有 `turn.send` 调用形状，但 `canSteer=false`，也不会根据 Codex `pluginId` 推断 steering 能力。
 
@@ -103,11 +103,11 @@ Provider 发送全部六种 v1 事件：`event.instanceStatusChanged`、`event.c
 
 Provider/Gateway 的语言中立 `RoutedResourceId` 是 `deviceId + providerPluginId + providerInstanceId + nativeResourceId` 四段身份。instance route 是前三段。SDK、Host、Gateway、Provider、compat extension 在每个请求、响应、事件和审批入口逐跳保留并校验四段；compat 不再通过 registry 事后回查 plugin id。旧 v0 对象自身的 `id` 继续等于 `nativeResourceId`，完整身份位于 `codepet.gateway.route` extension。
 
-每个 Provider instance 持有一个 observer 和按 conversation 索引的执行槽。执行槽在首次写入时以 `Creating → Ready` 单向建立；并发等待者共享同一结果，失败槽从 map 删除，后续显式请求才可重建。Ready 槽只关联一个 App Server generation 和当前 active turn；不同 conversation 不共享进程、operation lock 或 loaded-thread 状态。
+每个 Provider instance 持有一个 observer 和按 conversation 索引的执行槽。执行槽以 `Creating → Ready → Closing → Closed` 管理，创建失败则进入 `Failed` 并从 map 淘汰；并发等待者共享同一创建结果。槽从插入 map 起就有独立 attempt generation 与 cancellation 状态；子进程完成 spawn、尚未 initialize 前即登记到 Creating，因此 stop 能关闭其 stdin/进程并唤醒 initialize。initialize 返回、subscribe 前和 resume 前都会重新核对 instance 仍 Ready、map 仍指向同一槽、attempt/session generation 未变且未取消，失败时绝不继续 resume/start。Ready 槽只关联一个 App Server generation 和当前 active turn；不同 conversation 不共享进程、operation lock 或 loaded-thread 状态。
 
 每次执行 App Server 启动生成唯一 generation；approval 的 `nativeResourceId` 同时编码 generation 与原 App Server request id。`approval.resolve` 先校验四段 route，再校验 generation、pending 记录与 owning conversation，最后回写持有请求的同一进程。即使新进程复用了相同 request id，旧 approval 也以 `stale_approval_session` 失败。执行进程异常退出或 turn 终态时，尚未解决的 approval 会过期，历史 ledger 可继续被 `conversation.get` 投影，但不再保留进程引用。
 
-执行槽不归 Remote 详情页、event subscription 或 WSS connection 所有。手机退出或断网不会触发释放；`running`、`waiting-approval`、`waiting-user-input` 都继续保留执行进程。`turn/completed` 携带 `completed/failed/interrupted` 时，Provider 先发布权威 turn event，再关闭该 conversation 的子进程并移除槽；steer/interrupt 后的权威 terminal snapshot 走同一清理。App Server crash、initialize/resume 失败、明确 RPC reject 与 `SentOutcomeUnknown` 也都会关闭并移除对应槽，不自动重放 `turn/start`。
+执行槽不归 Remote 详情页、event subscription 或 WSS connection 所有。手机退出或断网不会触发释放；`running`、`waiting-approval`、`waiting-user-input` 都继续保留执行进程。`turn/completed` 携带 `completed/failed/interrupted` 时，Provider 在持有 conversation operation lock 时先把 Ready 槽切成 Closing；新请求只能等待 Closing 完成，不能取得旧 handle。随后发布权威 turn event、关闭旧子进程、按 conversation + generation 移除同一槽并唤醒等待者，下一次写才创建新 generation。steer/interrupt 后的权威 terminal snapshot 走同一关闭路径。App Server crash、initialize/resume 失败、明确 RPC reject 与 `SentOutcomeUnknown` 也都会关闭并移除对应槽，不自动重放 `turn/start`。
 
 ## 本地开发安装
 
@@ -134,13 +134,14 @@ Provider/Gateway 的语言中立 `RoutedResourceId` 是 `deviceId + providerPlug
 
 ## 风险与验证
 
-- App Server 协议漂移：本机 `codex-cli 0.151.0-alpha.7.1` schema 和 smoke 证明上游 response/notification 不要求 `jsonrpc`，request/notification 的 `params` 可缺失，并允许 `trace`/`emittedAtMs` 元数据；fixture 与 typed DTO 覆盖 initialize、Thread、Turn、start/resume、approval 和 request fail-closed。Provider Protocol 自己仍严格使用 JSON-RPC 2.0。
+- App Server 协议漂移：本机 `codex-cli 0.151.0` schema 和 smoke 证明上游 response/notification 不要求 `jsonrpc`，request/notification 的 `params` 可缺失，并允许 `trace`/`emittedAtMs` 元数据；fixture 与 typed DTO 覆盖 initialize、Thread、Turn、start/resume、approval 和 request fail-closed。Provider Protocol 自己仍严格使用 JSON-RPC 2.0。
 - 路由或审批串实例：Host 测试从 manifest 启动真实 stdio fixture binary 并完成 Gateway RPC/事件/四段路由；Codex Provider 二进制测试独立完成 App Server 会话、审批和 interrupt 闭环。
 - Provider 污染桌宠：Tauri mock runtime 使用生产 bridge，断言 Provider 只进入 remote replay/event，companion replay、companion event、pet channel、activity store 与 Desktop adapter spy 不变化；PetApp 静态测试断言只导入 companion client，且不含跨链路同步路径。
 - 审批 fail-open/串 session：真实 Provider 二进制测试证明 `additionalPermissions.network` 得到原 id 的 `-32601` 且无 Approval；stop/start 后复用相同 request id 时旧句柄不能批准新进程请求。
 - framing/lifecycle：App Server stdout/stderr 与 Provider SDK 都完整 drain 超长物理行后 fail-stop。stdout/stderr fault 复用同一个 session terminal path，清空 pending 并终止 App Server；terminal fault 与 subscribers 在同一把锁下完成“读已有 fault / 注册未来 fault”，barrier 竞态测试与 late-subscriber 测试分别覆盖并发和已有 fault，实例不会误报 Ready。
-- writer 生命周期：真实 Provider 二进制 fixture 以进程 id 证明 observer 只做 model/list/read；首次 send 单独 resume，steer/interrupt/approval 复用 owning execution；waiting approval/user input 不提前退出；terminal notification 与权威 terminal snapshot 都产生新一代 resume；A 终态不影响 B。并发 Provider 测试证明同 conversation 首次 send 只 resume 一次，stop 可中断仍在等待 resume 的进程。
-- writer 冲突与未知发送结果：`thread/resume` 明确报告 writer 被其他 runtime 持有时只返回 `conversation_write_conflict`、`retryable=true`、`operation=thread/resume`、`reason=owned-by-other-runtime`，不回传进程/客户端身份。fixture 分别覆盖 initialize failure、明确 turn reject、App Server crash 和 sent-outcome-unknown，断言失败槽无残留且 Provider 不自动重试 `turn/start`。
+- writer 生命周期：真实 Provider 二进制 fixture 以每 PID 独立日志证明 observer 只做 model/list/read；首次 send 单独 resume，steer/interrupt/approval 复用 owning execution；waiting approval/user input 不提前退出；terminal notification 与权威 terminal snapshot 都产生新一代 resume；A 终态不影响 B。并发 Provider 测试证明同 conversation 首次 send 只 resume 一次，stop 在 2 秒内中断仍在等待 initialize/resume 的进程；terminal event sink 被确定性阻塞时，新请求等待 Closing 后使用新 PID。64 轮终态压力测试验证 PID 证据无并发 append 丢失。
+- stdio 并发与回收：生产 Provider binary 测试令 A 的 `thread/resume` 永不响应，证明 B 仍在 2 秒内按自己的 id 返回，随后 `instance.stop` 在 2 秒内响应并回收 A/B。另一个测试同时悬挂 17 个请求，只允许前 16 个进入 App Server，第 17 个留在有界队列；stdin EOF 在 2 秒内关闭所有已启动子进程并退出。
+- writer 冲突与未知发送结果：只有 `thread/resume` 的明确 RPC reject 同时满足 `code=-32600`、无非空 `data`，且 message 精确等于 `thread <当前 conversation id> already has an active writer` 时，才返回 `conversation_write_conflict`、`retryable=true`、`operation=thread/resume`、`reason=owned-by-other-runtime`。wrong code、近似 message、其他 thread id 与非空 data 都保留普通 Provider error。fixture 另行覆盖 initialize failure、明确 turn reject、App Server crash 和 sent-outcome-unknown，断言失败槽无残留且 Provider 不自动重试 `turn/start`。
 - 显式 restart：Host 测试先替换 instance setting，再制造 graceful stop 超时和 force-kill；确认旧进程结束后 replacement 的 RPC 返回新 setting。无法确认旧进程终止时保持 fail closed。
 - 配置漂移：Provider 拒绝非绝对 executable 和未知 settings；Tauri 每次只使用 resolver 覆盖该字段。
 - 机械生成漂移：运行 `npm run protocol:check` 与 `git diff --check`，不提交 Tauri build 自动改写的 schema。

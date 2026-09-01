@@ -391,6 +391,18 @@ impl CodexAppServerSession {
         executable: &Path,
         args: &[String],
     ) -> Result<Self, CodexAppServerError> {
+        let session = Self::spawn_uninitialized(executable, args)?;
+        if let Err(error) = session.initialize() {
+            let _ = session.shutdown();
+            return Err(error);
+        }
+        Ok(session)
+    }
+
+    pub(crate) fn spawn_uninitialized(
+        executable: &Path,
+        args: &[String],
+    ) -> Result<Self, CodexAppServerError> {
         let mut child = codex_app_server_command(executable, args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -413,10 +425,6 @@ impl CodexAppServerSession {
         );
         if let Some(stderr) = stderr {
             session.start_stderr_monitor(stderr);
-        }
-        if let Err(error) = session.initialize() {
-            let _ = session.shutdown();
-            return Err(error);
         }
         Ok(session)
     }
@@ -881,7 +889,7 @@ impl CodexAppServerSession {
             })
     }
 
-    fn initialize(&self) -> Result<(), CodexAppServerError> {
+    pub(crate) fn initialize(&self) -> Result<(), CodexAppServerError> {
         self.initialize_with_timeout(INITIALIZE_TIMEOUT)
     }
 
@@ -1210,6 +1218,10 @@ fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppSe
         Err(CodexAppServerError::Rpc {
             code,
             message: message.to_string(),
+            data: error
+                .get("data")
+                .filter(|data| !data.is_null())
+                .cloned(),
         })
     } else {
         Ok(object["result"].clone())
@@ -2469,7 +2481,8 @@ mod tests {
                 outcome,
                 CodexRequestOutcome::ExplicitRpcReject(CodexAppServerError::Rpc {
                     code: -32600,
-                    message
+                    message,
+                    data: None
                 }) if message == "no rollout found for thread id thread-missing"
             ));
         }

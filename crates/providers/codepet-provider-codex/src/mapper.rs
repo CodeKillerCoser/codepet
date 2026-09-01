@@ -601,7 +601,7 @@ impl CodexProtocolMapper {
 
     pub fn error(error: CodexAppServerError) -> ProtocolError {
         match error {
-            CodexAppServerError::Rpc { code, message } => ProtocolError {
+            CodexAppServerError::Rpc { code, message, .. } => ProtocolError {
                 code: "provider_error".to_string(),
                 message,
                 retryable: code == -32001,

@@ -45,6 +45,11 @@ fn main() {
         );
         match method {
             "initialize" => {
+                if options.approval_mode == "execution-initialize-no-response"
+                    && observer_discovery_completed(&options)
+                {
+                    continue;
+                }
                 if options.approval_mode == "execution-initialize-reject"
                     && observer_discovery_completed(&options)
                 {
@@ -204,17 +209,72 @@ fn main() {
             }
             "thread/resume" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
-                if options.approval_mode == "resume-no-response" {
+                if options.approval_mode == "resume-no-response"
+                    && thread_id.starts_with("thread-resume-pending")
+                {
                     continue;
                 }
-                if thread_id == "thread-writer-held" {
+                if thread_id == "thread-active-writer" {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": {
+                                "code": -32600,
+                                "message": format!("thread {thread_id} already has an active writer")
+                            }
+                        }),
+                    );
+                    continue;
+                }
+                if thread_id == "thread-active-writer-wrong-code" {
                     write_json(
                         &mut writer,
                         json!({
                             "id": id,
                             "error": {
                                 "code": -32000,
+                                "message": format!("thread {thread_id} already has an active writer")
+                            }
+                        }),
+                    );
+                    continue;
+                }
+                if thread_id == "thread-active-writer-wrong-message" {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": {
+                                "code": -32600,
                                 "message": "thread writer is held by another runtime"
+                            }
+                        }),
+                    );
+                    continue;
+                }
+                if thread_id == "thread-active-writer-with-data" {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": {
+                                "code": -32600,
+                                "message": format!("thread {thread_id} already has an active writer"),
+                                "data": { "owner": "fixture-owner" }
+                            }
+                        }),
+                    );
+                    continue;
+                }
+                if thread_id == "thread-active-writer-other-thread" {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": {
+                                "code": -32600,
+                                "message": "thread a-different-thread already has an active writer"
                             }
                         }),
                     );
@@ -400,7 +460,7 @@ fn record_session_activity(options: &Options, method: &str, thread_id: &str) {
     let Some(marker) = options.marker.as_ref() else {
         return;
     };
-    let path = marker.with_extension("sessions");
+    let path = session_log_path(marker, std::process::id());
     let mut log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -413,8 +473,36 @@ fn observer_discovery_completed(options: &Options) -> bool {
     let Some(marker) = options.marker.as_ref() else {
         return false;
     };
-    std::fs::read_to_string(marker.with_extension("sessions"))
-        .is_ok_and(|contents| contents.lines().any(|line| line.contains("\tmodel/list\t")))
+    session_log_paths(marker).into_iter().any(|path| {
+        std::fs::read_to_string(path)
+            .is_ok_and(|contents| contents.lines().any(|line| line.contains("\tmodel/list\t")))
+    })
+}
+
+fn session_log_path(marker: &std::path::Path, process_id: u32) -> PathBuf {
+    marker.with_extension(format!("sessions.{process_id}"))
+}
+
+fn session_log_paths(marker: &std::path::Path) -> Vec<PathBuf> {
+    let Some(parent) = marker.parent() else {
+        return Vec::new();
+    };
+    let Some(stem) = marker.file_stem().and_then(|stem| stem.to_str()) else {
+        return Vec::new();
+    };
+    let prefix = format!("{stem}.sessions.");
+    std::fs::read_dir(parent)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with(&prefix))
+                .then(|| entry.path())
+        })
+        .collect()
 }
 
 fn handle_client_response(
