@@ -182,16 +182,10 @@ fn main() {
             "thread/read" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
                 let turn_state = read_turn_status(&options, thread_id);
-                let turn_status = turn_state.as_deref().map(|state| match state {
-                    "waitingApproval" | "waitingUserInput" => "inProgress",
-                    status => status,
-                });
-                let turns = if thread_id == "thread-large" {
-                    vec![large_turn("turn-large", "completed")]
+                let turns = if params["includeTurns"] == false {
+                    Vec::new()
                 } else {
-                    turn_status
-                        .map(|status| vec![turn("turn-started", status)])
-                        .unwrap_or_else(|| vec![turn("turn-history", "completed")])
+                    history_turns(thread_id, turn_state.as_deref())
                 };
                 respond(
                     &mut writer,
@@ -207,6 +201,40 @@ fn main() {
                             },
                             turns
                         )
+                    }),
+                );
+            }
+            "thread/turns/list" => {
+                let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
+                if params["limit"] != 10
+                    || params["itemsView"] != "full"
+                    || params["sortDirection"] != "asc"
+                {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": {
+                                "code": -32602,
+                                "message": "thread/turns/list must request ten full turns in ascending order"
+                            }
+                        }),
+                    );
+                    continue;
+                }
+                let turn_state = read_turn_status(&options, thread_id);
+                let (data, next_cursor) = turn_page(
+                    thread_id,
+                    params.get("cursor").and_then(Value::as_str),
+                    turn_state.as_deref(),
+                );
+                respond(
+                    &mut writer,
+                    id,
+                    json!({
+                        "data": data,
+                        "nextCursor": next_cursor,
+                        "backwardsCursor": null
                     }),
                 );
             }
@@ -686,6 +714,68 @@ fn large_turn(id: &str, status: &str) -> Value {
     let mut value = turn(id, status);
     value["items"][1]["text"] = Value::String("x".repeat(1024 * 1024 + 4096));
     value
+}
+
+fn history_turns(thread_id: &str, turn_state: Option<&str>) -> Vec<Value> {
+    if thread_id == "thread-large" {
+        return vec![large_turn("turn-large", "completed")];
+    }
+    let turn_status = turn_state.map(|state| match state {
+        "waitingApproval" | "waitingUserInput" => "inProgress",
+        status => status,
+    });
+    turn_status
+        .map(|status| vec![turn("turn-started", status)])
+        .unwrap_or_else(|| vec![turn("turn-history", "completed")])
+}
+
+fn turn_page(
+    thread_id: &str,
+    cursor: Option<&str>,
+    turn_state: Option<&str>,
+) -> (Vec<Value>, Option<&'static str>) {
+    match (thread_id, cursor) {
+        ("thread-paginated", None) => (
+            vec![paged_turn("turn-page-one", "agent-page-one", "page one")],
+            Some("page-two"),
+        ),
+        ("thread-paginated", Some("page-two")) => (
+            vec![paged_turn("turn-page-two", "agent-page-two", "page two")],
+            None,
+        ),
+        ("thread-output-too-large", None) => (
+            vec![large_agent_turn("turn-large-one", "agent-large-one")],
+            Some("large-page-two"),
+        ),
+        ("thread-output-too-large", Some("large-page-two")) => (
+            vec![large_agent_turn("turn-large-two", "agent-large-two")],
+            Some("large-page-three"),
+        ),
+        ("thread-output-too-large", Some("large-page-three")) => (
+            vec![large_agent_turn("turn-large-three", "agent-large-three")],
+            None,
+        ),
+        _ => (history_turns(thread_id, turn_state), None),
+    }
+}
+
+fn paged_turn(turn_id: &str, item_id: &str, text: &str) -> Value {
+    json!({
+        "id": turn_id,
+        "status": "completed",
+        "startedAt": 30,
+        "completedAt": 31,
+        "itemsView": "full",
+        "items": [{
+            "type": "agentMessage",
+            "id": item_id,
+            "text": text
+        }]
+    })
+}
+
+fn large_agent_turn(turn_id: &str, item_id: &str) -> Value {
+    paged_turn(turn_id, item_id, &"x".repeat(6 * 1024 * 1024))
 }
 
 fn respond(writer: &mut BufWriter<std::io::Stdout>, id: Value, result: Value) {

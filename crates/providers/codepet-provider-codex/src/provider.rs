@@ -26,7 +26,7 @@ use codepet_provider_sdk::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
@@ -36,6 +36,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 static NEXT_EXECUTION_ATTEMPT: AtomicU64 = AtomicU64::new(1);
 static NEXT_INSTANCE_SESSION: AtomicU64 = AtomicU64::new(1);
+const MAX_THREAD_TURN_PAGES: usize = 10_000;
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -1914,25 +1915,80 @@ impl ProtocolServer for CodexProvider {
             let runtime = self.resource_instance(&request.conversation)?;
             let conversation_id = request.conversation.native_resource_id;
             let session = runtime.ready_observer()?;
-            let snapshot = tokio::task::spawn_blocking(move || session.thread_read(&conversation_id))
+            tokio::task::spawn_blocking(move || {
+                let snapshot = session
+                    .thread_read_metadata(&conversation_id)
+                    .map_err(CodexProtocolMapper::error)?;
+                let approvals = {
+                    let mutable = lock(&runtime.mutable);
+                    mutable
+                        .approval_history
+                        .iter()
+                        .filter(|observed| {
+                            observed.approval.conversation.native_resource_id == snapshot.thread.id
+                        })
+                        .map(|observed| (observed.item_id.clone(), observed.approval.clone()))
+                        .collect::<Vec<_>>()
+                };
+                let mut emitted_approvals = vec![false; approvals.len()];
+                let mut items = Vec::new();
+                let mut active_turn = None;
+                let mut cursor = None;
+                let mut seen_cursors = HashSet::new();
+                for _ in 0..MAX_THREAD_TURN_PAGES {
+                    let page = session
+                        .thread_turns_list(&conversation_id, cursor)
+                        .map_err(CodexProtocolMapper::error)?;
+                    let next_cursor = page.next_cursor;
+                    {
+                        let mapper = lock(&runtime.mapper);
+                        for turn in page.data {
+                            if turn.status == CodexTurnStatus::InProgress {
+                                active_turn = Some(mapper.turn(&snapshot.thread.id, &turn));
+                            }
+                            mapper.append_conversation_turn_items(
+                                &snapshot.thread.id,
+                                &turn,
+                                &approvals,
+                                &mut emitted_approvals,
+                                &mut items,
+                            );
+                        }
+                    }
+                    match next_cursor {
+                        Some(next_cursor) if seen_cursors.insert(next_cursor.clone()) => {
+                            cursor = Some(next_cursor);
+                        }
+                        Some(_) => {
+                            return Err(protocol_error(
+                                "provider_protocol_error",
+                                "thread/turns/list returned a repeated cursor".to_string(),
+                                false,
+                            ));
+                        }
+                        None => {
+                            let mapper = lock(&runtime.mapper);
+                            mapper.append_remaining_approval_items(
+                                &approvals,
+                                &emitted_approvals,
+                                &mut items,
+                            );
+                            let conversation = mapper
+                                .conversation_with_active_turn(&snapshot, active_turn);
+                            return Ok(ConversationGetResponse { conversation, items });
+                        }
+                    }
+                }
+                Err(protocol_error(
+                    "provider_protocol_error",
+                    format!(
+                        "thread/turns/list exceeded the {MAX_THREAD_TURN_PAGES}-page limit"
+                    ),
+                    false,
+                ))
+            })
                 .await
                 .map_err(provider_task_error)?
-                .map_err(CodexProtocolMapper::error)?;
-            let approvals = {
-                let mutable = lock(&runtime.mutable);
-                mutable
-                    .approval_history
-                    .iter()
-                    .filter(|observed| {
-                        observed.approval.conversation.native_resource_id == snapshot.thread.id
-                    })
-                    .map(|observed| (observed.item_id.clone(), observed.approval.clone()))
-                    .collect::<Vec<_>>()
-            };
-            let mapper = lock(&runtime.mapper);
-            let conversation = mapper.conversation(&snapshot);
-            let items = mapper.conversation_items(&snapshot, &approvals);
-            Ok(ConversationGetResponse { conversation, items })
         })
     }
 

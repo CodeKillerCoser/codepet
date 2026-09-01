@@ -432,6 +432,12 @@ pub struct CodexThreadPage {
     pub next_cursor: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct CodexTurnPage {
+    pub data: Vec<CodexTurn>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexModel {
@@ -628,6 +634,15 @@ pub(crate) struct ThreadListResponse {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ThreadReadResponse {
     pub thread: CodexThread,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ThreadTurnsListResponse {
+    pub data: Vec<CodexTurn>,
+    pub next_cursor: Option<String>,
+    #[serde(default, rename = "backwardsCursor")]
+    pub _backwards_cursor: Option<String>,
 }
 
 #[derive(Deserialize)]

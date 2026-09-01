@@ -4,10 +4,10 @@ use super::protocol::{
     CodexAppServerError, CodexApprovalKind, CodexApprovalRequest, CodexContentKind,
     CodexConversationSnapshot, CodexIncoming, CodexModel, CodexModelListResponse,
     CodexNotification, CodexPermissionLevel, CodexThreadListRequest, CodexThreadPage,
-    CodexThreadStartRequest, CodexTurn,
+    CodexThreadStartRequest, CodexTurn, CodexTurnPage,
     CodexTurnItemsView, CodexTurnStartRequest, CodexTurnSteerRequest, CommandApprovalParams, FileApprovalParams,
     InitializeResponse, JsonRpcId, ThreadConfiguredResponse, ThreadListResponse,
-    ThreadReadResponse, TurnResponse, TurnSteerResponse,
+    ThreadReadResponse, ThreadTurnsListResponse, TurnResponse, TurnSteerResponse,
 };
 use crate::workspace_projection::project_workspace_root;
 use codepet_provider_sdk::ApprovalDecision;
@@ -27,6 +27,7 @@ const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_APP_SERVER_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const MAX_APP_SERVER_STDERR_LINE_BYTES: usize = 64 * 1024;
+const THREAD_TURNS_PAGE_LIMIT: u32 = 10;
 static NEXT_SESSION_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 pub trait JsonRpcReader: Send + 'static {
@@ -598,6 +599,51 @@ impl CodexAppServerSession {
         let mut snapshot = snapshot_from_thread(response.thread);
         self.inner.apply_configuration(&mut snapshot);
         Ok(snapshot)
+    }
+
+    pub fn thread_read_metadata(
+        &self,
+        thread_id: &str,
+    ) -> Result<CodexConversationSnapshot, CodexAppServerError> {
+        let mut response: ThreadReadResponse = self.request(
+            "thread/read",
+            json!({ "threadId": thread_id, "includeTurns": false }),
+        )?;
+        response.thread.turns = Vec::new();
+        let mut snapshot = snapshot_from_thread(response.thread);
+        self.inner.apply_configuration(&mut snapshot);
+        Ok(snapshot)
+    }
+
+    pub fn thread_turns_list(
+        &self,
+        thread_id: &str,
+        cursor: Option<String>,
+    ) -> Result<CodexTurnPage, CodexAppServerError> {
+        let response: ThreadTurnsListResponse = self.request(
+            "thread/turns/list",
+            json!({
+                "threadId": thread_id,
+                "cursor": cursor,
+                "limit": THREAD_TURNS_PAGE_LIMIT,
+                "sortDirection": "asc",
+                "itemsView": "full",
+            }),
+        )?;
+        if let Some(turn) = response
+            .data
+            .iter()
+            .find(|turn| turn.items_view != CodexTurnItemsView::Full)
+        {
+            return Err(CodexAppServerError::Protocol(format!(
+                "thread/turns/list returned non-full items for turn {}",
+                turn.id
+            )));
+        }
+        Ok(CodexTurnPage {
+            data: response.data,
+            next_cursor: response.next_cursor,
+        })
     }
 
     pub fn model_list(&self) -> Result<Vec<CodexModel>, CodexAppServerError> {

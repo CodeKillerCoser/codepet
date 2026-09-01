@@ -6,12 +6,14 @@
 - `turn.start` 返回 `conversation_write_conflict`，但 `conversation.get` 仍可读取历史。
 - Codex Desktop companion 和桌宠仍可工作。
 - 日志出现 executable 解析、spawn、initialize、进程退出或 App Server request timeout。
+- `conversation.get` 出现 `App Server physical line exceeds 16777216 bytes`，或返回 non-retryable `provider_response_too_large`。
 
 ## 需要收集的证据
 
 - `AgentRuntime` 的 Codex executable path、source、version 和诊断。
 - Plugin Manager 的 Codex plugin/instance status、catalog diagnostic、process exit 与最近 stderr；不要记录 prompt、command、diff 或完整原生 payload。
 - 区分 observer 与 conversation execution 子进程；记录有限的 generation/conversation route、请求 method/id、终态与 process exit，不记录 prompt 或内部 owner 身份。
+- 历史读取只记录 Codex CLI 版本、`thread/read` 是否 metadata-only、turn page 序号、cursor 是否推进与帧字节数；不要记录 page payload、正文、command 或 diff。
 - companion Provider 与桌宠是否仍保持独立状态，remote event 是否只存在于 remote replay。
 
 ## 排查步骤
@@ -19,7 +21,7 @@
 1. 在运行时设置确认 Codex executable 已通过文件、执行权限和限时 `--version` 验证。无效手动路径不会静默回退。
 2. 检查开发安装：`provider-plugins/codex/codepet-provider.json` 与相对 Provider executable 位于同一目录，`pluginId` 为 `dev.codepet.codex`，且没有重复 manifest。
 3. 区分两层启动配置：Provider executable/环境和 `appServerArgs` 来自 manifest；`appServerExecutable` 必须只由 Agent Runtime resolver 以绝对路径注入。Provider 不补默认参数，也不搜索用户目录。
-4. 检查 Provider `instance.start`：它只 spawn observer App Server，执行 `initialize`/`initialized` 与 `model/list`。observer 必须在 spawn 前产生 instance-generation 占位，spawn 后、initialize 前登记 session；stop 若发生在任一阶段，都应先回收 PID 再返回 stopped。observer 只应出现 `thread/list`/`thread/read`，不得出现 `thread/start`、`thread/resume` 或 turn/approval 写操作。
+4. 检查 Provider `instance.start`：它只 spawn observer App Server，执行 `initialize`/`initialized` 与 `model/list`。observer 必须在 spawn 前产生 instance-generation 占位，spawn 后、initialize 前登记 session；stop 若发生在任一阶段，都应先回收 PID 再返回 stopped。observer 只应出现 `thread/list`、metadata `thread/read` 与 `thread/turns/list`，不得出现 `thread/start`、`thread/resume` 或 turn/approval 写操作。
 5. 对 turn 故障检查 conversation execution：首次写应单独 spawn、在 initialize 前登记 Creating session、subscribe、`thread/resume`；同 active turn 的 steer/interrupt/approval 必须落在同 generation。cancel 与 resume frame 写入必须共用短线性化锁：cancel 先发生后不得出现 resume/start；resume 先写出后 stop 关闭 session，但不等待悬挂 response。
 6. 检查两层并发：普通 Host request 是 16 active + 32 pending，`instance.stop`/`instance.destroy`/`provider.shutdown` 是独立 2 active + 4 pending；队列满应按原 id 返回 retryable `provider_overloaded`，不得执行被拒请求。reader 不得因普通队列满停止读取，所以 16 个悬挂 write 后 stop、16+32 后 EOF 都应在 2 秒探针内完成回收。stdout 已断开时，response 或异步 event 的 write/flush failure 都必须只发送一次无输出依赖的 terminal 信号，不能只记日志后继续运行。
 7. 检查释放点：running、waiting approval、waiting user input 与 Remote/WSS 断开不能释放；completed/failed/interrupted notification 必须先把槽切成 Closing，再发布 terminal event、关闭子进程、删除同 generation 槽并唤醒等待者。请求即使在 Closing 前预取了 Ready handle，也必须在拿 operation lock 后复核并改用新 generation，不能向旧 session 写。
@@ -27,6 +29,7 @@
 9. 若修改 executable 或点击刷新，确认 Host 更新同一个 Codex instance setting，并按 stop → start → manifest instance create/start 显式重启插件；replacement 的 RPC 必须反映新 setting，Tauri 内不应出现第二个 observer。
 10. 对 timeout 或 process exit，不自动重放 create、turn、interrupt 或 approval。remote 结果不确定也不得触碰 Desktop companion；两条链路保持独立故障状态。
 11. 单独确认 Desktop companion：其 socket、owner/revision 和 activity projection 不应因 remote 故障清空、重启或改用 Hook/transcript。
+12. 对大历史单独分流：旧实现若在完整 `thread/read` 超限，应升级到 metadata read + `thread/turns/list(limit=10, itemsView=full, sortDirection=asc)`；新版若固定 10-turn page 仍超过 16 MiB，当前实现会 fail closed，先用诊断请求逐步降到 `limit=1` 判断是 page 聚合还是单 turn 过大；若 App Server pages 均成功而最终返回 `provider_response_too_large`，确认原请求 id、`details.maxFrameBytes=16777216`，并用后续 `provider.describe` 证明 Provider 仍存活。不要增大 page limit 或统一 frame limit。
 
 ## 结果判断
 
@@ -37,6 +40,8 @@
 - 单个 execution 退出：owning conversation 的写操作失败并释放 writer；observer 与其他 active conversation 应保持可用。结果未知时由调用方基于原 client request id 决定后续，不在 Provider 内盲重试。
 - writer conflict：保留纯读能力；确认真正 owner 终态退出后再由显式写请求创建新 execution。
 - 协议响应不兼容：remote error，更新 mapper/fixture 前不要放宽解析。
+- 固定 10-turn page 超过 16 MiB：当前请求 fail closed；诊断时用更小 limit 定位。若 `limit=1` 仍超限，才是单 turn 需要 item 级分页；已实测的 Codex `0.151.0-alpha.7.2` 对 `thread/items/list` 返回 `-32601`，当前 Provider 不得依赖它。
+- 最终 Provider 投影超过 16 MiB：当前请求返回 `provider_response_too_large`，Provider 继续服务；真正任意大历史需要 Provider/Gateway `conversation.get` 协议分页。
 - remote Provider 正常但手机仍不可访问：转查 Gateway LAN/WSS、配对、凭据和网络可达性；网络连接故障本身不应关闭 active execution。
 
 ## 恢复后验证
@@ -44,6 +49,7 @@
 - remote Provider 从 unavailable 变为当前 replacement 的真实 ready 状态。
 - `conversation.list/get/create`、turn start/steer/interrupt、approval 和通知通过真实 fixture App Server 子进程与 manifest-launched Provider binary 闭环。
 - 重复 `conversation.get` 不创建 execution；active turn 操作复用同一 pid；terminal 后下一次写使用新 pid；释放 A 不改变 B。
+- 两页以上历史按升序合并，跨页 item/content ID 稳定；最终投影超限返回 `provider_response_too_large` 后，`provider.describe` 仍成功。
 - stdio 饱和探针中 16 个普通 write 全悬挂时 `instance.stop` 仍在 2 秒内返回；16 active + 32 pending 后第 49 个普通请求按 id 返回 `provider_overloaded` 且无 App Server 记录；随后 EOF 仍在 2 秒内退出并清零 PID。
 - one-shot initialize 悬挂时，stop 与 stdin EOF 都在 2 秒内退出并清零该 PID，session log 不得出现 `thread/start`；observer initialize 悬挂时连续五轮 start/stop 都不得在 stopped 后出现 Ready。
 - 关闭 Provider stdout 后制造 observer 异步 fault，Provider 必须进入全局 shutdown；活动 execution PID 清零，不能依赖继续写 terminal event 才完成清理。
@@ -59,3 +65,4 @@
 - 插件 restart 后旧 process 继续发布事件，或审批被路由到新实例/其他 App Server session。
 - Provider event 进入 companion replay/event 或桌宠 activity；这表示生产 wiring 发生跨链路污染。
 - Codex CLI 升级改变 App Server request/response/notification wire 语义。
+- `limit=1` 的 `thread/turns/list` page 仍超过 16 MiB，或业务需要成功返回任意大历史；这需要可用的 item 级上游分页或公共 Provider/Gateway schema 分页，不能在本 runbook 中靠调大上限处理。

@@ -297,8 +297,65 @@ async fn dispatch_host_request(
     request: ProtocolRequest,
 ) -> Result<bool, String> {
     let response = dispatch(provider.as_ref(), request).await;
-    write_message(&codec, &writer, ProviderWireMessage::Response(response))?;
+    write_response(&codec, &writer, response)?;
     Ok(provider.is_shutdown())
+}
+
+fn write_response(
+    codec: &JsonLineCodec,
+    writer: &Arc<Mutex<BufWriter<std::io::Stdout>>>,
+    response: JsonRpcResponse,
+) -> Result<(), String> {
+    let jsonrpc = response.jsonrpc.clone();
+    let id = response.id.clone();
+    let message = ProviderWireMessage::Response(response);
+    match codec.encode_message(&message) {
+        Ok(frame) => write_frame(writer, &frame),
+        Err(error) if error.code == "json_line_frame_too_large" => {
+            drop(message);
+            write_message(
+                codec,
+                writer,
+                ProviderWireMessage::Response(response_too_large(
+                    jsonrpc,
+                    id,
+                    codec.max_frame_bytes(),
+                )),
+            )
+        }
+        Err(error) => Err(error.message),
+    }
+}
+
+fn response_too_large(jsonrpc: String, id: Option<String>, max_frame_bytes: usize) -> JsonRpcResponse {
+    let error = ProtocolError {
+        code: "provider_response_too_large".to_string(),
+        message: format!(
+            "Provider response exceeds the {max_frame_bytes}-byte JSON-line limit"
+        ),
+        retryable: false,
+        details: Some(
+            [("maxFrameBytes".to_string(), serde_json::json!(max_frame_bytes))]
+                .into_iter()
+                .collect(),
+        ),
+    };
+    let message = error.message.clone();
+    let data = serde_json::to_value(error)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .map(|entries| entries.into_iter().collect());
+    JsonRpcResponse {
+        jsonrpc,
+        id,
+        response: JsonRpcResponsePayload::Error {
+            error: RpcError {
+                code: -32000,
+                message,
+                data,
+            },
+        },
+    }
 }
 
 async fn shutdown_and_drain(
@@ -448,6 +505,15 @@ fn write_message(
     codec
         .write_message(&mut *writer, &message)
         .map_err(|error| error.message)?;
+    writer.flush().map_err(|error| error.to_string())
+}
+
+fn write_frame(
+    writer: &Arc<Mutex<BufWriter<std::io::Stdout>>>,
+    frame: &[u8],
+) -> Result<(), String> {
+    let mut writer = lock(writer);
+    writer.write_all(frame).map_err(|error| error.to_string())?;
     writer.flush().map_err(|error| error.to_string())
 }
 

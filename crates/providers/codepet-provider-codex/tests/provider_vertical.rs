@@ -504,6 +504,14 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     )
     .await
     .unwrap();
+    assert_eq!(
+        active_history
+            .conversation
+            .active_turn
+            .as_ref()
+            .map(|turn| turn.resource.native_resource_id.as_str()),
+        Some("turn-started")
+    );
     let agent = active_history
         .items
         .iter()
@@ -782,7 +790,9 @@ fn provider_binary_conversation_get_is_pure_read_with_external_writer() {
             .collect::<Vec<_>>(),
         vec![
             "thread/read\tthread-writer-held",
-            "thread/read\tthread-writer-held"
+            "thread/turns/list\tthread-writer-held",
+            "thread/read\tthread-writer-held",
+            "thread/turns/list\tthread-writer-held"
         ]
     );
     assert!(session_pids(&marker, "process/start", "").is_empty());
@@ -790,6 +800,79 @@ fn provider_binary_conversation_get_is_pure_read_with_external_writer() {
 
     provider.request("writer-held-stop", "instance.stop", json!({ "route": route_value() }));
     provider.request("writer-held-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_conversation_get_pages_history_without_resuming() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("paginated-history.txt");
+    let request_log = directory.path().join("paginated-history-requests.txt");
+    let mut provider = ProviderBinary::spawn();
+    provider.configure_with_request_log("none", &marker, Some(&request_log));
+    std::fs::write(&request_log, "").unwrap();
+    clear_session_log(&marker);
+    let conversation = conversation_resource_value("thread-paginated");
+
+    let first = provider.request(
+        "paginated-history-first",
+        "conversation.get",
+        json!({ "conversation": conversation.clone() }),
+    );
+    let second = provider.request(
+        "paginated-history-second",
+        "conversation.get",
+        json!({ "conversation": conversation }),
+    );
+
+    for response in [&first, &second] {
+        assert!(response.get("error").is_none());
+        let items = response
+            .pointer("/result/items")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| {
+                    item.pointer("/resource/nativeResourceId")
+                        .and_then(Value::as_str)
+                        .unwrap()
+                })
+                .collect::<Vec<_>>(),
+            vec!["agent-page-one", "agent-page-two"]
+        );
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| {
+                    item.pointer("/contents/0/contentId")
+                        .and_then(Value::as_str)
+                        .unwrap()
+                })
+                .collect::<Vec<_>>(),
+            vec!["agent-page-one:text", "agent-page-two:text"]
+        );
+    }
+    assert_eq!(first.pointer("/result"), second.pointer("/result"));
+    assert_eq!(
+        std::fs::read_to_string(&request_log)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        vec![
+            "thread/read\tthread-paginated",
+            "thread/turns/list\tthread-paginated",
+            "thread/turns/list\tthread-paginated",
+            "thread/read\tthread-paginated",
+            "thread/turns/list\tthread-paginated",
+            "thread/turns/list\tthread-paginated"
+        ]
+    );
+    assert!(session_pids(&marker, "process/start", "").is_empty());
+    assert!(session_pids(&marker, "thread/resume", "thread-paginated").is_empty());
+
+    provider.request("paginated-history-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("paginated-history-shutdown", "provider.shutdown", json!({}));
 }
 
 #[test]
@@ -2552,6 +2635,49 @@ fn provider_binary_transports_a_complete_history_larger_than_one_mebibyte() {
         Some(CODEX_PLUGIN_ID)
     );
     provider.request("large-history-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_returns_a_stable_error_for_oversized_history_and_keeps_serving() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("oversized-history.txt");
+    let mut provider = ProviderBinary::spawn();
+    provider.configure("none", &marker);
+
+    let fetched = provider.request(
+        "oversized-history",
+        "conversation.get",
+        json!({
+            "conversation": conversation_resource_value("thread-output-too-large")
+        }),
+    );
+    assert_eq!(fetched["id"], "oversized-history");
+    assert_eq!(fetched["error"]["code"], -32000);
+    assert_eq!(
+        fetched.pointer("/error/data/code").and_then(Value::as_str),
+        Some("provider_response_too_large")
+    );
+    assert_eq!(
+        fetched
+            .pointer("/error/data/retryable")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        fetched
+            .pointer("/error/data/details/maxFrameBytes")
+            .and_then(Value::as_u64),
+        Some(codepet_provider_sdk::MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES as u64)
+    );
+
+    let described = provider.request("after-oversized-history", "provider.describe", json!({}));
+    assert_eq!(
+        described
+            .pointer("/result/plugin/pluginId")
+            .and_then(Value::as_str),
+        Some(CODEX_PLUGIN_ID)
+    );
+    provider.request("oversized-history-shutdown", "provider.shutdown", json!({}));
 }
 
 #[test]

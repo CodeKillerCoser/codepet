@@ -45,7 +45,7 @@ Host stdio request 不能逐条 await：普通请求与 lifecycle control 必须
 
 ## 验证方式
 
-- 清空 fixture 进程日志后重复 `conversation.get`，必须只有 observer `thread/read`，没有新 process 或 `thread/resume`。
+- 清空 fixture 进程日志后重复 `conversation.get`，observer 只允许 metadata `thread/read(includeTurns=false)` 与 cursor `thread/turns/list(itemsView=full)`，不得出现新 process、`thread/resume` 或其他写操作。
 - 记录 App Server pid：同一 active turn 的 resume/start/steer/interrupt/approval 必须同 pid；terminal 后下一次写必须是新 pid。
 - 覆盖 waiting approval、waiting user input、无 Remote 生命周期调用的断开间隔、terminal notification、terminal snapshot、两 conversation 隔离与并发首次 send。
 - 覆盖 execution initialize failure、resume conflict/悬挂、RPC reject、async crash、sent-outcome-unknown、instance stop 与 provider shutdown；每条失败路径都必须无 map/pending/process 残留。

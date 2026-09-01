@@ -641,7 +641,7 @@ Code Pet 生命周期内不为每条消息、每个客户端或每个 conversati
 Codex 第一阶段覆盖：
 
 - `thread/list`：设备全部会话、cwd 过滤、分页、搜索和排序；
-- `thread/read`、`thread/turns/list`、`thread/items/list`：历史加载；
+- `thread/read`、`thread/turns/list`：当前历史加载；`thread/items/list` 只在上游版本实际支持时作为更细分页目标，已实测的 Codex `0.151.0-alpha.7.2` 返回 `-32601`，当前 Provider 不得依赖；
 - `thread/start`、`thread/resume`、`thread/fork`：创建、继续和分叉；
 - `thread/name/*`、archive/delete 生命周期；
 - `turn/start`、`turn/steer`、`turn/interrupt`；

@@ -47,6 +47,7 @@ impl CodexProtocolMapper {
                     json!([
                         "thread/list",
                         "thread/read",
+                        "thread/turns/list",
                         "thread/resume",
                         "thread/start",
                         "model/list",
@@ -229,6 +230,14 @@ impl CodexProtocolMapper {
             .map(|turn| {
                 self.turn(&snapshot.thread.id, turn)
             });
+        self.conversation_with_active_turn(snapshot, active_turn)
+    }
+
+    pub(crate) fn conversation_with_active_turn(
+        &self,
+        snapshot: &CodexConversationSnapshot,
+        active_turn: Option<ProviderTurn>,
+    ) -> ProviderConversation {
         let status = match snapshot.thread.status {
             CodexThreadStatus::Active { ref active_flags }
                 if active_flags.contains(&CodexThreadActiveFlag::WaitingOnApproval) => {
@@ -313,40 +322,69 @@ impl CodexProtocolMapper {
         }
     }
 
+    #[cfg(test)]
     pub fn conversation_items(
         &self,
         snapshot: &CodexConversationSnapshot,
         approvals: &[(String, ProviderApproval)],
     ) -> Vec<ConversationItem> {
         let mut items = Vec::new();
-        let conversation = self.resource(snapshot.thread.id.clone());
         let mut emitted_approvals = vec![false; approvals.len()];
         for turn in &snapshot.thread.turns {
-            for item in &turn.items {
-                items.push(self.conversation_item(turn, item, &conversation));
-                for (index, (related_item_id, approval)) in approvals.iter().enumerate() {
-                    if !emitted_approvals[index]
-                        && approval.turn.native_resource_id == turn.id
-                        && related_item_id == item.id()
-                    {
-                        items.push(self.approval_item(related_item_id, approval));
-                        emitted_approvals[index] = true;
-                    }
-                }
-            }
+            self.append_conversation_turn_items(
+                &snapshot.thread.id,
+                turn,
+                approvals,
+                &mut emitted_approvals,
+                &mut items,
+            );
+        }
+        self.append_remaining_approval_items(approvals, &emitted_approvals, &mut items);
+        items
+    }
+
+    pub(crate) fn append_conversation_turn_items(
+        &self,
+        conversation_id: &str,
+        turn: &CodexTurn,
+        approvals: &[(String, ProviderApproval)],
+        emitted_approvals: &mut [bool],
+        items: &mut Vec<ConversationItem>,
+    ) {
+        debug_assert_eq!(approvals.len(), emitted_approvals.len());
+        let conversation = self.resource(conversation_id.to_string());
+        for item in &turn.items {
+            items.push(self.conversation_item(turn, item, &conversation));
             for (index, (related_item_id, approval)) in approvals.iter().enumerate() {
-                if !emitted_approvals[index] && approval.turn.native_resource_id == turn.id {
+                if !emitted_approvals[index]
+                    && approval.turn.native_resource_id == turn.id
+                    && related_item_id == item.id()
+                {
                     items.push(self.approval_item(related_item_id, approval));
                     emitted_approvals[index] = true;
                 }
             }
         }
         for (index, (related_item_id, approval)) in approvals.iter().enumerate() {
+            if !emitted_approvals[index] && approval.turn.native_resource_id == turn.id {
+                items.push(self.approval_item(related_item_id, approval));
+                emitted_approvals[index] = true;
+            }
+        }
+    }
+
+    pub(crate) fn append_remaining_approval_items(
+        &self,
+        approvals: &[(String, ProviderApproval)],
+        emitted_approvals: &[bool],
+        items: &mut Vec<ConversationItem>,
+    ) {
+        debug_assert_eq!(approvals.len(), emitted_approvals.len());
+        for (index, (related_item_id, approval)) in approvals.iter().enumerate() {
             if !emitted_approvals[index] {
                 items.push(self.approval_item(related_item_id, approval));
             }
         }
-        items
     }
 
     fn conversation_item(
