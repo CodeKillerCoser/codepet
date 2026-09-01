@@ -5,9 +5,8 @@ use codepet_gateway_sdk::{
     EventSubscribeRequest, HandshakeRequest,
     FlatModelCatalogKind, FlatModelSelection, GatewayProviderRoute,
     GroupedModelCatalogKind, GroupedModelSelection, ModelCatalog, ModelSelection,
-    ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
-    ProtocolResponse as GatewayResponse, ProtocolServer as GatewayProtocolServer,
-    ProviderListRequest, RemoteHostIdentity, ResponsePayload,
+    JsonRpcResponsePayload, ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
+    ProtocolServer as GatewayProtocolServer, ProviderListRequest, GatewayHostIdentity,
     TurnInput as GatewayTurnInput, TurnInputKind as GatewayTurnInputKind,
     TurnSelection as GatewayTurnSelection, TurnSendRequest as GatewayTurnSendRequest, VersionRange,
 };
@@ -191,10 +190,9 @@ async fn gateway_handshake_without_a_transport_identity_fails_closed() {
 #[tokio::test]
 async fn gateway_handshake_returns_the_transport_injected_remote_host_identity() {
     let manager = build_manager("device-handshake", Vec::new());
-    let device = RemoteHostIdentity {
+    let device = GatewayHostIdentity {
         device_id: "device-handshake".to_string(),
         descriptor: device_descriptor("Device device-handshake"),
-        identity_fingerprint: "a".repeat(64),
     };
     let gateway =
         ProviderGatewayService::with_remote_identity(manager.clone(), device.clone()).unwrap();
@@ -211,29 +209,24 @@ async fn gateway_handshake_returns_the_transport_injected_remote_host_identity()
 }
 
 #[tokio::test]
-async fn gateway_remote_identity_rejects_noncanonical_or_zero_fingerprints() {
+async fn gateway_remote_identity_requires_a_device_id_and_complete_descriptor() {
     let manager = build_manager("device-invalid-remote-identity", Vec::new());
-    for fingerprint in ["0".repeat(64), "A".repeat(64), "a".repeat(63)] {
-        let error = match ProviderGatewayService::with_remote_identity(
-            manager.clone(),
-            RemoteHostIdentity {
-                device_id: "device-invalid-remote-identity".to_string(),
-                descriptor: device_descriptor("Device device-invalid-remote-identity"),
-                identity_fingerprint: fingerprint,
-            },
-        ) {
-            Ok(_) => panic!("expected invalid fingerprint to be rejected"),
-            Err(error) => error,
-        };
-        assert_eq!(error.code, "invalid_remote_host_identity");
-    }
+    let error = ProviderGatewayService::with_remote_identity(
+        manager.clone(),
+        GatewayHostIdentity {
+            device_id: String::new(),
+            descriptor: device_descriptor("Device device-invalid-remote-identity"),
+        },
+    )
+    .err()
+    .expect("expected invalid Gateway identity to be rejected");
+    assert_eq!(error.code, "invalid_remote_host_identity");
 
     let gateway = ProviderGatewayService::with_remote_identity(
         manager.clone(),
-        RemoteHostIdentity {
+        GatewayHostIdentity {
             device_id: "device-invalid-remote-identity".to_string(),
             descriptor: device_descriptor("Device device-invalid-remote-identity"),
-            identity_fingerprint: "b".repeat(64),
         },
     )
     .unwrap();
@@ -250,7 +243,7 @@ async fn gateway_dispatches_event_subscribe_with_the_exact_cursor_boundary() {
     let response = codepet_gateway_sdk::dispatch(
         &gateway,
         GatewayRequest::EventSubscribe {
-            protocol_version: codepet_gateway_sdk::PROTOCOL_VERSION,
+            jsonrpc: "2.0".to_string(),
             id: "subscribe-current".to_string(),
             params: EventSubscribeRequest {
                 after_cursor: after_cursor.clone(),
@@ -258,19 +251,16 @@ async fn gateway_dispatches_event_subscribe_with_the_exact_cursor_boundary() {
         },
     )
     .await;
-    let GatewayResponse::EventSubscribe {
-        response: ResponsePayload::Ok { result },
-        ..
-    } = response
-    else {
+    let JsonRpcResponsePayload::Ok { result } = response.response else {
         panic!("expected a successful event.subscribe response");
     };
+    let result: codepet_gateway_sdk::EventSubscribeResponse = serde_json::from_value(result).unwrap();
     assert_eq!(result.subscribed_after_cursor, after_cursor);
 
     let response = codepet_gateway_sdk::dispatch(
         &gateway,
         GatewayRequest::EventSubscribe {
-            protocol_version: codepet_gateway_sdk::PROTOCOL_VERSION,
+            jsonrpc: "2.0".to_string(),
             id: "subscribe-ahead".to_string(),
             params: EventSubscribeRequest {
                 after_cursor: "event-00000000000000000001".to_string(),
@@ -278,14 +268,10 @@ async fn gateway_dispatches_event_subscribe_with_the_exact_cursor_boundary() {
         },
     )
     .await;
-    let GatewayResponse::EventSubscribe {
-        response: ResponsePayload::Error { error },
-        ..
-    } = response
-    else {
+    let JsonRpcResponsePayload::Error { error } = response.response else {
         panic!("expected event.subscribe to reject an unknown future cursor");
     };
-    assert_eq!(error.code, "invalid_event_cursor");
+    assert_eq!(error.data.unwrap().get("code").unwrap(), "invalid_event_cursor");
     manager.shutdown().await;
 }
 
@@ -335,11 +321,11 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
         .await
         .unwrap();
     let stopped_event = lifecycle_events.next_event().await.unwrap();
-    let GatewayEvent::ProviderStatusChanged { payload, .. } = stopped_event else {
+    let GatewayEvent::ProviderStatusChanged { params, .. } = stopped_event else {
         panic!("expected one lifecycle status event");
     };
     assert_eq!(
-        payload.provider.status,
+        params.payload.provider.status,
         codepet_gateway_sdk::ProviderStatus::Disconnected
     );
     assert!(tokio::time::timeout(
@@ -357,10 +343,10 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
         .await
         .unwrap();
     let ready_event = lifecycle_events.next_event().await.unwrap();
-    let GatewayEvent::ProviderStatusChanged { payload, .. } = ready_event else {
+    let GatewayEvent::ProviderStatusChanged { params, .. } = ready_event else {
         panic!("expected one lifecycle status event");
     };
-    assert_eq!(payload.provider.status, codepet_gateway_sdk::ProviderStatus::Ready);
+    assert_eq!(params.payload.provider.status, codepet_gateway_sdk::ProviderStatus::Ready);
 
     let after = gateway.current_event_cursor();
     let mut events = gateway.subscribe_events(Some(&after)).unwrap();
@@ -417,27 +403,25 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
             .unwrap();
         match &event {
             GatewayEvent::ConversationUpserted {
-                event_cursor,
-                payload,
+                params,
                 ..
             } => {
                 assert_eq!(
-                    payload.conversation.resource.device_id,
+                    params.payload.conversation.resource.device_id,
                     "device-a"
                 );
                 routed_instances.push(
-                    payload.conversation.resource.provider_instance_id.clone(),
+                    params.payload.conversation.resource.provider_instance_id.clone(),
                 );
-                routed_event_cursors.push(event_cursor_sequence(event_cursor));
+                routed_event_cursors.push(event_cursor_sequence(&params.event_cursor));
             }
             GatewayEvent::TurnOutputDelta {
-                event_cursor,
-                payload,
+                params,
                 ..
             } => {
-                assert_eq!(payload.turn.device_id, "device-a");
-                routed_instances.push(payload.turn.provider_instance_id.clone());
-                routed_event_cursors.push(event_cursor_sequence(event_cursor));
+                assert_eq!(params.payload.turn.device_id, "device-a");
+                routed_instances.push(params.payload.turn.provider_instance_id.clone());
+                routed_event_cursors.push(event_cursor_sequence(&params.event_cursor));
             }
             _ => {}
         }
@@ -554,15 +538,14 @@ async fn conversation_snapshot_cursors_precede_events_emitted_during_provider_qu
     let list_event_cursor = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             if let GatewayEvent::ConversationUpserted {
-                event_cursor,
-                payload,
+                params,
                 ..
             } = list_events.next_event().await.unwrap()
             {
-                if payload.conversation.resource.native_resource_id
+                if params.payload.conversation.resource.native_resource_id
                     == "conversation-list-event-first"
                 {
-                    return event_cursor;
+                    return params.event_cursor;
                 }
             }
         }
@@ -603,15 +586,14 @@ async fn conversation_snapshot_cursors_precede_events_emitted_during_provider_qu
     let event_cursor = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             if let GatewayEvent::ConversationUpserted {
-                event_cursor,
-                payload,
+                params,
                 ..
             } = events.next_event().await.unwrap()
             {
-                if payload.conversation.resource.native_resource_id
+                if params.payload.conversation.resource.native_resource_id
                     == "conversation-event-first"
                 {
-                    return event_cursor;
+                    return params.event_cursor;
                 }
             }
         }
@@ -1042,7 +1024,6 @@ async fn gateway_turn_send_validates_controls_and_deduplicates_client_requests()
     };
     assert!(matches!(turn_send.model_catalog, Some(ModelCatalog::FlatModelCatalog(_))));
 
-    let route = provider.route;
     let conversation = resource(
         "device-turn-send",
         "dev.codepet.turn-send",
@@ -1050,7 +1031,6 @@ async fn gateway_turn_send_validates_controls_and_deduplicates_client_requests()
         "conversation-turn-send",
     );
     let request = GatewayTurnSendRequest {
-        route: route.clone(),
         conversation: conversation.clone(),
         client_request_id: "remote-request-1".to_string(),
         capability_revision: "fake-capabilities-v1".to_string(),
@@ -1294,11 +1274,6 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
                 "instance-identity",
                 "response-wrong-conversation",
             ),
-            route: GatewayProviderRoute {
-                device_id: "device-identity".to_string(),
-                provider_plugin_id: "dev.codepet.identity".to_string(),
-                provider_instance_id: "instance-identity".to_string(),
-            },
             client_request_id: "message-gateway".to_string(),
             capability_revision: "fake-capabilities-v1".to_string(),
             input: GatewayTurnInput {

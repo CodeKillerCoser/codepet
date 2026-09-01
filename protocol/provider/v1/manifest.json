@@ -53,6 +53,7 @@
       "name": "instance.stop",
       "direction": "hostToPlugin",
       "idempotency": "idempotent",
+      "dispatchLane": "control",
       "request": { "$ref": "./schema.json#/$defs/InstanceStopRequest" },
       "response": { "$ref": "./schema.json#/$defs/InstanceStopResponse" }
     },
@@ -60,6 +61,7 @@
       "name": "instance.destroy",
       "direction": "hostToPlugin",
       "idempotency": "idempotent",
+      "dispatchLane": "control",
       "request": { "$ref": "./schema.json#/$defs/InstanceDestroyRequest" },
       "response": { "$ref": "./schema.json#/$defs/InstanceDestroyResponse" }
     },
@@ -138,6 +140,7 @@
       "name": "provider.shutdown",
       "direction": "hostToPlugin",
       "idempotency": "idempotent",
+      "dispatchLane": "control",
       "request": { "$ref": "./schema.json#/$defs/ProviderShutdownRequest" },
       "response": { "$ref": "./schema.json#/$defs/ProviderShutdownResponse" }
     }

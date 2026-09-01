@@ -7,6 +7,12 @@ export type ClientId = string;
 
 export type Cursor = string;
 
+export interface DeviceDescriptor {
+  deviceName: string;
+  operatingSystem: string;
+  systemVersion: string;
+}
+
 export type DeviceId = string;
 
 export type EventCursor = string;

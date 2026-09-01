@@ -4,7 +4,9 @@ use codepet_provider_sdk::{
     InstanceCreateResponse, JsonRpcResponsePayload, ProtocolEvent, ProtocolFuture, ProtocolMethod,
     ModelSelection, ProtocolRequest, ProtocolServer, ProviderCapability, ProviderInitializeRequest,
     ProviderInitializeResponse, ProviderPluginDescriptor, TurnStartResponse, VersionRange,
+    StdioServerOptions, serve_stdio_with_io,
 };
+use std::io::Cursor;
 
 struct InitializeServer;
 
@@ -49,6 +51,25 @@ async fn json_rpc_dispatcher_routes_initialize_to_the_async_server_trait() {
         panic!("expected successful result");
     };
     assert_eq!(result["selectedVersion"], 1);
+}
+
+#[tokio::test]
+async fn stdio_runtime_rejects_zero_capacity_before_starting_the_provider() {
+    let options = StdioServerOptions {
+        max_pending_requests: 0,
+        ..StdioServerOptions::default()
+    };
+    let result = serve_stdio_with_io(
+        Cursor::new(Vec::<u8>::new()),
+        Vec::<u8>::new(),
+        options,
+        |_| InitializeServer,
+    )
+    .await;
+    assert!(result
+        .unwrap_err()
+        .message()
+        .contains("max_pending_requests"));
 }
 
 #[test]

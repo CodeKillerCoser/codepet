@@ -14,6 +14,8 @@
 
 ## 架构边界
 
+OpenCode binary 实现生成的 `Provider` trait，`main.rs` 只构造 `OpenCodeProvider` 并调用公共 `codepet-provider-sdk::serve_stdio`。SDK 统一负责 JSON-RPC JSON-lines、普通/控制双通路、有界 queue、过载响应、typed event、串行 stdout、terminal cleanup 和 shutdown drain；本 crate 只负责 OpenCode Server HTTP/SSE adapter、实例状态与子进程生命周期。
+
 运行数据链只有：
 
 ```text
@@ -39,7 +41,7 @@ Provider crate 的生产依赖只包含生成的 Provider SDK 和 Server adapter
 
 Server startup 使用总计 10 秒 deadline；每次 health probe 的 timeout 是剩余预算与 250ms 的较小值，成功后只做至多 100ms 的 child 存活确认。startup 失败会在同一有界路径回收 child。
 
-普通 V2 请求仍有 30 秒上限；`/api/session/:id/wait` 使用独立 client，只有 3 秒 connect timeout，没有会误杀长 turn 的 30 秒总 timeout。stop/restart/shutdown 先撤销 generation 与 active state，再直接终止自有 child，连接关闭会立即取消阻塞 wait。shutdown 不调用不存在的 V2 dispose。Provider 直接 kill/wait 自己持有的 child，shutdown、event subscriber 和 stdout reader 共用 3 秒 deadline。stdio EOF、正常 shutdown、坏帧和写失败都经过同一个 `provider_shutdown` cleanup。Unix Host 把 Provider 放进独立进程组，外层 timeout/force-kill 一次终止 Provider 及其 Server 后代；Windows 沿用 `taskkill /T /F` 的最小进程树终止。
+普通 V2 请求仍有 30 秒上限；`/api/session/:id/wait` 使用独立 client，只有 3 秒 connect timeout，没有会误杀长 turn 的 30 秒总 timeout。stop/restart/shutdown 先撤销 generation 与 active state，再直接终止自有 child，连接关闭会立即取消阻塞 wait。shutdown 不调用不存在的 V2 dispose。Provider 直接 kill/wait 自己持有的 child；SDK 在 stdio EOF 或 fatal frame 后先禁用 event output，再进入同一个 `provider_shutdown` cleanup，并对 dispatch drain 与 terminal error write 使用有界 deadline。Unix Host 把 Provider 放进独立进程组，外层 timeout/force-kill 一次终止 Provider 及其 Server 后代；Windows 沿用 `taskkill /T /F` 的最小进程树终止。
 
 ### 路由资源与重复操作
 
@@ -85,6 +87,7 @@ Provider 诚实声明 session list/get/create、turn start/steer/interrupt 和 a
 
 ```sh
 cargo test --manifest-path crates/Cargo.toml -p codepet-provider-opencode --all-targets
+cargo test --manifest-path crates/Cargo.toml -p codepet-host --test builtin_provider_integration
 cargo test --manifest-path crates/Cargo.toml -p codepet-host process::tests::force_kill_terminates_the_provider_process_group -- --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml --lib runtime_gateway::tauri_bridge::tests::catalog_runtime_executables_are_overridden_by_resolver_values -- --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_core_tests

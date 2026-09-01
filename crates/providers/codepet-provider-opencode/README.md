@@ -2,7 +2,7 @@
 
 `codepet-provider-opencode` 是独立的 Provider Protocol v1 / stdio JSON-lines 二进制。它由 `codepet-host` 启动，并为每个 instance 管理一个仅监听 loopback 的官方 OpenCode Server 子进程。运行依赖不包含 Host、Gateway、Tauri、Pet SDK、Desktop IPC 或 activity store。
 
-Provider 与 Host 之间只使用生成的 `codepet-provider-sdk` DTO、dispatcher、四段 Route 和有界 `JsonLineCodec`；Provider 内部的 HTTP/SSE DTO 只描述 OpenCode v1.18.25 正式发行版实际提供的 V2 `/api` Server 形状。OpenCode 可执行文件和版本必须由 Host resolver 作为绝对 `serverExecutable` 与 `serverVersion` 注入，Provider 不搜索 PATH、应用目录或其他候选位置，也不再次探测版本。
+Provider 实现生成的 `Provider` trait，入口只构造 `OpenCodeProvider` 并调用 `codepet-provider-sdk::serve_stdio`。公共 SDK 统一拥有 JSON-RPC framing、有界普通/控制 dispatch、过载错误、typed event、串行 stdout、terminal cleanup 和 shutdown drain；Provider 内部的 HTTP/SSE DTO 只描述 OpenCode v1.18.25 正式发行版实际提供的 V2 `/api` Server 形状。OpenCode 可执行文件和版本必须由 Host resolver 作为绝对 `serverExecutable` 与 `serverVersion` 注入，Provider 不搜索 PATH、应用目录或其他候选位置，也不再次探测版本。
 
 ## 构建与开发安装
 
@@ -29,6 +29,7 @@ Provider 每次启动都生成随机 `OPENCODE_SERVER_PASSWORD`，显式注入�
 
 ```sh
 cargo test --manifest-path crates/Cargo.toml -p codepet-provider-opencode --all-targets
+cargo test --manifest-path crates/Cargo.toml -p codepet-host --test builtin_provider_integration
 ```
 
 必跑测试使用真实子进程 fixture 覆盖官方 v1.18.25 JSON/SSE 形状、turn/approval 垂直映射、stdio framing 和 Pet 隔离。若本机有 OpenCode，可显式提供 Host 等价的绝对路径运行只读 smoke；测试自身不探测路径：

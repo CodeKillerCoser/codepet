@@ -16,13 +16,17 @@
 
 协议长期事实只存在于 `protocol/` 的语言无关 IDL，并按 `core`、`pet`、`provider`、`gateway` 四层独立版本化。生成包统一命名 `codepet-*-sdk` 并放在 `sdk/<language>/`；Rust struct、Tauri DTO 和任何语言侧 model 都不能成为第二事实来源。
 
-Provider v1 固定为 Host ↔ 独立 Provider 二进制的 JSON-RPC 2.0/stdio 协议，拥有插件描述与 instance 生命周期。Gateway v1 固定为 Host ↔ Remote Client 协议，只暴露设备、Provider instance、远程资源与 event cursor，不暴露插件进程控制。Pet v1 固定为 Desktop Companion 驱动的任务、审批、动作、快照与 patch，不引用 Provider 领域对象。
+Provider v1 固定为 Host ↔ 独立 Provider 二进制的 JSON-RPC 2.0/stdio 协议，拥有插件描述与 instance 生命周期。Gateway v2 固定为 Host ↔ Remote Client 的 JSON-RPC 2.0 业务协议，只暴露设备、Provider instance、远程资源与 event cursor，不暴露插件进程控制。LAN 的 discovery/channel/admission DTO 独立位于 `channel/lan/v1`；证书指纹、pairing secret 和 bearer 不进入 Gateway 业务 service。Pet v1 固定为 Desktop Companion 驱动的任务、审批、动作、快照与 patch，不引用 Provider 领域对象。
+
+Provider SDK 的公共边界由两部分组成：schema/manifest 生成的 DTO、method/event enum、server trait、dispatcher 与 typed client，以及各语言稳定维护的 transport runtime。Rust runtime 统一拥有 JSON-RPC 2.0/stdio JSON-lines reader、串行 writer、event sink、普通/控制双通路、过载拒绝、frame limit、EOF/fatal shutdown 与有界 drain；Provider 实现不得复制这些机制。`dispatchLane` 是 manifest 事实，`instance.stop`、`instance.destroy` 与 `provider.shutdown` 生成到 control lane，runtime 不维护第二份 method 分类表。
+
+公开 CLI `cp-sdk-gen` 复用 JavaScript normalized-IR 协议编译器，并由 Bun `--compile` 构建为随 App 分发的单体原生 executable。运行时以 schema、manifest 和 fixtures 为输入，执行引用解析、完整校验、IR 构建与 language emitter；Rust package scaffold、稳定 stdio runtime 和接入说明作为编译器资产内嵌，但生成的 DTO、trait、method/event、codec 必须现场从协议输入产生，不能嵌入 checked-in `generated.rs`。输出写入 generator/protocol/runtime 版本与输入 digest。最终 executable 不依赖 Bun、Node 或源码仓库。首个 Provider server target 只实现 Rust；Dart 当前用于 Gateway/Remote client，不因为仓库使用 Dart 就生成没有消费场景的 Provider server runtime。未实现语言继续 fail closed。
 
 每种输出语言必须通过 `codepet.protocol.codegen/v1` target adapter registry 显式接入。校验后的 schema/manifest 先归一化成唯一 typed IR；Dart 的 definition、constraint、union discriminator、method、event、capability 和 transport metadata 只能从该 IR 投影，不得维护第二份 model/method/event 表。Rust、TypeScript、Dart 是已实现 adapter；现有 Rust/TypeScript emitter 暂保留 validated model 输入，迁移到 normalized IR 必须另做等价 fixture/diff 验证。Python 在实现前保持 planned 且选择即失败，不能落入另一个语言 generator 或静默跳过。schema 与 manifest 的 `$ref` 使用同一依赖审计，capability type/container/method mapping 也是生成器受检契约。
 
-Dart target 采用只覆盖当前受检 schema 子集的结构化 emitter，不引入 quicktype、Freezed、json_serializable 或 build_runner 依赖。它生成 core 与 Gateway v1 两个 null-safe package、closed-object/约束校验、显式 sealed union、敏感字段 redaction、manifest metadata、envelope codec 与 transport-neutral typed client。无法找到共同 required singleton-enum discriminator 的 `oneOf` 在生成前失败；不会退化为 `dynamic` 或宽松可选字段模型。
+Dart target 采用只覆盖当前受检 schema 子集的结构化 emitter，不引入 quicktype、Freezed、json_serializable 或 build_runner 依赖。它生成 core、Gateway v2 client 与 LAN admission models null-safe package、closed-object/约束校验、显式 sealed union、敏感字段 redaction、manifest metadata、JSON-RPC codec 与 transport-neutral typed client。无法找到共同 required singleton-enum discriminator 的 `oneOf` 在生成前失败；不会退化为 `dynamic` 或宽松可选字段模型。
 
-既有 Tauri Runtime Gateway 调用面使用同一 gateway SDK 内的生成 compat v0 module。compat profile 仍来自 `protocol/gateway/v1` 下的 IDL，不允许在 Tauri 源码复制 DTO。它现在薄适配到 Host 的 Gateway v1 application service；Provider v1 已用于真实插件进程，但这仍不代表 Gateway v1 网络 transport 已实现。
+既有 Tauri Runtime Gateway 调用面使用同一 gateway SDK 内的生成 compat v0 module。compat profile 仍来自 `protocol/gateway/v1` 下的 IDL，不允许在 Tauri 源码复制 DTO。它只是桌面内部兼容面；Remote 网络 transport 已使用 Gateway v2 JSON-RPC。
 
 ## 备选方案
 
@@ -50,20 +54,25 @@ JSON Schema Draft 2020-12 加 method/event manifest 能同时表达跨语言 DTO
 - Rust 业务 crate 依赖 `codepet-*-sdk`；不得新增 `codepet-*-protocol` crate。
 - Provider Host 使用生成的有界 JSON-line codec 与统一 wire classifier，不自行实现另一套宽松 response/notification parser。
 - Provider Host 使用生成的 `ProtocolRequest::from_method_params` 构造 JSON-RPC request enum，不在 Host 维护第二份 method/envelope 枚举。
+- Provider binary 使用 `codepet-provider-sdk::serve_stdio` 与 typed `ProviderEventSink`；业务 crate 只实现生成 `Provider` trait 和上游 harness adapter，不读取 stdin、不写 stdout、不维护 request queue。
+- `cp-sdk-gen --package <package> --role <role> --lang <language> --output <sdk-dir>` 按需导出 client、server 或 models SDK 与 `cp-sdk-gen.lock.json`；`--check` 对已导出目录执行 freshness 检查，不删除目标目录中的其他文件。
+- App Resources 必须同时携带 `provider-sdk/codepet-sdk.json`、兼容索引、完整接入 README、canonical `protocol/{core,provider,gateway,channel}` 资源树与平台原生 `cp-sdk-gen(.exe)`；分发视图内的 JSON Schema `$ref` 必须可直接解析。只打包内置 Provider binary 不算完成 SDK 分发。
 - Provider 事件与 Pet 事件使用不同生成 enum 和 server/client contract，不能通过同一个 event sink 互换。
 - 新远程资源必须包含 device、provider plugin、provider instance 与 native resource 四段 identity；单独 native ID 只允许在已经绑定并逐跳校验完整 route 的 Provider 内部使用。
-- Python generator 可以后加，但只能消费 `protocol/codegen.json` 声明的同一接口和 normalized IR。
+- 新语言 generator 可以后加，但只能消费 `protocol/codegen.json` 声明的同一接口和 normalized IR；没有实际 Provider server 消费者时不因示例语言提前扩张 target。
 
 ## 后续观察
 
 - Provider Host 已使用 generated `ProtocolClient` 覆盖 initialize、describe、instance lifecycle、业务请求与 shutdown；进程启动、超时和生命周期监管仍属于 Host，而不是协议 SDK。
-- `codepet-provider-codex` 与 `codepet-provider-claude` 已使用 generated `ProtocolServer`、dispatcher 和 JSON-line codec 实现 production Provider v1；各自的 App Server / CLI 私有协议只存在于对应插件内部。
-- Gateway v1 transport 对 event cursor、分页 cursor、断线恢复和版本不重叠错误的实现是否与 IDL 一致。
+- Codex、Claude 与 OpenCode 三个内置 Provider 已统一使用公共 Rust Provider runtime：入口只构造各自 Provider 并调用 `serve_stdio`；App Server、CLI stream-json、HTTP/SSE client、mapper 与业务生命周期仍完全属于各自 adapter。
+- `scripts/test_codex_provider_stdio.py` 从独立 Python 进程执行公共 wire smoke；SDK 的通用 transport 行为仍由 Rust SDK tests 与 Codex 饱和/EOF/坏帧/断管纵向测试共同守护。
+- `codepet-provider-codex`、`codepet-provider-claude` 与 `codepet-provider-opencode` 已实现 generated `Provider` trait，并共享 SDK dispatcher、JSON-line codec 与 stdio runtime；各自的 App Server / CLI / HTTP+SSE 私有协议只存在于对应插件内部。
+- Gateway v2 transport 对 event cursor、分页 cursor、断线恢复和版本不重叠错误的持续兼容性。
 - compat v0 使用点是否持续收敛；在 Pet v1 adapter 与真实 gateway v1 session 均完成前，不应提前删除。
 - 如出现 schema 子集不足，应先评估所有目标语言的可生成性，再扩展 generator；不得为单个 Rust 需求加入只能由 serde 表达的语义。
 - 四个 Rust SDK 已移除永久私有标记，并为 path dependency 同时声明版本。仓库尚无 LICENSE，正式发布前必须由所有者决定许可证，不能由实现阶段猜测。
 - Dart package 当前版本为 `0.1.0`，Gateway 用 `dependency_overrides` 指向同仓 core 进行本地验证；发布时必须先发布同版本 core，并移除消费方的本地 override。仓库 LICENSE 决策同样仍是发布阻塞项。
-- 当前 Dart 不生成 gateway compat-v0、Pet 或 Provider JSON-RPC；未来扩展前必须为相应 transport semantics 增加 IR 与 fixture 证据，不能机械复制 Gateway v1 emitter。
+- 当前 Dart 不生成 gateway compat-v0、Pet 或 Provider server；未来扩展前必须为相应 transport semantics 增加 IR 与 fixture 证据，不能机械复制既有 emitter。
 - Rust/TypeScript 尚未改为完全从 normalized IR 渲染；这是生成器内部一致性的剩余迁移项，不影响 `protocol/` 作为唯一手写事实，但迁移时必须先锁定当前生成 diff 与全部 SDK fixture。
 
 ## 工具来源

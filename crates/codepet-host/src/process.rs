@@ -717,20 +717,22 @@ async fn reader_loop(
                 }
             }
             ProviderWireMessage::Event(event) => {
+                if shared.is_shutting_down() {
+                    continue;
+                }
                 if let Err(error) = shared.send_inbound(ProviderWireMessage::Event(event)) {
-                    if !shared.is_shutting_down() {
-                        fail_transport(&shared, &control, error).await;
-                    }
+                    fail_transport(&shared, &control, error).await;
                     return;
                 }
             }
             ProviderWireMessage::Notification(notification) => {
+                if shared.is_shutting_down() {
+                    continue;
+                }
                 if let Err(error) = shared
                     .send_inbound(ProviderWireMessage::Notification(notification))
                 {
-                    if !shared.is_shutting_down() {
-                        fail_transport(&shared, &control, error).await;
-                    }
+                    fail_transport(&shared, &control, error).await;
                     return;
                 }
             }

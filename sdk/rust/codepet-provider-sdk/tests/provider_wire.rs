@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use codepet_provider_sdk::{
     decode_request, decode_wire_message, JsonLineCodec, JsonRpcInboundRequest,
-    JsonRpcNotification, ProtocolClient, ProtocolError, ProtocolRequest,
+    JsonRpcNotification, ProtocolClient, ProtocolDispatchLane, ProtocolError, ProtocolRequest,
     ProtocolInboundFuture, ProtocolMethod, ProtocolTransport, ProtocolTransportFuture,
     ProviderWireMessage, JSON_RPC_INVALID_PARAMS, JSON_RPC_INVALID_REQUEST,
     JSON_RPC_METHOD_NOT_FOUND, JSON_RPC_PARSE_ERROR,
@@ -22,12 +22,31 @@ fn generated_sdk_builds_a_typed_wire_request_from_method_and_params() {
         params,
     )
     .unwrap();
+    assert_eq!(request.method(), ProtocolMethod::ProviderInitialize);
+    assert_eq!(request.method().dispatch_lane(), ProtocolDispatchLane::Normal);
+    assert_eq!(request.id(), "request-1");
 
     let ProtocolRequest::ProviderInitialize { id, params, .. } = request else {
         panic!("expected typed initialize request");
     };
     assert_eq!(id, "request-1");
     assert_eq!(params.host_device_id, "device-test");
+}
+
+#[test]
+fn generated_dispatch_lane_keeps_lifecycle_control_available_under_load() {
+    assert_eq!(
+        ProtocolMethod::InstanceStop.dispatch_lane(),
+        ProtocolDispatchLane::Control
+    );
+    assert_eq!(
+        ProtocolMethod::InstanceDestroy.dispatch_lane(),
+        ProtocolDispatchLane::Control
+    );
+    assert_eq!(
+        ProtocolMethod::ProviderShutdown.dispatch_lane(),
+        ProtocolDispatchLane::Control
+    );
 }
 
 #[test]

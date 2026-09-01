@@ -1,0 +1,9 @@
+{
+  "name": "codepet-channel-lan",
+  "layer": "channel",
+  "version": 1,
+  "kind": "types",
+  "methods": [],
+  "events": [],
+  "fixtures": "fixtures/index.json"
+}

@@ -5,6 +5,7 @@ sdk/rust/target/
 crates/target/
 src-tauri/resources/provider-plugins/*
 !src-tauri/resources/provider-plugins/.gitkeep
+src-tauri/resources/provider-sdk/
 custom-pet-data/
 .local-secrets/
 __pycache__/

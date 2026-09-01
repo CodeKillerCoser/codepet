@@ -26,7 +26,7 @@ Provider 事件进入 Gateway v1 replay，并由兼容适配发布到远程 `run
 - 显式插件目录、进程启动、协议协商、实例启动、能力查询和业务路由；
 - 有界 JSON-lines、并发 request id 关联、事件分流、超时、崩溃隔离、stderr 诊断和有界 shutdown；
 - 内部 Gateway v1 的 device/provider/capability/conversation/turn/approval 与 event replay 边界。
-- 从 App Resources 的单一 `provider-plugins/` 目录自动发现三个默认 Provider adapter，并在 macOS/Windows 发布构建中 staging。
+- 从 App Resources 的单一 `provider-plugins/` 目录自动发现三个默认 Provider adapter，并在 Tauri 开发态及 macOS/Windows 发布构建中 staging。
 - 持久化自签 LAN TLS identity、五分钟内存配对 session、只保存 bearer SHA-256 的可撤销远程 credential store，以及固定 pairing/current-credential REST 与 Gateway WSS route。
 
 本阶段不实现：
@@ -82,12 +82,13 @@ Agent executable 是 manifest 普通 setting 的受控例外：Codex 的 `appSer
 
 ## 内置资源与构建
 
-`scripts/stage_provider_plugins.mjs` 是唯一 staging 入口。它只构建三个 Provider crate 的主二进制，把每个二进制与源 manifest 放入 `src-tauri/resources/provider-plugins/<provider>/`，并让 `src-tauri/tauri.conf.json` 将该目录映射到 App Resources 根下的 `provider-plugins/`。staging 产物被 Git 忽略，只提交脚本、源 manifest 和目录占位。
+`scripts/stage_provider_plugins.mjs` 是唯一 staging 入口。它用 Cargo 构建三个 Provider binary，并用 Bun `--compile` 把 JavaScript 协议编译器构建为原生 `cp-sdk-gen`；Provider binary/manifest 放入 `src-tauri/resources/provider-plugins/<provider>/`，生成器、Core/Provider JSON Schema、method/event manifest、Provider fixtures、完整接入 README 与 `codepet-provider-sdk.json` 资源索引放入 `src-tauri/resources/provider-sdk/`。分发协议采用 version-first 布局：共享定义是 `protocol/v1/core/`，Provider schema/manifest/fixtures 是 `protocol/v1/schema/`；staging 会把 Provider 文档中的 Core `$ref` 重定位为 `../core/schema.json`，避免复制后出现断链。`tauri.conf.json` 分别映射到 App Resources 根下的 `provider-plugins/` 和 `provider-sdk/`。staging 产物被 Git 忽略，只提交脚本、源协议/manifest 和两个目录占位。脚本默认使用 release profile；`--profile debug` 使用 `crates/target/debug`，供开发态快速增量构建。
 
-- macOS universal：分别构建 `aarch64-apple-darwin` 与 `x86_64-apple-darwin`，再逐个 `lipo -create`；App 主程序和三个 Provider 都必须通过双架构检查。
-- Windows x86_64：构建 `x86_64-pc-windows-msvc`，staging 时把 manifest 的相对 executable 改为对应 `.exe` 文件名；NSIS 继续使用同一 Tauri resources 配置。
-- 普通 Tauri bundle：`beforeBuildCommand` 调用 `npm run build:bundle`，先 staging 再构建前端。release workflow 通过 `CODEPET_PROVIDER_TARGET` 明确目标，避免交叉构建时猜架构。
-- 开发测试：先运行 `npm run providers:stage`，再以绝对路径设置 `CODEPET_BUNDLED_PROVIDER_PLUGINS_DIR` 指向 staging 目录。未设置时，运行态使用 Tauri `BaseDirectory::Resource` 解析发行资源，不硬编码安装位置或用户目录。
+- macOS universal：分别构建 `aarch64-apple-darwin` 与 `x86_64-apple-darwin`，再逐个 `lipo -create`；App 主程序、三个 Provider 和 `cp-sdk-gen` 都必须通过双架构检查。
+- Windows x86_64：构建 `x86_64-pc-windows-msvc`，staging 时把 manifest 的相对 executable 和生成器资源索引改为对应 `.exe` 文件名；NSIS 继续使用同一 Tauri resources 配置。
+- 普通 Tauri bundle：`beforeBuildCommand` 调用 `npm run build:bundle`，先执行 `protocol:check` 锁定 schema/generated freshness，再 staging 和构建前端。release workflow 通过 `CODEPET_PROVIDER_TARGET` 明确目标，避免交叉构建时猜架构。
+- Tauri 开发态：`beforeDevCommand` 先调用 `npm run providers:stage:dev`，确保 `tauri dev` 使用与发行包相同的 App Resources 发现链路，而不是依赖工作区中手工残留的 Provider binary。
+- 独立开发测试：可用 `--staging-dir` 写入临时目录，再以绝对路径设置 `CODEPET_BUNDLED_PROVIDER_PLUGINS_DIR`。未设置时，运行态使用 Tauri `BaseDirectory::Resource` 解析资源，不硬编码安装位置或用户目录。
 
 Catalog 仍只消费普通目录和 manifest，没有默认 Provider registry、市场、签名、沙箱、安装器或自动更新分支。Provider Protocol 事件仍只走 Host/Gateway；bundled discovery 不改变 Pet Protocol、Desktop IPC、companion 或 activity 链。
 
@@ -103,6 +104,7 @@ Catalog 仍只消费普通目录和 manifest，没有默认 Provider registry、
 - writer task 只持有 `Weak<RpcShared>`，不会与共享状态形成强引用环；
 - SDK 生成的 `ProtocolRequest::from_method_params` 负责把 typed method/params 构造成 wire request，Host 不枚举 envelope variant；
 - pending map 按 request id 关联响应；event/notification 进入唯一有界 inbound consumer，不会被当作 response；
+- shutdown 开始后业务 inbound consumer 会关闭，但 stdout reader 必须继续读取 wire：晚到 event/notification 直接丢弃，`provider.shutdown` response 仍按 pending id 交付。不能因为晚到事件没有消费者而提前关闭 Provider stdout；
 - frame、inbound/outbound queue 和 stderr 历史均有上限；坏帧、超限、EOF 或 backpressure 只终止对应进程；
 - 所有 terminal path 都关闭 inbound、完成 pending、结束 writer 并关闭 stdin；进程 monitor 在发布 exit 前有界等待 writer、reader 与 stderr task，因此末尾 stderr 已进入退出快照；
 - 进程只保留一个 `shutting_down` 状态，并统一使用配置的 `shutdown_timeout`。正常关闭先发 `provider.shutdown`，关闭 stdin，并允许 Provider 先关闭 stdout、延迟退出；真实 fixture 在 Unix 直接关闭 fd 1，并用独立 marker 证明 EOF 后 shutdown future 仍未完成，直到 200ms 后子进程正常退出；
@@ -143,32 +145,41 @@ Manager 到 Gateway 只有一个有界 `mpsc` receiver，且只能领取一次�
 
 Host 只依赖 `codepet-provider-sdk` 和 `codepet-gateway-sdk`，不定义第二套 Provider/Gateway DTO。四个 Rust SDK 都具备 description/authors/repository metadata，不再 `publish = false`；内部 path dependency 同时声明 `version = "0.1.0"`，可用 `cargo package --allow-dirty` 检查包内容。仓库当前没有 LICENSE 文件，因此 manifest 不虚构 license 声明；正式发布前仍需仓库所有者补充许可证决策。
 
+App 内 `provider-sdk/cp-sdk-gen` 是 JavaScript 编写并由 Bun `--compile` 产出的单体原生协议编译器。它运行时读取相邻 Core/Provider schema、manifest 与 fixtures，经与仓库生成流程相同的校验和 normalized typed IR 生成 `generated.rs`，再写入 Bun executable 内嵌的 Cargo package scaffold、稳定 stdio runtime 和接入 README；它不嵌入或复制仓库预生成的 `generated.rs`。`cp-sdk-gen.lock.json` 的 digest 来自本次实际输入协议，`--check` 重新编译并比对所有已知输出。相邻 `provider-sdk/protocol/v1/{core,schema}/` 是面向插件作者、引用可直接解析的 JSON-RPC 2.0 输入事实。
+
+第三方 Provider 的公开接入说明以随 App 和生成 SDK 同时分发的 `provider-sdk/README.md` 为准。它覆盖生成器构建原理、SDK 导出与 freshness、`Provider` trait/`ProviderEventSink`/`serve_stdio` 边界、manifest 字段、独立进程 JSON-RPC 测试、应用数据目录安装以及 `settings.providerPlugins.directories` 发现方式。内置 Codex、Claude、OpenCode 仍是同一边界的实现证据，不形成第三方插件的特殊入口。
+
 Provider 包只依赖 Provider SDK，不能反向依赖 Host。Host 启动 manifest binary 的纵向测试位于 `codepet-host`；Codex、Claude 与 OpenCode Provider 的 all-target/dev dependency graph 都不含 Host、Gateway、Tauri 或 Pet SDK。三个默认 Provider 的名称只存在于各自普通 manifest 与 Tauri runtime-setting 映射中，Host 没有预埋第二套 registry；后续 Provider 仍应以普通 manifest/binary 接入。
 
 ## 风险与验证证据
 
 - 强引用环或 FD 泄漏：同一 current-thread Tokio runtime 循环制造坏帧，断言 task 计数、`Weak` 与 `/dev/fd` 回到基线。
-- request/event 串线：真实 fixture 并发乱序响应并在 response 前发送 event/notification，断言按 id 和通道分类。
+- request/event 串线：真实 fixture 并发乱序响应并在 response 前发送 event/notification，断言按 id 和通道分类；shutdown fixture 在 response 前发送 notification，断言 Host 丢弃晚到消息但仍接收 response，Provider 正常退出。
 - shutdown 误杀：fixture 响应 shutdown 后真实关闭 stdout fd，写 close marker、输出末尾 stderr、等待 200ms 再成功退出；marker 出现时及 100ms 后 future 均必须未完成，最终断言成功 exit 与完整诊断。
 - 启停竞态：initialize 延迟 fixture 与两个并发 `shutdown_once` 触发外层 timeout；断言两次调用都等到 force kill 完成、子进程已结束（Unix 额外用 PID 复核），且 shutdown gate 阻止后续 spawn。
 - 路由串流：两设备、两实例、错误 device/plugin/instance、空 ID、错误 response identity 和单调 cursor 均有定向测试。
 - 远程身份与凭据：定向测试断言 TLS identity 重启稳定、损坏轮换会清空旧 credential、pairing secret 并发只成功一次且过期/重启失效、bearer 明文不落盘、hash 校验与两种撤销路径持久生效。
 - 状态重复：stop/start lifecycle 后每次只收到一个 ProviderStatusChanged。
 - 通道污染：Tauri mock runtime 真实监听三条 Tauri event；fixture 的 Provider event 只增加 remote event/replay，不改变 companion replay、`SharedState` activity、companion/Pet event 或 Desktop adapter spy。
-- bundled 资源缺失或架构不一致：staging 测试断言三 manifest/三平台 executable，macOS 产物检查 Resources 清单、可执行位与 `lipo -archs`，DMG 用 `hdiutil verify`。
+- bundled 资源缺失、引用断链或架构不一致：staging 测试断言三 Provider manifest/binary、`protocol/v1/{core,schema}` schema/manifest/fixture、重定位后的 Core `$ref`、完整 README、资源索引和平台 `cp-sdk-gen`；macOS 产物检查 Resources 清单、可执行位与 `lipo -archs`，再从实际 App Resources 导出 SDK 并执行 `cargo check`，DMG 用 `hdiutil verify`。
+- 内置 Provider 接入漂移：`builtin_provider_integration` 从三份正式 manifest 启动 SDK 化 Codex、Claude、OpenCode Provider 与各自 fixture，经同一个 Plugin Manager/Gateway 验证三者 ready、provider list、代表性 conversation 操作和有序 shutdown。
 - 机械漂移：验收检查工作树，不提交 `src-tauri/gen/schemas/macOS-schema.json` 或构建产物。
 
 ## 验证命令
 
 ```sh
 cargo test --manifest-path crates/Cargo.toml -p codepet-host --all-targets
+cargo test --manifest-path crates/Cargo.toml -p codepet-host --test builtin_provider_integration
 cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --all-targets
 cargo test --manifest-path crates/Cargo.toml -p codepet-provider-claude --all-targets
 cargo test --manifest-path crates/Cargo.toml -p codepet-provider-opencode --all-targets
+npm run sdkgen:test
 cargo test --manifest-path sdk/rust/Cargo.toml
 npm run protocol:check
 npm run providers:test
 CODEPET_PROVIDER_TARGET=universal-apple-darwin npm run providers:stage
+"src-tauri/target/release/bundle/macos/Code Pet.app/Contents/Resources/provider-sdk/cp-sdk-gen" --lang rust --output /tmp/codepet-provider-sdk
+cargo check --manifest-path /tmp/codepet-provider-sdk/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_core_tests --test runtime_gateway_protocol_tests --test settings_tests --test tray_tests
 cargo check --manifest-path src-tauri/Cargo.toml --lib
 cargo package --manifest-path sdk/rust/Cargo.toml --workspace --allow-dirty

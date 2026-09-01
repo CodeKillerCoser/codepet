@@ -891,15 +891,6 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
     }
 }
 
-fn codec_error(context: &str, error: serde_json::Error) -> ProtocolError {
-    ProtocolError {
-        code: "protocol_codec_error".to_string(),
-        message: format!("{context}: {error}"),
-        retryable: false,
-        details: None,
-    }
-}
-
 pub fn encode_request(value: &ProtocolRequest) -> Result<Vec<u8>, ProtocolError> {
     serde_json::to_vec(value).map_err(|error| codec_error("encode request", error))
 }
@@ -922,4 +913,13 @@ pub fn encode_event(value: &ProtocolEvent) -> Result<Vec<u8>, ProtocolError> {
 
 pub fn decode_event(value: &[u8]) -> Result<ProtocolEvent, ProtocolError> {
     serde_json::from_slice(value).map_err(|error| codec_error("decode event", error))
+}
+
+fn codec_error(context: &str, error: serde_json::Error) -> ProtocolError {
+    ProtocolError {
+        code: "protocol_codec_error".to_string(),
+        message: format!("{context}: {error}"),
+        retryable: false,
+        details: None,
+    }
 }

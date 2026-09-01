@@ -9,6 +9,15 @@ pub type ClientId = String;
 
 pub type Cursor = String;
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct DeviceDescriptor {
+    pub device_name: String,
+    pub operating_system: String,
+    pub system_version: String,
+}
+
 pub type DeviceId = String;
 
 pub type EventCursor = String;

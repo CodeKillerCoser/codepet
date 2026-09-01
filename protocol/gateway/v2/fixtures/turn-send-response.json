@@ -1,0 +1,31 @@
+{
+  "jsonrpc": "2.0",
+  "id": "turn-send-1",
+  "result": {
+    "accepted": true,
+    "turn": {
+      "resource": {
+        "deviceId": "device-macbook-1",
+        "providerPluginId": "dev.codepet.codex",
+        "providerInstanceId": "codex-work",
+        "nativeResourceId": "turn-02"
+      },
+      "conversation": {
+        "deviceId": "device-macbook-1",
+        "providerPluginId": "dev.codepet.codex",
+        "providerInstanceId": "codex-work",
+        "nativeResourceId": "thread-01"
+      },
+      "status": "running"
+    },
+    "userItem": null,
+    "effectiveSelection": {
+      "accessModeId": "workspace-write",
+      "reasoningEffortId": "high",
+      "model": {
+        "kind": "flat",
+        "modelId": "gpt-5"
+      }
+    }
+  }
+}

@@ -828,6 +828,12 @@ impl ProviderPluginDescriptor {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProtocolDispatchLane {
+    Normal,
+    Control,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolMethod {
     #[serde(rename = "provider.initialize")]
     ProviderInitialize,
@@ -882,6 +888,27 @@ impl ProtocolMethod {
             Self::TurnInterrupt => "turn.interrupt",
             Self::ApprovalResolve => "approval.resolve",
             Self::ProviderShutdown => "provider.shutdown",
+        }
+    }
+
+    pub const fn dispatch_lane(self) -> ProtocolDispatchLane {
+        match self {
+            Self::ProviderInitialize => ProtocolDispatchLane::Normal,
+            Self::ProviderDescribe => ProtocolDispatchLane::Normal,
+            Self::InstanceCreate => ProtocolDispatchLane::Normal,
+            Self::InstanceStart => ProtocolDispatchLane::Normal,
+            Self::InstanceStop => ProtocolDispatchLane::Control,
+            Self::InstanceDestroy => ProtocolDispatchLane::Control,
+            Self::InstanceCapabilities => ProtocolDispatchLane::Normal,
+            Self::ConversationList => ProtocolDispatchLane::Normal,
+            Self::ConversationSearch => ProtocolDispatchLane::Normal,
+            Self::ConversationGet => ProtocolDispatchLane::Normal,
+            Self::ConversationCreate => ProtocolDispatchLane::Normal,
+            Self::TurnStart => ProtocolDispatchLane::Normal,
+            Self::TurnSteer => ProtocolDispatchLane::Normal,
+            Self::TurnInterrupt => ProtocolDispatchLane::Normal,
+            Self::ApprovalResolve => ProtocolDispatchLane::Normal,
+            Self::ProviderShutdown => ProtocolDispatchLane::Control,
         }
     }
 
@@ -1195,6 +1222,48 @@ impl ProtocolRequest {
             Self::TurnInterrupt { jsonrpc, .. } => jsonrpc,
             Self::ApprovalResolve { jsonrpc, .. } => jsonrpc,
             Self::ProviderShutdown { jsonrpc, .. } => jsonrpc,
+        }
+    }
+
+    pub fn id(&self) -> &RequestId {
+        match self {
+            Self::ProviderInitialize { id, .. } => id,
+            Self::ProviderDescribe { id, .. } => id,
+            Self::InstanceCreate { id, .. } => id,
+            Self::InstanceStart { id, .. } => id,
+            Self::InstanceStop { id, .. } => id,
+            Self::InstanceDestroy { id, .. } => id,
+            Self::InstanceCapabilities { id, .. } => id,
+            Self::ConversationList { id, .. } => id,
+            Self::ConversationSearch { id, .. } => id,
+            Self::ConversationGet { id, .. } => id,
+            Self::ConversationCreate { id, .. } => id,
+            Self::TurnStart { id, .. } => id,
+            Self::TurnSteer { id, .. } => id,
+            Self::TurnInterrupt { id, .. } => id,
+            Self::ApprovalResolve { id, .. } => id,
+            Self::ProviderShutdown { id, .. } => id,
+        }
+    }
+
+    pub const fn method(&self) -> ProtocolMethod {
+        match self {
+            Self::ProviderInitialize { .. } => ProtocolMethod::ProviderInitialize,
+            Self::ProviderDescribe { .. } => ProtocolMethod::ProviderDescribe,
+            Self::InstanceCreate { .. } => ProtocolMethod::InstanceCreate,
+            Self::InstanceStart { .. } => ProtocolMethod::InstanceStart,
+            Self::InstanceStop { .. } => ProtocolMethod::InstanceStop,
+            Self::InstanceDestroy { .. } => ProtocolMethod::InstanceDestroy,
+            Self::InstanceCapabilities { .. } => ProtocolMethod::InstanceCapabilities,
+            Self::ConversationList { .. } => ProtocolMethod::ConversationList,
+            Self::ConversationSearch { .. } => ProtocolMethod::ConversationSearch,
+            Self::ConversationGet { .. } => ProtocolMethod::ConversationGet,
+            Self::ConversationCreate { .. } => ProtocolMethod::ConversationCreate,
+            Self::TurnStart { .. } => ProtocolMethod::TurnStart,
+            Self::TurnSteer { .. } => ProtocolMethod::TurnSteer,
+            Self::TurnInterrupt { .. } => ProtocolMethod::TurnInterrupt,
+            Self::ApprovalResolve { .. } => ProtocolMethod::ApprovalResolve,
+            Self::ProviderShutdown { .. } => ProtocolMethod::ProviderShutdown,
         }
     }
 }
@@ -1755,15 +1824,6 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
     }
 }
 
-fn codec_error(context: &str, error: serde_json::Error) -> ProtocolError {
-    ProtocolError {
-        code: "protocol_codec_error".to_string(),
-        message: format!("{context}: {error}"),
-        retryable: false,
-        details: None,
-    }
-}
-
 fn rpc_method_error(error: ProtocolError) -> RpcError {
     let message = error.message.clone();
     let data = serde_json::to_value(error).ok().and_then(|value| match value {
@@ -1775,6 +1835,15 @@ fn rpc_method_error(error: ProtocolError) -> RpcError {
 
 fn rpc_codec_error(context: &str, error: serde_json::Error) -> RpcError {
     RpcError { code: JSON_RPC_INTERNAL_ERROR, message: format!("{context}: {error}"), data: None }
+}
+
+fn codec_error(context: &str, error: serde_json::Error) -> ProtocolError {
+    ProtocolError {
+        code: "protocol_codec_error".to_string(),
+        message: format!("{context}: {error}"),
+        retryable: false,
+        details: None,
+    }
 }
 
 fn inbound_error(id: Option<RequestId>, code: i64, message: impl Into<String>) -> JsonRpcInboundError {

@@ -32,7 +32,15 @@ test("schema and method/event manifests are self-consistent", async () => {
   const model = await loadProtocolModel();
   assert.deepEqual(
     model.records.map((entry) => entry.packageConfig.id),
-    ["core-v1", "pet-v1", "provider-v1", "gateway-v1", "gateway-compat-v0"],
+    [
+      "core-v1",
+      "pet-v1",
+      "provider-v1",
+      "gateway-v1",
+      "gateway-v2",
+      "channel-lan-v1",
+      "gateway-compat-v0",
+    ],
   );
 });
 
@@ -82,6 +90,21 @@ test("provider is JSON-RPC over stdio and owns plugin instance lifecycle", async
   ]) {
     assert(methods.has(required), `provider manifest is missing ${required}`);
   }
+  assert.deepEqual(
+    provider.methods
+      .filter((method) => method.dispatchLane === "control")
+      .map((method) => method.name),
+    ["instance.stop", "instance.destroy", "provider.shutdown"],
+  );
+  const providerIr = model.protocolIr.packagesById.get("provider-v1");
+  assert.equal(
+    providerIr.service.methods.find((method) => method.name === "instance.stop").dispatchLane,
+    "control",
+  );
+  assert.equal(
+    providerIr.service.methods.find((method) => method.name === "conversation.list").dispatchLane,
+    "normal",
+  );
 });
 
 test("provider history items carry routed conversation ownership", async () => {
@@ -326,8 +349,8 @@ test("target registry fails closed for fake and planned adapters", async () => {
 
 test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and package boundaries", async () => {
   const model = await loadProtocolModel();
-  const gateway = record(model, "gateway-v1");
-  const gatewayIr = model.protocolIr.packagesById.get("gateway-v1");
+  const gateway = record(model, "gateway-v2");
+  const gatewayIr = model.protocolIr.packagesById.get("gateway-v2");
   assert.equal(gatewayIr.service.methods.length, 11);
   assert.equal(gatewayIr.service.events.length, 7);
   assert.equal(
@@ -351,15 +374,15 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   const result = await generateProtocol({ checkMode: true, targets: ["dart"] });
   assert.deepEqual(
     result.generated.map(({ packageId, targetId }) => [packageId, targetId]),
-    [["core-v1", "dart"], ["gateway-v1", "dart"]],
+    [["core-v1", "dart"], ["gateway-v2", "dart"], ["channel-lan-v1", "dart"]],
   );
 });
 
 test("Dart adapter rejects ambiguous oneOf before emitting source", async () => {
   const model = await loadProtocolModel();
-  const gateway = record(model, "gateway-v1");
+  const gateway = record(model, "gateway-v2");
   const union = model.protocolIr.packagesById
-    .get("gateway-v1")
+    .get("gateway-v2")
     .definitions.find((definition) => definition.name === "ModelCatalog");
   const discriminator = union.discriminator;
   union.discriminator = undefined;

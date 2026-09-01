@@ -104,6 +104,52 @@ Object? encodeCursor(Cursor value, {String path = 'Cursor'}) {
   return checked;
 }
 
+final class DeviceDescriptor {
+  factory DeviceDescriptor({
+    required String deviceName,
+    required String operatingSystem,
+    required String systemVersion,
+  }) {
+    final validatedDeviceName = _string(deviceName, 'DeviceDescriptor.deviceName', minLength: 1);
+    final validatedOperatingSystem = _string(operatingSystem, 'DeviceDescriptor.operatingSystem', minLength: 1);
+    final validatedSystemVersion = _string(systemVersion, 'DeviceDescriptor.systemVersion', minLength: 1);
+    return DeviceDescriptor._(
+      deviceName: validatedDeviceName,
+      operatingSystem: validatedOperatingSystem,
+      systemVersion: validatedSystemVersion,
+    );
+  }
+
+  DeviceDescriptor._({
+    required this.deviceName,
+    required this.operatingSystem,
+    required this.systemVersion,
+  });
+
+  final String deviceName;
+  final String operatingSystem;
+  final String systemVersion;
+
+  factory DeviceDescriptor.fromJson(Object? value, {String path = 'DeviceDescriptor'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'deviceName', 'operatingSystem', 'systemVersion'}, path);
+    return DeviceDescriptor(
+      deviceName: _string(_required(json, 'deviceName', path), '$path.deviceName', minLength: 1),
+      operatingSystem: _string(_required(json, 'operatingSystem', path), '$path.operatingSystem', minLength: 1),
+      systemVersion: _string(_required(json, 'systemVersion', path), '$path.systemVersion', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'deviceName': deviceName,
+    'operatingSystem': operatingSystem,
+    'systemVersion': systemVersion,
+  };
+
+  @override
+  String toString() => 'DeviceDescriptor(deviceName: $deviceName, operatingSystem: $operatingSystem, systemVersion: $systemVersion)';
+}
+
 typedef DeviceId = String;
 
 DeviceId decodeDeviceId(Object? value, {String path = 'DeviceId'}) => _string(value, path, minLength: 1);

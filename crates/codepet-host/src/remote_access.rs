@@ -2,7 +2,7 @@ use crate::persistence::{
     persistence_io, protect_secret_file, write_secret_json_atomically,
 };
 use crate::{DeviceRegistry, HostError, HostResult};
-use codepet_gateway_sdk::{DeviceDescriptor, PairingExchangeRequest, RemoteHostIdentity};
+use codepet_lan_channel_sdk::{DeviceDescriptor, LanHostIdentity, PairingExchangeRequest};
 use codepet_provider_sdk::{ClientId, TimestampMs};
 use rcgen::{
     CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, KeyPair,
@@ -715,9 +715,9 @@ impl RemoteAccessManager {
         &self.diagnostics
     }
 
-    pub fn remote_host_identity(&self) -> RemoteHostIdentity {
+    pub fn remote_host_identity(&self) -> LanHostIdentity {
         let device = self.device.identity();
-        RemoteHostIdentity {
+        LanHostIdentity {
             device_id: device.device_id.clone(),
             descriptor: self.local_device_descriptor.clone(),
             identity_fingerprint: self.tls_identity.certificate_fingerprint.clone(),

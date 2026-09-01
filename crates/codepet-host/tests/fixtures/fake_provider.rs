@@ -451,6 +451,18 @@ async fn main() {
             if let Ok(path) = std::env::var("CODEPET_FAKE_SHUTDOWN_MARKER") {
                 let _ = std::fs::write(path, b"shutdown received\n");
             }
+            if std::env::var_os("CODEPET_FAKE_SHUTDOWN_NOTIFICATION").is_some() {
+                write_message(
+                    &output,
+                    codec,
+                    ProviderWireMessage::Notification(JsonRpcNotification {
+                        jsonrpc: "2.0".to_string(),
+                        method: "fixture.shutdownProgress".to_string(),
+                        params: serde_json::json!({ "stage": "stopping" }),
+                    }),
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
             let response = dispatch(server.as_ref(), request).await;
             write_message(&output, codec, ProviderWireMessage::Response(response));
             close_stdout_pipe();

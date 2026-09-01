@@ -2,7 +2,9 @@
 
 ## 当前结论
 
-远程 Codex 能力已经从 Tauri 进程内直连实现迁到独立二进制 `crates/providers/codepet-provider-codex`。二进制只依赖生成的 `codepet-provider-sdk`，通过 Provider Protocol v1 的 JSON-RPC 2.0 / stdio JSON-lines 与 `codepet-host` 通信；它不依赖 `codepet-host`、Tauri、Pet SDK 或 Desktop 私有 IPC。每个 Provider instance 长期持有一个纯读 observer App Server；`conversation.create` 使用一次性 App Server；真正取得历史 thread writer 的 App Server 则按 conversation/active turn 独立创建并在 turn 终态立即退出。observer 与一次性 create 从 spawn 前占位开始进入同一 generation/cancellation registry，stop/shutdown 只有在占位操作收敛、子进程退出后才发布 stopped。Host stdio 普通请求最多并发 16 个、排队 32 个，lifecycle control 另有 2 个并发、4 个排队的保留通路；队列满时按原 id 返回 retryable `provider_overloaded`，response 仍允许乱序返回。
+远程 Codex 能力已经从 Tauri 进程内直连实现迁到独立二进制 `crates/providers/codepet-provider-codex`。二进制只依赖 `codepet-provider-sdk`，通过 Provider Protocol v1 的 JSON-RPC 2.0 / stdio JSON-lines 与 `codepet-host` 通信；它不依赖 `codepet-host`、Tauri、Pet SDK 或 Desktop 私有 IPC。Provider 入口只构造 `CodexProvider` 并调用 SDK 的 `serve_stdio`；reader、writer、dispatcher、event sink、普通/控制双通路、过载、frame limit 与 terminal cleanup 全部属于公共 SDK runtime，Codex crate 不再复制 transport server。
+
+每个 Provider instance 长期持有一个纯读 observer App Server；`conversation.create` 使用一次性 App Server；真正取得历史 thread writer 的 App Server 则按 conversation/active turn 独立创建并在 turn 终态立即退出。observer 与一次性 create 从 spawn 前占位开始进入同一 generation/cancellation registry，stop/shutdown 只有在占位操作收敛、子进程退出后才发布 stopped。SDK runtime 的普通请求最多并发 16 个、排队 32 个，manifest 标记的 lifecycle control 使用 2 并发/4 排队保留通路；队列满时按原 id 返回 retryable `provider_overloaded`，response 仍允许乱序返回。
 
 Host 是唯一进程与路由所有者：`PluginManager` 从 manifest 启动 Provider、创建并启动实例，`ProviderGatewayService` 把 Gateway v1 请求路由到实例，并把 Provider 事件变成可 replay 的远程事件。兼容 v0 的 Tauri command/event 只是一层 Gateway DTO 适配，不再拥有或启动 Codex App Server。
 
@@ -138,6 +140,7 @@ observer 与 `conversation.create` 共用 instance session lifecycle：请求先
 
 - App Server 协议漂移：本机 `codex-cli 0.151.0` schema 和 smoke 证明上游 response/notification 不要求 `jsonrpc`，request/notification 的 `params` 可缺失，并允许 `trace`/`emittedAtMs` 元数据；实际故障环境的 `0.151.0-alpha.7.2` 证明 `thread/turns/list` 可分页且 `thread/items/list` 返回 `-32601`。fixture 与 typed DTO 覆盖 initialize、Thread、Turn、start/resume、approval 和 request fail-closed。Provider Protocol 自己仍严格使用 JSON-RPC 2.0。
 - 路由或审批串实例：Host 测试从 manifest 启动真实 stdio fixture binary 并完成 Gateway RPC/事件/四段路由；Codex Provider 二进制测试独立完成 App Server 会话、审批和 interrupt 闭环。
+- CodePet 接入漂移：`codepet-host/tests/builtin_provider_integration.rs` 读取三份正式 manifest，在同一个 Plugin Manager/Gateway 启动 SDK 化 Codex、Claude、OpenCode Provider 与各自 fixture，验证 ready、provider list、代表性 conversation 操作和有序 shutdown。Host shutdown 期间会丢弃晚到状态事件但继续读取 control response，避免提前关闭 stdout 造成 Broken pipe。
 - Provider 污染桌宠：Tauri mock runtime 使用生产 bridge，断言 Provider 只进入 remote replay/event，companion replay、companion event、pet channel、activity store 与 Desktop adapter spy 不变化；PetApp 静态测试断言只导入 companion client，且不含跨链路同步路径。
 - 审批 fail-open/串 session：真实 Provider 二进制测试证明 `additionalPermissions.network` 得到原 id 的 `-32601` 且无 Approval；stop/start 后复用相同 request id 时旧句柄不能批准新进程请求。
 - framing/lifecycle：App Server stdout/stderr 与 Provider SDK 都完整 drain 超长物理行后 fail-stop；observer 历史通过 metadata read + 10-turn pages 避免把全部历史聚成单行。stdout/stderr fault 复用同一个 session terminal path，清空 pending 并终止 App Server。Provider→Host 最终序列化超过共享 16 MiB 时按原 id 返回 non-retryable `provider_response_too_large`，进程继续服务；分页顺序/稳定 ID/无 resume 与超限后 `provider.describe` 均有 binary fixture 覆盖。

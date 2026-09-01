@@ -6,10 +6,11 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "vite build",
-    "build:bundle": "npm run providers:stage && npm run build",
+    "build:bundle": "npm run protocol:check && npm run providers:stage && npm run build",
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "tauri",
     "providers:stage": "node scripts/stage_provider_plugins.mjs",
+    "providers:stage:dev": "node scripts/stage_provider_plugins.mjs --profile debug",
     "providers:test": "node --test scripts/stage_provider_plugins.test.mjs",
     "package:signed": "python3 scripts/package_signed.py",
     "version:check": "node scripts/release_version.mjs",
@@ -17,8 +18,11 @@
     "release:latest-json": "node scripts/generate_latest_json.mjs",
     "release:github": "node scripts/publish_github_release.mjs",
     "protocol:generate": "node tools/protocol-codegen/generate.mjs",
+    "cp-sdk-gen": "bun tools/cp-sdk-gen/cp-sdk-gen.mjs",
     "protocol:test": "node --test tools/protocol-codegen/test.mjs",
-    "protocol:check": "node tools/protocol-codegen/generate.mjs --check && node --test tools/protocol-codegen/test.mjs"
+    "protocol:check": "node tools/protocol-codegen/generate.mjs --check && node --test tools/protocol-codegen/test.mjs",
+    "sdkgen:build": "bun build tools/cp-sdk-gen/cp-sdk-gen.mjs --compile --outfile tools/cp-sdk-gen/dist/cp-sdk-gen",
+    "sdkgen:test": "bun test tools/cp-sdk-gen/cp-sdk-gen.test.mjs"
   },
   "dependencies": {
     "@lucide/svelte": "^1.16.0",

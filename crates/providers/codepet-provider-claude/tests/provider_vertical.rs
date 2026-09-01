@@ -826,9 +826,9 @@ fn provider_binary_reaps_active_tree_after_response_pipe_breaks() {
     .unwrap();
     stdin.write_all(b"\n").unwrap();
     stdin.flush().unwrap();
-    drop(stdin);
 
     let status = wait_for_provider_exit(&mut child);
+    drop(stdin);
     assert!(!status.success());
     assert_pids_gone(pids);
 }
@@ -877,7 +877,7 @@ fn provider_binary_reaps_active_tree_after_an_oversized_host_frame_under_stdout_
 }
 
 #[test]
-fn provider_binary_fail_stops_without_reply_after_an_oversized_host_frame() {
+fn provider_binary_returns_a_standard_error_then_fail_stops_after_an_oversized_host_frame() {
     let mut child = Command::new(provider_executable())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -917,7 +917,13 @@ fn provider_binary_fail_stops_without_reply_after_an_oversized_host_frame() {
         .unwrap()
         .read_to_string(&mut output)
         .unwrap();
-    assert!(output.is_empty());
+    let responses = output.lines().collect::<Vec<_>>();
+    assert_eq!(responses.len(), 1, "{output}");
+    let response: Value = serde_json::from_str(responses[0]).unwrap();
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert!(response["id"].is_null());
+    assert_eq!(response["error"]["code"], -32600);
+    assert!(!output.contains("must-not-run"));
 }
 
 #[test]

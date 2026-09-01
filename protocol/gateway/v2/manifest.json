@@ -1,0 +1,48 @@
+{
+  "name": "codepet-gateway",
+  "layer": "gateway",
+  "version": 2,
+  "kind": "service",
+  "transport": {
+    "kind": "json-rpc-2.0",
+    "framing": "websocket-text",
+    "requestDiscriminator": "method",
+    "eventDiscriminator": "method",
+    "jsonRpcVersion": "2.0",
+    "requestId": { "$ref": "../../core/v1/schema.json#/$defs/RequestId" },
+    "rpcError": { "$ref": "../../core/v1/schema.json#/$defs/RpcError" },
+    "eventCursorField": "eventCursor",
+    "eventCursor": { "$ref": "../../core/v1/schema.json#/$defs/EventCursor" }
+  },
+  "error": {
+    "$ref": "../../core/v1/schema.json#/$defs/ProtocolError"
+  },
+  "fixtures": "fixtures/index.json",
+  "capabilities": {
+    "type": { "$ref": "./schema.json#/$defs/GatewayCapability" },
+    "container": { "$ref": "./schema.json#/$defs/GatewayCapabilities" },
+    "field": "methods"
+  },
+  "methods": [
+    { "name": "protocol.handshake", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/HandshakeRequest" }, "response": { "$ref": "./schema.json#/$defs/HandshakeResponse" } },
+    { "name": "event.subscribe", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/EventSubscribeRequest" }, "response": { "$ref": "./schema.json#/$defs/EventSubscribeResponse" } },
+    { "name": "device.list", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/DeviceListRequest" }, "response": { "$ref": "./schema.json#/$defs/DeviceListResponse" } },
+    { "name": "provider.list", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/ProviderListRequest" }, "response": { "$ref": "./schema.json#/$defs/ProviderListResponse" } },
+    { "name": "conversation.list", "direction": "clientToGateway", "idempotency": "safe", "capability": "conversation.list", "request": { "$ref": "./schema.json#/$defs/ConversationListRequest" }, "response": { "$ref": "./schema.json#/$defs/ConversationListResponse" } },
+    { "name": "conversation.search", "direction": "clientToGateway", "idempotency": "safe", "capability": "conversation.search", "request": { "$ref": "./schema.json#/$defs/ConversationSearchRequest" }, "response": { "$ref": "./schema.json#/$defs/ConversationSearchResponse" } },
+    { "name": "conversation.get", "direction": "clientToGateway", "idempotency": "safe", "capability": "conversation.get", "request": { "$ref": "./schema.json#/$defs/ConversationGetRequest" }, "response": { "$ref": "./schema.json#/$defs/ConversationGetResponse" } },
+    { "name": "conversation.create", "direction": "clientToGateway", "idempotency": "nonIdempotent", "capability": "conversation.create", "request": { "$ref": "./schema.json#/$defs/ConversationCreateRequest" }, "response": { "$ref": "./schema.json#/$defs/ConversationCreateResponse" } },
+    { "name": "turn.send", "direction": "clientToGateway", "idempotency": "nonIdempotent", "capability": "turn.send", "request": { "$ref": "./schema.json#/$defs/TurnSendRequest" }, "response": { "$ref": "./schema.json#/$defs/TurnSendResponse" } },
+    { "name": "turn.interrupt", "direction": "clientToGateway", "idempotency": "idempotent", "capability": "turn.interrupt", "request": { "$ref": "./schema.json#/$defs/TurnInterruptRequest" }, "response": { "$ref": "./schema.json#/$defs/TurnInterruptResponse" } },
+    { "name": "approval.resolve", "direction": "clientToGateway", "idempotency": "idempotent", "capability": "approval.resolve", "request": { "$ref": "./schema.json#/$defs/ApprovalResolveRequest" }, "response": { "$ref": "./schema.json#/$defs/ApprovalResolveResponse" } }
+  ],
+  "events": [
+    { "name": "device.statusChanged", "direction": "gatewayToClient", "delivery": "replayable", "scope": "device", "payload": { "$ref": "./schema.json#/$defs/DeviceStatusChangedEvent" } },
+    { "name": "provider.statusChanged", "direction": "gatewayToClient", "delivery": "replayable", "scope": "providerInstance", "payload": { "$ref": "./schema.json#/$defs/ProviderStatusChangedEvent" } },
+    { "name": "conversation.upserted", "direction": "gatewayToClient", "delivery": "replayable", "scope": "conversation", "payload": { "$ref": "./schema.json#/$defs/ConversationUpsertedEvent" } },
+    { "name": "turn.upserted", "direction": "gatewayToClient", "delivery": "replayable", "scope": "turn", "payload": { "$ref": "./schema.json#/$defs/TurnUpsertedEvent" } },
+    { "name": "turn.outputDelta", "direction": "gatewayToClient", "delivery": "replayable", "scope": "turn", "payload": { "$ref": "./schema.json#/$defs/TurnOutputDeltaEvent" } },
+    { "name": "approval.requested", "direction": "gatewayToClient", "delivery": "replayable", "scope": "approval", "payload": { "$ref": "./schema.json#/$defs/ApprovalRequestedEvent" } },
+    { "name": "approval.resolved", "direction": "gatewayToClient", "delivery": "replayable", "scope": "approval", "payload": { "$ref": "./schema.json#/$defs/ApprovalResolvedEvent" } }
+  ]
+}

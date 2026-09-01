@@ -2,7 +2,7 @@
 
 ## 当前结论
 
-Claude 默认 Provider 是独立 Rust 二进制 `crates/providers/codepet-provider-claude`。它只通过生成的 `codepet-provider-sdk` 与 Host 交换 Provider Protocol v1 JSON-RPC / stdio JSON-lines，并把 Host resolver 注入的绝对 Claude executable 作为唯一启动路径。Provider crate 不依赖 Host、Gateway、Tauri、Pet SDK、Desktop IPC、Hook collector 或 activity store。
+Claude 默认 Provider 是独立 Rust 二进制 `crates/providers/codepet-provider-claude`。它实现生成的 `Provider` trait，入口只构造 `ClaudeProvider` 并调用公共 `codepet-provider-sdk::serve_stdio`；JSON-RPC reader/writer、普通/控制双通路、typed event、过载、terminal cleanup 与 shutdown drain 不在 Claude crate 重复实现。Host resolver 注入的绝对 Claude executable 是唯一启动路径。Provider crate 不依赖 Host、Gateway、Tauri、Pet SDK、Desktop IPC、Hook collector 或 activity store。
 
 当前官方公开接口中未发现与 Codex App Server 等价、可由 Rust 直接消费的完整 Claude session server。诚实切面是官方 Claude Code CLI 的 `--print` + 双向 `stream-json`：Provider 管理自己的 session ID，一次 turn 启动一个 CLI 子进程，后续 turn 用 `--resume`。它不宣称能枚举、读取、附着或同步其他 Claude Desktop/CLI 会话。
 
@@ -94,7 +94,7 @@ Access mode：
 - 每个 turn 建立独立 process group。后台 reaper 独占 `Child` 并负责 `wait`；control 只保存 PID/process-group ID 与退出通知。
 - result/aborted 只记录 pending completion；进程真实退出、stdout 排空后才发布 terminal 并删除 active。此间下一 turn 返回 `turn_already_active`。
 - interrupt、instance.stop、destroy 和 protocol shutdown 先给有界 grace，再杀整个 process group并等待 reaper。
-- Provider binary 把服务循环结果与最终 cleanup 分开。正常 EOF、response write 或 flush 失败都会调用不发布 event、不依赖 stdout 的 `reap_active_processes`。坏/超大 Host frame 直接把 fatal 结果交给外层，先 reap 再 fail-stop，当前不回写错误响应，避免不可写或背压 stdout 抢在 cleanup 前阻塞。
+- 公共 SDK 把 transport terminal 与 Provider cleanup 分开。stdin EOF 或坏/超大 Host frame 出现时先将 typed event output 标记为不可用，并把此后不可观测的 cleanup event 当作已丢弃，再调用 Claude 的 `provider_shutdown` 回收活动进程；fatal frame 的标准 JSON-RPC error 只在 cleanup 后按 2 秒 drain deadline 尝试写出。即使 stdout 不可写或持续背压，清理与 runtime 返回都保持有界。
 - Claude stdout 单物理行硬限制为 4 MiB；超过限制且无换行时立即杀进程组。stderr 单行限制 64 KiB。
 - Provider codec frame 上限是 1 MiB。所有对外 text delta/result 按 UTF-8 边界切为最多 64 KiB；终态 metadata 限制为 4 KiB。
 - output event 失败时 active 不会先删除；正常 lifecycle 仍尝试尺寸安全的 failed terminal。致命 stdio cleanup 不等待 terminal event 成功，只等待进程退出。
@@ -102,7 +102,7 @@ Access mode：
 ## 涉及模块
 
 - `src/client.rs`：默认 Claude 参数、process group、reaper、退出通知与上游 line limit。
-- `src/main.rs`：stdio 服务结果与无输出依赖的最终 reap。
+- `src/main.rs`：只构造 `ClaudeProvider` 并进入公共 `serve_stdio` runtime。
 - `src/provider.rs`：能力、配置继承元数据、延迟终态、分块和 lifecycle 回收。
 - `tests/fixtures/claude_stream.rs`、`tests/provider_vertical.rs`：默认参数、无害项目 MCP 可见性、异常 stdio PID、2 MiB 与进程探针。
 - `src-tauri/src/runtime_gateway/tauri_bridge.rs`：只负责 resolver setting 注入，本轮无新增逻辑。
@@ -112,11 +112,12 @@ Access mode：
 
 - `provider_inherits_claude_project_configuration_and_rejects_strong_access_modes`：命令行无隔离/permission flags，无害 `.mcp.json` 沿 workspace 默认路径可见，read-only/full-access fail closed。
 - `provider_binary_reaps_active_tree_after_response_pipe_breaks`：active ignore-SIGINT turn 下关闭 Provider stdout，Provider 非零退出且 root/child PID 消失。
-- `provider_binary_reaps_active_tree_after_invalid_json_under_stdout_backpressure`、`provider_binary_reaps_active_tree_after_an_oversized_host_frame_under_stdout_backpressure`：预先填满且不读取 Provider stdout 后发送 fatal frame，Provider 非零退出且 root/child PID 消失。
+- `provider_binary_reaps_active_tree_after_invalid_json_under_stdout_backpressure`、`provider_binary_returns_a_standard_error_then_fail_stops_after_an_oversized_host_frame`：分别证明不读取 stdout 时 fatal cleanup 仍有界回收进程树，以及 stdout 可写时超大 Host frame 先返回标准 JSON-RPC error、后续请求不会执行。
 - `provider_reaps_result_interrupt_stdout_and_oversize_process_trees`：result-then-sleep、ignore-SIGINT、stdout-close、超长无换行及 stop/destroy/shutdown 回收。
 - `provider_chunks_two_mib_result_before_the_one_mib_provider_frame_limit`：2 MiB result 完整分块并抵达 terminal。
 - `provider_event_failure_still_publishes_a_small_failed_terminal`：正常 output send failure 不留下 pending。
 - 生产依赖断言只有生成 Provider/Core SDK 与纯 Rust基础库；Tauri 隔离测试断言 Provider event 不进入 Desktop/Pet adapter。
+- `codepet-host/tests/builtin_provider_integration.rs` 从正式 manifest 与 resolver 等价的绝对 fixture setting 启动 Claude，并与 Codex、OpenCode 一起验证 Ready、Gateway 路由和有序 shutdown。
 
 ## 未知项
 

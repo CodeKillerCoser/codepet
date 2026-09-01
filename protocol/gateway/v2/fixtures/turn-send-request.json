@@ -1,0 +1,27 @@
+{
+  "jsonrpc": "2.0",
+  "id": "turn-send-1",
+  "method": "turn.send",
+  "params": {
+    "conversation": {
+      "deviceId": "device-macbook-1",
+      "providerPluginId": "dev.codepet.codex",
+      "providerInstanceId": "codex-work",
+      "nativeResourceId": "thread-01"
+    },
+    "clientRequestId": "remote-turn-01",
+    "capabilityRevision": "codex-session-42",
+    "input": {
+      "kind": "text",
+      "text": "Continue with the implementation"
+    },
+    "selection": {
+      "accessModeId": "workspace-write",
+      "reasoningEffortId": "high",
+      "model": {
+        "kind": "flat",
+        "modelId": "gpt-5"
+      }
+    }
+  }
+}

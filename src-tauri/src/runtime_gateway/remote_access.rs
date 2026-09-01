@@ -1,5 +1,6 @@
 use base64::Engine;
-use codepet_gateway_sdk::{DeviceDescriptor, PairingQrPayload, PROTOCOL_VERSION};
+use codepet_gateway_sdk::PROTOCOL_VERSION;
+use codepet_lan_channel_sdk::{DeviceDescriptor, PairingQrPayload};
 use codepet_host::{
     select_remote_lan_ipv4, HostError, PairingStatus, PairingStatusKind,
     ProviderGatewayService,
@@ -1572,7 +1573,7 @@ pub async fn revoke_remote_credential(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codepet_gateway_sdk::PairingExchangeRequest;
+    use codepet_lan_channel_sdk::PairingExchangeRequest;
     use codepet_host::{
         DeviceRegistry, IssuedRemoteCredential, PluginCatalog,
         PluginCatalogConfig, PluginManager, PluginManagerConfig,
@@ -1692,7 +1693,13 @@ mod tests {
         let gateway = Arc::new(
             ProviderGatewayService::with_remote_identity(
                 provider_manager.clone(),
-                remote_manager.remote_host_identity(),
+                {
+                    let identity = remote_manager.remote_host_identity();
+                    codepet_gateway_sdk::GatewayHostIdentity {
+                        device_id: identity.device_id,
+                        descriptor: identity.descriptor,
+                    }
+                },
             )
             .unwrap(),
         );
@@ -1976,7 +1983,7 @@ mod tests {
             .await
             .unwrap();
         assert!(exchange.status().is_success());
-        let exchange: codepet_gateway_sdk::PairingExchangeResponse =
+        let exchange: codepet_lan_channel_sdk::PairingExchangeResponse =
             exchange.json().await.unwrap();
         assert_eq!(
             exchange.gateway_url,
@@ -2495,7 +2502,7 @@ mod tests {
             .await
             .unwrap();
         assert!(exchange.status().is_success());
-        let exchange: codepet_gateway_sdk::PairingExchangeResponse =
+        let exchange: codepet_lan_channel_sdk::PairingExchangeResponse =
             exchange.json().await.unwrap();
         wait_for_pairing_advertisement(&test.runtime, false).await;
         assert_eq!(

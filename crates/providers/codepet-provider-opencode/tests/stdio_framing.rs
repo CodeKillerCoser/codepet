@@ -35,21 +35,19 @@ fn standalone_binary_uses_provider_json_line_framing() {
             "params": {}
         }),
     ];
-    {
+    let mut responses = Vec::new();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    for frame in frames {
+        let expected_id = frame["id"].as_str().unwrap();
         let stdin = child.stdin.as_mut().unwrap();
-        for frame in frames {
-            serde_json::to_writer(&mut *stdin, &frame).unwrap();
-            stdin.write_all(b"\n").unwrap();
-        }
+        serde_json::to_writer(&mut *stdin, &frame).unwrap();
+        stdin.write_all(b"\n").unwrap();
+        stdin.flush().unwrap();
+        responses.push(read_response(&mut stdout, expected_id));
     }
     drop(child.stdin.take());
-    let output = child.wait_with_output().unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    let responses = String::from_utf8(output.stdout)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .collect::<Vec<_>>();
+    let status = child.wait().unwrap();
+    assert!(status.success());
     assert_eq!(responses.len(), 3);
     assert_eq!(responses[0]["id"], "1");
     assert_eq!(responses[0]["result"]["selectedVersion"], 1);

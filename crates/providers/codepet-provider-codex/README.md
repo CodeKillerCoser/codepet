@@ -4,7 +4,7 @@
 
 两层 wire 不相同：Provider 与 Host 之间严格使用 JSON-RPC 2.0；上游 App Server 按官方 schema 使用 `id/method/result/error`，不要求 `jsonrpc`，并允许 request 的 `trace`、notification 的 `emittedAtMs` 和缺失的 `params`。具体 method 的参数仍由 typed DTO 严格校验。
 
-Provider 的 Host stdio reader 不逐条等待 RPC，也不在普通队列满时阻塞读 stdin：普通请求最多并发 16 个、排队 32 个；`instance.stop`、`instance.destroy`、`provider.shutdown` 另有 2 个并发与 4 个排队的保留通路。普通或控制队列过载时，请求以原 JSON-RPC id 收到 retryable `provider_overloaded`，不会进入 Provider 方法。response 允许按完成顺序乱序返回，并与 event 共用串行 stdout writer；因此 stdin EOF/fatal 即使在普通请求饱和时仍可见，并会触发 Provider/App Server 清理和有界 dispatch drain/abort。
+公共 Provider SDK 的 stdio reader 不逐条等待 RPC，也不在普通队列满时阻塞读 stdin：普通请求最多并发 16 个、排队 32 个；manifest 以 `dispatchLane: control` 标记的 `instance.stop`、`instance.destroy`、`provider.shutdown` 使用 2 个并发与 4 个排队的保留通路。普通或控制队列过载时，请求以原 JSON-RPC id 收到 retryable `provider_overloaded`，不会进入 Provider 方法。response 允许按完成顺序乱序返回，并与 typed event sink 共用串行 stdout writer；因此 stdin EOF/fatal 即使在普通请求饱和时仍可见，并会触发 Provider/App Server 清理和有界 dispatch drain/abort。Codex `main.rs` 只调用 `codepet_provider_sdk::serve_stdio`，不拥有另一套 transport 实现。
 
 资源身份始终是 `deviceId + providerPluginId + providerInstanceId + nativeResourceId`。每次 App Server session 使用独立 generation；只有普通 command/file 的 accept/decline 二元审批会发布，额外权限、结构化 decision 和未知 server request 使用原 JSON-RPC id 返回 `-32601`。
 
@@ -33,6 +33,20 @@ cargo build --manifest-path crates/Cargo.toml -p codepet-provider-codex
 CODEPET_CODEX_EXECUTABLE=/absolute/path/to/codex cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --test provider_vertical provider_real_codex_app_server_smoke -- --ignored --exact
 ```
 
-该 smoke 只从环境变量读取 executable，覆盖 initialize、instance create/start、conversation list 和 instance stop；Provider 不搜索或硬编码用户路径。
+不依赖 Rust 测试内部 API 的进程级 smoke：
+
+```sh
+python3 scripts/test_codex_provider_stdio.py \
+  --provider crates/target/debug/codepet-provider-codex \
+  --app-server crates/target/debug/codex-app-server-fixture
+```
+
+该 smoke 通过命令行接收 Provider 与 App Server fixture 的 executable，覆盖 initialize、instance create/start、conversation list/create/get、instance stop 和 provider shutdown；Provider 不搜索或硬编码用户路径。
+
+验证 CodePet 自身的 manifest discovery、Plugin Manager、Gateway 与关闭链路：
+
+```sh
+cargo test --manifest-path crates/Cargo.toml -p codepet-host --test builtin_provider_integration
+```
 
 完整协议矩阵、配置权威、双链路与限制见 `knowledge/10-architecture/codex-provider-plugin-runtime.md`。

@@ -1,0 +1,19 @@
+{
+  "jsonrpc": "2.0",
+  "id": "gateway-handshake-1",
+  "method": "protocol.handshake",
+  "params": {
+    "clientId": "remote-client-phone-1",
+    "device": {
+      "deviceName": "Alice's Pixel",
+      "operatingSystem": "Android",
+      "systemVersion": "16"
+    },
+    "clientVersion": "1.0.0",
+    "supportedVersions": {
+      "minVersion": 2,
+      "maxVersion": 2
+    },
+    "lastEventCursor": "event-40"
+  }
+}

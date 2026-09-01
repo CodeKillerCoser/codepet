@@ -13,7 +13,7 @@ use crate::agent_runtime::{
 };
 use crate::platform::host_identity::computer_name;
 use crate::settings::{configured_app_data_dir, load_app_settings};
-use codepet_gateway_sdk::DeviceDescriptor;
+use codepet_lan_channel_sdk::DeviceDescriptor;
 use codepet_host::{
     DeviceRegistry, HostError, PluginCatalog, PluginCatalogConfig, PluginManager,
     PluginManagerConfig, ProviderGatewayService, ProviderInstanceRegistry,
@@ -466,7 +466,13 @@ fn configured_provider_runtime(
     )?);
     let gateway = Arc::new(ProviderGatewayService::with_remote_identity(
         manager.clone(),
-        remote_access.remote_host_identity(),
+        {
+            let identity = remote_access.remote_host_identity();
+            codepet_gateway_sdk::GatewayHostIdentity {
+                device_id: identity.device_id,
+                descriptor: identity.descriptor,
+            }
+        },
     )?);
     Ok((manager, gateway, remote_access))
 }

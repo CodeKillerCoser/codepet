@@ -16,7 +16,8 @@ use codepet_provider_sdk::{
     InstanceDestroyRequest, InstanceDestroyResponse, InstanceStartRequest,
     InstanceStartResponse, InstanceStatus, InstanceStatusChangedEvent, InstanceStopRequest,
     InstanceStopResponse, PageInfo, ProtocolError, ProtocolEvent, ProtocolFuture,
-    ProtocolServer, ProviderCapabilities, ProviderDescribeRequest, ProviderDescribeResponse,
+    Provider, ProviderCapabilities, ProviderDescribeRequest, ProviderDescribeResponse,
+    ProviderEventSink,
     FlatModelCatalogKind, FlatModelSelection, HarnessDescriptor, ModelCatalog, ModelSelection, ProviderApproval,
     ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance,
     ProviderInstanceRoute, ProviderPluginDescriptor, ProviderShutdownRequest,
@@ -44,19 +45,6 @@ const MAX_THREAD_TURN_PAGES: usize = 10_000;
 struct CodexInstanceSettings {
     app_server_executable: PathBuf,
     app_server_args: Vec<String>,
-}
-
-pub trait ProviderEventSink: Send + Sync + 'static {
-    fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError>;
-}
-
-impl<F> ProviderEventSink for F
-where
-    F: Fn(ProtocolEvent) -> Result<(), ProtocolError> + Send + Sync + 'static,
-{
-    fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError> {
-        self(event)
-    }
 }
 
 #[doc(hidden)]
@@ -1422,7 +1410,7 @@ impl CodexProvider {
     }
 }
 
-impl ProtocolServer for CodexProvider {
+impl Provider for CodexProvider {
     fn provider_initialize<'a>(
         &'a self,
         request: ProviderInitializeRequest,

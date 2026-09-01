@@ -18,6 +18,16 @@
       "minLength": 1,
       "description": "Stable identity of a CodePet host device."
     },
+    "DeviceDescriptor": {
+      "type": "object",
+      "properties": {
+        "deviceName": { "type": "string", "minLength": 1 },
+        "operatingSystem": { "type": "string", "minLength": 1 },
+        "systemVersion": { "type": "string", "minLength": 1 }
+      },
+      "required": ["deviceName", "operatingSystem", "systemVersion"],
+      "additionalProperties": false
+    },
     "EventCursor": {
       "type": "string",
       "minLength": 1,

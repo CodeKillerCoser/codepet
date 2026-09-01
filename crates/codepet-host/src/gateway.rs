@@ -216,7 +216,7 @@ pub struct ProviderGatewayService {
     forwarding_started: AtomicBool,
     server_name: String,
     server_version: String,
-    remote_host_identity: Option<gateway::RemoteHostIdentity>,
+    remote_host_identity: Option<gateway::GatewayHostIdentity>,
     turn_sends: AsyncMutex<TurnSendCache>,
 }
 
@@ -227,7 +227,7 @@ impl ProviderGatewayService {
 
     pub fn with_remote_identity(
         manager: Arc<PluginManager>,
-        remote_host_identity: gateway::RemoteHostIdentity,
+        remote_host_identity: gateway::GatewayHostIdentity,
     ) -> HostResult<Self> {
         validate_remote_host_identity(&remote_host_identity)?;
         Self::build(manager, Some(remote_host_identity))
@@ -235,7 +235,7 @@ impl ProviderGatewayService {
 
     fn build(
         manager: Arc<PluginManager>,
-        remote_host_identity: Option<gateway::RemoteHostIdentity>,
+        remote_host_identity: Option<gateway::GatewayHostIdentity>,
     ) -> HostResult<Self> {
         let event_capacity = manager.event_capacity().max(1);
         let updates = manager.take_updates()?;
@@ -259,7 +259,7 @@ impl ProviderGatewayService {
         &self.server_version
     }
 
-    pub fn remote_host_identity(&self) -> Option<&gateway::RemoteHostIdentity> {
+    pub fn remote_host_identity(&self) -> Option<&gateway::GatewayHostIdentity> {
         self.remote_host_identity.as_ref()
     }
 
@@ -285,25 +285,15 @@ impl ProviderGatewayService {
         &self,
         caller_scope: &str,
         request: gateway::ProtocolRequest,
-    ) -> gateway::ProtocolResponse {
+    ) -> gateway::JsonRpcResponse {
         match request {
             gateway::ProtocolRequest::TurnSend {
-                protocol_version,
+                jsonrpc,
                 id,
                 params,
             } => {
-                let response = match self
-                    .turn_send_for_caller_scope(caller_scope, params)
-                    .await
-                {
-                    Ok(result) => gateway::ResponsePayload::Ok { result },
-                    Err(error) => gateway::ResponsePayload::Error { error },
-                };
-                gateway::ProtocolResponse::TurnSend {
-                    protocol_version,
-                    id,
-                    response,
-                }
+                let result = self.turn_send_for_caller_scope(caller_scope, params).await;
+                json_rpc_response(jsonrpc, id, result)
             }
             request => gateway::dispatch(self, request).await,
         }
@@ -389,11 +379,13 @@ impl ProviderGatewayService {
                         instance.instance.as_ref(),
                     ));
                     self.events.publish(gateway::ProtocolEvent::ProviderStatusChanged {
-                        protocol_version: gateway::PROTOCOL_VERSION,
-                        event_cursor: event_cursor(0),
-                        payload: gateway::ProviderStatusChangedEvent {
-                            provider,
-                            previous_status,
+                        jsonrpc: "2.0".to_string(),
+                        params: gateway::ProtocolEventParams {
+                            event_cursor: event_cursor(0),
+                            payload: gateway::ProviderStatusChangedEvent {
+                                provider,
+                                previous_status,
+                            },
                         },
                     })?;
                 }
@@ -416,11 +408,13 @@ impl ProviderGatewayService {
                         }
                     })?;
                 self.events.publish(gateway::ProtocolEvent::ProviderStatusChanged {
-                    protocol_version: gateway::PROTOCOL_VERSION,
-                    event_cursor: event_cursor(0),
-                    payload: gateway::ProviderStatusChangedEvent {
-                        provider: gateway_instance(&snapshot, runtime),
-                        previous_status: previous_status.map(instance_status_to_gateway),
+                    jsonrpc: "2.0".to_string(),
+                    params: gateway::ProtocolEventParams {
+                        event_cursor: event_cursor(0),
+                        payload: gateway::ProviderStatusChangedEvent {
+                            provider: gateway_instance(&snapshot, runtime),
+                            previous_status: previous_status.map(instance_status_to_gateway),
+                        },
                     },
                 })?;
             }
@@ -435,51 +429,61 @@ impl ProviderGatewayService {
             }
             provider::ProtocolEvent::EventConversationUpserted { params, .. } => {
                 gateway::ProtocolEvent::ConversationUpserted {
-                    protocol_version: gateway::PROTOCOL_VERSION,
-                    event_cursor: event_cursor(0),
-                    payload: gateway::ConversationUpsertedEvent {
-                        conversation: map_conversation(params.conversation),
+                    jsonrpc: "2.0".to_string(),
+                    params: gateway::ProtocolEventParams {
+                        event_cursor: event_cursor(0),
+                        payload: gateway::ConversationUpsertedEvent {
+                            conversation: map_conversation(params.conversation),
+                        },
                     },
                 }
             }
             provider::ProtocolEvent::EventTurnUpserted { params, .. } => {
                 gateway::ProtocolEvent::TurnUpserted {
-                    protocol_version: gateway::PROTOCOL_VERSION,
-                    event_cursor: event_cursor(0),
-                    payload: gateway::TurnUpsertedEvent {
-                        turn: map_turn(params.turn),
+                    jsonrpc: "2.0".to_string(),
+                    params: gateway::ProtocolEventParams {
+                        event_cursor: event_cursor(0),
+                        payload: gateway::TurnUpsertedEvent {
+                            turn: map_turn(params.turn),
+                        },
                     },
                 }
             }
             provider::ProtocolEvent::EventTurnOutputDelta { params, .. } => {
                 gateway::ProtocolEvent::TurnOutputDelta {
-                    protocol_version: gateway::PROTOCOL_VERSION,
-                    event_cursor: event_cursor(0),
-                    payload: gateway::TurnOutputDeltaEvent {
-                        turn: params.turn,
-                        conversation: params.conversation,
-                        item_id: params.item_id,
-                        content_id: params.content_id,
-                        kind: map_conversation_content_kind(params.kind),
-                        delta: params.delta,
+                    jsonrpc: "2.0".to_string(),
+                    params: gateway::ProtocolEventParams {
+                        event_cursor: event_cursor(0),
+                        payload: gateway::TurnOutputDeltaEvent {
+                            turn: params.turn,
+                            conversation: params.conversation,
+                            item_id: params.item_id,
+                            content_id: params.content_id,
+                            kind: map_conversation_content_kind(params.kind),
+                            delta: params.delta,
+                        },
                     },
                 }
             }
             provider::ProtocolEvent::EventApprovalRequested { params, .. } => {
                 gateway::ProtocolEvent::ApprovalRequested {
-                    protocol_version: gateway::PROTOCOL_VERSION,
-                    event_cursor: event_cursor(0),
-                    payload: gateway::ApprovalRequestedEvent {
-                        approval: map_approval(params.approval),
+                    jsonrpc: "2.0".to_string(),
+                    params: gateway::ProtocolEventParams {
+                        event_cursor: event_cursor(0),
+                        payload: gateway::ApprovalRequestedEvent {
+                            approval: map_approval(params.approval),
+                        },
                     },
                 }
             }
             provider::ProtocolEvent::EventApprovalResolved { params, .. } => {
                 gateway::ProtocolEvent::ApprovalResolved {
-                    protocol_version: gateway::PROTOCOL_VERSION,
-                    event_cursor: event_cursor(0),
-                    payload: gateway::ApprovalResolvedEvent {
-                        approval: map_approval(params.approval),
+                    jsonrpc: "2.0".to_string(),
+                    params: gateway::ProtocolEventParams {
+                        event_cursor: event_cursor(0),
+                        payload: gateway::ApprovalResolvedEvent {
+                            approval: map_approval(params.approval),
+                        },
                     },
                 }
             }
@@ -533,7 +537,7 @@ impl ProviderGatewayService {
         request: gateway::TurnSendRequest,
     ) -> Result<gateway::TurnSendResponse, gateway::ProtocolError> {
         validate_gateway_resource(&request.conversation)?;
-        ensure_route_matches_resource(&request.route, &request.conversation)?;
+        let route = gateway_route_for_resource(&request.conversation);
         let expected_conversation = request.conversation.clone();
         if request.input.text.trim().is_empty() {
             return Err(gateway::ProtocolError {
@@ -544,10 +548,10 @@ impl ProviderGatewayService {
             });
         }
         let provider_instance = self
-            .gateway_instances(Some(&request.route.device_id))
+            .gateway_instances(Some(&route.device_id))
             .await?
             .into_iter()
-            .find(|provider| provider.route == request.route)
+            .find(|provider| provider.route == route)
             .ok_or_else(|| gateway::ProtocolError {
                 code: "unknown_provider_instance".to_string(),
                 message: "turn.send route does not identify a registered Provider instance"
@@ -1362,7 +1366,8 @@ fn turn_send_key(
             details: None,
         });
     }
-    validate_gateway_route(&request.route)?;
+    validate_gateway_resource(&request.conversation)?;
+    let route = gateway_route_for_resource(&request.conversation);
     if request.client_request_id.trim().is_empty() {
         return Err(gateway::ProtocolError {
             code: "invalid_client_request_id".to_string(),
@@ -1373,32 +1378,58 @@ fn turn_send_key(
     }
     Ok(TurnSendKey {
         caller_scope: caller_scope.to_string(),
-        device_id: request.route.device_id.clone(),
-        provider_plugin_id: request.route.provider_plugin_id.clone(),
-        provider_instance_id: request.route.provider_instance_id.clone(),
+        device_id: route.device_id,
+        provider_plugin_id: route.provider_plugin_id,
+        provider_instance_id: route.provider_instance_id,
         client_request_id: request.client_request_id.clone(),
     })
 }
 
-fn ensure_route_matches_resource(
-    route: &gateway::GatewayProviderRoute,
+fn gateway_route_for_resource(
     resource: &gateway::RoutedResourceId,
-) -> Result<(), gateway::ProtocolError> {
-    validate_gateway_route(route)?;
-    validate_gateway_resource(resource)?;
-    if route.device_id == resource.device_id
-        && route.provider_plugin_id == resource.provider_plugin_id
-        && route.provider_instance_id == resource.provider_instance_id
-    {
-        return Ok(());
+) -> gateway::GatewayProviderRoute {
+    gateway::GatewayProviderRoute {
+        device_id: resource.device_id.clone(),
+        provider_plugin_id: resource.provider_plugin_id.clone(),
+        provider_instance_id: resource.provider_instance_id.clone(),
     }
-    Err(gateway::ProtocolError {
-        code: "gateway_route_mismatch".to_string(),
-        message: "turn.send route and conversation target different Provider instances"
-            .to_string(),
-        retryable: false,
-        details: None,
-    })
+}
+
+fn json_rpc_response<T: serde::Serialize>(
+    jsonrpc: String,
+    id: gateway::RequestId,
+    result: Result<T, gateway::ProtocolError>,
+) -> gateway::JsonRpcResponse {
+    let response = match result {
+        Ok(result) => match serde_json::to_value(result) {
+            Ok(result) => gateway::JsonRpcResponsePayload::Ok { result },
+            Err(error) => gateway::JsonRpcResponsePayload::Error {
+                error: gateway::RpcError {
+                    code: gateway::JSON_RPC_INTERNAL_ERROR,
+                    message: format!("encode Gateway response: {error}"),
+                    data: None,
+                },
+            },
+        },
+        Err(error) => {
+            let message = error.message.clone();
+            let data = serde_json::to_value(error).ok().and_then(|value| {
+                value.as_object().cloned().map(|entries| entries.into_iter().collect())
+            });
+            gateway::JsonRpcResponsePayload::Error {
+                error: gateway::RpcError {
+                    code: -32000,
+                    message,
+                    data,
+                },
+            }
+        }
+    };
+    gateway::JsonRpcResponse {
+        jsonrpc,
+        id: Some(id),
+        response,
+    }
 }
 
 fn validate_gateway_turn_selection(
@@ -1505,24 +1536,6 @@ fn validate_choice_option(
     Ok(())
 }
 
-fn validate_gateway_route(
-    route: &gateway::GatewayProviderRoute,
-) -> Result<(), gateway::ProtocolError> {
-    if route.device_id.trim().is_empty()
-        || route.provider_plugin_id.trim().is_empty()
-        || route.provider_instance_id.trim().is_empty()
-    {
-        return Err(gateway::ProtocolError {
-            code: "invalid_gateway_route".to_string(),
-            message: "deviceId, providerPluginId, and providerInstanceId must not be empty"
-                .to_string(),
-            retryable: false,
-            details: None,
-        });
-    }
-    Ok(())
-}
-
 fn ensure_same_gateway_route(
     left: &gateway::RoutedResourceId,
     right: &gateway::RoutedResourceId,
@@ -1559,21 +1572,11 @@ fn ensure_same_resource_identity(
     })
 }
 
-fn validate_remote_host_identity(identity: &gateway::RemoteHostIdentity) -> HostResult<()> {
-    let fingerprint = identity.identity_fingerprint.as_bytes();
-    let is_lowercase_sha256 = fingerprint.len() == 64
-        && fingerprint
-            .iter()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte));
-    let is_all_zero = fingerprint.iter().all(|byte| *byte == b'0');
-    if identity.device_id.trim().is_empty()
-        || !device_descriptor_is_valid(&identity.descriptor)
-        || !is_lowercase_sha256
-        || is_all_zero
-    {
+fn validate_remote_host_identity(identity: &gateway::GatewayHostIdentity) -> HostResult<()> {
+    if identity.device_id.trim().is_empty() || !device_descriptor_is_valid(&identity.descriptor) {
         return Err(HostError::new(
             "invalid_remote_host_identity",
-            "Remote Host identity requires a device ID, complete descriptor, and non-zero lowercase SHA-256 fingerprint",
+            "Gateway Host identity requires a device ID and complete descriptor",
         ));
     }
     Ok(())
@@ -1678,59 +1681,11 @@ fn event_cursor_sequence(cursor: &str) -> Result<u64, gateway::ProtocolError> {
 }
 
 fn protocol_event_sequence(event: &gateway::ProtocolEvent) -> Result<u64, gateway::ProtocolError> {
-    let cursor = match event {
-        gateway::ProtocolEvent::DeviceStatusChanged { event_cursor, .. }
-        | gateway::ProtocolEvent::ProviderStatusChanged { event_cursor, .. }
-        | gateway::ProtocolEvent::ConversationUpserted { event_cursor, .. }
-        | gateway::ProtocolEvent::TurnUpserted { event_cursor, .. }
-        | gateway::ProtocolEvent::TurnOutputDelta { event_cursor, .. }
-        | gateway::ProtocolEvent::ApprovalRequested { event_cursor, .. }
-        | gateway::ProtocolEvent::ApprovalResolved { event_cursor, .. } => event_cursor,
-    };
-    event_cursor_sequence(cursor)
+    event_cursor_sequence(event.event_cursor())
 }
 
 fn set_event_cursor(event: &mut gateway::ProtocolEvent, cursor: gateway::EventCursor) {
-    match event {
-        gateway::ProtocolEvent::DeviceStatusChanged {
-            protocol_version,
-            event_cursor,
-            ..
-        }
-        | gateway::ProtocolEvent::ProviderStatusChanged {
-            protocol_version,
-            event_cursor,
-            ..
-        }
-        | gateway::ProtocolEvent::ConversationUpserted {
-            protocol_version,
-            event_cursor,
-            ..
-        }
-        | gateway::ProtocolEvent::TurnUpserted {
-            protocol_version,
-            event_cursor,
-            ..
-        }
-        | gateway::ProtocolEvent::TurnOutputDelta {
-            protocol_version,
-            event_cursor,
-            ..
-        }
-        | gateway::ProtocolEvent::ApprovalRequested {
-            protocol_version,
-            event_cursor,
-            ..
-        }
-        | gateway::ProtocolEvent::ApprovalResolved {
-            protocol_version,
-            event_cursor,
-            ..
-        } => {
-            *protocol_version = gateway::PROTOCOL_VERSION;
-            *event_cursor = cursor;
-        }
-    }
+    event.set_event_cursor(cursor);
 }
 
 fn gateway_state_error() -> gateway::ProtocolError {

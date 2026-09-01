@@ -10,6 +10,7 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use axum_server::tls_rustls::RustlsConfig;
 use codepet_gateway_sdk as gateway;
+use codepet_lan_channel_sdk as lan;
 use futures_util::{SinkExt, StreamExt};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -25,7 +26,7 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 const PAIRING_EXCHANGE_PATH: &str = "/remote/v1/pairings/:pairing_id/exchange";
-const GATEWAY_PATH: &str = "/remote/v1/gateway";
+const GATEWAY_PATH: &str = "/remote/v2/gateway";
 const CURRENT_CREDENTIAL_PATH: &str = "/remote/v1/credentials/current";
 const MAX_REST_BODY_BYTES: usize = 64 * 1024;
 const MAX_WEBSOCKET_FRAME_BYTES: usize = 256 * 1024;
@@ -79,7 +80,11 @@ impl RemoteLanServer {
         gateway: Arc<ProviderGatewayService>,
     ) -> HostResult<RemoteLanServerHandle> {
         let remote_identity = remote_access.remote_host_identity();
-        if gateway.remote_host_identity() != Some(&remote_identity) {
+        let gateway_identity = gateway::GatewayHostIdentity {
+            device_id: remote_identity.device_id.clone(),
+            descriptor: remote_identity.descriptor.clone(),
+        };
+        if gateway.remote_host_identity() != Some(&gateway_identity) {
             return Err(HostError::new(
                 "remote_gateway_identity_mismatch",
                 "Remote Gateway service identity must match the LAN TLS and Host identity",
@@ -222,7 +227,7 @@ impl RemoteLanAdvertisedEndpoint {
 pub struct RemoteLanAdvertisementSource {
     listener_id: u64,
     local_addr: SocketAddr,
-    remote_identity: gateway::RemoteHostIdentity,
+    remote_identity: lan::LanHostIdentity,
 }
 
 impl RemoteLanAdvertisementSource {
@@ -234,7 +239,7 @@ impl RemoteLanAdvertisementSource {
         self.local_addr
     }
 
-    pub(crate) fn remote_host_identity(&self) -> &gateway::RemoteHostIdentity {
+    pub(crate) fn remote_host_identity(&self) -> &lan::LanHostIdentity {
         &self.remote_identity
     }
 }
@@ -322,7 +327,7 @@ impl Drop for RemoteLanAdvertisedEndpointTransition {
 pub struct RemoteLanServerHandle {
     listener_id: u64,
     local_addr: SocketAddr,
-    remote_identity: gateway::RemoteHostIdentity,
+    remote_identity: lan::LanHostIdentity,
     advertised_endpoints: Arc<Mutex<RemoteLanAdvertisedEndpointState>>,
     sessions: Arc<SessionRegistry>,
     server_handle: axum_server::Handle,
@@ -346,7 +351,7 @@ impl RemoteLanServerHandle {
     }
 
     /// Returns the immutable Host identity validated when this listener started.
-    pub fn remote_host_identity(&self) -> &gateway::RemoteHostIdentity {
+    pub fn remote_host_identity(&self) -> &lan::LanHostIdentity {
         &self.remote_identity
     }
 
@@ -524,7 +529,7 @@ impl Drop for RemoteLanServerHandle {
 struct RemoteLanState {
     remote_access: Arc<RemoteAccessManager>,
     gateway: Arc<ProviderGatewayService>,
-    remote_identity: gateway::RemoteHostIdentity,
+    remote_identity: lan::LanHostIdentity,
     advertised_endpoints: Arc<Mutex<RemoteLanAdvertisedEndpointState>>,
     sessions: Arc<SessionRegistry>,
 }
@@ -533,15 +538,15 @@ async fn pairing_exchange(
     State(state): State<Arc<RemoteLanState>>,
     Path(pairing_id): Path<String>,
     headers: HeaderMap,
-    request: Result<Json<gateway::PairingExchangeRequest>, JsonRejection>,
-) -> Result<Json<gateway::PairingExchangeResponse>, RestError> {
+    request: Result<Json<lan::PairingExchangeRequest>, JsonRejection>,
+) -> Result<Json<lan::PairingExchangeResponse>, RestError> {
     let gateway_url = pairing_exchange_gateway_url(&state.advertised_endpoints, &headers)?;
     let Json(request) = request.map_err(RestError::invalid_json)?;
     let issued = state
         .remote_access
         .complete_pairing(&pairing_id, request)
         .map_err(RestError::pairing)?;
-    Ok(Json(gateway::PairingExchangeResponse {
+    Ok(Json(lan::PairingExchangeResponse {
         device: state.remote_identity.clone(),
         gateway_url,
         credential: issued.bearer_token,
@@ -551,14 +556,14 @@ async fn pairing_exchange(
 async fn delete_current_credential(
     State(state): State<Arc<RemoteLanState>>,
     headers: HeaderMap,
-) -> Result<Json<gateway::CurrentCredentialDeleteResponse>, RestError> {
+) -> Result<Json<lan::CurrentCredentialDeleteResponse>, RestError> {
     let bearer = bearer_from_headers(&headers)?;
     let revoked = state
         .remote_access
         .revoke_current_credential(bearer)
         .map_err(RestError::authorization)?;
     state.sessions.cancel_credential(&revoked.credential_id);
-    Ok(Json(gateway::CurrentCredentialDeleteResponse { revoked: true }))
+    Ok(Json(lan::CurrentCredentialDeleteResponse { revoked: true }))
 }
 
 async fn gateway_websocket(
@@ -669,17 +674,41 @@ async fn run_gateway_socket(
                 break;
             }
         };
-        let request = match serde_json::from_str::<gateway::ProtocolRequest>(&text) {
-            Ok(request) => request,
-            Err(_) => {
-                close_frame = Some(close_message(1007, "invalid_gateway_json"));
+        let request = match gateway::decode_wire_message(text.as_bytes()) {
+            Ok(gateway::ProviderWireMessage::Request(
+                gateway::JsonRpcInboundRequest::Typed(request),
+            )) => request,
+            Ok(gateway::ProviderWireMessage::Request(
+                gateway::JsonRpcInboundRequest::Rejected(rejection),
+            )) => {
+                if !queue_json(&outbound_tx, &rejection.into_response(), &mut registration).await {
+                    break;
+                }
+                if !handshaken {
+                    close_frame = Some(close_message(1008, "protocol_handshake_required"));
+                    break;
+                }
+                continue;
+            }
+            Err(error) => {
+                if !queue_json(&outbound_tx, &error.into_response(), &mut registration).await {
+                    break;
+                }
+                if !handshaken {
+                    close_frame = Some(close_message(1008, "protocol_handshake_required"));
+                    break;
+                }
+                continue;
+            }
+            Ok(_) => {
+                close_frame = Some(close_message(1008, "gateway_requests_required"));
                 break;
             }
         };
 
         if !handshaken {
             let gateway::ProtocolRequest::ProtocolHandshake {
-                protocol_version,
+                jsonrpc,
                 id,
                 params,
             } = request
@@ -688,17 +717,15 @@ async fn run_gateway_socket(
                 break;
             };
             if params.client_id != credential.client_id {
-                let response = gateway::ProtocolResponse::ProtocolHandshake {
-                    protocol_version,
-                    id,
-                    response: gateway::ResponsePayload::Error {
-                        error: protocol_error(
-                            "gateway_client_identity_mismatch",
-                            "Handshake clientId does not match the authenticated credential",
-                            false,
-                        ),
-                    },
-                };
+                let response = json_rpc_error_response(
+                    jsonrpc,
+                    Some(id),
+                    protocol_error(
+                        "gateway_client_identity_mismatch",
+                        "Handshake clientId does not match the authenticated credential",
+                        false,
+                    ),
+                );
                 if !queue_json(&outbound_tx, &response, &mut registration).await {
                     break;
                 }
@@ -708,7 +735,7 @@ async fn run_gateway_socket(
             let device_descriptor = params.device.clone();
             let response_id = id.clone();
             let request = gateway::ProtocolRequest::ProtocolHandshake {
-                protocol_version,
+                jsonrpc: jsonrpc.clone(),
                 id,
                 params,
             };
@@ -720,24 +747,19 @@ async fn run_gateway_socket(
                 response = gateway.dispatch_for_caller_scope(&caller_scope, request) => response,
             };
             let mut succeeded = matches!(
-                &response,
-                gateway::ProtocolResponse::ProtocolHandshake {
-                    response: gateway::ResponsePayload::Ok { .. },
-                    ..
-                }
+                &response.response,
+                gateway::JsonRpcResponsePayload::Ok { .. }
             );
             if succeeded {
                 if let Err(error) = remote_access.update_credential_descriptor(
                     &credential.credential_id,
                     device_descriptor,
                 ) {
-                    response = gateway::ProtocolResponse::ProtocolHandshake {
-                        protocol_version,
-                        id: response_id,
-                        response: gateway::ResponsePayload::Error {
-                            error: error.into_protocol_error(),
-                        },
-                    };
+                    response = json_rpc_error_response(
+                        jsonrpc,
+                        Some(response_id),
+                        error.into_protocol_error(),
+                    );
                     succeeded = false;
                     close_frame = Some(close_message(
                         1008,
@@ -759,22 +781,20 @@ async fn run_gateway_socket(
         }
 
         if let gateway::ProtocolRequest::ProtocolHandshake {
-            protocol_version,
+            jsonrpc,
             id,
             ..
         } = &request
         {
-            let response = gateway::ProtocolResponse::ProtocolHandshake {
-                protocol_version: *protocol_version,
-                id: id.clone(),
-                response: gateway::ResponsePayload::Error {
-                    error: protocol_error(
-                        "gateway_handshake_already_completed",
-                        "protocol.handshake may succeed only once per socket",
-                        false,
-                    ),
-                },
-            };
+            let response = json_rpc_error_response(
+                jsonrpc.clone(),
+                Some(id.clone()),
+                protocol_error(
+                    "gateway_handshake_already_completed",
+                    "protocol.handshake may succeed only once per socket",
+                    false,
+                ),
+            );
             if !queue_json(&outbound_tx, &response, &mut registration).await {
                 break;
             }
@@ -782,23 +802,21 @@ async fn run_gateway_socket(
         }
 
         if let gateway::ProtocolRequest::EventSubscribe {
-            protocol_version,
+            jsonrpc,
             id,
             params,
         } = &request
         {
             if subscribed {
-                let response = gateway::ProtocolResponse::EventSubscribe {
-                    protocol_version: *protocol_version,
-                    id: id.clone(),
-                    response: gateway::ResponsePayload::Error {
-                        error: protocol_error(
-                            "gateway_event_already_subscribed",
-                            "event.subscribe may succeed only once per socket",
-                            false,
-                        ),
-                    },
-                };
+                let response = json_rpc_error_response(
+                    jsonrpc.clone(),
+                    Some(id.clone()),
+                    protocol_error(
+                        "gateway_event_already_subscribed",
+                        "event.subscribe may succeed only once per socket",
+                        false,
+                    ),
+                );
                 if !queue_json(&outbound_tx, &response, &mut registration).await {
                     break;
                 }
@@ -1047,6 +1065,30 @@ fn protocol_error(
         message: message.into(),
         retryable,
         details: None,
+    }
+}
+
+fn json_rpc_error_response(
+    jsonrpc: String,
+    id: Option<gateway::RequestId>,
+    error: gateway::ProtocolError,
+) -> gateway::JsonRpcResponse {
+    let mut data = error.details.unwrap_or_default();
+    data.insert("code".to_string(), serde_json::Value::String(error.code));
+    data.insert(
+        "retryable".to_string(),
+        serde_json::Value::Bool(error.retryable),
+    );
+    gateway::JsonRpcResponse {
+        jsonrpc,
+        id,
+        response: gateway::JsonRpcResponsePayload::Error {
+            error: gateway::RpcError {
+                code: -32000,
+                message: error.message,
+                data: Some(data),
+            },
+        },
     }
 }
 

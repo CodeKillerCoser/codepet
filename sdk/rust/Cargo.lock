@@ -20,6 +20,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "codepet-lan-channel-sdk"
+version = "0.1.0"
+dependencies = [
+ "codepet-core-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "codepet-pet-sdk"
 version = "0.1.0"
 dependencies = [

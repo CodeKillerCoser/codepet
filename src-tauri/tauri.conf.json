@@ -4,7 +4,7 @@
   "version": "0.1.4",
   "identifier": "com.codepet.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run providers:stage:dev && npm run dev",
     "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "npm run build:bundle",
     "frontendDist": "../dist"
@@ -63,7 +63,8 @@
       "resources/sounds/whip-crack.wav": "resources/sounds/whip-crack.wav",
       "resources/sounds/whip-swing.wav": "resources/sounds/whip-swing.wav",
       "resources/sounds/whip-heavy-crack.wav": "resources/sounds/whip-heavy-crack.wav",
-      "resources/provider-plugins/": "provider-plugins/"
+      "resources/provider-plugins/": "provider-plugins/",
+      "resources/provider-sdk/": "provider-sdk/"
     },
     "icon": [
       "icons/icon.icns",

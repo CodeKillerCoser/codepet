@@ -423,8 +423,8 @@ function emitCodecHelpers(writer, includeException) {
 
 function emitProtocolMetadata(writer, pkg, ir) {
   const service = pkg.service;
-  assert(service.kind === "codepet-envelope", `${pkg.id} Dart generator currently supports codepet-envelope services only`);
   writer.line(`const int protocolVersion = ${service.version};`);
+  if (service.kind === "json-rpc-2.0") writer.line(`const String jsonRpcVersion = ${dartString(service.jsonRpcVersion)};`);
   writer.blank();
   writer.block("enum ProtocolIdempotency", () => {
     writer.line("safe,");
@@ -482,7 +482,9 @@ function emitProtocolMetadata(writer, pkg, ir) {
     writer.line("String toJson() => wireName;");
   });
   writer.blank();
-  emitProtocolCodec(writer, pkg, ir);
+  if (service.kind === "codepet-envelope") emitProtocolCodec(writer, pkg, ir);
+  else if (service.kind === "json-rpc-2.0") emitJsonRpcProtocolCodec(writer, pkg, ir);
+  else fail(`${pkg.id} Dart generator does not support service transport ${service.kind}`);
 }
 
 function emitTypedSwitch(writer, entries, selector, typeKey, value, path, ir, mode) {
@@ -498,6 +500,163 @@ function emitTypedSwitch(writer, entries, selector, typeKey, value, path, ir, mo
         writer.line(`return ${encodeExpression(type, value, path, ir)};`);
       }
       writer.indent -= 1;
+    }
+  });
+}
+
+function emitJsonRpcProtocolCodec(writer, pkg, ir) {
+  const service = pkg.service;
+  const cursorField = service.eventCursorField;
+  writer.block("Object _decodeRequestParams(ProtocolMethod method, Object? value, String path)", () => {
+    emitTypedSwitch(writer, service.methods, "method", "requestType", "value", "path", ir, "decode");
+  });
+  writer.blank();
+  writer.block("Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, String path)", () => {
+    emitTypedSwitch(writer, service.methods, "method", "requestType", "value", "path", ir, "encode");
+  });
+  writer.blank();
+  writer.block("Object _decodeResponseResult(ProtocolMethod method, Object? value, String path)", () => {
+    emitTypedSwitch(writer, service.methods, "method", "responseType", "value", "path", ir, "decode");
+  });
+  writer.blank();
+  writer.block("Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, String path)", () => {
+    emitTypedSwitch(writer, service.methods, "method", "responseType", "value", "path", ir, "encode");
+  });
+  writer.blank();
+  writer.block("Object _decodeEventPayload(ProtocolEventName event, Object? value, String path)", () => {
+    emitTypedSwitch(writer, service.events, "event", "payloadType", "value", "path", ir, "decode");
+  });
+  writer.blank();
+  writer.block("Map<String, Object?> _encodeEventPayload(ProtocolEventName event, Object value, String path)", () => {
+    emitTypedSwitch(writer, service.events, "event", "payloadType", "value", "path", ir, "encode");
+  });
+  writer.blank();
+  writer.block("final class ProtocolRequestEnvelope", () => {
+    writer.block("factory ProtocolRequestEnvelope({required RequestId id, required ProtocolMethod method, required Object params})", () => {
+      writer.line(`final checkedId = ${validateExpression(service.requestIdType, "id", dartString("id"), ir)};`);
+      writer.line("_encodeRequestParams(method, params, 'params');");
+      writer.line("return ProtocolRequestEnvelope._(id: checkedId, method: method, params: params);");
+    });
+    writer.blank();
+    writer.line("const ProtocolRequestEnvelope._({required this.id, required this.method, required this.params});");
+    writer.line("final RequestId id;");
+    writer.line("final ProtocolMethod method;");
+    writer.line("final Object params;");
+    writer.blank();
+    writer.block("factory ProtocolRequestEnvelope.fromJson(Object? value, {String path = 'ProtocolRequestEnvelope'})", () => {
+      writer.line("final json = _object(value, path);");
+      writer.line("_expectKeys(json, const {'jsonrpc', 'id', 'method', 'params'}, path);");
+      writer.line("if (_string(_required(json, 'jsonrpc', path), '$path.jsonrpc') != jsonRpcVersion) throw ProtocolCodecException('$path.jsonrpc', 'expected JSON-RPC 2.0');");
+      writer.line("final method = ProtocolMethod.fromJson(_required(json, 'method', path), path: '$path.method');");
+      writer.line(`return ProtocolRequestEnvelope(id: ${decodeExpression(service.requestIdType, "_required(json, 'id', path)", "'$path.id'", ir)}, method: method, params: _decodeRequestParams(method, _required(json, 'params', path), '$path.params'));`);
+    });
+    writer.blank();
+    writer.line("Map<String, Object?> toJson() => {'jsonrpc': jsonRpcVersion, 'id': id, 'method': method.toJson(), 'params': _encodeRequestParams(method, params, 'params')};");
+  });
+  writer.blank();
+  writer.block("sealed class ProtocolResponsePayload", () => writer.line("const ProtocolResponsePayload();"));
+  writer.blank();
+  writer.block("final class ProtocolSuccess extends ProtocolResponsePayload", () => {
+    writer.line("const ProtocolSuccess(this.result);");
+    writer.line("final Object result;");
+  });
+  writer.blank();
+  writer.block("final class ProtocolFailure extends ProtocolResponsePayload", () => {
+    writer.line("const ProtocolFailure(this.error);");
+    writer.line("final RpcError error;");
+  });
+  writer.blank();
+  writer.block("final class ProtocolResponseEnvelope", () => {
+    writer.block("factory ProtocolResponseEnvelope({required RequestId id, required ProtocolMethod method, required ProtocolResponsePayload response})", () => {
+      writer.line(`final checkedId = ${validateExpression(service.requestIdType, "id", dartString("id"), ir)};`);
+      writer.line("if (response is ProtocolSuccess) _encodeResponseResult(method, response.result, 'result');");
+      writer.line("return ProtocolResponseEnvelope._(id: checkedId, method: method, response: response);");
+    });
+    writer.blank();
+    writer.line("const ProtocolResponseEnvelope._({required this.id, required this.method, required this.response});");
+    writer.line("final RequestId id;");
+    writer.line("final ProtocolMethod method;");
+    writer.line("final ProtocolResponsePayload response;");
+    writer.blank();
+    writer.block("factory ProtocolResponseEnvelope.fromJson(Object? value, {required ProtocolMethod method, String path = 'ProtocolResponseEnvelope'})", () => {
+      writer.line("final json = _object(value, path);");
+      writer.line("if (_string(_required(json, 'jsonrpc', path), '$path.jsonrpc') != jsonRpcVersion) throw ProtocolCodecException('$path.jsonrpc', 'expected JSON-RPC 2.0');");
+      writer.line("final hasResult = json.containsKey('result');");
+      writer.line("final hasError = json.containsKey('error');");
+      writer.line("if (hasResult == hasError) throw ProtocolCodecException(path, 'response must contain exactly one of result or error');");
+      writer.line("_expectKeys(json, hasResult ? const {'jsonrpc', 'id', 'result'} : const {'jsonrpc', 'id', 'error'}, path);");
+      writer.line("final response = hasResult ? ProtocolSuccess(_decodeResponseResult(method, _required(json, 'result', path), '$path.result')) : ProtocolFailure(RpcError.fromJson(_required(json, 'error', path), path: '$path.error'));");
+      writer.line(`return ProtocolResponseEnvelope(id: ${decodeExpression(service.requestIdType, "_required(json, 'id', path)", "'$path.id'", ir)}, method: method, response: response);`);
+    });
+    writer.blank();
+    writer.block("Map<String, Object?> toJson()", () => {
+      writer.line("return switch (response) {");
+      writer.line("  ProtocolSuccess(:final result) => {'jsonrpc': jsonRpcVersion, 'id': id, 'result': _encodeResponseResult(method, result, 'result')},");
+      writer.line("  ProtocolFailure(:final error) => {'jsonrpc': jsonRpcVersion, 'id': id, 'error': error.toJson()},");
+      writer.line("};");
+    });
+  });
+  writer.blank();
+  writer.block("final class ProtocolEventEnvelope", () => {
+    writer.block("factory ProtocolEventEnvelope({required EventCursor eventCursor, required ProtocolEventName event, required Object payload})", () => {
+      writer.line(`final checkedCursor = ${validateExpression(service.eventCursorType, "eventCursor", dartString(cursorField), ir)};`);
+      writer.line("_encodeEventPayload(event, payload, 'params.payload');");
+      writer.line("return ProtocolEventEnvelope._(eventCursor: checkedCursor, event: event, payload: payload);");
+    });
+    writer.blank();
+    writer.line("const ProtocolEventEnvelope._({required this.eventCursor, required this.event, required this.payload});");
+    writer.line("final EventCursor eventCursor;");
+    writer.line("final ProtocolEventName event;");
+    writer.line("final Object payload;");
+    writer.blank();
+    writer.block("factory ProtocolEventEnvelope.fromJson(Object? value, {String path = 'ProtocolEventEnvelope'})", () => {
+      writer.line("final json = _object(value, path);");
+      writer.line("_expectKeys(json, const {'jsonrpc', 'method', 'params'}, path);");
+      writer.line("if (_string(_required(json, 'jsonrpc', path), '$path.jsonrpc') != jsonRpcVersion) throw ProtocolCodecException('$path.jsonrpc', 'expected JSON-RPC 2.0');");
+      writer.line("final event = ProtocolEventName.fromJson(_required(json, 'method', path), path: '$path.method');");
+      writer.line("final params = _object(_required(json, 'params', path), '$path.params');");
+      writer.line(`_expectKeys(params, const {${dartString(cursorField)}, 'payload'}, '$path.params');`);
+      writer.line(`return ProtocolEventEnvelope(eventCursor: ${decodeExpression(service.eventCursorType, `_required(params, ${dartString(cursorField)}, '$path.params')`, `'$path.params.${cursorField}'`, ir)}, event: event, payload: _decodeEventPayload(event, _required(params, 'payload', '$path.params'), '$path.params.payload'));`);
+    });
+    writer.blank();
+    writer.line(`Map<String, Object?> toJson() => {'jsonrpc': jsonRpcVersion, 'method': event.toJson(), 'params': {${dartString(cursorField)}: eventCursor, 'payload': _encodeEventPayload(event, payload, 'params.payload')}};`);
+  });
+  writer.blank();
+  writer.line("ProtocolRequestEnvelope decodeProtocolRequest(String source) => ProtocolRequestEnvelope.fromJson(jsonDecode(source));");
+  writer.line("String encodeProtocolRequest(ProtocolRequestEnvelope value) => jsonEncode(value.toJson());");
+  writer.line("ProtocolResponseEnvelope decodeProtocolResponse(String source, {required ProtocolMethod method}) => ProtocolResponseEnvelope.fromJson(jsonDecode(source), method: method);");
+  writer.line("String encodeProtocolResponse(ProtocolResponseEnvelope value) => jsonEncode(value.toJson());");
+  writer.line("ProtocolEventEnvelope decodeProtocolEvent(String source) => ProtocolEventEnvelope.fromJson(jsonDecode(source));");
+  writer.line("String encodeProtocolEvent(ProtocolEventEnvelope value) => jsonEncode(value.toJson());");
+  writer.blank();
+  writer.block("abstract interface class ProtocolTransport", () => writer.line("Future<Object?> request(Map<String, Object?> request);"));
+  writer.blank();
+  writer.block("final class ProtocolRemoteException implements Exception", () => {
+    writer.line("const ProtocolRemoteException(this.error);");
+    writer.line("final RpcError error;");
+    writer.line("@override");
+    writer.line("String toString() => 'ProtocolRemoteException(${error.code}): ${error.message}';");
+  });
+  writer.blank();
+  writer.block("final class ProtocolClient", () => {
+    writer.line("const ProtocolClient(this.transport, {required this.requestIdFactory});");
+    writer.line("final ProtocolTransport transport;");
+    writer.line("final RequestId Function() requestIdFactory;");
+    writer.blank();
+    writer.block("Future<TResponse> _request<TResponse>(ProtocolMethod method, Object request) async", () => {
+      writer.line("final id = requestIdFactory();");
+      writer.line("final envelope = ProtocolRequestEnvelope(id: id, method: method, params: request);");
+      writer.line("final response = ProtocolResponseEnvelope.fromJson(await transport.request(envelope.toJson()), method: method);");
+      writer.line("if (response.id != id) throw ProtocolCodecException('id', 'response id does not match request id');");
+      writer.line("return switch (response.response) {");
+      writer.line("  ProtocolSuccess(:final result) when result is TResponse => result as TResponse,");
+      writer.line("  ProtocolSuccess() => throw ProtocolCodecException('result', 'response result has the wrong generated type'),");
+      writer.line("  ProtocolFailure(:final error) => throw ProtocolRemoteException(error),");
+      writer.line("};");
+    });
+    for (const method of service.methods) {
+      writer.blank();
+      writer.line(`Future<${method.responseType.name}> ${camelCase(method.name)}(${method.requestType.name} request) => _request<${method.responseType.name}>(ProtocolMethod.${camelCase(method.name)}, request);`);
     }
   });
 }

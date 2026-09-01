@@ -1,4 +1,5 @@
 use codepet_gateway_sdk as gateway;
+use codepet_lan_channel_sdk as lan;
 use codepet_host::{
     DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor,
     PluginInstanceConfig, PluginManager, PluginManagerConfig, PluginProcessOptions,
@@ -104,7 +105,10 @@ impl TestHost {
         let gateway = Arc::new(
             ProviderGatewayService::with_remote_identity(
                 manager.clone(),
-                remote_access.remote_host_identity(),
+                gateway::GatewayHostIdentity {
+                    device_id: remote_access.remote_host_identity().device_id,
+                    descriptor: remote_access.remote_host_identity().descriptor,
+                },
             )
             .unwrap(),
         );
@@ -244,7 +248,7 @@ impl PinnedTlsClient {
     ) -> Result<TestWebSocket, WebSocketError> {
         let tls = self.connect_tls().await;
         let mut request = format!(
-            "wss://localhost:{}/remote/v1/gateway",
+            "wss://localhost:{}/remote/v2/gateway",
             self.address.port()
         )
         .into_client_request()
@@ -261,12 +265,12 @@ async fn pair_client(
     remote_access: &RemoteAccessManager,
     client: &PinnedTlsClient,
     client_id: &str,
-) -> gateway::PairingExchangeResponse {
+) -> lan::PairingExchangeResponse {
     let pairing = remote_access.begin_pairing().unwrap();
     let pairing_id = pairing.pairing_id.clone();
     let pairing_watch = remote_access.subscribe_pairing_state();
     assert!(pairing_watch.borrow().pairing_available);
-    let request = gateway::PairingExchangeRequest {
+    let request = lan::PairingExchangeRequest {
         pairing_secret: pairing.pairing_secret,
         client_id: client_id.to_string(),
         device: client_descriptor(client_id, "1.0"),
@@ -295,7 +299,7 @@ fn handshake_request_with_descriptor(
     device: gateway::DeviceDescriptor,
 ) -> gateway::ProtocolRequest {
     gateway::ProtocolRequest::ProtocolHandshake {
-        protocol_version: gateway::PROTOCOL_VERSION,
+        jsonrpc: "2.0".to_string(),
         id: id.to_string(),
         params: gateway::HandshakeRequest {
             client_id: client_id.to_string(),
@@ -349,22 +353,31 @@ async fn next_value(socket: &mut TestWebSocket) -> serde_json::Value {
 async fn next_response(
     socket: &mut TestWebSocket,
     expected_id: &str,
-) -> gateway::ProtocolResponse {
+) -> gateway::JsonRpcResponse {
     let value = next_value(socket).await;
     assert_eq!(value.get("id").and_then(|id| id.as_str()), Some(expected_id));
     serde_json::from_value(value).unwrap()
 }
 
+fn response_result<T: serde::de::DeserializeOwned>(response: gateway::JsonRpcResponse) -> T {
+    let gateway::JsonRpcResponsePayload::Ok { result } = response.response else {
+        panic!("expected successful JSON-RPC response");
+    };
+    serde_json::from_value(result).unwrap()
+}
+
+fn response_error_code(response: gateway::JsonRpcResponse) -> String {
+    let gateway::JsonRpcResponsePayload::Error { error } = response.response else {
+        panic!("expected JSON-RPC error response");
+    };
+    error
+        .data
+        .and_then(|data| data.get("code").and_then(serde_json::Value::as_str).map(str::to_string))
+        .unwrap_or_else(|| error.code.to_string())
+}
+
 fn event_cursor(event: &gateway::ProtocolEvent) -> &str {
-    match event {
-        gateway::ProtocolEvent::DeviceStatusChanged { event_cursor, .. }
-        | gateway::ProtocolEvent::ProviderStatusChanged { event_cursor, .. }
-        | gateway::ProtocolEvent::ConversationUpserted { event_cursor, .. }
-        | gateway::ProtocolEvent::TurnUpserted { event_cursor, .. }
-        | gateway::ProtocolEvent::TurnOutputDelta { event_cursor, .. }
-        | gateway::ProtocolEvent::ApprovalRequested { event_cursor, .. }
-        | gateway::ProtocolEvent::ApprovalResolved { event_cursor, .. } => event_cursor,
-    }
+    event.event_cursor()
 }
 
 fn cursor_sequence(cursor: &str) -> u64 {
@@ -375,7 +388,7 @@ async fn collect_response_and_events(
     socket: &mut TestWebSocket,
     response_id: &str,
     event_count: usize,
-) -> (gateway::ProtocolResponse, Vec<gateway::ProtocolEvent>) {
+) -> (gateway::JsonRpcResponse, Vec<gateway::ProtocolEvent>) {
     let mut response = None;
     let mut events = Vec::new();
     while response.is_none() || events.len() < event_count {
@@ -475,7 +488,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     assert_eq!(
         wildcard_server.gateway_url(),
         Some(format!(
-            "wss://listener.local:{}/remote/v1/gateway",
+            "wss://listener.local:{}/remote/v2/gateway",
             wildcard_server.port()
         ))
     );
@@ -499,7 +512,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     );
     assert_eq!(
         server.gateway_url(),
-        Some(format!("wss://127.0.0.1:{}/remote/v1/gateway", server.port()))
+        Some(format!("wss://127.0.0.1:{}/remote/v2/gateway", server.port()))
     );
     let address = server.local_addr();
     let gateway_url = server.gateway_url().unwrap();
@@ -509,7 +522,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     let staged = server.stage_advertised_host("127.0.0.2").unwrap();
     assert_eq!(server.advertised_host().as_deref(), Some("127.0.0.1"));
     let staged_pairing = host.remote_access.begin_pairing().unwrap();
-    let staged_request = gateway::PairingExchangeRequest {
+    let staged_request = lan::PairingExchangeRequest {
         pairing_secret: staged_pairing.pairing_secret,
         client_id: "client-generation-test".to_string(),
         device: client_descriptor("client-generation-test", "1.0"),
@@ -528,11 +541,11 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         )
         .await;
     assert_eq!(staged_status, 200);
-    let staged_response: gateway::PairingExchangeResponse =
+    let staged_response: lan::PairingExchangeResponse =
         serde_json::from_value(staged_response).unwrap();
     assert_eq!(
         staged_response.gateway_url,
-        format!("wss://127.0.0.2:{}/remote/v1/gateway", server.port())
+        format!("wss://127.0.0.2:{}/remote/v2/gateway", server.port())
     );
     assert_eq!(server.advertised_host().as_deref(), Some("127.0.0.1"));
     staged.commit().unwrap();
@@ -551,7 +564,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         "/remote/v1/pairings/{}/exchange",
         unavailable_pairing.pairing_id
     );
-    let unavailable_request = gateway::PairingExchangeRequest {
+    let unavailable_request = lan::PairingExchangeRequest {
         pairing_secret: unavailable_pairing.pairing_secret,
         client_id: "client-unavailable".to_string(),
         device: client_descriptor("client-unavailable", "1.0"),
@@ -624,17 +637,12 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         ),
     )
     .await;
-    let handshake = next_response(&mut socket_a, "handshake-a").await;
-    let gateway::ProtocolResponse::ProtocolHandshake {
-        response: gateway::ResponsePayload::Ok { result: handshake },
-        ..
-    } = handshake
-    else {
-        panic!("expected successful authenticated handshake");
-    };
+    let handshake: gateway::HandshakeResponse =
+        response_result(next_response(&mut socket_a, "handshake-a").await);
     let certificate_fingerprint = hex_sha256(&certificate_der);
-    assert_eq!(handshake.device.identity_fingerprint, certificate_fingerprint);
-    assert_eq!(handshake.device, pairing_a.device);
+    assert_eq!(pairing_a.device.identity_fingerprint, certificate_fingerprint);
+    assert_eq!(handshake.device.device_id, pairing_a.device.device_id);
+    assert_eq!(handshake.device.descriptor, pairing_a.device.descriptor);
     assert_eq!(
         handshake.device.descriptor,
         gateway::DeviceDescriptor {
@@ -667,7 +675,13 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         .send(Message::Text("{".to_string()))
         .await
         .unwrap();
-    assert_close_reason(&mut malformed, "invalid_gateway_json").await;
+    let malformed_response: gateway::JsonRpcResponse =
+        serde_json::from_value(next_value(&mut malformed).await).unwrap();
+    let gateway::JsonRpcResponsePayload::Error { error } = malformed_response.response else {
+        panic!("expected JSON-RPC parse error");
+    };
+    assert_eq!(error.code, gateway::JSON_RPC_PARSE_ERROR);
+    assert_close_reason(&mut malformed, "protocol_handshake_required").await;
 
     let mut missing_handshake = client
         .connect_websocket(&pairing_a.credential)
@@ -676,7 +690,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     send_request(
         &mut missing_handshake,
         gateway::ProtocolRequest::DeviceList {
-            protocol_version: gateway::PROTOCOL_VERSION,
+            jsonrpc: "2.0".to_string(),
             id: "before-handshake".to_string(),
             params: gateway::DeviceListRequest {},
         },
@@ -717,19 +731,13 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     )
     .await;
     let stalled_handshake = next_response(&mut stalled, "handshake-stalled").await;
-    assert!(matches!(
-        stalled_handshake,
-        gateway::ProtocolResponse::ProtocolHandshake {
-            response: gateway::ResponsePayload::Ok { .. },
-            ..
-        }
-    ));
+    let _: gateway::HandshakeResponse = response_result(stalled_handshake);
     wait_for_active_sessions(&server, 2).await;
     let large_id_tail = "x".repeat(248 * 1024);
     let mut backpressure_requests_sent = 0;
     for sequence in 0..128 {
         let request = gateway::ProtocolRequest::DeviceList {
-            protocol_version: gateway::PROTOCOL_VERSION,
+            jsonrpc: "2.0".to_string(),
             id: format!("backpressure-{sequence}-{large_id_tail}"),
             params: gateway::DeviceListRequest {},
         };
@@ -745,7 +753,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     send_request(
         &mut socket_a,
         gateway::ProtocolRequest::DeviceList {
-            protocol_version: gateway::PROTOCOL_VERSION,
+            jsonrpc: "2.0".to_string(),
             id: "healthy-during-backpressure".to_string(),
             params: gateway::DeviceListRequest {},
         },
@@ -753,20 +761,14 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     .await;
     let healthy_during_backpressure =
         next_response(&mut socket_a, "healthy-during-backpressure").await;
-    assert!(matches!(
-        healthy_during_backpressure,
-        gateway::ProtocolResponse::DeviceList {
-            response: gateway::ResponsePayload::Ok { .. },
-            ..
-        }
-    ));
+    let _: gateway::DeviceListResponse = response_result(healthy_during_backpressure);
     wait_for_active_sessions(&server, 1).await;
     drop(stalled);
 
     send_request(
         &mut socket_a,
         gateway::ProtocolRequest::ConversationList {
-            protocol_version: gateway::PROTOCOL_VERSION,
+            jsonrpc: "2.0".to_string(),
             id: "list-a".to_string(),
             params: gateway::ConversationListRequest {
                 route: Some(gateway::GatewayProviderRoute {
@@ -780,20 +782,14 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         },
     )
     .await;
-    let list = next_response(&mut socket_a, "list-a").await;
-    let gateway::ProtocolResponse::ConversationList {
-        response: gateway::ResponsePayload::Ok { result: list },
-        ..
-    } = list
-    else {
-        panic!("expected conversation.list response");
-    };
+    let list: gateway::ConversationListResponse =
+        response_result(next_response(&mut socket_a, "list-a").await);
     assert_eq!(list.conversations.len(), 1);
 
     send_request(
         &mut socket_a,
         gateway::ProtocolRequest::ConversationGet {
-            protocol_version: gateway::PROTOCOL_VERSION,
+            jsonrpc: "2.0".to_string(),
             id: "get-a".to_string(),
             params: gateway::ConversationGetRequest {
                 conversation: conversation_resource("ordinary"),
@@ -801,20 +797,14 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         },
     )
     .await;
-    let get = next_response(&mut socket_a, "get-a").await;
-    let gateway::ProtocolResponse::ConversationGet {
-        response: gateway::ResponsePayload::Ok { result: get },
-        ..
-    } = get
-    else {
-        panic!("expected conversation.get response");
-    };
+    let get: gateway::ConversationGetResponse =
+        response_result(next_response(&mut socket_a, "get-a").await);
     assert_eq!(get.conversation.resource.native_resource_id, "ordinary");
 
     send_request(
         &mut socket_a,
         gateway::ProtocolRequest::ConversationGet {
-            protocol_version: gateway::PROTOCOL_VERSION,
+            jsonrpc: "2.0".to_string(),
             id: "pre-subscribe-event".to_string(),
             params: gateway::ConversationGetRequest {
                 conversation: conversation_resource("event-first"),
@@ -830,7 +820,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     send_request(
         &mut socket_a,
         gateway::ProtocolRequest::EventSubscribe {
-            protocol_version: gateway::PROTOCOL_VERSION,
+            jsonrpc: "2.0".to_string(),
             id: "subscribe-a".to_string(),
             params: gateway::EventSubscribeRequest {
                 after_cursor: initial_cursor,
@@ -839,13 +829,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     )
     .await;
     let subscribed = next_response(&mut socket_a, "subscribe-a").await;
-    assert!(matches!(
-        subscribed,
-        gateway::ProtocolResponse::EventSubscribe {
-            response: gateway::ResponsePayload::Ok { .. },
-            ..
-        }
-    ));
+    let _: gateway::EventSubscribeResponse = response_result(subscribed);
     let replay_one: gateway::ProtocolEvent = serde_json::from_value(next_value(&mut socket_a).await).unwrap();
     let replay_two: gateway::ProtocolEvent = serde_json::from_value(next_value(&mut socket_a).await).unwrap();
     let replay_sequences = [
@@ -857,7 +841,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     send_request(
         &mut socket_a,
         gateway::ProtocolRequest::ConversationGet {
-            protocol_version: gateway::PROTOCOL_VERSION,
+            jsonrpc: "2.0".to_string(),
             id: "live-event-a".to_string(),
             params: gateway::ConversationGetRequest {
                 conversation: conversation_resource("event-first"),
@@ -876,7 +860,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     send_request(
         &mut socket_a,
         gateway::ProtocolRequest::EventSubscribe {
-            protocol_version: gateway::PROTOCOL_VERSION,
+            jsonrpc: "2.0".to_string(),
             id: "subscribe-a-again".to_string(),
             params: gateway::EventSubscribeRequest {
                 after_cursor: event_cursor(live_events.last().unwrap()).to_string(),
@@ -885,14 +869,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     )
     .await;
     let duplicate = next_response(&mut socket_a, "subscribe-a-again").await;
-    let gateway::ProtocolResponse::EventSubscribe {
-        response: gateway::ResponsePayload::Error { error },
-        ..
-    } = duplicate
-    else {
-        panic!("expected duplicate event.subscribe rejection");
-    };
-    assert_eq!(error.code, "gateway_event_already_subscribed");
+    assert_eq!(response_error_code(duplicate), "gateway_event_already_subscribed");
 
     let descriptor_before_mismatch = host.remote_access
         .list_credentials()
@@ -911,14 +888,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     )
     .await;
     let mismatch_response = next_response(&mut mismatch, "handshake-mismatch").await;
-    let gateway::ProtocolResponse::ProtocolHandshake {
-        response: gateway::ResponsePayload::Error { error },
-        ..
-    } = mismatch_response
-    else {
-        panic!("expected clientId mismatch rejection");
-    };
-    assert_eq!(error.code, "gateway_client_identity_mismatch");
+    assert_eq!(response_error_code(mismatch_response), "gateway_client_identity_mismatch");
     assert_close_reason(&mut mismatch, "gateway_client_identity_mismatch").await;
     assert_eq!(
         host.remote_access
@@ -938,18 +908,12 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         .unwrap();
     send_request(&mut socket_b, handshake_request("handshake-b", "client-b")).await;
     let handshake_b = next_response(&mut socket_b, "handshake-b").await;
-    let gateway::ProtocolResponse::ProtocolHandshake {
-        response: gateway::ResponsePayload::Ok { .. },
-        ..
-    } = handshake_b
-    else {
-        panic!("expected second client handshake");
-    };
+    let _: gateway::HandshakeResponse = response_result(handshake_b);
 
     send_request(
         &mut socket_a,
         gateway::ProtocolRequest::ConversationGet {
-            protocol_version: gateway::PROTOCOL_VERSION,
+            jsonrpc: "2.0".to_string(),
             id: "client-a-only".to_string(),
             params: gateway::ConversationGetRequest {
                 conversation: conversation_resource("event-first"),
@@ -967,7 +931,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     send_request(
         &mut socket_b,
         gateway::ProtocolRequest::EventSubscribe {
-            protocol_version: gateway::PROTOCOL_VERSION,
+            jsonrpc: "2.0".to_string(),
             id: "subscribe-b".to_string(),
             params: gateway::EventSubscribeRequest {
                 after_cursor: latest_cursor,
@@ -976,18 +940,12 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     )
     .await;
     let subscribed_b = next_response(&mut socket_b, "subscribe-b").await;
-    assert!(matches!(
-        subscribed_b,
-        gateway::ProtocolResponse::EventSubscribe {
-            response: gateway::ResponsePayload::Ok { .. },
-            ..
-        }
-    ));
+    let _: gateway::EventSubscribeResponse = response_result(subscribed_b);
 
     send_request(
         &mut socket_a,
         gateway::ProtocolRequest::ConversationGet {
-            protocol_version: gateway::PROTOCOL_VERSION,
+            jsonrpc: "2.0".to_string(),
             id: "shared-event-source-a".to_string(),
             params: gateway::ConversationGetRequest {
                 conversation: conversation_resource("event-first"),
@@ -1014,13 +972,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     )
     .await;
     let handshake_a_second = next_response(&mut socket_a_second, "handshake-a-second").await;
-    assert!(matches!(
-        handshake_a_second,
-        gateway::ProtocolResponse::ProtocolHandshake {
-            response: gateway::ResponsePayload::Ok { .. },
-            ..
-        }
-    ));
+    let _: gateway::HandshakeResponse = response_result(handshake_a_second);
     wait_for_active_sessions(&server, 3).await;
     let credential_a = host
         .remote_access
@@ -1047,7 +999,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         )
         .await;
     assert_eq!(delete_status, 200);
-    let deleted: gateway::CurrentCredentialDeleteResponse =
+    let deleted: lan::CurrentCredentialDeleteResponse =
         serde_json::from_value(delete_body).unwrap();
     assert!(deleted.revoked);
     assert_close_reason(&mut socket_a, "credential_revoked").await;
@@ -1071,20 +1023,14 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     send_request(
         &mut socket_b,
         gateway::ProtocolRequest::DeviceList {
-            protocol_version: gateway::PROTOCOL_VERSION,
+            jsonrpc: "2.0".to_string(),
             id: "client-b-still-active".to_string(),
             params: gateway::DeviceListRequest {},
         },
     )
     .await;
     let client_b_active = next_response(&mut socket_b, "client-b-still-active").await;
-    assert!(matches!(
-        client_b_active,
-        gateway::ProtocolResponse::DeviceList {
-            response: gateway::ResponsePayload::Ok { .. },
-            ..
-        }
-    ));
+    let _: gateway::DeviceListResponse = response_result(client_b_active);
 
     let pairing_c = pair_client(host.remote_access.as_ref(), &client, "client-c").await;
     let mut socket_c_first = client

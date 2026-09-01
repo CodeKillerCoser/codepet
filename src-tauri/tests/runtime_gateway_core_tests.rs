@@ -672,14 +672,14 @@ async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desk
         loop {
             let event = plugin_events.next_event().await.unwrap();
             if let codepet_host::gateway_sdk::ProtocolEvent::ConversationUpserted {
-                payload,
+                params,
                 ..
             } = event
             {
-                if payload.conversation.resource.native_resource_id
+                if params.payload.conversation.resource.native_resource_id
                     == "conversation-event-first"
                 {
-                    return payload.conversation.resource;
+                    return params.payload.conversation.resource;
                 }
             }
         }

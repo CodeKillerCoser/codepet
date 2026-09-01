@@ -18,7 +18,7 @@ use codepet_provider_sdk::{
     InstanceCreateResponse, InstanceDestroyRequest, InstanceDestroyResponse,
     InstanceStartRequest, InstanceStartResponse, InstanceStatus, InstanceStatusChangedEvent,
     HarnessDescriptor, InstanceStopRequest, InstanceStopResponse, PageInfo, ProtocolError, ProtocolEvent,
-    ProtocolFuture, ProtocolServer, ProviderApproval, ProviderCapabilities,
+    ProtocolFuture, Provider, ProviderApproval, ProviderCapabilities,
     ProviderDescribeRequest, ProviderDescribeResponse, ProviderInitializeRequest,
     ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute,
     ProviderPluginDescriptor, ProviderShutdownRequest, ProviderShutdownResponse,
@@ -49,18 +49,7 @@ struct OpenCodeInstanceSettings {
     workspace_root: Option<PathBuf>,
 }
 
-pub trait ProviderEventSink: Send + Sync + 'static {
-    fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError>;
-}
-
-impl<F> ProviderEventSink for F
-where
-    F: Fn(ProtocolEvent) -> Result<(), ProtocolError> + Send + Sync + 'static,
-{
-    fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError> {
-        self(event)
-    }
-}
+use codepet_provider_sdk::ProviderEventSink;
 
 #[derive(Clone)]
 struct PendingApproval {
@@ -813,7 +802,7 @@ impl OpenCodeProvider {
     }
 }
 
-impl ProtocolServer for OpenCodeProvider {
+impl Provider for OpenCodeProvider {
     fn provider_initialize<'a>(
         &'a self,
         request: ProviderInitializeRequest,

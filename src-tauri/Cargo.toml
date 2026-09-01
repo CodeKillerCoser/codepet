@@ -21,6 +21,7 @@ axum = "0.7"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 codepet-gateway-sdk = { path = "../sdk/rust/codepet-gateway-sdk", version = "0.1.0" }
+codepet-lan-channel-sdk = { path = "../sdk/rust/codepet-lan-channel-sdk", version = "0.1.0" }
 codepet-host = { path = "../crates/codepet-host", version = "0.1.0" }
 dirs = "5"
 hmac = "0.12"

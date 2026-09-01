@@ -1,0 +1,9 @@
+{
+  "pairingSecret": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+  "clientId": "remote-client-phone-1",
+  "device": {
+    "deviceName": "Alice's Pixel",
+    "operatingSystem": "Android",
+    "systemVersion": "16"
+  }
+}

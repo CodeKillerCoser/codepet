@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/channel/lan/v1/schema.json",
+  "title": "CodePet LAN Channel Contract v1",
+  "$defs": {
+    "CurrentCredentialDeleteResponse": {
+      "type": "object",
+      "properties": { "revoked": { "type": "boolean" } },
+      "required": ["revoked"],
+      "additionalProperties": false
+    },
+    "LanHostIdentity": {
+      "type": "object",
+      "properties": {
+        "deviceId": { "$ref": "../../../core/v1/schema.json#/$defs/DeviceId" },
+        "descriptor": { "$ref": "../../../core/v1/schema.json#/$defs/DeviceDescriptor" },
+        "identityFingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "required": ["deviceId", "descriptor", "identityFingerprint"],
+      "additionalProperties": false
+    },
+    "PairingExchangeRequest": {
+      "type": "object",
+      "properties": {
+        "pairingSecret": { "type": "string", "pattern": "^[0-9a-f]{64}$", "x-codepet-sensitive": true },
+        "clientId": { "$ref": "../../../core/v1/schema.json#/$defs/ClientId" },
+        "device": { "$ref": "../../../core/v1/schema.json#/$defs/DeviceDescriptor" }
+      },
+      "required": ["pairingSecret", "clientId", "device"],
+      "additionalProperties": false
+    },
+    "PairingExchangeResponse": {
+      "type": "object",
+      "properties": {
+        "device": { "$ref": "#/$defs/LanHostIdentity" },
+        "gatewayUrl": { "type": "string", "minLength": 1 },
+        "credential": { "type": "string", "minLength": 1, "x-codepet-sensitive": true }
+      },
+      "required": ["device", "gatewayUrl", "credential"],
+      "additionalProperties": false
+    },
+    "PairingQrPayload": {
+      "type": "object",
+      "properties": {
+        "version": { "type": "integer", "minimum": 1, "maximum": 1 },
+        "hostDeviceId": { "$ref": "../../../core/v1/schema.json#/$defs/DeviceId" },
+        "displayName": { "type": "string", "minLength": 1 },
+        "httpsBaseUrl": { "type": "string", "minLength": 1 },
+        "certSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "pairingId": { "type": "string", "minLength": 1 },
+        "pairingSecret": { "type": "string", "pattern": "^[0-9a-f]{64}$", "x-codepet-sensitive": true },
+        "expiresAt": { "$ref": "../../../core/v1/schema.json#/$defs/TimestampMs" }
+      },
+      "required": ["version", "hostDeviceId", "displayName", "httpsBaseUrl", "certSha256", "pairingId", "pairingSecret", "expiresAt"],
+      "additionalProperties": false
+    }
+  }
+}

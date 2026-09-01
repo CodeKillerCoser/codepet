@@ -33,6 +33,7 @@
       "publicTypes": [
         "ClientId",
         "Cursor",
+        "DeviceDescriptor",
         "DeviceId",
         "EventCursor",
         "EventSequence",
@@ -92,9 +93,39 @@
         "PairingQrPayload"
       ],
       "outputs": {
+        "rust": "sdk/rust/codepet-gateway-sdk/src/v1.rs",
+        "typescript": "sdk/typescript/codepet-gateway-sdk/src/generated.ts"
+      }
+    },
+    {
+      "id": "gateway-v2",
+      "layer": "gateway",
+      "version": 2,
+      "schema": "gateway/v2/schema.json",
+      "manifest": "gateway/v2/manifest.json",
+      "dependencies": ["core-v1"],
+      "outputs": {
         "rust": "sdk/rust/codepet-gateway-sdk/src/generated.rs",
-        "typescript": "sdk/typescript/codepet-gateway-sdk/src/generated.ts",
         "dart": "sdk/dart/codepet-gateway-sdk/lib/src/generated.dart"
+      }
+    },
+    {
+      "id": "channel-lan-v1",
+      "layer": "channel",
+      "version": 1,
+      "schema": "channel/lan/v1/schema.json",
+      "manifest": "channel/lan/v1/manifest.json",
+      "dependencies": ["core-v1"],
+      "publicTypes": [
+        "CurrentCredentialDeleteResponse",
+        "LanHostIdentity",
+        "PairingExchangeRequest",
+        "PairingExchangeResponse",
+        "PairingQrPayload"
+      ],
+      "outputs": {
+        "rust": "sdk/rust/codepet-lan-channel-sdk/src/generated.rs",
+        "dart": "sdk/dart/codepet-lan-channel-sdk/lib/src/generated.dart"
       }
     },
     {

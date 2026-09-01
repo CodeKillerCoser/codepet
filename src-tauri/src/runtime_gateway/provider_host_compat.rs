@@ -99,45 +99,31 @@ impl CompatProviderGateway {
     ) -> Result<Option<compat::ProtocolEvent>, compat::ProtocolError> {
         let mapped = match event {
             gateway::ProtocolEvent::DeviceStatusChanged { .. } => return Ok(None),
-            gateway::ProtocolEvent::ProviderStatusChanged {
-                event_cursor,
-                payload,
-                ..
-            } => compat::ProtocolEvent::ProviderStatusChanged {
+            gateway::ProtocolEvent::ProviderStatusChanged { params, .. } => compat::ProtocolEvent::ProviderStatusChanged {
                 protocol_version: compat::PROTOCOL_VERSION,
-                event_sequence: event_sequence(&event_cursor)?,
+                event_sequence: event_sequence(&params.event_cursor)?,
                 payload: compat::ProviderStatusChangedEvent {
-                    provider: map_provider(payload.provider),
-                    previous_status: payload.previous_status.map(map_provider_status),
+                    provider: map_provider(params.payload.provider),
+                    previous_status: params.payload.previous_status.map(map_provider_status),
                 },
             },
-            gateway::ProtocolEvent::ConversationUpserted {
-                event_cursor,
-                payload,
-                ..
-            } => compat::ProtocolEvent::ConversationUpserted {
+            gateway::ProtocolEvent::ConversationUpserted { params, .. } => compat::ProtocolEvent::ConversationUpserted {
                 protocol_version: compat::PROTOCOL_VERSION,
-                event_sequence: event_sequence(&event_cursor)?,
+                event_sequence: event_sequence(&params.event_cursor)?,
                 payload: compat::ConversationUpsertedEvent {
-                    conversation: map_conversation(payload.conversation)?,
+                    conversation: map_conversation(params.payload.conversation)?,
                 },
             },
-            gateway::ProtocolEvent::TurnUpserted {
-                event_cursor,
-                payload,
-                ..
-            } => compat::ProtocolEvent::TurnUpserted {
+            gateway::ProtocolEvent::TurnUpserted { params, .. } => compat::ProtocolEvent::TurnUpserted {
                 protocol_version: compat::PROTOCOL_VERSION,
-                event_sequence: event_sequence(&event_cursor)?,
+                event_sequence: event_sequence(&params.event_cursor)?,
                 payload: compat::TurnUpsertedEvent {
-                    turn: map_turn(payload.turn)?,
+                    turn: map_turn(params.payload.turn)?,
                 },
             },
-            gateway::ProtocolEvent::TurnOutputDelta {
-                event_cursor,
-                payload,
-                ..
-            } => {
+            gateway::ProtocolEvent::TurnOutputDelta { params, .. } => {
+                let event_cursor = params.event_cursor;
+                let payload = params.payload;
                 let route = route_extension(
                     &payload.turn.device_id,
                     &payload.turn.provider_plugin_id,
@@ -158,26 +144,18 @@ impl CompatProviderGateway {
                     },
                 }
             }
-            gateway::ProtocolEvent::ApprovalRequested {
-                event_cursor,
-                payload,
-                ..
-            } => compat::ProtocolEvent::ApprovalRequested {
+            gateway::ProtocolEvent::ApprovalRequested { params, .. } => compat::ProtocolEvent::ApprovalRequested {
                 protocol_version: compat::PROTOCOL_VERSION,
-                event_sequence: event_sequence(&event_cursor)?,
+                event_sequence: event_sequence(&params.event_cursor)?,
                 payload: compat::ApprovalRequestedEvent {
-                    approval: map_approval(payload.approval),
+                    approval: map_approval(params.payload.approval),
                 },
             },
-            gateway::ProtocolEvent::ApprovalResolved {
-                event_cursor,
-                payload,
-                ..
-            } => compat::ProtocolEvent::ApprovalResolved {
+            gateway::ProtocolEvent::ApprovalResolved { params, .. } => compat::ProtocolEvent::ApprovalResolved {
                 protocol_version: compat::PROTOCOL_VERSION,
-                event_sequence: event_sequence(&event_cursor)?,
+                event_sequence: event_sequence(&params.event_cursor)?,
                 payload: compat::ApprovalResolvedEvent {
-                    approval: map_approval(payload.approval),
+                    approval: map_approval(params.payload.approval),
                 },
             },
         };
@@ -370,12 +348,10 @@ impl compat::ProtocolServer for CompatProviderGateway {
                 ));
             }
             let provider = self.provider_route(&request.provider_id).await?;
-            let route = provider.route;
-            let conversation = routed_resource(route.clone(), request.conversation_id);
+            let conversation = routed_resource(provider.route, request.conversation_id);
             let response = self.gateway()?.turn_send_for_caller_scope(
                 TURN_SEND_CALLER_SCOPE,
                 gateway::TurnSendRequest {
-                    route,
                     conversation,
                     client_request_id: request.client_message_id,
                     capability_revision: provider.capabilities.revision,

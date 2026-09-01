@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart';
 import 'package:test/test.dart';
 
-const fixtureRoot = '../../../protocol/gateway/v1/fixtures';
+const fixtureRoot = '../../../protocol/gateway/v2/fixtures';
 
 Object? fixture(String name) => jsonDecode(File('$fixtureRoot/$name').readAsStringSync());
 
@@ -23,17 +23,11 @@ void main() {
 
       final encoded = switch (kind) {
         'request' => ProtocolRequestEnvelope.fromJson(json).toJson(),
-        'response' => ProtocolResponseEnvelope.fromJson(json).toJson(),
+        'response' => ProtocolResponseEnvelope.fromJson(
+            json,
+            method: ProtocolMethod.fromJson(name),
+          ).toJson(),
         'event' => ProtocolEventEnvelope.fromJson(json).toJson(),
-        'type' => switch (name) {
-            'PairingQrPayload' => PairingQrPayload.fromJson(json).toJson(),
-            'PairingExchangeRequest' => PairingExchangeRequest.fromJson(json).toJson(),
-            'PairingExchangeResponse' => PairingExchangeResponse.fromJson(json).toJson(),
-            'CurrentCredentialDeleteResponse' =>
-              CurrentCredentialDeleteResponse.fromJson(json).toJson(),
-            'ModelCatalog' => ModelCatalog.fromJson(json).toJson(),
-            _ => throw StateError('unhandled canonical type fixture: $name'),
-          },
         _ => throw StateError('unhandled canonical fixture kind: $kind'),
       };
 
@@ -42,11 +36,40 @@ void main() {
   });
 
   test('discriminated unions retain concrete Dart variants', () {
-    final flat = ModelCatalog.fromJson(fixture('model-catalog-flat.json'));
+    final flat = ModelCatalog.fromJson({
+      'kind': 'flat',
+      'models': [
+        {'id': 'gpt-5', 'displayName': 'GPT-5'},
+      ],
+      'defaultSelection': {'kind': 'flat', 'modelId': 'gpt-5'},
+    });
     expect(flat, isA<FlatModelCatalog>());
     expect((flat as FlatModelCatalog).models.single.id, 'gpt-5');
 
-    final grouped = ModelCatalog.fromJson(fixture('model-catalog-grouped.json'));
+    final grouped = ModelCatalog.fromJson({
+      'kind': 'grouped',
+      'providers': [
+        {
+          'id': 'openai',
+          'displayName': 'OpenAI',
+          'models': [
+            {'id': 'gpt-5', 'displayName': 'GPT-5'},
+          ],
+        },
+        {
+          'id': 'anthropic',
+          'displayName': 'Anthropic',
+          'models': [
+            {'id': 'claude-sonnet', 'displayName': 'Claude Sonnet'},
+          ],
+        },
+      ],
+      'defaultSelection': {
+        'kind': 'grouped',
+        'providerId': 'openai',
+        'modelId': 'gpt-5',
+      },
+    });
     expect(grouped, isA<GroupedModelCatalog>());
     expect((grouped as GroupedModelCatalog).providers.last.id, 'anthropic');
 
@@ -59,6 +82,7 @@ void main() {
   test('required nullable values remain explicit on the wire', () {
     final response = ProtocolResponseEnvelope.fromJson(
       fixture('turn-send-response.json'),
+      method: ProtocolMethod.turnSend,
     );
     final result = (response.response as ProtocolSuccess).result as TurnSendResponse;
     expect(result.userItem, isNull);
@@ -92,14 +116,7 @@ void main() {
     expect(
       () => ProtocolRequestEnvelope.fromJson({
         ...handshake,
-        'protocolVersion': 2,
-      }),
-      throwsA(isA<ProtocolCodecException>()),
-    );
-    expect(
-      () => PairingQrPayload.fromJson({
-        ...fixtureObject('pairing-qr-payload.json'),
-        'pairingSecret': 'not-a-secret',
+        'jsonrpc': '1.0',
       }),
       throwsA(isA<ProtocolCodecException>()),
     );
@@ -115,25 +132,6 @@ void main() {
       }),
       throwsA(isA<ProtocolCodecException>()),
     );
-  });
-
-  test('sensitive fields are redacted from generated diagnostics', () {
-    final qr = PairingQrPayload.fromJson(fixture('pairing-qr-payload.json'));
-    final exchange = PairingExchangeRequest.fromJson(
-      fixture('pairing-exchange-request.json'),
-    );
-    final response = PairingExchangeResponse.fromJson(
-      fixture('pairing-exchange-response.json'),
-    );
-
-    for (final pair in [
-      (qr.toString(), qr.pairingSecret),
-      (exchange.toString(), exchange.pairingSecret),
-      (response.toString(), response.credential),
-    ]) {
-      expect(pair.$1, contains('<redacted>'));
-      expect(pair.$1, isNot(contains(pair.$2)));
-    }
   });
 
   test('method and event metadata come from the manifest IR', () {

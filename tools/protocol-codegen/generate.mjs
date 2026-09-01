@@ -6,9 +6,22 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { generateDart } from "./dart.mjs";
 
-export const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const protocolRoot = resolve(repositoryRoot, "protocol");
-const configPath = resolve(protocolRoot, "codegen.json");
+export let repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+export let protocolRoot = resolve(repositoryRoot, "protocol");
+let configPath = resolve(protocolRoot, "codegen.json");
+let outputRoot = repositoryRoot;
+
+export function configureProtocolGenerator({
+  sourceRoot = repositoryRoot,
+  protocolDirectory = resolve(sourceRoot, "protocol"),
+  configFile = resolve(protocolDirectory, "codegen.json"),
+  generatedOutputRoot = sourceRoot,
+} = {}) {
+  repositoryRoot = resolve(sourceRoot);
+  protocolRoot = resolve(protocolDirectory);
+  configPath = resolve(configFile);
+  outputRoot = resolve(generatedOutputRoot);
+}
 
 export const GENERATOR_TARGET_INTERFACE = "codepet.protocol.codegen/v1";
 const defaultTargetIds = ["rust", "typescript", "dart"];
@@ -254,7 +267,7 @@ export function validateManifest(record, model) {
   assert(requestId.name === "RequestId", `${packageConfig.id} transport requestId must reference core RequestId`);
   if (manifest.transport.kind === "json-rpc-2.0") {
     assert(manifest.transport.jsonRpcVersion === "2.0", `${packageConfig.id} must use JSON-RPC 2.0`);
-    assert(manifest.transport.framing === "stdio-json-lines", `${packageConfig.id} provider framing must be stdio-json-lines`);
+    assert(["stdio-json-lines", "websocket-text"].includes(manifest.transport.framing), `${packageConfig.id} JSON-RPC framing must be stdio-json-lines or websocket-text`);
     assert(manifest.transport.eventDiscriminator === "method", `${packageConfig.id} JSON-RPC event discriminator must be method`);
     const rpcError = referenceTarget(manifest.transport.rpcError, manifestPath, model, `${packageConfig.id}.transport.rpcError`);
     assert(rpcError.name === "RpcError", `${packageConfig.id} transport rpcError must reference core RpcError`);
@@ -280,6 +293,7 @@ export function validateManifest(record, model) {
     methodNames.add(method.name);
     assert(typeof method.direction === "string" && method.direction.length > 0, `${location}.direction is required`);
     assert(["safe", "idempotent", "nonIdempotent"].includes(method.idempotency), `${location}.idempotency is invalid`);
+    assert(["normal", "control"].includes(method.dispatchLane ?? "normal"), `${location}.dispatchLane is invalid`);
     if (method.capability !== undefined) {
       assert(typeof method.capability === "string" && method.capability.length > 0, `${location}.capability must be a non-empty string`);
     }
@@ -496,8 +510,16 @@ async function validateFixtures(record, model) {
         assert(event, `${location} references unknown event ${fixture.name}`);
         exactKeys(value, ["jsonrpc", "method", "params"], location);
         assert(value.method === fixture.name, `${location}.method is invalid`);
-        const target = referenceTarget(event.payload, manifestPath, model, `${location}.params`);
-        validateValue(value.params, target.node, target.record, model, `${location}.params`);
+        const target = referenceTarget(event.payload, manifestPath, model, `${location}.params.payload`);
+        if (manifest.transport.eventCursorField) {
+          assert(isObject(value.params), `${location}.params must be an object`);
+          exactKeys(value.params, [manifest.transport.eventCursorField, "payload"], `${location}.params`);
+          const cursor = referenceTarget(manifest.transport.eventCursor, manifestPath, model, `${location}.params.${manifest.transport.eventCursorField}`);
+          validateValue(value.params[manifest.transport.eventCursorField], cursor.node, cursor.record, model, `${location}.params.${manifest.transport.eventCursorField}`);
+          validateValue(value.params.payload, target.node, target.record, model, `${location}.params.payload`);
+        } else {
+          validateValue(value.params, target.node, target.record, model, `${location}.params`);
+        }
       } else {
         fail(`${location} has unsupported kind ${fixture.kind}`);
       }
@@ -505,8 +527,8 @@ async function validateFixtures(record, model) {
   }
 }
 
-export async function loadProtocolModel() {
-  const config = await readJson(configPath);
+export async function loadProtocolModel({ config: suppliedConfig } = {}) {
+  const config = suppliedConfig ?? await readJson(configPath);
   assert(config.generatorInterfaceVersion === 1, "protocol/codegen.json has unsupported generatorInterfaceVersion");
   assert(Array.isArray(config.targets) && config.targets.length >= 4, "protocol/codegen.json must declare generator targets");
   const targetIds = new Set(config.targets.map((target) => target.id));
@@ -536,7 +558,7 @@ export async function loadProtocolModel() {
     assert(isObject(packageConfig), "protocol package entry must be an object");
     assert(!packageIds.has(packageConfig.id), `duplicate protocol package ${packageConfig.id}`);
     packageIds.add(packageConfig.id);
-    assert(["core", "pet", "provider", "gateway"].includes(packageConfig.layer), `${packageConfig.id} has invalid layer`);
+    assert(["core", "pet", "provider", "gateway", "channel"].includes(packageConfig.layer), `${packageConfig.id} has invalid layer`);
     assert(Number.isInteger(packageConfig.version) && packageConfig.version >= 0, `${packageConfig.id} has invalid version`);
     assert(Array.isArray(packageConfig.dependencies), `${packageConfig.id} dependencies must be an array`);
     const publicTypes = packageConfig.publicTypes ?? [];
@@ -820,6 +842,7 @@ export function buildProtocolIr(model) {
       requestDiscriminator: record.manifest.transport.requestDiscriminator,
       responseDiscriminator: record.manifest.transport.responseDiscriminator,
       eventDiscriminator: record.manifest.transport.eventDiscriminator,
+      jsonRpcVersion: record.manifest.transport.jsonRpcVersion,
       eventCursorField: record.manifest.transport.eventCursorField,
       protocolVersionType: record.manifest.transport.protocolVersion
         ? namedManifestType(record.manifest.transport.protocolVersion, record.manifestPath, model, `${record.packageConfig.id}.protocolVersion`)
@@ -836,6 +859,7 @@ export function buildProtocolIr(model) {
         name: method.name,
         direction: method.direction,
         idempotency: method.idempotency,
+        dispatchLane: method.dispatchLane ?? "normal",
         capability: method.capability,
         requestType: namedManifestType(method.request, record.manifestPath, model, `${record.packageConfig.id}.${method.name}.request`),
         responseType: namedManifestType(method.response, record.manifestPath, model, `${record.packageConfig.id}.${method.name}.response`),
@@ -938,9 +962,31 @@ function protocolEnums(record, model) {
   const methodVariants = record.manifest.methods.map((method) => `    #[serde(rename = "${method.name}")]\n    ${pascalCase(method.name)},`).join("\n");
   const methodAsStr = record.manifest.methods.map((method) => `            Self::${pascalCase(method.name)} => "${method.name}",`).join("\n");
   const methodFromStr = record.manifest.methods.map((method) => `            "${method.name}" => Ok(Self::${pascalCase(method.name)}),`).join("\n");
+  const methodDispatchLanes = record.manifest.methods.map((method) => {
+    const lane = method.dispatchLane === "control" ? "Control" : "Normal";
+    return `            Self::${pascalCase(method.name)} => ProtocolDispatchLane::${lane},`;
+  }).join("\n");
   const eventVariants = record.manifest.events.map((event) => `    #[serde(rename = "${event.name}")]\n    ${pascalCase(event.name)},`).join("\n");
   const eventAsStr = record.manifest.events.map((event) => `            Self::${pascalCase(event.name)} => "${event.name}",`).join("\n");
   const eventFromStr = record.manifest.events.map((event) => `            "${event.name}" => Ok(Self::${pascalCase(event.name)}),`).join("\n");
+  const dispatchLaneType = record.manifest.transport.kind === "json-rpc-2.0"
+    ? `#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProtocolDispatchLane {
+    Normal,
+    Control,
+}
+
+`
+    : "";
+  const dispatchLaneMethod = record.manifest.transport.kind === "json-rpc-2.0"
+    ? `
+
+    pub const fn dispatch_lane(self) -> ProtocolDispatchLane {
+        match self {
+${methodDispatchLanes}
+        }
+    }`
+    : "";
   let capabilityMethod = "";
   if (record.manifest.capabilities) {
     const capabilityType = referenceTarget(record.manifest.capabilities.type, record.manifestPath, model, "capability type").name;
@@ -956,7 +1002,7 @@ ${capabilityArms}
         }
     }`;
   }
-  return `#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+  return `${dispatchLaneType}#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolMethod {
 ${methodVariants}
 }
@@ -966,7 +1012,7 @@ impl ProtocolMethod {
         match self {
 ${methodAsStr}
         }
-    }${capabilityMethod}
+    }${dispatchLaneMethod}${capabilityMethod}
 }
 
 impl std::str::FromStr for ProtocolMethod {
@@ -1011,9 +1057,7 @@ function serverTrait(record, model) {
     const response = definitionName(method.response, record.manifestPath, model);
     return `    fn ${snakeCase(method.name)}<'a>(&'a self, _request: ${request}) -> ProtocolFuture<'a, ${response}> {\n        Box::pin(async { Err(method_not_implemented("${method.name}")) })\n    }`;
   }).join("\n\n");
-  return `pub type ProtocolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ProtocolError>> + Send + 'a>>;
-
-pub trait ProtocolServer: Send + Sync {
+  return `pub trait ProtocolServer: Send + Sync {
 ${methods}
 }
 
@@ -1074,19 +1118,10 @@ impl<T> ProtocolClient<T> {
 
 impl<T: ProtocolTransport> ProtocolClient<T> {
 ${methods}${inboundClient}
-}
-
-fn codec_error(context: &str, error: serde_json::Error) -> ProtocolError {
-    ProtocolError {
-        code: "protocol_codec_error".to_string(),
-        message: format!("{context}: {error}"),
-        retryable: false,
-        details: None,
-    }
 }`;
 }
 
-function generateCodepetEnvelope(record, model) {
+function generateCodepetEnvelope(record, model, role = "both") {
   const { manifest, manifestPath } = record;
   const requestVariants = manifest.methods.map((method) => `    #[serde(rename = "${method.name}")]
     ${pascalCase(method.name)} {
@@ -1123,6 +1158,34 @@ function generateCodepetEnvelope(record, model) {
             ProtocolResponse::${variant} { protocol_version, id, response }
         }`;
   }).join(",\n");
+  const serverBlock = role === "client" ? "" : `${serverTrait(record, model)}
+
+pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolRequest) -> ProtocolResponse {
+    match request {
+${dispatchArms}
+    }
+}
+
+pub struct ProtocolDispatcher<S> {
+    server: S,
+}
+
+impl<S> ProtocolDispatcher<S> {
+    pub const fn new(server: S) -> Self {
+        Self { server }
+    }
+
+    pub const fn server(&self) -> &S {
+        &self.server
+    }
+}
+
+impl<S: ProtocolServer> ProtocolDispatcher<S> {
+    pub async fn dispatch(&self, request: ProtocolRequest) -> ProtocolResponse {
+        dispatch(&self.server, request).await
+    }
+}`;
+  const clientBlock = role === "server" ? "" : clientSupport(record, model);
   return `${protocolEnums(record, model)}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1150,35 +1213,11 @@ pub enum ProtocolEvent {
 ${eventVariants}
 }
 
-${serverTrait(record, model)}
+pub type ProtocolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ProtocolError>> + Send + 'a>>;
 
-pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolRequest) -> ProtocolResponse {
-    match request {
-${dispatchArms}
-    }
-}
+${serverBlock}
 
-pub struct ProtocolDispatcher<S> {
-    server: S,
-}
-
-impl<S> ProtocolDispatcher<S> {
-    pub const fn new(server: S) -> Self {
-        Self { server }
-    }
-
-    pub const fn server(&self) -> &S {
-        &self.server
-    }
-}
-
-impl<S: ProtocolServer> ProtocolDispatcher<S> {
-    pub async fn dispatch(&self, request: ProtocolRequest) -> ProtocolResponse {
-        dispatch(&self.server, request).await
-    }
-}
-
-${clientSupport(record, model)}
+${clientBlock}
 
 pub fn encode_request(value: &ProtocolRequest) -> Result<Vec<u8>, ProtocolError> {
     serde_json::to_vec(value).map_err(|error| codec_error("encode request", error))
@@ -1202,11 +1241,22 @@ pub fn encode_event(value: &ProtocolEvent) -> Result<Vec<u8>, ProtocolError> {
 
 pub fn decode_event(value: &[u8]) -> Result<ProtocolEvent, ProtocolError> {
     serde_json::from_slice(value).map_err(|error| codec_error("decode event", error))
+}
+
+fn codec_error(context: &str, error: serde_json::Error) -> ProtocolError {
+    ProtocolError {
+        code: "protocol_codec_error".to_string(),
+        message: format!("{context}: {error}"),
+        retryable: false,
+        details: None,
+    }
 }`;
 }
 
-function generateJsonRpc(record, model) {
+function generateJsonRpc(record, model, role = "both") {
   const { manifest, manifestPath } = record;
+  const cursorField = manifest.transport.eventCursorField;
+  const cursorType = cursorField ? referenceTarget(manifest.transport.eventCursor, manifestPath, model, "JSON-RPC event cursor").name : undefined;
   const requestVariants = manifest.methods.map((method) => `    #[serde(rename = "${method.name}")]
     ${pascalCase(method.name)} {
         jsonrpc: String,
@@ -1216,15 +1266,33 @@ function generateJsonRpc(record, model) {
   const eventVariants = manifest.events.map((event) => `    #[serde(rename = "${event.name}")]
     ${pascalCase(event.name)} {
         jsonrpc: String,
-        params: ${definitionName(event.payload, manifestPath, model)},
+        params: ${cursorField ? `ProtocolEventParams<${definitionName(event.payload, manifestPath, model)}>` : definitionName(event.payload, manifestPath, model)},
     },`).join("\n");
   const requestVersions = manifest.methods.map((method) => `            Self::${pascalCase(method.name)} { jsonrpc, .. } => jsonrpc,`).join("\n");
+  const requestIds = manifest.methods.map((method) => `            Self::${pascalCase(method.name)} { id, .. } => id,`).join("\n");
+  const requestMethods = manifest.methods.map((method) => `            Self::${pascalCase(method.name)} { .. } => ProtocolMethod::${pascalCase(method.name)},`).join("\n");
   const requestConstructors = manifest.methods.map((method) => `            ProtocolMethod::${pascalCase(method.name)} => Ok(Self::${pascalCase(method.name)} {
                 jsonrpc,
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode ${method.name} request params", error))?,
             }),`).join("\n");
   const eventVersions = manifest.events.map((event) => `            Self::${pascalCase(event.name)} { jsonrpc, .. } => jsonrpc,`).join("\n");
+  const eventCursorMethods = cursorField ? `
+
+    pub fn event_cursor(&self) -> &${cursorType} {
+        match self {
+${manifest.events.map((event) => `            Self::${pascalCase(event.name)} { params, .. } => &params.${snakeCase(cursorField)},`).join("\n")}
+        }
+    }
+
+    pub fn set_event_cursor(&mut self, cursor: ${cursorType}) {
+        match self {
+${manifest.events.map((event) => `            Self::${pascalCase(event.name)} { jsonrpc, params } => {
+                *jsonrpc = "${manifest.transport.jsonRpcVersion}".to_string();
+                params.${snakeCase(cursorField)} = cursor;
+            },`).join("\n")}
+        }
+    }` : "";
   const dispatchArms = manifest.methods.map((method) => {
     const variant = pascalCase(method.name);
     return `        ProtocolRequest::${variant} { jsonrpc, id, params } => {
@@ -1238,6 +1306,44 @@ function generateJsonRpc(record, model) {
             JsonRpcResponse { jsonrpc, id: Some(id), response }
         }`;
   }).join(",\n");
+  const eventParams = cursorField ? `#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProtocolEventParams<T> {
+    #[serde(rename = "${cursorField}")]
+    pub ${snakeCase(cursorField)}: ${cursorType},
+    pub payload: T,
+}
+
+` : "";
+  const serverBlock = role === "client" ? "" : `${serverTrait(record, model)}
+
+pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolRequest) -> JsonRpcResponse {
+    match request {
+${dispatchArms}
+    }
+}
+
+pub struct ProtocolDispatcher<S> {
+    server: S,
+}
+
+impl<S> ProtocolDispatcher<S> {
+    pub const fn new(server: S) -> Self {
+        Self { server }
+    }
+
+    pub const fn server(&self) -> &S {
+        &self.server
+    }
+}
+
+impl<S: ProtocolServer> ProtocolDispatcher<S> {
+    pub async fn dispatch(&self, request: ProtocolRequest) -> JsonRpcResponse {
+        dispatch(&self.server, request).await
+    }
+}`;
+  const clientBlock = role === "server" ? "" : clientSupport(record, model);
   return `${protocolEnums(record, model)}
 
 pub const JSON_RPC_PARSE_ERROR: i64 = -32700;
@@ -1270,9 +1376,21 @@ ${requestConstructors}
 ${requestVersions}
         }
     }
+
+    pub fn id(&self) -> &RequestId {
+        match self {
+${requestIds}
+        }
+    }
+
+    pub const fn method(&self) -> ProtocolMethod {
+        match self {
+${requestMethods}
+        }
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+${eventParams}#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "${manifest.transport.eventDiscriminator}")]
 pub enum ProtocolEvent {
 ${eventVariants}
@@ -1283,7 +1401,7 @@ impl ProtocolEvent {
         match self {
 ${eventVersions}
         }
-    }
+    }${eventCursorMethods}
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1375,35 +1493,11 @@ impl std::fmt::Display for JsonRpcInboundError {
 
 impl std::error::Error for JsonRpcInboundError {}
 
-${serverTrait(record, model)}
+pub type ProtocolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ProtocolError>> + Send + 'a>>;
 
-pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolRequest) -> JsonRpcResponse {
-    match request {
-${dispatchArms}
-    }
-}
+${serverBlock}
 
-pub struct ProtocolDispatcher<S> {
-    server: S,
-}
-
-impl<S> ProtocolDispatcher<S> {
-    pub const fn new(server: S) -> Self {
-        Self { server }
-    }
-
-    pub const fn server(&self) -> &S {
-        &self.server
-    }
-}
-
-impl<S: ProtocolServer> ProtocolDispatcher<S> {
-    pub async fn dispatch(&self, request: ProtocolRequest) -> JsonRpcResponse {
-        dispatch(&self.server, request).await
-    }
-}
-
-${clientSupport(record, model)}
+${clientBlock}
 
 fn rpc_method_error(error: ProtocolError) -> RpcError {
     let message = error.message.clone();
@@ -1416,6 +1510,15 @@ fn rpc_method_error(error: ProtocolError) -> RpcError {
 
 fn rpc_codec_error(context: &str, error: serde_json::Error) -> RpcError {
     RpcError { code: JSON_RPC_INTERNAL_ERROR, message: format!("{context}: {error}"), data: None }
+}
+
+fn codec_error(context: &str, error: serde_json::Error) -> ProtocolError {
+    ProtocolError {
+        code: "protocol_codec_error".to_string(),
+        message: format!("{context}: {error}"),
+        retryable: false,
+        details: None,
+    }
 }
 
 fn inbound_error(id: Option<RequestId>, code: i64, message: impl Into<String>) -> JsonRpcInboundError {
@@ -1781,7 +1884,7 @@ function providerInstanceKindSupport(record) {
 }`;
 }
 
-function generateRust(record, model) {
+function generateRust(record, model, role = "both") {
   const sourceFiles = [relative(repositoryRoot, record.manifestPath), relative(repositoryRoot, record.schemaPath)].join(" and ");
   const imports = rustImports(record, model);
   const definitions = rustDefinitions(record, model);
@@ -1798,8 +1901,8 @@ ${imports ? `${imports}\n\n` : ""}${definitions}
 `;
   }
   const service = record.manifest.transport.kind === "json-rpc-2.0"
-    ? generateJsonRpc(record, model)
-    : generateCodepetEnvelope(record, model);
+    ? generateJsonRpc(record, model, role)
+    : generateCodepetEnvelope(record, model, role);
   const instanceKindSupport = providerInstanceKindSupport(record);
   const instanceKindBlock = instanceKindSupport ? `${instanceKindSupport}\n\n` : "";
   return `// @generated by tools/protocol-codegen/generate.mjs from ${sourceFiles}.
@@ -1837,13 +1940,13 @@ function typeScriptDefinitions(record, model) {
 }
 
 function typescriptImports(record, model) {
-  const outputPath = resolve(repositoryRoot, record.packageConfig.outputs.typescript);
+  const outputPath = resolve(outputRoot, record.packageConfig.outputs.typescript);
   const lines = [];
   for (const [packageId, names] of [...externalReferences(record, model)].sort(([left], [right]) => left.localeCompare(right))) {
     const target = model.recordsById.get(packageId);
     const targetOutput = target.packageConfig.outputs.typescript;
     assert(targetOutput, `${record.packageConfig.id} needs TypeScript output from ${packageId}`);
-    let importPath = relative(dirname(outputPath), resolve(repositoryRoot, targetOutput)).replaceAll("\\", "/").replace(/\.ts$/, "");
+    let importPath = relative(dirname(outputPath), resolve(outputRoot, targetOutput)).replaceAll("\\", "/").replace(/\.ts$/, "");
     if (!importPath.startsWith(".")) importPath = `./${importPath}`;
     const list = [...names].sort().join(", ");
     lines.push(`import type { ${list} } from ${JSON.stringify(importPath)};`);
@@ -1929,7 +2032,7 @@ export const generatorTargetRegistry = Object.freeze({
     id: "rust",
     interface: GENERATOR_TARGET_INTERFACE,
     implemented: true,
-    render: ({ record, model }) => generateRust(record, model),
+    render: ({ record, model, role }) => generateRust(record, model, role),
   }),
   typescript: Object.freeze({
     id: "typescript",
@@ -1974,15 +2077,15 @@ async function updateGeneratedFile(path, content, checkMode, staleFiles) {
   }
   if (current === content) return;
   if (checkMode) {
-    staleFiles.push(relative(repositoryRoot, path));
+    staleFiles.push(relative(outputRoot, path));
     return;
   }
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, content, "utf8");
 }
 
-export async function generateProtocol({ checkMode = false, targets = defaultTargetIds } = {}) {
-  const model = await loadProtocolModel();
+export async function generateProtocol({ checkMode = false, targets = defaultTargetIds, config, role = "both" } = {}) {
+  const model = await loadProtocolModel({ config });
   const adapters = resolveGeneratorTargets(targets, model.config);
   for (const adapter of adapters) {
     assert(
@@ -1996,12 +2099,12 @@ export async function generateProtocol({ checkMode = false, targets = defaultTar
     for (const adapter of adapters) {
       const output = record.packageConfig.outputs[adapter.id];
       if (!output) continue;
-      const content = adapter.render({ record, model, ir: model.protocolIr, output });
+      const content = adapter.render({ record, model, ir: model.protocolIr, output, role });
       artifacts.push({ packageId: record.packageConfig.id, targetId: adapter.id, output, content });
     }
   }
   for (const artifact of artifacts) {
-    await updateGeneratedFile(resolve(repositoryRoot, artifact.output), artifact.content, checkMode, staleFiles);
+    await updateGeneratedFile(resolve(outputRoot, artifact.output), artifact.content, checkMode, staleFiles);
   }
   if (staleFiles.length > 0) {
     fail(`generated protocol files are stale:\n${staleFiles.map((path) => `- ${path}`).join("\n")}\nRun npm run protocol:generate.`);
@@ -2020,7 +2123,11 @@ async function main() {
   console.log(checkMode ? "protocol generated files are up to date" : "protocol generated files updated");
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (
+  process.argv[1]
+  && process.argv[1].endsWith("generate.mjs")
+  && import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+) {
   main().catch((error) => {
     console.error(error.message);
     process.exitCode = 1;

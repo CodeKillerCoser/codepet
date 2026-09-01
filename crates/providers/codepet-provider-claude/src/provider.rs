@@ -12,7 +12,7 @@ use codepet_provider_sdk::{
     InstanceCreateRequest, InstanceCreateResponse, InstanceDestroyRequest,
     InstanceDestroyResponse, InstanceStartRequest, InstanceStartResponse, InstanceStatus,
     InstanceStatusChangedEvent, InstanceStopRequest, InstanceStopResponse, ProtocolError,
-    ProtocolEvent, ProtocolFuture, ProtocolServer, ProviderCapabilities, ProviderCapability,
+    ProtocolEvent, ProtocolFuture, Provider, ProviderCapabilities, ProviderCapability,
     ProviderConversation, ProviderDescribeRequest, ProviderDescribeResponse, ProviderExtension,
     ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute,
     ProviderPluginDescriptor, ProviderShutdownRequest, ProviderShutdownResponse, ProviderTurn,
@@ -45,18 +45,7 @@ struct ClaudeInstanceSettings {
     claude_executable: PathBuf,
 }
 
-pub trait ProviderEventSink: Send + Sync + 'static {
-    fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError>;
-}
-
-impl<F> ProviderEventSink for F
-where
-    F: Fn(ProtocolEvent) -> Result<(), ProtocolError> + Send + Sync + 'static,
-{
-    fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError> {
-        self(event)
-    }
-}
+use codepet_provider_sdk::ProviderEventSink;
 
 struct ManagedTurn {
     turn: ProviderTurn,
@@ -954,7 +943,7 @@ impl ClaudeProvider {
     }
 }
 
-impl ProtocolServer for ClaudeProvider {
+impl Provider for ClaudeProvider {
     fn provider_initialize<'a>(
         &'a self,
         request: ProviderInitializeRequest,

@@ -2,7 +2,8 @@ use crate::{
     HostError, HostResult, RemoteLanAdvertisedEndpoint,
     RemoteLanAdvertisementSource, RemoteLanServerHandle,
 };
-use codepet_gateway_sdk::{RemoteHostIdentity, PROTOCOL_VERSION};
+use codepet_gateway_sdk::PROTOCOL_VERSION;
+use codepet_lan_channel_sdk::LanHostIdentity;
 use mdns_sd::{
     DaemonEvent, DaemonStatus, Error as MdnsError, IfKind, Receiver, RecvTimeoutError,
     ServiceDaemon, ServiceInfo, TryRecvError, UnregisterStatus,
@@ -262,7 +263,7 @@ impl MdnsServiceSpec {
     }
 
     fn from_listener(
-        identity: &RemoteHostIdentity,
+        identity: &LanHostIdentity,
         advertised_host: &str,
         local_addr: SocketAddr,
     ) -> HostResult<Self> {
@@ -286,7 +287,7 @@ impl MdnsServiceSpec {
     }
 
     fn from_listener_with_local_addresses(
-        identity: &RemoteHostIdentity,
+        identity: &LanHostIdentity,
         advertised_host: &str,
         local_addr: SocketAddr,
         local_addresses: &[IpAddr],
@@ -591,7 +592,7 @@ impl MdnsBackend for ServiceDaemonBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codepet_gateway_sdk::DeviceDescriptor;
+    use codepet_lan_channel_sdk::DeviceDescriptor;
     use std::collections::{BTreeMap, VecDeque};
     use std::sync::{Arc, Mutex};
 
@@ -767,8 +768,8 @@ mod tests {
         (Box::new(FakeBackend::new(state.clone())), state)
     }
 
-    fn identity(device_id: &str, display_name: &str) -> RemoteHostIdentity {
-        RemoteHostIdentity {
+    fn identity(device_id: &str, display_name: &str) -> LanHostIdentity {
+        LanHostIdentity {
             device_id: device_id.to_string(),
             descriptor: DeviceDescriptor {
                 device_name: display_name.to_string(),

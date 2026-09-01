@@ -240,6 +240,32 @@ async fn shutdown_waits_for_a_provider_that_closes_stdout_before_delayed_clean_e
 }
 
 #[tokio::test]
+async fn shutdown_discards_late_notifications_without_closing_provider_stdout() {
+    let mut descriptor = descriptor("dev.codepet.shutdown-notification");
+    descriptor.env.insert(
+        "CODEPET_FAKE_SHUTDOWN_NOTIFICATION".to_string(),
+        "1".to_string(),
+    );
+    let process = PluginProcess::spawn(&descriptor, options()).unwrap();
+    process
+        .client()
+        .provider_initialize(ProviderInitializeRequest {
+            host_client_id: "client-test".to_string(),
+            host_device_id: "device-test".to_string(),
+            host_version: "test".to_string(),
+            supported_versions: VersionRange {
+                min_version: 1,
+                max_version: 1,
+            },
+        })
+        .await
+        .unwrap();
+
+    let exit = process.shutdown().await.unwrap();
+    assert!(exit.success, "Provider shutdown must remain graceful: {exit:?}");
+}
+
+#[tokio::test]
 async fn timeout_does_not_poison_later_requests() {
     let process = ready_process("dev.codepet.timeout", "instance-timeout").await;
     let error = process

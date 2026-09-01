@@ -4,5 +4,6 @@ members = [
     "codepet-pet-sdk",
     "codepet-provider-sdk",
     "codepet-gateway-sdk",
+    "codepet-lan-channel-sdk",
 ]
 resolver = "2"

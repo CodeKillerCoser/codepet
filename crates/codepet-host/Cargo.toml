@@ -8,6 +8,7 @@ publish = false
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "ws"] }
 axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
 codepet-gateway-sdk = { path = "../../sdk/rust/codepet-gateway-sdk", version = "0.1.0" }
+codepet-lan-channel-sdk = { path = "../../sdk/rust/codepet-lan-channel-sdk", version = "0.1.0" }
 codepet-provider-sdk = { path = "../../sdk/rust/codepet-provider-sdk", version = "0.1.0" }
 futures-util = "0.3"
 if-addrs = "0.15"

@@ -4,6 +4,8 @@
 
 Rust, TypeScript, and Dart have real adapters. Rust generates every SDK; TypeScript generates core, Gateway v1, and the Runtime Gateway v0 compatibility surface. Dart generates null-safe core and Gateway v1 packages with strict codecs, discriminated unions, method/event metadata, and a transport-neutral typed client. Python remains a registered unimplemented planned adapter; selecting it fails before writing any output. Implementing a new target requires adding its adapter, changing its status from `planned`, and declaring at least one package output without introducing another handwritten model source or method table.
 
+Provider method `dispatchLane` is also canonical manifest metadata. Rust generation projects it through `ProtocolMethod::dispatch_lane()` so the reusable stdio runtime can reserve lifecycle-control capacity without copying method names. `tools/cp-sdk-gen` reuses this compiler at runtime: it reads the distributed schema/manifest, rebuilds normalized IR, emits Core/Provider Rust source, and adds the stable package/runtime scaffold. Bun `--compile` packages the JavaScript compiler and scaffold assets into the native executable shipped beside the App's protocol resources; checked-in `generated.rs` files are not embedded or copied.
+
 The Dart adapter deliberately emits from the normalized IR instead of delegating to quicktype. A quicktype 26.0.0 experiment proved relative cross-file `$ref` resolution works, but also showed loss of shared type names, schema constraints, closed-object rejection, sensitive-field handling, and discriminated `oneOf` exclusivity. Dart generation therefore accepts only the finite supported IR subset and rejects ambiguous or untagged unions before any output write.
 
 Commands:

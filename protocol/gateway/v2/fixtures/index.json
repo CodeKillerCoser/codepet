@@ -1,0 +1,7 @@
+[
+  { "file": "handshake-request.json", "kind": "request", "name": "protocol.handshake" },
+  { "file": "handshake-response.json", "kind": "response", "name": "protocol.handshake" },
+  { "file": "turn-send-request.json", "kind": "request", "name": "turn.send" },
+  { "file": "turn-send-response.json", "kind": "response", "name": "turn.send" },
+  { "file": "conversation-upserted-event.json", "kind": "event", "name": "conversation.upserted" }
+]

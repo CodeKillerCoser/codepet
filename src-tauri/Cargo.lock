@@ -675,6 +675,7 @@ dependencies = [
  "chrono",
  "codepet-gateway-sdk",
  "codepet-host",
+ "codepet-lan-channel-sdk",
  "core-foundation",
  "core-graphics",
  "dirs 5.0.1",
@@ -734,6 +735,7 @@ dependencies = [
  "axum",
  "axum-server",
  "codepet-gateway-sdk",
+ "codepet-lan-channel-sdk",
  "codepet-provider-sdk",
  "futures-util",
  "if-addrs",
@@ -752,12 +754,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "codepet-lan-channel-sdk"
+version = "0.1.0"
+dependencies = [
+ "codepet-core-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "codepet-provider-sdk"
 version = "0.1.0"
 dependencies = [
  "codepet-core-sdk",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
