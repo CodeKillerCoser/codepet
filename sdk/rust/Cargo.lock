@@ -11,6 +11,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "codepet-desktop-sdk"
+version = "0.1.0"
+dependencies = [
+ "codepet-core-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "codepet-gateway-sdk"
 version = "0.1.0"
 dependencies = [

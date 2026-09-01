@@ -16,7 +16,7 @@ Provider 事件只能进入 `ProviderGatewayService` 的 cursor/replay 与 `runt
 ## 证据边界
 
 - `RuntimeGatewayState` 只持有 `CompatProviderGateway`；compat 只调用 `ProviderGatewayService`，不持有 Pet/companion/scope 状态。
-- `TurnOutputDeltaEvent` 在 Provider/Gateway v1 中自带 conversation 四段 route，因此 compat 不需要 turn replay map。
+- `TurnOutputDeltaEvent` 在 Provider/Gateway v2 中自带 conversation 四段 route，因此 compat 不需要 turn replay map。
 - Provider resource 直接携带 `deviceId + providerPluginId + providerInstanceId + nativeResourceId`；compat 不通过 registry 回查 plugin id。
 - 生产 `lib.rs` 分别构造 Provider Host/Gateway 和 Desktop Companion；Provider state 不接收 companion state。
 

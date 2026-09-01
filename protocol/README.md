@@ -12,15 +12,15 @@ The current layers are:
 - `gateway/v2` — Host ↔ Remote Client JSON-RPC 2.0 methods and replayable notifications over a channel-provided WebSocket. Resources use `deviceId + providerPluginId + providerInstanceId + nativeResourceId`; the gateway exposes neither plugin process lifecycle nor pet-private state.
 - `channel/lan/v1` — LAN admission DTOs for QR pairing, TLS identity and credential revocation. It declares no Gateway business methods.
 
-Gateway v1 remains a generated compatibility artifact only. New Host/Remote integration uses Gateway v2. Discovery, channel establishment, trust admission and Gateway business RPC are separate runtime layers.
+The legacy Gateway protocol has been removed. Host/Remote integration has one Gateway business protocol: Gateway v2. Discovery, channel establishment, trust admission and Gateway business RPC remain separate runtime layers.
 
-`codegen.json` declares packages, dependency direction, output targets, and the shared `codepet.protocol.codegen/v1` adapter interface. Rust is active for core, Pet, Provider, Gateway v1/v2 and LAN admission. TypeScript covers core, legacy Gateway v1 and the Runtime Gateway compatibility surface. Dart is active for core, Gateway v2 and LAN admission. Python remains explicitly registered but unimplemented; selecting it fails closed before generation.
+`codegen.json` declares packages, dependency direction, output targets, and the shared `codepet.protocol.codegen/v1` adapter interface. Rust is active for core, Pet, Provider, Gateway v2, LAN admission and the desktop-only v0 contract. TypeScript covers core and the desktop-only v0 contract. Dart is active for core, Gateway v2 and LAN admission. Python remains explicitly registered but unimplemented; selecting it fails closed before generation.
 
 ## Versioning and discriminators
 
 Every public initialize/handshake request carries an explicit supported `VersionRange`, and the response selects one `ProtocolVersion`. Method and event names live in each layer's manifest rather than language-specific code.
 
-- Pet and legacy Gateway v1 use CodePet envelopes discriminated by `method` and `event`; Gateway v2 uses standard JSON-RPC 2.0 requests/responses and event notifications.
+- Pet and the desktop-only v0 contract use CodePet envelopes discriminated by `method` and `event`; Gateway v2 uses standard JSON-RPC 2.0 requests/responses and event notifications.
 - Provider uses JSON-RPC 2.0 requests discriminated by `method`, strict result/error responses, and notification events also discriminated by `method`. Its generated `JsonLineCodec` enforces a caller-selected frame limit and classifies inbound request, response, notification, and declared event messages.
 - Gateway v2 events carry an opaque `eventCursor` for replay.
 - Union-like domain DTOs such as `PetAction` retain an explicit `kind`; receivers validate kind-specific optional fields.
@@ -74,14 +74,17 @@ The current advertised execution matrix is intentionally conservative:
 Rust packages are located at:
 
 - `sdk/rust/codepet-core-sdk`
+- `sdk/rust/codepet-desktop-sdk`
 - `sdk/rust/codepet-pet-sdk`
 - `sdk/rust/codepet-provider-sdk`
 - `sdk/rust/codepet-gateway-sdk`
+- `sdk/rust/codepet-lan-channel-sdk`
 
 Dart packages are located at:
 
 - `sdk/dart/codepet-core-sdk`
 - `sdk/dart/codepet-gateway-sdk`
+- `sdk/dart/codepet-lan-channel-sdk`
 
 The Dart Gateway package is pure null-safe Dart and re-exports core. It contains immutable generated DTOs, strict unknown-field and schema-constraint validation, `kind`-discriminated sealed unions, secret-redacted diagnostics, manifest-derived method/event metadata, JSON-RPC 2.0 codecs, and a transport-neutral typed `ProtocolClient`. WebSocket framing, request correlation storage, TLS pinning, credentials, reconnect/retry policy, and event persistence remain consumer-runtime concerns.
 
@@ -91,11 +94,11 @@ The Rust Provider SDK also exposes a stable, handwritten `serve_stdio` runtime a
 
 `cp-sdk-gen --package <provider|gateway|lan-channel> --role <client|server|both|models> --lang <rust|dart> --output <sdk-dir>` reads canonical adjacent schema/manifest/fixtures, rebuilds normalized typed IR, and writes a standalone SDK plus protocol digest lock. Provider supports Rust server; Gateway supports Dart client and Rust client/server/both; LAN admission supports Dart/Rust models. The Bun-compiled native executable and canonical `protocol/{core,provider,gateway,channel}` tree ship under App `provider-sdk/` resources.
 
-The four Rust SDK manifests are packageable crates rather than permanently private workspace crates. Their local path dependencies also declare version `0.1.0`, allowing local workspace development while preserving a publishable dependency graph. Repository tests are excluded from crate tarballs because they read the canonical fixtures outside each crate under `protocol/`; the tests still run from the SDK workspace, while published source remains self-contained without copying fixture facts. The Provider SDK runtime is consumed by the standalone Codex, Claude, and OpenCode Provider binaries; their all-target dependency graphs do not include Host or Gateway. The repository currently has no license file; `cargo package` content checks can run, but the project should not publish until the repository owner makes an explicit license decision.
+The five Rust SDK manifests are packageable crates rather than permanently private workspace crates. Their local path dependencies also declare version `0.1.0`, allowing local workspace development while preserving a publishable dependency graph. Repository tests are excluded from crate tarballs because they read the canonical fixtures outside each crate under `protocol/`; the tests still run from the SDK workspace, while published source remains self-contained without copying fixture facts. The Provider SDK runtime is consumed by the standalone Codex, Claude, and OpenCode Provider binaries; their all-target dependency graphs do not include Host or Gateway. The repository currently has no license file; `cargo package` content checks can run, but the project should not publish until the repository owner makes an explicit license decision.
 
 ## Runtime Gateway compatibility
 
-The existing in-process Runtime Gateway and Desktop Companion still use the unchanged v0 wire profile. That profile lives at `gateway/v1/compat-v0.*` and is generated into `codepet-gateway-sdk::compat_v0` plus the TypeScript compatibility SDK. It is independent from the production Remote path, which now uses Gateway v2 JSON-RPC. The Tauri and frontend files named `generated` are thin re-export shims only.
+The existing in-process Runtime Gateway and Desktop Companion still use the unchanged desktop-only v0 wire profile. That profile lives at `desktop/v0` and is generated into `codepet-desktop-sdk` plus the TypeScript desktop SDK. It is not a Gateway version and is independent from the production Remote path, which uses Gateway v2 JSON-RPC. The Tauri and frontend files named `generated` are thin re-export shims only.
 
 This compatibility path preserves current dual-channel behavior: remote App Server operations run only through Provider v1 and `codepet-host`, then map to the existing remote v0 Tauri surface; Desktop IPC remains on the companion bus. The compat layer is stateless, uses resource-carried four-part identity, and never forwards Provider events into companion/Pet channels.
 
@@ -105,7 +108,7 @@ This compatibility path preserves current dual-channel behavior: remote App Serv
 npm run protocol:generate
 npm run protocol:check
 cargo test --manifest-path sdk/rust/Cargo.toml
-npm test --prefix sdk/typescript/codepet-gateway-sdk
+npm test --prefix sdk/typescript/codepet-desktop-sdk
 dart analyze sdk/dart/codepet-core-sdk sdk/dart/codepet-gateway-sdk sdk/dart/codepet-lan-channel-sdk
 # Run `dart test` with sdk/dart/codepet-gateway-sdk as the working directory.
 node tools/protocol-codegen/generate.mjs --target=rust --check

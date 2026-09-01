@@ -1,8 +1,0 @@
-{
-  "protocolVersion": 1,
-  "id": "event-subscribe-1",
-  "method": "event.subscribe",
-  "params": {
-    "afterCursor": "opaque-gateway-cursor-QkFTRQ"
-  }
-}

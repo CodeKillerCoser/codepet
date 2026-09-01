@@ -22,15 +22,15 @@
 - 不迁移 Desktop IPC adapter 到独立 Provider 二进制；Codex App Server 已迁到独立 Provider。
 - LAN identity、QR 与 pairing/credential REST DTO 由 `channel/lan/v1` 模型 SDK 生成，不属于 Gateway 业务协议；Host 已接入 TLS/HTTP/WSS listener 与 mDNS 生命周期。
 - 不改桌宠展示、交互或 activity projection；本阶段只提供未来 Pet Protocol 的生成 SDK。
-- 不生成 Python、Dart Pet/Provider 或 Gateway compat-v0 SDK；Python 只固定可复用的 generator interface 与 target manifest。
+- 不生成 Python、Dart Pet/Provider 或 Dart desktop-v0 SDK；Python 只固定可复用的 generator interface 与 target manifest。
 
 ## 现状理解
 
-协议布局现在是 `core/v1`、`pet/v1`、`provider/v1`、`gateway/v2` 和 `channel/lan/v1`；`gateway/v1` 只保留旧 Runtime Gateway 兼容生成。`protocol/codegen.json` 记录包、依赖、输出与 `codepet.protocol.codegen/v1` target adapter 接口。Rust、TypeScript、Dart 有显式 adapter；Python 只有 fail-closed 的 planned registry entry。Rust 输出位于 `sdk/rust/codepet-*-sdk`；Dart 生成 core、Gateway v2 和 LAN admission SDK。
+协议布局现在是 `core/v1`、`pet/v1`、`provider/v1`、`gateway/v2`、`channel/lan/v1` 和桌面私有的 `desktop/v0`。旧 Gateway 协议已删除；`gateway/v2` 是唯一 Gateway 业务协议。`protocol/codegen.json` 记录包、依赖、输出与 `codepet.protocol.codegen/v1` target adapter 接口。Rust、TypeScript、Dart 有显式 adapter；Python 只有 fail-closed 的 planned registry entry。Rust 输出位于 `sdk/rust/codepet-*-sdk`；Dart 生成 core、Gateway v2 和 LAN admission SDK。
 
 `core/v1` 只包含可安全共享的 ID、版本范围、时间戳、分页、错误、JSON 对象、JSON-RPC error 和 `RoutedResourceId`。`pet/v1` 只出现 PetTask/PetApproval/PetAction/Snapshot/Patch；`provider/v1` 拥有 Provider 插件描述、instance 生命周期与 harness 能力；`gateway/v2` 拥有 handshake、device/provider 枚举、conversation/turn/approval 与 replayable event cursor，不包含插件进程控制。`channel/lan/v1` 只包含 discovery/admission 所需 DTO，不声明 Gateway method。
 
-旧 Runtime Gateway 契约没有被复制回 Tauri 源码。它作为 `protocol/gateway/v1/compat-v0.*` 的 IDL profile 生成到 `codepet-gateway-sdk::compat_v0`；`src-tauri/src/runtime_gateway/generated.rs` 和 `frontend/lib/generated/runtimeGateway.ts` 只是 re-export 薄层。这样兼容 profile 仍由同一个 IDL 根和同一个生成器约束，同时 v1 不必伪装成已接线的生产网络协议。
+旧 Runtime Gateway 契约没有被复制回 Tauri 源码。它作为 `protocol/desktop/v0` 的 IDL profile 生成到 `codepet-desktop-sdk`；`src-tauri/src/runtime_gateway/generated.rs` 和 `frontend/lib/generated/runtimeGateway.ts` 只是 re-export 薄层。这样桌面 profile 仍由同一个 IDL 根和同一个生成器约束，但不再占用 Gateway 命名空间或伪装成网络协议版本。
 
 ## 实现路径
 
@@ -40,7 +40,7 @@
 4. v1 initialize/handshake 通过 `VersionRange` 提交支持范围，并返回 selected version。manifest version、wire version 与生成常量由同一输入产生。
 5. Provider 和 gateway 的资源 ID 均使用 `RoutedResourceId { deviceId, providerPluginId, providerInstanceId, nativeResourceId }`；Provider descriptor 的 `instanceKinds` 非空，create request/instance 都携带稳定 `instanceKind`，生成 helper 供服务实现 fail closed 选择。请求、响应、事件和审批必须逐跳校验四段身份，不能事后回查 plugin id 补齐 route。
 6. capability enum、capability container 与 method mapping 同时受 manifest/schema 校验，并生成 typed `ProtocolMethod::capability()`。
-7. Tauri 依赖 `codepet-host` 与 `codepet-gateway-sdk`，并继续通过 compat v0 re-export 使用原类型。`RuntimeGatewayState` 只适配 `ProviderHostState` 创建的 Gateway service；remote 与 companion 保持各自 EventBus/replay/Tauri event，Provider v1 event 经 Gateway 只发布到 remote channel。
+7. Tauri 依赖 `codepet-host`、`codepet-gateway-sdk` 与 `codepet-desktop-sdk`，并继续通过 desktop v0 re-export 使用原有桌面类型。`RuntimeGatewayState` 只适配 `ProviderHostState` 创建的 Gateway service；remote 与 companion 保持各自 EventBus/replay/Tauri event，Provider v1 event 经 Gateway 只发布到 remote channel。
 8. `crates/codepet-host` 已消费生成 SDK 实现进程外 Provider client、Plugin Manager 和 `codepet-gateway-sdk::ProtocolServer` application boundary；Manager 到 Gateway 是只能领取一次的有界单消费者队列，不指向 companion bus。详见 `provider-host-device-and-plugin-runtime.md`。
 9. `crates/providers/codepet-provider-codex` 使用生成 Provider SDK 实现全部 v1 lifecycle/业务方法和事件，官方 App Server client 不再位于 Tauri。详见 `codex-provider-plugin-runtime.md`。
 10. `crates/providers/codepet-provider-claude` 使用同一生成 Provider SDK 与 Host lifecycle，只适配官方 CLI `stream-json` 可验证的 create/start/result/Unix interrupt；list/get/steer/approval 明确关闭。详见 `claude-provider-plugin-runtime.md`。
@@ -51,10 +51,10 @@
 - `protocol/`：唯一手写 schema、service manifest、transport discriminator、fixture 和 target manifest。
 - `tools/protocol-codegen/`：生成与 freshness/边界检查；不包含业务 handler。
 - `sdk/rust/`：四个可独立编译、可执行 `cargo package` 检查的 SDK；Provider 与 gateway 只依赖 core，pet 只依赖 core。path dependency 同时声明发布 version。
-- `sdk/typescript/`：生成旧 Gateway v1/Runtime Gateway compat 输入，不承担 Pet 或 Provider 业务。
+- `sdk/typescript/`：生成 core 与 Desktop Runtime v0 输入，不生成 Gateway 业务 SDK。
 - `sdk/dart/`：生成 core/Gateway v2/LAN admission null-safe package；channel、TLS、credential、重连与事件持久化留给 `codepet-remote`。
-- `src-tauri/src/runtime_gateway/generated.rs`：只把 compat v0 SDK 暴露给现有手写 gateway。
-- `frontend/lib/generated/runtimeGateway.ts`：只把 compat v0 TypeScript 类型暴露给当前前端。
+- `src-tauri/src/runtime_gateway/generated.rs`：只把 desktop v0 SDK 暴露给现有桌面内部调用面。
+- `frontend/lib/generated/runtimeGateway.ts`：只把 desktop v0 TypeScript 类型暴露给当前前端。
 - `crates/providers/codepet-provider-codex/`：首个 production Provider binary；运行依赖只有 Provider SDK 与纯 Rust App Server adapter。
 - `crates/providers/codepet-provider-claude/`：Claude production Provider binary；运行依赖只有 Provider SDK 与纯 Rust CLI adapter。
 - `crates/providers/codepet-provider-opencode/`：OpenCode Server HTTP/SSE adapter 与独立 Provider binary；不依赖 Host、Gateway、Tauri 或 Pet。

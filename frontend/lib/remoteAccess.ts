@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { DeviceDescriptor } from "../../sdk/typescript/codepet-gateway-sdk/src/generated";
+import type { DeviceDescriptor } from "../../sdk/typescript/codepet-core-sdk/src/generated";
 
 export type RemoteAccessRuntimePhase = "starting" | "available" | "unavailable" | "stopping" | "stopped";
 

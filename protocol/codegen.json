@@ -80,24 +80,6 @@
       }
     },
     {
-      "id": "gateway-v1",
-      "layer": "gateway",
-      "version": 1,
-      "schema": "gateway/v1/schema.json",
-      "manifest": "gateway/v1/manifest.json",
-      "dependencies": ["core-v1"],
-      "publicTypes": [
-        "CurrentCredentialDeleteResponse",
-        "PairingExchangeRequest",
-        "PairingExchangeResponse",
-        "PairingQrPayload"
-      ],
-      "outputs": {
-        "rust": "sdk/rust/codepet-gateway-sdk/src/v1.rs",
-        "typescript": "sdk/typescript/codepet-gateway-sdk/src/generated.ts"
-      }
-    },
-    {
       "id": "gateway-v2",
       "layer": "gateway",
       "version": 2,
@@ -129,15 +111,15 @@
       }
     },
     {
-      "id": "gateway-compat-v0",
-      "layer": "gateway",
+      "id": "desktop-runtime-v0",
+      "layer": "desktop",
       "version": 0,
-      "schema": "gateway/v1/compat-v0.schema.json",
-      "manifest": "gateway/v1/compat-v0.manifest.json",
+      "schema": "desktop/v0/schema.json",
+      "manifest": "desktop/v0/manifest.json",
       "dependencies": ["core-v1"],
       "outputs": {
-        "rust": "sdk/rust/codepet-gateway-sdk/src/compat_v0.rs",
-        "typescript": "sdk/typescript/codepet-gateway-sdk/src/compat-v0.ts"
+        "rust": "sdk/rust/codepet-desktop-sdk/src/generated.rs",
+        "typescript": "sdk/typescript/codepet-desktop-sdk/src/generated.ts"
       }
     }
   ]

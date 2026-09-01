@@ -1,4 +1,4 @@
-use codepet_gateway_sdk::compat_v0 as compat;
+use codepet_desktop_sdk as compat;
 use codepet_gateway_sdk::{self as gateway, ProtocolServer as GatewayProtocolServer};
 use codepet_host::{GatewayEventSubscription, ProviderGatewayService};
 use serde_json::json;
@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 const ROUTE_EXTENSION_NAMESPACE: &str = "codepet.gateway.route";
-const TURN_SEND_CALLER_SCOPE: &str = "tauri-runtime-gateway-compat-v0";
+const TURN_SEND_CALLER_SCOPE: &str = "tauri-desktop-runtime-v0";
 
 #[derive(Clone)]
 pub struct CompatProviderGateway {
@@ -342,7 +342,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
             if request.steer_turn_id.is_some() {
                 return Err(compat_error(
                     "capability_unsupported",
-                    "Gateway v1 turn.send starts a new turn and does not steer an active turn"
+                    "Gateway v2 turn.send starts a new turn and does not steer an active turn"
                         .to_string(),
                     false,
                 ));

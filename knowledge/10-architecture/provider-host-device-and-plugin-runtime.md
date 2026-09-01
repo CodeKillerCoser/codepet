@@ -2,11 +2,11 @@
 
 ## 当前结论
 
-`crates/codepet-host` 已提供可复用的 Rust Provider Host：它从显式目录读取 manifest，为本机持久化稳定 `DeviceId`，按 manifest 启动独立 Provider 二进制，并通过生成的 `codepet-provider-sdk` 在独占 stdio 上通信。它同时实现内部 `codepet-gateway-sdk::ProtocolServer`、`RemoteAccessManager` 安全核心，以及共用同一 TLS identity 的 Gateway v1 HTTPS/WSS LAN listener。Tauri 后端现已通过单个 `RemoteAccessRuntime` 接入 listener、mDNS、pairing watch 与退出生命周期；frontend UI 尚未接入。
+`crates/codepet-host` 已提供可复用的 Rust Provider Host：它从显式目录读取 manifest，为本机持久化稳定 `DeviceId`，按 manifest 启动独立 Provider 二进制，并通过生成的 `codepet-provider-sdk` 在独占 stdio 上通信。它同时实现内部 `codepet-gateway-sdk::ProtocolServer`、`RemoteAccessManager` 安全核心，以及共用同一 TLS identity 的 Gateway v2 HTTPS/WSS LAN listener。Tauri 后端现已通过单个 `RemoteAccessRuntime` 接入 listener、mDNS、pairing watch 与退出生命周期；frontend UI 尚未接入。
 
 Code Pet 发行包内置 `codepet-provider-codex`、`codepet-provider-opencode` 和 `codepet-provider-claude` 三个独立 adapter 二进制及其 manifest。内置的是 Code Pet 自有的 Provider adapter，不是 Codex、OpenCode 或 Claude runtime；runtime 仍由用户本机安装和配置，`AgentRuntimeService` 的检测/用户选择结果始终是 executable 权威。
 
-Tauri 由 `ProviderHostState` 管理 Plugin Manager 与 Gateway service；compat-v0 `RuntimeGatewayState` 只持有同一个 service 的薄适配引用。Provider 数据只有一条远程路径：
+Tauri 由 `ProviderHostState` 管理 Plugin Manager 与 Gateway service；desktop-v0 `RuntimeGatewayState` 只持有同一个 service 的薄适配引用。Provider 数据只有一条远程路径：
 
 ```text
 Provider binary
@@ -16,7 +16,7 @@ Provider binary
   -> runtime_gateway_* / runtime-gateway-event
 ```
 
-Provider 事件进入 Gateway v1 replay，并由兼容适配发布到远程 `runtime-gateway-event`；它们不进入 `SharedState` activity store、Desktop Companion replay、`codex-desktop-companion-event` 或 `pet-event`，也没有失败后回退到桌宠 IPC 的路径。真实 fixture 与 Tauri mock `AppHandle` 测试断言 remote event/replay 收到数据，同时 companion、Pet 与 Desktop adapter spy 保持不变。
+Provider 事件进入 Gateway v2 replay，并由兼容适配发布到远程 `runtime-gateway-event`；它们不进入 `SharedState` activity store、Desktop Companion replay、`codex-desktop-companion-event` 或 `pet-event`，也没有失败后回退到桌宠 IPC 的路径。真实 fixture 与 Tauri mock `AppHandle` 测试断言 remote event/replay 收到数据，同时 companion、Pet 与 Desktop adapter spy 保持不变。
 
 ## 范围与非目标
 
@@ -25,7 +25,7 @@ Provider 事件进入 Gateway v1 replay，并由兼容适配发布到远程 `run
 - 持久设备身份和 manifest 实例的稳定 ID 映射；
 - 显式插件目录、进程启动、协议协商、实例启动、能力查询和业务路由；
 - 有界 JSON-lines、并发 request id 关联、事件分流、超时、崩溃隔离、stderr 诊断和有界 shutdown；
-- 内部 Gateway v1 的 device/provider/capability/conversation/turn/approval 与 event replay 边界。
+- 内部 Gateway v2 的 device/provider/capability/conversation/turn/approval 与 event replay 边界。
 - 从 App Resources 的单一 `provider-plugins/` 目录自动发现三个默认 Provider adapter，并在 Tauri 开发态及 macOS/Windows 发布构建中 staging。
 - 持久化自签 LAN TLS identity、五分钟内存配对 session、只保存 bearer SHA-256 的可撤销远程 credential store，以及固定 pairing/current-credential REST 与 Gateway WSS route。
 
@@ -143,7 +143,7 @@ Manager 到 Gateway 只有一个有界 `mpsc` receiver，且只能领取一次�
 
 ## SDK 边界
 
-Host 只依赖 `codepet-provider-sdk` 和 `codepet-gateway-sdk`，不定义第二套 Provider/Gateway DTO。四个 Rust SDK 都具备 description/authors/repository metadata，不再 `publish = false`；内部 path dependency 同时声明 `version = "0.1.0"`，可用 `cargo package --allow-dirty` 检查包内容。仓库当前没有 LICENSE 文件，因此 manifest 不虚构 license 声明；正式发布前仍需仓库所有者补充许可证决策。
+Host 只依赖 `codepet-provider-sdk` 和 `codepet-gateway-sdk`，不定义第二套 Provider/Gateway DTO。五个 Rust SDK 都具备 description/authors/repository metadata，不再 `publish = false`；内部 path dependency 同时声明 `version = "0.1.0"`，可用 `cargo package --allow-dirty` 检查包内容。仓库当前没有 LICENSE 文件，因此 manifest 不虚构 license 声明；正式发布前仍需仓库所有者补充许可证决策。
 
 App 内 `provider-sdk/cp-sdk-gen` 是 JavaScript 编写并由 Bun `--compile` 产出的单体原生协议编译器。它运行时读取相邻 Core/Provider schema、manifest 与 fixtures，经与仓库生成流程相同的校验和 normalized typed IR 生成 `generated.rs`，再写入 Bun executable 内嵌的 Cargo package scaffold、稳定 stdio runtime 和接入 README；它不嵌入或复制仓库预生成的 `generated.rs`。`cp-sdk-gen.lock.json` 的 digest 来自本次实际输入协议，`--check` 重新编译并比对所有已知输出。相邻 `provider-sdk/protocol/v1/{core,schema}/` 是面向插件作者、引用可直接解析的 JSON-RPC 2.0 输入事实。
 

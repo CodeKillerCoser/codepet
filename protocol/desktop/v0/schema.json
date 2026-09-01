@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://code-pet.dev/protocol/gateway/v1/compat-v0.schema.json",
+  "$id": "https://code-pet.dev/protocol/desktop/v0/schema.json",
   "title": "CodePet Runtime Gateway Compatibility Protocol v0",
   "$defs": {
     "PermissionLevel": {

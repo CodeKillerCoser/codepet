@@ -673,6 +673,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "chrono",
+ "codepet-desktop-sdk",
  "codepet-gateway-sdk",
  "codepet-host",
  "codepet-lan-channel-sdk",
@@ -715,6 +716,15 @@ dependencies = [
 name = "codepet-core-sdk"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "codepet-desktop-sdk"
+version = "0.1.0"
+dependencies = [
+ "codepet-core-sdk",
  "serde",
  "serde_json",
 ]

@@ -36,10 +36,9 @@ test("schema and method/event manifests are self-consistent", async () => {
       "core-v1",
       "pet-v1",
       "provider-v1",
-      "gateway-v1",
       "gateway-v2",
       "channel-lan-v1",
-      "gateway-compat-v0",
+      "desktop-runtime-v0",
     ],
   );
 });
@@ -124,7 +123,7 @@ test("provider history items carry routed conversation ownership", async () => {
 
 test("gateway resources are routed while plugin lifecycle stays private", async () => {
   const model = await loadProtocolModel();
-  const gateway = record(model, "gateway-v1");
+  const gateway = record(model, "gateway-v2");
   const methods = gateway.manifest.methods.map((method) => method.name);
   assert.equal(methods.some((method) => method.startsWith("instance.") || method === "provider.shutdown"), false);
   assert(methods.includes("event.subscribe"));
@@ -172,11 +171,11 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
 
 test("provider descriptors and turn controls are explicit discriminated protocol data", async () => {
   const model = await loadProtocolModel();
-  const gatewayTurnSend = record(model, "gateway-v1").manifest.methods.find(
+  const gatewayTurnSend = record(model, "gateway-v2").manifest.methods.find(
     (method) => method.name === "turn.send",
   );
   assert.equal(gatewayTurnSend.idempotency, "nonIdempotent");
-  for (const packageId of ["provider-v1", "gateway-v1"]) {
+  for (const packageId of ["provider-v1", "gateway-v2"]) {
     const definitions = record(model, packageId).schema.$defs;
     const instance = definitions.ProviderInstance;
     assert(instance.required.includes("harness"));
@@ -218,59 +217,32 @@ test("provider descriptors and turn controls are explicit discriminated protocol
     assert.match(source, /pub kind: GroupedModelCatalogKind/);
     assert.match(source, /pub user_item: Option<ConversationItem>/);
   }
-  const gatewayTypescript = await readFile(
-    "sdk/typescript/codepet-gateway-sdk/src/generated.ts",
-    "utf8",
-  );
-  assert.match(
-    gatewayTypescript,
-    /export type ModelSelection = FlatModelSelection \| GroupedModelSelection/,
-  );
-  assert.match(gatewayTypescript, /export interface FlatModelSelection \{\n  kind: FlatModelCatalogKind;/);
-  assert.match(gatewayTypescript, /export interface GroupedModelSelection \{\n  kind: GroupedModelCatalogKind;/);
-  assert.match(gatewayTypescript, /userItem: ConversationItem \| null/);
 });
 
-test("gateway LAN DTOs remain generated types outside the JSON-RPC method manifest", async () => {
+test("LAN admission DTOs remain independent from the Gateway JSON-RPC manifest", async () => {
   const model = await loadProtocolModel();
-  const gateway = record(model, "gateway-v1");
-  const definitions = gateway.schema.$defs;
-  assert.deepEqual(gateway.packageConfig.publicTypes, [
+  const channel = record(model, "channel-lan-v1");
+  const definitions = channel.schema.$defs;
+  assert.deepEqual(channel.packageConfig.publicTypes, [
     "CurrentCredentialDeleteResponse",
+    "LanHostIdentity",
     "PairingExchangeRequest",
     "PairingExchangeResponse",
     "PairingQrPayload",
   ]);
-  assert.equal(definitions.HandshakeRequest.properties.clientId.$ref, "../../core/v1/schema.json#/$defs/ClientId");
-  assert.equal(definitions.HandshakeRequest.properties.remoteClientId, undefined);
-  assert.equal(definitions.HandshakeRequest.properties.clientName, undefined);
-  assert.equal(definitions.HandshakeRequest.properties.device.$ref, "#/$defs/DeviceDescriptor");
-  assert(definitions.HandshakeRequest.required.includes("device"));
-  assert.equal(definitions.HandshakeResponse.properties.device.$ref, "#/$defs/RemoteHostIdentity");
-  assert(definitions.HandshakeResponse.required.includes("device"));
-  assert.deepEqual(Object.keys(definitions.DeviceDescriptor.properties), [
-    "deviceName",
-    "operatingSystem",
-    "systemVersion",
-  ]);
-  assert.deepEqual(definitions.DeviceDescriptor.required, [
-    "deviceName",
-    "operatingSystem",
-    "systemVersion",
-  ]);
-  assert.deepEqual(Object.keys(definitions.RemoteHostIdentity.properties), [
+  assert.deepEqual(Object.keys(definitions.LanHostIdentity.properties), [
     "deviceId",
     "descriptor",
     "identityFingerprint",
   ]);
-  assert.equal(definitions.RemoteHostIdentity.properties.descriptor.$ref, "#/$defs/DeviceDescriptor");
-  assert.equal(definitions.RemoteHostIdentity.properties.identityFingerprint.pattern, "^[0-9a-f]{64}$");
+  assert.equal(definitions.LanHostIdentity.properties.descriptor.$ref, "../../../core/v1/schema.json#/$defs/DeviceDescriptor");
+  assert.equal(definitions.LanHostIdentity.properties.identityFingerprint.pattern, "^[0-9a-f]{64}$");
   assert.deepEqual(Object.keys(definitions.PairingExchangeRequest.properties), [
     "pairingSecret",
     "clientId",
     "device",
   ]);
-  assert.equal(definitions.PairingExchangeRequest.properties.device.$ref, "#/$defs/DeviceDescriptor");
+  assert.equal(definitions.PairingExchangeRequest.properties.device.$ref, "../../../core/v1/schema.json#/$defs/DeviceDescriptor");
   assert(definitions.PairingExchangeRequest.required.includes("device"));
   assert.equal(definitions.PairingExchangeRequest.properties.pairingSecret["x-codepet-sensitive"], true);
   assert.deepEqual(Object.keys(definitions.PairingExchangeResponse.properties), [
@@ -292,16 +264,13 @@ test("gateway LAN DTOs remain generated types outside the JSON-RPC method manife
   assert.equal(definitions.PairingQrPayload.properties.certSha256.pattern, "^[0-9a-f]{64}$");
   assert.equal(definitions.PairingQrPayload.properties.pairingSecret["x-codepet-sensitive"], true);
   assert.deepEqual(definitions.CurrentCredentialDeleteResponse.required, ["revoked"]);
-  assert.equal(
-    gateway.manifest.methods.some((method) => method.name.includes("pairing") || method.name.includes("credential")),
-    false,
-  );
+  assert.equal(channel.manifest.methods.length, 0);
 });
 
 test("active generators omit schema definitions outside the public reachability graph", async () => {
   const model = await loadProtocolModel();
-  const gateway = record(model, "gateway-v1");
-  gateway.schema.$defs.InternalOnly = {
+  const channel = record(model, "channel-lan-v1");
+  channel.schema.$defs.InternalOnly = {
     type: "object",
     properties: {
       value: { type: "string" },
@@ -310,16 +279,13 @@ test("active generators omit schema definitions outside the public reachability 
     additionalProperties: false,
   };
 
-  const rust = generatorTargetRegistry.rust.render({ record: gateway, model });
-  const typescript = generatorTargetRegistry.typescript.render({ record: gateway, model });
+  const rust = generatorTargetRegistry.rust.render({ record: channel, model });
   model.protocolIr = buildProtocolIr(model);
-  const dart = generatorTargetRegistry.dart.render({ record: gateway, model, ir: model.protocolIr });
+  const dart = generatorTargetRegistry.dart.render({ record: channel, model, ir: model.protocolIr });
   assert.doesNotMatch(rust, /InternalOnly/);
-  assert.doesNotMatch(typescript, /InternalOnly/);
   assert.doesNotMatch(dart, /InternalOnly/);
-  for (const publicType of gateway.packageConfig.publicTypes) {
+  for (const publicType of channel.packageConfig.publicTypes) {
     assert.match(rust, new RegExp(`pub struct ${publicType}`));
-    assert.match(typescript, new RegExp(`export interface ${publicType}`));
     assert.match(dart, new RegExp(`final class ${publicType}`));
   }
 });
@@ -400,15 +366,9 @@ test("TypeScript adapter handles multiple packages and cross-schema imports", as
   const result = await generateProtocol({ checkMode: true, targets: ["typescript"] });
   assert.deepEqual(
     result.generated.map(({ packageId, targetId }) => [packageId, targetId]),
-    [["core-v1", "typescript"], ["gateway-v1", "typescript"], ["gateway-compat-v0", "typescript"]],
+    [["core-v1", "typescript"], ["desktop-runtime-v0", "typescript"]],
   );
-  const gatewaySource = await readFile("sdk/typescript/codepet-gateway-sdk/src/generated.ts", "utf8");
-  assert.match(gatewaySource, /export interface RemoteHostIdentity/);
-  assert.match(gatewaySource, /export interface PairingExchangeRequest/);
-  assert.match(gatewaySource, /export interface PairingExchangeResponse/);
-  assert.match(gatewaySource, /export interface PairingQrPayload/);
-  assert.match(gatewaySource, /export interface CurrentCredentialDeleteResponse/);
-  const source = await readFile("sdk/typescript/codepet-gateway-sdk/src/compat-v0.ts", "utf8");
+  const source = await readFile("sdk/typescript/codepet-desktop-sdk/src/generated.ts", "utf8");
   assert.match(source, /from "\.\.\/\.\.\/codepet-core-sdk\/src\/generated"/);
   assert.match(source, /import type \{ Cursor, EventSequence, JsonObject, ProtocolError, ProtocolVersion, RequestId, TimestampMs \}/);
 });

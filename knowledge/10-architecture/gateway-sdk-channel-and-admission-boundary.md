@@ -38,7 +38,7 @@ discovery ---------------------------------- mDNS
 - credential 绑定逻辑 client identity。WSS 首次 `protocol.handshake.clientId` 必须与 bearer 绑定的 client 一致。
 - Gateway Host identity 只包含 `deviceId + DeviceDescriptor`。
 - Provider route 从业务资源获得。`turn.send` 不再同时携带一份可冲突的 route 和 conversation route。
-- 旧 Remote 存储的 `/remote/v1/gateway` endpoint 在读取时迁移到 `/remote/v2/gateway`；pairing 与 credential REST 路径仍为 v1。
+- 旧 Remote 存储的 `/remote/v2/gateway` endpoint 在读取时迁移到 `/remote/v2/gateway`；pairing 与 credential REST 路径仍为 v1。
 
 ## 风险与验证
 

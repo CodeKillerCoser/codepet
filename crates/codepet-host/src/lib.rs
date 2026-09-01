@@ -1,4 +1,4 @@
-//! CodePet device identity, out-of-process Provider host, and Gateway v1 boundary.
+//! CodePet device identity, out-of-process Provider host, and Gateway v2 boundary.
 
 pub use codepet_gateway_sdk as gateway_sdk;
 pub use codepet_lan_channel_sdk::PairingExchangeRequest;

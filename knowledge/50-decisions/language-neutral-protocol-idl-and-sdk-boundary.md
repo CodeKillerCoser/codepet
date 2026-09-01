@@ -26,13 +26,13 @@ Provider SDK 的公共边界由两部分组成：schema/manifest 生成的 DTO�
 
 Dart target 采用只覆盖当前受检 schema 子集的结构化 emitter，不引入 quicktype、Freezed、json_serializable 或 build_runner 依赖。它生成 core、Gateway v2 client 与 LAN admission models null-safe package、closed-object/约束校验、显式 sealed union、敏感字段 redaction、manifest metadata、JSON-RPC codec 与 transport-neutral typed client。无法找到共同 required singleton-enum discriminator 的 `oneOf` 在生成前失败；不会退化为 `dynamic` 或宽松可选字段模型。
 
-既有 Tauri Runtime Gateway 调用面使用同一 gateway SDK 内的生成 compat v0 module。compat profile 仍来自 `protocol/gateway/v1` 下的 IDL，不允许在 Tauri 源码复制 DTO。它只是桌面内部兼容面；Remote 网络 transport 已使用 Gateway v2 JSON-RPC。
+既有 Tauri Runtime Gateway 调用面使用同一 SDK 内生成的 `desktop_v0` module。该 profile 来自 `protocol/desktop/v0`，不允许在 Tauri 源码复制 DTO；它是独立的桌面内部协议，不再占用 Gateway 版本空间。Remote 网络 transport 只使用 Gateway v2 JSON-RPC。
 
 ## 备选方案
 
 - 继续以 Tauri Rust struct 为主并导出其他语言：短期简单，但 Rust 特性会决定 wire 语义，并形成与 JSON Schema 并列的事实来源，因此不采用。
 - 为 pet/provider/gateway 各自手写重复 ID、错误和 envelope：能快速隔离目录，但公共语义会漂移，无法可靠生成多语言 SDK，因此不采用。
-- 立即把现有 Runtime Gateway 全量升级到 gateway v1：可移除 compat profile，但会把设备 registry、event cursor store 和网络 session 等未实现能力混入本阶段，并扩大双链路回归面，因此不采用。
+- 立即把 Desktop 内部协议改成 Gateway v2：会把 Desktop Companion/Pet 的本地状态语义误并入远程 Gateway，因此不采用；本次只把它移出 Gateway 命名空间。
 - 把 Desktop IPC adapter 直接实现为 Provider plugin：会让 Provider event 有机会进入桌宠投影，破坏已验证的 remote/companion channel isolation，因此不采用。
 - 直接采用 quicktype Dart renderer：跨文件 ref 可用，但会丢失约束、共享命名、closed object、敏感字段和判别联合，因此不采用。
 - 生成 annotated Dart source 再运行 json_serializable/Freezed：codec 生态成熟，但会增加第二阶段生成链、运行依赖和一份 Dart 侧模型事实，因此本阶段不采用。
@@ -40,7 +40,7 @@ Dart target 采用只覆盖当前受检 schema 子集的结构化 emitter，不�
 
 ## 取舍理由
 
-JSON Schema Draft 2020-12 加 method/event manifest 能同时表达跨语言 DTO、版本、方向、幂等性、capability、transport 和 discriminator，且现有生成逻辑已有成熟基础。独立 Rust SDK 让 Provider Host、Gateway、Provider binary 与桌面应用通过普通 crate dependency 使用生成接口，而不是复制代码。compat v0 module 把迁移风险集中在可删除边界：现有 serde fixtures 和调用形状保持不变，而实际 runtime 已收敛到 Provider/Gateway v1。
+JSON Schema Draft 2020-12 加 method/event manifest 能同时表达跨语言 DTO、版本、方向、幂等性、capability、transport 和 discriminator，且现有生成逻辑已有成熟基础。独立 Rust SDK 让 Provider Host、Gateway、Provider binary 与桌面应用通过普通 crate dependency 使用生成接口，而不是复制代码。桌面 v0 module 保持本地调用形状不变；Gateway runtime 已唯一收敛到 v2。
 
 把 `RoutedResourceId` 置于 core 是一个有意的最小共享选择：它只组合稳定 ID，不携带 Provider conversation、Pet task 或 Gateway session 状态，因而可安全被 provider 与 gateway 同时引用。所有更高层的资源、生命周期和 UI 字段仍留在各自 schema。
 
@@ -68,11 +68,11 @@ JSON Schema Draft 2020-12 加 method/event manifest 能同时表达跨语言 DTO
 - `scripts/test_codex_provider_stdio.py` 从独立 Python 进程执行公共 wire smoke；SDK 的通用 transport 行为仍由 Rust SDK tests 与 Codex 饱和/EOF/坏帧/断管纵向测试共同守护。
 - `codepet-provider-codex`、`codepet-provider-claude` 与 `codepet-provider-opencode` 已实现 generated `Provider` trait，并共享 SDK dispatcher、JSON-line codec 与 stdio runtime；各自的 App Server / CLI / HTTP+SSE 私有协议只存在于对应插件内部。
 - Gateway v2 transport 对 event cursor、分页 cursor、断线恢复和版本不重叠错误的持续兼容性。
-- compat v0 使用点是否持续收敛；在 Pet v1 adapter 与真实 gateway v1 session 均完成前，不应提前删除。
+- desktop v0 使用点是否持续收敛；它只能服务 Desktop Companion/Pet 本地链路，不得重新成为 Remote Gateway 兼容层。
 - 如出现 schema 子集不足，应先评估所有目标语言的可生成性，再扩展 generator；不得为单个 Rust 需求加入只能由 serde 表达的语义。
-- 四个 Rust SDK 已移除永久私有标记，并为 path dependency 同时声明版本。仓库尚无 LICENSE，正式发布前必须由所有者决定许可证，不能由实现阶段猜测。
+- 五个 Rust SDK 已移除永久私有标记，并为 path dependency 同时声明版本。仓库尚无 LICENSE，正式发布前必须由所有者决定许可证，不能由实现阶段猜测。
 - Dart package 当前版本为 `0.1.0`，Gateway 用 `dependency_overrides` 指向同仓 core 进行本地验证；发布时必须先发布同版本 core，并移除消费方的本地 override。仓库 LICENSE 决策同样仍是发布阻塞项。
-- 当前 Dart 不生成 gateway compat-v0、Pet 或 Provider server；未来扩展前必须为相应 transport semantics 增加 IR 与 fixture 证据，不能机械复制既有 emitter。
+- 当前 Dart 不生成 gateway desktop-v0、Pet 或 Provider server；未来扩展前必须为相应 transport semantics 增加 IR 与 fixture 证据，不能机械复制既有 emitter。
 - Rust/TypeScript 尚未改为完全从 normalized IR 渲染；这是生成器内部一致性的剩余迁移项，不影响 `protocol/` 作为唯一手写事实，但迁移时必须先锁定当前生成 diff 与全部 SDK fixture。
 
 ## 工具来源

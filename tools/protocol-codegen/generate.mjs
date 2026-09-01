@@ -558,7 +558,7 @@ export async function loadProtocolModel({ config: suppliedConfig } = {}) {
     assert(isObject(packageConfig), "protocol package entry must be an object");
     assert(!packageIds.has(packageConfig.id), `duplicate protocol package ${packageConfig.id}`);
     packageIds.add(packageConfig.id);
-    assert(["core", "pet", "provider", "gateway", "channel"].includes(packageConfig.layer), `${packageConfig.id} has invalid layer`);
+    assert(["core", "pet", "provider", "gateway", "channel", "desktop"].includes(packageConfig.layer), `${packageConfig.id} has invalid layer`);
     assert(Number.isInteger(packageConfig.version) && packageConfig.version >= 0, `${packageConfig.id} has invalid version`);
     assert(Array.isArray(packageConfig.dependencies), `${packageConfig.id} dependencies must be an array`);
     const publicTypes = packageConfig.publicTypes ?? [];
