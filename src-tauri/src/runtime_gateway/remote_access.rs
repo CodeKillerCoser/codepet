@@ -1987,7 +1987,7 @@ mod tests {
             exchange.json().await.unwrap();
         assert_eq!(
             exchange.gateway_url,
-            format!("wss://192.168.10.21:{port}/remote/v1/gateway")
+            format!("wss://192.168.10.21:{port}/remote/v2/gateway")
         );
 
         test.runtime.shutdown_once().await;
