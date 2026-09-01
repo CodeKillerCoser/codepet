@@ -791,10 +791,7 @@ impl ProtocolServer for CodexProvider {
             let runtime = self.resource_instance(&request.conversation)?;
             let conversation_id = request.conversation.native_resource_id;
             let session = runtime.ready_session()?;
-            let snapshot = tokio::task::spawn_blocking(move || {
-                session.ensure_thread_loaded(&conversation_id)?;
-                session.thread_read(&conversation_id)
-            })
+            let snapshot = tokio::task::spawn_blocking(move || session.thread_read(&conversation_id))
                 .await
                 .map_err(provider_task_error)?
                 .map_err(CodexProtocolMapper::error)?;

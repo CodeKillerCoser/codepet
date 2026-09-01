@@ -87,7 +87,7 @@ Codex Desktop 私有 IPC
 | `instance.capabilities` | 返回当前真实 method/permission/model/reasoning 列表 | 支持。 |
 | `conversation.list` | `thread/list` | 支持 cursor/limit；固定 `updated_at desc` 且 `useStateDbOnly=true`。 |
 | `conversation.search` | `thread/list(searchTerm)` | 支持 route-scoped cursor/limit；与 list 相同固定 `updated_at desc` 和 state DB only，不做跨 Provider 聚合或本地过滤。 |
-| `conversation.get` | `thread/read(includeTurns=true)` | 支持。 |
+| `conversation.get` | `thread/read(includeTurns=true)` | 支持；严格纯读，每次只发送一次 `thread/read`，不调用 `thread/resume`，也不改变 session 的 loaded-thread 状态。 |
 | `conversation.create` | `thread/start` | 支持 permission/model/reasoning/workspace；App Server 不支持 title 或 Provider extension，传入时明确返回 `capability_unsupported`。 |
 | `turn.start` | 必要时 `thread/resume`，再 `turn/start` | 支持，保留 `clientUserMessageId`。 |
 | `turn.steer` | 必要时 `thread/resume`，再 `turn/steer`，随后 `thread/read` | 支持；请求显式携带 conversation 与 turn 四段身份，响应使用权威 turn 状态。 |

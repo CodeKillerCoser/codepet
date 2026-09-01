@@ -1652,6 +1652,52 @@ mod tests {
     }
 
     #[test]
+    fn repeated_thread_reads_do_not_load_or_configure_the_thread() {
+        let (session, peer_receiver, peer_sender) = mock_session();
+        let operation_session = session.clone();
+        let operation = thread::spawn(move || {
+            (0..2)
+                .map(|_| operation_session.thread_read("thread-writer-held").unwrap())
+                .collect::<Vec<_>>()
+        });
+
+        for _ in 0..2 {
+            let read = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+            assert_eq!(read["method"], "thread/read");
+            assert_eq!(read["params"]["threadId"], "thread-writer-held");
+            assert_eq!(read["params"]["includeTurns"], true);
+            peer_sender
+                .send(json!({
+                    "id": read["id"],
+                    "result": {
+                        "thread": thread_fixture(
+                            "thread-writer-held",
+                            "/tmp/project",
+                            "idle",
+                            vec![]
+                        )
+                    }
+                }))
+                .unwrap();
+        }
+
+        let snapshots = operation.join().unwrap();
+        assert_eq!(snapshots.len(), 2);
+        assert!(snapshots
+            .iter()
+            .all(|snapshot| snapshot.thread.id == "thread-writer-held"));
+        assert!(session.inner.loaded_threads.lock().unwrap().is_empty());
+        assert!(session
+            .inner
+            .thread_configurations
+            .lock()
+            .unwrap()
+            .is_empty());
+        assert!(peer_receiver.try_recv().is_err());
+        session.shutdown().unwrap();
+    }
+
+    #[test]
     fn thread_list_projects_live_and_deleted_managed_worktrees_from_the_wire() {
         let temp = tempfile::tempdir().unwrap();
         let main = temp.path().join("main/project");

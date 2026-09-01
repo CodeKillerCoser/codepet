@@ -41,7 +41,7 @@ Provider instance 启动并 initialize 官方 App Server stdio 子进程，reade
 
 `thread/list`、`thread/read` 只返回历史目录/快照，不代表 thread 已加载进当前 session。每个 `CodexAppServerSession` 独立维护 `Unknown → Resuming → Loaded` 状态：并发成功时等待者共享同一 Loaded 证据；resume 失败不缓存，等待者被唤醒后重新竞争并发起下一次 resume。`thread/start`、成功 resume 或当前 session 的 thread/turn/approval 通知构成 loaded 证据。新 session 不继承这张表，因此必须重新 resume。
 
-`conversation.get` 只使用 `thread/read(includeTurns: true)` 的 turn/item 顺序作为历史事实，不扫描 transcript。Mapper 把 Codex `ThreadItem` 投影为 Provider v1 的通用 `ConversationItem/ConversationContent`：每个 item 显式携带 owning conversation 与 turn，Host 要求 owning conversation 与请求的 routed conversation 完全相等；user/agent message、reasoning summary、command/file、MCP/dynamic tool 和未知安全占位均保留原生 item id。未知项不携带 arguments、result 或原 DTO。reasoning 只公开 `summary`，绝不公开 raw `content` 或 `item/reasoning/textDelta`。
+`conversation.get` 严格只发送一次 `thread/read(includeTurns: true)`，使用其 turn/item 顺序作为历史事实，不调用 `ensure_thread_loaded`/`thread/resume`，不扫描 transcript，也不写 loaded-thread 状态或创建 writer 执行上下文。因此另一个 runtime 已持有 thread writer 时，历史详情读取仍可成功。Mapper 把 Codex `ThreadItem` 投影为 Provider v1 的通用 `ConversationItem/ConversationContent`：每个 item 显式携带 owning conversation 与 turn，Host 要求 owning conversation 与请求的 routed conversation 完全相等；user/agent message、reasoning summary、command/file、MCP/dynamic tool 和未知安全占位均保留原生 item id。未知项不携带 arguments、result 或原 DTO。reasoning 只公开 `summary`，绝不公开 raw `content` 或 `item/reasoning/textDelta`。
 
 无原生 content id 的内容使用位置稳定且与文本无关的派生 ID，例如 `${itemId}:input:${index}`、`${itemId}:text`、`${itemId}:summary:${index}`、`${itemId}:command` 与 `${itemId}:output`。live `turn.outputDelta` 使用相同 `itemId/contentId`。in-progress turn 的 agent/plan/reasoning body 和运行中 command output 不进入 committed snapshot；item identity/status 仍可见，权威完成内容来自 completed item。Gateway 保留查询前 cursor，客户端据稳定 content id 合并 replay，从而同时避免查询竞态丢事件和重复追加。
 
@@ -68,7 +68,7 @@ compat 是无状态 DTO/event 映射：delta 自带 conversation route，所有�
 - App Server wire 漂移：必跑 fixture 使用无 `jsonrpc` 的官方 response/notification 形状，并覆盖可选 `trace`、`emittedAtMs` 与缺失 `params`；升级 CLI 后重新生成 schema 并重跑。
 - response schema 漂移：用当前 binary 重新生成 JSON Schema/TS binding，核对 start/resume `SandboxPolicy` 与 permissions request/response；真实对象 fixture 必须保持可反序列化。
 - 本机可执行文件兼容性：显式 integration test 使用 resolver 得到的绝对 executable，已覆盖 initialize、instance create/start、conversation list 与 instance stop；无 executable 的环境只跑官方录制 fixture，不把 integration test 假装成必过。
-- 历史 thread 生命周期：list/read 后首次运行时动作必须先 resume；测试覆盖真实 `-32600/no rollout`、写前 Shutdown、写后断线、并发失败 waiter 重试、成功缓存和新 session 重新 resume。
+- 历史 thread 生命周期：`conversation.get` 重复读取只能发送 `thread/read`，不参与 loaded-thread 状态机；后续首次写动作才允许 resume。测试覆盖另一个 runtime 持 writer 时详情仍可读取，以及真实 `-32600/no rollout`、写前 Shutdown、写后断线、并发失败 waiter 重试、成功缓存和新 session 重新 resume。
 - 历史投影泄漏或重复：fixture 覆盖 ordered user/assistant/reasoning/command/file/tool/unknown，断言 raw reasoning 和原生 payload 不出现；completed/in-progress 对照断言可变 body 只在完成后进入 snapshot，delta 与 snapshot 使用相同 content id。
 - server request 悬挂：真实 Provider 二进制测试覆盖 `additionalPermissions.network` 得到原 id 的 `-32601`，同时断言无 Approval event。
 - 审批串 session：真实 Provider 二进制 stop/start 后复用相同 App Server request id，旧 approval 必须 `stale_approval_session`，当前 approval 才能回写。
@@ -83,7 +83,7 @@ compat 是无状态 DTO/event 映射：delta 自带 conversation route，所有�
 
 - App Server fake peer 使用官方 wire 完整请求/通知闭环；可选真实 executable smoke 覆盖 initialize → instance create/start → conversation list → instance stop。
 - list → resume → send、同 session 成功缓存、失败 waiter 重试与新 session 重新 resume。
-- `thread/read(includeTurns)` 的 ordered history、稳定 item/content ID、safe unknown、reasoning summary-only 与真实 approval ledger 合并。
+- `conversation.get` 在另一个 runtime 持 writer 时仍每次只发送一次 `thread/read(includeTurns)`；重复读取不改变 loaded/configuration 状态、不创建新 session，并继续覆盖 ordered history、稳定 item/content ID、safe unknown、reasoning summary-only 与真实 approval ledger 合并。
 - 额外权限/结构化 decision/未知 server request 的 `-32601` response 与 capability/event 一致性。
 - remote `conversation.list/create` 明确路由 Provider Gateway；companion 不广告或实现这两项能力。
 - runtime executable refresh 只更新 Host instance setting 并重启 Codex 插件。

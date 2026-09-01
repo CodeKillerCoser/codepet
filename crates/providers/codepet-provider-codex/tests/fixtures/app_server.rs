@@ -5,6 +5,7 @@ use std::path::PathBuf;
 struct Options {
     approval_mode: String,
     marker: Option<PathBuf>,
+    request_log: Option<PathBuf>,
 }
 
 fn main() {
@@ -30,6 +31,7 @@ fn main() {
             continue;
         };
         let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
+        record_request(&options, method, &params);
         match method {
             "initialize" => respond(
                 &mut writer,
@@ -165,6 +167,19 @@ fn main() {
             }
             "thread/resume" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
+                if thread_id == "thread-writer-held" {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": {
+                                "code": -32000,
+                                "message": "thread writer is held by another runtime"
+                            }
+                        }),
+                    );
+                    continue;
+                }
                 respond(
                     &mut writer,
                     id,
@@ -248,6 +263,26 @@ fn main() {
     }
 }
 
+fn record_request(options: &Options, method: &str, params: &Value) {
+    let Some(path) = options.request_log.as_ref() else {
+        return;
+    };
+    let thread_id = params
+        .get("threadId")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let mut log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap();
+    if thread_id.is_empty() {
+        writeln!(log, "{method}").unwrap();
+    } else {
+        writeln!(log, "{method}\t{thread_id}").unwrap();
+    }
+}
+
 fn handle_client_response(options: &Options, message: &Value) {
     if message.get("id") != Some(&json!("approval-one")) {
         return;
@@ -271,17 +306,20 @@ fn handle_client_response(options: &Options, message: &Value) {
 fn options() -> Options {
     let mut approval_mode = "normal".to_string();
     let mut marker = None;
+    let mut request_log = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--approval-mode" => approval_mode = args.next().unwrap_or_default(),
             "--marker" => marker = args.next().map(PathBuf::from),
+            "--request-log" => request_log = args.next().map(PathBuf::from),
             _ => {}
         }
     }
     Options {
         approval_mode,
         marker,
+        request_log,
     }
 }
 

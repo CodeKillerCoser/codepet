@@ -616,6 +616,64 @@ fn provider_binary_rejects_stale_approval_when_app_server_request_id_is_reused()
 }
 
 #[test]
+fn provider_binary_conversation_get_is_pure_read_with_external_writer() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("unused-approval.txt");
+    let request_log = directory.path().join("app-server-requests.txt");
+    let mut provider = ProviderBinary::spawn();
+    provider.configure_with_request_log("none", &marker, Some(&request_log));
+    std::fs::write(&request_log, "").unwrap();
+    let conversation = json!({
+        "deviceId": "device-provider-binary",
+        "providerPluginId": CODEX_PLUGIN_ID,
+        "providerInstanceId": "codex",
+        "nativeResourceId": "thread-writer-held"
+    });
+
+    let first = provider.request(
+        "writer-held-first",
+        "conversation.get",
+        json!({ "conversation": conversation.clone() }),
+    );
+    let second = provider.request(
+        "writer-held-second",
+        "conversation.get",
+        json!({ "conversation": conversation }),
+    );
+
+    for response in [&first, &second] {
+        assert!(response.get("error").is_none());
+        assert_eq!(
+            response
+                .pointer("/result/conversation/resource/nativeResourceId")
+                .and_then(Value::as_str),
+            Some("thread-writer-held")
+        );
+        assert_eq!(
+            response
+                .pointer("/result/items")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(8)
+        );
+    }
+    assert_eq!(first.pointer("/result"), second.pointer("/result"));
+    assert_eq!(
+        std::fs::read_to_string(&request_log)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        vec![
+            "thread/read\tthread-writer-held",
+            "thread/read\tthread-writer-held"
+        ]
+    );
+
+    provider.request("writer-held-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("writer-held-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
 fn provider_binary_fails_stop_after_an_oversized_host_frame() {
     let mut child = Command::new(provider_executable())
         .stdin(Stdio::piped())
@@ -792,6 +850,25 @@ impl ProviderBinary {
     }
 
     fn configure(&mut self, approval_mode: &str, marker: &Path) -> (Value, String) {
+        self.configure_with_request_log(approval_mode, marker, None)
+    }
+
+    fn configure_with_request_log(
+        &mut self,
+        approval_mode: &str,
+        marker: &Path,
+        request_log: Option<&Path>,
+    ) -> (Value, String) {
+        let mut app_server_args = vec![
+            "--approval-mode".to_string(),
+            approval_mode.to_string(),
+            "--marker".to_string(),
+            marker.to_string_lossy().into_owned(),
+        ];
+        if let Some(request_log) = request_log {
+            app_server_args.push("--request-log".to_string());
+            app_server_args.push(request_log.to_string_lossy().into_owned());
+        }
         self.request(
             "initialize",
             "provider.initialize",
@@ -811,12 +888,7 @@ impl ProviderBinary {
                 "displayName": "Codex Binary Fixture",
                 "settings": {
                     "appServerExecutable": app_server_executable(),
-                    "appServerArgs": [
-                        "--approval-mode",
-                        approval_mode,
-                        "--marker",
-                        marker
-                    ]
+                    "appServerArgs": app_server_args
                 }
             }),
         );
