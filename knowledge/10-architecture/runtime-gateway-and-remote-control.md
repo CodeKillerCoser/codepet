@@ -20,7 +20,7 @@ Code Pet 当前是一个面向本机 AI 编程工具的桌面宠物应用。它�
 - 以 Codex 为第一优先级，完整接入 `codex app-server` V2，覆盖会话历史、新建和继续对话、实时 turn/item、模型、推理强度、访问权限、审批、Diff、用量和状态。
 - 保留现有桌宠体验：任务运行时显示气泡，需要审批、完成或失败时及时提醒；支持回复、停止、审批和打开对应桌面会话。
 - 建立统一的 Code Pet Standard Protocol，使桌宠 Svelte UI 和未来 Flutter 手机 App 面对同一套方法、模型、事件、错误和能力声明。
-- 使用统一 IDL 作为协议事实来源。当前生成 Rust SDK 与 TypeScript compatibility SDK；未来 Dart/Python 必须通过显式 target adapter 接入，在实现前选择即 fail closed。
+- 使用统一 IDL 作为协议事实来源。当前生成 Rust SDK、TypeScript Gateway/compatibility SDK 与 Dart core/Gateway SDK；未来 Python 必须通过显式 target adapter 接入，在实现前选择即 fail closed。
 - 将本地 Tauri IPC 与未来远程连接实现为同一 Gateway 的不同 Transport，使业务行为、权限检查和 Provider 状态只维护一次。
 - 保持 Provider 可扩展性。完成 Codex 后，能够在不推翻 Gateway、标准协议和 UI 基础模型的前提下接入 OpenCode Server、Claude Agent SDK/runtime，并为 Qoder 等后端保留扩展空间。
 - 所有 Agent 实际执行继续发生在用户电脑上；手机只承担 UI、输入、审批和状态查看。
@@ -274,7 +274,7 @@ manifest 中的方法条目直接引用同层 schema，并以 `capability` 映�
 
 - Rust serde DTO、request/response/event union、typed capability/method mapping、dispatcher、client/transport 和 codec；
 - TypeScript core 与 compat-v0 类型、discriminated union、typed client 和 event map；
-- Dart/Python 当前只有 planned target adapter entry，显式选择会在写文件前失败，尚无生成包。
+- Dart 当前从 normalized IR 生成 core/Gateway null-safe package、strict codec、manifest metadata 与 typed client；Python 只有 planned target adapter entry，显式选择会在写文件前失败。
 
 Provider Rust SDK 还生成有界 JSON-line framing、统一 request/response/notification/event classifier、标准 JSON-RPC error mapping、inbound transport 接口与 typed request-to-wire 构造器。业务 handler、进程 supervisor、Provider manager 和 UI renderer 仍属于各自运行时。
 
@@ -756,7 +756,7 @@ Provider 状态和能力
 
 - 建立 `protocol/{core,pet,provider,gateway}/v1`、分层 manifest、JSON Schema 子集和显式版本协商。
 - 定义 Provider lifecycle/conversation/turn/approval/event/shutdown、Gateway device/instance routing 与 Pet snapshot/patch/action 边界。
-- 实现 Rust/TypeScript target adapter；Dart/Python 保持 planned 且 fail closed，未生成代码。
+- 实现 Rust/TypeScript/Dart target adapter；Dart 覆盖 core/Gateway v1，Python 保持 planned 且 fail closed。
 - 生成四个 Rust SDK 的 DTO、server/client、dispatcher、typed capability mapping 和 codec；Provider 包含有界 stdio-json-lines framing。
 - 建立 fixture、dependency/capability/target 负例、Rust SDK 和 compat-v0 round-trip 测试。
 - 现有 Tauri Runtime Gateway 通过 gateway SDK `compat_v0` re-export 保持编译和双链路行为；未实现旧草案中的 `system.health` 或 UI 全量迁移。
@@ -881,7 +881,7 @@ Provider 状态和能力
 ### IDL 与生成代码
 
 - 验证 schema 与 manifest 的所有 `$ref` 可解析、符合 declared dependency/layer，schema 符合受支持子集。
-- 当前 Rust SDK 与 TypeScript compatibility SDK 对共享 fixture 执行 decode/encode/strict compile；Dart/Python 在 adapter 实现前只验证显式选择失败。
+- 当前 Rust SDK、TypeScript Gateway/compatibility SDK 与 Dart Gateway SDK 对共享 fixture 或类型面执行 decode/encode/strict compile；Dart 另验证 closed-object/constraint、判别 union、nullable、secret redaction、metadata 与 typed client，Python 只验证显式选择失败。
 - 覆盖 optional、nullable、unknown enum、unknown timeline item、int64 和错误响应。
 - CI 重新生成代码并检查工作区无差异，禁止提交过期生成物。
 - 检查 method/event 名称唯一，request/response `$ref` 存在，capability enum/container/method mapping 一致。

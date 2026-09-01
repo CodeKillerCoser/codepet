@@ -2,7 +2,7 @@
 
 ## Single source of truth
 
-Everything under `protocol/` is language-neutral, handwritten protocol input. Generated Rust and TypeScript files are outputs only; they must not be edited as an alternative model source.
+Everything under `protocol/` is language-neutral, handwritten protocol input. Generated Rust, TypeScript, and Dart files are outputs only; they must not be edited as an alternative model source.
 
 The v1 layers are:
 
@@ -11,7 +11,7 @@ The v1 layers are:
 - `provider/v1` — public Host ↔ independent Provider binary JSON-RPC 2.0 over newline-delimited stdio. It owns initialize, describe, instance lifecycle/capability, conversation, turn, approval, event, and shutdown contracts.
 - `gateway/v1` — Host ↔ Remote Client methods and replayable events. Resources use `deviceId + providerPluginId + providerInstanceId + nativeResourceId`; the gateway exposes neither plugin process lifecycle nor pet-private state.
 
-`codegen.json` declares packages, dependency direction, output targets, and the shared `codepet.protocol.codegen/v1` adapter interface for Rust, TypeScript, Dart, and Python. Rust is active for all four v1 layers. TypeScript covers core, Gateway v1, and the Runtime Gateway compatibility surface. Dart and Python remain explicitly registered but unimplemented planned targets; selecting them fails closed before generation.
+`codegen.json` declares packages, dependency direction, output targets, and the shared `codepet.protocol.codegen/v1` adapter interface for Rust, TypeScript, Dart, and Python. Rust is active for all four v1 layers. TypeScript covers core, Gateway v1, and the Runtime Gateway compatibility surface. Dart is active for core and Gateway v1. Python remains explicitly registered but unimplemented; selecting it fails closed before generation.
 
 ## Versioning and discriminators
 
@@ -75,6 +75,13 @@ Rust packages are located at:
 - `sdk/rust/codepet-provider-sdk`
 - `sdk/rust/codepet-gateway-sdk`
 
+Dart packages are located at:
+
+- `sdk/dart/codepet-core-sdk`
+- `sdk/dart/codepet-gateway-sdk`
+
+The Dart Gateway package is pure null-safe Dart and re-exports core. It contains immutable generated DTOs, strict unknown-field and schema-constraint validation, `kind`-discriminated sealed unions, secret-redacted diagnostics, manifest-derived method/event metadata, CodePet envelope codecs, and a transport-neutral typed `ProtocolClient`. WebSocket framing, request correlation storage, TLS pinning, credentials, reconnect/retry policy, and event persistence remain consumer-runtime concerns.
+
 Service SDKs contain serde DTOs, method/event enums, async server traits, dispatchers, typed client/transport shells, wire envelopes, and codecs. Provider additionally generates `ProtocolRequest::from_method_params`, so a transport can turn the generated method plus typed-client params into the exact JSON-RPC request enum without maintaining a second method/envelope match. Provider/Gateway capability enums and `ProtocolMethod::capability()` are generated from checked manifest/schema metadata. Provider descriptors expose protocol validation for non-empty supported instance kinds, and `instance.create` plus returned instances carry the selected `instanceKind`. The generated packages remain transport contracts rather than business runtimes. The consuming implementation is now `crates/codepet-host`: it owns device/instance persistence, Provider process supervision, Plugin Manager behavior, and an internal Gateway v1 service without copying protocol DTOs back into the host.
 
 The four Rust SDK manifests are packageable crates rather than permanently private workspace crates. Their local path dependencies also declare version `0.1.0`, allowing local workspace development while preserving a publishable dependency graph. Repository tests are excluded from crate tarballs because they read the canonical fixtures outside each crate under `protocol/`; the tests still run from the SDK workspace, while published source remains self-contained without copying fixture facts. The Provider SDK is consumed by the standalone `codepet-provider-codex` and `codepet-provider-claude` binaries; their all-target dependency graphs do not include Host or Gateway. The repository currently has no license file; `cargo package` content checks can run, but the project should not publish until the repository owner makes an explicit license decision.
@@ -92,6 +99,8 @@ npm run protocol:generate
 npm run protocol:check
 cargo test --manifest-path sdk/rust/Cargo.toml
 npm test --prefix sdk/typescript/codepet-gateway-sdk
+dart analyze sdk/dart/codepet-core-sdk sdk/dart/codepet-gateway-sdk
+# Run `dart test` with sdk/dart/codepet-gateway-sdk as the working directory.
 node tools/protocol-codegen/generate.mjs --target=rust --check
 ```
 

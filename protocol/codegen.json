@@ -14,7 +14,7 @@
     {
       "id": "dart",
       "interface": "codepet.protocol.codegen/v1",
-      "status": "planned"
+      "status": "active"
     },
     {
       "id": "python",
@@ -52,7 +52,8 @@
       ],
       "outputs": {
         "rust": "sdk/rust/codepet-core-sdk/src/generated.rs",
-        "typescript": "sdk/typescript/codepet-core-sdk/src/generated.ts"
+        "typescript": "sdk/typescript/codepet-core-sdk/src/generated.ts",
+        "dart": "sdk/dart/codepet-core-sdk/lib/src/generated.dart"
       }
     },
     {
@@ -92,7 +93,8 @@
       ],
       "outputs": {
         "rust": "sdk/rust/codepet-gateway-sdk/src/generated.rs",
-        "typescript": "sdk/typescript/codepet-gateway-sdk/src/generated.ts"
+        "typescript": "sdk/typescript/codepet-gateway-sdk/src/generated.ts",
+        "dart": "sdk/dart/codepet-gateway-sdk/lib/src/generated.dart"
       }
     },
     {

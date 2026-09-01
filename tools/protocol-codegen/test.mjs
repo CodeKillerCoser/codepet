@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   GENERATOR_TARGET_INTERFACE,
+  buildProtocolIr,
   generateProtocol,
   generatorTargetRegistry,
   loadProtocolModel,
@@ -274,7 +275,7 @@ test("gateway LAN DTOs remain generated types outside the JSON-RPC method manife
   );
 });
 
-test("Rust and TypeScript generators omit schema definitions outside the public reachability graph", async () => {
+test("active generators omit schema definitions outside the public reachability graph", async () => {
   const model = await loadProtocolModel();
   const gateway = record(model, "gateway-v1");
   gateway.schema.$defs.InternalOnly = {
@@ -288,11 +289,15 @@ test("Rust and TypeScript generators omit schema definitions outside the public 
 
   const rust = generatorTargetRegistry.rust.render({ record: gateway, model });
   const typescript = generatorTargetRegistry.typescript.render({ record: gateway, model });
+  model.protocolIr = buildProtocolIr(model);
+  const dart = generatorTargetRegistry.dart.render({ record: gateway, model, ir: model.protocolIr });
   assert.doesNotMatch(rust, /InternalOnly/);
   assert.doesNotMatch(typescript, /InternalOnly/);
+  assert.doesNotMatch(dart, /InternalOnly/);
   for (const publicType of gateway.packageConfig.publicTypes) {
     assert.match(rust, new RegExp(`pub struct ${publicType}`));
     assert.match(typescript, new RegExp(`export interface ${publicType}`));
+    assert.match(dart, new RegExp(`final class ${publicType}`));
   }
 });
 
@@ -301,7 +306,7 @@ test("future language generators share the same declared interface", async () =>
   const targets = new Map(model.config.targets.map((target) => [target.id, target]));
   assert.equal(targets.get("rust").status, "active");
   assert.equal(targets.get("typescript").status, "active");
-  assert.equal(targets.get("dart").status, "planned");
+  assert.equal(targets.get("dart").status, "active");
   assert.equal(targets.get("python").status, "planned");
   assert.deepEqual(new Set(model.config.targets.map((target) => target.interface)), new Set([GENERATOR_TARGET_INTERFACE]));
 });
@@ -311,11 +316,60 @@ test("target registry fails closed for fake and planned adapters", async () => {
     generateProtocol({ checkMode: true, targets: ["fake"] }),
     /unknown generator target: fake/,
   );
-  for (const target of ["dart", "python"]) {
+  for (const target of ["python"]) {
     await assert.rejects(
       generateProtocol({ checkMode: true, targets: [target] }),
       new RegExp(`generator target is not implemented: ${target}`),
     );
+  }
+});
+
+test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and package boundaries", async () => {
+  const model = await loadProtocolModel();
+  const gateway = record(model, "gateway-v1");
+  const gatewayIr = model.protocolIr.packagesById.get("gateway-v1");
+  assert.equal(gatewayIr.service.methods.length, 11);
+  assert.equal(gatewayIr.service.events.length, 7);
+  assert.equal(
+    gatewayIr.service.methods.find((method) => method.name === "turn.send").idempotency,
+    "nonIdempotent",
+  );
+  assert.equal(
+    gatewayIr.service.methods.find((method) => method.name === "turn.send").capability,
+    "turn.send",
+  );
+
+  const first = generatorTargetRegistry.dart.render({ record: gateway, model, ir: model.protocolIr });
+  const second = generatorTargetRegistry.dart.render({ record: gateway, model, ir: model.protocolIr });
+  assert.equal(first, second);
+  assert.match(first, /import 'package:codepet_core_sdk\/codepet_core_sdk\.dart';/);
+  assert.match(first, /sealed class ModelCatalog/);
+  assert.match(first, /final class FlatModelCatalog extends ModelCatalog/);
+  assert.match(first, /ProtocolIdempotency\.nonIdempotent/);
+  assert.match(first, /Future<TurnSendResponse> turnSend\(TurnSendRequest request\)/);
+
+  const result = await generateProtocol({ checkMode: true, targets: ["dart"] });
+  assert.deepEqual(
+    result.generated.map(({ packageId, targetId }) => [packageId, targetId]),
+    [["core-v1", "dart"], ["gateway-v1", "dart"]],
+  );
+});
+
+test("Dart adapter rejects ambiguous oneOf before emitting source", async () => {
+  const model = await loadProtocolModel();
+  const gateway = record(model, "gateway-v1");
+  const union = model.protocolIr.packagesById
+    .get("gateway-v1")
+    .definitions.find((definition) => definition.name === "ModelCatalog");
+  const discriminator = union.discriminator;
+  union.discriminator = undefined;
+  try {
+    assert.throws(
+      () => generatorTargetRegistry.dart.render({ record: gateway, model, ir: model.protocolIr }),
+      /untagged or ambiguous oneOf/,
+    );
+  } finally {
+    union.discriminator = discriminator;
   }
 });
 

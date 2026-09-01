@@ -6,7 +6,7 @@
 
 ## 目标
 
-- 从 `protocol/gateway/v1/schema.json` 同时生成 Rust 与 TypeScript 的 LAN DTO。
+- 从 `protocol/gateway/v1/schema.json` 同时生成 Rust、TypeScript 与 Dart 的 LAN DTO。
 - 保留 `HandshakeRequest.clientId` 作为 remote client 唯一协议身份，并要求 transport 将其与 pairing credential 绑定；设备展示信息统一使用 `DeviceDescriptor`，不重复造 ID。
 - 让 pairing exchange 与 handshake 双向都使用同一最小 descriptor，并让 response 复用同一 `RemoteHostIdentity`，其中证书指纹语义唯一。
 - 以单个 TLS listener 落实固定 REST/WSS wire 边界，并通过 `_codepet._tcp.local.` 发布同一 listener 的实际 LAN IP 与 TLS port。
@@ -59,8 +59,8 @@ Tauri 在一个 lifecycle mutex 下串行网络与 pairing 变化。地址切换
 ## 涉及模块
 
 - `protocol/gateway/v1/schema.json` 与 `fixtures/`：LAN DTO 与可验证 wire 样例的唯一事实来源。
-- `tools/protocol-codegen/`：支持 standalone type fixture 与 fingerprint pattern 校验，保证 Rust/TypeScript freshness。
-- `sdk/rust/codepet-gateway-sdk`、`sdk/typescript/codepet-gateway-sdk`：生成 DTO 与语言侧编译测试。
+- `tools/protocol-codegen/`：支持 standalone type fixture、fingerprint pattern、normalized IR 与判别联合校验，保证 Rust/TypeScript/Dart freshness。
+- `sdk/rust/codepet-gateway-sdk`、`sdk/typescript/codepet-gateway-sdk`、`sdk/dart/codepet-gateway-sdk`：生成 DTO 与语言侧编译/fixture 测试。
 - `crates/codepet-host/src/remote_access.rs`：消费生成 `PairingExchangeRequest`，不保留手写同义 DTO。
 - `crates/codepet-host/src/gateway.rs`：构造必需 handshake `device`；认证仍留在 transport 外层。
 - `crates/codepet-host/src/remote_listener.rs`：单 TLS listener、固定 REST/WSS route、per-socket 状态、撤销取消和有界 shutdown。
@@ -88,6 +88,7 @@ Tauri 在一个 lifecycle mutex 下串行网络与 pairing 变化。地址切换
 - `npm run protocol:check`：schema、standalone fixtures、生成目标与 freshness。
 - `cargo test --manifest-path sdk/rust/Cargo.toml -p codepet-gateway-sdk`：handshake identity 与 LAN DTO fixture 解码。
 - `npm test --prefix sdk/typescript/codepet-gateway-sdk`：Gateway v1 TypeScript 生成类型编译。
+- `dart analyze sdk/dart/codepet-core-sdk sdk/dart/codepet-gateway-sdk` 与 Gateway package 下的 `dart test`：null safety、canonical fixture round-trip、closed-object/constraint、判别 union、敏感字段与 typed client。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-host --test manager_gateway`：Host 注入 identity 的 handshake 构造。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-host --test remote_lan_listener`：真实 loopback TLS、证书 pin、advertised authority、pairing、WSS dispatch、binary/超限 frame、安全 backpressure 关闭、replay/live、多客户端、同 credential 双 socket 撤销和 shutdown。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-host --lib remote_mdns`：纯构造/校验、TXT exact set、完整 IP+pair generation、实际 port、非本机 endpoint fail-closed、同源 API、同值 no-op、旧 resend 竞态屏障、unregister error/timeout 与 Announce/idle 失败生命周期；macOS 同一测试集另以唯一 instance、不启动 browse，验证 start Announce、`pair=0→1` 的 unregister/new-daemon/new-Announce 顺序和 shutdown。

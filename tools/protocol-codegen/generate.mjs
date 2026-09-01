@@ -4,12 +4,14 @@ import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { generateDart } from "./dart.mjs";
+
 export const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const protocolRoot = resolve(repositoryRoot, "protocol");
 const configPath = resolve(protocolRoot, "codegen.json");
 
 export const GENERATOR_TARGET_INTERFACE = "codepet.protocol.codegen/v1";
-const defaultTargetIds = ["rust", "typescript"];
+const defaultTargetIds = ["rust", "typescript", "dart"];
 
 const supportedKeywords = new Set([
   "$schema",
@@ -572,6 +574,7 @@ export async function loadProtocolModel() {
   for (const record of records) validateManifest(record, model);
   for (const record of records) validatePackageReferences(record, model);
   for (const record of records) await validateFixtures(record, model);
+  model.protocolIr = buildProtocolIr(model);
   return model;
 }
 
@@ -679,6 +682,186 @@ function externalReferences(record, model) {
     visitRefs(record.schema.$defs[name], (reference) => add(reference, record.schemaPath));
   }
   return byPackage;
+}
+
+function normalizeConstraints(node) {
+  return Object.fromEntries(
+    ["minimum", "maximum", "minLength", "minItems", "pattern", "uniqueItems"]
+      .filter((keyword) => node[keyword] !== undefined)
+      .map((keyword) => [keyword, node[keyword]]),
+  );
+}
+
+function normalizeType(node, record, model, location) {
+  if (node.$ref) {
+    const target = parseReference(node.$ref, record.schemaPath, model, location);
+    return {
+      kind: "named",
+      packageId: target.record.packageConfig.id,
+      name: target.name,
+    };
+  }
+  const nullableReference = nullableReferenceVariant(node);
+  if (nullableReference) {
+    return {
+      kind: "nullable",
+      value: normalizeType(nullableReference, record, model, `${location}.nullable`),
+    };
+  }
+  if (node.type === "array") {
+    return {
+      kind: "list",
+      items: normalizeType(node.items, record, model, `${location}.items`),
+      constraints: normalizeConstraints(node),
+    };
+  }
+  if (node.type === "object" && node.properties === undefined && node.additionalProperties === true) {
+    return { kind: "jsonObject" };
+  }
+  if (["string", "integer", "boolean", "null"].includes(node.type)) {
+    return {
+      kind: node.type,
+      constraints: normalizeConstraints(node),
+    };
+  }
+  fail(`${location} cannot be normalized as a protocol IR type`);
+}
+
+function singletonEnumValue(type, model) {
+  if (type.kind !== "named") return undefined;
+  const definition = model.recordsById.get(type.packageId)?.schema.$defs[type.name];
+  return definition?.type === "string" && definition.enum?.length === 1
+    ? definition.enum[0]
+    : undefined;
+}
+
+function unionDiscriminator(variants, model) {
+  const objects = variants.map((variant) => {
+    const record = model.recordsById.get(variant.packageId);
+    const definition = record?.schema.$defs[variant.name];
+    return definition?.type === "object" ? { record, definition } : undefined;
+  });
+  if (objects.some((value) => value === undefined)) return undefined;
+  const commonRequired = objects[0].definition.required ?? [];
+  for (const field of commonRequired) {
+    const values = objects.map(({ record, definition }) => {
+      if (!(definition.required ?? []).includes(field)) return undefined;
+      const property = definition.properties?.[field];
+      if (!property) return undefined;
+      return singletonEnumValue(
+        normalizeType(property, record, model, `union discriminator ${field}`),
+        model,
+      );
+    });
+    if (values.every((value) => value !== undefined) && new Set(values).size === values.length) {
+      return {
+        field,
+        variants: variants.map((variant, index) => ({ ...variant, value: values[index] })),
+      };
+    }
+  }
+  return undefined;
+}
+
+function buildDefinitionIr(name, node, record, model) {
+  const base = {
+    name,
+    packageId: record.packageConfig.id,
+    description: node.description,
+  };
+  if (nullableReferenceVariant(node)) {
+    return { ...base, kind: "alias", type: normalizeType(node, record, model, `${record.packageConfig.id}.${name}`) };
+  }
+  if (node.oneOf) {
+    const variants = node.oneOf.map((variant, index) => {
+      const target = referenceTarget(
+        variant,
+        record.schemaPath,
+        model,
+        `${record.packageConfig.id}.${name}.oneOf[${index}]`,
+      );
+      return { kind: "named", packageId: target.record.packageConfig.id, name: target.name };
+    });
+    return { ...base, kind: "union", variants, discriminator: unionDiscriminator(variants, model) };
+  }
+  if (node.enum) return { ...base, kind: "enum", values: [...node.enum], constraints: normalizeConstraints(node) };
+  if (node.type === "object" && node.properties !== undefined) {
+    const required = new Set(node.required ?? []);
+    return {
+      ...base,
+      kind: "object",
+      closed: node.additionalProperties === false,
+      fields: Object.entries(node.properties).map(([wireName, field]) => ({
+        wireName,
+        required: required.has(wireName),
+        sensitive: field["x-codepet-sensitive"] === true,
+        type: normalizeType(field, record, model, `${record.packageConfig.id}.${name}.${wireName}`),
+      })),
+    };
+  }
+  return { ...base, kind: "alias", type: normalizeType(node, record, model, `${record.packageConfig.id}.${name}`) };
+}
+
+function namedManifestType(value, sourcePath, model, location) {
+  const target = referenceTarget(value, sourcePath, model, location);
+  return { kind: "named", packageId: target.record.packageConfig.id, name: target.name };
+}
+
+export function buildProtocolIr(model) {
+  const reachable = reachableDefinitionSets(model);
+  const packages = model.records.map((record) => {
+    const definitions = [...reachable.get(record.packageConfig.id)]
+      .sort()
+      .map((name) => buildDefinitionIr(name, record.schema.$defs[name], record, model));
+    const service = record.manifest.kind === "service" ? {
+      kind: record.manifest.transport.kind,
+      version: record.manifest.version,
+      versionField: record.manifest.transport.versionField,
+      requestDiscriminator: record.manifest.transport.requestDiscriminator,
+      responseDiscriminator: record.manifest.transport.responseDiscriminator,
+      eventDiscriminator: record.manifest.transport.eventDiscriminator,
+      eventCursorField: record.manifest.transport.eventCursorField,
+      protocolVersionType: record.manifest.transport.protocolVersion
+        ? namedManifestType(record.manifest.transport.protocolVersion, record.manifestPath, model, `${record.packageConfig.id}.protocolVersion`)
+        : undefined,
+      requestIdType: namedManifestType(record.manifest.transport.requestId, record.manifestPath, model, `${record.packageConfig.id}.requestId`),
+      eventCursorType: record.manifest.transport.eventCursor
+        ? namedManifestType(record.manifest.transport.eventCursor, record.manifestPath, model, `${record.packageConfig.id}.eventCursor`)
+        : undefined,
+      errorType: namedManifestType(record.manifest.error, record.manifestPath, model, `${record.packageConfig.id}.error`),
+      capabilityType: record.manifest.capabilities
+        ? namedManifestType(record.manifest.capabilities.type, record.manifestPath, model, `${record.packageConfig.id}.capabilityType`)
+        : undefined,
+      methods: record.manifest.methods.map((method) => ({
+        name: method.name,
+        direction: method.direction,
+        idempotency: method.idempotency,
+        capability: method.capability,
+        requestType: namedManifestType(method.request, record.manifestPath, model, `${record.packageConfig.id}.${method.name}.request`),
+        responseType: namedManifestType(method.response, record.manifestPath, model, `${record.packageConfig.id}.${method.name}.response`),
+      })),
+      events: record.manifest.events.map((event) => ({
+        name: event.name,
+        direction: event.direction,
+        delivery: event.delivery,
+        scope: event.scope,
+        payloadType: namedManifestType(event.payload, record.manifestPath, model, `${record.packageConfig.id}.${event.name}.payload`),
+      })),
+    } : undefined;
+    return {
+      id: record.packageConfig.id,
+      layer: record.packageConfig.layer,
+      version: record.packageConfig.version,
+      dependencies: [...record.packageConfig.dependencies],
+      definitions,
+      service,
+    };
+  });
+  return {
+    interface: GENERATOR_TARGET_INTERFACE,
+    packages,
+    packagesById: new Map(packages.map((value) => [value.id, value])),
+  };
 }
 
 function rustDependencyCrate(targetRecord) {
@@ -1739,7 +1922,7 @@ export interface ProtocolTransport {
  * source text. Planned adapters stay registered without a render function so
  * explicit selection fails before any output is written.
  *
- * render({ record, model, output }) -> string
+ * render({ record, model, ir, output }) -> string
  */
 export const generatorTargetRegistry = Object.freeze({
   rust: Object.freeze({
@@ -1757,7 +1940,8 @@ export const generatorTargetRegistry = Object.freeze({
   dart: Object.freeze({
     id: "dart",
     interface: GENERATOR_TARGET_INTERFACE,
-    implemented: false,
+    implemented: true,
+    render: ({ record, model, ir }) => generateDart(record, model, ir),
   }),
   python: Object.freeze({
     id: "python",
@@ -1812,7 +1996,7 @@ export async function generateProtocol({ checkMode = false, targets = defaultTar
     for (const adapter of adapters) {
       const output = record.packageConfig.outputs[adapter.id];
       if (!output) continue;
-      const content = adapter.render({ record, model, output });
+      const content = adapter.render({ record, model, ir: model.protocolIr, output });
       artifacts.push({ packageId: record.packageConfig.id, targetId: adapter.id, output, content });
     }
   }
