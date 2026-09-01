@@ -42,6 +42,7 @@ export interface RemotePairingStatus {
   pairingId: string;
   state: RemotePairingStatusKind;
   expiresAt: number;
+  qrSvgDataUrl?: string | null;
 }
 
 export interface RemoteCredentialRevokeResult {

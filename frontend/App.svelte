@@ -733,7 +733,7 @@
       pairingDisplay = {
         ...pairingDisplay,
         phase,
-        qrImageUrl: phase === "waiting" ? pairingDisplay.qrImageUrl : null,
+        qrImageUrl: phase === "waiting" ? (status.qrSvgDataUrl ?? null) : null,
         expiresAtMs: status.expiresAt,
         remainingSeconds,
         errorMessage: null,

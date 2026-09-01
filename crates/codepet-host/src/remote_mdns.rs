@@ -1,4 +1,7 @@
-use crate::{HostError, HostResult, RemoteLanServerHandle};
+use crate::{
+    HostError, HostResult, RemoteLanAdvertisedEndpoint,
+    RemoteLanAdvertisementSource, RemoteLanServerHandle,
+};
 use codepet_gateway_sdk::{RemoteHostIdentity, PROTOCOL_VERSION};
 use mdns_sd::{
     DaemonEvent, DaemonStatus, Error as MdnsError, IfKind, Receiver, RecvTimeoutError,
@@ -22,6 +25,7 @@ const ANNOUNCE_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(3);
 /// remains the `id` TXT value, while TLS trust is established by the pairing flow.
 pub struct RemoteLanMdnsAdvertiser {
     backend: Box<dyn MdnsBackend>,
+    source: Option<RemoteLanAdvertisementSource>,
     service: MdnsServiceSpec,
     fullname: String,
     pairing_available: bool,
@@ -34,13 +38,29 @@ impl RemoteLanMdnsAdvertiser {
         listener: &RemoteLanServerHandle,
         pairing_available: bool,
     ) -> HostResult<Self> {
-        let service = MdnsServiceSpec::from_listener(
-            listener.remote_host_identity(),
-            listener.advertised_host(),
-            listener.local_addr(),
-        )?;
+        let endpoint = listener.advertised_endpoint().ok_or_else(|| {
+            invalid_mdns_endpoint("Remote LAN listener has no advertised endpoint")
+        })?;
+        Self::start_for_endpoint(
+            listener.advertisement_source(),
+            endpoint,
+            pairing_available,
+        )
+    }
+
+    pub fn start_for_endpoint(
+        source: RemoteLanAdvertisementSource,
+        endpoint: RemoteLanAdvertisedEndpoint,
+        pairing_available: bool,
+    ) -> HostResult<Self> {
+        let service = MdnsServiceSpec::from_source_endpoint(&source, &endpoint)?;
         let backend = Box::new(ServiceDaemonBackend::new()?);
-        Self::start_with_backend(service, pairing_available, backend)
+        Self::start_with_backend_and_source(
+            service,
+            pairing_available,
+            backend,
+            Some(source),
+        )
     }
 
     /// Replaces the same service with only the `pair` TXT value changed.
@@ -48,17 +68,41 @@ impl RemoteLanMdnsAdvertiser {
     /// A changed value briefly removes the service while a fresh daemon generation
     /// starts; this is a bounded discovery gap, not an atomic or seamless update.
     pub fn update_pairing_available(&mut self, pairing_available: bool) -> HostResult<()> {
+        self.replace_service(self.service.clone(), pairing_available)
+    }
+
+    /// Replaces the complete address/interface/TXT generation for the same listener.
+    pub fn replace_advertised_endpoint(
+        &mut self,
+        endpoint: &RemoteLanAdvertisedEndpoint,
+        pairing_available: bool,
+    ) -> HostResult<()> {
+        let source = self.source.as_ref().ok_or_else(|| {
+            HostError::new(
+                "remote_lan_mdns_source_unavailable",
+                "Remote LAN mDNS advertiser has no listener provenance",
+            )
+        })?;
+        let service = MdnsServiceSpec::from_source_endpoint(source, endpoint)?;
+        self.replace_service(service, pairing_available)
+    }
+
+    fn replace_service(
+        &mut self,
+        service: MdnsServiceSpec,
+        pairing_available: bool,
+    ) -> HostResult<()> {
         if self.daemon_stopped || !self.service_registered {
             return Err(HostError::new(
                 "remote_lan_mdns_not_running",
                 "Remote LAN mDNS advertiser is not running",
             ));
         }
-        if self.pairing_available == pairing_available {
+        if self.service == service && self.pairing_available == pairing_available {
             return Ok(());
         }
 
-        let service = self.service.service_info(pairing_available)?;
+        let service_info = service.service_info(pairing_available)?;
         self.observe_backend_health()?;
         if let Err(message) = self.backend.unregister(&self.fullname) {
             return Err(self.fail_closed("unregister", message));
@@ -70,9 +114,10 @@ impl RemoteLanMdnsAdvertiser {
         }
 
         self.service_registered = true;
-        if let Err(message) = self.backend.register(service) {
+        if let Err(message) = self.backend.register(service_info) {
             return Err(self.fail_closed("register", message));
         }
+        self.service = service;
         self.pairing_available = pairing_available;
         Ok(())
     }
@@ -137,10 +182,25 @@ impl RemoteLanMdnsAdvertiser {
         error
     }
 
+    #[cfg(test)]
     fn start_with_backend(
         service: MdnsServiceSpec,
         pairing_available: bool,
+        backend: Box<dyn MdnsBackend>,
+    ) -> HostResult<Self> {
+        Self::start_with_backend_and_source(
+            service,
+            pairing_available,
+            backend,
+            None,
+        )
+    }
+
+    fn start_with_backend_and_source(
+        service: MdnsServiceSpec,
+        pairing_available: bool,
         mut backend: Box<dyn MdnsBackend>,
+        source: Option<RemoteLanAdvertisementSource>,
     ) -> HostResult<Self> {
         let service_info = match service.service_info(pairing_available) {
             Ok(service_info) => service_info,
@@ -158,6 +218,7 @@ impl RemoteLanMdnsAdvertiser {
 
         Ok(Self {
             backend,
+            source,
             service,
             fullname,
             pairing_available,
@@ -173,7 +234,7 @@ impl Drop for RemoteLanMdnsAdvertiser {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct MdnsServiceSpec {
     device_id: String,
     display_name: String,
@@ -184,6 +245,22 @@ struct MdnsServiceSpec {
 }
 
 impl MdnsServiceSpec {
+    fn from_source_endpoint(
+        source: &RemoteLanAdvertisementSource,
+        endpoint: &RemoteLanAdvertisedEndpoint,
+    ) -> HostResult<Self> {
+        if source.listener_id() != endpoint.listener_id() {
+            return Err(invalid_mdns_endpoint(
+                "Remote LAN mDNS endpoint belongs to a different listener",
+            ));
+        }
+        Self::from_listener(
+            source.remote_host_identity(),
+            endpoint.advertised_host(),
+            source.local_addr(),
+        )
+    }
+
     fn from_listener(
         identity: &RemoteHostIdentity,
         advertised_host: &str,
@@ -703,10 +780,18 @@ mod tests {
     }
 
     fn service_spec(device_id: &str, display_name: &str) -> MdnsServiceSpec {
-        let address = "192.168.1.23".parse::<IpAddr>().unwrap();
+        service_spec_at(device_id, display_name, "192.168.1.23")
+    }
+
+    fn service_spec_at(
+        device_id: &str,
+        display_name: &str,
+        advertised_host: &str,
+    ) -> MdnsServiceSpec {
+        let address = advertised_host.parse::<IpAddr>().unwrap();
         MdnsServiceSpec::from_listener_with_local_addresses(
             &identity(device_id, display_name),
-            "192.168.1.23",
+            advertised_host,
             "0.0.0.0:43123".parse().unwrap(),
             &[address],
         )
@@ -857,6 +942,48 @@ mod tests {
         assert_eq!(calls[2], BackendCall::Restart);
         assert_eq!(calls[4], BackendCall::Unregister(first.fullname.clone()));
         assert_eq!(calls[5], BackendCall::Shutdown);
+    }
+
+    #[test]
+    fn endpoint_and_pair_replace_publish_one_complete_latest_generation() {
+        let (backend, state) = fake_backend([
+            RegisterOutcome::Announced,
+            RegisterOutcome::Announced,
+        ]);
+        let mut advertiser = RemoteLanMdnsAdvertiser::start_with_backend(
+            service_spec_at("device-alpha", "Living Room", "192.168.1.23"),
+            false,
+            backend,
+        )
+        .unwrap();
+
+        advertiser
+            .replace_service(
+                service_spec_at("device-alpha", "Living Room", "192.168.1.24"),
+                true,
+            )
+            .unwrap();
+
+        let state = state.lock().unwrap();
+        let generations = state
+            .calls
+            .iter()
+            .filter_map(|call| match call {
+                BackendCall::Register(service) => Some(service),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(generations.len(), 2);
+        assert_eq!(
+            generations[0].addresses,
+            vec!["192.168.1.23".parse::<IpAddr>().unwrap()]
+        );
+        assert_eq!(generations[0].properties.get("pair").unwrap(), "0");
+        assert_eq!(
+            generations[1].addresses,
+            vec!["192.168.1.24".parse::<IpAddr>().unwrap()]
+        );
+        assert_eq!(generations[1].properties.get("pair").unwrap(), "1");
     }
 
     #[test]

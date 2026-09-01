@@ -55,6 +55,7 @@ describe("connections workspace", () => {
     expect(pairDialogSource).toContain('display.phase === "cancelled"');
     expect(pairDialogSource).toContain('display.phase === "error"');
     expect(appSource).toContain("getRemotePairingStatus(pairingId)");
+    expect(appSource).toContain("status.qrSvgDataUrl ?? null");
     expect(appSource).toContain("copyRemotePairingJson(pairingId)");
     expect(appSource).toContain("pairingCopyRequestIsCurrent(requestToken, pairingId)");
     expect(appSource).toContain("await cancelRemotePairing(pairingId)");

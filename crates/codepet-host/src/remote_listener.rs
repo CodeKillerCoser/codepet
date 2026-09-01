@@ -15,6 +15,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Debug, Formatter};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{
@@ -36,6 +37,7 @@ const OUTBOUND_ENQUEUE_TIMEOUT: Duration = Duration::from_secs(2);
 const CONNECTION_CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(1);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+static NEXT_REMOTE_LAN_LISTENER_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Socket binding and client-visible host for the TLS-only Remote Gateway listener.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -126,16 +128,23 @@ impl RemoteLanServer {
             )
         })?;
 
-        let advertised_authority =
-            advertised_url_authority(&advertised_host, local_addr.port());
-        let https_base_url = format!("https://{advertised_authority}");
-        let gateway_url = format!("wss://{advertised_authority}{GATEWAY_PATH}");
+        let listener_id = NEXT_REMOTE_LAN_LISTENER_ID.fetch_add(1, Ordering::Relaxed);
+        let advertised_endpoint = RemoteLanAdvertisedEndpoint::new(
+            listener_id,
+            advertised_host,
+            local_addr.port(),
+        );
+        let advertised_endpoints = Arc::new(Mutex::new(RemoteLanAdvertisedEndpointState {
+            current: Some(advertised_endpoint),
+            pending: None,
+            next_transition_id: 1,
+        }));
         let sessions = Arc::new(SessionRegistry::new(MAX_CONCURRENT_WEBSOCKET_SESSIONS));
         let state = Arc::new(RemoteLanState {
             remote_access,
             gateway,
             remote_identity: remote_identity.clone(),
-            gateway_url: gateway_url.clone(),
+            advertised_endpoints: advertised_endpoints.clone(),
             sessions: sessions.clone(),
         });
         let app = Router::new()
@@ -155,11 +164,10 @@ impl RemoteLanServer {
         });
 
         Ok(RemoteLanServerHandle {
+            listener_id,
             local_addr,
-            advertised_host,
             remote_identity,
-            https_base_url,
-            gateway_url,
+            advertised_endpoints,
             sessions,
             server_handle,
             server_task: Some(server_task),
@@ -167,13 +175,155 @@ impl RemoteLanServer {
     }
 }
 
-/// Running listener metadata plus bounded shutdown ownership.
-pub struct RemoteLanServerHandle {
-    local_addr: SocketAddr,
+/// One complete client-visible endpoint generation for a running listener.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteLanAdvertisedEndpoint {
+    listener_id: u64,
     advertised_host: String,
-    remote_identity: gateway::RemoteHostIdentity,
+    authority: String,
     https_base_url: String,
     gateway_url: String,
+}
+
+impl RemoteLanAdvertisedEndpoint {
+    fn new(listener_id: u64, advertised_host: String, port: u16) -> Self {
+        let authority = advertised_url_authority(&advertised_host, port);
+        Self {
+            listener_id,
+            advertised_host,
+            https_base_url: format!("https://{authority}"),
+            gateway_url: format!("wss://{authority}{GATEWAY_PATH}"),
+            authority,
+        }
+    }
+
+    pub fn advertised_host(&self) -> &str {
+        &self.advertised_host
+    }
+
+    pub fn authority(&self) -> &str {
+        &self.authority
+    }
+
+    pub fn https_base_url(&self) -> &str {
+        &self.https_base_url
+    }
+
+    pub fn gateway_url(&self) -> &str {
+        &self.gateway_url
+    }
+
+    pub(crate) fn listener_id(&self) -> u64 {
+        self.listener_id
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RemoteLanAdvertisementSource {
+    listener_id: u64,
+    local_addr: SocketAddr,
+    remote_identity: gateway::RemoteHostIdentity,
+}
+
+impl RemoteLanAdvertisementSource {
+    pub(crate) fn listener_id(&self) -> u64 {
+        self.listener_id
+    }
+
+    pub(crate) fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    pub(crate) fn remote_host_identity(&self) -> &gateway::RemoteHostIdentity {
+        &self.remote_identity
+    }
+}
+
+struct RemoteLanAdvertisedEndpointState {
+    current: Option<RemoteLanAdvertisedEndpoint>,
+    pending: Option<(u64, RemoteLanAdvertisedEndpoint)>,
+    next_transition_id: u64,
+}
+
+/// A staged endpoint generation. Dropping it aborts only its own pending generation.
+pub struct RemoteLanAdvertisedEndpointTransition {
+    state: Arc<Mutex<RemoteLanAdvertisedEndpointState>>,
+    transition_id: u64,
+    endpoint: RemoteLanAdvertisedEndpoint,
+    completed: bool,
+}
+
+impl RemoteLanAdvertisedEndpointTransition {
+    pub fn endpoint(&self) -> &RemoteLanAdvertisedEndpoint {
+        &self.endpoint
+    }
+
+    pub fn commit(mut self) -> HostResult<RemoteLanAdvertisedEndpoint> {
+        let mut state = self.state.lock().map_err(|_| {
+            HostError::new(
+                "remote_lan_advertised_endpoint_unavailable",
+                "Remote LAN advertised endpoint state is unavailable",
+            )
+            .retryable(true)
+        })?;
+        if !state
+            .pending
+            .as_ref()
+            .is_some_and(|(transition_id, endpoint)| {
+                *transition_id == self.transition_id && endpoint == &self.endpoint
+            })
+        {
+            return Err(HostError::new(
+                "remote_lan_advertised_generation_stale",
+                "Remote LAN advertised endpoint generation is no longer current",
+            )
+            .retryable(true));
+        }
+        state.current = Some(self.endpoint.clone());
+        state.pending = None;
+        self.completed = true;
+        Ok(self.endpoint.clone())
+    }
+
+    /// Clears both the pending endpoint and the obsolete committed endpoint.
+    pub fn fail_closed(mut self) {
+        if let Ok(mut state) = self.state.lock() {
+            if state
+                .pending
+                .as_ref()
+                .is_some_and(|(transition_id, _)| *transition_id == self.transition_id)
+            {
+                state.current = None;
+                state.pending = None;
+            }
+        }
+        self.completed = true;
+    }
+}
+
+impl Drop for RemoteLanAdvertisedEndpointTransition {
+    fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
+        if let Ok(mut state) = self.state.lock() {
+            if state
+                .pending
+                .as_ref()
+                .is_some_and(|(transition_id, _)| *transition_id == self.transition_id)
+            {
+                state.pending = None;
+            }
+        }
+    }
+}
+
+/// Running listener metadata plus bounded shutdown ownership.
+pub struct RemoteLanServerHandle {
+    listener_id: u64,
+    local_addr: SocketAddr,
+    remote_identity: gateway::RemoteHostIdentity,
+    advertised_endpoints: Arc<Mutex<RemoteLanAdvertisedEndpointState>>,
     sessions: Arc<SessionRegistry>,
     server_handle: axum_server::Handle,
     server_task: Option<JoinHandle<std::io::Result<()>>>,
@@ -188,8 +338,11 @@ impl RemoteLanServerHandle {
         self.local_addr.port()
     }
 
-    pub fn advertised_host(&self) -> &str {
-        &self.advertised_host
+    pub fn advertised_endpoint(&self) -> Option<RemoteLanAdvertisedEndpoint> {
+        self.advertised_endpoints
+            .lock()
+            .ok()
+            .and_then(|state| state.current.clone())
     }
 
     /// Returns the immutable Host identity validated when this listener started.
@@ -197,12 +350,71 @@ impl RemoteLanServerHandle {
         &self.remote_identity
     }
 
-    pub fn https_base_url(&self) -> &str {
-        &self.https_base_url
+    pub fn advertisement_source(&self) -> RemoteLanAdvertisementSource {
+        RemoteLanAdvertisementSource {
+            listener_id: self.listener_id,
+            local_addr: self.local_addr,
+            remote_identity: self.remote_identity.clone(),
+        }
     }
 
-    pub fn gateway_url(&self) -> &str {
-        &self.gateway_url
+    pub fn advertised_host(&self) -> Option<String> {
+        self.advertised_endpoint()
+            .map(|endpoint| endpoint.advertised_host().to_string())
+    }
+
+    pub fn https_base_url(&self) -> Option<String> {
+        self.advertised_endpoint()
+            .map(|endpoint| endpoint.https_base_url().to_string())
+    }
+
+    pub fn gateway_url(&self) -> Option<String> {
+        self.advertised_endpoint()
+            .map(|endpoint| endpoint.gateway_url().to_string())
+    }
+
+    /// Stages a client-visible endpoint without exposing it through status/QR yet.
+    ///
+    /// Pairing exchange requests whose `Host` authority matches the staged endpoint
+    /// already receive its WSS URL. This closes the short interval between the mDNS
+    /// daemon sending a new Announce and the runtime committing that generation.
+    pub fn stage_advertised_host(
+        &self,
+        advertised_host: impl AsRef<str>,
+    ) -> HostResult<RemoteLanAdvertisedEndpointTransition> {
+        let advertised_host = resolve_advertised_host(
+            self.local_addr.ip(),
+            Some(advertised_host.as_ref()),
+        )?;
+        let endpoint = RemoteLanAdvertisedEndpoint::new(
+            self.listener_id,
+            advertised_host,
+            self.port(),
+        );
+        let mut state = self.advertised_endpoints.lock().map_err(|_| {
+            HostError::new(
+                "remote_lan_advertised_endpoint_unavailable",
+                "Remote LAN advertised endpoint state is unavailable",
+            )
+            .retryable(true)
+        })?;
+        let transition_id = state.next_transition_id;
+        state.next_transition_id = state.next_transition_id.wrapping_add(1).max(1);
+        state.pending = Some((transition_id, endpoint.clone()));
+        Ok(RemoteLanAdvertisedEndpointTransition {
+            state: self.advertised_endpoints.clone(),
+            transition_id,
+            endpoint,
+            completed: false,
+        })
+    }
+
+    /// Removes the committed and staged advertised endpoint while keeping the listener.
+    pub fn withdraw_advertised_endpoint(&self) {
+        if let Ok(mut state) = self.advertised_endpoints.lock() {
+            state.current = None;
+            state.pending = None;
+        }
     }
 
     pub fn active_session_count(&self) -> usize {
@@ -293,9 +505,7 @@ impl Debug for RemoteLanServerHandle {
         formatter
             .debug_struct("RemoteLanServerHandle")
             .field("local_addr", &self.local_addr)
-            .field("advertised_host", &self.advertised_host)
-            .field("https_base_url", &self.https_base_url)
-            .field("gateway_url", &self.gateway_url)
+            .field("advertised_endpoint", &self.advertised_endpoint())
             .field("active_session_count", &self.active_session_count())
             .finish()
     }
@@ -315,15 +525,17 @@ struct RemoteLanState {
     remote_access: Arc<RemoteAccessManager>,
     gateway: Arc<ProviderGatewayService>,
     remote_identity: gateway::RemoteHostIdentity,
-    gateway_url: String,
+    advertised_endpoints: Arc<Mutex<RemoteLanAdvertisedEndpointState>>,
     sessions: Arc<SessionRegistry>,
 }
 
 async fn pairing_exchange(
     State(state): State<Arc<RemoteLanState>>,
     Path(pairing_id): Path<String>,
+    headers: HeaderMap,
     request: Result<Json<gateway::PairingExchangeRequest>, JsonRejection>,
 ) -> Result<Json<gateway::PairingExchangeResponse>, RestError> {
+    let gateway_url = pairing_exchange_gateway_url(&state.advertised_endpoints, &headers)?;
     let Json(request) = request.map_err(RestError::invalid_json)?;
     let issued = state
         .remote_access
@@ -331,7 +543,7 @@ async fn pairing_exchange(
         .map_err(RestError::pairing)?;
     Ok(Json(gateway::PairingExchangeResponse {
         device: state.remote_identity.clone(),
-        gateway_url: state.gateway_url.clone(),
+        gateway_url,
         credential: issued.bearer_token,
     }))
 }
@@ -733,6 +945,30 @@ fn bearer_from_headers(headers: &HeaderMap) -> Result<&str, RestError> {
     Ok(bearer)
 }
 
+fn pairing_exchange_gateway_url(
+    endpoints: &Mutex<RemoteLanAdvertisedEndpointState>,
+    headers: &HeaderMap,
+) -> Result<String, RestError> {
+    let state = endpoints
+        .lock()
+        .map_err(|_| RestError::discovery_unavailable())?;
+    let requested_authority = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok());
+    if let (Some(requested_authority), Some((_, pending))) =
+        (requested_authority, state.pending.as_ref())
+    {
+        if requested_authority.eq_ignore_ascii_case(pending.authority()) {
+            return Ok(pending.gateway_url().to_string());
+        }
+    }
+    state
+        .current
+        .as_ref()
+        .map(|endpoint| endpoint.gateway_url().to_string())
+        .ok_or_else(RestError::discovery_unavailable)
+}
+
 fn resolve_advertised_host(
     bind_ip: IpAddr,
     configured_host: Option<&str>,
@@ -871,6 +1107,17 @@ impl RestError {
         Self {
             status,
             error: error.into_protocol_error(),
+        }
+    }
+
+    fn discovery_unavailable() -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            error: protocol_error(
+                "remote_lan_discovery_unavailable",
+                "Remote LAN discovery has no current advertised endpoint",
+                true,
+            ),
         }
     }
 

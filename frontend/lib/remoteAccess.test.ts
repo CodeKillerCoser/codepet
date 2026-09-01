@@ -32,7 +32,12 @@ describe("remote access command bridge", () => {
       expiresAt: 2_000,
       qrSvgDataUrl: "data:image/svg+xml;base64,PHN2Zy8+",
     };
-    const pairingStatus = { pairingId: "pairing-one", state: "active", expiresAt: 2_000 };
+    const pairingStatus = {
+      pairingId: "pairing-one",
+      state: "active",
+      expiresAt: 2_000,
+      qrSvgDataUrl: "data:image/svg+xml;base64,PHN2Zy8+",
+    };
     const clients = [{
       credentialId: "credential-one",
       remoteClientId: "client-one",

@@ -190,13 +190,30 @@ impl PinnedTlsClient {
         bearer: Option<&str>,
         body: Option<&str>,
     ) -> (u16, serde_json::Value) {
+        self.json_request_with_host(
+            method,
+            path,
+            bearer,
+            body,
+            &format!("localhost:{}", self.address.port()),
+        )
+        .await
+    }
+
+    async fn json_request_with_host(
+        &self,
+        method: &str,
+        path: &str,
+        bearer: Option<&str>,
+        body: Option<&str>,
+        host: &str,
+    ) -> (u16, serde_json::Value) {
         let body = body.unwrap_or("");
         let authorization = bearer
             .map(|bearer| format!("Authorization: Bearer {bearer}\r\n"))
             .unwrap_or_default();
         let request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: localhost:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{authorization}Connection: close\r\n\r\n{body}",
-            self.address.port(),
+            "{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{authorization}Connection: close\r\n\r\n{body}",
             body.len(),
         );
         let mut tls = self.connect_tls().await;
@@ -447,17 +464,20 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     .await
     .unwrap();
     assert!(wildcard_server.local_addr().ip().is_unspecified());
-    assert_eq!(wildcard_server.advertised_host(), "listener.local");
+    assert_eq!(
+        wildcard_server.advertised_host().as_deref(),
+        Some("listener.local")
+    );
     assert_eq!(
         wildcard_server.https_base_url(),
-        format!("https://listener.local:{}", wildcard_server.port())
+        Some(format!("https://listener.local:{}", wildcard_server.port()))
     );
     assert_eq!(
         wildcard_server.gateway_url(),
-        format!(
+        Some(format!(
             "wss://listener.local:{}/remote/v1/gateway",
             wildcard_server.port()
-        )
+        ))
     );
     wildcard_server.shutdown().await.unwrap();
     let server = RemoteLanServer::start(
@@ -468,23 +488,100 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     .await
     .unwrap();
     assert_ne!(server.port(), 0);
-    assert_eq!(server.advertised_host(), "127.0.0.1");
+    assert_eq!(server.advertised_host().as_deref(), Some("127.0.0.1"));
     assert_eq!(
         server.remote_host_identity(),
         &host.remote_access.remote_host_identity()
     );
     assert_eq!(
         server.https_base_url(),
-        format!("https://127.0.0.1:{}", server.port())
+        Some(format!("https://127.0.0.1:{}", server.port()))
     );
     assert_eq!(
         server.gateway_url(),
-        format!("wss://127.0.0.1:{}/remote/v1/gateway", server.port())
+        Some(format!("wss://127.0.0.1:{}/remote/v1/gateway", server.port()))
     );
     let address = server.local_addr();
-    let gateway_url = server.gateway_url().to_string();
+    let gateway_url = server.gateway_url().unwrap();
     let certificate_der = host.remote_access.tls_identity().certificate_der().to_vec();
     let client = PinnedTlsClient::new(address, certificate_der.clone());
+
+    let staged = server.stage_advertised_host("127.0.0.2").unwrap();
+    assert_eq!(server.advertised_host().as_deref(), Some("127.0.0.1"));
+    let staged_pairing = host.remote_access.begin_pairing().unwrap();
+    let staged_request = gateway::PairingExchangeRequest {
+        pairing_secret: staged_pairing.pairing_secret,
+        client_id: "client-generation-test".to_string(),
+        device: client_descriptor("client-generation-test", "1.0"),
+    };
+    let staged_path = format!(
+        "/remote/v1/pairings/{}/exchange",
+        staged_pairing.pairing_id
+    );
+    let (staged_status, staged_response) = client
+        .json_request_with_host(
+            "POST",
+            &staged_path,
+            None,
+            Some(&serde_json::to_string(&staged_request).unwrap()),
+            &format!("127.0.0.2:{}", server.port()),
+        )
+        .await;
+    assert_eq!(staged_status, 200);
+    let staged_response: gateway::PairingExchangeResponse =
+        serde_json::from_value(staged_response).unwrap();
+    assert_eq!(
+        staged_response.gateway_url,
+        format!("wss://127.0.0.2:{}/remote/v1/gateway", server.port())
+    );
+    assert_eq!(server.advertised_host().as_deref(), Some("127.0.0.1"));
+    staged.commit().unwrap();
+    assert_eq!(server.advertised_host().as_deref(), Some("127.0.0.2"));
+    server
+        .stage_advertised_host("127.0.0.1")
+        .unwrap()
+        .commit()
+        .unwrap();
+
+    let failed = server.stage_advertised_host("127.0.0.2").unwrap();
+    failed.fail_closed();
+    assert_eq!(server.advertised_endpoint(), None);
+    let unavailable_pairing = host.remote_access.begin_pairing().unwrap();
+    let unavailable_path = format!(
+        "/remote/v1/pairings/{}/exchange",
+        unavailable_pairing.pairing_id
+    );
+    let unavailable_request = gateway::PairingExchangeRequest {
+        pairing_secret: unavailable_pairing.pairing_secret,
+        client_id: "client-unavailable".to_string(),
+        device: client_descriptor("client-unavailable", "1.0"),
+    };
+    let (unavailable_status, unavailable_response) = client
+        .json_request(
+            "POST",
+            &unavailable_path,
+            None,
+            Some(&serde_json::to_string(&unavailable_request).unwrap()),
+        )
+        .await;
+    assert_eq!(unavailable_status, 503);
+    assert_eq!(
+        unavailable_response["code"],
+        "remote_lan_discovery_unavailable"
+    );
+    assert!(host
+        .remote_access
+        .subscribe_pairing_state()
+        .borrow()
+        .pairing_available);
+    host.remote_access
+        .cancel_pairing(&unavailable_pairing.pairing_id)
+        .unwrap();
+    server
+        .stage_advertised_host("127.0.0.1")
+        .unwrap()
+        .commit()
+        .unwrap();
 
     let invalid_pairing = host.remote_access.begin_pairing().unwrap();
     let invalid_path = format!(

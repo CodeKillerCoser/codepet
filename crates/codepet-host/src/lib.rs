@@ -40,6 +40,8 @@ pub use remote_access::{
 };
 pub use remote_mdns::{RemoteLanMdnsAdvertiser, REMOTE_LAN_MDNS_SERVICE_TYPE};
 pub use remote_listener::{
-    RemoteLanServer, RemoteLanServerConfig, RemoteLanServerHandle,
+    RemoteLanAdvertisedEndpoint, RemoteLanAdvertisedEndpointTransition,
+    RemoteLanAdvertisementSource, RemoteLanServer, RemoteLanServerConfig,
+    RemoteLanServerHandle,
 };
 pub use remote_network::select_remote_lan_ipv4;

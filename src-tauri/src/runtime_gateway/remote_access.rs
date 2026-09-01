@@ -1,14 +1,17 @@
 use base64::Engine;
 use codepet_gateway_sdk::{DeviceDescriptor, PairingQrPayload, PROTOCOL_VERSION};
 use codepet_host::{
-    select_remote_lan_ipv4, HostError, PairingStatus, ProviderGatewayService,
-    RemoteAccessManager, RemoteCredential, RemoteLanMdnsAdvertiser,
-    RemoteLanServer, RemoteLanServerConfig, RemoteLanServerHandle,
+    select_remote_lan_ipv4, HostError, PairingStatus, PairingStatusKind,
+    ProviderGatewayService,
+    RemoteAccessManager, RemoteCredential, RemoteLanAdvertisedEndpoint,
+    RemoteLanAdvertisementSource, RemoteLanMdnsAdvertiser, RemoteLanServer,
+    RemoteLanServerConfig, RemoteLanServerHandle,
 };
 use qrcode::render::svg;
 use qrcode::QrCode;
 use serde::Serialize;
 use std::collections::BTreeMap;
+use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
@@ -21,6 +24,39 @@ pub const REMOTE_ADVERTISED_HOST_ENV: &str = "CODEPET_REMOTE_ADVERTISED_HOST";
 const REMOTE_LAN_STABLE_PORT: u16 = 47_622;
 const PAIRING_MONITOR_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
 const MDNS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const NETWORK_MONITOR_INTERVAL: Duration = Duration::from_secs(2);
+const NETWORK_MONITOR_DEBOUNCE_OBSERVATIONS: usize = 2;
+
+trait RemoteDiscoveryPublisher: Send {
+    fn replace(
+        &mut self,
+        endpoint: &RemoteLanAdvertisedEndpoint,
+        pairing_available: bool,
+    ) -> Result<(), HostError>;
+    fn shutdown(&mut self) -> Result<(), HostError>;
+}
+
+impl RemoteDiscoveryPublisher for RemoteLanMdnsAdvertiser {
+    fn replace(
+        &mut self,
+        endpoint: &RemoteLanAdvertisedEndpoint,
+        pairing_available: bool,
+    ) -> Result<(), HostError> {
+        self.replace_advertised_endpoint(endpoint, pairing_available)
+    }
+
+    fn shutdown(&mut self) -> Result<(), HostError> {
+        RemoteLanMdnsAdvertiser::shutdown(self)
+    }
+}
+
+type RemoteDiscoveryPublisherFactory = dyn Fn(
+        RemoteLanAdvertisementSource,
+        RemoteLanAdvertisedEndpoint,
+        bool,
+    ) -> Result<Box<dyn RemoteDiscoveryPublisher>, HostError>
+    + Send
+    + Sync;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -71,6 +107,15 @@ pub struct RemotePairingStartView {
     pub qr_svg_data_url: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePairingStatusView {
+    pub pairing_id: String,
+    pub state: PairingStatusKind,
+    pub expires_at: u64,
+    pub qr_svg_data_url: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteClientView {
@@ -112,14 +157,16 @@ impl From<HostError> for RemoteCommandError {
 struct RemoteAccessRuntimeInner {
     phase: RemoteAccessRuntimePhase,
     listener: Option<RemoteLanServerHandle>,
-    mdns: Option<RemoteLanMdnsAdvertiser>,
+    mdns: Option<Box<dyn RemoteDiscoveryPublisher>>,
     pairing_available: bool,
-    diagnostic: Option<RemoteAccessDiagnosticView>,
+    listener_diagnostic: Option<RemoteAccessDiagnosticView>,
+    discovery_diagnostic: Option<RemoteAccessDiagnosticView>,
 }
 
 struct ActivePairingPayload {
     pairing_id: String,
     json: String,
+    qr_svg_data_url: Option<String>,
 }
 
 struct EncodedPairingPayload {
@@ -136,11 +183,15 @@ pub struct RemoteAccessRuntime {
     lifecycle: Arc<Mutex<()>>,
     pairing_monitor: Arc<StdMutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
     pairing_shutdown: watch::Sender<bool>,
+    network_monitor: Arc<StdMutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
+    network_shutdown: watch::Sender<bool>,
     shutdown_completed: Arc<AtomicBool>,
     advertised_host_resolver:
         Arc<dyn Fn() -> Result<std::net::Ipv4Addr, HostError> + Send + Sync>,
     preferred_port: u16,
     mdns_enabled: bool,
+    network_monitor_interval: Option<Duration>,
+    discovery_publisher_factory: Arc<RemoteDiscoveryPublisherFactory>,
 }
 
 impl RemoteAccessRuntime {
@@ -149,6 +200,7 @@ impl RemoteAccessRuntime {
         gateway: Arc<ProviderGatewayService>,
     ) -> Self {
         let (pairing_shutdown, _) = watch::channel(false);
+        let (network_shutdown, _) = watch::channel(false);
         Self {
             manager: Some(manager),
             gateway: Some(gateway),
@@ -157,7 +209,8 @@ impl RemoteAccessRuntime {
                 listener: None,
                 mdns: None,
                 pairing_available: false,
-                diagnostic: Some(RemoteAccessDiagnosticView {
+                listener_diagnostic: None,
+                discovery_diagnostic: Some(RemoteAccessDiagnosticView {
                     code: "remote_access_not_started".to_string(),
                     message: "Remote LAN access has not started yet".to_string(),
                     retryable: true,
@@ -167,15 +220,29 @@ impl RemoteAccessRuntime {
             lifecycle: Arc::new(Mutex::new(())),
             pairing_monitor: Arc::new(StdMutex::new(None)),
             pairing_shutdown,
+            network_monitor: Arc::new(StdMutex::new(None)),
+            network_shutdown,
             shutdown_completed: Arc::new(AtomicBool::new(false)),
             advertised_host_resolver: Arc::new(select_advertised_host_from_environment),
             preferred_port: REMOTE_LAN_STABLE_PORT,
             mdns_enabled: true,
+            network_monitor_interval: Some(NETWORK_MONITOR_INTERVAL),
+            discovery_publisher_factory: Arc::new(|source, endpoint, pairing_available| {
+                RemoteLanMdnsAdvertiser::start_for_endpoint(
+                    source,
+                    endpoint,
+                    pairing_available,
+                )
+                .map(|publisher| {
+                    Box::new(publisher) as Box<dyn RemoteDiscoveryPublisher>
+                })
+            }),
         }
     }
 
     pub fn unavailable(error: HostError) -> Self {
         let (pairing_shutdown, _) = watch::channel(false);
+        let (network_shutdown, _) = watch::channel(false);
         Self {
             manager: None,
             gateway: None,
@@ -184,12 +251,15 @@ impl RemoteAccessRuntime {
                 listener: None,
                 mdns: None,
                 pairing_available: false,
-                diagnostic: Some(error.into()),
+                listener_diagnostic: None,
+                discovery_diagnostic: Some(error.into()),
             })),
             active_pairing_payload: Arc::new(StdMutex::new(None)),
             lifecycle: Arc::new(Mutex::new(())),
             pairing_monitor: Arc::new(StdMutex::new(None)),
             pairing_shutdown,
+            network_monitor: Arc::new(StdMutex::new(None)),
+            network_shutdown,
             shutdown_completed: Arc::new(AtomicBool::new(false)),
             advertised_host_resolver: Arc::new(|| {
                 Err(HostError::new(
@@ -199,6 +269,17 @@ impl RemoteAccessRuntime {
             }),
             preferred_port: REMOTE_LAN_STABLE_PORT,
             mdns_enabled: true,
+            network_monitor_interval: Some(NETWORK_MONITOR_INTERVAL),
+            discovery_publisher_factory: Arc::new(|source, endpoint, pairing_available| {
+                RemoteLanMdnsAdvertiser::start_for_endpoint(
+                    source,
+                    endpoint,
+                    pairing_available,
+                )
+                .map(|publisher| {
+                    Box::new(publisher) as Box<dyn RemoteDiscoveryPublisher>
+                })
+            }),
         }
     }
 
@@ -215,11 +296,13 @@ impl RemoteAccessRuntime {
         runtime.advertised_host_resolver = advertised_host_resolver;
         runtime.preferred_port = 0;
         runtime.mdns_enabled = mdns_enabled;
+        runtime.network_monitor_interval = None;
         runtime
     }
 
     pub fn start_in_background(&self) {
         self.ensure_pairing_monitor();
+        self.ensure_network_monitor();
         let runtime = self.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(error) = runtime.retry().await {
@@ -246,40 +329,49 @@ impl RemoteAccessRuntime {
             advertised_host: inner
                 .listener
                 .as_ref()
-                .map(|listener| listener.advertised_host().to_string()),
+                .and_then(RemoteLanServerHandle::advertised_host),
             https_base_url: inner
                 .listener
                 .as_ref()
-                .map(|listener| listener.https_base_url().to_string()),
+                .and_then(RemoteLanServerHandle::https_base_url),
             active_session_count: inner
                 .listener
                 .as_ref()
                 .map(RemoteLanServerHandle::active_session_count)
                 .unwrap_or(0),
             pairing_available: inner.pairing_available,
-            diagnostic: inner.diagnostic.clone(),
+            diagnostic: Self::diagnostic_locked(&inner),
         }
     }
 
     pub async fn retry(&self) -> Result<RemoteAccessStatusView, RemoteCommandError> {
         self.ensure_pairing_monitor();
+        self.ensure_network_monitor();
         let _lifecycle = self.lifecycle.lock().await;
-        {
+        let already_available = {
             let inner = self.inner.lock().await;
             match inner.phase {
-                RemoteAccessRuntimePhase::Available => return Ok(self.status_locked(&inner)),
+                RemoteAccessRuntimePhase::Available => true,
                 RemoteAccessRuntimePhase::Stopping | RemoteAccessRuntimePhase::Stopped => {
                     return Err(runtime_stopped_error())
                 }
-                RemoteAccessRuntimePhase::Starting | RemoteAccessRuntimePhase::Unavailable => {}
+                RemoteAccessRuntimePhase::Starting | RemoteAccessRuntimePhase::Unavailable => false,
             }
+        };
+        if already_available {
+            self.reconcile_network_observation_locked(
+                (self.advertised_host_resolver)(),
+            )
+            .await?;
+            let inner = self.inner.lock().await;
+            return Ok(self.status_locked(&inner));
         }
         let manager = self.manager.clone().ok_or_else(runtime_core_unavailable)?;
         let gateway = self.gateway.clone().ok_or_else(runtime_core_unavailable)?;
         {
             let mut inner = self.inner.lock().await;
             inner.phase = RemoteAccessRuntimePhase::Starting;
-            inner.diagnostic = None;
+            inner.discovery_diagnostic = None;
         }
 
         let advertised_host = match (self.advertised_host_resolver)() {
@@ -327,37 +419,60 @@ impl RemoteAccessRuntime {
             .subscribe_pairing_state()
             .borrow()
             .pairing_available;
-        let (listener, mdns) = if self.mdns_enabled {
+        let mut discovery_diagnostic = None;
+        let mdns = if self.mdns_enabled {
+            let endpoint = listener.advertised_endpoint().ok_or_else(|| {
+                RemoteCommandError::from(HostError::new(
+                    "remote_lan_discovery_unavailable",
+                    "Remote LAN listener has no advertised endpoint",
+                )
+                .retryable(true))
+            })?;
+            let source = listener.advertisement_source();
+            let factory = self.discovery_publisher_factory.clone();
             match tauri::async_runtime::spawn_blocking(move || {
-                let mdns = RemoteLanMdnsAdvertiser::start(&listener, pairing_available);
-                (listener, mdns)
+                factory(source, endpoint, pairing_available)
             })
             .await
             {
-                Ok((listener, Ok(mdns))) => (listener, Some(mdns)),
-                Ok((listener, Err(error))) => {
-                    let _ = listener.shutdown().await;
-                    return self.fail_start(error).await;
+                Ok(Ok(mdns)) => Some(mdns),
+                Ok(Err(error)) => {
+                    listener.withdraw_advertised_endpoint();
+                    crate::app_log::error(
+                        "remote_access",
+                        &format!(
+                            "Remote LAN discovery startup failed without stopping the listener code={} message={}",
+                            error.code, error.message
+                        ),
+                    );
+                    discovery_diagnostic = Some(error.into());
+                    None
                 }
                 Err(error) => {
-                    return self
-                        .fail_start(HostError::new(
-                            "remote_lan_mdns_task_failed",
-                            format!("Remote LAN mDNS startup task failed: {error}"),
-                        ))
-                        .await;
+                    listener.withdraw_advertised_endpoint();
+                    let error = HostError::new(
+                        "remote_lan_mdns_task_failed",
+                        format!("Remote LAN mDNS startup task failed: {error}"),
+                    )
+                    .retryable(true);
+                    crate::app_log::error("remote_access", &error.message);
+                    discovery_diagnostic = Some(error.into());
+                    None
                 }
             }
         } else {
-            (listener, None)
+            None
         };
 
         let mut inner = self.inner.lock().await;
         inner.phase = RemoteAccessRuntimePhase::Available;
         inner.listener = Some(listener);
         inner.mdns = mdns;
-        inner.pairing_available = pairing_available;
-        inner.diagnostic = listener_diagnostic;
+        inner.pairing_available = inner.mdns.is_some().then_some(pairing_available).unwrap_or(
+            if self.mdns_enabled { false } else { pairing_available },
+        );
+        inner.listener_diagnostic = listener_diagnostic;
+        inner.discovery_diagnostic = discovery_diagnostic;
         Ok(self.status_locked(&inner))
     }
 
@@ -370,7 +485,9 @@ impl RemoteAccessRuntime {
             let listener = inner.listener.as_ref().ok_or_else(runtime_core_unavailable)?;
             let manager = self.manager.as_ref().ok_or_else(runtime_core_unavailable)?;
             (
-                listener.https_base_url().to_string(),
+                listener
+                    .https_base_url()
+                    .ok_or_else(|| runtime_unavailable_error(&inner))?,
                 manager.remote_host_identity(),
             )
         };
@@ -393,10 +510,7 @@ impl RemoteAccessRuntime {
                 return Err(error);
             }
         };
-        if self
-            .store_pairing_payload(&pairing.pairing_id, encoded.json)
-            .is_err()
-        {
+        if self.store_pairing_payload(&pairing.pairing_id, &encoded).is_err() {
             let _ = manager.cancel_pairing(&pairing.pairing_id);
             return Err(pairing_payload_unavailable());
         }
@@ -405,19 +519,43 @@ impl RemoteAccessRuntime {
             self.clear_pairing_payload(&pairing.pairing_id);
             return Err(error);
         }
+        let qr_svg_data_url = self.active_pairing_qr(&pairing.pairing_id)?;
         Ok(RemotePairingStartView {
             pairing_id: pairing.pairing_id,
             expires_at: pairing.expires_at,
-            qr_svg_data_url: encoded.qr_svg_data_url,
+            qr_svg_data_url,
         })
     }
 
-    pub fn pairing_status(&self, pairing_id: &str) -> Result<PairingStatus, RemoteCommandError> {
-        self.manager
+    pub async fn pairing_status(
+        &self,
+        pairing_id: &str,
+    ) -> Result<RemotePairingStatusView, RemoteCommandError> {
+        let _generation = self.inner.lock().await;
+        let status = self.manager
             .as_ref()
             .ok_or_else(runtime_core_unavailable)?
             .pairing_status(pairing_id)
-            .map_err(RemoteCommandError::from)
+            .map_err(RemoteCommandError::from)?;
+        let qr_svg_data_url = (status.state == PairingStatusKind::Active)
+            .then(|| {
+                self.active_pairing_payload
+                    .lock()
+                    .ok()
+                    .and_then(|payload| {
+                        payload
+                            .as_ref()
+                            .filter(|payload| payload.pairing_id == pairing_id)
+                            .and_then(|payload| payload.qr_svg_data_url.clone())
+                    })
+            })
+            .flatten();
+        Ok(RemotePairingStatusView {
+            pairing_id: status.pairing_id,
+            state: status.state,
+            expires_at: status.expires_at,
+            qr_svg_data_url,
+        })
     }
 
     pub fn copy_pairing_json(
@@ -530,6 +668,7 @@ impl RemoteAccessRuntime {
             return true;
         }
         self.pairing_shutdown.send_replace(true);
+        self.network_shutdown.send_replace(true);
         self.clear_all_pairing_payload();
         let monitor = self
             .pairing_monitor
@@ -537,6 +676,20 @@ impl RemoteAccessRuntime {
             .ok()
             .and_then(|mut monitor| monitor.take());
         if let Some(mut monitor) = monitor {
+            if timeout(PAIRING_MONITOR_SHUTDOWN_TIMEOUT, &mut monitor)
+                .await
+                .is_err()
+            {
+                monitor.abort();
+                let _ = monitor.await;
+            }
+        }
+        let network_monitor = self
+            .network_monitor
+            .lock()
+            .ok()
+            .and_then(|mut monitor| monitor.take());
+        if let Some(mut monitor) = network_monitor {
             if timeout(PAIRING_MONITOR_SHUTDOWN_TIMEOUT, &mut monitor)
                 .await
                 .is_err()
@@ -570,7 +723,8 @@ impl RemoteAccessRuntime {
         }
         let mut inner = self.inner.lock().await;
         inner.phase = RemoteAccessRuntimePhase::Stopped;
-        inner.diagnostic = None;
+        inner.listener_diagnostic = None;
+        inner.discovery_diagnostic = None;
         self.shutdown_completed.store(true, Ordering::SeqCst);
         true
     }
@@ -630,6 +784,200 @@ impl RemoteAccessRuntime {
         }));
     }
 
+    fn ensure_network_monitor(&self) {
+        let Some(interval) = self.network_monitor_interval else {
+            return;
+        };
+        if self.manager.is_none() || self.gateway.is_none() {
+            return;
+        }
+        if self.shutdown_completed() || *self.network_shutdown.borrow() {
+            return;
+        }
+        let Ok(mut monitor) = self.network_monitor.lock() else {
+            return;
+        };
+        if monitor.is_some() {
+            return;
+        }
+        let runtime = self.clone();
+        let resolver = self.advertised_host_resolver.clone();
+        let mut shutdown = self.network_shutdown.subscribe();
+        *monitor = Some(tauri::async_runtime::spawn(async move {
+            let mut observed = None;
+            let mut repeated = 0_usize;
+            loop {
+                tokio::select! {
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(interval) => {}
+                }
+                if *shutdown.borrow() {
+                    break;
+                }
+                let observation = resolver();
+                let key = observation.as_ref().ok().copied();
+                if observed == Some(key) {
+                    repeated = repeated.saturating_add(1);
+                } else {
+                    observed = Some(key);
+                    repeated = 1;
+                }
+                if repeated < NETWORK_MONITOR_DEBOUNCE_OBSERVATIONS {
+                    continue;
+                }
+
+                let phase = runtime.inner.lock().await.phase;
+                match phase {
+                    RemoteAccessRuntimePhase::Available => {
+                        if let Err(error) = runtime
+                            .reconcile_network_observation(observation)
+                            .await
+                        {
+                            crate::app_log::warn(
+                                "remote_access",
+                                &format!(
+                                    "Remote LAN discovery will retry code={} message={}",
+                                    error.code, error.message
+                                ),
+                            );
+                        }
+                    }
+                    RemoteAccessRuntimePhase::Unavailable if observation.is_ok() => {
+                        if let Err(error) = runtime.retry().await {
+                            crate::app_log::warn(
+                                "remote_access",
+                                &format!(
+                                    "Remote LAN listener recovery will retry code={} message={}",
+                                    error.code, error.message
+                                ),
+                            );
+                        }
+                    }
+                    RemoteAccessRuntimePhase::Starting
+                    | RemoteAccessRuntimePhase::Unavailable
+                    | RemoteAccessRuntimePhase::Stopping
+                    | RemoteAccessRuntimePhase::Stopped => {}
+                }
+            }
+        }));
+    }
+
+    async fn reconcile_network_observation(
+        &self,
+        observation: Result<Ipv4Addr, HostError>,
+    ) -> Result<(), RemoteCommandError> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.reconcile_network_observation_locked(observation).await
+    }
+
+    async fn reconcile_network_observation_locked(
+        &self,
+        observation: Result<Ipv4Addr, HostError>,
+    ) -> Result<(), RemoteCommandError> {
+        match observation {
+            Ok(advertised_host) => {
+                let pairing_available = self.current_pairing_available()?;
+                self.publish_generation_locked(advertised_host, pairing_available)
+                    .await
+            }
+            Err(error) => self.withdraw_advertisement_locked(error).await,
+        }
+    }
+
+    async fn withdraw_advertisement_locked(
+        &self,
+        error: HostError,
+    ) -> Result<(), RemoteCommandError> {
+        let error = error.retryable(true);
+        let (publisher, had_endpoint, already_reported) = {
+            let mut inner = self.inner.lock().await;
+            if inner.phase != RemoteAccessRuntimePhase::Available {
+                return Err(runtime_unavailable_error(&inner));
+            }
+            let had_endpoint = inner
+                .listener
+                .as_ref()
+                .and_then(RemoteLanServerHandle::advertised_endpoint)
+                .is_some();
+            let already_reported = !had_endpoint
+                && inner.mdns.is_none()
+                && inner
+                    .discovery_diagnostic
+                    .as_ref()
+                    .is_some_and(|diagnostic| diagnostic.code == error.code);
+            (inner.mdns.take(), had_endpoint, already_reported)
+        };
+        if already_reported {
+            return Ok(());
+        }
+        if let Some(mut publisher) = publisher {
+            let shutdown = tauri::async_runtime::spawn_blocking(move || {
+                publisher.shutdown()
+            });
+            match timeout(MDNS_SHUTDOWN_TIMEOUT, shutdown).await {
+                Ok(Ok(Ok(()))) => {}
+                Ok(Ok(Err(shutdown_error))) => crate::app_log::warn(
+                    "remote_access",
+                    &format!(
+                        "Remote LAN discovery withdrawal reported code={} message={}",
+                        shutdown_error.code, shutdown_error.message
+                    ),
+                ),
+                Ok(Err(join_error)) => crate::app_log::warn(
+                    "remote_access",
+                    &format!("Remote LAN discovery withdrawal task failed: {join_error}"),
+                ),
+                Err(_) => crate::app_log::warn(
+                    "remote_access",
+                    "Remote LAN discovery withdrawal exceeded its bounded window",
+                ),
+            }
+        }
+
+        let mut inner = self.inner.lock().await;
+        if let Some(listener) = inner.listener.as_ref() {
+            listener.withdraw_advertised_endpoint();
+        }
+        if let Err(payload_error) = self.update_active_pairing_endpoint(None) {
+            crate::app_log::warn("remote_access", &payload_error.message);
+        }
+        inner.mdns = None;
+        inner.pairing_available = false;
+        inner.discovery_diagnostic = Some(error.clone().into());
+        if had_endpoint {
+            crate::app_log::warn(
+                "remote_access",
+                &format!(
+                    "Remote LAN advertised endpoint withdrawn; listener remains active code={} message={}",
+                    error.code, error.message
+                ),
+            );
+        }
+        Err(error.into())
+    }
+
+    async fn discovery_unavailable_error(&self) -> RemoteCommandError {
+        let inner = self.inner.lock().await;
+        inner
+            .discovery_diagnostic
+            .as_ref()
+            .map(|diagnostic| RemoteCommandError {
+                code: diagnostic.code.clone(),
+                message: diagnostic.message.clone(),
+                retryable: true,
+            })
+            .unwrap_or_else(|| RemoteCommandError {
+                code: "remote_lan_discovery_unavailable".to_string(),
+                message: "Remote LAN discovery has no current advertised endpoint"
+                    .to_string(),
+                retryable: true,
+            })
+    }
+
     fn current_pairing_available(&self) -> Result<bool, RemoteCommandError> {
         let manager = self.manager.as_ref().ok_or_else(runtime_core_unavailable)?;
         let pairing = manager.subscribe_pairing_state();
@@ -640,7 +988,7 @@ impl RemoteAccessRuntime {
     fn store_pairing_payload(
         &self,
         pairing_id: &str,
-        json: String,
+        encoded: &EncodedPairingPayload,
     ) -> Result<(), RemoteCommandError> {
         let mut payload = self
             .active_pairing_payload
@@ -648,7 +996,8 @@ impl RemoteAccessRuntime {
             .map_err(|_| pairing_payload_unavailable())?;
         *payload = Some(ActivePairingPayload {
             pairing_id: pairing_id.to_string(),
-            json,
+            json: encoded.json.clone(),
+            qr_svg_data_url: Some(encoded.qr_svg_data_url.clone()),
         });
         Ok(())
     }
@@ -658,9 +1007,49 @@ impl RemoteAccessRuntime {
             .lock()
             .map_err(|_| pairing_payload_unavailable())?
             .as_ref()
-            .filter(|payload| payload.pairing_id == pairing_id)
+            .filter(|payload| {
+                payload.pairing_id == pairing_id
+                    && payload.qr_svg_data_url.is_some()
+            })
             .map(|payload| payload.json.clone())
             .ok_or_else(pairing_payload_unavailable)
+    }
+
+    fn active_pairing_qr(
+        &self,
+        pairing_id: &str,
+    ) -> Result<String, RemoteCommandError> {
+        self.active_pairing_payload
+            .lock()
+            .map_err(|_| pairing_payload_unavailable())?
+            .as_ref()
+            .filter(|payload| payload.pairing_id == pairing_id)
+            .and_then(|payload| payload.qr_svg_data_url.clone())
+            .ok_or_else(pairing_payload_unavailable)
+    }
+
+    fn update_active_pairing_endpoint(
+        &self,
+        https_base_url: Option<&str>,
+    ) -> Result<(), RemoteCommandError> {
+        let mut active = self
+            .active_pairing_payload
+            .lock()
+            .map_err(|_| pairing_payload_unavailable())?;
+        let Some(active) = active.as_mut() else {
+            return Ok(());
+        };
+        let Some(https_base_url) = https_base_url else {
+            active.qr_svg_data_url = None;
+            return Ok(());
+        };
+        let mut payload = serde_json::from_str::<PairingQrPayload>(&active.json)
+            .map_err(|_| pairing_payload_unavailable())?;
+        payload.https_base_url = https_base_url.to_string();
+        let encoded = encode_pairing_payload(&payload)?;
+        active.json = encoded.json;
+        active.qr_svg_data_url = Some(encoded.qr_svg_data_url);
+        Ok(())
     }
 
     fn clear_pairing_payload(&self, pairing_id: &str) {
@@ -702,8 +1091,8 @@ impl RemoteAccessRuntime {
         let _lifecycle = self.lifecycle.lock().await;
         loop {
             let pairing_available = self.current_pairing_available()?;
-            let mut mdns = {
-                let mut inner = self.inner.lock().await;
+            let advertised_host = {
+                let inner = self.inner.lock().await;
                 if inner.phase != RemoteAccessRuntimePhase::Available {
                     return if pairing_available {
                         Err(runtime_unavailable_error(&inner))
@@ -711,73 +1100,172 @@ impl RemoteAccessRuntime {
                         Ok(())
                     };
                 }
-                if inner.pairing_available == pairing_available {
-                    return Ok(());
-                }
-                if !self.mdns_enabled {
-                    inner.pairing_available = pairing_available;
-                    return Ok(());
-                }
-                inner.mdns.take().ok_or_else(runtime_core_unavailable)?
+                inner
+                    .listener
+                    .as_ref()
+                    .and_then(RemoteLanServerHandle::advertised_host)
             };
-            let updated = tauri::async_runtime::spawn_blocking(move || {
-                let result = mdns.update_pairing_available(pairing_available);
-                (mdns, result)
-            })
-            .await;
-            let (returned, result) = match updated {
-                Ok(updated) => updated,
-                Err(error) => {
-                    let command_error = RemoteCommandError {
-                        code: "remote_lan_mdns_task_failed".to_string(),
-                        message: format!("Remote LAN mDNS update task failed: {error}"),
-                        retryable: true,
-                    };
-                    self.fail_running(command_error.clone()).await;
-                    return Err(command_error);
-                }
+            let Some(advertised_host) = advertised_host else {
+                return if pairing_available {
+                    Err(self.discovery_unavailable_error().await)
+                } else {
+                    let mut inner = self.inner.lock().await;
+                    inner.pairing_available = false;
+                    Ok(())
+                };
             };
-            let mut inner = self.inner.lock().await;
-            match result {
-                Ok(()) => {
-                    inner.mdns = Some(returned);
-                    inner.pairing_available = pairing_available;
-                    drop(inner);
-                    if self.current_pairing_available()? == pairing_available {
-                        return Ok(());
-                    }
-                }
-                Err(error) => {
-                    drop(inner);
-                    drop(returned);
-                    self.fail_running(RemoteCommandError::from(error.clone()))
-                        .await;
-                    return Err(error.into());
-                }
+            let advertised_host = advertised_host.parse::<Ipv4Addr>().map_err(|_| {
+                RemoteCommandError::from(HostError::new(
+                    "invalid_remote_lan_advertised_host",
+                    "Remote LAN runtime advertised endpoint must be one IPv4 address",
+                ))
+            })?;
+            self.publish_generation_locked(advertised_host, pairing_available)
+                .await?;
+            if self.current_pairing_available()? == pairing_available {
+                return Ok(());
             }
         }
     }
 
-    async fn fail_running(&self, error: RemoteCommandError) {
-        self.clear_all_pairing_payload();
-        let listener = {
+    async fn publish_generation_locked(
+        &self,
+        advertised_host: Ipv4Addr,
+        pairing_available: bool,
+    ) -> Result<(), RemoteCommandError> {
+        let advertised_host = advertised_host.to_string();
+        let (source, endpoint, transition, publisher) = {
             let mut inner = self.inner.lock().await;
-            inner.phase = RemoteAccessRuntimePhase::Unavailable;
-            inner.pairing_available = false;
-            inner.mdns = None;
-            inner.diagnostic = Some(RemoteAccessDiagnosticView {
-                code: error.code,
-                message: error.message,
-                retryable: error.retryable,
-            });
-            inner.listener.take()
+            if inner.phase != RemoteAccessRuntimePhase::Available {
+                return Err(runtime_unavailable_error(&inner));
+            }
+            let listener = inner.listener.as_ref().ok_or_else(runtime_core_unavailable)?;
+            let current = listener.advertised_endpoint();
+            let endpoint_matches = current
+                .as_ref()
+                .is_some_and(|endpoint| endpoint.advertised_host() == advertised_host);
+            let publisher_is_current = if self.mdns_enabled {
+                inner.mdns.is_some()
+            } else {
+                true
+            };
+            if endpoint_matches
+                && publisher_is_current
+                && inner.pairing_available == pairing_available
+            {
+                return Ok(());
+            }
+            let transition = if endpoint_matches {
+                None
+            } else {
+                Some(listener.stage_advertised_host(&advertised_host)?)
+            };
+            let endpoint = transition
+                .as_ref()
+                .map(|transition| transition.endpoint().clone())
+                .or(current)
+                .ok_or_else(runtime_core_unavailable)?;
+            let source = listener.advertisement_source();
+            let publisher = inner.mdns.take();
+            (source, endpoint, transition, publisher)
         };
-        if let Some(listener) = listener {
-            if let Err(error) = listener.shutdown().await {
+
+        if !self.mdns_enabled {
+            let mut inner = self.inner.lock().await;
+            if let Err(error) = self.update_active_pairing_endpoint(
+                Some(endpoint.https_base_url()),
+            ) {
+                self.clear_all_pairing_payload();
+                crate::app_log::error("remote_access", &error.message);
+            }
+            if let Some(transition) = transition {
+                transition.commit().map_err(RemoteCommandError::from)?;
+            }
+            inner.pairing_available = pairing_available;
+            inner.discovery_diagnostic = None;
+            return Ok(());
+        }
+
+        let factory = self.discovery_publisher_factory.clone();
+        let published_endpoint = endpoint.clone();
+        let published = tauri::async_runtime::spawn_blocking(move || {
+            match publisher {
+                Some(mut publisher) => match publisher.replace(
+                    &published_endpoint,
+                    pairing_available,
+                ) {
+                    Ok(()) => Ok(publisher),
+                    Err(error) => {
+                        let _ = publisher.shutdown();
+                        Err(error)
+                    }
+                },
+                None => factory(source, published_endpoint, pairing_available),
+            }
+        })
+        .await
+        .map_err(|error| {
+            RemoteCommandError::from(HostError::new(
+                "remote_lan_mdns_task_failed",
+                format!("Remote LAN mDNS generation task failed: {error}"),
+            )
+            .retryable(true))
+        });
+
+        let mut inner = self.inner.lock().await;
+        match published {
+            Ok(Ok(publisher)) => {
+                if let Err(error) = self.update_active_pairing_endpoint(
+                    Some(endpoint.https_base_url()),
+                ) {
+                    self.clear_all_pairing_payload();
+                    crate::app_log::error("remote_access", &error.message);
+                }
+                if let Some(transition) = transition {
+                    if let Err(error) = transition.commit() {
+                        drop(inner);
+                        let mut publisher = publisher;
+                        let _ = tauri::async_runtime::spawn_blocking(move || {
+                            publisher.shutdown()
+                        })
+                        .await;
+                        return Err(error.into());
+                    }
+                }
+                inner.mdns = Some(publisher);
+                inner.pairing_available = pairing_available;
+                inner.discovery_diagnostic = None;
+                Ok(())
+            }
+            Ok(Err(error)) => {
+                if let Some(transition) = transition {
+                    transition.fail_closed();
+                }
+                inner.mdns = None;
+                inner.pairing_available = false;
+                inner.discovery_diagnostic = Some(error.clone().into());
                 crate::app_log::error(
                     "remote_access",
-                    &format!("Remote LAN listener fail-closed shutdown failed error={error:?}"),
+                    &format!(
+                        "Remote LAN discovery generation failed; listener remains active code={} message={}",
+                        error.code, error.message
+                    ),
                 );
+                Err(error.into())
+            }
+            Err(error) => {
+                if let Some(transition) = transition {
+                    transition.fail_closed();
+                }
+                inner.mdns = None;
+                inner.pairing_available = false;
+                inner.discovery_diagnostic = Some(RemoteAccessDiagnosticView {
+                    code: error.code.clone(),
+                    message: error.message.clone(),
+                    retryable: error.retryable,
+                });
+                crate::app_log::error("remote_access", &error.message);
+                Err(error)
             }
         }
     }
@@ -790,7 +1278,7 @@ impl RemoteAccessRuntime {
         inner.listener = None;
         inner.mdns = None;
         inner.pairing_available = false;
-        inner.diagnostic = Some(diagnostic);
+        inner.discovery_diagnostic = Some(diagnostic);
         Err(error.into())
     }
 
@@ -805,19 +1293,28 @@ impl RemoteAccessRuntime {
             advertised_host: inner
                 .listener
                 .as_ref()
-                .map(|listener| listener.advertised_host().to_string()),
+                .and_then(RemoteLanServerHandle::advertised_host),
             https_base_url: inner
                 .listener
                 .as_ref()
-                .map(|listener| listener.https_base_url().to_string()),
+                .and_then(RemoteLanServerHandle::https_base_url),
             active_session_count: inner
                 .listener
                 .as_ref()
                 .map(RemoteLanServerHandle::active_session_count)
                 .unwrap_or(0),
             pairing_available: inner.pairing_available,
-            diagnostic: inner.diagnostic.clone(),
+            diagnostic: Self::diagnostic_locked(inner),
         }
+    }
+
+    fn diagnostic_locked(
+        inner: &RemoteAccessRuntimeInner,
+    ) -> Option<RemoteAccessDiagnosticView> {
+        inner
+            .discovery_diagnostic
+            .clone()
+            .or_else(|| inner.listener_diagnostic.clone())
     }
 }
 
@@ -993,7 +1490,7 @@ fn runtime_unavailable_error(inner: &RemoteAccessRuntimeInner) -> RemoteCommandE
         return runtime_stopped_error();
     }
     inner
-        .diagnostic
+        .discovery_diagnostic
         .as_ref()
         .map(|diagnostic| RemoteCommandError {
             code: diagnostic.code.clone(),
@@ -1032,11 +1529,11 @@ pub async fn start_remote_pairing(
 }
 
 #[tauri::command]
-pub fn get_remote_pairing_status(
+pub async fn get_remote_pairing_status(
     state: State<'_, RemoteAccessRuntime>,
     pairing_id: String,
-) -> Result<PairingStatus, RemoteCommandError> {
-    state.pairing_status(&pairing_id)
+) -> Result<RemotePairingStatusView, RemoteCommandError> {
+    state.pairing_status(&pairing_id).await
 }
 
 #[tauri::command]
@@ -1089,6 +1586,68 @@ mod tests {
         provider_manager: Arc<PluginManager>,
         remote_manager: Arc<RemoteAccessManager>,
         runtime: RemoteAccessRuntime,
+    }
+
+    #[derive(Default)]
+    struct FakeDiscoveryState {
+        generations: Vec<(String, bool)>,
+        shutdown_count: usize,
+        fail_next_publish: bool,
+    }
+
+    struct FakeDiscoveryPublisher {
+        state: Arc<StdMutex<FakeDiscoveryState>>,
+    }
+
+    impl RemoteDiscoveryPublisher for FakeDiscoveryPublisher {
+        fn replace(
+            &mut self,
+            endpoint: &RemoteLanAdvertisedEndpoint,
+            pairing_available: bool,
+        ) -> Result<(), HostError> {
+            record_fake_generation(
+                &self.state,
+                endpoint,
+                pairing_available,
+            )
+        }
+
+        fn shutdown(&mut self) -> Result<(), HostError> {
+            self.state.lock().unwrap().shutdown_count += 1;
+            Ok(())
+        }
+    }
+
+    fn record_fake_generation(
+        state: &Arc<StdMutex<FakeDiscoveryState>>,
+        endpoint: &RemoteLanAdvertisedEndpoint,
+        pairing_available: bool,
+    ) -> Result<(), HostError> {
+        let mut state = state.lock().unwrap();
+        if state.fail_next_publish {
+            state.fail_next_publish = false;
+            return Err(HostError::new(
+                "test_mdns_announce_failed",
+                "test mDNS Announce failed",
+            )
+            .retryable(true));
+        }
+        state.generations.push((
+            endpoint.advertised_host().to_string(),
+            pairing_available,
+        ));
+        Ok(())
+    }
+
+    fn fake_discovery_factory(
+        state: Arc<StdMutex<FakeDiscoveryState>>,
+    ) -> Arc<RemoteDiscoveryPublisherFactory> {
+        Arc::new(move |_source, endpoint, pairing_available| {
+            record_fake_generation(&state, &endpoint, pairing_available)?;
+            Ok(Box::new(FakeDiscoveryPublisher {
+                state: state.clone(),
+            }))
+        })
     }
 
     fn test_runtime(
@@ -1231,7 +1790,7 @@ mod tests {
         assert_eq!(available.advertised_host.as_deref(), Some("127.0.0.1"));
         let repeated = test.runtime.retry().await.unwrap();
         assert_eq!(repeated.https_base_url, available.https_base_url);
-        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
 
         assert!(test.runtime.shutdown_once().await);
         assert_eq!(
@@ -1315,6 +1874,343 @@ mod tests {
         fallback.runtime.shutdown_once().await;
         fallback.provider_manager.shutdown().await;
         drop(occupied);
+    }
+
+    #[tokio::test]
+    async fn address_generation_commits_mdns_status_qr_and_exchange_together() {
+        let discovery = Arc::new(StdMutex::new(FakeDiscoveryState::default()));
+        let mut test = test_runtime(
+            Arc::new(|| Ok("192.168.10.20".parse().unwrap())),
+            true,
+        );
+        test.runtime.discovery_publisher_factory =
+            fake_discovery_factory(discovery.clone());
+        let started_at_a = test.runtime.retry().await.unwrap();
+        let port = test
+            .runtime
+            .inner
+            .lock()
+            .await
+            .listener
+            .as_ref()
+            .unwrap()
+            .port();
+        assert_eq!(
+            started_at_a.https_base_url,
+            Some(format!("https://192.168.10.20:{port}"))
+        );
+
+        let pairing = test.runtime.start_pairing().await.unwrap();
+        let qr_at_a = pairing.qr_svg_data_url.clone();
+        test.runtime
+            .reconcile_network_observation(Ok(
+                "192.168.10.21".parse().unwrap(),
+            ))
+            .await
+            .unwrap();
+
+        let status_at_b = test.runtime.status().await;
+        assert_eq!(status_at_b.phase, RemoteAccessRuntimePhase::Available);
+        assert_eq!(
+            status_at_b.advertised_host.as_deref(),
+            Some("192.168.10.21")
+        );
+        assert_eq!(
+            status_at_b.https_base_url,
+            Some(format!("https://192.168.10.21:{port}"))
+        );
+        assert!(status_at_b.pairing_available);
+        let pairing_status = test
+            .runtime
+            .pairing_status(&pairing.pairing_id)
+            .await
+            .unwrap();
+        assert_ne!(
+            pairing_status.qr_svg_data_url.as_deref(),
+            Some(qr_at_a.as_str())
+        );
+        let pairing_json = test
+            .runtime
+            .active_pairing_payload
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .json
+            .clone();
+        let pairing_payload: PairingQrPayload =
+            serde_json::from_str(&pairing_json).unwrap();
+        assert_eq!(
+            pairing_payload.https_base_url,
+            format!("https://192.168.10.21:{port}")
+        );
+        assert_eq!(
+            discovery.lock().unwrap().generations.last(),
+            Some(&("192.168.10.21".to_string(), true))
+        );
+
+        let certificate = reqwest::Certificate::from_der(
+            test.remote_manager.tls_identity().certificate_der(),
+        )
+        .unwrap();
+        let client = reqwest::Client::builder()
+            .tls_built_in_root_certs(false)
+            .add_root_certificate(certificate)
+            .build()
+            .unwrap();
+        let exchange = client
+            .post(format!(
+                "https://localhost:{port}/remote/v1/pairings/{}/exchange",
+                pairing.pairing_id
+            ))
+            .json(&PairingExchangeRequest {
+                pairing_secret: pairing_payload.pairing_secret,
+                client_id: "generation-client".to_string(),
+                device: DeviceDescriptor {
+                    device_name: "Generation Client".to_string(),
+                    operating_system: "TestOS".to_string(),
+                    system_version: "1.0".to_string(),
+                },
+            })
+            .send()
+            .await
+            .unwrap();
+        assert!(exchange.status().is_success());
+        let exchange: codepet_gateway_sdk::PairingExchangeResponse =
+            exchange.json().await.unwrap();
+        assert_eq!(
+            exchange.gateway_url,
+            format!("wss://192.168.10.21:{port}/remote/v1/gateway")
+        );
+
+        test.runtime.shutdown_once().await;
+        test.provider_manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn missing_address_and_announce_failure_withdraw_only_discovery_then_retry() {
+        let discovery = Arc::new(StdMutex::new(FakeDiscoveryState::default()));
+        let mut test = test_runtime(
+            Arc::new(|| Ok("192.168.20.30".parse().unwrap())),
+            true,
+        );
+        test.runtime.discovery_publisher_factory =
+            fake_discovery_factory(discovery.clone());
+        test.runtime.retry().await.unwrap();
+        let listener_port = test
+            .runtime
+            .inner
+            .lock()
+            .await
+            .listener
+            .as_ref()
+            .unwrap()
+            .port();
+        let tls_certificate = test
+            .remote_manager
+            .tls_identity()
+            .certificate_der()
+            .to_vec();
+        let credential = pair_remote_client(
+            test.remote_manager.as_ref(),
+            "persistent-client",
+            "Persistent Client",
+        );
+
+        let unavailable = HostError::new(
+            "remote_lan_route_probe_failed",
+            "test route unavailable",
+        )
+        .retryable(true);
+        assert_eq!(
+            test.runtime
+                .reconcile_network_observation(Err(unavailable))
+                .await
+                .unwrap_err()
+                .code,
+            "remote_lan_route_probe_failed"
+        );
+        let withdrawn = test.runtime.status().await;
+        assert_eq!(withdrawn.phase, RemoteAccessRuntimePhase::Available);
+        assert_eq!(withdrawn.advertised_host, None);
+        assert_eq!(withdrawn.https_base_url, None);
+        assert!(withdrawn.diagnostic.as_ref().unwrap().retryable);
+        assert_eq!(
+            test.runtime
+                .inner
+                .lock()
+                .await
+                .listener
+                .as_ref()
+                .unwrap()
+                .port(),
+            listener_port
+        );
+        assert_eq!(
+            test.remote_manager.tls_identity().certificate_der(),
+            tls_certificate.as_slice()
+        );
+        assert!(test
+            .remote_manager
+            .validate_bearer(&credential.bearer_token)
+            .is_ok());
+
+        test.runtime
+            .reconcile_network_observation(Ok(
+                "192.168.20.31".parse().unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            test.runtime.status().await.advertised_host.as_deref(),
+            Some("192.168.20.31")
+        );
+        discovery.lock().unwrap().fail_next_publish = true;
+        assert_eq!(
+            test.runtime
+                .reconcile_network_observation(Ok(
+                    "192.168.20.32".parse().unwrap(),
+                ))
+                .await
+                .unwrap_err()
+                .code,
+            "test_mdns_announce_failed"
+        );
+        let failed = test.runtime.status().await;
+        assert_eq!(failed.phase, RemoteAccessRuntimePhase::Available);
+        assert_eq!(failed.advertised_host, None);
+        assert!(test
+            .remote_manager
+            .validate_bearer(&credential.bearer_token)
+            .is_ok());
+        test.runtime
+            .reconcile_network_observation(Ok(
+                "192.168.20.32".parse().unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            test.runtime.status().await.advertised_host.as_deref(),
+            Some("192.168.20.32")
+        );
+        assert_eq!(
+            discovery
+                .lock()
+                .unwrap()
+                .generations
+                .iter()
+                .filter(|(host, _)| host == "192.168.20.32")
+                .count(),
+            1
+        );
+        assert_eq!(
+            test.runtime
+                .inner
+                .lock()
+                .await
+                .listener
+                .as_ref()
+                .unwrap()
+                .port(),
+            listener_port
+        );
+        assert_eq!(
+            test.remote_manager.tls_identity().certificate_der(),
+            tls_certificate.as_slice()
+        );
+
+        test.runtime.shutdown_once().await;
+        test.provider_manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_address_and_pairing_changes_converge_to_latest_generation() {
+        let discovery = Arc::new(StdMutex::new(FakeDiscoveryState::default()));
+        let mut test = test_runtime(
+            Arc::new(|| Ok("192.168.30.40".parse().unwrap())),
+            true,
+        );
+        test.runtime.discovery_publisher_factory =
+            fake_discovery_factory(discovery.clone());
+        test.runtime.retry().await.unwrap();
+
+        let refresh_runtime = test.runtime.clone();
+        let refresh = tokio::spawn(async move {
+            refresh_runtime
+                .reconcile_network_observation(Ok(
+                    "192.168.30.41".parse().unwrap(),
+                ))
+                .await
+        });
+        let pairing = test.remote_manager.begin_pairing().unwrap();
+        refresh.await.unwrap().unwrap();
+        timeout(Duration::from_secs(2), async {
+            loop {
+                let status = test.runtime.status().await;
+                if status.advertised_host.as_deref()
+                    == Some("192.168.30.41")
+                    && status.pairing_available
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let generations = discovery.lock().unwrap().generations.clone();
+        let first_new = generations
+            .iter()
+            .position(|(host, _)| host == "192.168.30.41")
+            .unwrap();
+        assert!(generations[first_new..]
+            .iter()
+            .all(|(host, _)| host == "192.168.30.41"));
+        assert_eq!(
+            generations.last(),
+            Some(&("192.168.30.41".to_string(), true))
+        );
+
+        test.remote_manager
+            .cancel_pairing(&pairing.pairing_id)
+            .unwrap();
+        wait_for_pairing_advertisement(&test.runtime, false).await;
+        test.runtime.shutdown_once().await;
+        test.provider_manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_stops_the_network_monitor() {
+        let resolver_calls = Arc::new(AtomicUsize::new(0));
+        let calls = resolver_calls.clone();
+        let mut test = test_runtime(
+            Arc::new(move || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(Ipv4Addr::LOCALHOST)
+            }),
+            false,
+        );
+        test.runtime.network_monitor_interval =
+            Some(Duration::from_millis(10));
+        test.runtime.retry().await.unwrap();
+        timeout(Duration::from_secs(1), async {
+            while resolver_calls.load(Ordering::SeqCst) < 3 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        test.runtime.shutdown_once().await;
+        assert!(test.runtime.network_monitor.lock().unwrap().is_none());
+        let calls_after_shutdown = resolver_calls.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert_eq!(
+            resolver_calls.load(Ordering::SeqCst),
+            calls_after_shutdown
+        );
+        test.provider_manager.shutdown().await;
     }
 
     #[tokio::test]
@@ -1504,6 +2400,7 @@ mod tests {
         assert_eq!(
             test.runtime
                 .pairing_status(&started.pairing_id)
+                .await
                 .unwrap()
                 .state,
             codepet_host::PairingStatusKind::Active
@@ -1551,7 +2448,11 @@ mod tests {
             codepet_host::PairingStatusKind::Cancelled
         );
         assert_eq!(
-            test.runtime.pairing_status(&pairing_id).unwrap().state,
+            test.runtime
+                .pairing_status(&pairing_id)
+                .await
+                .unwrap()
+                .state,
             codepet_host::PairingStatusKind::Active
         );
         assert!(test
@@ -1598,7 +2499,11 @@ mod tests {
             exchange.json().await.unwrap();
         wait_for_pairing_advertisement(&test.runtime, false).await;
         assert_eq!(
-            test.runtime.pairing_status(&pairing_id).unwrap().state,
+            test.runtime
+                .pairing_status(&pairing_id)
+                .await
+                .unwrap()
+                .state,
             codepet_host::PairingStatusKind::Succeeded
         );
         assert_eq!(
