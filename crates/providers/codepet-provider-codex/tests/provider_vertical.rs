@@ -1,5 +1,6 @@
 use codepet_provider_codex::{
-    CodexProvider, ProviderEventSink, CODEX_INSTANCE_KIND, CODEX_PLUGIN_ID,
+    CodexProvider, ExecutionLifecycleHook, ProviderEventSink, CODEX_INSTANCE_KIND,
+    CODEX_PLUGIN_ID,
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalResolveRequest, ConversationCreateRequest, ConversationListRequest,
@@ -16,6 +17,7 @@ use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
@@ -68,7 +70,21 @@ async fn configured_direct_provider_with_events(
     marker: &Path,
     events: Arc<dyn ProviderEventSink>,
 ) -> (Arc<CodexProvider>, ProviderInstanceRoute, String) {
-    let provider = Arc::new(CodexProvider::new(events));
+    configured_direct_provider_with_events_and_hook(approval_mode, marker, events, None).await
+}
+
+async fn configured_direct_provider_with_events_and_hook(
+    approval_mode: &str,
+    marker: &Path,
+    events: Arc<dyn ProviderEventSink>,
+    lifecycle_hook: Option<Arc<dyn ExecutionLifecycleHook>>,
+) -> (Arc<CodexProvider>, ProviderInstanceRoute, String) {
+    let provider = Arc::new(match lifecycle_hook {
+        Some(lifecycle_hook) => {
+            CodexProvider::new_with_execution_lifecycle_hook(events, lifecycle_hook)
+        }
+        None => CodexProvider::new(events),
+    });
     let route = route("device-provider-direct");
     ProviderProtocolServer::provider_initialize(
         provider.as_ref(),
@@ -108,6 +124,50 @@ async fn configured_direct_provider_with_events(
         route,
         started.instance.capabilities.revision,
     )
+}
+
+struct BlockHandleOnceHook {
+    conversation_id: String,
+    operation: &'static str,
+    armed: AtomicBool,
+    entered: Arc<Barrier>,
+    release: Arc<Barrier>,
+}
+
+impl ExecutionLifecycleHook for BlockHandleOnceHook {
+    fn after_handle_acquired(&self, conversation_id: &str, operation: &str) {
+        if conversation_id == self.conversation_id
+            && operation == self.operation
+            && self.armed.swap(false, Ordering::SeqCst)
+        {
+            self.entered.wait();
+            self.release.wait();
+        }
+    }
+}
+
+struct BlockResumeUntilCancelledHook {
+    conversation_id: String,
+    resume_entered: Arc<Barrier>,
+    resume_release: Arc<Barrier>,
+    cancelled_entered: Arc<Barrier>,
+    cancelled_release: Arc<Barrier>,
+}
+
+impl ExecutionLifecycleHook for BlockResumeUntilCancelledHook {
+    fn before_resume_linearization(&self, conversation_id: &str) {
+        if conversation_id == self.conversation_id {
+            self.resume_entered.wait();
+            self.resume_release.wait();
+        }
+    }
+
+    fn after_execution_cancelled(&self, conversation_id: &str) {
+        if conversation_id == self.conversation_id {
+            self.cancelled_entered.wait();
+            self.cancelled_release.wait();
+        }
+    }
 }
 
 #[tokio::test]
@@ -1151,6 +1211,272 @@ async fn terminal_cleanup_hides_the_closing_slot_before_publishing_the_terminal_
         .unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn prefetched_ready_handle_retries_after_terminal_closes_its_generation() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("prefetched-ready-handle.txt");
+    let handle_entered = Arc::new(Barrier::new(2));
+    let handle_release = Arc::new(Barrier::new(2));
+    let hook = Arc::new(BlockHandleOnceHook {
+        conversation_id: "thread-prefetched-handle".to_string(),
+        operation: "turn.start",
+        armed: AtomicBool::new(false),
+        entered: handle_entered.clone(),
+        release: handle_release.clone(),
+    });
+    let (event_sender, event_receiver) = mpsc::channel();
+    let events = Arc::new(move |event: ProtocolEvent| {
+        event_sender.send(event).map_err(|error| codepet_provider_sdk::ProtocolError {
+            code: "test_event_sink_closed".to_string(),
+            message: error.to_string(),
+            retryable: false,
+            details: None,
+        })
+    });
+    let (provider, route, capability_revision) =
+        configured_direct_provider_with_events_and_hook(
+            "complete-on-approval",
+            &marker,
+            events,
+            Some(hook.clone()),
+        )
+        .await;
+    clear_session_log(&marker);
+    let conversation = conversation_resource(&route, "thread-prefetched-handle");
+    ProviderProtocolServer::turn_start(
+        provider.as_ref(),
+        TurnStartRequest {
+            conversation: conversation.clone(),
+            client_request_id: "prefetched-first".to_string(),
+            capability_revision: capability_revision.clone(),
+            input: TurnInput {
+                kind: TurnInputKind::Text,
+                text: "start the first turn".to_string(),
+            },
+            selection: TurnSelection {
+                access_mode_id: None,
+                reasoning_effort_id: None,
+                model: None,
+            },
+        },
+    )
+    .await
+    .unwrap();
+    let approval = loop {
+        let event = event_receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        if let ProtocolEvent::EventApprovalRequested { params, .. } = event {
+            break params.approval.resource;
+        }
+    };
+    let first_generation_pids =
+        session_pids(&marker, "thread/resume", "thread-prefetched-handle");
+    assert_eq!(first_generation_pids.len(), 1);
+
+    hook.armed.store(true, Ordering::SeqCst);
+    let next_provider = provider.clone();
+    let next_conversation = conversation.clone();
+    let next = tokio::spawn(async move {
+        ProviderProtocolServer::turn_start(
+            next_provider.as_ref(),
+            TurnStartRequest {
+                conversation: next_conversation,
+                client_request_id: "prefetched-second".to_string(),
+                capability_revision,
+                input: TurnInput {
+                    kind: TurnInputKind::Text,
+                    text: "start on the next generation".to_string(),
+                },
+                selection: TurnSelection {
+                    access_mode_id: None,
+                    reasoning_effort_id: None,
+                    model: None,
+                },
+            },
+        )
+        .await
+    });
+    let entered = handle_entered.clone();
+    tokio::task::spawn_blocking(move || entered.wait())
+        .await
+        .unwrap();
+
+    ProviderProtocolServer::approval_resolve(
+        provider.as_ref(),
+        ApprovalResolveRequest {
+            approval,
+            decision: ApprovalDecision::Approve,
+        },
+    )
+    .await
+    .unwrap();
+    loop {
+        let event = event_receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        if matches!(
+            event,
+            ProtocolEvent::EventTurnUpserted { params, .. }
+                if params.turn.status == codepet_provider_sdk::TurnStatus::Completed
+                    && params.turn.conversation.native_resource_id == "thread-prefetched-handle"
+        ) {
+            break;
+        }
+    }
+    wait_for_processes_to_exit(&first_generation_pids, Duration::from_secs(2));
+
+    let release = handle_release.clone();
+    tokio::task::spawn_blocking(move || release.wait())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), next)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let execution_pids = session_pids(&marker, "thread/resume", "thread-prefetched-handle");
+    assert_eq!(execution_pids.len(), 2);
+    assert_ne!(execution_pids[0], execution_pids[1]);
+
+    ProviderProtocolServer::instance_stop(
+        provider.as_ref(),
+        InstanceStopRequest { route: route.clone() },
+    )
+    .await
+    .unwrap();
+    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {})
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stop_cancelled_before_resume_linearization_never_writes_resume_or_start() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("cancel-before-resume-linearization.txt");
+    let resume_entered = Arc::new(Barrier::new(2));
+    let resume_release = Arc::new(Barrier::new(2));
+    let cancelled_entered = Arc::new(Barrier::new(2));
+    let cancelled_release = Arc::new(Barrier::new(2));
+    let hook = Arc::new(BlockResumeUntilCancelledHook {
+        conversation_id: "thread-resume-pending-linearization".to_string(),
+        resume_entered: resume_entered.clone(),
+        resume_release: resume_release.clone(),
+        cancelled_entered: cancelled_entered.clone(),
+        cancelled_release: cancelled_release.clone(),
+    });
+    let (provider, route, capability_revision) =
+        configured_direct_provider_with_events_and_hook(
+            "resume-no-response",
+            &marker,
+            Arc::new(|_| Ok(())),
+            Some(hook),
+        )
+        .await;
+    clear_session_log(&marker);
+    let conversation = conversation_resource(&route, "thread-resume-pending-linearization");
+    let operation_provider = provider.clone();
+    let operation = tokio::spawn(async move {
+        ProviderProtocolServer::turn_start(
+            operation_provider.as_ref(),
+            TurnStartRequest {
+                conversation,
+                client_request_id: "cancel-before-resume-message".to_string(),
+                capability_revision,
+                input: TurnInput {
+                    kind: TurnInputKind::Text,
+                    text: "stop before resume is sent".to_string(),
+                },
+                selection: TurnSelection {
+                    access_mode_id: None,
+                    reasoning_effort_id: None,
+                    model: None,
+                },
+            },
+        )
+        .await
+    });
+    let entered = resume_entered.clone();
+    tokio::task::spawn_blocking(move || entered.wait())
+        .await
+        .unwrap();
+    let execution_pids = session_pids(&marker, "process/start", "");
+    assert_eq!(execution_pids.len(), 1);
+    assert_eq!(session_method_count(&marker, "initialize"), 1);
+
+    let stop_provider = provider.clone();
+    let stop_route = route.clone();
+    let stop = tokio::spawn(async move {
+        ProviderProtocolServer::instance_stop(
+            stop_provider.as_ref(),
+            InstanceStopRequest { route: stop_route },
+        )
+        .await
+    });
+    let cancelled = cancelled_entered.clone();
+    tokio::task::spawn_blocking(move || cancelled.wait())
+        .await
+        .unwrap();
+
+    let release_resume = resume_release.clone();
+    tokio::task::spawn_blocking(move || release_resume.wait())
+        .await
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while session_pids(
+        &marker,
+        "thread/resume",
+        "thread-resume-pending-linearization",
+    )
+    .is_empty()
+        && !operation.is_finished()
+        && Instant::now() < deadline
+    {
+        tokio::task::yield_now().await;
+    }
+    let resume_was_written = !session_pids(
+        &marker,
+        "thread/resume",
+        "thread-resume-pending-linearization",
+    )
+    .is_empty();
+
+    let release_cancelled = cancelled_release.clone();
+    tokio::task::spawn_blocking(move || release_cancelled.wait())
+        .await
+        .unwrap();
+    let stopped = tokio::time::timeout(Duration::from_secs(2), stop)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(stopped.instance.status, codepet_provider_sdk::InstanceStatus::Stopped);
+    let operation_error = tokio::time::timeout(Duration::from_secs(2), operation)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(operation_error.code, "provider_unavailable");
+    assert!(!resume_was_written);
+    assert!(
+        session_pids(
+            &marker,
+            "thread/resume",
+            "thread-resume-pending-linearization",
+        )
+        .is_empty()
+    );
+    assert!(
+        session_pids(
+            &marker,
+            "turn/start",
+            "thread-resume-pending-linearization",
+        )
+        .is_empty()
+    );
+    wait_for_processes_to_exit(&execution_pids, Duration::from_secs(2));
+
+    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {})
+        .await
+        .unwrap();
+}
+
 #[test]
 fn terminal_release_and_per_process_session_evidence_are_stable_under_repetition() {
     const ITERATIONS: usize = 64;
@@ -1465,23 +1791,23 @@ fn provider_binary_dispatches_other_conversations_and_stop_while_resume_hangs() 
 }
 
 #[test]
-fn provider_binary_bounds_concurrency_and_reaps_blocked_requests_on_eof() {
+fn provider_binary_reserves_dispatch_for_stop_when_all_normal_slots_are_blocked() {
     const MAX_CONCURRENT_HOST_REQUESTS: usize = 16;
 
     let directory = tempfile::tempdir().unwrap();
-    let marker = directory.path().join("stdio-concurrency-limit.txt");
+    let marker = directory.path().join("stdio-saturated-stop.txt");
     let mut provider = ProviderBinary::spawn();
     let (_, capability_revision) = provider.configure("resume-no-response", &marker);
     clear_session_log(&marker);
 
-    for index in 0..=MAX_CONCURRENT_HOST_REQUESTS {
+    for index in 0..MAX_CONCURRENT_HOST_REQUESTS {
         provider.send_request(
-            &format!("bounded-request-{index}"),
+            &format!("saturated-stop-request-{index}"),
             "turn.start",
             turn_start_params(
                 conversation_resource_value(&format!("thread-resume-pending-{index}")),
-                &format!("bounded-message-{index}"),
-                "hold bounded dispatch",
+                &format!("saturated-stop-message-{index}"),
+                "hold every normal dispatch slot",
                 &capability_revision,
             ),
         );
@@ -1496,20 +1822,163 @@ fn provider_binary_bounds_concurrency_and_reaps_blocked_requests_on_eof() {
         session_method_count(&marker, "thread/resume"),
         MAX_CONCURRENT_HOST_REQUESTS
     );
-    assert!(
-        session_pids(
-            &marker,
-            "thread/resume",
-            &format!("thread-resume-pending-{MAX_CONCURRENT_HOST_REQUESTS}")
-        )
-        .is_empty()
+    let execution_pids = session_pids(&marker, "process/start", "");
+    assert_eq!(execution_pids.len(), MAX_CONCURRENT_HOST_REQUESTS);
+
+    provider.send_request(
+        "saturated-instance-stop",
+        "instance.stop",
+        json!({ "route": route_value() }),
     );
+    let stopped = provider.receive(Duration::from_secs(2), |message| {
+        message.get("id").and_then(Value::as_str) == Some("saturated-instance-stop")
+    });
+    assert_eq!(stopped["id"], "saturated-instance-stop");
+    assert_eq!(
+        stopped.pointer("/result/instance/status").and_then(Value::as_str),
+        Some("stopped")
+    );
+    wait_for_processes_to_exit(&execution_pids, Duration::from_secs(2));
+
+    provider.request("saturated-provider-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_keeps_eof_visible_after_at_least_forty_nine_saturated_frames() {
+    const MAX_CONCURRENT_HOST_REQUESTS: usize = 16;
+    const MAX_PENDING_HOST_MESSAGES: usize = 32;
+
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("stdio-saturated-eof.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (_, capability_revision) = provider.configure("resume-no-response", &marker);
+    clear_session_log(&marker);
+
+    for index in 0..MAX_CONCURRENT_HOST_REQUESTS {
+        provider.send_request(
+            &format!("saturated-eof-request-{index}"),
+            "turn.start",
+            turn_start_params(
+                conversation_resource_value(&format!("thread-resume-pending-{index}")),
+                &format!("saturated-eof-message-{index}"),
+                "saturate dispatch before EOF",
+                &capability_revision,
+            ),
+        );
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while session_method_count(&marker, "thread/resume") < MAX_CONCURRENT_HOST_REQUESTS {
+        assert!(Instant::now() < deadline, "saturated requests did not reach the dispatch limit");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for index in MAX_CONCURRENT_HOST_REQUESTS
+        ..(MAX_CONCURRENT_HOST_REQUESTS + MAX_PENDING_HOST_MESSAGES + 1)
+    {
+        provider.send_request(
+            &format!("saturated-eof-request-{index}"),
+            "turn.start",
+            turn_start_params(
+                conversation_resource_value(&format!("thread-resume-pending-{index}")),
+                &format!("saturated-eof-message-{index}"),
+                "saturate dispatch before EOF",
+                &capability_revision,
+            ),
+        );
+    }
     let execution_pids = session_pids(&marker, "process/start", "");
     assert_eq!(execution_pids.len(), MAX_CONCURRENT_HOST_REQUESTS);
 
     let status = provider.close_input_and_wait(Duration::from_secs(2));
     assert!(status.success());
     wait_for_processes_to_exit(&execution_pids, Duration::from_secs(2));
+}
+
+#[test]
+fn provider_binary_rejects_queue_overload_by_id_without_executing_it() {
+    const MAX_CONCURRENT_HOST_REQUESTS: usize = 16;
+    const MAX_PENDING_HOST_MESSAGES: usize = 32;
+    const OVERLOADED_INDEX: usize = MAX_CONCURRENT_HOST_REQUESTS + MAX_PENDING_HOST_MESSAGES;
+
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("stdio-overload-response.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (_, capability_revision) = provider.configure("resume-no-response", &marker);
+    clear_session_log(&marker);
+
+    for index in 0..MAX_CONCURRENT_HOST_REQUESTS {
+        provider.send_request(
+            &format!("overload-request-{index}"),
+            "turn.start",
+            turn_start_params(
+                conversation_resource_value(&format!("thread-resume-pending-{index}")),
+                &format!("overload-message-{index}"),
+                "verify explicit overload",
+                &capability_revision,
+            ),
+        );
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while session_method_count(&marker, "thread/resume") < MAX_CONCURRENT_HOST_REQUESTS {
+        assert!(Instant::now() < deadline, "overload requests did not fill dispatch slots");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for index in MAX_CONCURRENT_HOST_REQUESTS..=OVERLOADED_INDEX {
+        provider.send_request(
+            &format!("overload-request-{index}"),
+            "turn.start",
+            turn_start_params(
+                conversation_resource_value(&format!("thread-resume-pending-{index}")),
+                &format!("overload-message-{index}"),
+                "verify explicit overload",
+                &capability_revision,
+            ),
+        );
+    }
+    let overloaded_id = format!("overload-request-{OVERLOADED_INDEX}");
+    let overloaded = provider.receive(Duration::from_secs(2), |message| {
+        message.get("id").and_then(Value::as_str) == Some(overloaded_id.as_str())
+    });
+    assert_eq!(overloaded["id"], overloaded_id);
+    assert_eq!(
+        overloaded.pointer("/error/data/code").and_then(Value::as_str),
+        Some("provider_overloaded")
+    );
+    assert_eq!(
+        overloaded
+            .pointer("/error/data/retryable")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(
+        session_pids(
+            &marker,
+            "thread/resume",
+            &format!("thread-resume-pending-{OVERLOADED_INDEX}")
+        )
+        .is_empty()
+    );
+
+    provider.send_request(
+        "overload-instance-stop",
+        "instance.stop",
+        json!({ "route": route_value() }),
+    );
+    let stopped = provider.receive(Duration::from_secs(2), |message| {
+        message.get("id").and_then(Value::as_str) == Some("overload-instance-stop")
+    });
+    assert_eq!(
+        stopped.pointer("/result/instance/status").and_then(Value::as_str),
+        Some("stopped")
+    );
+    assert!(
+        session_pids(
+            &marker,
+            "thread/resume",
+            &format!("thread-resume-pending-{OVERLOADED_INDEX}")
+        )
+        .is_empty()
+    );
+    provider.request("overload-provider-shutdown", "provider.shutdown", json!({}));
 }
 
 #[tokio::test]

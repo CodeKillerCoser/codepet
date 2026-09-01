@@ -644,29 +644,53 @@ impl CodexAppServerSession {
         ))
     }
 
-    fn request_thread_resume_outcome(
+    fn request_thread_resume_outcome_with_sender(
         &self,
         thread_id: &str,
+        send_request: impl FnOnce(Value) -> CodexRequestOutcome<()>,
     ) -> CodexRequestOutcome<CodexConversationSnapshot> {
-        self.request_outcome("thread/resume", json!({ "threadId": thread_id }))
-            .and_then(|response: ThreadConfiguredResponse| {
-                let snapshot = snapshot_from_configured_response(response);
-                if snapshot.thread.id != thread_id {
-                    return CodexRequestOutcome::SentOutcomeUnknown(
-                        CodexAppServerError::Protocol(format!(
-                            "thread/resume returned thread {} for requested thread {thread_id}",
-                            snapshot.thread.id
-                        )),
-                    );
-                }
-                self.inner.record_configuration(&snapshot);
-                CodexRequestOutcome::Success(snapshot)
-            })
+        self.request_value_with_timeout_outcome_with_sender(
+            "thread/resume",
+            json!({ "threadId": thread_id }),
+            REQUEST_TIMEOUT,
+            send_request,
+        )
+        .and_then(|response| match serde_json::from_value::<ThreadConfiguredResponse>(response) {
+            Ok(response) => CodexRequestOutcome::Success(response),
+            Err(error) => CodexRequestOutcome::SentOutcomeUnknown(
+                CodexAppServerError::Protocol(format!(
+                    "invalid thread/resume response: {error}"
+                )),
+            ),
+        })
+        .and_then(|response| {
+            let snapshot = snapshot_from_configured_response(response);
+            if snapshot.thread.id != thread_id {
+                return CodexRequestOutcome::SentOutcomeUnknown(
+                    CodexAppServerError::Protocol(format!(
+                        "thread/resume returned thread {} for requested thread {thread_id}",
+                        snapshot.thread.id
+                    )),
+                );
+            }
+            self.inner.record_configuration(&snapshot);
+            CodexRequestOutcome::Success(snapshot)
+        })
     }
 
     pub(crate) fn ensure_thread_loaded_outcome(
         &self,
         thread_id: &str,
+    ) -> CodexRequestOutcome<u64> {
+        self.ensure_thread_loaded_outcome_with_sender(thread_id, |message| {
+            self.inner.write_request(message)
+        })
+    }
+
+    pub(crate) fn ensure_thread_loaded_outcome_with_sender(
+        &self,
+        thread_id: &str,
+        send_request: impl FnOnce(Value) -> CodexRequestOutcome<()>,
     ) -> CodexRequestOutcome<u64> {
         loop {
             let mut loaded_threads = match self.inner.loaded_threads.lock() {
@@ -704,7 +728,7 @@ impl CodexAppServerSession {
                 }
             }
         }
-        let result = self.request_thread_resume_outcome(thread_id);
+        let result = self.request_thread_resume_outcome_with_sender(thread_id, send_request);
         let mut loaded_threads = match self.inner.loaded_threads.lock() {
             Ok(loaded_threads) => loaded_threads,
             Err(_) => {
@@ -994,6 +1018,21 @@ impl CodexAppServerSession {
         params: Value,
         timeout: Duration,
     ) -> CodexRequestOutcome<Value> {
+        self.request_value_with_timeout_outcome_with_sender(
+            method,
+            params,
+            timeout,
+            |message| self.inner.write_request(message),
+        )
+    }
+
+    fn request_value_with_timeout_outcome_with_sender(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+        send_request: impl FnOnce(Value) -> CodexRequestOutcome<()>,
+    ) -> CodexRequestOutcome<Value> {
         if !self.is_running() {
             return CodexRequestOutcome::NotSent(CodexAppServerError::Shutdown);
         }
@@ -1009,7 +1048,7 @@ impl CodexAppServerSession {
         };
         pending.insert(id.clone(), sender);
         drop(pending);
-        let write_outcome = self.inner.write_request(json!({
+        let write_outcome = send_request(json!({
             "id": id,
             "method": method,
             "params": params,
@@ -1056,6 +1095,10 @@ impl CodexAppServerSession {
                 CodexAppServerError::ProcessExited,
             ),
         }
+    }
+
+    pub(crate) fn write_prepared_request(&self, message: Value) -> CodexRequestOutcome<()> {
+        self.inner.write_request(message)
     }
 
     fn notify(&self, method: &str, params: Value) -> Result<(), CodexAppServerError> {
