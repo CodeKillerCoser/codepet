@@ -2,6 +2,7 @@
   "manifestVersion": 1,
   "pluginId": "dev.codepet.codex",
   "displayName": "Codex",
+  "icon": "codex",
   "executable": "codepet-provider-codex",
   "args": [],
   "env": {},

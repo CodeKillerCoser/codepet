@@ -574,6 +574,7 @@ async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desk
     let descriptor = PluginDescriptor {
         plugin_id: "dev.codepet.isolation".to_string(),
         display_name: "Isolation Fixture".to_string(),
+        icon: None,
         executable: fixture_executable,
         args: Vec::new(),
         env: [(

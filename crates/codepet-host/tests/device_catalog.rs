@@ -48,6 +48,7 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
             "manifestVersion": 1,
             "pluginId": "dev.codepet.fake",
             "displayName": "Fake",
+            "icon": "fake",
             "executable": "bin/codepet-provider-fake",
             "enabled": true,
             "instances": [{
@@ -88,6 +89,7 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
         discovered.catalog.executable,
         plugin_directory.join("bin/codepet-provider-fake")
     );
+    assert_eq!(discovered.catalog.icon.as_deref(), Some("fake"));
 
     let reopened = ProviderInstanceRegistry::open(&registry_path, device_id.clone()).unwrap();
     let second = reopened.synchronize_catalog(&catalog).unwrap();

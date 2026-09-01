@@ -43,6 +43,7 @@ test("staging contains Provider plugins, JSON-RPC resources, and cp-sdk-gen", as
         manifestVersion: 1,
         pluginId: provider.pluginId,
         displayName: provider.name,
+        icon: provider.icon,
         executable: provider.packageName,
         enabled: true,
         instances: [],
@@ -114,6 +115,7 @@ test("staging contains Provider plugins, JSON-RPC resources, and cp-sdk-gen", as
         await readFile(path.join(providerDirectory, "codepet-provider.json"), "utf8"),
       );
       assert.equal(manifest.pluginId, provider.pluginId);
+      assert.equal(manifest.icon, provider.icon);
       assert.equal(manifest.executable, executable);
       assert.deepEqual((await readdir(providerDirectory)).sort(), [
         "codepet-provider.json",

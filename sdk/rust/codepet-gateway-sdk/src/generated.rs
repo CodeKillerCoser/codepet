@@ -545,6 +545,8 @@ pub struct ProviderInstance {
     pub plugin_id: ProviderPluginId,
     pub display_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     pub harness: HarnessDescriptor,
     pub status: ProviderStatus,

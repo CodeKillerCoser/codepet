@@ -152,6 +152,11 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
     gateway.schema.$defs.ProviderInstance.properties.pluginId.$ref,
     "../../core/v1/schema.json#/$defs/ProviderPluginId",
   );
+  assert.deepEqual(gateway.schema.$defs.ProviderInstance.properties.icon, {
+    type: "string",
+    minLength: 1,
+  });
+  assert.equal(gateway.schema.$defs.ProviderInstance.required.includes("icon"), false);
   for (const definition of ["Conversation", "TurnTask", "Approval"]) {
     assert.equal(
       gateway.schema.$defs[definition].properties.resource.$ref,

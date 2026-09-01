@@ -1269,6 +1269,7 @@ mod tests {
             let descriptor = PluginDescriptor {
                 plugin_id: format!("dev.codepet.terminal-{}", case.name),
                 display_name: "Failure fixture".to_string(),
+                icon: None,
                 executable: "/bin/sh".into(),
                 args: vec![
                     "-c".to_string(),
@@ -1362,6 +1363,7 @@ mod tests {
         let descriptor = PluginDescriptor {
             plugin_id: "dev.codepet.process-tree".to_string(),
             display_name: "Process tree fixture".to_string(),
+            icon: None,
             executable: "/bin/sh".into(),
             args: vec![
                 "-c".to_string(),

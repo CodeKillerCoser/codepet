@@ -129,6 +129,7 @@ fn fake_plugin() -> PluginDescriptor {
     PluginDescriptor {
         plugin_id: "dev.codepet.lan-listener".to_string(),
         display_name: "LAN Listener Provider".to_string(),
+        icon: None,
         executable: env!("CARGO_BIN_EXE_codepet-host-fake-provider").into(),
         args: Vec::new(),
         env: BTreeMap::from([(

@@ -31,6 +31,8 @@ pub struct PluginInstanceConfig {
 pub struct PluginDescriptor {
     pub plugin_id: ProviderPluginId,
     pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     pub executable: PathBuf,
     #[serde(default)]
     pub args: Vec<String>,
@@ -292,6 +294,19 @@ fn validate_descriptor(descriptor: &PluginDescriptor) -> HostResult<()> {
             "invalid_plugin_descriptor",
             format!(
                 "Provider plugin {} must declare a display name and executable",
+                descriptor.plugin_id
+            ),
+        ));
+    }
+    if descriptor
+        .icon
+        .as_ref()
+        .is_some_and(|icon| icon.trim().is_empty())
+    {
+        return Err(HostError::new(
+            "invalid_plugin_descriptor",
+            format!(
+                "Provider plugin {} icon must not be empty",
                 descriptor.plugin_id
             ),
         ));

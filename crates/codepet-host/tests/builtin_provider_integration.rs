@@ -132,6 +132,9 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
     let codex = ready_provider(&listed.providers, CODEX_PLUGIN_ID, &device_id);
     let claude = ready_provider(&listed.providers, CLAUDE_PLUGIN_ID, &device_id);
     let opencode = ready_provider(&listed.providers, OPENCODE_PLUGIN_ID, &device_id);
+    assert_eq!(codex.icon.as_deref(), Some("codex"));
+    assert_eq!(claude.icon.as_deref(), Some("claude"));
+    assert_eq!(opencode.icon.as_deref(), Some("opencode"));
 
     let codex_conversations = conversation_list(gateway.as_ref(), codex).await;
     assert_eq!(codex_conversations.len(), 1);

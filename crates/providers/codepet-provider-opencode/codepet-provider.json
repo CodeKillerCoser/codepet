@@ -2,6 +2,7 @@
   "manifestVersion": 1,
   "pluginId": "dev.codepet.opencode",
   "displayName": "OpenCode",
+  "icon": "opencode",
   "executable": "codepet-provider-opencode",
   "args": [],
   "env": {},

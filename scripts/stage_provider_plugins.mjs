@@ -10,16 +10,19 @@ export const PROVIDERS = Object.freeze([
     name: "codex",
     packageName: "codepet-provider-codex",
     pluginId: "dev.codepet.codex",
+    icon: "codex",
   },
   {
     name: "opencode",
     packageName: "codepet-provider-opencode",
     pluginId: "dev.codepet.opencode",
+    icon: "opencode",
   },
   {
     name: "claude",
     packageName: "codepet-provider-claude",
     pluginId: "dev.codepet.claude",
+    icon: "claude",
   },
 ]);
 
@@ -231,6 +234,11 @@ export async function stageProviderPlugins({
     if (manifest.pluginId !== provider.pluginId) {
       throw new Error(
         `${provider.name} manifest pluginId must be ${provider.pluginId}, received ${manifest.pluginId}`,
+      );
+    }
+    if (manifest.icon !== provider.icon) {
+      throw new Error(
+        `${provider.name} manifest icon must be ${provider.icon}, received ${manifest.icon}`,
       );
     }
     const executable = binaryFileName(provider, target);

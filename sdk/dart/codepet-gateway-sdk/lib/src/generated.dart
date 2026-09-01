@@ -2097,6 +2097,7 @@ final class ProviderInstance {
     required GatewayProviderRoute route,
     required ProviderPluginId pluginId,
     required String displayName,
+    String? icon,
     String? version,
     required HarnessDescriptor harness,
     required ProviderStatus status,
@@ -2105,6 +2106,7 @@ final class ProviderInstance {
     final validatedRoute = route;
     final validatedPluginId = _string(pluginId, 'ProviderInstance.pluginId', minLength: 1);
     final validatedDisplayName = _string(displayName, 'ProviderInstance.displayName', minLength: 1);
+    final validatedIcon = icon == null ? null : _string(icon, 'ProviderInstance.icon', minLength: 1);
     final validatedVersion = version == null ? null : _string(version, 'ProviderInstance.version');
     final validatedHarness = harness;
     final validatedStatus = status;
@@ -2113,6 +2115,7 @@ final class ProviderInstance {
       route: validatedRoute,
       pluginId: validatedPluginId,
       displayName: validatedDisplayName,
+      icon: validatedIcon,
       version: validatedVersion,
       harness: validatedHarness,
       status: validatedStatus,
@@ -2124,6 +2127,7 @@ final class ProviderInstance {
     required this.route,
     required this.pluginId,
     required this.displayName,
+    required this.icon,
     required this.version,
     required this.harness,
     required this.status,
@@ -2133,6 +2137,7 @@ final class ProviderInstance {
   final GatewayProviderRoute route;
   final ProviderPluginId pluginId;
   final String displayName;
+  final String? icon;
   final String? version;
   final HarnessDescriptor harness;
   final ProviderStatus status;
@@ -2140,11 +2145,12 @@ final class ProviderInstance {
 
   factory ProviderInstance.fromJson(Object? value, {String path = 'ProviderInstance'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'route', 'pluginId', 'displayName', 'version', 'harness', 'status', 'capabilities'}, path);
+    _expectKeys(json, const {'route', 'pluginId', 'displayName', 'icon', 'version', 'harness', 'status', 'capabilities'}, path);
     return ProviderInstance(
       route: GatewayProviderRoute.fromJson(_required(json, 'route', path), path: '$path.route'),
       pluginId: _string(_required(json, 'pluginId', path), '$path.pluginId', minLength: 1),
       displayName: _string(_required(json, 'displayName', path), '$path.displayName', minLength: 1),
+      icon: json.containsKey('icon') && json['icon'] != null ? _string(json['icon'], '$path.icon', minLength: 1) : null,
       version: json.containsKey('version') && json['version'] != null ? _string(json['version'], '$path.version') : null,
       harness: HarnessDescriptor.fromJson(_required(json, 'harness', path), path: '$path.harness'),
       status: ProviderStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
@@ -2156,6 +2162,7 @@ final class ProviderInstance {
     'route': route.toJson(),
     'pluginId': pluginId,
     'displayName': displayName,
+    if (icon != null) 'icon': icon!,
     if (version != null) 'version': version!,
     'harness': harness.toJson(),
     'status': status.toJson(),
@@ -2163,7 +2170,7 @@ final class ProviderInstance {
   };
 
   @override
-  String toString() => 'ProviderInstance(route: $route, pluginId: $pluginId, displayName: $displayName, version: $version, harness: $harness, status: $status, capabilities: $capabilities)';
+  String toString() => 'ProviderInstance(route: $route, pluginId: $pluginId, displayName: $displayName, icon: $icon, version: $version, harness: $harness, status: $status, capabilities: $capabilities)';
 }
 
 final class ProviderListRequest {

@@ -27,6 +27,7 @@ fn plugin(plugin_id: &str, instances: &[&str]) -> PluginDescriptor {
     PluginDescriptor {
         plugin_id: plugin_id.to_string(),
         display_name: format!("Fake {plugin_id}"),
+        icon: Some("fake".to_string()),
         executable: env!("CARGO_BIN_EXE_codepet-host-fake-provider").into(),
         args: Vec::new(),
         env: BTreeMap::from([(
@@ -300,7 +301,8 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
         .unwrap();
     assert_eq!(providers.providers.len(), 2);
     assert!(providers.providers.iter().all(|provider| {
-        provider.status == codepet_gateway_sdk::ProviderStatus::Ready
+        provider.icon.as_deref() == Some("fake")
+            && provider.status == codepet_gateway_sdk::ProviderStatus::Ready
             && provider
                 .capabilities
                 .methods

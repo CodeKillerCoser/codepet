@@ -874,6 +874,7 @@ mod tests {
             PluginDescriptor {
                 plugin_id: "dev.codepet.codex".to_string(),
                 display_name: "Codex".to_string(),
+                icon: Some("codex".to_string()),
                 executable: directory.path().join("codepet-provider-codex"),
                 args: Vec::new(),
                 env: Default::default(),
@@ -897,6 +898,7 @@ mod tests {
             PluginDescriptor {
                 plugin_id: "dev.codepet.opencode".to_string(),
                 display_name: "OpenCode".to_string(),
+                icon: Some("opencode".to_string()),
                 executable: directory.path().join("codepet-provider-opencode"),
                 args: Vec::new(),
                 env: Default::default(),
@@ -924,6 +926,7 @@ mod tests {
             PluginDescriptor {
                 plugin_id: "dev.codepet.claude".to_string(),
                 display_name: "Claude".to_string(),
+                icon: Some("claude".to_string()),
                 executable: directory.path().join("codepet-provider-claude"),
                 args: Vec::new(),
                 env: Default::default(),
@@ -1086,6 +1089,7 @@ mod tests {
         let descriptor = PluginDescriptor {
             plugin_id: "dev.codepet.shutdown-race".to_string(),
             display_name: "Shutdown Race Fixture".to_string(),
+            icon: None,
             executable: fake_provider_executable(&fixture_manifest),
             args: Vec::new(),
             env: [

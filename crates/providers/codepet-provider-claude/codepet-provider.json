@@ -2,6 +2,7 @@
   "manifestVersion": 1,
   "pluginId": "dev.codepet.claude",
   "displayName": "Claude",
+  "icon": "claude",
   "executable": "codepet-provider-claude",
   "args": [],
   "env": {},

@@ -954,6 +954,7 @@ fn gateway_instance(
         },
         plugin_id: plugin.catalog.plugin_id.clone(),
         display_name: runtime.record.display_name.clone(),
+        icon: plugin.catalog.icon.clone(),
         version: plugin.reported.as_ref().map(|reported| reported.version.clone()),
         harness: runtime
             .instance

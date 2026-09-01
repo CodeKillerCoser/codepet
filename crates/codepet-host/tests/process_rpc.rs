@@ -12,6 +12,7 @@ fn descriptor(plugin_id: &str) -> PluginDescriptor {
     PluginDescriptor {
         plugin_id: plugin_id.to_string(),
         display_name: "Fake Provider".to_string(),
+        icon: None,
         executable: env!("CARGO_BIN_EXE_codepet-host-fake-provider").into(),
         args: Vec::new(),
         env: BTreeMap::from([(
