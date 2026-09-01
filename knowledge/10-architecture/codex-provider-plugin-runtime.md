@@ -2,7 +2,7 @@
 
 ## 当前结论
 
-远程 Codex 能力已经从 Tauri 进程内直连实现迁到独立二进制 `crates/providers/codepet-provider-codex`。二进制只依赖生成的 `codepet-provider-sdk`，通过 Provider Protocol v1 的 JSON-RPC 2.0 / stdio JSON-lines 与 `codepet-host` 通信；它不依赖 `codepet-host`、Tauri、Pet SDK 或 Desktop 私有 IPC。
+远程 Codex 能力已经从 Tauri 进程内直连实现迁到独立二进制 `crates/providers/codepet-provider-codex`。二进制只依赖生成的 `codepet-provider-sdk`，通过 Provider Protocol v1 的 JSON-RPC 2.0 / stdio JSON-lines 与 `codepet-host` 通信；它不依赖 `codepet-host`、Tauri、Pet SDK 或 Desktop 私有 IPC。每个 Provider instance 长期持有一个纯读 observer App Server；真正取得 thread writer 的 App Server 则按 conversation/active turn 独立创建并在 turn 终态立即退出。
 
 Host 是唯一进程与路由所有者：`PluginManager` 从 manifest 启动 Provider、创建并启动实例，`ProviderGatewayService` 把 Gateway v1 请求路由到实例，并把 Provider 事件变成可 replay 的远程事件。兼容 v0 的 Tauri command/event 只是一层 Gateway DTO 适配，不再拥有或启动 Codex App Server。
 
@@ -17,7 +17,7 @@ Host 是唯一进程与路由所有者：`PluginManager` 从 manifest 启动 Pro
 
 - 不实现 dylib ABI、插件市场、签名、沙箱、自动重启/backoff 或第二套运行时。
 - 不把 Desktop 私有 IPC 放入 Provider，也不让桌宠动作调用 Plugin Manager。
-- 不实现 Gateway v1 的 WebSocket/P2P/relay listener；当前 Tauri 入口仍是进程内兼容调用面。
+- 不修改 Gateway LAN/WSS、配对、凭据或 relay；网络连接不拥有 Provider execution 生命周期。
 - 不伪造 Codex App Server 不支持的能力或审批成功结果。
 
 ## 审计边界
@@ -70,7 +70,7 @@ Codex Desktop 私有 IPC
 | Provider 二进制路径、Provider 参数与环境变量 | `codepet-provider.json` | Catalog 将相对 `executable` 按 manifest 目录解析后交给 `PluginManager`。 |
 | Codex App Server executable | Tauri `AgentRuntimeService` 的 Codex resolver | Host 在内存中的 Codex instance settings 覆盖 `appServerExecutable`，必须是绝对路径。manifest 中的同名字段会先被移除。 |
 | Codex App Server 启动参数 | Codex Provider manifest 的 `appServerArgs` | Host 原样放入 instance settings；Provider 不补默认参数。 |
-| 可广告的 model/reasoning effort | 当前 App Server session 的官方 `model/list` | model 使用全部可见项；全局 reasoning control 只发布所有已广告 model 的共同支持交集，Provider 不猜测或硬编码列表。 |
+| 可广告的 model/reasoning effort | 当前 observer App Server 的官方 `model/list` | model 使用全部可见项；全局 reasoning control 只发布所有已广告 model 的共同支持交集，Provider 不猜测或硬编码列表。 |
 
 应用启动和 runtime set/clear/refresh 都使用同一个 resolver 结果更新 Codex instance setting，然后显式重启该 Provider 插件。Desktop IPC connection、owner、revision 和 companion projection 不受影响。没有 resolver 结果时 `appServerExecutable` 缺失，实例 create 明确失败；不会搜索用户目录、调用 Desktop IPC 或启动备用 App Server。
 
@@ -81,19 +81,19 @@ Codex Desktop 私有 IPC
 | `provider.initialize` | 校验版本与 Host identity，绑定单一 device/client | 支持；同一进程不能改绑另一 Host。 |
 | `provider.describe` | 返回 `dev.codepet.codex`、版本与 `codex` instance kind | 支持。 |
 | `instance.create` | 解码 Host 注入的 settings，建立实例状态 | 支持；executable 必须是绝对路径，未知字段失败。 |
-| `instance.start` | 启动 App Server、`initialize`、`initialized`，启动长期 reader | 支持；无 fallback。 |
-| `instance.stop` | 关闭同一 App Server session/process | 支持且幂等。 |
+| `instance.start` | 启动纯读 observer App Server、`initialize`、`initialized`、`model/list` 与长期 reader | 支持；observer 不发送 `thread/start`、`thread/resume` 或 turn/approval 写操作，无 fallback。 |
+| `instance.stop` | 关闭 observer 与全部 conversation 执行 App Server | 支持且幂等；正在 initialize/resume 的执行槽也会被关闭并唤醒等待者。 |
 | `instance.destroy` | 删除已停止实例 | 支持；运行中明确拒绝。 |
 | `instance.capabilities` | 返回当前真实 method/permission/model/reasoning 列表 | 支持。 |
-| `conversation.list` | `thread/list` | 支持 cursor/limit；固定 `updated_at desc` 且 `useStateDbOnly=true`。 |
-| `conversation.search` | `thread/list(searchTerm)` | 支持 route-scoped cursor/limit；与 list 相同固定 `updated_at desc` 和 state DB only，不做跨 Provider 聚合或本地过滤。 |
-| `conversation.get` | `thread/read(includeTurns=true)` | 支持；严格纯读，每次只发送一次 `thread/read`，不调用 `thread/resume`，也不改变 session 的 loaded-thread 状态。 |
-| `conversation.create` | `thread/start` | 支持 permission/model/reasoning/workspace；App Server 不支持 title 或 Provider extension，传入时明确返回 `capability_unsupported`。 |
-| `turn.start` | 必要时 `thread/resume`，再 `turn/start` | 支持，保留 `clientUserMessageId`。 |
-| `turn.steer` | 必要时 `thread/resume`，再 `turn/steer`，随后 `thread/read` | 支持；请求显式携带 conversation 与 turn 四段身份，响应使用权威 turn 状态。 |
-| `turn.interrupt` | 必要时 `thread/resume`，再 `turn/interrupt`，随后 `thread/read` | 支持；不根据 interrupt ack 伪造完整 Turn。 |
-| `approval.resolve` | 对原 server request id 回写 command/file decision | 仅支持普通 accept/decline 二元审批；只处理当前实例、当前 App Server session generation 的 pending approval。 |
-| `provider.shutdown` | 关闭全部实例的 App Server session，结束 stdio 主循环 | 支持且幂等。 |
+| `conversation.list` | observer `thread/list` | 支持 cursor/limit；固定 `updated_at desc` 且 `useStateDbOnly=true`。 |
+| `conversation.search` | observer `thread/list(searchTerm)` | 支持 route-scoped cursor/limit；与 list 相同固定 `updated_at desc` 和 state DB only，不做跨 Provider 聚合或本地过滤。 |
+| `conversation.get` | observer `thread/read(includeTurns=true)` | 支持；严格纯读，每次只发送一次 `thread/read`，不创建执行槽、不调用 `thread/resume`，也不改变 loaded-thread 状态。 |
+| `conversation.create` | 一次性 App Server `thread/start`，随后立即退出 | 支持 permission/model/reasoning/workspace；不把 writer 留在 observer 或空闲 conversation。App Server 不支持 title 或 Provider extension，传入时明确返回 `capability_unsupported`。 |
+| `turn.start` | conversation 执行 App Server `thread/resume`、权威 `thread/read`、`turn/start` | 支持，保留 `clientUserMessageId`；同 conversation 并发首次请求共享一个创建槽，只发送一次 resume。 |
+| `turn.steer` | 同一 conversation 执行 App Server `turn/steer`，随后 `thread/read` | 支持；请求显式携带 conversation 与 turn 四段身份，响应使用权威 turn 状态。 |
+| `turn.interrupt` | 同一 conversation 执行 App Server `turn/interrupt`，随后 `thread/read` | 支持；不根据 interrupt ack 伪造完整 Turn，权威 terminal snapshot 会触发会话退出。 |
+| `approval.resolve` | 对 owning execution session 的原 server request id 回写 command/file decision | 仅支持普通 accept/decline 二元审批；generation 与 pending approval 必须同时匹配，不能换进程回写。 |
+| `provider.shutdown` | 关闭全部实例的 observer 与执行 App Server，结束 stdio 主循环 | 支持且幂等；即使某个 shutdown 失败也会先尝试关闭其他 session。 |
 
 Gateway v1 的 `turn.send` 只对已有空闲 conversation 启动新 turn，并在 Host 中映射为 Provider `turn.start`。Provider v1 的 `turn.steer` 仍是独立内部能力，不由 Gateway `turn.send` 自动选择。兼容 v0 继续暴露既有 `turn.send` 调用形状，但 `canSteer=false`，也不会根据 Codex `pluginId` 推断 steering 能力。
 
@@ -103,7 +103,11 @@ Provider 发送全部六种 v1 事件：`event.instanceStatusChanged`、`event.c
 
 Provider/Gateway 的语言中立 `RoutedResourceId` 是 `deviceId + providerPluginId + providerInstanceId + nativeResourceId` 四段身份。instance route 是前三段。SDK、Host、Gateway、Provider、compat extension 在每个请求、响应、事件和审批入口逐跳保留并校验四段；compat 不再通过 registry 事后回查 plugin id。旧 v0 对象自身的 `id` 继续等于 `nativeResourceId`，完整身份位于 `codepet.gateway.route` extension。
 
-每个 Provider instance 只持有一个 App Server session 和一张 pending approval map。每次 session 启动生成唯一 generation；approval 的 `nativeResourceId` 同时编码 generation 与原 App Server request id。`approval.resolve` 先校验四段 route，再校验 generation 和 pending 记录，最后回写持有请求的同一 App Server 进程。即使新进程复用了相同 request id，旧 approval 也以 `stale_approval_session` 失败。
+每个 Provider instance 持有一个 observer 和按 conversation 索引的执行槽。执行槽在首次写入时以 `Creating → Ready` 单向建立；并发等待者共享同一结果，失败槽从 map 删除，后续显式请求才可重建。Ready 槽只关联一个 App Server generation 和当前 active turn；不同 conversation 不共享进程、operation lock 或 loaded-thread 状态。
+
+每次执行 App Server 启动生成唯一 generation；approval 的 `nativeResourceId` 同时编码 generation 与原 App Server request id。`approval.resolve` 先校验四段 route，再校验 generation、pending 记录与 owning conversation，最后回写持有请求的同一进程。即使新进程复用了相同 request id，旧 approval 也以 `stale_approval_session` 失败。执行进程异常退出或 turn 终态时，尚未解决的 approval 会过期，历史 ledger 可继续被 `conversation.get` 投影，但不再保留进程引用。
+
+执行槽不归 Remote 详情页、event subscription 或 WSS connection 所有。手机退出或断网不会触发释放；`running`、`waiting-approval`、`waiting-user-input` 都继续保留执行进程。`turn/completed` 携带 `completed/failed/interrupted` 时，Provider 先发布权威 turn event，再关闭该 conversation 的子进程并移除槽；steer/interrupt 后的权威 terminal snapshot 走同一清理。App Server crash、initialize/resume 失败、明确 RPC reject 与 `SentOutcomeUnknown` 也都会关闭并移除对应槽，不自动重放 `turn/start`。
 
 ## 本地开发安装
 
@@ -135,17 +139,20 @@ Provider/Gateway 的语言中立 `RoutedResourceId` 是 `deviceId + providerPlug
 - Provider 污染桌宠：Tauri mock runtime 使用生产 bridge，断言 Provider 只进入 remote replay/event，companion replay、companion event、pet channel、activity store 与 Desktop adapter spy 不变化；PetApp 静态测试断言只导入 companion client，且不含跨链路同步路径。
 - 审批 fail-open/串 session：真实 Provider 二进制测试证明 `additionalPermissions.network` 得到原 id 的 `-32601` 且无 Approval；stop/start 后复用相同 request id 时旧句柄不能批准新进程请求。
 - framing/lifecycle：App Server stdout/stderr 与 Provider SDK 都完整 drain 超长物理行后 fail-stop。stdout/stderr fault 复用同一个 session terminal path，清空 pending 并终止 App Server；terminal fault 与 subscribers 在同一把锁下完成“读已有 fault / 注册未来 fault”，barrier 竞态测试与 late-subscriber 测试分别覆盖并发和已有 fault，实例不会误报 Ready。
+- writer 生命周期：真实 Provider 二进制 fixture 以进程 id 证明 observer 只做 model/list/read；首次 send 单独 resume，steer/interrupt/approval 复用 owning execution；waiting approval/user input 不提前退出；terminal notification 与权威 terminal snapshot 都产生新一代 resume；A 终态不影响 B。并发 Provider 测试证明同 conversation 首次 send 只 resume 一次，stop 可中断仍在等待 resume 的进程。
+- writer 冲突与未知发送结果：`thread/resume` 明确报告 writer 被其他 runtime 持有时只返回 `conversation_write_conflict`、`retryable=true`、`operation=thread/resume`、`reason=owned-by-other-runtime`，不回传进程/客户端身份。fixture 分别覆盖 initialize failure、明确 turn reject、App Server crash 和 sent-outcome-unknown，断言失败槽无残留且 Provider 不自动重试 `turn/start`。
 - 显式 restart：Host 测试先替换 instance setting，再制造 graceful stop 超时和 force-kill；确认旧进程结束后 replacement 的 RPC 返回新 setting。无法确认旧进程终止时保持 fail closed。
 - 配置漂移：Provider 拒绝非绝对 executable 和未知 settings；Tauri 每次只使用 resolver 覆盖该字段。
 - 机械生成漂移：运行 `npm run protocol:check` 与 `git diff --check`，不提交 Tauri build 自动改写的 schema。
 
 ## 明确限制
 
-- 没有 Gateway v1 网络 listener、配对、认证或持久 event cursor。
+- Codex Provider 自身不拥有 Gateway network listener、配对、认证或 event cursor；这些由 Host/Gateway 层管理，连接终止不等于 turn 终态。
 - 没有自动重启、backoff、签名、沙箱或插件市场；这些是明确非目标。
 - 只无损支持 command execution 与 file change 的二元审批。permissions、tool user input、MCP elicitation 不广告为可操作审批。
 - App Server 不支持在 `thread/start` 设置 title；Provider 明确拒绝该可选字段。
-- model 列表来自当前 session 的官方 `model/list`；reasoning control 因 Gateway v1 尚未表达 per-model effort，只能发布所有可见 model 的共同支持交集。
+- model 列表来自当前 observer session 的官方 `model/list`；reasoning control 因 Gateway v1 尚未表达 per-model effort，只能发布所有可见 model 的共同支持交集。
+- observer crash 会使当前 Provider instance fail closed；本阶段没有 observer 自动 supervisor/backoff。active execution 会被关闭，需由既有 Provider restart/refresh 路径恢复。
 - Gateway v1 `turn.send` 只表示空闲 conversation 的新 turn。compat 不按 Provider 或 harness 身份推断 catalog/selection 形状，也不按 Codex `pluginId` 推断 `canSteer`。
 - compat v0 的 conversation/turn 模型要求 permission 与时间戳，也没有 `waiting-user-input`；v1 无法确认这些字段或状态时 compat 明确返回 `compat_data_unrepresentable`，不会补默认值。
 - remote 与 Desktop 同名 thread 不做去重、来源排除或状态同步；两条链路在本阶段按独立资源展示和操作。

@@ -656,10 +656,6 @@ impl CodexAppServerSession {
             })
     }
 
-    pub fn ensure_thread_loaded(&self, thread_id: &str) -> Result<u64, CodexAppServerError> {
-        self.ensure_thread_loaded_outcome(thread_id).into_result()
-    }
-
     pub(crate) fn ensure_thread_loaded_outcome(
         &self,
         thread_id: &str,
@@ -750,6 +746,7 @@ impl CodexAppServerSession {
         settled
     }
 
+    #[cfg(test)]
     pub fn thread_start(
         &self,
         request: CodexThreadStartRequest,
@@ -770,63 +767,118 @@ impl CodexAppServerSession {
             })
     }
 
+    #[cfg(test)]
     pub fn turn_start(
         &self,
         request: CodexTurnStartRequest,
     ) -> Result<CodexTurn, CodexAppServerError> {
-        self.ensure_thread_loaded(&request.thread_id)?;
-        let response: TurnResponse =
-            self.request("turn/start", turn_start_params(&request))?;
-        self.inner.update_turn_configuration(&request);
-        Ok(response.turn)
+        self.turn_start_outcome(request).into_result()
     }
 
+    pub(crate) fn turn_start_outcome(
+        &self,
+        request: CodexTurnStartRequest,
+    ) -> CodexRequestOutcome<CodexTurn> {
+        self.ensure_thread_loaded_outcome(&request.thread_id)
+            .and_then(|_| {
+                self.request_outcome("turn/start", turn_start_params(&request))
+                    .and_then(|response: TurnResponse| {
+                        self.inner.update_turn_configuration(&request);
+                        CodexRequestOutcome::Success(response.turn)
+                    })
+            })
+    }
+
+    #[cfg(test)]
     pub fn turn_steer(
         &self,
         request: CodexTurnSteerRequest,
     ) -> Result<CodexTurn, CodexAppServerError> {
-        self.ensure_thread_loaded(&request.thread_id)?;
-        let response: TurnSteerResponse =
-            self.request("turn/steer", turn_steer_params(&request))?;
-        self.authoritative_turn(&request.thread_id, &response.turn_id)
+        self.turn_steer_outcome(request).into_result()
     }
 
+    pub(crate) fn turn_steer_outcome(
+        &self,
+        request: CodexTurnSteerRequest,
+    ) -> CodexRequestOutcome<CodexTurn> {
+        self.ensure_thread_loaded_outcome(&request.thread_id)
+            .and_then(|_| {
+                self.request_outcome("turn/steer", turn_steer_params(&request))
+                    .and_then(|response: TurnSteerResponse| {
+                        match self.authoritative_turn(&request.thread_id, &response.turn_id) {
+                            Ok(turn) => CodexRequestOutcome::Success(turn),
+                            Err(error) => CodexRequestOutcome::SentOutcomeUnknown(error),
+                        }
+                    })
+            })
+    }
+
+    #[cfg(test)]
     pub fn turn_interrupt(
         &self,
         thread_id: &str,
         turn_id: &str,
     ) -> Result<CodexTurn, CodexAppServerError> {
-        self.ensure_thread_loaded(thread_id)?;
-        let _: Value = self.request(
-            "turn/interrupt",
-            json!({ "threadId": thread_id, "turnId": turn_id }),
-        )?;
-        self.authoritative_turn(thread_id, turn_id)
+        self.turn_interrupt_outcome(thread_id, turn_id).into_result()
     }
 
+    pub(crate) fn turn_interrupt_outcome(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+    ) -> CodexRequestOutcome<CodexTurn> {
+        self.ensure_thread_loaded_outcome(thread_id).and_then(|_| {
+            self.request_outcome(
+                "turn/interrupt",
+                json!({ "threadId": thread_id, "turnId": turn_id }),
+            )
+            .and_then(|_: Value| match self.authoritative_turn(thread_id, turn_id) {
+                Ok(turn) => CodexRequestOutcome::Success(turn),
+                Err(error) => CodexRequestOutcome::SentOutcomeUnknown(error),
+            })
+        })
+    }
+
+    #[cfg(test)]
     pub fn respond_to_approval(
         &self,
         approval: &CodexApprovalRequest,
         decision: ApprovalDecision,
     ) -> Result<(), CodexAppServerError> {
-        self.ensure_thread_loaded(&approval.thread_id)?;
-        let native_decision = match approval.kind {
-            CodexApprovalKind::CommandExecution | CodexApprovalKind::FileChange => match decision {
-                ApprovalDecision::Approve => "accept",
-                ApprovalDecision::Deny => "decline",
-            },
-        };
-        if !approval.available_decisions.is_empty()
-            && !approval
-                .available_decisions
-                .iter()
-                .any(|available| available == native_decision)
-        {
-            return Err(CodexAppServerError::Protocol(format!(
-                "Codex approval does not offer decision {native_decision}"
-            )));
-        }
-        self.respond(&approval.request_id, json!({ "decision": native_decision }))
+        self.respond_to_approval_outcome(approval, decision)
+            .into_result()
+    }
+
+    pub(crate) fn respond_to_approval_outcome(
+        &self,
+        approval: &CodexApprovalRequest,
+        decision: ApprovalDecision,
+    ) -> CodexRequestOutcome<()> {
+        self.ensure_thread_loaded_outcome(&approval.thread_id)
+            .and_then(|_| {
+                let native_decision = match approval.kind {
+                    CodexApprovalKind::CommandExecution | CodexApprovalKind::FileChange => {
+                        match decision {
+                            ApprovalDecision::Approve => "accept",
+                            ApprovalDecision::Deny => "decline",
+                        }
+                    }
+                };
+                if !approval.available_decisions.is_empty()
+                    && !approval
+                        .available_decisions
+                        .iter()
+                        .any(|available| available == native_decision)
+                {
+                    return CodexRequestOutcome::NotSent(CodexAppServerError::Protocol(
+                        format!("Codex approval does not offer decision {native_decision}"),
+                    ));
+                }
+                self.respond_outcome(
+                    &approval.request_id,
+                    json!({ "decision": native_decision }),
+                )
+            })
     }
 
     fn initialize(&self) -> Result<(), CodexAppServerError> {
@@ -1005,8 +1057,8 @@ impl CodexAppServerSession {
         }))
     }
 
-    fn respond(&self, id: &JsonRpcId, result: Value) -> Result<(), CodexAppServerError> {
-        self.write(json!({
+    fn respond_outcome(&self, id: &JsonRpcId, result: Value) -> CodexRequestOutcome<()> {
+        self.inner.write_request(json!({
             "id": id,
             "result": result,
         }))

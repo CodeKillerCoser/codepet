@@ -10,10 +10,11 @@ struct Options {
 
 fn main() {
     let options = options();
+    record_session_activity(&options, "process/start", "");
     let mut reader = BufReader::new(std::io::stdin());
     let mut writer = BufWriter::new(std::io::stdout());
     let mut line = String::new();
-    let mut turn_status: Option<String> = None;
+    let mut active_thread_id = None;
     while reader.read_line(&mut line).unwrap_or(0) > 0 {
         let message: Value = match serde_json::from_str(line.trim()) {
             Ok(message) => message,
@@ -24,7 +25,12 @@ fn main() {
         };
         line.clear();
         let Some(method) = message.get("method").and_then(Value::as_str) else {
-            handle_client_response(&options, &message);
+            handle_client_response(
+                &options,
+                &mut writer,
+                active_thread_id.as_deref(),
+                &message,
+            );
             continue;
         };
         let Some(id) = message.get("id").cloned() else {
@@ -32,17 +38,39 @@ fn main() {
         };
         let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
         record_request(&options, method, &params);
+        record_session_activity(
+            &options,
+            method,
+            params.get("threadId").and_then(Value::as_str).unwrap_or(""),
+        );
         match method {
-            "initialize" => respond(
-                &mut writer,
-                id,
-                json!({
-                    "codexHome": "/fixture/codex-home",
-                    "platformFamily": "unix",
-                    "platformOs": "macos",
-                    "userAgent": "codex-app-server-fixture/1"
-                }),
-            ),
+            "initialize" => {
+                if options.approval_mode == "execution-initialize-reject"
+                    && observer_discovery_completed(&options)
+                {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": {
+                                "code": -32003,
+                                "message": "fixture rejected execution initialize"
+                            }
+                        }),
+                    );
+                    continue;
+                }
+                respond(
+                    &mut writer,
+                    id,
+                    json!({
+                        "codexHome": "/fixture/codex-home",
+                        "platformFamily": "unix",
+                        "platformOs": "macos",
+                        "userAgent": "codex-app-server-fixture/1"
+                    }),
+                );
+            }
             "model/list" => {
                 if params["includeHidden"] != false || params["limit"] != 100 {
                     write_json(
@@ -145,11 +173,15 @@ fn main() {
             }
             "thread/read" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
+                let turn_state = read_turn_status(&options, thread_id);
+                let turn_status = turn_state.as_deref().map(|state| match state {
+                    "waitingApproval" | "waitingUserInput" => "inProgress",
+                    status => status,
+                });
                 let turns = if thread_id == "thread-large" {
                     vec![large_turn("turn-large", "completed")]
                 } else {
                     turn_status
-                        .as_deref()
                         .map(|status| vec![turn("turn-started", status)])
                         .unwrap_or_else(|| vec![turn("turn-history", "completed")])
                 };
@@ -159,7 +191,12 @@ fn main() {
                     json!({
                         "thread": thread(
                             thread_id,
-                            if turn_status.as_deref() == Some("inProgress") { "active" } else { "idle" },
+                            match turn_state.as_deref() {
+                                Some("inProgress") => "active",
+                                Some("waitingApproval") => "waitingApproval",
+                                Some("waitingUserInput") => "waitingUserInput",
+                                _ => "idle",
+                            },
                             turns
                         )
                     }),
@@ -167,6 +204,9 @@ fn main() {
             }
             "thread/resume" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
+                if options.approval_mode == "resume-no-response" {
+                    continue;
+                }
                 if thread_id == "thread-writer-held" {
                     write_json(
                         &mut writer,
@@ -186,14 +226,39 @@ fn main() {
                     configured_thread_result(thread_id, params.get("model").cloned()),
                 );
             }
-            "thread/start" => respond(
-                &mut writer,
-                id,
-                configured_thread_result("thread-created", params.get("model").cloned()),
-            ),
+            "thread/start" => {
+                clear_turn_status(&options, "thread-created");
+                respond(
+                    &mut writer,
+                    id,
+                    configured_thread_result("thread-created", params.get("model").cloned()),
+                );
+            }
             "turn/start" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-created");
-                turn_status = Some("inProgress".to_string());
+                if options.approval_mode == "turn-reject" {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": {
+                                "code": -32002,
+                                "message": "fixture rejected turn/start"
+                            }
+                        }),
+                    );
+                    continue;
+                }
+                if options.approval_mode == "turn-sent-unknown" {
+                    std::process::exit(0);
+                }
+                active_thread_id = Some(thread_id.to_string());
+                let initial_state = if options.approval_mode == "waiting-user-input" {
+                    "waitingUserInput"
+                } else {
+                    "inProgress"
+                };
+                write_turn_status(&options, thread_id, initial_state);
                 let mut started_turn = turn("turn-started", "inProgress");
                 let started_user_item = started_turn["items"][0].clone();
                 started_turn["items"] = json!([]);
@@ -222,7 +287,10 @@ fn main() {
                         "delta": "fixture output"
                     }),
                 );
-                if options.approval_mode != "none" {
+                if matches!(
+                    options.approval_mode.as_str(),
+                    "normal" | "additional-network" | "complete-on-approval"
+                ) {
                     let mut approval = json!({
                         "threadId": thread_id,
                         "turnId": "turn-started",
@@ -241,6 +309,12 @@ fn main() {
                         "item/commandExecution/requestApproval",
                         approval,
                     );
+                    if options.approval_mode != "additional-network" {
+                        write_turn_status(&options, thread_id, "waitingApproval");
+                    }
+                }
+                if options.approval_mode == "crash-after-start" {
+                    std::process::exit(0);
                 }
             }
             "turn/steer" => respond(
@@ -249,7 +323,8 @@ fn main() {
                 json!({ "turnId": params["expectedTurnId"] }),
             ),
             "turn/interrupt" => {
-                turn_status = Some("interrupted".to_string());
+                let thread_id = params["threadId"].as_str().unwrap_or("thread-created");
+                write_turn_status(&options, thread_id, "interrupted");
                 respond(&mut writer, id, json!({}));
             }
             other => write_json(
@@ -261,6 +336,44 @@ fn main() {
             ),
         }
     }
+    record_session_activity(&options, "process/eof", "");
+}
+
+fn read_turn_status(options: &Options, thread_id: &str) -> Option<String> {
+    std::fs::read_to_string(turn_state_path(options, thread_id)?).ok()
+}
+
+fn write_turn_status(options: &Options, thread_id: &str, status: &str) {
+    let Some(path) = turn_state_path(options, thread_id) else {
+        return;
+    };
+    std::fs::write(path, status).unwrap();
+}
+
+fn clear_turn_status(options: &Options, thread_id: &str) {
+    let Some(path) = turn_state_path(options, thread_id) else {
+        return;
+    };
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!("failed to clear fixture turn state: {error}"),
+    }
+}
+
+fn turn_state_path(options: &Options, thread_id: &str) -> Option<PathBuf> {
+    let marker = options.marker.as_ref()?;
+    let safe_thread_id = thread_id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    Some(marker.with_file_name(format!("{safe_thread_id}.turn-state")))
 }
 
 fn record_request(options: &Options, method: &str, params: &Value) {
@@ -283,10 +396,41 @@ fn record_request(options: &Options, method: &str, params: &Value) {
     }
 }
 
-fn handle_client_response(options: &Options, message: &Value) {
+fn record_session_activity(options: &Options, method: &str, thread_id: &str) {
+    let Some(marker) = options.marker.as_ref() else {
+        return;
+    };
+    let path = marker.with_extension("sessions");
+    let mut log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap();
+    writeln!(log, "{}\t{method}\t{thread_id}", std::process::id()).unwrap();
+}
+
+fn observer_discovery_completed(options: &Options) -> bool {
+    let Some(marker) = options.marker.as_ref() else {
+        return false;
+    };
+    std::fs::read_to_string(marker.with_extension("sessions"))
+        .is_ok_and(|contents| contents.lines().any(|line| line.contains("\tmodel/list\t")))
+}
+
+fn handle_client_response(
+    options: &Options,
+    writer: &mut BufWriter<std::io::Stdout>,
+    active_thread_id: Option<&str>,
+    message: &Value,
+) {
     if message.get("id") != Some(&json!("approval-one")) {
         return;
     }
+    record_session_activity(
+        options,
+        "approval/response",
+        active_thread_id.unwrap_or(""),
+    );
     if let Some(marker) = options.marker.as_ref() {
         let outcome = message
             .pointer("/result/decision")
@@ -300,6 +444,21 @@ fn handle_client_response(options: &Options, message: &Value) {
             })
             .unwrap_or_else(|| "missing".to_string());
         std::fs::write(marker, outcome).unwrap();
+    }
+    if let Some(thread_id) = active_thread_id {
+        if options.approval_mode == "complete-on-approval" {
+            write_turn_status(options, thread_id, "completed");
+            notify(
+                writer,
+                "turn/completed",
+                json!({
+                    "threadId": thread_id,
+                    "turn": turn("turn-started", "completed")
+                }),
+            );
+        } else {
+            write_turn_status(options, thread_id, "inProgress");
+        }
     }
 }
 
@@ -337,10 +496,15 @@ fn configured_thread_result(thread_id: &str, model: Option<Value>) -> Value {
 }
 
 fn thread(id: &str, status: &str, turns: Vec<Value>) -> Value {
-    let status = if status == "active" {
-        json!({ "type": status, "activeFlags": [] })
-    } else {
-        json!({ "type": status })
+    let status = match status {
+        "active" => json!({ "type": "active", "activeFlags": [] }),
+        "waitingApproval" => {
+            json!({ "type": "active", "activeFlags": ["waitingOnApproval"] })
+        }
+        "waitingUserInput" => {
+            json!({ "type": "active", "activeFlags": ["waitingOnUserInput"] })
+        }
+        status => json!({ "type": status }),
     };
     json!({
         "id": id,

@@ -5,8 +5,8 @@ use codepet_provider_sdk::{
     InstanceDestroyRequest, InstanceStartRequest, InstanceStopRequest, JsonObject, ProtocolEvent,
     ProtocolServer as ProviderProtocolServer, ProviderInitializeRequest,
     FlatModelCatalogKind, FlatModelSelection, ModelSelection, ProviderInstanceRoute,
-    ProviderShutdownRequest, TurnInput, TurnInputKind, TurnInterruptRequest, TurnSelection,
-    TurnStartRequest, TurnSteerRequest, VersionRange, PROTOCOL_VERSION,
+    ProviderShutdownRequest, RoutedResourceId, TurnInput, TurnInputKind, TurnInterruptRequest,
+    TurnSelection, TurnStartRequest, TurnSteerRequest, VersionRange, PROTOCOL_VERSION,
 };
 use serde_json::json;
 use serde_json::Value;
@@ -52,6 +52,52 @@ fn instance_settings(app_server: &Path, approval_mode: &str, marker: &Path) -> J
     ]
     .into_iter()
     .collect()
+}
+
+async fn configured_direct_provider(
+    approval_mode: &str,
+    marker: &Path,
+) -> (Arc<CodexProvider>, ProviderInstanceRoute, String) {
+    let provider = Arc::new(CodexProvider::new(Arc::new(|_| Ok(()))));
+    let route = route("device-provider-direct");
+    ProviderProtocolServer::provider_initialize(
+        provider.as_ref(),
+        ProviderInitializeRequest {
+            host_client_id: "client-provider-direct".to_string(),
+            host_device_id: route.device_id.clone(),
+            host_version: "test".to_string(),
+            supported_versions: VersionRange {
+                min_version: PROTOCOL_VERSION,
+                max_version: PROTOCOL_VERSION,
+            },
+        },
+    )
+    .await
+    .unwrap();
+    ProviderProtocolServer::instance_create(
+        provider.as_ref(),
+        InstanceCreateRequest {
+            route: route.clone(),
+            instance_kind: CODEX_INSTANCE_KIND.to_string(),
+            display_name: "Codex Direct Fixture".to_string(),
+            settings: instance_settings(&app_server_executable(), approval_mode, marker),
+        },
+    )
+    .await
+    .unwrap();
+    let started = ProviderProtocolServer::instance_start(
+        provider.as_ref(),
+        InstanceStartRequest {
+            route: route.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    (
+        provider,
+        route,
+        started.instance.capabilities.revision,
+    )
 }
 
 #[tokio::test]
@@ -623,6 +669,7 @@ fn provider_binary_conversation_get_is_pure_read_with_external_writer() {
     let mut provider = ProviderBinary::spawn();
     provider.configure_with_request_log("none", &marker, Some(&request_log));
     std::fs::write(&request_log, "").unwrap();
+    clear_session_log(&marker);
     let conversation = json!({
         "deviceId": "device-provider-binary",
         "providerPluginId": CODEX_PLUGIN_ID,
@@ -668,9 +715,627 @@ fn provider_binary_conversation_get_is_pure_read_with_external_writer() {
             "thread/read\tthread-writer-held"
         ]
     );
+    assert!(session_pids(&marker, "process/start", "").is_empty());
+    assert!(session_pids(&marker, "thread/resume", "thread-writer-held").is_empty());
 
     provider.request("writer-held-stop", "instance.stop", json!({ "route": route_value() }));
     provider.request("writer-held-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_reuses_one_execution_session_until_authoritative_terminal_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("turn-lifecycle.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (conversation, capability_revision) = provider.configure("normal", &marker);
+    let observer_pid = session_pids(&marker, "model/list", "")[0];
+    let creation_pid = session_pids(&marker, "thread/start", "")[0];
+    assert_ne!(observer_pid, creation_pid);
+    clear_session_log(&marker);
+
+    let started = provider.request(
+        "lifecycle-turn-start",
+        "turn.start",
+        turn_start_params(
+            conversation.clone(),
+            "lifecycle-message-one",
+            "start lifecycle",
+            &capability_revision,
+        ),
+    );
+    let turn = started
+        .pointer("/result/turn/resource")
+        .cloned()
+        .unwrap();
+    let approval = provider
+        .event("event.approvalRequested")
+        .pointer("/params/approval/resource")
+        .cloned()
+        .unwrap();
+
+    provider.collect_for(Duration::from_millis(50));
+    let resolved = provider.request(
+        "lifecycle-approval",
+        "approval.resolve",
+        json!({ "approval": approval, "decision": "approve" }),
+    );
+    assert_eq!(
+        resolved
+            .pointer("/result/approval/status")
+            .and_then(Value::as_str),
+        Some("approved")
+    );
+    let steered = provider.request(
+        "lifecycle-steer",
+        "turn.steer",
+        json!({
+            "conversation": conversation.clone(),
+            "turn": turn.clone(),
+            "clientMessageId": "lifecycle-message-two",
+            "message": "continue lifecycle"
+        }),
+    );
+    assert!(steered.get("error").is_none());
+    let interrupted = provider.request(
+        "lifecycle-interrupt",
+        "turn.interrupt",
+        json!({ "conversation": conversation.clone(), "turn": turn }),
+    );
+    assert_eq!(
+        interrupted
+            .pointer("/result/turn/status")
+            .and_then(Value::as_str),
+        Some("interrupted")
+    );
+
+    let restarted = provider.request(
+        "lifecycle-turn-restart",
+        "turn.start",
+        turn_start_params(
+            conversation,
+            "lifecycle-message-three",
+            "restart after terminal snapshot",
+            &capability_revision,
+        ),
+    );
+    assert!(restarted.get("error").is_none());
+
+    let resume_pids = session_pids(&marker, "thread/resume", "thread-created");
+    assert_eq!(resume_pids.len(), 2);
+    let first_execution = resume_pids[0];
+    assert_ne!(observer_pid, first_execution);
+    assert_eq!(
+        session_pids(&marker, "approval/response", "thread-created"),
+        vec![first_execution]
+    );
+    assert_eq!(
+        session_pids(&marker, "turn/steer", "thread-created"),
+        vec![first_execution]
+    );
+    assert_eq!(
+        session_pids(&marker, "turn/interrupt", "thread-created"),
+        vec![first_execution]
+    );
+    assert_ne!(resume_pids[0], resume_pids[1]);
+
+    provider.request("lifecycle-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("lifecycle-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_keeps_waiting_user_input_execution_detached_from_remote_reads() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("waiting-user-input.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (conversation, capability_revision) =
+        provider.configure("waiting-user-input", &marker);
+    let observer_pid = session_pids(&marker, "model/list", "")[0];
+    clear_session_log(&marker);
+
+    let started = provider.request(
+        "waiting-input-start",
+        "turn.start",
+        turn_start_params(
+            conversation.clone(),
+            "waiting-input-message",
+            "wait for input",
+            &capability_revision,
+        ),
+    );
+    let turn = started
+        .pointer("/result/turn/resource")
+        .cloned()
+        .unwrap();
+    let execution_pid = session_pids(&marker, "thread/resume", "thread-created")[0];
+    let fetched = provider.request(
+        "waiting-input-read",
+        "conversation.get",
+        json!({ "conversation": conversation.clone() }),
+    );
+    assert_eq!(
+        fetched
+            .pointer("/result/conversation/status")
+            .and_then(Value::as_str),
+        Some("waiting-user-input")
+    );
+
+    provider.collect_for(Duration::from_millis(50));
+    let steered = provider.request(
+        "waiting-input-steer",
+        "turn.steer",
+        json!({
+            "conversation": conversation.clone(),
+            "turn": turn.clone(),
+            "clientMessageId": "waiting-input-follow-up",
+            "message": "input supplied"
+        }),
+    );
+    assert!(steered.get("error").is_none());
+    assert_eq!(
+        session_pids(&marker, "turn/steer", "thread-created"),
+        vec![execution_pid]
+    );
+    let read_pids = session_pids(&marker, "thread/read", "thread-created");
+    assert!(read_pids.contains(&observer_pid));
+    assert!(read_pids.contains(&execution_pid));
+    assert_eq!(session_pids(&marker, "thread/resume", "thread-created").len(), 1);
+
+    provider.request(
+        "waiting-input-interrupt",
+        "turn.interrupt",
+        json!({ "conversation": conversation, "turn": turn }),
+    );
+    provider.request("waiting-input-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("waiting-input-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_terminal_notification_releases_only_its_conversation() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("parallel-terminal.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (_, capability_revision) = provider.configure("complete-on-approval", &marker);
+    clear_session_log(&marker);
+    let conversation_a = conversation_resource_value("thread-a");
+    let conversation_b = conversation_resource_value("thread-b");
+
+    let started_a = provider.request(
+        "parallel-start-a",
+        "turn.start",
+        turn_start_params(
+            conversation_a.clone(),
+            "parallel-message-a",
+            "run A",
+            &capability_revision,
+        ),
+    );
+    let turn_a = started_a.pointer("/result/turn/resource").cloned().unwrap();
+    let approval_one = provider
+        .event("event.approvalRequested")
+        .pointer("/params/approval")
+        .cloned()
+        .unwrap();
+    let started_b = provider.request(
+        "parallel-start-b",
+        "turn.start",
+        turn_start_params(
+            conversation_b.clone(),
+            "parallel-message-b",
+            "run B",
+            &capability_revision,
+        ),
+    );
+    let turn_b = started_b.pointer("/result/turn/resource").cloned().unwrap();
+    let approval_two = provider
+        .event("event.approvalRequested")
+        .pointer("/params/approval")
+        .cloned()
+        .unwrap();
+    let (approval_a, _approval_b) = if approval_one
+        .pointer("/conversation/nativeResourceId")
+        .and_then(Value::as_str)
+        == Some("thread-a")
+    {
+        (approval_one, approval_two)
+    } else {
+        (approval_two, approval_one)
+    };
+
+    provider.request(
+        "parallel-resolve-a",
+        "approval.resolve",
+        json!({ "approval": approval_a["resource"].clone(), "decision": "approve" }),
+    );
+    provider.receive(Duration::from_secs(5), |message| {
+        message.get("method").and_then(Value::as_str) == Some("event.turnUpserted")
+            && message
+                .pointer("/params/turn/conversation/nativeResourceId")
+                .and_then(Value::as_str)
+                == Some("thread-a")
+            && message
+                .pointer("/params/turn/status")
+                .and_then(Value::as_str)
+                == Some("completed")
+    });
+
+    let steered_b = provider.request(
+        "parallel-steer-b",
+        "turn.steer",
+        json!({
+            "conversation": conversation_b.clone(),
+            "turn": turn_b.clone(),
+            "clientMessageId": "parallel-message-b-two",
+            "message": "B remains active"
+        }),
+    );
+    assert!(steered_b.get("error").is_none());
+    let restarted_a = provider.request(
+        "parallel-restart-a",
+        "turn.start",
+        turn_start_params(
+            conversation_a,
+            "parallel-message-a-two",
+            "A starts again",
+            &capability_revision,
+        ),
+    );
+    assert!(restarted_a.get("error").is_none());
+
+    let a_pids = session_pids(&marker, "thread/resume", "thread-a");
+    let b_pids = session_pids(&marker, "thread/resume", "thread-b");
+    assert_eq!(a_pids.len(), 2);
+    assert_eq!(b_pids.len(), 1);
+    assert_ne!(a_pids[0], a_pids[1]);
+    assert_ne!(a_pids[0], b_pids[0]);
+    assert_eq!(
+        session_pids(&marker, "turn/steer", "thread-b"),
+        vec![b_pids[0]]
+    );
+
+    provider.request("parallel-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("parallel-start-provider", "instance.start", json!({ "route": route_value() }));
+    let resumed_b = provider.request(
+        "parallel-steer-b-after-stop",
+        "turn.steer",
+        json!({
+            "conversation": conversation_b,
+            "turn": turn_b,
+            "clientMessageId": "parallel-message-b-three",
+            "message": "B resumes after Provider stop"
+        }),
+    );
+    assert!(resumed_b.get("error").is_none());
+    let b_pids_after_stop = session_pids(&marker, "thread/resume", "thread-b");
+    assert_eq!(b_pids_after_stop.len(), 2);
+    assert_ne!(b_pids_after_stop[0], b_pids_after_stop[1]);
+
+    provider.request("parallel-stop-final", "instance.stop", json!({ "route": route_value() }));
+    provider.request("parallel-shutdown", "provider.shutdown", json!({}));
+    let _ = turn_a;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_first_turn_start_shares_one_resume_and_one_active_turn() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("concurrent-resume.txt");
+    let (provider, route, capability_revision) =
+        configured_direct_provider("none", &marker).await;
+    clear_session_log(&marker);
+    let conversation = conversation_resource(&route, "thread-concurrent");
+    let request = |client_request_id: &str| TurnStartRequest {
+        conversation: conversation.clone(),
+        client_request_id: client_request_id.to_string(),
+        capability_revision: capability_revision.clone(),
+        input: TurnInput {
+            kind: TurnInputKind::Text,
+            text: "concurrent start".to_string(),
+        },
+        selection: TurnSelection {
+            access_mode_id: None,
+            reasoning_effort_id: None,
+            model: None,
+        },
+    };
+    let first = ProviderProtocolServer::turn_start(provider.as_ref(), request("concurrent-one"));
+    let second = ProviderProtocolServer::turn_start(provider.as_ref(), request("concurrent-two"));
+    let (first, second) = tokio::join!(first, second);
+    let results = [first, second];
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .map(|error| error.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["turn_already_active"]
+    );
+    assert_eq!(
+        session_pids(&marker, "thread/resume", "thread-concurrent").len(),
+        1
+    );
+    assert_eq!(
+        session_pids(&marker, "turn/start", "thread-concurrent").len(),
+        1
+    );
+
+    ProviderProtocolServer::instance_stop(
+        provider.as_ref(),
+        InstanceStopRequest { route: route.clone() },
+    )
+    .await
+    .unwrap();
+    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {})
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn provider_stop_interrupts_an_execution_still_waiting_for_resume() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("stop-during-resume.txt");
+    let (provider, route, capability_revision) =
+        configured_direct_provider("resume-no-response", &marker).await;
+    clear_session_log(&marker);
+    let conversation = conversation_resource(&route, "thread-resume-pending");
+    let operation_provider = provider.clone();
+    let operation = tokio::spawn(async move {
+        ProviderProtocolServer::turn_start(
+            operation_provider.as_ref(),
+            TurnStartRequest {
+                conversation,
+                client_request_id: "resume-pending-message".to_string(),
+                capability_revision,
+                input: TurnInput {
+                    kind: TurnInputKind::Text,
+                    text: "wait for resume".to_string(),
+                },
+                selection: TurnSelection {
+                    access_mode_id: None,
+                    reasoning_effort_id: None,
+                    model: None,
+                },
+            },
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while session_pids(&marker, "thread/resume", "thread-resume-pending").is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let stopped = ProviderProtocolServer::instance_stop(
+        provider.as_ref(),
+        InstanceStopRequest { route: route.clone() },
+    )
+    .await
+    .unwrap();
+    assert_eq!(stopped.instance.status, codepet_provider_sdk::InstanceStatus::Stopped);
+    let operation_error = tokio::time::timeout(Duration::from_secs(3), operation)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(operation_error.code, "provider_unavailable");
+    assert_eq!(
+        session_pids(&marker, "thread/resume", "thread-resume-pending").len(),
+        1
+    );
+
+    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {})
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn execution_initialize_failure_removes_the_conversation_slot() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("execution-initialize-reject.txt");
+    let (provider, route, capability_revision) =
+        configured_direct_provider("execution-initialize-reject", &marker).await;
+    let conversation = conversation_resource(&route, "thread-initialize-reject");
+
+    for client_request_id in ["initialize-reject-one", "initialize-reject-two"] {
+        let error = ProviderProtocolServer::turn_start(
+            provider.as_ref(),
+            TurnStartRequest {
+                conversation: conversation.clone(),
+                client_request_id: client_request_id.to_string(),
+                capability_revision: capability_revision.clone(),
+                input: TurnInput {
+                    kind: TurnInputKind::Text,
+                    text: "initialize failure".to_string(),
+                },
+                selection: TurnSelection {
+                    access_mode_id: None,
+                    reasoning_effort_id: None,
+                    model: None,
+                },
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "provider_error");
+    }
+    assert_eq!(session_pids(&marker, "initialize", "").len(), 3);
+    assert!(session_pids(&marker, "thread/resume", "thread-initialize-reject").is_empty());
+
+    ProviderProtocolServer::instance_stop(
+        provider.as_ref(),
+        InstanceStopRequest { route: route.clone() },
+    )
+    .await
+    .unwrap();
+    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {})
+        .await
+        .unwrap();
+}
+
+#[test]
+fn provider_binary_standardizes_writer_conflict_and_removes_failed_execution() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("writer-conflict.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (_, capability_revision) = provider.configure("none", &marker);
+    clear_session_log(&marker);
+    let conversation = conversation_resource_value("thread-writer-held");
+
+    for (id, client_request_id) in [
+        ("writer-conflict-first", "writer-conflict-message-one"),
+        ("writer-conflict-second", "writer-conflict-message-two"),
+    ] {
+        let response = provider.request(
+            id,
+            "turn.start",
+            turn_start_params(
+                conversation.clone(),
+                client_request_id,
+                "writer conflict",
+                &capability_revision,
+            ),
+        );
+        assert_eq!(
+            response.pointer("/error/data/code").and_then(Value::as_str),
+            Some("conversation_write_conflict")
+        );
+        assert_eq!(
+            response
+                .pointer("/error/data/retryable")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            response
+                .pointer("/error/data/details/operation")
+                .and_then(Value::as_str),
+            Some("thread/resume")
+        );
+        assert_eq!(
+            response
+                .pointer("/error/data/details/reason")
+                .and_then(Value::as_str),
+            Some("owned-by-other-runtime")
+        );
+        let encoded = serde_json::to_string(&response).unwrap();
+        assert!(!encoded.contains("writer is held"));
+        assert!(!encoded.contains("another process"));
+        assert!(!encoded.contains("another client"));
+    }
+    let resume_pids = session_pids(&marker, "thread/resume", "thread-writer-held");
+    assert_eq!(resume_pids.len(), 2);
+    assert_ne!(resume_pids[0], resume_pids[1]);
+    assert!(session_pids(&marker, "turn/start", "thread-writer-held").is_empty());
+
+    provider.request("writer-conflict-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("writer-conflict-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_cleans_explicit_reject_and_sent_unknown_without_automatic_retry() {
+    for (mode, expected_code) in [
+        ("turn-reject", "provider_error"),
+        ("turn-sent-unknown", "provider_unavailable"),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join(format!("{mode}.txt"));
+        let mut provider = ProviderBinary::spawn();
+        let (conversation, capability_revision) = provider.configure(mode, &marker);
+        clear_session_log(&marker);
+
+        let first = provider.request(
+            "failed-turn-first",
+            "turn.start",
+            turn_start_params(
+                conversation.clone(),
+                "failed-message-one",
+                "fail once",
+                &capability_revision,
+            ),
+        );
+        assert_eq!(
+            first.pointer("/error/data/code").and_then(Value::as_str),
+            Some(expected_code)
+        );
+        assert_eq!(
+            session_pids(&marker, "thread/resume", "thread-created").len(),
+            1
+        );
+        assert_eq!(
+            session_pids(&marker, "turn/start", "thread-created").len(),
+            1
+        );
+
+        let second = provider.request(
+            "failed-turn-second",
+            "turn.start",
+            turn_start_params(
+                conversation,
+                "failed-message-two",
+                "explicit caller retry",
+                &capability_revision,
+            ),
+        );
+        assert_eq!(
+            second.pointer("/error/data/code").and_then(Value::as_str),
+            Some(expected_code)
+        );
+        let resume_pids = session_pids(&marker, "thread/resume", "thread-created");
+        assert_eq!(resume_pids.len(), 2);
+        assert_ne!(resume_pids[0], resume_pids[1]);
+        assert_eq!(
+            session_pids(&marker, "turn/start", "thread-created").len(),
+            2
+        );
+
+        provider.request("failed-turn-stop", "instance.stop", json!({ "route": route_value() }));
+        provider.request("failed-turn-shutdown", "provider.shutdown", json!({}));
+    }
+}
+
+#[test]
+fn provider_binary_async_execution_crash_drops_the_mapped_session() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("execution-crash.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (conversation, capability_revision) = provider.configure("crash-after-start", &marker);
+    clear_session_log(&marker);
+
+    let started = provider.request(
+        "crash-start",
+        "turn.start",
+        turn_start_params(
+            conversation.clone(),
+            "crash-message-one",
+            "start before crash",
+            &capability_revision,
+        ),
+    );
+    assert!(started.get("error").is_none());
+    let turn = started
+        .pointer("/result/turn/resource")
+        .cloned()
+        .unwrap();
+    provider.collect_for(Duration::from_millis(100));
+
+    let steered = provider.request(
+        "crash-steer",
+        "turn.steer",
+        json!({
+            "conversation": conversation,
+            "turn": turn,
+            "clientMessageId": "crash-message-two",
+            "message": "resume after execution crash"
+        }),
+    );
+    assert!(steered.get("error").is_none());
+    let resume_pids = session_pids(&marker, "thread/resume", "thread-created");
+    assert_eq!(resume_pids.len(), 2);
+    assert_ne!(resume_pids[0], resume_pids[1]);
+
+    provider.request("crash-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("crash-shutdown", "provider.shutdown", json!({}));
 }
 
 #[test]
@@ -987,6 +1652,43 @@ fn route_value() -> Value {
         "providerPluginId": CODEX_PLUGIN_ID,
         "providerInstanceId": "codex"
     })
+}
+
+fn conversation_resource_value(native_resource_id: &str) -> Value {
+    let mut resource = route_value();
+    resource["nativeResourceId"] = json!(native_resource_id);
+    resource
+}
+
+fn conversation_resource(route: &ProviderInstanceRoute, native_resource_id: &str) -> RoutedResourceId {
+    RoutedResourceId {
+        device_id: route.device_id.clone(),
+        provider_plugin_id: route.provider_plugin_id.clone(),
+        provider_instance_id: route.provider_instance_id.clone(),
+        native_resource_id: native_resource_id.to_string(),
+    }
+}
+
+fn clear_session_log(marker: &Path) {
+    std::fs::write(marker.with_extension("sessions"), "").unwrap();
+}
+
+fn session_pids(marker: &Path, method: &str, thread_id: &str) -> Vec<u32> {
+    let contents = std::fs::read_to_string(marker.with_extension("sessions")).unwrap();
+    let mut pids = Vec::new();
+    for line in contents.lines() {
+        let mut fields = line.splitn(3, '\t');
+        let Some(pid) = fields.next().and_then(|value| value.parse::<u32>().ok()) else {
+            continue;
+        };
+        if fields.next() != Some(method) || fields.next() != Some(thread_id) {
+            continue;
+        }
+        if !pids.contains(&pid) {
+            pids.push(pid);
+        }
+    }
+    pids
 }
 
 fn turn_start_params(
