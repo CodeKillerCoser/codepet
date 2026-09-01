@@ -19,9 +19,9 @@
 1. 在运行时设置确认 Codex executable 已通过文件、执行权限和限时 `--version` 验证。无效手动路径不会静默回退。
 2. 检查开发安装：`provider-plugins/codex/codepet-provider.json` 与相对 Provider executable 位于同一目录，`pluginId` 为 `dev.codepet.codex`，且没有重复 manifest。
 3. 区分两层启动配置：Provider executable/环境和 `appServerArgs` 来自 manifest；`appServerExecutable` 必须只由 Agent Runtime resolver 以绝对路径注入。Provider 不补默认参数，也不搜索用户目录。
-4. 检查 Provider `instance.start`：它只 spawn observer App Server，执行 `initialize`/`initialized` 与 `model/list`。observer 只应出现 `thread/list`/`thread/read`，不得出现 `thread/start`、`thread/resume` 或 turn/approval 写操作。silent child 应让实例转 error，不能阻塞 Tauri 或 Desktop companion。
+4. 检查 Provider `instance.start`：它只 spawn observer App Server，执行 `initialize`/`initialized` 与 `model/list`。observer 必须在 spawn 前产生 instance-generation 占位，spawn 后、initialize 前登记 session；stop 若发生在任一阶段，都应先回收 PID 再返回 stopped。observer 只应出现 `thread/list`/`thread/read`，不得出现 `thread/start`、`thread/resume` 或 turn/approval 写操作。
 5. 对 turn 故障检查 conversation execution：首次写应单独 spawn、在 initialize 前登记 Creating session、subscribe、`thread/resume`；同 active turn 的 steer/interrupt/approval 必须落在同 generation。cancel 与 resume frame 写入必须共用短线性化锁：cancel 先发生后不得出现 resume/start；resume 先写出后 stop 关闭 session，但不等待悬挂 response。
-6. 检查两层并发：普通 Host request 是 16 active + 32 pending，`instance.stop`/`instance.destroy`/`provider.shutdown` 是独立 2 active + 4 pending；队列满应按原 id 返回 retryable `provider_overloaded`，不得执行被拒请求。reader 不得因普通队列满停止读取，所以 16 个悬挂 write 后 stop、16+32 后 EOF 都应在 2 秒探针内完成回收。
+6. 检查两层并发：普通 Host request 是 16 active + 32 pending，`instance.stop`/`instance.destroy`/`provider.shutdown` 是独立 2 active + 4 pending；队列满应按原 id 返回 retryable `provider_overloaded`，不得执行被拒请求。reader 不得因普通队列满停止读取，所以 16 个悬挂 write 后 stop、16+32 后 EOF 都应在 2 秒探针内完成回收。stdout 已断开时，response 或异步 event 的 write/flush failure 都必须只发送一次无输出依赖的 terminal 信号，不能只记日志后继续运行。
 7. 检查释放点：running、waiting approval、waiting user input 与 Remote/WSS 断开不能释放；completed/failed/interrupted notification 必须先把槽切成 Closing，再发布 terminal event、关闭子进程、删除同 generation 槽并唤醒等待者。请求即使在 Closing 前预取了 Ready handle，也必须在拿 operation lock 后复核并改用新 generation，不能向旧 session 写。
 8. 只在 `thread/resume` reject 同时满足 `code=-32600`、`data` 缺失/null 且 message 精确为 `thread <当前 conversation id> already has an active writer` 时，对外返回 retryable `conversation_write_conflict`，details 为 `operation=thread/resume` 与 `reason=owned-by-other-runtime`。wrong code、近似 message、其他 thread id 或非空 data 必须保留普通 Provider error；不得把原生 owner message 写入标准冲突错误或日志。
 9. 若修改 executable 或点击刷新，确认 Host 更新同一个 Codex instance setting，并按 stop → start → manifest instance create/start 显式重启插件；replacement 的 RPC 必须反映新 setting，Tauri 内不应出现第二个 observer。
@@ -45,6 +45,8 @@
 - `conversation.list/get/create`、turn start/steer/interrupt、approval 和通知通过真实 fixture App Server 子进程与 manifest-launched Provider binary 闭环。
 - 重复 `conversation.get` 不创建 execution；active turn 操作复用同一 pid；terminal 后下一次写使用新 pid；释放 A 不改变 B。
 - stdio 饱和探针中 16 个普通 write 全悬挂时 `instance.stop` 仍在 2 秒内返回；16 active + 32 pending 后第 49 个普通请求按 id 返回 `provider_overloaded` 且无 App Server 记录；随后 EOF 仍在 2 秒内退出并清零 PID。
+- one-shot initialize 悬挂时，stop 与 stdin EOF 都在 2 秒内退出并清零该 PID，session log 不得出现 `thread/start`；observer initialize 悬挂时连续五轮 start/stop 都不得在 stopped 后出现 Ready。
+- 关闭 Provider stdout 后制造 observer 异步 fault，Provider 必须进入全局 shutdown；活动 execution PID 清零，不能依赖继续写 terminal event 才完成清理。
 - handle barrier 证明旧 Ready handle 在 terminal Closing 后不会写旧 session；resume/cancel barrier 证明 cancel 先线性化时没有 `thread/resume`/`turn/start` 记录。
 - fixture session 证据来自每 PID 独立日志；运行 64 轮 terminal/approval 释放压力测试，不应出现 PID 记录丢失或交叉。
 - remote conversation/turn/approval 只出现在 remote replay；companion replay 与桌宠 activity store 不变。

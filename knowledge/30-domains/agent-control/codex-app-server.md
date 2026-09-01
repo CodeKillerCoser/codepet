@@ -35,13 +35,13 @@ Gateway v1 把 `turn.send` 分发到 Provider `turn.start` 或 `turn.steer`。`R
 
 Provider instance 启动并 initialize 一个官方 App Server stdio observer 子进程，长期 reader 只服务 `model/list`、`thread/list` 与 `thread/read`。observer 从不发送 `thread/start`、`thread/resume`、turn 或 approval 写操作，因此长期存在也不会加载历史 thread 或持有 writer。
 
-`conversation.create` 使用独立的一次性 App Server 执行 `thread/start`，拿到权威 response 后立即关闭。`turn.start/steer/interrupt` 首次写入某 conversation 时创建执行槽，spawn 新 App Server、subscribe、`thread/resume`，再在该槽的串行 operation lock 内完成 turn 操作；approval 必须回到同一 generation 的槽。response request id 仍允许乱序关联，notification 经 mapper 生成 Provider v1 conversation、turn、delta 与 approval event，不经过 Tauri 或 compat DTO。
+`conversation.create` 使用独立的一次性 App Server 执行 `thread/start`，拿到权威 response 后立即关闭。observer 与一次性 create 都从 spawn 前开始登记到 instance-generation lifecycle registry；spawn 后、initialize 前登记真实 session，最终 `thread/start` 写入与 cancel 通过短门线性化。`turn.start/steer/interrupt` 首次写入某 conversation 时创建执行槽，spawn 新 App Server、subscribe、`thread/resume`，再在该槽的串行 operation lock 内完成 turn 操作；approval 必须回到同一 generation 的槽。response request id 仍允许乱序关联，notification 经 mapper 生成 Provider v1 conversation、turn、delta 与 approval event，不经过 Tauri 或 compat DTO。
 
 执行槽使用 `Creating → Ready → Closing → Closed`，创建失败则进入 `Failed` 并从 map 淘汰。同 conversation 并发首次写共享同一个 Creating 槽和 resume 结果；不同 conversation 使用不同进程。Ready 槽记录 generation 与 active turn id，事件线程只持 runtime 的 `Weak` 引用，不与 runtime/session 形成强引用环。Creating 从插入 map 起就有 attempt generation/cancellation；子进程完成 spawn、尚未 initialize 前即登记，因此 Provider stop 或 observer fail 可以直接关闭 pending initialize/resume。initialize/subscribe 后继续核对 instance 与 slot；resume request 的写入和 cancel 通过一把短锁线性化，锁只覆盖最终复核与 frame 写入，不覆盖 response 等待，也没有给正常 turn 增加短 timeout。
 
 协议 DTO 以本机官方 `codex-cli 0.151.0` 的 `app-server generate-json-schema` 输出、官方 App Server 文档和同一 binary 的纵向 smoke 为证据。上游 wire 不要求 `jsonrpc`：request 是 `id + method`，可带或不带 `params`/`trace`；notification 是 `method`，可带或不带 `params`/`emittedAtMs`；response 必须是 `id + result` 或 `id + error` 二选一，error 必须有整数 code 与非空 message，可选 `data` 会保留在内部错误证据中。历史 fixture 若携带 `jsonrpc`，只接受 `"2.0"`。缺失 `params` 由具体 method 的 typed DTO 决定是否成立。Provider 自己面向 Host 的 stdio Provider Protocol 仍严格使用 JSON-RPC 2.0，两层 envelope 不共用判定规则。
 
-生产 stdio reader 与 RPC dispatch 分离：普通 request 最多并发 16 个、排队 32 个；`instance.stop`、`instance.destroy`、`provider.shutdown` 使用独立的 2 并发/4 排队保留通路。reader 对 channel 使用非阻塞入队，队列满则用原 id 返回 retryable `provider_overloaded`，因此仍能继续读取 EOF/fatal。每个 response 保留原 id，可按完成顺序乱序返回，event/response 最终通过同一 stdout mutex 串行写出；EOF/fatal 会触发 Provider shutdown 与有界 drain/abort。
+生产 stdio reader 与 RPC dispatch 分离：普通 request 最多并发 16 个、排队 32 个；`instance.stop`、`instance.destroy`、`provider.shutdown` 使用独立的 2 并发/4 排队保留通路。reader 对 channel 使用非阻塞入队，队列满则用原 id 返回 retryable `provider_overloaded`，因此仍能继续读取 EOF/fatal。每个 response 保留原 id，可按完成顺序乱序返回，event/response 最终通过同一 stdout mutex 串行写出；EOF、坏帧以及 response/event stdout 写失败都会触发 Provider shutdown 与有界 drain/abort。event sink 在释放 stdout mutex 后只发送一次 terminal 信号，清理路径不依赖继续输出。
 
 `initialize` 必须返回 `codexHome/platformFamily/platformOs/userAgent`。`Thread`、`Turn`、start/resume response 的必需字段严格解码，不能用 `serde(default)` 或伪造 workspace permission/status/timestamp。`ThreadStartResponse`、`ThreadResumeResponse` 的结构化 `SandboxPolicy` 是 create 后权限的唯一证据。
 
@@ -80,7 +80,7 @@ compat 是无状态 DTO/event 映射：delta 自带 conversation route，所有�
 - 本机可执行文件兼容性：显式 integration test 使用 resolver 得到的绝对 executable，已覆盖 initialize、instance create/start、conversation list 与 instance stop；无 executable 的环境只跑官方录制 fixture，不把 integration test 假装成必过。
 - 历史 thread 生命周期：`conversation.get` 重复读取只在 observer 发送 `thread/read`，不创建新进程、不参与 loaded-thread 状态机；后续首次写动作才允许执行 session resume。测试清空进程日志后重复读取，断言没有 `process/start` 或 `thread/resume`。
 - turn/writer 生命周期：纵向 fixture 使用每 PID 独立日志证明 observer、一次性 create 与 execution 是三个边界；同一 active turn 的 steer/interrupt/approval 复用 execution；terminal notification/权威 snapshot 后下一次写使用新 pid。handle barrier 精确覆盖“请求先拿 Ready handle、terminal 先拿 operation lock 并 Closing”，断言请求随后在新 PID 成功；resume barrier 覆盖 cancel 先线性化，断言无 resume/start。64 轮重复测试锁定终态释放与 PID 证据稳定性。
-- 并发与失败清理：并发首次 `turn.start` 只有一次 resume/一次 `turn/start`；initialize/resume 悬挂时 instance stop 都在 2 秒内关闭子进程并唤醒请求。生产 Provider binary 在 16 个普通 dispatch 全悬挂时仍用保留通路完成 stop；16 active + 32 pending 后第 49 个请求按 id 明确过载且未执行，EOF 仍在 2 秒内回收。fixture 另行覆盖 execution initialize reject、官方 writer conflict 及反例、turn RPC reject、App Server crash 与 sent-outcome-unknown。
+- 并发与失败清理：并发首次 `turn.start` 只有一次 resume/一次 `turn/start`；observer、one-shot create 与 execution 的 initialize/resume 悬挂时 instance stop 都在 2 秒内关闭子进程并唤醒请求。one-shot EOF、五轮 observer start/stop 以及异步 event stdout broken pipe 分别证明全局 shutdown、generation 终态和 PID 回收。生产 Provider binary 在 16 个普通 dispatch 全悬挂时仍用保留通路完成 stop；16 active + 32 pending 后第 49 个请求按 id 明确过载且未执行，EOF 仍在 2 秒内回收。fixture 另行覆盖 execution initialize reject、官方 writer conflict 及反例、turn RPC reject、App Server crash 与 sent-outcome-unknown。
 - 历史投影泄漏或重复：fixture 覆盖 ordered user/assistant/reasoning/command/file/tool/unknown，断言 raw reasoning 和原生 payload 不出现；completed/in-progress 对照断言可变 body 只在完成后进入 snapshot，delta 与 snapshot 使用相同 content id。
 - server request 悬挂：真实 Provider 二进制测试覆盖 `additionalPermissions.network` 得到原 id 的 `-32601`，同时断言无 Approval event。
 - 审批串 session：真实 Provider 二进制 stop/start 后复用相同 App Server request id，旧 approval 必须 `stale_approval_session`，当前 approval 才能回写。
@@ -111,6 +111,7 @@ compat 是无状态 DTO/event 映射：delta 自带 conversation route，所有�
 - 故障排查见 `../../40-runbooks/codex-app-server-unavailable.md`。
 - channel 约束见 `../../60-rules/codex-provider-channel-isolation.md`。
 - turn writer 生命周期规约见 `../../60-rules/codex-provider-turn-writer-lifecycle.md`。
+- instance session 生命周期规约见 `../../60-rules/codex-provider-instance-session-lifecycle.md`。
 - 完整边界、协议矩阵和开发安装见 `../../10-architecture/codex-provider-plugin-runtime.md`。
 
 ## 未知项

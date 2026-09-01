@@ -387,18 +387,6 @@ pub struct CodexAppServerSession {
 }
 
 impl CodexAppServerSession {
-    pub fn spawn(
-        executable: &Path,
-        args: &[String],
-    ) -> Result<Self, CodexAppServerError> {
-        let session = Self::spawn_uninitialized(executable, args)?;
-        if let Err(error) = session.initialize() {
-            let _ = session.shutdown();
-            return Err(error);
-        }
-        Ok(session)
-    }
-
     pub(crate) fn spawn_uninitialized(
         executable: &Path,
         args: &[String],
@@ -786,11 +774,35 @@ impl CodexAppServerSession {
         self.thread_start_outcome(request).into_result()
     }
 
-    pub(crate) fn thread_start_outcome(
+    #[cfg(test)]
+    fn thread_start_outcome(
         &self,
         request: CodexThreadStartRequest,
     ) -> CodexRequestOutcome<CodexConversationSnapshot> {
-        self.request_outcome("thread/start", thread_start_params(&request))
+        self.thread_start_outcome_with_sender(request, |message| {
+            self.inner.write_request(message)
+        })
+    }
+
+    pub(crate) fn thread_start_outcome_with_sender(
+        &self,
+        request: CodexThreadStartRequest,
+        send_request: impl FnOnce(Value) -> CodexRequestOutcome<()>,
+    ) -> CodexRequestOutcome<CodexConversationSnapshot> {
+        self.request_value_with_timeout_outcome_with_sender(
+            "thread/start",
+            thread_start_params(&request),
+            REQUEST_TIMEOUT,
+            send_request,
+        )
+        .and_then(|response| match serde_json::from_value::<ThreadConfiguredResponse>(response) {
+            Ok(response) => CodexRequestOutcome::Success(response),
+            Err(error) => CodexRequestOutcome::SentOutcomeUnknown(
+                CodexAppServerError::Protocol(format!(
+                    "invalid thread/start response: {error}"
+                )),
+            ),
+        })
             .and_then(|response: ThreadConfiguredResponse| {
                 let snapshot = snapshot_from_configured_response(response);
                 self.inner.record_configuration(&snapshot);

@@ -45,6 +45,9 @@ fn main() {
         );
         match method {
             "initialize" => {
+                if options.approval_mode == "observer-initialize-no-response" {
+                    continue;
+                }
                 if options.approval_mode == "execution-initialize-no-response"
                     && observer_discovery_completed(&options)
                 {

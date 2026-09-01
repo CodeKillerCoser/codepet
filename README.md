@@ -171,6 +171,13 @@ Rust 测试：
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
+Provider/Host workspace 与 Codex Provider 生命周期垂直测试：
+
+```bash
+cargo test --manifest-path crates/Cargo.toml --workspace
+cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --test provider_vertical
+```
+
 Windows 目标编译检查：
 
 ```bash

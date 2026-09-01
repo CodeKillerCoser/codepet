@@ -35,6 +35,7 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static NEXT_EXECUTION_ATTEMPT: AtomicU64 = AtomicU64::new(1);
+static NEXT_INSTANCE_SESSION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -71,14 +72,105 @@ struct NoopExecutionLifecycleHook;
 impl ExecutionLifecycleHook for NoopExecutionLifecycleHook {}
 
 struct InstanceMutable {
+    destroyed: bool,
+    cleanup_in_progress: bool,
     status: InstanceStatus,
     capabilities: ProviderCapabilities,
     harness: HarnessDescriptor,
-    observer_session: Option<CodexAppServerSession>,
+    lifecycle_generation: u64,
+    sessions: HashMap<u64, Arc<InstanceSessionSlot>>,
+    observer_session_id: Option<u64>,
     observer_generation: Option<String>,
     executions: HashMap<String, Arc<ExecutionSlot>>,
     pending_approvals: HashMap<String, PendingApproval>,
     approval_history: Vec<ObservedApproval>,
+}
+
+enum InstanceSessionState {
+    Pending,
+    Spawning,
+    Spawned(CodexAppServerSession),
+    Finished,
+}
+
+struct InstanceSessionSlot {
+    id: u64,
+    lifecycle_generation: u64,
+    cancelled: AtomicBool,
+    send_gate: Mutex<()>,
+    state: Mutex<InstanceSessionState>,
+    changed: Condvar,
+}
+
+impl InstanceSessionSlot {
+    fn new(lifecycle_generation: u64) -> Self {
+        Self {
+            id: NEXT_INSTANCE_SESSION.fetch_add(1, Ordering::SeqCst),
+            lifecycle_generation,
+            cancelled: AtomicBool::new(false),
+            send_gate: Mutex::new(()),
+            state: Mutex::new(InstanceSessionState::Pending),
+            changed: Condvar::new(),
+        }
+    }
+
+    fn begin_spawn(&self) -> bool {
+        let _send_gate = lock(&self.send_gate);
+        if self.cancelled.load(Ordering::SeqCst) {
+            return false;
+        }
+        let mut state = lock(&self.state);
+        if !matches!(*state, InstanceSessionState::Pending) {
+            return false;
+        }
+        *state = InstanceSessionState::Spawning;
+        true
+    }
+
+    fn register_spawned(&self, session: CodexAppServerSession) -> bool {
+        let mut state = lock(&self.state);
+        if !matches!(*state, InstanceSessionState::Spawning) {
+            return false;
+        }
+        *state = InstanceSessionState::Spawned(session);
+        self.changed.notify_all();
+        !self.cancelled.load(Ordering::SeqCst)
+    }
+
+    fn session(&self) -> Option<CodexAppServerSession> {
+        match &*lock(&self.state) {
+            InstanceSessionState::Spawned(session) => Some(session.clone()),
+            InstanceSessionState::Pending
+            | InstanceSessionState::Spawning
+            | InstanceSessionState::Finished => None,
+        }
+    }
+
+    fn cancel_and_take(&self) -> Option<CodexAppServerSession> {
+        let _send_gate = lock(&self.send_gate);
+        self.cancelled.store(true, Ordering::SeqCst);
+        let mut state = lock(&self.state);
+        while matches!(*state, InstanceSessionState::Spawning) {
+            state = self
+                .changed
+                .wait(state)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+        let previous = std::mem::replace(&mut *state, InstanceSessionState::Finished);
+        self.changed.notify_all();
+        match previous {
+            InstanceSessionState::Spawned(session) => Some(session),
+            InstanceSessionState::Pending
+            | InstanceSessionState::Spawning
+            | InstanceSessionState::Finished => None,
+        }
+    }
+
+    fn finish(&self) {
+        let mut state = lock(&self.state);
+        *state = InstanceSessionState::Finished;
+        self.changed.notify_all();
+    }
 }
 
 #[derive(Clone)]
@@ -298,6 +390,8 @@ struct CodexInstanceRuntime {
     instance_kind: String,
     display_name: String,
     settings: CodexInstanceSettings,
+    lifecycle_transition: Mutex<()>,
+    lifecycle_changed: Condvar,
     mutable: Mutex<InstanceMutable>,
     mapper: Mutex<CodexProtocolMapper>,
     events: Arc<dyn ProviderEventSink>,
@@ -316,7 +410,11 @@ impl CodexInstanceRuntime {
             instance_kind: request.instance_kind,
             display_name: request.display_name,
             settings,
+            lifecycle_transition: Mutex::new(()),
+            lifecycle_changed: Condvar::new(),
             mutable: Mutex::new(InstanceMutable {
+                destroyed: false,
+                cleanup_in_progress: false,
                 status: InstanceStatus::Created,
                 capabilities: CodexProtocolMapper::unavailable_capabilities(
                     "codex-not-ready".to_string(),
@@ -326,7 +424,9 @@ impl CodexInstanceRuntime {
                     display_name: "Codex".to_string(),
                     version: None,
                 },
-                observer_session: None,
+                lifecycle_generation: 0,
+                sessions: HashMap::new(),
+                observer_session_id: None,
                 observer_generation: None,
                 executions: HashMap::new(),
                 pending_approvals: HashMap::new(),
@@ -350,24 +450,10 @@ impl CodexInstanceRuntime {
         )
     }
 
-    fn status(&self) -> InstanceStatus {
-        lock(&self.mutable).status
-    }
-
-    fn set_status(&self, status: InstanceStatus) -> Result<ProviderInstance, ProtocolError> {
-        let previous_status = {
-            let mut mutable = lock(&self.mutable);
-            if mutable.status == status {
-                None
-            } else {
-                let previous = mutable.status;
-                mutable.status = status;
-                Some(previous)
-            }
-        };
-        let Some(previous_status) = previous_status else {
-            return Ok(self.snapshot());
-        };
+    fn publish_status_change(
+        &self,
+        previous_status: InstanceStatus,
+    ) -> Result<ProviderInstance, ProtocolError> {
         let instance = self.snapshot();
         self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
             jsonrpc: "2.0".to_string(),
@@ -377,6 +463,206 @@ impl CodexInstanceRuntime {
             },
         })?;
         Ok(instance)
+    }
+
+    fn session_is_current(&self, slot: &Arc<InstanceSessionSlot>) -> bool {
+        let mutable = lock(&self.mutable);
+        mutable.lifecycle_generation == slot.lifecycle_generation
+            && mutable
+                .sessions
+                .get(&slot.id)
+                .is_some_and(|current| Arc::ptr_eq(current, slot))
+    }
+
+    fn unregister_session(&self, slot: &Arc<InstanceSessionSlot>) {
+        slot.finish();
+        let mut mutable = lock(&self.mutable);
+        if mutable
+            .sessions
+            .get(&slot.id)
+            .is_some_and(|current| Arc::ptr_eq(current, slot))
+        {
+            mutable.sessions.remove(&slot.id);
+        }
+        if mutable.observer_session_id == Some(slot.id) {
+            mutable.observer_session_id = None;
+            mutable.observer_generation = None;
+        }
+    }
+
+    fn cancel_sessions(slots: Vec<Arc<InstanceSessionSlot>>) -> Result<(), CodexAppServerError> {
+        let sessions = slots
+            .into_iter()
+            .filter_map(|slot| slot.cancel_and_take())
+            .collect::<Vec<_>>();
+        shutdown_sessions(sessions)
+    }
+
+    fn mark_start_failed(
+        &self,
+        slot: &Arc<InstanceSessionSlot>,
+    ) -> Result<bool, ProtocolError> {
+        let _transition = lock(&self.lifecycle_transition);
+        let previous_status = {
+            let mut mutable = lock(&self.mutable);
+            let current = mutable.lifecycle_generation == slot.lifecycle_generation
+                && mutable.status == InstanceStatus::Starting
+                && mutable
+                    .sessions
+                    .get(&slot.id)
+                    .is_some_and(|current| Arc::ptr_eq(current, slot));
+            if !current {
+                drop(mutable);
+                slot.finish();
+                return Ok(false);
+            }
+            mutable.sessions.remove(&slot.id);
+            mutable.observer_session_id = None;
+            mutable.observer_generation = None;
+            let previous = mutable.status;
+            mutable.status = InstanceStatus::Error;
+            self.lifecycle_changed.notify_all();
+            previous
+        };
+        slot.finish();
+        self.publish_status_change(previous_status)?;
+        Ok(true)
+    }
+
+    async fn stop(self: &Arc<Self>) -> Result<ProviderInstance, ProtocolError> {
+        enum StopAction {
+            Return(Box<ProviderInstance>),
+            Wait,
+            Stop {
+                lifecycle_generation: u64,
+                sessions: Vec<Arc<InstanceSessionSlot>>,
+                executions: Vec<(String, Arc<ExecutionSlot>)>,
+                status_event_error: Option<ProtocolError>,
+            },
+        }
+
+        loop {
+        let action = {
+            let _transition = lock(&self.lifecycle_transition);
+            let mut mutable = lock(&self.mutable);
+            if mutable.cleanup_in_progress {
+                StopAction::Wait
+            } else if mutable.destroyed {
+                drop(mutable);
+                StopAction::Return(Box::new(self.snapshot()))
+            } else {
+            match mutable.status {
+                InstanceStatus::Stopped => {
+                    drop(mutable);
+                    StopAction::Return(Box::new(self.snapshot()))
+                }
+                InstanceStatus::Stopping => StopAction::Wait,
+                InstanceStatus::Created => {
+                    let previous = mutable.status;
+                    mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
+                    mutable.status = InstanceStatus::Stopped;
+                    self.lifecycle_changed.notify_all();
+                    drop(mutable);
+                    StopAction::Return(Box::new(self.publish_status_change(previous)?))
+                }
+                _ => {
+                    let previous = mutable.status;
+                    mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
+                    let lifecycle_generation = mutable.lifecycle_generation;
+                    mutable.status = InstanceStatus::Stopping;
+                    mutable.observer_session_id = None;
+                    mutable.observer_generation = None;
+                    let sessions = mutable.sessions.drain().map(|(_, slot)| slot).collect();
+                    let executions = mutable.executions.drain().collect();
+                    mutable.pending_approvals.clear();
+                    mutable.approval_history.clear();
+                    drop(mutable);
+                    let status_event_error = self.publish_status_change(previous).err();
+                    StopAction::Stop {
+                        lifecycle_generation,
+                        sessions,
+                        executions,
+                        status_event_error,
+                    }
+                }
+            }
+            }
+        };
+
+        match action {
+            StopAction::Return(instance) => return Ok(*instance),
+            StopAction::Wait => {
+                let runtime = self.clone();
+                tokio::task::spawn_blocking(move || {
+                    let mut mutable = lock(&runtime.mutable);
+                    while mutable.status == InstanceStatus::Stopping
+                        || mutable.cleanup_in_progress
+                    {
+                        mutable = runtime
+                            .lifecycle_changed
+                            .wait(mutable)
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    }
+                })
+                .await
+                .map_err(provider_task_error)?;
+                continue;
+            }
+            StopAction::Stop {
+                lifecycle_generation,
+                sessions,
+                executions,
+                status_event_error,
+            } => {
+                let mut execution_sessions = Vec::new();
+                for (conversation_id, slot) in executions {
+                    let session = slot.force_close();
+                    self.lifecycle_hook
+                        .after_execution_cancelled(&conversation_id);
+                    execution_sessions.extend(session);
+                }
+                let shutdown_result = tokio::task::spawn_blocking(move || {
+                    let lifecycle_result = Self::cancel_sessions(sessions);
+                    let execution_result = shutdown_sessions(execution_sessions);
+                    lifecycle_result.and(execution_result)
+                })
+                .await
+                .map_err(provider_task_error)?
+                .map_err(CodexProtocolMapper::error);
+
+                let (instance, stopped_event_error) = {
+                    let _transition = lock(&self.lifecycle_transition);
+                    let previous = {
+                        let mut mutable = lock(&self.mutable);
+                        if mutable.status == InstanceStatus::Stopping
+                            && mutable.lifecycle_generation == lifecycle_generation
+                        {
+                            let previous = mutable.status;
+                            mutable.status = InstanceStatus::Stopped;
+                            mutable.pending_approvals.clear();
+                            mutable.approval_history.clear();
+                            self.lifecycle_changed.notify_all();
+                            Some(previous)
+                        } else {
+                            None
+                        }
+                    };
+                    match previous {
+                        Some(previous) => match self.publish_status_change(previous) {
+                            Ok(instance) => (instance, None),
+                            Err(error) => (self.snapshot(), Some(error)),
+                        },
+                        None => (self.snapshot(), None),
+                    }
+                };
+                if let Some(error) = status_event_error.or(stopped_event_error) {
+                    return Err(error);
+                }
+                shutdown_result?;
+                return Ok(instance);
+            }
+        }
+        }
     }
 
     fn ready_observer(&self) -> Result<CodexAppServerSession, ProtocolError> {
@@ -391,7 +677,11 @@ impl CodexInstanceRuntime {
                 true,
             ));
         }
-        mutable.observer_session.clone().ok_or_else(|| {
+        let session = mutable
+            .observer_session_id
+            .and_then(|id| mutable.sessions.get(&id))
+            .and_then(|slot| slot.session());
+        session.ok_or_else(|| {
             protocol_error(
                 "provider_unavailable",
                 "Codex observer App Server session is unavailable".to_string(),
@@ -407,7 +697,12 @@ impl CodexInstanceRuntime {
         loop {
             let (slot, creator) = {
                 let mut mutable = lock(&self.mutable);
-                if mutable.status != InstanceStatus::Ready || mutable.observer_session.is_none() {
+                let observer_ready = mutable
+                    .observer_session_id
+                    .and_then(|id| mutable.sessions.get(&id))
+                    .and_then(|slot| slot.session())
+                    .is_some();
+                if mutable.status != InstanceStatus::Ready || !observer_ready {
                     return Err(protocol_error(
                         "provider_unavailable",
                         format!(
@@ -979,7 +1274,8 @@ impl CodexInstanceRuntime {
         error: ProtocolError,
     ) {
         eprintln!("Codex observer App Server failed: {}", error.message);
-        let (previous_status, observer, execution_slots) = {
+        let (failure_generation, sessions, execution_slots) = {
+            let _transition = lock(&self.lifecycle_transition);
             let mut mutable = lock(&self.mutable);
             if mutable.observer_generation.as_deref() != Some(observer_generation)
                 || !matches!(mutable.status, InstanceStatus::Ready | InstanceStatus::Starting)
@@ -987,20 +1283,25 @@ impl CodexInstanceRuntime {
                 return;
             }
             let previous = mutable.status;
+            mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
+            let failure_generation = mutable.lifecycle_generation;
+            mutable.cleanup_in_progress = true;
             mutable.status = InstanceStatus::Error;
-            let observer = mutable.observer_session.take();
+            mutable.observer_session_id = None;
             mutable.observer_generation = None;
+            let sessions = mutable.sessions.drain().map(|(_, slot)| slot).collect();
             let execution_slots = mutable
                 .executions
                 .drain()
                 .collect::<Vec<_>>();
             mutable.pending_approvals.clear();
             mutable.approval_history.clear();
-            (previous, observer, execution_slots)
+            self.lifecycle_changed.notify_all();
+            drop(mutable);
+            let _ = self.publish_status_change(previous);
+            (failure_generation, sessions, execution_slots)
         };
-        if let Some(observer) = observer {
-            let _ = observer.shutdown();
-        }
+        let _ = Self::cancel_sessions(sessions);
         for (conversation_id, slot) in execution_slots {
             let session = slot.force_close();
             self.lifecycle_hook
@@ -1009,13 +1310,12 @@ impl CodexInstanceRuntime {
                 let _ = session.shutdown();
             }
         }
-        let _ = self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
-            jsonrpc: "2.0".to_string(),
-            params: InstanceStatusChangedEvent {
-                instance: self.snapshot(),
-                previous_status: Some(previous_status),
-            },
-        });
+        let _transition = lock(&self.lifecycle_transition);
+        let mut mutable = lock(&self.mutable);
+        if mutable.lifecycle_generation == failure_generation {
+            mutable.cleanup_in_progress = false;
+            self.lifecycle_changed.notify_all();
+        }
     }
 }
 
@@ -1030,6 +1330,8 @@ pub struct CodexProvider {
     events: Arc<dyn ProviderEventSink>,
     lifecycle_hook: Arc<dyn ExecutionLifecycleHook>,
     shutdown: AtomicBool,
+    shutdown_complete: AtomicBool,
+    shutdown_changed: tokio::sync::Notify,
 }
 
 impl CodexProvider {
@@ -1054,6 +1356,8 @@ impl CodexProvider {
             events,
             lifecycle_hook,
             shutdown: AtomicBool::new(false),
+            shutdown_complete: AtomicBool::new(false),
+            shutdown_changed: tokio::sync::Notify::new(),
         }
     }
 
@@ -1249,39 +1553,113 @@ impl ProtocolServer for CodexProvider {
     ) -> ProtocolFuture<'a, InstanceStartResponse> {
         Box::pin(async move {
             let runtime = self.instance(&request.route)?;
-            if runtime.status() == InstanceStatus::Ready {
-                return Ok(InstanceStartResponse {
-                    instance: runtime.snapshot(),
-                });
+            let (slot, starting_event_error) = {
+                let _transition = lock(&runtime.lifecycle_transition);
+                let mut mutable = lock(&runtime.mutable);
+                if mutable.destroyed {
+                    return Err(protocol_error(
+                        "unknown_provider_instance",
+                        format!(
+                            "unknown Codex Provider instance: {}",
+                            runtime.route.provider_instance_id
+                        ),
+                        false,
+                    ));
+                }
+                if mutable.cleanup_in_progress {
+                    return Err(protocol_error(
+                        "provider_instance_stopping",
+                        "Codex Provider instance is cleaning up a failed lifecycle".to_string(),
+                        true,
+                    ));
+                }
+                match mutable.status {
+                    InstanceStatus::Ready => {
+                        drop(mutable);
+                        return Ok(InstanceStartResponse {
+                            instance: runtime.snapshot(),
+                        });
+                    }
+                    InstanceStatus::Starting => {
+                        return Err(protocol_error(
+                            "provider_instance_starting",
+                            "Codex Provider instance is already starting".to_string(),
+                            true,
+                        ));
+                    }
+                    InstanceStatus::Stopping => {
+                        return Err(protocol_error(
+                            "provider_instance_stopping",
+                            "Codex Provider instance is stopping".to_string(),
+                            true,
+                        ));
+                    }
+                    _ => {}
+                }
+                let previous = mutable.status;
+                mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
+                mutable.status = InstanceStatus::Starting;
+                mutable.observer_session_id = None;
+                mutable.observer_generation = None;
+                mutable.pending_approvals.clear();
+                mutable.approval_history.clear();
+                let slot = Arc::new(InstanceSessionSlot::new(mutable.lifecycle_generation));
+                mutable.sessions.insert(slot.id, slot.clone());
+                drop(mutable);
+                let event_error = runtime.publish_status_change(previous).err();
+                (slot, event_error)
+            };
+            if let Some(error) = starting_event_error {
+                let _ = runtime.mark_start_failed(&slot);
+                return Err(error);
             }
-            if runtime.status() == InstanceStatus::Starting {
-                return Err(protocol_error(
-                    "provider_instance_starting",
-                    "Codex Provider instance is already starting".to_string(),
-                    true,
-                ));
+            if !slot.begin_spawn() {
+                runtime.unregister_session(&slot);
+                return Err(instance_session_cancelled_error("observer session"));
             }
-            runtime.set_status(InstanceStatus::Starting)?;
             let executable = runtime.settings.app_server_executable.clone();
             let args = runtime.settings.app_server_args.clone();
-            let observer = tokio::task::spawn_blocking(move || {
-                CodexAppServerSession::spawn(&executable, &args)
+            let observer = match tokio::task::spawn_blocking(move || {
+                CodexAppServerSession::spawn_uninitialized(&executable, &args)
             })
-            .await
-            .map_err(|error| {
-                protocol_error(
+            .await {
+                Ok(Ok(observer)) => observer,
+                Ok(Err(error)) => {
+                    let mapped = CodexProtocolMapper::error(error);
+                    if runtime.mark_start_failed(&slot)? {
+                        return Err(mapped);
+                    }
+                    return Err(instance_session_cancelled_error("observer session"));
+                }
+                Err(error) => {
+                    let mapped = protocol_error(
                     "provider_task_failed",
                     format!("Codex App Server start task failed: {error}"),
                     true,
-                )
-            })?;
-            let observer = match observer {
-                Ok(observer) => observer,
-                Err(error) => {
-                    let _ = runtime.set_status(InstanceStatus::Error);
-                    return Err(CodexProtocolMapper::error(error));
+                    );
+                    if runtime.mark_start_failed(&slot)? {
+                        return Err(mapped);
+                    }
+                    return Err(instance_session_cancelled_error("observer session"));
                 }
             };
+            if !slot.register_spawned(observer.clone()) || !runtime.session_is_current(&slot) {
+                let _ = observer.shutdown();
+                runtime.unregister_session(&slot);
+                return Err(instance_session_cancelled_error("observer session"));
+            }
+            let initialize_session = observer.clone();
+            let initialize_result = tokio::task::spawn_blocking(move || initialize_session.initialize())
+                .await
+                .map_err(provider_task_error)?;
+            if let Err(error) = initialize_result {
+                let mapped = CodexProtocolMapper::error(error);
+                let _ = observer.shutdown();
+                if runtime.mark_start_failed(&slot)? {
+                    return Err(mapped);
+                }
+                return Err(instance_session_cancelled_error("observer session"));
+            }
             let discovery_session = observer.clone();
             let models = match tokio::task::spawn_blocking(move || discovery_session.model_list())
                 .await
@@ -1289,9 +1667,12 @@ impl ProtocolServer for CodexProvider {
             {
                 Ok(models) => models,
                 Err(error) => {
+                    let mapped = CodexProtocolMapper::error(error);
                     let _ = observer.shutdown();
-                    let _ = runtime.set_status(InstanceStatus::Error);
-                    return Err(CodexProtocolMapper::error(error));
+                    if runtime.mark_start_failed(&slot)? {
+                        return Err(mapped);
+                    }
+                    return Err(instance_session_cancelled_error("observer session"));
                 }
             };
             let capabilities = match CodexProtocolMapper::capabilities(
@@ -1301,8 +1682,10 @@ impl ProtocolServer for CodexProvider {
                 Ok(capabilities) => capabilities,
                 Err(error) => {
                     let _ = observer.shutdown();
-                    let _ = runtime.set_status(InstanceStatus::Error);
-                    return Err(error);
+                    if runtime.mark_start_failed(&slot)? {
+                        return Err(error);
+                    }
+                    return Err(instance_session_cancelled_error("observer session"));
                 }
             };
             let harness = HarnessDescriptor {
@@ -1313,48 +1696,54 @@ impl ProtocolServer for CodexProvider {
             let incoming = match observer.subscribe() {
                 Ok(incoming) => incoming,
                 Err(error) => {
+                    let mapped = CodexProtocolMapper::error(error);
                     let _ = observer.shutdown();
-                    let _ = runtime.set_status(InstanceStatus::Error);
-                    return Err(CodexProtocolMapper::error(error));
+                    if runtime.mark_start_failed(&slot)? {
+                        return Err(mapped);
+                    }
+                    return Err(instance_session_cancelled_error("observer session"));
                 }
             };
             let observer_generation = observer.generation().to_string();
-            let installed = {
+            let (installed, ready_event_error) = {
+                let _transition = lock(&runtime.lifecycle_transition);
                 let mut mutable = lock(&runtime.mutable);
-                if mutable.status != InstanceStatus::Starting
-                    || mutable.observer_session.is_some()
-                    || !mutable.executions.is_empty()
-                {
-                    false
+                let current = mutable.status == InstanceStatus::Starting
+                    && mutable.lifecycle_generation == slot.lifecycle_generation
+                    && mutable
+                        .sessions
+                        .get(&slot.id)
+                        .is_some_and(|current| Arc::ptr_eq(current, &slot))
+                    && !slot.cancelled.load(Ordering::SeqCst)
+                    && mutable.observer_session_id.is_none()
+                    && mutable.executions.is_empty();
+                if !current {
+                    (false, None)
                 } else {
                     mutable.capabilities = capabilities;
                     mutable.harness = harness;
-                    mutable.observer_session = Some(observer.clone());
+                    mutable.observer_session_id = Some(slot.id);
                     mutable.observer_generation = Some(observer_generation.clone());
                     mutable.pending_approvals.clear();
                     mutable.approval_history.clear();
-                    true
+                    let previous = mutable.status;
+                    mutable.status = InstanceStatus::Ready;
+                    runtime.lifecycle_changed.notify_all();
+                    drop(mutable);
+                    (true, runtime.publish_status_change(previous).err())
                 }
             };
             if !installed {
                 let _ = observer.shutdown();
-                return Err(protocol_error(
-                    "provider_unavailable",
-                    "Codex Provider stopped while the observer session was starting".to_string(),
-                    true,
-                ));
+                runtime.unregister_session(&slot);
+                return Err(instance_session_cancelled_error("observer session"));
+            }
+            if let Some(error) = ready_event_error {
+                runtime.fail_observer(&observer_generation, error.clone());
+                return Err(error);
             }
             runtime.start_observer_forwarder(observer_generation, incoming);
-            let instance = match runtime.set_status(InstanceStatus::Ready) {
-                Ok(instance) => instance,
-                Err(error) => {
-                    let generation = lock(&runtime.mutable).observer_generation.clone();
-                    if let Some(generation) = generation {
-                        runtime.fail_observer(&generation, error.clone());
-                    }
-                    return Err(error);
-                }
-            };
+            let instance = runtime.snapshot();
             Ok(InstanceStartResponse { instance })
         })
     }
@@ -1365,54 +1754,9 @@ impl ProtocolServer for CodexProvider {
     ) -> ProtocolFuture<'a, InstanceStopResponse> {
         Box::pin(async move {
             let runtime = self.instance(&request.route)?;
-            if matches!(runtime.status(), InstanceStatus::Created | InstanceStatus::Stopped) {
-                return Ok(InstanceStopResponse {
-                    instance: runtime.set_status(InstanceStatus::Stopped)?,
-                });
-            }
-            let stopping_error = runtime.set_status(InstanceStatus::Stopping).err();
-            let (observer, execution_slots) = {
-                let mut mutable = lock(&runtime.mutable);
-                mutable.pending_approvals.clear();
-                mutable.approval_history.clear();
-                mutable.observer_generation = None;
-                let observer = mutable.observer_session.take();
-                let execution_slots = mutable
-                    .executions
-                    .drain()
-                    .collect::<Vec<_>>();
-                (observer, execution_slots)
-            };
-            let mut sessions = observer.into_iter().collect::<Vec<_>>();
-            for (conversation_id, slot) in execution_slots {
-                let session = slot.force_close();
-                runtime
-                    .lifecycle_hook
-                    .after_execution_cancelled(&conversation_id);
-                if let Some(session) = session {
-                    sessions.push(session);
-                }
-            }
-            let shutdown_result = match tokio::task::spawn_blocking(move || {
-                shutdown_sessions(sessions)
+            Ok(InstanceStopResponse {
+                instance: runtime.stop().await?,
             })
-            .await
-            {
-                Ok(result) => result.map_err(CodexProtocolMapper::error),
-                Err(error) => Err(provider_task_error(error)),
-            };
-            {
-                let mut mutable = lock(&runtime.mutable);
-                mutable.pending_approvals.clear();
-                mutable.approval_history.clear();
-                mutable.observer_generation = None;
-            }
-            let stopped = runtime.set_status(InstanceStatus::Stopped);
-            if let Some(error) = stopping_error {
-                return Err(error);
-            }
-            shutdown_result?;
-            Ok(InstanceStopResponse { instance: stopped? })
         })
     }
 
@@ -1422,16 +1766,40 @@ impl ProtocolServer for CodexProvider {
     ) -> ProtocolFuture<'a, InstanceDestroyResponse> {
         Box::pin(async move {
             let runtime = self.instance(&request.route)?;
-            if matches!(runtime.status(), InstanceStatus::Ready | InstanceStatus::Starting | InstanceStatus::Stopping) {
-                return Err(protocol_error(
-                    "provider_instance_running",
-                    "Stop the Codex Provider instance before destroying it".to_string(),
-                    false,
-                ));
+            {
+                let _transition = lock(&runtime.lifecycle_transition);
+                let mut mutable = lock(&runtime.mutable);
+                if mutable.destroyed {
+                    return Ok(InstanceDestroyResponse { destroyed: true });
+                }
+                if mutable.cleanup_in_progress
+                    || matches!(
+                        mutable.status,
+                        InstanceStatus::Ready
+                            | InstanceStatus::Starting
+                            | InstanceStatus::Stopping
+                    )
+                {
+                    return Err(protocol_error(
+                        "provider_instance_running",
+                        "Stop the Codex Provider instance before destroying it".to_string(),
+                        false,
+                    ));
+                }
+                mutable.destroyed = true;
+                mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
+                mutable.observer_session_id = None;
+                mutable.observer_generation = None;
+                runtime.lifecycle_changed.notify_all();
             }
-            lock(&self.state)
+            let mut state = lock(&self.state);
+            if state
                 .instances
-                .remove(&request.route.provider_instance_id);
+                .get(&request.route.provider_instance_id)
+                .is_some_and(|current| Arc::ptr_eq(current, &runtime))
+            {
+                state.instances.remove(&request.route.provider_instance_id);
+            }
             Ok(InstanceDestroyResponse { destroyed: true })
         })
     }
@@ -1589,17 +1957,78 @@ impl ProtocolServer for CodexProvider {
             }
             let runtime = self.instance(&request.route)?;
             let permission_level = parse_permission_level(&request.permission_level)?;
-            runtime.ready_observer()?;
+            let slot = {
+                let _transition = lock(&runtime.lifecycle_transition);
+                let mut mutable = lock(&runtime.mutable);
+                let observer_ready = mutable
+                    .observer_session_id
+                    .and_then(|id| mutable.sessions.get(&id))
+                    .and_then(|slot| slot.session())
+                    .is_some();
+                if mutable.status != InstanceStatus::Ready || !observer_ready {
+                    return Err(protocol_error(
+                        "provider_unavailable",
+                        format!(
+                            "Codex Provider instance {} is not ready",
+                            runtime.route.provider_instance_id
+                        ),
+                        true,
+                    ));
+                }
+                let slot = Arc::new(InstanceSessionSlot::new(mutable.lifecycle_generation));
+                mutable.sessions.insert(slot.id, slot.clone());
+                slot
+            };
+            if !slot.begin_spawn() {
+                runtime.unregister_session(&slot);
+                return Err(instance_session_cancelled_error("conversation creation session"));
+            }
             let executable = runtime.settings.app_server_executable.clone();
             let args = runtime.settings.app_server_args.clone();
+            let operation_runtime = runtime.clone();
+            let operation_slot = slot.clone();
             let snapshot = tokio::task::spawn_blocking(move || {
-                let session = CodexAppServerSession::spawn(&executable, &args)
-                    .map_err(CodexProtocolMapper::error)?;
-                let outcome = session.thread_start_outcome(CodexThreadStartRequest {
+                let session = match CodexAppServerSession::spawn_uninitialized(&executable, &args) {
+                    Ok(session) => session,
+                    Err(error) => {
+                        operation_runtime.unregister_session(&operation_slot);
+                        return Err(CodexProtocolMapper::error(error));
+                    }
+                };
+                if !operation_slot.register_spawned(session.clone())
+                    || !operation_runtime.session_is_current(&operation_slot)
+                {
+                    let _ = session.shutdown();
+                    operation_runtime.unregister_session(&operation_slot);
+                    return Err(instance_session_cancelled_error(
+                        "conversation creation session",
+                    ));
+                }
+                if let Err(error) = session.initialize() {
+                    let cancelled = operation_slot.cancelled.load(Ordering::SeqCst)
+                        || !operation_runtime.session_is_current(&operation_slot);
+                    let _ = session.shutdown();
+                    operation_runtime.unregister_session(&operation_slot);
+                    return Err(if cancelled {
+                        instance_session_cancelled_error("conversation creation session")
+                    } else {
+                        CodexProtocolMapper::error(error)
+                    });
+                }
+                let outcome = session.thread_start_outcome_with_sender(CodexThreadStartRequest {
                     workspace_root: request.workspace_root,
                     permission_level,
                     model: request.model,
                     reasoning_effort: request.reasoning_effort,
+                }, |message| {
+                    let _send_gate = lock(&operation_slot.send_gate);
+                    let current = !operation_slot.cancelled.load(Ordering::SeqCst)
+                        && operation_runtime.session_is_current(&operation_slot)
+                        && lock(&operation_runtime.mutable).status == InstanceStatus::Ready;
+                    if !current {
+                        return CodexRequestOutcome::NotSent(CodexAppServerError::Shutdown);
+                    }
+                    session.write_prepared_request(message)
                 });
                 let result = match outcome {
                     CodexRequestOutcome::Success(snapshot) => Ok(snapshot),
@@ -1608,6 +2037,7 @@ impl ProtocolServer for CodexProvider {
                 if let Err(error) = session.shutdown() {
                     eprintln!("Codex conversation creation session shutdown failed: {error}");
                 }
+                operation_runtime.unregister_session(&operation_slot);
                 result
             })
             .await
@@ -2034,6 +2464,13 @@ impl ProtocolServer for CodexProvider {
     ) -> ProtocolFuture<'a, ProviderShutdownResponse> {
         Box::pin(async move {
             if self.shutdown.swap(true, Ordering::SeqCst) {
+                loop {
+                    let notified = self.shutdown_changed.notified();
+                    if self.shutdown_complete.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    notified.await;
+                }
                 return Ok(ProviderShutdownResponse { accepted: true });
             }
             let instances = lock(&self.state)
@@ -2041,48 +2478,19 @@ impl ProtocolServer for CodexProvider {
                 .values()
                 .cloned()
                 .collect::<Vec<_>>();
-            let mut sessions = Vec::new();
-            for runtime in &instances {
-                let (observer, execution_slots) = {
-                    let mut mutable = lock(&runtime.mutable);
-                    mutable.status = InstanceStatus::Stopping;
-                    mutable.observer_generation = None;
-                    let observer = mutable.observer_session.take();
-                    let execution_slots = mutable
-                        .executions
-                        .drain()
-                        .collect::<Vec<_>>();
-                    mutable.pending_approvals.clear();
-                    mutable.approval_history.clear();
-                    (observer, execution_slots)
-                };
-                sessions.extend(observer);
-                for (conversation_id, slot) in execution_slots {
-                    let session = slot.force_close();
-                    runtime
-                        .lifecycle_hook
-                        .after_execution_cancelled(&conversation_id);
-                    if let Some(session) = session {
-                        sessions.push(session);
+            let mut first_error = None;
+            for runtime in instances {
+                if let Err(error) = runtime.stop().await {
+                    if first_error.is_none() {
+                        first_error = Some(error);
                     }
                 }
             }
-            let shutdown_result = match tokio::task::spawn_blocking(move || {
-                shutdown_sessions(sessions)
-            })
-            .await
-            {
-                Ok(result) => result.map_err(CodexProtocolMapper::error),
-                Err(error) => Err(provider_task_error(error)),
-            };
-            for runtime in instances {
-                let mut mutable = lock(&runtime.mutable);
-                mutable.status = InstanceStatus::Stopped;
-                mutable.observer_generation = None;
-                mutable.pending_approvals.clear();
-                mutable.approval_history.clear();
+            self.shutdown_complete.store(true, Ordering::SeqCst);
+            self.shutdown_changed.notify_waiters();
+            if let Some(error) = first_error {
+                return Err(error);
             }
-            shutdown_result?;
             Ok(ProviderShutdownResponse { accepted: true })
         })
     }
@@ -2139,6 +2547,14 @@ fn execution_start_cancelled_error() -> ProtocolError {
     protocol_error(
         "provider_unavailable",
         "Codex Provider stopped while the execution session was starting".to_string(),
+        true,
+    )
+}
+
+fn instance_session_cancelled_error(session: &str) -> ProtocolError {
+    protocol_error(
+        "provider_unavailable",
+        format!("Codex Provider stopped while the {session} was starting"),
         true,
     )
 }

@@ -1893,6 +1893,250 @@ fn provider_binary_keeps_eof_visible_after_at_least_forty_nine_saturated_frames(
     wait_for_processes_to_exit(&execution_pids, Duration::from_secs(2));
 }
 
+#[cfg(unix)]
+#[test]
+fn provider_binary_stop_cancels_a_conversation_create_waiting_for_initialize() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("create-initialize-stop.txt");
+    let mut provider = ProviderBinary::spawn();
+    provider.initialize_and_create_instance(
+        &app_server_executable(),
+        fixture_args("execution-initialize-no-response", &marker),
+    );
+    let started = provider.request(
+        "create-stop-start-instance",
+        "instance.start",
+        json!({ "route": route_value() }),
+    );
+    assert_eq!(
+        started.pointer("/result/instance/status").and_then(Value::as_str),
+        Some("ready")
+    );
+    let observer_pids = session_pids(&marker, "model/list", "");
+    assert_eq!(observer_pids.len(), 1);
+
+    provider.send_request(
+        "create-stop-conversation",
+        "conversation.create",
+        conversation_create_params(),
+    );
+    wait_for_session_count(&marker, "initialize", 2, Duration::from_secs(2));
+    let create_pids = session_pids(&marker, "process/start", "")
+        .into_iter()
+        .filter(|process_id| !observer_pids.contains(process_id))
+        .collect::<Vec<_>>();
+    assert_eq!(create_pids.len(), 1);
+
+    provider.send_request(
+        "create-stop-instance",
+        "instance.stop",
+        json!({ "route": route_value() }),
+    );
+    let stopped = provider.receive(Duration::from_secs(2), |message| {
+        message.get("id").and_then(Value::as_str) == Some("create-stop-instance")
+    });
+    let create_processes_still_running = create_pids
+        .iter()
+        .copied()
+        .filter(|process_id| process_is_running(*process_id))
+        .collect::<Vec<_>>();
+    if !create_processes_still_running.is_empty() {
+        terminate_processes(&create_processes_still_running);
+    }
+    assert_eq!(stopped["id"], "create-stop-instance");
+    assert_eq!(
+        stopped.pointer("/result/instance/status").and_then(Value::as_str),
+        Some("stopped")
+    );
+    assert!(
+        create_processes_still_running.is_empty(),
+        "instance.stop returned before create sessions exited: {create_processes_still_running:?}"
+    );
+    let create_response = provider.receive(Duration::from_secs(2), |message| {
+        message.get("id").and_then(Value::as_str) == Some("create-stop-conversation")
+    });
+    assert_eq!(create_response["id"], "create-stop-conversation");
+    assert!(create_response.get("error").is_some());
+    assert!(session_pids(&marker, "thread/start", "").is_empty());
+
+    provider.request("create-stop-shutdown", "provider.shutdown", json!({}));
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_binary_eof_cancels_a_conversation_create_waiting_for_initialize() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("create-initialize-eof.txt");
+    let mut provider = ProviderBinary::spawn();
+    provider.initialize_and_create_instance(
+        &app_server_executable(),
+        fixture_args("execution-initialize-no-response", &marker),
+    );
+    provider.request(
+        "create-eof-start-instance",
+        "instance.start",
+        json!({ "route": route_value() }),
+    );
+    let observer_pids = session_pids(&marker, "model/list", "");
+    provider.send_request(
+        "create-eof-conversation",
+        "conversation.create",
+        conversation_create_params(),
+    );
+    wait_for_session_count(&marker, "initialize", 2, Duration::from_secs(2));
+    let create_pids = session_pids(&marker, "process/start", "")
+        .into_iter()
+        .filter(|process_id| !observer_pids.contains(process_id))
+        .collect::<Vec<_>>();
+    assert_eq!(create_pids.len(), 1);
+
+    let exit_status = provider.close_input_and_wait_result(Duration::from_secs(2));
+    let create_processes_still_running = create_pids
+        .iter()
+        .copied()
+        .filter(|process_id| process_is_running(*process_id))
+        .collect::<Vec<_>>();
+    if exit_status.is_none() {
+        let _ = provider.child.kill();
+        let _ = provider.child.wait();
+    }
+    if !create_processes_still_running.is_empty() {
+        terminate_processes(&create_processes_still_running);
+    }
+    assert!(exit_status.is_some(), "Provider did not exit after EOF");
+    assert!(
+        create_processes_still_running.is_empty(),
+        "Provider EOF returned before create sessions exited: {create_processes_still_running:?}"
+    );
+    assert!(session_pids(&marker, "thread/start", "").is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_binary_stop_linearizes_repeated_observer_initialization() {
+    const ROUNDS: usize = 5;
+
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("observer-initialize-stop.txt");
+    let mut provider = ProviderBinary::spawn();
+    provider.initialize_and_create_instance(
+        &app_server_executable(),
+        fixture_args("observer-initialize-no-response", &marker),
+    );
+
+    for round in 0..ROUNDS {
+        let start_id = format!("observer-start-{round}");
+        let stop_id = format!("observer-stop-{round}");
+        provider.send_request(
+            &start_id,
+            "instance.start",
+            json!({ "route": route_value() }),
+        );
+        wait_for_session_count(&marker, "initialize", round + 1, Duration::from_secs(2));
+        let process_id = *session_pids(&marker, "process/start", "")
+            .last()
+            .expect("observer fixture process was not recorded");
+        provider.send_request(
+            &stop_id,
+            "instance.stop",
+            json!({ "route": route_value() }),
+        );
+        let stopped = provider.receive(Duration::from_secs(2), |message| {
+            message.get("id").and_then(Value::as_str) == Some(stop_id.as_str())
+        });
+        let process_still_running = process_is_running(process_id);
+        if process_still_running {
+            terminate_processes(&[process_id]);
+        }
+        assert_eq!(stopped["id"], stop_id);
+        assert_eq!(
+            stopped.pointer("/result/instance/status").and_then(Value::as_str),
+            Some("stopped")
+        );
+        assert!(
+            !process_still_running,
+            "round {round}: stop returned before observer {process_id} exited"
+        );
+        let start_response = provider.receive(Duration::from_secs(2), |message| {
+            message.get("id").and_then(Value::as_str) == Some(start_id.as_str())
+        });
+        assert_eq!(start_response["id"], start_id);
+        assert!(start_response.get("error").is_some());
+    }
+    provider.collect_for(Duration::from_millis(100));
+    assert!(provider.buffered.iter().all(|message| {
+        message.get("method").and_then(Value::as_str)
+            != Some("event.instanceStatusChanged")
+            || message
+                .pointer("/params/instance/status")
+                .and_then(Value::as_str)
+                != Some("ready")
+    }));
+
+    let destroyed = provider.request(
+        "observer-destroy",
+        "instance.destroy",
+        json!({ "route": route_value() }),
+    );
+    assert_eq!(destroyed["id"], "observer-destroy");
+    provider.request("observer-shutdown", "provider.shutdown", json!({}));
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_binary_async_event_broken_pipe_triggers_global_shutdown() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("event-broken-pipe.txt");
+    let mut provider = ProviderBinary::spawn_ignoring_sigpipe();
+    let (_, capability_revision) = provider.configure("resume-no-response", &marker);
+    let observer_pids = session_pids(&marker, "model/list", "");
+    assert_eq!(observer_pids.len(), 1);
+    clear_session_log(&marker);
+
+    provider.send_request(
+        "broken-pipe-turn",
+        "turn.start",
+        turn_start_params(
+            conversation_resource_value("thread-broken-pipe"),
+            "broken-pipe-message",
+            "hold execution while stdout closes",
+            &capability_revision,
+        ),
+    );
+    wait_for_file_method(
+        &marker,
+        "thread/resume",
+        "thread-broken-pipe",
+        Duration::from_secs(2),
+    );
+    let execution_pids = session_pids(&marker, "process/start", "");
+    assert_eq!(execution_pids.len(), 1);
+
+    provider.close_stdout_after_probe();
+    terminate_processes(&observer_pids);
+    let exit_status = provider.wait_for_exit(Duration::from_secs(2));
+    let execution_processes_still_running = execution_pids
+        .iter()
+        .copied()
+        .filter(|process_id| process_is_running(*process_id))
+        .collect::<Vec<_>>();
+    if exit_status.is_none() {
+        let _ = provider.child.kill();
+        let _ = provider.child.wait();
+    }
+    if !execution_processes_still_running.is_empty() {
+        terminate_processes(&execution_processes_still_running);
+    }
+    assert!(
+        exit_status.is_some(),
+        "Provider ignored an async event stdout failure"
+    );
+    assert!(
+        execution_processes_still_running.is_empty(),
+        "stdout failure returned before execution sessions exited: {execution_processes_still_running:?}"
+    );
+}
+
 #[test]
 fn provider_binary_rejects_queue_overload_by_id_without_executing_it() {
     const MAX_CONCURRENT_HOST_REQUESTS: usize = 16;
@@ -2375,11 +2619,27 @@ struct ProviderBinary {
     stdin: Option<BufWriter<ChildStdin>>,
     messages: mpsc::Receiver<Value>,
     buffered: VecDeque<Value>,
+    close_stdout_requested: Arc<AtomicBool>,
+    stdout_closed: Arc<AtomicBool>,
 }
 
 impl ProviderBinary {
     fn spawn() -> Self {
-        let mut child = Command::new(provider_executable())
+        let mut command = Command::new(provider_executable());
+        Self::spawn_command(&mut command)
+    }
+
+    #[cfg(unix)]
+    fn spawn_ignoring_sigpipe() -> Self {
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "trap '' PIPE; exec \"$1\"", "provider-without-sigpipe"])
+            .arg(provider_executable());
+        Self::spawn_command(&mut command)
+    }
+
+    fn spawn_command(command: &mut Command) -> Self {
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -2388,17 +2648,29 @@ impl ProviderBinary {
         let stdin = BufWriter::new(child.stdin.take().unwrap());
         let stdout = child.stdout.take().unwrap();
         let (sender, messages) = mpsc::channel();
+        let close_stdout_requested = Arc::new(AtomicBool::new(false));
+        let stdout_closed = Arc::new(AtomicBool::new(false));
+        let reader_close_requested = close_stdout_requested.clone();
+        let reader_stdout_closed = stdout_closed.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
                 let line = line.unwrap();
-                sender.send(serde_json::from_str(&line).unwrap()).unwrap();
+                if sender.send(serde_json::from_str(&line).unwrap()).is_err() {
+                    break;
+                }
+                if reader_close_requested.load(Ordering::SeqCst) {
+                    break;
+                }
             }
+            reader_stdout_closed.store(true, Ordering::SeqCst);
         });
         Self {
             child,
             stdin: Some(stdin),
             messages,
             buffered: VecDeque::new(),
+            close_stdout_requested,
+            stdout_closed,
         }
     }
 
@@ -2422,6 +2694,20 @@ impl ProviderBinary {
             app_server_args.push("--request-log".to_string());
             app_server_args.push(request_log.to_string_lossy().into_owned());
         }
+        self.initialize_and_create_instance(&app_server_executable(), app_server_args);
+        let started = self.request("start", "instance.start", json!({ "route": route_value() }));
+        let capability_revision = started
+            .pointer("/result/instance/capabilities/revision")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        (
+            self.create_conversation("conversation-first"),
+            capability_revision,
+        )
+    }
+
+    fn initialize_and_create_instance(&mut self, executable: &Path, app_server_args: Vec<String>) {
         self.request(
             "initialize",
             "provider.initialize",
@@ -2440,21 +2726,11 @@ impl ProviderBinary {
                 "instanceKind": CODEX_INSTANCE_KIND,
                 "displayName": "Codex Binary Fixture",
                 "settings": {
-                    "appServerExecutable": app_server_executable(),
+                    "appServerExecutable": executable,
                     "appServerArgs": app_server_args
                 }
             }),
         );
-        let started = self.request("start", "instance.start", json!({ "route": route_value() }));
-        let capability_revision = started
-            .pointer("/result/instance/capabilities/revision")
-            .and_then(Value::as_str)
-            .unwrap()
-            .to_string();
-        (
-            self.create_conversation("conversation-first"),
-            capability_revision,
-        )
     }
 
     fn create_conversation(&mut self, id: &str) -> Value {
@@ -2493,13 +2769,47 @@ impl ProviderBinary {
     }
 
     fn close_input_and_wait(&mut self, timeout: Duration) -> std::process::ExitStatus {
+        self.close_input_and_wait_result(timeout)
+            .expect("Provider did not exit after stdin EOF")
+    }
+
+    fn close_input_and_wait_result(
+        &mut self,
+        timeout: Duration,
+    ) -> Option<std::process::ExitStatus> {
         drop(self.stdin.take());
         let deadline = Instant::now() + timeout;
         loop {
             if let Some(status) = self.child.try_wait().unwrap() {
-                return status;
+                return Some(status);
             }
-            assert!(Instant::now() < deadline, "Provider did not exit after stdin EOF");
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn wait_for_exit(&mut self, timeout: Duration) -> Option<std::process::ExitStatus> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                return Some(status);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn close_stdout_after_probe(&mut self) {
+        self.close_stdout_requested.store(true, Ordering::SeqCst);
+        let described = self.request("close-stdout-probe", "provider.describe", json!({}));
+        assert_eq!(described["id"], "close-stdout-probe");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !self.stdout_closed.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline, "Provider stdout reader did not close");
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -2556,6 +2866,25 @@ fn route_value() -> Value {
         "deviceId": "device-provider-binary",
         "providerPluginId": CODEX_PLUGIN_ID,
         "providerInstanceId": "codex"
+    })
+}
+
+fn fixture_args(approval_mode: &str, marker: &Path) -> Vec<String> {
+    vec![
+        "--approval-mode".to_string(),
+        approval_mode.to_string(),
+        "--marker".to_string(),
+        marker.to_string_lossy().into_owned(),
+    ]
+}
+
+fn conversation_create_params() -> Value {
+    json!({
+        "route": route_value(),
+        "permissionLevel": "workspace-write",
+        "model": "gpt-fixture",
+        "reasoningEffort": "high",
+        "workspaceRoot": "/fixture/workspace"
     })
 }
 
@@ -2651,6 +2980,17 @@ fn wait_for_file_method(marker: &Path, method: &str, thread_id: &str, timeout: D
     }
 }
 
+fn wait_for_session_count(marker: &Path, method: &str, expected: usize, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while session_method_count(marker, method) < expected {
+        assert!(
+            Instant::now() < deadline,
+            "fixture did not record {expected} {method} requests"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 #[cfg(unix)]
 fn process_is_running(process_id: u32) -> bool {
     Command::new("/bin/kill")
@@ -2660,6 +3000,18 @@ fn process_is_running(process_id: u32) -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+#[cfg(unix)]
+fn terminate_processes(process_ids: &[u32]) {
+    for process_id in process_ids {
+        let _ = Command::new("/bin/kill")
+            .args(["-KILL", &process_id.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    wait_for_processes_to_exit(process_ids, Duration::from_secs(2));
 }
 
 #[cfg(windows)]

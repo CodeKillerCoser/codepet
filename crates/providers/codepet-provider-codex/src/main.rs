@@ -5,6 +5,7 @@ use codepet_provider_sdk::{
     ProviderWireMessage, RpcError, MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES,
 };
 use std::io::{BufReader, BufWriter, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -19,19 +20,34 @@ const DISPATCH_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 struct StdioEventSink {
     codec: JsonLineCodec,
     writer: Arc<Mutex<BufWriter<std::io::Stdout>>>,
+    terminal: mpsc::Sender<ReaderTerminal>,
+    terminal_signalled: AtomicBool,
 }
 
 impl codepet_provider_codex::ProviderEventSink for StdioEventSink {
     fn publish(&self, event: ProtocolEvent) -> Result<(), codepet_provider_sdk::ProtocolError> {
-        let mut writer = lock(&self.writer);
-        self.codec
-            .write_message(&mut *writer, &ProviderWireMessage::Event(event))?;
-        writer.flush().map_err(|error| codepet_provider_sdk::ProtocolError {
-            code: "json_line_flush_failed".to_string(),
-            message: format!("flush Provider event: {error}"),
-            retryable: true,
-            details: None,
-        })
+        let result = {
+            let mut writer = lock(&self.writer);
+            self.codec
+                .write_message(&mut *writer, &ProviderWireMessage::Event(event))
+                .and_then(|()| {
+                    writer.flush().map_err(|error| codepet_provider_sdk::ProtocolError {
+                        code: "json_line_flush_failed".to_string(),
+                        message: format!("flush Provider event: {error}"),
+                        retryable: true,
+                        details: None,
+                    })
+                })
+        };
+        if let Err(error) = &result {
+            if !self.terminal_signalled.swap(true, Ordering::SeqCst) {
+                let _ = self.terminal.try_send(ReaderTerminal::Fatal {
+                    response: None,
+                    message: error.message.clone(),
+                });
+            }
+        }
+        result
     }
 }
 
@@ -55,14 +71,16 @@ async fn run() -> Result<(), String> {
     let codec = JsonLineCodec::new(MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES)
         .map_err(|error| error.message)?;
     let writer = Arc::new(Mutex::new(BufWriter::new(std::io::stdout())));
+    let (terminal_sender, terminal_receiver) = mpsc::channel(1);
     let events = Arc::new(StdioEventSink {
         codec,
         writer: writer.clone(),
+        terminal: terminal_sender.clone(),
+        terminal_signalled: AtomicBool::new(false),
     });
     let provider = Arc::new(CodexProvider::new(events));
     let (normal_sender, normal_receiver) = mpsc::channel(MAX_PENDING_HOST_MESSAGES);
     let (control_sender, control_receiver) = mpsc::channel(MAX_PENDING_CONTROL_REQUESTS);
-    let (terminal_sender, terminal_receiver) = mpsc::channel(1);
     let reader_writer = writer.clone();
     std::thread::spawn(move || {
         read_host_messages(
@@ -245,12 +263,12 @@ async fn run_service_loop(
     .await;
     if let Some((response, message)) = fatal_response {
         if let Err(error) = cleanup_result {
-            eprintln!("Codex Provider cleanup after invalid Host frame failed: {error}");
+            eprintln!("Codex Provider cleanup after terminal I/O failed: {error}");
         }
         if let Some(response) = response {
             write_message(&codec, &writer, response)?;
         }
-        return Err(format!("invalid Host frame: {message}"));
+        return Err(format!("terminal Provider I/O failed: {message}"));
     }
     match service_result {
         Err(error) => {
