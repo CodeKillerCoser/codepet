@@ -133,6 +133,22 @@ pub struct Conversation {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ConversationAcquireInteractionRequest {
+    pub conversation: RoutedResourceId,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationAcquireInteractionResponse {
+    pub selection: TurnSelection,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lease_expires_at: Option<TimestampMs>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ConversationContent {
     pub content_id: NativeResourceId,
     pub kind: ConversationContentKind,
@@ -739,6 +755,8 @@ pub enum ProtocolMethod {
     ConversationSearch,
     #[serde(rename = "conversation.get")]
     ConversationGet,
+    #[serde(rename = "conversation.acquireInteraction")]
+    ConversationAcquireInteraction,
     #[serde(rename = "conversation.create")]
     ConversationCreate,
     #[serde(rename = "turn.send")]
@@ -759,6 +777,7 @@ impl ProtocolMethod {
             Self::ConversationList => "conversation.list",
             Self::ConversationSearch => "conversation.search",
             Self::ConversationGet => "conversation.get",
+            Self::ConversationAcquireInteraction => "conversation.acquireInteraction",
             Self::ConversationCreate => "conversation.create",
             Self::TurnSend => "turn.send",
             Self::TurnInterrupt => "turn.interrupt",
@@ -775,6 +794,7 @@ impl ProtocolMethod {
             Self::ConversationList => ProtocolDispatchLane::Normal,
             Self::ConversationSearch => ProtocolDispatchLane::Normal,
             Self::ConversationGet => ProtocolDispatchLane::Normal,
+            Self::ConversationAcquireInteraction => ProtocolDispatchLane::Normal,
             Self::ConversationCreate => ProtocolDispatchLane::Normal,
             Self::TurnSend => ProtocolDispatchLane::Normal,
             Self::TurnInterrupt => ProtocolDispatchLane::Normal,
@@ -791,6 +811,7 @@ impl ProtocolMethod {
             Self::ConversationList => Some(GatewayCapability::ConversationList),
             Self::ConversationSearch => Some(GatewayCapability::ConversationSearch),
             Self::ConversationGet => Some(GatewayCapability::ConversationGet),
+            Self::ConversationAcquireInteraction => None,
             Self::ConversationCreate => Some(GatewayCapability::ConversationCreate),
             Self::TurnSend => Some(GatewayCapability::TurnSend),
             Self::TurnInterrupt => Some(GatewayCapability::TurnInterrupt),
@@ -811,6 +832,7 @@ impl std::str::FromStr for ProtocolMethod {
             "conversation.list" => Ok(Self::ConversationList),
             "conversation.search" => Ok(Self::ConversationSearch),
             "conversation.get" => Ok(Self::ConversationGet),
+            "conversation.acquireInteraction" => Ok(Self::ConversationAcquireInteraction),
             "conversation.create" => Ok(Self::ConversationCreate),
             "turn.send" => Ok(Self::TurnSend),
             "turn.interrupt" => Ok(Self::TurnInterrupt),
@@ -921,6 +943,12 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: ConversationGetRequest,
     },
+    #[serde(rename = "conversation.acquireInteraction")]
+    ConversationAcquireInteraction {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationAcquireInteractionRequest,
+    },
     #[serde(rename = "conversation.create")]
     ConversationCreate {
         jsonrpc: String,
@@ -990,6 +1018,11 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.get request params", error))?,
             }),
+            ProtocolMethod::ConversationAcquireInteraction => Ok(Self::ConversationAcquireInteraction {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.acquireInteraction request params", error))?,
+            }),
             ProtocolMethod::ConversationCreate => Ok(Self::ConversationCreate {
                 jsonrpc,
                 id,
@@ -1022,6 +1055,7 @@ impl ProtocolRequest {
             Self::ConversationList { jsonrpc, .. } => jsonrpc,
             Self::ConversationSearch { jsonrpc, .. } => jsonrpc,
             Self::ConversationGet { jsonrpc, .. } => jsonrpc,
+            Self::ConversationAcquireInteraction { jsonrpc, .. } => jsonrpc,
             Self::ConversationCreate { jsonrpc, .. } => jsonrpc,
             Self::TurnSend { jsonrpc, .. } => jsonrpc,
             Self::TurnInterrupt { jsonrpc, .. } => jsonrpc,
@@ -1038,6 +1072,7 @@ impl ProtocolRequest {
             Self::ConversationList { id, .. } => id,
             Self::ConversationSearch { id, .. } => id,
             Self::ConversationGet { id, .. } => id,
+            Self::ConversationAcquireInteraction { id, .. } => id,
             Self::ConversationCreate { id, .. } => id,
             Self::TurnSend { id, .. } => id,
             Self::TurnInterrupt { id, .. } => id,
@@ -1054,6 +1089,7 @@ impl ProtocolRequest {
             Self::ConversationList { .. } => ProtocolMethod::ConversationList,
             Self::ConversationSearch { .. } => ProtocolMethod::ConversationSearch,
             Self::ConversationGet { .. } => ProtocolMethod::ConversationGet,
+            Self::ConversationAcquireInteraction { .. } => ProtocolMethod::ConversationAcquireInteraction,
             Self::ConversationCreate { .. } => ProtocolMethod::ConversationCreate,
             Self::TurnSend { .. } => ProtocolMethod::TurnSend,
             Self::TurnInterrupt { .. } => ProtocolMethod::TurnInterrupt,
@@ -1290,6 +1326,10 @@ pub trait ProtocolServer: Send + Sync {
         Box::pin(async { Err(method_not_implemented("conversation.get")) })
     }
 
+    fn conversation_acquire_interaction<'a>(&'a self, _request: ConversationAcquireInteractionRequest) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.acquireInteraction")) })
+    }
+
     fn conversation_create<'a>(&'a self, _request: ConversationCreateRequest) -> ProtocolFuture<'a, ConversationCreateResponse> {
         Box::pin(async { Err(method_not_implemented("conversation.create")) })
     }
@@ -1380,6 +1420,16 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
         },
         ProtocolRequest::ConversationGet { jsonrpc, id, params } => {
             let response = match server.conversation_get(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationAcquireInteraction { jsonrpc, id, params } => {
+            let response = match server.conversation_acquire_interaction(params).await {
                 Ok(result) => match serde_json::to_value(result) {
                     Ok(result) => JsonRpcResponsePayload::Ok { result },
                     Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
@@ -1527,6 +1577,14 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             let result = self.transport.request(ProtocolMethod::ConversationGet, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_acquire_interaction<'a>(&'a self, request: ConversationAcquireInteractionRequest) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationAcquireInteraction, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

@@ -83,6 +83,7 @@ test("provider is JSON-RPC over stdio and owns plugin instance lifecycle", async
     "instance.capabilities",
     "conversation.list",
     "conversation.search",
+    "conversation.acquireInteraction",
     "turn.start",
     "approval.resolve",
     "provider.shutdown",
@@ -128,6 +129,7 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
   assert.equal(methods.some((method) => method.startsWith("instance.") || method === "provider.shutdown"), false);
   assert(methods.includes("event.subscribe"));
   assert(methods.includes("conversation.search"));
+  assert(methods.includes("conversation.acquireInteraction"));
   assert.equal(gateway.manifest.transport.eventCursorField, "eventCursor");
   assert.equal(
     gateway.schema.$defs.EventSubscribeRequest.properties.afterCursor.$ref,
@@ -326,7 +328,7 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   const model = await loadProtocolModel();
   const gateway = record(model, "gateway-v2");
   const gatewayIr = model.protocolIr.packagesById.get("gateway-v2");
-  assert.equal(gatewayIr.service.methods.length, 11);
+  assert.equal(gatewayIr.service.methods.length, 12);
   assert.equal(gatewayIr.service.events.length, 7);
   assert.equal(
     gatewayIr.service.methods.find((method) => method.name === "turn.send").idempotency,
@@ -335,6 +337,10 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   assert.equal(
     gatewayIr.service.methods.find((method) => method.name === "turn.send").capability,
     "turn.send",
+  );
+  assert.equal(
+    gatewayIr.service.methods.find((method) => method.name === "conversation.acquireInteraction").idempotency,
+    "idempotent",
   );
 
   const first = generatorTargetRegistry.dart.render({ record: gateway, model, ir: model.protocolIr });

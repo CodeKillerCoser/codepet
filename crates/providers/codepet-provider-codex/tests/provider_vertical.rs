@@ -803,6 +803,103 @@ fn provider_binary_conversation_get_is_pure_read_with_external_writer() {
 }
 
 #[test]
+fn provider_binary_acquire_interaction_resumes_once_and_returns_configuration() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("acquire-interaction.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (conversation, capability_revision) = provider.configure("normal", &marker);
+    clear_session_log(&marker);
+
+    let first = provider.request(
+        "acquire-interaction-first",
+        "conversation.acquireInteraction",
+        json!({ "conversation": conversation.clone() }),
+    );
+    let second = provider.request(
+        "acquire-interaction-second",
+        "conversation.acquireInteraction",
+        json!({ "conversation": conversation.clone() }),
+    );
+
+    for response in [&first, &second] {
+        assert!(response.get("error").is_none(), "{response}");
+        assert_eq!(
+            response
+                .pointer("/result/selection/accessModeId")
+                .and_then(Value::as_str),
+            Some("workspace-write")
+        );
+        assert_eq!(
+            response
+                .pointer("/result/selection/reasoningEffortId")
+                .and_then(Value::as_str),
+            Some("high")
+        );
+        assert_eq!(
+            response
+                .pointer("/result/selection/model/modelId")
+                .and_then(Value::as_str),
+            Some("gpt-fixture")
+        );
+        assert!(
+            response
+                .pointer("/result/leaseExpiresAt")
+                .and_then(Value::as_u64)
+                .is_some()
+        );
+    }
+    assert_eq!(
+        session_pids(&marker, "thread/resume", "thread-created").len(),
+        1
+    );
+
+    let started = provider.request(
+        "acquire-interaction-turn",
+        "turn.start",
+        turn_start_params(
+            conversation.clone(),
+            "acquire-interaction-message",
+            "keep the leased writer",
+            &capability_revision,
+        ),
+    );
+    let turn = started.pointer("/result/turn/resource").cloned().unwrap();
+    let approval = provider
+        .event("event.approvalRequested")
+        .pointer("/params/approval/resource")
+        .cloned()
+        .unwrap();
+    provider.request(
+        "acquire-interaction-approval",
+        "approval.resolve",
+        json!({ "approval": approval, "decision": "approve" }),
+    );
+    provider.request(
+        "acquire-interaction-interrupt",
+        "turn.interrupt",
+        json!({ "conversation": conversation.clone(), "turn": turn }),
+    );
+    let restarted = provider.request(
+        "acquire-interaction-restart",
+        "turn.start",
+        turn_start_params(
+            conversation,
+            "acquire-interaction-message-two",
+            "reuse the leased writer",
+            &capability_revision,
+        ),
+    );
+    assert!(restarted.get("error").is_none(), "{restarted}");
+    assert_eq!(
+        session_pids(&marker, "thread/resume", "thread-created").len(),
+        1
+    );
+
+    provider.request("acquire-interaction-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("acquire-interaction-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
 fn provider_binary_conversation_get_pages_history_without_resuming() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("paginated-history.txt");

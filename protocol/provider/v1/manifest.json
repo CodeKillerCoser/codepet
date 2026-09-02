@@ -97,6 +97,13 @@
       "response": { "$ref": "./schema.json#/$defs/ConversationGetResponse" }
     },
     {
+      "name": "conversation.acquireInteraction",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": { "$ref": "./schema.json#/$defs/ConversationAcquireInteractionRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ConversationAcquireInteractionResponse" }
+    },
+    {
       "name": "conversation.create",
       "direction": "hostToPlugin",
       "idempotency": "nonIdempotent",

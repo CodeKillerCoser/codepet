@@ -3,7 +3,8 @@ use crate::client::{
 };
 use crate::protocol::{ClaudeOutput, ClaudeStreamDelta, ClaudeStreamEvent};
 use codepet_provider_sdk::{
-    ApprovalResolveRequest, ApprovalResolveResponse, ConversationContent, ConversationCreateRequest,
+    ApprovalResolveRequest, ApprovalResolveResponse, ConversationAcquireInteractionRequest,
+    ConversationAcquireInteractionResponse, ConversationContent, ConversationCreateRequest,
     ChoiceOption, ChoiceSet, ConversationContentKind, ConversationCreateResponse, ConversationGetRequest,
     ConversationGetResponse, ConversationListRequest, ConversationListResponse,
     ConversationItem, ConversationItemKind, ConversationItemRole, ConversationItemStatus,
@@ -1317,6 +1318,24 @@ impl Provider for ClaudeProvider {
         Box::pin(async move {
             let runtime = self.resource_instance(&request.conversation)?;
             runtime.get_conversation(request)
+        })
+    }
+
+    fn conversation_acquire_interaction<'a>(
+        &'a self,
+        request: ConversationAcquireInteractionRequest,
+    ) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
+        Box::pin(async move {
+            let runtime = self.resource_instance(&request.conversation)?;
+            validate_resource_for_instance(&request.conversation, &runtime.route)?;
+            Ok(ConversationAcquireInteractionResponse {
+                selection: TurnSelection {
+                    access_mode_id: None,
+                    reasoning_effort_id: None,
+                    model: None,
+                },
+                lease_expires_at: None,
+            })
         })
     }
 

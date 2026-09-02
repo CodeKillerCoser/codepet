@@ -1,4 +1,5 @@
 use codepet_gateway_sdk::{
+    ConversationAcquireInteractionRequest as GatewayConversationAcquireInteractionRequest,
     ConversationGetRequest as GatewayConversationGetRequest,
     ConversationListRequest as GatewayConversationListRequest,
     ConversationSearchRequest as GatewayConversationSearchRequest, DeviceDescriptor,
@@ -349,6 +350,21 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
         panic!("expected one lifecycle status event");
     };
     assert_eq!(params.payload.provider.status, codepet_gateway_sdk::ProviderStatus::Ready);
+
+    let interaction = gateway
+        .conversation_acquire_interaction(GatewayConversationAcquireInteractionRequest {
+            conversation: resource(
+                "device-a",
+                "dev.codepet.gateway",
+                "instance-a1",
+                "event-first",
+            ),
+        })
+        .await
+        .unwrap();
+    assert_eq!(interaction.selection.access_mode_id.as_deref(), Some("workspace-write"));
+    assert_eq!(interaction.selection.reasoning_effort_id.as_deref(), Some("high"));
+    assert_eq!(interaction.lease_expires_at, Some(2_000));
 
     let after = gateway.current_event_cursor();
     let mut events = gateway.subscribe_events(Some(&after)).unwrap();

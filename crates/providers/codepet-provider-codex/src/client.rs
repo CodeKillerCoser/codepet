@@ -193,11 +193,11 @@ enum ThreadLoadState {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct ThreadConfiguration {
-    workspace_root: Option<String>,
-    permission_level: Option<CodexPermissionLevel>,
-    model: Option<String>,
-    reasoning_effort: Option<String>,
+pub(crate) struct ThreadConfiguration {
+    pub(crate) workspace_root: Option<String>,
+    pub(crate) permission_level: Option<CodexPermissionLevel>,
+    pub(crate) model: Option<String>,
+    pub(crate) reasoning_effort: Option<String>,
 }
 
 impl ThreadConfiguration {
@@ -350,6 +350,13 @@ impl SessionInner {
         }
     }
 
+    fn thread_configuration(&self, thread_id: &str) -> Option<ThreadConfiguration> {
+        self.thread_configurations
+            .lock()
+            .ok()
+            .and_then(|configurations| configurations.get(thread_id).cloned())
+    }
+
     fn update_turn_configuration(&self, request: &CodexTurnStartRequest) {
         if let Ok(mut configurations) = self.thread_configurations.lock() {
             if let Some(configuration) = configurations.get_mut(&request.thread_id) {
@@ -500,6 +507,10 @@ impl CodexAppServerSession {
 
     pub fn generation(&self) -> &str {
         &self.inner.generation
+    }
+
+    pub(crate) fn thread_configuration(&self, thread_id: &str) -> Option<ThreadConfiguration> {
+        self.inner.thread_configuration(thread_id)
     }
 
     pub fn harness_version(&self) -> Option<String> {

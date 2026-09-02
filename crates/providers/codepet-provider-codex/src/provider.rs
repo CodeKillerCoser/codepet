@@ -8,6 +8,7 @@ use crate::protocol::{
 };
 use codepet_provider_sdk::{
     ApprovalRequestedEvent, ApprovalResolveRequest, ApprovalResolveResponse,
+    ConversationAcquireInteractionRequest, ConversationAcquireInteractionResponse,
     ConversationCreateRequest,
     ConversationCreateResponse, ConversationGetRequest, ConversationGetResponse,
     ConversationListRequest, ConversationListResponse, ConversationSearchRequest,
@@ -30,14 +31,16 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static NEXT_EXECUTION_ATTEMPT: AtomicU64 = AtomicU64::new(1);
 static NEXT_INSTANCE_SESSION: AtomicU64 = AtomicU64::new(1);
 const MAX_THREAD_TURN_PAGES: usize = 10_000;
+const INTERACTION_LEASE_DURATION: Duration = Duration::from_secs(30);
+const INTERACTION_REAPER_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -167,6 +170,7 @@ struct ExecutionSession {
     session: CodexAppServerSession,
     generation: String,
     active_turn_id: Option<String>,
+    interaction_expires_at: Option<Instant>,
 }
 
 enum ExecutionSlotState {
@@ -358,6 +362,69 @@ impl ExecutionSlot {
             &*lock(&self.state),
             ExecutionSlotState::Ready(execution)
                 if execution.generation == generation && execution.active_turn_id.is_some()
+        )
+    }
+
+    fn renew_interaction(&self, generation: &str, expires_at: Instant) -> bool {
+        let mut state = lock(&self.state);
+        let ExecutionSlotState::Ready(execution) = &mut *state else {
+            return false;
+        };
+        if execution.generation != generation {
+            return false;
+        }
+        execution.interaction_expires_at = Some(expires_at);
+        true
+    }
+
+    fn finish_active_turn_and_should_close(
+        &self,
+        generation: &str,
+        completed_turn_id: Option<&str>,
+        now: Instant,
+    ) -> Option<bool> {
+        let mut state = lock(&self.state);
+        let ExecutionSlotState::Ready(execution) = &mut *state else {
+            return None;
+        };
+        if execution.generation != generation {
+            return None;
+        }
+        if completed_turn_id.is_some_and(|completed_turn_id| {
+            execution
+                .active_turn_id
+                .as_deref()
+                .is_some_and(|active_turn_id| active_turn_id != completed_turn_id)
+        }) {
+            return Some(false);
+        }
+        execution.active_turn_id = None;
+        Some(
+            execution
+                .interaction_expires_at
+                .is_none_or(|expires_at| expires_at <= now),
+        )
+    }
+
+    fn interaction_expired_while_idle(&self, generation: &str, now: Instant) -> bool {
+        matches!(
+            &*lock(&self.state),
+            ExecutionSlotState::Ready(execution)
+                if execution.generation == generation
+                    && execution.active_turn_id.is_none()
+                    && execution.interaction_expires_at.is_some_and(|expires_at| expires_at <= now)
+        )
+    }
+
+    fn idle_without_valid_interaction(&self, generation: &str, now: Instant) -> bool {
+        matches!(
+            &*lock(&self.state),
+            ExecutionSlotState::Ready(execution)
+                if execution.generation == generation
+                    && execution.active_turn_id.is_none()
+                    && execution
+                        .interaction_expires_at
+                        .is_none_or(|expires_at| expires_at <= now)
         )
     }
 }
@@ -827,6 +894,7 @@ impl CodexInstanceRuntime {
                         session: session.clone(),
                         generation: generation.clone(),
                         active_turn_id: None,
+                        interaction_expires_at: None,
                     })
             };
             if !installed {
@@ -1005,7 +1073,29 @@ impl CodexInstanceRuntime {
     }
 
     fn release_idle_execution(&self, conversation_id: &str, handle: &ExecutionHandle) {
-        if !handle.slot.has_active_turn(&handle.generation) {
+        if handle.slot.idle_without_valid_interaction(
+            &handle.generation,
+            Instant::now(),
+        ) {
+            self.release_execution(conversation_id, &handle.generation);
+        }
+    }
+
+    fn finish_turn_execution(
+        &self,
+        conversation_id: &str,
+        handle: &ExecutionHandle,
+        completed_turn_id: Option<&str>,
+    ) {
+        if handle
+            .slot
+            .finish_active_turn_and_should_close(
+                &handle.generation,
+                completed_turn_id,
+                Instant::now(),
+            )
+            .unwrap_or(false)
+        {
             self.release_execution(conversation_id, &handle.generation);
         }
     }
@@ -1054,7 +1144,35 @@ impl CodexInstanceRuntime {
     ) {
         let runtime = Arc::downgrade(self);
         thread::spawn(move || {
-            while let Ok(message) = incoming.recv() {
+            loop {
+                let message = match incoming.recv_timeout(INTERACTION_REAPER_INTERVAL) {
+                    Ok(message) => message,
+                    Err(RecvTimeoutError::Timeout) => {
+                        let Some(runtime) = runtime.upgrade() else {
+                            return;
+                        };
+                        let Some(slot) =
+                            runtime.execution_slot(&conversation_id, &session_generation)
+                        else {
+                            return;
+                        };
+                        let _operation = lock(&slot.operation);
+                        if slot.interaction_expired_while_idle(
+                            &session_generation,
+                            Instant::now(),
+                        ) {
+                            runtime.release_execution(&conversation_id, &session_generation);
+                            return;
+                        }
+                        continue;
+                    }
+                    Err(RecvTimeoutError::Disconnected) => {
+                        if let Some(runtime) = runtime.upgrade() {
+                            runtime.release_execution(&conversation_id, &session_generation);
+                        }
+                        return;
+                    }
+                };
                 let Some(runtime) = runtime.upgrade() else {
                     return;
                 };
@@ -1065,7 +1183,7 @@ impl CodexInstanceRuntime {
                 let _operation = lock(&slot.operation);
                 match message {
                     Ok(incoming) => {
-                        let terminal_turn = match &incoming {
+                        let terminal_turn_id = match &incoming {
                             CodexIncoming::Notification(CodexNotification::TurnCompleted {
                                 thread_id,
                                 turn,
@@ -1080,7 +1198,7 @@ impl CodexInstanceRuntime {
                                     );
                                     return;
                                 }
-                                true
+                                Some(turn.id.clone())
                             }
                             CodexIncoming::Notification(CodexNotification::TurnCompleted {
                                 ..
@@ -1094,45 +1212,77 @@ impl CodexInstanceRuntime {
                                 );
                                 return;
                             }
-                            _ => false,
+                            _ => None,
                         };
-                        if terminal_turn {
-                            let Some((closing_slot, expired)) = runtime.begin_execution_close(
-                                &conversation_id,
+                        if let Some(terminal_turn_id) = terminal_turn_id {
+                            let Some(should_close) = slot.finish_active_turn_and_should_close(
                                 &session_generation,
+                                Some(&terminal_turn_id),
+                                Instant::now(),
                             ) else {
                                 return;
                             };
-                            match runtime.map_execution_incoming(
+                            let closing = if should_close {
+                                runtime.begin_execution_close(
+                                    &conversation_id,
+                                    &session_generation,
+                                )
+                            } else {
+                                None
+                            };
+                            let forwarded = match runtime.map_execution_incoming(
                                 &conversation_id,
                                 &session_generation,
                                 incoming,
                             ) {
                                 Ok(events) => {
+                                    let mut published = true;
                                     for event in events {
                                         if let Err(error) = runtime.events.publish(event) {
                                             eprintln!(
                                                 "Codex execution event forwarding failed: {}",
                                                 error.message
                                             );
+                                            published = false;
                                             break;
                                         }
                                     }
+                                    published
                                 }
                                 Err(error) => {
                                     eprintln!(
                                         "Codex execution event mapping failed: {}",
                                         error.message
                                     );
+                                    false
                                 }
+                            };
+                            if !forwarded {
+                                if let Some((closing_slot, expired)) = closing {
+                                    runtime.finish_execution_close(
+                                        &conversation_id,
+                                        &session_generation,
+                                        closing_slot,
+                                        expired,
+                                    );
+                                } else {
+                                    runtime.release_execution(
+                                        &conversation_id,
+                                        &session_generation,
+                                    );
+                                }
+                                return;
                             }
-                            runtime.finish_execution_close(
-                                &conversation_id,
-                                &session_generation,
-                                closing_slot,
-                                expired,
-                            );
-                            return;
+                            if let Some((closing_slot, expired)) = closing {
+                                runtime.finish_execution_close(
+                                    &conversation_id,
+                                    &session_generation,
+                                    closing_slot,
+                                    expired,
+                                );
+                                return;
+                            }
+                            continue;
                         }
                         let events = runtime.map_execution_incoming(
                             &conversation_id,
@@ -1980,6 +2130,67 @@ impl Provider for CodexProvider {
         })
     }
 
+    fn conversation_acquire_interaction<'a>(
+        &'a self,
+        request: ConversationAcquireInteractionRequest,
+    ) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
+        Box::pin(async move {
+            let runtime = self.resource_instance(&request.conversation)?;
+            let conversation_id = request.conversation.native_resource_id;
+            tokio::task::spawn_blocking(move || {
+                runtime.with_current_execution(
+                    &conversation_id,
+                    "conversation.acquireInteraction",
+                    |handle| {
+                        let configuration = handle
+                            .session
+                            .thread_configuration(&conversation_id)
+                            .ok_or_else(|| {
+                                protocol_error(
+                                    "provider_protocol_error",
+                                    format!(
+                                        "Codex thread/resume did not return configuration for conversation {conversation_id}"
+                                    ),
+                                    false,
+                                )
+                            })?;
+                        if !handle.slot.renew_interaction(
+                            &handle.generation,
+                            Instant::now() + INTERACTION_LEASE_DURATION,
+                        ) {
+                            return Ok(ExecutionStep::Retry);
+                        }
+                        Ok(ExecutionStep::Complete(
+                            ConversationAcquireInteractionResponse {
+                                selection: TurnSelection {
+                                    access_mode_id: configuration
+                                        .permission_level
+                                        .map(permission_level_id)
+                                        .map(str::to_string),
+                                    reasoning_effort_id: configuration.reasoning_effort.clone(),
+                                    model: configuration.model.clone().map(|model_id| {
+                                        ModelSelection::FlatModelSelection(FlatModelSelection {
+                                            kind: FlatModelCatalogKind::Flat,
+                                            model_id,
+                                        })
+                                    }),
+                                },
+                                lease_expires_at: Some(now_ms().saturating_add(
+                                    INTERACTION_LEASE_DURATION
+                                        .as_millis()
+                                        .min(u128::from(u64::MAX))
+                                        as u64,
+                                )),
+                            },
+                        ))
+                    },
+                )
+            })
+            .await
+            .map_err(provider_task_error)?
+        })
+    }
+
     fn conversation_create<'a>(
         &'a self,
         request: ConversationCreateRequest,
@@ -2153,11 +2364,14 @@ impl Provider for CodexProvider {
                             ));
                         }
                         if handle.slot.has_active_turn(&handle.generation) {
-                            execution_runtime.release_execution(
+                            execution_runtime.finish_turn_execution(
                                 &execution_conversation_id,
-                                &handle.generation,
+                                handle,
+                                None,
                             );
-                            return Ok(ExecutionStep::Retry);
+                            if !handle.slot.matches_generation(&handle.generation) {
+                                return Ok(ExecutionStep::Retry);
+                            }
                         }
                         let effective_selection = match resolve_turn_selection(
                             &capabilities,
@@ -2224,9 +2438,10 @@ impl Provider for CodexProvider {
                                 if turn.status == CodexTurnStatus::InProgress {
                                     handle.slot.mark_active_turn(&handle.generation, &turn.id);
                                 } else {
-                                    execution_runtime.release_execution(
+                                    execution_runtime.finish_turn_execution(
                                         &execution_conversation_id,
-                                        &handle.generation,
+                                        handle,
+                                        Some(&turn.id),
                                     );
                                 }
                                 Ok(ExecutionStep::Complete((turn, effective_selection)))
@@ -2293,9 +2508,10 @@ impl Provider for CodexProvider {
                                 if turn.status == CodexTurnStatus::InProgress {
                                     handle.slot.mark_active_turn(&handle.generation, &turn.id);
                                 } else {
-                                    execution_runtime.release_execution(
+                                    execution_runtime.finish_turn_execution(
                                         &execution_conversation_id,
-                                        &handle.generation,
+                                        handle,
+                                        Some(&turn.id),
                                     );
                                 }
                                 Ok(ExecutionStep::Complete(turn))
@@ -2353,9 +2569,10 @@ impl Provider for CodexProvider {
                                 if turn.status == CodexTurnStatus::InProgress {
                                     handle.slot.mark_active_turn(&handle.generation, &turn.id);
                                 } else {
-                                    execution_runtime.release_execution(
+                                    execution_runtime.finish_turn_execution(
                                         &execution_conversation_id,
-                                        &handle.generation,
+                                        handle,
+                                        Some(&turn.id),
                                     );
                                 }
                                 Ok(ExecutionStep::Complete(turn))

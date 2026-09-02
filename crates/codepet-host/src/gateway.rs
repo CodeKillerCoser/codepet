@@ -865,6 +865,27 @@ impl ProtocolServer for ProviderGatewayService {
         })
     }
 
+    fn conversation_acquire_interaction<'a>(
+        &'a self,
+        request: gateway::ConversationAcquireInteractionRequest,
+    ) -> gateway::ProtocolFuture<'a, gateway::ConversationAcquireInteractionResponse> {
+        Box::pin(async move {
+            let response = self
+                .manager
+                .conversation_acquire_interaction(
+                    provider::ConversationAcquireInteractionRequest {
+                        conversation: request.conversation,
+                    },
+                )
+                .await
+                .map_err(gateway_error)?;
+            Ok(gateway::ConversationAcquireInteractionResponse {
+                selection: map_turn_selection_to_gateway(response.selection),
+                lease_expires_at: response.lease_expires_at,
+            })
+        })
+    }
+
     fn conversation_create<'a>(
         &'a self,
         request: gateway::ConversationCreateRequest,

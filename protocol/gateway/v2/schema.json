@@ -86,6 +86,23 @@
       "required": ["resource", "title", "status"],
       "additionalProperties": false
     },
+    "ConversationAcquireInteractionRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" }
+      },
+      "required": ["conversation"],
+      "additionalProperties": false
+    },
+    "ConversationAcquireInteractionResponse": {
+      "type": "object",
+      "properties": {
+        "selection": { "$ref": "#/$defs/TurnSelection" },
+        "leaseExpiresAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" }
+      },
+      "required": ["selection"],
+      "additionalProperties": false
+    },
     "ConversationCreateRequest": {
       "type": "object",
       "properties": {

@@ -11,6 +11,7 @@ use crate::protocol::{
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalResolveRequest, ApprovalResolveResponse,
+    ConversationAcquireInteractionRequest, ConversationAcquireInteractionResponse,
     ConversationContentKind, ConversationCreateRequest, ConversationCreateResponse,
     ConversationGetRequest, ConversationGetResponse, ConversationListRequest,
     ConversationListResponse, ConversationUpsertedEvent,
@@ -1237,6 +1238,23 @@ impl Provider for OpenCodeProvider {
             Ok(ConversationGetResponse {
                 conversation,
                 items,
+            })
+        })
+    }
+
+    fn conversation_acquire_interaction<'a>(
+        &'a self,
+        request: ConversationAcquireInteractionRequest,
+    ) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
+        Box::pin(async move {
+            self.resource_instance(&request.conversation)?;
+            Ok(ConversationAcquireInteractionResponse {
+                selection: TurnSelection {
+                    access_mode_id: None,
+                    reasoning_effort_id: None,
+                    model: None,
+                },
+                lease_expires_at: None,
             })
         })
     }

@@ -564,6 +564,77 @@ final class Conversation {
   String toString() => 'Conversation(resource: $resource, title: $title, preview: $preview, status: $status, permissionLevel: $permissionLevel, model: $model, reasoningEffort: $reasoningEffort, selection: $selection, workspaceRoot: $workspaceRoot, createdAt: $createdAt, updatedAt: $updatedAt, activeTurn: $activeTurn)';
 }
 
+final class ConversationAcquireInteractionRequest {
+  factory ConversationAcquireInteractionRequest({
+    required RoutedResourceId conversation,
+  }) {
+    final validatedConversation = conversation;
+    return ConversationAcquireInteractionRequest._(
+      conversation: validatedConversation,
+    );
+  }
+
+  ConversationAcquireInteractionRequest._({
+    required this.conversation,
+  });
+
+  final RoutedResourceId conversation;
+
+  factory ConversationAcquireInteractionRequest.fromJson(Object? value, {String path = 'ConversationAcquireInteractionRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'conversation'}, path);
+    return ConversationAcquireInteractionRequest(
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'conversation': conversation.toJson(),
+  };
+
+  @override
+  String toString() => 'ConversationAcquireInteractionRequest(conversation: $conversation)';
+}
+
+final class ConversationAcquireInteractionResponse {
+  factory ConversationAcquireInteractionResponse({
+    required TurnSelection selection,
+    TimestampMs? leaseExpiresAt,
+  }) {
+    final validatedSelection = selection;
+    final validatedLeaseExpiresAt = leaseExpiresAt == null ? null : _integer(leaseExpiresAt, 'ConversationAcquireInteractionResponse.leaseExpiresAt', minimum: 0, maximum: 9007199254740991);
+    return ConversationAcquireInteractionResponse._(
+      selection: validatedSelection,
+      leaseExpiresAt: validatedLeaseExpiresAt,
+    );
+  }
+
+  ConversationAcquireInteractionResponse._({
+    required this.selection,
+    required this.leaseExpiresAt,
+  });
+
+  final TurnSelection selection;
+  final TimestampMs? leaseExpiresAt;
+
+  factory ConversationAcquireInteractionResponse.fromJson(Object? value, {String path = 'ConversationAcquireInteractionResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'selection', 'leaseExpiresAt'}, path);
+    return ConversationAcquireInteractionResponse(
+      selection: TurnSelection.fromJson(_required(json, 'selection', path), path: '$path.selection'),
+      leaseExpiresAt: json.containsKey('leaseExpiresAt') && json['leaseExpiresAt'] != null ? _integer(json['leaseExpiresAt'], '$path.leaseExpiresAt', minimum: 0, maximum: 9007199254740991) : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'selection': selection.toJson(),
+    if (leaseExpiresAt != null) 'leaseExpiresAt': leaseExpiresAt!,
+  };
+
+  @override
+  String toString() => 'ConversationAcquireInteractionResponse(selection: $selection, leaseExpiresAt: $leaseExpiresAt)';
+}
+
 final class ConversationContent {
   factory ConversationContent({
     required NativeResourceId contentId,
@@ -2844,6 +2915,7 @@ enum ProtocolMethod {
   conversationList('conversation.list', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationList, requestType: ConversationListRequest, responseType: ConversationListResponse),
   conversationSearch('conversation.search', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationSearch, requestType: ConversationSearchRequest, responseType: ConversationSearchResponse),
   conversationGet('conversation.get', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationGet, requestType: ConversationGetRequest, responseType: ConversationGetResponse),
+  conversationAcquireInteraction('conversation.acquireInteraction', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: null, requestType: ConversationAcquireInteractionRequest, responseType: ConversationAcquireInteractionResponse),
   conversationCreate('conversation.create', direction: 'clientToGateway', idempotency: ProtocolIdempotency.nonIdempotent, capability: GatewayCapability.conversationCreate, requestType: ConversationCreateRequest, responseType: ConversationCreateResponse),
   turnSend('turn.send', direction: 'clientToGateway', idempotency: ProtocolIdempotency.nonIdempotent, capability: GatewayCapability.turnSend, requestType: TurnSendRequest, responseType: TurnSendResponse),
   turnInterrupt('turn.interrupt', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.turnInterrupt, requestType: TurnInterruptRequest, responseType: TurnInterruptResponse),
@@ -2913,6 +2985,8 @@ Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
       return ConversationSearchRequest.fromJson(value, path: path);
     case ProtocolMethod.conversationGet:
       return ConversationGetRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationAcquireInteraction:
+      return ConversationAcquireInteractionRequest.fromJson(value, path: path);
     case ProtocolMethod.conversationCreate:
       return ConversationCreateRequest.fromJson(value, path: path);
     case ProtocolMethod.turnSend:
@@ -2947,6 +3021,9 @@ Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, S
     case ProtocolMethod.conversationGet:
       if (value is! ConversationGetRequest) throw ProtocolCodecException(path, 'expected ConversationGetRequest');
       return value.toJson();
+    case ProtocolMethod.conversationAcquireInteraction:
+      if (value is! ConversationAcquireInteractionRequest) throw ProtocolCodecException(path, 'expected ConversationAcquireInteractionRequest');
+      return value.toJson();
     case ProtocolMethod.conversationCreate:
       if (value is! ConversationCreateRequest) throw ProtocolCodecException(path, 'expected ConversationCreateRequest');
       return value.toJson();
@@ -2978,6 +3055,8 @@ Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) 
       return ConversationSearchResponse.fromJson(value, path: path);
     case ProtocolMethod.conversationGet:
       return ConversationGetResponse.fromJson(value, path: path);
+    case ProtocolMethod.conversationAcquireInteraction:
+      return ConversationAcquireInteractionResponse.fromJson(value, path: path);
     case ProtocolMethod.conversationCreate:
       return ConversationCreateResponse.fromJson(value, path: path);
     case ProtocolMethod.turnSend:
@@ -3011,6 +3090,9 @@ Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, 
       return value.toJson();
     case ProtocolMethod.conversationGet:
       if (value is! ConversationGetResponse) throw ProtocolCodecException(path, 'expected ConversationGetResponse');
+      return value.toJson();
+    case ProtocolMethod.conversationAcquireInteraction:
+      if (value is! ConversationAcquireInteractionResponse) throw ProtocolCodecException(path, 'expected ConversationAcquireInteractionResponse');
       return value.toJson();
     case ProtocolMethod.conversationCreate:
       if (value is! ConversationCreateResponse) throw ProtocolCodecException(path, 'expected ConversationCreateResponse');
@@ -3213,6 +3295,8 @@ final class ProtocolClient {
   Future<ConversationSearchResponse> conversationSearch(ConversationSearchRequest request) => _request<ConversationSearchResponse>(ProtocolMethod.conversationSearch, request);
 
   Future<ConversationGetResponse> conversationGet(ConversationGetRequest request) => _request<ConversationGetResponse>(ProtocolMethod.conversationGet, request);
+
+  Future<ConversationAcquireInteractionResponse> conversationAcquireInteraction(ConversationAcquireInteractionRequest request) => _request<ConversationAcquireInteractionResponse>(ProtocolMethod.conversationAcquireInteraction, request);
 
   Future<ConversationCreateResponse> conversationCreate(ConversationCreateRequest request) => _request<ConversationCreateResponse>(ProtocolMethod.conversationCreate, request);
 

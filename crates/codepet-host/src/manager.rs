@@ -5,6 +5,7 @@ use crate::{
 };
 use codepet_provider_sdk::{
     ApprovalResolveRequest, ApprovalResolveResponse, ClientId, ConversationCreateRequest,
+    ConversationAcquireInteractionRequest, ConversationAcquireInteractionResponse,
     ConversationCreateResponse, ConversationGetRequest, ConversationGetResponse,
     ConversationItemKind, ConversationListRequest, ConversationListResponse,
     ConversationSearchRequest, ConversationSearchResponse, InstanceCapabilitiesRequest,
@@ -1057,6 +1058,20 @@ impl PluginManager {
         validate_exact_resource(&response.conversation.resource, &expected, "conversation.get")?;
         validate_conversation_items(&response.items, &expected, &route)?;
         Ok(response)
+    }
+
+    pub async fn conversation_acquire_interaction(
+        &self,
+        request: ConversationAcquireInteractionRequest,
+    ) -> HostResult<ConversationAcquireInteractionResponse> {
+        validate_resource_identity(&request.conversation)?;
+        let route = route_from_resource(&request.conversation);
+        let (_, process, _) = self.routing_context(&route).await?;
+        process
+            .client()
+            .conversation_acquire_interaction(request)
+            .await
+            .map_err(HostError::from)
     }
 
     pub async fn conversation_create(

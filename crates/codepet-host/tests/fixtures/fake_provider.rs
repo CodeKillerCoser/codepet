@@ -1,6 +1,7 @@
 use codepet_provider_sdk::{
     dispatch, ApprovalDecision, ApprovalResolveRequest, ApprovalResolveResponse, ApprovalStatus,
-    ChoiceOption, ChoiceSet, ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
+    ChoiceOption, ChoiceSet, ConversationAcquireInteractionRequest,
+    ConversationAcquireInteractionResponse, ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
     ConversationGetResponse, ConversationListRequest, ConversationListResponse,
     ConversationSearchRequest, ConversationSearchResponse, ConversationContent,
     ConversationContentKind, ConversationItem, ConversationItemKind,
@@ -17,7 +18,8 @@ use codepet_provider_sdk::{
     ProviderInstance, ProviderInstanceRoute, ProviderPluginDescriptor, ProviderShutdownRequest,
     ProviderShutdownResponse, ProviderTurn, ProviderWireMessage, RoutedResourceId,
     TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent, TurnSendCapabilities,
-    TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest, TurnSteerResponse, VersionRange,
+    TurnSelection, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
+    TurnSteerResponse, VersionRange,
 };
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -264,6 +266,26 @@ impl ProtocolServer for FakeProvider {
             Ok(ConversationGetResponse {
                 conversation: configured,
                 items: history_items(&response_route, native_id),
+            })
+        })
+    }
+
+    fn conversation_acquire_interaction<'a>(
+        &'a self,
+        request: ConversationAcquireInteractionRequest,
+    ) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
+        Box::pin(async move {
+            self.instance(&route_from_resource(&request.conversation))?;
+            Ok(ConversationAcquireInteractionResponse {
+                selection: TurnSelection {
+                    access_mode_id: Some("workspace-write".to_string()),
+                    reasoning_effort_id: Some("high".to_string()),
+                    model: Some(ModelSelection::FlatModelSelection(FlatModelSelection {
+                        kind: FlatModelCatalogKind::Flat,
+                        model_id: "model-a".to_string(),
+                    })),
+                },
+                lease_expires_at: Some(2_000),
             })
         })
     }
