@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "pluginId": "dev.codepet.codex",
   "displayName": "Codex",
-  "icon": "https://developers.openai.com/favicon.png",
+  "icon": "https://raw.githubusercontent.com/openai/codex/main/codex-rs/skills/src/assets/samples/openai-docs/assets/openai.png",
   "executable": "codepet-provider-codex",
   "args": [],
   "env": {},

@@ -10,7 +10,8 @@ export const PROVIDERS = Object.freeze([
     name: "codex",
     packageName: "codepet-provider-codex",
     pluginId: "dev.codepet.codex",
-    icon: "https://developers.openai.com/favicon.png",
+    icon:
+      "https://raw.githubusercontent.com/openai/codex/main/codex-rs/skills/src/assets/samples/openai-docs/assets/openai.png",
   },
   {
     name: "opencode",
