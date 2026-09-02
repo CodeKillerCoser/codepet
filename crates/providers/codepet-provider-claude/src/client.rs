@@ -53,6 +53,7 @@ pub struct ClaudeTurnLaunch {
     pub user_message_id: String,
     pub message: String,
     pub title: Option<String>,
+    pub permission_mode: String,
     pub model: Option<String>,
     pub effort: Option<String>,
 }
@@ -206,6 +207,9 @@ impl ClaudeTurnLaunch {
         if let Some(effort) = self.effort.as_ref() {
             command.arg("--effort").arg(effort);
         }
+        command
+            .arg("--permission-mode")
+            .arg(&self.permission_mode);
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;

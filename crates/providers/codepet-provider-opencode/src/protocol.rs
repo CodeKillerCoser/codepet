@@ -104,6 +104,47 @@ pub struct OpenCodeSessionPage {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeMessagePage {
+    pub data: Vec<OpenCodeMessage>,
+    pub cursor: OpenCodeCursors,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeMessage {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub time: OpenCodeMessageTime,
+    pub text: Option<String>,
+    pub content: Option<Vec<OpenCodeMessageContent>>,
+    pub command: Option<String>,
+    pub output: Option<String>,
+    pub summary: Option<String>,
+    pub recent: Option<String>,
+    pub finish: Option<String>,
+    pub error: Option<Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeMessageTime {
+    pub created: u64,
+    pub completed: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct OpenCodeMessageContent {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub text: Option<String>,
+    pub name: Option<String>,
+    pub state: Option<Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct OpenCodeCursors {
     pub previous: Option<String>,
     pub next: Option<String>,
@@ -126,6 +167,53 @@ pub struct OpenCodeSessionCreate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<OpenCodeModelRef>,
     pub location: OpenCodeLocationRef,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct OpenCodeCatalogResponse<T> {
+    pub data: Vec<T>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct OpenCodeAgent {
+    pub id: String,
+    pub description: Option<String>,
+    pub mode: String,
+    pub hidden: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeModel {
+    pub id: String,
+    #[serde(rename = "providerID")]
+    pub provider_id: String,
+    pub name: String,
+    pub status: String,
+    pub enabled: bool,
+    pub variants: Vec<OpenCodeModelVariant>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct OpenCodeModelVariant {
+    pub id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct OpenCodeProvider {
+    pub id: String,
+    pub name: String,
+    pub disabled: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct OpenCodeAgentSwitch {
+    pub agent: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct OpenCodeModelSwitch {
+    pub model: OpenCodeModelRef,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 
+pub const CORE_SCHEMA_VERSION: u64 = 1;
+
 pub type ClientId = String;
 
 pub type Cursor = String;

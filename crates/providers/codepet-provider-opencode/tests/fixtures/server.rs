@@ -130,6 +130,27 @@ fn route(
     if method == "GET" && path == "/api/health" {
         return (200, json!({"healthy": true}).to_string());
     }
+    if method == "GET" && path == "/api/agent" {
+        return (200, json!({"data": [
+            {"id": "build", "description": "Build mode", "mode": "primary", "hidden": false},
+            {"id": "plan", "description": "Plan mode", "mode": "primary", "hidden": false}
+        ]}).to_string());
+    }
+    if method == "GET" && path == "/api/model" {
+        return (200, json!({"data": [{
+            "id": "fixture-model",
+            "providerID": "fixture",
+            "name": "Fixture Model",
+            "status": "active",
+            "enabled": true,
+            "variants": [{"id": "high"}]
+        }]}).to_string());
+    }
+    if method == "GET" && path == "/api/provider" {
+        return (200, json!({"data": [{
+            "id": "fixture", "name": "Fixture Provider", "disabled": false
+        }]}).to_string());
+    }
     if method == "GET" && path == "/api/session" {
         let sessions = lock(state).sessions.values().cloned().collect::<Vec<_>>();
         return (
@@ -153,6 +174,68 @@ fn route(
             .sessions
             .insert("ses_created".to_string(), created.clone());
         return (200, json!({"data": created}).to_string());
+    }
+    if method == "GET" && path.ends_with("/message") {
+        let session_id = path
+            .trim_start_matches("/api/session/")
+            .trim_end_matches("/message")
+            .trim_end_matches('/');
+        if !lock(state).sessions.contains_key(session_id) {
+            return (404, json!({"error": "not found"}).to_string());
+        }
+        return (
+            200,
+            json!({
+                "data": [
+                    {
+                        "id": "msg_fixture_user",
+                        "time": {"created": 1_700_000_000_100u64},
+                        "text": "fixture question",
+                        "type": "user"
+                    },
+                    {
+                        "id": "msg_fixture_assistant",
+                        "time": {
+                            "created": 1_700_000_000_200u64,
+                            "completed": 1_700_000_000_300u64
+                        },
+                        "type": "assistant",
+                        "agent": "build",
+                        "model": {
+                            "id": "fixture-model",
+                            "providerID": "fixture",
+                            "variant": "default"
+                        },
+                        "content": [
+                            {"type": "reasoning", "id": "reasoning_fixture", "text": "fixture reasoning"},
+                            {"type": "text", "id": "text_fixture", "text": "fixture answer"},
+                            {
+                                "type": "tool",
+                                "id": "tool_fixture",
+                                "name": "read",
+                                "state": {
+                                    "status": "completed",
+                                    "input": {"path": "README.md"},
+                                    "content": [],
+                                    "structured": {}
+                                },
+                                "time": {"created": 1_700_000_000_210u64}
+                            }
+                        ],
+                        "finish": "stop",
+                        "cost": 0,
+                        "tokens": {
+                            "input": 1,
+                            "output": 1,
+                            "reasoning": 1,
+                            "cache": {"read": 0, "write": 0}
+                        }
+                    }
+                ],
+                "cursor": {"previous": null, "next": null}
+            })
+            .to_string(),
+        );
     }
     if let Some(session_id) = path.strip_prefix("/api/session/") {
         if !session_id.contains('/') && method == "GET" {
@@ -218,6 +301,30 @@ fn route(
             })
             .to_string(),
         );
+    }
+    if method == "POST" && path.ends_with("/agent") {
+        let session_id = path
+            .trim_start_matches("/api/session/")
+            .trim_end_matches("/agent")
+            .trim_end_matches('/');
+        let request: Value = serde_json::from_slice(body).unwrap();
+        if let Some(session) = lock(state).sessions.get_mut(session_id) {
+            session["agent"] = request["agent"].clone();
+            return (204, String::new());
+        }
+        return (404, json!({"error": "not found"}).to_string());
+    }
+    if method == "POST" && path.ends_with("/model") {
+        let session_id = path
+            .trim_start_matches("/api/session/")
+            .trim_end_matches("/model")
+            .trim_end_matches('/');
+        let request: Value = serde_json::from_slice(body).unwrap();
+        if let Some(session) = lock(state).sessions.get_mut(session_id) {
+            session["model"] = request["model"].clone();
+            return (204, String::new());
+        }
+        return (404, json!({"error": "not found"}).to_string());
     }
     if method == "POST" && path.ends_with("/interrupt") {
         let session_id = path
@@ -444,6 +551,8 @@ fn session(id: &str, title: &str, directory: &str, timestamp: u64) -> Value {
         },
         "time": {"created": timestamp, "updated": timestamp},
         "title": title,
+        "agent": "build",
+        "model": {"id": "fixture-model", "providerID": "fixture", "variant": "default"},
         "location": {"directory": directory}
     })
 }

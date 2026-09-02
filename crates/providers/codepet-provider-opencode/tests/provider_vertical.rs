@@ -3,9 +3,10 @@ use codepet_provider_opencode::{
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalResolveRequest, ConversationContentKind, ConversationCreateRequest,
-    ConversationGetRequest, ConversationListRequest, InstanceCreateRequest,
+    ConversationGetRequest, ConversationItemKind, ConversationItemRole, ConversationItemStatus,
+    ConversationListRequest, GroupedModelCatalogKind, GroupedModelSelection, InstanceCreateRequest,
     InstanceStartRequest, InstanceStatus, InstanceStopRequest, ProtocolEvent,
-    ProtocolServer, ProviderInitializeRequest, ProviderInstanceRoute, RoutedResourceId,
+    ModelSelection, ProtocolServer, ProviderInitializeRequest, ProviderInstanceRoute, RoutedResourceId,
     TurnInput, TurnInputKind, TurnInterruptRequest, TurnSelection, TurnStartRequest, TurnStatus,
     TurnSteerRequest, VersionRange, PROTOCOL_VERSION,
 };
@@ -27,7 +28,7 @@ fn turn_start_request(
     TurnStartRequest {
         conversation,
         client_request_id: client_request_id.to_string(),
-        capability_revision: "opencode-server-1.18.25".to_string(),
+        capability_revision: "opencode-server-1.18.25-controls-v1".to_string(),
         input: TurnInput {
             kind: TurnInputKind::Text,
             text: message.to_string(),
@@ -89,9 +90,9 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     .await
     .unwrap();
     assert_eq!(created.instance.status, InstanceStatus::Created);
-    assert_eq!(created.instance.capabilities.revision, "opencode-server-1.18.25");
-    assert!(created.instance.capabilities.turn_send.is_none());
-    assert!(!created
+    assert_eq!(created.instance.capabilities.revision, "opencode-server-1.18.25-controls-v1");
+    assert!(created.instance.capabilities.turn_send.is_some());
+    assert!(created
         .instance
         .capabilities
         .methods
@@ -106,6 +107,10 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         .unwrap();
     std::env::remove_var("OPENCODE_FIXTURE_PID_FILE");
     assert_eq!(started.instance.status, InstanceStatus::Ready);
+    let controls = started.instance.capabilities.turn_send.as_ref().unwrap();
+    assert_eq!(controls.access_mode.as_ref().unwrap().options.len(), 2);
+    assert_eq!(controls.reasoning_effort.as_ref().unwrap().options.len(), 2);
+    assert!(controls.model_catalog.is_some());
     let first_server_pid = read_pid(&first_pid_file);
     std::thread::sleep(Duration::from_millis(100));
 
@@ -133,9 +138,23 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         .conversation_get(ConversationGetRequest {
             conversation: fixture_conversation.clone(),
         })
-        .await
-        .unwrap();
+    .await
+    .unwrap();
     assert_eq!(fetched.conversation.title, "Fixture session");
+    assert_eq!(fetched.items.len(), 4);
+    assert_eq!(fetched.items[0].kind, ConversationItemKind::Message);
+    assert_eq!(fetched.items[0].role, Some(ConversationItemRole::User));
+    assert_eq!(fetched.items[0].contents[0].text, "fixture question");
+    assert_eq!(fetched.items[1].kind, ConversationItemKind::Reasoning);
+    assert_eq!(
+        fetched.items[1].contents[0].kind,
+        ConversationContentKind::ReasoningSummary
+    );
+    assert_eq!(fetched.items[2].kind, ConversationItemKind::Message);
+    assert_eq!(fetched.items[2].role, Some(ConversationItemRole::Assistant));
+    assert_eq!(fetched.items[2].contents[0].text, "fixture answer");
+    assert_eq!(fetched.items[3].kind, ConversationItemKind::Tool);
+    assert_eq!(fetched.items[3].status, ConversationItemStatus::Completed);
 
     let created_workspace = std::env::temp_dir()
         .join("opencode-created")
@@ -157,15 +176,31 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         new_conversation.conversation.resource.native_resource_id,
         "ses_created"
     );
+    assert_eq!(
+        wait_for_conversation(&event_receiver, "ses_created").resource,
+        new_conversation.conversation.resource
+    );
 
+    let mut selected_turn = turn_start_request(
+        fixture_conversation.clone(),
+        "shared-client-id",
+        "complete normally",
+    );
+    selected_turn.selection = TurnSelection {
+        access_mode_id: Some("plan".to_string()),
+        reasoning_effort_id: Some("high".to_string()),
+        model: Some(ModelSelection::GroupedModelSelection(GroupedModelSelection {
+            kind: GroupedModelCatalogKind::Grouped,
+            provider_id: "fixture".to_string(),
+            model_id: "fixture-model".to_string(),
+        })),
+    };
     let successful_turn = provider
-        .turn_start(turn_start_request(
-            fixture_conversation.clone(),
-            "shared-client-id",
-            "complete normally",
-        ))
+        .turn_start(selected_turn)
         .await
         .unwrap();
+    assert_eq!(successful_turn.effective_selection.access_mode_id.as_deref(), Some("plan"));
+    assert_eq!(successful_turn.effective_selection.reasoning_effort_id.as_deref(), Some("high"));
     assert_eq!(successful_turn.turn.conversation, fixture_conversation);
     assert_eq!(successful_turn.turn.started_at, None);
     let completed = wait_for_turn_status(
@@ -655,6 +690,25 @@ fn wait_for_turn_status(
         }
     }
     panic!("Provider turn did not reach {status:?}")
+}
+
+fn wait_for_conversation(
+    receiver: &mpsc::Receiver<ProtocolEvent>,
+    native_resource_id: &str,
+) -> codepet_provider_sdk::ProviderConversation {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let event = receiver
+            .recv_timeout(remaining)
+            .expect("timed out waiting for Provider conversation event");
+        if let ProtocolEvent::EventConversationUpserted { params, .. } = event {
+            if params.conversation.resource.native_resource_id == native_resource_id {
+                return params.conversation;
+            }
+        }
+    }
+    panic!("Provider conversation event was not published")
 }
 
 fn assert_no_duplicate_turn_status(

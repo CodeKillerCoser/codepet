@@ -628,6 +628,16 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         .connect_websocket(&pairing_a.credential)
         .await
         .unwrap();
+    socket_a
+        .send(Message::Ping(vec![1_u8, 2_u8, 3_u8]))
+        .await
+        .unwrap();
+    let pong = timeout(Duration::from_secs(1), socket_a.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(pong, Message::Pong(vec![1_u8, 2_u8, 3_u8]));
     let refreshed_client_a = client_descriptor("client-a", "2.0");
     send_request(
         &mut socket_a,
@@ -667,6 +677,40 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         refreshed_client_a
     );
     let initial_cursor = handshake.event_cursor.clone();
+
+    let mut heartbeat_while_loading = client
+        .connect_websocket(&pairing_a.credential)
+        .await
+        .unwrap();
+    send_request(
+        &mut heartbeat_while_loading,
+        handshake_request("handshake-heartbeat", "client-a"),
+    )
+    .await;
+    next_response(&mut heartbeat_while_loading, "handshake-heartbeat").await;
+    send_request(
+        &mut heartbeat_while_loading,
+        gateway::ProtocolRequest::ConversationGet {
+            jsonrpc: "2.0".to_string(),
+            id: "get-that-does-not-complete".to_string(),
+            params: gateway::ConversationGetRequest {
+                conversation: conversation_resource("timeout"),
+            },
+        },
+    )
+    .await;
+    heartbeat_while_loading
+        .send(Message::Ping(vec![4_u8, 5_u8, 6_u8]))
+        .await
+        .unwrap();
+    let pong = timeout(Duration::from_secs(1), heartbeat_while_loading.next())
+        .await
+        .expect("conversation.get must not block WebSocket control frames")
+        .unwrap()
+        .unwrap();
+    assert_eq!(pong, Message::Pong(vec![4_u8, 5_u8, 6_u8]));
+    drop(heartbeat_while_loading);
+    wait_for_active_sessions(&server, 1).await;
 
     let mut malformed = client
         .connect_websocket(&pairing_a.credential)

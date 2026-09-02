@@ -37,7 +37,7 @@ fn turn_start_request(
     TurnStartRequest {
         conversation,
         client_request_id,
-        capability_revision: "claude-cli-stream-json-v1".to_string(),
+        capability_revision: "claude-cli-stream-json-controls-v1".to_string(),
         input: TurnInput {
             kind: TurnInputKind::Text,
             text,
@@ -151,13 +151,18 @@ async fn configured_provider(
     .unwrap();
     assert_eq!(described.plugin, initialized.plugin);
 
+    let mut settings = instance_settings(executable);
+    settings.insert(
+        "claudeConfigDir".to_string(),
+        json!(workspace_root.join(".claude-test").to_string_lossy()),
+    );
     let created = ProviderProtocolServer::instance_create(
         provider.as_ref(),
         InstanceCreateRequest {
             route: route.clone(),
             instance_kind: CLAUDE_INSTANCE_KIND.to_string(),
             display_name: "Claude Fixture".to_string(),
-            settings: instance_settings(executable),
+            settings,
         },
     )
     .await
@@ -207,15 +212,18 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     .unwrap()
     .capabilities;
     assert!(capabilities.methods.contains(&ProviderCapability::ConversationCreate));
+    assert!(capabilities.methods.contains(&ProviderCapability::ConversationList));
+    assert!(capabilities.methods.contains(&ProviderCapability::ConversationGet));
+    assert!(capabilities.methods.contains(&ProviderCapability::TurnStart));
     #[cfg(unix)]
     assert!(capabilities.methods.contains(&ProviderCapability::TurnInterrupt));
-    assert!(!capabilities.methods.contains(&ProviderCapability::ConversationList));
     assert!(!capabilities.methods.contains(&ProviderCapability::ConversationSearch));
-    assert!(!capabilities.methods.contains(&ProviderCapability::ConversationGet));
     assert!(!capabilities.methods.contains(&ProviderCapability::TurnSteer));
     assert!(!capabilities.methods.contains(&ProviderCapability::ApprovalResolve));
-    assert!(!capabilities.methods.contains(&ProviderCapability::TurnStart));
-    assert!(capabilities.turn_send.is_none());
+    let controls = capabilities.turn_send.as_ref().unwrap();
+    assert!(controls.access_mode.as_ref().is_some_and(|choices| choices.options.len() >= 4));
+    assert!(controls.reasoning_effort.as_ref().is_some_and(|choices| choices.options.len() == 5));
+    assert!(controls.model_catalog.is_some());
 
     let first_turn = ProviderProtocolServer::turn_start(
         provider.as_ref(),
@@ -264,7 +272,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     assert_eq!(failed.deltas[0].content_id, format!("{failed_item_id}:summary"));
     assert_eq!(failed.deltas[0].kind, ConversationContentKind::ActivitySummary);
 
-    let list_error = ProviderProtocolServer::conversation_list(
+    let listed = ProviderProtocolServer::conversation_list(
         provider.as_ref(),
         ConversationListRequest {
             route: route.clone(),
@@ -273,17 +281,20 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
         },
     )
     .await
-    .unwrap_err();
-    assert_eq!(list_error.code, "capability_unsupported");
-    let get_error = ProviderProtocolServer::conversation_get(
+    .unwrap();
+    assert!(listed
+        .conversations
+        .iter()
+        .any(|item| item.resource == conversation.resource));
+    let fetched = ProviderProtocolServer::conversation_get(
         provider.as_ref(),
         ConversationGetRequest {
             conversation: conversation.resource.clone(),
         },
     )
     .await
-    .unwrap_err();
-    assert_eq!(get_error.code, "capability_unsupported");
+    .unwrap();
+    assert_eq!(fetched.conversation.resource, conversation.resource);
     let steer_error = ProviderProtocolServer::turn_steer(
         provider.as_ref(),
         TurnSteerRequest {
@@ -772,7 +783,7 @@ fn provider_binary_uses_generated_json_line_dispatcher() {
         described.pointer("/result/plugin/pluginId").and_then(Value::as_str),
         Some(CLAUDE_PLUGIN_ID)
     );
-    let unsupported = binary_request(
+    let missing_instance = binary_request(
         &mut stdin,
         &mut stdout,
         "list",
@@ -786,10 +797,10 @@ fn provider_binary_uses_generated_json_line_dispatcher() {
         }),
     );
     assert_eq!(
-        unsupported
+        missing_instance
             .pointer("/error/data/code")
             .and_then(Value::as_str),
-        Some("capability_unsupported")
+        Some("unknown_provider_instance")
     );
     binary_request(
         &mut stdin,
@@ -1206,7 +1217,7 @@ fn active_provider_binary(workspace: &Path) -> ActiveProviderBinary {
         json!({
             "conversation": conversation,
             "clientRequestId": "active-ignore-sigint",
-            "capabilityRevision": "claude-cli-stream-json-v1",
+            "capabilityRevision": "claude-cli-stream-json-controls-v1",
             "input": { "kind": "text", "text": "ignore sigint" },
             "selection": {}
         }),

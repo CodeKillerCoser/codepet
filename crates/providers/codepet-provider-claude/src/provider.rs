@@ -4,26 +4,30 @@ use crate::client::{
 use crate::protocol::{ClaudeOutput, ClaudeStreamDelta, ClaudeStreamEvent};
 use codepet_provider_sdk::{
     ApprovalResolveRequest, ApprovalResolveResponse, ConversationContent, ConversationCreateRequest,
-    ConversationContentKind, ConversationCreateResponse, ConversationGetRequest,
+    ChoiceOption, ChoiceSet, ConversationContentKind, ConversationCreateResponse, ConversationGetRequest,
     ConversationGetResponse, ConversationListRequest, ConversationListResponse,
     ConversationItem, ConversationItemKind, ConversationItemRole, ConversationItemStatus,
-    ConversationStatus, HarnessDescriptor,
-    ConversationUpsertedEvent, InstanceCapabilitiesRequest, InstanceCapabilitiesResponse,
+    ConversationStatus, HarnessDescriptor, PageInfo,
+    ConversationUpsertedEvent, FlatModelCatalog, FlatModelCatalogKind, FlatModelSelection,
+    InstanceCapabilitiesRequest, InstanceCapabilitiesResponse,
     InstanceCreateRequest, InstanceCreateResponse, InstanceDestroyRequest,
     InstanceDestroyResponse, InstanceStartRequest, InstanceStartResponse, InstanceStatus,
     InstanceStatusChangedEvent, InstanceStopRequest, InstanceStopResponse, ProtocolError,
-    ProtocolEvent, ProtocolFuture, Provider, ProviderCapabilities, ProviderCapability,
+    ModelCatalog, ModelSelection, ProtocolEvent, ProtocolFuture, Provider, ProviderCapabilities, ProviderCapability,
     ProviderConversation, ProviderDescribeRequest, ProviderDescribeResponse, ProviderExtension,
     ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute,
     ProviderPluginDescriptor, ProviderShutdownRequest, ProviderShutdownResponse, ProviderTurn,
     RoutedResourceId, TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent,
-    TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest, TurnSteerResponse,
+    TurnSelection, TurnSendCapabilities, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
+    TurnSteerResponse,
     TurnUpsertedEvent, VersionRange, PROTOCOL_VERSION,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -37,12 +41,17 @@ const CLAUDE_EXTENSION_NAMESPACE: &str = "dev.codepet.claude";
 const MAX_PROVIDER_TEXT_CHUNK_BYTES: usize = 64 * 1024;
 const MAX_CLAUDE_METADATA_BYTES: usize = 4 * 1024;
 const TURN_COMPLETION_WAIT: Duration = Duration::from_secs(4);
+const CLAUDE_DEFAULT_MODEL: &str = "claude-default";
+const CLAUDE_DEFAULT_ACCESS_MODE: &str = "manual";
+const CLAUDE_DEFAULT_EFFORT: &str = "high";
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 struct ClaudeInstanceSettings {
     claude_executable: PathBuf,
+    #[serde(default)]
+    claude_config_dir: Option<PathBuf>,
 }
 
 use codepet_provider_sdk::ProviderEventSink;
@@ -97,10 +106,20 @@ struct ManagedConversation {
     conversation: ProviderConversation,
     workspace_root: PathBuf,
     title: Option<String>,
+    access_mode: String,
     model: Option<String>,
     effort: Option<String>,
     materialized: bool,
+    history_path: Option<PathBuf>,
     active_turn: Option<ManagedTurn>,
+}
+
+struct DiscoveredConversation {
+    conversation: ProviderConversation,
+    workspace_root: PathBuf,
+    title: Option<String>,
+    model: Option<String>,
+    history_path: PathBuf,
 }
 
 struct InstanceMutable {
@@ -247,7 +266,11 @@ impl ClaudeInstanceRuntime {
             permission_level: Some(request.permission_level.clone()),
             model: request.model.clone(),
             reasoning_effort: request.reasoning_effort.clone(),
-            selection: None,
+            selection: Some(claude_selection(
+                CLAUDE_DEFAULT_ACCESS_MODE,
+                request.reasoning_effort.as_deref().unwrap_or(CLAUDE_DEFAULT_EFFORT),
+                request.model.as_deref().unwrap_or(CLAUDE_DEFAULT_MODEL),
+            )),
             workspace_root: Some(workspace_root.to_string_lossy().to_string()),
             created_at: Some(now),
             updated_at: Some(now),
@@ -267,9 +290,11 @@ impl ClaudeInstanceRuntime {
                     conversation: conversation.clone(),
                     workspace_root,
                     title: request.title,
+                    access_mode: CLAUDE_DEFAULT_ACCESS_MODE.to_string(),
                     model: request.model,
                     effort: request.reasoning_effort,
                     materialized: false,
+                    history_path: None,
                     active_turn: None,
                 },
             );
@@ -278,10 +303,150 @@ impl ClaudeInstanceRuntime {
         Ok(conversation)
     }
 
+    fn refresh_discovered_conversations(&self) -> Result<(), ProtocolError> {
+        let Some(config_dir) = self
+            .settings
+            .claude_config_dir
+            .clone()
+            .or_else(claude_config_dir)
+        else {
+            return Ok(());
+        };
+        let discovered = discover_claude_conversations(&config_dir, &self.route)?;
+        let mut mutable = lock(&self.mutable);
+        for discovered in discovered {
+            let conversation_id = discovered
+                .conversation
+                .resource
+                .native_resource_id
+                .clone();
+            if let Some(managed) = mutable.conversations.get_mut(&conversation_id) {
+                managed.history_path = Some(discovered.history_path);
+                managed.materialized = true;
+                if managed.active_turn.is_none() {
+                    managed.conversation = discovered.conversation;
+                    managed.workspace_root = discovered.workspace_root;
+                    managed.title = discovered.title;
+                    managed.model = discovered.model;
+                }
+            } else {
+                mutable.conversations.insert(
+                    conversation_id,
+                    ManagedConversation {
+                        conversation: discovered.conversation,
+                        workspace_root: discovered.workspace_root,
+                        title: discovered.title,
+                        access_mode: CLAUDE_DEFAULT_ACCESS_MODE.to_string(),
+                        model: discovered.model,
+                        effort: None,
+                        materialized: true,
+                        history_path: Some(discovered.history_path),
+                        active_turn: None,
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn list_conversations(
+        &self,
+        request: ConversationListRequest,
+    ) -> Result<ConversationListResponse, ProtocolError> {
+        if self.status() != InstanceStatus::Ready {
+            return Err(provider_unavailable(&self.route));
+        }
+        if request.route != self.route {
+            return Err(protocol_error(
+                "resource_route_mismatch",
+                "conversation.list targets a different Claude instance".to_string(),
+                false,
+            ));
+        }
+        self.refresh_discovered_conversations()?;
+        let mut conversations = lock(&self.mutable)
+            .conversations
+            .values()
+            .map(|managed| managed.conversation.clone())
+            .collect::<Vec<_>>();
+        conversations.sort_by(|left, right| {
+            right
+                .updated_at
+                .unwrap_or_default()
+                .cmp(&left.updated_at.unwrap_or_default())
+                .then_with(|| {
+                    left.resource
+                        .native_resource_id
+                        .cmp(&right.resource.native_resource_id)
+                })
+        });
+        let offset = request
+            .cursor
+            .as_deref()
+            .map(|cursor| {
+                cursor.parse::<usize>().map_err(|_| {
+                    protocol_error(
+                        "invalid_cursor",
+                        "Claude conversation cursor is invalid".to_string(),
+                        false,
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let limit = request.limit.unwrap_or(50).clamp(1, 200) as usize;
+        if offset > conversations.len() {
+            return Err(protocol_error(
+                "invalid_cursor",
+                "Claude conversation cursor is outside the result set".to_string(),
+                false,
+            ));
+        }
+        let end = offset.saturating_add(limit).min(conversations.len());
+        let next_cursor = (end < conversations.len()).then(|| end.to_string());
+        Ok(ConversationListResponse {
+            conversations: conversations[offset..end].to_vec(),
+            page_info: PageInfo { next_cursor },
+        })
+    }
+
+    fn get_conversation(
+        &self,
+        request: ConversationGetRequest,
+    ) -> Result<ConversationGetResponse, ProtocolError> {
+        if self.status() != InstanceStatus::Ready {
+            return Err(provider_unavailable(&self.route));
+        }
+        validate_resource_for_instance(&request.conversation, &self.route)?;
+        self.refresh_discovered_conversations()?;
+        let (conversation, history_path) = {
+            let mutable = lock(&self.mutable);
+            let managed = mutable
+                .conversations
+                .get(&request.conversation.native_resource_id)
+                .ok_or_else(|| {
+                    protocol_error(
+                        "unknown_conversation",
+                        "unknown Claude conversation".to_string(),
+                        false,
+                    )
+                })?;
+            (managed.conversation.clone(), managed.history_path.clone())
+        };
+        let items = match history_path {
+            Some(path) => read_claude_history_items(&path, &self.route, &conversation.resource)?,
+            None => Vec::new(),
+        };
+        Ok(ConversationGetResponse {
+            conversation,
+            items,
+        })
+    }
+
     fn start_turn(
         self: &Arc<Self>,
         request: TurnStartRequest,
-    ) -> Result<ProviderTurn, ProtocolError> {
+    ) -> Result<(ProviderTurn, TurnSelection), ProtocolError> {
         validate_resource_for_instance(&request.conversation, &self.route)?;
         if request.input.text.trim().is_empty() || request.client_request_id.trim().is_empty() {
             return Err(protocol_error(
@@ -292,7 +457,7 @@ impl ClaudeInstanceRuntime {
         }
         let conversation_id = request.conversation.native_resource_id.clone();
         let turn_id = Uuid::new_v4().to_string();
-        if request.capability_revision != "claude-cli-stream-json-v1" {
+        if request.capability_revision != "claude-cli-stream-json-controls-v1" {
             return Err(protocol_error(
                 "stale_capability_revision",
                 "turn.start capabilityRevision no longer matches the Provider instance"
@@ -300,18 +465,8 @@ impl ClaudeInstanceRuntime {
                 true,
             ));
         }
-        if request.selection.access_mode_id.is_some()
-            || request.selection.reasoning_effort_id.is_some()
-            || request.selection.model.is_some()
-        {
-            return Err(protocol_error(
-                "unsupported_turn_control",
-                "Claude Provider does not advertise turn selection controls".to_string(),
-                false,
-            ));
-        }
         let user_message_id = request.client_request_id.clone();
-        let (spawned, turn, conversation) = {
+        let (spawned, turn, conversation, effective_selection) = {
             let mut mutable = lock(&self.mutable);
             if mutable.status != InstanceStatus::Ready {
                 return Err(provider_unavailable(&self.route));
@@ -330,6 +485,17 @@ impl ClaudeInstanceRuntime {
                     true,
                 ));
             }
+            let effective_selection = resolve_claude_selection(&request.selection, managed)?;
+            managed.access_mode = effective_selection
+                .access_mode_id
+                .clone()
+                .unwrap_or_else(|| CLAUDE_DEFAULT_ACCESS_MODE.to_string());
+            managed.effort = effective_selection.reasoning_effort_id.clone();
+            managed.model = selected_claude_model(&effective_selection);
+            managed.conversation.permission_level = Some(managed.access_mode.clone());
+            managed.conversation.reasoning_effort = managed.effort.clone();
+            managed.conversation.model = managed.model.clone();
+            managed.conversation.selection = Some(effective_selection.clone());
             let spawned = ClaudeTurnLaunch {
                 executable: self.settings.claude_executable.clone(),
                 workspace_root: managed.workspace_root.clone(),
@@ -338,6 +504,7 @@ impl ClaudeInstanceRuntime {
                 user_message_id,
                 message: request.input.text,
                 title: managed.title.clone(),
+                permission_mode: managed.access_mode.clone(),
                 model: managed.model.clone(),
                 effort: managed.effort.clone(),
             }
@@ -370,7 +537,7 @@ impl ClaudeInstanceRuntime {
             managed.conversation.status = ConversationStatus::Running;
             managed.conversation.active_turn = Some(turn.clone());
             managed.conversation.updated_at = Some(now);
-            (spawned, turn, managed.conversation.clone())
+            (spawned, turn, managed.conversation.clone(), effective_selection)
         };
         let control = spawned.control();
         if let Err(error) = self
@@ -383,7 +550,7 @@ impl ClaudeInstanceRuntime {
             return Err(error);
         }
         self.monitor_turn(spawned, conversation_id, turn_id);
-        Ok(turn)
+        Ok((turn, effective_selection))
     }
 
     fn monitor_turn(
@@ -1135,16 +1302,22 @@ impl Provider for ClaudeProvider {
 
     fn conversation_list<'a>(
         &'a self,
-        _request: ConversationListRequest,
+        request: ConversationListRequest,
     ) -> ProtocolFuture<'a, ConversationListResponse> {
-        Box::pin(async { Err(capability_error("Claude CLI does not expose a stable conversation list API")) })
+        Box::pin(async move {
+            let runtime = self.instance(&request.route)?;
+            runtime.list_conversations(request)
+        })
     }
 
     fn conversation_get<'a>(
         &'a self,
-        _request: ConversationGetRequest,
+        request: ConversationGetRequest,
     ) -> ProtocolFuture<'a, ConversationGetResponse> {
-        Box::pin(async { Err(capability_error("Claude CLI does not expose a stable conversation get API")) })
+        Box::pin(async move {
+            let runtime = self.resource_instance(&request.conversation)?;
+            runtime.get_conversation(request)
+        })
     }
 
     fn conversation_create<'a>(
@@ -1168,8 +1341,7 @@ impl Provider for ClaudeProvider {
             let conversation = request.conversation.clone();
             let item_id = request.client_request_id.clone();
             let input_text = request.input.text.clone();
-            let effective_selection = request.selection.clone();
-            let turn = runtime.start_turn(request)?;
+            let (turn, effective_selection) = runtime.start_turn(request)?;
             Ok(TurnStartResponse {
                 accepted: true,
                 user_item: Some(ConversationItem {
@@ -1250,13 +1422,49 @@ impl Provider for ClaudeProvider {
 }
 
 fn claude_capabilities() -> ProviderCapabilities {
-    let mut methods = vec![ProviderCapability::ConversationCreate];
+    let mut methods = vec![
+        ProviderCapability::ConversationList,
+        ProviderCapability::ConversationGet,
+        ProviderCapability::ConversationCreate,
+        ProviderCapability::TurnStart,
+    ];
     #[cfg(unix)]
     methods.push(ProviderCapability::TurnInterrupt);
     ProviderCapabilities {
-        revision: "claude-cli-stream-json-v1".to_string(),
+        revision: "claude-cli-stream-json-controls-v1".to_string(),
         methods,
-        turn_send: None,
+        turn_send: Some(TurnSendCapabilities {
+            access_mode: Some(ChoiceSet {
+                options: vec![
+                    choice("manual", "Ask before changes", Some("Claude asks before protected tool actions.")),
+                    choice("acceptEdits", "Accept edits", Some("Automatically accepts file edits while retaining other permission checks.")),
+                    choice("plan", "Plan mode", Some("Read-only planning mode.")),
+                    choice("dontAsk", "Don't ask", Some("Declines actions that would require an approval prompt.")),
+                    choice("auto", "Auto", Some("Uses Claude Code's automatic permission policy.")),
+                ],
+                default_id: Some(CLAUDE_DEFAULT_ACCESS_MODE.to_string()),
+            }),
+            reasoning_effort: Some(ChoiceSet {
+                options: ["low", "medium", "high", "xhigh", "max"]
+                    .into_iter()
+                    .map(|effort| choice(effort, &choice_display_name(effort), None))
+                    .collect(),
+                default_id: Some(CLAUDE_DEFAULT_EFFORT.to_string()),
+            }),
+            model_catalog: Some(ModelCatalog::FlatModelCatalog(FlatModelCatalog {
+                kind: FlatModelCatalogKind::Flat,
+                models: vec![
+                    choice(CLAUDE_DEFAULT_MODEL, "Default", Some("Uses the model selected by Claude Code configuration.")),
+                    choice("sonnet", "Sonnet", None),
+                    choice("opus", "Opus", None),
+                    choice("fable", "Fable", None),
+                ],
+                default_selection: Some(FlatModelSelection {
+                    kind: FlatModelCatalogKind::Flat,
+                    model_id: CLAUDE_DEFAULT_MODEL.to_string(),
+                }),
+            })),
+        }),
         extensions: vec![extension([
             ("nativeInterface", json!("claude-print-stream-json")),
             (
@@ -1265,10 +1473,131 @@ fn claude_capabilities() -> ProviderCapabilities {
             ),
             (
                 "unsupportedMethods",
-                json!(["conversation.list", "conversation.get", "turn.steer", "approval.resolve"]),
+                json!(["turn.steer", "approval.resolve"]),
             ),
             ("permissionModeMapping", json!({ "workspace-write": "inherited" })),
         ])],
+    }
+}
+
+fn choice(id: &str, display_name: &str, description: Option<&str>) -> ChoiceOption {
+    ChoiceOption {
+        id: id.to_string(),
+        display_name: display_name.to_string(),
+        description: description.map(str::to_string),
+        enabled: Some(true),
+        disabled_reason: None,
+    }
+}
+
+fn choice_display_name(id: &str) -> String {
+    let mut chars = id.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+fn claude_selection(access_mode: &str, effort: &str, model: &str) -> TurnSelection {
+    TurnSelection {
+        access_mode_id: Some(access_mode.to_string()),
+        reasoning_effort_id: Some(effort.to_string()),
+        model: Some(ModelSelection::FlatModelSelection(FlatModelSelection {
+            kind: FlatModelCatalogKind::Flat,
+            model_id: model.to_string(),
+        })),
+    }
+}
+
+fn resolve_claude_selection(
+    requested: &TurnSelection,
+    managed: &ManagedConversation,
+) -> Result<TurnSelection, ProtocolError> {
+    let capabilities = claude_capabilities();
+    let controls = capabilities.turn_send.expect("Claude turn controls");
+    let access_mode = resolve_choice(
+        controls.access_mode.as_ref().expect("Claude access modes"),
+        requested.access_mode_id.as_deref(),
+        Some(managed.access_mode.as_str()),
+        "accessModeId",
+    )?;
+    let effort = resolve_choice(
+        controls.reasoning_effort.as_ref().expect("Claude reasoning efforts"),
+        requested.reasoning_effort_id.as_deref(),
+        managed.effort.as_deref(),
+        "reasoningEffortId",
+    )?;
+    let catalog = match controls.model_catalog.expect("Claude model catalog") {
+        ModelCatalog::FlatModelCatalog(catalog) => catalog,
+        ModelCatalog::GroupedModelCatalog(_) => unreachable!("Claude uses a flat model catalog"),
+    };
+    let requested_model = match requested.model.as_ref() {
+        Some(ModelSelection::FlatModelSelection(selection)) => Some(selection.model_id.as_str()),
+        Some(ModelSelection::GroupedModelSelection(_)) => {
+            return Err(protocol_error(
+                "invalid_turn_selection",
+                "Claude requires a flat model selection".to_string(),
+                false,
+            ));
+        }
+        None => None,
+    };
+    let current_model = managed.model.as_deref().unwrap_or(CLAUDE_DEFAULT_MODEL);
+    let model = requested_model
+        .or_else(|| catalog.models.iter().any(|option| option.id == current_model).then_some(current_model))
+        .or_else(|| catalog.default_selection.as_ref().map(|selection| selection.model_id.as_str()))
+        .ok_or_else(|| protocol_error(
+            "provider_capability_invalid",
+            "Claude model catalog has no default".to_string(),
+            false,
+        ))?;
+    validate_choice(&catalog.models, model, "model")?;
+    Ok(claude_selection(&access_mode, &effort, model))
+}
+
+fn resolve_choice(
+    choices: &ChoiceSet,
+    requested: Option<&str>,
+    current: Option<&str>,
+    field: &str,
+) -> Result<String, ProtocolError> {
+    let selected = requested
+        .or_else(|| current.filter(|value| choices.options.iter().any(|option| option.id == *value)))
+        .or(choices.default_id.as_deref())
+        .ok_or_else(|| protocol_error(
+            "provider_capability_invalid",
+            format!("Claude {field} has no default"),
+            false,
+        ))?;
+    validate_choice(&choices.options, selected, field)?;
+    Ok(selected.to_string())
+}
+
+fn validate_choice(
+    options: &[ChoiceOption],
+    selected: &str,
+    field: &str,
+) -> Result<(), ProtocolError> {
+    match options.iter().find(|option| option.id == selected) {
+        Some(option) if option.enabled != Some(false) => Ok(()),
+        Some(option) => Err(protocol_error(
+            "invalid_turn_selection",
+            option.disabled_reason.clone().unwrap_or_else(|| format!("{field} is disabled: {selected}")),
+            false,
+        )),
+        None => Err(protocol_error(
+            "invalid_turn_selection",
+            format!("unknown {field}: {selected}"),
+            false,
+        )),
+    }
+}
+
+fn selected_claude_model(selection: &TurnSelection) -> Option<String> {
+    match selection.model.as_ref() {
+        Some(ModelSelection::FlatModelSelection(selection))
+            if selection.model_id != CLAUDE_DEFAULT_MODEL => Some(selection.model_id.clone()),
+        _ => None,
     }
 }
 
@@ -1287,6 +1616,17 @@ fn decode_settings(
         return Err(protocol_error(
             "invalid_instance_settings",
             "claudeExecutable must be an absolute path resolved by the Host".to_string(),
+            false,
+        ));
+    }
+    if settings
+        .claude_config_dir
+        .as_ref()
+        .is_some_and(|path| !path.is_absolute())
+    {
+        return Err(protocol_error(
+            "invalid_instance_settings",
+            "claudeConfigDir must be absolute when provided".to_string(),
             false,
         ));
     }
@@ -1491,6 +1831,263 @@ fn truncate_text(value: &str, limit: usize) -> String {
     value[..end].to_string()
 }
 
+fn claude_config_dir() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("CLAUDE_CONFIG_DIR") {
+        if !path.is_empty() {
+            return Some(PathBuf::from(path));
+        }
+    }
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude"))
+}
+
+fn discover_claude_conversations(
+    config_dir: &Path,
+    route: &ProviderInstanceRoute,
+) -> Result<Vec<DiscoveredConversation>, ProtocolError> {
+    let projects_dir = config_dir.join("projects");
+    let Ok(projects) = std::fs::read_dir(&projects_dir) else {
+        return Ok(Vec::new());
+    };
+    let mut discovered = Vec::new();
+    for project in projects.flatten() {
+        let Ok(file_type) = project.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let Ok(histories) = std::fs::read_dir(project.path()) else {
+            continue;
+        };
+        for history in histories.flatten() {
+            let path = history.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
+                continue;
+            }
+            if let Some(conversation) = summarize_claude_history(&path, route)? {
+                discovered.push(conversation);
+            }
+        }
+    }
+    Ok(discovered)
+}
+
+fn summarize_claude_history(
+    path: &Path,
+    route: &ProviderInstanceRoute,
+) -> Result<Option<DiscoveredConversation>, ProtocolError> {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(_) => return Ok(None),
+    };
+    let mut session_id = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_string();
+    if session_id.is_empty() {
+        return Ok(None);
+    }
+    let mut workspace_root = None;
+    let mut generated_title = None;
+    let mut first_user_text = None;
+    let mut latest_assistant_text = None;
+    let mut model = None;
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        let Ok(record) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if let Some(value) = record.get("sessionId").and_then(Value::as_str) {
+            if !value.trim().is_empty() {
+                session_id = value.to_string();
+            }
+        }
+        if workspace_root.is_none() {
+            workspace_root = record
+                .get("cwd")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(PathBuf::from);
+        }
+        if record.get("type").and_then(Value::as_str) == Some("ai-title") {
+            generated_title = record
+                .get("aiTitle")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(ToOwned::to_owned);
+        }
+        let Some(message) = record.get("message") else {
+            continue;
+        };
+        let Some(role) = message.get("role").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(text) = message.get("content").and_then(claude_message_text) else {
+            continue;
+        };
+        match role {
+            "user" if first_user_text.is_none() => first_user_text = Some(text),
+            "assistant" => {
+                latest_assistant_text = Some(text);
+                if let Some(value) = message.get("model").and_then(Value::as_str) {
+                    if !value.trim().is_empty() {
+                        model = Some(value.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(workspace_root) = workspace_root.filter(|path| path.is_absolute()) else {
+        return Ok(None);
+    };
+    let metadata = std::fs::metadata(path).ok();
+    let updated_at = metadata
+        .as_ref()
+        .and_then(|value| value.modified().ok())
+        .and_then(system_time_ms)
+        .unwrap_or_default();
+    let created_at = metadata
+        .as_ref()
+        .and_then(|value| value.created().ok())
+        .and_then(system_time_ms)
+        .unwrap_or(updated_at);
+    let title = generated_title
+        .or_else(|| first_user_text.as_deref().map(|value| truncate_text(value, 120)))
+        .unwrap_or_else(|| session_id.clone());
+    let resource = RoutedResourceId {
+        device_id: route.device_id.clone(),
+        provider_plugin_id: route.provider_plugin_id.clone(),
+        provider_instance_id: route.provider_instance_id.clone(),
+        native_resource_id: session_id,
+    };
+    Ok(Some(DiscoveredConversation {
+        conversation: ProviderConversation {
+            resource,
+            title: title.clone(),
+            preview: latest_assistant_text.map(|value| truncate_text(&value, 240)),
+            status: ConversationStatus::Idle,
+            permission_level: Some("workspace-write".to_string()),
+            model: model.clone(),
+            reasoning_effort: None,
+            selection: Some(claude_selection(
+                CLAUDE_DEFAULT_ACCESS_MODE,
+                CLAUDE_DEFAULT_EFFORT,
+                model
+                    .as_deref()
+                    .filter(|model| ["sonnet", "opus", "fable"].contains(model))
+                    .unwrap_or(CLAUDE_DEFAULT_MODEL),
+            )),
+            workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+            created_at: Some(created_at),
+            updated_at: Some(updated_at),
+            active_turn: None,
+            extension: Some(extension([
+                ("nativeInterface", json!("claude-history-jsonl")),
+                ("sessionScope", json!("claude-persisted")),
+                ("externalSessionDiscovery", json!(true)),
+            ])),
+        },
+        workspace_root,
+        title: Some(title),
+        model,
+        history_path: path.to_path_buf(),
+    }))
+}
+
+fn read_claude_history_items(
+    path: &Path,
+    route: &ProviderInstanceRoute,
+    conversation: &RoutedResourceId,
+) -> Result<Vec<ConversationItem>, ProtocolError> {
+    let file = File::open(path).map_err(|error| {
+        protocol_error(
+            "claude_history_unavailable",
+            format!("open Claude conversation history: {error}"),
+            true,
+        )
+    })?;
+    let mut items = Vec::new();
+    let mut seen = HashSet::new();
+    for (index, line) in BufReader::new(file).lines().map_while(Result::ok).enumerate() {
+        let Ok(record) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let Some(message) = record.get("message") else {
+            continue;
+        };
+        let role = match message.get("role").and_then(Value::as_str) {
+            Some("user") => ConversationItemRole::User,
+            Some("assistant") => ConversationItemRole::Assistant,
+            _ => continue,
+        };
+        let Some(text) = message.get("content").and_then(claude_message_text) else {
+            continue;
+        };
+        let native_id = record
+            .get("uuid")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| format!("history-{index}"));
+        if !seen.insert(native_id.clone()) {
+            continue;
+        }
+        let item_resource = routed_resource(route, native_id.clone());
+        items.push(ConversationItem {
+            resource: item_resource,
+            turn: routed_resource(route, format!("{native_id}:turn")),
+            conversation: conversation.clone(),
+            kind: ConversationItemKind::Message,
+            status: ConversationItemStatus::Completed,
+            role: Some(role),
+            title: None,
+            contents: vec![ConversationContent {
+                content_id: format!("{native_id}:text"),
+                kind: ConversationContentKind::Text,
+                text,
+            }],
+            related_item: None,
+            approval: None,
+        });
+    }
+    Ok(items)
+}
+
+fn claude_message_text(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return (!text.trim().is_empty()).then(|| text.to_string());
+    }
+    let parts = value.as_array()?.iter().filter_map(|part| {
+        if part.get("type").and_then(Value::as_str) != Some("text") {
+            return None;
+        }
+        part.get("text")
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+    });
+    let text = parts.collect::<Vec<_>>().join("\n");
+    (!text.is_empty()).then_some(text)
+}
+
+fn routed_resource(route: &ProviderInstanceRoute, native_resource_id: String) -> RoutedResourceId {
+    RoutedResourceId {
+        device_id: route.device_id.clone(),
+        provider_plugin_id: route.provider_plugin_id.clone(),
+        provider_instance_id: route.provider_instance_id.clone(),
+        native_resource_id,
+    }
+}
+
+fn system_time_ms(value: SystemTime) -> Option<u64> {
+    value
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis()
+        .try_into()
+        .ok()
+}
+
 fn result_status(subtype: &str, is_error: bool, terminal_reason: Option<&str>) -> TurnStatus {
     if terminal_reason.is_some_and(|reason| {
         reason.eq_ignore_ascii_case("interrupted")
@@ -1619,4 +2216,75 @@ fn extension<const N: usize>(entries: [(&str, Value); N]) -> ProviderExtension {
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovers_and_reads_persisted_claude_jsonl_conversations() {
+        let config = tempfile::tempdir().unwrap();
+        let project = config.path().join("projects/project-fixture");
+        std::fs::create_dir_all(&project).unwrap();
+        let history = project.join("session-fixture.jsonl");
+        let records = [
+            json!({
+                "type": "user",
+                "uuid": "user-1",
+                "sessionId": "session-fixture",
+                "cwd": config.path(),
+                "message": { "role": "user", "content": "first question" }
+            }),
+            json!({
+                "type": "assistant",
+                "uuid": "assistant-1",
+                "sessionId": "session-fixture",
+                "cwd": config.path(),
+                "message": {
+                    "role": "assistant",
+                    "model": "claude-sonnet",
+                    "content": [{ "type": "text", "text": "final answer" }]
+                }
+            }),
+            json!({
+                "type": "ai-title",
+                "sessionId": "session-fixture",
+                "cwd": config.path(),
+                "aiTitle": "Recovered title"
+            }),
+        ]
+        .into_iter()
+        .map(|record| serde_json::to_string(&record).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+        std::fs::write(&history, records).unwrap();
+        let route = ProviderInstanceRoute {
+            device_id: "device".to_string(),
+            provider_plugin_id: CLAUDE_PLUGIN_ID.to_string(),
+            provider_instance_id: "claude".to_string(),
+        };
+
+        let discovered = discover_claude_conversations(config.path(), &route).unwrap();
+
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0].conversation.title, "Recovered title");
+        assert_eq!(discovered[0].conversation.preview.as_deref(), Some("final answer"));
+        assert_eq!(discovered[0].conversation.model.as_deref(), Some("claude-sonnet"));
+        assert_eq!(
+            discovered[0].conversation.resource.native_resource_id,
+            "session-fixture"
+        );
+        let items = read_claude_history_items(
+            &history,
+            &route,
+            &discovered[0].conversation.resource,
+        )
+        .unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].role, Some(ConversationItemRole::User));
+        assert_eq!(items[0].contents[0].text, "first question");
+        assert_eq!(items[1].role, Some(ConversationItemRole::Assistant));
+        assert_eq!(items[1].contents[0].text, "final answer");
+    }
 }

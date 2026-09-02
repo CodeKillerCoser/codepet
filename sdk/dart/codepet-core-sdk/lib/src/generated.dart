@@ -88,6 +88,8 @@ List<T> _decodeList<T>(Object? value, String path, T Function(Object?, String) d
   return _freezeList<T>(value.indexed.map((entry) => decode(entry.$2, '$path[${entry.$1}]')), path, (item, _) => item, minItems: minItems, uniqueItems: uniqueItems, encodeItem: encodeItem);
 }
 
+const int coreSchemaVersion = 1;
+
 typedef ClientId = String;
 
 ClientId decodeClientId(Object? value, {String path = 'ClientId'}) => _string(value, path, minLength: 1);

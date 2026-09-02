@@ -866,6 +866,11 @@ export function generateDart(record, _model, ir) {
   writer.blank();
   emitCodecHelpers(writer, !pkg.dependencies.includes("core-v1"));
   writer.blank();
+  if (!pkg.service) {
+    const schemaVersionConstant = `${camelCase(pkg.id.replace(/-v\d+$/, ""))}SchemaVersion`;
+    writer.line(`const int ${schemaVersionConstant} = ${pkg.version};`);
+    writer.blank();
+  }
   const parents = unionParents(pkg);
   for (const definition of pkg.definitions) {
     if (definition.kind === "alias") emitAlias(writer, definition, ir);

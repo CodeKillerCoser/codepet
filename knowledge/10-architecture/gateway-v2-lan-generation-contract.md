@@ -80,7 +80,7 @@ Tauri 在一个 lifecycle mutex 下串行网络与 pairing 变化。地址切换
 - identity 与 endpoint provenance 被错误拼接：公开 start API 只接受 listener handle，编译形状测试固定该边界；真实 listener 测试核对 handle identity 等于启动它的 manager identity。
 - 广告不可达或串到错误接口：advertiser 只接受与 listener bind 匹配、存在于 active 本机接口集合的显式 unicast IP，并将 service 限定到该地址；确定性负例覆盖 DNS host、unspecified、bind mismatch 与非本机 IP，macOS smoke 对 start 和 `pair=0→1` 各等待目标 fullname 的真实 Announce；runtime fake publisher 另覆盖 A→B、无地址撤销、失败重试与 IP/pair 竞态。实际跨设备发现和防火墙仍需真机验证。
 - daemon 入队或旧代 resend 被误报为新发布成功：fake backend 把旧 Announce 精确注入到 update 的首次 drain 与 unregister ack 之间，断言 ack 后 drain 和新 daemon 会丢弃它，且没有新 Announce 时必须超时；另覆盖 unregister error/timeout 清理、同值 no-op、Announce、idle 断开与重复 shutdown。真实 backend 只有新 daemon monitor 收到目标 fullname Announce 才让变更 update 返回成功。
-- 慢客户端阻塞或消费其他客户端事件：每 socket 使用独立 subscription、send task 与有界 queue；真实 WSS 测试让一个客户端在握手后停止读取并持续发送合法的大响应请求，验证该 session 因 backpressure 有界退出，同时健康 socket 仍得到正常 response。双客户端订阅测试另行验证未订阅连接保持静默、订阅连接各自收到同 cursor event，业务 response 不串 socket。
+- 慢 Provider 或客户端阻塞 control plane：每 socket 使用持续 poll 控制帧的 reader、握手后有界并发 request dispatcher、独立 subscription/send task 与有界 queue；真实 WSS 测试让 `conversation.get` 保持 pending 并验证同 socket 仍及时 Pong，再让一个客户端停止读取并持续发送合法的大响应请求，验证该 session 因 backpressure 有界退出，同时健康 socket 仍得到正常 response。双客户端订阅测试另行验证未订阅连接保持静默、订阅连接各自收到同 cursor event，业务 response 不串 socket。
 - 撤销后旧 socket 继续使用：DELETE 先持久撤销 bearer，再取消对应 credentialId 的本地 sessions；真实 WSS 测试以同一 credential 建立两个 socket，验证两者均有界断线、旧 bearer 拒绝重连且其他 bearer 仍可请求。
 - REST DTO 被误加成 Gateway method：生成器测试断言 pairing/credential 不出现在 method manifest。
 - compat 或桌宠链机械漂移：`protocol:check`、Tauri `cargo check --lib --locked` 与最终边界 diff 审计确认无改动。

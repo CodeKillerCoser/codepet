@@ -79,6 +79,8 @@ List<T> _decodeList<T>(Object? value, String path, T Function(Object?, String) d
   return _freezeList<T>(value.indexed.map((entry) => decode(entry.$2, '$path[${entry.$1}]')), path, (item, _) => item, minItems: minItems, uniqueItems: uniqueItems, encodeItem: encodeItem);
 }
 
+const int channelLanSchemaVersion = 1;
+
 final class CurrentCredentialDeleteResponse {
   factory CurrentCredentialDeleteResponse({
     required bool revoked,

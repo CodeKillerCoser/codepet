@@ -22,7 +22,7 @@ use std::time::Duration;
 use tokio::sync::{
     broadcast, mpsc, watch, Notify, OwnedSemaphorePermit, Semaphore,
 };
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::timeout;
 
 const PAIRING_EXCHANGE_PATH: &str = "/remote/v1/pairings/:pairing_id/exchange";
@@ -32,8 +32,10 @@ const MAX_REST_BODY_BYTES: usize = 64 * 1024;
 const MAX_WEBSOCKET_FRAME_BYTES: usize = 256 * 1024;
 const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 256 * 1024;
 const OUTBOUND_QUEUE_CAPACITY: usize = 64;
+const REQUEST_QUEUE_CAPACITY: usize = 64;
+const MAX_CONCURRENT_REQUESTS_PER_SESSION: usize = 8;
 const MAX_CONCURRENT_WEBSOCKET_SESSIONS: usize = 32;
-const WEBSOCKET_SEND_TIMEOUT: Duration = Duration::from_secs(1);
+const WEBSOCKET_SEND_TIMEOUT: Duration = Duration::from_secs(15);
 const OUTBOUND_ENQUEUE_TIMEOUT: Duration = Duration::from_secs(2);
 const CONNECTION_CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -609,6 +611,8 @@ async fn run_gateway_socket(
 ) {
     let (mut sink, mut source) = socket.split();
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<Message>(OUTBOUND_QUEUE_CAPACITY);
+    let (request_tx, request_rx) =
+        mpsc::channel::<gateway::ProtocolRequest>(REQUEST_QUEUE_CAPACITY);
     let (stop_tx, _) = watch::channel(false);
     let (writer_done_tx, mut writer_done) = watch::channel(false);
     let (transport_failed_tx, mut transport_failed) = watch::channel(false);
@@ -627,6 +631,14 @@ async fn run_gateway_socket(
         }
         let _ = writer_done_tx.send(true);
     });
+    let request_dispatcher = tokio::spawn(run_gateway_requests(
+        request_rx,
+        gateway.clone(),
+        format!("remote-client:{}", credential.client_id),
+        outbound_tx.clone(),
+        transport_failed_tx.clone(),
+        stop_tx.subscribe(),
+    ));
 
     let mut handshaken = false;
     let mut subscribed = false;
@@ -896,19 +908,18 @@ async fn run_gateway_socket(
             continue;
         }
 
-        let response = tokio::select! {
-            cancellation = registration.cancelled() => {
-                close_frame = Some(cancellation_close(cancellation));
+        match request_tx.try_send(request) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                close_frame = Some(close_message(1013, "gateway_request_queue_full"));
                 break;
             }
-            response = gateway.dispatch_for_caller_scope(&caller_scope, request) => response,
-        };
-        if !queue_json(&outbound_tx, &response, &mut registration).await {
-            break;
+            Err(mpsc::error::TrySendError::Closed(_)) => break,
         }
     }
 
     let _ = stop_tx.send(true);
+    drop(request_tx);
     if let Some(close_frame) = close_frame {
         let _ = outbound_tx.try_send(close_frame);
     }
@@ -918,12 +929,79 @@ async fn run_gateway_socket(
             let _ = event_task.await;
         }
     }
+    let mut request_dispatcher = request_dispatcher;
+    if timeout(CONNECTION_CLOSE_TIMEOUT, &mut request_dispatcher)
+        .await
+        .is_err()
+    {
+        request_dispatcher.abort();
+        let _ = request_dispatcher.await;
+    }
     drop(outbound_tx);
     let mut writer = writer;
     if timeout(CONNECTION_CLOSE_TIMEOUT, &mut writer).await.is_err() {
         writer.abort();
         let _ = writer.await;
     }
+}
+
+async fn run_gateway_requests(
+    mut requests: mpsc::Receiver<gateway::ProtocolRequest>,
+    gateway: Arc<ProviderGatewayService>,
+    caller_scope: String,
+    outbound: mpsc::Sender<Message>,
+    transport_failed: watch::Sender<bool>,
+    mut stop: watch::Receiver<bool>,
+) {
+    let mut tasks = JoinSet::new();
+    loop {
+        tokio::select! {
+            biased;
+            changed = stop.changed() => {
+                if changed.is_err() || *stop.borrow() {
+                    break;
+                }
+            }
+            completed = tasks.join_next(), if !tasks.is_empty() => {
+                if completed.is_some_and(|result| result.is_err()) {
+                    let _ = transport_failed.send(true);
+                    break;
+                }
+            }
+            request = requests.recv(), if tasks.len() < MAX_CONCURRENT_REQUESTS_PER_SESSION => {
+                let Some(request) = request else {
+                    break;
+                };
+                let request_gateway = gateway.clone();
+                let request_scope = caller_scope.clone();
+                let request_outbound = outbound.clone();
+                let request_transport_failed = transport_failed.clone();
+                let mut request_stop = stop.clone();
+                tasks.spawn(async move {
+                    let response = tokio::select! {
+                        biased;
+                        changed = request_stop.changed() => {
+                            let _ = changed;
+                            return;
+                        }
+                        response = request_gateway.dispatch_for_caller_scope(&request_scope, request) => response,
+                    };
+                    let text = match serde_json::to_string(&response) {
+                        Ok(text) => text,
+                        Err(_) => {
+                            let _ = request_transport_failed.send(true);
+                            return;
+                        }
+                    };
+                    if !enqueue_outbound(&request_outbound, Message::Text(text)).await {
+                        let _ = request_transport_failed.send(true);
+                    }
+                });
+            }
+        }
+    }
+    tasks.abort_all();
+    while tasks.join_next().await.is_some() {}
 }
 
 async fn queue_json<T: serde::Serialize>(

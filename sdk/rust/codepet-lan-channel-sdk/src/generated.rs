@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 pub use codepet_core_sdk::{ClientId, DeviceDescriptor, DeviceId, TimestampMs};
 
+pub const CHANNEL_LAN_SCHEMA_VERSION: u64 = 1;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]

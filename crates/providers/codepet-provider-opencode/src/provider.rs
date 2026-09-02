@@ -1,10 +1,10 @@
-use crate::client::OpenCodeServerSession;
+use crate::client::{OpenCodeClient, OpenCodeServerSession};
 use crate::mapper::{protocol_error, OpenCodeProtocolMapper};
 use crate::protocol::{
     OpenCodeDelivery, OpenCodeDeltaEventData, OpenCodeEvent,
     OpenCodeLocationRef, OpenCodePermissionAskedEventData, OpenCodePermissionRepliedEventData,
     OpenCodePermissionReply, OpenCodePrompt, OpenCodePromptAdmittedEventData,
-    OpenCodePromptRequest, OpenCodeServerError, OpenCodeSession, OpenCodeSessionCreate,
+    OpenCodeModel, OpenCodeModelRef, OpenCodePromptRequest, OpenCodeServerError, OpenCodeSession, OpenCodeSessionCreate,
     OpenCodeStepEndedEventData, OpenCodeStepFailedEventData, OpenCodeStepStartedEventData,
     OPENCODE_INSTANCE_KIND, OPENCODE_PERMISSION_LEVEL, OPENCODE_PLUGIN_ID,
     OPENCODE_VERIFIED_SERVER_VERSION,
@@ -13,24 +13,26 @@ use codepet_provider_sdk::{
     ApprovalDecision, ApprovalResolveRequest, ApprovalResolveResponse,
     ConversationContentKind, ConversationCreateRequest, ConversationCreateResponse,
     ConversationGetRequest, ConversationGetResponse, ConversationListRequest,
-    ConversationListResponse,
+    ConversationListResponse, ConversationUpsertedEvent,
     InstanceCapabilitiesRequest, InstanceCapabilitiesResponse, InstanceCreateRequest,
     InstanceCreateResponse, InstanceDestroyRequest, InstanceDestroyResponse,
     InstanceStartRequest, InstanceStartResponse, InstanceStatus, InstanceStatusChangedEvent,
-    HarnessDescriptor, InstanceStopRequest, InstanceStopResponse, PageInfo, ProtocolError, ProtocolEvent,
+    GroupedModelCatalogKind, GroupedModelSelection, HarnessDescriptor, InstanceStopRequest,
+    InstanceStopResponse, ModelCatalog, ModelSelection, PageInfo, ProtocolError, ProtocolEvent,
     ProtocolFuture, Provider, ProviderApproval, ProviderCapabilities,
     ProviderDescribeRequest, ProviderDescribeResponse, ProviderInitializeRequest,
     ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute,
     ProviderPluginDescriptor, ProviderShutdownRequest, ProviderShutdownResponse,
-    ProviderTurn, RoutedResourceId, TurnInterruptRequest, TurnInterruptResponse,
+    ProviderTurn, RoutedResourceId, TurnInterruptRequest, TurnInterruptResponse, TurnSelection,
     TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest, TurnSteerResponse,
     VersionRange, PROTOCOL_VERSION,
 };
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -86,7 +88,7 @@ struct OpenCodeInstanceRuntime {
     instance_kind: String,
     display_name: String,
     settings: OpenCodeInstanceSettings,
-    capabilities: ProviderCapabilities,
+    capabilities: Mutex<ProviderCapabilities>,
     boot_id: String,
     mutable: Mutex<InstanceMutable>,
     mapper: OpenCodeProtocolMapper,
@@ -105,7 +107,7 @@ impl OpenCodeInstanceRuntime {
             instance_kind: request.instance_kind,
             display_name: request.display_name,
             settings,
-            capabilities: OpenCodeProtocolMapper::capabilities(),
+            capabilities: Mutex::new(OpenCodeProtocolMapper::base_capabilities()),
             boot_id,
             mutable: Mutex::new(InstanceMutable {
                 status: InstanceStatus::Created,
@@ -133,7 +135,7 @@ impl OpenCodeInstanceRuntime {
                 version: Some(self.settings.server_version.clone()),
             },
             lock(&self.mutable).status,
-            self.capabilities.clone(),
+            lock(&self.capabilities).clone(),
         )
     }
 
@@ -949,6 +951,13 @@ impl Provider for OpenCodeProvider {
             let executable = runtime.settings.server_executable.clone();
             let version = runtime.settings.server_version.clone();
             let args = runtime.settings.server_args.clone();
+            let working_directory = runtime
+                .settings
+                .workspace_root
+                .clone()
+                .or_else(default_server_working_directory);
+            let capability_executable = executable.clone();
+            let capability_working_directory = working_directory.clone();
             let generation = {
                 let mut mutable = lock(&runtime.mutable);
                 mutable.generation_counter = mutable.generation_counter.saturating_add(1);
@@ -961,6 +970,7 @@ impl Provider for OpenCodeProvider {
                     &args,
                     &version,
                     session_generation,
+                    working_directory.as_deref(),
                 )
             })
             .await
@@ -972,6 +982,44 @@ impl Provider for OpenCodeProvider {
                     return Err(OpenCodeProtocolMapper::error(error));
                 }
             };
+            let discovery_client = session.client();
+            let discovered = tokio::task::spawn_blocking(move || {
+                let mut models = discovery_client.list_models()?;
+                if models.is_empty() {
+                    models = discover_cli_models(
+                        &capability_executable,
+                        capability_working_directory.as_deref(),
+                    )?;
+                }
+                Ok::<_, OpenCodeServerError>((
+                    discovery_client.list_agents()?,
+                    models,
+                    discovery_client.list_providers()?,
+                ))
+            })
+            .await
+            .map_err(provider_task_error)?;
+            let (agents, models, providers) = match discovered {
+                Ok(discovered) => discovered,
+                Err(error) => {
+                    let _ = session.shutdown();
+                    let _ = runtime.set_status(InstanceStatus::Error);
+                    return Err(OpenCodeProtocolMapper::error(error));
+                }
+            };
+            let capabilities = match OpenCodeProtocolMapper::capabilities(
+                &agents,
+                &models,
+                &providers,
+            ) {
+                Ok(capabilities) => capabilities,
+                Err(error) => {
+                    let _ = session.shutdown();
+                    let _ = runtime.set_status(InstanceStatus::Error);
+                    return Err(error);
+                }
+            };
+            *lock(&runtime.capabilities) = capabilities;
             let incoming = match session.subscribe() {
                 Ok(incoming) => incoming,
                 Err(error) => {
@@ -1068,8 +1116,9 @@ impl Provider for OpenCodeProvider {
     ) -> ProtocolFuture<'a, InstanceCapabilitiesResponse> {
         Box::pin(async move {
             let runtime = self.instance(&request.route)?;
+            let capabilities = lock(&runtime.capabilities).clone();
             Ok(InstanceCapabilitiesResponse {
-                capabilities: runtime.capabilities.clone(),
+                capabilities,
             })
         })
     }
@@ -1153,10 +1202,11 @@ impl Provider for OpenCodeProvider {
             let session = runtime.ready_session()?;
             let client = session.client();
             let requested_id = conversation_id.clone();
-            let (session, active) = tokio::task::spawn_blocking(move || {
+            let (session, active, messages) = tokio::task::spawn_blocking(move || {
                 let session = client.get_session(&requested_id)?;
                 let active = client.active_sessions()?.contains_key(&requested_id);
-                Ok::<_, OpenCodeServerError>((session, active))
+                let messages = load_conversation_messages(&client, &requested_id)?;
+                Ok::<_, OpenCodeServerError>((session, active, messages))
             })
             .await
             .map_err(provider_task_error)?
@@ -1181,9 +1231,12 @@ impl Provider for OpenCodeProvider {
                     .mapper
                     .conversation(&session, active, turn, waiting)
             };
+            let items = runtime
+                .mapper
+                .conversation_items(&conversation.resource, &messages);
             Ok(ConversationGetResponse {
                 conversation,
-                items: Vec::new(),
+                items,
             })
         })
     }
@@ -1264,6 +1317,14 @@ impl Provider for OpenCodeProvider {
             lock(&runtime.mutable)
                 .sessions
                 .insert(created.id.clone(), created);
+            runtime
+                .events
+                .publish(ProtocolEvent::EventConversationUpserted {
+                    jsonrpc: "2.0".to_string(),
+                    params: ConversationUpsertedEvent {
+                        conversation: conversation.clone(),
+                    },
+                })?;
             Ok(ConversationCreateResponse { conversation })
         })
     }
@@ -1280,7 +1341,7 @@ impl Provider for OpenCodeProvider {
                     false,
                 ));
             }
-            if request.capability_revision != "opencode-server-1.18.25" {
+            if request.capability_revision != "opencode-server-1.18.25-controls-v1" {
                 return Err(protocol_error(
                     "stale_capability_revision",
                     "turn.start capabilityRevision no longer matches the Provider instance"
@@ -1288,17 +1349,7 @@ impl Provider for OpenCodeProvider {
                     true,
                 ));
             }
-            if request.selection.access_mode_id.is_some()
-                || request.selection.reasoning_effort_id.is_some()
-                || request.selection.model.is_some()
-            {
-                return Err(protocol_error(
-                    "unsupported_turn_control",
-                    "OpenCode Provider does not advertise turn selection controls".to_string(),
-                    false,
-                ));
-            }
-            let effective_selection = request.selection;
+            let requested_selection = request.selection;
             let input_text = request.input.text;
             let client_request_id = request.client_request_id;
             let conversation_resource = request.conversation.clone();
@@ -1324,6 +1375,51 @@ impl Provider for OpenCodeProvider {
                     false,
                 ));
             }
+            let configuration_client = client.clone();
+            let configuration_conversation_id = conversation_id.clone();
+            let current_session = tokio::task::spawn_blocking(move || {
+                configuration_client.get_session(&configuration_conversation_id)
+            })
+            .await
+            .map_err(provider_task_error)?
+            .map_err(OpenCodeProtocolMapper::error)?;
+            let effective_selection = resolve_opencode_selection(
+                &lock(&runtime.capabilities),
+                requested_selection,
+                &current_session,
+            )?;
+            let selected_agent = effective_selection
+                .access_mode_id
+                .clone()
+                .ok_or_else(|| protocol_error(
+                    "provider_capability_invalid",
+                    "OpenCode access mode has no selection".to_string(),
+                    false,
+                ))?;
+            let selected_model = selected_opencode_model(&effective_selection)?;
+            let switch_client = client.clone();
+            let switch_conversation_id = conversation_id.clone();
+            let configured_session = tokio::task::spawn_blocking(move || {
+                let mut configured = current_session;
+                if configured.agent.as_deref() != Some(selected_agent.as_str()) {
+                    switch_client.switch_agent(
+                        &switch_conversation_id,
+                        selected_agent.clone(),
+                    )?;
+                    configured.agent = Some(selected_agent);
+                }
+                if configured.model.as_ref() != Some(&selected_model) {
+                    switch_client.switch_model(
+                        &switch_conversation_id,
+                        selected_model.clone(),
+                    )?;
+                    configured.model = Some(selected_model);
+                }
+                Ok::<_, OpenCodeServerError>(configured)
+            })
+            .await
+            .map_err(provider_task_error)?
+            .map_err(OpenCodeProtocolMapper::error)?;
             let (epoch, turn_resource_id, message_id) = {
                 let mut mutable = lock(&runtime.mutable);
                 if mutable.session_generation.as_deref() != Some(generation.as_str()) {
@@ -1340,6 +1436,9 @@ impl Provider for OpenCodeProvider {
                         false,
                     ));
                 }
+                mutable
+                    .sessions
+                    .insert(conversation_id.clone(), configured_session);
                 mutable.next_turn_epoch = mutable.next_turn_epoch.saturating_add(1);
                 let epoch = mutable.next_turn_epoch;
                 let turn_resource_id = turn_resource_id(
@@ -1840,6 +1939,74 @@ fn decode_settings(
     Ok(settings)
 }
 
+fn default_server_working_directory() -> Option<PathBuf> {
+    ["HOME", "USERPROFILE"]
+        .into_iter()
+        .find_map(std::env::var_os)
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_dir())
+}
+
+fn discover_cli_models(
+    executable: &std::path::Path,
+    working_directory: Option<&std::path::Path>,
+) -> Result<Vec<OpenCodeModel>, OpenCodeServerError> {
+    const MAX_CATALOG_OUTPUT_BYTES: usize = 1024 * 1024;
+    let mut command = Command::new(executable);
+    command
+        .arg("models")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(working_directory) = working_directory {
+        command.current_dir(working_directory);
+    }
+    let output = command
+        .output()
+        .map_err(|error| OpenCodeServerError::Spawn(format!("run `opencode models`: {error}")))?;
+    if !output.status.success() {
+        return Err(OpenCodeServerError::ProcessExited(format!(
+            "`opencode models` exited with {}",
+            output.status
+        )));
+    }
+    if output.stdout.len() > MAX_CATALOG_OUTPUT_BYTES {
+        return Err(OpenCodeServerError::Protocol(
+            "`opencode models` output exceeded 1 MiB".to_string(),
+        ));
+    }
+    let output = String::from_utf8(output.stdout).map_err(|error| {
+        OpenCodeServerError::Protocol(format!("`opencode models` returned non-UTF-8 output: {error}"))
+    })?;
+    let mut models = Vec::new();
+    let mut seen = HashSet::new();
+    for line in output.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let Some((provider_id, model_id)) = line.split_once('/') else {
+            continue;
+        };
+        if provider_id.is_empty()
+            || model_id.is_empty()
+            || !seen.insert((provider_id.to_string(), model_id.to_string()))
+        {
+            continue;
+        }
+        models.push(OpenCodeModel {
+            id: model_id.to_string(),
+            provider_id: provider_id.to_string(),
+            name: model_id.to_string(),
+            status: "active".to_string(),
+            enabled: true,
+            variants: Vec::new(),
+        });
+    }
+    if models.is_empty() {
+        return Err(OpenCodeServerError::Protocol(
+            "`opencode models` returned no parseable provider/model entries".to_string(),
+        ));
+    }
+    Ok(models)
+}
+
 fn validate_route(route: &ProviderInstanceRoute) -> Result<(), ProtocolError> {
     if route.device_id.trim().is_empty()
         || route.provider_plugin_id.trim().is_empty()
@@ -1936,6 +2103,58 @@ fn validate_opencode_session(session: &OpenCodeSession) -> Result<(), ProtocolEr
         ));
     }
     Ok(())
+}
+
+fn load_conversation_messages(
+    client: &OpenCodeClient,
+    session_id: &str,
+) -> Result<Vec<crate::protocol::OpenCodeMessage>, OpenCodeServerError> {
+    const PAGE_SIZE: u64 = 100;
+    const MAX_PAGES: usize = 100;
+    const MAX_MESSAGES: usize = 10_000;
+    let mut messages = Vec::new();
+    let mut cursor = None;
+    let mut seen_cursors = HashSet::new();
+    for _ in 0..MAX_PAGES {
+        let page = client.list_messages(session_id, cursor.as_deref(), PAGE_SIZE)?;
+        for message in &page.data {
+            if message.id.trim().is_empty() || message.kind.trim().is_empty() {
+                return Err(OpenCodeServerError::Protocol(
+                    "OpenCode message history contains an empty id or type".to_string(),
+                ));
+            }
+            if message.content.as_ref().is_some_and(|contents| {
+                contents
+                    .iter()
+                    .any(|content| content.id.trim().is_empty() || content.kind.trim().is_empty())
+            }) {
+                return Err(OpenCodeServerError::Protocol(
+                    "OpenCode message history contains an empty content id or type".to_string(),
+                ));
+            }
+        }
+        if page.data.is_empty() {
+            return Ok(messages);
+        }
+        messages.extend(page.data);
+        if messages.len() > MAX_MESSAGES {
+            return Err(OpenCodeServerError::Protocol(format!(
+                "OpenCode conversation exceeds the {MAX_MESSAGES} message history limit"
+            )));
+        }
+        let Some(next_cursor) = page.cursor.next else {
+            return Ok(messages);
+        };
+        if !seen_cursors.insert(next_cursor.clone()) {
+            return Err(OpenCodeServerError::Protocol(
+                "OpenCode message history repeated a pagination cursor".to_string(),
+            ));
+        }
+        cursor = Some(next_cursor);
+    }
+    Err(OpenCodeServerError::Protocol(format!(
+        "OpenCode conversation exceeds the {MAX_PAGES}-page history limit"
+    )))
 }
 
 fn decode_event<T: DeserializeOwned>(event: &OpenCodeEvent) -> Result<T, ProtocolError> {
@@ -2038,6 +2257,149 @@ fn now_ms() -> u64 {
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn resolve_opencode_selection(
+    capabilities: &ProviderCapabilities,
+    requested: TurnSelection,
+    current: &OpenCodeSession,
+) -> Result<TurnSelection, ProtocolError> {
+    let controls = capabilities.turn_send.as_ref().ok_or_else(|| protocol_error(
+        "provider_capability_invalid",
+        "OpenCode turn controls are unavailable".to_string(),
+        false,
+    ))?;
+    let access_mode_id = resolve_control_choice(
+        controls.access_mode.as_ref(),
+        requested.access_mode_id,
+        current.agent.clone(),
+        "accessModeId",
+    )?;
+    let reasoning_effort_id = resolve_control_choice(
+        controls.reasoning_effort.as_ref(),
+        requested.reasoning_effort_id,
+        current.model.as_ref().and_then(|model| model.variant.clone()),
+        "reasoningEffortId",
+    )?;
+    let catalog = match controls.model_catalog.as_ref() {
+        Some(ModelCatalog::GroupedModelCatalog(catalog)) => catalog,
+        Some(ModelCatalog::FlatModelCatalog(_)) => {
+            return Err(protocol_error(
+                "provider_capability_invalid",
+                "OpenCode requires a grouped model catalog".to_string(),
+                false,
+            ));
+        }
+        None => {
+            return Err(protocol_error(
+                "provider_capability_invalid",
+                "OpenCode model catalog is unavailable".to_string(),
+                false,
+            ));
+        }
+    };
+    let requested_model = match requested.model {
+        Some(ModelSelection::GroupedModelSelection(selection)) => Some(selection),
+        Some(ModelSelection::FlatModelSelection(_)) => {
+            return Err(protocol_error(
+                "invalid_turn_selection",
+                "OpenCode requires a grouped model selection".to_string(),
+                false,
+            ));
+        }
+        None => None,
+    };
+    let current_model = current.model.as_ref().map(|model| GroupedModelSelection {
+        kind: GroupedModelCatalogKind::Grouped,
+        provider_id: model.provider_id.clone(),
+        model_id: model.id.clone(),
+    });
+    let model = requested_model
+        .or_else(|| current_model.filter(|selection| grouped_model_enabled(catalog, selection)))
+        .or_else(|| catalog.default_selection.clone())
+        .ok_or_else(|| protocol_error(
+            "provider_capability_invalid",
+            "OpenCode model catalog has no default selection".to_string(),
+            false,
+        ))?;
+    if !grouped_model_enabled(catalog, &model) {
+        return Err(protocol_error(
+            "invalid_turn_selection",
+            format!("unknown or disabled OpenCode model: {}/{}", model.provider_id, model.model_id),
+            false,
+        ));
+    }
+    Ok(TurnSelection {
+        access_mode_id,
+        reasoning_effort_id,
+        model: Some(ModelSelection::GroupedModelSelection(model)),
+    })
+}
+
+fn resolve_control_choice(
+    choices: Option<&codepet_provider_sdk::ChoiceSet>,
+    requested: Option<String>,
+    current: Option<String>,
+    field: &str,
+) -> Result<Option<String>, ProtocolError> {
+    let choices = choices.ok_or_else(|| protocol_error(
+        "provider_capability_invalid",
+        format!("OpenCode {field} choices are unavailable"),
+        false,
+    ))?;
+    let selected = requested
+        .or_else(|| current.filter(|value| choices.options.iter().any(|option| option.id == *value)))
+        .or_else(|| choices.default_id.clone());
+    if let Some(selected) = selected.as_deref() {
+        match choices.options.iter().find(|option| option.id == selected) {
+            Some(option) if option.enabled != Some(false) => {}
+            Some(option) => {
+                return Err(protocol_error(
+                    "invalid_turn_selection",
+                    option.disabled_reason.clone().unwrap_or_else(|| format!("{field} is disabled: {selected}")),
+                    false,
+                ));
+            }
+            None => {
+                return Err(protocol_error(
+                    "invalid_turn_selection",
+                    format!("unknown {field}: {selected}"),
+                    false,
+                ));
+            }
+        }
+    }
+    Ok(selected)
+}
+
+fn grouped_model_enabled(
+    catalog: &codepet_provider_sdk::GroupedModelCatalog,
+    selection: &GroupedModelSelection,
+) -> bool {
+    catalog.providers.iter().any(|provider| {
+        provider.id == selection.provider_id
+            && provider.models.iter().any(|model| {
+                model.id == selection.model_id && model.enabled != Some(false)
+            })
+    })
+}
+
+fn selected_opencode_model(selection: &TurnSelection) -> Result<OpenCodeModelRef, ProtocolError> {
+    let model = match selection.model.as_ref() {
+        Some(ModelSelection::GroupedModelSelection(model)) => model,
+        _ => {
+            return Err(protocol_error(
+                "invalid_turn_selection",
+                "OpenCode model selection is missing".to_string(),
+                false,
+            ));
+        }
+    };
+    Ok(OpenCodeModelRef {
+        id: model.model_id.clone(),
+        provider_id: model.provider_id.clone(),
+        variant: selection.reasoning_effort_id.clone(),
+    })
 }
 
 #[cfg(test)]

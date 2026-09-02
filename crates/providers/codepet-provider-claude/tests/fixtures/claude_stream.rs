@@ -208,12 +208,14 @@ fn parse_options() -> Options {
         "--settings",
         "--restricted",
         "--tools",
-        "--permission-mode",
     ] {
         assert!(!args.iter().any(|arg| arg == inherited_flag));
     }
+    assert_eq!(value_after(&args, "--permission-mode"), "manual");
     assert_eq!(value_after(&args, "--input-format"), "stream-json");
     assert_eq!(value_after(&args, "--output-format"), "stream-json");
+    assert_eq!(value_after(&args, "--model"), "sonnet");
+    assert_eq!(value_after(&args, "--effort"), "high");
 
     let session = args
         .iter()

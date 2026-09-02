@@ -1,6 +1,7 @@
 use base64::Engine;
-use codepet_gateway_sdk::PROTOCOL_VERSION;
-use codepet_lan_channel_sdk::{DeviceDescriptor, PairingQrPayload};
+use codepet_lan_channel_sdk::{
+    DeviceDescriptor, PairingQrPayload, CHANNEL_LAN_SCHEMA_VERSION,
+};
 use codepet_host::{
     select_remote_lan_ipv4, HostError, PairingStatus, PairingStatusKind,
     ProviderGatewayService,
@@ -495,7 +496,7 @@ impl RemoteAccessRuntime {
         let manager = self.manager.as_ref().ok_or_else(runtime_core_unavailable)?;
         let pairing = manager.begin_pairing().map_err(RemoteCommandError::from)?;
         let payload = PairingQrPayload {
-            version: u64::from(PROTOCOL_VERSION),
+            version: CHANNEL_LAN_SCHEMA_VERSION,
             host_device_id: identity.device_id,
             display_name: identity.descriptor.device_name,
             https_base_url,
@@ -2390,7 +2391,7 @@ mod tests {
                 let pairing_payload: PairingQrPayload = serde_json::from_str(json).unwrap();
                 assert_eq!(pairing_payload.pairing_id, started.pairing_id);
                 assert_eq!(pairing_payload.expires_at, started.expires_at);
-                assert_eq!(pairing_payload.version, u64::from(PROTOCOL_VERSION));
+                assert_eq!(pairing_payload.version, CHANNEL_LAN_SCHEMA_VERSION);
                 assert_eq!(pairing_payload.host_device_id, remote_identity.device_id);
                 assert_eq!(
                     pairing_payload.display_name,

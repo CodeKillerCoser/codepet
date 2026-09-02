@@ -1,8 +1,10 @@
 use crate::protocol::{
     OpenCodeActiveSessions, OpenCodeDataResponse, OpenCodeEvent, OpenCodeHealth,
-    OpenCodePermissionReply, OpenCodePermissionReplyRequest, OpenCodePromptAdmission,
-    OpenCodePromptRequest, OpenCodeServerError, OpenCodeSession, OpenCodeSessionCreate,
-    OpenCodeSessionPage, OPENCODE_VERIFIED_SERVER_VERSION,
+    OpenCodeAgent, OpenCodeAgentSwitch, OpenCodeCatalogResponse, OpenCodeMessagePage,
+    OpenCodeModel, OpenCodeModelRef, OpenCodeModelSwitch, OpenCodePermissionReply, OpenCodePermissionReplyRequest,
+    OpenCodePromptAdmission, OpenCodePromptRequest, OpenCodeServerError, OpenCodeSession,
+    OpenCodeSessionCreate,
+    OpenCodeProvider, OpenCodeSessionPage, OPENCODE_VERIFIED_SERVER_VERSION,
 };
 use reqwest::blocking::{Client, Response};
 use reqwest::Url;
@@ -119,6 +121,25 @@ impl OpenCodeClient {
         Ok(response.data)
     }
 
+    pub fn list_messages(
+        &self,
+        session_id: &str,
+        cursor: Option<&str>,
+        limit: u64,
+    ) -> Result<OpenCodeMessagePage, OpenCodeServerError> {
+        let mut request = self.request(
+            self.requests
+                .get(self.url(&["api", "session", session_id, "message"])?),
+        );
+        request = request.query(&[("limit", limit)]);
+        if let Some(cursor) = cursor {
+            request = request.query(&[("cursor", cursor)]);
+        } else {
+            request = request.query(&[("order", "asc")]);
+        }
+        decode_json(request.send().map_err(transport_error)?)
+    }
+
     pub fn create_session(
         &self,
         request: &OpenCodeSessionCreate,
@@ -130,6 +151,65 @@ impl OpenCodeClient {
                 .map_err(transport_error)?,
         )?;
         Ok(response.data)
+    }
+
+    pub fn list_agents(&self) -> Result<Vec<OpenCodeAgent>, OpenCodeServerError> {
+        let response: OpenCodeCatalogResponse<OpenCodeAgent> = decode_json(
+            self.request(self.requests.get(self.url(&["api", "agent"])?))
+                .send()
+                .map_err(transport_error)?,
+        )?;
+        Ok(response.data)
+    }
+
+    pub fn list_models(&self) -> Result<Vec<OpenCodeModel>, OpenCodeServerError> {
+        let response: OpenCodeCatalogResponse<OpenCodeModel> = decode_json(
+            self.request(self.requests.get(self.url(&["api", "model"])?))
+                .send()
+                .map_err(transport_error)?,
+        )?;
+        Ok(response.data)
+    }
+
+    pub fn list_providers(&self) -> Result<Vec<OpenCodeProvider>, OpenCodeServerError> {
+        let response: OpenCodeCatalogResponse<OpenCodeProvider> = decode_json(
+            self.request(self.requests.get(self.url(&["api", "provider"])?))
+                .send()
+                .map_err(transport_error)?,
+        )?;
+        Ok(response.data)
+    }
+
+    pub fn switch_agent(
+        &self,
+        session_id: &str,
+        agent: String,
+    ) -> Result<(), OpenCodeServerError> {
+        decode_no_content(
+            self.request(
+                self.requests
+                    .post(self.url(&["api", "session", session_id, "agent"])?),
+            )
+            .json(&OpenCodeAgentSwitch { agent })
+            .send()
+            .map_err(transport_error)?,
+        )
+    }
+
+    pub fn switch_model(
+        &self,
+        session_id: &str,
+        model: OpenCodeModelRef,
+    ) -> Result<(), OpenCodeServerError> {
+        decode_no_content(
+            self.request(
+                self.requests
+                    .post(self.url(&["api", "session", session_id, "model"])?),
+            )
+            .json(&OpenCodeModelSwitch { model })
+            .send()
+            .map_err(transport_error)?,
+        )
     }
 
     pub fn prompt(
@@ -238,6 +318,7 @@ impl OpenCodeServerSession {
         args: &[String],
         server_version: &str,
         generation: String,
+        working_directory: Option<&Path>,
     ) -> Result<Self, OpenCodeServerError> {
         validate_server_version(server_version)?;
         let deadline = Instant::now() + STARTUP_TIMEOUT;
@@ -253,6 +334,9 @@ impl OpenCodeServerSession {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
+        if let Some(working_directory) = working_directory {
+            command.current_dir(working_directory);
+        }
         let mut child = command
             .spawn()
             .map_err(|error| OpenCodeServerError::Spawn(error.to_string()))?;

@@ -270,6 +270,10 @@ test("LAN admission DTOs remain independent from the Gateway JSON-RPC manifest",
   assert.equal(definitions.PairingQrPayload.properties.pairingSecret["x-codepet-sensitive"], true);
   assert.deepEqual(definitions.CurrentCredentialDeleteResponse.required, ["revoked"]);
   assert.equal(channel.manifest.methods.length, 0);
+  const rust = await readFile("sdk/rust/codepet-lan-channel-sdk/src/generated.rs", "utf8");
+  const dart = await readFile("sdk/dart/codepet-lan-channel-sdk/lib/src/generated.dart", "utf8");
+  assert.match(rust, /pub const CHANNEL_LAN_SCHEMA_VERSION: u64 = 1;/);
+  assert.match(dart, /const int channelLanSchemaVersion = 1;/);
 });
 
 test("active generators omit schema definitions outside the public reachability graph", async () => {
