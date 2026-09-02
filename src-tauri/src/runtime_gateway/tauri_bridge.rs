@@ -874,7 +874,7 @@ mod tests {
             PluginDescriptor {
                 plugin_id: "dev.codepet.codex".to_string(),
                 display_name: "Codex".to_string(),
-                icon: Some("https://raw.githubusercontent.com/openai/codex/main/codex-rs/skills/src/assets/samples/openai-docs/assets/openai.png".to_string()),
+                icon: Some("https://avatars.githubusercontent.com/u/14957082?s=200&v=4".to_string()),
                 executable: directory.path().join("codepet-provider-codex"),
                 args: Vec::new(),
                 env: Default::default(),

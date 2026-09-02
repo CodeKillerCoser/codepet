@@ -134,7 +134,7 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
     let opencode = ready_provider(&listed.providers, OPENCODE_PLUGIN_ID, &device_id);
     assert_eq!(
         codex.icon.as_deref(),
-        Some("https://raw.githubusercontent.com/openai/codex/main/codex-rs/skills/src/assets/samples/openai-docs/assets/openai.png")
+        Some("https://avatars.githubusercontent.com/u/14957082?s=200&v=4")
     );
     assert_eq!(
         claude.icon.as_deref(),
