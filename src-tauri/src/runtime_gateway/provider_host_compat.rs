@@ -317,6 +317,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
                     model: request.model,
                     reasoning_effort: request.reasoning_effort,
                     workspace_root: request.workspace_root,
+                    workspace_mode: None,
                 },
             )
             .await

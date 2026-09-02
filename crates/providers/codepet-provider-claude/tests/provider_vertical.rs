@@ -187,6 +187,7 @@ async fn configured_provider(
             model: Some("sonnet".to_string()),
             reasoning_effort: Some("high".to_string()),
             workspace_root: Some(workspace_root.to_string_lossy().to_string()),
+            workspace_mode: None,
             extension: None,
         },
     )
@@ -427,6 +428,7 @@ async fn provider_inherits_claude_project_configuration_and_rejects_strong_acces
                 model: Some("sonnet".to_string()),
                 reasoning_effort: Some("high".to_string()),
                 workspace_root: Some(workspace.path().to_string_lossy().to_string()),
+                workspace_mode: None,
                 extension: None,
             },
         )

@@ -363,6 +363,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
             model: None,
             reasoning_effort: None,
             workspace_root: None,
+            workspace_mode: None,
             extension: None,
         },
     )
@@ -379,6 +380,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
             model: Some("gpt-fixture".to_string()),
             reasoning_effort: Some("high".to_string()),
             workspace_root: Some("/fixture/workspace".to_string()),
+            workspace_mode: None,
             extension: None,
         },
     )
@@ -800,6 +802,50 @@ fn provider_binary_conversation_get_is_pure_read_with_external_writer() {
 
     provider.request("writer-held-stop", "instance.stop", json!({ "route": route_value() }));
     provider.request("writer-held-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_create_waits_until_conversation_is_readable() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("create-readiness.txt");
+    let request_log = directory.path().join("create-readiness-requests.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (conversation, _) = provider.configure_with_request_log(
+        "create-read-eventually",
+        &marker,
+        Some(&request_log),
+    );
+
+    assert_eq!(
+        conversation.get("nativeResourceId").and_then(Value::as_str),
+        Some("thread-created")
+    );
+    let fetched = provider.request(
+        "created-readable",
+        "conversation.get",
+        json!({ "conversation": conversation }),
+    );
+    assert!(fetched.get("error").is_none(), "{fetched}");
+
+    let requests = std::fs::read_to_string(&request_log).unwrap();
+    let creation_requests = requests
+        .lines()
+        .skip_while(|line| *line != "thread/start")
+        .take(5)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        creation_requests,
+        vec![
+            "thread/start",
+            "thread/read\tthread-created",
+            "thread/read\tthread-created",
+            "thread/read\tthread-created",
+            "thread/turns/list\tthread-created"
+        ]
+    );
+
+    provider.request("create-readiness-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("create-readiness-shutdown", "provider.shutdown", json!({}));
 }
 
 #[test]
@@ -2825,6 +2871,26 @@ fn provider_real_codex_app_server_smoke() {
         json!({ "route": route_value(), "limit": 1 }),
     );
     assert!(listed.pointer("/result/conversations").is_some());
+    if let Some(workspace) = std::env::var_os("CODEPET_REAL_WORKSPACE") {
+        let created = provider.request(
+            "real-conversation-create",
+            "conversation.create",
+            json!({
+                "route": route_value(),
+                "permissionLevel": "workspace-write",
+                "workspaceRoot": workspace.to_string_lossy(),
+                "workspaceMode": "worktree"
+            }),
+        );
+        assert!(created
+            .pointer("/result/conversation/resource/nativeResourceId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| !id.is_empty()));
+        assert!(created
+            .pointer("/result/conversation/workspaceRoot")
+            .and_then(Value::as_str)
+            .is_some_and(|path| path == workspace.to_string_lossy()));
+    }
     let stopped = provider.request(
         "real-stop",
         "instance.stop",

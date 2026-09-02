@@ -900,6 +900,7 @@ impl ProtocolServer for ProviderGatewayService {
                     model: request.model,
                     reasoning_effort: request.reasoning_effort,
                     workspace_root: request.workspace_root,
+                    workspace_mode: request.workspace_mode,
                     extension: None,
                 })
                 .await
@@ -1067,6 +1068,10 @@ fn map_capabilities(capabilities: &provider::ProviderCapabilities) -> gateway::G
         revision: capabilities.revision.clone(),
         methods,
         turn_send: capabilities.turn_send.as_ref().map(map_turn_send_capabilities),
+        conversation_create: capabilities
+            .conversation_create
+            .as_ref()
+            .map(map_conversation_create_capabilities),
     }
 }
 
@@ -1075,6 +1080,20 @@ fn empty_gateway_capabilities(revision: String) -> gateway::GatewayCapabilities 
         revision,
         methods: Vec::new(),
         turn_send: None,
+        conversation_create: None,
+    }
+}
+
+fn map_conversation_create_capabilities(
+    capabilities: &provider::ConversationCreateCapabilities,
+) -> gateway::ConversationCreateCapabilities {
+    gateway::ConversationCreateCapabilities {
+        supports_title: capabilities.supports_title,
+        selection: capabilities
+            .selection
+            .as_ref()
+            .map(map_turn_send_capabilities),
+        workspace_mode: capabilities.workspace_mode.as_ref().map(map_choice_set),
     }
 }
 

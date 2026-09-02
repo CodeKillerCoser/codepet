@@ -70,6 +70,7 @@
         "model": { "type": "string", "minLength": 1 },
         "reasoningEffort": { "type": "string", "minLength": 1 },
         "workspaceRoot": { "type": "string", "minLength": 1 },
+        "workspaceMode": { "type": "string", "minLength": 1 },
         "extension": { "$ref": "#/$defs/ProviderExtension" }
       },
       "required": ["route", "permissionLevel"],
@@ -333,6 +334,16 @@
       },
       "additionalProperties": false
     },
+    "ConversationCreateCapabilities": {
+      "type": "object",
+      "properties": {
+        "supportsTitle": { "type": "boolean" },
+        "selection": { "$ref": "#/$defs/TurnSendCapabilities" },
+        "workspaceMode": { "$ref": "#/$defs/ChoiceSet" }
+      },
+      "required": ["supportsTitle"],
+      "additionalProperties": false
+    },
     "TurnInputKind": {
       "type": "string",
       "enum": ["text"]
@@ -512,6 +523,7 @@
           "uniqueItems": true
         },
         "turnSend": { "$ref": "#/$defs/TurnSendCapabilities" },
+        "conversationCreate": { "$ref": "#/$defs/ConversationCreateCapabilities" },
         "extensions": {
           "type": "array",
           "items": { "$ref": "#/$defs/ProviderExtension" }

@@ -168,6 +168,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
             model: None,
             reasoning_effort: None,
             workspace_root: Some(created_workspace),
+            workspace_mode: None,
             extension: None,
         })
         .await

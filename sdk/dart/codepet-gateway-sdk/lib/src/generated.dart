@@ -703,6 +703,52 @@ enum ConversationContentKind {
   String toJson() => wireValue;
 }
 
+final class ConversationCreateCapabilities {
+  factory ConversationCreateCapabilities({
+    required bool supportsTitle,
+    TurnSendCapabilities? selection,
+    ChoiceSet? workspaceMode,
+  }) {
+    final validatedSupportsTitle = supportsTitle;
+    final validatedSelection = selection == null ? null : selection;
+    final validatedWorkspaceMode = workspaceMode == null ? null : workspaceMode;
+    return ConversationCreateCapabilities._(
+      supportsTitle: validatedSupportsTitle,
+      selection: validatedSelection,
+      workspaceMode: validatedWorkspaceMode,
+    );
+  }
+
+  ConversationCreateCapabilities._({
+    required this.supportsTitle,
+    required this.selection,
+    required this.workspaceMode,
+  });
+
+  final bool supportsTitle;
+  final TurnSendCapabilities? selection;
+  final ChoiceSet? workspaceMode;
+
+  factory ConversationCreateCapabilities.fromJson(Object? value, {String path = 'ConversationCreateCapabilities'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'supportsTitle', 'selection', 'workspaceMode'}, path);
+    return ConversationCreateCapabilities(
+      supportsTitle: _boolean(_required(json, 'supportsTitle', path), '$path.supportsTitle'),
+      selection: json.containsKey('selection') && json['selection'] != null ? TurnSendCapabilities.fromJson(json['selection'], path: '$path.selection') : null,
+      workspaceMode: json.containsKey('workspaceMode') && json['workspaceMode'] != null ? ChoiceSet.fromJson(json['workspaceMode'], path: '$path.workspaceMode') : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'supportsTitle': supportsTitle,
+    if (selection != null) 'selection': selection!.toJson(),
+    if (workspaceMode != null) 'workspaceMode': workspaceMode!.toJson(),
+  };
+
+  @override
+  String toString() => 'ConversationCreateCapabilities(supportsTitle: $supportsTitle, selection: $selection, workspaceMode: $workspaceMode)';
+}
+
 final class ConversationCreateRequest {
   factory ConversationCreateRequest({
     required GatewayProviderRoute route,
@@ -711,6 +757,7 @@ final class ConversationCreateRequest {
     String? model,
     String? reasoningEffort,
     String? workspaceRoot,
+    String? workspaceMode,
   }) {
     final validatedRoute = route;
     final validatedTitle = title == null ? null : _string(title, 'ConversationCreateRequest.title', minLength: 1);
@@ -718,6 +765,7 @@ final class ConversationCreateRequest {
     final validatedModel = model == null ? null : _string(model, 'ConversationCreateRequest.model', minLength: 1);
     final validatedReasoningEffort = reasoningEffort == null ? null : _string(reasoningEffort, 'ConversationCreateRequest.reasoningEffort', minLength: 1);
     final validatedWorkspaceRoot = workspaceRoot == null ? null : _string(workspaceRoot, 'ConversationCreateRequest.workspaceRoot', minLength: 1);
+    final validatedWorkspaceMode = workspaceMode == null ? null : _string(workspaceMode, 'ConversationCreateRequest.workspaceMode', minLength: 1);
     return ConversationCreateRequest._(
       route: validatedRoute,
       title: validatedTitle,
@@ -725,6 +773,7 @@ final class ConversationCreateRequest {
       model: validatedModel,
       reasoningEffort: validatedReasoningEffort,
       workspaceRoot: validatedWorkspaceRoot,
+      workspaceMode: validatedWorkspaceMode,
     );
   }
 
@@ -735,6 +784,7 @@ final class ConversationCreateRequest {
     required this.model,
     required this.reasoningEffort,
     required this.workspaceRoot,
+    required this.workspaceMode,
   });
 
   final GatewayProviderRoute route;
@@ -743,10 +793,11 @@ final class ConversationCreateRequest {
   final String? model;
   final String? reasoningEffort;
   final String? workspaceRoot;
+  final String? workspaceMode;
 
   factory ConversationCreateRequest.fromJson(Object? value, {String path = 'ConversationCreateRequest'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'route', 'title', 'permissionLevel', 'model', 'reasoningEffort', 'workspaceRoot'}, path);
+    _expectKeys(json, const {'route', 'title', 'permissionLevel', 'model', 'reasoningEffort', 'workspaceRoot', 'workspaceMode'}, path);
     return ConversationCreateRequest(
       route: GatewayProviderRoute.fromJson(_required(json, 'route', path), path: '$path.route'),
       title: json.containsKey('title') && json['title'] != null ? _string(json['title'], '$path.title', minLength: 1) : null,
@@ -754,6 +805,7 @@ final class ConversationCreateRequest {
       model: json.containsKey('model') && json['model'] != null ? _string(json['model'], '$path.model', minLength: 1) : null,
       reasoningEffort: json.containsKey('reasoningEffort') && json['reasoningEffort'] != null ? _string(json['reasoningEffort'], '$path.reasoningEffort', minLength: 1) : null,
       workspaceRoot: json.containsKey('workspaceRoot') && json['workspaceRoot'] != null ? _string(json['workspaceRoot'], '$path.workspaceRoot', minLength: 1) : null,
+      workspaceMode: json.containsKey('workspaceMode') && json['workspaceMode'] != null ? _string(json['workspaceMode'], '$path.workspaceMode', minLength: 1) : null,
     );
   }
 
@@ -764,10 +816,11 @@ final class ConversationCreateRequest {
     if (model != null) 'model': model!,
     if (reasoningEffort != null) 'reasoningEffort': reasoningEffort!,
     if (workspaceRoot != null) 'workspaceRoot': workspaceRoot!,
+    if (workspaceMode != null) 'workspaceMode': workspaceMode!,
   };
 
   @override
-  String toString() => 'ConversationCreateRequest(route: $route, title: $title, permissionLevel: $permissionLevel, model: $model, reasoningEffort: $reasoningEffort, workspaceRoot: $workspaceRoot)';
+  String toString() => 'ConversationCreateRequest(route: $route, title: $title, permissionLevel: $permissionLevel, model: $model, reasoningEffort: $reasoningEffort, workspaceRoot: $workspaceRoot, workspaceMode: $workspaceMode)';
 }
 
 final class ConversationCreateResponse {
@@ -1630,14 +1683,17 @@ final class GatewayCapabilities {
     required String revision,
     required List<GatewayCapability> methods,
     TurnSendCapabilities? turnSend,
+    ConversationCreateCapabilities? conversationCreate,
   }) {
     final validatedRevision = _string(revision, 'GatewayCapabilities.revision', minLength: 1);
     final validatedMethods = _freezeList<GatewayCapability>(methods, 'GatewayCapabilities.methods', (item, itemPath) => item, uniqueItems: true, encodeItem: (item) => item.toJson());
     final validatedTurnSend = turnSend == null ? null : turnSend;
+    final validatedConversationCreate = conversationCreate == null ? null : conversationCreate;
     return GatewayCapabilities._(
       revision: validatedRevision,
       methods: validatedMethods,
       turnSend: validatedTurnSend,
+      conversationCreate: validatedConversationCreate,
     );
   }
 
@@ -1645,19 +1701,22 @@ final class GatewayCapabilities {
     required this.revision,
     required this.methods,
     required this.turnSend,
+    required this.conversationCreate,
   });
 
   final String revision;
   final List<GatewayCapability> methods;
   final TurnSendCapabilities? turnSend;
+  final ConversationCreateCapabilities? conversationCreate;
 
   factory GatewayCapabilities.fromJson(Object? value, {String path = 'GatewayCapabilities'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'revision', 'methods', 'turnSend'}, path);
+    _expectKeys(json, const {'revision', 'methods', 'turnSend', 'conversationCreate'}, path);
     return GatewayCapabilities(
       revision: _string(_required(json, 'revision', path), '$path.revision', minLength: 1),
       methods: _decodeList<GatewayCapability>(_required(json, 'methods', path), '$path.methods', (item, itemPath) => GatewayCapability.fromJson(item, path: itemPath), uniqueItems: true, encodeItem: (item) => item.toJson()),
       turnSend: json.containsKey('turnSend') && json['turnSend'] != null ? TurnSendCapabilities.fromJson(json['turnSend'], path: '$path.turnSend') : null,
+      conversationCreate: json.containsKey('conversationCreate') && json['conversationCreate'] != null ? ConversationCreateCapabilities.fromJson(json['conversationCreate'], path: '$path.conversationCreate') : null,
     );
   }
 
@@ -1665,10 +1724,11 @@ final class GatewayCapabilities {
     'revision': revision,
     'methods': methods.map((item) => item.toJson()).toList(growable: false),
     if (turnSend != null) 'turnSend': turnSend!.toJson(),
+    if (conversationCreate != null) 'conversationCreate': conversationCreate!.toJson(),
   };
 
   @override
-  String toString() => 'GatewayCapabilities(revision: $revision, methods: $methods, turnSend: $turnSend)';
+  String toString() => 'GatewayCapabilities(revision: $revision, methods: $methods, turnSend: $turnSend, conversationCreate: $conversationCreate)';
 }
 
 enum GatewayCapability {

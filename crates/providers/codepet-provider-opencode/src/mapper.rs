@@ -5,7 +5,8 @@ use crate::protocol::{
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalRequestedEvent, ApprovalResolvedEvent, ApprovalStatus,
-    ChoiceOption, ChoiceSet, ConversationContent, ConversationContentKind, ConversationItem, ConversationItemKind,
+    ChoiceOption, ChoiceSet, ConversationContent, ConversationContentKind,
+    ConversationCreateCapabilities, ConversationItem, ConversationItemKind,
     ConversationItemRole, ConversationItemStatus, ConversationStatus, HarnessDescriptor,
     GroupedModelCatalog, GroupedModelCatalogKind, GroupedModelProvider, GroupedModelSelection,
     InstanceStatus, ModelCatalog, ModelSelection, ProtocolError, ProtocolEvent, ProviderApproval, ProviderCapabilities,
@@ -40,6 +41,33 @@ impl OpenCodeProtocolMapper {
                 access_mode: None,
                 reasoning_effort: None,
                 model_catalog: None,
+            }),
+            conversation_create: Some(ConversationCreateCapabilities {
+                supports_title: false,
+                selection: Some(TurnSendCapabilities {
+                    access_mode: Some(ChoiceSet {
+                        options: vec![ChoiceOption {
+                            id: OPENCODE_PERMISSION_LEVEL.to_string(),
+                            display_name: "OpenCode default".to_string(),
+                            description: None,
+                            enabled: Some(true),
+                            disabled_reason: None,
+                        }],
+                        default_id: Some(OPENCODE_PERMISSION_LEVEL.to_string()),
+                    }),
+                    reasoning_effort: None,
+                    model_catalog: None,
+                }),
+                workspace_mode: Some(ChoiceSet {
+                    options: vec![ChoiceOption {
+                        id: "main".to_string(),
+                        display_name: "Main workspace".to_string(),
+                        description: None,
+                        enabled: Some(true),
+                        disabled_reason: None,
+                    }],
+                    default_id: Some("main".to_string()),
+                }),
             }),
             extensions: Vec::new(),
         }

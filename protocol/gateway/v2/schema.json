@@ -111,7 +111,8 @@
         "permissionLevel": { "type": "string", "minLength": 1 },
         "model": { "type": "string", "minLength": 1 },
         "reasoningEffort": { "type": "string", "minLength": 1 },
-        "workspaceRoot": { "type": "string", "minLength": 1 }
+        "workspaceRoot": { "type": "string", "minLength": 1 },
+        "workspaceMode": { "type": "string", "minLength": 1 }
       },
       "required": ["route", "permissionLevel"],
       "additionalProperties": false
@@ -365,6 +366,16 @@
       },
       "additionalProperties": false
     },
+    "ConversationCreateCapabilities": {
+      "type": "object",
+      "properties": {
+        "supportsTitle": { "type": "boolean" },
+        "selection": { "$ref": "#/$defs/TurnSendCapabilities" },
+        "workspaceMode": { "$ref": "#/$defs/ChoiceSet" }
+      },
+      "required": ["supportsTitle"],
+      "additionalProperties": false
+    },
     "TurnInputKind": {
       "type": "string",
       "enum": ["text"]
@@ -474,7 +485,8 @@
           "items": { "$ref": "#/$defs/GatewayCapability" },
           "uniqueItems": true
         },
-        "turnSend": { "$ref": "#/$defs/TurnSendCapabilities" }
+        "turnSend": { "$ref": "#/$defs/TurnSendCapabilities" },
+        "conversationCreate": { "$ref": "#/$defs/ConversationCreateCapabilities" }
       },
       "required": ["revision", "methods"],
       "additionalProperties": false

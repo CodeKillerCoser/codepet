@@ -15,6 +15,8 @@ fn main() {
     let mut writer = BufWriter::new(std::io::stdout());
     let mut line = String::new();
     let mut active_thread_id = None;
+    let mut created_thread_started_in_process = false;
+    let mut created_thread_read_failures_remaining = 2usize;
     while reader.read_line(&mut line).unwrap_or(0) > 0 {
         let message: Value = match serde_json::from_str(line.trim()) {
             Ok(message) => message,
@@ -181,6 +183,24 @@ fn main() {
             }
             "thread/read" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
+                if options.approval_mode == "create-read-eventually"
+                    && created_thread_started_in_process
+                    && thread_id == "thread-created"
+                    && created_thread_read_failures_remaining > 0
+                {
+                    created_thread_read_failures_remaining -= 1;
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": {
+                                "code": -32603,
+                                "message": "failed to read thread: thread-store internal error: failed to read session metadata: rollout is empty"
+                            }
+                        }),
+                    );
+                    continue;
+                }
                 let turn_state = read_turn_status(&options, thread_id);
                 let turns = if params["includeTurns"] == false {
                     Vec::new()
@@ -319,6 +339,7 @@ fn main() {
             }
             "thread/start" => {
                 clear_turn_status(&options, "thread-created");
+                created_thread_started_in_process = true;
                 respond(
                     &mut writer,
                     id,

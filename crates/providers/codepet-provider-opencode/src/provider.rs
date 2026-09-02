@@ -1284,6 +1284,13 @@ impl Provider for OpenCodeProvider {
                     "OpenCode Provider does not define conversation.create extensions",
                 ));
             }
+            if request.workspace_mode.as_deref().unwrap_or("main") != "main" {
+                return Err(protocol_error(
+                    "unsupported_workspace_mode",
+                    "OpenCode Provider only supports main workspace mode".to_string(),
+                    false,
+                ));
+            }
             if request.permission_level != OPENCODE_PERMISSION_LEVEL {
                 return Err(protocol_error(
                     "unsupported_permission_level",

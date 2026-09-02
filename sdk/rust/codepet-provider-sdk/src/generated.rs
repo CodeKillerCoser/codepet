@@ -124,6 +124,17 @@ pub enum ConversationContentKind {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ConversationCreateCapabilities {
+    pub supports_title: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<TurnSendCapabilities>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_mode: Option<ChoiceSet>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ConversationCreateRequest {
     pub route: ProviderInstanceRoute,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -135,6 +146,8 @@ pub struct ConversationCreateRequest {
     pub reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extension: Option<ProviderExtension>,
 }
@@ -506,6 +519,8 @@ pub struct ProviderCapabilities {
     pub methods: Vec<ProviderCapability>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub turn_send: Option<TurnSendCapabilities>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_create: Option<ConversationCreateCapabilities>,
     pub extensions: Vec<ProviderExtension>,
 }
 

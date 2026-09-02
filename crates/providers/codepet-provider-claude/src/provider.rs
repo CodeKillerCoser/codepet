@@ -4,7 +4,8 @@ use crate::client::{
 use crate::protocol::{ClaudeOutput, ClaudeStreamDelta, ClaudeStreamEvent};
 use codepet_provider_sdk::{
     ApprovalResolveRequest, ApprovalResolveResponse, ConversationAcquireInteractionRequest,
-    ConversationAcquireInteractionResponse, ConversationContent, ConversationCreateRequest,
+    ConversationAcquireInteractionResponse, ConversationContent,
+    ConversationCreateCapabilities, ConversationCreateRequest,
     ChoiceOption, ChoiceSet, ConversationContentKind, ConversationCreateResponse, ConversationGetRequest,
     ConversationGetResponse, ConversationListRequest, ConversationListResponse,
     ConversationItem, ConversationItemKind, ConversationItemRole, ConversationItemStatus,
@@ -212,6 +213,13 @@ impl ClaudeInstanceRuntime {
         if request.extension.is_some() {
             return Err(capability_error(
                 "conversation.create extension data is unsupported by the Claude CLI adapter",
+            ));
+        }
+        if request.workspace_mode.as_deref().unwrap_or("main") != "main" {
+            return Err(protocol_error(
+                "unsupported_workspace_mode",
+                "Claude Provider only supports main workspace mode".to_string(),
+                false,
             ));
         }
         validate_permission_level(&request.permission_level)?;
@@ -1449,41 +1457,62 @@ fn claude_capabilities() -> ProviderCapabilities {
     ];
     #[cfg(unix)]
     methods.push(ProviderCapability::TurnInterrupt);
+    let turn_send = TurnSendCapabilities {
+        access_mode: Some(ChoiceSet {
+            options: vec![
+                choice("manual", "Ask before changes", Some("Claude asks before protected tool actions.")),
+                choice("acceptEdits", "Accept edits", Some("Automatically accepts file edits while retaining other permission checks.")),
+                choice("plan", "Plan mode", Some("Read-only planning mode.")),
+                choice("dontAsk", "Don't ask", Some("Declines actions that would require an approval prompt.")),
+                choice("auto", "Auto", Some("Uses Claude Code's automatic permission policy.")),
+            ],
+            default_id: Some(CLAUDE_DEFAULT_ACCESS_MODE.to_string()),
+        }),
+        reasoning_effort: Some(ChoiceSet {
+            options: ["low", "medium", "high", "xhigh", "max"]
+                .into_iter()
+                .map(|effort| choice(effort, &choice_display_name(effort), None))
+                .collect(),
+            default_id: Some(CLAUDE_DEFAULT_EFFORT.to_string()),
+        }),
+        model_catalog: Some(ModelCatalog::FlatModelCatalog(FlatModelCatalog {
+            kind: FlatModelCatalogKind::Flat,
+            models: vec![
+                choice(CLAUDE_DEFAULT_MODEL, "Default", Some("Uses the model selected by Claude Code configuration.")),
+                choice("sonnet", "Sonnet", None),
+                choice("opus", "Opus", None),
+                choice("fable", "Fable", None),
+            ],
+            default_selection: Some(FlatModelSelection {
+                kind: FlatModelCatalogKind::Flat,
+                model_id: CLAUDE_DEFAULT_MODEL.to_string(),
+            }),
+        })),
+    };
+    let create_selection = TurnSendCapabilities {
+        access_mode: Some(ChoiceSet {
+            options: vec![choice(
+                "workspace-write",
+                "Workspace write",
+                Some("Creates the conversation in the selected workspace."),
+            )],
+            default_id: Some("workspace-write".to_string()),
+        }),
+        reasoning_effort: turn_send.reasoning_effort.clone(),
+        model_catalog: turn_send.model_catalog.clone(),
+    };
     ProviderCapabilities {
         revision: "claude-cli-stream-json-controls-v1".to_string(),
         methods,
-        turn_send: Some(TurnSendCapabilities {
-            access_mode: Some(ChoiceSet {
-                options: vec![
-                    choice("manual", "Ask before changes", Some("Claude asks before protected tool actions.")),
-                    choice("acceptEdits", "Accept edits", Some("Automatically accepts file edits while retaining other permission checks.")),
-                    choice("plan", "Plan mode", Some("Read-only planning mode.")),
-                    choice("dontAsk", "Don't ask", Some("Declines actions that would require an approval prompt.")),
-                    choice("auto", "Auto", Some("Uses Claude Code's automatic permission policy.")),
-                ],
-                default_id: Some(CLAUDE_DEFAULT_ACCESS_MODE.to_string()),
+        conversation_create: Some(ConversationCreateCapabilities {
+            supports_title: true,
+            selection: Some(create_selection),
+            workspace_mode: Some(ChoiceSet {
+                options: vec![choice("main", "Main workspace", None)],
+                default_id: Some("main".to_string()),
             }),
-            reasoning_effort: Some(ChoiceSet {
-                options: ["low", "medium", "high", "xhigh", "max"]
-                    .into_iter()
-                    .map(|effort| choice(effort, &choice_display_name(effort), None))
-                    .collect(),
-                default_id: Some(CLAUDE_DEFAULT_EFFORT.to_string()),
-            }),
-            model_catalog: Some(ModelCatalog::FlatModelCatalog(FlatModelCatalog {
-                kind: FlatModelCatalogKind::Flat,
-                models: vec![
-                    choice(CLAUDE_DEFAULT_MODEL, "Default", Some("Uses the model selected by Claude Code configuration.")),
-                    choice("sonnet", "Sonnet", None),
-                    choice("opus", "Opus", None),
-                    choice("fable", "Fable", None),
-                ],
-                default_selection: Some(FlatModelSelection {
-                    kind: FlatModelCatalogKind::Flat,
-                    model_id: CLAUDE_DEFAULT_MODEL.to_string(),
-                }),
-            })),
         }),
+        turn_send: Some(turn_send),
         extensions: vec![extension([
             ("nativeInterface", json!("claude-print-stream-json")),
             (

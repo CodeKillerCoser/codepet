@@ -4,7 +4,7 @@ use codepet_provider_sdk::{
     ConversationAcquireInteractionResponse, ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
     ConversationGetResponse, ConversationListRequest, ConversationListResponse,
     ConversationSearchRequest, ConversationSearchResponse, ConversationContent,
-    ConversationContentKind, ConversationItem, ConversationItemKind,
+    ConversationContentKind, ConversationCreateCapabilities, ConversationItem, ConversationItemKind,
     ConversationItemRole, ConversationItemStatus, ConversationStatus, ConversationUpsertedEvent,
     InstanceCapabilitiesRequest,
     InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceCreateResponse,
@@ -717,6 +717,14 @@ fn capabilities() -> ProviderCapabilities {
                     model_id: "fake-model".to_string(),
                 }),
             })),
+        }),
+        conversation_create: Some(ConversationCreateCapabilities {
+            supports_title: true,
+            selection: None,
+            workspace_mode: Some(ChoiceSet {
+                options: vec![choice("main", "Main workspace")],
+                default_id: Some("main".to_string()),
+            }),
         }),
         extensions: Vec::new(),
     }

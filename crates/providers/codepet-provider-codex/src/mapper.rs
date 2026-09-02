@@ -7,7 +7,8 @@ use crate::protocol::{
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalRequestedEvent, ApprovalResolvedEvent, ApprovalStatus,
-    ChoiceOption, ChoiceSet, ConversationContent, ConversationContentKind, ConversationItem,
+    ChoiceOption, ChoiceSet, ConversationContent, ConversationContentKind,
+    ConversationCreateCapabilities, ConversationItem,
     ConversationItemKind, ConversationItemRole, ConversationItemStatus, ConversationStatus,
     ConversationUpsertedEvent, FlatModelCatalog, FlatModelCatalogKind, FlatModelSelection,
     HarnessDescriptor, InstanceStatus, JsonObject, ModelCatalog, ModelSelection, ProtocolError,
@@ -41,6 +42,7 @@ impl CodexProtocolMapper {
                 ProviderCapability::ApprovalResolve,
             ],
             turn_send: None,
+            conversation_create: None,
             extensions: vec![extension([
                 (
                     "nativeMethods",
@@ -177,25 +179,37 @@ impl CodexProtocolMapper {
             options: reasoning_options,
             default_id: default_reasoning,
         });
+        let turn_send = TurnSendCapabilities {
+            access_mode: Some(ChoiceSet {
+                options: vec![
+                    choice("read-only", "Read only"),
+                    choice("workspace-write", "Workspace write"),
+                    choice("full-access", "Full access"),
+                ],
+                default_id: None,
+            }),
+            reasoning_effort,
+            model_catalog: Some(ModelCatalog::FlatModelCatalog(FlatModelCatalog {
+                kind: FlatModelCatalogKind::Flat,
+                models: model_options,
+                default_selection: default_model,
+            })),
+        };
         Ok(ProviderCapabilities {
             revision,
             methods,
-            turn_send: Some(TurnSendCapabilities {
-                access_mode: Some(ChoiceSet {
+            conversation_create: Some(ConversationCreateCapabilities {
+                supports_title: false,
+                selection: Some(turn_send.clone()),
+                workspace_mode: Some(ChoiceSet {
                     options: vec![
-                        choice("read-only", "Read only"),
-                        choice("workspace-write", "Workspace write"),
-                        choice("full-access", "Full access"),
+                        choice("main", "Main workspace"),
+                        choice("worktree", "Worktree"),
                     ],
-                    default_id: None,
+                    default_id: Some("main".to_string()),
                 }),
-                reasoning_effort,
-                model_catalog: Some(ModelCatalog::FlatModelCatalog(FlatModelCatalog {
-                    kind: FlatModelCatalogKind::Flat,
-                    models: model_options,
-                    default_selection: default_model,
-                })),
             }),
+            turn_send: Some(turn_send),
             extensions: Self::unavailable_capabilities("unused".to_string()).extensions,
         })
     }

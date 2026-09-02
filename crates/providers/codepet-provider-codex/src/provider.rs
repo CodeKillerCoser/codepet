@@ -29,7 +29,8 @@ use codepet_provider_sdk::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -38,9 +39,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static NEXT_EXECUTION_ATTEMPT: AtomicU64 = AtomicU64::new(1);
 static NEXT_INSTANCE_SESSION: AtomicU64 = AtomicU64::new(1);
+static NEXT_MANAGED_WORKTREE: AtomicU64 = AtomicU64::new(1);
 const MAX_THREAD_TURN_PAGES: usize = 10_000;
 const INTERACTION_LEASE_DURATION: Duration = Duration::from_secs(30);
 const INTERACTION_REAPER_INTERVAL: Duration = Duration::from_secs(1);
+const CONVERSATION_CREATE_READINESS_TIMEOUT: Duration = Duration::from_secs(2);
+const CONVERSATION_CREATE_READINESS_INITIAL_DELAY: Duration = Duration::from_millis(10);
+const CONVERSATION_CREATE_READINESS_MAX_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -2234,6 +2239,16 @@ impl Provider for CodexProvider {
                 mutable.sessions.insert(slot.id, slot.clone());
                 slot
             };
+            let workspace_root = match prepare_conversation_workspace(
+                request.workspace_root.as_deref(),
+                request.workspace_mode.as_deref(),
+            ) {
+                Ok(workspace_root) => workspace_root,
+                Err(error) => {
+                    runtime.unregister_session(&slot);
+                    return Err(error);
+                }
+            };
             if !slot.begin_spawn() {
                 runtime.unregister_session(&slot);
                 return Err(instance_session_cancelled_error("conversation creation session"));
@@ -2271,7 +2286,7 @@ impl Provider for CodexProvider {
                     });
                 }
                 let outcome = session.thread_start_outcome_with_sender(CodexThreadStartRequest {
-                    workspace_root: request.workspace_root,
+                    workspace_root,
                     permission_level,
                     model: request.model,
                     reasoning_effort: request.reasoning_effort,
@@ -2286,7 +2301,14 @@ impl Provider for CodexProvider {
                     session.write_prepared_request(message)
                 });
                 let result = match outcome {
-                    CodexRequestOutcome::Success(snapshot) => Ok(snapshot),
+                    CodexRequestOutcome::Success(snapshot) => {
+                        wait_for_created_conversation_readable(
+                            &session,
+                            &snapshot.thread.id,
+                        )
+                        .map(|()| snapshot)
+                        .map_err(CodexProtocolMapper::error)
+                    }
                     outcome => Err(execution_outcome_error("thread/start", None, outcome)),
                 };
                 if let Err(error) = session.shutdown() {
@@ -2757,6 +2779,201 @@ impl Provider for CodexProvider {
     }
 }
 
+fn prepare_conversation_workspace(
+    workspace_root: Option<&str>,
+    workspace_mode: Option<&str>,
+) -> Result<Option<String>, ProtocolError> {
+    let mode = workspace_mode.unwrap_or("main");
+    if mode == "main" {
+        return Ok(workspace_root.map(str::to_string));
+    }
+    if mode != "worktree" {
+        return Err(protocol_error(
+            "unsupported_workspace_mode",
+            format!("Codex Provider does not support workspace mode {mode}"),
+            false,
+        ));
+    }
+    let requested = workspace_root.ok_or_else(|| {
+        protocol_error(
+            "workspace_required",
+            "Codex worktree mode requires workspaceRoot".to_string(),
+            false,
+        )
+    })?;
+    let requested = Path::new(requested);
+    if !requested.is_absolute() || !requested.is_dir() {
+        return Err(protocol_error(
+            "invalid_workspace_root",
+            "Codex worktree workspaceRoot must be an existing absolute directory".to_string(),
+            false,
+        ));
+    }
+    let codex_home = std::env::var_os("CODEX_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .filter(|value| !value.is_empty())
+                .map(|home| PathBuf::from(home).join(".codex"))
+        })
+        .ok_or_else(|| {
+            protocol_error(
+                "worktree_create_failed",
+                "cannot resolve Codex home for managed worktrees".to_string(),
+                false,
+            )
+        })?;
+    create_managed_worktree(requested, &codex_home).map(Some)
+}
+
+fn create_managed_worktree(
+    requested: &Path,
+    codex_home: &Path,
+) -> Result<String, ProtocolError> {
+    let requested = requested.canonicalize().map_err(|error| {
+        protocol_error(
+            "invalid_workspace_root",
+            format!("failed to resolve workspaceRoot: {error}"),
+            false,
+        )
+    })?;
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&requested)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .map_err(|error| {
+            protocol_error(
+                "worktree_create_failed",
+                format!("failed to inspect Git workspace: {error}"),
+                true,
+            )
+        })?;
+    if !output.status.success() {
+        return Err(protocol_error(
+            "workspace_not_git_repository",
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            false,
+        ));
+    }
+    let repository_root = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())
+        .canonicalize()
+        .map_err(|error| {
+            protocol_error(
+                "invalid_workspace_root",
+                format!("failed to resolve Git repository root: {error}"),
+                false,
+            )
+        })?;
+    let relative_cwd = requested.strip_prefix(&repository_root).map_err(|_| {
+        protocol_error(
+            "invalid_workspace_root",
+            "workspaceRoot is outside the discovered Git repository".to_string(),
+            false,
+        )
+    })?;
+    let project_name = repository_root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("workspace");
+    let unique = format!(
+        "remote-{}-{}-{}",
+        now_ms(),
+        std::process::id(),
+        NEXT_MANAGED_WORKTREE.fetch_add(1, Ordering::SeqCst),
+    );
+    let worktree_root = codex_home.join("worktrees").join(unique).join(project_name);
+    if let Some(parent) = worktree_root.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            protocol_error(
+                "worktree_create_failed",
+                format!("failed to prepare managed worktree directory: {error}"),
+                true,
+            )
+        })?;
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&repository_root)
+        .args(["worktree", "add", "--detach"])
+        .arg(&worktree_root)
+        .arg("HEAD")
+        .output()
+        .map_err(|error| {
+            protocol_error(
+                "worktree_create_failed",
+                format!("failed to start git worktree: {error}"),
+                true,
+            )
+        })?;
+    if !output.status.success() {
+        return Err(protocol_error(
+            "worktree_create_failed",
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            false,
+        ));
+    }
+    let worktree_cwd = worktree_root.join(relative_cwd);
+    std::fs::create_dir_all(&worktree_cwd).map_err(|error| {
+        protocol_error(
+            "worktree_create_failed",
+            format!("failed to prepare worktree working directory: {error}"),
+            true,
+        )
+    })?;
+    Ok(worktree_cwd.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod workspace_mode_tests {
+    use super::create_managed_worktree;
+    use std::fs;
+    use std::path::Path;
+    use std::process::Command;
+
+    #[test]
+    fn creates_a_detached_managed_worktree_and_preserves_relative_cwd() {
+        let fixture = tempfile::tempdir().unwrap();
+        let repository = fixture.path().join("project");
+        let nested = repository.join("packages/app");
+        fs::create_dir_all(&nested).unwrap();
+        git(&repository, &["init"]);
+        git(&repository, &["config", "user.email", "test@codepet.dev"]);
+        git(&repository, &["config", "user.name", "CodePet Test"]);
+        fs::write(repository.join("README.md"), "fixture").unwrap();
+        git(&repository, &["add", "README.md"]);
+        git(&repository, &["commit", "-m", "fixture"]);
+
+        let codex_home = fixture.path().join("codex-home");
+        let cwd = create_managed_worktree(&nested, &codex_home).unwrap();
+        let cwd = Path::new(&cwd);
+
+        assert!(cwd.is_dir());
+        assert!(cwd.starts_with(codex_home.join("worktrees")));
+        assert_eq!(cwd.file_name().and_then(|value| value.to_str()), Some("app"));
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(["rev-parse", "--is-inside-work-tree"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "true");
+    }
+
+    fn git(repository: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(repository)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?} failed");
+    }
+}
+
 fn execution_outcome_error<T>(
     operation: &str,
     conversation_id: Option<&str>,
@@ -2788,6 +3005,47 @@ fn execution_outcome_error<T>(
         | CodexRequestOutcome::SentOutcomeUnknown(error) => CodexProtocolMapper::error(error),
         CodexRequestOutcome::Success(_) => unreachable!("successful outcome is not an error"),
     }
+}
+
+fn wait_for_created_conversation_readable(
+    session: &CodexAppServerSession,
+    conversation_id: &str,
+) -> Result<(), CodexAppServerError> {
+    let deadline = Instant::now() + CONVERSATION_CREATE_READINESS_TIMEOUT;
+    let mut delay = CONVERSATION_CREATE_READINESS_INITIAL_DELAY;
+    loop {
+        let result = session
+            .thread_read_metadata(conversation_id)
+            .and_then(|_| session.thread_turns_list(conversation_id, None).map(|_| ()));
+        match result {
+            Ok(()) => return Ok(()),
+            Err(error) if is_created_conversation_not_ready(&error) => {
+                let now = Instant::now();
+                if now >= deadline {
+                    return Err(CodexAppServerError::Timeout(format!(
+                        "new conversation {conversation_id} did not become readable: {error}"
+                    )));
+                }
+                thread::sleep(delay.min(deadline.saturating_duration_since(now)));
+                delay = delay
+                    .saturating_mul(2)
+                    .min(CONVERSATION_CREATE_READINESS_MAX_DELAY);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn is_created_conversation_not_ready(error: &CodexAppServerError) -> bool {
+    let CodexAppServerError::Rpc { message, .. } = error else {
+        return false;
+    };
+    let message = message.to_ascii_lowercase();
+    (message.contains("failed to read session metadata")
+        && (message.contains("is empty")
+            || message.contains("not found")
+            || message.contains("no such file")))
+        || message.contains("thread not found")
 }
 
 fn is_active_writer_conflict(error: &CodexAppServerError, conversation_id: &str) -> bool {

@@ -159,6 +159,7 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
             model: Some("sonnet".to_string()),
             reasoning_effort: Some("high".to_string()),
             workspace_root: Some(directory.path().to_string_lossy().into_owned()),
+            workspace_mode: None,
         },
     )
     .await
