@@ -48,7 +48,7 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
             "manifestVersion": 1,
             "pluginId": "dev.codepet.fake",
             "displayName": "Fake",
-            "icon": "fake",
+            "icon": "https://example.com/fake.png",
             "executable": "bin/codepet-provider-fake",
             "enabled": true,
             "instances": [{
@@ -89,7 +89,10 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
         discovered.catalog.executable,
         plugin_directory.join("bin/codepet-provider-fake")
     );
-    assert_eq!(discovered.catalog.icon.as_deref(), Some("fake"));
+    assert_eq!(
+        discovered.catalog.icon.as_deref(),
+        Some("https://example.com/fake.png")
+    );
 
     let reopened = ProviderInstanceRegistry::open(&registry_path, device_id.clone()).unwrap();
     let second = reopened.synchronize_catalog(&catalog).unwrap();
@@ -133,6 +136,39 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
     .unwrap();
     let snapshot = manager.snapshot("dev.codepet.fake").await.unwrap();
     assert!(snapshot.instances.is_empty());
+}
+
+#[test]
+fn catalog_rejects_unsafe_provider_icons() {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, icon) in [
+        ("local", "file:///tmp/provider.png"),
+        ("credentials", "https://user:secret@example.com/provider.png"),
+    ] {
+        fs::write(
+            directory.path().join(format!("{name}.codepet-provider.json")),
+            serde_json::to_vec(&json!({
+                "manifestVersion": 1,
+                "pluginId": format!("dev.codepet.invalid-icon-{name}"),
+                "displayName": "Invalid icon",
+                "icon": icon,
+                "executable": "provider",
+                "instances": []
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    let catalog = PluginCatalog::discover(
+        PluginCatalogConfig::default().with_directory(directory.path()),
+    );
+    assert_eq!(catalog.diagnostics().len(), 2);
+    assert!(catalog
+        .diagnostics()
+        .iter()
+        .all(|diagnostic| diagnostic.code == "invalid_plugin_descriptor"
+            && diagnostic.message.contains("HTTPS URL without credentials")));
 }
 
 #[test]

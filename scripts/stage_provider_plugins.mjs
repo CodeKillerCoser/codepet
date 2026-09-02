@@ -10,19 +10,19 @@ export const PROVIDERS = Object.freeze([
     name: "codex",
     packageName: "codepet-provider-codex",
     pluginId: "dev.codepet.codex",
-    icon: "codex",
+    icon: "https://developers.openai.com/favicon.png",
   },
   {
     name: "opencode",
     packageName: "codepet-provider-opencode",
     pluginId: "dev.codepet.opencode",
-    icon: "opencode",
+    icon: "https://opencode.ai/favicon-96x96-v3.png",
   },
   {
     name: "claude",
     packageName: "codepet-provider-claude",
     pluginId: "dev.codepet.claude",
-    icon: "claude",
+    icon: "https://cdn.prod.website-files.com/6889473510b50328dbb70ae6/68c33859cc6cd903686c66a2_apple-touch-icon.png",
   },
 ]);
 

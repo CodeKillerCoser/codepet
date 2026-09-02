@@ -254,6 +254,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",
+ "url",
  "uuid",
  "x509-parser",
 ]

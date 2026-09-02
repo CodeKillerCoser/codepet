@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "pluginId": "dev.codepet.claude",
   "displayName": "Claude",
-  "icon": "claude",
+  "icon": "https://cdn.prod.website-files.com/6889473510b50328dbb70ae6/68c33859cc6cd903686c66a2_apple-touch-icon.png",
   "executable": "codepet-provider-claude",
   "args": [],
   "env": {},

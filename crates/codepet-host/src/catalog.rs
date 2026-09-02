@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use url::Url;
 
 pub const PLUGIN_MANIFEST_FILE_NAME: &str = "codepet-provider.json";
 
@@ -298,18 +299,22 @@ fn validate_descriptor(descriptor: &PluginDescriptor) -> HostResult<()> {
             ),
         ));
     }
-    if descriptor
-        .icon
-        .as_ref()
-        .is_some_and(|icon| icon.trim().is_empty())
-    {
-        return Err(HostError::new(
-            "invalid_plugin_descriptor",
-            format!(
-                "Provider plugin {} icon must not be empty",
-                descriptor.plugin_id
-            ),
-        ));
+    if let Some(icon) = descriptor.icon.as_ref() {
+        let valid_icon = Url::parse(icon).ok().is_some_and(|url| {
+            url.scheme() == "https"
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+        });
+        if !valid_icon {
+            return Err(HostError::new(
+                "invalid_plugin_descriptor",
+                format!(
+                    "Provider plugin {} icon must be an absolute HTTPS URL without credentials",
+                    descriptor.plugin_id
+                ),
+            ));
+        }
     }
     let mut instance_ids = BTreeSet::new();
     for instance in &descriptor.instances {

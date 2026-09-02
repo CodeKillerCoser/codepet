@@ -539,7 +539,7 @@
         "route": { "$ref": "#/$defs/GatewayProviderRoute" },
         "pluginId": { "$ref": "../../core/v1/schema.json#/$defs/ProviderPluginId" },
         "displayName": { "type": "string", "minLength": 1 },
-        "icon": { "type": "string", "minLength": 1 },
+        "icon": { "type": "string", "pattern": "^https://" },
         "version": { "type": "string" },
         "harness": { "$ref": "#/$defs/HarnessDescriptor" },
         "status": { "$ref": "#/$defs/ProviderStatus" },

@@ -135,7 +135,7 @@ void main() {
   });
 
   test('method and event metadata come from the manifest IR', () {
-    expect(ProtocolMethod.values, hasLength(11));
+    expect(ProtocolMethod.values, hasLength(12));
     expect(ProtocolEventName.values, hasLength(7));
     expect(ProtocolMethod.turnSend.wireName, 'turn.send');
     expect(ProtocolMethod.turnSend.idempotency, ProtocolIdempotency.nonIdempotent);

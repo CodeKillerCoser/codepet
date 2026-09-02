@@ -2237,7 +2237,7 @@ final class ProviderInstance {
     final validatedRoute = route;
     final validatedPluginId = _string(pluginId, 'ProviderInstance.pluginId', minLength: 1);
     final validatedDisplayName = _string(displayName, 'ProviderInstance.displayName', minLength: 1);
-    final validatedIcon = icon == null ? null : _string(icon, 'ProviderInstance.icon', minLength: 1);
+    final validatedIcon = icon == null ? null : _string(icon, 'ProviderInstance.icon', pattern: '^https://');
     final validatedVersion = version == null ? null : _string(version, 'ProviderInstance.version');
     final validatedHarness = harness;
     final validatedStatus = status;
@@ -2281,7 +2281,7 @@ final class ProviderInstance {
       route: GatewayProviderRoute.fromJson(_required(json, 'route', path), path: '$path.route'),
       pluginId: _string(_required(json, 'pluginId', path), '$path.pluginId', minLength: 1),
       displayName: _string(_required(json, 'displayName', path), '$path.displayName', minLength: 1),
-      icon: json.containsKey('icon') && json['icon'] != null ? _string(json['icon'], '$path.icon', minLength: 1) : null,
+      icon: json.containsKey('icon') && json['icon'] != null ? _string(json['icon'], '$path.icon', pattern: '^https://') : null,
       version: json.containsKey('version') && json['version'] != null ? _string(json['version'], '$path.version') : null,
       harness: HarnessDescriptor.fromJson(_required(json, 'harness', path), path: '$path.harness'),
       status: ProviderStatus.fromJson(_required(json, 'status', path), path: '$path.status'),

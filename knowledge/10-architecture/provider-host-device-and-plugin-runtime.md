@@ -59,7 +59,7 @@ manifest 是插件进程和普通实例设置的配置权威：
   "manifestVersion": 1,
   "pluginId": "example-provider",
   "displayName": "Example Provider",
-  "icon": "example-provider",
+  "icon": "https://example.com/provider-icon.png",
   "executable": "codepet-provider-example",
   "args": [],
   "env": {},
@@ -75,7 +75,7 @@ manifest 是插件进程和普通实例设置的配置权威：
 }
 ```
 
-`icon` 是可选的稳定标识符，不是文件路径或图片内容。Host 从 manifest catalog 将它带入 runtime snapshot，并投影到 Gateway v2 的每个 `ProviderInstance.icon`；Gateway client 根据 token 选择自己的图标资源，未知或缺失 token 必须回退到通用 Provider 图标。内置 Provider 固定使用 `codex`、`claude`、`opencode`。
+`icon` 是可选、不含凭据的绝对 HTTPS URL，不接受本地路径、`file://`、明文 HTTP 或 URL userinfo。Host 从 manifest catalog 将它带入 runtime snapshot，并投影到 Gateway v2 的每个 `ProviderInstance.icon`；Gateway client 负责异步加载、缓存，并在地址缺失、无效或加载失败时回退到通用 Provider 图标。内置 Provider 使用各产品官方站点提供的图片地址。
 
 `provider-instances.json` 只镜像 `instanceId + pluginId + instanceKind + displayName`，用于在重启后复用未显式给出的 `instanceId`。`settings` 与 `enabled` 每次都来自当前 manifest，不作为第二配置源；manifest 删除的实例会从映射中 prune。registry 损坏或 device id 不匹配时 fail closed。设备身份损坏时，原文件先隔离为 `.corrupt-<timestamp>`，再生成新的 `device-<uuid>` 并保留诊断。macOS 的设备显示名由 Tauri 通过原生 ComputerName API 读取并在打开 registry 时刷新，但保留原 `deviceId/createdAt`；hostname 和 display name 都不充当稳定 ID。
 

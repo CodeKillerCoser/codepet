@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "pluginId": "dev.codepet.opencode",
   "displayName": "OpenCode",
-  "icon": "opencode",
+  "icon": "https://opencode.ai/favicon-96x96-v3.png",
   "executable": "codepet-provider-opencode",
   "args": [],
   "env": {},

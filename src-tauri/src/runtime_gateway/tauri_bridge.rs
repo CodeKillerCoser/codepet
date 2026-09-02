@@ -874,7 +874,7 @@ mod tests {
             PluginDescriptor {
                 plugin_id: "dev.codepet.codex".to_string(),
                 display_name: "Codex".to_string(),
-                icon: Some("codex".to_string()),
+                icon: Some("https://developers.openai.com/favicon.png".to_string()),
                 executable: directory.path().join("codepet-provider-codex"),
                 args: Vec::new(),
                 env: Default::default(),
@@ -898,7 +898,7 @@ mod tests {
             PluginDescriptor {
                 plugin_id: "dev.codepet.opencode".to_string(),
                 display_name: "OpenCode".to_string(),
-                icon: Some("opencode".to_string()),
+                icon: Some("https://opencode.ai/favicon-96x96-v3.png".to_string()),
                 executable: directory.path().join("codepet-provider-opencode"),
                 args: Vec::new(),
                 env: Default::default(),
@@ -926,7 +926,7 @@ mod tests {
             PluginDescriptor {
                 plugin_id: "dev.codepet.claude".to_string(),
                 display_name: "Claude".to_string(),
-                icon: Some("claude".to_string()),
+                icon: Some("https://claude.ai/favicon.ico".to_string()),
                 executable: directory.path().join("codepet-provider-claude"),
                 args: Vec::new(),
                 env: Default::default(),

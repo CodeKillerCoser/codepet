@@ -132,9 +132,18 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
     let codex = ready_provider(&listed.providers, CODEX_PLUGIN_ID, &device_id);
     let claude = ready_provider(&listed.providers, CLAUDE_PLUGIN_ID, &device_id);
     let opencode = ready_provider(&listed.providers, OPENCODE_PLUGIN_ID, &device_id);
-    assert_eq!(codex.icon.as_deref(), Some("codex"));
-    assert_eq!(claude.icon.as_deref(), Some("claude"));
-    assert_eq!(opencode.icon.as_deref(), Some("opencode"));
+    assert_eq!(
+        codex.icon.as_deref(),
+        Some("https://developers.openai.com/favicon.png")
+    );
+    assert_eq!(
+        claude.icon.as_deref(),
+        Some("https://cdn.prod.website-files.com/6889473510b50328dbb70ae6/68c33859cc6cd903686c66a2_apple-touch-icon.png")
+    );
+    assert_eq!(
+        opencode.icon.as_deref(),
+        Some("https://opencode.ai/favicon-96x96-v3.png")
+    );
 
     let codex_conversations = conversation_list(gateway.as_ref(), codex).await;
     assert_eq!(codex_conversations.len(), 1);
