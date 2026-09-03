@@ -98,7 +98,8 @@ impl CompatProviderGateway {
         event: gateway::ProtocolEvent,
     ) -> Result<Option<compat::ProtocolEvent>, compat::ProtocolError> {
         let mapped = match event {
-            gateway::ProtocolEvent::DeviceStatusChanged { .. } => return Ok(None),
+            gateway::ProtocolEvent::DeviceStatusChanged { .. }
+            | gateway::ProtocolEvent::ConversationActivityChanged { .. } => return Ok(None),
             gateway::ProtocolEvent::ProviderStatusChanged { params, .. } => compat::ProtocolEvent::ProviderStatusChanged {
                 protocol_version: compat::PROTOCOL_VERSION,
                 event_sequence: event_sequence(&params.event_cursor)?,

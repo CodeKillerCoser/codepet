@@ -469,6 +469,7 @@ final class Conversation {
     TimestampMs? createdAt,
     TimestampMs? updatedAt,
     TurnTask? activeTurn,
+    ConversationReadState? readState,
   }) {
     final validatedResource = resource;
     final validatedTitle = _string(title, 'Conversation.title', minLength: 1);
@@ -482,6 +483,7 @@ final class Conversation {
     final validatedCreatedAt = createdAt == null ? null : _integer(createdAt, 'Conversation.createdAt', minimum: 0, maximum: 9007199254740991);
     final validatedUpdatedAt = updatedAt == null ? null : _integer(updatedAt, 'Conversation.updatedAt', minimum: 0, maximum: 9007199254740991);
     final validatedActiveTurn = activeTurn == null ? null : activeTurn;
+    final validatedReadState = readState == null ? null : readState;
     return Conversation._(
       resource: validatedResource,
       title: validatedTitle,
@@ -495,6 +497,7 @@ final class Conversation {
       createdAt: validatedCreatedAt,
       updatedAt: validatedUpdatedAt,
       activeTurn: validatedActiveTurn,
+      readState: validatedReadState,
     );
   }
 
@@ -511,6 +514,7 @@ final class Conversation {
     required this.createdAt,
     required this.updatedAt,
     required this.activeTurn,
+    required this.readState,
   });
 
   final RoutedResourceId resource;
@@ -525,10 +529,11 @@ final class Conversation {
   final TimestampMs? createdAt;
   final TimestampMs? updatedAt;
   final TurnTask? activeTurn;
+  final ConversationReadState? readState;
 
   factory Conversation.fromJson(Object? value, {String path = 'Conversation'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'resource', 'title', 'preview', 'status', 'permissionLevel', 'model', 'reasoningEffort', 'selection', 'workspaceRoot', 'createdAt', 'updatedAt', 'activeTurn'}, path);
+    _expectKeys(json, const {'resource', 'title', 'preview', 'status', 'permissionLevel', 'model', 'reasoningEffort', 'selection', 'workspaceRoot', 'createdAt', 'updatedAt', 'activeTurn', 'readState'}, path);
     return Conversation(
       resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
       title: _string(_required(json, 'title', path), '$path.title', minLength: 1),
@@ -542,6 +547,7 @@ final class Conversation {
       createdAt: json.containsKey('createdAt') && json['createdAt'] != null ? _integer(json['createdAt'], '$path.createdAt', minimum: 0, maximum: 9007199254740991) : null,
       updatedAt: json.containsKey('updatedAt') && json['updatedAt'] != null ? _integer(json['updatedAt'], '$path.updatedAt', minimum: 0, maximum: 9007199254740991) : null,
       activeTurn: json.containsKey('activeTurn') && json['activeTurn'] != null ? TurnTask.fromJson(json['activeTurn'], path: '$path.activeTurn') : null,
+      readState: json.containsKey('readState') && json['readState'] != null ? ConversationReadState.fromJson(json['readState'], path: '$path.readState') : null,
     );
   }
 
@@ -558,10 +564,11 @@ final class Conversation {
     if (createdAt != null) 'createdAt': createdAt!,
     if (updatedAt != null) 'updatedAt': updatedAt!,
     if (activeTurn != null) 'activeTurn': activeTurn!.toJson(),
+    if (readState != null) 'readState': readState!.toJson(),
   };
 
   @override
-  String toString() => 'Conversation(resource: $resource, title: $title, preview: $preview, status: $status, permissionLevel: $permissionLevel, model: $model, reasoningEffort: $reasoningEffort, selection: $selection, workspaceRoot: $workspaceRoot, createdAt: $createdAt, updatedAt: $updatedAt, activeTurn: $activeTurn)';
+  String toString() => 'Conversation(resource: $resource, title: $title, preview: $preview, status: $status, permissionLevel: $permissionLevel, model: $model, reasoningEffort: $reasoningEffort, selection: $selection, workspaceRoot: $workspaceRoot, createdAt: $createdAt, updatedAt: $updatedAt, activeTurn: $activeTurn, readState: $readState)';
 }
 
 final class ConversationAcquireInteractionRequest {
@@ -633,6 +640,45 @@ final class ConversationAcquireInteractionResponse {
 
   @override
   String toString() => 'ConversationAcquireInteractionResponse(selection: $selection, leaseExpiresAt: $leaseExpiresAt)';
+}
+
+final class ConversationActivityChangedEvent {
+  factory ConversationActivityChangedEvent({
+    required RoutedResourceId conversation,
+    required String activityVersion,
+  }) {
+    final validatedConversation = conversation;
+    final validatedActivityVersion = _string(activityVersion, 'ConversationActivityChangedEvent.activityVersion', minLength: 1);
+    return ConversationActivityChangedEvent._(
+      conversation: validatedConversation,
+      activityVersion: validatedActivityVersion,
+    );
+  }
+
+  ConversationActivityChangedEvent._({
+    required this.conversation,
+    required this.activityVersion,
+  });
+
+  final RoutedResourceId conversation;
+  final String activityVersion;
+
+  factory ConversationActivityChangedEvent.fromJson(Object? value, {String path = 'ConversationActivityChangedEvent'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'conversation', 'activityVersion'}, path);
+    return ConversationActivityChangedEvent(
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      activityVersion: _string(_required(json, 'activityVersion', path), '$path.activityVersion', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'conversation': conversation.toJson(),
+    'activityVersion': activityVersion,
+  };
+
+  @override
+  String toString() => 'ConversationActivityChangedEvent(conversation: $conversation, activityVersion: $activityVersion)';
 }
 
 final class ConversationContent {
@@ -1209,6 +1255,116 @@ final class ConversationListResponse {
 
   @override
   String toString() => 'ConversationListResponse(conversations: $conversations, pageInfo: $pageInfo, snapshotCursor: $snapshotCursor)';
+}
+
+final class ConversationMarkReadRequest {
+  factory ConversationMarkReadRequest({
+    required RoutedResourceId conversation,
+    required String observedActivityVersion,
+  }) {
+    final validatedConversation = conversation;
+    final validatedObservedActivityVersion = _string(observedActivityVersion, 'ConversationMarkReadRequest.observedActivityVersion', minLength: 1);
+    return ConversationMarkReadRequest._(
+      conversation: validatedConversation,
+      observedActivityVersion: validatedObservedActivityVersion,
+    );
+  }
+
+  ConversationMarkReadRequest._({
+    required this.conversation,
+    required this.observedActivityVersion,
+  });
+
+  final RoutedResourceId conversation;
+  final String observedActivityVersion;
+
+  factory ConversationMarkReadRequest.fromJson(Object? value, {String path = 'ConversationMarkReadRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'conversation', 'observedActivityVersion'}, path);
+    return ConversationMarkReadRequest(
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      observedActivityVersion: _string(_required(json, 'observedActivityVersion', path), '$path.observedActivityVersion', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'conversation': conversation.toJson(),
+    'observedActivityVersion': observedActivityVersion,
+  };
+
+  @override
+  String toString() => 'ConversationMarkReadRequest(conversation: $conversation, observedActivityVersion: $observedActivityVersion)';
+}
+
+final class ConversationMarkReadResponse {
+  factory ConversationMarkReadResponse({
+    required ConversationReadState readState,
+  }) {
+    final validatedReadState = readState;
+    return ConversationMarkReadResponse._(
+      readState: validatedReadState,
+    );
+  }
+
+  ConversationMarkReadResponse._({
+    required this.readState,
+  });
+
+  final ConversationReadState readState;
+
+  factory ConversationMarkReadResponse.fromJson(Object? value, {String path = 'ConversationMarkReadResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'readState'}, path);
+    return ConversationMarkReadResponse(
+      readState: ConversationReadState.fromJson(_required(json, 'readState', path), path: '$path.readState'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'readState': readState.toJson(),
+  };
+
+  @override
+  String toString() => 'ConversationMarkReadResponse(readState: $readState)';
+}
+
+final class ConversationReadState {
+  factory ConversationReadState({
+    required bool unread,
+    required String activityVersion,
+  }) {
+    final validatedUnread = unread;
+    final validatedActivityVersion = _string(activityVersion, 'ConversationReadState.activityVersion', minLength: 1);
+    return ConversationReadState._(
+      unread: validatedUnread,
+      activityVersion: validatedActivityVersion,
+    );
+  }
+
+  ConversationReadState._({
+    required this.unread,
+    required this.activityVersion,
+  });
+
+  final bool unread;
+  final String activityVersion;
+
+  factory ConversationReadState.fromJson(Object? value, {String path = 'ConversationReadState'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'unread', 'activityVersion'}, path);
+    return ConversationReadState(
+      unread: _boolean(_required(json, 'unread', path), '$path.unread'),
+      activityVersion: _string(_required(json, 'activityVersion', path), '$path.activityVersion', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'unread': unread,
+    'activityVersion': activityVersion,
+  };
+
+  @override
+  String toString() => 'ConversationReadState(unread: $unread, activityVersion: $activityVersion)';
 }
 
 final class ConversationSearchRequest {
@@ -2996,6 +3152,7 @@ enum ProtocolMethod {
   conversationList('conversation.list', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationList, requestType: ConversationListRequest, responseType: ConversationListResponse),
   conversationSearch('conversation.search', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationSearch, requestType: ConversationSearchRequest, responseType: ConversationSearchResponse),
   conversationGet('conversation.get', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationGet, requestType: ConversationGetRequest, responseType: ConversationGetResponse),
+  conversationMarkRead('conversation.markRead', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: null, requestType: ConversationMarkReadRequest, responseType: ConversationMarkReadResponse),
   conversationAcquireInteraction('conversation.acquireInteraction', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: null, requestType: ConversationAcquireInteractionRequest, responseType: ConversationAcquireInteractionResponse),
   conversationCreate('conversation.create', direction: 'clientToGateway', idempotency: ProtocolIdempotency.nonIdempotent, capability: GatewayCapability.conversationCreate, requestType: ConversationCreateRequest, responseType: ConversationCreateResponse),
   turnSend('turn.send', direction: 'clientToGateway', idempotency: ProtocolIdempotency.nonIdempotent, capability: GatewayCapability.turnSend, requestType: TurnSendRequest, responseType: TurnSendResponse),
@@ -3026,6 +3183,7 @@ enum ProtocolEventName {
   deviceStatusChanged('device.statusChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'device', payloadType: DeviceStatusChangedEvent),
   providerStatusChanged('provider.statusChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'providerInstance', payloadType: ProviderStatusChangedEvent),
   conversationUpserted('conversation.upserted', direction: 'gatewayToClient', delivery: 'replayable', scope: 'conversation', payloadType: ConversationUpsertedEvent),
+  conversationActivityChanged('conversation.activityChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'conversation', payloadType: ConversationActivityChangedEvent),
   turnUpserted('turn.upserted', direction: 'gatewayToClient', delivery: 'replayable', scope: 'turn', payloadType: TurnUpsertedEvent),
   turnOutputDelta('turn.outputDelta', direction: 'gatewayToClient', delivery: 'replayable', scope: 'turn', payloadType: TurnOutputDeltaEvent),
   approvalRequested('approval.requested', direction: 'gatewayToClient', delivery: 'replayable', scope: 'approval', payloadType: ApprovalRequestedEvent),
@@ -3066,6 +3224,8 @@ Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
       return ConversationSearchRequest.fromJson(value, path: path);
     case ProtocolMethod.conversationGet:
       return ConversationGetRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationMarkRead:
+      return ConversationMarkReadRequest.fromJson(value, path: path);
     case ProtocolMethod.conversationAcquireInteraction:
       return ConversationAcquireInteractionRequest.fromJson(value, path: path);
     case ProtocolMethod.conversationCreate:
@@ -3102,6 +3262,9 @@ Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, S
     case ProtocolMethod.conversationGet:
       if (value is! ConversationGetRequest) throw ProtocolCodecException(path, 'expected ConversationGetRequest');
       return value.toJson();
+    case ProtocolMethod.conversationMarkRead:
+      if (value is! ConversationMarkReadRequest) throw ProtocolCodecException(path, 'expected ConversationMarkReadRequest');
+      return value.toJson();
     case ProtocolMethod.conversationAcquireInteraction:
       if (value is! ConversationAcquireInteractionRequest) throw ProtocolCodecException(path, 'expected ConversationAcquireInteractionRequest');
       return value.toJson();
@@ -3136,6 +3299,8 @@ Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) 
       return ConversationSearchResponse.fromJson(value, path: path);
     case ProtocolMethod.conversationGet:
       return ConversationGetResponse.fromJson(value, path: path);
+    case ProtocolMethod.conversationMarkRead:
+      return ConversationMarkReadResponse.fromJson(value, path: path);
     case ProtocolMethod.conversationAcquireInteraction:
       return ConversationAcquireInteractionResponse.fromJson(value, path: path);
     case ProtocolMethod.conversationCreate:
@@ -3172,6 +3337,9 @@ Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, 
     case ProtocolMethod.conversationGet:
       if (value is! ConversationGetResponse) throw ProtocolCodecException(path, 'expected ConversationGetResponse');
       return value.toJson();
+    case ProtocolMethod.conversationMarkRead:
+      if (value is! ConversationMarkReadResponse) throw ProtocolCodecException(path, 'expected ConversationMarkReadResponse');
+      return value.toJson();
     case ProtocolMethod.conversationAcquireInteraction:
       if (value is! ConversationAcquireInteractionResponse) throw ProtocolCodecException(path, 'expected ConversationAcquireInteractionResponse');
       return value.toJson();
@@ -3198,6 +3366,8 @@ Object _decodeEventPayload(ProtocolEventName event, Object? value, String path) 
       return ProviderStatusChangedEvent.fromJson(value, path: path);
     case ProtocolEventName.conversationUpserted:
       return ConversationUpsertedEvent.fromJson(value, path: path);
+    case ProtocolEventName.conversationActivityChanged:
+      return ConversationActivityChangedEvent.fromJson(value, path: path);
     case ProtocolEventName.turnUpserted:
       return TurnUpsertedEvent.fromJson(value, path: path);
     case ProtocolEventName.turnOutputDelta:
@@ -3219,6 +3389,9 @@ Map<String, Object?> _encodeEventPayload(ProtocolEventName event, Object value, 
       return value.toJson();
     case ProtocolEventName.conversationUpserted:
       if (value is! ConversationUpsertedEvent) throw ProtocolCodecException(path, 'expected ConversationUpsertedEvent');
+      return value.toJson();
+    case ProtocolEventName.conversationActivityChanged:
+      if (value is! ConversationActivityChangedEvent) throw ProtocolCodecException(path, 'expected ConversationActivityChangedEvent');
       return value.toJson();
     case ProtocolEventName.turnUpserted:
       if (value is! TurnUpsertedEvent) throw ProtocolCodecException(path, 'expected TurnUpsertedEvent');
@@ -3376,6 +3549,8 @@ final class ProtocolClient {
   Future<ConversationSearchResponse> conversationSearch(ConversationSearchRequest request) => _request<ConversationSearchResponse>(ProtocolMethod.conversationSearch, request);
 
   Future<ConversationGetResponse> conversationGet(ConversationGetRequest request) => _request<ConversationGetResponse>(ProtocolMethod.conversationGet, request);
+
+  Future<ConversationMarkReadResponse> conversationMarkRead(ConversationMarkReadRequest request) => _request<ConversationMarkReadResponse>(ProtocolMethod.conversationMarkRead, request);
 
   Future<ConversationAcquireInteractionResponse> conversationAcquireInteraction(ConversationAcquireInteractionRequest request) => _request<ConversationAcquireInteractionResponse>(ProtocolMethod.conversationAcquireInteraction, request);
 

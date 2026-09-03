@@ -128,6 +128,8 @@ pub struct Conversation {
     pub updated_at: Option<TimestampMs>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_turn: Option<TurnTask>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_state: Option<ConversationReadState>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -144,6 +146,14 @@ pub struct ConversationAcquireInteractionResponse {
     pub selection: TurnSelection,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lease_expires_at: Option<TimestampMs>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationActivityChangedEvent {
+    pub conversation: RoutedResourceId,
+    pub activity_version: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -316,6 +326,29 @@ pub struct ConversationListResponse {
     pub conversations: Vec<Conversation>,
     pub page_info: PageInfo,
     pub snapshot_cursor: EventCursor,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationMarkReadRequest {
+    pub conversation: RoutedResourceId,
+    pub observed_activity_version: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationMarkReadResponse {
+    pub read_state: ConversationReadState,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationReadState {
+    pub unread: bool,
+    pub activity_version: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -776,6 +809,8 @@ pub enum ProtocolMethod {
     ConversationSearch,
     #[serde(rename = "conversation.get")]
     ConversationGet,
+    #[serde(rename = "conversation.markRead")]
+    ConversationMarkRead,
     #[serde(rename = "conversation.acquireInteraction")]
     ConversationAcquireInteraction,
     #[serde(rename = "conversation.create")]
@@ -798,6 +833,7 @@ impl ProtocolMethod {
             Self::ConversationList => "conversation.list",
             Self::ConversationSearch => "conversation.search",
             Self::ConversationGet => "conversation.get",
+            Self::ConversationMarkRead => "conversation.markRead",
             Self::ConversationAcquireInteraction => "conversation.acquireInteraction",
             Self::ConversationCreate => "conversation.create",
             Self::TurnSend => "turn.send",
@@ -815,6 +851,7 @@ impl ProtocolMethod {
             Self::ConversationList => ProtocolDispatchLane::Normal,
             Self::ConversationSearch => ProtocolDispatchLane::Normal,
             Self::ConversationGet => ProtocolDispatchLane::Normal,
+            Self::ConversationMarkRead => ProtocolDispatchLane::Normal,
             Self::ConversationAcquireInteraction => ProtocolDispatchLane::Normal,
             Self::ConversationCreate => ProtocolDispatchLane::Normal,
             Self::TurnSend => ProtocolDispatchLane::Normal,
@@ -832,6 +869,7 @@ impl ProtocolMethod {
             Self::ConversationList => Some(GatewayCapability::ConversationList),
             Self::ConversationSearch => Some(GatewayCapability::ConversationSearch),
             Self::ConversationGet => Some(GatewayCapability::ConversationGet),
+            Self::ConversationMarkRead => None,
             Self::ConversationAcquireInteraction => None,
             Self::ConversationCreate => Some(GatewayCapability::ConversationCreate),
             Self::TurnSend => Some(GatewayCapability::TurnSend),
@@ -853,6 +891,7 @@ impl std::str::FromStr for ProtocolMethod {
             "conversation.list" => Ok(Self::ConversationList),
             "conversation.search" => Ok(Self::ConversationSearch),
             "conversation.get" => Ok(Self::ConversationGet),
+            "conversation.markRead" => Ok(Self::ConversationMarkRead),
             "conversation.acquireInteraction" => Ok(Self::ConversationAcquireInteraction),
             "conversation.create" => Ok(Self::ConversationCreate),
             "turn.send" => Ok(Self::TurnSend),
@@ -871,6 +910,8 @@ pub enum ProtocolEventName {
     ProviderStatusChanged,
     #[serde(rename = "conversation.upserted")]
     ConversationUpserted,
+    #[serde(rename = "conversation.activityChanged")]
+    ConversationActivityChanged,
     #[serde(rename = "turn.upserted")]
     TurnUpserted,
     #[serde(rename = "turn.outputDelta")]
@@ -887,6 +928,7 @@ impl ProtocolEventName {
             Self::DeviceStatusChanged => "device.statusChanged",
             Self::ProviderStatusChanged => "provider.statusChanged",
             Self::ConversationUpserted => "conversation.upserted",
+            Self::ConversationActivityChanged => "conversation.activityChanged",
             Self::TurnUpserted => "turn.upserted",
             Self::TurnOutputDelta => "turn.outputDelta",
             Self::ApprovalRequested => "approval.requested",
@@ -903,6 +945,7 @@ impl std::str::FromStr for ProtocolEventName {
             "device.statusChanged" => Ok(Self::DeviceStatusChanged),
             "provider.statusChanged" => Ok(Self::ProviderStatusChanged),
             "conversation.upserted" => Ok(Self::ConversationUpserted),
+            "conversation.activityChanged" => Ok(Self::ConversationActivityChanged),
             "turn.upserted" => Ok(Self::TurnUpserted),
             "turn.outputDelta" => Ok(Self::TurnOutputDelta),
             "approval.requested" => Ok(Self::ApprovalRequested),
@@ -963,6 +1006,12 @@ pub enum ProtocolRequest {
         jsonrpc: String,
         id: RequestId,
         params: ConversationGetRequest,
+    },
+    #[serde(rename = "conversation.markRead")]
+    ConversationMarkRead {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationMarkReadRequest,
     },
     #[serde(rename = "conversation.acquireInteraction")]
     ConversationAcquireInteraction {
@@ -1039,6 +1088,11 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.get request params", error))?,
             }),
+            ProtocolMethod::ConversationMarkRead => Ok(Self::ConversationMarkRead {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.markRead request params", error))?,
+            }),
             ProtocolMethod::ConversationAcquireInteraction => Ok(Self::ConversationAcquireInteraction {
                 jsonrpc,
                 id,
@@ -1076,6 +1130,7 @@ impl ProtocolRequest {
             Self::ConversationList { jsonrpc, .. } => jsonrpc,
             Self::ConversationSearch { jsonrpc, .. } => jsonrpc,
             Self::ConversationGet { jsonrpc, .. } => jsonrpc,
+            Self::ConversationMarkRead { jsonrpc, .. } => jsonrpc,
             Self::ConversationAcquireInteraction { jsonrpc, .. } => jsonrpc,
             Self::ConversationCreate { jsonrpc, .. } => jsonrpc,
             Self::TurnSend { jsonrpc, .. } => jsonrpc,
@@ -1093,6 +1148,7 @@ impl ProtocolRequest {
             Self::ConversationList { id, .. } => id,
             Self::ConversationSearch { id, .. } => id,
             Self::ConversationGet { id, .. } => id,
+            Self::ConversationMarkRead { id, .. } => id,
             Self::ConversationAcquireInteraction { id, .. } => id,
             Self::ConversationCreate { id, .. } => id,
             Self::TurnSend { id, .. } => id,
@@ -1110,6 +1166,7 @@ impl ProtocolRequest {
             Self::ConversationList { .. } => ProtocolMethod::ConversationList,
             Self::ConversationSearch { .. } => ProtocolMethod::ConversationSearch,
             Self::ConversationGet { .. } => ProtocolMethod::ConversationGet,
+            Self::ConversationMarkRead { .. } => ProtocolMethod::ConversationMarkRead,
             Self::ConversationAcquireInteraction { .. } => ProtocolMethod::ConversationAcquireInteraction,
             Self::ConversationCreate { .. } => ProtocolMethod::ConversationCreate,
             Self::TurnSend { .. } => ProtocolMethod::TurnSend,
@@ -1146,6 +1203,11 @@ pub enum ProtocolEvent {
         jsonrpc: String,
         params: ProtocolEventParams<ConversationUpsertedEvent>,
     },
+    #[serde(rename = "conversation.activityChanged")]
+    ConversationActivityChanged {
+        jsonrpc: String,
+        params: ProtocolEventParams<ConversationActivityChangedEvent>,
+    },
     #[serde(rename = "turn.upserted")]
     TurnUpserted {
         jsonrpc: String,
@@ -1174,6 +1236,7 @@ impl ProtocolEvent {
             Self::DeviceStatusChanged { jsonrpc, .. } => jsonrpc,
             Self::ProviderStatusChanged { jsonrpc, .. } => jsonrpc,
             Self::ConversationUpserted { jsonrpc, .. } => jsonrpc,
+            Self::ConversationActivityChanged { jsonrpc, .. } => jsonrpc,
             Self::TurnUpserted { jsonrpc, .. } => jsonrpc,
             Self::TurnOutputDelta { jsonrpc, .. } => jsonrpc,
             Self::ApprovalRequested { jsonrpc, .. } => jsonrpc,
@@ -1186,6 +1249,7 @@ impl ProtocolEvent {
             Self::DeviceStatusChanged { params, .. } => &params.event_cursor,
             Self::ProviderStatusChanged { params, .. } => &params.event_cursor,
             Self::ConversationUpserted { params, .. } => &params.event_cursor,
+            Self::ConversationActivityChanged { params, .. } => &params.event_cursor,
             Self::TurnUpserted { params, .. } => &params.event_cursor,
             Self::TurnOutputDelta { params, .. } => &params.event_cursor,
             Self::ApprovalRequested { params, .. } => &params.event_cursor,
@@ -1204,6 +1268,10 @@ impl ProtocolEvent {
                 params.event_cursor = cursor;
             },
             Self::ConversationUpserted { jsonrpc, params } => {
+                *jsonrpc = "2.0".to_string();
+                params.event_cursor = cursor;
+            },
+            Self::ConversationActivityChanged { jsonrpc, params } => {
                 *jsonrpc = "2.0".to_string();
                 params.event_cursor = cursor;
             },
@@ -1347,6 +1415,10 @@ pub trait ProtocolServer: Send + Sync {
         Box::pin(async { Err(method_not_implemented("conversation.get")) })
     }
 
+    fn conversation_mark_read<'a>(&'a self, _request: ConversationMarkReadRequest) -> ProtocolFuture<'a, ConversationMarkReadResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.markRead")) })
+    }
+
     fn conversation_acquire_interaction<'a>(&'a self, _request: ConversationAcquireInteractionRequest) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
         Box::pin(async { Err(method_not_implemented("conversation.acquireInteraction")) })
     }
@@ -1441,6 +1513,16 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
         },
         ProtocolRequest::ConversationGet { jsonrpc, id, params } => {
             let response = match server.conversation_get(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationMarkRead { jsonrpc, id, params } => {
+            let response = match server.conversation_mark_read(params).await {
                 Ok(result) => match serde_json::to_value(result) {
                     Ok(result) => JsonRpcResponsePayload::Ok { result },
                     Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
@@ -1598,6 +1680,14 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             let result = self.transport.request(ProtocolMethod::ConversationGet, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_mark_read<'a>(&'a self, request: ConversationMarkReadRequest) -> ProtocolFuture<'a, ConversationMarkReadResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationMarkRead, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

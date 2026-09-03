@@ -1358,6 +1358,7 @@ fn incoming_thread_id(incoming: &CodexIncoming) -> Option<&str> {
         }
         CodexIncoming::Notification(
             CodexNotification::ThreadNameUpdated { thread_id, .. }
+            | CodexNotification::ThreadStatusChanged { thread_id, .. }
             | CodexNotification::TurnStarted { thread_id, .. }
             | CodexNotification::TurnCompleted { thread_id, .. }
             | CodexNotification::OutputDelta { thread_id, .. }
@@ -1515,6 +1516,10 @@ fn parse_notification(
                 })?
                 .flatten(),
         }),
+        "thread/status/changed" => Ok(CodexNotification::ThreadStatusChanged {
+            thread_id: required_string(&params, "threadId")?,
+            status: deserialize_field(&params, "status")?,
+        }),
         "turn/started" => Ok(CodexNotification::TurnStarted {
             thread_id: required_string(&params, "threadId")?,
             turn: deserialize_field(&params, "turn")?,
@@ -1596,7 +1601,9 @@ fn deserialize_field<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{CodexPermissionLevel, CodexTurnStatus};
+    use crate::protocol::{
+        CodexPermissionLevel, CodexThreadActiveFlag, CodexThreadStatus, CodexTurnStatus,
+    };
     use std::fs;
     use std::sync::mpsc::{Receiver, Sender};
     use std::sync::Barrier;
@@ -1991,6 +1998,35 @@ mod tests {
                 thread_id,
                 thread_name: Some(thread_name),
             }) if thread_id == "thread-one" && thread_name == "A useful title"
+        ));
+        session.shutdown().unwrap();
+    }
+
+    #[test]
+    fn session_parses_thread_status_changed_notifications() {
+        let (session, _, peer_sender) = mock_session();
+        let notifications = session.subscribe().unwrap();
+        peer_sender
+            .send(json!({
+                "method": "thread/status/changed",
+                "params": {
+                    "threadId": "thread-one",
+                    "status": {
+                        "type": "active",
+                        "activeFlags": ["waitingOnApproval"]
+                    }
+                }
+            }))
+            .unwrap();
+
+        let incoming = notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
+        assert!(matches!(
+            incoming,
+            CodexIncoming::Notification(CodexNotification::ThreadStatusChanged {
+                thread_id,
+                status: CodexThreadStatus::Active { active_flags },
+            }) if thread_id == "thread-one"
+                && active_flags == vec![CodexThreadActiveFlag::WaitingOnApproval]
         ));
         session.shutdown().unwrap();
     }

@@ -464,7 +464,7 @@ fn configured_provider_runtime(
         instances,
         provider_manager_config(),
     )?);
-    let gateway = Arc::new(ProviderGatewayService::with_remote_identity(
+    let gateway = Arc::new(ProviderGatewayService::with_remote_identity_and_state_path(
         manager.clone(),
         {
             let identity = remote_access.remote_host_identity();
@@ -473,6 +473,7 @@ fn configured_provider_runtime(
                 descriptor: identity.descriptor,
             }
         },
+        provider_host_directory.join("conversation-state.json"),
     )?);
     Ok((manager, gateway, remote_access))
 }

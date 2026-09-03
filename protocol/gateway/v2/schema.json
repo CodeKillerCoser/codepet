@@ -81,7 +81,8 @@
         "workspaceRoot": { "type": "string", "minLength": 1 },
         "createdAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
         "updatedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
-        "activeTurn": { "$ref": "#/$defs/TurnTask" }
+        "activeTurn": { "$ref": "#/$defs/TurnTask" },
+        "readState": { "$ref": "#/$defs/ConversationReadState" }
       },
       "required": ["resource", "title", "status"],
       "additionalProperties": false
@@ -222,6 +223,32 @@
       "required": ["conversations", "pageInfo", "snapshotCursor"],
       "additionalProperties": false
     },
+    "ConversationMarkReadRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "observedActivityVersion": { "type": "string", "minLength": 1 }
+      },
+      "required": ["conversation", "observedActivityVersion"],
+      "additionalProperties": false
+    },
+    "ConversationMarkReadResponse": {
+      "type": "object",
+      "properties": {
+        "readState": { "$ref": "#/$defs/ConversationReadState" }
+      },
+      "required": ["readState"],
+      "additionalProperties": false
+    },
+    "ConversationReadState": {
+      "type": "object",
+      "properties": {
+        "unread": { "type": "boolean" },
+        "activityVersion": { "type": "string", "minLength": 1 }
+      },
+      "required": ["unread", "activityVersion"],
+      "additionalProperties": false
+    },
     "ConversationSearchRequest": {
       "type": "object",
       "properties": {
@@ -256,6 +283,15 @@
         "conversation": { "$ref": "#/$defs/Conversation" }
       },
       "required": ["conversation"],
+      "additionalProperties": false
+    },
+    "ConversationActivityChangedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "activityVersion": { "type": "string", "minLength": 1 }
+      },
+      "required": ["conversation", "activityVersion"],
       "additionalProperties": false
     },
     "ChoiceOption": {

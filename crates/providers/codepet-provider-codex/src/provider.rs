@@ -1157,6 +1157,22 @@ impl CodexInstanceRuntime {
                             }
                         }
                     }
+                    Ok(CodexIncoming::Notification(
+                        CodexNotification::ThreadStatusChanged { thread_id, status },
+                    )) => {
+                        if let Some(event) = runtime.conversation_status_upsert_event(
+                            &session,
+                            &thread_id,
+                            status,
+                        ) {
+                            if let Err(error) = runtime.events.publish(event) {
+                                eprintln!(
+                                    "Codex observer status event forwarding failed: {}",
+                                    error.message
+                                );
+                            }
+                        }
+                    }
                     Ok(_) => {}
                     Err(error) => {
                         runtime.fail_observer(
@@ -1394,6 +1410,13 @@ impl CodexInstanceRuntime {
                 .conversation_upsert_event(session, &thread_id, thread_name)
                 .into_iter()
                 .collect()),
+            CodexIncoming::Notification(CodexNotification::ThreadStatusChanged {
+                thread_id,
+                status,
+            }) => Ok(self
+                .conversation_status_upsert_event(session, &thread_id, status)
+                .into_iter()
+                .collect()),
             CodexIncoming::ApprovalRequested(request) => {
                 let approval = lock(&self.mapper).approval(&request);
                 let approval_id = approval.resource.native_resource_id.clone();
@@ -1481,6 +1504,43 @@ impl CodexInstanceRuntime {
             },
         };
         snapshot.thread.name = thread_name;
+        Some(ProtocolEvent::EventConversationUpserted {
+            jsonrpc: "2.0".to_string(),
+            params: ConversationUpsertedEvent {
+                conversation: lock(&self.mapper).conversation(&snapshot),
+            },
+        })
+    }
+
+    fn conversation_status_upsert_event(
+        &self,
+        session: &CodexAppServerSession,
+        conversation_id: &str,
+        status: crate::protocol::CodexThreadStatus,
+    ) -> Option<ProtocolEvent> {
+        let pending = {
+            let mut mutable = lock(&self.mutable);
+            mutable
+                .pending_materialization
+                .get_mut(conversation_id)
+                .map(|snapshot| {
+                    snapshot.thread.status = status.clone();
+                    snapshot.clone()
+                })
+        };
+        let mut snapshot = match session.thread_read_metadata(conversation_id) {
+            Ok(snapshot) => snapshot,
+            Err(error) => match pending {
+                Some(snapshot) => snapshot,
+                None => {
+                    eprintln!(
+                        "Codex status update could not refresh conversation {conversation_id}: {error}"
+                    );
+                    return None;
+                }
+            },
+        };
+        snapshot.thread.status = status;
         Some(ProtocolEvent::EventConversationUpserted {
             jsonrpc: "2.0".to_string(),
             params: ConversationUpsertedEvent {
@@ -3286,6 +3346,7 @@ fn incoming_conversation_id(incoming: &CodexIncoming) -> Option<&str> {
         }
         CodexIncoming::Notification(
             CodexNotification::ThreadNameUpdated { thread_id, .. }
+            | CodexNotification::ThreadStatusChanged { thread_id, .. }
             | CodexNotification::TurnStarted { thread_id, .. }
             | CodexNotification::TurnCompleted { thread_id, .. }
             | CodexNotification::OutputDelta { thread_id, .. }

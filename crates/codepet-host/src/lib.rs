@@ -5,6 +5,7 @@ pub use codepet_lan_channel_sdk::PairingExchangeRequest;
 pub use codepet_provider_sdk as provider_sdk;
 
 mod catalog;
+mod conversation_state;
 mod device;
 mod error;
 mod gateway;

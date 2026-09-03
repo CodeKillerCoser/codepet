@@ -727,6 +727,7 @@ impl CodexProtocolMapper {
                 ..
             } => return Ok(Vec::new()),
             CodexNotification::ThreadNameUpdated { .. } => return Ok(Vec::new()),
+            CodexNotification::ThreadStatusChanged { .. } => return Ok(Vec::new()),
             CodexNotification::Unknown { .. } => return Ok(Vec::new()),
         };
         Ok(vec![event])

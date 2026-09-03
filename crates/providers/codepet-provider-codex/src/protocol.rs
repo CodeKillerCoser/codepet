@@ -586,6 +586,10 @@ pub enum CodexNotification {
         thread_id: String,
         thread_name: Option<String>,
     },
+    ThreadStatusChanged {
+        thread_id: String,
+        status: CodexThreadStatus,
+    },
     TurnStarted {
         thread_id: String,
         turn: CodexTurn,

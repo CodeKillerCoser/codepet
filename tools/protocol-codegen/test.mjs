@@ -328,8 +328,8 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   const model = await loadProtocolModel();
   const gateway = record(model, "gateway-v2");
   const gatewayIr = model.protocolIr.packagesById.get("gateway-v2");
-  assert.equal(gatewayIr.service.methods.length, 12);
-  assert.equal(gatewayIr.service.events.length, 7);
+  assert.equal(gatewayIr.service.methods.length, 13);
+  assert.equal(gatewayIr.service.events.length, 8);
   assert.equal(
     gatewayIr.service.methods.find((method) => method.name === "turn.send").idempotency,
     "nonIdempotent",
