@@ -33,9 +33,9 @@ fn gateway_handshake_uses_json_rpc_and_business_identity_only() {
     let result: HandshakeResponse = decode_success(include_bytes!(
         "../../../../protocol/gateway/v1/fixtures/handshake-response.json"
     ));
-    assert_eq!(result.selected_version, 1);
-    assert_eq!(result.device.device_id, "device-macbook-1");
-    assert_eq!(result.device.descriptor.operating_system, "macOS");
+    assert_eq!(result.protocol.version, 1);
+    assert_eq!(result.device.name, "MacBook");
+    assert_eq!(result.device.operating_system, "macOS");
     let identity = serde_json::to_value(&result.device).unwrap();
     assert!(identity.get("identityFingerprint").is_none());
 }
@@ -50,8 +50,7 @@ fn gateway_turn_send_derives_route_from_conversation() {
         panic!("expected turn.send request");
     };
     assert_eq!(params.client_request_id, "remote-turn-01");
-    assert_eq!(params.conversation.provider_plugin_id, "dev.codepet.codex");
-    assert_eq!(params.conversation.provider_instance_id, "codex-work");
+    assert_eq!(params.conversation.provider_id, "codex-work");
     let encoded = serde_json::to_value(&params).unwrap();
     assert!(encoded.get("route").is_none());
 
@@ -106,11 +105,7 @@ fn gateway_event_wraps_cursor_inside_json_rpc_params() {
     assert_eq!(jsonrpc, "2.0");
     assert_eq!(params.event_cursor, "event-41");
     assert_eq!(
-        params.payload.conversation.resource.provider_plugin_id,
-        "dev.codepet.codex"
-    );
-    assert_eq!(
-        params.payload.conversation.resource.provider_instance_id,
+        params.payload.conversation.resource.provider_id,
         "codex-work"
     );
 }

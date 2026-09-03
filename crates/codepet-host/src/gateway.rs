@@ -28,7 +28,7 @@ pub struct RemoteHostIdentity {
 
 #[derive(Clone)]
 struct GatewayProviderRuntime {
-    route: gateway::GatewayProviderRoute,
+    route: provider::ProviderInstanceRoute,
     summary: gateway::ProviderSummary,
     capabilities: gateway::GatewayCapabilities,
 }
@@ -36,9 +36,7 @@ struct GatewayProviderRuntime {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct TurnSendKey {
     caller_scope: String,
-    device_id: String,
-    provider_plugin_id: String,
-    provider_instance_id: String,
+    provider_id: String,
     client_request_id: String,
 }
 
@@ -307,7 +305,7 @@ impl ProviderGatewayService {
     pub async fn resolve_provider_route(
         &self,
         provider_id: &str,
-    ) -> Result<gateway::GatewayProviderRoute, gateway::ProtocolError> {
+    ) -> Result<provider::ProviderInstanceRoute, gateway::ProtocolError> {
         self.gateway_providers(None)
             .await?
             .into_iter()
@@ -319,6 +317,62 @@ impl ProviderGatewayService {
                 retryable: false,
                 details: None,
             })
+    }
+
+    async fn resolve_resource(
+        &self,
+        resource: gateway::RoutedResourceId,
+    ) -> Result<provider::RoutedResourceId, gateway::ProtocolError> {
+        validate_gateway_resource(&resource)?;
+        let route = self.resolve_provider_route(&resource.provider_id).await?;
+        Ok(provider::RoutedResourceId {
+            device_id: route.device_id,
+            provider_plugin_id: route.provider_plugin_id,
+            provider_instance_id: route.provider_instance_id,
+            native_resource_id: resource.native_resource_id,
+        })
+    }
+
+    async fn resolve_project_filter(
+        &self,
+        filter: gateway::ConversationProjectFilter,
+    ) -> Result<provider::ConversationProjectFilter, gateway::ProtocolError> {
+        Ok(match filter {
+            gateway::ConversationProjectFilter::ConversationProjectFilterAll(filter) => {
+                provider::ConversationProjectFilter::ConversationProjectFilterAll(
+                    provider::ConversationProjectFilterAll {
+                        kind: match filter.kind {
+                            gateway::ConversationProjectFilterAllKind::All => {
+                                provider::ConversationProjectFilterAllKind::All
+                            }
+                        },
+                    },
+                )
+            }
+            gateway::ConversationProjectFilter::ConversationProjectFilterStandalone(filter) => {
+                provider::ConversationProjectFilter::ConversationProjectFilterStandalone(
+                    provider::ConversationProjectFilterStandalone {
+                        kind: match filter.kind {
+                            gateway::ConversationProjectFilterStandaloneKind::Standalone => {
+                                provider::ConversationProjectFilterStandaloneKind::Standalone
+                            }
+                        },
+                    },
+                )
+            }
+            gateway::ConversationProjectFilter::ConversationProjectFilterProject(filter) => {
+                provider::ConversationProjectFilter::ConversationProjectFilterProject(
+                    provider::ConversationProjectFilterProject {
+                        kind: match filter.kind {
+                            gateway::ConversationProjectFilterProjectKind::Project => {
+                                provider::ConversationProjectFilterProjectKind::Project
+                            }
+                        },
+                        project: self.resolve_resource(filter.project).await?,
+                    },
+                )
+            }
+        })
     }
 
     pub fn replay_events(
@@ -539,7 +593,7 @@ impl ProviderGatewayService {
                     params: gateway::ProtocolEventParams {
                         event_cursor: event_cursor(0),
                         payload: gateway::ProjectChangedEvent {
-                            project: params.project,
+                            project: map_resource(params.project),
                             change_type: match params.change_type {
                                 provider::ProjectChangeType::Created => gateway::ProjectChangeType::Created,
                                 provider::ProjectChangeType::Updated => gateway::ProjectChangeType::Updated,
@@ -588,8 +642,8 @@ impl ProviderGatewayService {
                     params: gateway::ProtocolEventParams {
                         event_cursor: event_cursor(0),
                         payload: gateway::TurnOutputDeltaEvent {
-                            turn: params.turn,
-                            conversation: params.conversation,
+                            turn: map_resource(params.turn),
+                            conversation: map_resource(params.conversation),
                             item_id: params.item_id,
                             content_id: params.content_id,
                             kind: map_conversation_content_kind(params.kind),
@@ -653,8 +707,8 @@ impl ProviderGatewayService {
         request: gateway::TurnSendRequest,
     ) -> Result<gateway::TurnSendResponse, gateway::ProtocolError> {
         validate_gateway_resource(&request.conversation)?;
-        let route = gateway_route_for_resource(&request.conversation);
-        let expected_conversation = request.conversation.clone();
+        let route = self.resolve_provider_route(&request.conversation.provider_id).await?;
+        let expected_conversation = self.resolve_resource(request.conversation.clone()).await?;
         if request.input.text.trim().is_empty() {
             return Err(gateway::ProtocolError {
                 code: "invalid_turn_input".to_string(),
@@ -711,7 +765,7 @@ impl ProviderGatewayService {
         let conversation_snapshot = self
             .manager
             .conversation_get(provider::ConversationGetRequest {
-                conversation: request.conversation.clone(),
+                conversation: expected_conversation.clone(),
                 cursor: None,
                 limit: Some(1),
             })
@@ -728,7 +782,7 @@ impl ProviderGatewayService {
         let response = self
             .manager
             .turn_start(provider::TurnStartRequest {
-                conversation: request.conversation,
+                conversation: expected_conversation.clone(),
                 client_request_id: request.client_request_id,
                 capability_revision: request.capability_revision,
                 input: map_turn_input_to_provider(request.input),
@@ -749,7 +803,7 @@ impl ProviderGatewayService {
         if let Some(user_item) = response.user_item.as_ref() {
             ensure_same_resource_identity(&user_item.conversation, &expected_conversation)?;
             ensure_same_resource_identity(&user_item.turn, &response.turn.resource)?;
-            ensure_same_gateway_route(&user_item.resource, &expected_conversation)?;
+            ensure_same_provider_route(&user_item.resource, &expected_conversation)?;
             if user_item.role != Some(provider::ConversationItemRole::User) {
                 return Err(gateway::ProtocolError {
                     code: "provider_response_invalid".to_string(),
@@ -862,7 +916,7 @@ impl ProtocolServer for ProviderGatewayService {
                 .gateway_providers(None)
                 .await?
                 .into_iter()
-                .find(|provider| provider.summary.id == request.id)
+                .find(|provider| provider.summary.id == request.provider_id)
                 .ok_or_else(|| gateway::ProtocolError {
                     code: "unknown_provider".to_string(),
                     message: "provider.describe id does not identify a configured Provider".to_string(),
@@ -870,7 +924,7 @@ impl ProtocolServer for ProviderGatewayService {
                     details: None,
                 })?;
             Ok(gateway::ProviderDescribeResponse {
-                provider_id: provider.summary.id,
+                provider: provider.summary,
                 capabilities: provider.capabilities,
             })
         })
@@ -882,10 +936,11 @@ impl ProtocolServer for ProviderGatewayService {
     ) -> gateway::ProtocolFuture<'a, gateway::ProjectListResponse> {
         Box::pin(async move {
             let snapshot_cursor = self.current_event_cursor();
+            let route = self.resolve_provider_route(&request.provider_id).await?;
             let response = self
                 .manager
                 .project_list(provider::ProjectListRequest {
-                    route: provider_route(request.route),
+                    route,
                     cursor: request.cursor,
                     limit: request.limit,
                 })
@@ -906,10 +961,11 @@ impl ProtocolServer for ProviderGatewayService {
         request: gateway::ProjectGetRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ProjectGetResponse> {
         Box::pin(async move {
+            let project = self.resolve_resource(request.project).await?;
             let response = self
                 .manager
                 .project_get(provider::ProjectGetRequest {
-                    project: request.project,
+                    project,
                 })
                 .await
                 .map_err(gateway_error)?;
@@ -924,10 +980,11 @@ impl ProtocolServer for ProviderGatewayService {
         request: gateway::ProjectCreateRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ProjectCreateResponse> {
         Box::pin(async move {
+            let route = self.resolve_provider_route(&request.provider_id).await?;
             let response = self
                 .manager
                 .project_create(provider::ProjectCreateRequest {
-                    route: provider_route(request.route),
+                    route,
                     idempotency_key: request.idempotency_key,
                     name: request.name,
                     roots: request
@@ -950,10 +1007,11 @@ impl ProtocolServer for ProviderGatewayService {
         request: gateway::ProjectUpdateRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ProjectUpdateResponse> {
         Box::pin(async move {
+            let project = self.resolve_resource(request.project).await?;
             let response = self
                 .manager
                 .project_update(provider::ProjectUpdateRequest {
-                    project: request.project,
+                    project,
                     name: request.name,
                     roots: request.roots.map(|roots| {
                         roots
@@ -976,9 +1034,10 @@ impl ProtocolServer for ProviderGatewayService {
         request: gateway::ProjectDeleteRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ProjectDeleteResponse> {
         Box::pin(async move {
+            let project = self.resolve_resource(request.project).await?;
             self.manager
                 .project_delete(provider::ProjectDeleteRequest {
-                    project: request.project,
+                    project,
                 })
                 .await
                 .map_err(gateway_error)?;
@@ -991,109 +1050,51 @@ impl ProtocolServer for ProviderGatewayService {
         request: gateway::ConversationListRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ConversationListResponse> {
         Box::pin(async move {
-            let project_route = match &request.project_filter {
+            let project_provider_id = match &request.project_filter {
                 gateway::ConversationProjectFilter::ConversationProjectFilterProject(filter) => {
                     validate_gateway_resource(&filter.project)?;
-                    Some(gateway_route_for_resource(&filter.project))
+                    Some(filter.project.provider_id.as_str())
                 }
                 _ => None,
             };
-            if let (Some(route), Some(project_route)) = (request.route.as_ref(), project_route.as_ref()) {
-                if route != project_route {
-                    return Err(gateway::ProtocolError {
-                        code: "mismatched_provider_route".to_string(),
-                        message: "conversation project filter must target the requested Provider route".to_string(),
-                        retryable: false,
-                        details: None,
-                    });
-                }
-            }
-            let route = request.route.clone().or(project_route);
-            let project_filter = map_conversation_project_filter(request.project_filter.clone());
-            if route.is_none() && request.cursor.is_some() {
+            if project_provider_id.is_some_and(|id| id != request.provider_id) {
                 return Err(gateway::ProtocolError {
-                    code: "aggregate_conversation_cursor_unsupported".to_string(),
-                    message: "route-less conversation.list does not support Provider cursors"
+                    code: "mismatched_provider_route".to_string(),
+                    message: "conversation project filter must target the requested Provider"
                         .to_string(),
                     retryable: false,
                     details: None,
                 });
             }
+            let route = self.resolve_provider_route(&request.provider_id).await?;
+            let project_filter = self.resolve_project_filter(request.project_filter).await?;
             let snapshot_cursor = self.current_event_cursor();
-            let mut conversations = Vec::new();
-            let mut next_cursor = None;
-            if let Some(route) = route {
-                let response = self
-                    .manager
-                    .conversation_list(provider::ConversationListRequest {
-                        route: provider_route(route),
-                        cursor: request.cursor,
-                        limit: request.limit,
-                        project_filter,
-                    })
-                    .await
+            let response = self
+                .manager
+                .conversation_list(provider::ConversationListRequest {
+                    route,
+                    cursor: request.cursor,
+                    limit: request.limit,
+                    project_filter,
+                })
+                .await
+                .map_err(gateway_error)?;
+            let mut conversations = Vec::with_capacity(response.conversations.len());
+            for conversation in response.conversations {
+                let mut conversation = map_conversation(conversation);
+                self.conversation_state
+                    .observe_summary(&conversation)
                     .map_err(gateway_error)?;
-                for conversation in response.conversations {
-                    let mut conversation = map_conversation(conversation);
-                    self.conversation_state
-                        .observe_summary(&conversation)
-                        .map_err(gateway_error)?;
-                    self.conversation_state
-                        .decorate(DEFAULT_TURN_SEND_CALLER_SCOPE, &mut conversation)
-                        .map_err(gateway_error)?;
-                    conversations.push(conversation);
-                }
-                next_cursor = response.page_info.next_cursor;
-            } else {
-                let routes = self
-                    .manager
-                    .enabled_historical_routes()
-                    .await
+                self.conversation_state
+                    .decorate(DEFAULT_TURN_SEND_CALLER_SCOPE, &mut conversation)
                     .map_err(gateway_error)?;
-                let mut successful_providers = 0usize;
-                let mut diagnostic_error = None;
-                for route in routes {
-                    match self
-                        .manager
-                        .conversation_list(provider::ConversationListRequest {
-                            route,
-                            cursor: request.cursor.clone(),
-                            limit: request.limit,
-                            project_filter: project_filter.clone(),
-                        })
-                        .await
-                    {
-                        Ok(response) => {
-                            successful_providers = successful_providers.saturating_add(1);
-                            for conversation in response.conversations {
-                                let mut conversation = map_conversation(conversation);
-                                self.conversation_state
-                                    .observe_summary(&conversation)
-                                    .map_err(gateway_error)?;
-                                self.conversation_state
-                                    .decorate(DEFAULT_TURN_SEND_CALLER_SCOPE, &mut conversation)
-                                    .map_err(gateway_error)?;
-                                conversations.push(conversation);
-                            }
-                        }
-                        Err(error) if error.code == "provider_capability_unsupported" => {}
-                        Err(error) => {
-                            retain_more_diagnostic_error(&mut diagnostic_error, error);
-                        }
-                    }
-                }
-                if successful_providers == 0 {
-                    if let Some(error) = diagnostic_error {
-                        return Err(gateway_error(error));
-                    }
-                }
-                if let Some(limit) = request.limit.and_then(|limit| usize::try_from(limit).ok()) {
-                    conversations.truncate(limit);
-                }
+                conversations.push(conversation);
             }
             Ok(gateway::ConversationListResponse {
                 conversations,
-                page_info: gateway::PageInfo { next_cursor },
+                page_info: gateway::PageInfo {
+                    next_cursor: response.page_info.next_cursor,
+                },
                 snapshot_cursor,
             })
         })
@@ -1113,10 +1114,11 @@ impl ProtocolServer for ProviderGatewayService {
                 });
             }
             let snapshot_cursor = self.current_event_cursor();
+            let route = self.resolve_provider_route(&request.provider_id).await?;
             let response = self
                 .manager
                 .conversation_search(provider::ConversationSearchRequest {
-                    route: provider_route(request.route),
+                    route,
                     search_term: request.search_term,
                     cursor: request.cursor,
                     limit: request.limit,
@@ -1150,10 +1152,11 @@ impl ProtocolServer for ProviderGatewayService {
     ) -> gateway::ProtocolFuture<'a, gateway::ConversationGetResponse> {
         Box::pin(async move {
             let snapshot_cursor = self.current_event_cursor();
+            let conversation = self.resolve_resource(request.conversation).await?;
             let response = self
                 .manager
                 .conversation_get(provider::ConversationGetRequest {
-                    conversation: request.conversation,
+                    conversation,
                     cursor: request.cursor,
                     limit: request.limit,
                 })
@@ -1190,11 +1193,12 @@ impl ProtocolServer for ProviderGatewayService {
         request: gateway::ConversationAcquireInteractionRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ConversationAcquireInteractionResponse> {
         Box::pin(async move {
+            let conversation = self.resolve_resource(request.conversation).await?;
             let response = self
                 .manager
                 .conversation_acquire_interaction(
                     provider::ConversationAcquireInteractionRequest {
-                        conversation: request.conversation,
+                        conversation,
                     },
                 )
                 .await
@@ -1228,11 +1232,16 @@ impl ProtocolServer for ProviderGatewayService {
         request: gateway::ConversationCreateRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ConversationCreateResponse> {
         Box::pin(async move {
+            let route = self.resolve_provider_route(&request.provider_id).await?;
+            let project = match request.project {
+                Some(project) => Some(self.resolve_resource(project).await?),
+                None => None,
+            };
             let response = self
                 .manager
                 .conversation_create(provider::ConversationCreateRequest {
-                    route: provider_route(request.route),
-                    project: request.project,
+                    route,
+                    project,
                     title: request.title,
                     permission_level: request.permission_level,
                     model: request.model,
@@ -1265,11 +1274,13 @@ impl ProtocolServer for ProviderGatewayService {
     ) -> gateway::ProtocolFuture<'a, gateway::TurnInterruptResponse> {
         Box::pin(async move {
             ensure_same_gateway_route(&request.conversation, &request.turn)?;
+            let conversation = self.resolve_resource(request.conversation).await?;
+            let turn = self.resolve_resource(request.turn).await?;
             let response = self
                 .manager
                 .turn_interrupt(provider::TurnInterruptRequest {
-                    conversation: request.conversation,
-                    turn: request.turn,
+                    conversation,
+                    turn,
                 })
                 .await
                 .map_err(gateway_error)?;
@@ -1284,10 +1295,11 @@ impl ProtocolServer for ProviderGatewayService {
         request: gateway::ApprovalResolveRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ApprovalResolveResponse> {
         Box::pin(async move {
+            let approval = self.resolve_resource(request.approval).await?;
             let response = self
                 .manager
                 .approval_resolve(provider::ApprovalResolveRequest {
-                    approval: request.approval,
+                    approval,
                     decision: match request.decision {
                         gateway::ApprovalDecision::Approve => provider::ApprovalDecision::Approve,
                         gateway::ApprovalDecision::Deny => provider::ApprovalDecision::Deny,
@@ -1323,7 +1335,7 @@ fn gateway_provider(
         .and_then(|instance| instance.harness.executable_path.clone())
         .or_else(|| configured_executable_path(&runtime.record.settings));
     GatewayProviderRuntime {
-        route: gateway::GatewayProviderRoute {
+        route: provider::ProviderInstanceRoute {
             device_id: runtime.record.device_id.clone(),
             provider_plugin_id: plugin.catalog.plugin_id.clone(),
             provider_instance_id: runtime.record.instance_id.clone(),
@@ -1632,8 +1644,8 @@ fn map_grouped_model_selection_to_gateway(
 
 fn map_conversation(conversation: provider::ProviderConversation) -> gateway::Conversation {
     gateway::Conversation {
-        resource: conversation.resource,
-        project: conversation.project,
+        resource: map_resource(conversation.resource),
+        project: conversation.project.map(map_resource),
         title: conversation.title,
         preview: conversation.preview,
         status: match conversation.status {
@@ -1662,8 +1674,8 @@ fn map_conversation(conversation: provider::ProviderConversation) -> gateway::Co
 
 fn map_turn(turn: provider::ProviderTurn) -> gateway::TurnTask {
     gateway::TurnTask {
-        resource: turn.resource,
-        conversation: turn.conversation,
+        resource: map_resource(turn.resource),
+        conversation: map_resource(turn.conversation),
         status: match turn.status {
             provider::TurnStatus::Queued => gateway::TurnStatus::Queued,
             provider::TurnStatus::Running => gateway::TurnStatus::Running,
@@ -1681,7 +1693,7 @@ fn map_turn(turn: provider::ProviderTurn) -> gateway::TurnTask {
 
 fn map_project(project: provider::Project) -> gateway::Project {
     gateway::Project {
-        resource: project.resource,
+        resource: map_resource(project.resource),
         name: project.name,
         roots: project
             .roots
@@ -1695,52 +1707,11 @@ fn map_project(project: provider::Project) -> gateway::Project {
     }
 }
 
-fn map_conversation_project_filter(
-    filter: gateway::ConversationProjectFilter,
-) -> provider::ConversationProjectFilter {
-    match filter {
-        gateway::ConversationProjectFilter::ConversationProjectFilterAll(filter) => {
-            provider::ConversationProjectFilter::ConversationProjectFilterAll(
-                provider::ConversationProjectFilterAll {
-                    kind: match filter.kind {
-                        gateway::ConversationProjectFilterAllKind::All => {
-                            provider::ConversationProjectFilterAllKind::All
-                        }
-                    },
-                },
-            )
-        }
-        gateway::ConversationProjectFilter::ConversationProjectFilterStandalone(filter) => {
-            provider::ConversationProjectFilter::ConversationProjectFilterStandalone(
-                provider::ConversationProjectFilterStandalone {
-                    kind: match filter.kind {
-                        gateway::ConversationProjectFilterStandaloneKind::Standalone => {
-                            provider::ConversationProjectFilterStandaloneKind::Standalone
-                        }
-                    },
-                },
-            )
-        }
-        gateway::ConversationProjectFilter::ConversationProjectFilterProject(filter) => {
-            provider::ConversationProjectFilter::ConversationProjectFilterProject(
-                provider::ConversationProjectFilterProject {
-                    kind: match filter.kind {
-                        gateway::ConversationProjectFilterProjectKind::Project => {
-                            provider::ConversationProjectFilterProjectKind::Project
-                        }
-                    },
-                    project: filter.project,
-                },
-            )
-        }
-    }
-}
-
 fn map_conversation_item(item: provider::ConversationItem) -> gateway::ConversationItem {
     gateway::ConversationItem {
-        resource: item.resource,
-        turn: item.turn,
-        conversation: item.conversation,
+        resource: map_resource(item.resource),
+        turn: map_resource(item.turn),
+        conversation: map_resource(item.conversation),
         kind: match item.kind {
             provider::ConversationItemKind::Message => gateway::ConversationItemKind::Message,
             provider::ConversationItemKind::Reasoning => gateway::ConversationItemKind::Reasoning,
@@ -1786,7 +1757,7 @@ fn map_conversation_item(item: provider::ConversationItem) -> gateway::Conversat
                 text: content.text,
             })
             .collect(),
-        related_item: item.related_item,
+        related_item: item.related_item.map(map_resource),
         approval: item.approval.map(map_approval),
         tool: item.tool.map(map_tool_invocation),
     }
@@ -1897,9 +1868,9 @@ fn map_conversation_content_kind(
 
 fn map_approval(approval: provider::ProviderApproval) -> gateway::Approval {
     gateway::Approval {
-        resource: approval.resource,
-        conversation: approval.conversation,
-        turn: approval.turn,
+        resource: map_resource(approval.resource),
+        conversation: map_resource(approval.conversation),
+        turn: map_resource(approval.turn),
         kind: approval.kind,
         title: approval.title,
         description: approval.description,
@@ -1926,11 +1897,10 @@ fn map_approval(approval: provider::ProviderApproval) -> gateway::Approval {
     }
 }
 
-fn provider_route(route: gateway::GatewayProviderRoute) -> provider::ProviderInstanceRoute {
-    provider::ProviderInstanceRoute {
-        device_id: route.device_id,
-        provider_plugin_id: route.provider_plugin_id,
-        provider_instance_id: route.provider_instance_id,
+fn map_resource(resource: provider::RoutedResourceId) -> gateway::RoutedResourceId {
+    gateway::RoutedResourceId {
+        provider_id: resource.provider_instance_id,
+        native_resource_id: resource.native_resource_id,
     }
 }
 
@@ -2000,7 +1970,6 @@ fn turn_send_key(
         });
     }
     validate_gateway_resource(&request.conversation)?;
-    let route = gateway_route_for_resource(&request.conversation);
     if request.client_request_id.trim().is_empty() {
         return Err(gateway::ProtocolError {
             code: "invalid_client_request_id".to_string(),
@@ -2011,21 +1980,9 @@ fn turn_send_key(
     }
     Ok(TurnSendKey {
         caller_scope: caller_scope.to_string(),
-        device_id: route.device_id,
-        provider_plugin_id: route.provider_plugin_id,
-        provider_instance_id: route.provider_instance_id,
+        provider_id: request.conversation.provider_id.clone(),
         client_request_id: request.client_request_id.clone(),
     })
-}
-
-fn gateway_route_for_resource(
-    resource: &gateway::RoutedResourceId,
-) -> gateway::GatewayProviderRoute {
-    gateway::GatewayProviderRoute {
-        device_id: resource.device_id.clone(),
-        provider_plugin_id: resource.provider_plugin_id.clone(),
-        provider_instance_id: resource.provider_instance_id.clone(),
-    }
 }
 
 fn json_rpc_response<T: serde::Serialize>(
@@ -2175,10 +2132,7 @@ fn ensure_same_gateway_route(
 ) -> Result<(), gateway::ProtocolError> {
     validate_gateway_resource(left)?;
     validate_gateway_resource(right)?;
-    if left.device_id == right.device_id
-        && left.provider_plugin_id == right.provider_plugin_id
-        && left.provider_instance_id == right.provider_instance_id
-    {
+    if left.provider_id == right.provider_id {
         return Ok(());
     }
     Err(gateway::ProtocolError {
@@ -2190,16 +2144,33 @@ fn ensure_same_gateway_route(
 }
 
 fn ensure_same_resource_identity(
-    actual: &gateway::RoutedResourceId,
-    expected: &gateway::RoutedResourceId,
+    actual: &provider::RoutedResourceId,
+    expected: &provider::RoutedResourceId,
 ) -> Result<(), gateway::ProtocolError> {
-    validate_gateway_resource(actual)?;
     if actual == expected {
         return Ok(());
     }
     Err(gateway::ProtocolError {
         code: "provider_resource_identity_mismatch".to_string(),
         message: "Provider returned a turn for a different conversation".to_string(),
+        retryable: false,
+        details: None,
+    })
+}
+
+fn ensure_same_provider_route(
+    left: &provider::RoutedResourceId,
+    right: &provider::RoutedResourceId,
+) -> Result<(), gateway::ProtocolError> {
+    if left.device_id == right.device_id
+        && left.provider_plugin_id == right.provider_plugin_id
+        && left.provider_instance_id == right.provider_instance_id
+    {
+        return Ok(());
+    }
+    Err(gateway::ProtocolError {
+        code: "gateway_route_mismatch".to_string(),
+        message: "Provider returned resources owned by different routes".to_string(),
         retryable: false,
         details: None,
     })
@@ -2224,14 +2195,11 @@ fn device_descriptor_is_valid(descriptor: &gateway::DeviceDescriptor) -> bool {
 fn validate_gateway_resource(
     resource: &gateway::RoutedResourceId,
 ) -> Result<(), gateway::ProtocolError> {
-    if resource.device_id.trim().is_empty()
-        || resource.provider_plugin_id.trim().is_empty()
-        || resource.provider_instance_id.trim().is_empty()
-        || resource.native_resource_id.trim().is_empty()
+    if resource.provider_id.trim().is_empty() || resource.native_resource_id.trim().is_empty()
     {
         return Err(gateway::ProtocolError {
             code: "invalid_gateway_resource".to_string(),
-            message: "deviceId, providerPluginId, providerInstanceId, and nativeResourceId must not be empty".to_string(),
+            message: "providerId and nativeResourceId must not be empty".to_string(),
             retryable: false,
             details: None,
         });
@@ -2265,27 +2233,6 @@ fn validate_gateway_version_range(
 
 fn gateway_error(error: HostError) -> gateway::ProtocolError {
     error.into_protocol_error()
-}
-
-fn retain_more_diagnostic_error(current: &mut Option<HostError>, candidate: HostError) {
-    let candidate_score = aggregate_error_score(&candidate);
-    let replace = current
-        .as_ref()
-        .map(|error| candidate_score > aggregate_error_score(error))
-        .unwrap_or(true);
-    if replace {
-        *current = Some(candidate);
-    }
-}
-
-fn aggregate_error_score(error: &HostError) -> u8 {
-    let specific = !matches!(
-        error.code.as_str(),
-        "provider_plugin_unavailable"
-            | "provider_process_unavailable"
-            | "provider_instance_unavailable"
-    );
-    u8::from(!error.retryable) * 2 + u8::from(specific) + u8::from(error.details.is_some())
 }
 
 fn event_cursor(sequence: u64) -> gateway::EventCursor {

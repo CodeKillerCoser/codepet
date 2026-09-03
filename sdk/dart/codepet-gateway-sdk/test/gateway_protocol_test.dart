@@ -107,6 +107,7 @@ void main() {
     );
     expect(
       () => ConversationListRequest(
+        providerId: 'codex-work',
         projectFilter: ConversationProjectFilterAll(
           kind: ConversationProjectFilterAllKind.all,
         ),
@@ -189,9 +190,7 @@ void main() {
 }
 
 Map<String, Object?> _resource(String nativeResourceId) => {
-      'deviceId': 'device-macbook-1',
-      'providerPluginId': 'dev.codepet.codex',
-      'providerInstanceId': 'codex-work',
+      'providerId': 'codex-work',
       'nativeResourceId': nativeResourceId,
     };
 

@@ -1,6 +1,6 @@
 use codepet_desktop_sdk as compat;
 use codepet_gateway_sdk::{self as gateway, ProtocolServer as GatewayProtocolServer};
-use codepet_host::{GatewayEventSubscription, ProviderGatewayService};
+use codepet_host::{provider_sdk::ProviderInstanceRoute, GatewayEventSubscription, ProviderGatewayService};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -57,23 +57,6 @@ impl CompatProviderGateway {
         })
     }
 
-    async fn provider_route(
-        &self,
-        provider_id: &str,
-    ) -> Result<gateway::GatewayProviderRoute, compat::ProtocolError> {
-        if provider_id.trim().is_empty() {
-            return Err(compat_error(
-                "unknown_provider",
-                "Provider id must not be empty".to_string(),
-                false,
-            ));
-        }
-        self.gateway()?
-            .resolve_provider_route(provider_id)
-            .await
-            .map_err(map_error)
-    }
-
     fn map_event(
         &self,
         event: gateway::ProtocolEvent,
@@ -100,17 +83,15 @@ impl CompatProviderGateway {
             gateway::ProtocolEvent::TurnOutputDelta { params, .. } => {
                 let event_cursor = params.event_cursor;
                 let payload = params.payload;
-                let route = route_extension(
-                    &payload.turn.device_id,
-                    &payload.turn.provider_plugin_id,
-                    &payload.turn.provider_instance_id,
+                let route = opaque_route_extension(
+                    &payload.turn.provider_id,
                     Some(&payload.turn.native_resource_id),
                 );
                 compat::ProtocolEvent::TurnOutputDelta {
                     protocol_version: compat::PROTOCOL_VERSION,
                     event_sequence: event_sequence(&event_cursor)?,
                     payload: compat::TurnOutputDeltaEvent {
-                        provider_id: payload.turn.provider_instance_id.clone(),
+                        provider_id: payload.turn.provider_id.clone(),
                         conversation_id: payload.conversation.native_resource_id,
                         turn_id: payload.turn.native_resource_id,
                         output_id: payload.content_id,
@@ -215,7 +196,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
                 let route = gateway.resolve_provider_route(&provider.id).await.map_err(map_error)?;
                 let description = GatewayProtocolServer::provider_describe(
                     gateway.as_ref(),
-                    gateway::ProviderDescribeRequest { id: provider.id.clone() },
+                    gateway::ProviderDescribeRequest { provider_id: provider.id.clone() },
                 ).await.map_err(map_error)?;
                 mapped_providers.push(map_provider(provider, route, description.capabilities));
             }
@@ -246,7 +227,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
                 let route = gateway.resolve_provider_route(&provider.id).await.map_err(map_error)?;
                 let description = GatewayProtocolServer::provider_describe(
                     gateway.as_ref(),
-                    gateway::ProviderDescribeRequest { id: provider.id.clone() },
+                    gateway::ProviderDescribeRequest { provider_id: provider.id.clone() },
                 ).await.map_err(map_error)?;
                 providers.push(map_provider(provider, route, description.capabilities));
             }
@@ -259,33 +240,75 @@ impl compat::ProtocolServer for CompatProviderGateway {
         request: compat::ConversationListRequest,
     ) -> compat::ProtocolFuture<'a, compat::ConversationListResponse> {
         Box::pin(async move {
-            let route = match request.provider_id.as_deref() {
-                Some(provider_id) => Some(self.provider_route(provider_id).await?),
-                None => None,
+            let aggregate = request.provider_id.is_none();
+            if aggregate && request.cursor.is_some() {
+                return Err(compat_error(
+                    "aggregate_conversation_cursor_unsupported",
+                    "Provider-aggregate conversation.list does not support Provider cursors"
+                        .to_string(),
+                    false,
+                ));
+            }
+            let provider_ids = match request.provider_id {
+                Some(provider_id) => vec![provider_id],
+                None => GatewayProtocolServer::provider_list(
+                    self.gateway()?.as_ref(),
+                    gateway::ProviderListRequest {},
+                )
+                .await
+                .map_err(map_error)?
+                .providers
+                .into_iter()
+                .map(|provider| provider.id)
+                .collect(),
             };
-            let response = GatewayProtocolServer::conversation_list(
-                self.gateway()?.as_ref(),
-                gateway::ConversationListRequest {
-                    route,
-                    cursor: request.cursor,
-                    limit: request.limit,
-                    project_filter: gateway::ConversationProjectFilter::ConversationProjectFilterAll(
-                        gateway::ConversationProjectFilterAll {
-                            kind: gateway::ConversationProjectFilterAllKind::All,
-                        },
-                    ),
-                },
-            )
-            .await
-            .map_err(map_error)?;
+            let mut conversations = Vec::new();
+            let mut next_cursor = None;
+            let mut snapshot_cursor = self.gateway()?.current_event_cursor();
+            let mut successful_providers = 0usize;
+            let mut first_error = None;
+            for provider_id in provider_ids {
+                let response = GatewayProtocolServer::conversation_list(
+                    self.gateway()?.as_ref(),
+                    gateway::ConversationListRequest {
+                        provider_id,
+                        cursor: request.cursor.clone(),
+                        limit: request.limit,
+                        project_filter: gateway::ConversationProjectFilter::ConversationProjectFilterAll(
+                            gateway::ConversationProjectFilterAll {
+                                kind: gateway::ConversationProjectFilterAllKind::All,
+                            },
+                        ),
+                    },
+                )
+                .await;
+                let response = match response {
+                    Ok(response) => response,
+                    Err(error) if aggregate => {
+                        if first_error.is_none() {
+                            first_error = Some(map_error(error));
+                        }
+                        continue;
+                    }
+                    Err(error) => return Err(map_error(error)),
+                };
+                successful_providers = successful_providers.saturating_add(1);
+                conversations.extend(response.conversations);
+                next_cursor = response.page_info.next_cursor.or(next_cursor);
+                snapshot_cursor = response.snapshot_cursor;
+            }
+            if aggregate && successful_providers == 0 {
+                if let Some(error) = first_error {
+                    return Err(error);
+                }
+            }
             Ok(compat::ConversationListResponse {
-                conversations: response
-                    .conversations
+                conversations: conversations
                     .into_iter()
                     .map(map_conversation)
                     .collect::<Result<Vec<_>, compat::ProtocolError>>()?,
-                next_cursor: response.page_info.next_cursor,
-                event_sequence: event_sequence(&response.snapshot_cursor)?,
+                next_cursor,
+                event_sequence: event_sequence(&snapshot_cursor)?,
             })
         })
     }
@@ -295,11 +318,10 @@ impl compat::ProtocolServer for CompatProviderGateway {
         request: compat::ConversationGetRequest,
     ) -> compat::ProtocolFuture<'a, compat::ConversationGetResponse> {
         Box::pin(async move {
-            let provider = self.provider_route(&request.provider_id).await?;
             let response = GatewayProtocolServer::conversation_get(
                 self.gateway()?.as_ref(),
                 gateway::ConversationGetRequest {
-                    conversation: routed_resource(provider, request.conversation_id),
+                    conversation: routed_resource(request.provider_id, request.conversation_id),
                     cursor: None,
                     limit: None,
                 },
@@ -317,11 +339,10 @@ impl compat::ProtocolServer for CompatProviderGateway {
         request: compat::ConversationCreateRequest,
     ) -> compat::ProtocolFuture<'a, compat::ConversationCreateResponse> {
         Box::pin(async move {
-            let provider = self.provider_route(&request.provider_id).await?;
             let response = GatewayProtocolServer::conversation_create(
                 self.gateway()?.as_ref(),
                 gateway::ConversationCreateRequest {
-                    route: provider,
+                    provider_id: request.provider_id,
                     project: None,
                     title: request.title,
                     permission_level: permission_level_name(request.permission_level).to_string(),
@@ -359,14 +380,13 @@ impl compat::ProtocolServer for CompatProviderGateway {
                     false,
                 ));
             }
-            let provider = self.provider_route(&request.provider_id).await?;
             let description = GatewayProtocolServer::provider_describe(
                 self.gateway()?.as_ref(),
-                gateway::ProviderDescribeRequest { id: request.provider_id.clone() },
+                gateway::ProviderDescribeRequest { provider_id: request.provider_id.clone() },
             )
             .await
             .map_err(map_error)?;
-            let conversation = routed_resource(provider, request.conversation_id);
+            let conversation = routed_resource(request.provider_id, request.conversation_id);
             let response = self.gateway()?.turn_send_for_caller_scope(
                 TURN_SEND_CALLER_SCOPE,
                 gateway::TurnSendRequest {
@@ -397,16 +417,14 @@ impl compat::ProtocolServer for CompatProviderGateway {
         request: compat::TurnInterruptRequest,
     ) -> compat::ProtocolFuture<'a, compat::TurnInterruptResponse> {
         Box::pin(async move {
-            let provider = self.provider_route(&request.provider_id).await?;
-            let route = provider;
             let response = GatewayProtocolServer::turn_interrupt(
                 self.gateway()?.as_ref(),
                 gateway::TurnInterruptRequest {
                     conversation: routed_resource(
-                        route.clone(),
+                        request.provider_id.clone(),
                         request.conversation_id,
                     ),
-                    turn: routed_resource(route, request.turn_id),
+                    turn: routed_resource(request.provider_id, request.turn_id),
                 },
             )
             .await
@@ -422,11 +440,10 @@ impl compat::ProtocolServer for CompatProviderGateway {
         request: compat::ApprovalResolveRequest,
     ) -> compat::ProtocolFuture<'a, compat::ApprovalResolveResponse> {
         Box::pin(async move {
-            let provider = self.provider_route(&request.provider_id).await?;
             let response = GatewayProtocolServer::approval_resolve(
                 self.gateway()?.as_ref(),
                 gateway::ApprovalResolveRequest {
-                    approval: routed_resource(provider, request.approval_id),
+                    approval: routed_resource(request.provider_id, request.approval_id),
                     decision: match request.decision {
                         compat::ApprovalDecision::Approve => gateway::ApprovalDecision::Approve,
                         compat::ApprovalDecision::Deny => gateway::ApprovalDecision::Deny,
@@ -444,7 +461,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
 
 fn map_provider(
     provider: gateway::ProviderSummary,
-    route: gateway::GatewayProviderRoute,
+    route: ProviderInstanceRoute,
     capabilities: gateway::GatewayCapabilities,
 ) -> compat::Provider {
     let provider_id = provider.id.clone();
@@ -535,11 +552,9 @@ fn map_provider(
 fn map_conversation(
     conversation: gateway::Conversation,
 ) -> Result<compat::Conversation, compat::ProtocolError> {
-    let provider_id = conversation.resource.provider_instance_id.clone();
-    let route = route_extension(
-        &conversation.resource.device_id,
-        &conversation.resource.provider_plugin_id,
-        &conversation.resource.provider_instance_id,
+    let provider_id = conversation.resource.provider_id.clone();
+    let route = opaque_route_extension(
+        &conversation.resource.provider_id,
         Some(&conversation.resource.native_resource_id),
     );
     let permission_level = conversation
@@ -606,10 +621,8 @@ fn map_conversation(
 }
 
 fn map_turn(turn: gateway::TurnTask) -> Result<compat::TurnTask, compat::ProtocolError> {
-    let route = route_extension(
-        &turn.resource.device_id,
-        &turn.resource.provider_plugin_id,
-        &turn.resource.provider_instance_id,
+    let route = opaque_route_extension(
+        &turn.resource.provider_id,
         Some(&turn.resource.native_resource_id),
     );
     let updated_at = turn.updated_at.ok_or_else(|| {
@@ -621,7 +634,7 @@ fn map_turn(turn: gateway::TurnTask) -> Result<compat::TurnTask, compat::Protoco
     })?;
     Ok(compat::TurnTask {
         id: turn.resource.native_resource_id,
-        provider_id: turn.resource.provider_instance_id.clone(),
+        provider_id: turn.resource.provider_id.clone(),
         conversation_id: turn.conversation.native_resource_id,
         status: match turn.status {
             gateway::TurnStatus::Queued => compat::TurnTaskStatus::Queued,
@@ -640,15 +653,13 @@ fn map_turn(turn: gateway::TurnTask) -> Result<compat::TurnTask, compat::Protoco
 }
 
 fn map_approval(approval: gateway::Approval) -> compat::Approval {
-    let route = route_extension(
-        &approval.resource.device_id,
-        &approval.resource.provider_plugin_id,
-        &approval.resource.provider_instance_id,
+    let route = opaque_route_extension(
+        &approval.resource.provider_id,
         Some(&approval.resource.native_resource_id),
     );
     compat::Approval {
         id: approval.resource.native_resource_id,
-        provider_id: approval.resource.provider_instance_id.clone(),
+        provider_id: approval.resource.provider_id.clone(),
         conversation_id: approval.conversation.native_resource_id,
         turn_id: approval.turn.native_resource_id,
         kind: approval.kind,
@@ -706,14 +717,27 @@ fn permission_level_name(level: compat::PermissionLevel) -> &'static str {
 }
 
 fn routed_resource(
-    route: gateway::GatewayProviderRoute,
+    provider_id: String,
     native_resource_id: String,
 ) -> gateway::RoutedResourceId {
     gateway::RoutedResourceId {
-        device_id: route.device_id,
-        provider_plugin_id: route.provider_plugin_id,
-        provider_instance_id: route.provider_instance_id,
+        provider_id,
         native_resource_id,
+    }
+}
+
+fn opaque_route_extension(
+    provider_id: &str,
+    native_resource_id: Option<&str>,
+) -> compat::ProviderExtension {
+    let mut data = BTreeMap::new();
+    data.insert("providerId".to_string(), json!(provider_id));
+    if let Some(native_resource_id) = native_resource_id {
+        data.insert("nativeResourceId".to_string(), json!(native_resource_id));
+    }
+    compat::ProviderExtension {
+        namespace: ROUTE_EXTENSION_NAMESPACE.to_string(),
+        data,
     }
 }
 
@@ -788,9 +812,7 @@ mod tests {
 
     fn resource(native_resource_id: &str) -> gateway::RoutedResourceId {
         gateway::RoutedResourceId {
-            device_id: "device-test".to_string(),
-            provider_plugin_id: "dev.codepet.test".to_string(),
-            provider_instance_id: "instance-test".to_string(),
+            provider_id: "instance-test".to_string(),
             native_resource_id: native_resource_id.to_string(),
         }
     }

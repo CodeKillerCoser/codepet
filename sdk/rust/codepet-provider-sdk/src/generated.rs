@@ -7,7 +7,7 @@ use std::io::{BufRead, Write};
 use std::future::Future;
 use std::pin::Pin;
 
-pub use codepet_core_sdk::{ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RoutedResourceId, RpcError, TimestampMs, VersionRange};
+pub use codepet_core_sdk::{ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RpcError, TimestampMs, VersionRange};
 
 pub const PROTOCOL_VERSION: ProtocolVersion = 1;
 
@@ -931,6 +931,16 @@ pub struct ProviderUsageDetail {
     pub namespace: String,
     pub schema_version: String,
     pub data: JsonObject,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct RoutedResourceId {
+    pub device_id: DeviceId,
+    pub provider_plugin_id: ProviderPluginId,
+    pub provider_instance_id: ProviderInstanceId,
+    pub native_resource_id: NativeResourceId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -325,9 +325,7 @@ fn client_descriptor(client_id: &str, system_version: &str) -> gateway::DeviceDe
 
 fn conversation_resource(native_id: &str) -> gateway::RoutedResourceId {
     gateway::RoutedResourceId {
-        device_id: "device-lan-listener".to_string(),
-        provider_plugin_id: "dev.codepet.lan-listener".to_string(),
-        provider_instance_id: "instance-lan-listener".to_string(),
+        provider_id: "instance-lan-listener".to_string(),
         native_resource_id: native_id.to_string(),
     }
 }
@@ -897,11 +895,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
             jsonrpc: "2.0".to_string(),
             id: "list-a".to_string(),
             params: gateway::ConversationListRequest {
-                route: Some(gateway::GatewayProviderRoute {
-                    device_id: "device-lan-listener".to_string(),
-                    provider_plugin_id: "dev.codepet.lan-listener".to_string(),
-                    provider_instance_id: "instance-lan-listener".to_string(),
-                }),
+                provider_id: "instance-lan-listener".to_string(),
                 cursor: None,
                 limit: Some(10),
                 project_filter: gateway::ConversationProjectFilter::ConversationProjectFilterAll(

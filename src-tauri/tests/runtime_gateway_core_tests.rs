@@ -655,9 +655,7 @@ async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desk
     start_codex_desktop_companion_event_bridge(app.handle().clone(), &companion).unwrap();
     let mut plugin_events = provider_gateway.subscribe_events(None).unwrap();
     let resource = codepet_host::gateway_sdk::RoutedResourceId {
-        device_id: device_id.clone(),
-        provider_plugin_id: "dev.codepet.isolation".to_string(),
-        provider_instance_id: "instance-plugin-test".to_string(),
+        provider_id: "instance-plugin-test".to_string(),
         native_resource_id: "event-first".to_string(),
     };
     let response = codepet_host::gateway_sdk::ProtocolServer::conversation_get(
@@ -689,8 +687,7 @@ async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desk
     })
     .await
     .unwrap();
-    assert_eq!(plugin_event.device_id, device_id);
-    assert_eq!(plugin_event.provider_instance_id, "instance-plugin-test");
+    assert_eq!(plugin_event.provider_id, "instance-plugin-test");
 
     let malformed = codepet_host::gateway_sdk::ProtocolServer::conversation_get(
         provider_gateway.as_ref(),
@@ -739,16 +736,11 @@ async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desk
         .as_ref()
         .expect("compat event must retain the Provider route identity");
     assert_eq!(route.namespace, "codepet.gateway.route");
+    assert_eq!(route.data.get("deviceId"), None);
+    assert_eq!(route.data.get("providerPluginId"), None);
+    assert_eq!(route.data.get("providerInstanceId"), None);
     assert_eq!(
-        route.data.get("deviceId"),
-        Some(&serde_json::json!(device_id))
-    );
-    assert_eq!(
-        route.data.get("providerPluginId"),
-        Some(&serde_json::json!("dev.codepet.isolation"))
-    );
-    assert_eq!(
-        route.data.get("providerInstanceId"),
+        route.data.get("providerId"),
         Some(&serde_json::json!("instance-plugin-test"))
     );
     assert_eq!(
@@ -809,13 +801,11 @@ fn fake_provider_executable(fixture_manifest: &std::path::Path) -> PathBuf {
 }
 
 fn provider_resource(
-    device_id: &str,
+    _device_id: &str,
     native_resource_id: &str,
 ) -> codepet_host::gateway_sdk::RoutedResourceId {
     codepet_host::gateway_sdk::RoutedResourceId {
-        device_id: device_id.to_string(),
-        provider_plugin_id: "dev.codepet.isolation".to_string(),
-        provider_instance_id: "instance-plugin-test".to_string(),
+        provider_id: "instance-plugin-test".to_string(),
         native_resource_id: native_resource_id.to_string(),
     }
 }

@@ -5,9 +5,7 @@
     "eventCursor": "event-43",
     "payload": {
       "project": {
-        "deviceId": "device-macbook-1",
-        "providerPluginId": "dev.codepet.codex",
-        "providerInstanceId": "codex-work",
+        "providerId": "codex-work",
         "nativeResourceId": "project-01"
       },
       "changeType": "updated"

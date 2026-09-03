@@ -251,6 +251,7 @@ impl ConversationStateStore {
         let Some((resource, fingerprint)) = observed else {
             return Ok(None);
         };
+        let resource = gateway_resource(resource);
         let Some(version) = self.observe_fingerprint(
             &resource,
             FingerprintKind::Event,
@@ -398,13 +399,14 @@ fn fingerprint<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
 }
 
 fn resource_key(resource: &gateway::RoutedResourceId) -> String {
-    format!(
-        "{}\u{1f}{}\u{1f}{}\u{1f}{}",
-        resource.device_id,
-        resource.provider_plugin_id,
-        resource.provider_instance_id,
-        resource.native_resource_id
-    )
+    format!("{}\u{1f}{}", resource.provider_id, resource.native_resource_id)
+}
+
+fn gateway_resource(resource: provider::RoutedResourceId) -> gateway::RoutedResourceId {
+    gateway::RoutedResourceId {
+        provider_id: resource.provider_instance_id,
+        native_resource_id: resource.native_resource_id,
+    }
 }
 
 fn activity_version(version: u64) -> String {
@@ -504,9 +506,7 @@ mod tests {
     fn conversation(preview: &str) -> gateway::Conversation {
         gateway::Conversation {
             resource: gateway::RoutedResourceId {
-                device_id: "host".to_string(),
-                provider_plugin_id: "dev.codepet.codex".to_string(),
-                provider_instance_id: "codex-work".to_string(),
+                provider_id: "codex-work".to_string(),
                 native_resource_id: "thread-1".to_string(),
             },
             project: None,

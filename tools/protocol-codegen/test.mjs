@@ -112,7 +112,7 @@ test("provider history items carry routed conversation ownership", async () => {
   const definitions = record(model, "provider-v1").schema.$defs;
   assert.equal(
     definitions.ConversationItem.properties.conversation.$ref,
-    "../../core/v1/schema.json#/$defs/RoutedResourceId",
+    "#/$defs/RoutedResourceId",
   );
   assert(definitions.ConversationItem.required.includes("conversation"));
   assert(definitions.ConversationGetResponse.required.includes("items"));
@@ -153,9 +153,23 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
     );
     assert(gateway.schema.$defs[definition].required.includes("snapshotCursor"));
   }
-  assert.equal(gateway.schema.$defs.ConversationSearchRequest.properties.route.$ref, "#/$defs/GatewayProviderRoute");
+  for (const definition of [
+    "ConversationCreateRequest",
+    "ConversationListRequest",
+    "ConversationSearchRequest",
+    "ProjectCreateRequest",
+    "ProjectListRequest",
+  ]) {
+    assert.equal(
+      gateway.schema.$defs[definition].properties.providerId.$ref,
+      "#/$defs/ProviderId",
+    );
+    assert(gateway.schema.$defs[definition].required.includes("providerId"));
+    assert.equal(gateway.schema.$defs[definition].properties.route, undefined);
+  }
+  assert.equal(gateway.schema.$defs.GatewayProviderRoute, undefined);
   assert.equal(gateway.schema.$defs.ConversationSearchRequest.properties.searchTerm.minLength, 1);
-  assert.deepEqual(gateway.schema.$defs.ConversationSearchRequest.required, ["route", "searchTerm"]);
+  assert.deepEqual(gateway.schema.$defs.ConversationSearchRequest.required, ["providerId", "searchTerm"]);
   assert.equal(gateway.schema.$defs.HandshakeResponse.properties.devices, undefined);
   assert.equal(
     gateway.schema.$defs.HandshakeResponse.properties.device.$ref,
@@ -172,6 +186,14 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
     gateway.schema.$defs.ProviderDescribeResponse.properties.capabilities.$ref,
     "#/$defs/GatewayCapabilities",
   );
+  assert.equal(
+    gateway.schema.$defs.ProviderDescribeResponse.properties.provider.$ref,
+    "#/$defs/ProviderSummary",
+  );
+  assert.deepEqual(Object.keys(record(model, "core-v1").schema.$defs.RoutedResourceId.properties), [
+    "providerId",
+    "nativeResourceId",
+  ]);
   assert(gateway.manifest.events.some((event) => event.name === "provider.changed"));
   assert.equal(gateway.manifest.events.some((event) => event.name === "provider.statusChanged"), false);
   for (const definition of ["Conversation", "TurnTask", "Approval"]) {

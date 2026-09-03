@@ -4,9 +4,7 @@
   "method": "turn.send",
   "params": {
     "conversation": {
-      "deviceId": "device-macbook-1",
-      "providerPluginId": "dev.codepet.codex",
-      "providerInstanceId": "codex-work",
+      "providerId": "codex-work",
       "nativeResourceId": "thread-01"
     },
     "clientRequestId": "remote-turn-01",

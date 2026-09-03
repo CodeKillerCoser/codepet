@@ -283,23 +283,6 @@ impl PluginManager {
             .collect()
     }
 
-    pub(crate) async fn enabled_historical_routes(
-        &self,
-    ) -> HostResult<Vec<ProviderInstanceRoute>> {
-        let records = self.inner.instances.list()?;
-        let plugins = self.inner.plugins.read().await;
-        Ok(records
-            .into_iter()
-            .filter(|record| record.enabled)
-            .filter(|record| {
-                plugins
-                    .get(&record.plugin_id)
-                    .is_some_and(|entry| entry.catalog.enabled)
-            })
-            .map(|record| record.route())
-            .collect())
-    }
-
     pub async fn snapshot(&self, plugin_id: &str) -> HostResult<PluginRuntimeSnapshot> {
         self.inner
             .plugins

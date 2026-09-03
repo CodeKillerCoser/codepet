@@ -48,9 +48,7 @@ export type ProviderPluginId = string;
 export type RequestId = string;
 
 export interface RoutedResourceId {
-  deviceId: DeviceId;
-  providerPluginId: ProviderPluginId;
-  providerInstanceId: ProviderInstanceId;
+  providerId: string;
   nativeResourceId: NativeResourceId;
 }
 

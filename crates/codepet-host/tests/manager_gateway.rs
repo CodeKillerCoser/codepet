@@ -8,7 +8,7 @@ use codepet_gateway_sdk::{
     ConversationProjectFilterProjectKind,
     ConversationSearchRequest as GatewayConversationSearchRequest, DeviceDescriptor,
     EventSubscribeRequest, HandshakeRequest,
-    FlatModelCatalogKind, FlatModelSelection, GatewayProviderRoute,
+    FlatModelCatalogKind, FlatModelSelection,
     GroupedModelCatalogKind, GroupedModelSelection, ModelCatalog, ModelSelection,
     JsonRpcResponsePayload, ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
     ProjectCreateRequest, ProjectDeleteRequest, ProjectGetRequest, ProjectListRequest, ProjectRoot,
@@ -148,6 +148,18 @@ fn resource(
         device_id: device_id.to_string(),
         provider_plugin_id: plugin_id.to_string(),
         provider_instance_id: instance_id.to_string(),
+        native_resource_id: native_id.to_string(),
+    }
+}
+
+fn gateway_resource(
+    _device_id: &str,
+    _plugin_id: &str,
+    instance_id: &str,
+    native_id: &str,
+) -> codepet_gateway_sdk::RoutedResourceId {
+    codepet_gateway_sdk::RoutedResourceId {
+        provider_id: instance_id.to_string(),
         native_resource_id: native_id.to_string(),
     }
 }
@@ -310,9 +322,10 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
         assert_eq!(provider.identity.icon.as_deref(), Some("https://example.com/fake.png"));
         assert_eq!(provider.runtime.status, codepet_gateway_sdk::ProviderStatus::Ready);
         let described = gateway
-            .provider_describe(ProviderDescribeRequest { id: provider.id.clone() })
+            .provider_describe(ProviderDescribeRequest { provider_id: provider.id.clone() })
             .await
             .unwrap();
+        assert_eq!(&described.provider, provider);
         assert!(described
             .capabilities
             .methods
@@ -362,7 +375,7 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
 
     let interaction = gateway
         .conversation_acquire_interaction(GatewayConversationAcquireInteractionRequest {
-            conversation: resource(
+            conversation: gateway_resource(
                 "device-a",
                 "dev.codepet.gateway",
                 "instance-a1",
@@ -379,7 +392,7 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
     let mut events = gateway.subscribe_events(Some(&after)).unwrap();
     let response = gateway
         .conversation_get(GatewayConversationGetRequest {
-            conversation: resource(
+            conversation: gateway_resource(
                 "device-a",
                 "dev.codepet.gateway",
                 "instance-a1",
@@ -391,7 +404,7 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
         .await
         .unwrap();
     assert_eq!(
-        response.conversation.resource.provider_instance_id,
+        response.conversation.resource.provider_id,
         "instance-a1"
     );
     assert_eq!(response.items.len(), 2);
@@ -409,7 +422,7 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
     );
     let response = gateway
         .conversation_get(GatewayConversationGetRequest {
-            conversation: resource(
+            conversation: gateway_resource(
                 "device-a",
                 "dev.codepet.gateway",
                 "instance-a2",
@@ -421,7 +434,7 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
         .await
         .unwrap();
     assert_eq!(
-        response.conversation.resource.provider_instance_id,
+        response.conversation.resource.provider_id,
         "instance-a2"
     );
 
@@ -437,12 +450,8 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
                 params,
                 ..
             } => {
-                assert_eq!(
-                    params.payload.conversation.resource.device_id,
-                    "device-a"
-                );
                 routed_instances.push(
-                    params.payload.conversation.resource.provider_instance_id.clone(),
+                    params.payload.conversation.resource.provider_id.clone(),
                 );
                 routed_event_cursors.push(event_cursor_sequence(&params.event_cursor));
             }
@@ -450,8 +459,7 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
                 params,
                 ..
             } => {
-                assert_eq!(params.payload.turn.device_id, "device-a");
-                routed_instances.push(params.payload.turn.provider_instance_id.clone());
+                routed_instances.push(params.payload.turn.provider_id.clone());
                 routed_event_cursors.push(event_cursor_sequence(&params.event_cursor));
             }
             _ => {}
@@ -477,7 +485,7 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
 
     let wrong_instance = gateway
         .conversation_get(GatewayConversationGetRequest {
-            conversation: resource(
+            conversation: gateway_resource(
                 "device-a",
                 "dev.codepet.gateway",
                 "instance-missing",
@@ -488,10 +496,10 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
         })
         .await
         .unwrap_err();
-    assert_eq!(wrong_instance.code, "unknown_provider_instance");
-    let wrong_device = gateway
+    assert_eq!(wrong_instance.code, "unknown_provider");
+    let opaque_route = gateway
         .conversation_get(GatewayConversationGetRequest {
-            conversation: resource(
+            conversation: gateway_resource(
                 "device-b",
                 "dev.codepet.gateway",
                 "instance-a1",
@@ -501,8 +509,8 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
             limit: None,
         })
         .await
-        .unwrap_err();
-    assert_eq!(wrong_device.code, "wrong_device_route");
+        .unwrap();
+    assert_eq!(opaque_route.conversation.resource.provider_id, "instance-a1");
     let device_b = build_manager(
         "device-b",
         vec![plugin("dev.codepet.device-b", &["instance-b1"])],
@@ -512,7 +520,7 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
     assert!(device_b.start_enabled().await[0].1.is_ok());
     let response_b = gateway_b
         .conversation_get(GatewayConversationGetRequest {
-            conversation: resource(
+            conversation: gateway_resource(
                 "device-b",
                 "dev.codepet.device-b",
                 "instance-b1",
@@ -523,8 +531,7 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
         })
         .await
         .unwrap();
-    assert_eq!(response_b.conversation.resource.device_id, "device-b");
-    assert_eq!(response_b.conversation.resource.provider_instance_id, "instance-b1");
+    assert_eq!(response_b.conversation.resource.provider_id, "instance-b1");
     manager.shutdown().await;
     device_b.shutdown().await;
 }
@@ -538,7 +545,7 @@ async fn gateway_routes_project_crud_filters_and_project_owned_conversation_crea
     let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
     assert!(gateway.start_event_forwarding());
     assert!(manager.start_enabled().await[0].1.is_ok());
-    let route = GatewayProviderRoute {
+    let route = ProviderInstanceRoute {
         device_id: "device-project".to_string(),
         provider_plugin_id: "dev.codepet.project".to_string(),
         provider_instance_id: "instance-project".to_string(),
@@ -549,7 +556,7 @@ async fn gateway_routes_project_crud_filters_and_project_owned_conversation_crea
         .await
         .unwrap();
     let described = gateway
-        .provider_describe(ProviderDescribeRequest { id: providers.providers[0].id.clone() })
+        .provider_describe(ProviderDescribeRequest { provider_id: providers.providers[0].id.clone() })
         .await
         .unwrap();
     assert!(described.capabilities
@@ -559,7 +566,7 @@ async fn gateway_routes_project_crud_filters_and_project_owned_conversation_crea
     let snapshot_cursor = gateway.current_event_cursor();
     let listed = gateway
         .project_list(ProjectListRequest {
-            route: route.clone(),
+            provider_id: route.provider_instance_id.clone(),
             cursor: None,
             limit: Some(10),
         })
@@ -582,7 +589,7 @@ async fn gateway_routes_project_crud_filters_and_project_owned_conversation_crea
     let mut project_events = gateway.subscribe_events(Some(&after_project_event)).unwrap();
     gateway
         .project_get(ProjectGetRequest {
-            project: resource(
+            project: gateway_resource(
                 "device-project",
                 "dev.codepet.project",
                 "instance-project",
@@ -601,7 +608,7 @@ async fn gateway_routes_project_crud_filters_and_project_owned_conversation_crea
 
     let created = gateway
         .project_create(ProjectCreateRequest {
-            route: route.clone(),
+            provider_id: route.provider_instance_id.clone(),
             idempotency_key: "create-project".to_string(),
             name: "Created Project".to_string(),
             roots: vec![ProjectRoot {
@@ -627,7 +634,7 @@ async fn gateway_routes_project_crud_filters_and_project_owned_conversation_crea
 
     let conversation = gateway
         .conversation_create(GatewayConversationCreateRequest {
-            route: route.clone(),
+            provider_id: route.provider_instance_id.clone(),
             project: Some(listed_project.clone()),
             title: None,
             permission_level: "workspace-write".to_string(),
@@ -642,7 +649,7 @@ async fn gateway_routes_project_crud_filters_and_project_owned_conversation_crea
 
     let filtered = gateway
         .conversation_list(GatewayConversationListRequest {
-            route: None,
+            provider_id: route.provider_instance_id.clone(),
             cursor: None,
             limit: Some(10),
             project_filter: ConversationProjectFilter::ConversationProjectFilterProject(
@@ -690,11 +697,7 @@ async fn conversation_snapshot_cursors_precede_events_emitted_during_provider_qu
     let list_query = tokio::spawn(async move {
         list_gateway
             .conversation_list(GatewayConversationListRequest {
-                route: Some(codepet_gateway_sdk::GatewayProviderRoute {
-                    device_id: "device-snapshot".to_string(),
-                    provider_plugin_id: "dev.codepet.snapshot".to_string(),
-                    provider_instance_id: "instance-snapshot".to_string(),
-                }),
+                provider_id: "instance-snapshot".to_string(),
                 cursor: None,
                 limit: Some(10),
                 project_filter: all_project_filter(),
@@ -739,7 +742,7 @@ async fn conversation_snapshot_cursors_precede_events_emitted_during_provider_qu
     let query = tokio::spawn(async move {
         query_gateway
             .conversation_get(GatewayConversationGetRequest {
-                conversation: resource(
+                conversation: gateway_resource(
                     "device-snapshot",
                     "dev.codepet.snapshot",
                     "instance-snapshot",
@@ -948,7 +951,7 @@ async fn failed_instance_start_is_unavailable_instead_of_stuck_connecting() {
         .unwrap();
     assert_eq!(initial_snapshot.state, PluginRuntimeState::Ready);
 
-    let failed_route = GatewayProviderRoute {
+    let failed_route = ProviderInstanceRoute {
         device_id: "device-start-failure".to_string(),
         provider_plugin_id: "dev.codepet.start-failure".to_string(),
         provider_instance_id: "instance-start-failure".to_string(),
@@ -956,7 +959,7 @@ async fn failed_instance_start_is_unavailable_instead_of_stuck_connecting() {
     for _ in 0..2 {
         let error = gateway
             .conversation_list(GatewayConversationListRequest {
-                route: Some(failed_route.clone()),
+                provider_id: failed_route.provider_instance_id.clone(),
                 cursor: None,
                 limit: Some(10),
                 project_filter: all_project_filter(),
@@ -967,10 +970,7 @@ async fn failed_instance_start_is_unavailable_instead_of_stuck_connecting() {
     }
     let healthy_history = gateway
         .conversation_list(GatewayConversationListRequest {
-            route: Some(GatewayProviderRoute {
-                provider_instance_id: "instance-start-healthy".to_string(),
-                ..failed_route
-            }),
+            provider_id: "instance-start-healthy".to_string(),
             cursor: None,
             limit: Some(10),
             project_filter: all_project_filter(),
@@ -1122,7 +1122,7 @@ async fn conversation_search_is_route_scoped_and_preserves_pagination_and_snapsh
         .await
         .unwrap();
     let described = gateway
-        .provider_describe(ProviderDescribeRequest { id: providers.providers[0].id.clone() })
+        .provider_describe(ProviderDescribeRequest { provider_id: providers.providers[0].id.clone() })
         .await
         .unwrap();
     assert!(described.capabilities
@@ -1132,11 +1132,7 @@ async fn conversation_search_is_route_scoped_and_preserves_pagination_and_snapsh
     let snapshot_cursor = gateway.current_event_cursor();
     let response = gateway
         .conversation_search(GatewayConversationSearchRequest {
-            route: GatewayProviderRoute {
-                device_id: "device-search".to_string(),
-                provider_plugin_id: "dev.codepet.search".to_string(),
-                provider_instance_id: "instance-search".to_string(),
-            },
+            provider_id: "instance-search".to_string(),
             search_term: "gateway protocol".to_string(),
             cursor: Some("search-cursor".to_string()),
             limit: Some(7),
@@ -1152,11 +1148,7 @@ async fn conversation_search_is_route_scoped_and_preserves_pagination_and_snapsh
 
     let empty = gateway
         .conversation_search(GatewayConversationSearchRequest {
-            route: GatewayProviderRoute {
-                device_id: "device-search".to_string(),
-                provider_plugin_id: "dev.codepet.search".to_string(),
-                provider_instance_id: "instance-search".to_string(),
-            },
+            provider_id: "instance-search".to_string(),
             search_term: String::new(),
             cursor: None,
             limit: None,
@@ -1201,7 +1193,7 @@ async fn gateway_turn_send_validates_controls_and_deduplicates_client_requests()
     assert_eq!(details[0].data["nested"], serde_json::json!({"safe": true}));
     assert_eq!(provider.capabilities.revision, "fake-capabilities-v1");
     let described = gateway
-        .provider_describe(ProviderDescribeRequest { id: provider.id.clone() })
+        .provider_describe(ProviderDescribeRequest { provider_id: provider.id.clone() })
         .await
         .unwrap();
     let Some(turn_send) = described.capabilities.turn_send.as_ref() else {
@@ -1209,7 +1201,7 @@ async fn gateway_turn_send_validates_controls_and_deduplicates_client_requests()
     };
     assert!(matches!(turn_send.model_catalog, Some(ModelCatalog::FlatModelCatalog(_))));
 
-    let conversation = resource(
+    let conversation = gateway_resource(
         "device-turn-send",
         "dev.codepet.turn-send",
         "instance-turn-send",
@@ -1316,7 +1308,7 @@ async fn gateway_turn_send_validates_controls_and_deduplicates_client_requests()
 }
 
 #[tokio::test]
-async fn resource_identity_and_route_less_pagination_fail_closed() {
+async fn resource_identity_and_unknown_provider_fail_closed() {
     let manager = build_manager(
         "device-identity",
         vec![plugin("dev.codepet.identity", &["instance-identity"])],
@@ -1463,7 +1455,7 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
 
     let wrong_gateway_conversation = gateway
         .turn_send(GatewayTurnSendRequest {
-            conversation: resource(
+            conversation: gateway_resource(
                 "device-identity",
                 "dev.codepet.identity",
                 "instance-identity",
@@ -1488,9 +1480,9 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
         "provider_resource_identity_mismatch"
     );
 
-    let aggregate_cursor = gateway
+    let unknown_provider = gateway
         .conversation_list(GatewayConversationListRequest {
-            route: None,
+            provider_id: "missing-provider".to_string(),
             cursor: Some("provider-cursor".to_string()),
             limit: Some(10),
             project_filter: all_project_filter(),
@@ -1498,8 +1490,8 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
         .await
         .unwrap_err();
     assert_eq!(
-        aggregate_cursor.code,
-        "aggregate_conversation_cursor_unsupported"
+        unknown_provider.code,
+        "unknown_provider"
     );
     manager.shutdown().await;
 }
@@ -1586,14 +1578,14 @@ async fn a_crashed_plugin_does_not_change_another_plugin_or_instance_route() {
 }
 
 #[tokio::test]
-async fn aggregate_history_starts_on_demand_and_recovers_the_crashed_plugin_generation() {
+async fn provider_scoped_history_starts_on_demand_and_recovers_the_crashed_plugin_generation() {
     let manager = build_manager(
         "device-history-recovery",
         vec![plugin("dev.codepet.history", &["instance-history"])],
     );
     let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
     assert!(gateway.start_event_forwarding());
-    let route = GatewayProviderRoute {
+    let route = ProviderInstanceRoute {
         device_id: "device-history-recovery".to_string(),
         provider_plugin_id: "dev.codepet.history".to_string(),
         provider_instance_id: "instance-history".to_string(),
@@ -1601,7 +1593,7 @@ async fn aggregate_history_starts_on_demand_and_recovers_the_crashed_plugin_gene
 
     let listed = gateway
         .conversation_list(GatewayConversationListRequest {
-            route: None,
+            provider_id: route.provider_instance_id.clone(),
             cursor: None,
             limit: Some(10),
             project_filter: all_project_filter(),
@@ -1610,11 +1602,7 @@ async fn aggregate_history_starts_on_demand_and_recovers_the_crashed_plugin_gene
         .unwrap();
     assert_eq!(listed.conversations.len(), 1);
     assert_eq!(
-        listed.conversations[0].resource.provider_plugin_id,
-        route.provider_plugin_id
-    );
-    assert_eq!(
-        listed.conversations[0].resource.provider_instance_id,
+        listed.conversations[0].resource.provider_id,
         route.provider_instance_id
     );
     let initial_generation = manager
@@ -1625,7 +1613,7 @@ async fn aggregate_history_starts_on_demand_and_recovers_the_crashed_plugin_gene
 
     let crashed = gateway
         .conversation_get(GatewayConversationGetRequest {
-            conversation: resource(
+            conversation: gateway_resource(
                 "device-history-recovery",
                 "dev.codepet.history",
                 "instance-history",
@@ -1643,7 +1631,7 @@ async fn aggregate_history_starts_on_demand_and_recovers_the_crashed_plugin_gene
 
     let recovered_list = gateway
         .conversation_list(GatewayConversationListRequest {
-            route: None,
+            provider_id: route.provider_instance_id.clone(),
             cursor: None,
             limit: Some(10),
             project_filter: all_project_filter(),
@@ -1653,7 +1641,7 @@ async fn aggregate_history_starts_on_demand_and_recovers_the_crashed_plugin_gene
     assert_eq!(recovered_list.conversations.len(), 1);
     let recovered = gateway
         .conversation_get(GatewayConversationGetRequest {
-            conversation: resource(
+            conversation: gateway_resource(
                 "device-history-recovery",
                 "dev.codepet.history",
                 "instance-history",
@@ -1665,11 +1653,7 @@ async fn aggregate_history_starts_on_demand_and_recovers_the_crashed_plugin_gene
         .await
         .unwrap();
     assert_eq!(
-        recovered.conversation.resource.provider_plugin_id,
-        route.provider_plugin_id
-    );
-    assert_eq!(
-        recovered.conversation.resource.provider_instance_id,
+        recovered.conversation.resource.provider_id,
         route.provider_instance_id
     );
     assert!(
@@ -1684,7 +1668,7 @@ async fn aggregate_history_starts_on_demand_and_recovers_the_crashed_plugin_gene
 }
 
 #[tokio::test]
-async fn aggregate_history_keeps_healthy_providers_and_reports_an_all_failed_error() {
+async fn provider_scoped_history_isolates_healthy_and_failed_providers() {
     let mut failing = plugin("dev.codepet.aggregate-failing", &["instance-aggregate-failing"]);
     failing.env.insert(
         "CODEPET_FAKE_INSTANCE_START_ERROR_ID".to_string(),
@@ -1701,7 +1685,7 @@ async fn aggregate_history_keeps_healthy_providers_and_reports_an_all_failed_err
 
     let response = gateway
         .conversation_list(GatewayConversationListRequest {
-            route: None,
+            provider_id: "instance-aggregate-healthy".to_string(),
             cursor: None,
             limit: Some(10),
             project_filter: all_project_filter(),
@@ -1710,7 +1694,7 @@ async fn aggregate_history_keeps_healthy_providers_and_reports_an_all_failed_err
         .unwrap();
     assert_eq!(response.conversations.len(), 1);
     assert_eq!(
-        response.conversations[0].resource.provider_instance_id,
+        response.conversations[0].resource.provider_id,
         "instance-aggregate-healthy"
     );
     manager.shutdown().await;
@@ -1727,7 +1711,7 @@ async fn aggregate_history_keeps_healthy_providers_and_reports_an_all_failed_err
     let all_failed_gateway = ProviderGatewayService::new(all_failed_manager.clone()).unwrap();
     let error = all_failed_gateway
         .conversation_list(GatewayConversationListRequest {
-            route: None,
+            provider_id: "instance-aggregate-all-failing".to_string(),
             cursor: None,
             limit: Some(10),
             project_filter: all_project_filter(),
@@ -1770,11 +1754,7 @@ async fn historical_recovery_fails_closed_for_disabled_plugin_and_instance() {
     ] {
         let error = gateway
             .conversation_list(GatewayConversationListRequest {
-                route: Some(GatewayProviderRoute {
-                    device_id: "device-disabled-history".to_string(),
-                    provider_plugin_id: plugin_id.to_string(),
-                    provider_instance_id: instance_id.to_string(),
-                }),
+                provider_id: instance_id.to_string(),
                 cursor: None,
                 limit: Some(10),
                 project_filter: all_project_filter(),
@@ -1784,16 +1764,6 @@ async fn historical_recovery_fails_closed_for_disabled_plugin_and_instance() {
         assert_eq!(error.code, expected_code);
         assert_eq!(manager.snapshot(plugin_id).await.unwrap().generation, 0);
     }
-    let aggregate = gateway
-        .conversation_list(GatewayConversationListRequest {
-            route: None,
-            cursor: None,
-            limit: Some(10),
-            project_filter: all_project_filter(),
-        })
-        .await
-        .unwrap();
-    assert!(aggregate.conversations.is_empty());
     manager.shutdown().await;
 }
 
@@ -1814,11 +1784,7 @@ async fn nonretryable_plugin_misconfiguration_is_not_restarted_by_history() {
     let manager = build_manager("device-history-misconfigured", vec![descriptor]);
     let gateway = ProviderGatewayService::new(manager.clone()).unwrap();
     let request = || GatewayConversationListRequest {
-        route: Some(GatewayProviderRoute {
-            device_id: "device-history-misconfigured".to_string(),
-            provider_plugin_id: "dev.codepet.history-misconfigured".to_string(),
-            provider_instance_id: "instance-history-misconfigured".to_string(),
-        }),
+        provider_id: "instance-history-misconfigured".to_string(),
         cursor: None,
         limit: Some(10),
         project_filter: all_project_filter(),
@@ -1857,11 +1823,7 @@ async fn concurrent_history_requests_start_one_plugin_generation() {
     let manager = build_manager("device-concurrent-history", vec![descriptor]);
     let gateway = ProviderGatewayService::new(manager.clone()).unwrap();
     let request = || GatewayConversationListRequest {
-        route: Some(GatewayProviderRoute {
-            device_id: "device-concurrent-history".to_string(),
-            provider_plugin_id: "dev.codepet.concurrent-history".to_string(),
-            provider_instance_id: "instance-concurrent-history".to_string(),
-        }),
+        provider_id: "instance-concurrent-history".to_string(),
         cursor: None,
         limit: Some(10),
         project_filter: all_project_filter(),
@@ -1911,11 +1873,7 @@ async fn history_recovery_racing_shutdown_does_not_resurrect_the_plugin() {
     let query = tokio::spawn(async move {
         query_gateway
             .conversation_list(GatewayConversationListRequest {
-                route: Some(GatewayProviderRoute {
-                    device_id: "device-history-shutdown".to_string(),
-                    provider_plugin_id: "dev.codepet.history-shutdown".to_string(),
-                    provider_instance_id: "instance-history-shutdown".to_string(),
-                }),
+                provider_id: "instance-history-shutdown".to_string(),
                 cursor: None,
                 limit: Some(10),
                 project_filter: all_project_filter(),
@@ -1947,11 +1905,7 @@ async fn history_recovery_racing_shutdown_does_not_resurrect_the_plugin() {
     );
     let retry = gateway
         .conversation_list(GatewayConversationListRequest {
-            route: Some(GatewayProviderRoute {
-                device_id: "device-history-shutdown".to_string(),
-                provider_plugin_id: "dev.codepet.history-shutdown".to_string(),
-                provider_instance_id: "instance-history-shutdown".to_string(),
-            }),
+            provider_id: "instance-history-shutdown".to_string(),
             cursor: None,
             limit: Some(10),
             project_filter: all_project_filter(),

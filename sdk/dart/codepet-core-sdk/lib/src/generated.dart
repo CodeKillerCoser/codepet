@@ -359,55 +359,41 @@ Object? encodeRequestId(RequestId value, {String path = 'RequestId'}) {
 
 final class RoutedResourceId {
   factory RoutedResourceId({
-    required DeviceId deviceId,
-    required ProviderPluginId providerPluginId,
-    required ProviderInstanceId providerInstanceId,
+    required String providerId,
     required NativeResourceId nativeResourceId,
   }) {
-    final validatedDeviceId = _string(deviceId, 'RoutedResourceId.deviceId', minLength: 1);
-    final validatedProviderPluginId = _string(providerPluginId, 'RoutedResourceId.providerPluginId', minLength: 1);
-    final validatedProviderInstanceId = _string(providerInstanceId, 'RoutedResourceId.providerInstanceId', minLength: 1);
+    final validatedProviderId = _string(providerId, 'RoutedResourceId.providerId', minLength: 1);
     final validatedNativeResourceId = _string(nativeResourceId, 'RoutedResourceId.nativeResourceId', minLength: 1);
     return RoutedResourceId._(
-      deviceId: validatedDeviceId,
-      providerPluginId: validatedProviderPluginId,
-      providerInstanceId: validatedProviderInstanceId,
+      providerId: validatedProviderId,
       nativeResourceId: validatedNativeResourceId,
     );
   }
 
   RoutedResourceId._({
-    required this.deviceId,
-    required this.providerPluginId,
-    required this.providerInstanceId,
+    required this.providerId,
     required this.nativeResourceId,
   });
 
-  final DeviceId deviceId;
-  final ProviderPluginId providerPluginId;
-  final ProviderInstanceId providerInstanceId;
+  final String providerId;
   final NativeResourceId nativeResourceId;
 
   factory RoutedResourceId.fromJson(Object? value, {String path = 'RoutedResourceId'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'deviceId', 'providerPluginId', 'providerInstanceId', 'nativeResourceId'}, path);
+    _expectKeys(json, const {'providerId', 'nativeResourceId'}, path);
     return RoutedResourceId(
-      deviceId: _string(_required(json, 'deviceId', path), '$path.deviceId', minLength: 1),
-      providerPluginId: _string(_required(json, 'providerPluginId', path), '$path.providerPluginId', minLength: 1),
-      providerInstanceId: _string(_required(json, 'providerInstanceId', path), '$path.providerInstanceId', minLength: 1),
+      providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
       nativeResourceId: _string(_required(json, 'nativeResourceId', path), '$path.nativeResourceId', minLength: 1),
     );
   }
 
   Map<String, Object?> toJson() => {
-    'deviceId': deviceId,
-    'providerPluginId': providerPluginId,
-    'providerInstanceId': providerInstanceId,
+    'providerId': providerId,
     'nativeResourceId': nativeResourceId,
   };
 
   @override
-  String toString() => 'RoutedResourceId(deviceId: $deviceId, providerPluginId: $providerPluginId, providerInstanceId: $providerInstanceId, nativeResourceId: $nativeResourceId)';
+  String toString() => 'RoutedResourceId(providerId: $providerId, nativeResourceId: $nativeResourceId)';
 }
 
 final class RpcError {

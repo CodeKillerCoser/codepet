@@ -3,15 +3,9 @@
   "id": "conversation-create-project-1",
   "method": "conversation.create",
   "params": {
-    "route": {
-      "deviceId": "device-macbook-1",
-      "providerPluginId": "dev.codepet.codex",
-      "providerInstanceId": "codex-work"
-    },
+    "providerId": "codex-work",
     "project": {
-      "deviceId": "device-macbook-1",
-      "providerPluginId": "dev.codepet.codex",
-      "providerInstanceId": "codex-work",
+      "providerId": "codex-work",
       "nativeResourceId": "project-01"
     },
     "permissionLevel": "workspace-write",

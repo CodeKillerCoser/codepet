@@ -367,7 +367,7 @@ enum ApprovalStatus {
 
 final class ChoiceOption {
   factory ChoiceOption({
-    required String id,
+    required ProviderId id,
     required String displayName,
     String? description,
     bool? enabled,
@@ -395,7 +395,7 @@ final class ChoiceOption {
     required this.disabledReason,
   });
 
-  final String id;
+  final ProviderId id;
   final String displayName;
   final String? description;
   final bool? enabled;
@@ -813,7 +813,7 @@ final class ConversationCreateCapabilities {
 
 final class ConversationCreateRequest {
   factory ConversationCreateRequest({
-    required GatewayProviderRoute route,
+    required ProviderId providerId,
     String? title,
     required String permissionLevel,
     String? model,
@@ -822,7 +822,7 @@ final class ConversationCreateRequest {
     String? workspaceMode,
     RoutedResourceId? project,
   }) {
-    final validatedRoute = route;
+    final validatedProviderId = _string(providerId, 'ConversationCreateRequest.providerId', minLength: 1);
     final validatedTitle = title == null ? null : _string(title, 'ConversationCreateRequest.title', minLength: 1);
     final validatedPermissionLevel = _string(permissionLevel, 'ConversationCreateRequest.permissionLevel', minLength: 1);
     final validatedModel = model == null ? null : _string(model, 'ConversationCreateRequest.model', minLength: 1);
@@ -831,7 +831,7 @@ final class ConversationCreateRequest {
     final validatedWorkspaceMode = workspaceMode == null ? null : _string(workspaceMode, 'ConversationCreateRequest.workspaceMode', minLength: 1);
     final validatedProject = project == null ? null : project;
     return ConversationCreateRequest._(
-      route: validatedRoute,
+      providerId: validatedProviderId,
       title: validatedTitle,
       permissionLevel: validatedPermissionLevel,
       model: validatedModel,
@@ -843,7 +843,7 @@ final class ConversationCreateRequest {
   }
 
   ConversationCreateRequest._({
-    required this.route,
+    required this.providerId,
     required this.title,
     required this.permissionLevel,
     required this.model,
@@ -853,7 +853,7 @@ final class ConversationCreateRequest {
     required this.project,
   });
 
-  final GatewayProviderRoute route;
+  final ProviderId providerId;
   final String? title;
   final String permissionLevel;
   final String? model;
@@ -864,9 +864,9 @@ final class ConversationCreateRequest {
 
   factory ConversationCreateRequest.fromJson(Object? value, {String path = 'ConversationCreateRequest'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'route', 'title', 'permissionLevel', 'model', 'reasoningEffort', 'workspaceRoot', 'workspaceMode', 'project'}, path);
+    _expectKeys(json, const {'providerId', 'title', 'permissionLevel', 'model', 'reasoningEffort', 'workspaceRoot', 'workspaceMode', 'project'}, path);
     return ConversationCreateRequest(
-      route: GatewayProviderRoute.fromJson(_required(json, 'route', path), path: '$path.route'),
+      providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
       title: json.containsKey('title') && json['title'] != null ? _string(json['title'], '$path.title', minLength: 1) : null,
       permissionLevel: _string(_required(json, 'permissionLevel', path), '$path.permissionLevel', minLength: 1),
       model: json.containsKey('model') && json['model'] != null ? _string(json['model'], '$path.model', minLength: 1) : null,
@@ -878,7 +878,7 @@ final class ConversationCreateRequest {
   }
 
   Map<String, Object?> toJson() => {
-    'route': route.toJson(),
+    'providerId': providerId,
     if (title != null) 'title': title!,
     'permissionLevel': permissionLevel,
     if (model != null) 'model': model!,
@@ -889,7 +889,7 @@ final class ConversationCreateRequest {
   };
 
   @override
-  String toString() => 'ConversationCreateRequest(route: $route, title: $title, permissionLevel: $permissionLevel, model: $model, reasoningEffort: $reasoningEffort, workspaceRoot: $workspaceRoot, workspaceMode: $workspaceMode, project: $project)';
+  String toString() => 'ConversationCreateRequest(providerId: $providerId, title: $title, permissionLevel: $permissionLevel, model: $model, reasoningEffort: $reasoningEffort, workspaceRoot: $workspaceRoot, workspaceMode: $workspaceMode, project: $project)';
 }
 
 final class ConversationCreateResponse {
@@ -1229,17 +1229,17 @@ final class ConversationItemUpsertedEvent {
 
 final class ConversationListRequest {
   factory ConversationListRequest({
-    GatewayProviderRoute? route,
+    required ProviderId providerId,
     required ConversationProjectFilter projectFilter,
     Cursor? cursor,
     int? limit,
   }) {
-    final validatedRoute = route == null ? null : route;
+    final validatedProviderId = _string(providerId, 'ConversationListRequest.providerId', minLength: 1);
     final validatedProjectFilter = projectFilter;
     final validatedCursor = cursor == null ? null : _string(cursor, 'ConversationListRequest.cursor', minLength: 1);
     final validatedLimit = limit == null ? null : _integer(limit, 'ConversationListRequest.limit', minimum: 1, maximum: 100);
     return ConversationListRequest._(
-      route: validatedRoute,
+      providerId: validatedProviderId,
       projectFilter: validatedProjectFilter,
       cursor: validatedCursor,
       limit: validatedLimit,
@@ -1247,22 +1247,22 @@ final class ConversationListRequest {
   }
 
   ConversationListRequest._({
-    required this.route,
+    required this.providerId,
     required this.projectFilter,
     required this.cursor,
     required this.limit,
   });
 
-  final GatewayProviderRoute? route;
+  final ProviderId providerId;
   final ConversationProjectFilter projectFilter;
   final Cursor? cursor;
   final int? limit;
 
   factory ConversationListRequest.fromJson(Object? value, {String path = 'ConversationListRequest'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'route', 'projectFilter', 'cursor', 'limit'}, path);
+    _expectKeys(json, const {'providerId', 'projectFilter', 'cursor', 'limit'}, path);
     return ConversationListRequest(
-      route: json.containsKey('route') && json['route'] != null ? GatewayProviderRoute.fromJson(json['route'], path: '$path.route') : null,
+      providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
       projectFilter: ConversationProjectFilter.fromJson(_required(json, 'projectFilter', path), path: '$path.projectFilter'),
       cursor: json.containsKey('cursor') && json['cursor'] != null ? _string(json['cursor'], '$path.cursor', minLength: 1) : null,
       limit: json.containsKey('limit') && json['limit'] != null ? _integer(json['limit'], '$path.limit', minimum: 1, maximum: 100) : null,
@@ -1270,14 +1270,14 @@ final class ConversationListRequest {
   }
 
   Map<String, Object?> toJson() => {
-    if (route != null) 'route': route!.toJson(),
+    'providerId': providerId,
     'projectFilter': projectFilter.toJson(),
     if (cursor != null) 'cursor': cursor!,
     if (limit != null) 'limit': limit!,
   };
 
   @override
-  String toString() => 'ConversationListRequest(route: $route, projectFilter: $projectFilter, cursor: $cursor, limit: $limit)';
+  String toString() => 'ConversationListRequest(providerId: $providerId, projectFilter: $projectFilter, cursor: $cursor, limit: $limit)';
 }
 
 final class ConversationListResponse {
@@ -1619,17 +1619,17 @@ final class ConversationReadState {
 
 final class ConversationSearchRequest {
   factory ConversationSearchRequest({
-    required GatewayProviderRoute route,
+    required ProviderId providerId,
     required String searchTerm,
     Cursor? cursor,
     int? limit,
   }) {
-    final validatedRoute = route;
+    final validatedProviderId = _string(providerId, 'ConversationSearchRequest.providerId', minLength: 1);
     final validatedSearchTerm = _string(searchTerm, 'ConversationSearchRequest.searchTerm', minLength: 1);
     final validatedCursor = cursor == null ? null : _string(cursor, 'ConversationSearchRequest.cursor', minLength: 1);
     final validatedLimit = limit == null ? null : _integer(limit, 'ConversationSearchRequest.limit', minimum: 1, maximum: 100);
     return ConversationSearchRequest._(
-      route: validatedRoute,
+      providerId: validatedProviderId,
       searchTerm: validatedSearchTerm,
       cursor: validatedCursor,
       limit: validatedLimit,
@@ -1637,22 +1637,22 @@ final class ConversationSearchRequest {
   }
 
   ConversationSearchRequest._({
-    required this.route,
+    required this.providerId,
     required this.searchTerm,
     required this.cursor,
     required this.limit,
   });
 
-  final GatewayProviderRoute route;
+  final ProviderId providerId;
   final String searchTerm;
   final Cursor? cursor;
   final int? limit;
 
   factory ConversationSearchRequest.fromJson(Object? value, {String path = 'ConversationSearchRequest'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'route', 'searchTerm', 'cursor', 'limit'}, path);
+    _expectKeys(json, const {'providerId', 'searchTerm', 'cursor', 'limit'}, path);
     return ConversationSearchRequest(
-      route: GatewayProviderRoute.fromJson(_required(json, 'route', path), path: '$path.route'),
+      providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
       searchTerm: _string(_required(json, 'searchTerm', path), '$path.searchTerm', minLength: 1),
       cursor: json.containsKey('cursor') && json['cursor'] != null ? _string(json['cursor'], '$path.cursor', minLength: 1) : null,
       limit: json.containsKey('limit') && json['limit'] != null ? _integer(json['limit'], '$path.limit', minimum: 1, maximum: 100) : null,
@@ -1660,14 +1660,14 @@ final class ConversationSearchRequest {
   }
 
   Map<String, Object?> toJson() => {
-    'route': route.toJson(),
+    'providerId': providerId,
     'searchTerm': searchTerm,
     if (cursor != null) 'cursor': cursor!,
     if (limit != null) 'limit': limit!,
   };
 
   @override
-  String toString() => 'ConversationSearchRequest(route: $route, searchTerm: $searchTerm, cursor: $cursor, limit: $limit)';
+  String toString() => 'ConversationSearchRequest(providerId: $providerId, searchTerm: $searchTerm, cursor: $cursor, limit: $limit)';
 }
 
 final class ConversationSearchResponse {
@@ -2098,52 +2098,6 @@ final class GatewayProtocol {
 
   @override
   String toString() => 'GatewayProtocol(version: $version)';
-}
-
-final class GatewayProviderRoute {
-  factory GatewayProviderRoute({
-    required DeviceId deviceId,
-    required ProviderPluginId providerPluginId,
-    required ProviderInstanceId providerInstanceId,
-  }) {
-    final validatedDeviceId = _string(deviceId, 'GatewayProviderRoute.deviceId', minLength: 1);
-    final validatedProviderPluginId = _string(providerPluginId, 'GatewayProviderRoute.providerPluginId', minLength: 1);
-    final validatedProviderInstanceId = _string(providerInstanceId, 'GatewayProviderRoute.providerInstanceId', minLength: 1);
-    return GatewayProviderRoute._(
-      deviceId: validatedDeviceId,
-      providerPluginId: validatedProviderPluginId,
-      providerInstanceId: validatedProviderInstanceId,
-    );
-  }
-
-  GatewayProviderRoute._({
-    required this.deviceId,
-    required this.providerPluginId,
-    required this.providerInstanceId,
-  });
-
-  final DeviceId deviceId;
-  final ProviderPluginId providerPluginId;
-  final ProviderInstanceId providerInstanceId;
-
-  factory GatewayProviderRoute.fromJson(Object? value, {String path = 'GatewayProviderRoute'}) {
-    final json = _object(value, path);
-    _expectKeys(json, const {'deviceId', 'providerPluginId', 'providerInstanceId'}, path);
-    return GatewayProviderRoute(
-      deviceId: _string(_required(json, 'deviceId', path), '$path.deviceId', minLength: 1),
-      providerPluginId: _string(_required(json, 'providerPluginId', path), '$path.providerPluginId', minLength: 1),
-      providerInstanceId: _string(_required(json, 'providerInstanceId', path), '$path.providerInstanceId', minLength: 1),
-    );
-  }
-
-  Map<String, Object?> toJson() => {
-    'deviceId': deviceId,
-    'providerPluginId': providerPluginId,
-    'providerInstanceId': providerInstanceId,
-  };
-
-  @override
-  String toString() => 'GatewayProviderRoute(deviceId: $deviceId, providerPluginId: $providerPluginId, providerInstanceId: $providerInstanceId)';
 }
 
 final class GroupedModelCatalog extends ModelCatalog {
@@ -2597,19 +2551,19 @@ final class ProjectChangedEvent {
 
 final class ProjectCreateRequest {
   factory ProjectCreateRequest({
-    required GatewayProviderRoute route,
+    required ProviderId providerId,
     required RequestId idempotencyKey,
     required String name,
     required List<ProjectRoot> roots,
     required Map<String, String> metadata,
   }) {
-    final validatedRoute = route;
+    final validatedProviderId = _string(providerId, 'ProjectCreateRequest.providerId', minLength: 1);
     final validatedIdempotencyKey = _string(idempotencyKey, 'ProjectCreateRequest.idempotencyKey', minLength: 1);
     final validatedName = _string(name, 'ProjectCreateRequest.name', minLength: 1);
     final validatedRoots = _freezeList<ProjectRoot>(roots, 'ProjectCreateRequest.roots', (item, itemPath) => item, encodeItem: (item) => item.toJson());
     final validatedMetadata = _freezeMap<String>(metadata, 'ProjectCreateRequest.metadata', (item, itemPath) => _string(item, itemPath));
     return ProjectCreateRequest._(
-      route: validatedRoute,
+      providerId: validatedProviderId,
       idempotencyKey: validatedIdempotencyKey,
       name: validatedName,
       roots: validatedRoots,
@@ -2618,14 +2572,14 @@ final class ProjectCreateRequest {
   }
 
   ProjectCreateRequest._({
-    required this.route,
+    required this.providerId,
     required this.idempotencyKey,
     required this.name,
     required this.roots,
     required this.metadata,
   });
 
-  final GatewayProviderRoute route;
+  final ProviderId providerId;
   final RequestId idempotencyKey;
   final String name;
   final List<ProjectRoot> roots;
@@ -2633,9 +2587,9 @@ final class ProjectCreateRequest {
 
   factory ProjectCreateRequest.fromJson(Object? value, {String path = 'ProjectCreateRequest'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'route', 'idempotencyKey', 'name', 'roots', 'metadata'}, path);
+    _expectKeys(json, const {'providerId', 'idempotencyKey', 'name', 'roots', 'metadata'}, path);
     return ProjectCreateRequest(
-      route: GatewayProviderRoute.fromJson(_required(json, 'route', path), path: '$path.route'),
+      providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
       idempotencyKey: _string(_required(json, 'idempotencyKey', path), '$path.idempotencyKey', minLength: 1),
       name: _string(_required(json, 'name', path), '$path.name', minLength: 1),
       roots: _decodeList<ProjectRoot>(_required(json, 'roots', path), '$path.roots', (item, itemPath) => ProjectRoot.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
@@ -2644,7 +2598,7 @@ final class ProjectCreateRequest {
   }
 
   Map<String, Object?> toJson() => {
-    'route': route.toJson(),
+    'providerId': providerId,
     'idempotencyKey': idempotencyKey,
     'name': name,
     'roots': roots.map((item) => item.toJson()).toList(growable: false),
@@ -2652,7 +2606,7 @@ final class ProjectCreateRequest {
   };
 
   @override
-  String toString() => 'ProjectCreateRequest(route: $route, idempotencyKey: $idempotencyKey, name: $name, roots: $roots, metadata: $metadata)';
+  String toString() => 'ProjectCreateRequest(providerId: $providerId, idempotencyKey: $idempotencyKey, name: $name, roots: $roots, metadata: $metadata)';
 }
 
 final class ProjectCreateResponse {
@@ -2807,48 +2761,48 @@ final class ProjectGetResponse {
 
 final class ProjectListRequest {
   factory ProjectListRequest({
-    required GatewayProviderRoute route,
+    required ProviderId providerId,
     Cursor? cursor,
     int? limit,
   }) {
-    final validatedRoute = route;
+    final validatedProviderId = _string(providerId, 'ProjectListRequest.providerId', minLength: 1);
     final validatedCursor = cursor == null ? null : _string(cursor, 'ProjectListRequest.cursor', minLength: 1);
     final validatedLimit = limit == null ? null : _integer(limit, 'ProjectListRequest.limit', minimum: 1, maximum: 100);
     return ProjectListRequest._(
-      route: validatedRoute,
+      providerId: validatedProviderId,
       cursor: validatedCursor,
       limit: validatedLimit,
     );
   }
 
   ProjectListRequest._({
-    required this.route,
+    required this.providerId,
     required this.cursor,
     required this.limit,
   });
 
-  final GatewayProviderRoute route;
+  final ProviderId providerId;
   final Cursor? cursor;
   final int? limit;
 
   factory ProjectListRequest.fromJson(Object? value, {String path = 'ProjectListRequest'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'route', 'cursor', 'limit'}, path);
+    _expectKeys(json, const {'providerId', 'cursor', 'limit'}, path);
     return ProjectListRequest(
-      route: GatewayProviderRoute.fromJson(_required(json, 'route', path), path: '$path.route'),
+      providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
       cursor: json.containsKey('cursor') && json['cursor'] != null ? _string(json['cursor'], '$path.cursor', minLength: 1) : null,
       limit: json.containsKey('limit') && json['limit'] != null ? _integer(json['limit'], '$path.limit', minimum: 1, maximum: 100) : null,
     );
   }
 
   Map<String, Object?> toJson() => {
-    'route': route.toJson(),
+    'providerId': providerId,
     if (cursor != null) 'cursor': cursor!,
     if (limit != null) 'limit': limit!,
   };
 
   @override
-  String toString() => 'ProjectListRequest(route: $route, cursor: $cursor, limit: $limit)';
+  String toString() => 'ProjectListRequest(providerId: $providerId, cursor: $cursor, limit: $limit)';
 }
 
 final class ProjectListResponse {
@@ -3142,73 +3096,81 @@ final class ProviderChangedEvent {
 
 final class ProviderDescribeRequest {
   factory ProviderDescribeRequest({
-    required String id,
+    required ProviderId providerId,
   }) {
-    final validatedId = _string(id, 'ProviderDescribeRequest.id', minLength: 1);
+    final validatedProviderId = _string(providerId, 'ProviderDescribeRequest.providerId', minLength: 1);
     return ProviderDescribeRequest._(
-      id: validatedId,
+      providerId: validatedProviderId,
     );
   }
 
   ProviderDescribeRequest._({
-    required this.id,
+    required this.providerId,
   });
 
-  final String id;
+  final ProviderId providerId;
 
   factory ProviderDescribeRequest.fromJson(Object? value, {String path = 'ProviderDescribeRequest'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'id'}, path);
+    _expectKeys(json, const {'providerId'}, path);
     return ProviderDescribeRequest(
-      id: _string(_required(json, 'id', path), '$path.id', minLength: 1),
-    );
-  }
-
-  Map<String, Object?> toJson() => {
-    'id': id,
-  };
-
-  @override
-  String toString() => 'ProviderDescribeRequest(id: $id)';
-}
-
-final class ProviderDescribeResponse {
-  factory ProviderDescribeResponse({
-    required String providerId,
-    required GatewayCapabilities capabilities,
-  }) {
-    final validatedProviderId = _string(providerId, 'ProviderDescribeResponse.providerId', minLength: 1);
-    final validatedCapabilities = capabilities;
-    return ProviderDescribeResponse._(
-      providerId: validatedProviderId,
-      capabilities: validatedCapabilities,
-    );
-  }
-
-  ProviderDescribeResponse._({
-    required this.providerId,
-    required this.capabilities,
-  });
-
-  final String providerId;
-  final GatewayCapabilities capabilities;
-
-  factory ProviderDescribeResponse.fromJson(Object? value, {String path = 'ProviderDescribeResponse'}) {
-    final json = _object(value, path);
-    _expectKeys(json, const {'providerId', 'capabilities'}, path);
-    return ProviderDescribeResponse(
       providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
-      capabilities: GatewayCapabilities.fromJson(_required(json, 'capabilities', path), path: '$path.capabilities'),
     );
   }
 
   Map<String, Object?> toJson() => {
     'providerId': providerId,
+  };
+
+  @override
+  String toString() => 'ProviderDescribeRequest(providerId: $providerId)';
+}
+
+final class ProviderDescribeResponse {
+  factory ProviderDescribeResponse({
+    required ProviderSummary provider,
+    required GatewayCapabilities capabilities,
+  }) {
+    final validatedProvider = provider;
+    final validatedCapabilities = capabilities;
+    return ProviderDescribeResponse._(
+      provider: validatedProvider,
+      capabilities: validatedCapabilities,
+    );
+  }
+
+  ProviderDescribeResponse._({
+    required this.provider,
+    required this.capabilities,
+  });
+
+  final ProviderSummary provider;
+  final GatewayCapabilities capabilities;
+
+  factory ProviderDescribeResponse.fromJson(Object? value, {String path = 'ProviderDescribeResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'provider', 'capabilities'}, path);
+    return ProviderDescribeResponse(
+      provider: ProviderSummary.fromJson(_required(json, 'provider', path), path: '$path.provider'),
+      capabilities: GatewayCapabilities.fromJson(_required(json, 'capabilities', path), path: '$path.capabilities'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'provider': provider.toJson(),
     'capabilities': capabilities.toJson(),
   };
 
   @override
-  String toString() => 'ProviderDescribeResponse(providerId: $providerId, capabilities: $capabilities)';
+  String toString() => 'ProviderDescribeResponse(provider: $provider, capabilities: $capabilities)';
+}
+
+typedef ProviderId = String;
+
+ProviderId decodeProviderId(Object? value, {String path = 'ProviderId'}) => _string(value, path, minLength: 1);
+Object? encodeProviderId(ProviderId value, {String path = 'ProviderId'}) {
+  final checked = _string(value, path, minLength: 1);
+  return checked;
 }
 
 final class ProviderIdentity {

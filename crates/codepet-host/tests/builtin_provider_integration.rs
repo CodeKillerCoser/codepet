@@ -1,5 +1,5 @@
 use codepet_gateway_sdk::{
-    ConversationCreateRequest, ConversationListRequest, GatewayProviderRoute, ProtocolServer,
+    ConversationCreateRequest, ConversationListRequest, ProtocolServer,
     ProviderListRequest, ProviderStatus, ProviderSummary,
 };
 use codepet_host::{
@@ -13,7 +13,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const CODEX_PLUGIN_ID: &str = "dev.codepet.codex";
-const CLAUDE_PLUGIN_ID: &str = "dev.codepet.claude";
 const OPENCODE_PLUGIN_ID: &str = "dev.codepet.opencode";
 
 #[tokio::test]
@@ -163,11 +162,7 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
     let claude_conversation = ProtocolServer::conversation_create(
         gateway.as_ref(),
         ConversationCreateRequest {
-            route: GatewayProviderRoute {
-                device_id: device_id.clone(),
-                provider_plugin_id: CLAUDE_PLUGIN_ID.to_string(),
-                provider_instance_id: claude.id.clone(),
-            },
+            provider_id: claude.id.clone(),
             project: None,
             title: Some("CodePet Claude integration".to_string()),
             permission_level: "workspace-write".to_string(),
@@ -180,10 +175,7 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
     .await
     .unwrap()
     .conversation;
-    assert_eq!(
-        claude_conversation.resource.provider_plugin_id,
-        CLAUDE_PLUGIN_ID
-    );
+    assert_eq!(claude_conversation.resource.provider_id, claude.id);
     assert!(!claude_conversation.resource.native_resource_id.is_empty());
 
     let shutdown = manager.shutdown().await;
@@ -215,17 +207,13 @@ fn ready_provider<'a>(
 async fn conversation_list(
     gateway: &ProviderGatewayService,
     provider: &ProviderSummary,
-    device_id: &str,
-    plugin_id: &str,
+    _device_id: &str,
+    _plugin_id: &str,
 ) -> Vec<codepet_gateway_sdk::Conversation> {
     ProtocolServer::conversation_list(
         gateway,
         ConversationListRequest {
-            route: Some(GatewayProviderRoute {
-                device_id: device_id.to_string(),
-                provider_plugin_id: plugin_id.to_string(),
-                provider_instance_id: provider.id.clone(),
-            }),
+            provider_id: provider.id.clone(),
             cursor: None,
             limit: Some(10),
             project_filter: codepet_gateway_sdk::ConversationProjectFilter::ConversationProjectFilterAll(

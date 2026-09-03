@@ -7,7 +7,7 @@ use std::io::{BufRead, Write};
 use std::future::Future;
 use std::pin::Pin;
 
-pub use codepet_core_sdk::{ClientId, Cursor, DeviceDescriptor, DeviceId, EventCursor, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RoutedResourceId, RpcError, TimestampMs, VersionRange};
+pub use codepet_core_sdk::{ClientId, Cursor, DeviceDescriptor, EventCursor, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, RequestId, RoutedResourceId, RpcError, TimestampMs, VersionRange};
 
 pub const PROTOCOL_VERSION: ProtocolVersion = 1;
 
@@ -85,7 +85,7 @@ pub enum ApprovalStatus {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ChoiceOption {
-    pub id: String,
+    pub id: ProviderId,
     pub display_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -196,7 +196,7 @@ pub struct ConversationCreateCapabilities {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ConversationCreateRequest {
-    pub route: GatewayProviderRoute,
+    pub provider_id: ProviderId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub permission_level: String,
@@ -324,8 +324,7 @@ pub struct ConversationItemUpsertedEvent {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ConversationListRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub route: Option<GatewayProviderRoute>,
+    pub provider_id: ProviderId,
     pub project_filter: ConversationProjectFilter,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,
@@ -417,7 +416,7 @@ pub struct ConversationReadState {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ConversationSearchRequest {
-    pub route: GatewayProviderRoute,
+    pub provider_id: ProviderId,
     pub search_term: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,
@@ -554,15 +553,6 @@ pub struct GatewayProtocol {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct GatewayProviderRoute {
-    pub device_id: DeviceId,
-    pub provider_plugin_id: ProviderPluginId,
-    pub provider_instance_id: ProviderInstanceId,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
 pub struct GroupedModelCatalog {
     pub kind: GroupedModelCatalogKind,
     pub providers: Vec<GroupedModelProvider>,
@@ -667,7 +657,7 @@ pub struct ProjectChangedEvent {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ProjectCreateRequest {
-    pub route: GatewayProviderRoute,
+    pub provider_id: ProviderId,
     pub idempotency_key: RequestId,
     pub name: String,
     pub roots: Vec<ProjectRoot>,
@@ -713,7 +703,7 @@ pub struct ProjectGetResponse {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ProjectListRequest {
-    pub route: GatewayProviderRoute,
+    pub provider_id: ProviderId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -799,16 +789,18 @@ pub struct ProviderChangedEvent {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ProviderDescribeRequest {
-    pub id: String,
+    pub provider_id: ProviderId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ProviderDescribeResponse {
-    pub provider_id: String,
+    pub provider: ProviderSummary,
     pub capabilities: GatewayCapabilities,
 }
+
+pub type ProviderId = String;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

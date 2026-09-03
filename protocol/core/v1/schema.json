@@ -96,14 +96,12 @@
     "RoutedResourceId": {
       "type": "object",
       "properties": {
-        "deviceId": { "$ref": "#/$defs/DeviceId" },
-        "providerPluginId": { "$ref": "#/$defs/ProviderPluginId" },
-        "providerInstanceId": { "$ref": "#/$defs/ProviderInstanceId" },
+        "providerId": { "type": "string", "minLength": 1 },
         "nativeResourceId": { "$ref": "#/$defs/NativeResourceId" }
       },
-      "required": ["deviceId", "providerPluginId", "providerInstanceId", "nativeResourceId"],
+      "required": ["providerId", "nativeResourceId"],
       "additionalProperties": false,
-      "description": "Complete route for a provider-native resource."
+      "description": "Opaque gateway provider route for a provider-native resource."
     },
     "RpcError": {
       "type": "object",

@@ -71,9 +71,7 @@ pub type RequestId = String;
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct RoutedResourceId {
-    pub device_id: DeviceId,
-    pub provider_plugin_id: ProviderPluginId,
-    pub provider_instance_id: ProviderInstanceId,
+    pub provider_id: String,
     pub native_resource_id: NativeResourceId,
 }
 
