@@ -6,6 +6,8 @@ import {
   getRemoteAccessStatus,
   getRemotePairingStatus,
   listRemoteClients,
+  listRemotePairingRequests,
+  resolveRemotePairingRequest,
   retryRemoteAccess,
   revokeRemoteCredential,
   startRemotePairing,
@@ -20,7 +22,7 @@ describe("remote access command bridge", () => {
     vi.mocked(invoke).mockReset();
   });
 
-  it("uses only the eight dedicated RemoteAccessRuntime commands", async () => {
+  it("uses only the ten dedicated RemoteAccessRuntime commands", async () => {
     const status = {
       phase: "available",
       activeSessionCount: 0,
@@ -52,6 +54,13 @@ describe("remote access command bridge", () => {
       onlineSessionCount: 0,
     }];
     const revoked = { credentialId: "credential-one", revokedAt: 1_500, disconnectedSessionCount: 0 };
+    const requests = [{
+      requestId: "request-one",
+      remoteClientId: "client-one",
+      descriptor: clients[0].descriptor,
+      expiresAt: 2_000,
+      confirmationCode: "381204",
+    }];
     vi.mocked(invoke)
       .mockResolvedValueOnce(status)
       .mockResolvedValueOnce(status)
@@ -60,6 +69,8 @@ describe("remote access command bridge", () => {
       .mockResolvedValueOnce(pairingStatus)
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({ ...pairingStatus, state: "cancelled" })
+      .mockResolvedValueOnce(requests)
+      .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce(revoked);
 
     await expect(getRemoteAccessStatus()).resolves.toEqual(status);
@@ -69,6 +80,8 @@ describe("remote access command bridge", () => {
     await expect(getRemotePairingStatus("pairing-one")).resolves.toEqual(pairingStatus);
     await expect(copyRemotePairingJson("pairing-one")).resolves.toBeUndefined();
     await expect(cancelRemotePairing("pairing-one")).resolves.toMatchObject({ state: "cancelled" });
+    await expect(listRemotePairingRequests()).resolves.toEqual(requests);
+    await expect(resolveRemotePairingRequest("request-one", true)).resolves.toBeUndefined();
     await expect(revokeRemoteCredential("credential-one")).resolves.toEqual(revoked);
 
     expect(invoke).toHaveBeenNthCalledWith(1, "remote_access_status");
@@ -78,7 +91,9 @@ describe("remote access command bridge", () => {
     expect(invoke).toHaveBeenNthCalledWith(5, "get_remote_pairing_status", { pairingId: "pairing-one" });
     expect(invoke).toHaveBeenNthCalledWith(6, "copy_remote_pairing_json", { pairingId: "pairing-one" });
     expect(invoke).toHaveBeenNthCalledWith(7, "cancel_remote_pairing", { pairingId: "pairing-one" });
-    expect(invoke).toHaveBeenNthCalledWith(8, "revoke_remote_credential", { credentialId: "credential-one" });
+    expect(invoke).toHaveBeenNthCalledWith(8, "list_remote_pairing_requests");
+    expect(invoke).toHaveBeenNthCalledWith(9, "resolve_remote_pairing_request", { requestId: "request-one", accept: true });
+    expect(invoke).toHaveBeenNthCalledWith(10, "revoke_remote_credential", { credentialId: "credential-one" });
   });
 
   it("keeps clipboard errors inside the native copy command boundary", async () => {

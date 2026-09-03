@@ -120,6 +120,16 @@ pub struct RemotePairingStatusView {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct IncomingRemotePairingRequestView {
+    pub request_id: String,
+    pub remote_client_id: String,
+    pub descriptor: DeviceDescriptor,
+    pub expires_at: u64,
+    pub confirmation_code: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoteClientView {
     pub credential_id: String,
     pub remote_client_id: String,
@@ -589,6 +599,40 @@ impl RemoteAccessRuntime {
         self.clear_pairing_payload(pairing_id);
         self.sync_pairing_available().await?;
         Ok(status)
+    }
+
+    pub fn pending_pairing_requests(
+        &self,
+    ) -> Result<Vec<IncomingRemotePairingRequestView>, RemoteCommandError> {
+        let requests = self
+            .manager
+            .as_ref()
+            .ok_or_else(runtime_core_unavailable)?
+            .pending_pairing_requests()
+            .map_err(RemoteCommandError::from)?;
+        Ok(requests
+            .into_iter()
+            .map(|request| IncomingRemotePairingRequestView {
+                request_id: request.request_id,
+                remote_client_id: request.client.client_id,
+                descriptor: request.client.descriptor,
+                expires_at: request.expires_at,
+                confirmation_code: request.confirmation_code,
+            })
+            .collect())
+    }
+
+    pub fn resolve_pairing_request(
+        &self,
+        request_id: &str,
+        accept: bool,
+    ) -> Result<(), RemoteCommandError> {
+        self.manager
+            .as_ref()
+            .ok_or_else(runtime_core_unavailable)?
+            .resolve_pairing_request(request_id, accept)
+            .map(|_| ())
+            .map_err(RemoteCommandError::from)
     }
 
     pub async fn list_clients(&self) -> Result<Vec<RemoteClientView>, RemoteCommandError> {
@@ -1561,6 +1605,22 @@ pub async fn cancel_remote_pairing(
     pairing_id: String,
 ) -> Result<PairingStatus, RemoteCommandError> {
     state.cancel_pairing(&pairing_id).await
+}
+
+#[tauri::command]
+pub fn list_remote_pairing_requests(
+    state: State<'_, RemoteAccessRuntime>,
+) -> Result<Vec<IncomingRemotePairingRequestView>, RemoteCommandError> {
+    state.pending_pairing_requests()
+}
+
+#[tauri::command]
+pub fn resolve_remote_pairing_request(
+    state: State<'_, RemoteAccessRuntime>,
+    request_id: String,
+    accept: bool,
+) -> Result<(), RemoteCommandError> {
+    state.resolve_pairing_request(&request_id, accept)
 }
 
 #[tauri::command]

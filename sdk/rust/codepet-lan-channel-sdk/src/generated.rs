@@ -93,3 +93,55 @@ impl std::fmt::Debug for PairingQrPayload {
             .finish()
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct PairingRequestCreateRequest {
+    pub host_device_id: DeviceId,
+    pub client_id: ClientId,
+    pub device: DeviceDescriptor,
+    pub client_nonce: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PairingRequestState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "accepted")]
+    Accepted,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "expired")]
+    Expired,
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct PairingRequestStatusResponse {
+    pub request_id: String,
+    pub state: PairingRequestState,
+    pub device: LanHostIdentity,
+    pub expires_at: TimestampMs,
+    pub confirmation_code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gateway_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+}
+
+impl std::fmt::Debug for PairingRequestStatusResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PairingRequestStatusResponse")
+            .field("request_id", &self.request_id)
+            .field("state", &self.state)
+            .field("device", &self.device)
+            .field("expires_at", &self.expires_at)
+            .field("confirmation_code", &self.confirmation_code)
+            .field("gateway_url", &self.gateway_url)
+            .field("credential", &"<redacted>")
+            .finish()
+    }
+}

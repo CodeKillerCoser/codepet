@@ -2,7 +2,10 @@ use crate::persistence::{
     persistence_io, protect_secret_file, write_secret_json_atomically,
 };
 use crate::{DeviceRegistry, HostError, HostResult};
-use codepet_lan_channel_sdk::{DeviceDescriptor, LanHostIdentity, PairingExchangeRequest};
+use codepet_lan_channel_sdk::{
+    DeviceDescriptor, LanHostIdentity, PairingExchangeRequest, PairingRequestCreateRequest,
+    PairingRequestState,
+};
 use codepet_provider_sdk::{ClientId, TimestampMs};
 use rcgen::{
     CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, KeyPair,
@@ -33,8 +36,10 @@ const MAX_CREDENTIAL_STORE_FILE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_REMOTE_CREDENTIALS: usize = 4096;
 
 pub const PAIRING_SESSION_TTL: Duration = Duration::from_secs(5 * 60);
+pub const PAIRING_REQUEST_TTL: Duration = Duration::from_secs(2 * 60);
 const PAIRING_STATUS_RETENTION: Duration = Duration::from_secs(15 * 60);
 const MAX_PAIRING_STATUS_RECORDS: usize = 64;
+const MAX_PAIRING_REQUEST_RECORDS: usize = 64;
 
 type Clock = Arc<dyn Fn() -> TimestampMs + Send + Sync>;
 
@@ -631,10 +636,36 @@ struct PairingOutcomeRecord {
     recorded_at: Instant,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct RemotePairingRequest {
+    pub request_id: String,
+    pub state: PairingRequestState,
+    pub client: RemoteClientIdentity,
+    pub expires_at: TimestampMs,
+    pub confirmation_code: String,
+    bearer_token: Option<String>,
+}
+
+impl RemotePairingRequest {
+    pub fn bearer_token(&self) -> Option<&str> {
+        self.bearer_token.as_deref()
+    }
+}
+
+struct PairingRequestRecord {
+    request: RemotePairingRequest,
+    client_nonce: String,
+    host_pairing_id: Option<String>,
+    deadline: Instant,
+    recorded_at: Instant,
+}
+
 struct PairingState {
     active: Option<ActivePairingSession>,
     outcomes: BTreeMap<String, PairingOutcomeRecord>,
     outcome_order: VecDeque<String>,
+    requests: BTreeMap<String, PairingRequestRecord>,
+    request_order: VecDeque<String>,
 }
 
 /// Host security boundary for a future LAN HTTP/WSS listener.
@@ -692,6 +723,8 @@ impl RemoteAccessManager {
                 active: None,
                 outcomes: BTreeMap::new(),
                 outcome_order: VecDeque::new(),
+                requests: BTreeMap::new(),
+                request_order: VecDeque::new(),
             }),
             pairing_watch,
             diagnostics,
@@ -833,6 +866,191 @@ impl RemoteAccessManager {
 
     pub fn subscribe_pairing_state(&self) -> watch::Receiver<PairingWatchState> {
         self.pairing_watch.subscribe()
+    }
+
+    pub fn create_pairing_request(
+        &self,
+        request: PairingRequestCreateRequest,
+    ) -> HostResult<RemotePairingRequest> {
+        if request.host_device_id != self.device.identity().device_id {
+            return Err(HostError::new(
+                "pairing_host_identity_mismatch",
+                "Pairing request targeted a different Host device",
+            ));
+        }
+        if !is_canonical_hex(&request.client_nonce, SHA256_HEX_LENGTH) {
+            return Err(HostError::new(
+                "invalid_pairing_request",
+                "Pairing request clientNonce must be 64 lowercase hexadecimal characters",
+            ));
+        }
+        let client = RemoteClientIdentity {
+            client_id: request.client_id,
+            descriptor: request.device,
+        };
+        client.validate()?;
+
+        let now = Instant::now();
+        let mut pairing = self
+            .pairing
+            .lock()
+            .map_err(|_| pairing_session_lock_error())?;
+        self.expire_locked(&mut pairing, now);
+        self.expire_pairing_requests_locked(&mut pairing, now);
+        if let Some(existing) = pairing.requests.values().find(|record| {
+            record.request.client.client_id == client.client_id
+                && record.client_nonce == request.client_nonce
+        }) {
+            return Ok(existing.request.clone());
+        }
+        if pairing
+            .requests
+            .values()
+            .filter(|record| record.request.state == PairingRequestState::Pending)
+            .count()
+            >= MAX_PAIRING_REQUEST_RECORDS
+        {
+            return Err(HostError::new(
+                "pairing_request_limit_reached",
+                "Too many pairing requests are retained",
+            ));
+        }
+
+        let request_id = random_prefixed_id("request")?;
+        let confirmation_code = pairing_confirmation_code(
+            &request_id,
+            &request.client_nonce,
+            self.tls_identity.certificate_fingerprint(),
+        );
+        let deadline = now.checked_add(PAIRING_REQUEST_TTL).ok_or_else(|| {
+            HostError::new(
+                "invalid_pairing_ttl",
+                "remote pairing request TTL exceeds the monotonic clock range",
+            )
+        })?;
+        let expires_at = (self.clock)().saturating_add(duration_ms(PAIRING_REQUEST_TTL));
+        let pairing_request = RemotePairingRequest {
+            request_id: request_id.clone(),
+            state: PairingRequestState::Pending,
+            client: client.clone(),
+            expires_at,
+            confirmation_code,
+            bearer_token: None,
+        };
+
+        let host_pairing_id = pairing
+            .active
+            .as_ref()
+            .map(|active| active.pairing_id.clone());
+        pairing.requests.insert(
+            request_id.clone(),
+            PairingRequestRecord {
+                request: pairing_request.clone(),
+                client_nonce: request.client_nonce,
+                host_pairing_id,
+                deadline,
+                recorded_at: now,
+            },
+        );
+        pairing.request_order.push_back(request_id);
+        Ok(pairing_request)
+    }
+
+    pub fn pairing_request_status(
+        &self,
+        request_id: &str,
+    ) -> HostResult<RemotePairingRequest> {
+        validate_prefixed_random_id("request", request_id)?;
+        let mut pairing = self
+            .pairing
+            .lock()
+            .map_err(|_| pairing_session_lock_error())?;
+        self.expire_pairing_requests_locked(&mut pairing, Instant::now());
+        pairing
+            .requests
+            .get(request_id)
+            .map(|record| record.request.clone())
+            .ok_or_else(pairing_request_not_found)
+    }
+
+    pub fn pending_pairing_requests(&self) -> HostResult<Vec<RemotePairingRequest>> {
+        let mut pairing = self
+            .pairing
+            .lock()
+            .map_err(|_| pairing_session_lock_error())?;
+        self.expire_pairing_requests_locked(&mut pairing, Instant::now());
+        Ok(pairing
+            .request_order
+            .iter()
+            .filter_map(|request_id| pairing.requests.get(request_id))
+            .filter(|record| record.request.state == PairingRequestState::Pending)
+            .map(|record| record.request.clone())
+            .collect())
+    }
+
+    pub fn resolve_pairing_request(
+        &self,
+        request_id: &str,
+        accept: bool,
+    ) -> HostResult<RemotePairingRequest> {
+        validate_prefixed_random_id("request", request_id)?;
+        let mut pairing = self
+            .pairing
+            .lock()
+            .map_err(|_| pairing_session_lock_error())?;
+        let now = Instant::now();
+        self.expire_pairing_requests_locked(&mut pairing, now);
+        let (client, host_pairing_id) = {
+            let record = pairing
+                .requests
+                .get(request_id)
+                .ok_or_else(pairing_request_not_found)?;
+            if record.request.state != PairingRequestState::Pending {
+                return Ok(record.request.clone());
+            }
+            (
+                record.request.client.clone(),
+                record.host_pairing_id.clone(),
+            )
+        };
+        let issued = if accept {
+            Some(self.credential_store.issue(client)?)
+        } else {
+            None
+        };
+        let record = pairing
+            .requests
+            .get_mut(request_id)
+            .ok_or_else(pairing_request_not_found)?;
+        if let Some(issued) = issued {
+            record.request.state = PairingRequestState::Accepted;
+            record.request.bearer_token = Some(issued.bearer_token);
+        } else {
+            record.request.state = PairingRequestState::Rejected;
+        }
+        record.recorded_at = now;
+        let resolved = record.request.clone();
+        if accept {
+            if let Some(active) = pairing.active.take_if(|active| {
+                host_pairing_id
+                    .as_deref()
+                    .is_some_and(|pairing_id| pairing_id == active.pairing_id)
+            }) {
+                self.record_outcome_locked(
+                    &mut pairing,
+                    PairingStatus {
+                        pairing_id: active.pairing_id,
+                        state: PairingStatusKind::Succeeded,
+                        expires_at: active.expires_at,
+                    },
+                    now,
+                );
+                self.pairing_watch
+                    .send_replace(PairingWatchState::unavailable());
+            }
+        }
+        self.expire_pairing_requests_locked(&mut pairing, now);
+        Ok(resolved)
     }
 
     pub fn pairing_status(&self, pairing_id: &str) -> HostResult<PairingStatus> {
@@ -1008,6 +1226,61 @@ impl RemoteAccessManager {
             };
             pairing.outcomes.remove(&pairing_id);
         }
+    }
+
+    fn expire_pairing_requests_locked(&self, pairing: &mut PairingState, now: Instant) {
+        for record in pairing.requests.values_mut() {
+            if record.request.state == PairingRequestState::Pending && now >= record.deadline {
+                record.request.state = PairingRequestState::Expired;
+                record.recorded_at = now;
+            }
+        }
+
+        let mut removable = pairing
+            .request_order
+            .iter()
+            .filter(|request_id| {
+                pairing.requests.get(*request_id).is_none_or(|record| {
+                    record.request.state != PairingRequestState::Pending
+                        && now.saturating_duration_since(record.recorded_at)
+                            >= PAIRING_STATUS_RETENTION
+                })
+            })
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let retained_terminal_count = pairing
+            .request_order
+            .iter()
+            .filter(|request_id| !removable.contains(*request_id))
+            .filter(|request_id| {
+                pairing.requests.get(*request_id).is_some_and(|record| {
+                    record.request.state != PairingRequestState::Pending
+                })
+            })
+            .count();
+        let excess_terminal_count =
+            retained_terminal_count.saturating_sub(MAX_PAIRING_STATUS_RECORDS);
+        let excess_terminal_ids = pairing
+            .request_order
+            .iter()
+            .filter(|request_id| !removable.contains(*request_id))
+            .filter(|request_id| {
+                pairing.requests.get(*request_id).is_some_and(|record| {
+                    record.request.state != PairingRequestState::Pending
+                })
+            })
+            .take(excess_terminal_count)
+            .cloned()
+            .collect::<Vec<_>>();
+        for request_id in excess_terminal_ids {
+            removable.insert(request_id);
+        }
+        for request_id in &removable {
+            pairing.requests.remove(request_id);
+        }
+        pairing.request_order.retain(|request_id| {
+            !removable.contains(request_id) && pairing.requests.contains_key(request_id)
+        });
     }
 
     pub fn validate_bearer(&self, bearer_token: &str) -> HostResult<RemoteCredential> {
@@ -1402,6 +1675,18 @@ fn sha256_hex(value: &[u8]) -> String {
     encode_hex(&sha256_bytes(value))
 }
 
+fn pairing_confirmation_code(
+    request_id: &str,
+    client_nonce: &str,
+    certificate_fingerprint: &str,
+) -> String {
+    let digest = sha256_bytes(
+        format!("{request_id}\0{client_nonce}\0{certificate_fingerprint}").as_bytes(),
+    );
+    let value = u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]]) % 1_000_000;
+    format!("{value:06}")
+}
+
 fn decode_sha256_hex(value: &str) -> Result<[u8; 32], String> {
     let decoded = decode_hex(value)?;
     decoded
@@ -1488,6 +1773,13 @@ fn pairing_status_not_found() -> HostError {
     HostError::new(
         "pairing_session_not_found",
         "Remote pairing status is no longer available in this Host process",
+    )
+}
+
+fn pairing_request_not_found() -> HostError {
+    HostError::new(
+        "pairing_request_not_found",
+        "Remote pairing request is no longer available in this Host process",
     )
 }
 
@@ -1590,6 +1882,139 @@ mod tests {
                 device: paired_device_descriptor(client_id),
             })
             .unwrap()
+    }
+
+    fn pairing_request(
+        manager: &RemoteAccessManager,
+        client_id: &str,
+        nonce: char,
+    ) -> PairingRequestCreateRequest {
+        PairingRequestCreateRequest {
+            host_device_id: manager.device_registry().identity().device_id.clone(),
+            client_id: client_id.to_string(),
+            device: paired_device_descriptor(client_id),
+            client_nonce: nonce.to_string().repeat(SHA256_HEX_LENGTH),
+        }
+    }
+
+    #[test]
+    fn incoming_pairing_request_requires_explicit_resolution_and_is_idempotent() {
+        let directory = tempfile::tempdir().unwrap();
+        let clock = TestClock::new(1_000);
+        let (_, _, manager) = open_manager(directory.path(), &clock);
+        let request = pairing_request(&manager, "client-request", 'a');
+
+        let pending = manager.create_pairing_request(request.clone()).unwrap();
+        assert_eq!(pending.state, PairingRequestState::Pending);
+        assert_eq!(pending.confirmation_code.len(), 6);
+        assert!(pending
+            .confirmation_code
+            .bytes()
+            .all(|byte| byte.is_ascii_digit()));
+        assert!(pending.bearer_token().is_none());
+        assert_eq!(
+            manager.create_pairing_request(request).unwrap().request_id,
+            pending.request_id
+        );
+        assert_eq!(manager.pending_pairing_requests().unwrap().len(), 1);
+
+        let accepted = manager
+            .resolve_pairing_request(&pending.request_id, true)
+            .unwrap();
+        assert_eq!(accepted.state, PairingRequestState::Accepted);
+        assert!(manager
+            .validate_bearer(accepted.bearer_token().unwrap())
+            .is_ok());
+        assert!(manager.pending_pairing_requests().unwrap().is_empty());
+        assert_eq!(
+            manager
+                .pairing_request_status(&pending.request_id)
+                .unwrap()
+                .bearer_token(),
+            accepted.bearer_token()
+        );
+
+        let rejected = manager
+            .create_pairing_request(pairing_request(&manager, "client-rejected", 'b'))
+            .unwrap();
+        let rejected = manager
+            .resolve_pairing_request(&rejected.request_id, false)
+            .unwrap();
+        assert_eq!(rejected.state, PairingRequestState::Rejected);
+        assert!(rejected.bearer_token().is_none());
+    }
+
+    #[test]
+    fn pairing_confirmation_code_matches_the_cross_language_vector() {
+        assert_eq!(
+            pairing_confirmation_code(
+                "request-0123456789abcdef",
+                &"1234567890abcdef".repeat(4),
+                &"0123456789abcdef".repeat(4),
+            ),
+            "777533"
+        );
+    }
+
+    #[test]
+    fn host_initiated_pairing_completes_after_matching_code_is_accepted() {
+        let directory = tempfile::tempdir().unwrap();
+        let clock = TestClock::new(2_000);
+        let (_, _, manager) = open_manager(directory.path(), &clock);
+        let pairing = manager.begin_pairing().unwrap();
+
+        let pending = manager
+            .create_pairing_request(pairing_request(&manager, "client-host-invite", 'c'))
+            .unwrap();
+
+        assert_eq!(pending.state, PairingRequestState::Pending);
+        assert!(manager.subscribe_pairing_state().borrow().pairing_available);
+        let accepted = manager
+            .resolve_pairing_request(&pending.request_id, true)
+            .unwrap();
+        assert_eq!(accepted.state, PairingRequestState::Accepted);
+        assert!(manager
+            .validate_bearer(accepted.bearer_token().unwrap())
+            .is_ok());
+        assert_eq!(
+            manager.pairing_status(&pairing.pairing_id).unwrap().state,
+            PairingStatusKind::Succeeded
+        );
+        assert!(!manager.subscribe_pairing_state().borrow().pairing_available);
+    }
+
+    #[test]
+    fn pairing_request_retention_never_evicts_a_pending_request() {
+        let directory = tempfile::tempdir().unwrap();
+        let clock = TestClock::new(3_000);
+        let (_, _, manager) = open_manager(directory.path(), &clock);
+        let pending = manager
+            .create_pairing_request(pairing_request(&manager, "client-pending", 'd'))
+            .unwrap();
+
+        for index in 0..(MAX_PAIRING_STATUS_RECORDS + 8) {
+            let resolved = manager
+                .create_pairing_request(pairing_request(
+                    &manager,
+                    &format!("client-resolved-{index}"),
+                    'e',
+                ))
+                .unwrap();
+            manager
+                .resolve_pairing_request(&resolved.request_id, false)
+                .unwrap();
+        }
+
+        assert_eq!(
+            manager
+                .pairing_request_status(&pending.request_id)
+                .unwrap()
+                .state,
+            PairingRequestState::Pending
+        );
+        assert_eq!(manager.pending_pairing_requests().unwrap().len(), 1);
+        let pairing = manager.pairing.lock().unwrap();
+        assert!(pairing.requests.len() <= MAX_PAIRING_STATUS_RECORDS + 1);
     }
 
     #[test]

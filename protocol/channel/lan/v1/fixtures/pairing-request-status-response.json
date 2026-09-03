@@ -1,0 +1,17 @@
+{
+  "requestId": "request-0123456789abcdef",
+  "state": "accepted",
+  "device": {
+    "deviceId": "device-macbook-1",
+    "descriptor": {
+      "deviceName": "MacBook",
+      "operatingSystem": "macOS",
+      "systemVersion": "15.6"
+    },
+    "identityFingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "expiresAt": 1787700300000,
+  "confirmationCode": "777533",
+  "gatewayUrl": "wss://192.168.1.10:49152/remote/v2/gateway",
+  "credential": "opaque-remote-credential"
+}

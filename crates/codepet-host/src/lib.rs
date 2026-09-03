@@ -37,7 +37,7 @@ pub use remote_access::{
     IssuedRemoteCredential, LanTlsIdentity, PairingSession, PairingStatus,
     PairingStatusKind, PairingWatchState, RemoteAccessConfig, RemoteAccessDiagnostic,
     RemoteAccessManager, RemoteClientIdentity, RemoteCredential, RemoteCredentialStore,
-    PAIRING_SESSION_TTL,
+    RemotePairingRequest, PAIRING_REQUEST_TTL, PAIRING_SESSION_TTL,
 };
 pub use remote_mdns::{RemoteLanMdnsAdvertiser, REMOTE_LAN_MDNS_SERVICE_TYPE};
 pub use remote_listener::{

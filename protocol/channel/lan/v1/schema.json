@@ -39,6 +39,35 @@
       "required": ["device", "gatewayUrl", "credential"],
       "additionalProperties": false
     },
+    "PairingRequestState": {
+      "type": "string",
+      "enum": ["pending", "accepted", "rejected", "expired"]
+    },
+    "PairingRequestCreateRequest": {
+      "type": "object",
+      "properties": {
+        "hostDeviceId": { "$ref": "../../../core/v1/schema.json#/$defs/DeviceId" },
+        "clientId": { "$ref": "../../../core/v1/schema.json#/$defs/ClientId" },
+        "device": { "$ref": "../../../core/v1/schema.json#/$defs/DeviceDescriptor" },
+        "clientNonce": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "required": ["hostDeviceId", "clientId", "device", "clientNonce"],
+      "additionalProperties": false
+    },
+    "PairingRequestStatusResponse": {
+      "type": "object",
+      "properties": {
+        "requestId": { "type": "string", "minLength": 1 },
+        "state": { "$ref": "#/$defs/PairingRequestState" },
+        "device": { "$ref": "#/$defs/LanHostIdentity" },
+        "expiresAt": { "$ref": "../../../core/v1/schema.json#/$defs/TimestampMs" },
+        "confirmationCode": { "type": "string", "pattern": "^[0-9]{6}$" },
+        "gatewayUrl": { "type": "string", "minLength": 1 },
+        "credential": { "type": "string", "minLength": 1, "x-codepet-sensitive": true }
+      },
+      "required": ["requestId", "state", "device", "expiresAt", "confirmationCode"],
+      "additionalProperties": false
+    },
     "PairingQrPayload": {
       "type": "object",
       "properties": {

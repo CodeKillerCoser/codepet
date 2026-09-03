@@ -244,6 +244,9 @@ test("LAN admission DTOs remain independent from the Gateway JSON-RPC manifest",
     "LanHostIdentity",
     "PairingExchangeRequest",
     "PairingExchangeResponse",
+    "PairingRequestCreateRequest",
+    "PairingRequestState",
+    "PairingRequestStatusResponse",
     "PairingQrPayload",
   ]);
   assert.deepEqual(Object.keys(definitions.LanHostIdentity.properties), [
@@ -267,6 +270,15 @@ test("LAN admission DTOs remain independent from the Gateway JSON-RPC manifest",
     "credential",
   ]);
   assert.equal(definitions.PairingExchangeResponse.properties.credential["x-codepet-sensitive"], true);
+  assert.deepEqual(definitions.PairingRequestState.enum, [
+    "pending",
+    "accepted",
+    "rejected",
+    "expired",
+  ]);
+  assert.equal(definitions.PairingRequestCreateRequest.properties.clientNonce.pattern, "^[0-9a-f]{64}$");
+  assert.equal(definitions.PairingRequestStatusResponse.properties.confirmationCode.pattern, "^[0-9]{6}$");
+  assert.equal(definitions.PairingRequestStatusResponse.properties.credential["x-codepet-sensitive"], true);
   assert.deepEqual(Object.keys(definitions.PairingQrPayload.properties), [
     "version",
     "hostDeviceId",
@@ -305,8 +317,8 @@ test("active generators omit schema definitions outside the public reachability 
   assert.doesNotMatch(rust, /InternalOnly/);
   assert.doesNotMatch(dart, /InternalOnly/);
   for (const publicType of channel.packageConfig.publicTypes) {
-    assert.match(rust, new RegExp(`pub struct ${publicType}`));
-    assert.match(dart, new RegExp(`final class ${publicType}`));
+    assert.match(rust, new RegExp(`pub (?:struct|enum) ${publicType}`));
+    assert.match(dart, new RegExp(`(?:final class|enum) ${publicType}`));
   }
 });
 

@@ -239,6 +239,7 @@ impl Drop for RemoteLanMdnsAdvertiser {
 struct MdnsServiceSpec {
     device_id: String,
     display_name: String,
+    identity_fingerprint: String,
     instance_name: String,
     hostname: String,
     address: IpAddr,
@@ -294,10 +295,15 @@ impl MdnsServiceSpec {
     ) -> HostResult<Self> {
         if identity.device_id.trim().is_empty()
             || identity.descriptor.device_name.trim().is_empty()
+            || identity.identity_fingerprint.len() != 64
+            || !identity
+                .identity_fingerprint
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         {
             return Err(HostError::new(
                 "invalid_remote_lan_mdns_identity",
-                "Remote LAN mDNS identity requires a device id and display name",
+                "Remote LAN mDNS identity requires a device id, display name, and TLS fingerprint",
             ));
         }
         if local_addr.port() == 0 {
@@ -325,6 +331,7 @@ impl MdnsServiceSpec {
         Ok(Self {
             device_id: identity.device_id.clone(),
             display_name: identity.descriptor.device_name.clone(),
+            identity_fingerprint: identity.identity_fingerprint.clone(),
             instance_name,
             hostname,
             address,
@@ -338,6 +345,7 @@ impl MdnsServiceSpec {
         let properties = [
             ("id", self.device_id.as_str()),
             ("name", self.display_name.as_str()),
+            ("fp", self.identity_fingerprint.as_str()),
             ("vmin", version.as_str()),
             ("vmax", version.as_str()),
             ("pair", pairing),
@@ -776,7 +784,7 @@ mod tests {
                 operating_system: "TestOS".to_string(),
                 system_version: "1.0".to_string(),
             },
-            identity_fingerprint: "must-not-leak-fingerprint".to_string(),
+            identity_fingerprint: "ab".repeat(32),
         }
     }
 
@@ -826,13 +834,13 @@ mod tests {
             BTreeMap::from([
                 ("id".to_string(), "device-alpha".to_string()),
                 ("name".to_string(), "Living Room".to_string()),
+                ("fp".to_string(), "ab".repeat(32)),
                 ("pair".to_string(), "0".to_string()),
                 ("vmax".to_string(), PROTOCOL_VERSION.to_string()),
                 ("vmin".to_string(), PROTOCOL_VERSION.to_string()),
             ])
         );
         let published = format!("{snapshot:?}");
-        assert!(!published.contains("must-not-leak-fingerprint"));
         assert!(!published.contains("secret"));
         assert!(!published.contains("token"));
         assert!(!published.contains("provider"));

@@ -331,3 +331,151 @@ final class PairingQrPayload {
   @override
   String toString() => 'PairingQrPayload(version: $version, hostDeviceId: $hostDeviceId, displayName: $displayName, httpsBaseUrl: $httpsBaseUrl, certSha256: $certSha256, pairingId: $pairingId, pairingSecret: <redacted>, expiresAt: $expiresAt)';
 }
+
+final class PairingRequestCreateRequest {
+  factory PairingRequestCreateRequest({
+    required DeviceId hostDeviceId,
+    required ClientId clientId,
+    required DeviceDescriptor device,
+    required String clientNonce,
+  }) {
+    final validatedHostDeviceId = _string(hostDeviceId, 'PairingRequestCreateRequest.hostDeviceId', minLength: 1);
+    final validatedClientId = _string(clientId, 'PairingRequestCreateRequest.clientId', minLength: 1);
+    final validatedDevice = device;
+    final validatedClientNonce = _string(clientNonce, 'PairingRequestCreateRequest.clientNonce', pattern: '^[0-9a-f]{64}\$');
+    return PairingRequestCreateRequest._(
+      hostDeviceId: validatedHostDeviceId,
+      clientId: validatedClientId,
+      device: validatedDevice,
+      clientNonce: validatedClientNonce,
+    );
+  }
+
+  PairingRequestCreateRequest._({
+    required this.hostDeviceId,
+    required this.clientId,
+    required this.device,
+    required this.clientNonce,
+  });
+
+  final DeviceId hostDeviceId;
+  final ClientId clientId;
+  final DeviceDescriptor device;
+  final String clientNonce;
+
+  factory PairingRequestCreateRequest.fromJson(Object? value, {String path = 'PairingRequestCreateRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'hostDeviceId', 'clientId', 'device', 'clientNonce'}, path);
+    return PairingRequestCreateRequest(
+      hostDeviceId: _string(_required(json, 'hostDeviceId', path), '$path.hostDeviceId', minLength: 1),
+      clientId: _string(_required(json, 'clientId', path), '$path.clientId', minLength: 1),
+      device: DeviceDescriptor.fromJson(_required(json, 'device', path), path: '$path.device'),
+      clientNonce: _string(_required(json, 'clientNonce', path), '$path.clientNonce', pattern: '^[0-9a-f]{64}\$'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'hostDeviceId': hostDeviceId,
+    'clientId': clientId,
+    'device': device.toJson(),
+    'clientNonce': clientNonce,
+  };
+
+  @override
+  String toString() => 'PairingRequestCreateRequest(hostDeviceId: $hostDeviceId, clientId: $clientId, device: $device, clientNonce: $clientNonce)';
+}
+
+enum PairingRequestState {
+  pending('pending'),
+  accepted('accepted'),
+  rejected('rejected'),
+  expired('expired');
+
+  const PairingRequestState(this.wireValue);
+
+  final String wireValue;
+
+  static PairingRequestState fromJson(Object? value, {String path = 'PairingRequestState'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: pending, accepted, rejected, expired');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class PairingRequestStatusResponse {
+  factory PairingRequestStatusResponse({
+    required String requestId,
+    required PairingRequestState state,
+    required LanHostIdentity device,
+    required TimestampMs expiresAt,
+    required String confirmationCode,
+    String? gatewayUrl,
+    String? credential,
+  }) {
+    final validatedRequestId = _string(requestId, 'PairingRequestStatusResponse.requestId', minLength: 1);
+    final validatedState = state;
+    final validatedDevice = device;
+    final validatedExpiresAt = _integer(expiresAt, 'PairingRequestStatusResponse.expiresAt', minimum: 0, maximum: 9007199254740991);
+    final validatedConfirmationCode = _string(confirmationCode, 'PairingRequestStatusResponse.confirmationCode', pattern: '^[0-9]{6}\$');
+    final validatedGatewayUrl = gatewayUrl == null ? null : _string(gatewayUrl, 'PairingRequestStatusResponse.gatewayUrl', minLength: 1);
+    final validatedCredential = credential == null ? null : _string(credential, 'PairingRequestStatusResponse.credential', minLength: 1);
+    return PairingRequestStatusResponse._(
+      requestId: validatedRequestId,
+      state: validatedState,
+      device: validatedDevice,
+      expiresAt: validatedExpiresAt,
+      confirmationCode: validatedConfirmationCode,
+      gatewayUrl: validatedGatewayUrl,
+      credential: validatedCredential,
+    );
+  }
+
+  PairingRequestStatusResponse._({
+    required this.requestId,
+    required this.state,
+    required this.device,
+    required this.expiresAt,
+    required this.confirmationCode,
+    required this.gatewayUrl,
+    required this.credential,
+  });
+
+  final String requestId;
+  final PairingRequestState state;
+  final LanHostIdentity device;
+  final TimestampMs expiresAt;
+  final String confirmationCode;
+  final String? gatewayUrl;
+  final String? credential;
+
+  factory PairingRequestStatusResponse.fromJson(Object? value, {String path = 'PairingRequestStatusResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'requestId', 'state', 'device', 'expiresAt', 'confirmationCode', 'gatewayUrl', 'credential'}, path);
+    return PairingRequestStatusResponse(
+      requestId: _string(_required(json, 'requestId', path), '$path.requestId', minLength: 1),
+      state: PairingRequestState.fromJson(_required(json, 'state', path), path: '$path.state'),
+      device: LanHostIdentity.fromJson(_required(json, 'device', path), path: '$path.device'),
+      expiresAt: _integer(_required(json, 'expiresAt', path), '$path.expiresAt', minimum: 0, maximum: 9007199254740991),
+      confirmationCode: _string(_required(json, 'confirmationCode', path), '$path.confirmationCode', pattern: '^[0-9]{6}\$'),
+      gatewayUrl: json.containsKey('gatewayUrl') && json['gatewayUrl'] != null ? _string(json['gatewayUrl'], '$path.gatewayUrl', minLength: 1) : null,
+      credential: json.containsKey('credential') && json['credential'] != null ? _string(json['credential'], '$path.credential', minLength: 1) : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'requestId': requestId,
+    'state': state.toJson(),
+    'device': device.toJson(),
+    'expiresAt': expiresAt,
+    'confirmationCode': confirmationCode,
+    if (gatewayUrl != null) 'gatewayUrl': gatewayUrl!,
+    if (credential != null) 'credential': credential!,
+  };
+
+  @override
+  String toString() => 'PairingRequestStatusResponse(requestId: $requestId, state: $state, device: $device, expiresAt: $expiresAt, confirmationCode: $confirmationCode, gatewayUrl: $gatewayUrl, credential: <redacted>)';
+}

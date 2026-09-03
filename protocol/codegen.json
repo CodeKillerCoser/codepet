@@ -103,6 +103,9 @@
         "LanHostIdentity",
         "PairingExchangeRequest",
         "PairingExchangeResponse",
+        "PairingRequestCreateRequest",
+        "PairingRequestState",
+        "PairingRequestStatusResponse",
         "PairingQrPayload"
       ],
       "outputs": {

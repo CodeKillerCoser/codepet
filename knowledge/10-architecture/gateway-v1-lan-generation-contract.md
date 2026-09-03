@@ -76,7 +76,7 @@ Tauri 在一个 lifecycle mutex 下串行网络与 pairing 变化。地址切换
 - `clientId` 出现同义字段：生成器测试断言 request 只有 `clientId`，无 `remoteClientId`；真实 WSS 负例验证 credential 绑定。
 - 无 identity 的进程内服务被误用于 LAN：Gateway v1 handshake fail-closed，listener start 拒绝与 manager identity 不一致的 service；loopback 测试核对真实 TLS leaf 指纹、pairing response 与 handshake identity 三者相同。
 - wildcard bind 被误当作可访问 endpoint：start 在缺少 advertised host 时 fail-closed；测试分别验证 `0.0.0.0:0` bind 与 `listener.local:<actual-port>` handle URL，并用显式 `127.0.0.1` 完成真实网络闭环。
-- 发现数据被误当身份或泄露敏感上下文：构造测试断言 service type、实际 port 与 TXT exact set，并使用 sentinel fingerprint 证明不进入 service；文档和 review 继续要求客户端只信任 pairing/TLS/handshake。
+- 发现数据被误当身份或泄露敏感上下文：构造测试断言 service type、实际 port 与 TXT exact set；`fp` 只能作为首次 HTTPS 的候选 pin，必须经双方数字比较和 Host 接受才签发 credential。secret、bearer、Provider、项目和会话上下文不得进入 service；已配对客户端仍只信任持久化 pin 与 handshake。
 - identity 与 endpoint provenance 被错误拼接：公开 start API 只接受 listener handle，编译形状测试固定该边界；真实 listener 测试核对 handle identity 等于启动它的 manager identity。
 - 广告不可达或串到错误接口：advertiser 只接受与 listener bind 匹配、存在于 active 本机接口集合的显式 unicast IP，并将 service 限定到该地址；确定性负例覆盖 DNS host、unspecified、bind mismatch 与非本机 IP，macOS smoke 对 start 和 `pair=0→1` 各等待目标 fullname 的真实 Announce；runtime fake publisher 另覆盖 A→B、无地址撤销、失败重试与 IP/pair 竞态。实际跨设备发现和防火墙仍需真机验证。
 - daemon 入队或旧代 resend 被误报为新发布成功：fake backend 把旧 Announce 精确注入到 update 的首次 drain 与 unregister ack 之间，断言 ack 后 drain 和新 daemon 会丢弃它，且没有新 Announce 时必须超时；另覆盖 unregister error/timeout 清理、同值 no-op、Announce、idle 断开与重复 shutdown。真实 backend 只有新 daemon monitor 收到目标 fullname Announce 才让变更 update 返回成功。

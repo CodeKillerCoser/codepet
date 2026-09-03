@@ -2,5 +2,7 @@
   { "file": "pairing-qr-payload.json", "kind": "type", "name": "PairingQrPayload" },
   { "file": "pairing-exchange-request.json", "kind": "type", "name": "PairingExchangeRequest" },
   { "file": "pairing-exchange-response.json", "kind": "type", "name": "PairingExchangeResponse" },
+  { "file": "pairing-request-create-request.json", "kind": "type", "name": "PairingRequestCreateRequest" },
+  { "file": "pairing-request-status-response.json", "kind": "type", "name": "PairingRequestStatusResponse" },
   { "file": "credential-delete-response.json", "kind": "type", "name": "CurrentCredentialDeleteResponse" }
 ]

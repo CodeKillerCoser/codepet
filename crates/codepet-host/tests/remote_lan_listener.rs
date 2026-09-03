@@ -621,6 +621,50 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         .cancel_pairing(&invalid_pairing.pairing_id)
         .unwrap();
 
+    let pairing_request = lan::PairingRequestCreateRequest {
+        host_device_id: host.remote_access.remote_host_identity().device_id,
+        client_id: "client-confirmed".to_string(),
+        device: client_descriptor("client-confirmed", "1.0"),
+        client_nonce: "ab".repeat(32),
+    };
+    let (request_status, request_body) = client
+        .json_request(
+            "POST",
+            "/remote/v1/pairing-requests",
+            None,
+            Some(&serde_json::to_string(&pairing_request).unwrap()),
+        )
+        .await;
+    assert_eq!(request_status, 200);
+    let pending: lan::PairingRequestStatusResponse =
+        serde_json::from_value(request_body).unwrap();
+    assert_eq!(pending.state, lan::PairingRequestState::Pending);
+    assert!(pending.credential.is_none());
+    assert!(pending.gateway_url.is_none());
+    assert_eq!(host.remote_access.pending_pairing_requests().unwrap().len(), 1);
+    host.remote_access
+        .resolve_pairing_request(&pending.request_id, true)
+        .unwrap();
+    let (accepted_status, accepted_body) = client
+        .json_request(
+            "GET",
+            &format!("/remote/v1/pairing-requests/{}", pending.request_id),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(accepted_status, 200);
+    let accepted: lan::PairingRequestStatusResponse =
+        serde_json::from_value(accepted_body).unwrap();
+    assert_eq!(accepted.state, lan::PairingRequestState::Accepted);
+    assert!(accepted.gateway_url.as_deref().is_some_and(|url| {
+        url == server.gateway_url().unwrap()
+    }));
+    assert!(host
+        .remote_access
+        .validate_bearer(accepted.credential.as_deref().unwrap())
+        .is_ok());
+
     let pairing_a = pair_client(host.remote_access.as_ref(), &client, "client-a").await;
     assert_eq!(pairing_a.device, host.remote_access.remote_host_identity());
     assert_eq!(pairing_a.gateway_url, gateway_url);

@@ -1,0 +1,10 @@
+{
+  "hostDeviceId": "device-macbook-1",
+  "clientId": "remote-client-phone-1",
+  "device": {
+    "deviceName": "Alice's Pixel",
+    "operatingSystem": "Android",
+    "systemVersion": "16"
+  },
+  "clientNonce": "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+}

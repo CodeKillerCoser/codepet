@@ -26,6 +26,8 @@ use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::timeout;
 
 const PAIRING_EXCHANGE_PATH: &str = "/remote/v1/pairings/:pairing_id/exchange";
+const PAIRING_REQUEST_CREATE_PATH: &str = "/remote/v1/pairing-requests";
+const PAIRING_REQUEST_STATUS_PATH: &str = "/remote/v1/pairing-requests/:request_id";
 const GATEWAY_PATH: &str = "/remote/v2/gateway";
 const CURRENT_CREDENTIAL_PATH: &str = "/remote/v1/credentials/current";
 const MAX_REST_BODY_BYTES: usize = 64 * 1024;
@@ -156,6 +158,8 @@ impl RemoteLanServer {
         });
         let app = Router::new()
             .route(PAIRING_EXCHANGE_PATH, post(pairing_exchange))
+            .route(PAIRING_REQUEST_CREATE_PATH, post(create_pairing_request))
+            .route(PAIRING_REQUEST_STATUS_PATH, get(pairing_request_status))
             .route(GATEWAY_PATH, get(gateway_websocket))
             .route(CURRENT_CREDENTIAL_PATH, delete(delete_current_credential))
             .layer(DefaultBodyLimit::max(MAX_REST_BODY_BYTES))
@@ -553,6 +557,59 @@ async fn pairing_exchange(
         gateway_url,
         credential: issued.bearer_token,
     }))
+}
+
+async fn create_pairing_request(
+    State(state): State<Arc<RemoteLanState>>,
+    headers: HeaderMap,
+    request: Result<Json<lan::PairingRequestCreateRequest>, JsonRejection>,
+) -> Result<Json<lan::PairingRequestStatusResponse>, RestError> {
+    let gateway_url = pairing_exchange_gateway_url(&state.advertised_endpoints, &headers)?;
+    let Json(request) = request.map_err(RestError::invalid_json)?;
+    let pairing_request = state
+        .remote_access
+        .create_pairing_request(request)
+        .map_err(RestError::pairing)?;
+    Ok(Json(pairing_request_response(
+        &state,
+        pairing_request,
+        gateway_url,
+    )))
+}
+
+async fn pairing_request_status(
+    State(state): State<Arc<RemoteLanState>>,
+    Path(request_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<lan::PairingRequestStatusResponse>, RestError> {
+    let gateway_url = pairing_exchange_gateway_url(&state.advertised_endpoints, &headers)?;
+    let pairing_request = state
+        .remote_access
+        .pairing_request_status(&request_id)
+        .map_err(RestError::pairing)?;
+    Ok(Json(pairing_request_response(
+        &state,
+        pairing_request,
+        gateway_url,
+    )))
+}
+
+fn pairing_request_response(
+    state: &RemoteLanState,
+    request: crate::RemotePairingRequest,
+    gateway_url: String,
+) -> lan::PairingRequestStatusResponse {
+    let accepted = request.state == lan::PairingRequestState::Accepted;
+    let credential = request.bearer_token().map(str::to_string);
+    lan::PairingRequestStatusResponse {
+        request_id: request.request_id,
+        state: request.state,
+        device: state.remote_identity.clone(),
+        expires_at: request.expires_at,
+        confirmation_code: request.confirmation_code,
+        gateway_url: accepted.then_some(gateway_url),
+        credential,
+    }
 }
 
 async fn delete_current_credential(
@@ -1217,10 +1274,16 @@ impl RestError {
     fn pairing(error: HostError) -> Self {
         let status = match error.code.as_str() {
             "invalid_pairing_session" | "pairing_session_expired" => StatusCode::UNAUTHORIZED,
-            "invalid_remote_client_identity" | "invalid_remote_access_id" => {
+            "pairing_request_not_found" => StatusCode::NOT_FOUND,
+            "invalid_remote_client_identity"
+            | "invalid_remote_access_id"
+            | "invalid_pairing_request"
+            | "pairing_host_identity_mismatch" => {
                 StatusCode::BAD_REQUEST
             }
-            "remote_credential_limit_reached" => StatusCode::CONFLICT,
+            "remote_credential_limit_reached" | "pairing_request_limit_reached" => {
+                StatusCode::CONFLICT
+            }
             _ if error.retryable => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };

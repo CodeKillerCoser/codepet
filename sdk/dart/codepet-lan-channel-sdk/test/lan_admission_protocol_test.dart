@@ -21,6 +21,10 @@ void main() {
         'PairingQrPayload' => PairingQrPayload.fromJson(json).toJson(),
         'PairingExchangeRequest' => PairingExchangeRequest.fromJson(json).toJson(),
         'PairingExchangeResponse' => PairingExchangeResponse.fromJson(json).toJson(),
+        'PairingRequestCreateRequest' =>
+          PairingRequestCreateRequest.fromJson(json).toJson(),
+        'PairingRequestStatusResponse' =>
+          PairingRequestStatusResponse.fromJson(json).toJson(),
         'CurrentCredentialDeleteResponse' =>
           CurrentCredentialDeleteResponse.fromJson(json).toJson(),
         _ => throw StateError('unhandled canonical LAN fixture: $name'),
@@ -37,11 +41,15 @@ void main() {
     final response = PairingExchangeResponse.fromJson(
       fixture('pairing-exchange-response.json'),
     );
+    final requestStatus = PairingRequestStatusResponse.fromJson(
+      fixture('pairing-request-status-response.json'),
+    );
 
     for (final pair in [
       (qr.toString(), qr.pairingSecret),
       (exchange.toString(), exchange.pairingSecret),
       (response.toString(), response.credential),
+      (requestStatus.toString(), requestStatus.credential!),
     ]) {
       expect(pair.$1, contains('<redacted>'));
       expect(pair.$1, isNot(contains(pair.$2)));

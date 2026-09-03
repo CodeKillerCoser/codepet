@@ -55,8 +55,8 @@ use runtime_gateway::tauri_bridge::{
 };
 use runtime_gateway::remote_access::{
     cancel_remote_pairing, copy_remote_pairing_json, get_remote_pairing_status, list_remote_clients,
-    remote_access_status, retry_remote_access, revoke_remote_credential,
-    start_remote_pairing, RemoteAccessRuntime,
+    list_remote_pairing_requests, remote_access_status, resolve_remote_pairing_request,
+    retry_remote_access, revoke_remote_credential, start_remote_pairing, RemoteAccessRuntime,
 };
 use std::str::FromStr;
 use tauri::menu::{Menu, MenuItem};
@@ -615,6 +615,8 @@ pub fn run() {
             get_remote_pairing_status,
             copy_remote_pairing_json,
             cancel_remote_pairing,
+            list_remote_pairing_requests,
+            resolve_remote_pairing_request,
             revoke_remote_credential,
             updates::check_app_update,
             updates::install_app_update

@@ -45,6 +45,14 @@ export interface RemotePairingStatus {
   qrSvgDataUrl?: string | null;
 }
 
+export interface IncomingRemotePairingRequest {
+  requestId: string;
+  remoteClientId: string;
+  descriptor: DeviceDescriptor;
+  expiresAt: number;
+  confirmationCode: string;
+}
+
 export interface RemoteCredentialRevokeResult {
   credentialId: string;
   revokedAt?: number | null;
@@ -77,6 +85,14 @@ export async function copyRemotePairingJson(pairingId: string): Promise<void> {
 
 export async function cancelRemotePairing(pairingId: string): Promise<RemotePairingStatus> {
   return invoke<RemotePairingStatus>("cancel_remote_pairing", { pairingId });
+}
+
+export async function listRemotePairingRequests(): Promise<IncomingRemotePairingRequest[]> {
+  return invoke<IncomingRemotePairingRequest[]>("list_remote_pairing_requests");
+}
+
+export async function resolveRemotePairingRequest(requestId: string, accept: boolean): Promise<void> {
+  await invoke("resolve_remote_pairing_request", { requestId, accept });
 }
 
 export async function revokeRemoteCredential(credentialId: string): Promise<RemoteCredentialRevokeResult> {

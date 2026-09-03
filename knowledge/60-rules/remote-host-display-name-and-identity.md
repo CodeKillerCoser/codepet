@@ -18,7 +18,7 @@ macOS Host 的可见名称必须读取系统 ComputerName；设备名称和系�
 
 - macOS 使用 SystemConfiguration 的 `SCDynamicStoreCopyComputerName`，不启动 shell；空值或 API 不可用时使用无身份语义的安全 fallback。
 - `DeviceRegistry::open` 可刷新持久化 `displayName`，但必须保留原 `deviceId/createdAt`；名称变化不得触发 TLS identity 或 credential 重建。
-- Tauri 用 ComputerName 和系统信息构造一个 `DeviceDescriptor` 并注入 `RemoteAccessManager`。QR 使用其中的设备名，exchange/handshake 返回完整 descriptor，mDNS 只发布设备名；TLS 信任仍核对证书指纹。
+- Tauri 用 ComputerName 和系统信息构造一个 `DeviceDescriptor` 并注入 `RemoteAccessManager`。QR 使用其中的设备名，exchange/handshake 返回完整 descriptor；mDNS 可发布设备名与候选 TLS 指纹，但二者都不能单独建立信任。首次发现配对必须通过双方数字比较和 Host 接受，已配对连接仍核对持久化证书指纹。
 
 ## 来源
 

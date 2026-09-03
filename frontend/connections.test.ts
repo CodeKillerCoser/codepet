@@ -38,6 +38,13 @@ describe("connections workspace", () => {
     expect(appSource).toContain("applyRemoteClientSnapshot(await listRemoteClients())");
   });
 
+  it("polls incoming pairing requests and requires matching-code confirmation", () => {
+    expect(appSource).toContain("listRemotePairingRequests()");
+    expect(appSource).toContain("request.confirmationCode");
+    expect(appSource).toContain("请确认 Remote 上显示相同配对码");
+    expect(appSource).toContain("resolveRemotePairingRequest(request.requestId, accepted)");
+  });
+
   it("isolates Remote Host failures and provides a retry without changing runtime state", () => {
     expect(appSource).toContain("remoteRuntimeStatus = await getRemoteAccessStatus()");
     expect(appSource).toContain("remoteRuntimeStatus = await retryRemoteAccess()");

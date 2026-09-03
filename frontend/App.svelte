@@ -40,7 +40,7 @@
   import PetAvatar from "./lib/PetAvatar.svelte";
   import PairDeviceDialog from "./lib/PairDeviceDialog.svelte";
   import RemoteDeviceList from "./lib/RemoteDeviceList.svelte";
-  import { cancelRemotePairing, copyRemotePairingJson, getRemoteAccessStatus, getRemotePairingStatus, listRemoteClients, remoteCommandDiagnostic, retryRemoteAccess, revokeRemoteCredential, startRemotePairing, type RemoteAccessDiagnostic, type RemoteAccessStatus } from "./lib/remoteAccess";
+  import { cancelRemotePairing, copyRemotePairingJson, getRemoteAccessStatus, getRemotePairingStatus, listRemoteClients, listRemotePairingRequests, remoteCommandDiagnostic, resolveRemotePairingRequest, retryRemoteAccess, revokeRemoteCredential, startRemotePairing, type RemoteAccessDiagnostic, type RemoteAccessStatus } from "./lib/remoteAccess";
   import { pairingJsonCanBeCopied, pairingPhaseForStatus, pairingRemainingSeconds, remoteDeviceFromClient, type PairingCopyStatus, type PairingDisplayState, type RemoteDevice } from "./lib/remoteDevices";
   import { playNotificationSound, playWhipReactionSound } from "./lib/sound";
   import { defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
@@ -100,6 +100,9 @@
   let eventPollTimer: number | null = null;
   let updatePollTimer: number | null = null;
   let remoteAccessPollTimer: number | null = null;
+  let remotePairingRequestPollTimer: number | null = null;
+  let remotePairingRequestPollBusy = false;
+  const handledRemotePairingRequestIds = new Set<string>();
   let remoteDeviceClockTimer: number | null = null;
   let updateCheckMode: UpdateCheckMode | null = null;
   let updatePromptMode: UpdateCheckMode = "auto";
@@ -195,6 +198,7 @@
   const minPetOpacity = 0.25;
   const updateAutoIntervalMs = 6 * 60 * 60 * 1000;
   const remoteAccessPollIntervalMs = 10_000;
+  const remotePairingRequestPollIntervalMs = 2_000;
 
   $: visibleRemoteDiagnostic = remoteRuntimeStatus?.diagnostic ?? remoteCommandError;
 
@@ -209,6 +213,11 @@
     remoteAccessPollTimer = window.setInterval(() => {
       if (tab === "connections") void refreshRemoteAccess();
     }, remoteAccessPollIntervalMs);
+    void pollIncomingRemotePairingRequests();
+    remotePairingRequestPollTimer = window.setInterval(
+      () => void pollIncomingRemotePairingRequests(),
+      remotePairingRequestPollIntervalMs,
+    );
     remoteDeviceClockTimer = window.setInterval(() => {
       remoteDevicesNowMs = Date.now();
     }, 30_000);
@@ -364,6 +373,41 @@
     if (remoteAccessPollTimer) {
       window.clearInterval(remoteAccessPollTimer);
       remoteAccessPollTimer = null;
+    }
+    if (remotePairingRequestPollTimer) {
+      window.clearInterval(remotePairingRequestPollTimer);
+      remotePairingRequestPollTimer = null;
+    }
+  }
+
+  async function pollIncomingRemotePairingRequests() {
+    if (remotePairingRequestPollBusy) return;
+    remotePairingRequestPollBusy = true;
+    let activeRequestId: string | null = null;
+    try {
+      const requests = await listRemotePairingRequests();
+      const request = requests.find((candidate) =>
+        !handledRemotePairingRequestIds.has(candidate.requestId)
+        && candidate.expiresAt > Date.now(),
+      );
+      if (!request) return;
+      activeRequestId = request.requestId;
+      handledRemotePairingRequestIds.add(request.requestId);
+      await keepWindowVisible();
+      const accepted = await confirmDialog(
+        `${request.descriptor.deviceName} 希望连接这台电脑。\n\n配对码：${request.confirmationCode}\n\n请确认 Remote 上显示相同配对码。`,
+        { title: "确认设备配对", kind: "warning" },
+      );
+      await resolveRemotePairingRequest(request.requestId, accepted);
+      if (accepted) await refreshRemoteAccess();
+    } catch (currentError) {
+      if (activeRequestId) handledRemotePairingRequestIds.delete(activeRequestId);
+      remoteCommandError = remoteCommandDiagnostic(
+        currentError,
+        "remote_pairing_request_failed",
+      );
+    } finally {
+      remotePairingRequestPollBusy = false;
     }
   }
 
