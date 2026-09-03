@@ -182,14 +182,6 @@ impl ExecutionLifecycleHook for BlockResumeUntilCancelledHook {
     }
 }
 
-struct ShortInteractionLeaseHook;
-
-impl ExecutionLifecycleHook for ShortInteractionLeaseHook {
-    fn interaction_lease_duration(&self) -> Duration {
-        Duration::from_millis(100)
-    }
-}
-
 #[tokio::test]
 async fn project_methods_and_project_owned_conversation_fail_closed_when_probe_is_unsupported() {
     let marker = tempfile::NamedTempFile::new().unwrap();
@@ -1741,7 +1733,7 @@ async fn terminal_cleanup_hides_the_closing_slot_before_publishing_the_terminal_
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn delayed_output_after_completed_user_item_keeps_writer_until_terminal_is_forwarded() {
+async fn valid_lease_keeps_writer_through_delayed_output_and_terminal_forwarding() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("delayed-user-item-output.txt");
     let (event_sender, event_receiver) = mpsc::channel();
@@ -1774,7 +1766,7 @@ async fn delayed_output_after_completed_user_item_keeps_writer_until_terminal_is
             "delayed-output-after-user-item",
             &marker,
             events,
-            Some(Arc::new(ShortInteractionLeaseHook)),
+            None,
         )
         .await;
     let conversation = conversation_resource(&route, "thread-delayed-user-item");

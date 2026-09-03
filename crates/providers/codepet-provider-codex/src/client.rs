@@ -1697,7 +1697,8 @@ fn deserialize_field<T: DeserializeOwned>(
 mod tests {
     use super::*;
     use crate::protocol::{
-        CodexPermissionLevel, CodexThreadActiveFlag, CodexThreadStatus, CodexTurnStatus,
+        CodexPermissionLevel, CodexThreadActiveFlag, CodexThreadItem, CodexThreadStatus,
+        CodexTurnStatus,
     };
     use std::sync::mpsc::{Receiver, Sender};
     use std::sync::Barrier;
@@ -2220,6 +2221,40 @@ mod tests {
         assert_eq!(response["id"], "future-request");
         assert_eq!(response["error"]["code"], -32601);
         assert!(response.get("jsonrpc").is_none());
+        assert!(session.is_running());
+        session.shutdown().unwrap();
+    }
+
+    #[test]
+    fn empty_streaming_agent_message_text_does_not_fault_the_reader() {
+        let (session, _, peer_sender) = mock_session();
+        let notifications = session.subscribe().unwrap();
+        peer_sender
+            .send(json!({
+                "method": "item/started",
+                "params": {
+                    "threadId": "thread-one",
+                    "turnId": "turn-one",
+                    "item": {
+                        "type": "agentMessage",
+                        "id": "agent-one",
+                        "text": ""
+                    }
+                }
+            }))
+            .unwrap();
+
+        let incoming = notifications
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            incoming,
+            CodexIncoming::Notification(CodexNotification::ItemUpserted {
+                item: CodexThreadItem::AgentMessage { id, text },
+                ..
+            }) if id == "agent-one" && text.is_empty()
+        ));
         assert!(session.is_running());
         session.shutdown().unwrap();
     }

@@ -284,7 +284,7 @@ fn parse_thread_item(value: &Value) -> Result<CodexThreadItem, String> {
         }
         "agentMessage" => Ok(CodexThreadItem::AgentMessage {
             id,
-            text: thread_item_string(value, "text")?,
+            text: thread_item_text(value, "text")?,
         }),
         "plan" => Ok(CodexThreadItem::Plan {
             id,
@@ -472,6 +472,14 @@ fn thread_item_string(value: &Value, key: &str) -> Result<String, String> {
         .get(key)
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| format!("thread item is missing {key}"))
+}
+
+fn thread_item_text(value: &Value, key: &str) -> Result<String, String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| format!("thread item is missing {key}"))
 }
