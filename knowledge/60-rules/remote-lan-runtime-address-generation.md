@@ -20,6 +20,7 @@ Host 启动时把 `192.168.0.105` 分别复制进 listener handle、Axum pairing
 - 无 publishable 地址时有界注销旧广告并清空 committed endpoint；status 保持 listener `available`，URL 为空并暴露 retryable discovery diagnostic。地址恢复或 Announce 失败后由同一低频检查重新发布。
 - 失败 generation 不得放回 advertiser slot，也不得恢复旧 endpoint；listener/TLS/session/credential/Gateway 保持原对象。
 - Remote 在 App 生命周期内只维护一份共享发现目录，以 `deviceId` 更新当前 SRV/A endpoint；缓存必须有过期时间，相同地址只刷新 freshness，不制造重复重连事件。
+- Android 真机应优先使用系统 `NsdManager` 发现 DNS-SD 服务，并把解析出的 SRV 地址与 TXT 元数据送入与其他平台相同的严格校验；Dart 原始 UDP mDNS 只作为回退。不能把 `NetworkInterface.list` 返回的 Wi-Fi、蜂窝、VPN、虚拟和 loopback 接口全部加入多播的成功作为真机前提，也不能静默吞掉主发现路径失败后直接呈现“没有设备”。
 - Android Emulator 的 `10.0.2.0/24` NAT 不转发宿主机 LAN 上的 UDP 5353 广播。调试模拟器可以额外探测固定别名 `10.0.2.2:47622` 的公开 HTTPS discovery metadata；该回退不得在真机或发布构建启用，不得替代 mDNS，也不得绕过证书实际指纹比对、数字口令确认或 Host 接受。
 - `10.0.2.2` 只是模拟器本地可达别名，不是 Host advertised generation 的地址。Host 接受配对后可以返回真实 LAN `gatewayUrl`；经 pin TLS 连接、`deviceId`、证书指纹和配对码共同验证后，Remote 应接受 Host 授权的新 host/port locator，不得要求它与发起请求时的 IP 或端口相同。`gatewayUrl` 仍必须为无 userinfo/query/fragment 的 `wss://.../remote/v2/gateway`。
 - 连接解析优先尝试仍新鲜的发现候选，再回退持久化 endpoint 和稳定端口。已配对发现候选必须在建连前同时匹配已保存的 `deviceId` 与 TLS fingerprint，建连时再通过 credential、证书 pin 和 Gateway handshake 完成最终验证。首次配对可把 TXT `fp` 用作候选 pin，但只有两端显示相同数字码并由 Host 明确接受后才能签发 credential；mDNS TXT 本身不能升级为信任来源。
@@ -32,12 +33,15 @@ Host 启动时把 `192.168.0.105` 分别复制进 listener handle、Axum pairing
 
 2026-09-03 模拟器现场证据：macOS `dns-sd` 能发现 Host 的 `_codepet._tcp.local.` 和 47622，Android 端已获得 multicast 权限并持有 lock；模拟器 `eth0=10.0.2.15/24` 的抓包只看到发往 `224.0.0.251:5353` 的查询，看不到 Host 响应。因此该环境需要显式的宿主机别名回退，不能用模拟器结果否定真机 LAN mDNS。
 
+2026-09-03 真机排查证据：Host 在 `192.168.0.105:47622` 监听，`/remote/v1/discovery` 返回完整 `id/name/fp/vmin/vmax/pair`，macOS `dns-sd -B` 与 `dns-sd -L` 均能在 en0 对应接口发现并解析 `_codepet._tcp.local.`；同一局域网 Android 真机仍显示空目录。Remote 当时只使用 Dart `multicast_dns`，其启动会枚举所有 IPv4 接口并逐个 `joinMulticast`，目录 runner 又会把启动错误折叠为空扫描。该证据排除了 Host 未监听、未注册服务和 TXT 缺字段，但尚不能单独区分具体 Android 网卡加入失败与网络设备对多播的限制，因此真机改用系统 NSD，原始 UDP 保留为回退。
+
 ## 验证方式
 
 - Host mDNS 单测必须验证 A→B 同时替换 address/interface 与最新 `pair`，并保留 unregister ack、旧 resend 隔离、Announce 和失败清理。
 - 真实 listener 测试必须验证 committed=A、pending=B 时，经 B authority 的 pairing exchange 已返回 B，且无 endpoint 时返回 retryable 503 而不消费 pairing。
 - Tauri 测试必须覆盖 A→B 一致性；A→无地址时 listener/TLS/credential 不变并可恢复 B；IP/pair 竞态最终只留最新 generation；Announce 失败可重试；shutdown 后 resolver 调用停止。
 - Remote 测试必须覆盖同一 `deviceId` 的 A→B 缓存替换、过期候选淘汰、B 优先于持久化 A、发现事件立即唤醒 retryable failure，以及非重试认证失败不被唤醒。
+- Android NSD 测试必须覆盖：原生发现结果优先于原始 UDP；原生空结果或失败继续 UDP 回退；原生记录仍校验字段白名单、协议版本、`pair` 和 64 位小写十六进制证书指纹。真机 smoke 需要在 Wi-Fi 开启、蜂窝与 VPN 接口同时存在的常见环境下发现 Host。
 - 模拟器回退测试必须覆盖：HTTPS metadata 与实际叶子证书指纹一致才形成候选；回退失败仍继续 mDNS；探测仅由调试 Android 模拟器身份启用。真实模拟器 smoke 必须验证 `10.0.2.2` 候选可见且首次配对仍经过双端确认。
 - 配对测试必须覆盖 Host 返回与 QR、mDNS 或 `10.0.2.2` 不同 host/port 的 accepted `gatewayUrl`，确认 Remote 在身份链路完整时保存 Host 授权的 locator；非 WSS、错误 Gateway 路径或携带 userinfo/query/fragment 仍应失败关闭。
 - Remote 重连测试必须覆盖：相同 `deviceId` 但 TXT `fp` 缺失或不同的发现候选不得连接；旧证书 session 不得写回新证书配对记录的 preferred endpoint。
