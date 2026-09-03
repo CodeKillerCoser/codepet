@@ -677,6 +677,7 @@ dependencies = [
  "codepet-gateway-sdk",
  "codepet-host",
  "codepet-lan-channel-sdk",
+ "codepet-provider-sdk",
  "core-foundation",
  "core-graphics",
  "dirs 5.0.1",

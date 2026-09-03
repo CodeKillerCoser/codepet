@@ -19,6 +19,8 @@ describe("connections workspace", () => {
     expect(connectionSource).toContain("on:click={() => detectRuntime(runtime.providerId)}");
     expect(connectionSource).toContain("on:click={() => chooseRuntimeExecutable(runtime)}");
     expect(connectionSource).toContain("on:click={() => restoreAutomaticRuntime(runtime)}");
+    expect(connectionSource).toContain("<dt>用户选择</dt>");
+    expect(connectionSource).toContain('runtime.configuredExecutable ?? "自动选择"');
   });
 
   it("starts with bridge-owned device and pairing state empty", () => {

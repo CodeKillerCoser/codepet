@@ -1,6 +1,10 @@
 [
   { "file": "initialize-request.json", "kind": "request", "name": "provider.initialize" },
   { "file": "initialize-response.json", "kind": "response", "name": "provider.initialize" },
+  { "file": "runtime-get-installed-request.json", "kind": "request", "name": "runtime.getInstalled" },
+  { "file": "runtime-get-installed-response.json", "kind": "response", "name": "runtime.getInstalled" },
+  { "file": "runtime-select-request.json", "kind": "request", "name": "runtime.select" },
+  { "file": "runtime-select-response.json", "kind": "response", "name": "runtime.select" },
   { "file": "instance-create-request.json", "kind": "request", "name": "instance.create" },
   { "file": "instance-create-response.json", "kind": "response", "name": "instance.create" },
   { "file": "project-list-request.json", "kind": "request", "name": "project.list" },

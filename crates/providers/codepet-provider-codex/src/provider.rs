@@ -31,7 +31,9 @@ use codepet_provider_sdk::{
     FlatModelCatalogKind, FlatModelSelection, HarnessDescriptor, ModelCatalog, ModelSelection, ProviderApproval,
     ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance,
     ProviderInstanceRoute, ProviderPluginDescriptor, ProviderShutdownRequest,
-    ProviderShutdownResponse, RoutedResourceId, TurnInterruptRequest, TurnInterruptResponse,
+    ProviderShutdownResponse, RoutedResourceId, RuntimeCandidate, RuntimeGetInstalledRequest,
+    RuntimeGetInstalledResponse, RuntimeInstallation, RuntimeSelectRequest, RuntimeSelectResponse,
+    TurnInterruptRequest, TurnInterruptResponse,
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnSteerRequest, TurnSteerResponse,
     VersionRange, PROTOCOL_VERSION, fit_single_turn_conversation_history,
 };
@@ -39,7 +41,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -1642,6 +1644,7 @@ struct ProviderState {
     host_device_id: Option<String>,
     initialized_client_id: Option<String>,
     instances: HashMap<String, Arc<CodexInstanceRuntime>>,
+    selected_runtime: Option<RuntimeInstallation>,
 }
 
 pub struct CodexProvider {
@@ -1671,6 +1674,7 @@ impl CodexProvider {
                 host_device_id: None,
                 initialized_client_id: None,
                 instances: HashMap::new(),
+                selected_runtime: None,
             }),
             events,
             lifecycle_hook,
@@ -1805,9 +1809,30 @@ impl Provider for CodexProvider {
         })
     }
 
+    fn runtime_get_installed<'a>(
+        &'a self,
+        _request: RuntimeGetInstalledRequest,
+    ) -> ProtocolFuture<'a, RuntimeGetInstalledResponse> {
+        Box::pin(async move {
+            let selected = lock(&self.state).selected_runtime.clone();
+            Ok(runtime_inventory(discover_codex_candidates(), selected, "codex"))
+        })
+    }
+
+    fn runtime_select<'a>(
+        &'a self,
+        request: RuntimeSelectRequest,
+    ) -> ProtocolFuture<'a, RuntimeSelectResponse> {
+        Box::pin(async move {
+            let selected = inspect_runtime_candidate(request.candidate, "codex")?;
+            lock(&self.state).selected_runtime = Some(selected.clone());
+            Ok(RuntimeSelectResponse { selected })
+        })
+    }
+
     fn instance_create<'a>(
         &'a self,
-        request: InstanceCreateRequest,
+        mut request: InstanceCreateRequest,
     ) -> ProtocolFuture<'a, InstanceCreateResponse> {
         Box::pin(async move {
             Self::descriptor().validate_instance_kind(&request.instance_kind)?;
@@ -1819,8 +1844,17 @@ impl Provider for CodexProvider {
                     false,
                 ));
             }
+            let selected = if request.settings.contains_key("appServerExecutable") { None } else {
+                Some(lock(&self.state).selected_runtime.clone().or_else(|| {
+                    runtime_inventory(discover_codex_candidates(), None, "codex").installed.into_iter().next()
+                }).ok_or_else(|| protocol_error("provider_unavailable", "Codex Provider did not find a compatible local runtime".to_string(), true))?)
+            };
+            if let Some(selected) = selected.as_ref() {
+                request.settings.insert("appServerExecutable".to_string(), json!(selected.executable_path.clone()));
+            }
             let settings = decode_settings(request.settings.clone())?;
             let mut state = lock(&self.state);
+            if let Some(selected) = selected { state.selected_runtime = Some(selected); }
             let host_device = state.host_device_id.as_deref().ok_or_else(|| {
                 protocol_error(
                     "provider_not_initialized",
@@ -3730,6 +3764,122 @@ fn harness_allows_full_turn_fallback(version: Option<&str>) -> bool {
             }),
             Some((Some(major), Some(minor))) if major > 0 || minor >= 152
         )
+}
+
+fn runtime_inventory(candidates: Vec<RuntimeCandidate>, selected: Option<RuntimeInstallation>, product: &str) -> RuntimeGetInstalledResponse {
+    let mut seen = HashSet::new();
+    let installed = candidates
+        .into_iter()
+        .filter_map(|candidate| inspect_runtime_candidate(candidate, product).ok())
+        .filter(|installation| seen.insert(installation.executable_path.clone()))
+        .collect::<Vec<_>>();
+    let selected = selected.and_then(|selected| installed.iter()
+        .find(|installation| installation.executable_path == selected.executable_path).cloned());
+    RuntimeGetInstalledResponse { installed, selected }
+}
+
+fn discover_codex_candidates() -> Vec<RuntimeCandidate> {
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("CODE_PET_CODEX_BIN").filter(|value| !value.is_empty()) {
+        candidates.push(RuntimeCandidate { executable_path: PathBuf::from(path).to_string_lossy().into_owned(), source: codepet_provider_sdk::RuntimeCandidateSource::Environment });
+    }
+    if let Some(paths) = std::env::var_os("PATH") {
+        for directory in std::env::split_paths(&paths) {
+            candidates.push(RuntimeCandidate { executable_path: directory.join("codex").to_string_lossy().into_owned(), source: codepet_provider_sdk::RuntimeCandidateSource::CurrentPath });
+        }
+    }
+    if let Some(path) = discover_login_shell_command("codex") {
+        candidates.push(RuntimeCandidate { executable_path: path, source: codepet_provider_sdk::RuntimeCandidateSource::LoginShell });
+    }
+    for path in [
+        "/Applications/Codex.app/Contents/Resources/codex",
+        "/Applications/ChatGPT.app/Contents/Resources/codex",
+    ] {
+        candidates.push(RuntimeCandidate { executable_path: path.to_string(), source: codepet_provider_sdk::RuntimeCandidateSource::MacosApplication });
+    }
+    candidates
+}
+
+fn discover_login_shell_command(command_name: &str) -> Option<String> {
+    let shell = std::env::var_os("SHELL").map(PathBuf::from).filter(|path| path.is_absolute())
+        .unwrap_or_else(|| PathBuf::from("/bin/zsh"));
+    let output = Command::new(shell).args(["-lc", &format!("command -v {command_name}")]).output().ok()?;
+    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|path| !path.is_empty())
+}
+
+fn inspect_runtime_candidate(
+    candidate: RuntimeCandidate,
+    product: &str,
+) -> Result<RuntimeInstallation, ProtocolError> {
+    let path = PathBuf::from(&candidate.executable_path);
+    if !path.is_absolute() || !path.is_file() {
+        return Err(protocol_error(
+            "invalid_runtime_selection",
+            format!("Runtime executable is unavailable: {}", path.display()),
+            false,
+        ));
+    }
+    let canonical = std::fs::canonicalize(&path).map_err(|error| {
+        protocol_error(
+            "invalid_runtime_selection",
+            format!("Resolve runtime executable {}: {error}", path.display()),
+            false,
+        )
+    })?;
+    let line = bounded_runtime_version(&canonical)?;
+    if line.is_empty() || !line.to_ascii_lowercase().contains(product) {
+        return Err(protocol_error(
+            "invalid_runtime_selection",
+            format!("Runtime executable does not identify itself as {product}"),
+            false,
+        ));
+    }
+    let version = line
+        .split_whitespace()
+        .find(|part| part.chars().next().is_some_and(|character| character.is_ascii_digit()))
+        .unwrap_or(&line)
+        .trim_start_matches('v')
+        .to_string();
+    Ok(RuntimeInstallation {
+        executable_path: canonical.to_string_lossy().into_owned(),
+        version,
+        source: candidate.source,
+    })
+}
+
+fn bounded_runtime_version(executable: &Path) -> Result<String, ProtocolError> {
+    let mut child = Command::new(executable).arg("--version")
+        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| {
+        protocol_error(
+            "invalid_runtime_selection",
+            format!("Run runtime executable {}: {error}", executable.display()),
+            false,
+        )
+    })?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let output = child.wait_with_output().map_err(|error| protocol_error(
+                    "invalid_runtime_selection", format!("Read runtime version: {error}"), false))?;
+                if !status.success() {
+                    return Err(protocol_error("invalid_runtime_selection", format!("Runtime executable rejected --version: {status}"), false));
+                }
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Ok(stdout.lines().chain(stderr.lines()).find(|line| !line.trim().is_empty())
+                    .unwrap_or_default().trim().to_string());
+            }
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(protocol_error("invalid_runtime_selection", "Runtime version probe timed out".to_string(), true));
+            }
+            Err(error) => return Err(protocol_error("invalid_runtime_selection", format!("Inspect runtime version probe: {error}"), false)),
+        }
+    }
 }
 
 fn is_created_conversation_not_ready(

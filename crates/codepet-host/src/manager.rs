@@ -15,7 +15,8 @@ use codepet_provider_sdk::{
     ProjectListResponse, ProjectUpdateRequest, ProjectUpdateResponse, ProtocolEvent, ProtocolMethod,
     ProviderDescribeRequest, ProviderInitializeRequest, ProviderInstance, ProviderInstanceRoute,
     ProviderPluginDescriptor, ProviderWireMessage, RoutedResourceId, TurnInterruptRequest,
-    TurnInterruptResponse, TurnStartRequest, TurnStartResponse, TurnSteerRequest,
+    RuntimeCandidate, RuntimeGetInstalledRequest, RuntimeGetInstalledResponse, RuntimeSelectRequest,
+    RuntimeSelectResponse, TurnInterruptResponse, TurnStartRequest, TurnStartResponse, TurnSteerRequest,
     TurnSteerResponse, VersionRange, PROTOCOL_VERSION,
 };
 use serde_json::Value;
@@ -73,6 +74,7 @@ pub struct PluginManagerConfig {
     pub supported_versions: VersionRange,
     pub process: PluginProcessOptions,
     pub event_capacity: usize,
+    pub runtime_selections: BTreeMap<String, RuntimeCandidate>,
 }
 
 impl Default for PluginManagerConfig {
@@ -86,6 +88,7 @@ impl Default for PluginManagerConfig {
             },
             process: PluginProcessOptions::default(),
             event_capacity: 256,
+            runtime_selections: BTreeMap::new(),
         }
     }
 }
@@ -147,6 +150,7 @@ struct PluginManagerInner {
     shutting_down: AtomicBool,
     config: PluginManagerConfig,
     catalog_diagnostics: Vec<CatalogDiagnostic>,
+    runtime_selections: RwLock<BTreeMap<String, RuntimeCandidate>>,
 }
 
 #[derive(Clone)]
@@ -233,8 +237,9 @@ impl PluginManager {
                 updates,
                 update_receiver: StdMutex::new(Some(update_receiver)),
                 shutting_down: AtomicBool::new(false),
-                config,
                 catalog_diagnostics: catalog.diagnostics().to_vec(),
+                runtime_selections: RwLock::new(config.runtime_selections.clone()),
+                config,
             }),
         })
     }
@@ -544,6 +549,13 @@ impl PluginManager {
                 return Err(error);
             }
         };
+        if let Some(candidate) = self.inner.runtime_selections.read().await.get(plugin_id).cloned() {
+            if let Err(error) = process.client().runtime_select(RuntimeSelectRequest { candidate }).await {
+                let error = HostError::from(error);
+                self.fail_started_process(plugin_id, generation, process, error.clone()).await;
+                return Err(error);
+            }
+        }
         let inbound = match process.take_inbound().await {
             Ok(inbound) => inbound,
             Err(error) => {
@@ -984,6 +996,44 @@ impl PluginManager {
         instance.capabilities = response.capabilities.clone();
         self.set_runtime_instance(&record.plugin_id, instance).await?;
         Ok(response)
+    }
+
+    pub async fn runtime_get_installed(
+        &self,
+        plugin_id: &str,
+        request: RuntimeGetInstalledRequest,
+    ) -> HostResult<RuntimeGetInstalledResponse> {
+        self.process_for_plugin(plugin_id)
+            .await?
+            .client()
+            .runtime_get_installed(request)
+            .await
+            .map_err(HostError::from)
+    }
+
+    pub async fn runtime_select(
+        &self,
+        plugin_id: &str,
+        request: RuntimeSelectRequest,
+    ) -> HostResult<RuntimeSelectResponse> {
+        self.process_for_plugin(plugin_id)
+            .await?
+            .client()
+            .runtime_select(request)
+            .await
+            .map_err(HostError::from)
+    }
+
+    pub async fn remember_runtime_selection(
+        &self,
+        plugin_id: &str,
+        candidate: RuntimeCandidate,
+    ) -> HostResult<()> {
+        if !self.inner.plugins.read().await.contains_key(plugin_id) {
+            return Err(unknown_plugin(plugin_id));
+        }
+        self.inner.runtime_selections.write().await.insert(plugin_id.to_string(), candidate);
+        Ok(())
     }
 
     pub async fn conversation_list(

@@ -20,17 +20,20 @@ use codepet_provider_sdk::{
     InstanceStartRequest, InstanceStartResponse, InstanceStatus, InstanceStatusChangedEvent,
     GroupedModelCatalogKind, GroupedModelSelection, HarnessDescriptor, InstanceStopRequest,
     InstanceStopResponse, ModelCatalog, ModelSelection, PageInfo, ProtocolError, ProtocolEvent,
-    ProtocolFuture, Provider, ProviderApproval, ProviderCapabilities,
+    ProtocolFuture, Provider, ProviderApproval, ProviderAuthentication,
+    ProviderAuthenticationStatus, ProviderCapabilities,
     ProviderDescribeRequest, ProviderDescribeResponse, ProviderInitializeRequest,
     ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute,
     ProviderPluginDescriptor, ProviderShutdownRequest, ProviderShutdownResponse,
-    ProviderTurn, RoutedResourceId, TurnInterruptRequest, TurnInterruptResponse, TurnSelection,
+    ProviderTurn, ProviderUsage, ProviderUsageDetail, RoutedResourceId, RuntimeCandidate, RuntimeGetInstalledRequest,
+    RuntimeGetInstalledResponse, RuntimeInstallation, RuntimeSelectRequest, RuntimeSelectResponse,
+    TurnInterruptRequest, TurnInterruptResponse, TurnSelection,
     TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest, TurnSteerResponse,
     VersionRange, PROTOCOL_VERSION, fit_single_turn_conversation_history,
 };
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -38,7 +41,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -82,6 +85,8 @@ struct InstanceMutable {
     sessions: HashMap<String, OpenCodeSession>,
     active_turns: HashMap<String, ActiveTurnState>,
     pending_approvals: HashMap<String, PendingApproval>,
+    authentication: Option<ProviderAuthentication>,
+    usage: Option<ProviderUsage>,
 }
 
 struct OpenCodeInstanceRuntime {
@@ -119,6 +124,8 @@ impl OpenCodeInstanceRuntime {
                 sessions: HashMap::new(),
                 active_turns: HashMap::new(),
                 pending_approvals: HashMap::new(),
+                authentication: None,
+                usage: None,
             }),
             mapper: OpenCodeProtocolMapper::new(request.route),
             events,
@@ -126,6 +133,7 @@ impl OpenCodeInstanceRuntime {
     }
 
     fn snapshot(&self) -> ProviderInstance {
+        let mutable = lock(&self.mutable);
         self.mapper.instance(
             OPENCODE_PLUGIN_ID.to_string(),
             self.instance_kind.clone(),
@@ -136,8 +144,10 @@ impl OpenCodeInstanceRuntime {
                 version: Some(self.settings.server_version.clone()),
                 executable_path: Some(self.settings.server_executable.to_string_lossy().into_owned()),
             },
-            lock(&self.mutable).status,
+            mutable.status,
             lock(&self.capabilities).clone(),
+            mutable.authentication.clone(),
+            mutable.usage.clone(),
         )
     }
 
@@ -711,6 +721,7 @@ struct ProviderState {
     host_device_id: Option<String>,
     initialized_client_id: Option<String>,
     instances: HashMap<String, Arc<OpenCodeInstanceRuntime>>,
+    selected_runtime: Option<RuntimeInstallation>,
 }
 
 pub struct OpenCodeProvider {
@@ -727,6 +738,7 @@ impl OpenCodeProvider {
                 host_device_id: None,
                 initialized_client_id: None,
                 instances: HashMap::new(),
+                selected_runtime: None,
             }),
             events,
             boot_id: Uuid::new_v4().to_string(),
@@ -872,9 +884,30 @@ impl Provider for OpenCodeProvider {
         })
     }
 
+    fn runtime_get_installed<'a>(
+        &'a self,
+        _request: RuntimeGetInstalledRequest,
+    ) -> ProtocolFuture<'a, RuntimeGetInstalledResponse> {
+        Box::pin(async move {
+            let selected = lock(&self.state).selected_runtime.clone();
+            Ok(runtime_inventory(discover_path_candidates("opencode"), selected, OPENCODE_VERIFIED_SERVER_VERSION))
+        })
+    }
+
+    fn runtime_select<'a>(
+        &'a self,
+        request: RuntimeSelectRequest,
+    ) -> ProtocolFuture<'a, RuntimeSelectResponse> {
+        Box::pin(async move {
+            let selected = inspect_runtime_candidate(request.candidate, OPENCODE_VERIFIED_SERVER_VERSION)?;
+            lock(&self.state).selected_runtime = Some(selected.clone());
+            Ok(RuntimeSelectResponse { selected })
+        })
+    }
+
     fn instance_create<'a>(
         &'a self,
-        request: InstanceCreateRequest,
+        mut request: InstanceCreateRequest,
     ) -> ProtocolFuture<'a, InstanceCreateResponse> {
         Box::pin(async move {
             Self::descriptor().validate_instance_kind(&request.instance_kind)?;
@@ -886,8 +919,18 @@ impl Provider for OpenCodeProvider {
                     false,
                 ));
             }
+            let selected = if request.settings.contains_key("serverExecutable") { None } else {
+                Some(lock(&self.state).selected_runtime.clone().or_else(|| {
+                    runtime_inventory(discover_path_candidates("opencode"), None, OPENCODE_VERIFIED_SERVER_VERSION).installed.into_iter().next()
+                }).ok_or_else(|| protocol_error("provider_unavailable", "OpenCode Provider did not find the verified local runtime".to_string(), true))?)
+            };
+            if let Some(selected) = selected.as_ref() {
+                request.settings.insert("serverExecutable".to_string(), json!(selected.executable_path.clone()));
+                request.settings.insert("serverVersion".to_string(), json!(selected.version.clone()));
+            }
             let settings = decode_settings(request.settings.clone())?;
             let mut state = lock(&self.state);
+            if let Some(selected) = selected { state.selected_runtime = Some(selected); }
             let host_device = state.host_device_id.as_deref().ok_or_else(|| {
                 protocol_error(
                     "provider_not_initialized",
@@ -961,6 +1004,7 @@ impl Provider for OpenCodeProvider {
                 .or_else(default_server_working_directory);
             let capability_executable = executable.clone();
             let capability_working_directory = working_directory.clone();
+            let account_working_directory = working_directory.clone();
             let generation = {
                 let mut mutable = lock(&runtime.mutable);
                 mutable.generation_counter = mutable.generation_counter.saturating_add(1);
@@ -1010,6 +1054,10 @@ impl Provider for OpenCodeProvider {
                     return Err(OpenCodeProtocolMapper::error(error));
                 }
             };
+            let account_metadata = probe_opencode_account_metadata(
+                &runtime.settings.server_executable,
+                account_working_directory.as_deref(),
+            );
             let capabilities = match OpenCodeProtocolMapper::capabilities(
                 &agents,
                 &models,
@@ -1039,6 +1087,8 @@ impl Provider for OpenCodeProvider {
                 mutable.sessions.clear();
                 mutable.active_turns.clear();
                 mutable.pending_approvals.clear();
+                mutable.authentication = Some(account_metadata.0);
+                mutable.usage = Some(account_metadata.1);
             }
             let instance = match runtime.set_status(InstanceStatus::Ready) {
                 Ok(instance) => instance,
@@ -1979,6 +2029,143 @@ fn default_server_working_directory() -> Option<PathBuf> {
         .find_map(std::env::var_os)
         .map(PathBuf::from)
         .filter(|path| path.is_absolute() && path.is_dir())
+}
+
+fn probe_opencode_account_metadata(
+    executable: &std::path::Path,
+    working_directory: Option<&std::path::Path>,
+) -> (ProviderAuthentication, ProviderUsage) {
+    let run = |arguments: &[&str]| {
+        let mut command = Command::new(executable);
+        command.args(arguments).stdin(Stdio::null());
+        if let Some(directory) = working_directory {
+            command.current_dir(directory);
+        }
+        command.output().ok().filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+    };
+    let credential_count = run(&["auth", "list"]).as_deref().and_then(parse_credential_count);
+    let authentication = ProviderAuthentication {
+        status: match credential_count {
+            Some(0) => ProviderAuthenticationStatus::SignedOut,
+            Some(_) => ProviderAuthenticationStatus::SignedIn,
+            None => ProviderAuthenticationStatus::Unknown,
+        },
+        display_text: Some(match credential_count {
+            Some(0) => "No stored credentials".to_string(),
+            Some(1) => "1 credential provider".to_string(),
+            Some(count) => format!("{count} credential providers"),
+            None => "Authentication status unavailable".to_string(),
+        }),
+    };
+    let stats = run(&["stats", "--days", "30"]);
+    let total_cost = stats.as_deref().and_then(|text| statistic_value(text, "Total Cost"));
+    let input = stats.as_deref().and_then(|text| statistic_value(text, "Input"));
+    let output = stats.as_deref().and_then(|text| statistic_value(text, "Output"));
+    let mut data = codepet_provider_sdk::JsonObject::new();
+    if let Some(value) = total_cost.as_ref() { data.insert("totalCost".to_string(), json!(value)); }
+    if let Some(value) = input.as_ref() { data.insert("inputTokens".to_string(), json!(value)); }
+    if let Some(value) = output.as_ref() { data.insert("outputTokens".to_string(), json!(value)); }
+    let usage = ProviderUsage {
+        display_text: total_cost.map(|cost| format!("Last 30 days · {cost}"))
+            .unwrap_or_else(|| "Local usage statistics unavailable".to_string()),
+        observed_at: Some(now_ms()),
+        details: (!data.is_empty()).then_some(vec![ProviderUsageDetail {
+            namespace: "opencode.local-stats".to_string(),
+            schema_version: "1".to_string(),
+            data,
+        }]),
+    };
+    (authentication, usage)
+}
+
+fn parse_credential_count(text: &str) -> Option<u64> {
+    text.lines().find(|line| line.contains("credential"))
+        .and_then(|line| line.split(|character: char| !character.is_ascii_digit()).find(|part| !part.is_empty()))
+        .and_then(|value| value.parse().ok())
+}
+
+fn statistic_value(text: &str, label: &str) -> Option<String> {
+    text.lines().find(|line| line.contains(label)).and_then(|line| {
+        let index = line.find(label)? + label.len();
+        let value = line[index..].trim().trim_end_matches('│').trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
+}
+
+fn runtime_inventory(candidates: Vec<RuntimeCandidate>, selected: Option<RuntimeInstallation>, required_version: &str) -> RuntimeGetInstalledResponse {
+    let mut seen = HashSet::new();
+    let installed = candidates.into_iter()
+        .filter_map(|candidate| inspect_runtime_candidate(candidate, required_version).ok())
+        .filter(|installation| seen.insert(installation.executable_path.clone()))
+        .collect::<Vec<_>>();
+    let selected = selected.and_then(|selected| installed.iter()
+        .find(|installation| installation.executable_path == selected.executable_path).cloned());
+    RuntimeGetInstalledResponse { installed, selected }
+}
+
+fn discover_path_candidates(command: &str) -> Vec<RuntimeCandidate> {
+    let mut candidates = std::env::var_os("PATH").into_iter().flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
+        .map(|directory| RuntimeCandidate {
+            executable_path: directory.join(command).to_string_lossy().into_owned(),
+            source: codepet_provider_sdk::RuntimeCandidateSource::CurrentPath,
+        }).collect::<Vec<_>>();
+    if let Some(path) = discover_login_shell_command(command) {
+        candidates.push(RuntimeCandidate { executable_path: path, source: codepet_provider_sdk::RuntimeCandidateSource::LoginShell });
+    }
+    candidates
+}
+
+fn discover_login_shell_command(command_name: &str) -> Option<String> {
+    let shell = std::env::var_os("SHELL").map(PathBuf::from).filter(|path| path.is_absolute())
+        .unwrap_or_else(|| PathBuf::from("/bin/zsh"));
+    let output = Command::new(shell).args(["-lc", &format!("command -v {command_name}")]).output().ok()?;
+    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|path| !path.is_empty())
+}
+
+fn inspect_runtime_candidate(candidate: RuntimeCandidate, required_version: &str) -> Result<RuntimeInstallation, ProtocolError> {
+    let path = PathBuf::from(&candidate.executable_path);
+    if !path.is_absolute() || !path.is_file() {
+        return Err(protocol_error("invalid_runtime_selection", format!("Runtime executable is unavailable: {}", path.display()), false));
+    }
+    let canonical = std::fs::canonicalize(&path).map_err(|error| protocol_error(
+        "invalid_runtime_selection", format!("Resolve runtime executable {}: {error}", path.display()), false))?;
+    let version = bounded_opencode_version(&canonical)?;
+    if version != required_version {
+        return Err(protocol_error("invalid_runtime_selection", format!("OpenCode runtime must be version {required_version}; found {version}"), false));
+    }
+    Ok(RuntimeInstallation { executable_path: canonical.to_string_lossy().into_owned(), version, source: candidate.source })
+}
+
+fn bounded_opencode_version(executable: &std::path::Path) -> Result<String, ProtocolError> {
+    let mut child = Command::new(executable).arg("--version")
+        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()
+        .map_err(|error| protocol_error("invalid_runtime_selection", format!("Run runtime executable {}: {error}", executable.display()), false))?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let output = child.wait_with_output().map_err(|error| protocol_error(
+                    "invalid_runtime_selection", format!("Read runtime version: {error}"), false))?;
+                if !status.success() {
+                    return Err(protocol_error("invalid_runtime_selection", format!("Runtime executable rejected --version: {status}"), false));
+                }
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Ok(stdout.lines().chain(stderr.lines())
+                    .find_map(|line| line.split_whitespace().find(|part| part.trim_start_matches('v').chars().next().is_some_and(|character| character.is_ascii_digit())))
+                    .unwrap_or_default().trim_start_matches('v').to_string());
+            }
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(protocol_error("invalid_runtime_selection", "Runtime version probe timed out".to_string(), true));
+            }
+            Err(error) => return Err(protocol_error("invalid_runtime_selection", format!("Inspect runtime version probe: {error}"), false)),
+        }
+    }
 }
 
 fn discover_cli_models(

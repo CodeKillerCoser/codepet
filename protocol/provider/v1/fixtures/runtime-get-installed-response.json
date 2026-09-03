@@ -1,0 +1,23 @@
+{
+  "jsonrpc": "2.0",
+  "id": "provider-runtime-installed-1",
+  "result": {
+    "installed": [
+      {
+        "executablePath": "/opt/codepet/bin/codex",
+        "version": "0.151.0",
+        "source": "current-path"
+      },
+      {
+        "executablePath": "/Applications/Codex.app/Contents/Resources/codex",
+        "version": "0.152.1",
+        "source": "macos-application"
+      }
+    ],
+    "selected": {
+      "executablePath": "/opt/codepet/bin/codex",
+      "version": "0.151.0",
+      "source": "current-path"
+    }
+  }
+}

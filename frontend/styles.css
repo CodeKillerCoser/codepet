@@ -781,6 +781,48 @@ select:focus-visible {
   background: color-mix(in srgb, var(--app-danger) 9%, var(--app-surface-strong));
 }
 
+.runtime-installations {
+  display: grid;
+  gap: 8px;
+}
+
+.runtime-installations > strong {
+  font-size: var(--font-size-sm);
+  letter-spacing: var(--letter-spacing-caps);
+}
+
+.runtime-installations > p {
+  margin: 0;
+  color: var(--app-subtle);
+  font-size: var(--font-size-sm);
+}
+
+.runtime-installations button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-surface-strong);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.runtime-installations button.selected {
+  border-color: var(--app-accent);
+  box-shadow: inset 3px 0 0 var(--app-accent);
+}
+
+.runtime-installations code {
+  overflow: hidden;
+  color: var(--app-subtle);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .runtime-diagnostic strong {
   font-size: var(--font-size-sm);
   overflow-wrap: anywhere;

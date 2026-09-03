@@ -2,9 +2,9 @@
 
 ## 规则
 
-Claude Provider 的上游只能是 Host resolver 注入的 Claude executable 与官方非交互机器接口。当前允许的最小接口是 `claude --print` 的 `stream-json` 输入/输出、Provider 自建 UUID 的 `--session-id`/`--resume` 和 Unix 信号。不得通过 Hook、transcript 扫描、窗口控制、Claude Desktop/IDE 私有状态或猜测字段补能力。
+Claude Provider 的上游只能是 Host resolver 注入的 Claude executable 与官方非交互机器接口。当前允许的最小接口是 `claude --version`、`claude auth status --json`、`claude --print` 的 `stream-json` 输入/输出、Provider 自建 UUID 的 `--session-id`/`--resume` 和 Unix 信号。握手版本与认证状态来自前两个命令；用量只使用官方 result 事件的 `usage` / `total_cost_usd`，未完成 Provider turn 前明确显示为本次会话尚无记录。不得通过 Hook、transcript 扫描、窗口控制、Claude Desktop/IDE 私有状态或猜测字段补能力。
 
-Provider 不得自己搜索 PATH、应用目录、VS Code 扩展或用户目录。`claudeExecutable` 缺失、非绝对、不可执行或 `--version` 失败时，instance lifecycle 必须 fail closed。
+Claude Provider 的 `runtime.getInstalled` 负责搜索当前 PATH 与登录 Shell，并以 `--version` 验证结果；不得扫描 Claude Desktop、IDE 私有目录或 transcript。选择结果缺失、非绝对、不可执行或版本验证失败时，instance lifecycle 必须 fail closed。
 
 没有稳定机器接口的 Provider Protocol 方法必须从 capabilities 中关闭，并返回 `capability_unsupported`。当前包括 `conversation.list`、`conversation.get`、`turn.steer` 和 `approval.resolve`；Provider process 重启后也不扫描 transcript 恢复 session。审批若只能通过 Agent SDK callback 或 MCP permission tool 成立，不能在禁止 SDK sidecar/MCP 的实现中伪造。
 

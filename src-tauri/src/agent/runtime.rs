@@ -44,6 +44,21 @@ pub struct AgentRuntimeDiagnostic {
     pub message: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRuntimeCandidate {
+    pub executable_path: String,
+    pub source: AgentRuntimeSource,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRuntimeInstallation {
+    pub executable_path: String,
+    pub version: String,
+    pub source: AgentRuntimeSource,
+}
+
 impl AgentRuntimeDiagnostic {
     fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
@@ -64,6 +79,8 @@ pub struct AgentRuntime {
     pub configured_executable: Option<String>,
     pub version: Option<String>,
     pub diagnostic: Option<AgentRuntimeDiagnostic>,
+    #[serde(default)]
+    pub installed: Vec<AgentRuntimeInstallation>,
 }
 
 impl AgentRuntime {
@@ -109,6 +126,28 @@ impl std::error::Error for AgentRuntimeServiceError {
 pub struct AgentRuntimeService;
 
 impl AgentRuntimeService {
+    pub fn save_provider_selection(
+        &self,
+        provider_plugin_id: &str,
+        executable: &str,
+    ) -> Result<(), AgentRuntimeServiceError> {
+        let mut settings = load_app_settings().map_err(AgentRuntimeServiceError::Settings)?;
+        settings.agent_runtimes.by_provider
+            .entry(provider_plugin_id.to_string())
+            .or_insert_with(AgentRuntimePreferenceSettings::default)
+            .configured_executable = Some(executable.to_string());
+        save_app_settings(&settings).map_err(AgentRuntimeServiceError::Settings)
+    }
+
+    pub fn clear_provider_selection(
+        &self,
+        provider_plugin_id: &str,
+    ) -> Result<(), AgentRuntimeServiceError> {
+        let mut settings = load_app_settings().map_err(AgentRuntimeServiceError::Settings)?;
+        settings.agent_runtimes.by_provider.remove(provider_plugin_id);
+        save_app_settings(&settings).map_err(AgentRuntimeServiceError::Settings)
+    }
+
     pub fn list(&self) -> Result<Vec<AgentRuntime>, AgentRuntimeServiceError> {
         let settings = load_app_settings().map_err(AgentRuntimeServiceError::Settings)?;
         Ok(runtime_descriptors()
@@ -124,6 +163,42 @@ impl AgentRuntimeService {
         let descriptor = runtime_descriptor(provider_id)?;
         let settings = load_app_settings().map_err(AgentRuntimeServiceError::Settings)?;
         Ok(resolve_descriptor(descriptor, &settings))
+    }
+
+    pub fn detect_automatic(
+        &self,
+        provider_id: &str,
+    ) -> Result<AgentRuntime, AgentRuntimeServiceError> {
+        let descriptor = runtime_descriptor(provider_id)?;
+        Ok(resolve_descriptor_with(
+            descriptor,
+            None,
+            automatic_candidates(descriptor),
+            &SystemExecutableValidator,
+        ))
+    }
+
+    pub fn candidates(
+        &self,
+        provider_id: &str,
+    ) -> Result<Vec<AgentRuntimeCandidate>, AgentRuntimeServiceError> {
+        let descriptor = runtime_descriptor(provider_id)?;
+        let settings = load_app_settings().map_err(AgentRuntimeServiceError::Settings)?;
+        let configured = settings.agent_runtimes.by_provider.get(provider_id)
+            .and_then(|preference| preference.configured_executable.as_deref())
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(|path| RuntimeCandidate {
+                path: PathBuf::from(path),
+                source: AgentRuntimeSource::Configured,
+            });
+        Ok(deduplicate_candidates(configured.into_iter().chain(automatic_candidates(descriptor)).collect())
+            .into_iter()
+            .map(|candidate| AgentRuntimeCandidate {
+                executable_path: candidate.path.to_string_lossy().into_owned(),
+                source: candidate.source,
+            })
+            .collect())
     }
 
     pub fn set_configured_executable(
@@ -384,6 +459,7 @@ fn resolve_descriptor_with(
                 configured_executable: configured,
                 version: None,
                 diagnostic: Some(diagnostic),
+                installed: Vec::new(),
             },
         };
     }
@@ -430,6 +506,7 @@ fn resolve_descriptor_with(
         configured_executable: None,
         version: None,
         diagnostic: Some(diagnostic),
+        installed: Vec::new(),
     }
 }
 
@@ -470,6 +547,7 @@ fn ready_runtime(
         configured_executable,
         version: validated.version,
         diagnostic: None,
+        installed: Vec::new(),
     }
 }
 

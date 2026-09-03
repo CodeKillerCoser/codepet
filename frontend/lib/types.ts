@@ -1,7 +1,7 @@
 import type { Approval, Provider, TurnTask } from "./generated/runtimeGateway";
 
 export type AgentId = "codex" | "claude" | "qoder" | "cursor";
-export type AgentRuntimeProviderId = "codex" | "claude" | "opencode";
+export type AgentRuntimeProviderId = string;
 export type AgentRuntimeStatus = "ready" | "unavailable" | "invalid-configured-executable";
 export type AgentRuntimeSource =
   | "configured"
@@ -43,6 +43,12 @@ export interface AgentRuntimeDiagnostic {
   message: string;
 }
 
+export interface AgentRuntimeInstallation {
+  executablePath: string;
+  version: string;
+  source: AgentRuntimeSource;
+}
+
 export interface AgentRuntime {
   providerId: AgentRuntimeProviderId;
   displayName: string;
@@ -52,6 +58,7 @@ export interface AgentRuntime {
   configuredExecutable?: string | null;
   version?: string | null;
   diagnostic?: AgentRuntimeDiagnostic | null;
+  installed: AgentRuntimeInstallation[];
 }
 
 export interface PixelPetSprite {

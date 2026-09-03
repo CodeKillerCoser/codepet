@@ -18,8 +18,12 @@ use codepet_provider_sdk::{
     ModelCatalog, ModelSelection, ProtocolEvent, ProtocolFuture, Provider, ProviderCapabilities, ProviderCapability,
     ProviderConversation, ProviderDescribeRequest, ProviderDescribeResponse, ProviderExtension,
     ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute,
-    ProviderPluginDescriptor, ProviderShutdownRequest, ProviderShutdownResponse, ProviderTurn,
-    RoutedResourceId, ToolCategory, ToolCommandDetails, ToolContent, ToolContentKind,
+    ProviderAuthentication, ProviderAuthenticationStatus, ProviderPluginDescriptor,
+    ProviderShutdownRequest, ProviderShutdownResponse, ProviderTurn, ProviderUsage,
+    ProviderUsageDetail,
+    RoutedResourceId, RuntimeCandidate, RuntimeGetInstalledRequest, RuntimeGetInstalledResponse,
+    RuntimeInstallation, RuntimeSelectRequest, RuntimeSelectResponse, ToolCategory,
+    ToolCommandDetails, ToolContent, ToolContentKind,
     ToolExecutionError, ToolInvocation, ToolOrigin, ToolOriginKind, ToolResult,
     TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent,
     TurnSelection, TurnSendCapabilities, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
@@ -129,6 +133,9 @@ struct DiscoveredConversation {
 struct InstanceMutable {
     status: InstanceStatus,
     conversations: HashMap<String, ManagedConversation>,
+    version: Option<String>,
+    authentication: Option<ProviderAuthentication>,
+    usage: Option<ProviderUsage>,
 }
 
 struct ClaudeInstanceRuntime {
@@ -156,12 +163,16 @@ impl ClaudeInstanceRuntime {
             mutable: Mutex::new(InstanceMutable {
                 status: InstanceStatus::Created,
                 conversations: HashMap::new(),
+                version: None,
+                authentication: None,
+                usage: None,
             }),
             events,
         }
     }
 
     fn snapshot(&self) -> ProviderInstance {
+        let mutable = lock(&self.mutable);
         ProviderInstance {
             route: self.route.clone(),
             plugin_id: CLAUDE_PLUGIN_ID.to_string(),
@@ -170,12 +181,12 @@ impl ClaudeInstanceRuntime {
             harness: HarnessDescriptor {
                 id: self.instance_kind.clone(),
                 display_name: "Claude Code".to_string(),
-                version: None,
+                version: mutable.version.clone(),
                 executable_path: Some(self.settings.claude_executable.to_string_lossy().into_owned()),
             },
-            status: lock(&self.mutable).status,
-            authentication: None,
-            usage: None,
+            status: mutable.status,
+            authentication: mutable.authentication.clone(),
+            usage: mutable.usage.clone(),
             capabilities: self.capabilities.clone(),
         }
     }
@@ -710,10 +721,11 @@ impl ClaudeInstanceRuntime {
                 result,
                 stop_reason,
                 terminal_reason,
-                usage: _,
-                total_cost_usd: _,
+                usage,
+                total_cost_usd,
             } => {
                 validate_claude_session(conversation_id, session_id.as_deref())?;
+                self.update_usage(usage, total_cost_usd);
                 let status = result_status(&subtype, is_error, terminal_reason.as_deref());
                 self.set_pending_completion(
                     conversation_id,
@@ -728,6 +740,36 @@ impl ClaudeInstanceRuntime {
             }
             _ => Ok(()),
         }
+    }
+
+    fn update_usage(&self, usage: Option<Value>, total_cost_usd: Option<f64>) {
+        let Some(usage) = usage else { return };
+        let mut data = usage.as_object().map(|value| value.iter()
+            .map(|(key, value)| (key.clone(), value.clone())).collect::<BTreeMap<_, _>>())
+            .unwrap_or_default();
+        if let Some(cost) = total_cost_usd {
+            data.insert("totalCostUsd".to_string(), json!(cost));
+        }
+        let tokens = ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
+            .into_iter()
+            .filter_map(|key| data.get(key).and_then(Value::as_u64))
+            .sum::<u64>();
+        lock(&self.mutable).usage = Some(ProviderUsage {
+            display_text: match total_cost_usd {
+                Some(cost) => format!("Last turn: {tokens} tokens · ${cost:.4}"),
+                None => format!("Last turn: {tokens} tokens"),
+            },
+            observed_at: Some(now_ms()),
+            details: Some(vec![ProviderUsageDetail {
+                namespace: "anthropic.claude.turn-usage".to_string(),
+                schema_version: "1".to_string(),
+                data,
+            }]),
+        });
+        let _ = self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
+            jsonrpc: "2.0".to_string(),
+            params: InstanceStatusChangedEvent { instance: self.snapshot(), previous_status: None },
+        });
     }
 
     fn set_pending_completion(
@@ -1030,6 +1072,7 @@ struct ProviderState {
     host_device_id: Option<String>,
     initialized_client_id: Option<String>,
     instances: HashMap<String, Arc<ClaudeInstanceRuntime>>,
+    selected_runtime: Option<RuntimeInstallation>,
 }
 
 pub struct ClaudeProvider {
@@ -1045,6 +1088,7 @@ impl ClaudeProvider {
                 host_device_id: None,
                 initialized_client_id: None,
                 instances: HashMap::new(),
+                selected_runtime: None,
             }),
             events,
             shutdown: AtomicBool::new(false),
@@ -1191,9 +1235,30 @@ impl Provider for ClaudeProvider {
         })
     }
 
+    fn runtime_get_installed<'a>(
+        &'a self,
+        _request: RuntimeGetInstalledRequest,
+    ) -> ProtocolFuture<'a, RuntimeGetInstalledResponse> {
+        Box::pin(async move {
+            let selected = lock(&self.state).selected_runtime.clone();
+            Ok(runtime_inventory(discover_path_candidates("claude"), selected, "claude"))
+        })
+    }
+
+    fn runtime_select<'a>(
+        &'a self,
+        request: RuntimeSelectRequest,
+    ) -> ProtocolFuture<'a, RuntimeSelectResponse> {
+        Box::pin(async move {
+            let selected = inspect_runtime_candidate(request.candidate, "claude")?;
+            lock(&self.state).selected_runtime = Some(selected.clone());
+            Ok(RuntimeSelectResponse { selected })
+        })
+    }
+
     fn instance_create<'a>(
         &'a self,
-        request: InstanceCreateRequest,
+        mut request: InstanceCreateRequest,
     ) -> ProtocolFuture<'a, InstanceCreateResponse> {
         Box::pin(async move {
             Self::descriptor().validate_instance_kind(&request.instance_kind)?;
@@ -1205,8 +1270,17 @@ impl Provider for ClaudeProvider {
                     false,
                 ));
             }
+            let selected = if request.settings.contains_key("claudeExecutable") { None } else {
+                Some(lock(&self.state).selected_runtime.clone().or_else(|| {
+                    runtime_inventory(discover_path_candidates("claude"), None, "claude").installed.into_iter().next()
+                }).ok_or_else(|| protocol_error("provider_unavailable", "Claude Provider did not find a compatible local runtime".to_string(), true))?)
+            };
+            if let Some(selected) = selected.as_ref() {
+                request.settings.insert("claudeExecutable".to_string(), json!(selected.executable_path.clone()));
+            }
             let settings = decode_settings(request.settings.clone())?;
             let mut state = lock(&self.state);
+            if let Some(selected) = selected { state.selected_runtime = Some(selected); }
             let host_device = state.host_device_id.as_deref().ok_or_else(|| {
                 protocol_error(
                     "provider_not_initialized",
@@ -1259,16 +1333,30 @@ impl Provider for ClaudeProvider {
             }
             runtime.set_status(InstanceStatus::Starting)?;
             let executable = runtime.settings.claude_executable.clone();
-            let outcome = tokio::task::spawn_blocking(move || verify_claude_executable(executable))
+            let config_dir = runtime.settings.claude_config_dir.clone();
+            let outcome = tokio::task::spawn_blocking(move || probe_claude_metadata(executable, config_dir))
                 .await
                 .map_err(|error| protocol_error(
                     "provider_task_failed",
                     format!("Claude executable validation task failed: {error}"),
                     true,
                 ))?;
-            if let Err(error) = outcome {
-                runtime.set_status(InstanceStatus::Error)?;
-                return Err(error);
+            let metadata = match outcome {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    runtime.set_status(InstanceStatus::Error)?;
+                    return Err(error);
+                }
+            };
+            {
+                let mut mutable = lock(&runtime.mutable);
+                mutable.version = Some(metadata.version);
+                mutable.authentication = Some(metadata.authentication);
+                mutable.usage = Some(ProviderUsage {
+                    display_text: "No usage recorded in this Provider session".to_string(),
+                    observed_at: Some(now_ms()),
+                    details: None,
+                });
             }
             Ok(InstanceStartResponse {
                 instance: runtime.set_status(InstanceStatus::Ready)?,
@@ -1699,7 +1787,44 @@ fn decode_settings(
     Ok(settings)
 }
 
-fn verify_claude_executable(executable: PathBuf) -> Result<(), ProtocolError> {
+struct ClaudeRuntimeMetadata {
+    version: String,
+    authentication: ProviderAuthentication,
+}
+
+fn probe_claude_metadata(
+    executable: PathBuf,
+    config_dir: Option<PathBuf>,
+) -> Result<ClaudeRuntimeMetadata, ProtocolError> {
+    let version = verify_claude_executable(executable.clone())?;
+    let mut command = Command::new(executable);
+    command.args(["auth", "status", "--json"]);
+    if let Some(config_dir) = config_dir {
+        command.env("CLAUDE_CONFIG_DIR", config_dir);
+    }
+    let authentication = match command.output() {
+        Ok(output) => {
+            let value = serde_json::from_slice::<Value>(&output.stdout).unwrap_or(Value::Null);
+            let signed_in = value.get("loggedIn").and_then(Value::as_bool).unwrap_or(false);
+            let subscription = value.get("subscriptionType").and_then(Value::as_str);
+            ProviderAuthentication {
+                status: if signed_in { ProviderAuthenticationStatus::SignedIn } else { ProviderAuthenticationStatus::SignedOut },
+                display_text: Some(match (signed_in, subscription) {
+                    (true, Some(subscription)) => format!("Signed in · {subscription}"),
+                    (true, None) => "Signed in".to_string(),
+                    (false, _) => "Signed out".to_string(),
+                }),
+            }
+        }
+        Err(_) => ProviderAuthentication {
+            status: ProviderAuthenticationStatus::Unknown,
+            display_text: Some("Authentication status unavailable".to_string()),
+        },
+    };
+    Ok(ClaudeRuntimeMetadata { version, authentication })
+}
+
+fn verify_claude_executable(executable: PathBuf) -> Result<String, ProtocolError> {
     if !executable.is_file() {
         return Err(protocol_error(
             "provider_unavailable",
@@ -1710,8 +1835,8 @@ fn verify_claude_executable(executable: PathBuf) -> Result<(), ProtocolError> {
     let mut child = Command::new(&executable)
         .arg("--version")
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| protocol_error(
             "provider_unavailable",
@@ -1721,7 +1846,20 @@ fn verify_claude_executable(executable: PathBuf) -> Result<(), ProtocolError> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         match child.try_wait() {
-            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) if status.success() => {
+                let output = child.wait_with_output().map_err(|error| protocol_error(
+                    "provider_unavailable", format!("read Claude version output: {error}"), true))?;
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let line = stdout.lines().chain(stderr.lines()).find(|line| !line.trim().is_empty())
+                    .unwrap_or_default().trim();
+                if !line.to_ascii_lowercase().contains("claude") {
+                    return Err(protocol_error("provider_unavailable", "Executable does not identify itself as Claude".to_string(), false));
+                }
+                return Ok(line.split_whitespace()
+                    .find(|part| part.trim_start_matches('v').chars().next().is_some_and(|character| character.is_ascii_digit()))
+                    .unwrap_or(line).trim_start_matches('v').to_string());
+            }
             Ok(Some(status)) => {
                 return Err(protocol_error(
                     "provider_unavailable",
@@ -1748,6 +1886,49 @@ fn verify_claude_executable(executable: PathBuf) -> Result<(), ProtocolError> {
             }
         }
     }
+}
+
+fn runtime_inventory(candidates: Vec<RuntimeCandidate>, selected: Option<RuntimeInstallation>, product: &str) -> RuntimeGetInstalledResponse {
+    let mut seen = HashSet::new();
+    let installed = candidates.into_iter()
+        .filter_map(|candidate| inspect_runtime_candidate(candidate, product).ok())
+        .filter(|installation| seen.insert(installation.executable_path.clone()))
+        .collect::<Vec<_>>();
+    let selected = selected.and_then(|selected| installed.iter()
+        .find(|installation| installation.executable_path == selected.executable_path).cloned());
+    RuntimeGetInstalledResponse { installed, selected }
+}
+
+fn discover_path_candidates(command: &str) -> Vec<RuntimeCandidate> {
+    let mut candidates = std::env::var_os("PATH").into_iter().flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
+        .map(|directory| RuntimeCandidate {
+            executable_path: directory.join(command).to_string_lossy().into_owned(),
+            source: codepet_provider_sdk::RuntimeCandidateSource::CurrentPath,
+        }).collect::<Vec<_>>();
+    if let Some(path) = discover_login_shell_command(command) {
+        candidates.push(RuntimeCandidate { executable_path: path, source: codepet_provider_sdk::RuntimeCandidateSource::LoginShell });
+    }
+    candidates
+}
+
+fn discover_login_shell_command(command_name: &str) -> Option<String> {
+    let shell = std::env::var_os("SHELL").map(PathBuf::from).filter(|path| path.is_absolute())
+        .unwrap_or_else(|| PathBuf::from("/bin/zsh"));
+    let output = Command::new(shell).args(["-lc", &format!("command -v {command_name}")]).output().ok()?;
+    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|path| !path.is_empty())
+}
+
+fn inspect_runtime_candidate(candidate: RuntimeCandidate, product: &str) -> Result<RuntimeInstallation, ProtocolError> {
+    let path = PathBuf::from(&candidate.executable_path);
+    if !path.is_absolute() || !path.is_file() {
+        return Err(protocol_error("invalid_runtime_selection", format!("Runtime executable is unavailable: {}", path.display()), false));
+    }
+    let canonical = std::fs::canonicalize(&path).map_err(|error| protocol_error(
+        "invalid_runtime_selection", format!("Resolve runtime executable {}: {error}", path.display()), false))?;
+    let version = verify_claude_executable(canonical.clone()).map_err(|error| protocol_error(
+        "invalid_runtime_selection", format!("{product} runtime validation failed: {}", error.message), error.retryable))?;
+    Ok(RuntimeInstallation { executable_path: canonical.to_string_lossy().into_owned(), version, source: candidate.source })
 }
 
 fn active_conversation_mut<'a>(

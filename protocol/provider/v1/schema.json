@@ -920,6 +920,69 @@
       "required": ["plugin"],
       "additionalProperties": false
     },
+    "RuntimeCandidateSource": {
+      "type": "string",
+      "enum": [
+        "configured",
+        "environment",
+        "current-path",
+        "login-shell",
+        "macos-application",
+        "windows-application"
+      ]
+    },
+    "RuntimeCandidate": {
+      "type": "object",
+      "properties": {
+        "executablePath": { "type": "string", "minLength": 1 },
+        "source": { "$ref": "#/$defs/RuntimeCandidateSource" }
+      },
+      "required": ["executablePath", "source"],
+      "additionalProperties": false
+    },
+    "RuntimeInstallation": {
+      "type": "object",
+      "properties": {
+        "executablePath": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "source": { "$ref": "#/$defs/RuntimeCandidateSource" }
+      },
+      "required": ["executablePath", "version", "source"],
+      "additionalProperties": false
+    },
+    "RuntimeGetInstalledRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "RuntimeGetInstalledResponse": {
+      "type": "object",
+      "properties": {
+        "installed": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RuntimeInstallation" }
+        },
+        "selected": { "$ref": "#/$defs/RuntimeInstallation" }
+      },
+      "required": ["installed"],
+      "additionalProperties": false
+    },
+    "RuntimeSelectRequest": {
+      "type": "object",
+      "properties": {
+        "candidate": { "$ref": "#/$defs/RuntimeCandidate" }
+      },
+      "required": ["candidate"],
+      "additionalProperties": false
+    },
+    "RuntimeSelectResponse": {
+      "type": "object",
+      "properties": {
+        "selected": { "$ref": "#/$defs/RuntimeInstallation" }
+      },
+      "required": ["selected"],
+      "additionalProperties": false
+    },
     "ProviderExtension": {
       "type": "object",
       "properties": {

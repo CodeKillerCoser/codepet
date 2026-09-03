@@ -31,8 +31,7 @@ pub use platform::macos_window;
 
 use agents::{AgentId, AgentView};
 use agent_runtime::{
-    AgentRuntime, AgentRuntimeService, CLAUDE_RUNTIME_PROVIDER_ID,
-    CODEX_RUNTIME_PROVIDER_ID, OPENCODE_RUNTIME_PROVIDER_ID,
+    AgentRuntime, AgentRuntimeCandidate, AgentRuntimeService, AgentRuntimeSource,
 };
 use base64::Engine;
 use events::PetEvent;
@@ -108,88 +107,74 @@ fn set_agent_hook_events(
 }
 
 #[tauri::command]
-fn list_agent_runtimes(
-    service: tauri::State<'_, AgentRuntimeService>,
+async fn list_agent_runtimes(
+    _service: tauri::State<'_, AgentRuntimeService>,
+    provider_host: tauri::State<'_, ProviderHostState>,
 ) -> Result<Vec<AgentRuntime>, String> {
-    service.list().map_err(|error| error.to_string())
+    Ok(provider_host.runtime_views().await)
 }
 
 #[tauri::command]
-fn detect_agent_runtime(
+async fn detect_agent_runtime(
     service: tauri::State<'_, AgentRuntimeService>,
+    provider_host: tauri::State<'_, ProviderHostState>,
     provider_id: String,
 ) -> Result<AgentRuntime, String> {
-    service
-        .detect(&provider_id)
-        .map_err(|error| error.to_string())
+    let _ = service;
+    provider_host.runtime_view(&provider_id).await
 }
 
 #[tauri::command]
-fn refresh_agent_runtimes(
+async fn refresh_agent_runtimes(
     app: AppHandle,
     service: tauri::State<'_, AgentRuntimeService>,
     provider_host: tauri::State<'_, ProviderHostState>,
 ) -> Result<Vec<AgentRuntime>, String> {
-    let runtimes = service.list().map_err(|error| error.to_string())?;
-    for runtime in runtimes.iter().filter(|runtime| {
-        matches!(
-            runtime.provider_id.as_str(),
-            CODEX_RUNTIME_PROVIDER_ID
-                | CLAUDE_RUNTIME_PROVIDER_ID
-                | OPENCODE_RUNTIME_PROVIDER_ID
-        )
-    }) {
-        restart_remote_runtime_provider(runtime, &provider_host);
-    }
+    let _ = service;
+    let runtimes = provider_host.runtime_views().await;
     let _ = app.emit("agent-runtimes-updated", runtimes.clone());
     Ok(runtimes)
 }
 
 #[tauri::command]
-fn set_agent_runtime_executable(
+async fn set_agent_runtime_executable(
     app: AppHandle,
     service: tauri::State<'_, AgentRuntimeService>,
     provider_host: tauri::State<'_, ProviderHostState>,
     provider_id: String,
     executable: String,
 ) -> Result<AgentRuntime, String> {
-    let runtime = service
-        .set_configured_executable(&provider_id, &executable)
+    let selected = provider_host.select_runtime(&provider_id, AgentRuntimeCandidate {
+        executable_path: executable,
+        source: AgentRuntimeSource::Configured,
+    }).await?;
+    service.save_provider_selection(&provider_id, &selected.executable_path)
         .map_err(|error| error.to_string())?;
-    restart_remote_runtime_provider(&runtime, &provider_host);
+    let runtime = provider_host.runtime_view(&provider_id).await?;
     emit_runtime_settings(&app, &runtime);
     Ok(runtime)
 }
 
 #[tauri::command]
-fn clear_agent_runtime_executable(
+async fn clear_agent_runtime_executable(
     app: AppHandle,
     service: tauri::State<'_, AgentRuntimeService>,
     provider_host: tauri::State<'_, ProviderHostState>,
     provider_id: String,
 ) -> Result<AgentRuntime, String> {
-    let runtime = service
-        .clear_configured_executable(&provider_id)
-        .map_err(|error| error.to_string())?;
-    restart_remote_runtime_provider(&runtime, &provider_host);
+    let current = provider_host.runtime_view(&provider_id).await?;
+    let automatic = current.installed.first().cloned()
+        .ok_or_else(|| format!("{} Provider did not find a default runtime", current.display_name))?;
+    provider_host.select_runtime(&provider_id, AgentRuntimeCandidate {
+        executable_path: automatic.executable_path,
+        source: automatic.source,
+    }).await?;
+    service.clear_provider_selection(&provider_id).map_err(|error| error.to_string())?;
+    let runtime = provider_host.runtime_view(&provider_id).await?;
     emit_runtime_settings(&app, &runtime);
     Ok(runtime)
 }
 
-fn restart_remote_runtime_provider(
-    runtime: &AgentRuntime,
-    provider_host: &ProviderHostState,
-) {
-    if !matches!(
-        runtime.provider_id.as_str(),
-        CODEX_RUNTIME_PROVIDER_ID
-            | CLAUDE_RUNTIME_PROVIDER_ID
-            | OPENCODE_RUNTIME_PROVIDER_ID
-    ) {
-        return;
-    }
-    provider_host.refresh_runtime_in_background(runtime.clone());
-}
 
 fn emit_runtime_settings(app: &AppHandle, runtime: &AgentRuntime) {
     if let Ok(settings) = load_app_settings() {

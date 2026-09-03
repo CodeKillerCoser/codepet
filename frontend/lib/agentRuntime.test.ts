@@ -17,6 +17,7 @@ function runtime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
     configuredExecutable: null,
     version: "codex 1.0",
     diagnostic: null,
+    installed: [],
     ...overrides,
   };
 }

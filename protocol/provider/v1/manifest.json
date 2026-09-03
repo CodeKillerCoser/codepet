@@ -36,6 +36,20 @@
       "response": { "$ref": "./schema.json#/$defs/ProviderDescribeResponse" }
     },
     {
+      "name": "runtime.getInstalled",
+      "direction": "hostToPlugin",
+      "idempotency": "safe",
+      "request": { "$ref": "./schema.json#/$defs/RuntimeGetInstalledRequest" },
+      "response": { "$ref": "./schema.json#/$defs/RuntimeGetInstalledResponse" }
+    },
+    {
+      "name": "runtime.select",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": { "$ref": "./schema.json#/$defs/RuntimeSelectRequest" },
+      "response": { "$ref": "./schema.json#/$defs/RuntimeSelectResponse" }
+    },
+    {
       "name": "instance.create",
       "direction": "hostToPlugin",
       "idempotency": "idempotent",

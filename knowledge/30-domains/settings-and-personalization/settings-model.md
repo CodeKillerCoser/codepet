@@ -21,7 +21,7 @@
 
 `agents.byAgent.<agent>.hookEvents` 保存每个 Agent 勾选的 hook 事件。缺失或空列表表示默认使用该 Agent 注册表中的全部支持事件。
 
-`agentRuntimes.byProvider.<provider>.configuredExecutable` 保存用户验证通过的 Agent 可执行文件绝对路径。它只能由 runtime 专用 Tauri command 修改；通用 settings 更新会保留后端当前值，避免绕过文件、执行权限和版本探测。
+`agentRuntimes.byProvider.<providerPluginId>.configuredExecutable` 保存对应 Provider 通过 `runtime.select` 验证并返回的 Runtime 路径；旧的 `codex`、`claude`、`opencode` key 只在读取时迁移映射到内置 pluginId。Host 不验证路径或产品版本。通用 settings 更新会保留后端当前值，`runtime.getInstalled` 的安装清单是 Provider 即时探测结果，不写入 settings。
 
 `providerPlugins.directories` 保存额外 Provider plugin manifest 目录。缺失时默认空数组；Host 另有应用数据目录下的固定 `provider-plugins/` 默认目录。该字段只配置 Plugin Catalog，不改变 `agentRuntimes` 的 executable 探测，也不授权桌宠动作调用 Plugin Manager。
 

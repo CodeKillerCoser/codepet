@@ -535,10 +535,23 @@
     }
   }
 
-  function runtimeIntegrationHint(providerId: AgentRuntimeProviderId) {
-    return providerId === "codex"
-      ? "Codex CLI 路径仅供独立运行时检测；任务来源可用性取决于 Codex Desktop 私有 IPC。"
-      : "当前提供检测与路径配置，Provider 协议尚未接入。";
+  async function selectInstalledRuntime(runtime: AgentRuntime, executablePath: string) {
+    busyRuntime = runtime.providerId;
+    error = "";
+    try {
+      const replacement = await setAgentRuntimeExecutable(runtime.providerId, executablePath);
+      replacement.installed = runtime.installed;
+      agentRuntimes = replaceAgentRuntime(agentRuntimes, replacement);
+      settings = normalizeSettings(await getAppSettings());
+    } catch (currentError) {
+      error = String(currentError);
+    } finally {
+      busyRuntime = null;
+    }
+  }
+
+  function runtimeIntegrationHint(runtime: AgentRuntime) {
+    return `${runtime.displayName} Provider 负责探测、校验和选择自己的本机 Runtime；Host 只转发协议结果。`;
   }
 
   function showConnections() {
@@ -1867,6 +1880,7 @@
                     <dd>{selectedHookEvents(agent).length}/{agent.hookEvents.length} 个 hooks</dd>
                   </div>
                 </dl>
+
                 <div class="event-row">
                   {#each agent.hookEvents as hookEvent}
                     <label class="hook-event-check" class:active={hookEventSelected(agent, hookEvent)}>
@@ -2003,7 +2017,7 @@
                   <div>
                     <span class="agent-kicker">{runtime.providerId}</span>
                     <h3>{runtime.displayName}</h3>
-                    <p>{runtimeIntegrationHint(runtime.providerId)}</p>
+                    <p>{runtimeIntegrationHint(runtime)}</p>
                   </div>
                   <span class:online={status.tone === "ready"} class:runtime-danger={status.tone === "danger"} class="status-chip">{status.label}</span>
                 </header>
@@ -2022,10 +2036,27 @@
                     <dd>{runtime.version ?? "—"}</dd>
                   </div>
                   <div>
-                    <dt>手动配置</dt>
-                    <dd><code title={runtime.configuredExecutable ?? ""}>{runtime.configuredExecutable ?? "未配置"}</code></dd>
+                    <dt>用户选择</dt>
+                    <dd><code title={runtime.configuredExecutable ?? ""}>{runtime.configuredExecutable ?? "自动选择"}</code></dd>
                   </div>
                 </dl>
+
+                <div class="runtime-installations">
+                  <strong>Provider 探测到的安装</strong>
+                  {#each runtime.installed ?? [] as installation}
+                    <button
+                      type="button"
+                      class:selected={runtime.resolvedExecutable === installation.executablePath}
+                      disabled={runtimeBusy(runtime.providerId)}
+                      on:click={() => selectInstalledRuntime(runtime, installation.executablePath)}
+                    >
+                      <span><b>{installation.version}</b> · {agentRuntimeSourceLabel(installation.source)}</span>
+                      <code title={installation.executablePath}>{installation.executablePath}</code>
+                    </button>
+                  {:else}
+                    <p>没有通过 Provider 校验的本机安装。</p>
+                  {/each}
+                </div>
 
                 {#if runtime.diagnostic}
                   <div class="runtime-diagnostic" role="status">

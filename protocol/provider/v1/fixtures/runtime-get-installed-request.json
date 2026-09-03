@@ -1,0 +1,6 @@
+{
+  "jsonrpc": "2.0",
+  "id": "provider-runtime-installed-1",
+  "method": "runtime.getInstalled",
+  "params": {}
+}

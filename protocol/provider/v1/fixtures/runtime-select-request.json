@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": "provider-runtime-select-1",
+  "method": "runtime.select",
+  "params": {
+    "candidate": {
+      "executablePath": "/Applications/Codex.app/Contents/Resources/codex",
+      "source": "macos-application"
+    }
+  }
+}

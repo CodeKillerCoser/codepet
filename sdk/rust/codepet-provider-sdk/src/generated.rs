@@ -946,6 +946,69 @@ pub struct RoutedResourceId {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct RuntimeCandidate {
+    pub executable_path: String,
+    pub source: RuntimeCandidateSource,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RuntimeCandidateSource {
+    #[serde(rename = "configured")]
+    Configured,
+    #[serde(rename = "environment")]
+    Environment,
+    #[serde(rename = "current-path")]
+    CurrentPath,
+    #[serde(rename = "login-shell")]
+    LoginShell,
+    #[serde(rename = "macos-application")]
+    MacosApplication,
+    #[serde(rename = "windows-application")]
+    WindowsApplication,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeGetInstalledRequest {
+
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeGetInstalledResponse {
+    pub installed: Vec<RuntimeInstallation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected: Option<RuntimeInstallation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeInstallation {
+    pub executable_path: String,
+    pub version: String,
+    pub source: RuntimeCandidateSource,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeSelectRequest {
+    pub candidate: RuntimeCandidate,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeSelectResponse {
+    pub selected: RuntimeInstallation,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ToolAnnotations {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub read_only: Option<bool>,
@@ -1331,6 +1394,10 @@ pub enum ProtocolMethod {
     ProviderInitialize,
     #[serde(rename = "provider.describe")]
     ProviderDescribe,
+    #[serde(rename = "runtime.getInstalled")]
+    RuntimeGetInstalled,
+    #[serde(rename = "runtime.select")]
+    RuntimeSelect,
     #[serde(rename = "instance.create")]
     InstanceCreate,
     #[serde(rename = "instance.start")]
@@ -1378,6 +1445,8 @@ impl ProtocolMethod {
         match self {
             Self::ProviderInitialize => "provider.initialize",
             Self::ProviderDescribe => "provider.describe",
+            Self::RuntimeGetInstalled => "runtime.getInstalled",
+            Self::RuntimeSelect => "runtime.select",
             Self::InstanceCreate => "instance.create",
             Self::InstanceStart => "instance.start",
             Self::InstanceStop => "instance.stop",
@@ -1405,6 +1474,8 @@ impl ProtocolMethod {
         match self {
             Self::ProviderInitialize => ProtocolDispatchLane::Normal,
             Self::ProviderDescribe => ProtocolDispatchLane::Normal,
+            Self::RuntimeGetInstalled => ProtocolDispatchLane::Normal,
+            Self::RuntimeSelect => ProtocolDispatchLane::Normal,
             Self::InstanceCreate => ProtocolDispatchLane::Normal,
             Self::InstanceStart => ProtocolDispatchLane::Normal,
             Self::InstanceStop => ProtocolDispatchLane::Control,
@@ -1432,6 +1503,8 @@ impl ProtocolMethod {
         match self {
             Self::ProviderInitialize => None,
             Self::ProviderDescribe => None,
+            Self::RuntimeGetInstalled => None,
+            Self::RuntimeSelect => None,
             Self::InstanceCreate => None,
             Self::InstanceStart => None,
             Self::InstanceStop => None,
@@ -1463,6 +1536,8 @@ impl std::str::FromStr for ProtocolMethod {
         match value {
             "provider.initialize" => Ok(Self::ProviderInitialize),
             "provider.describe" => Ok(Self::ProviderDescribe),
+            "runtime.getInstalled" => Ok(Self::RuntimeGetInstalled),
+            "runtime.select" => Ok(Self::RuntimeSelect),
             "instance.create" => Ok(Self::InstanceCreate),
             "instance.start" => Ok(Self::InstanceStart),
             "instance.stop" => Ok(Self::InstanceStop),
@@ -1562,6 +1637,18 @@ pub enum ProtocolRequest {
         jsonrpc: String,
         id: RequestId,
         params: ProviderDescribeRequest,
+    },
+    #[serde(rename = "runtime.getInstalled")]
+    RuntimeGetInstalled {
+        jsonrpc: String,
+        id: RequestId,
+        params: RuntimeGetInstalledRequest,
+    },
+    #[serde(rename = "runtime.select")]
+    RuntimeSelect {
+        jsonrpc: String,
+        id: RequestId,
+        params: RuntimeSelectRequest,
     },
     #[serde(rename = "instance.create")]
     InstanceCreate {
@@ -1703,6 +1790,16 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode provider.describe request params", error))?,
             }),
+            ProtocolMethod::RuntimeGetInstalled => Ok(Self::RuntimeGetInstalled {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode runtime.getInstalled request params", error))?,
+            }),
+            ProtocolMethod::RuntimeSelect => Ok(Self::RuntimeSelect {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode runtime.select request params", error))?,
+            }),
             ProtocolMethod::InstanceCreate => Ok(Self::InstanceCreate {
                 jsonrpc,
                 id,
@@ -1810,6 +1907,8 @@ impl ProtocolRequest {
         match self {
             Self::ProviderInitialize { jsonrpc, .. } => jsonrpc,
             Self::ProviderDescribe { jsonrpc, .. } => jsonrpc,
+            Self::RuntimeGetInstalled { jsonrpc, .. } => jsonrpc,
+            Self::RuntimeSelect { jsonrpc, .. } => jsonrpc,
             Self::InstanceCreate { jsonrpc, .. } => jsonrpc,
             Self::InstanceStart { jsonrpc, .. } => jsonrpc,
             Self::InstanceStop { jsonrpc, .. } => jsonrpc,
@@ -1837,6 +1936,8 @@ impl ProtocolRequest {
         match self {
             Self::ProviderInitialize { id, .. } => id,
             Self::ProviderDescribe { id, .. } => id,
+            Self::RuntimeGetInstalled { id, .. } => id,
+            Self::RuntimeSelect { id, .. } => id,
             Self::InstanceCreate { id, .. } => id,
             Self::InstanceStart { id, .. } => id,
             Self::InstanceStop { id, .. } => id,
@@ -1864,6 +1965,8 @@ impl ProtocolRequest {
         match self {
             Self::ProviderInitialize { .. } => ProtocolMethod::ProviderInitialize,
             Self::ProviderDescribe { .. } => ProtocolMethod::ProviderDescribe,
+            Self::RuntimeGetInstalled { .. } => ProtocolMethod::RuntimeGetInstalled,
+            Self::RuntimeSelect { .. } => ProtocolMethod::RuntimeSelect,
             Self::InstanceCreate { .. } => ProtocolMethod::InstanceCreate,
             Self::InstanceStart { .. } => ProtocolMethod::InstanceStart,
             Self::InstanceStop { .. } => ProtocolMethod::InstanceStop,
@@ -2048,6 +2151,14 @@ pub trait ProtocolServer: Send + Sync {
         Box::pin(async { Err(method_not_implemented("provider.describe")) })
     }
 
+    fn runtime_get_installed<'a>(&'a self, _request: RuntimeGetInstalledRequest) -> ProtocolFuture<'a, RuntimeGetInstalledResponse> {
+        Box::pin(async { Err(method_not_implemented("runtime.getInstalled")) })
+    }
+
+    fn runtime_select<'a>(&'a self, _request: RuntimeSelectRequest) -> ProtocolFuture<'a, RuntimeSelectResponse> {
+        Box::pin(async { Err(method_not_implemented("runtime.select")) })
+    }
+
     fn instance_create<'a>(&'a self, _request: InstanceCreateRequest) -> ProtocolFuture<'a, InstanceCreateResponse> {
         Box::pin(async { Err(method_not_implemented("instance.create")) })
     }
@@ -2152,6 +2263,26 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
         },
         ProtocolRequest::ProviderDescribe { jsonrpc, id, params } => {
             let response = match server.provider_describe(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::RuntimeGetInstalled { jsonrpc, id, params } => {
+            let response = match server.runtime_get_installed(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::RuntimeSelect { jsonrpc, id, params } => {
+            let response = match server.runtime_select(params).await {
                 Ok(result) => match serde_json::to_value(result) {
                     Ok(result) => JsonRpcResponsePayload::Ok { result },
                     Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
@@ -2419,6 +2550,22 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             let result = self.transport.request(ProtocolMethod::ProviderDescribe, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn runtime_get_installed<'a>(&'a self, request: RuntimeGetInstalledRequest) -> ProtocolFuture<'a, RuntimeGetInstalledResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::RuntimeGetInstalled, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn runtime_select<'a>(&'a self, request: RuntimeSelectRequest) -> ProtocolFuture<'a, RuntimeSelectResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::RuntimeSelect, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
