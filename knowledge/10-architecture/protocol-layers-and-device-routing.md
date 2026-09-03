@@ -28,7 +28,7 @@
 
 协议布局现在是 `core/v1`、`pet/v1`、`provider/v1`、`gateway/v1`、`channel/lan/v1` 和桌面私有的 `desktop/v0`。旧 Gateway 协议已删除；`gateway/v1` 是唯一 Gateway 业务协议。`protocol/codegen.json` 记录包、依赖、输出与 `codepet.protocol.codegen/v1` target adapter 接口。Rust、TypeScript、Dart 有显式 adapter；Python 只有 fail-closed 的 planned registry entry。Rust 输出位于 `sdk/rust/codepet-*-sdk`；Dart 生成 core、Gateway v1 和 LAN admission SDK。
 
-`core/v1` 只包含可安全共享的 ID、版本范围、时间戳、分页、错误、JSON 对象、JSON-RPC error 和 `RoutedResourceId`。`pet/v1` 只出现 PetTask/PetApproval/PetAction/Snapshot/Patch；`provider/v1` 拥有 Provider 插件描述、instance 生命周期与 harness 能力；`gateway/v1` 拥有 handshake、device/provider 枚举、conversation/turn/approval 与 replayable event cursor，不包含插件进程控制。`channel/lan/v1` 只包含 discovery/admission 所需 DTO，不声明 Gateway method。
+`core/v1` 只包含可安全共享的 ID、版本范围、时间戳、分页、错误、JSON 对象、JSON-RPC error 和 `RoutedResourceId`。`pet/v1` 只出现 PetTask/PetApproval/PetAction/Snapshot/Patch；`provider/v1` 拥有 Provider 插件描述、instance 生命周期、Project CRUD 与 harness 能力；`gateway/v1` 拥有 handshake、device/provider 枚举、project/conversation/turn/approval 与 replayable event cursor，不包含插件进程控制。`channel/lan/v1` 只包含 discovery/admission 所需 DTO，不声明 Gateway method。
 
 旧 Runtime Gateway 契约没有被复制回 Tauri 源码。它作为 `protocol/desktop/v0` 的 IDL profile 生成到 `codepet-desktop-sdk`；`src-tauri/src/runtime_gateway/generated.rs` 和 `frontend/lib/generated/runtimeGateway.ts` 只是 re-export 薄层。这样桌面 profile 仍由同一个 IDL 根和同一个生成器约束，但不再占用 Gateway 命名空间或伪装成网络协议版本。
 

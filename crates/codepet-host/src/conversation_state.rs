@@ -509,6 +509,7 @@ mod tests {
                 provider_instance_id: "codex-work".to_string(),
                 native_resource_id: "thread-1".to_string(),
             },
+            project: None,
             title: "Conversation".to_string(),
             preview: Some(preview.to_string()),
             status: gateway::ConversationStatus::Idle,

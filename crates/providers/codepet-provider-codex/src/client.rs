@@ -3,13 +3,14 @@ use super::protocol::{
     turn_steer_params, output_content_id, reasoning_summary_content_id, text_content_id,
     CodexAppServerError, CodexApprovalKind, CodexApprovalRequest, CodexContentKind,
     CodexConversationSnapshot, CodexIncoming, CodexModel, CodexModelListResponse,
-    CodexNotification, CodexPermissionLevel, CodexThreadListRequest, CodexThreadPage,
+    CodexNotification, CodexPermissionLevel, CodexProject, CodexProjectCreateRequest,
+    CodexProjectPage, CodexProjectUpdateRequest, CodexThreadListRequest, CodexThreadPage,
     CodexThreadStartRequest, CodexTurn, CodexTurnPage, CodexTurnStatus,
     CodexTurnItemsView, CodexTurnStartRequest, CodexTurnSteerRequest, CommandApprovalParams, FileApprovalParams,
-    InitializeResponse, JsonRpcId, ThreadConfiguredResponse, ThreadListResponse,
+    InitializeResponse, JsonRpcId, ProjectListResponse, ProjectResponse,
+    ThreadConfiguredResponse, ThreadListResponse,
     ThreadReadResponse, ThreadTurnsListResponse, TurnResponse, TurnSteerResponse,
 };
-use crate::workspace_projection::project_workspace_root;
 use codepet_provider_sdk::ApprovalDecision;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
@@ -586,6 +587,68 @@ impl CodexAppServerSession {
             data: CodexConversationSnapshot::from_threads(response.data),
             next_cursor: response.next_cursor,
         })
+    }
+
+    pub fn project_list(
+        &self,
+        cursor: Option<String>,
+        limit: Option<u32>,
+    ) -> Result<CodexProjectPage, CodexAppServerError> {
+        let response: ProjectListResponse = self.request(
+            "project/list",
+            json!({ "cursor": cursor, "limit": limit }),
+        )?;
+        Ok(CodexProjectPage {
+            data: response.data,
+            next_cursor: response.next_cursor,
+        })
+    }
+
+    pub fn project_read(&self, project_id: &str) -> Result<CodexProject, CodexAppServerError> {
+        let response: ProjectResponse =
+            self.request("project/read", json!({ "projectId": project_id }))?;
+        Ok(response.project)
+    }
+
+    pub fn project_create(
+        &self,
+        request: CodexProjectCreateRequest,
+    ) -> Result<CodexProject, CodexAppServerError> {
+        let response: ProjectResponse = self.request(
+            "project/create",
+            json!({
+                "idempotencyKey": request.idempotency_key,
+                "name": request.name,
+                "roots": request.roots,
+                "metadata": request.metadata,
+            }),
+        )?;
+        Ok(response.project)
+    }
+
+    pub fn project_update(
+        &self,
+        request: CodexProjectUpdateRequest,
+    ) -> Result<CodexProject, CodexAppServerError> {
+        let mut params = serde_json::Map::new();
+        params.insert("projectId".to_string(), json!(request.project_id));
+        if let Some(name) = request.name {
+            params.insert("name".to_string(), json!(name));
+        }
+        if let Some(roots) = request.roots {
+            params.insert("roots".to_string(), json!(roots));
+        }
+        if let Some(metadata) = request.metadata {
+            params.insert("metadata".to_string(), json!(metadata));
+        }
+        let response: ProjectResponse = self.request("project/update", Value::Object(params))?;
+        Ok(response.project)
+    }
+
+    pub fn project_delete(&self, project_id: &str) -> Result<(), CodexAppServerError> {
+        let _: serde_json::Map<String, Value> =
+            self.request("project/delete", json!({ "projectId": project_id }))?;
+        Ok(())
     }
 
     pub fn thread_read(
@@ -1203,7 +1266,7 @@ fn snapshot_from_thread(thread: super::protocol::CodexThread) -> CodexConversati
 fn snapshot_from_configured_response(
     response: ThreadConfiguredResponse,
 ) -> CodexConversationSnapshot {
-    let workspace_root = project_workspace_root(Some(&response.cwd));
+    let workspace_root = Some(response.cwd.clone());
     CodexConversationSnapshot {
         thread: response.thread,
         workspace_root,
@@ -1366,7 +1429,9 @@ fn incoming_thread_id(incoming: &CodexIncoming) -> Option<&str> {
             | CodexNotification::ServerRequestResolved { thread_id, .. },
         ) => Some(thread_id),
         CodexIncoming::ApprovalRequested(approval) => Some(&approval.thread_id),
-        CodexIncoming::Notification(CodexNotification::Unknown { .. })
+        CodexIncoming::Notification(
+            CodexNotification::ProjectChanged { .. } | CodexNotification::Unknown { .. },
+        )
         | CodexIncoming::UnsupportedServerRequest { .. } => None,
     }
 }
@@ -1498,6 +1563,22 @@ fn parse_notification(
     session_generation: &str,
 ) -> Result<CodexNotification, CodexAppServerError> {
     match method {
+        "project/changed" => {
+            let change_type = match required_string(&params, "changeType")?.as_str() {
+                "created" => super::protocol::CodexProjectChangeType::Created,
+                "updated" => super::protocol::CodexProjectChangeType::Updated,
+                "deleted" => super::protocol::CodexProjectChangeType::Deleted,
+                value => {
+                    return Err(CodexAppServerError::Protocol(format!(
+                        "unknown project change type: {value}"
+                    )))
+                }
+            };
+            Ok(CodexNotification::ProjectChanged {
+                project_id: required_string(&params, "projectId")?,
+                change_type,
+            })
+        }
         "thread/started" => {
             let thread = deserialize_field(&params, "thread")?;
             Ok(CodexNotification::ThreadStarted {
@@ -1616,9 +1697,9 @@ fn deserialize_field<T: DeserializeOwned>(
 mod tests {
     use super::*;
     use crate::protocol::{
-        CodexPermissionLevel, CodexThreadActiveFlag, CodexThreadStatus, CodexTurnStatus,
+        CodexPermissionLevel, CodexThreadActiveFlag, CodexThreadItem, CodexThreadStatus,
+        CodexTurnStatus,
     };
-    use std::fs;
     use std::sync::mpsc::{Receiver, Sender};
     use std::sync::Barrier;
     use std::time::Duration;
@@ -1910,21 +1991,9 @@ mod tests {
     }
 
     #[test]
-    fn thread_list_projects_live_and_deleted_managed_worktrees_from_the_wire() {
-        let temp = tempfile::tempdir().unwrap();
-        let main = temp.path().join("main/project");
-        let git_dir = main.join(".git/worktrees/linked");
-        let managed_root = temp.path().join(".codex/worktrees");
-        let worktree = managed_root.join("linked/project");
-        let deleted = managed_root.join("deleted/project");
-        fs::create_dir_all(&git_dir).unwrap();
-        fs::create_dir_all(&worktree).unwrap();
-        fs::write(git_dir.join("commondir"), "../..\n").unwrap();
-        fs::write(
-            worktree.join(".git"),
-            format!("gitdir: {}\n", git_dir.display()),
-        )
-        .unwrap();
+    fn thread_list_preserves_native_cwds_from_the_wire() {
+        let worktree = "/fixture/.codex/worktrees/linked/project";
+        let deleted = "/fixture/.codex/worktrees/deleted/project";
         let (session, peer_receiver, peer_sender) = mock_session();
         let list_session = session.clone();
         let listed = thread::spawn(move || {
@@ -1941,13 +2010,13 @@ mod tests {
                     "data": [
                         thread_fixture(
                             "thread-worktree",
-                            worktree.to_str().unwrap(),
+                            worktree,
                             "idle",
                             vec![]
                         ),
                         thread_fixture(
                             "thread-deleted-worktree",
-                            deleted.to_str().unwrap(),
+                            deleted,
                             "idle",
                             vec![]
                         )
@@ -1959,13 +2028,10 @@ mod tests {
 
         let snapshots = listed.join().unwrap().data;
 
-        assert_eq!(snapshots[0].thread.cwd, worktree.to_str().unwrap());
-        assert_eq!(snapshots[1].thread.cwd, deleted.to_str().unwrap());
-        assert_eq!(
-            snapshots[0].workspace_root.as_deref(),
-            fs::canonicalize(main).unwrap().to_str()
-        );
-        assert_eq!(snapshots[0].workspace_root, snapshots[1].workspace_root);
+        assert_eq!(snapshots[0].thread.cwd, worktree);
+        assert_eq!(snapshots[1].thread.cwd, deleted);
+        assert_eq!(snapshots[0].workspace_root.as_deref(), Some(worktree));
+        assert_eq!(snapshots[1].workspace_root.as_deref(), Some(deleted));
         session.shutdown().unwrap();
     }
 
@@ -2160,6 +2226,40 @@ mod tests {
     }
 
     #[test]
+    fn empty_streaming_agent_message_text_does_not_fault_the_reader() {
+        let (session, _, peer_sender) = mock_session();
+        let notifications = session.subscribe().unwrap();
+        peer_sender
+            .send(json!({
+                "method": "item/started",
+                "params": {
+                    "threadId": "thread-one",
+                    "turnId": "turn-one",
+                    "item": {
+                        "type": "agentMessage",
+                        "id": "agent-one",
+                        "text": ""
+                    }
+                }
+            }))
+            .unwrap();
+
+        let incoming = notifications
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            incoming,
+            CodexIncoming::Notification(CodexNotification::ItemUpserted {
+                item: CodexThreadItem::AgentMessage { id, text },
+                ..
+            }) if id == "agent-one" && text.is_empty()
+        ));
+        assert!(session.is_running());
+        session.shutdown().unwrap();
+    }
+
+    #[test]
     fn output_delta_uses_channel_specific_content_ids_and_ignores_raw_reasoning() {
         let summary = parse_notification(
             "item/reasoning/summaryTextDelta",
@@ -2347,6 +2447,7 @@ mod tests {
                 .thread_list(CodexThreadListRequest {
                     cursor: Some("cursor-one".to_string()),
                     limit: Some(20),
+                    project_id: None,
                     workspace_root: Some("/work/project".to_string()),
                     search_term: None,
                 })
@@ -2357,6 +2458,7 @@ mod tests {
             let normal = operation_session
                 .thread_start(CodexThreadStartRequest {
                     workspace_root: None,
+                    project_id: None,
                     permission_level: CodexPermissionLevel::ReadOnly,
                     model: None,
                     reasoning_effort: None,
@@ -2370,6 +2472,7 @@ mod tests {
             let project = operation_session
                 .thread_start(CodexThreadStartRequest {
                     workspace_root: Some("/work/project".to_string()),
+                    project_id: Some("project-fixture".to_string()),
                     permission_level: CodexPermissionLevel::FullAccess,
                     model: Some("gpt-fixture".to_string()),
                     reasoning_effort: Some("high".to_string()),
@@ -2440,6 +2543,7 @@ mod tests {
         let normal = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(normal["method"], "thread/start");
         assert!(normal["params"].get("cwd").is_none());
+        assert!(normal["params"].get("projectId").is_none());
         assert_eq!(normal["params"]["sandbox"], "read-only");
         assert_eq!(normal["params"]["approvalPolicy"], "on-request");
         peer_sender
@@ -2464,6 +2568,7 @@ mod tests {
         let project = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(project["method"], "thread/start");
         assert_eq!(project["params"]["cwd"], "/work/project");
+        assert_eq!(project["params"]["projectId"], "project-fixture");
         assert_eq!(project["params"]["sandbox"], "danger-full-access");
         assert_eq!(project["params"]["approvalPolicy"], "never");
         assert_eq!(
@@ -2553,6 +2658,100 @@ mod tests {
                     )
                 }
             }))
+            .unwrap();
+
+        operations.join().unwrap();
+        session.shutdown().unwrap();
+    }
+
+    #[test]
+    fn project_operations_use_the_experimental_app_server_contract() {
+        let (session, peer_receiver, peer_sender) = mock_session();
+        let operation_session = session.clone();
+        let operations = thread::spawn(move || {
+            let listed = operation_session
+                .project_list(Some("cursor-one".to_string()), Some(5))
+                .unwrap();
+            assert_eq!(listed.next_cursor.as_deref(), Some("cursor-two"));
+            assert_eq!(listed.data[0].id, "project-one");
+            assert_eq!(operation_session.project_read("project-one").unwrap().position, 3);
+            operation_session
+                .project_create(CodexProjectCreateRequest {
+                    idempotency_key: "create-one".to_string(),
+                    name: "Project One".to_string(),
+                    roots: vec![super::super::protocol::CodexProjectRoot {
+                        path: "/fixture/project".to_string(),
+                    }],
+                    metadata: std::collections::BTreeMap::from([(
+                        "team".to_string(),
+                        "gateway".to_string(),
+                    )]),
+                })
+                .unwrap();
+            operation_session
+                .project_update(CodexProjectUpdateRequest {
+                    project_id: "project-one".to_string(),
+                    name: Some("Project Renamed".to_string()),
+                    roots: None,
+                    metadata: None,
+                })
+                .unwrap();
+            operation_session.project_delete("project-one").unwrap();
+        });
+
+        let project_json = || {
+            json!({
+                "id": "project-one",
+                "name": "Project One",
+                "roots": [{ "path": "/fixture/project" }],
+                "metadata": { "team": "gateway" },
+                "position": 3,
+                "createdAt": 11,
+                "updatedAt": 12
+            })
+        };
+
+        let list = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(list["method"], "project/list");
+        assert_eq!(list["params"], json!({ "cursor": "cursor-one", "limit": 5 }));
+        peer_sender
+            .send(json!({
+                "id": list["id"],
+                "result": { "data": [project_json()], "nextCursor": "cursor-two" }
+            }))
+            .unwrap();
+
+        let read = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(read["method"], "project/read");
+        assert_eq!(read["params"], json!({ "projectId": "project-one" }));
+        peer_sender
+            .send(json!({ "id": read["id"], "result": { "project": project_json() } }))
+            .unwrap();
+
+        let create = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(create["method"], "project/create");
+        assert_eq!(create["params"]["idempotencyKey"], "create-one");
+        assert_eq!(create["params"]["roots"][0]["path"], "/fixture/project");
+        assert_eq!(create["params"]["metadata"]["team"], "gateway");
+        peer_sender
+            .send(json!({ "id": create["id"], "result": { "project": project_json() } }))
+            .unwrap();
+
+        let update = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(update["method"], "project/update");
+        assert_eq!(
+            update["params"],
+            json!({ "projectId": "project-one", "name": "Project Renamed" })
+        );
+        peer_sender
+            .send(json!({ "id": update["id"], "result": { "project": project_json() } }))
+            .unwrap();
+
+        let delete = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(delete["method"], "project/delete");
+        assert_eq!(delete["params"], json!({ "projectId": "project-one" }));
+        peer_sender
+            .send(json!({ "id": delete["id"], "result": {} }))
             .unwrap();
 
         operations.join().unwrap();

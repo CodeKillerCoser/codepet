@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 const ROUTE_EXTENSION_NAMESPACE: &str = "codepet.gateway.route";
 const TURN_SEND_CALLER_SCOPE: &str = "tauri-desktop-runtime-v0";
+const COMPAT_DATA_UNREPRESENTABLE: &str = "compat_data_unrepresentable";
 
 #[derive(Clone)]
 pub struct CompatProviderGateway {
@@ -98,7 +99,8 @@ impl CompatProviderGateway {
         event: gateway::ProtocolEvent,
     ) -> Result<Option<compat::ProtocolEvent>, compat::ProtocolError> {
         let mapped = match event {
-            gateway::ProtocolEvent::DeviceStatusChanged { .. }
+            gateway::ProtocolEvent::ProjectChanged { .. }
+            | gateway::ProtocolEvent::DeviceStatusChanged { .. }
             | gateway::ProtocolEvent::ConversationActivityChanged { .. }
             | gateway::ProtocolEvent::ConversationItemUpserted { .. } => return Ok(None),
             gateway::ProtocolEvent::ProviderStatusChanged { params, .. } => compat::ProtocolEvent::ProviderStatusChanged {
@@ -184,10 +186,20 @@ impl CompatEventSubscription {
     pub async fn next_event(&mut self) -> Result<compat::ProtocolEvent, compat::ProtocolError> {
         loop {
             let event = self.subscription.next_event().await.map_err(map_error)?;
-            if let Some(event) = self.mapper.map_event(event)? {
+            if let Some(event) = map_subscription_event(&self.mapper, event)? {
                 return Ok(event);
             }
         }
+    }
+}
+
+fn map_subscription_event(
+    mapper: &CompatProviderGateway,
+    event: gateway::ProtocolEvent,
+) -> Result<Option<compat::ProtocolEvent>, compat::ProtocolError> {
+    match mapper.map_event(event) {
+        Err(error) if error.code == COMPAT_DATA_UNREPRESENTABLE => Ok(None),
+        result => result,
     }
 }
 
@@ -268,6 +280,11 @@ impl compat::ProtocolServer for CompatProviderGateway {
                     route,
                     cursor: request.cursor,
                     limit: request.limit,
+                    project_filter: gateway::ConversationProjectFilter::ConversationProjectFilterAll(
+                        gateway::ConversationProjectFilterAll {
+                            kind: gateway::ConversationProjectFilterAllKind::All,
+                        },
+                    ),
                 },
             )
             .await
@@ -316,6 +333,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
                 self.gateway()?.as_ref(),
                 gateway::ConversationCreateRequest {
                     route: provider.route,
+                    project: None,
                     title: request.title,
                     permission_level: permission_level_name(request.permission_level).to_string(),
                     model: request.model,
@@ -436,6 +454,11 @@ fn map_provider(provider: gateway::ProviderInstance) -> compat::Provider {
         .methods
         .iter()
         .filter_map(|method| match method {
+            gateway::GatewayCapability::ProjectList
+            | gateway::GatewayCapability::ProjectGet
+            | gateway::GatewayCapability::ProjectCreate
+            | gateway::GatewayCapability::ProjectUpdate
+            | gateway::GatewayCapability::ProjectDelete => None,
             gateway::GatewayCapability::ConversationList => Some("conversation.list"),
             gateway::GatewayCapability::ConversationSearch => None,
             gateway::GatewayCapability::ConversationGet => Some("conversation.get"),
@@ -528,7 +551,7 @@ fn map_conversation(
         .and_then(map_permission_level)
         .ok_or_else(|| {
             compat_error(
-                "compat_data_unrepresentable",
+                COMPAT_DATA_UNREPRESENTABLE,
                 "compat Runtime Gateway requires a known conversation permission level"
                     .to_string(),
                 false,
@@ -536,14 +559,14 @@ fn map_conversation(
         })?;
     let created_at = conversation.created_at.ok_or_else(|| {
         compat_error(
-            "compat_data_unrepresentable",
+            COMPAT_DATA_UNREPRESENTABLE,
             "compat Runtime Gateway requires a confirmed conversation createdAt".to_string(),
             false,
         )
     })?;
     let updated_at = conversation.updated_at.ok_or_else(|| {
         compat_error(
-            "compat_data_unrepresentable",
+            COMPAT_DATA_UNREPRESENTABLE,
             "compat Runtime Gateway requires a confirmed conversation updatedAt".to_string(),
             false,
         )
@@ -560,7 +583,7 @@ fn map_conversation(
         }
         gateway::ConversationStatus::WaitingUserInput => {
             return Err(compat_error(
-                "compat_data_unrepresentable",
+                COMPAT_DATA_UNREPRESENTABLE,
                 "compat Runtime Gateway cannot represent waiting-user-input".to_string(),
                 false,
             ));
@@ -594,7 +617,7 @@ fn map_turn(turn: gateway::TurnTask) -> Result<compat::TurnTask, compat::Protoco
     );
     let updated_at = turn.updated_at.ok_or_else(|| {
         compat_error(
-            "compat_data_unrepresentable",
+            COMPAT_DATA_UNREPRESENTABLE,
             "compat Runtime Gateway requires a confirmed turn updatedAt".to_string(),
             false,
         )
@@ -759,5 +782,81 @@ fn compat_error(code: &str, message: String, retryable: bool) -> compat::Protoco
         message,
         retryable,
         details: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn resource(native_resource_id: &str) -> gateway::RoutedResourceId {
+        gateway::RoutedResourceId {
+            device_id: "device-test".to_string(),
+            provider_plugin_id: "dev.codepet.test".to_string(),
+            provider_instance_id: "instance-test".to_string(),
+            native_resource_id: native_resource_id.to_string(),
+        }
+    }
+
+    fn turn_event(event_cursor: &str, updated_at: Option<u64>) -> gateway::ProtocolEvent {
+        gateway::ProtocolEvent::TurnUpserted {
+            jsonrpc: "2.0".to_string(),
+            params: gateway::ProtocolEventParams {
+                event_cursor: event_cursor.to_string(),
+                payload: gateway::TurnUpsertedEvent {
+                    turn: gateway::TurnTask {
+                        resource: resource("turn-test"),
+                        conversation: resource("conversation-test"),
+                        status: gateway::TurnStatus::Running,
+                        display_summary: None,
+                        started_at: Some(10),
+                        updated_at,
+                        completed_at: None,
+                    },
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn subscription_skips_unrepresentable_turn_and_maps_the_following_event() {
+        let mapper = CompatProviderGateway::new(None);
+        let missing_timestamp = turn_event("event-00000000000000000001", None);
+
+        let mapping_error = mapper.map_event(missing_timestamp.clone()).unwrap_err();
+        assert_eq!(mapping_error.code, COMPAT_DATA_UNREPRESENTABLE);
+        assert!(map_subscription_event(&mapper, missing_timestamp)
+            .unwrap()
+            .is_none());
+
+        let mapped = map_subscription_event(
+            &mapper,
+            turn_event("event-00000000000000000002", Some(20)),
+        )
+        .unwrap()
+        .expect("the next representable event must still be emitted");
+        let compat::ProtocolEvent::TurnUpserted {
+            event_sequence,
+            payload,
+            ..
+        } = mapped
+        else {
+            panic!("expected a compat turn.upserted event");
+        };
+        assert_eq!(event_sequence, 2);
+        assert_eq!(payload.turn.updated_at, 20);
+    }
+
+    #[test]
+    fn subscription_keeps_non_representation_mapping_errors_fatal() {
+        let mapper = CompatProviderGateway::new(None);
+
+        let error = map_subscription_event(
+            &mapper,
+            turn_event("event-2", Some(20)),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, "invalid_event_cursor");
     }
 }

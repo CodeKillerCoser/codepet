@@ -64,6 +64,15 @@ Object? _jsonValue(Object? value, String path) {
 Map<String, Object?> _jsonObject(Object? value, String path) => _jsonValue(_object(value, path), path) as Map<String, Object?>;
 Map<String, Object?> _encodeJsonObject(Map<String, Object?> value, String path) => _jsonObject(value, path);
 
+Map<String, T> _freezeMap<T>(Map<String, T> values, String path, T Function(T, String) validate) {
+  return Map<String, T>.unmodifiable(values.map((key, item) => MapEntry(key, validate(item, '$path.$key'))));
+}
+
+Map<String, T> _decodeMap<T>(Object? value, String path, T Function(Object?, String) decode) {
+  final object = _object(value, path);
+  return Map<String, T>.unmodifiable(object.map((key, item) => MapEntry(key, decode(item, '$path.$key'))));
+}
+
 List<T> _freezeList<T>(Iterable<T> values, String path, T Function(T, String) validate, {int? minItems, bool uniqueItems = false, required Object? Function(T) encodeItem}) {
   final result = List<T>.unmodifiable(values.indexed.map((entry) => validate(entry.$2, '$path[${entry.$1}]')));
   if (minItems != null && result.length < minItems) throw ProtocolCodecException(path, 'array has fewer than $minItems items');
@@ -458,6 +467,7 @@ final class ChoiceSet {
 final class Conversation {
   factory Conversation({
     required RoutedResourceId resource,
+    required RoutedResourceId? project,
     required String title,
     String? preview,
     required ConversationStatus status,
@@ -472,6 +482,7 @@ final class Conversation {
     ConversationReadState? readState,
   }) {
     final validatedResource = resource;
+    final validatedProject = project == null ? null : project;
     final validatedTitle = _string(title, 'Conversation.title', minLength: 1);
     final validatedPreview = preview == null ? null : _string(preview, 'Conversation.preview');
     final validatedStatus = status;
@@ -486,6 +497,7 @@ final class Conversation {
     final validatedReadState = readState == null ? null : readState;
     return Conversation._(
       resource: validatedResource,
+      project: validatedProject,
       title: validatedTitle,
       preview: validatedPreview,
       status: validatedStatus,
@@ -503,6 +515,7 @@ final class Conversation {
 
   Conversation._({
     required this.resource,
+    required this.project,
     required this.title,
     required this.preview,
     required this.status,
@@ -518,6 +531,7 @@ final class Conversation {
   });
 
   final RoutedResourceId resource;
+  final RoutedResourceId? project;
   final String title;
   final String? preview;
   final ConversationStatus status;
@@ -533,9 +547,10 @@ final class Conversation {
 
   factory Conversation.fromJson(Object? value, {String path = 'Conversation'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'resource', 'title', 'preview', 'status', 'permissionLevel', 'model', 'reasoningEffort', 'selection', 'workspaceRoot', 'createdAt', 'updatedAt', 'activeTurn', 'readState'}, path);
+    _expectKeys(json, const {'resource', 'project', 'title', 'preview', 'status', 'permissionLevel', 'model', 'reasoningEffort', 'selection', 'workspaceRoot', 'createdAt', 'updatedAt', 'activeTurn', 'readState'}, path);
     return Conversation(
       resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
+      project: _required(json, 'project', path) == null ? null : RoutedResourceId.fromJson(_required(json, 'project', path), path: '$path.project'),
       title: _string(_required(json, 'title', path), '$path.title', minLength: 1),
       preview: json.containsKey('preview') && json['preview'] != null ? _string(json['preview'], '$path.preview') : null,
       status: ConversationStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
@@ -553,6 +568,7 @@ final class Conversation {
 
   Map<String, Object?> toJson() => {
     'resource': resource.toJson(),
+    'project': project == null ? null : project!.toJson(),
     'title': title,
     if (preview != null) 'preview': preview!,
     'status': status.toJson(),
@@ -568,7 +584,7 @@ final class Conversation {
   };
 
   @override
-  String toString() => 'Conversation(resource: $resource, title: $title, preview: $preview, status: $status, permissionLevel: $permissionLevel, model: $model, reasoningEffort: $reasoningEffort, selection: $selection, workspaceRoot: $workspaceRoot, createdAt: $createdAt, updatedAt: $updatedAt, activeTurn: $activeTurn, readState: $readState)';
+  String toString() => 'Conversation(resource: $resource, project: $project, title: $title, preview: $preview, status: $status, permissionLevel: $permissionLevel, model: $model, reasoningEffort: $reasoningEffort, selection: $selection, workspaceRoot: $workspaceRoot, createdAt: $createdAt, updatedAt: $updatedAt, activeTurn: $activeTurn, readState: $readState)';
 }
 
 final class ConversationAcquireInteractionRequest {
@@ -804,6 +820,7 @@ final class ConversationCreateRequest {
     String? reasoningEffort,
     String? workspaceRoot,
     String? workspaceMode,
+    RoutedResourceId? project,
   }) {
     final validatedRoute = route;
     final validatedTitle = title == null ? null : _string(title, 'ConversationCreateRequest.title', minLength: 1);
@@ -812,6 +829,7 @@ final class ConversationCreateRequest {
     final validatedReasoningEffort = reasoningEffort == null ? null : _string(reasoningEffort, 'ConversationCreateRequest.reasoningEffort', minLength: 1);
     final validatedWorkspaceRoot = workspaceRoot == null ? null : _string(workspaceRoot, 'ConversationCreateRequest.workspaceRoot', minLength: 1);
     final validatedWorkspaceMode = workspaceMode == null ? null : _string(workspaceMode, 'ConversationCreateRequest.workspaceMode', minLength: 1);
+    final validatedProject = project == null ? null : project;
     return ConversationCreateRequest._(
       route: validatedRoute,
       title: validatedTitle,
@@ -820,6 +838,7 @@ final class ConversationCreateRequest {
       reasoningEffort: validatedReasoningEffort,
       workspaceRoot: validatedWorkspaceRoot,
       workspaceMode: validatedWorkspaceMode,
+      project: validatedProject,
     );
   }
 
@@ -831,6 +850,7 @@ final class ConversationCreateRequest {
     required this.reasoningEffort,
     required this.workspaceRoot,
     required this.workspaceMode,
+    required this.project,
   });
 
   final GatewayProviderRoute route;
@@ -840,10 +860,11 @@ final class ConversationCreateRequest {
   final String? reasoningEffort;
   final String? workspaceRoot;
   final String? workspaceMode;
+  final RoutedResourceId? project;
 
   factory ConversationCreateRequest.fromJson(Object? value, {String path = 'ConversationCreateRequest'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'route', 'title', 'permissionLevel', 'model', 'reasoningEffort', 'workspaceRoot', 'workspaceMode'}, path);
+    _expectKeys(json, const {'route', 'title', 'permissionLevel', 'model', 'reasoningEffort', 'workspaceRoot', 'workspaceMode', 'project'}, path);
     return ConversationCreateRequest(
       route: GatewayProviderRoute.fromJson(_required(json, 'route', path), path: '$path.route'),
       title: json.containsKey('title') && json['title'] != null ? _string(json['title'], '$path.title', minLength: 1) : null,
@@ -852,6 +873,7 @@ final class ConversationCreateRequest {
       reasoningEffort: json.containsKey('reasoningEffort') && json['reasoningEffort'] != null ? _string(json['reasoningEffort'], '$path.reasoningEffort', minLength: 1) : null,
       workspaceRoot: json.containsKey('workspaceRoot') && json['workspaceRoot'] != null ? _string(json['workspaceRoot'], '$path.workspaceRoot', minLength: 1) : null,
       workspaceMode: json.containsKey('workspaceMode') && json['workspaceMode'] != null ? _string(json['workspaceMode'], '$path.workspaceMode', minLength: 1) : null,
+      project: json.containsKey('project') && json['project'] != null ? RoutedResourceId.fromJson(json['project'], path: '$path.project') : null,
     );
   }
 
@@ -863,10 +885,11 @@ final class ConversationCreateRequest {
     if (reasoningEffort != null) 'reasoningEffort': reasoningEffort!,
     if (workspaceRoot != null) 'workspaceRoot': workspaceRoot!,
     if (workspaceMode != null) 'workspaceMode': workspaceMode!,
+    if (project != null) 'project': project!.toJson(),
   };
 
   @override
-  String toString() => 'ConversationCreateRequest(route: $route, title: $title, permissionLevel: $permissionLevel, model: $model, reasoningEffort: $reasoningEffort, workspaceRoot: $workspaceRoot, workspaceMode: $workspaceMode)';
+  String toString() => 'ConversationCreateRequest(route: $route, title: $title, permissionLevel: $permissionLevel, model: $model, reasoningEffort: $reasoningEffort, workspaceRoot: $workspaceRoot, workspaceMode: $workspaceMode, project: $project)';
 }
 
 final class ConversationCreateResponse {
@@ -1207,14 +1230,17 @@ final class ConversationItemUpsertedEvent {
 final class ConversationListRequest {
   factory ConversationListRequest({
     GatewayProviderRoute? route,
+    required ConversationProjectFilter projectFilter,
     Cursor? cursor,
     int? limit,
   }) {
     final validatedRoute = route == null ? null : route;
+    final validatedProjectFilter = projectFilter;
     final validatedCursor = cursor == null ? null : _string(cursor, 'ConversationListRequest.cursor', minLength: 1);
     final validatedLimit = limit == null ? null : _integer(limit, 'ConversationListRequest.limit', minimum: 1, maximum: 100);
     return ConversationListRequest._(
       route: validatedRoute,
+      projectFilter: validatedProjectFilter,
       cursor: validatedCursor,
       limit: validatedLimit,
     );
@@ -1222,19 +1248,22 @@ final class ConversationListRequest {
 
   ConversationListRequest._({
     required this.route,
+    required this.projectFilter,
     required this.cursor,
     required this.limit,
   });
 
   final GatewayProviderRoute? route;
+  final ConversationProjectFilter projectFilter;
   final Cursor? cursor;
   final int? limit;
 
   factory ConversationListRequest.fromJson(Object? value, {String path = 'ConversationListRequest'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'route', 'cursor', 'limit'}, path);
+    _expectKeys(json, const {'route', 'projectFilter', 'cursor', 'limit'}, path);
     return ConversationListRequest(
       route: json.containsKey('route') && json['route'] != null ? GatewayProviderRoute.fromJson(json['route'], path: '$path.route') : null,
+      projectFilter: ConversationProjectFilter.fromJson(_required(json, 'projectFilter', path), path: '$path.projectFilter'),
       cursor: json.containsKey('cursor') && json['cursor'] != null ? _string(json['cursor'], '$path.cursor', minLength: 1) : null,
       limit: json.containsKey('limit') && json['limit'] != null ? _integer(json['limit'], '$path.limit', minimum: 1, maximum: 100) : null,
     );
@@ -1242,12 +1271,13 @@ final class ConversationListRequest {
 
   Map<String, Object?> toJson() => {
     if (route != null) 'route': route!.toJson(),
+    'projectFilter': projectFilter.toJson(),
     if (cursor != null) 'cursor': cursor!,
     if (limit != null) 'limit': limit!,
   };
 
   @override
-  String toString() => 'ConversationListRequest(route: $route, cursor: $cursor, limit: $limit)';
+  String toString() => 'ConversationListRequest(route: $route, projectFilter: $projectFilter, cursor: $cursor, limit: $limit)';
 }
 
 final class ConversationListResponse {
@@ -1365,6 +1395,187 @@ final class ConversationMarkReadResponse {
 
   @override
   String toString() => 'ConversationMarkReadResponse(readState: $readState)';
+}
+
+sealed class ConversationProjectFilter {
+  const ConversationProjectFilter();
+
+  factory ConversationProjectFilter.fromJson(Object? value, {String path = 'ConversationProjectFilter'}) {
+    final json = _object(value, path);
+    final discriminator = _required(json, 'kind', path);
+    switch (discriminator) {
+      case 'all':
+        return ConversationProjectFilterAll.fromJson(json, path: path);
+      case 'standalone':
+        return ConversationProjectFilterStandalone.fromJson(json, path: path);
+      case 'project':
+        return ConversationProjectFilterProject.fromJson(json, path: path);
+      default:
+        throw ProtocolCodecException('$path.kind', 'unknown ConversationProjectFilter discriminator: $discriminator');
+    }
+  }
+
+  Map<String, Object?> toJson();
+}
+
+final class ConversationProjectFilterAll extends ConversationProjectFilter {
+  factory ConversationProjectFilterAll({
+    required ConversationProjectFilterAllKind kind,
+  }) {
+    final validatedKind = kind;
+    return ConversationProjectFilterAll._(
+      kind: validatedKind,
+    );
+  }
+
+  ConversationProjectFilterAll._({
+    required this.kind,
+  });
+
+  final ConversationProjectFilterAllKind kind;
+
+  factory ConversationProjectFilterAll.fromJson(Object? value, {String path = 'ConversationProjectFilterAll'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'kind'}, path);
+    return ConversationProjectFilterAll(
+      kind: ConversationProjectFilterAllKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+  };
+
+  @override
+  String toString() => 'ConversationProjectFilterAll(kind: $kind)';
+}
+
+enum ConversationProjectFilterAllKind {
+  all('all');
+
+  const ConversationProjectFilterAllKind(this.wireValue);
+
+  final String wireValue;
+
+  static ConversationProjectFilterAllKind fromJson(Object? value, {String path = 'ConversationProjectFilterAllKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: all');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class ConversationProjectFilterProject extends ConversationProjectFilter {
+  factory ConversationProjectFilterProject({
+    required ConversationProjectFilterProjectKind kind,
+    required RoutedResourceId project,
+  }) {
+    final validatedKind = kind;
+    final validatedProject = project;
+    return ConversationProjectFilterProject._(
+      kind: validatedKind,
+      project: validatedProject,
+    );
+  }
+
+  ConversationProjectFilterProject._({
+    required this.kind,
+    required this.project,
+  });
+
+  final ConversationProjectFilterProjectKind kind;
+  final RoutedResourceId project;
+
+  factory ConversationProjectFilterProject.fromJson(Object? value, {String path = 'ConversationProjectFilterProject'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'kind', 'project'}, path);
+    return ConversationProjectFilterProject(
+      kind: ConversationProjectFilterProjectKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      project: RoutedResourceId.fromJson(_required(json, 'project', path), path: '$path.project'),
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+    'project': project.toJson(),
+  };
+
+  @override
+  String toString() => 'ConversationProjectFilterProject(kind: $kind, project: $project)';
+}
+
+enum ConversationProjectFilterProjectKind {
+  project('project');
+
+  const ConversationProjectFilterProjectKind(this.wireValue);
+
+  final String wireValue;
+
+  static ConversationProjectFilterProjectKind fromJson(Object? value, {String path = 'ConversationProjectFilterProjectKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: project');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class ConversationProjectFilterStandalone extends ConversationProjectFilter {
+  factory ConversationProjectFilterStandalone({
+    required ConversationProjectFilterStandaloneKind kind,
+  }) {
+    final validatedKind = kind;
+    return ConversationProjectFilterStandalone._(
+      kind: validatedKind,
+    );
+  }
+
+  ConversationProjectFilterStandalone._({
+    required this.kind,
+  });
+
+  final ConversationProjectFilterStandaloneKind kind;
+
+  factory ConversationProjectFilterStandalone.fromJson(Object? value, {String path = 'ConversationProjectFilterStandalone'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'kind'}, path);
+    return ConversationProjectFilterStandalone(
+      kind: ConversationProjectFilterStandaloneKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+  };
+
+  @override
+  String toString() => 'ConversationProjectFilterStandalone(kind: $kind)';
+}
+
+enum ConversationProjectFilterStandaloneKind {
+  standalone('standalone');
+
+  const ConversationProjectFilterStandaloneKind(this.wireValue);
+
+  final String wireValue;
+
+  static ConversationProjectFilterStandaloneKind fromJson(Object? value, {String path = 'ConversationProjectFilterStandaloneKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: standalone');
+  }
+
+  String toJson() => wireValue;
 }
 
 final class ConversationReadState {
@@ -1948,6 +2159,11 @@ final class GatewayCapabilities {
 }
 
 enum GatewayCapability {
+  projectList('project.list'),
+  projectGet('project.get'),
+  projectCreate('project.create'),
+  projectUpdate('project.update'),
+  projectDelete('project.delete'),
   conversationList('conversation.list'),
   conversationSearch('conversation.search'),
   conversationGet('conversation.get'),
@@ -1965,7 +2181,7 @@ enum GatewayCapability {
     for (final candidate in values) {
       if (candidate.wireValue == wireValue) return candidate;
     }
-    throw ProtocolCodecException(path, 'expected one of: conversation.list, conversation.search, conversation.get, conversation.create, turn.send, turn.interrupt, approval.resolve');
+    throw ProtocolCodecException(path, 'expected one of: project.list, project.get, project.create, project.update, project.delete, conversation.list, conversation.search, conversation.get, conversation.create, turn.send, turn.interrupt, approval.resolve');
   }
 
   String toJson() => wireValue;
@@ -2437,6 +2653,558 @@ sealed class ModelSelection {
   }
 
   Map<String, Object?> toJson();
+}
+
+final class Project {
+  factory Project({
+    required RoutedResourceId resource,
+    required String name,
+    required List<ProjectRoot> roots,
+    required Map<String, String> metadata,
+    required int position,
+    required TimestampMs createdAt,
+    required TimestampMs updatedAt,
+  }) {
+    final validatedResource = resource;
+    final validatedName = _string(name, 'Project.name', minLength: 1);
+    final validatedRoots = _freezeList<ProjectRoot>(roots, 'Project.roots', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedMetadata = _freezeMap<String>(metadata, 'Project.metadata', (item, itemPath) => _string(item, itemPath));
+    final validatedPosition = _integer(position, 'Project.position', minimum: -9007199254740991, maximum: 9007199254740991);
+    final validatedCreatedAt = _integer(createdAt, 'Project.createdAt', minimum: 0, maximum: 9007199254740991);
+    final validatedUpdatedAt = _integer(updatedAt, 'Project.updatedAt', minimum: 0, maximum: 9007199254740991);
+    return Project._(
+      resource: validatedResource,
+      name: validatedName,
+      roots: validatedRoots,
+      metadata: validatedMetadata,
+      position: validatedPosition,
+      createdAt: validatedCreatedAt,
+      updatedAt: validatedUpdatedAt,
+    );
+  }
+
+  Project._({
+    required this.resource,
+    required this.name,
+    required this.roots,
+    required this.metadata,
+    required this.position,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final RoutedResourceId resource;
+  final String name;
+  final List<ProjectRoot> roots;
+  final Map<String, String> metadata;
+  final int position;
+  final TimestampMs createdAt;
+  final TimestampMs updatedAt;
+
+  factory Project.fromJson(Object? value, {String path = 'Project'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'resource', 'name', 'roots', 'metadata', 'position', 'createdAt', 'updatedAt'}, path);
+    return Project(
+      resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
+      name: _string(_required(json, 'name', path), '$path.name', minLength: 1),
+      roots: _decodeList<ProjectRoot>(_required(json, 'roots', path), '$path.roots', (item, itemPath) => ProjectRoot.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+      metadata: _decodeMap<String>(_required(json, 'metadata', path), '$path.metadata', (item, itemPath) => _string(item, itemPath)),
+      position: _integer(_required(json, 'position', path), '$path.position', minimum: -9007199254740991, maximum: 9007199254740991),
+      createdAt: _integer(_required(json, 'createdAt', path), '$path.createdAt', minimum: 0, maximum: 9007199254740991),
+      updatedAt: _integer(_required(json, 'updatedAt', path), '$path.updatedAt', minimum: 0, maximum: 9007199254740991),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'resource': resource.toJson(),
+    'name': name,
+    'roots': roots.map((item) => item.toJson()).toList(growable: false),
+    'metadata': metadata.map((key, item) => MapEntry(key, item)),
+    'position': position,
+    'createdAt': createdAt,
+    'updatedAt': updatedAt,
+  };
+
+  @override
+  String toString() => 'Project(resource: $resource, name: $name, roots: $roots, metadata: $metadata, position: $position, createdAt: $createdAt, updatedAt: $updatedAt)';
+}
+
+enum ProjectChangeType {
+  created('created'),
+  updated('updated'),
+  deleted('deleted');
+
+  const ProjectChangeType(this.wireValue);
+
+  final String wireValue;
+
+  static ProjectChangeType fromJson(Object? value, {String path = 'ProjectChangeType'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: created, updated, deleted');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class ProjectChangedEvent {
+  factory ProjectChangedEvent({
+    required RoutedResourceId project,
+    required ProjectChangeType changeType,
+  }) {
+    final validatedProject = project;
+    final validatedChangeType = changeType;
+    return ProjectChangedEvent._(
+      project: validatedProject,
+      changeType: validatedChangeType,
+    );
+  }
+
+  ProjectChangedEvent._({
+    required this.project,
+    required this.changeType,
+  });
+
+  final RoutedResourceId project;
+  final ProjectChangeType changeType;
+
+  factory ProjectChangedEvent.fromJson(Object? value, {String path = 'ProjectChangedEvent'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'project', 'changeType'}, path);
+    return ProjectChangedEvent(
+      project: RoutedResourceId.fromJson(_required(json, 'project', path), path: '$path.project'),
+      changeType: ProjectChangeType.fromJson(_required(json, 'changeType', path), path: '$path.changeType'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'project': project.toJson(),
+    'changeType': changeType.toJson(),
+  };
+
+  @override
+  String toString() => 'ProjectChangedEvent(project: $project, changeType: $changeType)';
+}
+
+final class ProjectCreateRequest {
+  factory ProjectCreateRequest({
+    required GatewayProviderRoute route,
+    required RequestId idempotencyKey,
+    required String name,
+    required List<ProjectRoot> roots,
+    required Map<String, String> metadata,
+  }) {
+    final validatedRoute = route;
+    final validatedIdempotencyKey = _string(idempotencyKey, 'ProjectCreateRequest.idempotencyKey', minLength: 1);
+    final validatedName = _string(name, 'ProjectCreateRequest.name', minLength: 1);
+    final validatedRoots = _freezeList<ProjectRoot>(roots, 'ProjectCreateRequest.roots', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedMetadata = _freezeMap<String>(metadata, 'ProjectCreateRequest.metadata', (item, itemPath) => _string(item, itemPath));
+    return ProjectCreateRequest._(
+      route: validatedRoute,
+      idempotencyKey: validatedIdempotencyKey,
+      name: validatedName,
+      roots: validatedRoots,
+      metadata: validatedMetadata,
+    );
+  }
+
+  ProjectCreateRequest._({
+    required this.route,
+    required this.idempotencyKey,
+    required this.name,
+    required this.roots,
+    required this.metadata,
+  });
+
+  final GatewayProviderRoute route;
+  final RequestId idempotencyKey;
+  final String name;
+  final List<ProjectRoot> roots;
+  final Map<String, String> metadata;
+
+  factory ProjectCreateRequest.fromJson(Object? value, {String path = 'ProjectCreateRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'route', 'idempotencyKey', 'name', 'roots', 'metadata'}, path);
+    return ProjectCreateRequest(
+      route: GatewayProviderRoute.fromJson(_required(json, 'route', path), path: '$path.route'),
+      idempotencyKey: _string(_required(json, 'idempotencyKey', path), '$path.idempotencyKey', minLength: 1),
+      name: _string(_required(json, 'name', path), '$path.name', minLength: 1),
+      roots: _decodeList<ProjectRoot>(_required(json, 'roots', path), '$path.roots', (item, itemPath) => ProjectRoot.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+      metadata: _decodeMap<String>(_required(json, 'metadata', path), '$path.metadata', (item, itemPath) => _string(item, itemPath)),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'route': route.toJson(),
+    'idempotencyKey': idempotencyKey,
+    'name': name,
+    'roots': roots.map((item) => item.toJson()).toList(growable: false),
+    'metadata': metadata.map((key, item) => MapEntry(key, item)),
+  };
+
+  @override
+  String toString() => 'ProjectCreateRequest(route: $route, idempotencyKey: $idempotencyKey, name: $name, roots: $roots, metadata: $metadata)';
+}
+
+final class ProjectCreateResponse {
+  factory ProjectCreateResponse({
+    required Project project,
+  }) {
+    final validatedProject = project;
+    return ProjectCreateResponse._(
+      project: validatedProject,
+    );
+  }
+
+  ProjectCreateResponse._({
+    required this.project,
+  });
+
+  final Project project;
+
+  factory ProjectCreateResponse.fromJson(Object? value, {String path = 'ProjectCreateResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'project'}, path);
+    return ProjectCreateResponse(
+      project: Project.fromJson(_required(json, 'project', path), path: '$path.project'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'project': project.toJson(),
+  };
+
+  @override
+  String toString() => 'ProjectCreateResponse(project: $project)';
+}
+
+final class ProjectDeleteRequest {
+  factory ProjectDeleteRequest({
+    required RoutedResourceId project,
+  }) {
+    final validatedProject = project;
+    return ProjectDeleteRequest._(
+      project: validatedProject,
+    );
+  }
+
+  ProjectDeleteRequest._({
+    required this.project,
+  });
+
+  final RoutedResourceId project;
+
+  factory ProjectDeleteRequest.fromJson(Object? value, {String path = 'ProjectDeleteRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'project'}, path);
+    return ProjectDeleteRequest(
+      project: RoutedResourceId.fromJson(_required(json, 'project', path), path: '$path.project'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'project': project.toJson(),
+  };
+
+  @override
+  String toString() => 'ProjectDeleteRequest(project: $project)';
+}
+
+final class ProjectDeleteResponse {
+  factory ProjectDeleteResponse()
+   {
+    return ProjectDeleteResponse._(
+    );
+  }
+
+  ProjectDeleteResponse._();
+
+  factory ProjectDeleteResponse.fromJson(Object? value, {String path = 'ProjectDeleteResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {}, path);
+    return ProjectDeleteResponse();
+  }
+
+  Map<String, Object?> toJson() => {
+  };
+
+  @override
+  String toString() => 'ProjectDeleteResponse()';
+}
+
+final class ProjectGetRequest {
+  factory ProjectGetRequest({
+    required RoutedResourceId project,
+  }) {
+    final validatedProject = project;
+    return ProjectGetRequest._(
+      project: validatedProject,
+    );
+  }
+
+  ProjectGetRequest._({
+    required this.project,
+  });
+
+  final RoutedResourceId project;
+
+  factory ProjectGetRequest.fromJson(Object? value, {String path = 'ProjectGetRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'project'}, path);
+    return ProjectGetRequest(
+      project: RoutedResourceId.fromJson(_required(json, 'project', path), path: '$path.project'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'project': project.toJson(),
+  };
+
+  @override
+  String toString() => 'ProjectGetRequest(project: $project)';
+}
+
+final class ProjectGetResponse {
+  factory ProjectGetResponse({
+    required Project project,
+  }) {
+    final validatedProject = project;
+    return ProjectGetResponse._(
+      project: validatedProject,
+    );
+  }
+
+  ProjectGetResponse._({
+    required this.project,
+  });
+
+  final Project project;
+
+  factory ProjectGetResponse.fromJson(Object? value, {String path = 'ProjectGetResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'project'}, path);
+    return ProjectGetResponse(
+      project: Project.fromJson(_required(json, 'project', path), path: '$path.project'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'project': project.toJson(),
+  };
+
+  @override
+  String toString() => 'ProjectGetResponse(project: $project)';
+}
+
+final class ProjectListRequest {
+  factory ProjectListRequest({
+    required GatewayProviderRoute route,
+    Cursor? cursor,
+    int? limit,
+  }) {
+    final validatedRoute = route;
+    final validatedCursor = cursor == null ? null : _string(cursor, 'ProjectListRequest.cursor', minLength: 1);
+    final validatedLimit = limit == null ? null : _integer(limit, 'ProjectListRequest.limit', minimum: 1, maximum: 100);
+    return ProjectListRequest._(
+      route: validatedRoute,
+      cursor: validatedCursor,
+      limit: validatedLimit,
+    );
+  }
+
+  ProjectListRequest._({
+    required this.route,
+    required this.cursor,
+    required this.limit,
+  });
+
+  final GatewayProviderRoute route;
+  final Cursor? cursor;
+  final int? limit;
+
+  factory ProjectListRequest.fromJson(Object? value, {String path = 'ProjectListRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'route', 'cursor', 'limit'}, path);
+    return ProjectListRequest(
+      route: GatewayProviderRoute.fromJson(_required(json, 'route', path), path: '$path.route'),
+      cursor: json.containsKey('cursor') && json['cursor'] != null ? _string(json['cursor'], '$path.cursor', minLength: 1) : null,
+      limit: json.containsKey('limit') && json['limit'] != null ? _integer(json['limit'], '$path.limit', minimum: 1, maximum: 100) : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'route': route.toJson(),
+    if (cursor != null) 'cursor': cursor!,
+    if (limit != null) 'limit': limit!,
+  };
+
+  @override
+  String toString() => 'ProjectListRequest(route: $route, cursor: $cursor, limit: $limit)';
+}
+
+final class ProjectListResponse {
+  factory ProjectListResponse({
+    required List<Project> projects,
+    required PageInfo pageInfo,
+    required EventCursor snapshotCursor,
+  }) {
+    final validatedProjects = _freezeList<Project>(projects, 'ProjectListResponse.projects', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedPageInfo = pageInfo;
+    final validatedSnapshotCursor = _string(snapshotCursor, 'ProjectListResponse.snapshotCursor', minLength: 1);
+    return ProjectListResponse._(
+      projects: validatedProjects,
+      pageInfo: validatedPageInfo,
+      snapshotCursor: validatedSnapshotCursor,
+    );
+  }
+
+  ProjectListResponse._({
+    required this.projects,
+    required this.pageInfo,
+    required this.snapshotCursor,
+  });
+
+  final List<Project> projects;
+  final PageInfo pageInfo;
+  final EventCursor snapshotCursor;
+
+  factory ProjectListResponse.fromJson(Object? value, {String path = 'ProjectListResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'projects', 'pageInfo', 'snapshotCursor'}, path);
+    return ProjectListResponse(
+      projects: _decodeList<Project>(_required(json, 'projects', path), '$path.projects', (item, itemPath) => Project.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+      pageInfo: PageInfo.fromJson(_required(json, 'pageInfo', path), path: '$path.pageInfo'),
+      snapshotCursor: _string(_required(json, 'snapshotCursor', path), '$path.snapshotCursor', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'projects': projects.map((item) => item.toJson()).toList(growable: false),
+    'pageInfo': pageInfo.toJson(),
+    'snapshotCursor': snapshotCursor,
+  };
+
+  @override
+  String toString() => 'ProjectListResponse(projects: $projects, pageInfo: $pageInfo, snapshotCursor: $snapshotCursor)';
+}
+
+final class ProjectRoot {
+  factory ProjectRoot({
+    required String path,
+  }) {
+    final validatedPath = _string(path, 'ProjectRoot.path', minLength: 1);
+    return ProjectRoot._(
+      path: validatedPath,
+    );
+  }
+
+  ProjectRoot._({
+    required this.path,
+  });
+
+  final String path;
+
+  factory ProjectRoot.fromJson(Object? value, {String path = 'ProjectRoot'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'path'}, path);
+    return ProjectRoot(
+      path: _string(_required(json, 'path', path), '$path.path', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'path': path,
+  };
+
+  @override
+  String toString() => 'ProjectRoot(path: $path)';
+}
+
+final class ProjectUpdateRequest {
+  factory ProjectUpdateRequest({
+    required RoutedResourceId project,
+    String? name,
+    List<ProjectRoot>? roots,
+    Map<String, String>? metadata,
+  }) {
+    final validatedProject = project;
+    final validatedName = name == null ? null : _string(name, 'ProjectUpdateRequest.name', minLength: 1);
+    final validatedRoots = roots == null ? null : _freezeList<ProjectRoot>(roots, 'ProjectUpdateRequest.roots', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedMetadata = metadata == null ? null : _freezeMap<String>(metadata, 'ProjectUpdateRequest.metadata', (item, itemPath) => _string(item, itemPath));
+    return ProjectUpdateRequest._(
+      project: validatedProject,
+      name: validatedName,
+      roots: validatedRoots,
+      metadata: validatedMetadata,
+    );
+  }
+
+  ProjectUpdateRequest._({
+    required this.project,
+    required this.name,
+    required this.roots,
+    required this.metadata,
+  });
+
+  final RoutedResourceId project;
+  final String? name;
+  final List<ProjectRoot>? roots;
+  final Map<String, String>? metadata;
+
+  factory ProjectUpdateRequest.fromJson(Object? value, {String path = 'ProjectUpdateRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'project', 'name', 'roots', 'metadata'}, path);
+    return ProjectUpdateRequest(
+      project: RoutedResourceId.fromJson(_required(json, 'project', path), path: '$path.project'),
+      name: json.containsKey('name') && json['name'] != null ? _string(json['name'], '$path.name', minLength: 1) : null,
+      roots: json.containsKey('roots') && json['roots'] != null ? _decodeList<ProjectRoot>(json['roots'], '$path.roots', (item, itemPath) => ProjectRoot.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()) : null,
+      metadata: json.containsKey('metadata') && json['metadata'] != null ? _decodeMap<String>(json['metadata'], '$path.metadata', (item, itemPath) => _string(item, itemPath)) : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'project': project.toJson(),
+    if (name != null) 'name': name!,
+    if (roots != null) 'roots': roots!.map((item) => item.toJson()).toList(growable: false),
+    if (metadata != null) 'metadata': metadata!.map((key, item) => MapEntry(key, item)),
+  };
+
+  @override
+  String toString() => 'ProjectUpdateRequest(project: $project, name: $name, roots: $roots, metadata: $metadata)';
+}
+
+final class ProjectUpdateResponse {
+  factory ProjectUpdateResponse({
+    required Project project,
+  }) {
+    final validatedProject = project;
+    return ProjectUpdateResponse._(
+      project: validatedProject,
+    );
+  }
+
+  ProjectUpdateResponse._({
+    required this.project,
+  });
+
+  final Project project;
+
+  factory ProjectUpdateResponse.fromJson(Object? value, {String path = 'ProjectUpdateResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'project'}, path);
+    return ProjectUpdateResponse(
+      project: Project.fromJson(_required(json, 'project', path), path: '$path.project'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'project': project.toJson(),
+  };
+
+  @override
+  String toString() => 'ProjectUpdateResponse(project: $project)';
 }
 
 final class ProviderInstance {
@@ -3821,6 +4589,11 @@ enum ProtocolMethod {
   eventSubscribe('event.subscribe', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: EventSubscribeRequest, responseType: EventSubscribeResponse),
   deviceList('device.list', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: DeviceListRequest, responseType: DeviceListResponse),
   providerList('provider.list', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: ProviderListRequest, responseType: ProviderListResponse),
+  projectList('project.list', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.projectList, requestType: ProjectListRequest, responseType: ProjectListResponse),
+  projectGet('project.get', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.projectGet, requestType: ProjectGetRequest, responseType: ProjectGetResponse),
+  projectCreate('project.create', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.projectCreate, requestType: ProjectCreateRequest, responseType: ProjectCreateResponse),
+  projectUpdate('project.update', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.projectUpdate, requestType: ProjectUpdateRequest, responseType: ProjectUpdateResponse),
+  projectDelete('project.delete', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.projectDelete, requestType: ProjectDeleteRequest, responseType: ProjectDeleteResponse),
   conversationList('conversation.list', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationList, requestType: ConversationListRequest, responseType: ConversationListResponse),
   conversationSearch('conversation.search', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationSearch, requestType: ConversationSearchRequest, responseType: ConversationSearchResponse),
   conversationGet('conversation.get', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationGet, requestType: ConversationGetRequest, responseType: ConversationGetResponse),
@@ -3852,6 +4625,7 @@ enum ProtocolMethod {
 }
 
 enum ProtocolEventName {
+  projectChanged('project.changed', direction: 'gatewayToClient', delivery: 'replayable', scope: 'project', payloadType: ProjectChangedEvent),
   deviceStatusChanged('device.statusChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'device', payloadType: DeviceStatusChangedEvent),
   providerStatusChanged('provider.statusChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'providerInstance', payloadType: ProviderStatusChangedEvent),
   conversationUpserted('conversation.upserted', direction: 'gatewayToClient', delivery: 'replayable', scope: 'conversation', payloadType: ConversationUpsertedEvent),
@@ -3891,6 +4665,16 @@ Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
       return DeviceListRequest.fromJson(value, path: path);
     case ProtocolMethod.providerList:
       return ProviderListRequest.fromJson(value, path: path);
+    case ProtocolMethod.projectList:
+      return ProjectListRequest.fromJson(value, path: path);
+    case ProtocolMethod.projectGet:
+      return ProjectGetRequest.fromJson(value, path: path);
+    case ProtocolMethod.projectCreate:
+      return ProjectCreateRequest.fromJson(value, path: path);
+    case ProtocolMethod.projectUpdate:
+      return ProjectUpdateRequest.fromJson(value, path: path);
+    case ProtocolMethod.projectDelete:
+      return ProjectDeleteRequest.fromJson(value, path: path);
     case ProtocolMethod.conversationList:
       return ConversationListRequest.fromJson(value, path: path);
     case ProtocolMethod.conversationSearch:
@@ -3925,6 +4709,21 @@ Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, S
       return value.toJson();
     case ProtocolMethod.providerList:
       if (value is! ProviderListRequest) throw ProtocolCodecException(path, 'expected ProviderListRequest');
+      return value.toJson();
+    case ProtocolMethod.projectList:
+      if (value is! ProjectListRequest) throw ProtocolCodecException(path, 'expected ProjectListRequest');
+      return value.toJson();
+    case ProtocolMethod.projectGet:
+      if (value is! ProjectGetRequest) throw ProtocolCodecException(path, 'expected ProjectGetRequest');
+      return value.toJson();
+    case ProtocolMethod.projectCreate:
+      if (value is! ProjectCreateRequest) throw ProtocolCodecException(path, 'expected ProjectCreateRequest');
+      return value.toJson();
+    case ProtocolMethod.projectUpdate:
+      if (value is! ProjectUpdateRequest) throw ProtocolCodecException(path, 'expected ProjectUpdateRequest');
+      return value.toJson();
+    case ProtocolMethod.projectDelete:
+      if (value is! ProjectDeleteRequest) throw ProtocolCodecException(path, 'expected ProjectDeleteRequest');
       return value.toJson();
     case ProtocolMethod.conversationList:
       if (value is! ConversationListRequest) throw ProtocolCodecException(path, 'expected ConversationListRequest');
@@ -3966,6 +4765,16 @@ Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) 
       return DeviceListResponse.fromJson(value, path: path);
     case ProtocolMethod.providerList:
       return ProviderListResponse.fromJson(value, path: path);
+    case ProtocolMethod.projectList:
+      return ProjectListResponse.fromJson(value, path: path);
+    case ProtocolMethod.projectGet:
+      return ProjectGetResponse.fromJson(value, path: path);
+    case ProtocolMethod.projectCreate:
+      return ProjectCreateResponse.fromJson(value, path: path);
+    case ProtocolMethod.projectUpdate:
+      return ProjectUpdateResponse.fromJson(value, path: path);
+    case ProtocolMethod.projectDelete:
+      return ProjectDeleteResponse.fromJson(value, path: path);
     case ProtocolMethod.conversationList:
       return ConversationListResponse.fromJson(value, path: path);
     case ProtocolMethod.conversationSearch:
@@ -4001,6 +4810,21 @@ Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, 
     case ProtocolMethod.providerList:
       if (value is! ProviderListResponse) throw ProtocolCodecException(path, 'expected ProviderListResponse');
       return value.toJson();
+    case ProtocolMethod.projectList:
+      if (value is! ProjectListResponse) throw ProtocolCodecException(path, 'expected ProjectListResponse');
+      return value.toJson();
+    case ProtocolMethod.projectGet:
+      if (value is! ProjectGetResponse) throw ProtocolCodecException(path, 'expected ProjectGetResponse');
+      return value.toJson();
+    case ProtocolMethod.projectCreate:
+      if (value is! ProjectCreateResponse) throw ProtocolCodecException(path, 'expected ProjectCreateResponse');
+      return value.toJson();
+    case ProtocolMethod.projectUpdate:
+      if (value is! ProjectUpdateResponse) throw ProtocolCodecException(path, 'expected ProjectUpdateResponse');
+      return value.toJson();
+    case ProtocolMethod.projectDelete:
+      if (value is! ProjectDeleteResponse) throw ProtocolCodecException(path, 'expected ProjectDeleteResponse');
+      return value.toJson();
     case ProtocolMethod.conversationList:
       if (value is! ConversationListResponse) throw ProtocolCodecException(path, 'expected ConversationListResponse');
       return value.toJson();
@@ -4033,6 +4857,8 @@ Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, 
 
 Object _decodeEventPayload(ProtocolEventName event, Object? value, String path) {
   switch (event) {
+    case ProtocolEventName.projectChanged:
+      return ProjectChangedEvent.fromJson(value, path: path);
     case ProtocolEventName.deviceStatusChanged:
       return DeviceStatusChangedEvent.fromJson(value, path: path);
     case ProtocolEventName.providerStatusChanged:
@@ -4056,6 +4882,9 @@ Object _decodeEventPayload(ProtocolEventName event, Object? value, String path) 
 
 Map<String, Object?> _encodeEventPayload(ProtocolEventName event, Object value, String path) {
   switch (event) {
+    case ProtocolEventName.projectChanged:
+      if (value is! ProjectChangedEvent) throw ProtocolCodecException(path, 'expected ProjectChangedEvent');
+      return value.toJson();
     case ProtocolEventName.deviceStatusChanged:
       if (value is! DeviceStatusChangedEvent) throw ProtocolCodecException(path, 'expected DeviceStatusChangedEvent');
       return value.toJson();
@@ -4221,6 +5050,16 @@ final class ProtocolClient {
   Future<DeviceListResponse> deviceList(DeviceListRequest request) => _request<DeviceListResponse>(ProtocolMethod.deviceList, request);
 
   Future<ProviderListResponse> providerList(ProviderListRequest request) => _request<ProviderListResponse>(ProtocolMethod.providerList, request);
+
+  Future<ProjectListResponse> projectList(ProjectListRequest request) => _request<ProjectListResponse>(ProtocolMethod.projectList, request);
+
+  Future<ProjectGetResponse> projectGet(ProjectGetRequest request) => _request<ProjectGetResponse>(ProtocolMethod.projectGet, request);
+
+  Future<ProjectCreateResponse> projectCreate(ProjectCreateRequest request) => _request<ProjectCreateResponse>(ProtocolMethod.projectCreate, request);
+
+  Future<ProjectUpdateResponse> projectUpdate(ProjectUpdateRequest request) => _request<ProjectUpdateResponse>(ProtocolMethod.projectUpdate, request);
+
+  Future<ProjectDeleteResponse> projectDelete(ProjectDeleteRequest request) => _request<ProjectDeleteResponse>(ProtocolMethod.projectDelete, request);
 
   Future<ConversationListResponse> conversationList(ConversationListRequest request) => _request<ConversationListResponse>(ProtocolMethod.conversationList, request);
 

@@ -1,0 +1,30 @@
+{
+  "jsonrpc": "2.0",
+  "id": "project-list-1",
+  "result": {
+    "projects": [
+      {
+        "resource": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "project-01"
+        },
+        "name": "CodePet",
+        "roots": [
+          { "path": "/Users/example/codepet" }
+        ],
+        "metadata": {
+          "team": "gateway"
+        },
+        "position": 4,
+        "createdAt": 1787700000000,
+        "updatedAt": 1787700001000
+      }
+    ],
+    "pageInfo": {
+      "nextCursor": "project-cursor-2"
+    },
+    "snapshotCursor": "event-42"
+  }
+}

@@ -507,6 +507,22 @@ impl ProviderGatewayService {
             provider::ProtocolEvent::EventInstanceStatusChanged { .. } => {
                 unreachable!("instance status events are converted to one Host state update")
             }
+            provider::ProtocolEvent::EventProjectChanged { params, .. } => {
+                gateway::ProtocolEvent::ProjectChanged {
+                    jsonrpc: "2.0".to_string(),
+                    params: gateway::ProtocolEventParams {
+                        event_cursor: event_cursor(0),
+                        payload: gateway::ProjectChangedEvent {
+                            project: params.project,
+                            change_type: match params.change_type {
+                                provider::ProjectChangeType::Created => gateway::ProjectChangeType::Created,
+                                provider::ProjectChangeType::Updated => gateway::ProjectChangeType::Updated,
+                                provider::ProjectChangeType::Deleted => gateway::ProjectChangeType::Deleted,
+                            },
+                        },
+                    },
+                }
+            }
             provider::ProtocolEvent::EventConversationUpserted { params, .. } => {
                 gateway::ProtocolEvent::ConversationUpserted {
                     jsonrpc: "2.0".to_string(),
@@ -823,12 +839,141 @@ impl ProtocolServer for ProviderGatewayService {
         })
     }
 
+    fn project_list<'a>(
+        &'a self,
+        request: gateway::ProjectListRequest,
+    ) -> gateway::ProtocolFuture<'a, gateway::ProjectListResponse> {
+        Box::pin(async move {
+            let snapshot_cursor = self.current_event_cursor();
+            let response = self
+                .manager
+                .project_list(provider::ProjectListRequest {
+                    route: provider_route(request.route),
+                    cursor: request.cursor,
+                    limit: request.limit,
+                })
+                .await
+                .map_err(gateway_error)?;
+            Ok(gateway::ProjectListResponse {
+                projects: response.projects.into_iter().map(map_project).collect(),
+                page_info: gateway::PageInfo {
+                    next_cursor: response.page_info.next_cursor,
+                },
+                snapshot_cursor,
+            })
+        })
+    }
+
+    fn project_get<'a>(
+        &'a self,
+        request: gateway::ProjectGetRequest,
+    ) -> gateway::ProtocolFuture<'a, gateway::ProjectGetResponse> {
+        Box::pin(async move {
+            let response = self
+                .manager
+                .project_get(provider::ProjectGetRequest {
+                    project: request.project,
+                })
+                .await
+                .map_err(gateway_error)?;
+            Ok(gateway::ProjectGetResponse {
+                project: map_project(response.project),
+            })
+        })
+    }
+
+    fn project_create<'a>(
+        &'a self,
+        request: gateway::ProjectCreateRequest,
+    ) -> gateway::ProtocolFuture<'a, gateway::ProjectCreateResponse> {
+        Box::pin(async move {
+            let response = self
+                .manager
+                .project_create(provider::ProjectCreateRequest {
+                    route: provider_route(request.route),
+                    idempotency_key: request.idempotency_key,
+                    name: request.name,
+                    roots: request
+                        .roots
+                        .into_iter()
+                        .map(|root| provider::ProjectRoot { path: root.path })
+                        .collect(),
+                    metadata: request.metadata,
+                })
+                .await
+                .map_err(gateway_error)?;
+            Ok(gateway::ProjectCreateResponse {
+                project: map_project(response.project),
+            })
+        })
+    }
+
+    fn project_update<'a>(
+        &'a self,
+        request: gateway::ProjectUpdateRequest,
+    ) -> gateway::ProtocolFuture<'a, gateway::ProjectUpdateResponse> {
+        Box::pin(async move {
+            let response = self
+                .manager
+                .project_update(provider::ProjectUpdateRequest {
+                    project: request.project,
+                    name: request.name,
+                    roots: request.roots.map(|roots| {
+                        roots
+                            .into_iter()
+                            .map(|root| provider::ProjectRoot { path: root.path })
+                            .collect()
+                    }),
+                    metadata: request.metadata,
+                })
+                .await
+                .map_err(gateway_error)?;
+            Ok(gateway::ProjectUpdateResponse {
+                project: map_project(response.project),
+            })
+        })
+    }
+
+    fn project_delete<'a>(
+        &'a self,
+        request: gateway::ProjectDeleteRequest,
+    ) -> gateway::ProtocolFuture<'a, gateway::ProjectDeleteResponse> {
+        Box::pin(async move {
+            self.manager
+                .project_delete(provider::ProjectDeleteRequest {
+                    project: request.project,
+                })
+                .await
+                .map_err(gateway_error)?;
+            Ok(gateway::ProjectDeleteResponse {})
+        })
+    }
+
     fn conversation_list<'a>(
         &'a self,
         request: gateway::ConversationListRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ConversationListResponse> {
         Box::pin(async move {
-            if request.route.is_none() && request.cursor.is_some() {
+            let project_route = match &request.project_filter {
+                gateway::ConversationProjectFilter::ConversationProjectFilterProject(filter) => {
+                    validate_gateway_resource(&filter.project)?;
+                    Some(gateway_route_for_resource(&filter.project))
+                }
+                _ => None,
+            };
+            if let (Some(route), Some(project_route)) = (request.route.as_ref(), project_route.as_ref()) {
+                if route != project_route {
+                    return Err(gateway::ProtocolError {
+                        code: "mismatched_provider_route".to_string(),
+                        message: "conversation project filter must target the requested Provider route".to_string(),
+                        retryable: false,
+                        details: None,
+                    });
+                }
+            }
+            let route = request.route.clone().or(project_route);
+            let project_filter = map_conversation_project_filter(request.project_filter.clone());
+            if route.is_none() && request.cursor.is_some() {
                 return Err(gateway::ProtocolError {
                     code: "aggregate_conversation_cursor_unsupported".to_string(),
                     message: "route-less conversation.list does not support Provider cursors"
@@ -840,13 +985,14 @@ impl ProtocolServer for ProviderGatewayService {
             let snapshot_cursor = self.current_event_cursor();
             let mut conversations = Vec::new();
             let mut next_cursor = None;
-            if let Some(route) = request.route {
+            if let Some(route) = route {
                 let response = self
                     .manager
                     .conversation_list(provider::ConversationListRequest {
                         route: provider_route(route),
                         cursor: request.cursor,
                         limit: request.limit,
+                        project_filter,
                     })
                     .await
                     .map_err(gateway_error)?;
@@ -876,6 +1022,7 @@ impl ProtocolServer for ProviderGatewayService {
                             route,
                             cursor: request.cursor.clone(),
                             limit: request.limit,
+                            project_filter: project_filter.clone(),
                         })
                         .await
                     {
@@ -1048,6 +1195,7 @@ impl ProtocolServer for ProviderGatewayService {
                 .manager
                 .conversation_create(provider::ConversationCreateRequest {
                     route: provider_route(request.route),
+                    project: request.project,
                     title: request.title,
                     permission_level: request.permission_level,
                     model: request.model,
@@ -1188,6 +1336,21 @@ fn map_capabilities(capabilities: &provider::ProviderCapabilities) -> gateway::G
     let mut methods = Vec::new();
     for method in &capabilities.methods {
         let mapped = match method {
+            provider::ProviderCapability::ProjectList => {
+                Some(gateway::GatewayCapability::ProjectList)
+            }
+            provider::ProviderCapability::ProjectGet => {
+                Some(gateway::GatewayCapability::ProjectGet)
+            }
+            provider::ProviderCapability::ProjectCreate => {
+                Some(gateway::GatewayCapability::ProjectCreate)
+            }
+            provider::ProviderCapability::ProjectUpdate => {
+                Some(gateway::GatewayCapability::ProjectUpdate)
+            }
+            provider::ProviderCapability::ProjectDelete => {
+                Some(gateway::GatewayCapability::ProjectDelete)
+            }
             provider::ProviderCapability::ConversationList => {
                 Some(gateway::GatewayCapability::ConversationList)
             }
@@ -1341,6 +1504,7 @@ fn map_grouped_model_selection_to_gateway(
 fn map_conversation(conversation: provider::ProviderConversation) -> gateway::Conversation {
     gateway::Conversation {
         resource: conversation.resource,
+        project: conversation.project,
         title: conversation.title,
         preview: conversation.preview,
         status: match conversation.status {
@@ -1383,6 +1547,63 @@ fn map_turn(turn: provider::ProviderTurn) -> gateway::TurnTask {
         started_at: turn.started_at,
         updated_at: turn.updated_at,
         completed_at: turn.completed_at,
+    }
+}
+
+fn map_project(project: provider::Project) -> gateway::Project {
+    gateway::Project {
+        resource: project.resource,
+        name: project.name,
+        roots: project
+            .roots
+            .into_iter()
+            .map(|root| gateway::ProjectRoot { path: root.path })
+            .collect(),
+        metadata: project.metadata,
+        position: project.position,
+        created_at: project.created_at,
+        updated_at: project.updated_at,
+    }
+}
+
+fn map_conversation_project_filter(
+    filter: gateway::ConversationProjectFilter,
+) -> provider::ConversationProjectFilter {
+    match filter {
+        gateway::ConversationProjectFilter::ConversationProjectFilterAll(filter) => {
+            provider::ConversationProjectFilter::ConversationProjectFilterAll(
+                provider::ConversationProjectFilterAll {
+                    kind: match filter.kind {
+                        gateway::ConversationProjectFilterAllKind::All => {
+                            provider::ConversationProjectFilterAllKind::All
+                        }
+                    },
+                },
+            )
+        }
+        gateway::ConversationProjectFilter::ConversationProjectFilterStandalone(filter) => {
+            provider::ConversationProjectFilter::ConversationProjectFilterStandalone(
+                provider::ConversationProjectFilterStandalone {
+                    kind: match filter.kind {
+                        gateway::ConversationProjectFilterStandaloneKind::Standalone => {
+                            provider::ConversationProjectFilterStandaloneKind::Standalone
+                        }
+                    },
+                },
+            )
+        }
+        gateway::ConversationProjectFilter::ConversationProjectFilterProject(filter) => {
+            provider::ConversationProjectFilter::ConversationProjectFilterProject(
+                provider::ConversationProjectFilterProject {
+                    kind: match filter.kind {
+                        gateway::ConversationProjectFilterProjectKind::Project => {
+                            provider::ConversationProjectFilterProjectKind::Project
+                        }
+                    },
+                    project: filter.project,
+                },
+            )
+        }
     }
 }
 

@@ -2,6 +2,7 @@
 // DO NOT EDIT MANUALLY.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::future::Future;
 use std::pin::Pin;
@@ -108,6 +109,7 @@ pub struct ChoiceSet {
 #[serde(deny_unknown_fields)]
 pub struct Conversation {
     pub resource: RoutedResourceId,
+    pub project: Option<RoutedResourceId>,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview: Option<String>,
@@ -206,6 +208,8 @@ pub struct ConversationCreateRequest {
     pub workspace_root: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<RoutedResourceId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -322,6 +326,7 @@ pub struct ConversationItemUpsertedEvent {
 pub struct ConversationListRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub route: Option<GatewayProviderRoute>,
+    pub project_filter: ConversationProjectFilter,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -350,6 +355,54 @@ pub struct ConversationMarkReadRequest {
 #[serde(deny_unknown_fields)]
 pub struct ConversationMarkReadResponse {
     pub read_state: ConversationReadState,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ConversationProjectFilter {
+    ConversationProjectFilterAll(ConversationProjectFilterAll),
+    ConversationProjectFilterStandalone(ConversationProjectFilterStandalone),
+    ConversationProjectFilterProject(ConversationProjectFilterProject),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationProjectFilterAll {
+    pub kind: ConversationProjectFilterAllKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConversationProjectFilterAllKind {
+    #[serde(rename = "all")]
+    All,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationProjectFilterProject {
+    pub kind: ConversationProjectFilterProjectKind,
+    pub project: RoutedResourceId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConversationProjectFilterProjectKind {
+    #[serde(rename = "project")]
+    Project,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationProjectFilterStandalone {
+    pub kind: ConversationProjectFilterStandaloneKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConversationProjectFilterStandaloneKind {
+    #[serde(rename = "standalone")]
+    Standalone,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -498,6 +551,16 @@ pub struct GatewayCapabilities {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GatewayCapability {
+    #[serde(rename = "project.list")]
+    ProjectList,
+    #[serde(rename = "project.get")]
+    ProjectGet,
+    #[serde(rename = "project.create")]
+    ProjectCreate,
+    #[serde(rename = "project.update")]
+    ProjectUpdate,
+    #[serde(rename = "project.delete")]
+    ProjectDelete,
     #[serde(rename = "conversation.list")]
     ConversationList,
     #[serde(rename = "conversation.search")]
@@ -614,6 +677,130 @@ pub enum ModelCatalog {
 pub enum ModelSelection {
     FlatModelSelection(FlatModelSelection),
     GroupedModelSelection(GroupedModelSelection),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct Project {
+    pub resource: RoutedResourceId,
+    pub name: String,
+    pub roots: Vec<ProjectRoot>,
+    pub metadata: BTreeMap<String, String>,
+    pub position: i64,
+    pub created_at: TimestampMs,
+    pub updated_at: TimestampMs,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProjectChangeType {
+    #[serde(rename = "created")]
+    Created,
+    #[serde(rename = "updated")]
+    Updated,
+    #[serde(rename = "deleted")]
+    Deleted,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProjectChangedEvent {
+    pub project: RoutedResourceId,
+    pub change_type: ProjectChangeType,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProjectCreateRequest {
+    pub route: GatewayProviderRoute,
+    pub idempotency_key: RequestId,
+    pub name: String,
+    pub roots: Vec<ProjectRoot>,
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProjectCreateResponse {
+    pub project: Project,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProjectDeleteRequest {
+    pub project: RoutedResourceId,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProjectDeleteResponse {
+
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProjectGetRequest {
+    pub project: RoutedResourceId,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProjectGetResponse {
+    pub project: Project,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProjectListRequest {
+    pub route: GatewayProviderRoute,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<Cursor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProjectListResponse {
+    pub projects: Vec<Project>,
+    pub page_info: PageInfo,
+    pub snapshot_cursor: EventCursor,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProjectRoot {
+    pub path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProjectUpdateRequest {
+    pub project: RoutedResourceId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roots: Option<Vec<ProjectRoot>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<BTreeMap<String, String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProjectUpdateResponse {
+    pub project: Project,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1009,6 +1196,16 @@ pub enum ProtocolMethod {
     DeviceList,
     #[serde(rename = "provider.list")]
     ProviderList,
+    #[serde(rename = "project.list")]
+    ProjectList,
+    #[serde(rename = "project.get")]
+    ProjectGet,
+    #[serde(rename = "project.create")]
+    ProjectCreate,
+    #[serde(rename = "project.update")]
+    ProjectUpdate,
+    #[serde(rename = "project.delete")]
+    ProjectDelete,
     #[serde(rename = "conversation.list")]
     ConversationList,
     #[serde(rename = "conversation.search")]
@@ -1036,6 +1233,11 @@ impl ProtocolMethod {
             Self::EventSubscribe => "event.subscribe",
             Self::DeviceList => "device.list",
             Self::ProviderList => "provider.list",
+            Self::ProjectList => "project.list",
+            Self::ProjectGet => "project.get",
+            Self::ProjectCreate => "project.create",
+            Self::ProjectUpdate => "project.update",
+            Self::ProjectDelete => "project.delete",
             Self::ConversationList => "conversation.list",
             Self::ConversationSearch => "conversation.search",
             Self::ConversationGet => "conversation.get",
@@ -1054,6 +1256,11 @@ impl ProtocolMethod {
             Self::EventSubscribe => ProtocolDispatchLane::Normal,
             Self::DeviceList => ProtocolDispatchLane::Normal,
             Self::ProviderList => ProtocolDispatchLane::Normal,
+            Self::ProjectList => ProtocolDispatchLane::Normal,
+            Self::ProjectGet => ProtocolDispatchLane::Normal,
+            Self::ProjectCreate => ProtocolDispatchLane::Normal,
+            Self::ProjectUpdate => ProtocolDispatchLane::Normal,
+            Self::ProjectDelete => ProtocolDispatchLane::Normal,
             Self::ConversationList => ProtocolDispatchLane::Normal,
             Self::ConversationSearch => ProtocolDispatchLane::Normal,
             Self::ConversationGet => ProtocolDispatchLane::Normal,
@@ -1072,6 +1279,11 @@ impl ProtocolMethod {
             Self::EventSubscribe => None,
             Self::DeviceList => None,
             Self::ProviderList => None,
+            Self::ProjectList => Some(GatewayCapability::ProjectList),
+            Self::ProjectGet => Some(GatewayCapability::ProjectGet),
+            Self::ProjectCreate => Some(GatewayCapability::ProjectCreate),
+            Self::ProjectUpdate => Some(GatewayCapability::ProjectUpdate),
+            Self::ProjectDelete => Some(GatewayCapability::ProjectDelete),
             Self::ConversationList => Some(GatewayCapability::ConversationList),
             Self::ConversationSearch => Some(GatewayCapability::ConversationSearch),
             Self::ConversationGet => Some(GatewayCapability::ConversationGet),
@@ -1094,6 +1306,11 @@ impl std::str::FromStr for ProtocolMethod {
             "event.subscribe" => Ok(Self::EventSubscribe),
             "device.list" => Ok(Self::DeviceList),
             "provider.list" => Ok(Self::ProviderList),
+            "project.list" => Ok(Self::ProjectList),
+            "project.get" => Ok(Self::ProjectGet),
+            "project.create" => Ok(Self::ProjectCreate),
+            "project.update" => Ok(Self::ProjectUpdate),
+            "project.delete" => Ok(Self::ProjectDelete),
             "conversation.list" => Ok(Self::ConversationList),
             "conversation.search" => Ok(Self::ConversationSearch),
             "conversation.get" => Ok(Self::ConversationGet),
@@ -1110,6 +1327,8 @@ impl std::str::FromStr for ProtocolMethod {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolEventName {
+    #[serde(rename = "project.changed")]
+    ProjectChanged,
     #[serde(rename = "device.statusChanged")]
     DeviceStatusChanged,
     #[serde(rename = "provider.statusChanged")]
@@ -1133,6 +1352,7 @@ pub enum ProtocolEventName {
 impl ProtocolEventName {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ProjectChanged => "project.changed",
             Self::DeviceStatusChanged => "device.statusChanged",
             Self::ProviderStatusChanged => "provider.statusChanged",
             Self::ConversationUpserted => "conversation.upserted",
@@ -1151,6 +1371,7 @@ impl std::str::FromStr for ProtocolEventName {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
+            "project.changed" => Ok(Self::ProjectChanged),
             "device.statusChanged" => Ok(Self::DeviceStatusChanged),
             "provider.statusChanged" => Ok(Self::ProviderStatusChanged),
             "conversation.upserted" => Ok(Self::ConversationUpserted),
@@ -1198,6 +1419,36 @@ pub enum ProtocolRequest {
         jsonrpc: String,
         id: RequestId,
         params: ProviderListRequest,
+    },
+    #[serde(rename = "project.list")]
+    ProjectList {
+        jsonrpc: String,
+        id: RequestId,
+        params: ProjectListRequest,
+    },
+    #[serde(rename = "project.get")]
+    ProjectGet {
+        jsonrpc: String,
+        id: RequestId,
+        params: ProjectGetRequest,
+    },
+    #[serde(rename = "project.create")]
+    ProjectCreate {
+        jsonrpc: String,
+        id: RequestId,
+        params: ProjectCreateRequest,
+    },
+    #[serde(rename = "project.update")]
+    ProjectUpdate {
+        jsonrpc: String,
+        id: RequestId,
+        params: ProjectUpdateRequest,
+    },
+    #[serde(rename = "project.delete")]
+    ProjectDelete {
+        jsonrpc: String,
+        id: RequestId,
+        params: ProjectDeleteRequest,
     },
     #[serde(rename = "conversation.list")]
     ConversationList {
@@ -1283,6 +1534,31 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode provider.list request params", error))?,
             }),
+            ProtocolMethod::ProjectList => Ok(Self::ProjectList {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode project.list request params", error))?,
+            }),
+            ProtocolMethod::ProjectGet => Ok(Self::ProjectGet {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode project.get request params", error))?,
+            }),
+            ProtocolMethod::ProjectCreate => Ok(Self::ProjectCreate {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode project.create request params", error))?,
+            }),
+            ProtocolMethod::ProjectUpdate => Ok(Self::ProjectUpdate {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode project.update request params", error))?,
+            }),
+            ProtocolMethod::ProjectDelete => Ok(Self::ProjectDelete {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode project.delete request params", error))?,
+            }),
             ProtocolMethod::ConversationList => Ok(Self::ConversationList {
                 jsonrpc,
                 id,
@@ -1337,6 +1613,11 @@ impl ProtocolRequest {
             Self::EventSubscribe { jsonrpc, .. } => jsonrpc,
             Self::DeviceList { jsonrpc, .. } => jsonrpc,
             Self::ProviderList { jsonrpc, .. } => jsonrpc,
+            Self::ProjectList { jsonrpc, .. } => jsonrpc,
+            Self::ProjectGet { jsonrpc, .. } => jsonrpc,
+            Self::ProjectCreate { jsonrpc, .. } => jsonrpc,
+            Self::ProjectUpdate { jsonrpc, .. } => jsonrpc,
+            Self::ProjectDelete { jsonrpc, .. } => jsonrpc,
             Self::ConversationList { jsonrpc, .. } => jsonrpc,
             Self::ConversationSearch { jsonrpc, .. } => jsonrpc,
             Self::ConversationGet { jsonrpc, .. } => jsonrpc,
@@ -1355,6 +1636,11 @@ impl ProtocolRequest {
             Self::EventSubscribe { id, .. } => id,
             Self::DeviceList { id, .. } => id,
             Self::ProviderList { id, .. } => id,
+            Self::ProjectList { id, .. } => id,
+            Self::ProjectGet { id, .. } => id,
+            Self::ProjectCreate { id, .. } => id,
+            Self::ProjectUpdate { id, .. } => id,
+            Self::ProjectDelete { id, .. } => id,
             Self::ConversationList { id, .. } => id,
             Self::ConversationSearch { id, .. } => id,
             Self::ConversationGet { id, .. } => id,
@@ -1373,6 +1659,11 @@ impl ProtocolRequest {
             Self::EventSubscribe { .. } => ProtocolMethod::EventSubscribe,
             Self::DeviceList { .. } => ProtocolMethod::DeviceList,
             Self::ProviderList { .. } => ProtocolMethod::ProviderList,
+            Self::ProjectList { .. } => ProtocolMethod::ProjectList,
+            Self::ProjectGet { .. } => ProtocolMethod::ProjectGet,
+            Self::ProjectCreate { .. } => ProtocolMethod::ProjectCreate,
+            Self::ProjectUpdate { .. } => ProtocolMethod::ProjectUpdate,
+            Self::ProjectDelete { .. } => ProtocolMethod::ProjectDelete,
             Self::ConversationList { .. } => ProtocolMethod::ConversationList,
             Self::ConversationSearch { .. } => ProtocolMethod::ConversationSearch,
             Self::ConversationGet { .. } => ProtocolMethod::ConversationGet,
@@ -1398,6 +1689,11 @@ pub struct ProtocolEventParams<T> {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum ProtocolEvent {
+    #[serde(rename = "project.changed")]
+    ProjectChanged {
+        jsonrpc: String,
+        params: ProtocolEventParams<ProjectChangedEvent>,
+    },
     #[serde(rename = "device.statusChanged")]
     DeviceStatusChanged {
         jsonrpc: String,
@@ -1448,6 +1744,7 @@ pub enum ProtocolEvent {
 impl ProtocolEvent {
     pub fn jsonrpc_version(&self) -> &str {
         match self {
+            Self::ProjectChanged { jsonrpc, .. } => jsonrpc,
             Self::DeviceStatusChanged { jsonrpc, .. } => jsonrpc,
             Self::ProviderStatusChanged { jsonrpc, .. } => jsonrpc,
             Self::ConversationUpserted { jsonrpc, .. } => jsonrpc,
@@ -1462,6 +1759,7 @@ impl ProtocolEvent {
 
     pub fn event_cursor(&self) -> &EventCursor {
         match self {
+            Self::ProjectChanged { params, .. } => &params.event_cursor,
             Self::DeviceStatusChanged { params, .. } => &params.event_cursor,
             Self::ProviderStatusChanged { params, .. } => &params.event_cursor,
             Self::ConversationUpserted { params, .. } => &params.event_cursor,
@@ -1476,6 +1774,10 @@ impl ProtocolEvent {
 
     pub fn set_event_cursor(&mut self, cursor: EventCursor) {
         match self {
+            Self::ProjectChanged { jsonrpc, params } => {
+                *jsonrpc = "2.0".to_string();
+                params.event_cursor = cursor;
+            },
             Self::DeviceStatusChanged { jsonrpc, params } => {
                 *jsonrpc = "2.0".to_string();
                 params.event_cursor = cursor;
@@ -1624,6 +1926,26 @@ pub trait ProtocolServer: Send + Sync {
         Box::pin(async { Err(method_not_implemented("provider.list")) })
     }
 
+    fn project_list<'a>(&'a self, _request: ProjectListRequest) -> ProtocolFuture<'a, ProjectListResponse> {
+        Box::pin(async { Err(method_not_implemented("project.list")) })
+    }
+
+    fn project_get<'a>(&'a self, _request: ProjectGetRequest) -> ProtocolFuture<'a, ProjectGetResponse> {
+        Box::pin(async { Err(method_not_implemented("project.get")) })
+    }
+
+    fn project_create<'a>(&'a self, _request: ProjectCreateRequest) -> ProtocolFuture<'a, ProjectCreateResponse> {
+        Box::pin(async { Err(method_not_implemented("project.create")) })
+    }
+
+    fn project_update<'a>(&'a self, _request: ProjectUpdateRequest) -> ProtocolFuture<'a, ProjectUpdateResponse> {
+        Box::pin(async { Err(method_not_implemented("project.update")) })
+    }
+
+    fn project_delete<'a>(&'a self, _request: ProjectDeleteRequest) -> ProtocolFuture<'a, ProjectDeleteResponse> {
+        Box::pin(async { Err(method_not_implemented("project.delete")) })
+    }
+
     fn conversation_list<'a>(&'a self, _request: ConversationListRequest) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async { Err(method_not_implemented("conversation.list")) })
     }
@@ -1704,6 +2026,56 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
         },
         ProtocolRequest::ProviderList { jsonrpc, id, params } => {
             let response = match server.provider_list(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ProjectList { jsonrpc, id, params } => {
+            let response = match server.project_list(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ProjectGet { jsonrpc, id, params } => {
+            let response = match server.project_get(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ProjectCreate { jsonrpc, id, params } => {
+            let response = match server.project_create(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ProjectUpdate { jsonrpc, id, params } => {
+            let response = match server.project_update(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ProjectDelete { jsonrpc, id, params } => {
+            let response = match server.project_delete(params).await {
                 Ok(result) => match serde_json::to_value(result) {
                     Ok(result) => JsonRpcResponsePayload::Ok { result },
                     Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
@@ -1877,6 +2249,46 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             let result = self.transport.request(ProtocolMethod::ProviderList, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn project_list<'a>(&'a self, request: ProjectListRequest) -> ProtocolFuture<'a, ProjectListResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ProjectList, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn project_get<'a>(&'a self, request: ProjectGetRequest) -> ProtocolFuture<'a, ProjectGetResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ProjectGet, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn project_create<'a>(&'a self, request: ProjectCreateRequest) -> ProtocolFuture<'a, ProjectCreateResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ProjectCreate, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn project_update<'a>(&'a self, request: ProjectUpdateRequest) -> ProtocolFuture<'a, ProjectUpdateResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ProjectUpdate, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn project_delete<'a>(&'a self, request: ProjectDeleteRequest) -> ProtocolFuture<'a, ProjectDeleteResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ProjectDelete, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

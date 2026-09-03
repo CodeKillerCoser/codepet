@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "id": "project-list-1",
+  "method": "project.list",
+  "params": {
+    "route": {
+      "deviceId": "device-macbook-1",
+      "providerPluginId": "dev.codepet.codex",
+      "providerInstanceId": "codex-work"
+    },
+    "cursor": "project-cursor-1",
+    "limit": 20
+  }
+}

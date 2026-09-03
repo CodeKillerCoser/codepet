@@ -158,7 +158,14 @@ function validateSchemaNode(node, record, model, location) {
       }
     }
     if (node.additionalProperties !== undefined) {
-      assert(typeof node.additionalProperties === "boolean", `${location}.additionalProperties must be boolean`);
+      assert(
+        typeof node.additionalProperties === "boolean" || isObject(node.additionalProperties),
+        `${location}.additionalProperties must be boolean or a schema object`,
+      );
+      if (isObject(node.additionalProperties)) {
+        assert(node.properties === undefined, `${location} cannot combine properties with typed additionalProperties`);
+        validateSchemaNode(node.additionalProperties, record, model, `${location}.additionalProperties`);
+      }
     }
   }
   if (node.type === "array") {
@@ -419,6 +426,9 @@ function validateValue(value, node, record, model, location) {
         validateValue(item, node.properties[name], record, model, `${location}.${name}`);
       } else {
         assert(node.additionalProperties !== false, `${location}.${name} is not allowed`);
+        if (isObject(node.additionalProperties)) {
+          validateValue(item, node.additionalProperties, record, model, `${location}.${name}`);
+        }
       }
     }
   }
@@ -636,6 +646,9 @@ function rustType(node, record, model, definition) {
   if (node.type === "object" && node.properties === undefined && node.additionalProperties === true) {
     return "BTreeMap<String, serde_json::Value>";
   }
+  if (node.type === "object" && node.properties === undefined && isObject(node.additionalProperties)) {
+    return `BTreeMap<String, ${rustType(node.additionalProperties, record, model)}>`;
+  }
   fail(`cannot generate Rust type for ${record.packageConfig.id}: ${JSON.stringify(node)}`);
 }
 
@@ -649,6 +662,9 @@ function typeScriptType(node, record, model) {
   if (node.type === "array") return `Array<${typeScriptType(node.items, record, model)}>`;
   if (node.type === "null") return "null";
   if (node.type === "object" && node.properties === undefined && node.additionalProperties === true) return "Record<string, JsonValue>";
+  if (node.type === "object" && node.properties === undefined && isObject(node.additionalProperties)) {
+    return `Record<string, ${typeScriptType(node.additionalProperties, record, model)}>`;
+  }
   fail(`cannot generate TypeScript type for ${record.packageConfig.id}: ${JSON.stringify(node)}`);
 }
 
@@ -739,6 +755,12 @@ function normalizeType(node, record, model, location) {
   }
   if (node.type === "object" && node.properties === undefined && node.additionalProperties === true) {
     return { kind: "jsonObject" };
+  }
+  if (node.type === "object" && node.properties === undefined && isObject(node.additionalProperties)) {
+    return {
+      kind: "map",
+      values: normalizeType(node.additionalProperties, record, model, `${location}.additionalProperties`),
+    };
   }
   if (["string", "integer", "boolean", "null"].includes(node.type)) {
     return {

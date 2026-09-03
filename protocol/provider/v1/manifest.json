@@ -81,6 +81,46 @@
       "response": { "$ref": "./schema.json#/$defs/ConversationListResponse" }
     },
     {
+      "name": "project.list",
+      "direction": "hostToPlugin",
+      "idempotency": "safe",
+      "capability": "project.list",
+      "request": { "$ref": "./schema.json#/$defs/ProjectListRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ProjectListResponse" }
+    },
+    {
+      "name": "project.get",
+      "direction": "hostToPlugin",
+      "idempotency": "safe",
+      "capability": "project.get",
+      "request": { "$ref": "./schema.json#/$defs/ProjectGetRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ProjectGetResponse" }
+    },
+    {
+      "name": "project.create",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "capability": "project.create",
+      "request": { "$ref": "./schema.json#/$defs/ProjectCreateRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ProjectCreateResponse" }
+    },
+    {
+      "name": "project.update",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "capability": "project.update",
+      "request": { "$ref": "./schema.json#/$defs/ProjectUpdateRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ProjectUpdateResponse" }
+    },
+    {
+      "name": "project.delete",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "capability": "project.delete",
+      "request": { "$ref": "./schema.json#/$defs/ProjectDeleteRequest" },
+      "response": { "$ref": "./schema.json#/$defs/ProjectDeleteResponse" }
+    },
+    {
       "name": "conversation.search",
       "direction": "hostToPlugin",
       "idempotency": "safe",
@@ -153,6 +193,13 @@
     }
   ],
   "events": [
+    {
+      "name": "event.projectChanged",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "project",
+      "payload": { "$ref": "./schema.json#/$defs/ProjectChangedEvent" }
+    },
     {
       "name": "event.instanceStatusChanged",
       "direction": "pluginToHost",

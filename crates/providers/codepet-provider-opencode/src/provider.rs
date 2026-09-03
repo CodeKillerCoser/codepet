@@ -1265,6 +1265,11 @@ impl Provider for OpenCodeProvider {
         request: ConversationCreateRequest,
     ) -> ProtocolFuture<'a, ConversationCreateResponse> {
         Box::pin(async move {
+            if request.project.is_some() {
+                return Err(capability_unsupported(
+                    "OpenCode Provider does not support project-owned conversations",
+                ));
+            }
             if request.title.is_some() {
                 return Err(capability_unsupported(
                     "OpenCode V2 session.create does not support setting a title",

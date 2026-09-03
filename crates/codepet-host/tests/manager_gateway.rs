@@ -1,12 +1,18 @@
 use codepet_gateway_sdk::{
     ConversationAcquireInteractionRequest as GatewayConversationAcquireInteractionRequest,
+    ConversationCreateRequest as GatewayConversationCreateRequest,
     ConversationGetRequest as GatewayConversationGetRequest,
     ConversationListRequest as GatewayConversationListRequest,
+    ConversationProjectFilter, ConversationProjectFilterAll, ConversationProjectFilterAllKind,
+    ConversationProjectFilterProject,
+    ConversationProjectFilterProjectKind,
     ConversationSearchRequest as GatewayConversationSearchRequest, DeviceDescriptor,
     EventSubscribeRequest, HandshakeRequest,
     FlatModelCatalogKind, FlatModelSelection, GatewayProviderRoute,
     GroupedModelCatalogKind, GroupedModelSelection, ModelCatalog, ModelSelection,
     JsonRpcResponsePayload, ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
+    ProjectCreateRequest, ProjectDeleteRequest, ProjectGetRequest, ProjectListRequest, ProjectRoot,
+    ProjectUpdateRequest,
     ProtocolServer as GatewayProtocolServer, ProviderListRequest, GatewayHostIdentity,
     TurnInput as GatewayTurnInput, TurnInputKind as GatewayTurnInputKind,
     TurnSelection as GatewayTurnSelection, TurnSendRequest as GatewayTurnSendRequest, VersionRange,
@@ -173,6 +179,12 @@ fn device_descriptor(name: &str) -> DeviceDescriptor {
         operating_system: "Test OS".to_string(),
         system_version: "1.0".to_string(),
     }
+}
+
+fn all_project_filter() -> ConversationProjectFilter {
+    ConversationProjectFilter::ConversationProjectFilterAll(ConversationProjectFilterAll {
+        kind: ConversationProjectFilterAllKind::All,
+    })
 }
 
 #[tokio::test]
@@ -529,6 +541,141 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
 }
 
 #[tokio::test]
+async fn gateway_routes_project_crud_filters_and_project_owned_conversation_create() {
+    let manager = build_manager(
+        "device-project",
+        vec![plugin("dev.codepet.project", &["instance-project"])],
+    );
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+    assert!(gateway.start_event_forwarding());
+    assert!(manager.start_enabled().await[0].1.is_ok());
+    let route = GatewayProviderRoute {
+        device_id: "device-project".to_string(),
+        provider_plugin_id: "dev.codepet.project".to_string(),
+        provider_instance_id: "instance-project".to_string(),
+    };
+
+    let providers = gateway
+        .provider_list(ProviderListRequest {
+            device_id: Some(route.device_id.clone()),
+        })
+        .await
+        .unwrap();
+    assert!(providers.providers[0]
+        .capabilities
+        .methods
+        .contains(&codepet_gateway_sdk::GatewayCapability::ProjectList));
+
+    let snapshot_cursor = gateway.current_event_cursor();
+    let listed = gateway
+        .project_list(ProjectListRequest {
+            route: route.clone(),
+            cursor: None,
+            limit: Some(10),
+        })
+        .await
+        .unwrap();
+    assert_eq!(listed.snapshot_cursor, snapshot_cursor);
+    assert_eq!(listed.page_info.next_cursor.as_deref(), Some("project-next"));
+    assert_eq!(listed.projects[0].metadata["fixture"], "true");
+    let listed_project = listed.projects[0].resource.clone();
+
+    let fetched = gateway
+        .project_get(ProjectGetRequest {
+            project: listed_project.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(fetched.project.resource, listed_project);
+
+    let after_project_event = gateway.current_event_cursor();
+    let mut project_events = gateway.subscribe_events(Some(&after_project_event)).unwrap();
+    gateway
+        .project_get(ProjectGetRequest {
+            project: resource(
+                "device-project",
+                "dev.codepet.project",
+                "instance-project",
+                "event-project",
+            ),
+        })
+        .await
+        .unwrap();
+    let event = project_events.next_event().await.unwrap();
+    assert!(matches!(
+        event,
+        GatewayEvent::ProjectChanged { params, .. }
+            if params.payload.project.native_resource_id == "event-project"
+                && params.payload.change_type == codepet_gateway_sdk::ProjectChangeType::Updated
+    ));
+
+    let created = gateway
+        .project_create(ProjectCreateRequest {
+            route: route.clone(),
+            idempotency_key: "create-project".to_string(),
+            name: "Created Project".to_string(),
+            roots: vec![ProjectRoot {
+                path: "/fixture/created".to_string(),
+            }],
+            metadata: BTreeMap::from([("owner".to_string(), "gateway".to_string())]),
+        })
+        .await
+        .unwrap();
+    assert_eq!(created.project.roots[0].path, "/fixture/created");
+    assert_eq!(created.project.metadata["owner"], "gateway");
+
+    let updated = gateway
+        .project_update(ProjectUpdateRequest {
+            project: created.project.resource.clone(),
+            name: Some("Renamed Project".to_string()),
+            roots: None,
+            metadata: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(updated.project.name, "Renamed Project");
+
+    let conversation = gateway
+        .conversation_create(GatewayConversationCreateRequest {
+            route: route.clone(),
+            project: Some(listed_project.clone()),
+            title: None,
+            permission_level: "workspace-write".to_string(),
+            model: None,
+            reasoning_effort: None,
+            workspace_root: Some("/fixture/project".to_string()),
+            workspace_mode: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(conversation.conversation.project.as_ref(), Some(&listed_project));
+
+    let filtered = gateway
+        .conversation_list(GatewayConversationListRequest {
+            route: None,
+            cursor: None,
+            limit: Some(10),
+            project_filter: ConversationProjectFilter::ConversationProjectFilterProject(
+                ConversationProjectFilterProject {
+                    kind: ConversationProjectFilterProjectKind::Project,
+                    project: listed_project.clone(),
+                },
+            ),
+        })
+        .await
+        .unwrap();
+    assert_eq!(filtered.conversations[0].project.as_ref(), Some(&listed_project));
+
+    gateway
+        .project_delete(ProjectDeleteRequest {
+            project: created.project.resource,
+        })
+        .await
+        .unwrap();
+    manager.shutdown().await;
+}
+
+#[tokio::test]
 async fn conversation_snapshot_cursors_precede_events_emitted_during_provider_queries() {
     let release_directory = tempfile::tempdir().unwrap();
     let release_marker = release_directory.path().join("release-snapshot-query");
@@ -560,6 +707,7 @@ async fn conversation_snapshot_cursors_precede_events_emitted_during_provider_qu
                 }),
                 cursor: None,
                 limit: Some(10),
+                project_filter: all_project_filter(),
             })
             .await
     });
@@ -825,6 +973,7 @@ async fn failed_instance_start_is_unavailable_instead_of_stuck_connecting() {
                 route: Some(failed_route.clone()),
                 cursor: None,
                 limit: Some(10),
+                project_filter: all_project_filter(),
             })
             .await
             .unwrap_err();
@@ -838,6 +987,7 @@ async fn failed_instance_start_is_unavailable_instead_of_stuck_connecting() {
             }),
             cursor: None,
             limit: Some(10),
+            project_filter: all_project_filter(),
         })
         .await
         .unwrap();
@@ -1342,6 +1492,7 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
             route: None,
             cursor: Some("provider-cursor".to_string()),
             limit: Some(10),
+            project_filter: all_project_filter(),
         })
         .await
         .unwrap_err();
@@ -1452,6 +1603,7 @@ async fn aggregate_history_starts_on_demand_and_recovers_the_crashed_plugin_gene
             route: None,
             cursor: None,
             limit: Some(10),
+            project_filter: all_project_filter(),
         })
         .await
         .unwrap();
@@ -1493,6 +1645,7 @@ async fn aggregate_history_starts_on_demand_and_recovers_the_crashed_plugin_gene
             route: None,
             cursor: None,
             limit: Some(10),
+            project_filter: all_project_filter(),
         })
         .await
         .unwrap();
@@ -1550,6 +1703,7 @@ async fn aggregate_history_keeps_healthy_providers_and_reports_an_all_failed_err
             route: None,
             cursor: None,
             limit: Some(10),
+            project_filter: all_project_filter(),
         })
         .await
         .unwrap();
@@ -1575,6 +1729,7 @@ async fn aggregate_history_keeps_healthy_providers_and_reports_an_all_failed_err
             route: None,
             cursor: None,
             limit: Some(10),
+            project_filter: all_project_filter(),
         })
         .await
         .unwrap_err();
@@ -1621,6 +1776,7 @@ async fn historical_recovery_fails_closed_for_disabled_plugin_and_instance() {
                 }),
                 cursor: None,
                 limit: Some(10),
+                project_filter: all_project_filter(),
             })
             .await
             .unwrap_err();
@@ -1632,6 +1788,7 @@ async fn historical_recovery_fails_closed_for_disabled_plugin_and_instance() {
             route: None,
             cursor: None,
             limit: Some(10),
+            project_filter: all_project_filter(),
         })
         .await
         .unwrap();
@@ -1663,6 +1820,7 @@ async fn nonretryable_plugin_misconfiguration_is_not_restarted_by_history() {
         }),
         cursor: None,
         limit: Some(10),
+        project_filter: all_project_filter(),
     };
 
     let first = gateway.conversation_list(request()).await.unwrap_err();
@@ -1705,6 +1863,7 @@ async fn concurrent_history_requests_start_one_plugin_generation() {
         }),
         cursor: None,
         limit: Some(10),
+        project_filter: all_project_filter(),
     };
 
     let (first, second) = tokio::join!(
@@ -1758,6 +1917,7 @@ async fn history_recovery_racing_shutdown_does_not_resurrect_the_plugin() {
                 }),
                 cursor: None,
                 limit: Some(10),
+                project_filter: all_project_filter(),
             })
             .await
     });
@@ -1793,6 +1953,7 @@ async fn history_recovery_racing_shutdown_does_not_resurrect_the_plugin() {
             }),
             cursor: None,
             limit: Some(10),
+            project_filter: all_project_filter(),
         })
         .await
         .unwrap_err();

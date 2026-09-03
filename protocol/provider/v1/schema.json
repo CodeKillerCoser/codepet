@@ -71,6 +71,7 @@
         "reasoningEffort": { "type": "string", "minLength": 1 },
         "workspaceRoot": { "type": "string", "minLength": 1 },
         "workspaceMode": { "type": "string", "minLength": 1 },
+        "project": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
         "extension": { "$ref": "#/$defs/ProviderExtension" }
       },
       "required": ["route", "permissionLevel"],
@@ -306,10 +307,11 @@
       "type": "object",
       "properties": {
         "route": { "$ref": "#/$defs/ProviderInstanceRoute" },
+        "projectFilter": { "$ref": "#/$defs/ConversationProjectFilter" },
         "cursor": { "$ref": "../../core/v1/schema.json#/$defs/Cursor" },
         "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
       },
-      "required": ["route"],
+      "required": ["route", "projectFilter"],
       "additionalProperties": false
     },
     "ConversationListResponse": {
@@ -323,6 +325,50 @@
       },
       "required": ["conversations", "pageInfo"],
       "additionalProperties": false
+    },
+    "ConversationProjectFilter": {
+      "oneOf": [
+        { "$ref": "#/$defs/ConversationProjectFilterAll" },
+        { "$ref": "#/$defs/ConversationProjectFilterStandalone" },
+        { "$ref": "#/$defs/ConversationProjectFilterProject" }
+      ]
+    },
+    "ConversationProjectFilterAll": {
+      "type": "object",
+      "properties": {
+        "kind": { "$ref": "#/$defs/ConversationProjectFilterAllKind" }
+      },
+      "required": ["kind"],
+      "additionalProperties": false
+    },
+    "ConversationProjectFilterAllKind": {
+      "type": "string",
+      "enum": ["all"]
+    },
+    "ConversationProjectFilterStandalone": {
+      "type": "object",
+      "properties": {
+        "kind": { "$ref": "#/$defs/ConversationProjectFilterStandaloneKind" }
+      },
+      "required": ["kind"],
+      "additionalProperties": false
+    },
+    "ConversationProjectFilterStandaloneKind": {
+      "type": "string",
+      "enum": ["standalone"]
+    },
+    "ConversationProjectFilterProject": {
+      "type": "object",
+      "properties": {
+        "kind": { "$ref": "#/$defs/ConversationProjectFilterProjectKind" },
+        "project": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" }
+      },
+      "required": ["kind", "project"],
+      "additionalProperties": false
+    },
+    "ConversationProjectFilterProjectKind": {
+      "type": "string",
+      "enum": ["project"]
     },
     "ConversationSearchRequest": {
       "type": "object",
@@ -652,6 +698,11 @@
     "ProviderCapability": {
       "type": "string",
       "enum": [
+        "project.list",
+        "project.get",
+        "project.create",
+        "project.update",
+        "project.delete",
         "conversation.list",
         "conversation.search",
         "conversation.get",
@@ -685,6 +736,12 @@
       "type": "object",
       "properties": {
         "resource": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "project": {
+          "oneOf": [
+            { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+            { "type": "null" }
+          ]
+        },
         "title": { "type": "string", "minLength": 1 },
         "preview": { "type": "string" },
         "status": { "$ref": "#/$defs/ConversationStatus" },
@@ -698,7 +755,155 @@
         "activeTurn": { "$ref": "#/$defs/ProviderTurn" },
         "extension": { "$ref": "#/$defs/ProviderExtension" }
       },
-      "required": ["resource", "title", "status"],
+      "required": ["resource", "project", "title", "status"],
+      "additionalProperties": false
+    },
+    "Project": {
+      "type": "object",
+      "properties": {
+        "resource": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "name": { "type": "string", "minLength": 1 },
+        "roots": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProjectRoot" }
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "position": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991,
+          "description": "Provider-defined ordering position. Read-only in Project v1 operations."
+        },
+        "createdAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
+        "updatedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" }
+      },
+      "required": ["resource", "name", "roots", "metadata", "position", "createdAt", "updatedAt"],
+      "additionalProperties": false
+    },
+    "ProjectChangeType": {
+      "type": "string",
+      "enum": ["created", "updated", "deleted"]
+    },
+    "ProjectChangedEvent": {
+      "type": "object",
+      "properties": {
+        "project": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "changeType": { "$ref": "#/$defs/ProjectChangeType" }
+      },
+      "required": ["project", "changeType"],
+      "additionalProperties": false
+    },
+    "ProjectCreateRequest": {
+      "type": "object",
+      "properties": {
+        "route": { "$ref": "#/$defs/ProviderInstanceRoute" },
+        "idempotencyKey": { "$ref": "../../core/v1/schema.json#/$defs/RequestId" },
+        "name": { "type": "string", "minLength": 1 },
+        "roots": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProjectRoot" }
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      },
+      "required": ["route", "idempotencyKey", "name", "roots", "metadata"],
+      "additionalProperties": false
+    },
+    "ProjectCreateResponse": {
+      "type": "object",
+      "properties": {
+        "project": { "$ref": "#/$defs/Project" }
+      },
+      "required": ["project"],
+      "additionalProperties": false
+    },
+    "ProjectDeleteRequest": {
+      "type": "object",
+      "properties": {
+        "project": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" }
+      },
+      "required": ["project"],
+      "additionalProperties": false
+    },
+    "ProjectDeleteResponse": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "ProjectGetRequest": {
+      "type": "object",
+      "properties": {
+        "project": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" }
+      },
+      "required": ["project"],
+      "additionalProperties": false
+    },
+    "ProjectGetResponse": {
+      "type": "object",
+      "properties": {
+        "project": { "$ref": "#/$defs/Project" }
+      },
+      "required": ["project"],
+      "additionalProperties": false
+    },
+    "ProjectListRequest": {
+      "type": "object",
+      "properties": {
+        "route": { "$ref": "#/$defs/ProviderInstanceRoute" },
+        "cursor": { "$ref": "../../core/v1/schema.json#/$defs/Cursor" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+      },
+      "required": ["route"],
+      "additionalProperties": false
+    },
+    "ProjectListResponse": {
+      "type": "object",
+      "properties": {
+        "projects": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Project" }
+        },
+        "pageInfo": { "$ref": "../../core/v1/schema.json#/$defs/PageInfo" }
+      },
+      "required": ["projects", "pageInfo"],
+      "additionalProperties": false
+    },
+    "ProjectRoot": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "minLength": 1 }
+      },
+      "required": ["path"],
+      "additionalProperties": false
+    },
+    "ProjectUpdateRequest": {
+      "type": "object",
+      "properties": {
+        "project": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "name": { "type": "string", "minLength": 1 },
+        "roots": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProjectRoot" }
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      },
+      "required": ["project"],
+      "additionalProperties": false
+    },
+    "ProjectUpdateResponse": {
+      "type": "object",
+      "properties": {
+        "project": { "$ref": "#/$defs/Project" }
+      },
+      "required": ["project"],
       "additionalProperties": false
     },
     "ProviderDescribeRequest": {

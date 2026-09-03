@@ -3,6 +3,11 @@
   { "file": "handshake-response.json", "kind": "response", "name": "protocol.handshake" },
   { "file": "turn-send-request.json", "kind": "request", "name": "turn.send" },
   { "file": "turn-send-response.json", "kind": "response", "name": "turn.send" },
+  { "file": "project-list-request.json", "kind": "request", "name": "project.list" },
+  { "file": "project-list-response.json", "kind": "response", "name": "project.list" },
+  { "file": "project-create-request.json", "kind": "request", "name": "project.create" },
+  { "file": "conversation-create-project-request.json", "kind": "request", "name": "conversation.create" },
+  { "file": "project-changed-event.json", "kind": "event", "name": "project.changed" },
   { "file": "conversation-upserted-event.json", "kind": "event", "name": "conversation.upserted" },
   { "file": "conversation-item-upserted-event.json", "kind": "event", "name": "conversation.itemUpserted" }
 ]

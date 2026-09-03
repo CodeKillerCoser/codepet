@@ -56,7 +56,7 @@ PetApp
 
 ```
 
-Codex Provider 实现 Provider v1 的完整 lifecycle、`conversation.list/get/create`、turn start/steer/interrupt、`approval.resolve` 和通知映射。Desktop companion 不广告 list/create，只把已 bootstrap 的本地 thread 投影到桌宠；回复、停止和审批继续使用 generation、owner、revision、request 与 handler 校验。
+Codex Provider 实现 Provider v1 的完整 lifecycle、实验 API 探测后的 `project.list/get/create/update/delete`、`conversation.list/get/create`、turn start/steer/interrupt、`approval.resolve` 和通知映射。Desktop companion 不广告 list/create，只把已 bootstrap 的本地 thread 投影到桌宠；回复、停止和审批继续使用 generation、owner、revision、request 与 handler 校验。
 
 Provider Host/Gateway 与 companion state 各自持有 registry、event bus、replay window 和 session。compat state 引用 Host 的同一个 Gateway service，但不拥有进程或第二个 remote bus。桌宠前端只引用 companion client/event，Provider conversation/turn/approval 不能进入 companion transport、thread scope/event 或 Pet projection。remote 与 Desktop 的同名 native thread 各自保留，不做跨链路排除或同步。Hook、audit、transcript 和文件监听不参与 Codex 桌宠数据。
 
@@ -655,7 +655,9 @@ Codex 第一阶段覆盖：
 
 ### 项目和普通聊天
 
-Codex 的 thread 统一以 cwd 记录工作目录。Code Pet 使用规范化绝对路径和本机项目索引将会话归入项目；未命中已知项目的 cwd 显示在“普通聊天/其他会话”，而不是假定 Provider 存在独立的普通聊天类型。worktree 路径可以映射到同一逻辑项目。
+Gateway v1 使用 Provider 权威 Project 资源表达项目，项目 DTO 包含 routed resource、name、roots、typed string metadata、只读 position 和时间戳。Conversation 的 nullable `project` 只来自上游 `Thread.projectId`；`workspaceRoot` 原样保留 `Thread.cwd`，不再通过 Git、worktree 或 cwd 推断归属。
+
+`conversation.list` 使用 all、standalone、project 三态筛选；`conversation.create` 只有在调用方显式传入同 route Project 时才建立项目归属，省略即 standalone。Codex 的 Project API 仍是 experimental：observer 启动时必须以真实 `project/list` 探测成功，才整组广告五个 CRUD capability 和 `project.changed` 映射。
 
 ### 桌面激活
 

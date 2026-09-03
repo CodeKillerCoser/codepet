@@ -4,7 +4,7 @@
 
 远程 Codex 能力已经从 Tauri 进程内直连实现迁到独立二进制 `crates/providers/codepet-provider-codex`。二进制只依赖 `codepet-provider-sdk`，通过 Provider Protocol v1 的 JSON-RPC 2.0 / stdio JSON-lines 与 `codepet-host` 通信；它不依赖 `codepet-host`、Tauri、Pet SDK 或 Desktop 私有 IPC。Provider 入口只构造 `CodexProvider` 并调用 SDK 的 `serve_stdio`；reader、writer、dispatcher、event sink、普通/控制双通路、过载、frame limit 与 terminal cleanup 全部属于公共 SDK runtime，Codex crate 不再复制 transport server。
 
-每个 Provider instance 长期持有一个纯读 observer App Server；`conversation.create` 使用一次性 App Server；真正取得历史 thread writer 的 App Server 则按 conversation 独立创建。Gateway/Provider 通过幂等 `conversation.acquireInteraction` 建立或续租交互权：Codex 首次 acquire 执行 `thread/resume`，30 秒租期内复用同一 writer；无 active turn 且租期过期后退出。observer 与一次性 create 从 spawn 前占位开始进入同一 generation/cancellation registry，stop/shutdown 只有在占位操作收敛、子进程退出后才发布 stopped。SDK runtime 的普通请求最多并发 16 个、排队 32 个，manifest 标记的 lifecycle control 使用 2 并发/4 排队保留通路；队列满时按原 id 返回 retryable `provider_overloaded`，response 仍允许乱序返回。
+每个 Provider instance 长期持有一个纯读 observer App Server；`conversation.create` 使用一次性 App Server；真正取得历史 thread writer 的 App Server 则按 conversation 独立创建。observer 初始化后调用 `model/list`，并用 `project/list(limit=1)` 探测实验 Project API：成功才整组广告五个 Project CRUD 能力，`-32601` 则不广告，其他错误使 instance start fail closed。Gateway/Provider 通过幂等 `conversation.acquireInteraction` 建立或续租交互权：Codex 首次 acquire 执行 `thread/resume`，30 秒租期内复用同一 writer；无 active turn 且租期过期后退出。observer 与一次性 create 从 spawn 前占位开始进入同一 generation/cancellation registry，stop/shutdown 只有在占位操作收敛、子进程退出后才发布 stopped。SDK runtime 的普通请求最多并发 16 个、排队 32 个，manifest 标记的 lifecycle control 使用 2 并发/4 排队保留通路；队列满时按原 id 返回 retryable `provider_overloaded`，response 仍允许乱序返回。
 
 Host 是唯一进程与路由所有者：`PluginManager` 从 manifest 启动 Provider、创建并启动实例，`ProviderGatewayService` 把 Gateway v1 请求路由到实例，并把 Provider 事件变成可 replay 的远程事件。兼容 v0 的 Tauri command/event 只是一层 Gateway DTO 适配，不再拥有或启动 Codex App Server。
 
@@ -83,15 +83,16 @@ Codex Desktop 私有 IPC
 | `provider.initialize` | 校验版本与 Host identity，绑定单一 device/client | 支持；同一进程不能改绑另一 Host。 |
 | `provider.describe` | 返回 `dev.codepet.codex`、版本与 `codex` instance kind | 支持。 |
 | `instance.create` | 解码 Host 注入的 settings，建立实例状态 | 支持；executable 必须是绝对路径，未知字段失败。 |
-| `instance.start` | 启动纯读 observer App Server、`initialize`、`initialized`、`model/list` 与长期 reader | 支持；spawn 前登记 generation 占位，spawn 后、initialize 前登记 session；observer 不发送 `thread/start`、`thread/resume` 或 turn/approval 写操作，无 fallback。 |
+| `instance.start` | 启动纯读 observer App Server、`initialize`、`initialized`、`model/list`、Project API 探测与长期 reader | 支持；Project 探测只读取 `project/list(limit=1)`；spawn 前登记 generation 占位，spawn 后、initialize 前登记 session；observer 不发送 `thread/start`、`thread/resume` 或 turn/approval 写操作，无 fallback。 |
 | `instance.stop` | 关闭 observer、一次性 create 与全部 conversation 执行 App Server | 支持且幂等；正在 spawn/initialize/resume 的槽会被取消并唤醒等待者，全部 PID 退出后才返回 stopped。 |
 | `instance.destroy` | 删除已停止实例 | 支持；运行中明确拒绝。 |
 | `instance.capabilities` | 返回当前真实 method/permission/model/reasoning 列表 | 支持。 |
-| `conversation.list` | observer `thread/list` | 支持 cursor/limit；固定 `updated_at desc` 且 `useStateDbOnly=true`。 |
+| `project.list/get/create/update/delete` | observer `project/list|read|create|update|delete` | 仅在启动探测成功时整组支持；Project 保留 routed identity、roots、typed string metadata、只读 position 与时间戳。 |
+| `conversation.list` | observer `thread/list` | 支持 cursor/limit 和 all/standalone/project 三态筛选；分别省略 `projectId`、发送 null、发送项目 native id。固定 `updated_at desc` 且 `useStateDbOnly=true`。 |
 | `conversation.search` | observer `thread/list(searchTerm)` | 支持 route-scoped cursor/limit；与 list 相同固定 `updated_at desc` 和 state DB only，不做跨 Provider 聚合或本地过滤。 |
 | `conversation.get` | observer `thread/read(includeTurns=false)` + cursor `thread/turns/list(itemsView=full, sortDirection=desc)` | 支持 cursor/limit；limit 是最多返回的原生 turn 数，Provider 用最多 10-turn 的上游页读取请求范围，恢复为时间正序后返回准确 nextCursor。严格纯读，不创建执行槽、不调用 `thread/resume`，也不改变 loaded-thread 状态。 |
 | `conversation.acquireInteraction` | conversation 执行 App Server `thread/resume`，或对当前执行槽续租 | 支持且幂等；返回 resume 得到的真实 permission/model/reasoning selection 与 30 秒租期。Claude/OpenCode 等无 writer lock 的 Provider 可返回成功与当前/空 selection，不执行 resume。 |
-| `conversation.create` | 一次性 App Server `thread/start`，随后立即退出 | 支持 permission/model/reasoning/workspace；从 spawn 前就在 instance registry 可见，最终 `thread/start` 写入与 cancel 通过短门线性化。不把 writer 留在 observer 或空闲 conversation。App Server 不支持 title 或 Provider extension，传入时明确返回 `capability_unsupported`。 |
+| `conversation.create` | 一次性 App Server `thread/start`，随后立即退出 | 支持 permission/model/reasoning/workspace 和可选显式 project；项目同路由且能力探测成功时映射 `projectId`，省略即 standalone，不根据 cwd 推断。从 spawn 前就在 instance registry 可见，最终 `thread/start` 写入与 cancel 通过短门线性化。不把 writer 留在 observer 或空闲 conversation。App Server 不支持 title 或 Provider extension，传入时明确返回 `capability_unsupported`。 |
 | `turn.start` | conversation 执行 App Server `thread/resume`、权威 `thread/read`、`turn/start` | 支持，保留 `clientUserMessageId`；同 conversation 并发首次请求共享一个创建槽，只发送一次 resume。 |
 | `turn.steer` | 同一 conversation 执行 App Server `turn/steer`，随后 `thread/read` | 支持；请求显式携带 conversation 与 turn 四段身份，响应使用权威 turn 状态。 |
 | `turn.interrupt` | 同一 conversation 执行 App Server `turn/interrupt`，随后 `thread/read` | 支持；不根据 interrupt ack 伪造完整 Turn。权威 terminal snapshot 会清除 active turn；仍有有效交互租约时保留 writer，否则退出。 |
@@ -100,11 +101,13 @@ Codex Desktop 私有 IPC
 
 Gateway v1 的 `turn.send` 只对已有空闲 conversation 启动新 turn，并在 Host 中映射为 Provider `turn.start`。Provider v1 的 `turn.steer` 仍是独立内部能力，不由 Gateway `turn.send` 自动选择。兼容 v0 继续暴露既有 `turn.send` 调用形状，但 `canSteer=false`，也不会根据 Codex `pluginId` 推断 steering 能力。
 
-Provider 发送全部七种 v1 事件：`event.instanceStatusChanged`、`event.conversationUpserted`、`event.conversationItemUpserted`、`event.turnUpserted`、`event.turnOutputDelta`、`event.approvalRequested`、`event.approvalResolved`。delta 自带 conversation route，不依赖 replay 顺序补状态；item upsert 用于提交工具调用的结构化状态和结果。App Server 的 `waitingOnApproval` 与 `waitingOnUserInput` 分别映射为 v1 的 `waiting-approval` 与 `waiting-user-input`。未知 notification 被忽略；未知或无法无损表达的 server request 使用原 request id 返回上游 error `-32601`，不会发布可批准的 Approval。
+Provider 发送全部八种 v1 事件：`event.instanceStatusChanged`、`event.projectChanged`、`event.conversationUpserted`、`event.conversationItemUpserted`、`event.turnUpserted`、`event.turnOutputDelta`、`event.approvalRequested`、`event.approvalResolved`。Project change 只由 observer 映射，避免 writer session 重复发布；delta 自带 conversation route，不依赖 replay 顺序补状态；item upsert 用于提交工具调用的结构化状态和结果。App Server 的 `waitingOnApproval` 与 `waitingOnUserInput` 分别映射为 v1 的 `waiting-approval` 与 `waiting-user-input`。未知 notification 被忽略；未知或无法无损表达的 server request 使用原 request id 返回上游 error `-32601`，不会发布可批准的 Approval。
 
 ## 身份与审批路由
 
 Provider/Gateway 的语言中立 `RoutedResourceId` 是 `deviceId + providerPluginId + providerInstanceId + nativeResourceId` 四段身份。instance route 是前三段。SDK、Host、Gateway、Provider、compat extension 在每个请求、响应、事件和审批入口逐跳保留并校验四段；compat 不再通过 registry 事后回查 plugin id。旧 v0 对象自身的 `id` 继续等于 `nativeResourceId`，完整身份位于 `codepet.gateway.route` extension。
+
+Project 使用相同四段身份。Conversation 的 `project` 只映射 App Server `Thread.projectId`，而 `workspaceRoot` 原样映射 `Thread.cwd`；Provider 不再扫描 Git metadata、归并 worktree 或用 cwd 推断项目。项目筛选和项目归属创建都在 Provider 与 Host 两层校验 route。
 
 每个 Provider instance 持有一个 observer 和按 conversation 索引的执行槽。执行槽以 `Creating → Ready → Closing → Closed` 管理，创建失败则进入 `Failed` 并从 map 淘汰；并发等待者共享同一创建结果。槽从插入 map 起就有独立 attempt generation 与 cancellation 状态；子进程完成 spawn、尚未 initialize 前即登记到 Creating，因此 stop 能关闭其 stdin/进程并唤醒 initialize。initialize 返回与 subscribe 后都会重新核对 instance、slot、attempt/session generation。首次 `thread/resume` 的实际 request 写入与 cancel 共用一把只覆盖“复核 + 写 frame”的短锁：cancel 先线性化则不再写 resume/start；resume 写入先线性化则 stop 随后关闭 session，但不等待悬挂 response。Ready 槽关联一个 App Server generation、当前 active turn 与可选交互租期；不同 conversation 不共享进程、operation lock、租期或 loaded-thread 状态。
 
@@ -140,6 +143,7 @@ observer 与 `conversation.create` 共用 instance session lifecycle：请求先
 ## 风险与验证
 
 - App Server 协议漂移：本机 `codex-cli 0.151.0` schema 和 smoke 证明上游 response/notification 不要求 `jsonrpc`，request/notification 的 `params` 可缺失，并允许 `trace`/`emittedAtMs` 元数据；实际故障环境的 `0.151.0-alpha.7.2` 证明 `thread/turns/list` 可分页且 `thread/items/list` 返回 `-32601`。fixture 与 typed DTO 覆盖 initialize、Thread、Turn、start/resume、approval 和 request fail-closed。Provider Protocol 自己仍严格使用 JSON-RPC 2.0。
+- Project API 漂移：本机 0.151 实验 schema 提供五个 Project 方法、`project/changed`、Thread list 三态 projectId 与 thread start projectId。typed client 和真实 Provider fixture 覆盖精确方法/参数、DTO、能力整组探测、CRUD、筛选、项目归属创建和 `-32601` fail-closed。
 - 路由或审批串实例：Host 测试从 manifest 启动真实 stdio fixture binary 并完成 Gateway RPC/事件/四段路由；Codex Provider 二进制测试独立完成 App Server 会话、审批和 interrupt 闭环。
 - CodePet 接入漂移：`codepet-host/tests/builtin_provider_integration.rs` 读取三份正式 manifest，在同一个 Plugin Manager/Gateway 启动 SDK 化 Codex、Claude、OpenCode Provider 与各自 fixture，验证 ready、provider list、代表性 conversation 操作和有序 shutdown。Host shutdown 期间会丢弃晚到状态事件但继续读取 control response，避免提前关闭 stdout 造成 Broken pipe。
 - Provider 污染桌宠：Tauri mock runtime 使用生产 bridge，断言 Provider 只进入 remote replay/event，companion replay、companion event、pet channel、activity store 与 Desktop adapter spy 不变化；PetApp 静态测试断言只导入 companion client，且不含跨链路同步路径。
@@ -158,11 +162,12 @@ observer 与 `conversation.create` 共用 instance session lifecycle：请求先
 - 没有自动重启、backoff、签名、沙箱或插件市场；这些是明确非目标。
 - 只无损支持 command execution 与 file change 的二元审批。permissions、tool user input、MCP elicitation 不广告为可操作审批。
 - App Server 不支持在 `thread/start` 设置 title；Provider 明确拒绝该可选字段。
+- Project API 仍属于 Codex experimental API；Provider 初始化会请求 experimental API，但只有实际 `project/list` 探测成功才向 Host/Gateway 广告任何 Project 能力。
 - model 列表来自当前 observer session 的官方 `model/list`；reasoning control 因 Gateway v1 尚未表达 per-model effort，只能发布所有可见 model 的共同支持交集。
 - observer crash 会使当前 Provider instance fail closed；本阶段没有 observer 自动 supervisor/backoff。active execution 会被关闭，需由既有 Provider restart/refresh 路径恢复。
 - Gateway v1 `turn.send` 只表示空闲 conversation 的新 turn。compat 不按 Provider 或 harness 身份推断 catalog/selection 形状，也不按 Codex `pluginId` 推断 `canSteer`。
 - `conversation.acquireInteraction` 的 30 秒 Provider 租期与 Remote 10 秒续租周期目前是固定常量；没有跨 Provider 持久 lease token，也不承诺 App 被系统长期挂起后仍保有 writer。
-- compat v0 的 conversation/turn 模型要求 permission 与时间戳，也没有 `waiting-user-input`；v1 无法确认这些字段或状态时 compat 明确返回 `compat_data_unrepresentable`，不会补默认值。
+- compat v0 的 conversation/turn 模型要求 permission 与时间戳，也没有 `waiting-user-input`；v1 无法确认这些字段或状态时 compat 映射明确返回 `compat_data_unrepresentable`，不会补默认值。长期 live subscription 只把这一类错误降级为跳过单个事件并继续读取；无效 cursor、transport/subscription fault 和其他 mapping error 仍终止 bridge，避免一个 `Turn.updatedAt=None` 永久切断后续事件。
 - remote 与 Desktop 同名 thread 不做去重、来源排除或状态同步；两条链路在本阶段按独立资源展示和操作。
 - 单个 turn 的 `thread/turns/list(limit=1)` 响应若超过 16 MiB，当前实现仍 fail closed；这类内容需要 item/content 级分页。已实测的 `0.151.0-alpha.7.2` 对 `thread/items/list` 返回 `-32601`，当前 Provider 不依赖它，也不统一抬高上限。
 - Provider/Gateway v1 的 `conversation.get` 已支持可选 cursor/limit 和 pageInfo；Remote 当前会拉完所有历史页再交给详情模型，因此解决了单帧上限，但超长会话仍有总传输量和客户端内存压力，后续可把既有“显示更早消息”改为按需请求旧页。

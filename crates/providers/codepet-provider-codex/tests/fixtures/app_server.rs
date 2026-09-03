@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 
 struct Options {
     approval_mode: String,
@@ -66,6 +67,19 @@ fn main() {
                             "error": {
                                 "code": -32003,
                                 "message": "fixture rejected execution initialize"
+                            }
+                        }),
+                    );
+                    continue;
+                }
+                if params.pointer("/capabilities/experimentalApi") != Some(&json!(true)) {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": {
+                                "code": -32602,
+                                "message": "fixture requires capabilities.experimentalApi for thread/start.projectId"
                             }
                         }),
                     );
@@ -138,6 +152,60 @@ fn main() {
                     }),
                 );
             }
+            "project/list" => {
+                if options.approval_mode == "project-unsupported" {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": { "code": -32601, "message": "method not found" }
+                        }),
+                    );
+                    continue;
+                }
+                respond(
+                    &mut writer,
+                    id,
+                    json!({
+                        "data": [project("project-fixture", "Fixture Project")],
+                        "nextCursor": null
+                    }),
+                );
+            }
+            "project/read" => {
+                respond(
+                    &mut writer,
+                    id,
+                    json!({
+                        "project": project(
+                            params["projectId"].as_str().unwrap_or("project-fixture"),
+                            "Fixture Project"
+                        )
+                    }),
+                );
+            }
+            "project/create" => {
+                respond(
+                    &mut writer,
+                    id,
+                    json!({
+                        "project": project("project-created", params["name"].as_str().unwrap_or("Created Project"))
+                    }),
+                );
+            }
+            "project/update" => {
+                respond(
+                    &mut writer,
+                    id,
+                    json!({
+                        "project": project(
+                            params["projectId"].as_str().unwrap_or("project-fixture"),
+                            params["name"].as_str().unwrap_or("Fixture Project")
+                        )
+                    }),
+                );
+            }
+            "project/delete" => respond(&mut writer, id, json!({})),
             "thread/list" => {
                 if params["sortKey"] != "updated_at"
                     || params["sortDirection"] != "desc"
@@ -152,7 +220,7 @@ fn main() {
                     );
                     continue;
                 }
-                let (data, next_cursor) = if params.get("searchTerm")
+                let (mut data, next_cursor) = if params.get("searchTerm")
                     == Some(&json!("gateway protocol"))
                 {
                     if params["cursor"] != "search-cursor" || params["limit"] != 7 {
@@ -172,6 +240,11 @@ fn main() {
                 } else {
                     (vec![thread("thread-listed", "idle", Vec::new())], None)
                 };
+                if let Some(project_id) = params.get("projectId") {
+                    for thread in &mut data {
+                        thread["projectId"] = project_id.clone();
+                    }
+                }
                 respond(
                     &mut writer,
                     id,
@@ -254,6 +327,9 @@ fn main() {
                     },
                     turns,
                 );
+                response_thread["projectId"] = read_thread_project(&options, thread_id)
+                    .map(Value::String)
+                    .unwrap_or(Value::Null);
                 if thread_renamed && active_thread_id.as_deref() == Some(thread_id) {
                     response_thread["name"] = json!("Renamed by Codex");
                 }
@@ -398,10 +474,37 @@ fn main() {
             "thread/start" => {
                 clear_turn_status(&options, "thread-created");
                 created_thread_started_in_process = true;
+                if options.approval_mode == "project-owned-create"
+                    && (params.get("projectId") != Some(&json!("project-fixture"))
+                        || params.get("cwd").is_some())
+                {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": {
+                                "code": -32602,
+                                "message": "project-owned thread/start must use projectId without inferring cwd"
+                            }
+                        }),
+                    );
+                    continue;
+                }
+                write_thread_project(
+                    &options,
+                    "thread-created",
+                    params.get("projectId").and_then(Value::as_str),
+                );
+                let mut result =
+                    configured_thread_result("thread-created", params.get("model").cloned());
+                result["thread"]["projectId"] = params
+                    .get("projectId")
+                    .cloned()
+                    .unwrap_or(Value::Null);
                 respond(
                     &mut writer,
                     id,
-                    configured_thread_result("thread-created", params.get("model").cloned()),
+                    result,
                 );
             }
             "turn/start" => {
@@ -432,6 +535,9 @@ fn main() {
                 let mut started_turn = turn("turn-started", "inProgress");
                 let started_user_item = started_turn["items"][0].clone();
                 started_turn["items"] = json!([]);
+                if options.approval_mode == "delayed-output-after-user-item" {
+                    started_turn["status"] = json!("completed");
+                }
                 respond(&mut writer, id, json!({ "turn": started_turn.clone() }));
                 if options.approval_mode == "normal" {
                     thread_renamed = true;
@@ -444,20 +550,54 @@ fn main() {
                         }),
                     );
                 }
-                notify(
-                    &mut writer,
-                    "turn/started",
-                    json!({ "threadId": thread_id, "turn": started_turn }),
-                );
+                if options.approval_mode != "delayed-output-after-user-item" {
+                    notify(
+                        &mut writer,
+                        "turn/started",
+                        json!({ "threadId": thread_id, "turn": started_turn }),
+                    );
+                }
                 notify(
                     &mut writer,
                     "item/started",
                     json!({
                         "threadId": thread_id,
                         "turnId": "turn-started",
-                        "item": started_user_item
+                        "item": started_user_item.clone()
                     }),
                 );
+                if options.approval_mode == "delayed-output-after-user-item" {
+                    notify(
+                        &mut writer,
+                        "item/completed",
+                        json!({
+                            "threadId": thread_id,
+                            "turnId": "turn-started",
+                            "item": started_user_item
+                        }),
+                    );
+                    std::thread::sleep(Duration::from_millis(1200));
+                    notify(
+                        &mut writer,
+                        "item/agentMessage/delta",
+                        json!({
+                            "threadId": thread_id,
+                            "turnId": "turn-started",
+                            "itemId": "agent-one",
+                            "delta": "delayed fixture output"
+                        }),
+                    );
+                    write_turn_status(&options, thread_id, "completed");
+                    notify(
+                        &mut writer,
+                        "turn/completed",
+                        json!({
+                            "threadId": thread_id,
+                            "turn": turn("turn-started", "completed")
+                        }),
+                    );
+                    continue;
+                }
                 notify(
                     &mut writer,
                     "item/agentMessage/delta",
@@ -540,6 +680,39 @@ fn clear_turn_status(options: &Options, thread_id: &str) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => panic!("failed to clear fixture turn state: {error}"),
     }
+}
+
+fn read_thread_project(options: &Options, thread_id: &str) -> Option<String> {
+    std::fs::read_to_string(thread_project_path(options, thread_id)?).ok()
+}
+
+fn write_thread_project(options: &Options, thread_id: &str, project_id: Option<&str>) {
+    let Some(path) = thread_project_path(options, thread_id) else {
+        return;
+    };
+    match project_id {
+        Some(project_id) => std::fs::write(path, project_id).unwrap(),
+        None => match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("failed to clear fixture thread project: {error}"),
+        },
+    }
+}
+
+fn thread_project_path(options: &Options, thread_id: &str) -> Option<PathBuf> {
+    let marker = options.marker.as_ref()?;
+    let safe_thread_id = thread_id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    Some(marker.with_extension(format!("project.{safe_thread_id}")))
 }
 
 fn turn_state_path(options: &Options, thread_id: &str) -> Option<PathBuf> {
@@ -701,6 +874,18 @@ fn configured_thread_result(thread_id: &str, model: Option<Value>) -> Value {
         "approvalsReviewer": "user",
         "reasoningEffort": "high",
         "sandbox": { "type": "workspaceWrite" }
+    })
+}
+
+fn project(id: &str, name: &str) -> Value {
+    json!({
+        "id": id,
+        "name": name,
+        "roots": [{ "path": "/fixture/workspace" }],
+        "metadata": { "fixture": "true" },
+        "position": 1,
+        "createdAt": 1700000000,
+        "updatedAt": 1700000001
     })
 }
 
