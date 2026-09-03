@@ -49,13 +49,13 @@ Gateway v1 业务协议、channel 和 admission 必须保持三层独立：chann
 - SDK 识别 stdin EOF 或 fatal frame 后必须先把 event output 标记为不可用并丢弃 cleanup event，再执行 Provider cleanup；标准 terminal error 只能在 cleanup 后按同一个有界 drain deadline 尝试写出，不能让不可读 stdout 的背压阻塞子进程回收，也不能把不可观测的状态事件误报成业务清理失败。
 - Host shutdown 可以先关闭面向 Gateway 的 inbound consumer，但 wire reader 必须活到 shutdown response/EOF；`shutting_down` 状态下只忽略 event/notification，不忽略 response，也不主动关闭 stdout。
 - Provider Host 将插件事件映射到 application/gateway channel；Desktop Companion 单独映射到 pet channel。
-- 兼容旧 wire 时，把 profile 放在同一 IDL 根并生成独立 module，业务侧只保留 re-export 或 adapter。
+- Harness 的 permission profile、Section 等版本化概念只允许留在 Provider adapter 内部；除非产品协议本身需要该概念，不得为了追随原生 wire 把它暴露到 Host/Remote schema，也不得把 Section 冒充 Project。
 - Gateway 在调用 Provider `conversation.list/get` 前捕获 `snapshotCursor`；客户端把该值原样传给 `event.subscribe.afterCursor`，由 Gateway 返回相同的 `subscribedAfterCursor`。
 - Conversation snapshot 只承载元数据和稳定内容，进行中正文只由 live `turn.outputDelta` 承载；不要为同步方便临时引入权威正文投影或 revision delta。
 - `conversation.get.limit` 表示单次最多读取的原生 turn 数，不是必须填满的数量；Provider/Gateway 只返回这一页并透传准确的 `pageInfo.nextCursor`，任何中间层都不得重新聚合全部历史。
 - Codex observer 先用 `thread/read(includeTurns=false)` 读取 metadata，再用 `thread/turns/list(itemsView=full, sortDirection=desc)` 按 opaque cursor 分页；单次上游请求最多 10 turns，Provider 将当前响应页恢复为时间正序，并检测返回数量、重复 cursor 与页数上限。
 - Provider 在 stdout 写入前对最终序列化帧执行共享 16 MiB 检查；超限返回 non-retryable `provider_response_too_large`，details 记录 `maxFrameBytes`，原请求 id 不变。客户端只对该错误保持原 cursor、缩小 limit 后重新请求；成功响应后才推进 cursor，相同参数不得盲目重试。
-- 若 `limit=1` 仍超过帧限制，客户端缩页已经无解，必须增加 item/content 级分页或对巨型输出采用明确的引用/截断协议；不得靠增大统一 frame limit 掩盖。
+- 若 `limit=1` 仍超过帧限制，客户端缩页已经无解。Provider 必须按最终序列化尺寸在共享层截断正文；仍超限时返回通用 History omitted 占位，同时尽量保留 `nextCursor`。能提供原生 item 分页的 adapter 应先逐 item 拉取；原生页失败时返回有界 partial/placeholder，不能让读取失败阻断后续写入。不得靠继续增大统一 frame limit 掩盖。
 
 ## 来源
 

@@ -24,7 +24,7 @@ use codepet_provider_sdk::{
     TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent,
     TurnSelection, TurnSendCapabilities, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
     TurnSteerResponse,
-    TurnUpsertedEvent, VersionRange, PROTOCOL_VERSION,
+    TurnUpsertedEvent, VersionRange, PROTOCOL_VERSION, fit_single_turn_conversation_history,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -1331,8 +1331,11 @@ impl Provider for ClaudeProvider {
         request: ConversationGetRequest,
     ) -> ProtocolFuture<'a, ConversationGetResponse> {
         Box::pin(async move {
+            let requested_limit = request.limit;
             let runtime = self.resource_instance(&request.conversation)?;
-            runtime.get_conversation(request)
+            runtime
+                .get_conversation(request)
+                .map(|response| fit_single_turn_conversation_history(requested_limit, response))
         })
     }
 

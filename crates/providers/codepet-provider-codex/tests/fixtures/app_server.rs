@@ -85,6 +85,11 @@ fn main() {
                     );
                     continue;
                 }
+                let user_agent = match options.approval_mode.as_str() {
+                    "app-server-0.151-history" => "codex-cli/0.151.0",
+                    "app-server-0.152-history" => "codex-cli/0.152.0",
+                    _ => "codex-app-server-fixture/1",
+                };
                 respond(
                     &mut writer,
                     id,
@@ -92,7 +97,7 @@ fn main() {
                         "codexHome": "/fixture/codex-home",
                         "platformFamily": "unix",
                         "platformOs": "macos",
-                        "userAgent": "codex-app-server-fixture/1"
+                        "userAgent": user_agent
                     }),
                 );
             }
@@ -330,6 +335,14 @@ fn main() {
                 response_thread["projectId"] = read_thread_project(&options, thread_id)
                     .map(Value::String)
                     .unwrap_or(Value::Null);
+                if options.approval_mode == "app-server-0.152-history" {
+                    response_thread.as_object_mut().unwrap().remove("projectId");
+                    response_thread["section"] = json!({
+                        "id": "section-fixture",
+                        "name": "Section Fixture",
+                        "appearance": null
+                    });
+                }
                 if thread_renamed && active_thread_id.as_deref() == Some(thread_id) {
                     response_thread["name"] = json!("Renamed by Codex");
                 }
@@ -343,8 +356,18 @@ fn main() {
             }
             "thread/turns/list" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
+                let versioned_history = matches!(
+                    options.approval_mode.as_str(),
+                    "app-server-0.151-history" | "app-server-0.152-history"
+                );
+                let requested_items_view = params["itemsView"].as_str().unwrap_or("");
+                let valid_items_view = if versioned_history {
+                    matches!(requested_items_view, "notLoaded" | "full")
+                } else {
+                    requested_items_view == "full"
+                };
                 if params["limit"].as_u64().is_none_or(|limit| !(1..=10).contains(&limit))
-                    || params["itemsView"] != "full"
+                    || !valid_items_view
                     || params["sortDirection"] != "desc"
                 {
                     write_json(
@@ -353,7 +376,7 @@ fn main() {
                             "id": id,
                             "error": {
                                 "code": -32602,
-                                "message": "thread/turns/list must request at most ten full turns in descending order"
+                                "message": "thread/turns/list used the wrong version-specific items view"
                             }
                         }),
                     );
@@ -377,17 +400,67 @@ fn main() {
                     continue;
                 }
                 let turn_state = read_turn_status(&options, thread_id);
-                let (data, next_cursor) = turn_page(
+                let (mut data, next_cursor) = turn_page(
                     thread_id,
                     params.get("cursor").and_then(Value::as_str),
                     turn_state.as_deref(),
                 );
+                if requested_items_view == "notLoaded" {
+                    for turn in &mut data {
+                        turn["itemsView"] = json!("notLoaded");
+                        turn["items"] = json!([]);
+                    }
+                }
                 respond(
                     &mut writer,
                     id,
                     json!({
                         "data": data,
                         "nextCursor": next_cursor,
+                        "backwardsCursor": null
+                    }),
+                );
+            }
+            "thread/items/list" => {
+                if options.approval_mode != "app-server-0.152-history" {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": { "code": -32601, "message": "thread/items/list is not supported yet" }
+                        }),
+                    );
+                    continue;
+                }
+                if params["limit"] != 1 || params["sortDirection"] != "asc" {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": { "code": -32602, "message": "thread/items/list must use one-item ascending pages" }
+                        }),
+                    );
+                    continue;
+                }
+                let turn_id = params["turnId"].as_str().unwrap_or("");
+                let item = match turn_id {
+                    "turn-page-two" => Some(json!({
+                        "type": "agentMessage", "id": "agent-page-two", "text": "page two"
+                    })),
+                    "turn-page-one" => Some(json!({
+                        "type": "agentMessage", "id": "agent-page-one", "text": "page one"
+                    })),
+                    _ => None,
+                };
+                respond(
+                    &mut writer,
+                    id,
+                    json!({
+                        "data": item.into_iter().map(|item| json!({
+                            "turnId": turn_id,
+                            "item": item
+                        })).collect::<Vec<_>>(),
+                        "nextCursor": null,
                         "backwardsCursor": null
                     }),
                 );
@@ -501,6 +574,14 @@ fn main() {
                     .get("projectId")
                     .cloned()
                     .unwrap_or(Value::Null);
+                if options.approval_mode == "app-server-0.152-history" {
+                    result["thread"].as_object_mut().unwrap().remove("projectId");
+                    result["thread"]["section"] = json!({
+                        "id": "section-fixture",
+                        "name": "Section Fixture",
+                        "appearance": null
+                    });
+                }
                 respond(
                     &mut writer,
                     id,

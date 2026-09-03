@@ -1010,7 +1010,7 @@ fn provider_binary_conversation_get_is_pure_read_with_external_writer() {
 }
 
 #[test]
-fn provider_binary_create_waits_until_conversation_is_readable() {
+fn provider_binary_create_returns_before_conversation_is_materialized() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("create-readiness.txt");
     let request_log = directory.path().join("create-readiness-requests.txt");
@@ -1036,14 +1036,11 @@ fn provider_binary_create_waits_until_conversation_is_readable() {
     let creation_requests = requests
         .lines()
         .skip_while(|line| *line != "thread/start")
-        .take(5)
         .collect::<Vec<_>>();
     assert_eq!(
         creation_requests,
         vec![
             "thread/start",
-            "thread/read\tthread-created",
-            "thread/read\tthread-created",
             "thread/read\tthread-created",
             "thread/turns/list\tthread-created"
         ]
@@ -1054,7 +1051,7 @@ fn provider_binary_create_waits_until_conversation_is_readable() {
 }
 
 #[test]
-fn provider_binary_create_waits_until_observer_can_read_persisted_metadata() {
+fn provider_binary_create_does_not_wait_for_observer_persistence() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("observer-create-readiness.txt");
     let request_log = directory.path().join("observer-create-readiness-requests.txt");
@@ -1074,13 +1071,13 @@ fn provider_binary_create_waits_until_observer_can_read_persisted_metadata() {
         .lines()
         .filter(|line| *line == "thread/read\tthread-created")
         .count();
-    assert_eq!(created_reads, 4, "{requests}");
+    assert_eq!(created_reads, 0, "{requests}");
     assert_eq!(
         requests
             .lines()
             .filter(|line| *line == "thread/turns/list\tthread-created")
             .count(),
-        2,
+        0,
         "{requests}"
     );
 
@@ -1130,12 +1127,6 @@ fn provider_binary_returns_empty_history_for_unmaterialized_new_conversation() {
             "initialize",
             "thread/start",
             "thread/read\tthread-created",
-            "thread/turns/list\tthread-created",
-            "thread/read\tthread-created",
-            "thread/read\tthread-created",
-            "thread/read\tthread-created",
-            "thread/turns/list\tthread-created",
-            "thread/read\tthread-created",
             "thread/turns/list\tthread-created"
         ]
     );
@@ -1145,7 +1136,7 @@ fn provider_binary_returns_empty_history_for_unmaterialized_new_conversation() {
 }
 
 #[test]
-fn provider_binary_acquire_interaction_resumes_once_and_returns_configuration() {
+fn provider_binary_acquire_interaction_reuses_created_session_and_returns_configuration() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("acquire-interaction.txt");
     let mut provider = ProviderBinary::spawn();
@@ -1192,7 +1183,7 @@ fn provider_binary_acquire_interaction_resumes_once_and_returns_configuration() 
     }
     assert_eq!(
         session_pids(&marker, "thread/resume", "thread-created").len(),
-        1
+        0
     );
 
     let started = provider.request(
@@ -1234,7 +1225,7 @@ fn provider_binary_acquire_interaction_resumes_once_and_returns_configuration() 
     assert!(restarted.get("error").is_none(), "{restarted}");
     assert_eq!(
         session_pids(&marker, "thread/resume", "thread-created").len(),
-        1
+        0
     );
 
     provider.request("acquire-interaction-stop", "instance.stop", json!({ "route": route_value() }));
@@ -1311,6 +1302,104 @@ fn provider_binary_conversation_get_pages_history_without_resuming() {
 
     provider.request("paginated-history-stop", "instance.stop", json!({ "route": route_value() }));
     provider.request("paginated-history-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_uses_item_pagination_for_app_server_0_152() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("item-paginated-history.txt");
+    let request_log = directory.path().join("item-paginated-history-requests.txt");
+    let mut provider = ProviderBinary::spawn();
+    provider.configure_with_request_log(
+        "app-server-0.152-history",
+        &marker,
+        Some(&request_log),
+    );
+    std::fs::write(&request_log, "").unwrap();
+
+    let response = provider.request(
+        "item-paginated-history",
+        "conversation.get",
+        json!({
+            "conversation": conversation_resource_value("thread-paginated"),
+            "limit": 1
+        }),
+    );
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(
+        response
+            .pointer("/result/items/0/resource/nativeResourceId")
+            .and_then(Value::as_str),
+        Some("agent-page-two")
+    );
+    assert_eq!(
+        response
+            .pointer("/result/pageInfo/nextCursor")
+            .and_then(Value::as_str),
+        Some("page-two")
+    );
+    assert_eq!(response.pointer("/result/conversation/project"), Some(&Value::Null));
+    assert_eq!(
+        std::fs::read_to_string(&request_log)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        vec![
+            "thread/read\tthread-paginated",
+            "thread/turns/list\tthread-paginated",
+            "thread/items/list\tthread-paginated"
+        ]
+    );
+
+    provider.request("item-paginated-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("item-paginated-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_falls_back_to_full_turns_when_app_server_0_151_lacks_item_pagination() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("legacy-full-history.txt");
+    let request_log = directory.path().join("legacy-full-history-requests.txt");
+    let mut provider = ProviderBinary::spawn();
+    provider.configure_with_request_log(
+        "app-server-0.151-history",
+        &marker,
+        Some(&request_log),
+    );
+    std::fs::write(&request_log, "").unwrap();
+
+    let response = provider.request(
+        "legacy-full-history",
+        "conversation.get",
+        json!({
+            "conversation": conversation_resource_value("thread-paginated"),
+            "limit": 1
+        }),
+    );
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(
+        response
+            .pointer("/result/items/0/resource/nativeResourceId")
+            .and_then(Value::as_str),
+        Some("agent-page-two")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&request_log)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        vec![
+            "thread/read\tthread-paginated",
+            "thread/turns/list\tthread-paginated",
+            "thread/items/list\tthread-paginated",
+            "thread/turns/list\tthread-paginated"
+        ]
+    );
+
+    provider.request("legacy-full-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("legacy-full-shutdown", "provider.shutdown", json!({}));
 }
 
 #[test]
@@ -1392,11 +1481,11 @@ fn provider_binary_reuses_one_execution_session_until_authoritative_terminal_sta
     assert!(restarted.get("error").is_none());
 
     let resume_pids = session_pids(&marker, "thread/resume", "thread-created");
-    assert_eq!(resume_pids.len(), 2);
+    assert!(resume_pids.is_empty());
     let approval_pids = session_pids(&marker, "approval/response", "thread-created");
     assert_eq!(approval_pids.len(), 1);
     let first_execution = approval_pids[0];
-    assert!(resume_pids.contains(&first_execution));
+    assert_eq!(first_execution, creation_pid);
     assert_ne!(observer_pid, first_execution);
     assert_eq!(
         session_pids(&marker, "turn/steer", "thread-created"),
@@ -1406,7 +1495,6 @@ fn provider_binary_reuses_one_execution_session_until_authoritative_terminal_sta
         session_pids(&marker, "turn/interrupt", "thread-created"),
         vec![first_execution]
     );
-    assert_ne!(resume_pids[0], resume_pids[1]);
 
     provider.request("lifecycle-stop", "instance.stop", json!({ "route": route_value() }));
     provider.request("lifecycle-shutdown", "provider.shutdown", json!({}));
@@ -1436,7 +1524,7 @@ fn provider_binary_keeps_waiting_user_input_execution_detached_from_remote_reads
         .pointer("/result/turn/resource")
         .cloned()
         .unwrap();
-    let execution_pid = session_pids(&marker, "thread/resume", "thread-created")[0];
+    let execution_pid = session_pids(&marker, "turn/start", "thread-created")[0];
     let fetched = provider.request(
         "waiting-input-read",
         "conversation.get",
@@ -1468,7 +1556,7 @@ fn provider_binary_keeps_waiting_user_input_execution_detached_from_remote_reads
     let read_pids = session_pids(&marker, "thread/read", "thread-created");
     assert!(read_pids.contains(&observer_pid));
     assert!(read_pids.contains(&execution_pid));
-    assert_eq!(session_pids(&marker, "thread/resume", "thread-created").len(), 1);
+    assert!(session_pids(&marker, "thread/resume", "thread-created").is_empty());
 
     provider.request(
         "waiting-input-interrupt",
@@ -3031,7 +3119,7 @@ fn provider_binary_cleans_explicit_reject_and_sent_unknown_without_automatic_ret
         );
         assert_eq!(
             session_pids(&marker, "thread/resume", "thread-created").len(),
-            1
+            0
         );
         assert_eq!(
             session_pids(&marker, "turn/start", "thread-created").len(),
@@ -3053,8 +3141,7 @@ fn provider_binary_cleans_explicit_reject_and_sent_unknown_without_automatic_ret
             Some(expected_code)
         );
         let resume_pids = session_pids(&marker, "thread/resume", "thread-created");
-        assert_eq!(resume_pids.len(), 2);
-        assert_ne!(resume_pids[0], resume_pids[1]);
+        assert_eq!(resume_pids.len(), 1);
         assert_eq!(
             session_pids(&marker, "turn/start", "thread-created").len(),
             2
@@ -3102,8 +3189,7 @@ fn provider_binary_async_execution_crash_drops_the_mapped_session() {
     );
     assert!(steered.get("error").is_none());
     let resume_pids = session_pids(&marker, "thread/resume", "thread-created");
-    assert_eq!(resume_pids.len(), 2);
-    assert_ne!(resume_pids[0], resume_pids[1]);
+    assert_eq!(resume_pids.len(), 1);
 
     provider.request("crash-stop", "instance.stop", json!({ "route": route_value() }));
     provider.request("crash-shutdown", "provider.shutdown", json!({}));

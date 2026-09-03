@@ -464,7 +464,7 @@ async fn provider_inherits_claude_project_configuration_and_rejects_strong_acces
 }
 
 #[tokio::test]
-async fn provider_chunks_two_mib_result_before_the_one_mib_provider_frame_limit() {
+async fn provider_chunks_two_mib_result_before_the_provider_frame_limit() {
     let workspace = tempfile::tempdir().unwrap();
     let (provider, events, route, conversation) = ready_provider(workspace.path()).await;
     let turn = ProviderProtocolServer::turn_start(
@@ -892,7 +892,12 @@ fn provider_binary_reaps_active_tree_after_an_oversized_host_frame_under_stdout_
         pids,
     } = active_provider_binary(workspace.path());
     saturate_provider_stdout(&mut stdout_backpressure);
-    stdin.write_all(&vec![b'x'; 1024 * 1024 + 1]).unwrap();
+    stdin
+        .write_all(&vec![
+            b'x';
+            codepet_provider_sdk::MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES + 1
+        ])
+        .unwrap();
     stdin.write_all(b"\n").unwrap();
     stdin.flush().unwrap();
     drop(stdin);
@@ -911,7 +916,12 @@ fn provider_binary_returns_a_standard_error_then_fail_stops_after_an_oversized_h
         .spawn()
         .unwrap();
     let mut stdin = child.stdin.take().unwrap();
-    stdin.write_all(&vec![b'x'; 1024 * 1024 + 1]).unwrap();
+    stdin
+        .write_all(&vec![
+            b'x';
+            codepet_provider_sdk::MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES + 1
+        ])
+        .unwrap();
     stdin.write_all(b"\n").unwrap();
     serde_json::to_writer(
         &mut stdin,

@@ -32,7 +32,7 @@ Host stdio request 不能逐条 await：普通请求与 lifecycle control 必须
 
 ## 推荐做法
 
-- instance start 只创建 observer；list/search/get/model 全部走 observer，conversation.create 走完成即关闭的一次性会话。
+- instance start 只创建 observer；list/search/get/model 全部走 observer。conversation.create 的 `thread/start` session 在返回后直接成为该 conversation 的临时 execution slot，首条 `turn.start` 必须复用它，不等待 list/get/read 物化，也不先关闭再 `thread/resume`。
 - 新 thread 已能被 metadata `thread/read` 读取、但首条用户消息前 `thread/turns/list` 返回当前 thread id 对应的官方 `-32600 not materialized` 响应时，Provider 将其映射为空历史，并将 create readiness 判为成功。若独立 observer 对同一个未 materialize id 返回精确的 `-32600 thread not loaded`，只允许使用当前 instance 的 create response 暂存 metadata 返回空历史；完整历史可读或 instance stop/fail/restart 后删除暂存。错误 code、message、thread id 不精确，或该 id 没有暂存证据时继续 fail closed。
 - 用 conversation-keyed 创建槽合并首次 spawn/resume，并用 per-slot operation lock 串行化 acquire/start/steer/interrupt/approval。事件线程只持 runtime 弱引用。
 - acquire 在 operation lock 内复核 Ready generation，更新单调时钟租期，并从成功 resume 的 session configuration cache 构造 response。协议时间戳使用 wall clock，只用于客户端观察，Provider 的过期判断使用单调时钟。

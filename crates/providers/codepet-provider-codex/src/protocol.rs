@@ -157,7 +157,7 @@ pub struct CodexTurn {
     pub items: Vec<CodexThreadItem>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CodexTurnItemsView {
     NotLoaded,
@@ -611,6 +611,19 @@ pub struct CodexTurnPage {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct CodexThreadItemEntry {
+    pub turn_id: String,
+    pub item: CodexThreadItem,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CodexThreadItemPage {
+    pub data: Vec<CodexThreadItemEntry>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct CodexModel {
     pub id: String,
     pub model: String,
@@ -842,6 +855,15 @@ pub(crate) struct ThreadReadResponse {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ThreadTurnsListResponse {
     pub data: Vec<CodexTurn>,
+    pub next_cursor: Option<String>,
+    #[serde(default, rename = "backwardsCursor")]
+    pub _backwards_cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ThreadItemsListResponse {
+    pub data: Vec<CodexThreadItemEntry>,
     pub next_cursor: Option<String>,
     #[serde(default, rename = "backwardsCursor")]
     pub _backwards_cursor: Option<String>,

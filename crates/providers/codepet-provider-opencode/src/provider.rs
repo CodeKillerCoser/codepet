@@ -26,7 +26,7 @@ use codepet_provider_sdk::{
     ProviderPluginDescriptor, ProviderShutdownRequest, ProviderShutdownResponse,
     ProviderTurn, RoutedResourceId, TurnInterruptRequest, TurnInterruptResponse, TurnSelection,
     TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest, TurnSteerResponse,
-    VersionRange, PROTOCOL_VERSION,
+    VersionRange, PROTOCOL_VERSION, fit_single_turn_conversation_history,
 };
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -1200,6 +1200,7 @@ impl Provider for OpenCodeProvider {
         request: ConversationGetRequest,
     ) -> ProtocolFuture<'a, ConversationGetResponse> {
         Box::pin(async move {
+            let requested_limit = request.limit;
             let runtime = self.resource_instance(&request.conversation)?;
             let conversation_id = request.conversation.native_resource_id;
             let session = runtime.ready_session()?;
@@ -1237,11 +1238,11 @@ impl Provider for OpenCodeProvider {
             let items = runtime
                 .mapper
                 .conversation_items(&conversation.resource, &messages);
-            Ok(ConversationGetResponse {
+            Ok(fit_single_turn_conversation_history(requested_limit, ConversationGetResponse {
                 conversation,
                 items,
                 page_info: None,
-            })
+            }))
         })
     }
 

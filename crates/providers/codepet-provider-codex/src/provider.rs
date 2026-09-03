@@ -6,7 +6,8 @@ use crate::protocol::{
     approval_generation, approval_resource_id, CodexAppServerError, CodexApprovalRequest,
     CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexProjectCreateRequest,
     CodexProjectRoot, CodexProjectUpdateRequest, CodexThreadListRequest, CodexThreadStartRequest,
-    CodexTurnStartRequest, CodexTurnStatus, CodexTurnSteerRequest,
+    CodexThreadItem, CodexTurn, CodexTurnItemsView, CodexTurnStartRequest, CodexTurnStatus,
+    CodexTurnSteerRequest,
     CODEX_INSTANCE_KIND, CODEX_PLUGIN_ID,
 };
 use codepet_provider_sdk::{
@@ -30,7 +31,7 @@ use codepet_provider_sdk::{
     ProviderInstanceRoute, ProviderPluginDescriptor, ProviderShutdownRequest,
     ProviderShutdownResponse, RoutedResourceId, TurnInterruptRequest, TurnInterruptResponse,
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnSteerRequest, TurnSteerResponse,
-    VersionRange, PROTOCOL_VERSION,
+    VersionRange, PROTOCOL_VERSION, fit_single_turn_conversation_history,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -51,9 +52,6 @@ const DEFAULT_CONVERSATION_GET_TURN_LIMIT: u64 = 40;
 const MAX_CONVERSATION_GET_TURN_LIMIT: u64 = 100;
 const INTERACTION_LEASE_DURATION: Duration = Duration::from_secs(30);
 const INTERACTION_REAPER_INTERVAL: Duration = Duration::from_secs(1);
-const CONVERSATION_CREATE_READINESS_TIMEOUT: Duration = Duration::from_secs(2);
-const CONVERSATION_CREATE_READINESS_INITIAL_DELAY: Duration = Duration::from_millis(10);
-const CONVERSATION_CREATE_READINESS_MAX_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -2462,83 +2460,16 @@ impl Provider for CodexProvider {
                 let mut emitted_approvals = vec![false; approvals.len()];
                 let mut items = Vec::new();
                 let mut active_turn = None;
-                let mut turns = Vec::new();
-                let mut cursor = initial_cursor;
-                let mut remaining_turns = requested_limit;
-                let mut response_next_cursor = None;
-                let mut seen_cursors = HashSet::new();
-                let mut page_count = 0;
-                let mut history_materialized = true;
-                loop {
-                    if page_count == MAX_THREAD_TURN_PAGES {
-                        return Err(protocol_error(
-                            "provider_protocol_error",
-                            format!(
-                                "thread/turns/list exceeded the {MAX_THREAD_TURN_PAGES}-page limit"
-                            ),
-                            false,
-                        ));
-                    }
-                    page_count += 1;
-                    let upstream_limit = remaining_turns.min(u64::from(THREAD_TURNS_PAGE_LIMIT));
-                    let page = match session.thread_turns_list(
-                        &conversation_id,
-                        cursor.clone(),
-                        upstream_limit as u32,
-                    ) {
-                        Ok(page) => page,
-                        Err(error)
-                            if cursor.is_none()
-                                && (error
-                                    .is_thread_turns_unavailable_before_first_user_message(
-                                        &conversation_id,
-                                    )
-                                    || used_pending_snapshot
-                                        && (error.is_thread_not_loaded(&conversation_id)
-                                            || is_created_conversation_not_ready(
-                                                &error,
-                                                &conversation_id,
-                                            ))) =>
-                        {
-                            history_materialized = false;
-                            break;
-                        }
-                        Err(error) => return Err(CodexProtocolMapper::error(error)),
-                    };
-                    if page.data.len() as u64 > upstream_limit {
-                        return Err(protocol_error(
-                            "provider_protocol_error",
-                            format!(
-                                "thread/turns/list returned {} turns for limit {upstream_limit}",
-                                page.data.len()
-                            ),
-                            false,
-                        ));
-                    }
-                    let returned_turns = page.data.len() as u64;
-                    let next_cursor = page.next_cursor;
-                    turns.extend(page.data);
-                    remaining_turns = remaining_turns.saturating_sub(returned_turns);
-                    if remaining_turns == 0 {
-                        response_next_cursor = next_cursor;
-                        break;
-                    }
-                    match next_cursor {
-                        Some(next_cursor) if seen_cursors.insert(next_cursor.clone()) => {
-                            cursor = Some(next_cursor);
-                        }
-                        Some(_) => {
-                            return Err(protocol_error(
-                                "provider_protocol_error",
-                                "thread/turns/list returned a repeated cursor".to_string(),
-                                false,
-                            ));
-                        }
-                        None => {
-                            break;
-                        }
-                    }
-                }
+                let loaded = load_conversation_turns(
+                    &session,
+                    &conversation_id,
+                    initial_cursor,
+                    requested_limit,
+                    used_pending_snapshot,
+                )?;
+                let turns = loaded.turns;
+                let response_next_cursor = loaded.next_cursor;
+                let history_materialized = loaded.materialized;
                 let mapper = lock(&runtime.mapper);
                 for turn in turns.into_iter().rev() {
                     if turn.status == CodexTurnStatus::InProgress {
@@ -2560,13 +2491,13 @@ impl Provider for CodexProvider {
                         .pending_materialization
                         .remove(&conversation_id);
                 }
-                Ok(ConversationGetResponse {
+                Ok(fit_single_turn_conversation_history(Some(requested_limit), ConversationGetResponse {
                     conversation,
                     items,
                     page_info: Some(PageInfo {
                         next_cursor: response_next_cursor,
                     }),
-                })
+                }))
             })
                 .await
                 .map_err(provider_task_error)?
@@ -2703,7 +2634,7 @@ impl Provider for CodexProvider {
             let args = runtime.settings.app_server_args.clone();
             let operation_runtime = runtime.clone();
             let operation_slot = slot.clone();
-            let snapshot = tokio::task::spawn_blocking(move || {
+            let (snapshot, execution_slot, execution_generation, execution_session, incoming) = tokio::task::spawn_blocking(move || {
                 let session = match CodexAppServerSession::spawn_uninitialized(&executable, &args) {
                     Ok(session) => session,
                     Err(error) => {
@@ -2731,6 +2662,14 @@ impl Provider for CodexProvider {
                         CodexProtocolMapper::error(error)
                     });
                 }
+                let incoming = match session.subscribe() {
+                    Ok(incoming) => incoming,
+                    Err(error) => {
+                        let _ = session.shutdown();
+                        operation_runtime.unregister_session(&operation_slot);
+                        return Err(CodexProtocolMapper::error(error));
+                    }
+                };
                 let outcome = session.thread_start_outcome_with_sender(CodexThreadStartRequest {
                     workspace_root,
                     project_id,
@@ -2747,49 +2686,65 @@ impl Provider for CodexProvider {
                     }
                     session.write_prepared_request(message)
                 });
-                let result = match outcome {
-                    CodexRequestOutcome::Success(snapshot) => {
-                        wait_for_created_conversation_readable(
-                            &session,
-                            &snapshot.thread.id,
-                        )
-                        .map(|()| snapshot)
-                        .map_err(CodexProtocolMapper::error)
+                let snapshot = match outcome {
+                    CodexRequestOutcome::Success(snapshot) => snapshot,
+                    outcome => {
+                        let error = execution_outcome_error("thread/start", None, outcome);
+                        let _ = session.shutdown();
+                        operation_runtime.unregister_session(&operation_slot);
+                        return Err(error);
                     }
-                    outcome => Err(execution_outcome_error("thread/start", None, outcome)),
                 };
-                if let Err(error) = session.shutdown() {
-                    eprintln!("Codex conversation creation session shutdown failed: {error}");
+                let execution_slot = Arc::new(ExecutionSlot::new());
+                if !execution_slot.set_starting_session(session.clone()) {
+                    let _ = session.shutdown();
+                    operation_runtime.unregister_session(&operation_slot);
+                    return Err(execution_start_cancelled_error());
+                }
+                let execution_generation = session.generation().to_string();
+                if !execution_slot.set_ready(ExecutionSession {
+                    session: session.clone(),
+                    generation: execution_generation.clone(),
+                    active_turn_id: None,
+                    interaction_expires_at: Some(
+                        Instant::now() + operation_runtime.lifecycle_hook.interaction_lease_duration(),
+                    ),
+                }) {
+                    let _ = session.shutdown();
+                    operation_runtime.unregister_session(&operation_slot);
+                    return Err(execution_start_cancelled_error());
                 }
                 operation_runtime.unregister_session(&operation_slot);
-                result
-            })
-            .await
-            .map_err(provider_task_error)??;
-            let observer = runtime.ready_observer()?;
-            let observer_conversation_id = snapshot.thread.id.clone();
-            tokio::task::spawn_blocking(move || {
-                wait_for_created_conversation_readable(
-                    &observer,
-                    &observer_conversation_id,
-                )
-                .map_err(CodexProtocolMapper::error)
+                Ok((snapshot, execution_slot, execution_generation, session, incoming))
             })
             .await
             .map_err(provider_task_error)??;
             let conversation = {
                 let _transition = lock(&runtime.lifecycle_transition);
                 let mut mutable = lock(&runtime.mutable);
-                if mutable.status != InstanceStatus::Ready {
+                if mutable.status != InstanceStatus::Ready
+                    || mutable.executions.contains_key(&snapshot.thread.id)
+                {
+                    drop(mutable);
+                    let _ = execution_session.shutdown();
                     return Err(instance_session_cancelled_error(
                         "conversation creation session",
                     ));
                 }
                 mutable
+                    .executions
+                    .insert(snapshot.thread.id.clone(), execution_slot);
+                mutable
                     .pending_materialization
                     .insert(snapshot.thread.id.clone(), snapshot.clone());
                 lock(&runtime.mapper).conversation(&snapshot)
             };
+            runtime.start_execution_event_forwarder(
+                snapshot.thread.id.clone(),
+                execution_generation,
+                execution_session,
+                incoming,
+            );
             Ok(ConversationCreateResponse { conversation })
         })
     }
@@ -3477,42 +3432,245 @@ fn execution_outcome_error<T>(
     }
 }
 
-fn wait_for_created_conversation_readable(
+struct LoadedConversationTurns {
+    turns: Vec<CodexTurn>,
+    next_cursor: Option<String>,
+    materialized: bool,
+}
+
+fn load_conversation_turns(
     session: &CodexAppServerSession,
     conversation_id: &str,
-) -> Result<(), CodexAppServerError> {
-    let deadline = Instant::now() + CONVERSATION_CREATE_READINESS_TIMEOUT;
-    let mut delay = CONVERSATION_CREATE_READINESS_INITIAL_DELAY;
-    loop {
-        let result = session
-            .thread_read_metadata(conversation_id)
-            .and_then(|_| {
-                session
-                    .thread_turns_list(conversation_id, None, THREAD_TURNS_PAGE_LIMIT)
-                    .map(|_| ())
-            });
-        match result {
-            Ok(()) => return Ok(()),
-            Err(error)
-                if error.is_thread_turns_unavailable_before_first_user_message(conversation_id) =>
-            {
-                return Ok(());
-            }
-            Err(error) if is_created_conversation_not_ready(&error, conversation_id) => {
-                let now = Instant::now();
-                if now >= deadline {
-                    return Err(CodexAppServerError::Timeout(format!(
-                        "new conversation {conversation_id} did not become readable: {error}"
-                    )));
+    initial_cursor: Option<String>,
+    requested_limit: u64,
+    used_pending_snapshot: bool,
+) -> Result<LoadedConversationTurns, ProtocolError> {
+    let harness_version = session.harness_version();
+    if harness_uses_item_pagination(harness_version.as_deref()) {
+        let mut loaded = load_conversation_turn_pages(
+            session,
+            conversation_id,
+            initial_cursor.clone(),
+            requested_limit,
+            used_pending_snapshot,
+            CodexTurnItemsView::NotLoaded,
+        )?;
+        if !loaded.materialized || loaded.turns.is_empty() {
+            return Ok(loaded);
+        }
+        match hydrate_turn_items(session, conversation_id, &mut loaded.turns) {
+            Ok(ItemPaginationProbe::Supported) => return Ok(loaded),
+            Ok(ItemPaginationProbe::Unsupported) => {
+                if harness_allows_full_turn_fallback(harness_version.as_deref()) {
+                    return load_conversation_turn_pages(
+                        session,
+                        conversation_id,
+                        initial_cursor,
+                        requested_limit,
+                        used_pending_snapshot,
+                        CodexTurnItemsView::Full,
+                    );
                 }
-                thread::sleep(delay.min(deadline.saturating_duration_since(now)));
-                delay = delay
-                    .saturating_mul(2)
-                    .min(CONVERSATION_CREATE_READINESS_MAX_DELAY);
+                for turn in &mut loaded.turns {
+                    set_history_placeholder(turn);
+                }
+                return Ok(loaded);
             }
-            Err(error) => return Err(error),
+            Err(()) => return Ok(loaded),
         }
     }
+    load_conversation_turn_pages(
+        session,
+        conversation_id,
+        initial_cursor,
+        requested_limit,
+        used_pending_snapshot,
+        CodexTurnItemsView::Full,
+    )
+}
+
+fn load_conversation_turn_pages(
+    session: &CodexAppServerSession,
+    conversation_id: &str,
+    initial_cursor: Option<String>,
+    requested_limit: u64,
+    used_pending_snapshot: bool,
+    items_view: CodexTurnItemsView,
+) -> Result<LoadedConversationTurns, ProtocolError> {
+    let mut turns = Vec::new();
+    let mut cursor = initial_cursor;
+    let mut remaining_turns = requested_limit;
+    let mut response_next_cursor = None;
+    let mut seen_cursors = HashSet::new();
+    let mut page_count = 0;
+    loop {
+        if page_count == MAX_THREAD_TURN_PAGES {
+            return Err(protocol_error(
+                "provider_protocol_error",
+                format!("thread/turns/list exceeded the {MAX_THREAD_TURN_PAGES}-page limit"),
+                false,
+            ));
+        }
+        page_count += 1;
+        let upstream_limit = remaining_turns.min(u64::from(THREAD_TURNS_PAGE_LIMIT));
+        let page = match session.thread_turns_list_with_view(
+            conversation_id,
+            cursor.clone(),
+            upstream_limit as u32,
+            items_view,
+        ) {
+            Ok(page) => page,
+            Err(error)
+                if cursor.is_none()
+                    && (error.is_thread_turns_unavailable_before_first_user_message(
+                        conversation_id,
+                    ) || used_pending_snapshot
+                        && (error.is_thread_not_loaded(conversation_id)
+                            || is_created_conversation_not_ready(&error, conversation_id))) =>
+            {
+                return Ok(LoadedConversationTurns {
+                    turns,
+                    next_cursor: None,
+                    materialized: false,
+                });
+            }
+            Err(error) => return Err(CodexProtocolMapper::error(error)),
+        };
+        if page.data.len() as u64 > upstream_limit {
+            return Err(protocol_error(
+                "provider_protocol_error",
+                format!(
+                    "thread/turns/list returned {} turns for limit {upstream_limit}",
+                    page.data.len()
+                ),
+                false,
+            ));
+        }
+        let returned_turns = page.data.len() as u64;
+        let next_cursor = page.next_cursor;
+        turns.extend(page.data);
+        remaining_turns = remaining_turns.saturating_sub(returned_turns);
+        if remaining_turns == 0 {
+            response_next_cursor = next_cursor;
+            break;
+        }
+        match next_cursor {
+            Some(next_cursor) if seen_cursors.insert(next_cursor.clone()) => {
+                cursor = Some(next_cursor);
+            }
+            Some(_) => {
+                return Err(protocol_error(
+                    "provider_protocol_error",
+                    "thread/turns/list returned a repeated cursor".to_string(),
+                    false,
+                ));
+            }
+            None => break,
+        }
+    }
+    Ok(LoadedConversationTurns {
+        turns,
+        next_cursor: response_next_cursor,
+        materialized: true,
+    })
+}
+
+enum ItemPaginationProbe {
+    Supported,
+    Unsupported,
+}
+
+fn hydrate_turn_items(
+    session: &CodexAppServerSession,
+    conversation_id: &str,
+    turns: &mut [CodexTurn],
+) -> Result<ItemPaginationProbe, ()> {
+    let mut method_was_observed = false;
+    let mut history_failed = false;
+    for turn in turns {
+        if history_failed {
+            set_history_placeholder(turn);
+            continue;
+        }
+        let mut cursor = None;
+        let mut seen_cursors = HashSet::new();
+        let mut items = Vec::new();
+        for page_count in 0..MAX_THREAD_TURN_PAGES {
+            let page = match session.thread_items_list(
+                conversation_id,
+                &turn.id,
+                cursor.clone(),
+                1,
+            ) {
+                Ok(page) => {
+                    method_was_observed = true;
+                    page
+                }
+                Err(error) if !method_was_observed && error.is_method_not_found() => {
+                    return Ok(ItemPaginationProbe::Unsupported);
+                }
+                Err(_) => {
+                    set_history_placeholder(turn);
+                    history_failed = true;
+                    break;
+                }
+            };
+            items.extend(page.data.into_iter().map(|entry| entry.item));
+            match page.next_cursor {
+                Some(next_cursor) if seen_cursors.insert(next_cursor.clone()) => {
+                    cursor = Some(next_cursor);
+                }
+                Some(_) => {
+                    set_history_placeholder(turn);
+                    history_failed = true;
+                    break;
+                }
+                None => {
+                    turn.items = items;
+                    break;
+                }
+            }
+            if page_count + 1 == MAX_THREAD_TURN_PAGES {
+                set_history_placeholder(turn);
+                history_failed = true;
+            }
+        }
+    }
+    if history_failed {
+        Err(())
+    } else {
+        Ok(ItemPaginationProbe::Supported)
+    }
+}
+
+fn set_history_placeholder(turn: &mut CodexTurn) {
+    turn.items = vec![CodexThreadItem::Unknown {
+        id: format!("{}:history-not-loaded", turn.id),
+    }];
+}
+
+fn harness_uses_item_pagination(version: Option<&str>) -> bool {
+    let Some(version) = version else {
+        return false;
+    };
+    let mut components = version.split(['.', '-']);
+    let major = components.next().and_then(|value| value.parse::<u64>().ok());
+    let minor = components.next().and_then(|value| value.parse::<u64>().ok());
+    matches!((major, minor), (Some(major), Some(minor)) if major > 0 || minor >= 151)
+}
+
+fn harness_allows_full_turn_fallback(version: Option<&str>) -> bool {
+    !harness_uses_item_pagination(version)
+        || !matches!(
+            version.map(|version| {
+                let mut components = version.split(['.', '-']);
+                (
+                    components.next().and_then(|value| value.parse::<u64>().ok()),
+                    components.next().and_then(|value| value.parse::<u64>().ok()),
+                )
+            }),
+            Some((Some(major), Some(minor))) if major > 0 || minor >= 152
+        )
 }
 
 fn is_created_conversation_not_ready(

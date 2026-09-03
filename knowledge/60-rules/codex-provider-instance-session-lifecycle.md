@@ -11,8 +11,8 @@ observer start 与 `conversation.create` 曾在本地变量中完成 spawn/initi
 - 槽按 `Pending → Spawning → Spawned → Finished` 推进。cancel 遇到 `Spawning` 必须等待 spawn 成功或失败的确定结果；spawn 失败路径也必须通知等待者。
 - 注销同时校验 session id、instance generation 与槽 identity。旧 future 或旧 reader 不得删除新一代 observer/create。
 - observer 只有在 initialize、model discovery、subscribe 完成且 generation 仍当前时才能把 instance 置为 Ready。stop 先线性化后，旧 start 只能以原 request id 返回错误，不能发布晚到 Ready。
-- one-shot create 的最终 `thread/start` 与 cancel 共用短 send gate。门内只做取消/当前性复核和 frame 写入，不持有 initialize、response wait 或进程回收。
-- `instance.stop`、observer failure、`provider.shutdown` 与 stdin EOF 必须 drain observer、one-shot create 和 execution；stopped/accepted 只表示相关子进程已退出。并发 stop/shutdown 等待同一清理，不得提前伪造终态。
+- create 的最终 `thread/start` 与 cancel 共用短 send gate。门内只做取消/当前性复核和 frame 写入，不持有 initialize、response wait 或进程回收；成功 response 后 session 必须原子转移到 conversation execution slot，转移失败则关闭。
+- `instance.stop`、observer failure、`provider.shutdown` 与 stdin EOF 必须 drain observer、仍在创建中的 session 和已转移的 execution；stopped/accepted 只表示相关子进程已退出。并发 stop/shutdown 等待同一清理，不得提前伪造终态。
 - `instance.destroy` 与 start/stop 使用同一 transition。destroy 只能标记并移除非运行实例；已取得旧 runtime 引用的异步 start 也必须因 destroyed/generation 复核失败。
 - event/response 共用 stdout writer 只负责串行化 frame。event write/flush 失败应在释放 writer lock 后幂等地通知主循环；全局 cleanup 不得依赖再次写 stdout。
 

@@ -5,11 +5,11 @@ use super::protocol::{
     CodexConversationSnapshot, CodexIncoming, CodexModel, CodexModelListResponse,
     CodexNotification, CodexPermissionLevel, CodexProject, CodexProjectCreateRequest,
     CodexProjectPage, CodexProjectUpdateRequest, CodexThreadListRequest, CodexThreadPage,
-    CodexThreadStartRequest, CodexTurn, CodexTurnPage, CodexTurnStatus,
+    CodexThreadStartRequest, CodexThreadItemPage, CodexTurn, CodexTurnPage, CodexTurnStatus,
     CodexTurnItemsView, CodexTurnStartRequest, CodexTurnSteerRequest, CommandApprovalParams, FileApprovalParams,
     InitializeResponse, JsonRpcId, ProjectListResponse, ProjectResponse,
     ThreadConfiguredResponse, ThreadListResponse,
-    ThreadReadResponse, ThreadTurnsListResponse, TurnResponse, TurnSteerResponse,
+    ThreadItemsListResponse, ThreadReadResponse, ThreadTurnsListResponse, TurnResponse, TurnSteerResponse,
 };
 use codepet_provider_sdk::ApprovalDecision;
 use serde::de::DeserializeOwned;
@@ -689,11 +689,12 @@ impl CodexAppServerSession {
         Ok(snapshot)
     }
 
-    pub fn thread_turns_list(
+    pub fn thread_turns_list_with_view(
         &self,
         thread_id: &str,
         cursor: Option<String>,
         limit: u32,
+        items_view: CodexTurnItemsView,
     ) -> Result<CodexTurnPage, CodexAppServerError> {
         let response: ThreadTurnsListResponse = self.request(
             "thread/turns/list",
@@ -702,20 +703,48 @@ impl CodexAppServerSession {
                 "cursor": cursor,
                 "limit": limit,
                 "sortDirection": "desc",
-                "itemsView": "full",
+                "itemsView": items_view,
             }),
         )?;
         if let Some(turn) = response
             .data
             .iter()
-            .find(|turn| turn.items_view != CodexTurnItemsView::Full)
+            .find(|turn| turn.items_view != items_view)
         {
             return Err(CodexAppServerError::Protocol(format!(
-                "thread/turns/list returned non-full items for turn {}",
-                turn.id
+                "thread/turns/list returned {:?} items for {:?} request on turn {}",
+                turn.items_view, items_view, turn.id
             )));
         }
         Ok(CodexTurnPage {
+            data: response.data,
+            next_cursor: response.next_cursor,
+        })
+    }
+
+    pub fn thread_items_list(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<CodexThreadItemPage, CodexAppServerError> {
+        let response: ThreadItemsListResponse = self.request(
+            "thread/items/list",
+            json!({
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "cursor": cursor,
+                "limit": limit,
+                "sortDirection": "asc",
+            }),
+        )?;
+        if response.data.iter().any(|entry| entry.turn_id != turn_id) {
+            return Err(CodexAppServerError::Protocol(format!(
+                "thread/items/list returned an item outside turn {turn_id}"
+            )));
+        }
+        Ok(CodexThreadItemPage {
             data: response.data,
             next_cursor: response.next_cursor,
         })
