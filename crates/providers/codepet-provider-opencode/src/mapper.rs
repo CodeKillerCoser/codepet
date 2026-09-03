@@ -334,6 +334,7 @@ impl OpenCodeProtocolMapper {
                     let status = assistant_status(message);
                     for content in message.content.as_deref().unwrap_or_default() {
                         if let Some(item) = self.assistant_content_item(
+                            &message.id,
                             content,
                             &turn,
                             conversation,
@@ -445,13 +446,14 @@ impl OpenCodeProtocolMapper {
 
     fn assistant_content_item(
         &self,
+        message_id: &str,
         content: &OpenCodeMessageContent,
         turn: &RoutedResourceId,
         conversation: &RoutedResourceId,
         message_status: ConversationItemStatus,
         text_budget: &mut usize,
     ) -> Option<ConversationItem> {
-        let resource_id = format!("{}:{}", turn.native_resource_id, content.id);
+        let resource_id = format!("{message_id}:{}", content.id);
         match content.kind.as_str() {
             "text" => Some(self.history_item(
                 resource_id,
@@ -462,7 +464,7 @@ impl OpenCodeProtocolMapper {
                 Some(ConversationItemRole::Assistant),
                 None,
                 content.text.as_deref().map(|text| ConversationContent {
-                    content_id: format!("{}:text", content.id),
+                    content_id: format!("{message_id}:{}:text", content.id),
                     kind: ConversationContentKind::Text,
                     text: bounded_history_text(text, text_budget),
                 }).into_iter().collect(),
@@ -476,7 +478,7 @@ impl OpenCodeProtocolMapper {
                 Some(ConversationItemRole::Assistant),
                 None,
                 content.text.as_deref().map(|text| ConversationContent {
-                    content_id: format!("{}:summary:0", content.id),
+                    content_id: format!("{message_id}:{}:summary:0", content.id),
                     kind: ConversationContentKind::ReasoningSummary,
                     text: bounded_history_text(text, text_budget),
                 }).into_iter().collect(),
@@ -989,6 +991,91 @@ fn bounded_history_text(text: &str, budget: &mut usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn history_message(
+        id: &str,
+        kind: &str,
+        text: Option<&str>,
+        content: Option<Vec<OpenCodeMessageContent>>,
+    ) -> OpenCodeMessage {
+        OpenCodeMessage {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            time: crate::protocol::OpenCodeMessageTime {
+                created: 1,
+                completed: Some(2),
+            },
+            text: text.map(str::to_string),
+            content,
+            command: None,
+            output: None,
+            summary: None,
+            recent: None,
+            finish: Some("stop".to_string()),
+            error: None,
+        }
+    }
+
+    fn text_content(id: &str, text: &str) -> OpenCodeMessageContent {
+        OpenCodeMessageContent {
+            id: id.to_string(),
+            kind: "text".to_string(),
+            text: Some(text.to_string()),
+            name: None,
+            call_id: None,
+            state: None,
+            time: None,
+        }
+    }
+
+    #[test]
+    fn assistant_content_identity_is_scoped_by_its_message() {
+        let mapper = OpenCodeProtocolMapper::new(ProviderInstanceRoute {
+            device_id: "device".to_string(),
+            provider_plugin_id: "opencode".to_string(),
+            provider_instance_id: "default".to_string(),
+        });
+        let conversation = mapper.resource("session".to_string());
+        let messages = vec![
+            history_message("user-one", "user", Some("one"), None),
+            history_message(
+                "assistant-one",
+                "assistant",
+                None,
+                Some(vec![text_content("text-0", "first")]),
+            ),
+            history_message("user-two", "user", Some("two"), None),
+            history_message(
+                "assistant-two",
+                "assistant",
+                None,
+                Some(vec![text_content("text-0", "second")]),
+            ),
+        ];
+
+        let items = mapper.conversation_items(&conversation, &messages);
+
+        assert_eq!(
+            items[1].resource.native_resource_id,
+            "assistant-one:text-0"
+        );
+        assert_eq!(
+            items[1].contents[0].content_id,
+            "assistant-one:text-0:text"
+        );
+        assert_eq!(
+            items[3].resource.native_resource_id,
+            "assistant-two:text-0"
+        );
+        assert_eq!(
+            items[3].contents[0].content_id,
+            "assistant-two:text-0:text"
+        );
+        assert_ne!(
+            items[1].contents[0].content_id,
+            items[3].contents[0].content_id
+        );
+    }
 
     #[test]
     fn capabilities_do_not_advertise_unimplemented_conversation_search() {

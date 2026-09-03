@@ -335,9 +335,10 @@ impl OpenCodeInstanceRuntime {
                         ConversationContentKind::ReasoningSummary,
                     )
                 };
-                let item_id = item_id.ok_or_else(|| {
+                let native_item_id = item_id.ok_or_else(|| {
                     event_shape_error(&event, "delta event is missing its item identifier")
                 })?;
+                let item_id = format!("{}:{native_item_id}", data.assistant_message_id);
                 let content_id = format!("{item_id}:{content_suffix}");
                 Ok(vec![self.mapper.delta_event(
                     &turn,
