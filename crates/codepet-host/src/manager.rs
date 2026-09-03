@@ -10,7 +10,9 @@ use codepet_provider_sdk::{
     ConversationItemKind, ConversationListRequest, ConversationListResponse,
     ConversationSearchRequest, ConversationSearchResponse, InstanceCapabilitiesRequest,
     InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceStartRequest, InstanceStatus,
-    InstanceStopRequest, ProtocolEvent, ProtocolMethod,
+    InstanceStopRequest, ProjectCreateRequest, ProjectCreateResponse, ProjectDeleteRequest,
+    ProjectDeleteResponse, ProjectGetRequest, ProjectGetResponse, ProjectListRequest,
+    ProjectListResponse, ProjectUpdateRequest, ProjectUpdateResponse, ProtocolEvent, ProtocolMethod,
     ProviderDescribeRequest, ProviderInitializeRequest, ProviderInstance, ProviderInstanceRoute,
     ProviderPluginDescriptor, ProviderWireMessage, RoutedResourceId, TurnInterruptRequest,
     TurnInterruptResponse, TurnStartRequest, TurnStartResponse, TurnSteerRequest,
@@ -1006,9 +1008,21 @@ impl PluginManager {
         request: ConversationListRequest,
     ) -> HostResult<ConversationListResponse> {
         let route = request.route.clone();
+        if let codepet_provider_sdk::ConversationProjectFilter::ConversationProjectFilterProject(filter) =
+            &request.project_filter
+        {
+            validate_resource_identity(&filter.project)?;
+            validate_resource_route(&filter.project, &route)?;
+        }
         self.ensure_historical_route_ready(&route).await?;
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::ConversationList)?;
+        if matches!(
+            &request.project_filter,
+            codepet_provider_sdk::ConversationProjectFilter::ConversationProjectFilterProject(_)
+        ) {
+            ensure_capability(&instance, ProtocolMethod::ProjectList)?;
+        }
         let response = process
             .client()
             .conversation_list(request)
@@ -1018,6 +1032,90 @@ impl PluginManager {
             validate_conversation_routes(conversation, &route)?;
         }
         Ok(response)
+    }
+
+    pub async fn project_list(&self, request: ProjectListRequest) -> HostResult<ProjectListResponse> {
+        let route = request.route.clone();
+        self.ensure_historical_route_ready(&route).await?;
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::ProjectList)?;
+        let response = process
+            .client()
+            .project_list(request)
+            .await
+            .map_err(HostError::from)?;
+        for project in &response.projects {
+            validate_project_routes(project, &route)?;
+        }
+        Ok(response)
+    }
+
+    pub async fn project_get(&self, request: ProjectGetRequest) -> HostResult<ProjectGetResponse> {
+        validate_resource_identity(&request.project)?;
+        let expected = request.project.clone();
+        let route = route_from_resource(&expected);
+        self.ensure_historical_route_ready(&route).await?;
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::ProjectGet)?;
+        let response = process
+            .client()
+            .project_get(request)
+            .await
+            .map_err(HostError::from)?;
+        validate_project_routes(&response.project, &route)?;
+        validate_exact_resource(&response.project.resource, &expected, "project.get")?;
+        Ok(response)
+    }
+
+    pub async fn project_create(
+        &self,
+        request: ProjectCreateRequest,
+    ) -> HostResult<ProjectCreateResponse> {
+        validate_route_identity(&request.route)?;
+        let route = request.route.clone();
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::ProjectCreate)?;
+        let response = process
+            .client()
+            .project_create(request)
+            .await
+            .map_err(HostError::from)?;
+        validate_project_routes(&response.project, &route)?;
+        Ok(response)
+    }
+
+    pub async fn project_update(
+        &self,
+        request: ProjectUpdateRequest,
+    ) -> HostResult<ProjectUpdateResponse> {
+        validate_resource_identity(&request.project)?;
+        let expected = request.project.clone();
+        let route = route_from_resource(&expected);
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::ProjectUpdate)?;
+        let response = process
+            .client()
+            .project_update(request)
+            .await
+            .map_err(HostError::from)?;
+        validate_project_routes(&response.project, &route)?;
+        validate_exact_resource(&response.project.resource, &expected, "project.update")?;
+        Ok(response)
+    }
+
+    pub async fn project_delete(
+        &self,
+        request: ProjectDeleteRequest,
+    ) -> HostResult<ProjectDeleteResponse> {
+        validate_resource_identity(&request.project)?;
+        let route = route_from_resource(&request.project);
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::ProjectDelete)?;
+        process
+            .client()
+            .project_delete(request)
+            .await
+            .map_err(HostError::from)
     }
 
     pub async fn conversation_search(
@@ -1080,6 +1178,10 @@ impl PluginManager {
     ) -> HostResult<ConversationCreateResponse> {
         validate_route_identity(&request.route)?;
         let route = request.route.clone();
+        if let Some(project) = request.project.as_ref() {
+            validate_resource_identity(project)?;
+            validate_resource_route(project, &route)?;
+        }
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::ConversationCreate)?;
         let response = process
@@ -1741,6 +1843,7 @@ fn ensure_capability(instance: &ProviderInstance, method: ProtocolMethod) -> Hos
 fn event_route(event: &ProtocolEvent) -> HostResult<ProviderInstanceRoute> {
     let route = match event {
         ProtocolEvent::EventInstanceStatusChanged { params, .. } => params.instance.route.clone(),
+        ProtocolEvent::EventProjectChanged { params, .. } => route_from_resource(&params.project),
         ProtocolEvent::EventConversationUpserted { params, .. } => {
             route_from_resource(&params.conversation.resource)
         }
@@ -1770,6 +1873,9 @@ fn validate_event_routes(
     match event {
         ProtocolEvent::EventInstanceStatusChanged { params, .. } => {
             validate_instance_response(record, &params.instance)
+        }
+        ProtocolEvent::EventProjectChanged { params, .. } => {
+            validate_resource_route(&params.project, route)
         }
         ProtocolEvent::EventConversationUpserted { params, .. } => {
             validate_conversation_routes(&params.conversation, route)
@@ -1805,6 +1911,9 @@ fn validate_conversation_routes(
     route: &ProviderInstanceRoute,
 ) -> HostResult<()> {
     validate_resource_route(&conversation.resource, route)?;
+    if let Some(project) = conversation.project.as_ref() {
+        validate_resource_route(project, route)?;
+    }
     if let Some(turn) = conversation.active_turn.as_ref() {
         validate_turn_routes(turn, route)?;
         validate_exact_resource(
@@ -1812,6 +1921,26 @@ fn validate_conversation_routes(
             &conversation.resource,
             "conversation active turn",
         )?;
+    }
+    Ok(())
+}
+
+fn validate_project_routes(
+    project: &codepet_provider_sdk::Project,
+    route: &ProviderInstanceRoute,
+) -> HostResult<()> {
+    validate_resource_route(&project.resource, route)?;
+    if project.name.trim().is_empty()
+        || project.roots.is_empty()
+        || project.roots.iter().any(|root| root.path.trim().is_empty())
+        || !(-9_007_199_254_740_991..=9_007_199_254_740_991).contains(&project.position)
+        || project.created_at > 9_007_199_254_740_991
+        || project.updated_at > 9_007_199_254_740_991
+    {
+        return Err(HostError::new(
+            "provider_response_invalid",
+            "Provider returned a project with invalid fields",
+        ));
     }
     Ok(())
 }

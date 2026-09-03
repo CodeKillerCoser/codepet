@@ -138,6 +138,60 @@ fn main() {
                     }),
                 );
             }
+            "project/list" => {
+                if options.approval_mode == "project-unsupported" {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": { "code": -32601, "message": "method not found" }
+                        }),
+                    );
+                    continue;
+                }
+                respond(
+                    &mut writer,
+                    id,
+                    json!({
+                        "data": [project("project-fixture", "Fixture Project")],
+                        "nextCursor": null
+                    }),
+                );
+            }
+            "project/read" => {
+                respond(
+                    &mut writer,
+                    id,
+                    json!({
+                        "project": project(
+                            params["projectId"].as_str().unwrap_or("project-fixture"),
+                            "Fixture Project"
+                        )
+                    }),
+                );
+            }
+            "project/create" => {
+                respond(
+                    &mut writer,
+                    id,
+                    json!({
+                        "project": project("project-created", params["name"].as_str().unwrap_or("Created Project"))
+                    }),
+                );
+            }
+            "project/update" => {
+                respond(
+                    &mut writer,
+                    id,
+                    json!({
+                        "project": project(
+                            params["projectId"].as_str().unwrap_or("project-fixture"),
+                            params["name"].as_str().unwrap_or("Fixture Project")
+                        )
+                    }),
+                );
+            }
+            "project/delete" => respond(&mut writer, id, json!({})),
             "thread/list" => {
                 if params["sortKey"] != "updated_at"
                     || params["sortDirection"] != "desc"
@@ -152,7 +206,7 @@ fn main() {
                     );
                     continue;
                 }
-                let (data, next_cursor) = if params.get("searchTerm")
+                let (mut data, next_cursor) = if params.get("searchTerm")
                     == Some(&json!("gateway protocol"))
                 {
                     if params["cursor"] != "search-cursor" || params["limit"] != 7 {
@@ -172,6 +226,11 @@ fn main() {
                 } else {
                     (vec![thread("thread-listed", "idle", Vec::new())], None)
                 };
+                if let Some(project_id) = params.get("projectId") {
+                    for thread in &mut data {
+                        thread["projectId"] = project_id.clone();
+                    }
+                }
                 respond(
                     &mut writer,
                     id,
@@ -398,10 +457,15 @@ fn main() {
             "thread/start" => {
                 clear_turn_status(&options, "thread-created");
                 created_thread_started_in_process = true;
+                let mut result =
+                    configured_thread_result("thread-created", params.get("model").cloned());
+                if let Some(project_id) = params.get("projectId") {
+                    result["thread"]["projectId"] = project_id.clone();
+                }
                 respond(
                     &mut writer,
                     id,
-                    configured_thread_result("thread-created", params.get("model").cloned()),
+                    result,
                 );
             }
             "turn/start" => {
@@ -701,6 +765,18 @@ fn configured_thread_result(thread_id: &str, model: Option<Value>) -> Value {
         "approvalsReviewer": "user",
         "reasoningEffort": "high",
         "sandbox": { "type": "workspaceWrite" }
+    })
+}
+
+fn project(id: &str, name: &str) -> Value {
+    json!({
+        "id": id,
+        "name": name,
+        "roots": [{ "path": "/fixture/workspace" }],
+        "metadata": { "fixture": "true" },
+        "position": 1,
+        "createdAt": 1700000000,
+        "updatedAt": 1700000001
     })
 }
 

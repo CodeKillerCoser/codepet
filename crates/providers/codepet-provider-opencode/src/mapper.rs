@@ -257,6 +257,7 @@ impl OpenCodeProtocolMapper {
         };
         ProviderConversation {
             resource: self.resource(session.id.clone()),
+            project: None,
             title: if session.title.trim().is_empty() {
                 session.id.clone()
             } else {

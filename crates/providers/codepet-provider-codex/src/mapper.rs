@@ -2,7 +2,8 @@ use crate::protocol::{
     activity_summary_content_id, command_content_id, output_content_id,
     reasoning_summary_content_id, text_content_id, user_input_content_id,
     CodexAppServerError, CodexApprovalRequest, CodexContentKind, CodexConversationSnapshot,
-    CodexIncoming, CodexModel, CodexNotification, CodexPermissionLevel, CodexThreadActiveFlag,
+    CodexIncoming, CodexModel, CodexNotification, CodexPermissionLevel, CodexProject,
+    CodexProjectChangeType, CodexThreadActiveFlag,
     CodexThreadItem, CodexThreadStatus, CodexTurn, CodexTurnStatus, CODEX_EXTENSION_NAMESPACE,
 };
 use codepet_provider_sdk::{
@@ -11,7 +12,8 @@ use codepet_provider_sdk::{
     ConversationCreateCapabilities, ConversationItem, ConversationItemUpsertedEvent,
     ConversationItemKind, ConversationItemRole, ConversationItemStatus, ConversationStatus,
     ConversationUpsertedEvent, FlatModelCatalog, FlatModelCatalogKind, FlatModelSelection,
-    HarnessDescriptor, InstanceStatus, JsonObject, ModelCatalog, ModelSelection, ProtocolError,
+    HarnessDescriptor, InstanceStatus, JsonObject, ModelCatalog, ModelSelection, Project,
+    ProjectChangeType, ProjectChangedEvent, ProjectRoot, ProtocolError,
     ProtocolEvent, ProviderApproval, ProviderCapabilities, ProviderCapability,
     ProviderConversation, ProviderExtension, ProviderInstance, ProviderInstanceRoute,
     ProviderTurn, RoutedResourceId, ToolCategory, ToolCommandAction, ToolCommandActionKind,
@@ -73,6 +75,7 @@ impl CodexProtocolMapper {
     pub fn capabilities(
         revision: String,
         models: Vec<CodexModel>,
+        project_api_supported: bool,
     ) -> Result<ProviderCapabilities, ProtocolError> {
         let visible_models = models
             .into_iter()
@@ -177,6 +180,15 @@ impl CodexProtocolMapper {
         });
         let mut methods = Self::unavailable_capabilities(revision.clone()).methods;
         methods.push(ProviderCapability::TurnStart);
+        if project_api_supported {
+            methods.extend([
+                ProviderCapability::ProjectList,
+                ProviderCapability::ProjectGet,
+                ProviderCapability::ProjectCreate,
+                ProviderCapability::ProjectUpdate,
+                ProviderCapability::ProjectDelete,
+            ]);
+        }
         let reasoning_effort = (!reasoning_options.is_empty()).then(|| ChoiceSet {
             options: reasoning_options,
             default_id: default_reasoning,
@@ -197,6 +209,22 @@ impl CodexProtocolMapper {
                 default_selection: default_model,
             })),
         };
+        let mut extensions = Self::unavailable_capabilities("unused".to_string()).extensions;
+        if project_api_supported {
+            if let Some(native_methods) = extensions
+                .first_mut()
+                .and_then(|extension| extension.data.get_mut("nativeMethods"))
+                .and_then(Value::as_array_mut)
+            {
+                native_methods.extend([
+                    json!("project/list"),
+                    json!("project/read"),
+                    json!("project/create"),
+                    json!("project/update"),
+                    json!("project/delete"),
+                ]);
+            }
+        }
         Ok(ProviderCapabilities {
             revision,
             methods,
@@ -212,7 +240,7 @@ impl CodexProtocolMapper {
                 }),
             }),
             turn_send: Some(turn_send),
-            extensions: Self::unavailable_capabilities("unused".to_string()).extensions,
+            extensions,
         })
     }
 
@@ -275,6 +303,12 @@ impl CodexProtocolMapper {
         extension_data.insert("nativeCwd".to_string(), json!(snapshot.thread.cwd));
         ProviderConversation {
             resource: self.resource(snapshot.thread.id.clone()),
+            project: snapshot
+                .thread
+                .project_id
+                .as_ref()
+                .filter(|project_id| !project_id.is_empty())
+                .map(|project_id| self.resource(project_id.clone())),
             title: snapshot
                 .thread
                 .name
@@ -302,6 +336,62 @@ impl CodexProtocolMapper {
                 data: extension_data,
             }),
         }
+    }
+
+    pub fn project(&self, project: CodexProject) -> Result<Project, ProtocolError> {
+        if project.id.trim().is_empty()
+            || project.name.trim().is_empty()
+            || project.roots.iter().any(|root| root.path.trim().is_empty())
+        {
+            return Err(protocol_error(
+                "provider_protocol_error",
+                "Codex App Server returned an invalid project identity, name, or root".to_string(),
+                false,
+            ));
+        }
+        let created_at = u64::try_from(project.created_at).map_err(|_| {
+            protocol_error(
+                "provider_protocol_error",
+                "Codex App Server returned a negative project createdAt".to_string(),
+                false,
+            )
+        })?;
+        let updated_at = u64::try_from(project.updated_at).map_err(|_| {
+            protocol_error(
+                "provider_protocol_error",
+                "Codex App Server returned a negative project updatedAt".to_string(),
+                false,
+            )
+        })?;
+        if created_at > 9_007_199_254_740_991 || updated_at > 9_007_199_254_740_991 {
+            return Err(protocol_error(
+                "provider_protocol_error",
+                "Codex App Server returned a project timestamp outside the JSON-safe integer range"
+                    .to_string(),
+                false,
+            ));
+        }
+        if !(-9_007_199_254_740_991..=9_007_199_254_740_991).contains(&project.position) {
+            return Err(protocol_error(
+                "provider_protocol_error",
+                "Codex App Server returned a project position outside the JSON-safe integer range"
+                    .to_string(),
+                false,
+            ));
+        }
+        Ok(Project {
+            resource: self.resource(project.id),
+            name: project.name,
+            roots: project
+                .roots
+                .into_iter()
+                .map(|root| ProjectRoot { path: root.path })
+                .collect(),
+            metadata: project.metadata,
+            position: project.position,
+            created_at,
+            updated_at,
+        })
     }
 
     pub fn turn_user_item(
@@ -753,6 +843,20 @@ impl CodexProtocolMapper {
         notification: CodexNotification,
     ) -> Result<Vec<ProtocolEvent>, ProtocolError> {
         let event = match notification {
+            CodexNotification::ProjectChanged {
+                project_id,
+                change_type,
+            } => ProtocolEvent::EventProjectChanged {
+                jsonrpc: "2.0".to_string(),
+                params: ProjectChangedEvent {
+                    project: self.resource(project_id),
+                    change_type: match change_type {
+                        CodexProjectChangeType::Created => ProjectChangeType::Created,
+                        CodexProjectChangeType::Updated => ProjectChangeType::Updated,
+                        CodexProjectChangeType::Deleted => ProjectChangeType::Deleted,
+                    },
+                },
+            },
             CodexNotification::ThreadStarted { snapshot } => {
                 ProtocolEvent::EventConversationUpserted {
                     jsonrpc: "2.0".to_string(),
@@ -1215,7 +1319,6 @@ fn extension<const N: usize>(entries: [(&str, Value); N]) -> ProviderExtension {
 mod tests {
     use super::*;
     use crate::protocol::CodexThread;
-    use std::fs;
 
     #[test]
     fn active_thread_flags_keep_approval_and_user_input_states_distinct() {
@@ -1266,6 +1369,7 @@ mod tests {
                 test_model("model-a", true, "high", &["low", "high"]),
                 test_model("model-b", false, "medium", &["high", "medium"]),
             ],
+            false,
         )
         .unwrap();
         let reasoning = capabilities
@@ -1293,6 +1397,7 @@ mod tests {
                 test_model("model-a", true, "low", &["low"]),
                 test_model("model-b", false, "high", &["high"]),
             ],
+            false,
         )
         .unwrap();
 
@@ -1302,6 +1407,73 @@ mod tests {
             .unwrap()
             .reasoning_effort
             .is_none());
+    }
+
+    #[test]
+    fn project_capabilities_are_advertised_only_after_upstream_probe_succeeds() {
+        let unsupported = CodexProtocolMapper::capabilities(
+            "revision-test".to_string(),
+            vec![test_model("model-a", true, "high", &["high"])],
+            false,
+        )
+        .unwrap();
+        assert!(!unsupported
+            .methods
+            .contains(&ProviderCapability::ProjectList));
+
+        let supported = CodexProtocolMapper::capabilities(
+            "revision-test".to_string(),
+            vec![test_model("model-a", true, "high", &["high"])],
+            true,
+        )
+        .unwrap();
+        for capability in [
+            ProviderCapability::ProjectList,
+            ProviderCapability::ProjectGet,
+            ProviderCapability::ProjectCreate,
+            ProviderCapability::ProjectUpdate,
+            ProviderCapability::ProjectDelete,
+        ] {
+            assert!(supported.methods.contains(&capability));
+        }
+    }
+
+    #[test]
+    fn project_and_project_changed_notification_preserve_routed_identity() {
+        let mapper = CodexProtocolMapper::new(ProviderInstanceRoute {
+            device_id: "device-test".to_string(),
+            provider_plugin_id: "dev.codepet.codex".to_string(),
+            provider_instance_id: "codex".to_string(),
+        });
+        let project = mapper
+            .project(CodexProject {
+                id: "project-one".to_string(),
+                name: "Project One".to_string(),
+                roots: vec![crate::protocol::CodexProjectRoot {
+                    path: "/fixture/project".to_string(),
+                }],
+                metadata: BTreeMap::from([("team".to_string(), "gateway".to_string())]),
+                position: 7,
+                created_at: 11,
+                updated_at: 12,
+            })
+            .unwrap();
+        assert_eq!(project.resource.native_resource_id, "project-one");
+        assert_eq!(project.position, 7);
+        assert_eq!(project.metadata["team"], "gateway");
+
+        let events = mapper
+            .events(CodexIncoming::Notification(CodexNotification::ProjectChanged {
+                project_id: "project-one".to_string(),
+                change_type: CodexProjectChangeType::Updated,
+            }))
+            .unwrap();
+        assert!(matches!(
+            &events[0],
+            ProtocolEvent::EventProjectChanged { params, .. }
+                if params.project.native_resource_id == "project-one"
+                    && params.change_type == ProjectChangeType::Updated
+        ));
     }
 
     #[test]
@@ -1557,7 +1729,7 @@ mod tests {
             cli_version: "0.151.0".to_string(),
             ephemeral: false,
             model_provider: "openai".to_string(),
-            project_id: Value::Null,
+            project_id: None,
             session_id: "session-history".to_string(),
             source: json!("appServer"),
         });
@@ -1566,12 +1738,8 @@ mod tests {
     }
 
     #[test]
-    fn workspace_projection_preserves_resource_identity_and_native_cwd() {
-        let temp = tempfile::tempdir().unwrap();
-        let project = temp.path().join("project");
-        fs::create_dir_all(project.join("nested")).unwrap();
-        let native_cwd = project.join("nested").join("..");
-        let native_cwd = native_cwd.to_string_lossy().into_owned();
+    fn conversation_preserves_resource_identity_and_native_cwd() {
+        let native_cwd = "/fixture/project/nested/..".to_string();
         let snapshot = CodexConversationSnapshot::from_thread(CodexThread {
             id: "thread-stable".to_string(),
             name: None,
@@ -1584,7 +1752,7 @@ mod tests {
             cli_version: "0.151.0".to_string(),
             ephemeral: false,
             model_provider: "openai".to_string(),
-            project_id: Value::Null,
+            project_id: None,
             session_id: "session-stable".to_string(),
             source: json!("appServer"),
         });
@@ -1598,7 +1766,7 @@ mod tests {
 
         assert_eq!(
             conversation.workspace_root,
-            Some(project.to_string_lossy().into_owned())
+            Some(native_cwd.clone())
         );
         assert_eq!(conversation.resource.native_resource_id, "thread-stable");
         assert_eq!(conversation.resource.device_id, "device-stable");
@@ -1631,7 +1799,7 @@ mod tests {
             cli_version: "0.151.0".to_string(),
             ephemeral: false,
             model_provider: "openai".to_string(),
-            project_id: Value::Null,
+            project_id: None,
             session_id: "session-test".to_string(),
             source: json!("appServer"),
         })

@@ -1,0 +1,16 @@
+{
+  "jsonrpc": "2.0",
+  "method": "project.changed",
+  "params": {
+    "eventCursor": "event-43",
+    "payload": {
+      "project": {
+        "deviceId": "device-macbook-1",
+        "providerPluginId": "dev.codepet.codex",
+        "providerInstanceId": "codex-work",
+        "nativeResourceId": "project-01"
+      },
+      "changeType": "updated"
+    }
+  }
+}

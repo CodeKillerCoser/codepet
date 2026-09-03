@@ -825,6 +825,11 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
                 }),
                 cursor: None,
                 limit: Some(10),
+                project_filter: gateway::ConversationProjectFilter::ConversationProjectFilterAll(
+                    gateway::ConversationProjectFilterAll {
+                        kind: gateway::ConversationProjectFilterAllKind::All,
+                    },
+                ),
             },
         },
     )

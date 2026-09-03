@@ -4,7 +4,8 @@ use codepet_provider_claude::{
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalResolveRequest, ConversationContentKind, ConversationCreateRequest,
-    ConversationGetRequest, ConversationListRequest, InstanceCapabilitiesRequest,
+    ConversationGetRequest, ConversationListRequest, ConversationProjectFilter,
+    ConversationProjectFilterAll, ConversationProjectFilterAllKind, InstanceCapabilitiesRequest,
     InstanceCreateRequest, InstanceDestroyRequest, InstanceStartRequest, InstanceStopRequest,
     JsonLineCodec, JsonObject, ProtocolEvent, ProtocolServer as ProviderProtocolServer,
     ProviderCapability, ProviderInitializeRequest, ProviderInstanceRoute, ProviderShutdownRequest,
@@ -27,6 +28,12 @@ use std::time::{Duration, Instant};
 
 fn provider_executable() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_codepet-provider-claude"))
+}
+
+fn all_project_filter() -> ConversationProjectFilter {
+    ConversationProjectFilter::ConversationProjectFilterAll(ConversationProjectFilterAll {
+        kind: ConversationProjectFilterAllKind::All,
+    })
 }
 
 fn turn_start_request(
@@ -182,6 +189,7 @@ async fn configured_provider(
         provider.as_ref(),
         ConversationCreateRequest {
             route: route.clone(),
+            project: None,
             title: Some("Fixture conversation".to_string()),
             permission_level: permission_level.to_string(),
             model: Some("sonnet".to_string()),
@@ -279,6 +287,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
             route: route.clone(),
             cursor: None,
             limit: None,
+            project_filter: all_project_filter(),
         },
     )
     .await
@@ -425,6 +434,7 @@ async fn provider_inherits_claude_project_configuration_and_rejects_strong_acces
             provider.as_ref(),
             ConversationCreateRequest {
                 route: route.clone(),
+                project: None,
                 title: Some("Unsupported access mode".to_string()),
                 permission_level: permission_level.to_string(),
                 model: Some("sonnet".to_string()),
@@ -797,7 +807,8 @@ fn provider_binary_uses_generated_json_line_dispatcher() {
                 "deviceId": "device-binary",
                 "providerPluginId": CLAUDE_PLUGIN_ID,
                 "providerInstanceId": "claude"
-            }
+            },
+            "projectFilter": { "kind": "all" }
         }),
     );
     assert_eq!(

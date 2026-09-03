@@ -4,8 +4,13 @@ use codepet_provider_codex::{
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalResolveRequest, ConversationCreateRequest, ConversationListRequest,
+    ConversationProjectFilter, ConversationProjectFilterAll, ConversationProjectFilterAllKind,
+    ConversationProjectFilterProject,
+    ConversationProjectFilterProjectKind,
     ConversationGetRequest, ConversationSearchRequest, InstanceCapabilitiesRequest, InstanceCreateRequest,
     InstanceDestroyRequest, InstanceStartRequest, InstanceStopRequest, JsonObject, ProtocolEvent,
+    ProjectCreateRequest, ProjectDeleteRequest, ProjectGetRequest, ProjectListRequest, ProjectRoot,
+    ProjectUpdateRequest,
     ProtocolServer as ProviderProtocolServer, ProviderInitializeRequest,
     FlatModelCatalogKind, FlatModelSelection, ModelSelection, ProviderInstanceRoute,
     ProviderShutdownRequest, RoutedResourceId, TurnInput, TurnInputKind, TurnInterruptRequest,
@@ -13,7 +18,7 @@ use codepet_provider_sdk::{
 };
 use serde_json::json;
 use serde_json::Value;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -36,6 +41,12 @@ fn route(device_id: &str) -> ProviderInstanceRoute {
         provider_plugin_id: CODEX_PLUGIN_ID.to_string(),
         provider_instance_id: "codex".to_string(),
     }
+}
+
+fn all_project_filter() -> ConversationProjectFilter {
+    ConversationProjectFilter::ConversationProjectFilterAll(ConversationProjectFilterAll {
+        kind: ConversationProjectFilterAllKind::All,
+    })
 }
 
 fn instance_settings(app_server: &Path, approval_mode: &str, marker: &Path) -> JsonObject {
@@ -171,6 +182,52 @@ impl ExecutionLifecycleHook for BlockResumeUntilCancelledHook {
 }
 
 #[tokio::test]
+async fn project_methods_and_project_owned_conversation_fail_closed_when_probe_is_unsupported() {
+    let marker = tempfile::NamedTempFile::new().unwrap();
+    let (provider, route, _) =
+        configured_direct_provider("project-unsupported", marker.path()).await;
+    let capabilities = ProviderProtocolServer::instance_capabilities(
+        provider.as_ref(),
+        InstanceCapabilitiesRequest {
+            route: route.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!capabilities
+        .capabilities
+        .methods
+        .contains(&codepet_provider_sdk::ProviderCapability::ProjectList));
+
+    let project = RoutedResourceId {
+        device_id: route.device_id.clone(),
+        provider_plugin_id: route.provider_plugin_id.clone(),
+        provider_instance_id: route.provider_instance_id.clone(),
+        native_resource_id: "project-unsupported".to_string(),
+    };
+    let error = ProviderProtocolServer::conversation_create(
+        provider.as_ref(),
+        ConversationCreateRequest {
+            route: route.clone(),
+            project: Some(project),
+            title: None,
+            permission_level: "workspace-write".to_string(),
+            model: None,
+            reasoning_effort: None,
+            workspace_root: None,
+            workspace_mode: None,
+            extension: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "capability_unsupported");
+    ProviderProtocolServer::instance_stop(provider.as_ref(), InstanceStopRequest { route })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("approval.txt");
@@ -243,6 +300,10 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         .capabilities
         .methods
         .contains(&codepet_provider_sdk::ProviderCapability::TurnStart));
+    assert!(capabilities
+        .capabilities
+        .methods
+        .contains(&codepet_provider_sdk::ProviderCapability::ProjectList));
     assert!(!capabilities.capabilities.revision.trim().is_empty());
     let reasoning = capabilities
         .capabilities
@@ -259,12 +320,71 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         vec!["high"]
     );
 
+    let projects = ProviderProtocolServer::project_list(
+        &provider,
+        ProjectListRequest {
+            route: route.clone(),
+            cursor: None,
+            limit: Some(20),
+        },
+    )
+    .await
+    .unwrap();
+    let fixture_project = projects.projects[0].resource.clone();
+    assert_eq!(projects.projects[0].metadata["fixture"], "true");
+    assert_eq!(projects.projects[0].position, 1);
+    let fetched_project = ProviderProtocolServer::project_get(
+        &provider,
+        ProjectGetRequest {
+            project: fixture_project.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(fetched_project.project.resource, fixture_project);
+    let created_project = ProviderProtocolServer::project_create(
+        &provider,
+        ProjectCreateRequest {
+            route: route.clone(),
+            idempotency_key: "create-project-one".to_string(),
+            name: "Created Project".to_string(),
+            roots: vec![ProjectRoot {
+                path: "/fixture/workspace".to_string(),
+            }],
+            metadata: BTreeMap::from([("owner".to_string(), "gateway".to_string())]),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(created_project.project.resource.native_resource_id, "project-created");
+    let updated_project = ProviderProtocolServer::project_update(
+        &provider,
+        ProjectUpdateRequest {
+            project: created_project.project.resource.clone(),
+            name: Some("Renamed Project".to_string()),
+            roots: None,
+            metadata: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated_project.project.name, "Renamed Project");
+    ProviderProtocolServer::project_delete(
+        &provider,
+        ProjectDeleteRequest {
+            project: created_project.project.resource,
+        },
+    )
+    .await
+    .unwrap();
+
     let listed = ProviderProtocolServer::conversation_list(
         &provider,
         ConversationListRequest {
             route: route.clone(),
             cursor: None,
             limit: Some(20),
+            project_filter: all_project_filter(),
         },
     )
     .await
@@ -277,6 +397,26 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     assert_eq!(
         listed.conversations[0].resource.native_resource_id,
         "thread-listed"
+    );
+    let project_conversations = ProviderProtocolServer::conversation_list(
+        &provider,
+        ConversationListRequest {
+            route: route.clone(),
+            cursor: None,
+            limit: Some(20),
+            project_filter: ConversationProjectFilter::ConversationProjectFilterProject(
+                ConversationProjectFilterProject {
+                    kind: ConversationProjectFilterProjectKind::Project,
+                    project: fixture_project.clone(),
+                },
+            ),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        project_conversations.conversations[0].project.as_ref(),
+        Some(&fixture_project)
     );
     let searched = ProviderProtocolServer::conversation_search(
         &provider,
@@ -360,6 +500,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         &provider,
         ConversationCreateRequest {
             route: route.clone(),
+            project: None,
             title: Some("unsupported title".to_string()),
             permission_level: "workspace-write".to_string(),
             model: None,
@@ -377,6 +518,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         &provider,
         ConversationCreateRequest {
             route: route.clone(),
+            project: Some(fixture_project.clone()),
             title: None,
             permission_level: "workspace-write".to_string(),
             model: Some("gpt-fixture".to_string()),
@@ -389,6 +531,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     .await
     .unwrap()
     .conversation;
+    assert_eq!(conversation.project.as_ref(), Some(&fixture_project));
     let rejected_reasoning = ProviderProtocolServer::turn_start(
         &provider,
         TurnStartRequest {
@@ -932,6 +1075,7 @@ fn provider_binary_returns_empty_history_for_unmaterialized_new_conversation() {
         vec![
             "initialize",
             "model/list",
+            "project/list",
             "initialize",
             "thread/start",
             "thread/read\tthread-created",
@@ -3015,7 +3159,11 @@ fn provider_real_codex_app_server_smoke() {
     let listed = provider.request(
         "real-list",
         "conversation.list",
-        json!({ "route": route_value(), "limit": 1 }),
+        json!({
+            "route": route_value(),
+            "projectFilter": { "kind": "all" },
+            "limit": 1
+        }),
     );
     assert!(listed.pointer("/result/conversations").is_some());
     if let Some(workspace) = std::env::var_os("CODEPET_REAL_WORKSPACE") {

@@ -106,7 +106,12 @@ void main() {
       throwsA(isA<ProtocolCodecException>()),
     );
     expect(
-      () => ConversationListRequest(limit: 101),
+      () => ConversationListRequest(
+        projectFilter: ConversationProjectFilterAll(
+          kind: ConversationProjectFilterAllKind.all,
+        ),
+        limit: 101,
+      ),
       throwsA(isA<ProtocolCodecException>()),
     );
     expect(
@@ -135,14 +140,40 @@ void main() {
   });
 
   test('method and event metadata come from the manifest IR', () {
-    expect(ProtocolMethod.values, hasLength(13));
-    expect(ProtocolEventName.values, hasLength(9));
+    expect(ProtocolMethod.values, hasLength(18));
+    expect(ProtocolEventName.values, hasLength(10));
+    expect(ProtocolMethod.projectList.wireName, 'project.list');
+    expect(ProtocolMethod.projectDelete.capability, GatewayCapability.projectDelete);
+    expect(ProtocolEventName.projectChanged.wireName, 'project.changed');
     expect(ProtocolMethod.turnSend.wireName, 'turn.send');
     expect(ProtocolMethod.turnSend.idempotency, ProtocolIdempotency.nonIdempotent);
     expect(ProtocolMethod.turnSend.capability, GatewayCapability.turnSend);
     expect(ProtocolMethod.protocolHandshake.capability, isNull);
     expect(ProtocolEventName.turnOutputDelta.delivery, 'replayable');
     expect(ProtocolEventName.turnOutputDelta.scope, 'turn');
+  });
+
+  test('project metadata uses a typed immutable string map', () {
+    final project = Project.fromJson({
+      'resource': _resource('project-1'),
+      'name': 'Gateway Project',
+      'roots': [
+        {'path': '/workspace/project'},
+      ],
+      'metadata': {'owner': 'gateway'},
+      'position': 3,
+      'createdAt': 10,
+      'updatedAt': 20,
+    });
+    expect(project.metadata, {'owner': 'gateway'});
+    expect(() => project.metadata['owner'] = 'changed', throwsUnsupportedError);
+    expect(
+      () => Project.fromJson({
+        ...project.toJson(),
+        'metadata': {'owner': 7},
+      }),
+      throwsA(isA<ProtocolCodecException>()),
+    );
   });
 
   test('typed client checks correlation and decodes generated response types', () async {

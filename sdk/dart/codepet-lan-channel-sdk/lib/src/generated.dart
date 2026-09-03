@@ -64,6 +64,15 @@ Object? _jsonValue(Object? value, String path) {
 Map<String, Object?> _jsonObject(Object? value, String path) => _jsonValue(_object(value, path), path) as Map<String, Object?>;
 Map<String, Object?> _encodeJsonObject(Map<String, Object?> value, String path) => _jsonObject(value, path);
 
+Map<String, T> _freezeMap<T>(Map<String, T> values, String path, T Function(T, String) validate) {
+  return Map<String, T>.unmodifiable(values.map((key, item) => MapEntry(key, validate(item, '$path.$key'))));
+}
+
+Map<String, T> _decodeMap<T>(Object? value, String path, T Function(Object?, String) decode) {
+  final object = _object(value, path);
+  return Map<String, T>.unmodifiable(object.map((key, item) => MapEntry(key, decode(item, '$path.$key'))));
+}
+
 List<T> _freezeList<T>(Iterable<T> values, String path, T Function(T, String) validate, {int? minItems, bool uniqueItems = false, required Object? Function(T) encodeItem}) {
   final result = List<T>.unmodifiable(values.indexed.map((entry) => validate(entry.$2, '$path[${entry.$1}]')));
   if (minItems != null && result.length < minItems) throw ProtocolCodecException(path, 'array has fewer than $minItems items');

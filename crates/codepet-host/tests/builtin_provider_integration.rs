@@ -163,6 +163,7 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
         gateway.as_ref(),
         ConversationCreateRequest {
             route: claude.route.clone(),
+            project: None,
             title: Some("CodePet Claude integration".to_string()),
             permission_level: "workspace-write".to_string(),
             model: Some("sonnet".to_string()),
@@ -221,6 +222,11 @@ async fn conversation_list(
             }),
             cursor: None,
             limit: Some(10),
+            project_filter: codepet_gateway_sdk::ConversationProjectFilter::ConversationProjectFilterAll(
+                codepet_gateway_sdk::ConversationProjectFilterAll {
+                    kind: codepet_gateway_sdk::ConversationProjectFilterAllKind::All,
+                },
+            ),
         },
     )
     .await

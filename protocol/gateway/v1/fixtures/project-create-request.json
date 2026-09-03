@@ -1,0 +1,20 @@
+{
+  "jsonrpc": "2.0",
+  "id": "project-create-1",
+  "method": "project.create",
+  "params": {
+    "route": {
+      "deviceId": "device-macbook-1",
+      "providerPluginId": "dev.codepet.codex",
+      "providerInstanceId": "codex-work"
+    },
+    "idempotencyKey": "remote-project-create-01",
+    "name": "CodePet",
+    "roots": [
+      { "path": "/Users/example/codepet" }
+    ],
+    "metadata": {
+      "team": "gateway"
+    }
+  }
+}

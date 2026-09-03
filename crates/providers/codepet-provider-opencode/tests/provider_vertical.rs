@@ -4,7 +4,8 @@ use codepet_provider_opencode::{
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalResolveRequest, ConversationContentKind, ConversationCreateRequest,
     ConversationGetRequest, ConversationItemKind, ConversationItemRole, ConversationItemStatus,
-    ConversationListRequest, GroupedModelCatalogKind, GroupedModelSelection, InstanceCreateRequest,
+    ConversationListRequest, ConversationProjectFilter, ConversationProjectFilterAll,
+    ConversationProjectFilterAllKind, GroupedModelCatalogKind, GroupedModelSelection, InstanceCreateRequest,
     InstanceStartRequest, InstanceStatus, InstanceStopRequest, ProtocolEvent,
     ModelSelection, ProtocolServer, ProviderInitializeRequest, ProviderInstanceRoute, RoutedResourceId,
     TurnInput, TurnInputKind, TurnInterruptRequest, TurnSelection, TurnStartRequest, TurnStatus,
@@ -19,6 +20,12 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+fn all_project_filter() -> ConversationProjectFilter {
+    ConversationProjectFilter::ConversationProjectFilterAll(ConversationProjectFilterAll {
+        kind: ConversationProjectFilterAllKind::All,
+    })
+}
 
 fn turn_start_request(
     conversation: RoutedResourceId,
@@ -119,6 +126,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
             route: route.clone(),
             cursor: None,
             limit: Some(10),
+            project_filter: all_project_filter(),
         })
         .await
         .unwrap();
@@ -169,6 +177,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     let new_conversation = provider
         .conversation_create(ConversationCreateRequest {
             route: route.clone(),
+            project: None,
             title: None,
             permission_level: "opencode-default".to_string(),
             model: None,
@@ -568,6 +577,7 @@ async fn provider_real_opencode_server_smoke() {
             route: route.clone(),
             cursor: None,
             limit: Some(1),
+            project_filter: all_project_filter(),
         })
         .await
         .unwrap();

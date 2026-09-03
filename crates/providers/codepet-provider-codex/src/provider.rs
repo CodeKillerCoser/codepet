@@ -4,22 +4,26 @@ use crate::client::{
 use crate::mapper::{parse_permission_level, CodexProtocolMapper};
 use crate::protocol::{
     approval_generation, approval_resource_id, CodexAppServerError, CodexApprovalRequest,
-    CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexThreadListRequest,
-    CodexThreadStartRequest, CodexTurnStartRequest, CodexTurnStatus, CodexTurnSteerRequest,
+    CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexProjectCreateRequest,
+    CodexProjectRoot, CodexProjectUpdateRequest, CodexThreadListRequest, CodexThreadStartRequest,
+    CodexTurnStartRequest, CodexTurnStatus, CodexTurnSteerRequest,
     CODEX_INSTANCE_KIND, CODEX_PLUGIN_ID,
 };
 use codepet_provider_sdk::{
     ApprovalRequestedEvent, ApprovalResolveRequest, ApprovalResolveResponse,
     ConversationAcquireInteractionRequest, ConversationAcquireInteractionResponse,
-    ConversationCreateRequest, ConversationUpsertedEvent,
+    ConversationCreateRequest, ConversationProjectFilter, ConversationUpsertedEvent,
     ConversationCreateResponse, ConversationGetRequest, ConversationGetResponse,
     ConversationListRequest, ConversationListResponse, ConversationSearchRequest,
     ConversationSearchResponse, InstanceCapabilitiesRequest, InstanceCapabilitiesResponse,
     InstanceCreateRequest, InstanceCreateResponse,
     InstanceDestroyRequest, InstanceDestroyResponse, InstanceStartRequest,
     InstanceStartResponse, InstanceStatus, InstanceStatusChangedEvent, InstanceStopRequest,
-    InstanceStopResponse, PageInfo, ProtocolError, ProtocolEvent, ProtocolFuture,
-    Provider, ProviderCapabilities, ProviderDescribeRequest, ProviderDescribeResponse,
+    InstanceStopResponse, PageInfo, ProjectCreateRequest, ProjectCreateResponse,
+    ProjectDeleteRequest, ProjectDeleteResponse, ProjectGetRequest, ProjectGetResponse,
+    ProjectListRequest, ProjectListResponse, ProjectUpdateRequest, ProjectUpdateResponse,
+    ProtocolError, ProtocolEvent, ProtocolFuture, Provider, ProviderCapabilities,
+    ProviderCapability, ProviderDescribeRequest, ProviderDescribeResponse,
     ProviderEventSink,
     FlatModelCatalogKind, FlatModelSelection, HarnessDescriptor, ModelCatalog, ModelSelection, ProviderApproval,
     ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance,
@@ -1173,6 +1177,23 @@ impl CodexInstanceRuntime {
                             }
                         }
                     }
+                    Ok(incoming @ CodexIncoming::Notification(
+                        CodexNotification::ProjectChanged { .. },
+                    )) => match lock(&runtime.mapper).events(incoming) {
+                        Ok(events) => {
+                            for event in events {
+                                if let Err(error) = runtime.events.publish(event) {
+                                    eprintln!(
+                                        "Codex observer project event forwarding failed: {}",
+                                        error.message
+                                    );
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            eprintln!("Codex observer project event mapping failed: {}", error.message);
+                        }
+                    },
                     Ok(_) => {}
                     Err(error) => {
                         runtime.fail_observer(
@@ -1403,6 +1424,9 @@ impl CodexInstanceRuntime {
             }
         }
         match incoming {
+            CodexIncoming::Notification(CodexNotification::ProjectChanged { .. }) => {
+                Ok(Vec::new())
+            }
             CodexIncoming::Notification(CodexNotification::ThreadNameUpdated {
                 thread_id,
                 thread_name,
@@ -1958,9 +1982,28 @@ impl Provider for CodexProvider {
                     return Err(instance_session_cancelled_error("observer session"));
                 }
             };
+            let project_discovery_session = observer.clone();
+            let project_api_supported = match tokio::task::spawn_blocking(move || {
+                project_discovery_session.project_list(None, Some(1))
+            })
+            .await
+            .map_err(provider_task_error)?
+            {
+                Ok(_) => true,
+                Err(error) if error.is_method_not_found() => false,
+                Err(error) => {
+                    let mapped = CodexProtocolMapper::error(error);
+                    let _ = observer.shutdown();
+                    if runtime.mark_start_failed(&slot)? {
+                        return Err(mapped);
+                    }
+                    return Err(instance_session_cancelled_error("observer session"));
+                }
+            };
             let capabilities = match CodexProtocolMapper::capabilities(
                 observer.generation().to_string(),
                 models,
+                project_api_supported,
             ) {
                 Ok(capabilities) => capabilities,
                 Err(error) => {
@@ -2101,12 +2144,176 @@ impl Provider for CodexProvider {
         })
     }
 
+    fn project_list<'a>(
+        &'a self,
+        request: ProjectListRequest,
+    ) -> ProtocolFuture<'a, ProjectListResponse> {
+        Box::pin(async move {
+            let runtime = self.instance(&request.route)?;
+            require_capability(&runtime, ProviderCapability::ProjectList)?;
+            let limit = request.limit.map(u32::try_from).transpose().map_err(|_| {
+                protocol_error(
+                    "invalid_request",
+                    "project list limit exceeds the Codex App Server range".to_string(),
+                    false,
+                )
+            })?;
+            let session = runtime.ready_observer()?;
+            let page = tokio::task::spawn_blocking(move || {
+                session.project_list(request.cursor, limit)
+            })
+            .await
+            .map_err(provider_task_error)?
+            .map_err(CodexProtocolMapper::error)?;
+            let projects = {
+                let mapper = lock(&runtime.mapper);
+                page.data
+                    .into_iter()
+                    .map(|project| mapper.project(project))
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            Ok(ProjectListResponse {
+                projects,
+                page_info: PageInfo {
+                    next_cursor: page.next_cursor,
+                },
+            })
+        })
+    }
+
+    fn project_get<'a>(
+        &'a self,
+        request: ProjectGetRequest,
+    ) -> ProtocolFuture<'a, ProjectGetResponse> {
+        Box::pin(async move {
+            let runtime = self.resource_instance(&request.project)?;
+            require_capability(&runtime, ProviderCapability::ProjectGet)?;
+            let project_id = request.project.native_resource_id;
+            let session = runtime.ready_observer()?;
+            let project = tokio::task::spawn_blocking(move || session.project_read(&project_id))
+                .await
+                .map_err(provider_task_error)?
+                .map_err(CodexProtocolMapper::error)?;
+            let project = lock(&runtime.mapper).project(project)?;
+            Ok(ProjectGetResponse { project })
+        })
+    }
+
+    fn project_create<'a>(
+        &'a self,
+        request: ProjectCreateRequest,
+    ) -> ProtocolFuture<'a, ProjectCreateResponse> {
+        Box::pin(async move {
+            let runtime = self.instance(&request.route)?;
+            require_capability(&runtime, ProviderCapability::ProjectCreate)?;
+            validate_project_fields(&request.name, &request.roots)?;
+            let session = runtime.ready_observer()?;
+            let native_request = CodexProjectCreateRequest {
+                idempotency_key: request.idempotency_key,
+                name: request.name,
+                roots: request
+                    .roots
+                    .into_iter()
+                    .map(|root| CodexProjectRoot { path: root.path })
+                    .collect(),
+                metadata: request.metadata,
+            };
+            let project = tokio::task::spawn_blocking(move || {
+                session.project_create(native_request)
+            })
+            .await
+            .map_err(provider_task_error)?
+            .map_err(CodexProtocolMapper::error)?;
+            let project = lock(&runtime.mapper).project(project)?;
+            Ok(ProjectCreateResponse { project })
+        })
+    }
+
+    fn project_update<'a>(
+        &'a self,
+        request: ProjectUpdateRequest,
+    ) -> ProtocolFuture<'a, ProjectUpdateResponse> {
+        Box::pin(async move {
+            let runtime = self.resource_instance(&request.project)?;
+            require_capability(&runtime, ProviderCapability::ProjectUpdate)?;
+            if let Some(name) = request.name.as_deref() {
+                if name.trim().is_empty() {
+                    return Err(protocol_error(
+                        "invalid_request",
+                        "project name must not be empty".to_string(),
+                        false,
+                    ));
+                }
+            }
+            if request
+                .roots
+                .as_ref()
+                .is_some_and(|roots| roots.is_empty() || roots.iter().any(|root| root.path.trim().is_empty()))
+            {
+                return Err(protocol_error(
+                    "invalid_request",
+                    "project roots must contain non-empty paths".to_string(),
+                    false,
+                ));
+            }
+            let session = runtime.ready_observer()?;
+            let native_request = CodexProjectUpdateRequest {
+                project_id: request.project.native_resource_id,
+                name: request.name,
+                roots: request.roots.map(|roots| {
+                    roots
+                        .into_iter()
+                        .map(|root| CodexProjectRoot { path: root.path })
+                        .collect()
+                }),
+                metadata: request.metadata,
+            };
+            let project = tokio::task::spawn_blocking(move || {
+                session.project_update(native_request)
+            })
+            .await
+            .map_err(provider_task_error)?
+            .map_err(CodexProtocolMapper::error)?;
+            let project = lock(&runtime.mapper).project(project)?;
+            Ok(ProjectUpdateResponse { project })
+        })
+    }
+
+    fn project_delete<'a>(
+        &'a self,
+        request: ProjectDeleteRequest,
+    ) -> ProtocolFuture<'a, ProjectDeleteResponse> {
+        Box::pin(async move {
+            let runtime = self.resource_instance(&request.project)?;
+            require_capability(&runtime, ProviderCapability::ProjectDelete)?;
+            let project_id = request.project.native_resource_id;
+            let session = runtime.ready_observer()?;
+            tokio::task::spawn_blocking(move || session.project_delete(&project_id))
+                .await
+                .map_err(provider_task_error)?
+                .map_err(CodexProtocolMapper::error)?;
+            Ok(ProjectDeleteResponse {})
+        })
+    }
+
     fn conversation_list<'a>(
         &'a self,
         request: ConversationListRequest,
     ) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async move {
             let runtime = self.instance(&request.route)?;
+            let project_id = match request.project_filter {
+                ConversationProjectFilter::ConversationProjectFilterAll(_) => None,
+                ConversationProjectFilter::ConversationProjectFilterStandalone(_) => {
+                    require_capability(&runtime, ProviderCapability::ProjectList)?;
+                    Some(None)
+                }
+                ConversationProjectFilter::ConversationProjectFilterProject(filter) => {
+                    validate_resource_route(&filter.project, &request.route)?;
+                    require_capability(&runtime, ProviderCapability::ProjectList)?;
+                    Some(Some(filter.project.native_resource_id))
+                }
+            };
             let limit = request.limit.map(u32::try_from).transpose().map_err(|_| {
                 protocol_error(
                     "invalid_request",
@@ -2119,6 +2326,7 @@ impl Provider for CodexProvider {
                 session.thread_list(CodexThreadListRequest {
                     cursor: request.cursor,
                     limit,
+                    project_id,
                     workspace_root: None,
                     search_term: None,
                 })
@@ -2167,6 +2375,7 @@ impl Provider for CodexProvider {
                 session.thread_list(CodexThreadListRequest {
                     cursor: request.cursor,
                     limit,
+                    project_id: None,
                     workspace_root: None,
                     search_term: Some(request.search_term),
                 })
@@ -2439,6 +2648,13 @@ impl Provider for CodexProvider {
                 ));
             }
             let runtime = self.instance(&request.route)?;
+            let project_id = if let Some(project) = request.project.as_ref() {
+                validate_resource_route(project, &request.route)?;
+                require_capability(&runtime, ProviderCapability::ProjectGet)?;
+                Some(project.native_resource_id.clone())
+            } else {
+                None
+            };
             let permission_level = parse_permission_level(&request.permission_level)?;
             let slot = {
                 let _transition = lock(&runtime.lifecycle_transition);
@@ -2510,6 +2726,7 @@ impl Provider for CodexProvider {
                 }
                 let outcome = session.thread_start_outcome_with_sender(CodexThreadStartRequest {
                     workspace_root,
+                    project_id,
                     permission_level,
                     model: request.model,
                     reasoning_effort: request.reasoning_effort,
@@ -3354,7 +3571,8 @@ fn incoming_conversation_id(incoming: &CodexIncoming) -> Option<&str> {
             | CodexNotification::ServerRequestResolved { thread_id, .. },
         ) => Some(thread_id),
         CodexIncoming::ApprovalRequested(request) => Some(&request.thread_id),
-        CodexIncoming::Notification(CodexNotification::Unknown { .. })
+        CodexIncoming::Notification(CodexNotification::ProjectChanged { .. })
+        | CodexIncoming::Notification(CodexNotification::Unknown { .. })
         | CodexIncoming::UnsupportedServerRequest { .. } => None,
     }
 }
@@ -3619,6 +3837,65 @@ fn validate_same_resource_route(
             "mismatched_provider_route",
             "resources must target the same device, Provider plugin, and Provider instance"
                 .to_string(),
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_resource_route(
+    resource: &RoutedResourceId,
+    route: &ProviderInstanceRoute,
+) -> Result<(), ProtocolError> {
+    validate_resource(resource)?;
+    validate_route(route)?;
+    if resource.device_id != route.device_id
+        || resource.provider_plugin_id != route.provider_plugin_id
+        || resource.provider_instance_id != route.provider_instance_id
+    {
+        return Err(protocol_error(
+            "mismatched_provider_route",
+            "resource must target the requested device, Provider plugin, and Provider instance"
+                .to_string(),
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn require_capability(
+    runtime: &CodexInstanceRuntime,
+    capability: ProviderCapability,
+) -> Result<(), ProtocolError> {
+    if lock(&runtime.mutable)
+        .capabilities
+        .methods
+        .contains(&capability)
+    {
+        return Ok(());
+    }
+    Err(protocol_error(
+        "capability_unsupported",
+        format!("Codex Provider does not advertise {capability:?}"),
+        false,
+    ))
+}
+
+fn validate_project_fields(
+    name: &str,
+    roots: &[codepet_provider_sdk::ProjectRoot],
+) -> Result<(), ProtocolError> {
+    if name.trim().is_empty() {
+        return Err(protocol_error(
+            "invalid_request",
+            "project name must not be empty".to_string(),
+            false,
+        ));
+    }
+    if roots.is_empty() || roots.iter().any(|root| root.path.trim().is_empty()) {
+        return Err(protocol_error(
+            "invalid_request",
+            "project roots must contain non-empty paths".to_string(),
             false,
         ));
     }

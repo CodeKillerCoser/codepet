@@ -1,9 +1,8 @@
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::fmt;
-
-use crate::workspace_projection::{project_workspace_root, WorkspaceProjector};
 
 pub const CODEX_PLUGIN_ID: &str = "dev.codepet.codex";
 pub const CODEX_INSTANCE_KIND: &str = "codex";
@@ -75,6 +74,10 @@ impl fmt::Display for CodexAppServerError {
 impl std::error::Error for CodexAppServerError {}
 
 impl CodexAppServerError {
+    pub(crate) fn is_method_not_found(&self) -> bool {
+        matches!(self, Self::Rpc { code: -32601, .. })
+    }
+
     pub(crate) fn is_thread_not_loaded(&self, thread_id: &str) -> bool {
         matches!(
             self,
@@ -117,7 +120,7 @@ pub struct CodexThread {
     pub cli_version: String,
     pub ephemeral: bool,
     pub model_provider: String,
-    pub project_id: Value,
+    pub project_id: Option<String>,
     pub session_id: String,
     pub source: Value,
 }
@@ -504,7 +507,7 @@ pub struct CodexConversationSnapshot {
 
 impl CodexConversationSnapshot {
     pub fn from_thread(thread: CodexThread) -> Self {
-        let workspace_root = project_workspace_root(Some(&thread.cwd));
+        let workspace_root = Some(thread.cwd.clone());
         Self {
             thread,
             workspace_root,
@@ -515,13 +518,10 @@ impl CodexConversationSnapshot {
     }
 
     pub(crate) fn from_threads(threads: Vec<CodexThread>) -> Vec<Self> {
-        let projector = WorkspaceProjector::prepare(
-            threads.iter().map(|thread| thread.cwd.as_str()),
-        );
         threads
             .into_iter()
             .map(|thread| {
-                let workspace_root = projector.project(Some(&thread.cwd));
+                let workspace_root = Some(thread.cwd.clone());
                 Self {
                     thread,
                     workspace_root,
@@ -538,6 +538,7 @@ impl CodexConversationSnapshot {
 pub struct CodexThreadListRequest {
     pub cursor: Option<String>,
     pub limit: Option<u32>,
+    pub project_id: Option<Option<String>>,
     pub workspace_root: Option<String>,
     pub search_term: Option<String>,
 }
@@ -546,6 +547,52 @@ pub struct CodexThreadListRequest {
 pub struct CodexThreadPage {
     pub data: Vec<CodexConversationSnapshot>,
     pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexProject {
+    pub id: String,
+    pub name: String,
+    pub roots: Vec<CodexProjectRoot>,
+    pub metadata: BTreeMap<String, String>,
+    pub position: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CodexProjectRoot {
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CodexProjectCreateRequest {
+    pub idempotency_key: String,
+    pub name: String,
+    pub roots: Vec<CodexProjectRoot>,
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CodexProjectUpdateRequest {
+    pub project_id: String,
+    pub name: Option<String>,
+    pub roots: Option<Vec<CodexProjectRoot>>,
+    pub metadata: Option<BTreeMap<String, String>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CodexProjectPage {
+    pub data: Vec<CodexProject>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CodexProjectChangeType {
+    Created,
+    Updated,
+    Deleted,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -584,6 +631,7 @@ pub(crate) struct CodexModelListResponse {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CodexThreadStartRequest {
     pub workspace_root: Option<String>,
+    pub project_id: Option<String>,
     pub permission_level: CodexPermissionLevel,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
@@ -666,6 +714,10 @@ pub fn approval_generation(resource_id: &str) -> Option<&str> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum CodexNotification {
+    ProjectChanged {
+        project_id: String,
+        change_type: CodexProjectChangeType,
+    },
     ThreadStarted {
         snapshot: CodexConversationSnapshot,
     },
@@ -758,6 +810,18 @@ pub(crate) struct ThreadListResponse {
     pub next_cursor: Option<String>,
     #[serde(rename = "backwardsCursor")]
     pub _backwards_cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectListResponse {
+    pub data: Vec<CodexProject>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ProjectResponse {
+    pub project: CodexProject,
 }
 
 #[derive(Deserialize)]
@@ -908,6 +972,9 @@ pub(crate) fn thread_list_params(request: &CodexThreadListRequest) -> Value {
     if let Some(limit) = request.limit {
         params.insert("limit".to_string(), json!(limit));
     }
+    if let Some(project_id) = &request.project_id {
+        params.insert("projectId".to_string(), json!(project_id));
+    }
     if let Some(cwd) = &request.workspace_root {
         params.insert("cwd".to_string(), json!(cwd));
     }
@@ -927,6 +994,9 @@ pub(crate) fn thread_start_params(request: &CodexThreadStartRequest) -> Value {
     params.insert("approvalPolicy".to_string(), json!(approval_policy));
     if let Some(cwd) = &request.workspace_root {
         params.insert("cwd".to_string(), json!(cwd));
+    }
+    if let Some(project_id) = &request.project_id {
+        params.insert("projectId".to_string(), json!(project_id));
     }
     if let Some(model) = &request.model {
         params.insert("model".to_string(), json!(model));
@@ -1050,6 +1120,19 @@ mod tests {
         assert_eq!(list["sortDirection"], "desc");
         assert_eq!(list["useStateDbOnly"], true);
         assert!(list.get("searchTerm").is_none());
+        assert!(list.get("projectId").is_none());
+
+        let standalone = thread_list_params(&CodexThreadListRequest {
+            project_id: Some(None),
+            ..CodexThreadListRequest::default()
+        });
+        assert_eq!(standalone["projectId"], Value::Null);
+
+        let project = thread_list_params(&CodexThreadListRequest {
+            project_id: Some(Some("project-one".to_string())),
+            ..CodexThreadListRequest::default()
+        });
+        assert_eq!(project["projectId"], "project-one");
 
         let search = thread_list_params(&CodexThreadListRequest {
             search_term: Some("gateway protocol".to_string()),

@@ -271,6 +271,7 @@ impl ClaudeInstanceRuntime {
             .unwrap_or_else(|| format!("Claude {}", &session_id[..8]));
         let conversation = ProviderConversation {
             resource: self.resource(session_id.clone()),
+            project: None,
             title,
             preview: None,
             status: ConversationStatus::Idle,
@@ -1355,6 +1356,13 @@ impl Provider for ClaudeProvider {
         request: ConversationCreateRequest,
     ) -> ProtocolFuture<'a, ConversationCreateResponse> {
         Box::pin(async move {
+            if request.project.is_some() {
+                return Err(protocol_error(
+                    "capability_unsupported",
+                    "Claude Provider does not support project-owned conversations".to_string(),
+                    false,
+                ));
+            }
             let runtime = self.instance(&request.route)?;
             Ok(ConversationCreateResponse {
                 conversation: runtime.create_conversation(request)?,
@@ -2016,6 +2024,7 @@ fn summarize_claude_history(
     Ok(Some(DiscoveredConversation {
         conversation: ProviderConversation {
             resource,
+            project: None,
             title: title.clone(),
             preview: latest_assistant_text.map(|value| truncate_text(&value, 240)),
             status: ConversationStatus::Idle,

@@ -12,7 +12,10 @@ use codepet_provider_sdk::{
     InstanceStartResponse, InstanceStatus, InstanceStopRequest, InstanceStopResponse,
     FlatModelCatalog, FlatModelCatalogKind, FlatModelSelection, HarnessDescriptor, JsonLineCodec,
     JsonObject, JsonRpcInboundRequest, JsonRpcNotification, ModelCatalog, ModelSelection, PageInfo, ProtocolEvent,
-    ProtocolFuture, ProtocolRequest, ProtocolServer, ProviderApproval, ProviderCapabilities,
+    Project, ProjectChangeType, ProjectChangedEvent, ProjectCreateRequest, ProjectCreateResponse, ProjectDeleteRequest,
+    ProjectDeleteResponse, ProjectGetRequest, ProjectGetResponse, ProjectListRequest,
+    ProjectListResponse, ProjectRoot, ProjectUpdateRequest, ProjectUpdateResponse, ProtocolFuture,
+    ProtocolRequest, ProtocolServer, ProviderApproval, ProviderCapabilities,
     ProviderCapability, ProviderConversation, ProviderDescribeRequest,
     ProviderDescribeResponse, ProviderInitializeRequest, ProviderInitializeResponse,
     ProviderInstance, ProviderInstanceRoute, ProviderPluginDescriptor, ProviderShutdownRequest,
@@ -193,14 +196,94 @@ impl ProtocolServer for FakeProvider {
         })
     }
 
+    fn project_list<'a>(
+        &'a self,
+        request: ProjectListRequest,
+    ) -> ProtocolFuture<'a, ProjectListResponse> {
+        Box::pin(async move {
+            self.instance(&request.route)?;
+            Ok(ProjectListResponse {
+                projects: vec![project(&request.route, "project-list", "Listed Project")],
+                page_info: PageInfo {
+                    next_cursor: Some("project-next".to_string()),
+                },
+            })
+        })
+    }
+
+    fn project_get<'a>(
+        &'a self,
+        request: ProjectGetRequest,
+    ) -> ProtocolFuture<'a, ProjectGetResponse> {
+        Box::pin(async move {
+            let route = route_from_resource(&request.project);
+            self.instance(&route)?;
+            Ok(ProjectGetResponse {
+                project: project(&route, &request.project.native_resource_id, "Fetched Project"),
+            })
+        })
+    }
+
+    fn project_create<'a>(
+        &'a self,
+        request: ProjectCreateRequest,
+    ) -> ProtocolFuture<'a, ProjectCreateResponse> {
+        Box::pin(async move {
+            self.instance(&request.route)?;
+            let mut created = project(&request.route, "project-created", &request.name);
+            created.roots = request.roots;
+            created.metadata = request.metadata;
+            Ok(ProjectCreateResponse { project: created })
+        })
+    }
+
+    fn project_update<'a>(
+        &'a self,
+        request: ProjectUpdateRequest,
+    ) -> ProtocolFuture<'a, ProjectUpdateResponse> {
+        Box::pin(async move {
+            let route = route_from_resource(&request.project);
+            self.instance(&route)?;
+            let mut updated = project(
+                &route,
+                &request.project.native_resource_id,
+                request.name.as_deref().unwrap_or("Updated Project"),
+            );
+            if let Some(roots) = request.roots {
+                updated.roots = roots;
+            }
+            if let Some(metadata) = request.metadata {
+                updated.metadata = metadata;
+            }
+            Ok(ProjectUpdateResponse { project: updated })
+        })
+    }
+
+    fn project_delete<'a>(
+        &'a self,
+        request: ProjectDeleteRequest,
+    ) -> ProtocolFuture<'a, ProjectDeleteResponse> {
+        Box::pin(async move {
+            self.instance(&route_from_resource(&request.project))?;
+            Ok(ProjectDeleteResponse {})
+        })
+    }
+
     fn conversation_list<'a>(
         &'a self,
         request: ConversationListRequest,
     ) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async move {
             self.instance(&request.route)?;
+            let mut listed = conversation(&request.route, "conversation-list");
+            if let codepet_provider_sdk::ConversationProjectFilter::ConversationProjectFilterProject(
+                filter,
+            ) = request.project_filter
+            {
+                listed.project = Some(filter.project);
+            }
             Ok(ConversationListResponse {
-                conversations: vec![conversation(&request.route, "conversation-list")],
+                conversations: vec![listed],
                 page_info: PageInfo { next_cursor: None },
             })
         })
@@ -297,8 +380,10 @@ impl ProtocolServer for FakeProvider {
     ) -> ProtocolFuture<'a, ConversationCreateResponse> {
         Box::pin(async move {
             self.instance(&request.route)?;
+            let mut created = conversation(&request.route, "conversation-created");
+            created.project = request.project;
             Ok(ConversationCreateResponse {
-                conversation: conversation(&request.route, "conversation-created"),
+                conversation: created,
             })
         })
     }
@@ -572,6 +657,21 @@ async fn main() {
                     write_message(&output, codec, ProviderWireMessage::Event(delta));
                 }
             }
+            if let ProtocolRequest::ProjectGet { params, .. } = &request {
+                if params.project.native_resource_id == "event-project" {
+                    write_message(
+                        &output,
+                        codec,
+                        ProviderWireMessage::Event(ProtocolEvent::EventProjectChanged {
+                            jsonrpc: "2.0".to_string(),
+                            params: ProjectChangedEvent {
+                                project: params.project.clone(),
+                                change_type: ProjectChangeType::Updated,
+                            },
+                        }),
+                    );
+                }
+            }
             if behavior == RequestBehavior::SnapshotRace {
                 wait_for_snapshot_release().await;
             }
@@ -693,6 +793,11 @@ fn capabilities() -> ProviderCapabilities {
     ProviderCapabilities {
         revision: "fake-capabilities-v1".to_string(),
         methods: vec![
+            ProviderCapability::ProjectList,
+            ProviderCapability::ProjectGet,
+            ProviderCapability::ProjectCreate,
+            ProviderCapability::ProjectUpdate,
+            ProviderCapability::ProjectDelete,
             ProviderCapability::ConversationList,
             ProviderCapability::ConversationSearch,
             ProviderCapability::ConversationGet,
@@ -745,6 +850,7 @@ fn choice(id: &str, display_name: &str) -> ChoiceOption {
 fn conversation(route: &ProviderInstanceRoute, native_id: &str) -> ProviderConversation {
     ProviderConversation {
         resource: resource(route, native_id),
+        project: None,
         title: format!("Fake {native_id}"),
         preview: Some("fixture conversation".to_string()),
         status: ConversationStatus::Idle,
@@ -764,6 +870,20 @@ fn conversation(route: &ProviderInstanceRoute, native_id: &str) -> ProviderConve
         updated_at: Some(2),
         active_turn: None,
         extension: None,
+    }
+}
+
+fn project(route: &ProviderInstanceRoute, native_id: &str, name: &str) -> Project {
+    Project {
+        resource: resource(route, native_id),
+        name: name.to_string(),
+        roots: vec![ProjectRoot {
+            path: "/fixture/project".to_string(),
+        }],
+        metadata: BTreeMap::from([("fixture".to_string(), "true".to_string())]),
+        position: 4,
+        created_at: 10,
+        updated_at: 20,
     }
 }
 

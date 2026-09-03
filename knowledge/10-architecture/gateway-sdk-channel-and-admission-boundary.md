@@ -8,7 +8,7 @@ Gateway v1 的 schema/manifest 是业务协议唯一事实来源。`cp-sdk-gen` 
 
 ## 证据
 
-- `protocol/gateway/v1/{schema,manifest}.json`：Gateway 业务 DTO、13 个方法、9 个 replayable event 与 WebSocket text framing。
+- `protocol/gateway/v1/{schema,manifest}.json`：Gateway 业务 DTO、18 个方法、10 个 replayable event 与 WebSocket text framing；五个 Project CRUD 方法逐项绑定 capability。
 - `protocol/channel/lan/v1/{schema,manifest}.json`：QR、pairing exchange、LAN Host identity 与 current credential revoke DTO；不声明 Gateway method。
 - `crates/codepet-host/src/remote_listener.rs`：pairing/credential 保持 `/remote/v1/...`，Gateway WSS 使用 `/remote/v2/gateway`；首个业务请求必须是 handshake。
 - `sdk/rust/codepet-gateway-sdk`：Host 实现生成的 server trait，事件与响应使用 JSON-RPC 2.0。
@@ -38,6 +38,7 @@ discovery ---------------------------------- mDNS
 - credential 绑定逻辑 client identity。WSS 首次 `protocol.handshake.clientId` 必须与 bearer 绑定的 client 一致。
 - Gateway Host identity 只包含 `deviceId + DeviceDescriptor`。
 - Provider route 从业务资源获得。`turn.send` 不再同时携带一份可冲突的 route 和 conversation route。
+- Project 与 Conversation 的项目归属都使用四段 routed resource；项目 CRUD、项目筛选和项目归属创建不得只传 native id。`project.list` 在调用 Provider 前取得 `snapshotCursor`，使随后到达的 `project.changed` 可从该边界 replay。
 - 旧 Remote 存储的 `/remote/v1/gateway` endpoint 在读取时迁移到 `/remote/v2/gateway`；pairing 与 credential REST 路径仍为 v1。
 
 ## 风险与验证
@@ -45,6 +46,7 @@ discovery ---------------------------------- mDNS
 - 风险：channel 再次手写 method 或业务 DTO。验证：Remote Gateway client 只调用生成 `ProtocolClient`，WebSocket transport 只接收/返回 JSON object envelope。
 - 风险：Gateway server 重新依赖 LAN 凭据。验证：bearer 校验发生在 listener upgrade，`ProviderGatewayService` 只接收 `GatewayHostIdentity`。
 - 风险：Provider 身份在 Remote 聚合时丢失。验证：Host/Remote 测试覆盖多实例 route、事件、分页、conversation get 与 turn send。
+- 风险：项目资源跨 Provider route 串用，或把 standalone 会话按 cwd 猜进项目。验证：Host/Provider 双层 route 校验、显式三态筛选、项目归属 create 和 native cwd 保留测试。
 - 风险：生成 client/server 实际输出相同。验证：`cp-sdk-gen` 测试断言 server role 有 trait 且没有 `ProtocolClient`，Dart client 有 typed client。
 - 风险：配对或升级破坏已有安装。验证：LAN listener 纵向 TLS/WSS 测试、Remote pairing 测试与 stored endpoint migration。
 

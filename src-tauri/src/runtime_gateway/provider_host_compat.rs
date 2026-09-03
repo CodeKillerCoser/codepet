@@ -98,7 +98,8 @@ impl CompatProviderGateway {
         event: gateway::ProtocolEvent,
     ) -> Result<Option<compat::ProtocolEvent>, compat::ProtocolError> {
         let mapped = match event {
-            gateway::ProtocolEvent::DeviceStatusChanged { .. }
+            gateway::ProtocolEvent::ProjectChanged { .. }
+            | gateway::ProtocolEvent::DeviceStatusChanged { .. }
             | gateway::ProtocolEvent::ConversationActivityChanged { .. }
             | gateway::ProtocolEvent::ConversationItemUpserted { .. } => return Ok(None),
             gateway::ProtocolEvent::ProviderStatusChanged { params, .. } => compat::ProtocolEvent::ProviderStatusChanged {
@@ -268,6 +269,11 @@ impl compat::ProtocolServer for CompatProviderGateway {
                     route,
                     cursor: request.cursor,
                     limit: request.limit,
+                    project_filter: gateway::ConversationProjectFilter::ConversationProjectFilterAll(
+                        gateway::ConversationProjectFilterAll {
+                            kind: gateway::ConversationProjectFilterAllKind::All,
+                        },
+                    ),
                 },
             )
             .await
@@ -316,6 +322,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
                 self.gateway()?.as_ref(),
                 gateway::ConversationCreateRequest {
                     route: provider.route,
+                    project: None,
                     title: request.title,
                     permission_level: permission_level_name(request.permission_level).to_string(),
                     model: request.model,
@@ -436,6 +443,11 @@ fn map_provider(provider: gateway::ProviderInstance) -> compat::Provider {
         .methods
         .iter()
         .filter_map(|method| match method {
+            gateway::GatewayCapability::ProjectList
+            | gateway::GatewayCapability::ProjectGet
+            | gateway::GatewayCapability::ProjectCreate
+            | gateway::GatewayCapability::ProjectUpdate
+            | gateway::GatewayCapability::ProjectDelete => None,
             gateway::GatewayCapability::ConversationList => Some("conversation.list"),
             gateway::GatewayCapability::ConversationSearch => None,
             gateway::GatewayCapability::ConversationGet => Some("conversation.get"),

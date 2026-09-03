@@ -86,6 +86,7 @@ function dartType(type) {
   if (type.kind === "boolean") return "bool";
   if (type.kind === "null") return "Object?";
   if (type.kind === "jsonObject") return "Map<String, Object?>";
+  if (type.kind === "map") return `Map<String, ${dartType(type.values)}>`;
   if (type.kind === "list") return `List<${dartType(type.items)}>`;
   fail(`unsupported Dart IR type ${type.kind}`);
 }
@@ -115,6 +116,10 @@ function decodeExpression(type, value, path, ir) {
   if (type.kind === "boolean") return `_boolean(${value}, ${path})`;
   if (type.kind === "null") return `_nullValue(${value}, ${path})`;
   if (type.kind === "jsonObject") return `_jsonObject(${value}, ${path})`;
+  if (type.kind === "map") {
+    const decoded = decodeExpression(type.values, "item", "itemPath", ir);
+    return `_decodeMap<${dartType(type.values)}>(${value}, ${path}, (item, itemPath) => ${decoded})`;
+  }
   if (type.kind === "list") {
     const itemPath = "itemPath";
     const decode = decodeExpression(type.items, "item", itemPath, ir);
@@ -137,6 +142,10 @@ function validateExpression(type, value, path, ir) {
   if (type.kind === "boolean") return value;
   if (type.kind === "null") return `_nullValue(${value}, ${path})`;
   if (type.kind === "jsonObject") return `_jsonObject(${value}, ${path})`;
+  if (type.kind === "map") {
+    const validated = validateExpression(type.values, "item", "itemPath", ir);
+    return `_freezeMap<${dartType(type.values)}>(${value}, ${path}, (item, itemPath) => ${validated})`;
+  }
   if (type.kind === "list") {
     const validate = validateExpression(type.items, "item", "itemPath", ir);
     const encode = encodeExpression(type.items, "item", `${path} + '[]'`, ir);
@@ -156,6 +165,10 @@ function encodeExpression(type, value, path, ir) {
   }
   if (["string", "integer", "boolean", "null"].includes(type.kind)) return value;
   if (type.kind === "jsonObject") return `_encodeJsonObject(${value}, ${path})`;
+  if (type.kind === "map") {
+    const item = encodeExpression(type.values, "item", `${path} + '[]'`, ir);
+    return `${value}.map((key, item) => MapEntry(key, ${item}))`;
+  }
   if (type.kind === "list") {
     const item = encodeExpression(type.items, "item", `${path} + '[]'`, ir);
     return `${value}.map((item) => ${item}).toList(growable: false)`;
@@ -404,6 +417,15 @@ function emitCodecHelpers(writer, includeException) {
   writer.blank();
   writer.line("Map<String, Object?> _jsonObject(Object? value, String path) => _jsonValue(_object(value, path), path) as Map<String, Object?>;");
   writer.line("Map<String, Object?> _encodeJsonObject(Map<String, Object?> value, String path) => _jsonObject(value, path);");
+  writer.blank();
+  writer.block("Map<String, T> _freezeMap<T>(Map<String, T> values, String path, T Function(T, String) validate)", () => {
+    writer.line("return Map<String, T>.unmodifiable(values.map((key, item) => MapEntry(key, validate(item, '$path.$key'))));");
+  });
+  writer.blank();
+  writer.block("Map<String, T> _decodeMap<T>(Object? value, String path, T Function(Object?, String) decode)", () => {
+    writer.line("final object = _object(value, path);");
+    writer.line("return Map<String, T>.unmodifiable(object.map((key, item) => MapEntry(key, decode(item, '$path.$key'))));");
+  });
   writer.blank();
   writer.block("List<T> _freezeList<T>(Iterable<T> values, String path, T Function(T, String) validate, {int? minItems, bool uniqueItems = false, required Object? Function(T) encodeItem})", () => {
     writer.line("final result = List<T>.unmodifiable(values.indexed.map((entry) => validate(entry.$2, '$path[${entry.$1}]')));");
