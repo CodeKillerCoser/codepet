@@ -8,6 +8,7 @@ use codepet_provider_sdk::{
     ConversationProjectFilter, ConversationProjectFilterAll, ConversationProjectFilterAllKind,
     ConversationProjectFilterProject,
     ConversationProjectFilterProjectKind,
+    ConversationProjectFilterStandalone, ConversationProjectFilterStandaloneKind,
     ConversationGetRequest, ConversationSearchRequest, InstanceCapabilitiesRequest, InstanceCreateRequest,
     InstanceDestroyRequest, InstanceStartRequest, InstanceStopRequest, JsonObject, ProtocolEvent,
     ProjectCreateRequest, ProjectDeleteRequest, ProjectGetRequest, ProjectListRequest, ProjectRoot,
@@ -449,6 +450,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         listed.conversations[0].resource.native_resource_id,
         "thread-listed"
     );
+    assert_eq!(listed.conversations[0].project.as_ref(), Some(&fixture_project));
     let project_conversations = ProviderProtocolServer::conversation_list(
         &provider,
         ConversationListRequest {
@@ -469,6 +471,22 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         project_conversations.conversations[0].project.as_ref(),
         Some(&fixture_project)
     );
+    let standalone_conversations = ProviderProtocolServer::conversation_list(
+        &provider,
+        ConversationListRequest {
+            route: route.clone(),
+            cursor: None,
+            limit: Some(20),
+            project_filter: ConversationProjectFilter::ConversationProjectFilterStandalone(
+                ConversationProjectFilterStandalone {
+                    kind: ConversationProjectFilterStandaloneKind::Standalone,
+                },
+            ),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(standalone_conversations.conversations.is_empty());
     let searched = ProviderProtocolServer::conversation_search(
         &provider,
         ConversationSearchRequest {
@@ -826,7 +844,7 @@ fn provider_binary_rejects_additional_network_permission_without_publishing_appr
         "turn-unsafe",
         "turn.start",
         turn_start_params(
-            conversation,
+            conversation.clone(),
             "message-unsafe",
             "request unsafe approval",
             &capability_revision,
@@ -1155,7 +1173,7 @@ fn provider_binary_starts_first_turn_without_reading_unmaterialized_history() {
         "unmaterialized-first-turn",
         "turn.start",
         turn_start_params(
-            conversation,
+            conversation.clone(),
             "unmaterialized-first-message",
             "start without persisted history",
             &capability_revision,
@@ -1164,6 +1182,17 @@ fn provider_binary_starts_first_turn_without_reading_unmaterialized_history() {
 
     assert!(started.get("error").is_none(), "{started}");
     assert!(started.pointer("/result/turn/resource/nativeResourceId").is_some());
+    let output = provider.event("event.turnOutputDelta");
+    assert_eq!(
+        output
+            .pointer("/params/conversation/nativeResourceId")
+            .and_then(Value::as_str),
+        conversation.get("nativeResourceId").and_then(Value::as_str)
+    );
+    assert_eq!(
+        output.pointer("/params/delta").and_then(Value::as_str),
+        Some("fixture output")
+    );
     assert_eq!(
         std::fs::read_to_string(&request_log)
             .unwrap()
@@ -3508,6 +3537,11 @@ fn provider_real_codex_app_server_smoke() {
         started.pointer("/result/instance/status").and_then(Value::as_str),
         Some("ready")
     );
+    let capability_revision = started
+        .pointer("/result/instance/capabilities/revision")
+        .and_then(Value::as_str)
+        .expect("real Provider must advertise a capability revision")
+        .to_string();
     let listed = provider.request(
         "real-list",
         "conversation.list",
@@ -3518,6 +3552,81 @@ fn provider_real_codex_app_server_smoke() {
         }),
     );
     assert!(listed.pointer("/result/conversations").is_some());
+    let projects_response = provider.request(
+        "real-project-list",
+        "project.list",
+        json!({
+            "route": route_value(),
+            "limit": 100
+        }),
+    );
+    let projects = projects_response
+        .pointer("/result/projects")
+        .and_then(Value::as_array)
+        .expect("Codex 0.152 project.list must return projects");
+    let standalone = provider.request(
+        "real-standalone-list",
+        "conversation.list",
+        json!({
+            "route": route_value(),
+            "projectFilter": { "kind": "standalone" },
+            "limit": 100
+        }),
+    );
+    eprintln!(
+        "real Codex projects={} standalone conversations={}",
+        projects.len(),
+        standalone
+            .pointer("/result/conversations")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or_default()
+    );
+    assert!(
+        standalone
+            .pointer("/result/conversations")
+            .and_then(Value::as_array)
+            .is_some_and(|conversations| conversations.iter().all(|conversation| {
+                conversation.get("project").is_none()
+                    || conversation.get("project").is_some_and(Value::is_null)
+            })),
+        "standalone list returned a project-owned conversation: {standalone}"
+    );
+    for (index, project) in projects.iter().enumerate() {
+        let resource = project
+            .get("resource")
+            .cloned()
+            .expect("project must have a routed resource");
+        let conversations = provider.request(
+            &format!("real-project-conversations-{index}"),
+            "conversation.list",
+            json!({
+                "route": route_value(),
+                "projectFilter": { "kind": "project", "project": resource.clone() },
+                "limit": 100
+            }),
+        );
+        eprintln!(
+            "project {:?} conversations={} response_error={:?}",
+            project.get("name").and_then(Value::as_str),
+            conversations
+                .pointer("/result/conversations")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or_default(),
+            conversations.get("error")
+        );
+        assert!(conversations.get("error").is_none(), "{conversations}");
+        assert!(
+            conversations
+                .pointer("/result/conversations")
+                .and_then(Value::as_array)
+                .is_some_and(|values| values.iter().all(|conversation| {
+                    conversation.get("project") == Some(&resource)
+                })),
+            "project list returned a conversation with the wrong membership: {conversations}"
+        );
+    }
     if let Some(workspace) = std::env::var_os("CODEPET_REAL_WORKSPACE") {
         let created = provider.request(
             "real-conversation-create",
@@ -3570,6 +3679,48 @@ fn provider_real_codex_app_server_smoke() {
                 .and_then(Value::as_array)
                 .map(Vec::len),
             Some(0)
+        );
+        const USER_MARKER: &str = "CODEPET_PROVIDER_USER_MARKER_0152";
+        const ASSISTANT_MARKER: &str = "CODEPET_PROVIDER_ASSISTANT_OK_0152";
+        provider.send_request(
+            "real-unmaterialized-turn-start",
+            "turn.start",
+            turn_start_params(
+                resource.clone(),
+                "real-unmaterialized-client-message",
+                &format!("{USER_MARKER}. Reply with exactly {ASSISTANT_MARKER}"),
+                &capability_revision,
+            ),
+        );
+        let turn_started = provider.receive(Duration::from_secs(30), |message| {
+            message.get("id").and_then(Value::as_str)
+                == Some("real-unmaterialized-turn-start")
+        });
+        assert!(turn_started.get("error").is_none(), "{turn_started}");
+        let conversation_id = resource
+            .get("nativeResourceId")
+            .and_then(Value::as_str)
+            .expect("created resource must have a native id");
+        provider.receive(Duration::from_secs(120), |message| {
+            message.get("method").and_then(Value::as_str) == Some("event.turnUpserted")
+                && message
+                    .pointer("/params/turn/conversation/nativeResourceId")
+                    .and_then(Value::as_str)
+                    == Some(conversation_id)
+                && message.pointer("/params/turn/status").and_then(Value::as_str)
+                    == Some("completed")
+        });
+        let materialized = provider.request(
+            "real-materialized-get",
+            "conversation.get",
+            json!({ "conversation": resource, "limit": 20 }),
+        );
+        assert!(materialized.get("error").is_none(), "{materialized}");
+        let serialized = materialized.to_string();
+        assert!(serialized.contains(USER_MARKER), "user message was not materialized");
+        assert!(
+            serialized.contains(ASSISTANT_MARKER),
+            "assistant response was not exposed by conversation.get: {materialized}"
         );
     }
     if let Some(conversation_id) = std::env::var_os("CODEPET_REAL_CONVERSATION_ID") {

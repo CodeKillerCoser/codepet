@@ -4,9 +4,10 @@ use crate::client::{
 use crate::mapper::{parse_permission_level, CodexProtocolMapper};
 use crate::protocol::{
     approval_generation, approval_resource_id, CodexAppServerError, CodexApprovalRequest,
-    CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexProjectCreateRequest,
-    CodexProjectRoot, CodexProjectUpdateRequest, CodexThreadListRequest, CodexThreadStartRequest,
-    CodexThreadItem, CodexTurn, CodexTurnItemsView, CodexTurnStartRequest, CodexTurnStatus,
+    CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexProject,
+    CodexProjectCreateRequest, CodexProjectRoot, CodexProjectUpdateRequest,
+    CodexThreadListRequest, CodexThreadPage, CodexThreadStartRequest, CodexThreadItem, CodexTurn,
+    CodexTurnItemsView, CodexTurnStartRequest, CodexTurnStatus,
     CodexTurnSteerRequest,
     CODEX_INSTANCE_KIND, CODEX_PLUGIN_ID,
 };
@@ -49,6 +50,8 @@ static NEXT_EXECUTION_ATTEMPT: AtomicU64 = AtomicU64::new(1);
 static NEXT_INSTANCE_SESSION: AtomicU64 = AtomicU64::new(1);
 static NEXT_MANAGED_WORKTREE: AtomicU64 = AtomicU64::new(1);
 const MAX_THREAD_TURN_PAGES: usize = 10_000;
+const MAX_FILTERED_THREAD_PAGES: usize = 10_000;
+const CODEX_LIST_PAGE_LIMIT: u32 = 100;
 const DEFAULT_CONVERSATION_GET_TURN_LIMIT: u64 = 40;
 const MAX_CONVERSATION_GET_TURN_LIMIT: u64 = 100;
 const INTERACTION_LEASE_DURATION: Duration = Duration::from_secs(30);
@@ -2345,16 +2348,23 @@ impl Provider for CodexProvider {
     ) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async move {
             let runtime = self.instance(&request.route)?;
-            let project_id = match request.project_filter {
-                ConversationProjectFilter::ConversationProjectFilterAll(_) => None,
+            let supports_projects = lock(&runtime.mutable)
+                .capabilities
+                .methods
+                .contains(&ProviderCapability::ProjectList);
+            let membership_filter = match request.project_filter {
+                ConversationProjectFilter::ConversationProjectFilterAll(_) => supports_projects
+                    .then_some(CodexConversationMembershipFilter::All),
                 ConversationProjectFilter::ConversationProjectFilterStandalone(_) => {
                     require_capability(&runtime, ProviderCapability::ProjectList)?;
-                    Some(None)
+                    Some(CodexConversationMembershipFilter::Standalone)
                 }
                 ConversationProjectFilter::ConversationProjectFilterProject(filter) => {
                     validate_resource_route(&filter.project, &request.route)?;
                     require_capability(&runtime, ProviderCapability::ProjectList)?;
-                    Some(Some(filter.project.native_resource_id))
+                    Some(CodexConversationMembershipFilter::Project(
+                        filter.project.native_resource_id,
+                    ))
                 }
             };
             let limit = request.limit.map(u32::try_from).transpose().map_err(|_| {
@@ -2366,13 +2376,17 @@ impl Provider for CodexProvider {
             })?;
             let session = runtime.ready_observer()?;
             let page = tokio::task::spawn_blocking(move || {
-                session.thread_list(CodexThreadListRequest {
-                    cursor: request.cursor,
-                    limit,
-                    project_id,
-                    workspace_root: None,
-                    search_term: None,
-                })
+                list_codex_conversations(
+                    &session,
+                    CodexThreadListRequest {
+                        cursor: request.cursor,
+                        limit,
+                        project_id: None,
+                        workspace_root: None,
+                        search_term: None,
+                    },
+                    membership_filter,
+                )
             })
             .await
             .map_err(provider_task_error)?
@@ -4126,6 +4140,125 @@ fn validate_project_fields(
         ));
     }
     Ok(())
+}
+
+#[derive(Clone, Debug)]
+enum CodexConversationMembershipFilter {
+    All,
+    Standalone,
+    Project(String),
+}
+
+fn list_codex_conversations(
+    session: &CodexAppServerSession,
+    mut request: CodexThreadListRequest,
+    membership_filter: Option<CodexConversationMembershipFilter>,
+) -> Result<CodexThreadPage, CodexAppServerError> {
+    let Some(membership_filter) = membership_filter else {
+        return session.thread_list(request);
+    };
+    let projects = list_all_codex_projects(session)?;
+    let target_limit = request.limit.unwrap_or(CODEX_LIST_PAGE_LIMIT);
+    let mut conversations = Vec::new();
+    let mut next_cursor = request.cursor.clone();
+    let mut seen_cursors = HashSet::new();
+    for _ in 0..MAX_FILTERED_THREAD_PAGES {
+        if target_limit == 0 {
+            return Ok(CodexThreadPage {
+                data: conversations,
+                next_cursor,
+            });
+        }
+        let cursor_key = next_cursor.clone().unwrap_or_default();
+        if !seen_cursors.insert(cursor_key) {
+            return Err(CodexAppServerError::Protocol(
+                "thread/list repeated a cursor while filtering project membership".to_string(),
+            ));
+        }
+        request.cursor = next_cursor;
+        request.limit = Some(target_limit.saturating_sub(conversations.len() as u32));
+        request.project_id = None;
+        let page = session.thread_list(request.clone())?;
+        next_cursor = page.next_cursor;
+        for mut snapshot in page.data {
+            let inferred_project = inferred_codex_project_id(&snapshot, &projects);
+            let matches = match &membership_filter {
+                CodexConversationMembershipFilter::All => true,
+                CodexConversationMembershipFilter::Standalone => inferred_project.is_none(),
+                CodexConversationMembershipFilter::Project(project_id) => {
+                    inferred_project.as_deref() == Some(project_id.as_str())
+                }
+            };
+            if matches {
+                snapshot.thread.project_id = inferred_project;
+                conversations.push(snapshot);
+            }
+        }
+        if conversations.len() >= target_limit as usize || next_cursor.is_none() {
+            return Ok(CodexThreadPage {
+                data: conversations,
+                next_cursor,
+            });
+        }
+    }
+    Err(CodexAppServerError::Protocol(
+        "thread/list exceeded the project membership pagination limit".to_string(),
+    ))
+}
+
+fn list_all_codex_projects(
+    session: &CodexAppServerSession,
+) -> Result<Vec<CodexProject>, CodexAppServerError> {
+    let mut projects = Vec::new();
+    let mut cursor = None;
+    let mut seen_cursors = HashSet::new();
+    for _ in 0..MAX_FILTERED_THREAD_PAGES {
+        let cursor_key = cursor.clone().unwrap_or_default();
+        if !seen_cursors.insert(cursor_key) {
+            return Err(CodexAppServerError::Protocol(
+                "project/list repeated a cursor while resolving conversation membership"
+                    .to_string(),
+            ));
+        }
+        let page = session.project_list(cursor, Some(CODEX_LIST_PAGE_LIMIT))?;
+        projects.extend(page.data);
+        let Some(next_cursor) = page.next_cursor else {
+            return Ok(projects);
+        };
+        cursor = Some(next_cursor);
+    }
+    Err(CodexAppServerError::Protocol(
+        "project/list exceeded the conversation membership pagination limit".to_string(),
+    ))
+}
+
+fn inferred_codex_project_id(
+    snapshot: &CodexConversationSnapshot,
+    projects: &[CodexProject],
+) -> Option<String> {
+    if let Some(project_id) = snapshot
+        .thread
+        .project_id
+        .as_ref()
+        .filter(|project_id| !project_id.is_empty())
+    {
+        return Some(project_id.clone());
+    }
+    let cwd = Path::new(&snapshot.thread.cwd);
+    projects
+        .iter()
+        .flat_map(|project| {
+            project.roots.iter().filter_map(move |root| {
+                let root_path = Path::new(&root.path);
+                cwd.starts_with(root_path).then_some((
+                    root_path.components().count(),
+                    root.path.len(),
+                    project.id.as_str(),
+                ))
+            })
+        })
+        .max_by_key(|(components, length, _)| (*components, *length))
+        .map(|(_, _, project_id)| project_id.to_string())
 }
 
 fn codex_authentication(response: &Value) -> Option<ProviderAuthentication> {
