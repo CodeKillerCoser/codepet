@@ -157,6 +157,52 @@ fn main() {
                     }),
                 );
             }
+            "account/read" => respond(
+                &mut writer,
+                id,
+                json!({
+                    "account": {
+                        "type": "chatgpt",
+                        "email": null,
+                        "planType": "pro"
+                    },
+                    "requiresOpenaiAuth": true
+                }),
+            ),
+            "account/rateLimits/read" => respond(
+                &mut writer,
+                id,
+                json!({
+                    "rateLimits": {
+                        "primary": {
+                            "usedPercent": 25,
+                            "windowDurationMins": 300,
+                            "resetsAt": 1_788_460_000
+                        },
+                        "secondary": {
+                            "usedPercent": 40,
+                            "windowDurationMins": 10_080,
+                            "resetsAt": 1_788_900_000
+                        }
+                    },
+                    "rateLimitsByLimitId": null,
+                    "accountId": "fixture-account-must-not-be-displayed"
+                }),
+            ),
+            "account/usage/read" => respond(
+                &mut writer,
+                id,
+                json!({
+                    "summary": {
+                        "lifetimeTokens": 1_250_000,
+                        "peakDailyTokens": 25_000,
+                        "longestRunningTurnSec": 120,
+                        "currentStreakDays": 3,
+                        "longestStreakDays": 5
+                    },
+                    "dailyUsageBuckets": []
+                }),
+            ),
             "project/list" => {
                 if options.approval_mode == "project-unsupported" {
                     write_json(
@@ -262,6 +308,23 @@ fn main() {
             }
             "thread/read" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
+                if options.approval_mode == "unmaterialized-before-first-message"
+                    && created_thread_started_in_process
+                    && thread_id == "thread-created"
+                    && params["includeTurns"] != false
+                {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": {
+                                "code": -32601,
+                                "message": "list_turns is not supported yet"
+                            }
+                        }),
+                    );
+                    continue;
+                }
                 if options.approval_mode == "unmaterialized-before-first-message"
                     && !created_thread_started_in_process
                     && thread_id == "thread-created"

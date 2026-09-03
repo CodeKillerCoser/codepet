@@ -16,7 +16,8 @@ use codepet_provider_sdk::{
     ProjectChangeType, ProjectChangedEvent, ProjectRoot, ProtocolError,
     ProtocolEvent, ProviderApproval, ProviderCapabilities, ProviderCapability,
     ProviderConversation, ProviderExtension, ProviderInstance, ProviderInstanceRoute,
-    ProviderTurn, RoutedResourceId, ToolCategory, ToolCommandAction, ToolCommandActionKind,
+    ProviderAuthentication, ProviderTurn, ProviderUsage, RoutedResourceId, ToolCategory,
+    ToolCommandAction, ToolCommandActionKind,
     ToolCommandDetails, ToolContent, ToolContentKind, ToolInvocation, ToolOrigin, ToolOriginKind,
     ToolResult, ToolTiming, TurnOutputDeltaEvent, TurnSelection, TurnSendCapabilities, TurnStatus,
     TurnUpsertedEvent,
@@ -251,6 +252,8 @@ impl CodexProtocolMapper {
         display_name: String,
         harness: HarnessDescriptor,
         status: InstanceStatus,
+        authentication: Option<ProviderAuthentication>,
+        usage: Option<ProviderUsage>,
         capabilities: ProviderCapabilities,
     ) -> ProviderInstance {
         ProviderInstance {
@@ -260,8 +263,8 @@ impl CodexProtocolMapper {
             display_name,
             harness,
             status,
-            authentication: None,
-            usage: None,
+            authentication,
+            usage,
             capabilities,
         }
     }

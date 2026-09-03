@@ -1124,6 +1124,9 @@ fn provider_binary_returns_empty_history_for_unmaterialized_new_conversation() {
             "initialize",
             "model/list",
             "project/list",
+            "account/read",
+            "account/rateLimits/read",
+            "account/usage/read",
             "initialize",
             "thread/start",
             "thread/read\tthread-created",
@@ -1133,6 +1136,100 @@ fn provider_binary_returns_empty_history_for_unmaterialized_new_conversation() {
 
     provider.request("unmaterialized-stop", "instance.stop", json!({ "route": route_value() }));
     provider.request("unmaterialized-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_starts_first_turn_without_reading_unmaterialized_history() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("unmaterialized-first-turn.txt");
+    let request_log = directory.path().join("unmaterialized-first-turn-requests.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (conversation, capability_revision) = provider.configure_with_request_log(
+        "unmaterialized-before-first-message",
+        &marker,
+        Some(&request_log),
+    );
+    std::fs::write(&request_log, "").unwrap();
+
+    let started = provider.request(
+        "unmaterialized-first-turn",
+        "turn.start",
+        turn_start_params(
+            conversation,
+            "unmaterialized-first-message",
+            "start without persisted history",
+            &capability_revision,
+        ),
+    );
+
+    assert!(started.get("error").is_none(), "{started}");
+    assert!(started.pointer("/result/turn/resource/nativeResourceId").is_some());
+    assert_eq!(
+        std::fs::read_to_string(&request_log)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        vec!["turn/start\tthread-created"]
+    );
+
+    provider.request("unmaterialized-first-turn-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("unmaterialized-first-turn-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_exposes_codex_authentication_usage_and_projects() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("provider-runtime-metadata.txt");
+    let mut provider = ProviderBinary::spawn();
+    provider.initialize_and_create_instance(
+        &app_server_executable(),
+        fixture_args("normal", &marker),
+    );
+
+    let started = provider.request(
+        "runtime-metadata-start",
+        "instance.start",
+        json!({ "route": route_value() }),
+    );
+    assert_eq!(
+        started
+            .pointer("/result/instance/authentication/status")
+            .and_then(Value::as_str),
+        Some("signed-in")
+    );
+    assert_eq!(
+        started
+            .pointer("/result/instance/authentication/displayText")
+            .and_then(Value::as_str),
+        Some("Signed in · ChatGPT Pro")
+    );
+    assert_eq!(
+        started
+            .pointer("/result/instance/usage/displayText")
+            .and_then(Value::as_str),
+        Some("5h 75% remaining · 7d 60% remaining")
+    );
+    assert_eq!(
+        started
+            .pointer("/result/instance/usage/details")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(2)
+    );
+    let projects = provider.request(
+        "runtime-metadata-projects",
+        "project.list",
+        json!({ "route": route_value(), "limit": 40 }),
+    );
+    assert_eq!(
+        projects
+            .pointer("/result/projects/0/name")
+            .and_then(Value::as_str),
+        Some("Fixture Project")
+    );
+
+    provider.request("runtime-metadata-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("runtime-metadata-shutdown", "provider.shutdown", json!({}));
 }
 
 #[test]

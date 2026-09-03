@@ -651,6 +651,18 @@ impl CodexAppServerSession {
         Ok(())
     }
 
+    pub fn account_read(&self) -> Result<Value, CodexAppServerError> {
+        self.request("account/read", json!({ "refreshToken": false }))
+    }
+
+    pub fn account_rate_limits_read(&self) -> Result<Value, CodexAppServerError> {
+        self.request("account/rateLimits/read", json!({}))
+    }
+
+    pub fn account_usage_read(&self) -> Result<Value, CodexAppServerError> {
+        self.request("account/usage/read", Value::Null)
+    }
+
     pub fn thread_read(
         &self,
         thread_id: &str,
@@ -1315,12 +1327,18 @@ fn new_session_generation() -> String {
 }
 
 fn harness_version_from_user_agent(user_agent: &str) -> Option<String> {
-    user_agent
-        .split_whitespace()
-        .next()
-        .and_then(|product| product.rsplit_once('/').map(|(_, version)| version))
-        .filter(|version| !version.trim().is_empty())
-        .map(str::to_string)
+    let mut previous_was_codex = false;
+    for product in user_agent.split_whitespace() {
+        if let Some((name, version)) = product.rsplit_once('/') {
+            if (name.to_ascii_lowercase().contains("codex") || previous_was_codex)
+                && !version.trim().is_empty()
+            {
+                return Some(version.trim().to_string());
+            }
+        }
+        previous_was_codex = product.eq_ignore_ascii_case("codex");
+    }
+    None
 }
 
 fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppServerError> {
@@ -1732,6 +1750,20 @@ mod tests {
     use std::sync::mpsc::{Receiver, Sender};
     use std::sync::Barrier;
     use std::time::Duration;
+
+    #[test]
+    fn extracts_cli_and_desktop_harness_versions_without_using_shell_product_versions() {
+        assert_eq!(
+            harness_version_from_user_agent("codex-cli/0.151.0"),
+            Some("0.151.0".to_string())
+        );
+        assert_eq!(
+            harness_version_from_user_agent(
+                "Codex Desktop/0.152.1 (Mac OS 26.3.2; arm64) iTerm.app/3.6.9"
+            ),
+            Some("0.152.1".to_string())
+        );
+    }
 
     struct MockReader {
         receiver: Receiver<Value>,
