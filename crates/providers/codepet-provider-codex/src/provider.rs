@@ -2924,15 +2924,7 @@ impl Provider for CodexProvider {
                         });
                         match outcome {
                             CodexRequestOutcome::Success(turn) => {
-                                if turn.status == CodexTurnStatus::InProgress {
-                                    handle.slot.mark_active_turn(&handle.generation, &turn.id);
-                                } else {
-                                    execution_runtime.finish_turn_execution(
-                                        &execution_conversation_id,
-                                        handle,
-                                        Some(&turn.id),
-                                    );
-                                }
+                                handle.slot.mark_active_turn(&handle.generation, &turn.id);
                                 Ok(ExecutionStep::Complete((turn, effective_selection)))
                             }
                             outcome => {
@@ -2994,15 +2986,7 @@ impl Provider for CodexProvider {
                         });
                         match outcome {
                             CodexRequestOutcome::Success(turn) => {
-                                if turn.status == CodexTurnStatus::InProgress {
-                                    handle.slot.mark_active_turn(&handle.generation, &turn.id);
-                                } else {
-                                    execution_runtime.finish_turn_execution(
-                                        &execution_conversation_id,
-                                        handle,
-                                        Some(&turn.id),
-                                    );
-                                }
+                                handle.slot.mark_active_turn(&handle.generation, &turn.id);
                                 Ok(ExecutionStep::Complete(turn))
                             }
                             outcome => {
@@ -3055,15 +3039,7 @@ impl Provider for CodexProvider {
                         );
                         match outcome {
                             CodexRequestOutcome::Success(turn) => {
-                                if turn.status == CodexTurnStatus::InProgress {
-                                    handle.slot.mark_active_turn(&handle.generation, &turn.id);
-                                } else {
-                                    execution_runtime.finish_turn_execution(
-                                        &execution_conversation_id,
-                                        handle,
-                                        Some(&turn.id),
-                                    );
-                                }
+                                handle.slot.mark_active_turn(&handle.generation, &turn.id);
                                 Ok(ExecutionStep::Complete(turn))
                             }
                             outcome => {

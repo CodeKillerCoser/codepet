@@ -557,6 +557,9 @@ fn main() {
                         json!({ "threadId": thread_id, "turn": started_turn }),
                     );
                 }
+                if options.approval_mode == "delayed-output-after-user-item" {
+                    std::thread::sleep(Duration::from_millis(1200));
+                }
                 notify(
                     &mut writer,
                     "item/started",
@@ -647,6 +650,16 @@ fn main() {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-created");
                 write_turn_status(&options, thread_id, "interrupted");
                 respond(&mut writer, id, json!({}));
+                if options.approval_mode == "interrupt-terminal-after-response" {
+                    notify(
+                        &mut writer,
+                        "turn/completed",
+                        json!({
+                            "threadId": thread_id,
+                            "turn": turn("turn-started", "interrupted")
+                        }),
+                    );
+                }
             }
             other => write_json(
                 &mut writer,

@@ -1741,7 +1741,7 @@ async fn terminal_cleanup_hides_the_closing_slot_before_publishing_the_terminal_
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn delayed_output_after_completed_user_item_keeps_writer_until_terminal_is_forwarded() {
+async fn delayed_user_item_and_output_keep_writer_until_terminal_is_forwarded() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("delayed-user-item-output.txt");
     let (event_sender, event_receiver) = mpsc::channel();
@@ -1809,8 +1809,9 @@ async fn delayed_output_after_completed_user_item_keeps_writer_until_terminal_is
     .unwrap();
     assert!(started.user_item.is_none());
     let execution_pid = session_pids(&marker, "turn/start", "thread-delayed-user-item")[0];
+    assert!(process_is_running(execution_pid));
 
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + Duration::from_secs(5);
     let mut saw_completed_user_item = false;
     let mut saw_delayed_output = false;
     let mut saw_terminal = false;
@@ -1831,7 +1832,6 @@ async fn delayed_output_after_completed_user_item_keeps_writer_until_terminal_is
                     && params.delta == "delayed fixture output" =>
             {
                 assert!(saw_completed_user_item);
-                assert!(process_is_running(execution_pid));
                 saw_delayed_output = true;
             }
             ProtocolEvent::EventTurnUpserted { params, .. }
@@ -1845,6 +1845,116 @@ async fn delayed_output_after_completed_user_item_keeps_writer_until_terminal_is
         }
     }
     assert!(saw_completed_user_item);
+    assert!(terminal_forwarded_while_running.load(Ordering::SeqCst));
+
+    ProviderProtocolServer::instance_stop(
+        provider.as_ref(),
+        InstanceStopRequest { route: route.clone() },
+    )
+    .await
+    .unwrap();
+    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {})
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn interrupt_response_does_not_close_writer_before_terminal_is_forwarded() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("interrupt-terminal-response.txt");
+    let (event_sender, event_receiver) = mpsc::channel();
+    let terminal_forwarded_while_running = Arc::new(AtomicBool::new(false));
+    let sink_terminal_forwarded_while_running = terminal_forwarded_while_running.clone();
+    let sink_marker = marker.clone();
+    let events = Arc::new(move |event: ProtocolEvent| {
+        if matches!(
+            &event,
+            ProtocolEvent::EventTurnUpserted { params, .. }
+                if params.turn.resource.native_resource_id == "turn-started"
+                    && params.turn.status == codepet_provider_sdk::TurnStatus::Interrupted
+        ) {
+            let execution_pids =
+                session_pids(&sink_marker, "turn/start", "thread-interrupt-terminal");
+            sink_terminal_forwarded_while_running.store(
+                execution_pids.len() == 1 && process_is_running(execution_pids[0]),
+                Ordering::SeqCst,
+            );
+        }
+        event_sender.send(event).map_err(|error| codepet_provider_sdk::ProtocolError {
+            code: "test_event_sink_closed".to_string(),
+            message: error.to_string(),
+            retryable: false,
+            details: None,
+        })
+    });
+    let (provider, route, capability_revision) =
+        configured_direct_provider_with_events_and_hook(
+            "interrupt-terminal-after-response",
+            &marker,
+            events,
+            Some(Arc::new(ShortInteractionLeaseHook)),
+        )
+        .await;
+    let conversation = conversation_resource(&route, "thread-interrupt-terminal");
+    ProviderProtocolServer::conversation_acquire_interaction(
+        provider.as_ref(),
+        ConversationAcquireInteractionRequest {
+            conversation: conversation.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    clear_session_log(&marker);
+
+    let started = ProviderProtocolServer::turn_start(
+        provider.as_ref(),
+        TurnStartRequest {
+            conversation: conversation.clone(),
+            client_request_id: "interrupt-terminal-start".to_string(),
+            capability_revision,
+            input: TurnInput {
+                kind: TurnInputKind::Text,
+                text: "wait until interrupted".to_string(),
+            },
+            selection: TurnSelection {
+                access_mode_id: None,
+                reasoning_effort_id: None,
+                model: None,
+            },
+        },
+    )
+    .await
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+
+    let interrupted = ProviderProtocolServer::turn_interrupt(
+        provider.as_ref(),
+        TurnInterruptRequest {
+            conversation: conversation.clone(),
+            turn: started.turn.resource,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        interrupted.turn.status,
+        codepet_provider_sdk::TurnStatus::Interrupted
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let event = event_receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
+        if matches!(
+            event,
+            ProtocolEvent::EventTurnUpserted { params, .. }
+                if params.turn.resource.native_resource_id == "turn-started"
+                    && params.turn.status == codepet_provider_sdk::TurnStatus::Interrupted
+        ) {
+            break;
+        }
+    }
     assert!(terminal_forwarded_while_running.load(Ordering::SeqCst));
 
     ProviderProtocolServer::instance_stop(
