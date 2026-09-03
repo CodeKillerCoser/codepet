@@ -1,8 +1,8 @@
 # Runtime Gateway 与远程控制架构
 
-> 文档状态（2026-08-31）：长期远程设计仍保留。当前 Codex 使用隔离双链路：`CodexRemote` 已迁到进程外 `codepet-provider-codex`，经 Provider Protocol v1、Plugin Manager 与内部 Gateway v2 service 提供远程能力；`CodexDesktopCompanion / IPC` 只驱动桌宠本地投影和面向 Desktop owner 的安全动作。Claude 已有能力较小的独立 `codepet-provider-claude`，只接官方 CLI stream-json，不提供全局会话 CRUD、steer 或审批；OpenCode 只通过独立 `codepet-provider-opencode` 加入同一个 remote Provider Gateway，不存在 companion/Pet 支路。compat `RuntimeGatewayState` 与 LAN listener 复用同一个 Provider registry、event bus 和 Gateway；Tauri 后端已接入 TLS listener、mDNS、pairing/credential 与有界生命周期，frontend UI 尚未接入。Remote 与 companion/Pet 链路不得共享 session、owner/revision 或 unavailable 状态，也不得把 Remote event 注入 Desktop/Pet/activity IPC。
+> 文档状态（2026-08-31）：长期远程设计仍保留。当前 Codex 使用隔离双链路：`CodexRemote` 已迁到进程外 `codepet-provider-codex`，经 Provider Protocol v1、Plugin Manager 与内部 Gateway v1 service 提供远程能力；`CodexDesktopCompanion / IPC` 只驱动桌宠本地投影和面向 Desktop owner 的安全动作。Claude 已有能力较小的独立 `codepet-provider-claude`，只接官方 CLI stream-json，不提供全局会话 CRUD、steer 或审批；OpenCode 只通过独立 `codepet-provider-opencode` 加入同一个 remote Provider Gateway，不存在 companion/Pet 支路。compat `RuntimeGatewayState` 与 LAN listener 复用同一个 Provider registry、event bus 和 Gateway；Tauri 后端已接入 TLS listener、mDNS、pairing/credential 与有界生命周期，frontend UI 尚未接入。Remote 与 companion/Pet 链路不得共享 session、owner/revision 或 unavailable 状态，也不得把 Remote event 注入 Desktop/Pet/activity IPC。
 >
-> 当前事实入口：Codex 插件边界与协议矩阵见 `codex-provider-plugin-runtime.md`，Claude 见 `claude-provider-plugin-runtime.md`，OpenCode 见 `opencode-provider-plugin-runtime.md`，remote 领域见 `../30-domains/agent-control/codex-app-server.md`，companion 见 `../30-domains/agent-control/codex-desktop-companion.md`，Provider Host 见 `provider-host-device-and-plugin-runtime.md`；协议现状见 `protocol-layers-and-device-routing.md`、`../../protocol/provider/v1/manifest.json` 和 `../../protocol/gateway/v2/manifest.json`。下文的阶段规划和完整能力清单仍包含未实现的长期目标；旧目录、统一 wire envelope、方法名或已生成 Dart 的描述均视为 superseded，不是当前实现证据。
+> 当前事实入口：Codex 插件边界与协议矩阵见 `codex-provider-plugin-runtime.md`，Claude 见 `claude-provider-plugin-runtime.md`，OpenCode 见 `opencode-provider-plugin-runtime.md`，remote 领域见 `../30-domains/agent-control/codex-app-server.md`，companion 见 `../30-domains/agent-control/codex-desktop-companion.md`，Provider Host 见 `provider-host-device-and-plugin-runtime.md`；协议现状见 `protocol-layers-and-device-routing.md`、`../../protocol/provider/v1/manifest.json` 和 `../../protocol/gateway/v1/manifest.json`。下文的阶段规划和完整能力清单仍包含未实现的长期目标；旧目录、统一 wire envelope、方法名或已生成 Dart 的描述均视为 superseded，不是当前实现证据。
 
 ## 背景
 
@@ -221,7 +221,7 @@ protocol/
 ├── core/v1/{schema.json,manifest.json}
 ├── pet/v1/{schema.json,manifest.json,fixtures/}
 ├── provider/v1/{schema.json,manifest.json,fixtures/}
-├── gateway/v2/{schema.json,manifest.json,fixtures/}
+├── gateway/v1/{schema.json,manifest.json,fixtures/}
 ├── desktop/v0/{schema.json,manifest.json}
 └── README.md
 
@@ -254,7 +254,7 @@ JSON Schema Draft 2020-12 定义 DTO，分层 manifest 定义 RPC 方向、方�
 - `../../protocol/core/v1/manifest.json`：安全共享类型，无 methods/events。
 - `../../protocol/pet/v1/manifest.json`：Desktop Companion 驱动的 Pet 方法和事件。
 - `../../protocol/provider/v1/manifest.json`：Host ↔ Provider binary 的 JSON-RPC/stdio 方法、事件、生命周期和 capability contract。
-- `../../protocol/gateway/v2/manifest.json`：Host ↔ Remote Client 的设备/实例路由与 replayable event。
+- `../../protocol/gateway/v1/manifest.json`：Host ↔ Remote Client 的设备/实例路由与 replayable event。
 - `../../protocol/codegen.json`：包依赖、target 状态与输出路径。
 
 manifest 中的方法条目直接引用同层 schema，并以 `capability` 映射到 manifest 声明的 typed capability enum/container：
@@ -295,7 +295,7 @@ Provider Rust SDK 还生成有界 JSON-line framing、统一 request/response/no
 
 此前“所有 Transport 共用一个带 `type` 的 envelope”草案已 superseded。当前协议按边界使用两种明确 transport：Pet/Gateway 使用 CodePet envelope；Provider plugin 使用 JSON-RPC 2.0/stdio-json-lines。实际 discriminator 和字段以各层 manifest 为准。
 
-Gateway v2 request：
+Gateway v1 request：
 
 ```json
 {
@@ -311,7 +311,7 @@ Gateway v2 request：
 }
 ```
 
-Gateway v2 response：
+Gateway v1 response：
 
 ```json
 {
@@ -325,7 +325,7 @@ Gateway v2 response：
 }
 ```
 
-Gateway v2 event：
+Gateway v1 event：
 
 ```json
 {
@@ -347,7 +347,7 @@ Provider request 则使用标准 JSON-RPC；generated classifier 严格区分 re
 }
 ```
 
-现有进程内 Runtime Gateway 仍走 `desktop/v0` 的 v0 envelope 和 `eventSequence`，它是兼容 profile，不是 gateway v2 或 Provider wire。未来远程 Transport 可在 gateway envelope 外增加 connection id、ack 和密文 framing；这些字段不进入业务协议。
+现有进程内 Runtime Gateway 仍走 `desktop/v0` 的 v0 envelope 和 `eventSequence`，它是兼容 profile，不是 gateway v1 或 Provider wire。未来远程 Transport 可在 gateway envelope 外增加 connection id、ack 和密文 framing；这些字段不进入业务协议。
 
 ### 初始化与能力协商
 
@@ -364,7 +364,7 @@ Provider instance capability 当前通过 `instance.capabilities` 读取，manif
 
 ### 初始公共方法
 
-以下清单是完整远程产品的未来能力草案，不是当前 v1 manifest。当前可生成接口只以 `pet/v1/manifest.json`、`provider/v1/manifest.json` 和 `gateway/v2/manifest.json` 为准。
+以下清单是完整远程产品的未来能力草案，不是当前 v1 manifest。当前可生成接口只以 `pet/v1/manifest.json`、`provider/v1/manifest.json` 和 `gateway/v1/manifest.json` 为准。
 
 ```text
 system.initialize
@@ -466,7 +466,7 @@ Data Plane 包括流式文本、reasoning、工具输出、Diff 和 Provider 实
 
 当前协议事实已收敛到 `protocol/{core,pet,provider,gateway}/v1` 与 `protocol/codegen.json`。详细的分层、设备路由、生成包和验证路径见 `protocol-layers-and-device-routing.md`；长期取舍见 `../50-decisions/language-neutral-protocol-idl-and-sdk-boundary.md`。
 
-Provider Host 已实现 Gateway v2 application service。桌面 v0 wire profile 位于 `protocol/desktop/v0`，并生成到 `sdk/rust/codepet-desktop-sdk` 和 TypeScript desktop SDK；`runtime_gateway/provider_host_compat.rs` 只把这层既有调用面映射到同一个 Gateway v2 service。Provider v1 event 已接入远程 Tauri event/replay，但明确不接入 companion 或桌宠 projection。
+Provider Host 已实现 Gateway v1 application service。桌面 v0 wire profile 位于 `protocol/desktop/v0`，并生成到 `sdk/rust/codepet-desktop-sdk` 和 TypeScript desktop SDK；`runtime_gateway/provider_host_compat.rs` 只把这层既有调用面映射到同一个 Gateway v1 service。Provider v1 event 已接入远程 Tauri event/replay，但明确不接入 companion 或桌宠 projection。
 
 阶段二留下的手写 compat core 位于 `src-tauri/src/runtime_gateway/`，当前主要服务 Desktop companion 与协议回归：
 
@@ -475,7 +475,7 @@ Provider Host 已实现 Gateway v2 application service。桌面 v0 wire profile 
 - `gateway.rs` 实现生成的 `ProtocolServer`。握手、Provider 枚举和六个 Provider 操作都经过同一 registry；空 registry 是合法启动状态。
 - `event_bus.rs` 接收生成的 `ProtocolEvent`，覆盖其 wire version 和 sequence，分配进程内单调 sequence，并维护有界内存重放窗口。窗口之外的 cursor 返回 `event_replay_unavailable`，由客户端重新获取快照；该窗口不是持久化会话存储。
 - `transport.rs` 的 `Transport` contract 将 request/response dispatch 与 event subscribe/replay 分开；`LocalTransport` 是直接调用同一 Gateway 的 in-process 实现，不包含 WebSocket、P2P、认证或远程加密。
-- `provider_host_compat.rs` 把 remote v0 request/response/event 映射到 Provider Gateway v2；不得启动 Provider/App Server 或创建第二个 remote event bus。
+- `provider_host_compat.rs` 把 remote v0 request/response/event 映射到 Provider Gateway v1；不得启动 Provider/App Server 或创建第二个 remote event bus。
 - `tauri_bridge.rs` 组合 Host/resolver 并传递生成的标准 DTO。remote 使用 `runtime_gateway_request/replay` 与 `runtime-gateway-event`；桌宠使用 `codex_desktop_companion_request/replay/snapshot` 与 `codex-desktop-companion-event`。两套 command、event bus 和 sequence 不得合并；Provider 原生 `Value` 不得穿过该边界。
 
 本地调用链为：
@@ -756,12 +756,12 @@ Provider 状态和能力
 
 - 建立 `protocol/{core,pet,provider,gateway}/v1`、分层 manifest、JSON Schema 子集和显式版本协商。
 - 定义 Provider lifecycle/conversation/turn/approval/event/shutdown、Gateway device/instance routing 与 Pet snapshot/patch/action 边界。
-- 实现 Rust/TypeScript/Dart target adapter；Dart 覆盖 core/Gateway v2，Python 保持 planned 且 fail closed。
+- 实现 Rust/TypeScript/Dart target adapter；Dart 覆盖 core/Gateway v1，Python 保持 planned 且 fail closed。
 - 生成五个 Rust SDK 的 DTO、server/client、dispatcher、typed capability mapping 和 codec；Provider 包含有界 stdio-json-lines framing。
 - 建立 fixture、dependency/capability/target 负例、Rust SDK 和 desktop-v0 round-trip 测试。
 - 现有 Tauri Runtime Gateway 通过 desktop SDK re-export 保持编译和双链路行为；未实现旧草案中的 `system.health` 或 UI 全量迁移。
 
-完成状态：IDL 已是协议事实来源，现有 v0 wire 只作为同一 IDL 根下的兼容 profile；真实 gateway v2 remote session 与 Pet v1 adapter 仍属后续阶段。
+完成状态：IDL 已是协议事实来源，现有 v0 wire 只作为同一 IDL 根下的兼容 profile；真实 gateway v1 remote session 与 Pet v1 adapter 仍属后续阶段。
 
 ### 阶段二：Runtime Gateway 壳与状态边界
 

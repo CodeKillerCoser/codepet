@@ -80,11 +80,11 @@
       }
     },
     {
-      "id": "gateway-v2",
+      "id": "gateway-v1",
       "layer": "gateway",
-      "version": 2,
-      "schema": "gateway/v2/schema.json",
-      "manifest": "gateway/v2/manifest.json",
+      "version": 1,
+      "schema": "gateway/v1/schema.json",
+      "manifest": "gateway/v1/manifest.json",
       "dependencies": ["core-v1"],
       "outputs": {
         "rust": "sdk/rust/codepet-gateway-sdk/src/generated.rs",

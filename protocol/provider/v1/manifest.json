@@ -168,6 +168,13 @@
       "payload": { "$ref": "./schema.json#/$defs/ConversationUpsertedEvent" }
     },
     {
+      "name": "event.conversationItemUpserted",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "conversation",
+      "payload": { "$ref": "./schema.json#/$defs/ConversationItemUpsertedEvent" }
+    },
+    {
       "name": "event.turnUpserted",
       "direction": "pluginToHost",
       "delivery": "ordered",

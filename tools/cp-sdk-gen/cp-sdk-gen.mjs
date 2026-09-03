@@ -106,7 +106,7 @@ async function protocolLayout(protocolDirectory) {
     return {
       core: "core/v1",
       provider: "provider/v1",
-      gateway: "gateway/v2",
+      gateway: "gateway/v1",
       "lan-channel": "channel/lan/v1",
     };
   }
@@ -122,9 +122,9 @@ async function buildConfig(protocolDirectory, layout, options) {
   const packageMetadata = {
     provider: { id: "provider-v1", layer: "provider", version: 1, output: "codepet-provider-sdk/src/generated.rs" },
     gateway: {
-      id: "gateway-v2",
+      id: "gateway-v1",
       layer: "gateway",
-      version: 2,
+      version: 1,
       output: language === "rust" ? "codepet-gateway-sdk/src/generated.rs" : "codepet-gateway-sdk/lib/src/generated.dart",
     },
     "lan-channel": {

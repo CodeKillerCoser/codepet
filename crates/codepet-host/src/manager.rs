@@ -1744,6 +1744,9 @@ fn event_route(event: &ProtocolEvent) -> HostResult<ProviderInstanceRoute> {
         ProtocolEvent::EventConversationUpserted { params, .. } => {
             route_from_resource(&params.conversation.resource)
         }
+        ProtocolEvent::EventConversationItemUpserted { params, .. } => {
+            route_from_resource(&params.item.resource)
+        }
         ProtocolEvent::EventTurnUpserted { params, .. } => {
             route_from_resource(&params.turn.resource)
         }
@@ -1770,6 +1773,9 @@ fn validate_event_routes(
         }
         ProtocolEvent::EventConversationUpserted { params, .. } => {
             validate_conversation_routes(&params.conversation, route)
+        }
+        ProtocolEvent::EventConversationItemUpserted { params, .. } => {
+            validate_conversation_items(std::slice::from_ref(&params.item), &params.item.conversation, route)
         }
         ProtocolEvent::EventTurnUpserted { params, .. } => {
             validate_turn_routes(&params.turn, route)

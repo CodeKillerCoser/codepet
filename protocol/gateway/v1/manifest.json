@@ -1,7 +1,7 @@
 {
   "name": "codepet-gateway",
   "layer": "gateway",
-  "version": 2,
+  "version": 1,
   "kind": "service",
   "transport": {
     "kind": "json-rpc-2.0",
@@ -42,6 +42,7 @@
     { "name": "device.statusChanged", "direction": "gatewayToClient", "delivery": "replayable", "scope": "device", "payload": { "$ref": "./schema.json#/$defs/DeviceStatusChangedEvent" } },
     { "name": "provider.statusChanged", "direction": "gatewayToClient", "delivery": "replayable", "scope": "providerInstance", "payload": { "$ref": "./schema.json#/$defs/ProviderStatusChangedEvent" } },
     { "name": "conversation.upserted", "direction": "gatewayToClient", "delivery": "replayable", "scope": "conversation", "payload": { "$ref": "./schema.json#/$defs/ConversationUpsertedEvent" } },
+    { "name": "conversation.itemUpserted", "direction": "gatewayToClient", "delivery": "replayable", "scope": "conversation", "payload": { "$ref": "./schema.json#/$defs/ConversationItemUpsertedEvent" } },
     { "name": "conversation.activityChanged", "direction": "gatewayToClient", "delivery": "replayable", "scope": "conversation", "payload": { "$ref": "./schema.json#/$defs/ConversationActivityChangedEvent" } },
     { "name": "turn.upserted", "direction": "gatewayToClient", "delivery": "replayable", "scope": "turn", "payload": { "$ref": "./schema.json#/$defs/TurnUpsertedEvent" } },
     { "name": "turn.outputDelta", "direction": "gatewayToClient", "delivery": "replayable", "scope": "turn", "payload": { "$ref": "./schema.json#/$defs/TurnOutputDeltaEvent" } },

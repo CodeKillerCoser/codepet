@@ -1,0 +1,43 @@
+{
+  "jsonrpc": "2.0",
+  "method": "event.conversationItemUpserted",
+  "params": {
+    "item": {
+      "resource": {
+        "deviceId": "device-macbook-1",
+        "providerPluginId": "dev.codepet.codex",
+        "providerInstanceId": "codex-work",
+        "nativeResourceId": "command-one"
+      },
+      "turn": {
+        "deviceId": "device-macbook-1",
+        "providerPluginId": "dev.codepet.codex",
+        "providerInstanceId": "codex-work",
+        "nativeResourceId": "turn-one"
+      },
+      "conversation": {
+        "deviceId": "device-macbook-1",
+        "providerPluginId": "dev.codepet.codex",
+        "providerInstanceId": "codex-work",
+        "nativeResourceId": "thread-01"
+      },
+      "kind": "command",
+      "status": "completed",
+      "title": "cargo test",
+      "contents": [],
+      "tool": {
+        "callId": "command-one",
+        "name": "shell",
+        "category": "command",
+        "origin": { "kind": "builtin" },
+        "input": { "command": "cargo test" },
+        "result": {
+          "content": [
+            { "contentId": "command-one:result:0", "kind": "text", "text": "tests passed" }
+          ]
+        },
+        "command": { "command": "cargo test", "exitCode": 0 }
+      }
+    }
+  }
+}

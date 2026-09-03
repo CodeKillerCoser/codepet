@@ -1,4 +1,4 @@
-# Gateway v2 与 LAN Channel 生成协议契约
+# Gateway v1 与 LAN Channel 生成协议契约
 
 ## 背景
 
@@ -6,7 +6,7 @@
 
 ## 目标
 
-- 从 `protocol/gateway/v2` 生成 Rust/Dart Gateway v2 SDK，从 `protocol/channel/lan/v1` 生成 Rust/Dart LAN admission DTO；两层只通过 Core 类型共享稳定身份字段。
+- 从 `protocol/gateway/v1` 生成 Rust/Dart Gateway v1 SDK，从 `protocol/channel/lan/v1` 生成 Rust/Dart LAN admission DTO；两层只通过 Core 类型共享稳定身份字段。
 - 保留 `HandshakeRequest.clientId` 作为 remote client 唯一协议身份，并要求 transport 将其与 pairing credential 绑定；设备展示信息统一使用 `DeviceDescriptor`，不重复造 ID。
 - 让 pairing exchange 与 handshake 双向都使用同一最小 descriptor；证书指纹只存在于 `LanHostIdentity`，Gateway `GatewayHostIdentity` 不携带通道信任材料。
 - 以单个 TLS listener 落实固定 REST/WSS wire 边界，并通过 `_codepet._tcp.local.` 发布同一 listener 的实际 LAN IP 与 TLS port。
@@ -20,7 +20,7 @@
 
 ## 现状理解
 
-`DeviceRegistry` 仍是稳定 `deviceId/displayName` 唯一事实来源；Tauri 启动时把该 display name 与一次 OS/system version 探测组合为进程内稳定 `DeviceDescriptor`，再注入 `RemoteAccessManager`。Manager 持有 leaf certificate DER 与 fingerprint、pairing session、descriptor 和 credential store。`ProviderGatewayService` 实现 Gateway v2 业务 dispatch，listener 只在 transport 层验证 bearer、绑定 socket clientId 和维护撤销取消；服务层不接收 bearer 或 TLS 状态。现有 `devices/providers` handshake 集合保持不变。
+`DeviceRegistry` 仍是稳定 `deviceId/displayName` 唯一事实来源；Tauri 启动时把该 display name 与一次 OS/system version 探测组合为进程内稳定 `DeviceDescriptor`，再注入 `RemoteAccessManager`。Manager 持有 leaf certificate DER 与 fingerprint、pairing session、descriptor 和 credential store。`ProviderGatewayService` 实现 Gateway v1 业务 dispatch，listener 只在 transport 层验证 bearer、绑定 socket clientId 和维护撤销取消；服务层不接收 bearer 或 TLS 状态。现有 `devices/providers` handshake 集合保持不变。
 
 ## 实现路径
 
@@ -58,10 +58,10 @@ Tauri 在一个 lifecycle mutex 下串行网络与 pairing 变化。地址切换
 
 ## 涉及模块
 
-- `protocol/gateway/v2/{schema.json,manifest.json,fixtures/}`：Gateway v2 业务 RPC 与可验证 wire 样例的唯一事实来源。
+- `protocol/gateway/v1/{schema.json,manifest.json,fixtures/}`：Gateway v1 业务 RPC 与可验证 wire 样例的唯一事实来源。
 - `protocol/channel/lan/v1/{schema.json,manifest.json,fixtures/}`：LAN admission DTO 与样例的唯一事实来源。
 - `tools/protocol-codegen/`：支持 standalone type fixture、fingerprint pattern、normalized IR 与判别联合校验，保证 Rust/TypeScript/Dart freshness。
-- `sdk/rust/codepet-gateway-sdk`、`sdk/dart/codepet-gateway-sdk`：Gateway v2 server/client DTO、trait 与 fixture 测试。
+- `sdk/rust/codepet-gateway-sdk`、`sdk/dart/codepet-gateway-sdk`：Gateway v1 server/client DTO、trait 与 fixture 测试。
 - `sdk/rust/codepet-lan-channel-sdk`、`sdk/dart/codepet-lan-channel-sdk`：LAN admission DTO 与 fixture 测试。
 - `crates/codepet-host/src/remote_access.rs`：消费生成 `PairingExchangeRequest`，不保留手写同义 DTO。
 - `crates/codepet-host/src/gateway.rs`：构造必需 handshake `device`；认证仍留在 transport 外层。
@@ -74,7 +74,7 @@ Tauri 在一个 lifecycle mutex 下串行网络与 pairing 变化。地址切换
 
 - 指纹格式漂移：schema pattern、fixture、Rust SDK 解码与 Host TLS 定向测试共同验证 64 位小写 hex。
 - `clientId` 出现同义字段：生成器测试断言 request 只有 `clientId`，无 `remoteClientId`；真实 WSS 负例验证 credential 绑定。
-- 无 identity 的进程内服务被误用于 LAN：Gateway v2 handshake fail-closed，listener start 拒绝与 manager identity 不一致的 service；loopback 测试核对真实 TLS leaf 指纹、pairing response 与 handshake identity 三者相同。
+- 无 identity 的进程内服务被误用于 LAN：Gateway v1 handshake fail-closed，listener start 拒绝与 manager identity 不一致的 service；loopback 测试核对真实 TLS leaf 指纹、pairing response 与 handshake identity 三者相同。
 - wildcard bind 被误当作可访问 endpoint：start 在缺少 advertised host 时 fail-closed；测试分别验证 `0.0.0.0:0` bind 与 `listener.local:<actual-port>` handle URL，并用显式 `127.0.0.1` 完成真实网络闭环。
 - 发现数据被误当身份或泄露敏感上下文：构造测试断言 service type、实际 port 与 TXT exact set，并使用 sentinel fingerprint 证明不进入 service；文档和 review 继续要求客户端只信任 pairing/TLS/handshake。
 - identity 与 endpoint provenance 被错误拼接：公开 start API 只接受 listener handle，编译形状测试固定该边界；真实 listener 测试核对 handle identity 等于启动它的 manager identity。

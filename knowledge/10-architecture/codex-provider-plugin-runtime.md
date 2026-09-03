@@ -6,7 +6,7 @@
 
 每个 Provider instance 长期持有一个纯读 observer App Server；`conversation.create` 使用一次性 App Server；真正取得历史 thread writer 的 App Server 则按 conversation 独立创建。Gateway/Provider 通过幂等 `conversation.acquireInteraction` 建立或续租交互权：Codex 首次 acquire 执行 `thread/resume`，30 秒租期内复用同一 writer；无 active turn 且租期过期后退出。observer 与一次性 create 从 spawn 前占位开始进入同一 generation/cancellation registry，stop/shutdown 只有在占位操作收敛、子进程退出后才发布 stopped。SDK runtime 的普通请求最多并发 16 个、排队 32 个，manifest 标记的 lifecycle control 使用 2 并发/4 排队保留通路；队列满时按原 id 返回 retryable `provider_overloaded`，response 仍允许乱序返回。
 
-Host 是唯一进程与路由所有者：`PluginManager` 从 manifest 启动 Provider、创建并启动实例，`ProviderGatewayService` 把 Gateway v2 请求路由到实例，并把 Provider 事件变成可 replay 的远程事件。兼容 v0 的 Tauri command/event 只是一层 Gateway DTO 适配，不再拥有或启动 Codex App Server。
+Host 是唯一进程与路由所有者：`PluginManager` 从 manifest 启动 Provider、创建并启动实例，`ProviderGatewayService` 把 Gateway v1 请求路由到实例，并把 Provider 事件变成可 replay 的远程事件。兼容 v0 的 Tauri command/event 只是一层 Gateway DTO 适配，不再拥有或启动 Codex App Server。
 
 ## 目标
 
@@ -98,9 +98,9 @@ Codex Desktop 私有 IPC
 | `approval.resolve` | 对 owning execution session 的原 server request id 回写 command/file decision | 仅支持普通 accept/decline 二元审批；generation 与 pending approval 必须同时匹配，不能换进程回写。 |
 | `provider.shutdown` | 关闭全部实例的 observer、一次性 create 与执行 App Server，结束 stdio 主循环 | 支持且幂等；并发 shutdown 等待同一清理完成，即使某个 shutdown 失败也会先尝试关闭其他 session。stdio EOF、坏帧、response/event stdout 写失败同样先调用该清理，再在 2 秒 drain 边界后中止未收敛的 dispatch task。 |
 
-Gateway v2 的 `turn.send` 只对已有空闲 conversation 启动新 turn，并在 Host 中映射为 Provider `turn.start`。Provider v1 的 `turn.steer` 仍是独立内部能力，不由 Gateway `turn.send` 自动选择。兼容 v0 继续暴露既有 `turn.send` 调用形状，但 `canSteer=false`，也不会根据 Codex `pluginId` 推断 steering 能力。
+Gateway v1 的 `turn.send` 只对已有空闲 conversation 启动新 turn，并在 Host 中映射为 Provider `turn.start`。Provider v1 的 `turn.steer` 仍是独立内部能力，不由 Gateway `turn.send` 自动选择。兼容 v0 继续暴露既有 `turn.send` 调用形状，但 `canSteer=false`，也不会根据 Codex `pluginId` 推断 steering 能力。
 
-Provider 发送全部六种 v1 事件：`event.instanceStatusChanged`、`event.conversationUpserted`、`event.turnUpserted`、`event.turnOutputDelta`、`event.approvalRequested`、`event.approvalResolved`。delta 自带 conversation route，不依赖 replay 顺序补状态。App Server 的 `waitingOnApproval` 与 `waitingOnUserInput` 分别映射为 v1 的 `waiting-approval` 与 `waiting-user-input`。未知 notification 被忽略；未知或无法无损表达的 server request 使用原 request id 返回上游 error `-32601`，不会发布可批准的 Approval。
+Provider 发送全部七种 v1 事件：`event.instanceStatusChanged`、`event.conversationUpserted`、`event.conversationItemUpserted`、`event.turnUpserted`、`event.turnOutputDelta`、`event.approvalRequested`、`event.approvalResolved`。delta 自带 conversation route，不依赖 replay 顺序补状态；item upsert 用于提交工具调用的结构化状态和结果。App Server 的 `waitingOnApproval` 与 `waitingOnUserInput` 分别映射为 v1 的 `waiting-approval` 与 `waiting-user-input`。未知 notification 被忽略；未知或无法无损表达的 server request 使用原 request id 返回上游 error `-32601`，不会发布可批准的 Approval。
 
 ## 身份与审批路由
 
@@ -133,7 +133,7 @@ observer 与 `conversation.create` 共用 instance session lifecycle：请求先
 
 - `crates/providers/codepet-provider-codex/`：Provider binary、App Server client/mapper、manifest 与真实子进程 fixture。
 - `crates/codepet-host/`：manifest settings 覆盖、实例设置更新、插件显式 restart、route 到 plugin identity 查询。
-- `src-tauri/src/runtime_gateway/provider_host_compat.rs`：既有 v0 调用面到 Gateway v2 的薄适配。
+- `src-tauri/src/runtime_gateway/provider_host_compat.rs`：既有 v0 调用面到 Gateway v1 的薄适配。
 - `src-tauri/src/runtime_gateway/tauri_bridge.rs`：Host/resolver 组合、远程 event bridge 与独立 companion state。
 - `src-tauri/src/agent/codex_desktop_ipc/`：保留 Desktop IPC 状态与动作链路，只删除旧的 remote 来源协调入口；仍是桌宠 Codex 数据源。
 
@@ -158,11 +158,11 @@ observer 与 `conversation.create` 共用 instance session lifecycle：请求先
 - 没有自动重启、backoff、签名、沙箱或插件市场；这些是明确非目标。
 - 只无损支持 command execution 与 file change 的二元审批。permissions、tool user input、MCP elicitation 不广告为可操作审批。
 - App Server 不支持在 `thread/start` 设置 title；Provider 明确拒绝该可选字段。
-- model 列表来自当前 observer session 的官方 `model/list`；reasoning control 因 Gateway v2 尚未表达 per-model effort，只能发布所有可见 model 的共同支持交集。
+- model 列表来自当前 observer session 的官方 `model/list`；reasoning control 因 Gateway v1 尚未表达 per-model effort，只能发布所有可见 model 的共同支持交集。
 - observer crash 会使当前 Provider instance fail closed；本阶段没有 observer 自动 supervisor/backoff。active execution 会被关闭，需由既有 Provider restart/refresh 路径恢复。
-- Gateway v2 `turn.send` 只表示空闲 conversation 的新 turn。compat 不按 Provider 或 harness 身份推断 catalog/selection 形状，也不按 Codex `pluginId` 推断 `canSteer`。
+- Gateway v1 `turn.send` 只表示空闲 conversation 的新 turn。compat 不按 Provider 或 harness 身份推断 catalog/selection 形状，也不按 Codex `pluginId` 推断 `canSteer`。
 - `conversation.acquireInteraction` 的 30 秒 Provider 租期与 Remote 10 秒续租周期目前是固定常量；没有跨 Provider 持久 lease token，也不承诺 App 被系统长期挂起后仍保有 writer。
 - compat v0 的 conversation/turn 模型要求 permission 与时间戳，也没有 `waiting-user-input`；v1 无法确认这些字段或状态时 compat 明确返回 `compat_data_unrepresentable`，不会补默认值。
 - remote 与 Desktop 同名 thread 不做去重、来源排除或状态同步；两条链路在本阶段按独立资源展示和操作。
 - 单个 turn 的 `thread/turns/list(limit=1)` 响应若超过 16 MiB，当前实现仍 fail closed；这类内容需要 item/content 级分页。已实测的 `0.151.0-alpha.7.2` 对 `thread/items/list` 返回 `-32601`，当前 Provider 不依赖它，也不统一抬高上限。
-- Provider/Gateway v2 的 `conversation.get` 已支持可选 cursor/limit 和 pageInfo；Remote 当前会拉完所有历史页再交给详情模型，因此解决了单帧上限，但超长会话仍有总传输量和客户端内存压力，后续可把既有“显示更早消息”改为按需请求旧页。
+- Provider/Gateway v1 的 `conversation.get` 已支持可选 cursor/limit 和 pageInfo；Remote 当前会拉完所有历史页再交给详情模型，因此解决了单帧上限，但超长会话仍有总传输量和客户端内存压力，后续可把既有“显示更早消息”改为按需请求旧页。

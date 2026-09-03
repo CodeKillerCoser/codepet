@@ -4,4 +4,3 @@ version: 0.1.0
 repository: https://github.com/CodeKillerCoser/codepet
 environment:
   sdk: ^3.3.0
-

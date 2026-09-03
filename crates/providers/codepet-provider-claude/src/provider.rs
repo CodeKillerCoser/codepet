@@ -14,12 +14,14 @@ use codepet_provider_sdk::{
     InstanceCapabilitiesRequest, InstanceCapabilitiesResponse,
     InstanceCreateRequest, InstanceCreateResponse, InstanceDestroyRequest,
     InstanceDestroyResponse, InstanceStartRequest, InstanceStartResponse, InstanceStatus,
-    InstanceStatusChangedEvent, InstanceStopRequest, InstanceStopResponse, ProtocolError,
+    InstanceStatusChangedEvent, InstanceStopRequest, InstanceStopResponse, JsonObject, ProtocolError,
     ModelCatalog, ModelSelection, ProtocolEvent, ProtocolFuture, Provider, ProviderCapabilities, ProviderCapability,
     ProviderConversation, ProviderDescribeRequest, ProviderDescribeResponse, ProviderExtension,
     ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute,
     ProviderPluginDescriptor, ProviderShutdownRequest, ProviderShutdownResponse, ProviderTurn,
-    RoutedResourceId, TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent,
+    RoutedResourceId, ToolCategory, ToolCommandDetails, ToolContent, ToolContentKind,
+    ToolExecutionError, ToolInvocation, ToolOrigin, ToolOriginKind, ToolResult,
+    TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent,
     TurnSelection, TurnSendCapabilities, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
     TurnSteerResponse,
     TurnUpsertedEvent, VersionRange, PROTOCOL_VERSION,
@@ -1387,6 +1389,7 @@ impl Provider for ClaudeProvider {
                     }],
                     related_item: None,
                     approval: None,
+                    tool: None,
                 }),
                 turn,
                 effective_selection,
@@ -2058,6 +2061,7 @@ fn read_claude_history_items(
     })?;
     let mut items = Vec::new();
     let mut seen = HashSet::new();
+    let mut tool_indexes = HashMap::<String, usize>::new();
     for (index, line) in BufReader::new(file).lines().map_while(Result::ok).enumerate() {
         let Ok(record) = serde_json::from_str::<Value>(&line) else {
             continue;
@@ -2070,9 +2074,6 @@ fn read_claude_history_items(
             Some("assistant") => ConversationItemRole::Assistant,
             _ => continue,
         };
-        let Some(text) = message.get("content").and_then(claude_message_text) else {
-            continue;
-        };
         let native_id = record
             .get("uuid")
             .and_then(Value::as_str)
@@ -2082,25 +2083,166 @@ fn read_claude_history_items(
         if !seen.insert(native_id.clone()) {
             continue;
         }
-        let item_resource = routed_resource(route, native_id.clone());
-        items.push(ConversationItem {
-            resource: item_resource,
-            turn: routed_resource(route, format!("{native_id}:turn")),
-            conversation: conversation.clone(),
-            kind: ConversationItemKind::Message,
-            status: ConversationItemStatus::Completed,
-            role: Some(role),
-            title: None,
-            contents: vec![ConversationContent {
-                content_id: format!("{native_id}:text"),
-                kind: ConversationContentKind::Text,
-                text,
-            }],
-            related_item: None,
-            approval: None,
-        });
+        let turn = routed_resource(route, format!("{native_id}:turn"));
+        if let Some(text) = message.get("content").and_then(claude_message_text) {
+            items.push(ConversationItem {
+                resource: routed_resource(route, native_id.clone()),
+                turn: turn.clone(),
+                conversation: conversation.clone(),
+                kind: ConversationItemKind::Message,
+                status: ConversationItemStatus::Completed,
+                role: Some(role),
+                title: None,
+                contents: vec![ConversationContent {
+                    content_id: format!("{native_id}:text"),
+                    kind: ConversationContentKind::Text,
+                    text,
+                }],
+                related_item: None,
+                approval: None,
+                tool: None,
+            });
+        }
+        let Some(parts) = message.get("content").and_then(Value::as_array) else {
+            continue;
+        };
+        for (part_index, part) in parts.iter().enumerate() {
+            match part.get("type").and_then(Value::as_str) {
+                Some("tool_use") => {
+                    let Some(call_id) = part.get("id").and_then(Value::as_str) else { continue };
+                    let name = part.get("name").and_then(Value::as_str).unwrap_or("tool");
+                    let input_value = part.get("input").cloned().unwrap_or_else(|| json!({}));
+                    let serialized_input = input_value.to_string();
+                    let input_fits = serialized_input.len() <= 256 * 1024;
+                    let input: JsonObject = input_fits.then(|| input_value.as_object()).flatten().map(|object| {
+                        object.iter().map(|(key, value)| (key.clone(), value.clone())).collect()
+                    }).unwrap_or_default();
+                    let command = input_value.as_object().and_then(|input| input.get("command")).and_then(Value::as_str).map(|command| ToolCommandDetails {
+                        command: bounded_claude_tool_text(command).0,
+                        cwd: input_value.as_object().and_then(|input| input.get("cwd")).and_then(Value::as_str).map(str::to_string),
+                        exit_code: None,
+                        process_id: None,
+                        actions: None,
+                    });
+                    let title = command.as_ref().map(|command| concise_claude_title(&command.command)).unwrap_or_else(|| name.to_string());
+                    let item = ConversationItem {
+                        resource: routed_resource(route, call_id.to_string()),
+                        turn: turn.clone(),
+                        conversation: conversation.clone(),
+                        kind: if command.is_some() { ConversationItemKind::Command } else { ConversationItemKind::Tool },
+                        status: ConversationItemStatus::Completed,
+                        role: None,
+                        title: Some(title),
+                        contents: Vec::new(),
+                        related_item: None,
+                        approval: None,
+                        tool: Some(ToolInvocation {
+                            call_id: call_id.to_string(),
+                            name: name.to_string(),
+                            namespace: None,
+                            category: claude_tool_category(name, command.is_some()),
+                            origin: ToolOrigin { kind: ToolOriginKind::Server, name: Some("claude".to_string()) },
+                            input,
+                            raw_input: (!input_fits || !input_value.is_object()).then(|| bounded_claude_tool_text(&serialized_input).0),
+                            result: None,
+                            timing: None,
+                            command,
+                            annotations: None,
+                            extension: None,
+                        }),
+                    };
+                    tool_indexes.insert(call_id.to_string(), items.len());
+                    items.push(item);
+                }
+                Some("tool_result") => {
+                    let Some(call_id) = part.get("tool_use_id").and_then(Value::as_str) else { continue };
+                    let Some(item_index) = tool_indexes.get(call_id).copied() else { continue };
+                    let is_error = part.get("is_error").and_then(Value::as_bool).unwrap_or(false);
+                    let text = part.get("content").and_then(claude_result_text);
+                    let bounded_text = text.as_ref().map(|text| bounded_claude_tool_text(text));
+                    let result = ToolResult {
+                        content: bounded_text.as_ref().map(|(text, truncated, total_bytes)| ToolContent {
+                            content_id: format!("{call_id}:result:{part_index}"),
+                            kind: ToolContentKind::Text,
+                            text: Some(text.clone()),
+                            uri: None,
+                            mime_type: Some("text/plain".to_string()),
+                            name: None,
+                            truncated: (*truncated).then_some(true),
+                            total_bytes: (*truncated).then_some(*total_bytes),
+                        }).into_iter().collect(),
+                        structured_content: None,
+                        error: is_error.then(|| ToolExecutionError {
+                            code: None,
+                            message: bounded_text.as_ref().map(|(text, _, _)| text.clone()).unwrap_or_else(|| "Claude tool execution failed".to_string()),
+                            retryable: None,
+                            details: None,
+                        }),
+                    };
+                    if let Some(tool) = items[item_index].tool.as_mut() {
+                        tool.result = Some(result);
+                    }
+                    if is_error {
+                        items[item_index].status = ConversationItemStatus::Failed;
+                    }
+                }
+                _ => {}
+            }
+        }
     }
     Ok(items)
+}
+
+fn claude_result_text(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return Some(text.to_string());
+    }
+    let text = value.as_array()?.iter().filter_map(|part| {
+        part.get("text").and_then(Value::as_str)
+    }).collect::<Vec<_>>().join("\n");
+    (!text.is_empty()).then_some(text)
+}
+
+fn bounded_claude_tool_text(text: &str) -> (String, bool, u64) {
+    const MAX_BYTES: usize = 256 * 1024;
+    let total_bytes = u64::try_from(text.len()).unwrap_or(u64::MAX);
+    if text.len() <= MAX_BYTES {
+        return (text.to_string(), false, total_bytes);
+    }
+    let mut end = MAX_BYTES;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (format!("{}\n[tool output truncated]", &text[..end]), true, total_bytes)
+}
+
+fn claude_tool_category(name: &str, command: bool) -> ToolCategory {
+    if command {
+        return ToolCategory::Command;
+    }
+    let name = name.to_ascii_lowercase();
+    if name.contains("read") || name.contains("list") {
+        ToolCategory::Read
+    } else if name.contains("write") || name.contains("edit") {
+        ToolCategory::Write
+    } else if name.contains("search") || name.contains("glob") || name.contains("grep") {
+        ToolCategory::Search
+    } else if name.contains("web") {
+        ToolCategory::Web
+    } else if name.contains("agent") || name.contains("task") {
+        ToolCategory::Agent
+    } else {
+        ToolCategory::Other
+    }
+}
+
+fn concise_claude_title(command: &str) -> String {
+    let first_line = command.lines().next().unwrap_or(command).trim();
+    if first_line.chars().count() <= 80 {
+        first_line.to_string()
+    } else {
+        format!("{}…", first_line.chars().take(79).collect::<String>())
+    }
 }
 
 fn claude_message_text(value: &Value) -> Option<String> {
@@ -2293,7 +2435,30 @@ mod tests {
                 "message": {
                     "role": "assistant",
                     "model": "claude-sonnet",
-                    "content": [{ "type": "text", "text": "final answer" }]
+                    "content": [
+                        { "type": "text", "text": "final answer" },
+                        {
+                            "type": "tool_use",
+                            "id": "tool-1",
+                            "name": "Bash",
+                            "input": { "command": "npm test", "cwd": "/workspace" }
+                        }
+                    ]
+                }
+            }),
+            json!({
+                "type": "user",
+                "uuid": "tool-result-1",
+                "sessionId": "session-fixture",
+                "cwd": config.path(),
+                "message": {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "tool-1",
+                        "content": "tests passed",
+                        "is_error": false
+                    }]
                 }
             }),
             json!({
@@ -2330,10 +2495,15 @@ mod tests {
             &discovered[0].conversation.resource,
         )
         .unwrap();
-        assert_eq!(items.len(), 2);
+        assert_eq!(items.len(), 3);
         assert_eq!(items[0].role, Some(ConversationItemRole::User));
         assert_eq!(items[0].contents[0].text, "first question");
         assert_eq!(items[1].role, Some(ConversationItemRole::Assistant));
         assert_eq!(items[1].contents[0].text, "final answer");
+        assert_eq!(items[2].title.as_deref(), Some("npm test"));
+        let tool = items[2].tool.as_ref().unwrap();
+        assert_eq!(tool.name, "Bash");
+        assert_eq!(tool.command.as_ref().unwrap().cwd.as_deref(), Some("/workspace"));
+        assert_eq!(tool.result.as_ref().unwrap().content[0].text.as_deref(), Some("tests passed"));
     }
 }

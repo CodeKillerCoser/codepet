@@ -30,7 +30,7 @@ provider-sdk/
 └── protocol/
     ├── core/v1/
     ├── provider/v1/
-    ├── gateway/v2/
+    ├── gateway/v1/
     └── channel/lan/v1/
 ```
 
@@ -55,13 +55,13 @@ Code Pet.app/Contents/Resources/provider-sdk/
 └── protocol/
     ├── core/v1/
     ├── provider/v1/
-    ├── gateway/v2/
+    ├── gateway/v1/
     └── channel/lan/v1/
 ```
 
 - `protocol/core/v1`：跨协议共享的 ID、route、错误和分页等基础类型。
 - `protocol/provider/v1`：Provider JSON-RPC 方法、事件、模型和 fixtures。
-- `protocol/gateway/v2`：Gateway JSON-RPC 业务方法、事件和路由模型。
+- `protocol/gateway/v1`：Gateway JSON-RPC 业务方法、事件和路由模型。
 - `protocol/channel/lan/v1`：LAN pairing/admission 与凭据撤销 DTO。
 - `codepet-sdk.json`：当前 App 携带的协议包、role、资源路径和生成器版本。
 - `codepet-provider-sdk.json`：为旧 Provider 接入流程保留的兼容索引。

@@ -157,6 +157,10 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     assert_eq!(fetched.items[2].contents[0].text, "fixture answer");
     assert_eq!(fetched.items[3].kind, ConversationItemKind::Tool);
     assert_eq!(fetched.items[3].status, ConversationItemStatus::Completed);
+    let tool = fetched.items[3].tool.as_ref().unwrap();
+    assert_eq!(tool.name, "read");
+    assert_eq!(tool.input.get("path"), Some(&json!("README.md")));
+    assert_eq!(tool.origin.name.as_deref(), Some("opencode"));
 
     let created_workspace = std::env::temp_dir()
         .join("opencode-created")

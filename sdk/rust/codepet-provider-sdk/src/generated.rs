@@ -198,6 +198,8 @@ pub struct ConversationItem {
     pub related_item: Option<RoutedResourceId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval: Option<ProviderApproval>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<ToolInvocation>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,6 +250,13 @@ pub enum ConversationItemStatus {
     Expired,
     #[serde(rename = "unknown")]
     Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationItemUpsertedEvent {
+    pub item: ConversationItem,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -690,6 +699,205 @@ pub struct ProviderTurn {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ToolAnnotations {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_only: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destructive: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idempotent: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_world: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolCategory {
+    #[serde(rename = "command")]
+    Command,
+    #[serde(rename = "read")]
+    Read,
+    #[serde(rename = "write")]
+    Write,
+    #[serde(rename = "search")]
+    Search,
+    #[serde(rename = "web")]
+    Web,
+    #[serde(rename = "agent")]
+    Agent,
+    #[serde(rename = "computer")]
+    Computer,
+    #[serde(rename = "media")]
+    Media,
+    #[serde(rename = "other")]
+    Other,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ToolCommandAction {
+    pub kind: ToolCommandActionKind,
+    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolCommandActionKind {
+    #[serde(rename = "execute")]
+    Execute,
+    #[serde(rename = "read")]
+    Read,
+    #[serde(rename = "list")]
+    List,
+    #[serde(rename = "search")]
+    Search,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ToolCommandDetails {
+    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<ToolCommandAction>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ToolContent {
+    pub content_id: NativeResourceId,
+    pub kind: ToolContentKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolContentKind {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "image")]
+    Image,
+    #[serde(rename = "audio")]
+    Audio,
+    #[serde(rename = "resource-link")]
+    ResourceLink,
+    #[serde(rename = "embedded-resource")]
+    EmbeddedResource,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ToolExecutionError {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<JsonObject>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ToolInvocation {
+    pub call_id: NativeResourceId,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    pub category: ToolCategory,
+    pub origin: ToolOrigin,
+    pub input: JsonObject,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_input: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<ToolResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timing: Option<ToolTiming>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<ToolCommandDetails>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<ToolAnnotations>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extension: Option<ProviderExtension>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ToolOrigin {
+    pub kind: ToolOriginKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolOriginKind {
+    #[serde(rename = "builtin")]
+    Builtin,
+    #[serde(rename = "mcp")]
+    Mcp,
+    #[serde(rename = "plugin")]
+    Plugin,
+    #[serde(rename = "server")]
+    Server,
+    #[serde(rename = "custom")]
+    Custom,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ToolResult {
+    pub content: Vec<ToolContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structured_content: Option<JsonObject>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ToolExecutionError>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ToolTiming {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<TimestampMs>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<TimestampMs>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct TurnInput {
     pub kind: TurnInputKind,
     pub text: String,
@@ -1009,6 +1217,8 @@ pub enum ProtocolEventName {
     EventInstanceStatusChanged,
     #[serde(rename = "event.conversationUpserted")]
     EventConversationUpserted,
+    #[serde(rename = "event.conversationItemUpserted")]
+    EventConversationItemUpserted,
     #[serde(rename = "event.turnUpserted")]
     EventTurnUpserted,
     #[serde(rename = "event.turnOutputDelta")]
@@ -1024,6 +1234,7 @@ impl ProtocolEventName {
         match self {
             Self::EventInstanceStatusChanged => "event.instanceStatusChanged",
             Self::EventConversationUpserted => "event.conversationUpserted",
+            Self::EventConversationItemUpserted => "event.conversationItemUpserted",
             Self::EventTurnUpserted => "event.turnUpserted",
             Self::EventTurnOutputDelta => "event.turnOutputDelta",
             Self::EventApprovalRequested => "event.approvalRequested",
@@ -1039,6 +1250,7 @@ impl std::str::FromStr for ProtocolEventName {
         match value {
             "event.instanceStatusChanged" => Ok(Self::EventInstanceStatusChanged),
             "event.conversationUpserted" => Ok(Self::EventConversationUpserted),
+            "event.conversationItemUpserted" => Ok(Self::EventConversationItemUpserted),
             "event.turnUpserted" => Ok(Self::EventTurnUpserted),
             "event.turnOutputDelta" => Ok(Self::EventTurnOutputDelta),
             "event.approvalRequested" => Ok(Self::EventApprovalRequested),
@@ -1338,6 +1550,11 @@ pub enum ProtocolEvent {
         jsonrpc: String,
         params: ConversationUpsertedEvent,
     },
+    #[serde(rename = "event.conversationItemUpserted")]
+    EventConversationItemUpserted {
+        jsonrpc: String,
+        params: ConversationItemUpsertedEvent,
+    },
     #[serde(rename = "event.turnUpserted")]
     EventTurnUpserted {
         jsonrpc: String,
@@ -1365,6 +1582,7 @@ impl ProtocolEvent {
         match self {
             Self::EventInstanceStatusChanged { jsonrpc, .. } => jsonrpc,
             Self::EventConversationUpserted { jsonrpc, .. } => jsonrpc,
+            Self::EventConversationItemUpserted { jsonrpc, .. } => jsonrpc,
             Self::EventTurnUpserted { jsonrpc, .. } => jsonrpc,
             Self::EventTurnOutputDelta { jsonrpc, .. } => jsonrpc,
             Self::EventApprovalRequested { jsonrpc, .. } => jsonrpc,

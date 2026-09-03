@@ -285,7 +285,7 @@ export async function stageProviderSdkResources({
 
   const protocolDestination = path.join(resolvedStagingDirectory, "protocol");
   await mkdir(protocolDestination, { recursive: true });
-  for (const relativeProtocolPath of ["core/v1", "provider/v1", "gateway/v2", "channel/lan/v1"]) {
+  for (const relativeProtocolPath of ["core/v1", "provider/v1", "gateway/v1", "channel/lan/v1"]) {
     await cp(
       path.join(resolvedRepositoryRoot, "protocol", relativeProtocolPath),
       path.join(protocolDestination, relativeProtocolPath),
@@ -315,7 +315,7 @@ export async function stageProviderSdkResources({
       },
       packages: [
         { package: "provider", version: 1, roles: ["server"], languages: ["rust"], schema: "protocol/provider/v1/schema.json", manifest: "protocol/provider/v1/manifest.json" },
-        { package: "gateway", version: 2, roles: ["client", "server", "both"], languages: ["dart", "rust"], schema: "protocol/gateway/v2/schema.json", manifest: "protocol/gateway/v2/manifest.json" },
+        { package: "gateway", version: 1, roles: ["client", "server", "both"], languages: ["dart", "rust"], schema: "protocol/gateway/v1/schema.json", manifest: "protocol/gateway/v1/manifest.json" },
         { package: "lan-channel", version: 1, roles: ["models"], languages: ["dart", "rust"], schema: "protocol/channel/lan/v1/schema.json", manifest: "protocol/channel/lan/v1/manifest.json" },
       ],
     }, null, 2)}\n`,

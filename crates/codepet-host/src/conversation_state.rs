@@ -207,6 +207,19 @@ impl ConversationStateStore {
                 params.approval.conversation.clone(),
                 format!("approval:{}", params.approval.resource.native_resource_id),
             )),
+            provider::ProtocolEvent::EventConversationItemUpserted { params, .. }
+                if matches!(
+                    params.item.status,
+                    provider::ConversationItemStatus::Completed
+                        | provider::ConversationItemStatus::Failed
+                        | provider::ConversationItemStatus::Interrupted
+                ) => Some((
+                    params.item.conversation.clone(),
+                    format!(
+                        "item-terminal:{}:{:?}",
+                        params.item.resource.native_resource_id, params.item.status
+                    ),
+                )),
             provider::ProtocolEvent::EventTurnUpserted { params, .. }
                 if matches!(
                     params.turn.status,

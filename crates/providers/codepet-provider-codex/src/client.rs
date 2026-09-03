@@ -4,7 +4,7 @@ use super::protocol::{
     CodexAppServerError, CodexApprovalKind, CodexApprovalRequest, CodexContentKind,
     CodexConversationSnapshot, CodexIncoming, CodexModel, CodexModelListResponse,
     CodexNotification, CodexPermissionLevel, CodexThreadListRequest, CodexThreadPage,
-    CodexThreadStartRequest, CodexTurn, CodexTurnPage,
+    CodexThreadStartRequest, CodexTurn, CodexTurnPage, CodexTurnStatus,
     CodexTurnItemsView, CodexTurnStartRequest, CodexTurnSteerRequest, CommandApprovalParams, FileApprovalParams,
     InitializeResponse, JsonRpcId, ThreadConfiguredResponse, ThreadListResponse,
     ThreadReadResponse, ThreadTurnsListResponse, TurnResponse, TurnSteerResponse,
@@ -1361,6 +1361,7 @@ fn incoming_thread_id(incoming: &CodexIncoming) -> Option<&str> {
             | CodexNotification::ThreadStatusChanged { thread_id, .. }
             | CodexNotification::TurnStarted { thread_id, .. }
             | CodexNotification::TurnCompleted { thread_id, .. }
+            | CodexNotification::ItemUpserted { thread_id, .. }
             | CodexNotification::OutputDelta { thread_id, .. }
             | CodexNotification::ServerRequestResolved { thread_id, .. },
         ) => Some(thread_id),
@@ -1528,6 +1529,19 @@ fn parse_notification(
             thread_id: required_string(&params, "threadId")?,
             turn: deserialize_field(&params, "turn")?,
         }),
+        "item/started" | "item/completed" => {
+            let item = deserialize_field(&params, "item")?;
+            Ok(CodexNotification::ItemUpserted {
+                thread_id: required_string(&params, "threadId")?,
+                turn_id: required_string(&params, "turnId")?,
+                turn_status: if method == "item/started" {
+                    CodexTurnStatus::InProgress
+                } else {
+                    CodexTurnStatus::Completed
+                },
+                item,
+            })
+        }
         "item/agentMessage/delta"
         | "item/plan/delta"
         | "item/commandExecution/outputDelta"

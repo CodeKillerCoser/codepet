@@ -16,8 +16,8 @@ Host 已具备稳定设备身份、LAN TLS identity、一次性 pairing、creden
 
 ## 非目标
 
-- 不改变 Gateway wire、Remote 客户端解析方式或 pairing credential 语义；连接页 UI 只消费 Tauri 命令。
-- 不修改 Gateway wire、Provider Protocol、Pet/activity、Desktop Companion IPC 或其事件投影。
+- 不改变 Gateway v1 wire、Remote 客户端解析方式或 pairing credential 语义；连接页 UI 只消费 Tauri 命令。
+- 不修改 Gateway v1 wire、Provider Protocol、Pet/activity、Desktop Companion IPC 或其事件投影。
 - 不实现 IPv6、多网卡选择 UI、relay、E2EE、RBAC、refresh token 或 credential scope。
 - 不把 pairing secret、pairing outcome 或在线 session 持久化。
 
@@ -51,7 +51,7 @@ Manager 的最小 `watch` 值只有 pairing id、是否可用和单调 deadline�
 
 网络地址和 pairing 变化共用一个 lifecycle mutex。每次协调都读取最新 pairing watch，并用完整 `{ endpoint, pair }` 替换 mDNS generation；旧 advertiser 必须完成 unregister/restart，新 generation 必须收到 Announce 才能提交。listener 内部同时保留 committed endpoint 和至多一个 pending endpoint：status/QR 只读 committed；新 Announce 已发出但尚未提交的极短窗口内，`Host` authority 匹配 pending IP 的 pairing exchange 已返回 pending generation 的 WSS URL，因此不会出现“发现新 IP、exchange 返回旧 IP”。Announce 失败会清除 pending 和已过期 committed endpoint，不复活旧 service。
 
-active pairing 的缓存 JSON/QR 也属于 advertised generation。地址提交后，Host 用原 pairing secret 重新序列化同一 pairing id 的 `httpsBaseUrl` 并生成新 QR；`get_remote_pairing_status` 在 active 状态返回当前 `qrSvgDataUrl`，连接弹窗的既有轮询据此替换图像。无地址时 QR/复制入口暂不可用，地址恢复后同一 active pairing 自动得到新 endpoint；这只扩展本地 Tauri command view，不修改 Gateway v2 wire。
+active pairing 的缓存 JSON/QR 也属于 advertised generation。地址提交后，Host 用原 pairing secret 重新序列化同一 pairing id 的 `httpsBaseUrl` 并生成新 QR；`get_remote_pairing_status` 在 active 状态返回当前 `qrSvgDataUrl`，连接弹窗的既有轮询据此替换图像。无地址时 QR/复制入口暂不可用，地址恢复后同一 active pairing 自动得到新 endpoint；这只扩展本地 Tauri command view，不修改 Gateway v1 wire。
 
 ### Tauri commands
 
@@ -111,7 +111,7 @@ client online 数只读取 listener 的实际 session registry。同一 `clientI
 
 ## 知识沉淀
 
-本页是 Phase 2B1 的当前事实入口。Gateway wire 与 mDNS 代际契约仍由 `gateway-v2-lan-generation-contract.md` 维护；运行期地址变更的长期约束见 `remote-lan-runtime-address-generation.md`；Provider/companion 事件隔离仍由 `provider-host-device-and-plugin-runtime.md` 和 `codex-provider-channel-isolation.md` 维护。若真机验证暴露防火墙、睡眠唤醒或权限问题，应新增对应 runbook。
+本页是 Phase 2B1 的当前事实入口。Gateway v1 wire 与 mDNS 代际契约仍由 `gateway-v1-lan-generation-contract.md` 维护；运行期地址变更的长期约束见 `remote-lan-runtime-address-generation.md`；Provider/companion 事件隔离仍由 `provider-host-device-and-plugin-runtime.md` 和 `codex-provider-channel-isolation.md` 维护。若真机验证暴露防火墙、睡眠唤醒或权限问题，应新增对应 runbook。
 
 ## 未知项
 

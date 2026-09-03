@@ -92,11 +92,33 @@
         },
         "kind": "command",
         "status": "completed",
-        "title": "Command",
+        "title": "cargo test",
         "contents": [
           { "contentId": "command-one:command", "kind": "command", "text": "cargo test" },
           { "contentId": "command-one:output", "kind": "output", "text": "tests passed" }
-        ]
+        ],
+        "tool": {
+          "callId": "command-one",
+          "name": "shell",
+          "category": "command",
+          "origin": { "kind": "builtin" },
+          "input": { "command": "cargo test" },
+          "result": {
+            "content": [
+              { "contentId": "command-one:result:0", "kind": "text", "text": "tests passed" }
+            ],
+            "structuredContent": { "exitCode": 0 }
+          },
+          "timing": { "durationMs": 1250 },
+          "command": {
+            "command": "cargo test",
+            "cwd": "/workspace/codepet",
+            "exitCode": 0,
+            "actions": [
+              { "kind": "execute", "command": "cargo test" }
+            ]
+          }
+        }
       },
       {
         "resource": {

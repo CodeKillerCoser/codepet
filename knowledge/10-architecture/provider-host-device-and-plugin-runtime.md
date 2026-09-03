@@ -2,7 +2,7 @@
 
 ## 当前结论
 
-`crates/codepet-host` 已提供可复用的 Rust Provider Host：它从显式目录读取 manifest，为本机持久化稳定 `DeviceId`，按 manifest 启动独立 Provider 二进制，并通过生成的 `codepet-provider-sdk` 在独占 stdio 上通信。它同时实现内部 `codepet-gateway-sdk::ProtocolServer`、`RemoteAccessManager` 安全核心，以及共用同一 TLS identity 的 Gateway v2 HTTPS/WSS LAN listener。Tauri 后端现已通过单个 `RemoteAccessRuntime` 接入 listener、mDNS、pairing watch 与退出生命周期；frontend UI 尚未接入。
+`crates/codepet-host` 已提供可复用的 Rust Provider Host：它从显式目录读取 manifest，为本机持久化稳定 `DeviceId`，按 manifest 启动独立 Provider 二进制，并通过生成的 `codepet-provider-sdk` 在独占 stdio 上通信。它同时实现内部 `codepet-gateway-sdk::ProtocolServer`、`RemoteAccessManager` 安全核心，以及共用同一 TLS identity 的 Gateway v1 HTTPS/WSS LAN listener。Tauri 后端现已通过单个 `RemoteAccessRuntime` 接入 listener、mDNS、pairing watch 与退出生命周期；frontend UI 尚未接入。
 
 Code Pet 发行包内置 `codepet-provider-codex`、`codepet-provider-opencode` 和 `codepet-provider-claude` 三个独立 adapter 二进制及其 manifest。内置的是 Code Pet 自有的 Provider adapter，不是 Codex、OpenCode 或 Claude runtime；runtime 仍由用户本机安装和配置，`AgentRuntimeService` 的检测/用户选择结果始终是 executable 权威。
 
@@ -16,7 +16,7 @@ Provider binary
   -> runtime_gateway_* / runtime-gateway-event
 ```
 
-Provider 事件进入 Gateway v2 replay，并由兼容适配发布到远程 `runtime-gateway-event`；它们不进入 `SharedState` activity store、Desktop Companion replay、`codex-desktop-companion-event` 或 `pet-event`，也没有失败后回退到桌宠 IPC 的路径。真实 fixture 与 Tauri mock `AppHandle` 测试断言 remote event/replay 收到数据，同时 companion、Pet 与 Desktop adapter spy 保持不变。
+Provider 事件进入 Gateway v1 replay，并由兼容适配发布到远程 `runtime-gateway-event`；它们不进入 `SharedState` activity store、Desktop Companion replay、`codex-desktop-companion-event` 或 `pet-event`，也没有失败后回退到桌宠 IPC 的路径。真实 fixture 与 Tauri mock `AppHandle` 测试断言 remote event/replay 收到数据，同时 companion、Pet 与 Desktop adapter spy 保持不变。
 
 ## 范围与非目标
 
@@ -25,7 +25,7 @@ Provider 事件进入 Gateway v2 replay，并由兼容适配发布到远程 `run
 - 持久设备身份和 manifest 实例的稳定 ID 映射；
 - 显式插件目录、进程启动、协议协商、实例启动、能力查询和业务路由；
 - 有界 JSON-lines、并发 request id 关联、事件分流、超时、崩溃隔离、stderr 诊断和有界 shutdown；
-- 内部 Gateway v2 的 device/provider/capability/conversation/turn/approval 与 event replay 边界。
+- 内部 Gateway v1 的 device/provider/capability/conversation/turn/approval 与 event replay 边界。
 - 从 App Resources 的单一 `provider-plugins/` 目录自动发现三个默认 Provider adapter，并在 Tauri 开发态及 macOS/Windows 发布构建中 staging。
 - 持久化自签 LAN TLS identity、五分钟内存配对 session、只保存 bearer SHA-256 的可撤销远程 credential store，以及固定 pairing/current-credential REST 与 Gateway WSS route。
 
@@ -75,7 +75,7 @@ manifest 是插件进程和普通实例设置的配置权威：
 }
 ```
 
-`icon` 是可选、不含凭据的绝对 HTTPS URL，不接受本地路径、`file://`、明文 HTTP 或 URL userinfo。Host 从 manifest catalog 将它带入 runtime snapshot，并投影到 Gateway v2 的每个 `ProviderInstance.icon`；Gateway client 负责异步加载、缓存，并在地址缺失、无效或加载失败时回退到通用 Provider 图标。内置 Provider 使用各产品官方站点提供的图片地址。
+`icon` 是可选、不含凭据的绝对 HTTPS URL，不接受本地路径、`file://`、明文 HTTP 或 URL userinfo。Host 从 manifest catalog 将它带入 runtime snapshot，并投影到 Gateway v1 的每个 `ProviderInstance.icon`；Gateway client 负责异步加载、缓存，并在地址缺失、无效或加载失败时回退到通用 Provider 图标。内置 Provider 使用各产品官方站点提供的图片地址。
 
 `provider-instances.json` 只镜像 `instanceId + pluginId + instanceKind + displayName`，用于在重启后复用未显式给出的 `instanceId`。`settings` 与 `enabled` 每次都来自当前 manifest，不作为第二配置源；manifest 删除的实例会从映射中 prune。registry 损坏或 device id 不匹配时 fail closed。设备身份损坏时，原文件先隔离为 `.corrupt-<timestamp>`，再生成新的 `device-<uuid>` 并保留诊断。macOS 的设备显示名由 Tauri 通过原生 ComputerName API 读取并在打开 registry 时刷新，但保留原 `deviceId/createdAt`；hostname 和 display name 都不充当稳定 ID。
 

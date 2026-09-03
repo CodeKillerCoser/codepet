@@ -9,25 +9,25 @@ The current layers are:
 - `core/v1` — stable IDs, timestamps, versions, pagination, errors, JSON primitives, and four-part routed resource identity (`deviceId + providerPluginId + providerInstanceId + nativeResourceId`).
 - `pet/v1` — Desktop Companion-driven `PetTask`, `PetApproval`, `PetAction`, snapshot, and patch contracts. It does not reference Provider conversation, turn, or approval models.
 - `provider/v1` — public Host ↔ independent Provider binary JSON-RPC 2.0 over newline-delimited stdio. It owns initialize, describe, instance lifecycle/capability, conversation, turn, approval, event, and shutdown contracts.
-- `gateway/v2` — Host ↔ Remote Client JSON-RPC 2.0 methods and replayable notifications over a channel-provided WebSocket. Resources use `deviceId + providerPluginId + providerInstanceId + nativeResourceId`; the gateway exposes neither plugin process lifecycle nor pet-private state.
+- `gateway/v1` — Host ↔ Remote Client JSON-RPC 2.0 methods and replayable notifications over a channel-provided WebSocket. Resources use `deviceId + providerPluginId + providerInstanceId + nativeResourceId`; the gateway exposes neither plugin process lifecycle nor pet-private state.
 - `channel/lan/v1` — LAN admission DTOs for QR pairing, TLS identity and credential revocation. It declares no Gateway business methods.
 
-The legacy Gateway protocol has been removed. Host/Remote integration has one Gateway business protocol: Gateway v2. Discovery, channel establishment, trust admission and Gateway business RPC remain separate runtime layers.
+The legacy Gateway protocol has been removed. Host/Remote integration has one Gateway business protocol: Gateway v1. Discovery, channel establishment, trust admission and Gateway business RPC remain separate runtime layers.
 
-`codegen.json` declares packages, dependency direction, output targets, and the shared `codepet.protocol.codegen/v1` adapter interface. Rust is active for core, Pet, Provider, Gateway v2, LAN admission and the desktop-only v0 contract. TypeScript covers core and the desktop-only v0 contract. Dart is active for core, Gateway v2 and LAN admission. Python remains explicitly registered but unimplemented; selecting it fails closed before generation.
+`codegen.json` declares packages, dependency direction, output targets, and the shared `codepet.protocol.codegen/v1` adapter interface. Rust is active for core, Pet, Provider, Gateway v1, LAN admission and the desktop-only v0 contract. TypeScript covers core and the desktop-only v0 contract. Dart is active for core, Gateway v1 and LAN admission. Python remains explicitly registered but unimplemented; selecting it fails closed before generation.
 
 ## Versioning and discriminators
 
 Every public initialize/handshake request carries an explicit supported `VersionRange`, and the response selects one `ProtocolVersion`. Method and event names live in each layer's manifest rather than language-specific code.
 
-- Pet and the desktop-only v0 contract use CodePet envelopes discriminated by `method` and `event`; Gateway v2 uses standard JSON-RPC 2.0 requests/responses and event notifications.
+- Pet and the desktop-only v0 contract use CodePet envelopes discriminated by `method` and `event`; Gateway v1 uses standard JSON-RPC 2.0 requests/responses and event notifications.
 - Provider uses JSON-RPC 2.0 requests discriminated by `method`, strict result/error responses, and notification events also discriminated by `method`. Its generated `JsonLineCodec` enforces a caller-selected frame limit and classifies inbound request, response, notification, and declared event messages.
-- Gateway v2 events carry an opaque `eventCursor` for replay.
+- Gateway v1 events carry an opaque `eventCursor` for replay.
 - Union-like domain DTOs such as `PetAction` retain an explicit `kind`; receivers validate kind-specific optional fields.
 
 The generator supports a deliberately small JSON Schema Draft 2020-12 subset. Unsupported keywords, unresolved references, duplicate method/event names, invalid fixtures, or undeclared cross-layer dependencies fail generation.
 
-## LAN admission v1 and Gateway v2 contract
+## LAN admission v1 and Gateway v1 contract
 
 The LAN transport uses three fixed routes without adding them as CodePet-envelope methods:
 
@@ -35,7 +35,7 @@ The LAN transport uses three fixed routes without adding them as CodePet-envelop
 - `GET /remote/v2/gateway` with WebSocket upgrade
 - `DELETE /remote/v1/credentials/current`
 
-REST/QR bodies are generated from `channel/lan/v1/schema.json`; Gateway business DTOs and methods are generated from `gateway/v2`. `PairingExchangeRequest` contains `pairingSecret`, the existing stable `clientId`, and one required `DeviceDescriptor { deviceName, operatingSystem, systemVersion }`; `pairingId` remains the REST path parameter. `PairingExchangeResponse` contains the stable LAN Host identity, Gateway URL, and opaque credential. These admission types are not JSON-RPC methods.
+REST/QR bodies are generated from `channel/lan/v1/schema.json`; Gateway business DTOs and methods are generated from `gateway/v1`. `PairingExchangeRequest` contains `pairingSecret`, the existing stable `clientId`, and one required `DeviceDescriptor { deviceName, operatingSystem, systemVersion }`; `pairingId` remains the REST path parameter. `PairingExchangeResponse` contains the stable LAN Host identity, Gateway URL, and opaque credential. These admission types are not JSON-RPC methods.
 
 `PairingQrPayload` is the only encodable QR wire payload. Its fields are exactly `version`, `hostDeviceId`, `displayName`, `httpsBaseUrl`, `certSha256`, `pairingId`, `pairingSecret`, and `expiresAt`. The plaintext pairing secret may flow from Host memory into the QR encoder, but must not be rendered as ordinary UI text or logged. Pairing display state and countdown values remain Host/UI implementation state rather than remote schema fields.
 
@@ -43,7 +43,7 @@ DNS-SD advertises `_codepet._tcp.local.` and its TXT record is limited to `id`, 
 
 The WSS upgrade authenticates the opaque bearer. The first business request is `protocol.handshake`; its `clientId` must equal the client identity bound to that credential. `identityFingerprint` and QR `certSha256` belong only to LAN channel/admission and are checked against the actual leaf certificate DER. Gateway `HandshakeResponse.device` contains only `deviceId + descriptor`; `ProviderGatewayService` never receives a bearer, pairing secret or certificate fingerprint.
 
-## Gateway v2 snapshot and live-event boundary
+## Gateway v1 snapshot and live-event boundary
 
 `EventCursor` is an opaque replay token. A client may persist it, compare it for equality, and return it to the Gateway, but must never parse, order, or increment it. In particular, clients must pass the exact last applied cursor as `event.subscribe.afterCursor`; they must not calculate a numeric `+1`. The Gateway acknowledges that exact boundary as `subscribedAfterCursor`, then the transport session delivers events after it. Whether one WebSocket may call `event.subscribe` more than once is a future transport-session policy, not part of the v1 IDL or Host service contract.
 
@@ -52,6 +52,8 @@ The WSS upgrade authenticates the opaque bearer. The first business request is `
 `conversation.get.items` is the ordered, provider-neutral committed history projection. Each item carries its routed native item identity, turn, and owning conversation; the Host rejects any item whose conversation does not exactly match the requested routed conversation. Each content block has a deterministic `contentId` derived from the native item ID plus its stable semantic position. `turn.outputDelta` carries the same `itemId/contentId/kind`, so clients first install the committed snapshot, then replay after `snapshotCursor`, and upsert or discard replayed deltas whose content ID is already committed instead of appending duplicate text. In-progress mutable bodies stay live-only until their authoritative item completes. Metadata upserts remain idempotent and may restate state already visible in the snapshot.
 
 The common history surface covers user and assistant messages, readable reasoning summaries, command/file/tool activity, and approval records actually observed by a Provider. It never exposes a native Provider DTO. Raw reasoning content is excluded, unknown native items become safe `unknown` activity without raw payload, and command completion must not be used to invent an approval that was never requested.
+
+Command and tool items may carry one typed `ToolInvocation`: stable call id and tool name, category, origin, JSON input, typed result content/error, timing, annotations, and an optional command facet with cwd, exit code, process id, and parsed actions. Provider-only extensions stop at the Host; the Gateway projection explicitly copies only the public fields. Large textual results are bounded by the Provider and declare `truncated + totalBytes`. `conversation.itemUpserted` replaces the same routed item as it moves from pending/running to a terminal result, while `turn.outputDelta` remains the append-only text channel.
 
 ## Provider descriptors and existing-conversation turns
 
@@ -98,7 +100,7 @@ The five Rust SDK manifests are packageable crates rather than permanently priva
 
 ## Runtime Gateway compatibility
 
-The existing in-process Runtime Gateway and Desktop Companion still use the unchanged desktop-only v0 wire profile. That profile lives at `desktop/v0` and is generated into `codepet-desktop-sdk` plus the TypeScript desktop SDK. It is not a Gateway version and is independent from the production Remote path, which uses Gateway v2 JSON-RPC. The Tauri and frontend files named `generated` are thin re-export shims only.
+The existing in-process Runtime Gateway and Desktop Companion still use the unchanged desktop-only v0 wire profile. That profile lives at `desktop/v0` and is generated into `codepet-desktop-sdk` plus the TypeScript desktop SDK. It is not a Gateway version and is independent from the production Remote path, which uses Gateway v1 JSON-RPC. The Tauri and frontend files named `generated` are thin re-export shims only.
 
 This compatibility path preserves current dual-channel behavior: remote App Server operations run only through Provider v1 and `codepet-host`, then map to the existing remote v0 Tauri surface; Desktop IPC remains on the companion bus. The compat layer is stateless, uses resource-carried four-part identity, and never forwards Provider events into companion/Pet channels.
 
@@ -121,6 +123,6 @@ python3 scripts/test_codex_provider_stdio.py --provider crates/target/debug/code
 ## Current limits
 
 - A reusable Plugin Manager and process supervisor exists in `crates/codepet-host`, and Codex remote operations run through the standalone Provider binary. Signature, marketplace, sandbox, and automatic restart policy remain deliberately out of scope.
-- LAN admission v1 defines identity, QR, pairing REST bodies and credential revocation; `codepet-host` owns the TLS/HTTP/WSS listener and mDNS lifecycle. The production Remote business session uses Gateway v2 JSON-RPC after admission. A persistent cross-process event-cursor store remains absent.
+- LAN admission v1 defines identity, QR, pairing REST bodies and credential revocation; `codepet-host` owns the TLS/HTTP/WSS listener and mDNS lifecycle. The production Remote business session uses Gateway v1 JSON-RPC after admission. A persistent cross-process event-cursor store remains absent.
 - The v0 compatibility profile remains in use only by the desktop process until a separate Pet-protocol migration; it is not the Remote network protocol.
 - `turn.send` is non-idempotent. Same-ID duplicate suppression is caller-scoped, process-local, and bounded; no persistent exactly-once ledger exists.

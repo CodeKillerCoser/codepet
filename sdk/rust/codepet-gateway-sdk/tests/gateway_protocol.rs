@@ -17,7 +17,7 @@ fn decode_success<T: DeserializeOwned>(bytes: &[u8]) -> T {
 #[test]
 fn gateway_handshake_uses_json_rpc_and_business_identity_only() {
     let request = decode_request(include_bytes!(
-        "../../../../protocol/gateway/v2/fixtures/handshake-request.json"
+        "../../../../protocol/gateway/v1/fixtures/handshake-request.json"
     ))
     .unwrap();
     let ProtocolRequest::ProtocolHandshake {
@@ -27,13 +27,13 @@ fn gateway_handshake_uses_json_rpc_and_business_identity_only() {
         panic!("expected protocol.handshake request");
     };
     assert_eq!(jsonrpc, "2.0");
-    assert_eq!(params.supported_versions.min_version, 2);
+    assert_eq!(params.supported_versions.min_version, 1);
     assert_eq!(params.device.device_name, "Alice's Pixel");
 
     let result: HandshakeResponse = decode_success(include_bytes!(
-        "../../../../protocol/gateway/v2/fixtures/handshake-response.json"
+        "../../../../protocol/gateway/v1/fixtures/handshake-response.json"
     ));
-    assert_eq!(result.selected_version, 2);
+    assert_eq!(result.selected_version, 1);
     assert_eq!(result.device.device_id, "device-macbook-1");
     assert_eq!(result.device.descriptor.operating_system, "macOS");
     let identity = serde_json::to_value(&result.device).unwrap();
@@ -43,7 +43,7 @@ fn gateway_handshake_uses_json_rpc_and_business_identity_only() {
 #[test]
 fn gateway_turn_send_derives_route_from_conversation() {
     let request = decode_request(include_bytes!(
-        "../../../../protocol/gateway/v2/fixtures/turn-send-request.json"
+        "../../../../protocol/gateway/v1/fixtures/turn-send-request.json"
     ))
     .unwrap();
     let ProtocolRequest::TurnSend { params, .. } = request else {
@@ -56,7 +56,7 @@ fn gateway_turn_send_derives_route_from_conversation() {
     assert!(encoded.get("route").is_none());
 
     let result: TurnSendResponse = decode_success(include_bytes!(
-        "../../../../protocol/gateway/v2/fixtures/turn-send-response.json"
+        "../../../../protocol/gateway/v1/fixtures/turn-send-response.json"
     ));
     assert!(result.accepted);
     assert!(result.user_item.is_none());
@@ -97,7 +97,7 @@ fn model_catalogs_retain_discriminated_shapes() {
 #[test]
 fn gateway_event_wraps_cursor_inside_json_rpc_params() {
     let event = decode_event(include_bytes!(
-        "../../../../protocol/gateway/v2/fixtures/conversation-upserted-event.json"
+        "../../../../protocol/gateway/v1/fixtures/conversation-upserted-event.json"
     ))
     .unwrap();
     let ProtocolEvent::ConversationUpserted { jsonrpc, params } = event else {

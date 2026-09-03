@@ -2,13 +2,13 @@
 
 ## 结论
 
-Remote 接入被拆成四个单向依赖层：discovery 只发现候选地址；channel 只建立经过 TLS pin 的 HTTPS/WSS 字节通道；LAN admission 通过一次性 pairing secret 换取设备级 credential；Gateway v2 在已准入通道上运行 JSON-RPC 2.0 业务协议。准入成功后可以访问 Host 上全部 Provider，不存在 Provider ACL；每个 Provider 资源始终携带 `deviceId + providerPluginId + providerInstanceId`，资源再增加 `nativeResourceId`。
+Remote 接入被拆成四个单向依赖层：discovery 只发现候选地址；channel 只建立经过 TLS pin 的 HTTPS/WSS 字节通道；LAN admission 通过一次性 pairing secret 换取设备级 credential；Gateway v1 在已准入通道上运行 JSON-RPC 2.0 业务协议。准入成功后可以访问 Host 上全部 Provider，不存在 Provider ACL；每个 Provider 资源始终携带 `deviceId + providerPluginId + providerInstanceId`，资源再增加 `nativeResourceId`。
 
-Gateway v2 的 schema/manifest 是业务协议唯一事实来源。`cp-sdk-gen` 从同一输入生成 Dart client 或 Rust client/server：client 生成 typed method wrapper、请求信封和响应解码；server 生成 trait、dispatcher、严格 JSON-RPC 分类和错误映射，业务实现仍由 Host 手写。通道实现不得枚举 Gateway method，Gateway handler 不得读取 bearer、证书或 mDNS 状态。
+Gateway v1 的 schema/manifest 是业务协议唯一事实来源。`cp-sdk-gen` 从同一输入生成 Dart client 或 Rust client/server：client 生成 typed method wrapper、请求信封和响应解码；server 生成 trait、dispatcher、严格 JSON-RPC 分类和错误映射，业务实现仍由 Host 手写。通道实现不得枚举 Gateway method，Gateway handler 不得读取 bearer、证书或 mDNS 状态。
 
 ## 证据
 
-- `protocol/gateway/v2/{schema,manifest}.json`：Gateway 业务 DTO、11 个方法、7 个 replayable event 与 WebSocket text framing。
+- `protocol/gateway/v1/{schema,manifest}.json`：Gateway 业务 DTO、13 个方法、9 个 replayable event 与 WebSocket text framing。
 - `protocol/channel/lan/v1/{schema,manifest}.json`：QR、pairing exchange、LAN Host identity 与 current credential revoke DTO；不声明 Gateway method。
 - `crates/codepet-host/src/remote_listener.rs`：pairing/credential 保持 `/remote/v1/...`，Gateway WSS 使用 `/remote/v2/gateway`；首个业务请求必须是 handshake。
 - `sdk/rust/codepet-gateway-sdk`：Host 实现生成的 server trait，事件与响应使用 JSON-RPC 2.0。
@@ -38,7 +38,7 @@ discovery ---------------------------------- mDNS
 - credential 绑定逻辑 client identity。WSS 首次 `protocol.handshake.clientId` 必须与 bearer 绑定的 client 一致。
 - Gateway Host identity 只包含 `deviceId + DeviceDescriptor`。
 - Provider route 从业务资源获得。`turn.send` 不再同时携带一份可冲突的 route 和 conversation route。
-- 旧 Remote 存储的 `/remote/v2/gateway` endpoint 在读取时迁移到 `/remote/v2/gateway`；pairing 与 credential REST 路径仍为 v1。
+- 旧 Remote 存储的 `/remote/v1/gateway` endpoint 在读取时迁移到 `/remote/v2/gateway`；pairing 与 credential REST 路径仍为 v1。
 
 ## 风险与验证
 

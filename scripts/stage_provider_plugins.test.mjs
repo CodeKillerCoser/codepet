@@ -65,9 +65,9 @@ test("staging contains Provider plugins, JSON-RPC resources, and cp-sdk-gen", as
   );
   await mkdir(path.join(root, "protocol", "core", "v1"), { recursive: true });
   await mkdir(path.join(root, "protocol", "provider", "v1", "fixtures"), { recursive: true });
-  await mkdir(path.join(root, "protocol", "gateway", "v2"), { recursive: true });
+  await mkdir(path.join(root, "protocol", "gateway", "v1"), { recursive: true });
   await mkdir(path.join(root, "protocol", "channel", "lan", "v1"), { recursive: true });
-  for (const [layer, version] of [["core", 1], ["provider", 1], ["gateway", 2]]) {
+  for (const [layer, version] of [["core", 1], ["provider", 1], ["gateway", 1]]) {
     await writeFile(
       path.join(root, "protocol", layer, `v${version}`, "schema.json"),
       JSON.stringify({

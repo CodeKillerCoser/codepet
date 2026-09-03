@@ -2,7 +2,7 @@
   "jsonrpc": "2.0",
   "id": "gateway-handshake-1",
   "result": {
-    "selectedVersion": 2,
+    "selectedVersion": 1,
     "serverName": "CodePet Gateway",
     "serverVersion": "0.1.4",
     "device": {

@@ -9,11 +9,13 @@ use codepet_provider_sdk::{
     ConversationCreateCapabilities, ConversationItem, ConversationItemKind,
     ConversationItemRole, ConversationItemStatus, ConversationStatus, HarnessDescriptor,
     GroupedModelCatalog, GroupedModelCatalogKind, GroupedModelProvider, GroupedModelSelection,
-    InstanceStatus, ModelCatalog, ModelSelection, ProtocolError, ProtocolEvent, ProviderApproval, ProviderCapabilities,
+    InstanceStatus, JsonObject, ModelCatalog, ModelSelection, ProtocolError, ProtocolEvent, ProviderApproval, ProviderCapabilities,
     ProviderCapability, ProviderConversation, ProviderInstance, ProviderInstanceRoute,
-    ProviderTurn, RoutedResourceId, TurnOutputDeltaEvent, TurnSelection, TurnSendCapabilities, TurnStatus,
-    TurnUpsertedEvent,
+    ProviderTurn, RoutedResourceId, ToolCategory, ToolCommandDetails, ToolContent,
+    ToolContentKind, ToolExecutionError, ToolInvocation, ToolOrigin, ToolOriginKind, ToolResult,
+    ToolTiming, TurnOutputDeltaEvent, TurnSelection, TurnSendCapabilities, TurnStatus, TurnUpsertedEvent,
 };
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 
 pub struct OpenCodeProtocolMapper {
@@ -296,6 +298,7 @@ impl OpenCodeProtocolMapper {
             }],
             related_item: None,
             approval: None,
+            tool: None,
         }
     }
 
@@ -373,7 +376,7 @@ impl OpenCodeProtocolMapper {
                             text: bounded_history_text(output, &mut text_budget),
                         });
                     }
-                    items.push(self.history_item(
+                    let mut item = self.history_item(
                         message.id.clone(),
                         turn.clone(),
                         conversation,
@@ -382,7 +385,10 @@ impl OpenCodeProtocolMapper {
                         None,
                         Some("Shell".to_string()),
                         contents,
-                    ));
+                    );
+                    item.tool = Some(shell_tool_invocation(message));
+                    item.title = message.command.as_deref().map(concise_tool_title).or(item.title);
+                    items.push(item);
                 }
                 "system" | "synthetic" => items.push(self.history_item(
                     message.id.clone(),
@@ -476,10 +482,8 @@ impl OpenCodeProtocolMapper {
             )),
             "tool" => {
                 let status = tool_status(content.state.as_ref());
-                let summary = content.state.as_ref().map(|state| {
-                    bounded_history_text(&state.to_string(), text_budget)
-                });
-                Some(self.history_item(
+                let tool = opencode_tool_invocation(content);
+                let mut item = self.history_item(
                     resource_id,
                     turn.clone(),
                     conversation,
@@ -487,12 +491,10 @@ impl OpenCodeProtocolMapper {
                     status,
                     None,
                     content.name.clone().or_else(|| Some("Tool".to_string())),
-                    summary.map(|text| ConversationContent {
-                        content_id: format!("{}:activity", content.id),
-                        kind: ConversationContentKind::ActivitySummary,
-                        text,
-                    }).into_iter().collect(),
-                ))
+                    Vec::new(),
+                );
+                item.tool = Some(tool);
+                Some(item)
             }
             _ => Some(self.history_item(
                 resource_id,
@@ -529,6 +531,7 @@ impl OpenCodeProtocolMapper {
             contents,
             related_item: None,
             approval: None,
+            tool: None,
         }
     }
 
@@ -730,6 +733,207 @@ fn choice_display_name(id: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn opencode_tool_invocation(content: &OpenCodeMessageContent) -> ToolInvocation {
+    let state = content.state.as_ref().and_then(Value::as_object);
+    let input_value = state.and_then(|state| state.get("input"));
+    let serialized_input = input_value.map(Value::to_string);
+    let input_fits = serialized_input.as_ref().is_none_or(|value| value.len() <= 256 * 1024);
+    let input: JsonObject = input_fits
+        .then(|| input_value.and_then(Value::as_object))
+        .flatten()
+        .map(|object| object.iter().map(|(key, value)| (key.clone(), value.clone())).collect())
+        .unwrap_or_default();
+    let raw_input = serialized_input
+        .filter(|_| !input_fits || input_value.is_some_and(|value| !value.is_object()))
+        .map(|value| bounded_tool_result_text(&value).0);
+    let name = content.name.clone().unwrap_or_else(|| "tool".to_string());
+    let result = state.and_then(opencode_tool_result);
+    let command = input_value
+        .and_then(Value::as_object)
+        .and_then(|input| input.get("command"))
+        .and_then(Value::as_str)
+        .map(|command| ToolCommandDetails {
+            command: bounded_tool_result_text(command).0,
+            cwd: input_value.and_then(Value::as_object).and_then(|input| input.get("cwd")).and_then(Value::as_str).map(str::to_string),
+            exit_code: state
+                .and_then(|state| state.get("exitCode"))
+                .and_then(Value::as_i64),
+            process_id: None,
+            actions: None,
+        });
+    ToolInvocation {
+        call_id: content.call_id.clone().unwrap_or_else(|| content.id.clone()),
+        name: name.clone(),
+        namespace: None,
+        category: opencode_tool_category(&name, command.is_some()),
+        origin: ToolOrigin { kind: ToolOriginKind::Server, name: Some("opencode".to_string()) },
+        input,
+        raw_input,
+        result,
+        timing: content.time.as_ref().map(|time| ToolTiming {
+            started_at: Some(time.created),
+            completed_at: time.completed,
+            duration_ms: time.completed.and_then(|completed| completed.checked_sub(time.created)),
+        }),
+        command,
+        annotations: None,
+        extension: None,
+    }
+}
+
+fn opencode_tool_result(state: &serde_json::Map<String, Value>) -> Option<ToolResult> {
+    let status = state.get("status").and_then(Value::as_str);
+    let mut content = Vec::new();
+    if let Some(output) = state.get("output") {
+        append_tool_content(&mut content, "output", output);
+    }
+    if let Some(parts) = state.get("content").and_then(Value::as_array) {
+        for (index, part) in parts.iter().take(128).enumerate() {
+            append_tool_content(&mut content, &format!("content:{index}"), part);
+        }
+    }
+    let structured_value = state.get("structured");
+    let structured_content = structured_value
+        .filter(|value| value.to_string().len() <= 256 * 1024)
+        .and_then(Value::as_object)
+        .map(|object| object.iter().map(|(key, value)| (key.clone(), value.clone())).collect());
+    if structured_content.is_none() {
+        if let Some(structured) = structured_value {
+            append_tool_content(&mut content, "structured", structured);
+        }
+    }
+    let error = state.get("error").map(|error| ToolExecutionError {
+        code: None,
+        message: error.as_str().map(str::to_string).unwrap_or_else(|| error.to_string()),
+        retryable: None,
+        details: None,
+    });
+    (matches!(status, Some("completed" | "error")) || !content.is_empty() || structured_content.is_some() || error.is_some())
+        .then_some(ToolResult { content, structured_content, error })
+}
+
+fn append_tool_content(content: &mut Vec<ToolContent>, id: &str, value: &Value) {
+    const MAX_RESULT_BYTES: usize = 256 * 1024;
+    let used = content.iter().filter_map(|content| content.text.as_ref()).map(String::len).sum::<usize>();
+    if used >= MAX_RESULT_BYTES {
+        return;
+    }
+    let text = value
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| value.get("text").and_then(Value::as_str).map(str::to_string))
+        .unwrap_or_else(|| value.to_string());
+    let (text, truncated, total_bytes) = bounded_tool_result_text_with_limit(&text, MAX_RESULT_BYTES - used);
+    content.push(ToolContent {
+        content_id: id.to_string(),
+        kind: ToolContentKind::Text,
+        text: Some(text),
+        uri: None,
+        mime_type: Some(if value.is_string() { "text/plain" } else { "application/json" }.to_string()),
+        name: None,
+        truncated: truncated.then_some(true),
+        total_bytes: truncated.then_some(total_bytes),
+    });
+}
+
+fn shell_tool_invocation(message: &OpenCodeMessage) -> ToolInvocation {
+    let command = message.command.clone().unwrap_or_default();
+    let result = (message.output.is_some() || message.error.is_some()).then(|| {
+        let content = message.output.as_ref().map(|output| {
+            let (text, truncated, total_bytes) = bounded_tool_result_text(output);
+            ToolContent {
+                content_id: format!("{}:output", message.id),
+                kind: ToolContentKind::Text,
+                text: Some(text),
+                uri: None,
+                mime_type: Some("text/plain".to_string()),
+                name: Some("Command output".to_string()),
+                truncated: truncated.then_some(true),
+                total_bytes: truncated.then_some(total_bytes),
+            }
+        }).into_iter().collect();
+        ToolResult {
+            content,
+            structured_content: None,
+            error: message.error.as_ref().map(|error| ToolExecutionError {
+                code: None,
+                message: error.to_string(),
+                retryable: None,
+                details: None,
+            }),
+        }
+    });
+    ToolInvocation {
+        call_id: message.id.clone(),
+        name: "shell".to_string(),
+        namespace: None,
+        category: ToolCategory::Command,
+        origin: ToolOrigin { kind: ToolOriginKind::Server, name: Some("opencode".to_string()) },
+        input: [("command".to_string(), json!(command))].into_iter().collect(),
+        raw_input: None,
+        result,
+        timing: Some(ToolTiming {
+            started_at: Some(message.time.created),
+            completed_at: message.time.completed,
+            duration_ms: message.time.completed.and_then(|completed| completed.checked_sub(message.time.created)),
+        }),
+        command: Some(ToolCommandDetails {
+            command,
+            cwd: None,
+            exit_code: None,
+            process_id: None,
+            actions: None,
+        }),
+        annotations: None,
+        extension: None,
+    }
+}
+
+fn opencode_tool_category(name: &str, command: bool) -> ToolCategory {
+    if command {
+        return ToolCategory::Command;
+    }
+    let name = name.to_ascii_lowercase();
+    if name.contains("read") || name.contains("list") {
+        ToolCategory::Read
+    } else if name.contains("write") || name.contains("edit") || name.contains("patch") {
+        ToolCategory::Write
+    } else if name.contains("search") || name.contains("find") {
+        ToolCategory::Search
+    } else if name.contains("web") || name.contains("browser") {
+        ToolCategory::Web
+    } else if name.contains("agent") || name.contains("task") {
+        ToolCategory::Agent
+    } else {
+        ToolCategory::Other
+    }
+}
+
+fn concise_tool_title(command: &str) -> String {
+    let first_line = command.lines().next().unwrap_or(command).trim();
+    if first_line.chars().count() <= 80 {
+        first_line.to_string()
+    } else {
+        format!("{}…", first_line.chars().take(79).collect::<String>())
+    }
+}
+
+fn bounded_tool_result_text(text: &str) -> (String, bool, u64) {
+    bounded_tool_result_text_with_limit(text, 256 * 1024)
+}
+
+fn bounded_tool_result_text_with_limit(text: &str, max_bytes: usize) -> (String, bool, u64) {
+    let total_bytes = u64::try_from(text.len()).unwrap_or(u64::MAX);
+    if text.len() <= max_bytes {
+        return (text.to_string(), false, total_bytes);
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (format!("{}\n[tool output truncated]", &text[..end]), true, total_bytes)
 }
 
 fn assistant_status(message: &OpenCodeMessage) -> ConversationItemStatus {

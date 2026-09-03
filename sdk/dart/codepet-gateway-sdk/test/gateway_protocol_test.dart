@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:codepet_gateway_sdk/codepet_gateway_sdk.dart';
 import 'package:test/test.dart';
 
-const fixtureRoot = '../../../protocol/gateway/v2/fixtures';
+const fixtureRoot = '../../../protocol/gateway/v1/fixtures';
 
 Object? fixture(String name) => jsonDecode(File('$fixtureRoot/$name').readAsStringSync());
 
@@ -135,8 +135,8 @@ void main() {
   });
 
   test('method and event metadata come from the manifest IR', () {
-    expect(ProtocolMethod.values, hasLength(12));
-    expect(ProtocolEventName.values, hasLength(7));
+    expect(ProtocolMethod.values, hasLength(13));
+    expect(ProtocolEventName.values, hasLength(9));
     expect(ProtocolMethod.turnSend.wireName, 'turn.send');
     expect(ProtocolMethod.turnSend.idempotency, ProtocolIdempotency.nonIdempotent);
     expect(ProtocolMethod.turnSend.capability, GatewayCapability.turnSend);

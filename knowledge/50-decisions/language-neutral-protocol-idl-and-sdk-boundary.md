@@ -16,7 +16,7 @@
 
 协议长期事实只存在于 `protocol/` 的语言无关 IDL，并按 `core`、`pet`、`provider`、`gateway` 四层独立版本化。生成包统一命名 `codepet-*-sdk` 并放在 `sdk/<language>/`；Rust struct、Tauri DTO 和任何语言侧 model 都不能成为第二事实来源。
 
-Provider v1 固定为 Host ↔ 独立 Provider 二进制的 JSON-RPC 2.0/stdio 协议，拥有插件描述与 instance 生命周期。Gateway v2 固定为 Host ↔ Remote Client 的 JSON-RPC 2.0 业务协议，只暴露设备、Provider instance、远程资源与 event cursor，不暴露插件进程控制。LAN 的 discovery/channel/admission DTO 独立位于 `channel/lan/v1`；证书指纹、pairing secret 和 bearer 不进入 Gateway 业务 service。Pet v1 固定为 Desktop Companion 驱动的任务、审批、动作、快照与 patch，不引用 Provider 领域对象。
+Provider v1 固定为 Host ↔ 独立 Provider 二进制的 JSON-RPC 2.0/stdio 协议，拥有插件描述与 instance 生命周期。Gateway v1 固定为 Host ↔ Remote Client 的 JSON-RPC 2.0 业务协议，只暴露设备、Provider instance、远程资源与 event cursor，不暴露插件进程控制。LAN 的 discovery/channel/admission DTO 独立位于 `channel/lan/v1`；证书指纹、pairing secret 和 bearer 不进入 Gateway 业务 service。Pet v1 固定为 Desktop Companion 驱动的任务、审批、动作、快照与 patch，不引用 Provider 领域对象。
 
 Provider SDK 的公共边界由两部分组成：schema/manifest 生成的 DTO、method/event enum、server trait、dispatcher 与 typed client，以及各语言稳定维护的 transport runtime。Rust runtime 统一拥有 JSON-RPC 2.0/stdio JSON-lines reader、串行 writer、event sink、普通/控制双通路、过载拒绝、frame limit、EOF/fatal shutdown 与有界 drain；Provider 实现不得复制这些机制。`dispatchLane` 是 manifest 事实，`instance.stop`、`instance.destroy` 与 `provider.shutdown` 生成到 control lane，runtime 不维护第二份 method 分类表。
 
@@ -24,15 +24,15 @@ Provider SDK 的公共边界由两部分组成：schema/manifest 生成的 DTO�
 
 每种输出语言必须通过 `codepet.protocol.codegen/v1` target adapter registry 显式接入。校验后的 schema/manifest 先归一化成唯一 typed IR；Dart 的 definition、constraint、union discriminator、method、event、capability 和 transport metadata 只能从该 IR 投影，不得维护第二份 model/method/event 表。Rust、TypeScript、Dart 是已实现 adapter；现有 Rust/TypeScript emitter 暂保留 validated model 输入，迁移到 normalized IR 必须另做等价 fixture/diff 验证。Python 在实现前保持 planned 且选择即失败，不能落入另一个语言 generator 或静默跳过。schema 与 manifest 的 `$ref` 使用同一依赖审计，capability type/container/method mapping 也是生成器受检契约。
 
-Dart target 采用只覆盖当前受检 schema 子集的结构化 emitter，不引入 quicktype、Freezed、json_serializable 或 build_runner 依赖。它生成 core、Gateway v2 client 与 LAN admission models null-safe package、closed-object/约束校验、显式 sealed union、敏感字段 redaction、manifest metadata、JSON-RPC codec 与 transport-neutral typed client。无法找到共同 required singleton-enum discriminator 的 `oneOf` 在生成前失败；不会退化为 `dynamic` 或宽松可选字段模型。
+Dart target 采用只覆盖当前受检 schema 子集的结构化 emitter，不引入 quicktype、Freezed、json_serializable 或 build_runner 依赖。它生成 core、Gateway v1 client 与 LAN admission models null-safe package、closed-object/约束校验、显式 sealed union、敏感字段 redaction、manifest metadata、JSON-RPC codec 与 transport-neutral typed client。无法找到共同 required singleton-enum discriminator 的 `oneOf` 在生成前失败；不会退化为 `dynamic` 或宽松可选字段模型。
 
-既有 Tauri Runtime Gateway 调用面使用同一 SDK 内生成的 `desktop_v0` module。该 profile 来自 `protocol/desktop/v0`，不允许在 Tauri 源码复制 DTO；它是独立的桌面内部协议，不再占用 Gateway 版本空间。Remote 网络 transport 只使用 Gateway v2 JSON-RPC。
+既有 Tauri Runtime Gateway 调用面使用同一 SDK 内生成的 `desktop_v0` module。该 profile 来自 `protocol/desktop/v0`，不允许在 Tauri 源码复制 DTO；它是独立的桌面内部协议，不再占用 Gateway 版本空间。Remote 网络 transport 只使用 Gateway v1 JSON-RPC。
 
 ## 备选方案
 
 - 继续以 Tauri Rust struct 为主并导出其他语言：短期简单，但 Rust 特性会决定 wire 语义，并形成与 JSON Schema 并列的事实来源，因此不采用。
 - 为 pet/provider/gateway 各自手写重复 ID、错误和 envelope：能快速隔离目录，但公共语义会漂移，无法可靠生成多语言 SDK，因此不采用。
-- 立即把 Desktop 内部协议改成 Gateway v2：会把 Desktop Companion/Pet 的本地状态语义误并入远程 Gateway，因此不采用；本次只把它移出 Gateway 命名空间。
+- 立即把 Desktop 内部协议改成 Gateway v1：会把 Desktop Companion/Pet 的本地状态语义误并入远程 Gateway，因此不采用；本次只把它移出 Gateway 命名空间。
 - 把 Desktop IPC adapter 直接实现为 Provider plugin：会让 Provider event 有机会进入桌宠投影，破坏已验证的 remote/companion channel isolation，因此不采用。
 - 直接采用 quicktype Dart renderer：跨文件 ref 可用，但会丢失约束、共享命名、closed object、敏感字段和判别联合，因此不采用。
 - 生成 annotated Dart source 再运行 json_serializable/Freezed：codec 生态成熟，但会增加第二阶段生成链、运行依赖和一份 Dart 侧模型事实，因此本阶段不采用。
@@ -67,7 +67,7 @@ JSON Schema Draft 2020-12 加 method/event manifest 能同时表达跨语言 DTO
 - Codex、Claude 与 OpenCode 三个内置 Provider 已统一使用公共 Rust Provider runtime：入口只构造各自 Provider 并调用 `serve_stdio`；App Server、CLI stream-json、HTTP/SSE client、mapper 与业务生命周期仍完全属于各自 adapter。
 - `scripts/test_codex_provider_stdio.py` 从独立 Python 进程执行公共 wire smoke；SDK 的通用 transport 行为仍由 Rust SDK tests 与 Codex 饱和/EOF/坏帧/断管纵向测试共同守护。
 - `codepet-provider-codex`、`codepet-provider-claude` 与 `codepet-provider-opencode` 已实现 generated `Provider` trait，并共享 SDK dispatcher、JSON-line codec 与 stdio runtime；各自的 App Server / CLI / HTTP+SSE 私有协议只存在于对应插件内部。
-- Gateway v2 transport 对 event cursor、分页 cursor、断线恢复和版本不重叠错误的持续兼容性。
+- Gateway v1 transport 对 event cursor、分页 cursor、断线恢复和版本不重叠错误的持续兼容性。
 - desktop v0 使用点是否持续收敛；它只能服务 Desktop Companion/Pet 本地链路，不得重新成为 Remote Gateway 兼容层。
 - 如出现 schema 子集不足，应先评估所有目标语言的可生成性，再扩展 generator；不得为单个 Rust 需求加入只能由 serde 表达的语义。
 - 五个 Rust SDK 已移除永久私有标记，并为 path dependency 同时声明版本。仓库尚无 LICENSE，正式发布前必须由所有者决定许可证，不能由实现阶段猜测。

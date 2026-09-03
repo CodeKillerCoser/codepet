@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://code-pet.dev/protocol/gateway/v2/schema.json",
-  "title": "CodePet Gateway Protocol v2",
+  "$id": "https://code-pet.dev/protocol/gateway/v1/schema.json",
+  "title": "CodePet Gateway Protocol v1",
   "$defs": {
     "Approval": {
       "type": "object",
@@ -169,6 +169,137 @@
       "type": "string",
       "enum": ["text", "reasoning-summary", "command", "output", "activity-summary"]
     },
+    "ToolAnnotations": {
+      "type": "object",
+      "properties": {
+        "readOnly": { "type": "boolean" },
+        "destructive": { "type": "boolean" },
+        "idempotent": { "type": "boolean" },
+        "openWorld": { "type": "boolean" }
+      },
+      "additionalProperties": false,
+      "description": "Advisory UI hints only; clients must not use these fields as authorization decisions."
+    },
+    "ToolCategory": {
+      "type": "string",
+      "enum": ["command", "read", "write", "search", "web", "agent", "computer", "media", "other"]
+    },
+    "ToolCommandAction": {
+      "type": "object",
+      "properties": {
+        "kind": { "$ref": "#/$defs/ToolCommandActionKind" },
+        "command": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "query": { "type": "string" }
+      },
+      "required": ["kind", "command"],
+      "additionalProperties": false
+    },
+    "ToolCommandActionKind": {
+      "type": "string",
+      "enum": ["execute", "read", "list", "search", "unknown"]
+    },
+    "ToolCommandDetails": {
+      "type": "object",
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "cwd": { "type": "string", "minLength": 1 },
+        "exitCode": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "processId": { "type": "string", "minLength": 1 },
+        "actions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ToolCommandAction" }
+        }
+      },
+      "required": ["command"],
+      "additionalProperties": false
+    },
+    "ToolContent": {
+      "type": "object",
+      "properties": {
+        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "kind": { "$ref": "#/$defs/ToolContentKind" },
+        "text": { "type": "string" },
+        "uri": { "type": "string", "minLength": 1 },
+        "mimeType": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "truncated": { "type": "boolean" },
+        "totalBytes": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["contentId", "kind"],
+      "additionalProperties": false,
+      "description": "Tool result content discriminated by kind; clients validate kind-specific optional fields."
+    },
+    "ToolContentKind": {
+      "type": "string",
+      "enum": ["text", "image", "audio", "resource-link", "embedded-resource"]
+    },
+    "ToolExecutionError": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "details": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" }
+      },
+      "required": ["message"],
+      "additionalProperties": false
+    },
+    "ToolInvocation": {
+      "type": "object",
+      "properties": {
+        "callId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "name": { "type": "string", "minLength": 1 },
+        "namespace": { "type": "string", "minLength": 1 },
+        "category": { "$ref": "#/$defs/ToolCategory" },
+        "origin": { "$ref": "#/$defs/ToolOrigin" },
+        "input": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" },
+        "rawInput": { "type": "string" },
+        "result": { "$ref": "#/$defs/ToolResult" },
+        "timing": { "$ref": "#/$defs/ToolTiming" },
+        "command": { "$ref": "#/$defs/ToolCommandDetails" },
+        "annotations": { "$ref": "#/$defs/ToolAnnotations" }
+      },
+      "required": ["callId", "name", "category", "origin", "input"],
+      "additionalProperties": false,
+      "description": "Provider-neutral client-safe tool-call envelope. Lifecycle remains ConversationItem.status."
+    },
+    "ToolOrigin": {
+      "type": "object",
+      "properties": {
+        "kind": { "$ref": "#/$defs/ToolOriginKind" },
+        "name": { "type": "string", "minLength": 1 }
+      },
+      "required": ["kind"],
+      "additionalProperties": false
+    },
+    "ToolOriginKind": {
+      "type": "string",
+      "enum": ["builtin", "mcp", "plugin", "server", "custom", "unknown"]
+    },
+    "ToolResult": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ToolContent" }
+        },
+        "structuredContent": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" },
+        "error": { "$ref": "#/$defs/ToolExecutionError" }
+      },
+      "required": ["content"],
+      "additionalProperties": false
+    },
+    "ToolTiming": {
+      "type": "object",
+      "properties": {
+        "startedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
+        "completedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
+        "durationMs": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
     "ConversationItem": {
       "type": "object",
       "properties": {
@@ -184,7 +315,8 @@
           "items": { "$ref": "#/$defs/ConversationContent" }
         },
         "relatedItem": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
-        "approval": { "$ref": "#/$defs/Approval" }
+        "approval": { "$ref": "#/$defs/Approval" },
+        "tool": { "$ref": "#/$defs/ToolInvocation" }
       },
       "required": ["resource", "turn", "conversation", "kind", "status", "contents"],
       "additionalProperties": false
@@ -283,6 +415,14 @@
         "conversation": { "$ref": "#/$defs/Conversation" }
       },
       "required": ["conversation"],
+      "additionalProperties": false
+    },
+    "ConversationItemUpsertedEvent": {
+      "type": "object",
+      "properties": {
+        "item": { "$ref": "#/$defs/ConversationItem" }
+      },
+      "required": ["item"],
       "additionalProperties": false
     },
     "ConversationActivityChangedEvent": {

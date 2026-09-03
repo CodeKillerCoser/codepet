@@ -141,7 +141,10 @@ pub struct OpenCodeMessageContent {
     pub kind: String,
     pub text: Option<String>,
     pub name: Option<String>,
+    #[serde(rename = "callID")]
+    pub call_id: Option<String>,
     pub state: Option<Value>,
+    pub time: Option<OpenCodeMessageTime>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]

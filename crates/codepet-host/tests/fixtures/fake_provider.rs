@@ -349,6 +349,7 @@ impl ProtocolServer for FakeProvider {
                 }],
                 related_item: None,
                 approval: None,
+                tool: None,
             };
             Ok(TurnStartResponse {
                 accepted: true,
@@ -794,6 +795,7 @@ fn history_items(route: &ProviderInstanceRoute, native_id: &str) -> Vec<Conversa
             }],
             related_item: None,
             approval: None,
+            tool: None,
         },
         ConversationItem {
             resource: resource(route, &assistant_item_id),
@@ -810,6 +812,7 @@ fn history_items(route: &ProviderInstanceRoute, native_id: &str) -> Vec<Conversa
             }],
             related_item: None,
             approval: None,
+            tool: None,
         },
     ]
 }

@@ -36,7 +36,7 @@ test("schema and method/event manifests are self-consistent", async () => {
       "core-v1",
       "pet-v1",
       "provider-v1",
-      "gateway-v2",
+      "gateway-v1",
       "channel-lan-v1",
       "desktop-runtime-v0",
     ],
@@ -120,11 +120,17 @@ test("provider history items carry routed conversation ownership", async () => {
   assert.equal(definitions.ConversationSearchRequest.properties.searchTerm.minLength, 1);
   assert.deepEqual(definitions.ConversationSearchRequest.required, ["route", "searchTerm"]);
   assert.equal(definitions.ConversationSearchResponse.properties.pageInfo.$ref, "../../core/v1/schema.json#/$defs/PageInfo");
+  assert.equal(definitions.ConversationItem.properties.tool.$ref, "#/$defs/ToolInvocation");
+  assert.deepEqual(definitions.ToolInvocation.required, ["callId", "name", "category", "origin", "input"]);
+  assert.equal(definitions.ToolInvocation.properties.extension.$ref, "#/$defs/ProviderExtension");
+  assert(record(model, "provider-v1").manifest.events.some(
+    (event) => event.name === "event.conversationItemUpserted",
+  ));
 });
 
 test("gateway resources are routed while plugin lifecycle stays private", async () => {
   const model = await loadProtocolModel();
-  const gateway = record(model, "gateway-v2");
+  const gateway = record(model, "gateway-v1");
   const methods = gateway.manifest.methods.map((method) => method.name);
   assert.equal(methods.some((method) => method.startsWith("instance.") || method === "provider.shutdown"), false);
   assert(methods.includes("event.subscribe"));
@@ -170,6 +176,9 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
     "../../core/v1/schema.json#/$defs/RoutedResourceId",
   );
   assert(gateway.schema.$defs.ConversationItem.required.includes("conversation"));
+  assert.equal(gateway.schema.$defs.ConversationItem.properties.tool.$ref, "#/$defs/ToolInvocation");
+  assert.equal(gateway.schema.$defs.ToolInvocation.properties.extension, undefined);
+  assert(gateway.manifest.events.some((event) => event.name === "conversation.itemUpserted"));
   assert.deepEqual(
     Object.keys(gateway.schema.$defs.TurnOutputDeltaEvent.properties),
     ["turn", "conversation", "itemId", "contentId", "kind", "delta"],
@@ -178,11 +187,11 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
 
 test("provider descriptors and turn controls are explicit discriminated protocol data", async () => {
   const model = await loadProtocolModel();
-  const gatewayTurnSend = record(model, "gateway-v2").manifest.methods.find(
+  const gatewayTurnSend = record(model, "gateway-v1").manifest.methods.find(
     (method) => method.name === "turn.send",
   );
   assert.equal(gatewayTurnSend.idempotency, "nonIdempotent");
-  for (const packageId of ["provider-v1", "gateway-v2"]) {
+  for (const packageId of ["provider-v1", "gateway-v1"]) {
     const definitions = record(model, packageId).schema.$defs;
     const instance = definitions.ProviderInstance;
     assert(instance.required.includes("harness"));
@@ -326,10 +335,10 @@ test("target registry fails closed for fake and planned adapters", async () => {
 
 test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and package boundaries", async () => {
   const model = await loadProtocolModel();
-  const gateway = record(model, "gateway-v2");
-  const gatewayIr = model.protocolIr.packagesById.get("gateway-v2");
+  const gateway = record(model, "gateway-v1");
+  const gatewayIr = model.protocolIr.packagesById.get("gateway-v1");
   assert.equal(gatewayIr.service.methods.length, 13);
-  assert.equal(gatewayIr.service.events.length, 8);
+  assert.equal(gatewayIr.service.events.length, 9);
   assert.equal(
     gatewayIr.service.methods.find((method) => method.name === "turn.send").idempotency,
     "nonIdempotent",
@@ -355,15 +364,15 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   const result = await generateProtocol({ checkMode: true, targets: ["dart"] });
   assert.deepEqual(
     result.generated.map(({ packageId, targetId }) => [packageId, targetId]),
-    [["core-v1", "dart"], ["gateway-v2", "dart"], ["channel-lan-v1", "dart"]],
+    [["core-v1", "dart"], ["gateway-v1", "dart"], ["channel-lan-v1", "dart"]],
   );
 });
 
 test("Dart adapter rejects ambiguous oneOf before emitting source", async () => {
   const model = await loadProtocolModel();
-  const gateway = record(model, "gateway-v2");
+  const gateway = record(model, "gateway-v1");
   const union = model.protocolIr.packagesById
-    .get("gateway-v2")
+    .get("gateway-v1")
     .definitions.find((definition) => definition.name === "ModelCatalog");
   const discriminator = union.discriminator;
   union.discriminator = undefined;

@@ -11,8 +11,8 @@
     },
     "clientVersion": "1.0.0",
     "supportedVersions": {
-      "minVersion": 2,
-      "maxVersion": 2
+      "minVersion": 1,
+      "maxVersion": 1
     },
     "lastEventCursor": "event-40"
   }

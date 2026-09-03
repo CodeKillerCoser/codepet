@@ -3349,6 +3349,7 @@ fn incoming_conversation_id(incoming: &CodexIncoming) -> Option<&str> {
             | CodexNotification::ThreadStatusChanged { thread_id, .. }
             | CodexNotification::TurnStarted { thread_id, .. }
             | CodexNotification::TurnCompleted { thread_id, .. }
+            | CodexNotification::ItemUpserted { thread_id, .. }
             | CodexNotification::OutputDelta { thread_id, .. }
             | CodexNotification::ServerRequestResolved { thread_id, .. },
         ) => Some(thread_id),

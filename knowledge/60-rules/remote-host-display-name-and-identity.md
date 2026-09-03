@@ -6,7 +6,7 @@ macOS Host 的可见名称必须读取系统 ComputerName；设备名称和系�
 
 ## 适用场景
 
-本规则适用于 Tauri 启动时创建设备 registry，以及 Remote pairing QR、pairing exchange、`protocol.handshake` 和 mDNS TXT `name` 的 Host 信息投影。Gateway v2 的 exchange/handshake 使用 `DeviceDescriptor.deviceName/operatingSystem/systemVersion`，QR 契约只携带 `displayName`；不得绕过 Schema 或把平台信息拼进名称。
+本规则适用于 Tauri 启动时创建设备 registry，以及 Remote pairing QR、pairing exchange、`protocol.handshake` 和 mDNS TXT `name` 的 Host 信息投影。Gateway v1 的 exchange/handshake 使用 `DeviceDescriptor.deviceName/operatingSystem/systemVersion`，QR 契约只携带 `displayName`；不得绕过 Schema 或把平台信息拼进名称。
 
 ## 反例
 

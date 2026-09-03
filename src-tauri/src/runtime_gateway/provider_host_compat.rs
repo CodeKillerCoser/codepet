@@ -99,7 +99,8 @@ impl CompatProviderGateway {
     ) -> Result<Option<compat::ProtocolEvent>, compat::ProtocolError> {
         let mapped = match event {
             gateway::ProtocolEvent::DeviceStatusChanged { .. }
-            | gateway::ProtocolEvent::ConversationActivityChanged { .. } => return Ok(None),
+            | gateway::ProtocolEvent::ConversationActivityChanged { .. }
+            | gateway::ProtocolEvent::ConversationItemUpserted { .. } => return Ok(None),
             gateway::ProtocolEvent::ProviderStatusChanged { params, .. } => compat::ProtocolEvent::ProviderStatusChanged {
                 protocol_version: compat::PROTOCOL_VERSION,
                 event_sequence: event_sequence(&params.event_cursor)?,
@@ -346,7 +347,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
             if request.steer_turn_id.is_some() {
                 return Err(compat_error(
                     "capability_unsupported",
-                    "Gateway v2 turn.send starts a new turn and does not steer an active turn"
+                    "Gateway v1 turn.send starts a new turn and does not steer an active turn"
                         .to_string(),
                     false,
                 ));

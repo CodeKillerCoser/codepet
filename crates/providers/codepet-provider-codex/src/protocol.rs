@@ -186,6 +186,11 @@ pub enum CodexThreadItem {
         command: String,
         status: String,
         aggregated_output: Option<String>,
+        cwd: Option<String>,
+        duration_ms: Option<u64>,
+        exit_code: Option<i64>,
+        process_id: Option<String>,
+        command_actions: Vec<CodexCommandAction>,
     },
     FileChange {
         id: String,
@@ -196,10 +201,30 @@ pub enum CodexThreadItem {
         id: String,
         title: String,
         status: Option<String>,
+        details: Option<CodexToolDetails>,
     },
     Unknown {
         id: String,
     },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CodexCommandAction {
+    pub kind: String,
+    pub command: String,
+    pub name: Option<String>,
+    pub path: Option<String>,
+    pub query: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CodexToolDetails {
+    pub name: String,
+    pub namespace: Option<String>,
+    pub origin_kind: String,
+    pub origin_name: Option<String>,
+    pub input: Value,
+    pub result: Option<Value>,
 }
 
 impl CodexThreadItem {
@@ -285,6 +310,19 @@ fn parse_thread_item(value: &Value) -> Result<CodexThreadItem, String> {
             command: thread_item_string(value, "command")?,
             status: thread_item_string(value, "status")?,
             aggregated_output: optional_thread_item_string(value, "aggregatedOutput")?,
+            cwd: optional_thread_item_string(value, "cwd")?,
+            duration_ms: value.get("durationMs").and_then(Value::as_u64),
+            exit_code: value.get("exitCode").and_then(Value::as_i64),
+            process_id: value
+                .get("processId")
+                .and_then(|value| value.as_str().map(str::to_string).or_else(|| value.as_i64().map(|value| value.to_string()))),
+            command_actions: value
+                .get("commandActions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(parse_command_action)
+                .collect(),
         }),
         "fileChange" => Ok(CodexThreadItem::FileChange {
             id,
@@ -303,78 +341,127 @@ fn parse_thread_item(value: &Value) -> Result<CodexThreadItem, String> {
                 thread_item_string(value, "tool")?
             ),
             status: Some(thread_item_string(value, "status")?),
+            details: Some(CodexToolDetails {
+                name: thread_item_string(value, "tool")?,
+                namespace: None,
+                origin_kind: "mcp".to_string(),
+                origin_name: Some(thread_item_string(value, "server")?),
+                input: value.get("arguments").cloned().unwrap_or_else(|| Value::Object(Default::default())),
+                result: value.get("result").cloned(),
+            }),
         }),
         "dynamicToolCall" => {
             let tool = thread_item_string(value, "tool")?;
             let title = optional_thread_item_string(value, "namespace")?
                 .map(|namespace| format!("{namespace}/{tool}"))
-                .unwrap_or(tool);
+                .unwrap_or_else(|| tool.clone());
             Ok(CodexThreadItem::ToolActivity {
                 id,
                 title,
                 status: Some(thread_item_string(value, "status")?),
+                details: Some(CodexToolDetails {
+                    name: tool,
+                    namespace: optional_thread_item_string(value, "namespace")?,
+                    origin_kind: "custom".to_string(),
+                    origin_name: None,
+                    input: value.get("arguments").cloned().unwrap_or_else(|| Value::Object(Default::default())),
+                    result: value.get("result").cloned(),
+                }),
             })
         }
         "functionCallOutput" => {
             let name = thread_item_string(value, "name")?;
             let title = optional_thread_item_string(value, "namespace")?
                 .map(|namespace| format!("{namespace}/{name}"))
-                .unwrap_or(name);
+                .unwrap_or_else(|| name.clone());
             Ok(CodexThreadItem::ToolActivity {
                 id,
                 title,
                 status: Some("completed".to_string()),
+                details: Some(CodexToolDetails {
+                    name,
+                    namespace: optional_thread_item_string(value, "namespace")?,
+                    origin_kind: "custom".to_string(),
+                    origin_name: None,
+                    input: Value::Object(Default::default()),
+                    result: value.get("output").cloned(),
+                }),
             })
         }
         "collabAgentToolCall" => Ok(CodexThreadItem::ToolActivity {
             id,
             title: thread_item_string(value, "tool")?,
             status: Some(thread_item_string(value, "status")?),
+            details: None,
         }),
         "subAgentActivity" => Ok(CodexThreadItem::ToolActivity {
             id,
             title: "Sub-agent activity".to_string(),
             status: Some("completed".to_string()),
+            details: None,
         }),
         "webSearch" => Ok(CodexThreadItem::ToolActivity {
             id,
             title: "Web search".to_string(),
             status: Some("completed".to_string()),
+            details: None,
         }),
         "imageView" => Ok(CodexThreadItem::ToolActivity {
             id,
             title: "Image view".to_string(),
             status: Some("completed".to_string()),
+            details: None,
         }),
         "sleep" => Ok(CodexThreadItem::ToolActivity {
             id,
             title: "Wait".to_string(),
             status: optional_thread_item_string(value, "status")?
                 .or_else(|| Some("completed".to_string())),
+            details: None,
         }),
         "imageGeneration" => Ok(CodexThreadItem::ToolActivity {
             id,
             title: "Image generation".to_string(),
             status: optional_thread_item_string(value, "status")?
                 .or_else(|| Some("completed".to_string())),
+            details: None,
         }),
         "enteredReviewMode" => Ok(CodexThreadItem::ToolActivity {
             id,
             title: "Entered review mode".to_string(),
             status: Some("completed".to_string()),
+            details: None,
         }),
         "exitedReviewMode" => Ok(CodexThreadItem::ToolActivity {
             id,
             title: "Exited review mode".to_string(),
             status: Some("completed".to_string()),
+            details: None,
         }),
         "contextCompaction" => Ok(CodexThreadItem::ToolActivity {
             id,
             title: "Context compaction".to_string(),
             status: Some("completed".to_string()),
+            details: None,
         }),
         _ => Ok(CodexThreadItem::Unknown { id }),
     }
+}
+
+fn parse_command_action(value: &Value) -> Option<CodexCommandAction> {
+    let command = value.get("command")?.as_str()?.to_string();
+    Some(CodexCommandAction {
+        kind: value
+            .get("type")
+            .or_else(|| value.get("kind"))
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string(),
+        command,
+        name: value.get("name").and_then(Value::as_str).map(str::to_string),
+        path: value.get("path").and_then(Value::as_str).map(str::to_string),
+        query: value.get("query").and_then(Value::as_str).map(str::to_string),
+    })
 }
 
 fn thread_item_string(value: &Value, key: &str) -> Result<String, String> {
@@ -597,6 +684,12 @@ pub enum CodexNotification {
     TurnCompleted {
         thread_id: String,
         turn: CodexTurn,
+    },
+    ItemUpserted {
+        thread_id: String,
+        turn_id: String,
+        turn_status: CodexTurnStatus,
+        item: CodexThreadItem,
     },
     OutputDelta {
         native_method: String,

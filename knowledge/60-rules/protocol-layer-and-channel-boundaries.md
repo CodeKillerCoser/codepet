@@ -2,7 +2,7 @@
 
 ## 规则
 
-Gateway v2 业务协议、channel 和 admission 必须保持三层独立：channel 只传输 JSON-RPC object/bytes，admission 只建立设备级信任，Gateway 只处理业务方法。证书指纹、pairing secret、bearer 和 mDNS TXT 不得进入 Gateway schema；Gateway method、Provider capability、conversation/turn DTO 不得进入 channel 或 LAN admission schema。准入成功默认可访问 Host 全部 Provider，不做 Provider ACL，但每个 Provider 范围的请求、响应与事件必须保留 `deviceId + providerPluginId + providerInstanceId`。LAN pairing QR 的 `version` 必须读取 LAN types SDK 从 manifest 生成的 `CHANNEL_LAN_SCHEMA_VERSION`，不得复用 Gateway `PROTOCOL_VERSION`；二者即使曾经数值相同也不是同一个版本空间。types-only SDK 的 schema version 常量必须带 package 前缀，避免 Dart SDK re-export 依赖包时产生命名冲突。
+Gateway v1 业务协议、channel 和 admission 必须保持三层独立：channel 只传输 JSON-RPC object/bytes，admission 只建立设备级信任，Gateway 只处理业务方法。证书指纹、pairing secret、bearer 和 mDNS TXT 不得进入 Gateway schema；Gateway method、Provider capability、conversation/turn DTO 不得进入 channel 或 LAN admission schema。准入成功默认可访问 Host 全部 Provider，不做 Provider ACL，但每个 Provider 范围的请求、响应与事件必须保留 `deviceId + providerPluginId + providerInstanceId`。LAN pairing QR 的 `version` 必须读取 LAN types SDK 从 manifest 生成的 `CHANNEL_LAN_SCHEMA_VERSION`，不得复用 Gateway `PROTOCOL_VERSION`；二者即使曾经数值相同也不是同一个版本空间。types-only SDK 的 schema version 常量必须带 package 前缀，避免 Dart SDK re-export 依赖包时产生命名冲突。
 
 长连接的 transport control plane 不得等待业务 RPC：WebSocket reader 必须持续 poll Ping/Pong/Close 和 credential cancellation，握手后的 Gateway 请求进入每连接有界队列与有界并发 dispatcher，再按 JSON-RPC id 独立返回。响应允许乱序，不能为了保持请求顺序让 `conversation.get` 阻塞 socket reader。writer 必须有界，但单次发送 deadline 要覆盖真实移动网络上的合法大响应；过载由请求队列、并发数和 outbound queue 共同 fail closed，不能用亚秒级 send timeout 把正常背压误判成断联。
 

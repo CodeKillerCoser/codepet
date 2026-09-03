@@ -518,6 +518,17 @@ impl ProviderGatewayService {
                     },
                 }
             }
+            provider::ProtocolEvent::EventConversationItemUpserted { params, .. } => {
+                gateway::ProtocolEvent::ConversationItemUpserted {
+                    jsonrpc: "2.0".to_string(),
+                    params: gateway::ProtocolEventParams {
+                        event_cursor: event_cursor(0),
+                        payload: gateway::ConversationItemUpsertedEvent {
+                            item: map_conversation_item(params.item),
+                        },
+                    },
+                }
+            }
             provider::ProtocolEvent::EventTurnUpserted { params, .. } => {
                 gateway::ProtocolEvent::TurnUpserted {
                     jsonrpc: "2.0".to_string(),
@@ -1427,6 +1438,94 @@ fn map_conversation_item(item: provider::ConversationItem) -> gateway::Conversat
             .collect(),
         related_item: item.related_item,
         approval: item.approval.map(map_approval),
+        tool: item.tool.map(map_tool_invocation),
+    }
+}
+
+fn map_tool_invocation(tool: provider::ToolInvocation) -> gateway::ToolInvocation {
+    gateway::ToolInvocation {
+        call_id: tool.call_id,
+        name: tool.name,
+        namespace: tool.namespace,
+        category: match tool.category {
+            provider::ToolCategory::Command => gateway::ToolCategory::Command,
+            provider::ToolCategory::Read => gateway::ToolCategory::Read,
+            provider::ToolCategory::Write => gateway::ToolCategory::Write,
+            provider::ToolCategory::Search => gateway::ToolCategory::Search,
+            provider::ToolCategory::Web => gateway::ToolCategory::Web,
+            provider::ToolCategory::Agent => gateway::ToolCategory::Agent,
+            provider::ToolCategory::Computer => gateway::ToolCategory::Computer,
+            provider::ToolCategory::Media => gateway::ToolCategory::Media,
+            provider::ToolCategory::Other => gateway::ToolCategory::Other,
+        },
+        origin: gateway::ToolOrigin {
+            kind: match tool.origin.kind {
+                provider::ToolOriginKind::Builtin => gateway::ToolOriginKind::Builtin,
+                provider::ToolOriginKind::Mcp => gateway::ToolOriginKind::Mcp,
+                provider::ToolOriginKind::Plugin => gateway::ToolOriginKind::Plugin,
+                provider::ToolOriginKind::Server => gateway::ToolOriginKind::Server,
+                provider::ToolOriginKind::Custom => gateway::ToolOriginKind::Custom,
+                provider::ToolOriginKind::Unknown => gateway::ToolOriginKind::Unknown,
+            },
+            name: tool.origin.name,
+        },
+        input: tool.input,
+        raw_input: tool.raw_input,
+        result: tool.result.map(|result| gateway::ToolResult {
+            content: result.content.into_iter().map(|content| gateway::ToolContent {
+                content_id: content.content_id,
+                kind: match content.kind {
+                    provider::ToolContentKind::Text => gateway::ToolContentKind::Text,
+                    provider::ToolContentKind::Image => gateway::ToolContentKind::Image,
+                    provider::ToolContentKind::Audio => gateway::ToolContentKind::Audio,
+                    provider::ToolContentKind::ResourceLink => gateway::ToolContentKind::ResourceLink,
+                    provider::ToolContentKind::EmbeddedResource => gateway::ToolContentKind::EmbeddedResource,
+                },
+                text: content.text,
+                uri: content.uri,
+                mime_type: content.mime_type,
+                name: content.name,
+                truncated: content.truncated,
+                total_bytes: content.total_bytes,
+            }).collect(),
+            structured_content: result.structured_content,
+            error: result.error.map(|error| gateway::ToolExecutionError {
+                code: error.code,
+                message: error.message,
+                retryable: error.retryable,
+                details: error.details,
+            }),
+        }),
+        timing: tool.timing.map(|timing| gateway::ToolTiming {
+            started_at: timing.started_at,
+            completed_at: timing.completed_at,
+            duration_ms: timing.duration_ms,
+        }),
+        command: tool.command.map(|command| gateway::ToolCommandDetails {
+            command: command.command,
+            cwd: command.cwd,
+            exit_code: command.exit_code,
+            process_id: command.process_id,
+            actions: command.actions.map(|actions| actions.into_iter().map(|action| gateway::ToolCommandAction {
+                kind: match action.kind {
+                    provider::ToolCommandActionKind::Execute => gateway::ToolCommandActionKind::Execute,
+                    provider::ToolCommandActionKind::Read => gateway::ToolCommandActionKind::Read,
+                    provider::ToolCommandActionKind::List => gateway::ToolCommandActionKind::List,
+                    provider::ToolCommandActionKind::Search => gateway::ToolCommandActionKind::Search,
+                    provider::ToolCommandActionKind::Unknown => gateway::ToolCommandActionKind::Unknown,
+                },
+                command: action.command,
+                name: action.name,
+                path: action.path,
+                query: action.query,
+            }).collect()),
+        }),
+        annotations: tool.annotations.map(|annotations| gateway::ToolAnnotations {
+            read_only: annotations.read_only,
+            destructive: annotations.destructive,
+            idempotent: annotations.idempotent,
+            open_world: annotations.open_world,
+        }),
     }
 }
 

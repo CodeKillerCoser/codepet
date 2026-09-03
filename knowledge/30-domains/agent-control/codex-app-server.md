@@ -29,7 +29,7 @@ Codex Provider v1 广告并实现：
 - `approval.resolve`
 - App Server thread/turn/item/approval 通知到 Standard Protocol event 的映射
 
-Gateway v2 把 `turn.send` 分发到 Provider `turn.start` 或 `turn.steer`。`RuntimeGatewayState` 只把既有 desktop-v0 调用面适配到 `ProviderGatewayService`，不注册 adapter、不持有 App Server session，也不产生第二份事件。Tauri 远程边界继续使用 `runtime_gateway_request`、`runtime_gateway_replay` 与 `runtime-gateway-event`；桌宠不订阅这些接口。
+Gateway v1 把 `turn.send` 分发到 Provider `turn.start` 或 `turn.steer`。`RuntimeGatewayState` 只把既有 desktop-v0 调用面适配到 `ProviderGatewayService`，不注册 adapter、不持有 App Server session，也不产生第二份事件。Tauri 远程边界继续使用 `runtime_gateway_request`、`runtime_gateway_replay` 与 `runtime-gateway-event`；桌宠不订阅这些接口。
 
 ## 实现路径
 
@@ -70,7 +70,7 @@ compat 是无状态 DTO/event 映射：delta 自带 conversation route，所有�
 - `crates/providers/codepet-provider-codex/src/{client,protocol,mapper,provider}.rs`：App Server 子进程、官方 DTO、Provider v1 映射与实例路由。
 - `crates/providers/codepet-provider-codex/src/main.rs`：生成 SDK codec/dispatcher 驱动的 stdio JSON-lines 主循环。
 - `crates/codepet-host`：manifest、进程、实例、Gateway route 与事件 replay。
-- `src-tauri/src/runtime_gateway/provider_host_compat.rs`：既有远程调用面到 Gateway v2 的薄适配。
+- `src-tauri/src/runtime_gateway/provider_host_compat.rs`：既有远程调用面到 Gateway v1 的薄适配。
 - `src-tauri/src/runtime_gateway/tauri_bridge.rs`、`src-tauri/src/lib.rs`：resolver 注入、插件 refresh 与 remote event bridge。
 
 ## 风险与验证
