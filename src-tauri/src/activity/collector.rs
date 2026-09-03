@@ -1,8 +1,7 @@
 use crate::agents::AgentId;
-use crate::events::{frontend_event, normalize_hook_payload, PetEvent, TaskStatus};
+use crate::events::{frontend_event, normalize_hook_payload, PetEvent};
 use crate::settings::{configured_app_data_dir, load_app_settings, AppSettings};
 use crate::state::{ApprovalDecision, SharedState, COLLECTOR_PORT};
-use crate::title_resolver::enrich_event_title;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -80,10 +79,9 @@ pub fn replay_spooled_events(
         if !accepts_legacy_hook_source(agent) || !app_state.agent_enabled(agent) {
             continue;
         }
-        let Ok(event) = normalize_hook_payload(agent, incoming.payload) else {
+        let Ok(mut event) = normalize_hook_payload(agent, incoming.payload) else {
             continue;
         };
-        let mut event = enrich_event_title(event);
         if let Some(spooled_at) = incoming.spooled_at {
             event.created_at = spooled_at;
         }
@@ -129,13 +127,10 @@ async fn receive_hook(
     }
     let event = normalize_hook_payload(agent, incoming.payload)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
-    let event = enrich_event_title(event);
     state.app_state.push_event(event.clone());
     let frontend_event = frontend_event(&event);
     let _ = state.app_handle.emit("pet-event", &frontend_event);
     crate::notifications::notify_event(event.clone());
-    refresh_token_usage_if_needed(&state.app_handle, event.clone());
-    watch_claude_transcript_if_needed(&state, &event);
     Ok(json_utf8_response(Some(frontend_event)))
 }
 
@@ -155,39 +150,6 @@ fn json_utf8_response<T: Serialize>(value: T) -> Response {
         HeaderValue::from_static("application/json; charset=utf-8"),
     );
     response
-}
-
-fn refresh_token_usage_if_needed(app_handle: &AppHandle, event: PetEvent) {
-    let app_handle = app_handle.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        if let Ok(Some(summary)) = crate::token_usage::refresh_usage_for_event(&event) {
-            let _ = app_handle.emit("token-usage-updated", summary);
-        }
-    });
-}
-
-fn watch_claude_transcript_if_needed(state: &CollectorState, event: &PetEvent) {
-    if event.provider != AgentId::Claude
-        || !matches!(event.status, TaskStatus::Thinking | TaskStatus::Running)
-    {
-        return;
-    }
-    let Some(transcript_path) = crate::claude_transcript::transcript_path_from_event(event) else {
-        return;
-    };
-
-    let fallback = event.clone();
-    let app_state = state.app_state.clone();
-    let app_handle = state.app_handle.clone();
-    tauri::async_runtime::spawn(async move {
-        crate::claude_transcript::watch_claude_transcript_for_outcome(
-            transcript_path,
-            fallback,
-            app_state,
-            app_handle,
-        )
-        .await;
-    });
 }
 
 #[derive(Debug, Deserialize)]
