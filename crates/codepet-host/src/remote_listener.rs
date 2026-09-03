@@ -28,6 +28,7 @@ use tokio::time::timeout;
 const PAIRING_EXCHANGE_PATH: &str = "/remote/v1/pairings/:pairing_id/exchange";
 const PAIRING_REQUEST_CREATE_PATH: &str = "/remote/v1/pairing-requests";
 const PAIRING_REQUEST_STATUS_PATH: &str = "/remote/v1/pairing-requests/:request_id";
+const DISCOVERY_PATH: &str = "/remote/v1/discovery";
 const GATEWAY_PATH: &str = "/remote/v2/gateway";
 const CURRENT_CREDENTIAL_PATH: &str = "/remote/v1/credentials/current";
 const MAX_REST_BODY_BYTES: usize = 64 * 1024;
@@ -157,6 +158,7 @@ impl RemoteLanServer {
             sessions: sessions.clone(),
         });
         let app = Router::new()
+            .route(DISCOVERY_PATH, get(discovery))
             .route(PAIRING_EXCHANGE_PATH, post(pairing_exchange))
             .route(PAIRING_REQUEST_CREATE_PATH, post(create_pairing_request))
             .route(PAIRING_REQUEST_STATUS_PATH, get(pairing_request_status))
@@ -538,6 +540,34 @@ struct RemoteLanState {
     remote_identity: lan::LanHostIdentity,
     advertised_endpoints: Arc<Mutex<RemoteLanAdvertisedEndpointState>>,
     sessions: Arc<SessionRegistry>,
+}
+
+#[derive(serde::Serialize)]
+struct RemoteLanDiscoveryResponse {
+    id: String,
+    name: String,
+    fp: String,
+    vmin: u64,
+    vmax: u64,
+    pair: u8,
+}
+
+async fn discovery(
+    State(state): State<Arc<RemoteLanState>>,
+) -> Json<RemoteLanDiscoveryResponse> {
+    let pairing_available = state
+        .remote_access
+        .subscribe_pairing_state()
+        .borrow()
+        .pairing_available;
+    Json(RemoteLanDiscoveryResponse {
+        id: state.remote_identity.device_id.clone(),
+        name: state.remote_identity.descriptor.device_name.clone(),
+        fp: state.remote_identity.identity_fingerprint.clone(),
+        vmin: lan::CHANNEL_LAN_SCHEMA_VERSION,
+        vmax: lan::CHANNEL_LAN_SCHEMA_VERSION,
+        pair: u8::from(pairing_available),
+    })
 }
 
 async fn pairing_exchange(

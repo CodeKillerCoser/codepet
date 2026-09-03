@@ -520,6 +520,31 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     let certificate_der = host.remote_access.tls_identity().certificate_der().to_vec();
     let client = PinnedTlsClient::new(address, certificate_der.clone());
 
+    let (discovery_status, discovery_body) = client
+        .json_request("GET", "/remote/v1/discovery", None, None)
+        .await;
+    assert_eq!(discovery_status, 200);
+    assert_eq!(discovery_body["id"], "device-lan-listener");
+    assert_eq!(discovery_body["name"], "LAN Listener Test Host");
+    assert_eq!(
+        discovery_body["fp"],
+        host.remote_access
+            .tls_identity()
+            .certificate_fingerprint()
+    );
+    assert_eq!(discovery_body["vmin"], lan::CHANNEL_LAN_SCHEMA_VERSION);
+    assert_eq!(discovery_body["vmax"], lan::CHANNEL_LAN_SCHEMA_VERSION);
+    assert_eq!(discovery_body["pair"], 0);
+
+    let discovery_pairing = host.remote_access.begin_pairing().unwrap();
+    let (_, pairing_discovery_body) = client
+        .json_request("GET", "/remote/v1/discovery", None, None)
+        .await;
+    assert_eq!(pairing_discovery_body["pair"], 1);
+    host.remote_access
+        .cancel_pairing(&discovery_pairing.pairing_id)
+        .unwrap();
+
     let staged = server.stage_advertised_host("127.0.0.2").unwrap();
     assert_eq!(server.advertised_host().as_deref(), Some("127.0.0.1"));
     let staged_pairing = host.remote_access.begin_pairing().unwrap();
