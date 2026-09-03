@@ -167,7 +167,7 @@ observer 与 `conversation.create` 共用 instance session lifecycle：请求先
 - observer crash 会使当前 Provider instance fail closed；本阶段没有 observer 自动 supervisor/backoff。active execution 会被关闭，需由既有 Provider restart/refresh 路径恢复。
 - Gateway v1 `turn.send` 只表示空闲 conversation 的新 turn。compat 不按 Provider 或 harness 身份推断 catalog/selection 形状，也不按 Codex `pluginId` 推断 `canSteer`。
 - `conversation.acquireInteraction` 的 30 秒 Provider 租期与 Remote 10 秒续租周期目前是固定常量；没有跨 Provider 持久 lease token，也不承诺 App 被系统长期挂起后仍保有 writer。
-- compat v0 的 conversation/turn 模型要求 permission 与时间戳，也没有 `waiting-user-input`；v1 无法确认这些字段或状态时 compat 明确返回 `compat_data_unrepresentable`，不会补默认值。
+- compat v0 的 conversation/turn 模型要求 permission 与时间戳，也没有 `waiting-user-input`；v1 无法确认这些字段或状态时 compat 映射明确返回 `compat_data_unrepresentable`，不会补默认值。长期 live subscription 只把这一类错误降级为跳过单个事件并继续读取；无效 cursor、transport/subscription fault 和其他 mapping error 仍终止 bridge，避免一个 `Turn.updatedAt=None` 永久切断后续事件。
 - remote 与 Desktop 同名 thread 不做去重、来源排除或状态同步；两条链路在本阶段按独立资源展示和操作。
 - 单个 turn 的 `thread/turns/list(limit=1)` 响应若超过 16 MiB，当前实现仍 fail closed；这类内容需要 item/content 级分页。已实测的 `0.151.0-alpha.7.2` 对 `thread/items/list` 返回 `-32601`，当前 Provider 不依赖它，也不统一抬高上限。
 - Provider/Gateway v1 的 `conversation.get` 已支持可选 cursor/limit 和 pageInfo；Remote 当前会拉完所有历史页再交给详情模型，因此解决了单帧上限，但超长会话仍有总传输量和客户端内存压力，后续可把既有“显示更早消息”改为按需请求旧页。

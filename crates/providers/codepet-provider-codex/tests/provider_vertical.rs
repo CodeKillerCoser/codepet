@@ -3,7 +3,8 @@ use codepet_provider_codex::{
     CODEX_PLUGIN_ID,
 };
 use codepet_provider_sdk::{
-    ApprovalDecision, ApprovalResolveRequest, ConversationCreateRequest, ConversationListRequest,
+    ApprovalDecision, ApprovalResolveRequest, ConversationAcquireInteractionRequest,
+    ConversationCreateRequest, ConversationListRequest,
     ConversationProjectFilter, ConversationProjectFilterAll, ConversationProjectFilterAllKind,
     ConversationProjectFilterProject,
     ConversationProjectFilterProjectKind,
@@ -181,6 +182,14 @@ impl ExecutionLifecycleHook for BlockResumeUntilCancelledHook {
     }
 }
 
+struct ShortInteractionLeaseHook;
+
+impl ExecutionLifecycleHook for ShortInteractionLeaseHook {
+    fn interaction_lease_duration(&self) -> Duration {
+        Duration::from_millis(100)
+    }
+}
+
 #[tokio::test]
 async fn project_methods_and_project_owned_conversation_fail_closed_when_probe_is_unsupported() {
     let marker = tempfile::NamedTempFile::new().unwrap();
@@ -223,6 +232,56 @@ async fn project_methods_and_project_owned_conversation_fail_closed_when_probe_i
     .unwrap_err();
     assert_eq!(error.code, "capability_unsupported");
     ProviderProtocolServer::instance_stop(provider.as_ref(), InstanceStopRequest { route })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn project_owned_conversation_uses_native_project_id_without_inferring_cwd() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("project-owned-create.txt");
+    let (provider, route, _) =
+        configured_direct_provider("project-owned-create", &marker).await;
+    let project = conversation_resource(&route, "project-fixture");
+
+    let created = ProviderProtocolServer::conversation_create(
+        provider.as_ref(),
+        ConversationCreateRequest {
+            route: route.clone(),
+            project: Some(project.clone()),
+            title: None,
+            permission_level: "workspace-write".to_string(),
+            model: Some("gpt-fixture".to_string()),
+            reasoning_effort: Some("high".to_string()),
+            workspace_root: None,
+            workspace_mode: None,
+            extension: None,
+        },
+    )
+    .await
+    .unwrap()
+    .conversation;
+    assert_eq!(created.project.as_ref(), Some(&project));
+
+    let fetched = ProviderProtocolServer::conversation_get(
+        provider.as_ref(),
+        ConversationGetRequest {
+            conversation: created.resource,
+            cursor: None,
+            limit: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(fetched.conversation.project.as_ref(), Some(&project));
+
+    ProviderProtocolServer::instance_stop(
+        provider.as_ref(),
+        InstanceStopRequest { route: route.clone() },
+    )
+    .await
+    .unwrap();
+    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {})
         .await
         .unwrap();
 }
@@ -1669,6 +1728,124 @@ async fn terminal_cleanup_hides_the_closing_slot_before_publishing_the_terminal_
     let execution_pids = session_pids(&marker, "thread/resume", "thread-terminal-race");
     assert_eq!(execution_pids.len(), 2);
     assert_ne!(execution_pids[0], execution_pids[1]);
+
+    ProviderProtocolServer::instance_stop(
+        provider.as_ref(),
+        InstanceStopRequest { route: route.clone() },
+    )
+    .await
+    .unwrap();
+    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {})
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn delayed_output_after_completed_user_item_keeps_writer_until_terminal_is_forwarded() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("delayed-user-item-output.txt");
+    let (event_sender, event_receiver) = mpsc::channel();
+    let terminal_forwarded_while_running = Arc::new(AtomicBool::new(false));
+    let sink_terminal_forwarded_while_running = terminal_forwarded_while_running.clone();
+    let sink_marker = marker.clone();
+    let events = Arc::new(move |event: ProtocolEvent| {
+        if matches!(
+            &event,
+            ProtocolEvent::EventTurnUpserted { params, .. }
+                if params.turn.resource.native_resource_id == "turn-started"
+                    && params.turn.status == codepet_provider_sdk::TurnStatus::Completed
+        ) {
+            let execution_pids =
+                session_pids(&sink_marker, "turn/start", "thread-delayed-user-item");
+            sink_terminal_forwarded_while_running.store(
+                execution_pids.len() == 1 && process_is_running(execution_pids[0]),
+                Ordering::SeqCst,
+            );
+        }
+        event_sender.send(event).map_err(|error| codepet_provider_sdk::ProtocolError {
+            code: "test_event_sink_closed".to_string(),
+            message: error.to_string(),
+            retryable: false,
+            details: None,
+        })
+    });
+    let (provider, route, capability_revision) =
+        configured_direct_provider_with_events_and_hook(
+            "delayed-output-after-user-item",
+            &marker,
+            events,
+            Some(Arc::new(ShortInteractionLeaseHook)),
+        )
+        .await;
+    let conversation = conversation_resource(&route, "thread-delayed-user-item");
+    ProviderProtocolServer::conversation_acquire_interaction(
+        provider.as_ref(),
+        ConversationAcquireInteractionRequest {
+            conversation: conversation.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    clear_session_log(&marker);
+
+    let started = ProviderProtocolServer::turn_start(
+        provider.as_ref(),
+        TurnStartRequest {
+            conversation: conversation.clone(),
+            client_request_id: "delayed-user-item".to_string(),
+            capability_revision,
+            input: TurnInput {
+                kind: TurnInputKind::Text,
+                text: "keep the writer while model output is delayed".to_string(),
+            },
+            selection: TurnSelection {
+                access_mode_id: None,
+                reasoning_effort_id: None,
+                model: None,
+            },
+        },
+    )
+    .await
+    .unwrap();
+    assert!(started.user_item.is_none());
+    let execution_pid = session_pids(&marker, "turn/start", "thread-delayed-user-item")[0];
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut saw_completed_user_item = false;
+    let mut saw_delayed_output = false;
+    let mut saw_terminal = false;
+    while !saw_terminal {
+        let event = event_receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
+        match event {
+            ProtocolEvent::EventConversationItemUpserted { params, .. }
+                if params.item.resource.native_resource_id == "user-one"
+                    && params.item.status
+                        == codepet_provider_sdk::ConversationItemStatus::Completed =>
+            {
+                saw_completed_user_item = true;
+            }
+            ProtocolEvent::EventTurnOutputDelta { params, .. }
+                if params.turn.native_resource_id == "turn-started"
+                    && params.delta == "delayed fixture output" =>
+            {
+                assert!(saw_completed_user_item);
+                assert!(process_is_running(execution_pid));
+                saw_delayed_output = true;
+            }
+            ProtocolEvent::EventTurnUpserted { params, .. }
+                if params.turn.resource.native_resource_id == "turn-started"
+                    && params.turn.status == codepet_provider_sdk::TurnStatus::Completed =>
+            {
+                assert!(saw_delayed_output);
+                saw_terminal = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_completed_user_item);
+    assert!(terminal_forwarded_while_running.load(Ordering::SeqCst));
 
     ProviderProtocolServer::instance_stop(
         provider.as_ref(),

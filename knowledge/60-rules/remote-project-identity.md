@@ -29,6 +29,7 @@ Remote 项目身份只来自 Provider 明确返回的 `Project.resource` 和 `Co
 - Codex instance start 在已启用 experimental API 的 session 上探测 `project/list`。只有成功时才整组广告并映射五个项目方法；`-32601` 表示不支持，其他探测错误使 instance start 失败。
 - `project/changed` 只由 observer session 映射为 Provider `event.projectChanged`，再由 Host 转换为 Gateway replayable `project.changed`；conversation writer session 不重复发布。
 - 保留 `workspaceRoot = Thread.cwd` 的原始字符串；不执行规范化、canonicalize 或文件系统扫描。
+- Codex App Server 的 `Project.id` 与 `Thread.projectId` 是 Provider/Gateway 的权威项目契约。Codex Desktop sidebar 另有 legacy local project id、legacy→App Server id 映射和 thread assignment 私有状态；独立 App Server 进程写入正确的 `Thread.projectId`，不代表 Desktop 私有 registry 会跨进程刷新。Provider 不写 `.codex-global-state.json`，不伪造 legacy id，也不把 Desktop sidebar 可见性当作 `conversation.create` 成功条件。
 
 ## 来源
 
@@ -39,6 +40,7 @@ Remote 项目身份只来自 Provider 明确返回的 `Project.resource` 和 `Co
 - `npm run protocol:check`：校验 schema/manifest、typed map codegen 和生成文件无漂移。
 - Codex client 单测断言五个上游方法、精确参数、`thread/list.projectId` 三态和 `thread/start.projectId` 省略/显式映射。
 - Codex Provider vertical fixture 覆盖项目 CRUD、项目筛选、项目归属创建，以及 `project/list = -32601` 时能力与创建均 fail closed。
+- 项目归属创建 fixture 必须在独立后续 `thread/read` 中恢复同一个 `projectId`，同时断言 `thread/start` 发送的是显式项目 native id 且没有用 cwd 推断。实机诊断先分别检查 App Server state DB 的 `threads.project_id` 与 Desktop legacy registry；二者不一致时不得归因为 Remote/Host 丢字段。
 - Host Gateway 集成测试覆盖五个能力、CRUD、`snapshotCursor`、route-less 项目筛选的路由收敛和项目归属创建。
 - mapper 测试断言 `workspaceRoot` 原样等于 native cwd、Project routed identity 和 `project.changed` changeType。
 - `cargo test --workspace` 与 Dart Gateway SDK `dart test` 覆盖 Rust/Dart DTO 和 canonical JSON fixtures。

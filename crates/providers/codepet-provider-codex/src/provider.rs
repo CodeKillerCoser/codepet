@@ -70,6 +70,10 @@ pub trait ExecutionLifecycleHook: Send + Sync + 'static {
     fn before_resume_linearization(&self, _conversation_id: &str) {}
 
     fn after_execution_cancelled(&self, _conversation_id: &str) {}
+
+    fn interaction_lease_duration(&self) -> Duration {
+        INTERACTION_LEASE_DURATION
+    }
 }
 
 struct NoopExecutionLifecycleHook;
@@ -1417,10 +1421,9 @@ impl CodexInstanceRuntime {
                 false,
             ));
         }
-        if let CodexIncoming::Notification(CodexNotification::TurnStarted { turn, .. }) = &incoming
-        {
+        if let Some(turn_id) = incoming_active_turn_id(&incoming, session_generation) {
             if let Some(slot) = self.execution_slot(conversation_id, session_generation) {
-                slot.mark_active_turn(session_generation, &turn.id);
+                slot.mark_active_turn(session_generation, turn_id);
             }
         }
         match incoming {
@@ -2591,9 +2594,10 @@ impl Provider for CodexProvider {
                                     false,
                                 )
                             })?;
+                        let lease_duration = runtime.lifecycle_hook.interaction_lease_duration();
                         if !handle.slot.renew_interaction(
                             &handle.generation,
-                            Instant::now() + INTERACTION_LEASE_DURATION,
+                            Instant::now() + lease_duration,
                         ) {
                             return Ok(ExecutionStep::Retry);
                         }
@@ -2613,7 +2617,7 @@ impl Provider for CodexProvider {
                                     }),
                                 },
                                 lease_expires_at: Some(now_ms().saturating_add(
-                                    INTERACTION_LEASE_DURATION
+                                    lease_duration
                                         .as_millis()
                                         .min(u128::from(u64::MAX))
                                         as u64,
@@ -3574,6 +3578,22 @@ fn incoming_conversation_id(incoming: &CodexIncoming) -> Option<&str> {
         CodexIncoming::Notification(CodexNotification::ProjectChanged { .. })
         | CodexIncoming::Notification(CodexNotification::Unknown { .. })
         | CodexIncoming::UnsupportedServerRequest { .. } => None,
+    }
+}
+
+fn incoming_active_turn_id<'a>(
+    incoming: &'a CodexIncoming,
+    session_generation: &str,
+) -> Option<&'a str> {
+    match incoming {
+        CodexIncoming::Notification(CodexNotification::TurnStarted { turn, .. }) => Some(&turn.id),
+        CodexIncoming::Notification(
+            CodexNotification::ItemUpserted { turn_id, .. }
+            | CodexNotification::OutputDelta { turn_id, .. },
+        ) => Some(turn_id),
+        CodexIncoming::ApprovalRequested(request)
+            if request.session_generation == session_generation => Some(&request.turn_id),
+        _ => None,
     }
 }
 
