@@ -1,6 +1,6 @@
 use codepet_gateway_sdk::{
     ConversationCreateRequest, ConversationListRequest, GatewayProviderRoute, ProtocolServer,
-    ProviderInstance, ProviderListRequest, ProviderStatus,
+    ProviderListRequest, ProviderStatus, ProviderSummary,
 };
 use codepet_host::{
     DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginManager, PluginManagerConfig,
@@ -124,35 +124,36 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
 
     let listed = ProtocolServer::provider_list(
         gateway.as_ref(),
-        ProviderListRequest { device_id: None },
+        ProviderListRequest {},
     )
     .await
     .unwrap();
     assert_eq!(listed.providers.len(), 3);
-    let codex = ready_provider(&listed.providers, CODEX_PLUGIN_ID, &device_id);
-    let claude = ready_provider(&listed.providers, CLAUDE_PLUGIN_ID, &device_id);
-    let opencode = ready_provider(&listed.providers, OPENCODE_PLUGIN_ID, &device_id);
+    let codex = ready_provider(&listed.providers, "codex", &device_id);
+    let claude = ready_provider(&listed.providers, "claude", &device_id);
+    let opencode = ready_provider(&listed.providers, "opencode", &device_id);
     assert_eq!(
-        codex.icon.as_deref(),
+        codex.identity.icon.as_deref(),
         Some("https://avatars.githubusercontent.com/u/14957082?s=200&v=4")
     );
     assert_eq!(
-        claude.icon.as_deref(),
+        claude.identity.icon.as_deref(),
         Some("https://cdn.prod.website-files.com/6889473510b50328dbb70ae6/68c33859cc6cd903686c66a2_apple-touch-icon.png")
     );
     assert_eq!(
-        opencode.icon.as_deref(),
+        opencode.identity.icon.as_deref(),
         Some("https://opencode.ai/favicon-96x96-v3.png")
     );
 
-    let codex_conversations = conversation_list(gateway.as_ref(), codex).await;
+    let codex_conversations = conversation_list(gateway.as_ref(), codex, &device_id, CODEX_PLUGIN_ID).await;
     assert_eq!(codex_conversations.len(), 1);
     assert_eq!(
         codex_conversations[0].resource.native_resource_id,
         "thread-listed"
     );
 
-    let opencode_conversations = conversation_list(gateway.as_ref(), opencode).await;
+    let opencode_conversations =
+        conversation_list(gateway.as_ref(), opencode, &device_id, OPENCODE_PLUGIN_ID).await;
     assert_eq!(opencode_conversations.len(), 1);
     assert_eq!(
         opencode_conversations[0].resource.native_resource_id,
@@ -162,7 +163,11 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
     let claude_conversation = ProtocolServer::conversation_create(
         gateway.as_ref(),
         ConversationCreateRequest {
-            route: claude.route.clone(),
+            route: GatewayProviderRoute {
+                device_id: device_id.clone(),
+                provider_plugin_id: CLAUDE_PLUGIN_ID.to_string(),
+                provider_instance_id: claude.id.clone(),
+            },
             project: None,
             title: Some("CodePet Claude integration".to_string()),
             permission_level: "workspace-write".to_string(),
@@ -195,30 +200,31 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
 }
 
 fn ready_provider<'a>(
-    providers: &'a [ProviderInstance],
-    plugin_id: &str,
-    device_id: &str,
-) -> &'a ProviderInstance {
+    providers: &'a [ProviderSummary],
+    name: &str,
+    _device_id: &str,
+) -> &'a ProviderSummary {
     let provider = providers
         .iter()
-        .find(|provider| provider.plugin_id == plugin_id)
-        .unwrap_or_else(|| panic!("Provider {plugin_id} must be visible through the Gateway"));
-    assert_eq!(provider.status, ProviderStatus::Ready);
-    assert_eq!(provider.route.device_id, device_id);
+        .find(|provider| provider.id.contains(name))
+        .unwrap_or_else(|| panic!("Provider {name} must be visible through the Gateway"));
+    assert_eq!(provider.runtime.status, ProviderStatus::Ready);
     provider
 }
 
 async fn conversation_list(
     gateway: &ProviderGatewayService,
-    provider: &ProviderInstance,
+    provider: &ProviderSummary,
+    device_id: &str,
+    plugin_id: &str,
 ) -> Vec<codepet_gateway_sdk::Conversation> {
     ProtocolServer::conversation_list(
         gateway,
         ConversationListRequest {
             route: Some(GatewayProviderRoute {
-                device_id: provider.route.device_id.clone(),
-                provider_plugin_id: provider.route.provider_plugin_id.clone(),
-                provider_instance_id: provider.route.provider_instance_id.clone(),
+                device_id: device_id.to_string(),
+                provider_plugin_id: plugin_id.to_string(),
+                provider_instance_id: provider.id.clone(),
             }),
             cursor: None,
             limit: Some(10),

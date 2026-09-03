@@ -441,6 +441,8 @@ pub struct HarnessDescriptor {
     pub display_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executable_path: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -704,6 +706,31 @@ pub struct ProviderApproval {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ProviderAuthentication {
+    pub status: ProviderAuthenticationStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_text: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProviderAuthenticationStatus {
+    #[serde(rename = "unknown")]
+    Unknown,
+    #[serde(rename = "signed-in")]
+    SignedIn,
+    #[serde(rename = "signed-out")]
+    SignedOut,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "error")]
+    Error,
+    #[serde(rename = "unsupported")]
+    Unsupported,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ProviderCapabilities {
     pub revision: String,
     pub methods: Vec<ProviderCapability>,
@@ -824,6 +851,10 @@ pub struct ProviderInstance {
     pub display_name: String,
     pub harness: HarnessDescriptor,
     pub status: InstanceStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authentication: Option<ProviderAuthentication>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<ProviderUsage>,
     pub capabilities: ProviderCapabilities,
 }
 
@@ -880,6 +911,26 @@ pub struct ProviderTurn {
     pub completed_at: Option<TimestampMs>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extension: Option<ProviderExtension>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProviderUsage {
+    pub display_text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<TimestampMs>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Vec<ProviderUsageDetail>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProviderUsageDetail {
+    pub namespace: String,
+    pub schema_version: String,
+    pub data: JsonObject,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

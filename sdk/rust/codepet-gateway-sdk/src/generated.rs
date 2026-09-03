@@ -460,48 +460,6 @@ pub struct ConversationUpsertedEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct Device {
-    pub device_id: DeviceId,
-    pub display_name: String,
-    pub status: DeviceStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_seen_at: Option<TimestampMs>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct DeviceListRequest {
-
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct DeviceListResponse {
-    pub devices: Vec<Device>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DeviceStatus {
-    #[serde(rename = "online")]
-    Online,
-    #[serde(rename = "offline")]
-    Offline,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct DeviceStatusChangedEvent {
-    pub device: Device,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub previous_status: Option<DeviceStatus>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
 pub struct EventSubscribeRequest {
     pub after_cursor: EventCursor,
 }
@@ -580,9 +538,17 @@ pub enum GatewayCapability {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct GatewayHostIdentity {
-    pub device_id: DeviceId,
-    pub descriptor: DeviceDescriptor,
+pub struct GatewayDevice {
+    pub name: String,
+    pub operating_system: String,
+    pub system_version: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct GatewayProtocol {
+    pub version: ProtocolVersion,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -646,23 +612,10 @@ pub struct HandshakeRequest {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct HandshakeResponse {
-    pub selected_version: ProtocolVersion,
-    pub server_name: String,
-    pub server_version: String,
-    pub device: GatewayHostIdentity,
-    pub devices: Vec<Device>,
-    pub providers: Vec<ProviderInstance>,
+    pub protocol: GatewayProtocol,
+    pub device: GatewayDevice,
+    pub providers: Vec<ProviderSummary>,
     pub event_cursor: EventCursor,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct HarnessDescriptor {
-    pub id: String,
-    pub display_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -806,42 +759,103 @@ pub struct ProjectUpdateResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct ProviderInstance {
-    pub route: GatewayProviderRoute,
-    pub plugin_id: ProviderPluginId,
-    pub display_name: String,
+pub struct ProviderAuthentication {
+    pub status: ProviderAuthenticationStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    pub harness: HarnessDescriptor,
-    pub status: ProviderStatus,
+    pub display_text: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProviderAuthenticationStatus {
+    #[serde(rename = "unknown")]
+    Unknown,
+    #[serde(rename = "signed-in")]
+    SignedIn,
+    #[serde(rename = "signed-out")]
+    SignedOut,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "error")]
+    Error,
+    #[serde(rename = "unsupported")]
+    Unsupported,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProviderCapabilitiesSummary {
+    pub revision: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProviderChangedEvent {
+    pub provider: ProviderSummary,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProviderDescribeRequest {
+    pub id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProviderDescribeResponse {
+    pub provider_id: String,
     pub capabilities: GatewayCapabilities,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct ProviderListRequest {
+pub struct ProviderIdentity {
+    pub display_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub device_id: Option<DeviceId>,
+    pub icon: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProviderListRequest {
+
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ProviderListResponse {
-    pub providers: Vec<ProviderInstance>,
+    pub providers: Vec<ProviderSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProviderRuntime {
+    pub status: ProviderStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executable_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authentication: Option<ProviderAuthentication>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<ProviderUsage>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProviderStatus {
-    #[serde(rename = "disconnected")]
-    Disconnected,
     #[serde(rename = "connecting")]
     Connecting,
     #[serde(rename = "ready")]
     Ready,
+    #[serde(rename = "stopped")]
+    Stopped,
     #[serde(rename = "unavailable")]
     Unavailable,
     #[serde(rename = "error")]
@@ -851,10 +865,31 @@ pub enum ProviderStatus {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct ProviderStatusChangedEvent {
-    pub provider: ProviderInstance,
+pub struct ProviderSummary {
+    pub id: String,
+    pub identity: ProviderIdentity,
+    pub runtime: ProviderRuntime,
+    pub capabilities: ProviderCapabilitiesSummary,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProviderUsage {
+    pub display_text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub previous_status: Option<ProviderStatus>,
+    pub observed_at: Option<TimestampMs>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Vec<ProviderUsageDetail>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProviderUsageDetail {
+    pub namespace: String,
+    pub schema_version: String,
+    pub data: JsonObject,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1192,10 +1227,10 @@ pub enum ProtocolMethod {
     ProtocolHandshake,
     #[serde(rename = "event.subscribe")]
     EventSubscribe,
-    #[serde(rename = "device.list")]
-    DeviceList,
     #[serde(rename = "provider.list")]
     ProviderList,
+    #[serde(rename = "provider.describe")]
+    ProviderDescribe,
     #[serde(rename = "project.list")]
     ProjectList,
     #[serde(rename = "project.get")]
@@ -1231,8 +1266,8 @@ impl ProtocolMethod {
         match self {
             Self::ProtocolHandshake => "protocol.handshake",
             Self::EventSubscribe => "event.subscribe",
-            Self::DeviceList => "device.list",
             Self::ProviderList => "provider.list",
+            Self::ProviderDescribe => "provider.describe",
             Self::ProjectList => "project.list",
             Self::ProjectGet => "project.get",
             Self::ProjectCreate => "project.create",
@@ -1254,8 +1289,8 @@ impl ProtocolMethod {
         match self {
             Self::ProtocolHandshake => ProtocolDispatchLane::Normal,
             Self::EventSubscribe => ProtocolDispatchLane::Normal,
-            Self::DeviceList => ProtocolDispatchLane::Normal,
             Self::ProviderList => ProtocolDispatchLane::Normal,
+            Self::ProviderDescribe => ProtocolDispatchLane::Normal,
             Self::ProjectList => ProtocolDispatchLane::Normal,
             Self::ProjectGet => ProtocolDispatchLane::Normal,
             Self::ProjectCreate => ProtocolDispatchLane::Normal,
@@ -1277,8 +1312,8 @@ impl ProtocolMethod {
         match self {
             Self::ProtocolHandshake => None,
             Self::EventSubscribe => None,
-            Self::DeviceList => None,
             Self::ProviderList => None,
+            Self::ProviderDescribe => None,
             Self::ProjectList => Some(GatewayCapability::ProjectList),
             Self::ProjectGet => Some(GatewayCapability::ProjectGet),
             Self::ProjectCreate => Some(GatewayCapability::ProjectCreate),
@@ -1304,8 +1339,8 @@ impl std::str::FromStr for ProtocolMethod {
         match value {
             "protocol.handshake" => Ok(Self::ProtocolHandshake),
             "event.subscribe" => Ok(Self::EventSubscribe),
-            "device.list" => Ok(Self::DeviceList),
             "provider.list" => Ok(Self::ProviderList),
+            "provider.describe" => Ok(Self::ProviderDescribe),
             "project.list" => Ok(Self::ProjectList),
             "project.get" => Ok(Self::ProjectGet),
             "project.create" => Ok(Self::ProjectCreate),
@@ -1329,10 +1364,8 @@ impl std::str::FromStr for ProtocolMethod {
 pub enum ProtocolEventName {
     #[serde(rename = "project.changed")]
     ProjectChanged,
-    #[serde(rename = "device.statusChanged")]
-    DeviceStatusChanged,
-    #[serde(rename = "provider.statusChanged")]
-    ProviderStatusChanged,
+    #[serde(rename = "provider.changed")]
+    ProviderChanged,
     #[serde(rename = "conversation.upserted")]
     ConversationUpserted,
     #[serde(rename = "conversation.itemUpserted")]
@@ -1353,8 +1386,7 @@ impl ProtocolEventName {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ProjectChanged => "project.changed",
-            Self::DeviceStatusChanged => "device.statusChanged",
-            Self::ProviderStatusChanged => "provider.statusChanged",
+            Self::ProviderChanged => "provider.changed",
             Self::ConversationUpserted => "conversation.upserted",
             Self::ConversationItemUpserted => "conversation.itemUpserted",
             Self::ConversationActivityChanged => "conversation.activityChanged",
@@ -1372,8 +1404,7 @@ impl std::str::FromStr for ProtocolEventName {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "project.changed" => Ok(Self::ProjectChanged),
-            "device.statusChanged" => Ok(Self::DeviceStatusChanged),
-            "provider.statusChanged" => Ok(Self::ProviderStatusChanged),
+            "provider.changed" => Ok(Self::ProviderChanged),
             "conversation.upserted" => Ok(Self::ConversationUpserted),
             "conversation.itemUpserted" => Ok(Self::ConversationItemUpserted),
             "conversation.activityChanged" => Ok(Self::ConversationActivityChanged),
@@ -1408,17 +1439,17 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: EventSubscribeRequest,
     },
-    #[serde(rename = "device.list")]
-    DeviceList {
-        jsonrpc: String,
-        id: RequestId,
-        params: DeviceListRequest,
-    },
     #[serde(rename = "provider.list")]
     ProviderList {
         jsonrpc: String,
         id: RequestId,
         params: ProviderListRequest,
+    },
+    #[serde(rename = "provider.describe")]
+    ProviderDescribe {
+        jsonrpc: String,
+        id: RequestId,
+        params: ProviderDescribeRequest,
     },
     #[serde(rename = "project.list")]
     ProjectList {
@@ -1524,15 +1555,15 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode event.subscribe request params", error))?,
             }),
-            ProtocolMethod::DeviceList => Ok(Self::DeviceList {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode device.list request params", error))?,
-            }),
             ProtocolMethod::ProviderList => Ok(Self::ProviderList {
                 jsonrpc,
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode provider.list request params", error))?,
+            }),
+            ProtocolMethod::ProviderDescribe => Ok(Self::ProviderDescribe {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode provider.describe request params", error))?,
             }),
             ProtocolMethod::ProjectList => Ok(Self::ProjectList {
                 jsonrpc,
@@ -1611,8 +1642,8 @@ impl ProtocolRequest {
         match self {
             Self::ProtocolHandshake { jsonrpc, .. } => jsonrpc,
             Self::EventSubscribe { jsonrpc, .. } => jsonrpc,
-            Self::DeviceList { jsonrpc, .. } => jsonrpc,
             Self::ProviderList { jsonrpc, .. } => jsonrpc,
+            Self::ProviderDescribe { jsonrpc, .. } => jsonrpc,
             Self::ProjectList { jsonrpc, .. } => jsonrpc,
             Self::ProjectGet { jsonrpc, .. } => jsonrpc,
             Self::ProjectCreate { jsonrpc, .. } => jsonrpc,
@@ -1634,8 +1665,8 @@ impl ProtocolRequest {
         match self {
             Self::ProtocolHandshake { id, .. } => id,
             Self::EventSubscribe { id, .. } => id,
-            Self::DeviceList { id, .. } => id,
             Self::ProviderList { id, .. } => id,
+            Self::ProviderDescribe { id, .. } => id,
             Self::ProjectList { id, .. } => id,
             Self::ProjectGet { id, .. } => id,
             Self::ProjectCreate { id, .. } => id,
@@ -1657,8 +1688,8 @@ impl ProtocolRequest {
         match self {
             Self::ProtocolHandshake { .. } => ProtocolMethod::ProtocolHandshake,
             Self::EventSubscribe { .. } => ProtocolMethod::EventSubscribe,
-            Self::DeviceList { .. } => ProtocolMethod::DeviceList,
             Self::ProviderList { .. } => ProtocolMethod::ProviderList,
+            Self::ProviderDescribe { .. } => ProtocolMethod::ProviderDescribe,
             Self::ProjectList { .. } => ProtocolMethod::ProjectList,
             Self::ProjectGet { .. } => ProtocolMethod::ProjectGet,
             Self::ProjectCreate { .. } => ProtocolMethod::ProjectCreate,
@@ -1694,15 +1725,10 @@ pub enum ProtocolEvent {
         jsonrpc: String,
         params: ProtocolEventParams<ProjectChangedEvent>,
     },
-    #[serde(rename = "device.statusChanged")]
-    DeviceStatusChanged {
+    #[serde(rename = "provider.changed")]
+    ProviderChanged {
         jsonrpc: String,
-        params: ProtocolEventParams<DeviceStatusChangedEvent>,
-    },
-    #[serde(rename = "provider.statusChanged")]
-    ProviderStatusChanged {
-        jsonrpc: String,
-        params: ProtocolEventParams<ProviderStatusChangedEvent>,
+        params: ProtocolEventParams<ProviderChangedEvent>,
     },
     #[serde(rename = "conversation.upserted")]
     ConversationUpserted {
@@ -1745,8 +1771,7 @@ impl ProtocolEvent {
     pub fn jsonrpc_version(&self) -> &str {
         match self {
             Self::ProjectChanged { jsonrpc, .. } => jsonrpc,
-            Self::DeviceStatusChanged { jsonrpc, .. } => jsonrpc,
-            Self::ProviderStatusChanged { jsonrpc, .. } => jsonrpc,
+            Self::ProviderChanged { jsonrpc, .. } => jsonrpc,
             Self::ConversationUpserted { jsonrpc, .. } => jsonrpc,
             Self::ConversationItemUpserted { jsonrpc, .. } => jsonrpc,
             Self::ConversationActivityChanged { jsonrpc, .. } => jsonrpc,
@@ -1760,8 +1785,7 @@ impl ProtocolEvent {
     pub fn event_cursor(&self) -> &EventCursor {
         match self {
             Self::ProjectChanged { params, .. } => &params.event_cursor,
-            Self::DeviceStatusChanged { params, .. } => &params.event_cursor,
-            Self::ProviderStatusChanged { params, .. } => &params.event_cursor,
+            Self::ProviderChanged { params, .. } => &params.event_cursor,
             Self::ConversationUpserted { params, .. } => &params.event_cursor,
             Self::ConversationItemUpserted { params, .. } => &params.event_cursor,
             Self::ConversationActivityChanged { params, .. } => &params.event_cursor,
@@ -1778,11 +1802,7 @@ impl ProtocolEvent {
                 *jsonrpc = "2.0".to_string();
                 params.event_cursor = cursor;
             },
-            Self::DeviceStatusChanged { jsonrpc, params } => {
-                *jsonrpc = "2.0".to_string();
-                params.event_cursor = cursor;
-            },
-            Self::ProviderStatusChanged { jsonrpc, params } => {
+            Self::ProviderChanged { jsonrpc, params } => {
                 *jsonrpc = "2.0".to_string();
                 params.event_cursor = cursor;
             },
@@ -1918,12 +1938,12 @@ pub trait ProtocolServer: Send + Sync {
         Box::pin(async { Err(method_not_implemented("event.subscribe")) })
     }
 
-    fn device_list<'a>(&'a self, _request: DeviceListRequest) -> ProtocolFuture<'a, DeviceListResponse> {
-        Box::pin(async { Err(method_not_implemented("device.list")) })
-    }
-
     fn provider_list<'a>(&'a self, _request: ProviderListRequest) -> ProtocolFuture<'a, ProviderListResponse> {
         Box::pin(async { Err(method_not_implemented("provider.list")) })
+    }
+
+    fn provider_describe<'a>(&'a self, _request: ProviderDescribeRequest) -> ProtocolFuture<'a, ProviderDescribeResponse> {
+        Box::pin(async { Err(method_not_implemented("provider.describe")) })
     }
 
     fn project_list<'a>(&'a self, _request: ProjectListRequest) -> ProtocolFuture<'a, ProjectListResponse> {
@@ -2014,8 +2034,8 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
             };
             JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
-        ProtocolRequest::DeviceList { jsonrpc, id, params } => {
-            let response = match server.device_list(params).await {
+        ProtocolRequest::ProviderList { jsonrpc, id, params } => {
+            let response = match server.provider_list(params).await {
                 Ok(result) => match serde_json::to_value(result) {
                     Ok(result) => JsonRpcResponsePayload::Ok { result },
                     Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
@@ -2024,8 +2044,8 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
             };
             JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
-        ProtocolRequest::ProviderList { jsonrpc, id, params } => {
-            let response = match server.provider_list(params).await {
+        ProtocolRequest::ProviderDescribe { jsonrpc, id, params } => {
+            let response = match server.provider_describe(params).await {
                 Ok(result) => match serde_json::to_value(result) {
                     Ok(result) => JsonRpcResponsePayload::Ok { result },
                     Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
@@ -2237,18 +2257,18 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         })
     }
 
-    pub fn device_list<'a>(&'a self, request: DeviceListRequest) -> ProtocolFuture<'a, DeviceListResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::DeviceList, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
     pub fn provider_list<'a>(&'a self, request: ProviderListRequest) -> ProtocolFuture<'a, ProviderListResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             let result = self.transport.request(ProtocolMethod::ProviderList, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn provider_describe<'a>(&'a self, request: ProviderDescribeRequest) -> ProtocolFuture<'a, ProviderDescribeResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ProviderDescribe, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

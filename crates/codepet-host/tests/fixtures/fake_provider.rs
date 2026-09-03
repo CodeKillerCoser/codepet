@@ -18,8 +18,9 @@ use codepet_provider_sdk::{
     ProtocolRequest, ProtocolServer, ProviderApproval, ProviderCapabilities,
     ProviderCapability, ProviderConversation, ProviderDescribeRequest,
     ProviderDescribeResponse, ProviderInitializeRequest, ProviderInitializeResponse,
-    ProviderInstance, ProviderInstanceRoute, ProviderPluginDescriptor, ProviderShutdownRequest,
-    ProviderShutdownResponse, ProviderTurn, ProviderWireMessage, RoutedResourceId,
+    ProviderAuthentication, ProviderAuthenticationStatus, ProviderInstance, ProviderInstanceRoute,
+    ProviderPluginDescriptor, ProviderShutdownRequest, ProviderShutdownResponse, ProviderTurn,
+    ProviderUsage, ProviderUsageDetail, ProviderWireMessage, RoutedResourceId,
     TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent, TurnSendCapabilities,
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
     TurnSteerResponse, VersionRange,
@@ -106,8 +107,26 @@ impl ProtocolServer for FakeProvider {
                     id: "fake-harness".to_string(),
                     display_name: "Fake Harness".to_string(),
                     version: Some("1.0.0-fixture".to_string()),
+                    executable_path: Some("/fixture/fake-harness".to_string()),
                 },
                 status: InstanceStatus::Created,
+                authentication: Some(ProviderAuthentication {
+                    status: ProviderAuthenticationStatus::SignedIn,
+                    display_text: Some("Signed in to fixture".to_string()),
+                }),
+                usage: Some(ProviderUsage {
+                    display_text: "Fixture usage 42%".to_string(),
+                    observed_at: Some(1_788_450_000_000),
+                    details: Some(vec![ProviderUsageDetail {
+                        namespace: "dev.codepet.fixture.usage".to_string(),
+                        schema_version: "1".to_string(),
+                        data: BTreeMap::from([
+                            ("usedPercent".to_string(), serde_json::json!(42)),
+                            ("accessToken".to_string(), serde_json::json!("must-not-leak")),
+                            ("nested".to_string(), serde_json::json!({"cookie": "must-not-leak", "safe": true})),
+                        ]),
+                    }]),
+                }),
                 capabilities: capabilities(),
             };
             self.instances

@@ -479,6 +479,7 @@ impl CodexInstanceRuntime {
         events: Arc<dyn ProviderEventSink>,
         lifecycle_hook: Arc<dyn ExecutionLifecycleHook>,
     ) -> Self {
+        let executable_path = settings.app_server_executable.to_string_lossy().into_owned();
         Self {
             route: request.route.clone(),
             instance_kind: request.instance_kind,
@@ -497,6 +498,7 @@ impl CodexInstanceRuntime {
                     id: CODEX_INSTANCE_KIND.to_string(),
                     display_name: "Codex".to_string(),
                     version: None,
+                    executable_path: Some(executable_path),
                 },
                 lifecycle_generation: 0,
                 sessions: HashMap::new(),
@@ -2021,6 +2023,7 @@ impl Provider for CodexProvider {
                 id: CODEX_INSTANCE_KIND.to_string(),
                 display_name: "Codex".to_string(),
                 version: observer.harness_version(),
+                executable_path: Some(runtime.settings.app_server_executable.to_string_lossy().into_owned()),
             };
             let incoming = match observer.subscribe() {
                 Ok(incoming) => incoming,

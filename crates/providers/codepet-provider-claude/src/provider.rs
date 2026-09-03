@@ -171,8 +171,11 @@ impl ClaudeInstanceRuntime {
                 id: self.instance_kind.clone(),
                 display_name: "Claude Code".to_string(),
                 version: None,
+                executable_path: Some(self.settings.claude_executable.to_string_lossy().into_owned()),
             },
             status: lock(&self.mutable).status,
+            authentication: None,
+            usage: None,
             capabilities: self.capabilities.clone(),
         }
     }

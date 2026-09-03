@@ -260,6 +260,8 @@ impl CodexProtocolMapper {
             display_name,
             harness,
             status,
+            authentication: None,
+            usage: None,
             capabilities,
         }
     }

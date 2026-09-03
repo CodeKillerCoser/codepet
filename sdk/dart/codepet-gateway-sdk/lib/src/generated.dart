@@ -1771,171 +1771,6 @@ final class ConversationUpsertedEvent {
   String toString() => 'ConversationUpsertedEvent(conversation: $conversation)';
 }
 
-final class Device {
-  factory Device({
-    required DeviceId deviceId,
-    required String displayName,
-    required DeviceStatus status,
-    TimestampMs? lastSeenAt,
-  }) {
-    final validatedDeviceId = _string(deviceId, 'Device.deviceId', minLength: 1);
-    final validatedDisplayName = _string(displayName, 'Device.displayName', minLength: 1);
-    final validatedStatus = status;
-    final validatedLastSeenAt = lastSeenAt == null ? null : _integer(lastSeenAt, 'Device.lastSeenAt', minimum: 0, maximum: 9007199254740991);
-    return Device._(
-      deviceId: validatedDeviceId,
-      displayName: validatedDisplayName,
-      status: validatedStatus,
-      lastSeenAt: validatedLastSeenAt,
-    );
-  }
-
-  Device._({
-    required this.deviceId,
-    required this.displayName,
-    required this.status,
-    required this.lastSeenAt,
-  });
-
-  final DeviceId deviceId;
-  final String displayName;
-  final DeviceStatus status;
-  final TimestampMs? lastSeenAt;
-
-  factory Device.fromJson(Object? value, {String path = 'Device'}) {
-    final json = _object(value, path);
-    _expectKeys(json, const {'deviceId', 'displayName', 'status', 'lastSeenAt'}, path);
-    return Device(
-      deviceId: _string(_required(json, 'deviceId', path), '$path.deviceId', minLength: 1),
-      displayName: _string(_required(json, 'displayName', path), '$path.displayName', minLength: 1),
-      status: DeviceStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
-      lastSeenAt: json.containsKey('lastSeenAt') && json['lastSeenAt'] != null ? _integer(json['lastSeenAt'], '$path.lastSeenAt', minimum: 0, maximum: 9007199254740991) : null,
-    );
-  }
-
-  Map<String, Object?> toJson() => {
-    'deviceId': deviceId,
-    'displayName': displayName,
-    'status': status.toJson(),
-    if (lastSeenAt != null) 'lastSeenAt': lastSeenAt!,
-  };
-
-  @override
-  String toString() => 'Device(deviceId: $deviceId, displayName: $displayName, status: $status, lastSeenAt: $lastSeenAt)';
-}
-
-final class DeviceListRequest {
-  factory DeviceListRequest()
-   {
-    return DeviceListRequest._(
-    );
-  }
-
-  DeviceListRequest._();
-
-  factory DeviceListRequest.fromJson(Object? value, {String path = 'DeviceListRequest'}) {
-    final json = _object(value, path);
-    _expectKeys(json, const {}, path);
-    return DeviceListRequest();
-  }
-
-  Map<String, Object?> toJson() => {
-  };
-
-  @override
-  String toString() => 'DeviceListRequest()';
-}
-
-final class DeviceListResponse {
-  factory DeviceListResponse({
-    required List<Device> devices,
-  }) {
-    final validatedDevices = _freezeList<Device>(devices, 'DeviceListResponse.devices', (item, itemPath) => item, encodeItem: (item) => item.toJson());
-    return DeviceListResponse._(
-      devices: validatedDevices,
-    );
-  }
-
-  DeviceListResponse._({
-    required this.devices,
-  });
-
-  final List<Device> devices;
-
-  factory DeviceListResponse.fromJson(Object? value, {String path = 'DeviceListResponse'}) {
-    final json = _object(value, path);
-    _expectKeys(json, const {'devices'}, path);
-    return DeviceListResponse(
-      devices: _decodeList<Device>(_required(json, 'devices', path), '$path.devices', (item, itemPath) => Device.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
-    );
-  }
-
-  Map<String, Object?> toJson() => {
-    'devices': devices.map((item) => item.toJson()).toList(growable: false),
-  };
-
-  @override
-  String toString() => 'DeviceListResponse(devices: $devices)';
-}
-
-enum DeviceStatus {
-  online('online'),
-  offline('offline');
-
-  const DeviceStatus(this.wireValue);
-
-  final String wireValue;
-
-  static DeviceStatus fromJson(Object? value, {String path = 'DeviceStatus'}) {
-    final wireValue = _string(value, path);
-    for (final candidate in values) {
-      if (candidate.wireValue == wireValue) return candidate;
-    }
-    throw ProtocolCodecException(path, 'expected one of: online, offline');
-  }
-
-  String toJson() => wireValue;
-}
-
-final class DeviceStatusChangedEvent {
-  factory DeviceStatusChangedEvent({
-    required Device device,
-    DeviceStatus? previousStatus,
-  }) {
-    final validatedDevice = device;
-    final validatedPreviousStatus = previousStatus == null ? null : previousStatus;
-    return DeviceStatusChangedEvent._(
-      device: validatedDevice,
-      previousStatus: validatedPreviousStatus,
-    );
-  }
-
-  DeviceStatusChangedEvent._({
-    required this.device,
-    required this.previousStatus,
-  });
-
-  final Device device;
-  final DeviceStatus? previousStatus;
-
-  factory DeviceStatusChangedEvent.fromJson(Object? value, {String path = 'DeviceStatusChangedEvent'}) {
-    final json = _object(value, path);
-    _expectKeys(json, const {'device', 'previousStatus'}, path);
-    return DeviceStatusChangedEvent(
-      device: Device.fromJson(_required(json, 'device', path), path: '$path.device'),
-      previousStatus: json.containsKey('previousStatus') && json['previousStatus'] != null ? DeviceStatus.fromJson(json['previousStatus'], path: '$path.previousStatus') : null,
-    );
-  }
-
-  Map<String, Object?> toJson() => {
-    'device': device.toJson(),
-    if (previousStatus != null) 'previousStatus': previousStatus!.toJson(),
-  };
-
-  @override
-  String toString() => 'DeviceStatusChangedEvent(device: $device, previousStatus: $previousStatus)';
-}
-
 final class EventSubscribeRequest {
   factory EventSubscribeRequest({
     required EventCursor afterCursor,
@@ -2187,43 +2022,82 @@ enum GatewayCapability {
   String toJson() => wireValue;
 }
 
-final class GatewayHostIdentity {
-  factory GatewayHostIdentity({
-    required DeviceId deviceId,
-    required DeviceDescriptor descriptor,
+final class GatewayDevice {
+  factory GatewayDevice({
+    required String name,
+    required String operatingSystem,
+    required String systemVersion,
   }) {
-    final validatedDeviceId = _string(deviceId, 'GatewayHostIdentity.deviceId', minLength: 1);
-    final validatedDescriptor = descriptor;
-    return GatewayHostIdentity._(
-      deviceId: validatedDeviceId,
-      descriptor: validatedDescriptor,
+    final validatedName = _string(name, 'GatewayDevice.name', minLength: 1);
+    final validatedOperatingSystem = _string(operatingSystem, 'GatewayDevice.operatingSystem', minLength: 1);
+    final validatedSystemVersion = _string(systemVersion, 'GatewayDevice.systemVersion', minLength: 1);
+    return GatewayDevice._(
+      name: validatedName,
+      operatingSystem: validatedOperatingSystem,
+      systemVersion: validatedSystemVersion,
     );
   }
 
-  GatewayHostIdentity._({
-    required this.deviceId,
-    required this.descriptor,
+  GatewayDevice._({
+    required this.name,
+    required this.operatingSystem,
+    required this.systemVersion,
   });
 
-  final DeviceId deviceId;
-  final DeviceDescriptor descriptor;
+  final String name;
+  final String operatingSystem;
+  final String systemVersion;
 
-  factory GatewayHostIdentity.fromJson(Object? value, {String path = 'GatewayHostIdentity'}) {
+  factory GatewayDevice.fromJson(Object? value, {String path = 'GatewayDevice'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'deviceId', 'descriptor'}, path);
-    return GatewayHostIdentity(
-      deviceId: _string(_required(json, 'deviceId', path), '$path.deviceId', minLength: 1),
-      descriptor: DeviceDescriptor.fromJson(_required(json, 'descriptor', path), path: '$path.descriptor'),
+    _expectKeys(json, const {'name', 'operatingSystem', 'systemVersion'}, path);
+    return GatewayDevice(
+      name: _string(_required(json, 'name', path), '$path.name', minLength: 1),
+      operatingSystem: _string(_required(json, 'operatingSystem', path), '$path.operatingSystem', minLength: 1),
+      systemVersion: _string(_required(json, 'systemVersion', path), '$path.systemVersion', minLength: 1),
     );
   }
 
   Map<String, Object?> toJson() => {
-    'deviceId': deviceId,
-    'descriptor': descriptor.toJson(),
+    'name': name,
+    'operatingSystem': operatingSystem,
+    'systemVersion': systemVersion,
   };
 
   @override
-  String toString() => 'GatewayHostIdentity(deviceId: $deviceId, descriptor: $descriptor)';
+  String toString() => 'GatewayDevice(name: $name, operatingSystem: $operatingSystem, systemVersion: $systemVersion)';
+}
+
+final class GatewayProtocol {
+  factory GatewayProtocol({
+    required ProtocolVersion version,
+  }) {
+    final validatedVersion = _integer(version, 'GatewayProtocol.version', minimum: 0, maximum: 4294967295);
+    return GatewayProtocol._(
+      version: validatedVersion,
+    );
+  }
+
+  GatewayProtocol._({
+    required this.version,
+  });
+
+  final ProtocolVersion version;
+
+  factory GatewayProtocol.fromJson(Object? value, {String path = 'GatewayProtocol'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'version'}, path);
+    return GatewayProtocol(
+      version: _integer(_required(json, 'version', path), '$path.version', minimum: 0, maximum: 4294967295),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'version': version,
+  };
+
+  @override
+  String toString() => 'GatewayProtocol(version: $version)';
 }
 
 final class GatewayProviderRoute {
@@ -2499,122 +2373,55 @@ final class HandshakeRequest {
 
 final class HandshakeResponse {
   factory HandshakeResponse({
-    required ProtocolVersion selectedVersion,
-    required String serverName,
-    required String serverVersion,
-    required GatewayHostIdentity device,
-    required List<Device> devices,
-    required List<ProviderInstance> providers,
+    required GatewayProtocol protocol,
+    required GatewayDevice device,
+    required List<ProviderSummary> providers,
     required EventCursor eventCursor,
   }) {
-    final validatedSelectedVersion = _integer(selectedVersion, 'HandshakeResponse.selectedVersion', minimum: 0, maximum: 4294967295);
-    final validatedServerName = _string(serverName, 'HandshakeResponse.serverName', minLength: 1);
-    final validatedServerVersion = _string(serverVersion, 'HandshakeResponse.serverVersion', minLength: 1);
+    final validatedProtocol = protocol;
     final validatedDevice = device;
-    final validatedDevices = _freezeList<Device>(devices, 'HandshakeResponse.devices', (item, itemPath) => item, encodeItem: (item) => item.toJson());
-    final validatedProviders = _freezeList<ProviderInstance>(providers, 'HandshakeResponse.providers', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedProviders = _freezeList<ProviderSummary>(providers, 'HandshakeResponse.providers', (item, itemPath) => item, encodeItem: (item) => item.toJson());
     final validatedEventCursor = _string(eventCursor, 'HandshakeResponse.eventCursor', minLength: 1);
     return HandshakeResponse._(
-      selectedVersion: validatedSelectedVersion,
-      serverName: validatedServerName,
-      serverVersion: validatedServerVersion,
+      protocol: validatedProtocol,
       device: validatedDevice,
-      devices: validatedDevices,
       providers: validatedProviders,
       eventCursor: validatedEventCursor,
     );
   }
 
   HandshakeResponse._({
-    required this.selectedVersion,
-    required this.serverName,
-    required this.serverVersion,
+    required this.protocol,
     required this.device,
-    required this.devices,
     required this.providers,
     required this.eventCursor,
   });
 
-  final ProtocolVersion selectedVersion;
-  final String serverName;
-  final String serverVersion;
-  final GatewayHostIdentity device;
-  final List<Device> devices;
-  final List<ProviderInstance> providers;
+  final GatewayProtocol protocol;
+  final GatewayDevice device;
+  final List<ProviderSummary> providers;
   final EventCursor eventCursor;
 
   factory HandshakeResponse.fromJson(Object? value, {String path = 'HandshakeResponse'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'selectedVersion', 'serverName', 'serverVersion', 'device', 'devices', 'providers', 'eventCursor'}, path);
+    _expectKeys(json, const {'protocol', 'device', 'providers', 'eventCursor'}, path);
     return HandshakeResponse(
-      selectedVersion: _integer(_required(json, 'selectedVersion', path), '$path.selectedVersion', minimum: 0, maximum: 4294967295),
-      serverName: _string(_required(json, 'serverName', path), '$path.serverName', minLength: 1),
-      serverVersion: _string(_required(json, 'serverVersion', path), '$path.serverVersion', minLength: 1),
-      device: GatewayHostIdentity.fromJson(_required(json, 'device', path), path: '$path.device'),
-      devices: _decodeList<Device>(_required(json, 'devices', path), '$path.devices', (item, itemPath) => Device.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
-      providers: _decodeList<ProviderInstance>(_required(json, 'providers', path), '$path.providers', (item, itemPath) => ProviderInstance.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+      protocol: GatewayProtocol.fromJson(_required(json, 'protocol', path), path: '$path.protocol'),
+      device: GatewayDevice.fromJson(_required(json, 'device', path), path: '$path.device'),
+      providers: _decodeList<ProviderSummary>(_required(json, 'providers', path), '$path.providers', (item, itemPath) => ProviderSummary.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
       eventCursor: _string(_required(json, 'eventCursor', path), '$path.eventCursor', minLength: 1),
     );
   }
 
   Map<String, Object?> toJson() => {
-    'selectedVersion': selectedVersion,
-    'serverName': serverName,
-    'serverVersion': serverVersion,
+    'protocol': protocol.toJson(),
     'device': device.toJson(),
-    'devices': devices.map((item) => item.toJson()).toList(growable: false),
     'providers': providers.map((item) => item.toJson()).toList(growable: false),
     'eventCursor': eventCursor,
   };
 
   @override
-  String toString() => 'HandshakeResponse(selectedVersion: $selectedVersion, serverName: $serverName, serverVersion: $serverVersion, device: $device, devices: $devices, providers: $providers, eventCursor: $eventCursor)';
-}
-
-final class HarnessDescriptor {
-  factory HarnessDescriptor({
-    required String id,
-    required String displayName,
-    String? version,
-  }) {
-    final validatedId = _string(id, 'HarnessDescriptor.id', minLength: 1);
-    final validatedDisplayName = _string(displayName, 'HarnessDescriptor.displayName', minLength: 1);
-    final validatedVersion = version == null ? null : _string(version, 'HarnessDescriptor.version', minLength: 1);
-    return HarnessDescriptor._(
-      id: validatedId,
-      displayName: validatedDisplayName,
-      version: validatedVersion,
-    );
-  }
-
-  HarnessDescriptor._({
-    required this.id,
-    required this.displayName,
-    required this.version,
-  });
-
-  final String id;
-  final String displayName;
-  final String? version;
-
-  factory HarnessDescriptor.fromJson(Object? value, {String path = 'HarnessDescriptor'}) {
-    final json = _object(value, path);
-    _expectKeys(json, const {'id', 'displayName', 'version'}, path);
-    return HarnessDescriptor(
-      id: _string(_required(json, 'id', path), '$path.id', minLength: 1),
-      displayName: _string(_required(json, 'displayName', path), '$path.displayName', minLength: 1),
-      version: json.containsKey('version') && json['version'] != null ? _string(json['version'], '$path.version', minLength: 1) : null,
-    );
-  }
-
-  Map<String, Object?> toJson() => {
-    'id': id,
-    'displayName': displayName,
-    if (version != null) 'version': version!,
-  };
-
-  @override
-  String toString() => 'HarnessDescriptor(id: $id, displayName: $displayName, version: $version)';
+  String toString() => 'HandshakeResponse(protocol: $protocol, device: $device, providers: $providers, eventCursor: $eventCursor)';
 }
 
 sealed class ModelCatalog {
@@ -3207,124 +3014,269 @@ final class ProjectUpdateResponse {
   String toString() => 'ProjectUpdateResponse(project: $project)';
 }
 
-final class ProviderInstance {
-  factory ProviderInstance({
-    required GatewayProviderRoute route,
-    required ProviderPluginId pluginId,
-    required String displayName,
-    String? icon,
-    String? version,
-    required HarnessDescriptor harness,
-    required ProviderStatus status,
+final class ProviderAuthentication {
+  factory ProviderAuthentication({
+    required ProviderAuthenticationStatus status,
+    String? displayText,
+  }) {
+    final validatedStatus = status;
+    final validatedDisplayText = displayText == null ? null : _string(displayText, 'ProviderAuthentication.displayText', minLength: 1);
+    return ProviderAuthentication._(
+      status: validatedStatus,
+      displayText: validatedDisplayText,
+    );
+  }
+
+  ProviderAuthentication._({
+    required this.status,
+    required this.displayText,
+  });
+
+  final ProviderAuthenticationStatus status;
+  final String? displayText;
+
+  factory ProviderAuthentication.fromJson(Object? value, {String path = 'ProviderAuthentication'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'status', 'displayText'}, path);
+    return ProviderAuthentication(
+      status: ProviderAuthenticationStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
+      displayText: json.containsKey('displayText') && json['displayText'] != null ? _string(json['displayText'], '$path.displayText', minLength: 1) : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'status': status.toJson(),
+    if (displayText != null) 'displayText': displayText!,
+  };
+
+  @override
+  String toString() => 'ProviderAuthentication(status: $status, displayText: $displayText)';
+}
+
+enum ProviderAuthenticationStatus {
+  unknown('unknown'),
+  signedIn('signed-in'),
+  signedOut('signed-out'),
+  expired('expired'),
+  error('error'),
+  unsupported('unsupported');
+
+  const ProviderAuthenticationStatus(this.wireValue);
+
+  final String wireValue;
+
+  static ProviderAuthenticationStatus fromJson(Object? value, {String path = 'ProviderAuthenticationStatus'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: unknown, signed-in, signed-out, expired, error, unsupported');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class ProviderCapabilitiesSummary {
+  factory ProviderCapabilitiesSummary({
+    required String revision,
+  }) {
+    final validatedRevision = _string(revision, 'ProviderCapabilitiesSummary.revision', minLength: 1);
+    return ProviderCapabilitiesSummary._(
+      revision: validatedRevision,
+    );
+  }
+
+  ProviderCapabilitiesSummary._({
+    required this.revision,
+  });
+
+  final String revision;
+
+  factory ProviderCapabilitiesSummary.fromJson(Object? value, {String path = 'ProviderCapabilitiesSummary'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'revision'}, path);
+    return ProviderCapabilitiesSummary(
+      revision: _string(_required(json, 'revision', path), '$path.revision', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'revision': revision,
+  };
+
+  @override
+  String toString() => 'ProviderCapabilitiesSummary(revision: $revision)';
+}
+
+final class ProviderChangedEvent {
+  factory ProviderChangedEvent({
+    required ProviderSummary provider,
+  }) {
+    final validatedProvider = provider;
+    return ProviderChangedEvent._(
+      provider: validatedProvider,
+    );
+  }
+
+  ProviderChangedEvent._({
+    required this.provider,
+  });
+
+  final ProviderSummary provider;
+
+  factory ProviderChangedEvent.fromJson(Object? value, {String path = 'ProviderChangedEvent'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'provider'}, path);
+    return ProviderChangedEvent(
+      provider: ProviderSummary.fromJson(_required(json, 'provider', path), path: '$path.provider'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'provider': provider.toJson(),
+  };
+
+  @override
+  String toString() => 'ProviderChangedEvent(provider: $provider)';
+}
+
+final class ProviderDescribeRequest {
+  factory ProviderDescribeRequest({
+    required String id,
+  }) {
+    final validatedId = _string(id, 'ProviderDescribeRequest.id', minLength: 1);
+    return ProviderDescribeRequest._(
+      id: validatedId,
+    );
+  }
+
+  ProviderDescribeRequest._({
+    required this.id,
+  });
+
+  final String id;
+
+  factory ProviderDescribeRequest.fromJson(Object? value, {String path = 'ProviderDescribeRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'id'}, path);
+    return ProviderDescribeRequest(
+      id: _string(_required(json, 'id', path), '$path.id', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+  };
+
+  @override
+  String toString() => 'ProviderDescribeRequest(id: $id)';
+}
+
+final class ProviderDescribeResponse {
+  factory ProviderDescribeResponse({
+    required String providerId,
     required GatewayCapabilities capabilities,
   }) {
-    final validatedRoute = route;
-    final validatedPluginId = _string(pluginId, 'ProviderInstance.pluginId', minLength: 1);
-    final validatedDisplayName = _string(displayName, 'ProviderInstance.displayName', minLength: 1);
-    final validatedIcon = icon == null ? null : _string(icon, 'ProviderInstance.icon', pattern: '^https://');
-    final validatedVersion = version == null ? null : _string(version, 'ProviderInstance.version');
-    final validatedHarness = harness;
-    final validatedStatus = status;
+    final validatedProviderId = _string(providerId, 'ProviderDescribeResponse.providerId', minLength: 1);
     final validatedCapabilities = capabilities;
-    return ProviderInstance._(
-      route: validatedRoute,
-      pluginId: validatedPluginId,
-      displayName: validatedDisplayName,
-      icon: validatedIcon,
-      version: validatedVersion,
-      harness: validatedHarness,
-      status: validatedStatus,
+    return ProviderDescribeResponse._(
+      providerId: validatedProviderId,
       capabilities: validatedCapabilities,
     );
   }
 
-  ProviderInstance._({
-    required this.route,
-    required this.pluginId,
-    required this.displayName,
-    required this.icon,
-    required this.version,
-    required this.harness,
-    required this.status,
+  ProviderDescribeResponse._({
+    required this.providerId,
     required this.capabilities,
   });
 
-  final GatewayProviderRoute route;
-  final ProviderPluginId pluginId;
-  final String displayName;
-  final String? icon;
-  final String? version;
-  final HarnessDescriptor harness;
-  final ProviderStatus status;
+  final String providerId;
   final GatewayCapabilities capabilities;
 
-  factory ProviderInstance.fromJson(Object? value, {String path = 'ProviderInstance'}) {
+  factory ProviderDescribeResponse.fromJson(Object? value, {String path = 'ProviderDescribeResponse'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'route', 'pluginId', 'displayName', 'icon', 'version', 'harness', 'status', 'capabilities'}, path);
-    return ProviderInstance(
-      route: GatewayProviderRoute.fromJson(_required(json, 'route', path), path: '$path.route'),
-      pluginId: _string(_required(json, 'pluginId', path), '$path.pluginId', minLength: 1),
-      displayName: _string(_required(json, 'displayName', path), '$path.displayName', minLength: 1),
-      icon: json.containsKey('icon') && json['icon'] != null ? _string(json['icon'], '$path.icon', pattern: '^https://') : null,
-      version: json.containsKey('version') && json['version'] != null ? _string(json['version'], '$path.version') : null,
-      harness: HarnessDescriptor.fromJson(_required(json, 'harness', path), path: '$path.harness'),
-      status: ProviderStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
+    _expectKeys(json, const {'providerId', 'capabilities'}, path);
+    return ProviderDescribeResponse(
+      providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
       capabilities: GatewayCapabilities.fromJson(_required(json, 'capabilities', path), path: '$path.capabilities'),
     );
   }
 
   Map<String, Object?> toJson() => {
-    'route': route.toJson(),
-    'pluginId': pluginId,
-    'displayName': displayName,
-    if (icon != null) 'icon': icon!,
-    if (version != null) 'version': version!,
-    'harness': harness.toJson(),
-    'status': status.toJson(),
+    'providerId': providerId,
     'capabilities': capabilities.toJson(),
   };
 
   @override
-  String toString() => 'ProviderInstance(route: $route, pluginId: $pluginId, displayName: $displayName, icon: $icon, version: $version, harness: $harness, status: $status, capabilities: $capabilities)';
+  String toString() => 'ProviderDescribeResponse(providerId: $providerId, capabilities: $capabilities)';
 }
 
-final class ProviderListRequest {
-  factory ProviderListRequest({
-    DeviceId? deviceId,
+final class ProviderIdentity {
+  factory ProviderIdentity({
+    required String displayName,
+    String? icon,
   }) {
-    final validatedDeviceId = deviceId == null ? null : _string(deviceId, 'ProviderListRequest.deviceId', minLength: 1);
-    return ProviderListRequest._(
-      deviceId: validatedDeviceId,
+    final validatedDisplayName = _string(displayName, 'ProviderIdentity.displayName', minLength: 1);
+    final validatedIcon = icon == null ? null : _string(icon, 'ProviderIdentity.icon', pattern: '^https://');
+    return ProviderIdentity._(
+      displayName: validatedDisplayName,
+      icon: validatedIcon,
     );
   }
 
-  ProviderListRequest._({
-    required this.deviceId,
+  ProviderIdentity._({
+    required this.displayName,
+    required this.icon,
   });
 
-  final DeviceId? deviceId;
+  final String displayName;
+  final String? icon;
 
-  factory ProviderListRequest.fromJson(Object? value, {String path = 'ProviderListRequest'}) {
+  factory ProviderIdentity.fromJson(Object? value, {String path = 'ProviderIdentity'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'deviceId'}, path);
-    return ProviderListRequest(
-      deviceId: json.containsKey('deviceId') && json['deviceId'] != null ? _string(json['deviceId'], '$path.deviceId', minLength: 1) : null,
+    _expectKeys(json, const {'displayName', 'icon'}, path);
+    return ProviderIdentity(
+      displayName: _string(_required(json, 'displayName', path), '$path.displayName', minLength: 1),
+      icon: json.containsKey('icon') && json['icon'] != null ? _string(json['icon'], '$path.icon', pattern: '^https://') : null,
     );
   }
 
   Map<String, Object?> toJson() => {
-    if (deviceId != null) 'deviceId': deviceId!,
+    'displayName': displayName,
+    if (icon != null) 'icon': icon!,
   };
 
   @override
-  String toString() => 'ProviderListRequest(deviceId: $deviceId)';
+  String toString() => 'ProviderIdentity(displayName: $displayName, icon: $icon)';
+}
+
+final class ProviderListRequest {
+  factory ProviderListRequest()
+   {
+    return ProviderListRequest._(
+    );
+  }
+
+  ProviderListRequest._();
+
+  factory ProviderListRequest.fromJson(Object? value, {String path = 'ProviderListRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {}, path);
+    return ProviderListRequest();
+  }
+
+  Map<String, Object?> toJson() => {
+  };
+
+  @override
+  String toString() => 'ProviderListRequest()';
 }
 
 final class ProviderListResponse {
   factory ProviderListResponse({
-    required List<ProviderInstance> providers,
+    required List<ProviderSummary> providers,
   }) {
-    final validatedProviders = _freezeList<ProviderInstance>(providers, 'ProviderListResponse.providers', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedProviders = _freezeList<ProviderSummary>(providers, 'ProviderListResponse.providers', (item, itemPath) => item, encodeItem: (item) => item.toJson());
     return ProviderListResponse._(
       providers: validatedProviders,
     );
@@ -3334,13 +3286,13 @@ final class ProviderListResponse {
     required this.providers,
   });
 
-  final List<ProviderInstance> providers;
+  final List<ProviderSummary> providers;
 
   factory ProviderListResponse.fromJson(Object? value, {String path = 'ProviderListResponse'}) {
     final json = _object(value, path);
     _expectKeys(json, const {'providers'}, path);
     return ProviderListResponse(
-      providers: _decodeList<ProviderInstance>(_required(json, 'providers', path), '$path.providers', (item, itemPath) => ProviderInstance.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+      providers: _decodeList<ProviderSummary>(_required(json, 'providers', path), '$path.providers', (item, itemPath) => ProviderSummary.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
     );
   }
 
@@ -3352,10 +3304,70 @@ final class ProviderListResponse {
   String toString() => 'ProviderListResponse(providers: $providers)';
 }
 
+final class ProviderRuntime {
+  factory ProviderRuntime({
+    required ProviderStatus status,
+    String? version,
+    String? executablePath,
+    ProviderAuthentication? authentication,
+    ProviderUsage? usage,
+  }) {
+    final validatedStatus = status;
+    final validatedVersion = version == null ? null : _string(version, 'ProviderRuntime.version', minLength: 1);
+    final validatedExecutablePath = executablePath == null ? null : _string(executablePath, 'ProviderRuntime.executablePath', minLength: 1);
+    final validatedAuthentication = authentication == null ? null : authentication;
+    final validatedUsage = usage == null ? null : usage;
+    return ProviderRuntime._(
+      status: validatedStatus,
+      version: validatedVersion,
+      executablePath: validatedExecutablePath,
+      authentication: validatedAuthentication,
+      usage: validatedUsage,
+    );
+  }
+
+  ProviderRuntime._({
+    required this.status,
+    required this.version,
+    required this.executablePath,
+    required this.authentication,
+    required this.usage,
+  });
+
+  final ProviderStatus status;
+  final String? version;
+  final String? executablePath;
+  final ProviderAuthentication? authentication;
+  final ProviderUsage? usage;
+
+  factory ProviderRuntime.fromJson(Object? value, {String path = 'ProviderRuntime'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'status', 'version', 'executablePath', 'authentication', 'usage'}, path);
+    return ProviderRuntime(
+      status: ProviderStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
+      version: json.containsKey('version') && json['version'] != null ? _string(json['version'], '$path.version', minLength: 1) : null,
+      executablePath: json.containsKey('executablePath') && json['executablePath'] != null ? _string(json['executablePath'], '$path.executablePath', minLength: 1) : null,
+      authentication: json.containsKey('authentication') && json['authentication'] != null ? ProviderAuthentication.fromJson(json['authentication'], path: '$path.authentication') : null,
+      usage: json.containsKey('usage') && json['usage'] != null ? ProviderUsage.fromJson(json['usage'], path: '$path.usage') : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'status': status.toJson(),
+    if (version != null) 'version': version!,
+    if (executablePath != null) 'executablePath': executablePath!,
+    if (authentication != null) 'authentication': authentication!.toJson(),
+    if (usage != null) 'usage': usage!.toJson(),
+  };
+
+  @override
+  String toString() => 'ProviderRuntime(status: $status, version: $version, executablePath: $executablePath, authentication: $authentication, usage: $usage)';
+}
+
 enum ProviderStatus {
-  disconnected('disconnected'),
   connecting('connecting'),
   ready('ready'),
+  stopped('stopped'),
   unavailable('unavailable'),
   error('error');
 
@@ -3368,49 +3380,155 @@ enum ProviderStatus {
     for (final candidate in values) {
       if (candidate.wireValue == wireValue) return candidate;
     }
-    throw ProtocolCodecException(path, 'expected one of: disconnected, connecting, ready, unavailable, error');
+    throw ProtocolCodecException(path, 'expected one of: connecting, ready, stopped, unavailable, error');
   }
 
   String toJson() => wireValue;
 }
 
-final class ProviderStatusChangedEvent {
-  factory ProviderStatusChangedEvent({
-    required ProviderInstance provider,
-    ProviderStatus? previousStatus,
+final class ProviderSummary {
+  factory ProviderSummary({
+    required String id,
+    required ProviderIdentity identity,
+    required ProviderRuntime runtime,
+    required ProviderCapabilitiesSummary capabilities,
   }) {
-    final validatedProvider = provider;
-    final validatedPreviousStatus = previousStatus == null ? null : previousStatus;
-    return ProviderStatusChangedEvent._(
-      provider: validatedProvider,
-      previousStatus: validatedPreviousStatus,
+    final validatedId = _string(id, 'ProviderSummary.id', minLength: 1);
+    final validatedIdentity = identity;
+    final validatedRuntime = runtime;
+    final validatedCapabilities = capabilities;
+    return ProviderSummary._(
+      id: validatedId,
+      identity: validatedIdentity,
+      runtime: validatedRuntime,
+      capabilities: validatedCapabilities,
     );
   }
 
-  ProviderStatusChangedEvent._({
-    required this.provider,
-    required this.previousStatus,
+  ProviderSummary._({
+    required this.id,
+    required this.identity,
+    required this.runtime,
+    required this.capabilities,
   });
 
-  final ProviderInstance provider;
-  final ProviderStatus? previousStatus;
+  final String id;
+  final ProviderIdentity identity;
+  final ProviderRuntime runtime;
+  final ProviderCapabilitiesSummary capabilities;
 
-  factory ProviderStatusChangedEvent.fromJson(Object? value, {String path = 'ProviderStatusChangedEvent'}) {
+  factory ProviderSummary.fromJson(Object? value, {String path = 'ProviderSummary'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'provider', 'previousStatus'}, path);
-    return ProviderStatusChangedEvent(
-      provider: ProviderInstance.fromJson(_required(json, 'provider', path), path: '$path.provider'),
-      previousStatus: json.containsKey('previousStatus') && json['previousStatus'] != null ? ProviderStatus.fromJson(json['previousStatus'], path: '$path.previousStatus') : null,
+    _expectKeys(json, const {'id', 'identity', 'runtime', 'capabilities'}, path);
+    return ProviderSummary(
+      id: _string(_required(json, 'id', path), '$path.id', minLength: 1),
+      identity: ProviderIdentity.fromJson(_required(json, 'identity', path), path: '$path.identity'),
+      runtime: ProviderRuntime.fromJson(_required(json, 'runtime', path), path: '$path.runtime'),
+      capabilities: ProviderCapabilitiesSummary.fromJson(_required(json, 'capabilities', path), path: '$path.capabilities'),
     );
   }
 
   Map<String, Object?> toJson() => {
-    'provider': provider.toJson(),
-    if (previousStatus != null) 'previousStatus': previousStatus!.toJson(),
+    'id': id,
+    'identity': identity.toJson(),
+    'runtime': runtime.toJson(),
+    'capabilities': capabilities.toJson(),
   };
 
   @override
-  String toString() => 'ProviderStatusChangedEvent(provider: $provider, previousStatus: $previousStatus)';
+  String toString() => 'ProviderSummary(id: $id, identity: $identity, runtime: $runtime, capabilities: $capabilities)';
+}
+
+final class ProviderUsage {
+  factory ProviderUsage({
+    required String displayText,
+    TimestampMs? observedAt,
+    List<ProviderUsageDetail>? details,
+  }) {
+    final validatedDisplayText = _string(displayText, 'ProviderUsage.displayText', minLength: 1);
+    final validatedObservedAt = observedAt == null ? null : _integer(observedAt, 'ProviderUsage.observedAt', minimum: 0, maximum: 9007199254740991);
+    final validatedDetails = details == null ? null : _freezeList<ProviderUsageDetail>(details, 'ProviderUsage.details', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    return ProviderUsage._(
+      displayText: validatedDisplayText,
+      observedAt: validatedObservedAt,
+      details: validatedDetails,
+    );
+  }
+
+  ProviderUsage._({
+    required this.displayText,
+    required this.observedAt,
+    required this.details,
+  });
+
+  final String displayText;
+  final TimestampMs? observedAt;
+  final List<ProviderUsageDetail>? details;
+
+  factory ProviderUsage.fromJson(Object? value, {String path = 'ProviderUsage'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'displayText', 'observedAt', 'details'}, path);
+    return ProviderUsage(
+      displayText: _string(_required(json, 'displayText', path), '$path.displayText', minLength: 1),
+      observedAt: json.containsKey('observedAt') && json['observedAt'] != null ? _integer(json['observedAt'], '$path.observedAt', minimum: 0, maximum: 9007199254740991) : null,
+      details: json.containsKey('details') && json['details'] != null ? _decodeList<ProviderUsageDetail>(json['details'], '$path.details', (item, itemPath) => ProviderUsageDetail.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()) : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'displayText': displayText,
+    if (observedAt != null) 'observedAt': observedAt!,
+    if (details != null) 'details': details!.map((item) => item.toJson()).toList(growable: false),
+  };
+
+  @override
+  String toString() => 'ProviderUsage(displayText: $displayText, observedAt: $observedAt, details: $details)';
+}
+
+final class ProviderUsageDetail {
+  factory ProviderUsageDetail({
+    required String namespace,
+    required String schemaVersion,
+    required JsonObject data,
+  }) {
+    final validatedNamespace = _string(namespace, 'ProviderUsageDetail.namespace', minLength: 1);
+    final validatedSchemaVersion = _string(schemaVersion, 'ProviderUsageDetail.schemaVersion', minLength: 1);
+    final validatedData = _jsonObject(data, 'ProviderUsageDetail.data');
+    return ProviderUsageDetail._(
+      namespace: validatedNamespace,
+      schemaVersion: validatedSchemaVersion,
+      data: validatedData,
+    );
+  }
+
+  ProviderUsageDetail._({
+    required this.namespace,
+    required this.schemaVersion,
+    required this.data,
+  });
+
+  final String namespace;
+  final String schemaVersion;
+  final JsonObject data;
+
+  factory ProviderUsageDetail.fromJson(Object? value, {String path = 'ProviderUsageDetail'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'namespace', 'schemaVersion', 'data'}, path);
+    return ProviderUsageDetail(
+      namespace: _string(_required(json, 'namespace', path), '$path.namespace', minLength: 1),
+      schemaVersion: _string(_required(json, 'schemaVersion', path), '$path.schemaVersion', minLength: 1),
+      data: _jsonObject(_required(json, 'data', path), '$path.data'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'namespace': namespace,
+    'schemaVersion': schemaVersion,
+    'data': _encodeJsonObject(data, 'ProviderUsageDetail.data'),
+  };
+
+  @override
+  String toString() => 'ProviderUsageDetail(namespace: $namespace, schemaVersion: $schemaVersion, data: $data)';
 }
 
 final class ToolAnnotations {
@@ -4587,8 +4705,8 @@ enum ProtocolIdempotency {
 enum ProtocolMethod {
   protocolHandshake('protocol.handshake', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: HandshakeRequest, responseType: HandshakeResponse),
   eventSubscribe('event.subscribe', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: EventSubscribeRequest, responseType: EventSubscribeResponse),
-  deviceList('device.list', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: DeviceListRequest, responseType: DeviceListResponse),
   providerList('provider.list', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: ProviderListRequest, responseType: ProviderListResponse),
+  providerDescribe('provider.describe', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: ProviderDescribeRequest, responseType: ProviderDescribeResponse),
   projectList('project.list', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.projectList, requestType: ProjectListRequest, responseType: ProjectListResponse),
   projectGet('project.get', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.projectGet, requestType: ProjectGetRequest, responseType: ProjectGetResponse),
   projectCreate('project.create', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.projectCreate, requestType: ProjectCreateRequest, responseType: ProjectCreateResponse),
@@ -4626,8 +4744,7 @@ enum ProtocolMethod {
 
 enum ProtocolEventName {
   projectChanged('project.changed', direction: 'gatewayToClient', delivery: 'replayable', scope: 'project', payloadType: ProjectChangedEvent),
-  deviceStatusChanged('device.statusChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'device', payloadType: DeviceStatusChangedEvent),
-  providerStatusChanged('provider.statusChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'providerInstance', payloadType: ProviderStatusChangedEvent),
+  providerChanged('provider.changed', direction: 'gatewayToClient', delivery: 'replayable', scope: 'provider', payloadType: ProviderChangedEvent),
   conversationUpserted('conversation.upserted', direction: 'gatewayToClient', delivery: 'replayable', scope: 'conversation', payloadType: ConversationUpsertedEvent),
   conversationItemUpserted('conversation.itemUpserted', direction: 'gatewayToClient', delivery: 'replayable', scope: 'conversation', payloadType: ConversationItemUpsertedEvent),
   conversationActivityChanged('conversation.activityChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'conversation', payloadType: ConversationActivityChangedEvent),
@@ -4661,10 +4778,10 @@ Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
       return HandshakeRequest.fromJson(value, path: path);
     case ProtocolMethod.eventSubscribe:
       return EventSubscribeRequest.fromJson(value, path: path);
-    case ProtocolMethod.deviceList:
-      return DeviceListRequest.fromJson(value, path: path);
     case ProtocolMethod.providerList:
       return ProviderListRequest.fromJson(value, path: path);
+    case ProtocolMethod.providerDescribe:
+      return ProviderDescribeRequest.fromJson(value, path: path);
     case ProtocolMethod.projectList:
       return ProjectListRequest.fromJson(value, path: path);
     case ProtocolMethod.projectGet:
@@ -4704,11 +4821,11 @@ Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, S
     case ProtocolMethod.eventSubscribe:
       if (value is! EventSubscribeRequest) throw ProtocolCodecException(path, 'expected EventSubscribeRequest');
       return value.toJson();
-    case ProtocolMethod.deviceList:
-      if (value is! DeviceListRequest) throw ProtocolCodecException(path, 'expected DeviceListRequest');
-      return value.toJson();
     case ProtocolMethod.providerList:
       if (value is! ProviderListRequest) throw ProtocolCodecException(path, 'expected ProviderListRequest');
+      return value.toJson();
+    case ProtocolMethod.providerDescribe:
+      if (value is! ProviderDescribeRequest) throw ProtocolCodecException(path, 'expected ProviderDescribeRequest');
       return value.toJson();
     case ProtocolMethod.projectList:
       if (value is! ProjectListRequest) throw ProtocolCodecException(path, 'expected ProjectListRequest');
@@ -4761,10 +4878,10 @@ Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) 
       return HandshakeResponse.fromJson(value, path: path);
     case ProtocolMethod.eventSubscribe:
       return EventSubscribeResponse.fromJson(value, path: path);
-    case ProtocolMethod.deviceList:
-      return DeviceListResponse.fromJson(value, path: path);
     case ProtocolMethod.providerList:
       return ProviderListResponse.fromJson(value, path: path);
+    case ProtocolMethod.providerDescribe:
+      return ProviderDescribeResponse.fromJson(value, path: path);
     case ProtocolMethod.projectList:
       return ProjectListResponse.fromJson(value, path: path);
     case ProtocolMethod.projectGet:
@@ -4804,11 +4921,11 @@ Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, 
     case ProtocolMethod.eventSubscribe:
       if (value is! EventSubscribeResponse) throw ProtocolCodecException(path, 'expected EventSubscribeResponse');
       return value.toJson();
-    case ProtocolMethod.deviceList:
-      if (value is! DeviceListResponse) throw ProtocolCodecException(path, 'expected DeviceListResponse');
-      return value.toJson();
     case ProtocolMethod.providerList:
       if (value is! ProviderListResponse) throw ProtocolCodecException(path, 'expected ProviderListResponse');
+      return value.toJson();
+    case ProtocolMethod.providerDescribe:
+      if (value is! ProviderDescribeResponse) throw ProtocolCodecException(path, 'expected ProviderDescribeResponse');
       return value.toJson();
     case ProtocolMethod.projectList:
       if (value is! ProjectListResponse) throw ProtocolCodecException(path, 'expected ProjectListResponse');
@@ -4859,10 +4976,8 @@ Object _decodeEventPayload(ProtocolEventName event, Object? value, String path) 
   switch (event) {
     case ProtocolEventName.projectChanged:
       return ProjectChangedEvent.fromJson(value, path: path);
-    case ProtocolEventName.deviceStatusChanged:
-      return DeviceStatusChangedEvent.fromJson(value, path: path);
-    case ProtocolEventName.providerStatusChanged:
-      return ProviderStatusChangedEvent.fromJson(value, path: path);
+    case ProtocolEventName.providerChanged:
+      return ProviderChangedEvent.fromJson(value, path: path);
     case ProtocolEventName.conversationUpserted:
       return ConversationUpsertedEvent.fromJson(value, path: path);
     case ProtocolEventName.conversationItemUpserted:
@@ -4885,11 +5000,8 @@ Map<String, Object?> _encodeEventPayload(ProtocolEventName event, Object value, 
     case ProtocolEventName.projectChanged:
       if (value is! ProjectChangedEvent) throw ProtocolCodecException(path, 'expected ProjectChangedEvent');
       return value.toJson();
-    case ProtocolEventName.deviceStatusChanged:
-      if (value is! DeviceStatusChangedEvent) throw ProtocolCodecException(path, 'expected DeviceStatusChangedEvent');
-      return value.toJson();
-    case ProtocolEventName.providerStatusChanged:
-      if (value is! ProviderStatusChangedEvent) throw ProtocolCodecException(path, 'expected ProviderStatusChangedEvent');
+    case ProtocolEventName.providerChanged:
+      if (value is! ProviderChangedEvent) throw ProtocolCodecException(path, 'expected ProviderChangedEvent');
       return value.toJson();
     case ProtocolEventName.conversationUpserted:
       if (value is! ConversationUpsertedEvent) throw ProtocolCodecException(path, 'expected ConversationUpsertedEvent');
@@ -5047,9 +5159,9 @@ final class ProtocolClient {
 
   Future<EventSubscribeResponse> eventSubscribe(EventSubscribeRequest request) => _request<EventSubscribeResponse>(ProtocolMethod.eventSubscribe, request);
 
-  Future<DeviceListResponse> deviceList(DeviceListRequest request) => _request<DeviceListResponse>(ProtocolMethod.deviceList, request);
-
   Future<ProviderListResponse> providerList(ProviderListRequest request) => _request<ProviderListResponse>(ProtocolMethod.providerList, request);
+
+  Future<ProviderDescribeResponse> providerDescribe(ProviderDescribeRequest request) => _request<ProviderDescribeResponse>(ProtocolMethod.providerDescribe, request);
 
   Future<ProjectListResponse> projectList(ProjectListRequest request) => _request<ProjectListResponse>(ProtocolMethod.projectList, request);
 

@@ -134,6 +134,7 @@ impl OpenCodeInstanceRuntime {
                 id: self.instance_kind.clone(),
                 display_name: "OpenCode".to_string(),
                 version: Some(self.settings.server_version.clone()),
+                executable_path: Some(self.settings.server_executable.to_string_lossy().into_owned()),
             },
             lock(&self.mutable).status,
             lock(&self.capabilities).clone(),

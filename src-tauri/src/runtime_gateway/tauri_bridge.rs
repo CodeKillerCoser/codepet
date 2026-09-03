@@ -468,7 +468,7 @@ fn configured_provider_runtime(
         manager.clone(),
         {
             let identity = remote_access.remote_host_identity();
-            codepet_gateway_sdk::GatewayHostIdentity {
+            codepet_host::RemoteHostIdentity {
                 device_id: identity.device_id,
                 descriptor: identity.descriptor,
             }

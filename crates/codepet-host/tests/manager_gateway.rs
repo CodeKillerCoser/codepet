@@ -13,14 +13,14 @@ use codepet_gateway_sdk::{
     JsonRpcResponsePayload, ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
     ProjectCreateRequest, ProjectDeleteRequest, ProjectGetRequest, ProjectListRequest, ProjectRoot,
     ProjectUpdateRequest,
-    ProtocolServer as GatewayProtocolServer, ProviderListRequest, GatewayHostIdentity,
+    ProtocolServer as GatewayProtocolServer, ProviderDescribeRequest, ProviderListRequest,
     TurnInput as GatewayTurnInput, TurnInputKind as GatewayTurnInputKind,
     TurnSelection as GatewayTurnSelection, TurnSendRequest as GatewayTurnSendRequest, VersionRange,
 };
 use codepet_host::{
     DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor, PluginInstanceConfig,
     PluginManager, PluginManagerConfig, PluginProcessOptions, PluginRuntimeState,
-    ProviderGatewayService, ProviderInstanceRegistry,
+    ProviderGatewayService, ProviderInstanceRegistry, RemoteHostIdentity,
 };
 use codepet_provider_sdk::{
     ConversationGetRequest, JsonObject, ProviderInstanceRoute, RoutedResourceId, TurnInput,
@@ -204,7 +204,7 @@ async fn gateway_handshake_without_a_transport_identity_fails_closed() {
 #[tokio::test]
 async fn gateway_handshake_returns_the_transport_injected_remote_host_identity() {
     let manager = build_manager("device-handshake", Vec::new());
-    let device = GatewayHostIdentity {
+    let device = RemoteHostIdentity {
         device_id: "device-handshake".to_string(),
         descriptor: device_descriptor("Device device-handshake"),
     };
@@ -216,9 +216,9 @@ async fn gateway_handshake_returns_the_transport_injected_remote_host_identity()
         .await
         .unwrap();
 
-    assert_eq!(response.device, device);
-    assert_eq!(response.devices.len(), 1);
-    assert_eq!(response.devices[0].device_id, "device-handshake");
+    assert_eq!(response.device.name, device.descriptor.device_name);
+    assert_eq!(response.device.operating_system, device.descriptor.operating_system);
+    assert_eq!(response.device.system_version, device.descriptor.system_version);
     manager.shutdown().await;
 }
 
@@ -227,7 +227,7 @@ async fn gateway_remote_identity_requires_a_device_id_and_complete_descriptor() 
     let manager = build_manager("device-invalid-remote-identity", Vec::new());
     let error = ProviderGatewayService::with_remote_identity(
         manager.clone(),
-        GatewayHostIdentity {
+        RemoteHostIdentity {
             device_id: String::new(),
             descriptor: device_descriptor("Device device-invalid-remote-identity"),
         },
@@ -238,7 +238,7 @@ async fn gateway_remote_identity_requires_a_device_id_and_complete_descriptor() 
 
     let gateway = ProviderGatewayService::with_remote_identity(
         manager.clone(),
-        GatewayHostIdentity {
+        RemoteHostIdentity {
             device_id: "device-invalid-remote-identity".to_string(),
             descriptor: device_descriptor("Device device-invalid-remote-identity"),
         },
@@ -301,26 +301,23 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
     assert_eq!(outcomes.len(), 1);
     assert!(outcomes[0].1.is_ok());
 
-    let devices = gateway
-        .device_list(codepet_gateway_sdk::DeviceListRequest {})
-        .await
-        .unwrap();
-    assert_eq!(devices.devices[0].device_id, "device-a");
     let providers = gateway
-        .provider_list(ProviderListRequest {
-            device_id: Some("device-a".to_string()),
-        })
+        .provider_list(ProviderListRequest {})
         .await
         .unwrap();
     assert_eq!(providers.providers.len(), 2);
-    assert!(providers.providers.iter().all(|provider| {
-        provider.icon.as_deref() == Some("https://example.com/fake.png")
-            && provider.status == codepet_gateway_sdk::ProviderStatus::Ready
-            && provider
-                .capabilities
-                .methods
-                .contains(&codepet_gateway_sdk::GatewayCapability::ConversationGet)
-    }));
+    for provider in &providers.providers {
+        assert_eq!(provider.identity.icon.as_deref(), Some("https://example.com/fake.png"));
+        assert_eq!(provider.runtime.status, codepet_gateway_sdk::ProviderStatus::Ready);
+        let described = gateway
+            .provider_describe(ProviderDescribeRequest { id: provider.id.clone() })
+            .await
+            .unwrap();
+        assert!(described
+            .capabilities
+            .methods
+            .contains(&codepet_gateway_sdk::GatewayCapability::ConversationGet));
+    }
 
     wait_for_gateway_cursor(&gateway, 8).await;
     let lifecycle_cursor = gateway.current_event_cursor();
@@ -336,12 +333,12 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
         .await
         .unwrap();
     let stopped_event = lifecycle_events.next_event().await.unwrap();
-    let GatewayEvent::ProviderStatusChanged { params, .. } = stopped_event else {
-        panic!("expected one lifecycle status event");
+    let GatewayEvent::ProviderChanged { params, .. } = stopped_event else {
+        panic!("expected one Provider change event");
     };
     assert_eq!(
-        params.payload.provider.status,
-        codepet_gateway_sdk::ProviderStatus::Disconnected
+        params.payload.provider.runtime.status,
+        codepet_gateway_sdk::ProviderStatus::Stopped
     );
     assert!(tokio::time::timeout(
         Duration::from_millis(50),
@@ -358,10 +355,10 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
         .await
         .unwrap();
     let ready_event = lifecycle_events.next_event().await.unwrap();
-    let GatewayEvent::ProviderStatusChanged { params, .. } = ready_event else {
-        panic!("expected one lifecycle status event");
+    let GatewayEvent::ProviderChanged { params, .. } = ready_event else {
+        panic!("expected one Provider change event");
     };
-    assert_eq!(params.payload.provider.status, codepet_gateway_sdk::ProviderStatus::Ready);
+    assert_eq!(params.payload.provider.runtime.status, codepet_gateway_sdk::ProviderStatus::Ready);
 
     let interaction = gateway
         .conversation_acquire_interaction(GatewayConversationAcquireInteractionRequest {
@@ -506,14 +503,6 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
         .await
         .unwrap_err();
     assert_eq!(wrong_device.code, "wrong_device_route");
-    let wrong_device_list = gateway
-        .provider_list(ProviderListRequest {
-            device_id: Some("device-b".to_string()),
-        })
-        .await
-        .unwrap_err();
-    assert_eq!(wrong_device_list.code, "unknown_device");
-
     let device_b = build_manager(
         "device-b",
         vec![plugin("dev.codepet.device-b", &["instance-b1"])],
@@ -556,13 +545,14 @@ async fn gateway_routes_project_crud_filters_and_project_owned_conversation_crea
     };
 
     let providers = gateway
-        .provider_list(ProviderListRequest {
-            device_id: Some(route.device_id.clone()),
-        })
+        .provider_list(ProviderListRequest {})
         .await
         .unwrap();
-    assert!(providers.providers[0]
-        .capabilities
+    let described = gateway
+        .provider_describe(ProviderDescribeRequest { id: providers.providers[0].id.clone() })
+        .await
+        .unwrap();
+    assert!(described.capabilities
         .methods
         .contains(&codepet_gateway_sdk::GatewayCapability::ProjectList));
 
@@ -818,13 +808,11 @@ async fn version_negotiation_rejects_a_plugin_with_an_inconsistent_reported_rang
     let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
     gateway.start_event_forwarding();
     let providers = gateway
-        .provider_list(ProviderListRequest {
-            device_id: Some("device-version".to_string()),
-        })
+        .provider_list(ProviderListRequest {})
         .await
         .unwrap();
     assert_eq!(
-        providers.providers[0].status,
+        providers.providers[0].runtime.status,
         codepet_gateway_sdk::ProviderStatus::Error
     );
 }
@@ -939,23 +927,21 @@ async fn failed_instance_start_is_unavailable_instead_of_stuck_connecting() {
     let outcomes = manager.start_enabled().await;
     assert!(outcomes[0].1.is_err());
     let providers = gateway
-        .provider_list(ProviderListRequest {
-            device_id: Some("device-start-failure".to_string()),
-        })
+        .provider_list(ProviderListRequest {})
         .await
         .unwrap();
     let failed = providers
         .providers
         .iter()
-        .find(|provider| provider.route.provider_instance_id == "instance-start-failure")
+        .find(|provider| provider.id == "instance-start-failure")
         .unwrap();
     let healthy = providers
         .providers
         .iter()
-        .find(|provider| provider.route.provider_instance_id == "instance-start-healthy")
+        .find(|provider| provider.id == "instance-start-healthy")
         .unwrap();
-    assert_eq!(failed.status, codepet_gateway_sdk::ProviderStatus::Unavailable);
-    assert_eq!(healthy.status, codepet_gateway_sdk::ProviderStatus::Ready);
+    assert_eq!(failed.runtime.status, codepet_gateway_sdk::ProviderStatus::Unavailable);
+    assert_eq!(healthy.runtime.status, codepet_gateway_sdk::ProviderStatus::Ready);
     let initial_snapshot = manager
         .snapshot("dev.codepet.start-failure")
         .await
@@ -1132,13 +1118,14 @@ async fn conversation_search_is_route_scoped_and_preserves_pagination_and_snapsh
     assert!(manager.start_enabled().await[0].1.is_ok());
 
     let providers = gateway
-        .provider_list(ProviderListRequest {
-            device_id: Some("device-search".to_string()),
-        })
+        .provider_list(ProviderListRequest {})
         .await
         .unwrap();
-    assert!(providers.providers[0]
-        .capabilities
+    let described = gateway
+        .provider_describe(ProviderDescribeRequest { id: providers.providers[0].id.clone() })
+        .await
+        .unwrap();
+    assert!(described.capabilities
         .methods
         .contains(&codepet_gateway_sdk::GatewayCapability::ConversationSearch));
 
@@ -1194,16 +1181,30 @@ async fn gateway_turn_send_validates_controls_and_deduplicates_client_requests()
     assert!(manager.start_enabled().await[0].1.is_ok());
 
     let provider = gateway
-        .provider_list(ProviderListRequest {
-            device_id: Some("device-turn-send".to_string()),
-        })
+        .provider_list(ProviderListRequest {})
         .await
         .unwrap()
         .providers
         .remove(0);
-    assert_eq!(provider.harness.id, "fake-harness");
+    assert_eq!(provider.runtime.version.as_deref(), Some("1.0.0-fixture"));
+    assert_eq!(provider.runtime.executable_path.as_deref(), Some("/fixture/fake-harness"));
+    assert_eq!(
+        provider.runtime.authentication.as_ref().unwrap().status,
+        codepet_gateway_sdk::ProviderAuthenticationStatus::SignedIn
+    );
+    let usage = provider.runtime.usage.as_ref().unwrap();
+    assert_eq!(usage.display_text, "Fixture usage 42%");
+    let details = usage.details.as_ref().unwrap();
+    assert_eq!(details.len(), 1);
+    assert_eq!(details[0].data.get("usedPercent"), Some(&serde_json::json!(42)));
+    assert!(!details[0].data.contains_key("accessToken"));
+    assert_eq!(details[0].data["nested"], serde_json::json!({"safe": true}));
     assert_eq!(provider.capabilities.revision, "fake-capabilities-v1");
-    let Some(turn_send) = provider.capabilities.turn_send.as_ref() else {
+    let described = gateway
+        .provider_describe(ProviderDescribeRequest { id: provider.id.clone() })
+        .await
+        .unwrap();
+    let Some(turn_send) = described.capabilities.turn_send.as_ref() else {
         panic!("expected turn.send controls");
     };
     assert!(matches!(turn_send.model_catalog, Some(ModelCatalog::FlatModelCatalog(_))));

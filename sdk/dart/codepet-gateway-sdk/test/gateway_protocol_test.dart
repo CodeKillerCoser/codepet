@@ -141,7 +141,7 @@ void main() {
 
   test('method and event metadata come from the manifest IR', () {
     expect(ProtocolMethod.values, hasLength(18));
-    expect(ProtocolEventName.values, hasLength(10));
+    expect(ProtocolEventName.values, hasLength(9));
     expect(ProtocolMethod.projectList.wireName, 'project.list');
     expect(ProtocolMethod.projectDelete.capability, GatewayCapability.projectDelete);
     expect(ProtocolEventName.projectChanged.wireName, 'project.changed');
@@ -183,8 +183,8 @@ void main() {
       requestIdFactory: () => 'dart-request-${++requestId}',
     );
 
-    final response = await client.deviceList(DeviceListRequest());
-    expect(response.devices.single.deviceId, 'device-macbook-1');
+    final response = await client.providerList(ProviderListRequest());
+    expect(response.providers.single.id, 'codex-work');
   });
 }
 
@@ -199,17 +199,18 @@ final class _FixtureTransport implements ProtocolTransport {
   @override
   Future<Object?> request(Map<String, Object?> request) async {
     final envelope = ProtocolRequestEnvelope.fromJson(request);
-    expect(envelope.method, ProtocolMethod.deviceList);
+    expect(envelope.method, ProtocolMethod.providerList);
     return ProtocolResponseEnvelope(
       id: envelope.id,
       method: envelope.method,
       response: ProtocolSuccess(
-        DeviceListResponse(
-          devices: [
-            Device(
-              deviceId: 'device-macbook-1',
-              displayName: 'MacBook',
-              status: DeviceStatus.online,
+        ProviderListResponse(
+          providers: [
+            ProviderSummary(
+              id: 'codex-work',
+              identity: ProviderIdentity(displayName: 'Codex'),
+              runtime: ProviderRuntime(status: ProviderStatus.ready),
+              capabilities: ProviderCapabilitiesSummary(revision: 'codex-v1'),
             ),
           ],
         ),

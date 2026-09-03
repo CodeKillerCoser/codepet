@@ -1756,7 +1756,7 @@ mod tests {
                 provider_manager.clone(),
                 {
                     let identity = remote_manager.remote_host_identity();
-                    codepet_gateway_sdk::GatewayHostIdentity {
+                    codepet_host::RemoteHostIdentity {
                         device_id: identity.device_id,
                         descriptor: identity.descriptor,
                     }

@@ -60,7 +60,7 @@ impl CompatProviderGateway {
     async fn provider_route(
         &self,
         provider_id: &str,
-    ) -> Result<gateway::ProviderInstance, compat::ProtocolError> {
+    ) -> Result<gateway::GatewayProviderRoute, compat::ProtocolError> {
         if provider_id.trim().is_empty() {
             return Err(compat_error(
                 "unknown_provider",
@@ -68,30 +68,10 @@ impl CompatProviderGateway {
                 false,
             ));
         }
-        let providers = GatewayProtocolServer::provider_list(
-            self.gateway()?.as_ref(),
-            gateway::ProviderListRequest { device_id: None },
-        )
-        .await
-        .map_err(map_error)?
-        .providers;
-        let matches = providers
-            .into_iter()
-            .filter(|provider| provider.route.provider_instance_id == provider_id)
-            .collect::<Vec<_>>();
-        match matches.as_slice() {
-            [provider] => Ok(provider.clone()),
-            [] => Err(compat_error(
-                "unknown_provider",
-                format!("Provider instance is not registered: {provider_id}"),
-                false,
-            )),
-            _ => Err(compat_error(
-                "ambiguous_provider",
-                format!("Provider instance id is not unique across devices: {provider_id}"),
-                false,
-            )),
-        }
+        self.gateway()?
+            .resolve_provider_route(provider_id)
+            .await
+            .map_err(map_error)
     }
 
     fn map_event(
@@ -100,17 +80,9 @@ impl CompatProviderGateway {
     ) -> Result<Option<compat::ProtocolEvent>, compat::ProtocolError> {
         let mapped = match event {
             gateway::ProtocolEvent::ProjectChanged { .. }
-            | gateway::ProtocolEvent::DeviceStatusChanged { .. }
+            | gateway::ProtocolEvent::ProviderChanged { .. }
             | gateway::ProtocolEvent::ConversationActivityChanged { .. }
             | gateway::ProtocolEvent::ConversationItemUpserted { .. } => return Ok(None),
-            gateway::ProtocolEvent::ProviderStatusChanged { params, .. } => compat::ProtocolEvent::ProviderStatusChanged {
-                protocol_version: compat::PROTOCOL_VERSION,
-                event_sequence: event_sequence(&params.event_cursor)?,
-                payload: compat::ProviderStatusChangedEvent {
-                    provider: map_provider(params.payload.provider),
-                    previous_status: params.payload.previous_status.map(map_provider_status),
-                },
-            },
             gateway::ProtocolEvent::ConversationUpserted { params, .. } => compat::ProtocolEvent::ConversationUpserted {
                 protocol_version: compat::PROTOCOL_VERSION,
                 event_sequence: event_sequence(&params.event_cursor)?,
@@ -233,16 +205,25 @@ impl compat::ProtocolServer for CompatProviderGateway {
             }
             let providers = GatewayProtocolServer::provider_list(
                 gateway.as_ref(),
-                gateway::ProviderListRequest { device_id: None },
+                gateway::ProviderListRequest {},
             )
             .await
             .map_err(map_error)?
             .providers;
+            let mut mapped_providers = Vec::new();
+            for provider in providers {
+                let route = gateway.resolve_provider_route(&provider.id).await.map_err(map_error)?;
+                let description = GatewayProtocolServer::provider_describe(
+                    gateway.as_ref(),
+                    gateway::ProviderDescribeRequest { id: provider.id.clone() },
+                ).await.map_err(map_error)?;
+                mapped_providers.push(map_provider(provider, route, description.capabilities));
+            }
             Ok(compat::HandshakeResponse {
                 protocol_version: compat::PROTOCOL_VERSION,
                 server_name: gateway.server_name().to_string(),
                 server_version: gateway.server_version().to_string(),
-                providers: providers.into_iter().map(map_provider).collect(),
+                providers: mapped_providers,
                 event_sequence: event_sequence(&gateway.current_event_cursor())?,
             })
         })
@@ -255,13 +236,21 @@ impl compat::ProtocolServer for CompatProviderGateway {
         Box::pin(async move {
             let response = GatewayProtocolServer::provider_list(
                 self.gateway()?.as_ref(),
-                gateway::ProviderListRequest { device_id: None },
+                gateway::ProviderListRequest {},
             )
             .await
             .map_err(map_error)?;
-            Ok(compat::ProviderListResponse {
-                providers: response.providers.into_iter().map(map_provider).collect(),
-            })
+            let gateway = self.gateway()?;
+            let mut providers = Vec::new();
+            for provider in response.providers {
+                let route = gateway.resolve_provider_route(&provider.id).await.map_err(map_error)?;
+                let description = GatewayProtocolServer::provider_describe(
+                    gateway.as_ref(),
+                    gateway::ProviderDescribeRequest { id: provider.id.clone() },
+                ).await.map_err(map_error)?;
+                providers.push(map_provider(provider, route, description.capabilities));
+            }
+            Ok(compat::ProviderListResponse { providers })
         })
     }
 
@@ -271,7 +260,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
     ) -> compat::ProtocolFuture<'a, compat::ConversationListResponse> {
         Box::pin(async move {
             let route = match request.provider_id.as_deref() {
-                Some(provider_id) => Some(self.provider_route(provider_id).await?.route),
+                Some(provider_id) => Some(self.provider_route(provider_id).await?),
                 None => None,
             };
             let response = GatewayProtocolServer::conversation_list(
@@ -310,7 +299,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
             let response = GatewayProtocolServer::conversation_get(
                 self.gateway()?.as_ref(),
                 gateway::ConversationGetRequest {
-                    conversation: routed_resource(provider.route, request.conversation_id),
+                    conversation: routed_resource(provider, request.conversation_id),
                     cursor: None,
                     limit: None,
                 },
@@ -332,7 +321,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
             let response = GatewayProtocolServer::conversation_create(
                 self.gateway()?.as_ref(),
                 gateway::ConversationCreateRequest {
-                    route: provider.route,
+                    route: provider,
                     project: None,
                     title: request.title,
                     permission_level: permission_level_name(request.permission_level).to_string(),
@@ -371,13 +360,19 @@ impl compat::ProtocolServer for CompatProviderGateway {
                 ));
             }
             let provider = self.provider_route(&request.provider_id).await?;
-            let conversation = routed_resource(provider.route, request.conversation_id);
+            let description = GatewayProtocolServer::provider_describe(
+                self.gateway()?.as_ref(),
+                gateway::ProviderDescribeRequest { id: request.provider_id.clone() },
+            )
+            .await
+            .map_err(map_error)?;
+            let conversation = routed_resource(provider, request.conversation_id);
             let response = self.gateway()?.turn_send_for_caller_scope(
                 TURN_SEND_CALLER_SCOPE,
                 gateway::TurnSendRequest {
                     conversation,
                     client_request_id: request.client_message_id,
-                    capability_revision: provider.capabilities.revision,
+                    capability_revision: description.capabilities.revision,
                     input: gateway::TurnInput {
                         kind: gateway::TurnInputKind::Text,
                         text: request.message,
@@ -403,7 +398,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
     ) -> compat::ProtocolFuture<'a, compat::TurnInterruptResponse> {
         Box::pin(async move {
             let provider = self.provider_route(&request.provider_id).await?;
-            let route = provider.route;
+            let route = provider;
             let response = GatewayProtocolServer::turn_interrupt(
                 self.gateway()?.as_ref(),
                 gateway::TurnInterruptRequest {
@@ -431,7 +426,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
             let response = GatewayProtocolServer::approval_resolve(
                 self.gateway()?.as_ref(),
                 gateway::ApprovalResolveRequest {
-                    approval: routed_resource(provider.route, request.approval_id),
+                    approval: routed_resource(provider, request.approval_id),
                     decision: match request.decision {
                         compat::ApprovalDecision::Approve => gateway::ApprovalDecision::Approve,
                         compat::ApprovalDecision::Deny => gateway::ApprovalDecision::Deny,
@@ -447,10 +442,13 @@ impl compat::ProtocolServer for CompatProviderGateway {
     }
 }
 
-fn map_provider(provider: gateway::ProviderInstance) -> compat::Provider {
-    let provider_id = provider.route.provider_instance_id.clone();
-    let methods = provider
-        .capabilities
+fn map_provider(
+    provider: gateway::ProviderSummary,
+    route: gateway::GatewayProviderRoute,
+    capabilities: gateway::GatewayCapabilities,
+) -> compat::Provider {
+    let provider_id = provider.id.clone();
+    let methods = capabilities
         .methods
         .iter()
         .filter_map(|method| match method {
@@ -469,11 +467,10 @@ fn map_provider(provider: gateway::ProviderInstance) -> compat::Provider {
         })
         .map(str::to_string)
         .collect::<Vec<_>>();
-    let can_interrupt = provider
-        .capabilities
+    let can_interrupt = capabilities
         .methods
         .contains(&gateway::GatewayCapability::TurnInterrupt);
-    let turn_send = provider.capabilities.turn_send.as_ref();
+    let turn_send = capabilities.turn_send.as_ref();
     let permission_levels = turn_send
         .and_then(|capabilities| capabilities.access_mode.as_ref())
         .map(|choices| {
@@ -512,10 +509,10 @@ fn map_provider(provider: gateway::ProviderInstance) -> compat::Provider {
         .unwrap_or_default();
     compat::Provider {
         id: provider_id,
-        provider_type: provider.plugin_id.clone(),
-        display_name: provider.display_name,
-        version: provider.version,
-        status: map_provider_status(provider.status),
+        provider_type: route.provider_plugin_id.clone(),
+        display_name: provider.identity.display_name,
+        version: provider.runtime.version,
+        status: map_provider_status(provider.runtime.status),
         capabilities: compat::ProviderCapabilities {
             methods,
             permission_levels,
@@ -527,9 +524,9 @@ fn map_provider(provider: gateway::ProviderInstance) -> compat::Provider {
             extension: None,
         },
         extension: Some(route_extension(
-            &provider.route.device_id,
-            &provider.route.provider_plugin_id,
-            &provider.route.provider_instance_id,
+            &route.device_id,
+            &route.provider_plugin_id,
+            &route.provider_instance_id,
             None,
         )),
     }
@@ -683,7 +680,7 @@ fn map_approval(approval: gateway::Approval) -> compat::Approval {
 
 fn map_provider_status(status: gateway::ProviderStatus) -> compat::ProviderStatus {
     match status {
-        gateway::ProviderStatus::Disconnected => compat::ProviderStatus::Disconnected,
+        gateway::ProviderStatus::Stopped => compat::ProviderStatus::Disconnected,
         gateway::ProviderStatus::Connecting => compat::ProviderStatus::Connecting,
         gateway::ProviderStatus::Ready => compat::ProviderStatus::Ready,
         gateway::ProviderStatus::Unavailable => compat::ProviderStatus::Unavailable,

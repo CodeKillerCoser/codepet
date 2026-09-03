@@ -635,56 +635,6 @@
       },
       "additionalProperties": false
     },
-    "HarnessDescriptor": {
-      "type": "object",
-      "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "displayName": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "minLength": 1 }
-      },
-      "required": ["id", "displayName"],
-      "additionalProperties": false
-    },
-    "Device": {
-      "type": "object",
-      "properties": {
-        "deviceId": { "$ref": "../../core/v1/schema.json#/$defs/DeviceId" },
-        "displayName": { "type": "string", "minLength": 1 },
-        "status": { "$ref": "#/$defs/DeviceStatus" },
-        "lastSeenAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" }
-      },
-      "required": ["deviceId", "displayName", "status"],
-      "additionalProperties": false
-    },
-    "DeviceListRequest": {
-      "type": "object",
-      "properties": {},
-      "additionalProperties": false
-    },
-    "DeviceListResponse": {
-      "type": "object",
-      "properties": {
-        "devices": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/Device" }
-        }
-      },
-      "required": ["devices"],
-      "additionalProperties": false
-    },
-    "DeviceStatus": {
-      "type": "string",
-      "enum": ["online", "offline"]
-    },
-    "DeviceStatusChangedEvent": {
-      "type": "object",
-      "properties": {
-        "device": { "$ref": "#/$defs/Device" },
-        "previousStatus": { "$ref": "#/$defs/DeviceStatus" }
-      },
-      "required": ["device"],
-      "additionalProperties": false
-    },
     "EventSubscribeRequest": {
       "type": "object",
       "properties": {
@@ -907,43 +857,131 @@
     "HandshakeResponse": {
       "type": "object",
       "properties": {
-        "selectedVersion": { "$ref": "../../core/v1/schema.json#/$defs/ProtocolVersion" },
-        "serverName": { "type": "string", "minLength": 1 },
-        "serverVersion": { "type": "string", "minLength": 1 },
-        "device": { "$ref": "#/$defs/GatewayHostIdentity" },
-        "devices": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/Device" }
-        },
+        "protocol": { "$ref": "#/$defs/GatewayProtocol" },
+        "device": { "$ref": "#/$defs/GatewayDevice" },
         "providers": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ProviderInstance" }
+          "items": { "$ref": "#/$defs/ProviderSummary" }
         },
         "eventCursor": { "$ref": "../../core/v1/schema.json#/$defs/EventCursor" }
       },
-      "required": ["selectedVersion", "serverName", "serverVersion", "device", "devices", "providers", "eventCursor"],
+      "required": ["protocol", "device", "providers", "eventCursor"],
       "additionalProperties": false
     },
-    "ProviderInstance": {
+    "GatewayDevice": {
       "type": "object",
       "properties": {
-        "route": { "$ref": "#/$defs/GatewayProviderRoute" },
-        "pluginId": { "$ref": "../../core/v1/schema.json#/$defs/ProviderPluginId" },
+        "name": { "type": "string", "minLength": 1 },
+        "operatingSystem": { "type": "string", "minLength": 1 },
+        "systemVersion": { "type": "string", "minLength": 1 }
+      },
+      "required": ["name", "operatingSystem", "systemVersion"],
+      "additionalProperties": false
+    },
+    "GatewayProtocol": {
+      "type": "object",
+      "properties": {
+        "version": { "$ref": "../../core/v1/schema.json#/$defs/ProtocolVersion" }
+      },
+      "required": ["version"],
+      "additionalProperties": false
+    },
+    "ProviderAuthenticationStatus": {
+      "type": "string",
+      "enum": ["unknown", "signed-in", "signed-out", "expired", "error", "unsupported"]
+    },
+    "ProviderAuthentication": {
+      "type": "object",
+      "properties": {
+        "status": { "$ref": "#/$defs/ProviderAuthenticationStatus" },
+        "displayText": { "type": "string", "minLength": 1 }
+      },
+      "required": ["status"],
+      "additionalProperties": false
+    },
+    "ProviderCapabilitiesSummary": {
+      "type": "object",
+      "properties": {
+        "revision": { "type": "string", "minLength": 1 }
+      },
+      "required": ["revision"],
+      "additionalProperties": false
+    },
+    "ProviderIdentity": {
+      "type": "object",
+      "properties": {
         "displayName": { "type": "string", "minLength": 1 },
-        "icon": { "type": "string", "pattern": "^https://" },
-        "version": { "type": "string" },
-        "harness": { "$ref": "#/$defs/HarnessDescriptor" },
+        "icon": { "type": "string", "pattern": "^https://" }
+      },
+      "required": ["displayName"],
+      "additionalProperties": false
+    },
+    "ProviderRuntime": {
+      "type": "object",
+      "properties": {
         "status": { "$ref": "#/$defs/ProviderStatus" },
+        "version": { "type": "string", "minLength": 1 },
+        "executablePath": { "type": "string", "minLength": 1 },
+        "authentication": { "$ref": "#/$defs/ProviderAuthentication" },
+        "usage": { "$ref": "#/$defs/ProviderUsage" }
+      },
+      "required": ["status"],
+      "additionalProperties": false
+    },
+    "ProviderSummary": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "identity": { "$ref": "#/$defs/ProviderIdentity" },
+        "runtime": { "$ref": "#/$defs/ProviderRuntime" },
+        "capabilities": { "$ref": "#/$defs/ProviderCapabilitiesSummary" }
+      },
+      "required": ["id", "identity", "runtime", "capabilities"],
+      "additionalProperties": false
+    },
+    "ProviderUsage": {
+      "type": "object",
+      "properties": {
+        "displayText": { "type": "string", "minLength": 1 },
+        "observedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
+        "details": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProviderUsageDetail" }
+        }
+      },
+      "required": ["displayText"],
+      "additionalProperties": false
+    },
+    "ProviderUsageDetail": {
+      "type": "object",
+      "properties": {
+        "namespace": { "type": "string", "minLength": 1 },
+        "schemaVersion": { "type": "string", "minLength": 1 },
+        "data": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" }
+      },
+      "required": ["namespace", "schemaVersion", "data"],
+      "additionalProperties": false
+    },
+    "ProviderDescribeRequest": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 }
+      },
+      "required": ["id"],
+      "additionalProperties": false
+    },
+    "ProviderDescribeResponse": {
+      "type": "object",
+      "properties": {
+        "providerId": { "type": "string", "minLength": 1 },
         "capabilities": { "$ref": "#/$defs/GatewayCapabilities" }
       },
-      "required": ["route", "pluginId", "displayName", "harness", "status", "capabilities"],
+      "required": ["providerId", "capabilities"],
       "additionalProperties": false
     },
     "ProviderListRequest": {
       "type": "object",
-      "properties": {
-        "deviceId": { "$ref": "../../core/v1/schema.json#/$defs/DeviceId" }
-      },
+      "properties": {},
       "additionalProperties": false
     },
     "ProviderListResponse": {
@@ -951,7 +989,7 @@
       "properties": {
         "providers": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ProviderInstance" }
+          "items": { "$ref": "#/$defs/ProviderSummary" }
         }
       },
       "required": ["providers"],
@@ -959,24 +997,14 @@
     },
     "ProviderStatus": {
       "type": "string",
-      "enum": ["disconnected", "connecting", "ready", "unavailable", "error"]
+      "enum": ["connecting", "ready", "stopped", "unavailable", "error"]
     },
-    "ProviderStatusChangedEvent": {
+    "ProviderChangedEvent": {
       "type": "object",
       "properties": {
-        "provider": { "$ref": "#/$defs/ProviderInstance" },
-        "previousStatus": { "$ref": "#/$defs/ProviderStatus" }
+        "provider": { "$ref": "#/$defs/ProviderSummary" }
       },
       "required": ["provider"],
-      "additionalProperties": false
-    },
-    "GatewayHostIdentity": {
-      "type": "object",
-      "properties": {
-        "deviceId": { "$ref": "../../core/v1/schema.json#/$defs/DeviceId" },
-        "descriptor": { "$ref": "../../core/v1/schema.json#/$defs/DeviceDescriptor" }
-      },
-      "required": ["deviceId", "descriptor"],
       "additionalProperties": false
     },
     "TurnInterruptRequest": {

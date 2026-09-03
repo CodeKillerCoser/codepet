@@ -24,7 +24,7 @@ pub use catalog::{
 };
 pub use device::{DeviceDiagnostic, DeviceIdentity, DeviceRegistry};
 pub use error::{HostError, HostResult};
-pub use gateway::{GatewayEventSubscription, ProviderGatewayService};
+pub use gateway::{GatewayEventSubscription, ProviderGatewayService, RemoteHostIdentity};
 pub use instance_registry::{ProviderInstanceRecord, ProviderInstanceRegistry};
 pub use manager::{
     PluginManager, PluginManagerConfig, PluginRuntimeSnapshot, PluginRuntimeState,

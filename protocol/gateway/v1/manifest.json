@@ -26,8 +26,8 @@
   "methods": [
     { "name": "protocol.handshake", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/HandshakeRequest" }, "response": { "$ref": "./schema.json#/$defs/HandshakeResponse" } },
     { "name": "event.subscribe", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/EventSubscribeRequest" }, "response": { "$ref": "./schema.json#/$defs/EventSubscribeResponse" } },
-    { "name": "device.list", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/DeviceListRequest" }, "response": { "$ref": "./schema.json#/$defs/DeviceListResponse" } },
     { "name": "provider.list", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/ProviderListRequest" }, "response": { "$ref": "./schema.json#/$defs/ProviderListResponse" } },
+    { "name": "provider.describe", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/ProviderDescribeRequest" }, "response": { "$ref": "./schema.json#/$defs/ProviderDescribeResponse" } },
     { "name": "project.list", "direction": "clientToGateway", "idempotency": "safe", "capability": "project.list", "request": { "$ref": "./schema.json#/$defs/ProjectListRequest" }, "response": { "$ref": "./schema.json#/$defs/ProjectListResponse" } },
     { "name": "project.get", "direction": "clientToGateway", "idempotency": "safe", "capability": "project.get", "request": { "$ref": "./schema.json#/$defs/ProjectGetRequest" }, "response": { "$ref": "./schema.json#/$defs/ProjectGetResponse" } },
     { "name": "project.create", "direction": "clientToGateway", "idempotency": "idempotent", "capability": "project.create", "request": { "$ref": "./schema.json#/$defs/ProjectCreateRequest" }, "response": { "$ref": "./schema.json#/$defs/ProjectCreateResponse" } },
@@ -45,8 +45,7 @@
   ],
   "events": [
     { "name": "project.changed", "direction": "gatewayToClient", "delivery": "replayable", "scope": "project", "payload": { "$ref": "./schema.json#/$defs/ProjectChangedEvent" } },
-    { "name": "device.statusChanged", "direction": "gatewayToClient", "delivery": "replayable", "scope": "device", "payload": { "$ref": "./schema.json#/$defs/DeviceStatusChangedEvent" } },
-    { "name": "provider.statusChanged", "direction": "gatewayToClient", "delivery": "replayable", "scope": "providerInstance", "payload": { "$ref": "./schema.json#/$defs/ProviderStatusChangedEvent" } },
+    { "name": "provider.changed", "direction": "gatewayToClient", "delivery": "replayable", "scope": "provider", "payload": { "$ref": "./schema.json#/$defs/ProviderChangedEvent" } },
     { "name": "conversation.upserted", "direction": "gatewayToClient", "delivery": "replayable", "scope": "conversation", "payload": { "$ref": "./schema.json#/$defs/ConversationUpsertedEvent" } },
     { "name": "conversation.itemUpserted", "direction": "gatewayToClient", "delivery": "replayable", "scope": "conversation", "payload": { "$ref": "./schema.json#/$defs/ConversationItemUpsertedEvent" } },
     { "name": "conversation.activityChanged", "direction": "gatewayToClient", "delivery": "replayable", "scope": "conversation", "payload": { "$ref": "./schema.json#/$defs/ConversationActivityChangedEvent" } },

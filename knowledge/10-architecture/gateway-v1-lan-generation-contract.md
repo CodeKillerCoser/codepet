@@ -8,7 +8,7 @@
 
 - 从 `protocol/gateway/v1` 生成 Rust/Dart Gateway v1 SDK，从 `protocol/channel/lan/v1` 生成 Rust/Dart LAN admission DTO；两层只通过 Core 类型共享稳定身份字段。
 - 保留 `HandshakeRequest.clientId` 作为 remote client 唯一协议身份，并要求 transport 将其与 pairing credential 绑定；设备展示信息统一使用 `DeviceDescriptor`，不重复造 ID。
-- 让 pairing exchange 与 handshake 双向都使用同一最小 descriptor；证书指纹只存在于 `LanHostIdentity`，Gateway `GatewayHostIdentity` 不携带通道信任材料。
+- 让 pairing exchange 与 handshake 双向都使用同一最小设备展示信息；证书指纹和稳定 device ID 只存在于 LAN admission/transport，不进入 Gateway 握手响应。
 - 以单个 TLS listener 落实固定 REST/WSS wire 边界，并通过 `_codepet._tcp.local.` 发布同一 listener 的实际 LAN IP 与 TLS port。
 - 保持 mDNS 只负责发现；Tauri 生命周期与 pairing 状态接线见 `remote-access-tauri-runtime.md`，frontend UI 仍留给后续阶段。
 
@@ -20,7 +20,7 @@
 
 ## 现状理解
 
-`DeviceRegistry` 仍是稳定 `deviceId/displayName` 唯一事实来源；Tauri 启动时把该 display name 与一次 OS/system version 探测组合为进程内稳定 `DeviceDescriptor`，再注入 `RemoteAccessManager`。Manager 持有 leaf certificate DER 与 fingerprint、pairing session、descriptor 和 credential store。`ProviderGatewayService` 实现 Gateway v1 业务 dispatch，listener 只在 transport 层验证 bearer、绑定 socket clientId 和维护撤销取消；服务层不接收 bearer 或 TLS 状态。现有 `devices/providers` handshake 集合保持不变。
+`DeviceRegistry` 仍是稳定 `deviceId/displayName` 唯一事实来源；Tauri 启动时把该 display name 与一次 OS/system version 探测组合为进程内稳定 `DeviceDescriptor`，再注入 `RemoteAccessManager`。Manager 持有 leaf certificate DER 与 fingerprint、pairing session、descriptor 和 credential store。`ProviderGatewayService` 实现 Gateway v1 业务 dispatch，listener 只在 transport 层验证 bearer、绑定 socket clientId 和维护撤销取消；服务层不接收 bearer 或 TLS 状态。Gateway 握手只返回单个 `device` 展示对象和 `ProviderSummary[]`，不再返回 `devices` 集合。
 
 ## 实现路径
 
@@ -36,9 +36,9 @@ DELETE /remote/v1/credentials/current
 
 QR 只编码 `PairingQrPayload`：`version/hostDeviceId/displayName/httpsBaseUrl/certSha256/pairingId/pairingSecret/expiresAt`。PairingOffer 的状态、倒计时等只留在 Host/UI 内存。`pairingSecret` 明文只能进入 QR encoder，不在普通 UI 文本、日志或持久文档中展示。
 
-`LanHostIdentity` 固定为 `deviceId/descriptor/identityFingerprint`。`identityFingerprint` 与 QR `certSha256` 都是 leaf certificate DER SHA-256 的 64 位小写 hex。`HandshakeRequest.device` 与 pairing request 复用 Core `DeviceDescriptor`；Gateway `HandshakeResponse.device` 是不含证书指纹的 `GatewayHostIdentity`，同时保留 `devices/providers`。LAN listener 启动前要求调用方通过 `ProviderGatewayService::with_remote_identity` 显式注入经 admission 校验的 Host identity；TLS 配置直接读取同一个 manager 已持久化的 certificate/private key DER。
+`LanHostIdentity` 固定为 `deviceId/descriptor/identityFingerprint`。`identityFingerprint` 与 QR `certSha256` 都是 leaf certificate DER SHA-256 的 64 位小写 hex。`HandshakeRequest.device` 与 pairing request 复用 Core `DeviceDescriptor`；Gateway `HandshakeResponse.device` 只投影 `name/operatingSystem/systemVersion`。LAN listener 启动前要求调用方通过 `ProviderGatewayService::with_remote_identity` 显式注入经 admission 校验的 Host identity；TLS 配置直接读取同一个 manager 已持久化的 certificate/private key DER。
 
-连接次序固定：客户端先 pin TLS peer leaf DER；WSS Upgrade 必须携带有效 bearer；第一条业务请求必须是 `protocol.handshake`；listener 校验 handshake `clientId` 等于 credential 绑定的 `clientId`，并在成功响应发送前原子刷新该 credential 的 descriptor；客户端再核对 response `device.deviceId`、`device.descriptor` 与 `device.identityFingerprint`。后续请求统一交给生成 SDK 的 envelope dispatcher，不在 listener 复制 conversation/turn/approval 路由。
+连接次序固定：客户端先 pin TLS peer leaf DER；WSS Upgrade 必须携带有效 bearer；第一条业务请求必须是 `protocol.handshake`；listener 校验 handshake `clientId` 等于 credential 绑定的 `clientId`，并在成功响应发送前原子刷新该 credential 的 descriptor；客户端以 pairing/TLS admission 保存稳定 Host 身份，并用 handshake `device` 更新展示信息。后续请求统一交给生成 SDK 的 envelope dispatcher，不在 listener 复制 conversation/turn/approval 路由。
 
 `event.subscribe` 是每条 socket 的显式推送门。listener 在成功响应前先从现有 EventPublisher 建立 replay/live subscription，响应入队后才启动该 socket 的 event send loop；`GatewayEventSubscription` 以 cursor 去除 receiver 与 replay 窗口交叠，因此顺序是 replay 后 live 且不重复。每条 socket 最多成功订阅一次，未订阅 socket 不收到 server event，但仍可执行普通请求。
 

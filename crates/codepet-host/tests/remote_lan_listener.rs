@@ -105,7 +105,7 @@ impl TestHost {
         let gateway = Arc::new(
             ProviderGatewayService::with_remote_identity(
                 manager.clone(),
-                gateway::GatewayHostIdentity {
+                codepet_host::RemoteHostIdentity {
                     device_id: remote_access.remote_host_identity().device_id,
                     descriptor: remote_access.remote_host_identity().descriptor,
                 },
@@ -358,6 +358,19 @@ async fn next_response(
     let value = next_value(socket).await;
     assert_eq!(value.get("id").and_then(|id| id.as_str()), Some(expected_id));
     serde_json::from_value(value).unwrap()
+}
+
+async fn next_response_after_events(
+    socket: &mut TestWebSocket,
+    expected_id: &str,
+) -> gateway::JsonRpcResponse {
+    loop {
+        let value = next_value(socket).await;
+        if value.get("id").and_then(|id| id.as_str()) == Some(expected_id) {
+            return serde_json::from_value(value).unwrap();
+        }
+        let _: gateway::ProtocolEvent = serde_json::from_value(value).unwrap();
+    }
 }
 
 fn response_result<T: serde::de::DeserializeOwned>(response: gateway::JsonRpcResponse) -> T {
@@ -721,19 +734,16 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         response_result(next_response(&mut socket_a, "handshake-a").await);
     let certificate_fingerprint = hex_sha256(&certificate_der);
     assert_eq!(pairing_a.device.identity_fingerprint, certificate_fingerprint);
-    assert_eq!(handshake.device.device_id, pairing_a.device.device_id);
-    assert_eq!(handshake.device.descriptor, pairing_a.device.descriptor);
+    assert_eq!(handshake.device.name, pairing_a.device.descriptor.device_name);
+    assert_eq!(handshake.device.operating_system, pairing_a.device.descriptor.operating_system);
+    assert_eq!(handshake.device.system_version, pairing_a.device.descriptor.system_version);
     assert_eq!(
-        handshake.device.descriptor,
-        gateway::DeviceDescriptor {
-            device_name: "LAN Listener Test Host".to_string(),
+        handshake.device,
+        gateway::GatewayDevice {
+            name: "LAN Listener Test Host".to_string(),
             operating_system: "TestOS".to_string(),
             system_version: "1.0".to_string(),
         }
-    );
-    assert_eq!(
-        handshake.devices[0].display_name,
-        handshake.device.descriptor.device_name
     );
     assert_eq!(
         host.remote_access
@@ -805,10 +815,10 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         .unwrap();
     send_request(
         &mut missing_handshake,
-        gateway::ProtocolRequest::DeviceList {
+        gateway::ProtocolRequest::ProviderList {
             jsonrpc: "2.0".to_string(),
             id: "before-handshake".to_string(),
-            params: gateway::DeviceListRequest {},
+            params: gateway::ProviderListRequest {},
         },
     )
     .await;
@@ -852,10 +862,10 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     let large_id_tail = "x".repeat(248 * 1024);
     let mut backpressure_requests_sent = 0;
     for sequence in 0..128 {
-        let request = gateway::ProtocolRequest::DeviceList {
+        let request = gateway::ProtocolRequest::ProviderList {
             jsonrpc: "2.0".to_string(),
             id: format!("backpressure-{sequence}-{large_id_tail}"),
-            params: gateway::DeviceListRequest {},
+            params: gateway::ProviderListRequest {},
         };
         let text = serde_json::to_string(&request).unwrap();
         assert!(text.len() < 256 * 1024);
@@ -868,16 +878,16 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
 
     send_request(
         &mut socket_a,
-        gateway::ProtocolRequest::DeviceList {
+        gateway::ProtocolRequest::ProviderList {
             jsonrpc: "2.0".to_string(),
             id: "healthy-during-backpressure".to_string(),
-            params: gateway::DeviceListRequest {},
+            params: gateway::ProviderListRequest {},
         },
     )
     .await;
     let healthy_during_backpressure =
         next_response(&mut socket_a, "healthy-during-backpressure").await;
-    let _: gateway::DeviceListResponse = response_result(healthy_during_backpressure);
+    let _: gateway::ProviderListResponse = response_result(healthy_during_backpressure);
     wait_for_active_sessions(&server, 1).await;
     drop(stalled);
 
@@ -995,7 +1005,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         },
     )
     .await;
-    let duplicate = next_response(&mut socket_a, "subscribe-a-again").await;
+    let duplicate = next_response_after_events(&mut socket_a, "subscribe-a-again").await;
     assert_eq!(response_error_code(duplicate), "gateway_event_already_subscribed");
 
     let descriptor_before_mismatch = host.remote_access
@@ -1153,15 +1163,15 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
 
     send_request(
         &mut socket_b,
-        gateway::ProtocolRequest::DeviceList {
+        gateway::ProtocolRequest::ProviderList {
             jsonrpc: "2.0".to_string(),
             id: "client-b-still-active".to_string(),
-            params: gateway::DeviceListRequest {},
+            params: gateway::ProviderListRequest {},
         },
     )
     .await;
     let client_b_active = next_response(&mut socket_b, "client-b-still-active").await;
-    let _: gateway::DeviceListResponse = response_result(client_b_active);
+    let _: gateway::ProviderListResponse = response_result(client_b_active);
 
     let pairing_c = pair_client(host.remote_access.as_ref(), &client, "client-c").await;
     let mut socket_c_first = client

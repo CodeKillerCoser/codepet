@@ -566,7 +566,8 @@
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "displayName": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "minLength": 1 }
+        "version": { "type": "string", "minLength": 1 },
+        "executablePath": { "type": "string", "minLength": 1 }
       },
       "required": ["id", "displayName"],
       "additionalProperties": false
@@ -957,9 +958,47 @@
         "displayName": { "type": "string", "minLength": 1 },
         "harness": { "$ref": "#/$defs/HarnessDescriptor" },
         "status": { "$ref": "#/$defs/InstanceStatus" },
+        "authentication": { "$ref": "#/$defs/ProviderAuthentication" },
+        "usage": { "$ref": "#/$defs/ProviderUsage" },
         "capabilities": { "$ref": "#/$defs/ProviderCapabilities" }
       },
       "required": ["route", "pluginId", "instanceKind", "displayName", "harness", "status", "capabilities"],
+      "additionalProperties": false
+    },
+    "ProviderAuthenticationStatus": {
+      "type": "string",
+      "enum": ["unknown", "signed-in", "signed-out", "expired", "error", "unsupported"]
+    },
+    "ProviderAuthentication": {
+      "type": "object",
+      "properties": {
+        "status": { "$ref": "#/$defs/ProviderAuthenticationStatus" },
+        "displayText": { "type": "string", "minLength": 1 }
+      },
+      "required": ["status"],
+      "additionalProperties": false
+    },
+    "ProviderUsage": {
+      "type": "object",
+      "properties": {
+        "displayText": { "type": "string", "minLength": 1 },
+        "observedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
+        "details": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProviderUsageDetail" }
+        }
+      },
+      "required": ["displayText"],
+      "additionalProperties": false
+    },
+    "ProviderUsageDetail": {
+      "type": "object",
+      "properties": {
+        "namespace": { "type": "string", "minLength": 1 },
+        "schemaVersion": { "type": "string", "minLength": 1 },
+        "data": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" }
+      },
+      "required": ["namespace", "schemaVersion", "data"],
       "additionalProperties": false
     },
     "ProviderInstanceRoute": {

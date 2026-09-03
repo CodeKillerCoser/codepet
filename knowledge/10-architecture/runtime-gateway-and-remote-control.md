@@ -351,16 +351,16 @@ Provider request 则使用标准 JSON-RPC；generated classifier 严格区分 re
 
 ### 初始化与能力协商
 
-当前 Pet 使用 `protocol.initialize`、Gateway 使用 `protocol.handshake`、Provider 使用 `provider.initialize` 协商 `VersionRange` 并返回 selected version。此前 `system.initialize` 名称仅属未来草案，已被当前 manifests superseded。协商内容包括：
+当前 Pet 使用 `protocol.initialize`、Gateway 使用 `protocol.handshake`、Provider 使用 `provider.initialize`。Gateway request 仍提交 `VersionRange`，response 通过嵌套的 `protocol.version` 返回选定版本；此前 `system.initialize` 名称仅属未来草案，已被当前 manifests superseded。Gateway 握手内容包括：
 
 - client 名称、版本和平台；
 - client 支持的最小/最大协议版本；
 - Gateway 选定的协议版本；
-- server 名称和版本；
-- event replay、资源传输等协议能力；
-- Provider 列表、状态和 capability 概要。
+- 单个 Host 设备展示信息；
+- Provider summary、状态和 capability revision；
+- event replay cursor。
 
-Provider instance capability 当前通过 `instance.capabilities` 读取，manifest capability metadata 映射到 schema 中的 typed capability enum。UI 不写死模型、推理强度和权限枚举，而是按 Provider 返回值构建选择器。旧客户端面对新能力时隐藏未知操作，而不是依赖 App 版本猜测。
+Provider 内部仍通过 `instance.capabilities` 提供能力；Remote 握手只接收 revision，选中 Provider 后再调用 Gateway `provider.describe(providerId)` 懒加载完整 typed capability。UI 不写死模型、推理强度和权限枚举，而是按 Provider 返回值构建选择器。
 
 ### 初始公共方法
 

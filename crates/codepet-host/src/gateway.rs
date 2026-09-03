@@ -11,12 +11,27 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex};
 
 const EVENT_CURSOR_PREFIX: &str = "event-";
 const TURN_SEND_CACHE_CAPACITY: usize = 1_024;
 const DEFAULT_TURN_SEND_CALLER_SCOPE: &str = "provider-gateway-protocol-default";
+const MAX_USAGE_DETAILS: usize = 8;
+const MAX_USAGE_DETAIL_BYTES: usize = 16 * 1024;
+const MAX_USAGE_DETAILS_BYTES: usize = 32 * 1024;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RemoteHostIdentity {
+    pub device_id: String,
+    pub descriptor: gateway::DeviceDescriptor,
+}
+
+#[derive(Clone)]
+struct GatewayProviderRuntime {
+    route: gateway::GatewayProviderRoute,
+    summary: gateway::ProviderSummary,
+    capabilities: gateway::GatewayCapabilities,
+}
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct TurnSendKey {
@@ -218,7 +233,7 @@ pub struct ProviderGatewayService {
     forwarding_started: AtomicBool,
     server_name: String,
     server_version: String,
-    remote_host_identity: Option<gateway::GatewayHostIdentity>,
+    remote_host_identity: Option<RemoteHostIdentity>,
     turn_sends: AsyncMutex<TurnSendCache>,
     conversation_state: Arc<ConversationStateStore>,
 }
@@ -230,7 +245,7 @@ impl ProviderGatewayService {
 
     pub fn with_remote_identity(
         manager: Arc<PluginManager>,
-        remote_host_identity: gateway::GatewayHostIdentity,
+        remote_host_identity: RemoteHostIdentity,
     ) -> HostResult<Self> {
         validate_remote_host_identity(&remote_host_identity)?;
         Self::build(
@@ -242,7 +257,7 @@ impl ProviderGatewayService {
 
     pub fn with_remote_identity_and_state_path(
         manager: Arc<PluginManager>,
-        remote_host_identity: gateway::GatewayHostIdentity,
+        remote_host_identity: RemoteHostIdentity,
         state_path: impl AsRef<Path>,
     ) -> HostResult<Self> {
         validate_remote_host_identity(&remote_host_identity)?;
@@ -255,7 +270,7 @@ impl ProviderGatewayService {
 
     fn build(
         manager: Arc<PluginManager>,
-        remote_host_identity: Option<gateway::GatewayHostIdentity>,
+        remote_host_identity: Option<RemoteHostIdentity>,
         conversation_state: Arc<ConversationStateStore>,
     ) -> HostResult<Self> {
         let event_capacity = manager.event_capacity().max(1);
@@ -281,12 +296,29 @@ impl ProviderGatewayService {
         &self.server_version
     }
 
-    pub fn remote_host_identity(&self) -> Option<&gateway::GatewayHostIdentity> {
+    pub fn remote_host_identity(&self) -> Option<&RemoteHostIdentity> {
         self.remote_host_identity.as_ref()
     }
 
     pub fn current_event_cursor(&self) -> gateway::EventCursor {
         self.events.current_cursor()
+    }
+
+    pub async fn resolve_provider_route(
+        &self,
+        provider_id: &str,
+    ) -> Result<gateway::GatewayProviderRoute, gateway::ProtocolError> {
+        self.gateway_providers(None)
+            .await?
+            .into_iter()
+            .find(|provider| provider.summary.id == provider_id)
+            .map(|provider| provider.route)
+            .ok_or_else(|| gateway::ProtocolError {
+                code: "unknown_provider".to_string(),
+                message: "Provider id does not identify a configured Provider".to_string(),
+                retryable: false,
+                details: None,
+            })
     }
 
     pub fn replay_events(
@@ -452,20 +484,14 @@ impl ProviderGatewayService {
                 snapshot,
                 previous_state,
             } => {
+                let _ = previous_state;
                 for instance in &snapshot.instances {
-                    let provider = gateway_instance(&snapshot, instance);
-                    let previous_status = Some(provider_runtime_status(
-                        previous_state,
-                        instance.instance.as_ref(),
-                    ));
-                    self.events.publish(gateway::ProtocolEvent::ProviderStatusChanged {
+                    let provider = gateway_provider(&snapshot, instance).summary;
+                    self.events.publish(gateway::ProtocolEvent::ProviderChanged {
                         jsonrpc: "2.0".to_string(),
                         params: gateway::ProtocolEventParams {
                             event_cursor: event_cursor(0),
-                            payload: gateway::ProviderStatusChangedEvent {
-                                provider,
-                                previous_status,
-                            },
+                            payload: gateway::ProviderChangedEvent { provider },
                         },
                     })?;
                 }
@@ -475,6 +501,7 @@ impl ProviderGatewayService {
                 instance_id,
                 previous_status,
             } => {
+                let _ = previous_status;
                 let runtime = snapshot
                     .instances
                     .iter()
@@ -487,13 +514,12 @@ impl ProviderGatewayService {
                             details: None,
                         }
                     })?;
-                self.events.publish(gateway::ProtocolEvent::ProviderStatusChanged {
+                self.events.publish(gateway::ProtocolEvent::ProviderChanged {
                     jsonrpc: "2.0".to_string(),
                     params: gateway::ProtocolEventParams {
                         event_cursor: event_cursor(0),
-                        payload: gateway::ProviderStatusChangedEvent {
-                            provider: gateway_instance(&snapshot, runtime),
-                            previous_status: previous_status.map(instance_status_to_gateway),
+                        payload: gateway::ProviderChangedEvent {
+                            provider: gateway_provider(&snapshot, runtime).summary,
                         },
                     },
                 })?;
@@ -597,10 +623,10 @@ impl ProviderGatewayService {
         }
     }
 
-    async fn gateway_instances(
+    async fn gateway_providers(
         &self,
         device_id: Option<&str>,
-    ) -> Result<Vec<gateway::ProviderInstance>, gateway::ProtocolError> {
+    ) -> Result<Vec<GatewayProviderRuntime>, gateway::ProtocolError> {
         let local_device_id = &self.manager.device().identity().device_id;
         if device_id.is_some_and(|requested| requested != local_device_id) {
             return Err(gateway::ProtocolError {
@@ -613,30 +639,13 @@ impl ProviderGatewayService {
         let mut providers = Vec::new();
         for snapshot in self.manager.snapshots().await {
             for instance in &snapshot.instances {
-                providers.push(gateway_instance(&snapshot, instance));
+                providers.push(gateway_provider(&snapshot, instance));
             }
         }
         providers.sort_by(|left, right| {
-            left.route
-                .device_id
-                .cmp(&right.route.device_id)
-                .then_with(|| {
-                    left.route
-                        .provider_instance_id
-                        .cmp(&right.route.provider_instance_id)
-                })
+            left.summary.id.cmp(&right.summary.id)
         });
         Ok(providers)
-    }
-
-    fn local_device(&self) -> gateway::Device {
-        let identity = self.manager.device().identity();
-        gateway::Device {
-            device_id: identity.device_id.clone(),
-            display_name: identity.display_name.clone(),
-            status: gateway::DeviceStatus::Online,
-            last_seen_at: Some(now_ms()),
-        }
     }
 
     async fn perform_turn_send(
@@ -655,7 +664,7 @@ impl ProviderGatewayService {
             });
         }
         let provider_instance = self
-            .gateway_instances(Some(&route.device_id))
+            .gateway_providers(Some(&route.device_id))
             .await?
             .into_iter()
             .find(|provider| provider.route == route)
@@ -666,7 +675,7 @@ impl ProviderGatewayService {
                 retryable: false,
                 details: None,
             })?;
-        if provider_instance.status != gateway::ProviderStatus::Ready {
+        if provider_instance.summary.runtime.status != gateway::ProviderStatus::Ready {
             return Err(gateway::ProtocolError {
                 code: "provider_instance_unavailable".to_string(),
                 message: "turn.send Provider instance is not ready".to_string(),
@@ -793,14 +802,25 @@ impl ProtocolServer for ProviderGatewayService {
             if let Some(cursor) = request.last_event_cursor.as_deref() {
                 self.events.replay(Some(cursor))?;
             }
+            // Capture the replay boundary before reading Provider snapshots. Any concurrent
+            // update is therefore either reflected in the snapshot or replayable after it.
+            let event_cursor = self.current_event_cursor();
             Ok(gateway::HandshakeResponse {
-                selected_version: gateway::PROTOCOL_VERSION,
-                server_name: self.server_name.clone(),
-                server_version: self.server_version.clone(),
-                device: remote_host_identity,
-                devices: vec![self.local_device()],
-                providers: self.gateway_instances(None).await?,
-                event_cursor: self.current_event_cursor(),
+                protocol: gateway::GatewayProtocol {
+                    version: gateway::PROTOCOL_VERSION,
+                },
+                device: gateway::GatewayDevice {
+                    name: remote_host_identity.descriptor.device_name,
+                    operating_system: remote_host_identity.descriptor.operating_system,
+                    system_version: remote_host_identity.descriptor.system_version,
+                },
+                providers: self
+                    .gateway_providers(None)
+                    .await?
+                    .into_iter()
+                    .map(|provider| provider.summary)
+                    .collect(),
+                event_cursor,
             })
         })
     }
@@ -817,24 +837,41 @@ impl ProtocolServer for ProviderGatewayService {
         })
     }
 
-    fn device_list<'a>(
+    fn provider_list<'a>(
         &'a self,
-        _request: gateway::DeviceListRequest,
-    ) -> gateway::ProtocolFuture<'a, gateway::DeviceListResponse> {
+        _request: gateway::ProviderListRequest,
+    ) -> gateway::ProtocolFuture<'a, gateway::ProviderListResponse> {
         Box::pin(async move {
-            Ok(gateway::DeviceListResponse {
-                devices: vec![self.local_device()],
+            Ok(gateway::ProviderListResponse {
+                providers: self
+                    .gateway_providers(None)
+                    .await?
+                    .into_iter()
+                    .map(|provider| provider.summary)
+                    .collect(),
             })
         })
     }
 
-    fn provider_list<'a>(
+    fn provider_describe<'a>(
         &'a self,
-        request: gateway::ProviderListRequest,
-    ) -> gateway::ProtocolFuture<'a, gateway::ProviderListResponse> {
+        request: gateway::ProviderDescribeRequest,
+    ) -> gateway::ProtocolFuture<'a, gateway::ProviderDescribeResponse> {
         Box::pin(async move {
-            Ok(gateway::ProviderListResponse {
-                providers: self.gateway_instances(request.device_id.as_deref()).await?,
+            let provider = self
+                .gateway_providers(None)
+                .await?
+                .into_iter()
+                .find(|provider| provider.summary.id == request.id)
+                .ok_or_else(|| gateway::ProtocolError {
+                    code: "unknown_provider".to_string(),
+                    message: "provider.describe id does not identify a configured Provider".to_string(),
+                    retryable: false,
+                    details: None,
+                })?;
+            Ok(gateway::ProviderDescribeResponse {
+                provider_id: provider.summary.id,
+                capabilities: provider.capabilities,
             })
         })
     }
@@ -1265,45 +1302,145 @@ impl ProtocolServer for ProviderGatewayService {
     }
 }
 
-fn gateway_instance(
+fn gateway_provider(
     plugin: &PluginRuntimeSnapshot,
     runtime: &ProviderInstanceRuntimeSnapshot,
-) -> gateway::ProviderInstance {
-    gateway::ProviderInstance {
+) -> GatewayProviderRuntime {
+    let capabilities = runtime
+        .instance
+        .as_ref()
+        .map(|instance| map_capabilities(&instance.capabilities))
+        .unwrap_or_else(|| {
+            empty_gateway_capabilities(format!("provider-unavailable-{}", plugin.generation))
+        });
+    let harness_version = runtime
+        .instance
+        .as_ref()
+        .and_then(|instance| instance.harness.version.clone());
+    let executable_path = runtime
+        .instance
+        .as_ref()
+        .and_then(|instance| instance.harness.executable_path.clone())
+        .or_else(|| configured_executable_path(&runtime.record.settings));
+    GatewayProviderRuntime {
         route: gateway::GatewayProviderRoute {
             device_id: runtime.record.device_id.clone(),
             provider_plugin_id: plugin.catalog.plugin_id.clone(),
             provider_instance_id: runtime.record.instance_id.clone(),
         },
-        plugin_id: plugin.catalog.plugin_id.clone(),
-        display_name: runtime.record.display_name.clone(),
-        icon: plugin.catalog.icon.clone(),
-        version: plugin.reported.as_ref().map(|reported| reported.version.clone()),
-        harness: runtime
-            .instance
-            .as_ref()
-            .map(|instance| map_harness(&instance.harness))
-            .unwrap_or_else(|| gateway::HarnessDescriptor {
-                id: runtime.record.instance_kind.clone(),
+        summary: gateway::ProviderSummary {
+            id: runtime.record.instance_id.clone(),
+            identity: gateway::ProviderIdentity {
                 display_name: runtime.record.display_name.clone(),
-                version: None,
-            }),
-        status: if plugin.catalog.enabled && runtime.record.enabled {
-            provider_runtime_status(plugin.state, runtime.instance.as_ref())
-        } else {
-            gateway::ProviderStatus::Unavailable
+                icon: plugin.catalog.icon.clone(),
+            },
+            runtime: gateway::ProviderRuntime {
+                status: if plugin.catalog.enabled && runtime.record.enabled {
+                    provider_runtime_status(plugin.state, runtime.instance.as_ref())
+                } else {
+                    gateway::ProviderStatus::Unavailable
+                },
+                version: harness_version,
+                executable_path,
+                authentication: runtime
+                    .instance
+                    .as_ref()
+                    .and_then(|instance| instance.authentication.as_ref())
+                    .map(map_authentication),
+                usage: runtime
+                    .instance
+                    .as_ref()
+                    .and_then(|instance| instance.usage.as_ref())
+                    .map(map_usage),
+            },
+            capabilities: gateway::ProviderCapabilitiesSummary {
+                revision: capabilities.revision.clone(),
+            },
         },
-        capabilities: runtime
-            .instance
-            .as_ref()
-            .map(|instance| map_capabilities(&instance.capabilities))
-            .unwrap_or_else(|| {
-                empty_gateway_capabilities(format!(
-                    "provider-unavailable-{}",
-                    plugin.generation
-                ))
-            }),
+        capabilities,
     }
+}
+
+fn configured_executable_path(settings: &provider::JsonObject) -> Option<String> {
+    ["appServerExecutable", "claudeExecutable", "serverExecutable"]
+        .into_iter()
+        .find_map(|key| settings.get(key).and_then(|value| value.as_str()))
+        .filter(|path| !path.trim().is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn map_authentication(authentication: &provider::ProviderAuthentication) -> gateway::ProviderAuthentication {
+    gateway::ProviderAuthentication {
+        status: match authentication.status {
+            provider::ProviderAuthenticationStatus::Unknown => gateway::ProviderAuthenticationStatus::Unknown,
+            provider::ProviderAuthenticationStatus::SignedIn => gateway::ProviderAuthenticationStatus::SignedIn,
+            provider::ProviderAuthenticationStatus::SignedOut => gateway::ProviderAuthenticationStatus::SignedOut,
+            provider::ProviderAuthenticationStatus::Expired => gateway::ProviderAuthenticationStatus::Expired,
+            provider::ProviderAuthenticationStatus::Error => gateway::ProviderAuthenticationStatus::Error,
+            provider::ProviderAuthenticationStatus::Unsupported => gateway::ProviderAuthenticationStatus::Unsupported,
+        },
+        display_text: authentication.display_text.clone(),
+    }
+}
+
+fn map_usage(usage: &provider::ProviderUsage) -> gateway::ProviderUsage {
+    let mut total_bytes = 0usize;
+    let details = usage.details.as_ref().map(|details| {
+        details
+            .iter()
+            .take(MAX_USAGE_DETAILS)
+            .filter_map(|detail| {
+                let data = redact_usage_data(&detail.data);
+                let serialized_bytes = serde_json::to_vec(&data).ok()?.len();
+                if serialized_bytes > MAX_USAGE_DETAIL_BYTES
+                    || total_bytes.saturating_add(serialized_bytes) > MAX_USAGE_DETAILS_BYTES
+                {
+                    return None;
+                }
+                total_bytes = total_bytes.saturating_add(serialized_bytes);
+                Some(gateway::ProviderUsageDetail {
+                    namespace: detail.namespace.clone(),
+                    schema_version: detail.schema_version.clone(),
+                    data,
+                })
+            })
+            .collect()
+    });
+    gateway::ProviderUsage {
+        display_text: usage.display_text.clone(),
+        observed_at: usage.observed_at,
+        details,
+    }
+}
+
+fn redact_usage_data(data: &provider::JsonObject) -> gateway::JsonObject {
+    data.iter()
+        .filter(|(key, _)| !usage_key_is_sensitive(key))
+        .map(|(key, value)| (key.clone(), redact_usage_value(value)))
+        .collect()
+}
+
+fn redact_usage_value(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(object) => serde_json::Value::Object(
+            object
+                .iter()
+                .filter(|(key, _)| !usage_key_is_sensitive(key))
+                .map(|(key, value)| (key.clone(), redact_usage_value(value)))
+                .collect(),
+        ),
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.iter().map(redact_usage_value).collect())
+        }
+        _ => value.clone(),
+    }
+}
+
+fn usage_key_is_sensitive(key: &str) -> bool {
+    let normalized = key.to_ascii_lowercase().replace(['-', '_'], "");
+    ["authorization", "accesstoken", "refreshtoken", "password", "secret", "cookie", "email", "accountid"]
+        .iter()
+        .any(|sensitive| normalized.contains(sensitive))
 }
 
 fn provider_runtime_status(
@@ -1311,7 +1448,7 @@ fn provider_runtime_status(
     instance: Option<&provider::ProviderInstance>,
 ) -> gateway::ProviderStatus {
     match state {
-        PluginRuntimeState::Stopped => gateway::ProviderStatus::Disconnected,
+        PluginRuntimeState::Stopped => gateway::ProviderStatus::Stopped,
         PluginRuntimeState::Starting => gateway::ProviderStatus::Connecting,
         PluginRuntimeState::Ready => instance
             .map(|instance| instance_status_to_gateway(instance.status))
@@ -1323,7 +1460,7 @@ fn provider_runtime_status(
 fn instance_status_to_gateway(status: provider::InstanceStatus) -> gateway::ProviderStatus {
     match status {
         provider::InstanceStatus::Created => gateway::ProviderStatus::Unavailable,
-        provider::InstanceStatus::Stopped => gateway::ProviderStatus::Disconnected,
+        provider::InstanceStatus::Stopped => gateway::ProviderStatus::Stopped,
         provider::InstanceStatus::Starting | provider::InstanceStatus::Stopping => {
             gateway::ProviderStatus::Connecting
         }
@@ -1410,14 +1547,6 @@ fn map_conversation_create_capabilities(
             .as_ref()
             .map(map_turn_send_capabilities),
         workspace_mode: capabilities.workspace_mode.as_ref().map(map_choice_set),
-    }
-}
-
-fn map_harness(harness: &provider::HarnessDescriptor) -> gateway::HarnessDescriptor {
-    gateway::HarnessDescriptor {
-        id: harness.id.clone(),
-        display_name: harness.display_name.clone(),
-        version: harness.version.clone(),
     }
 }
 
@@ -2076,7 +2205,7 @@ fn ensure_same_resource_identity(
     })
 }
 
-fn validate_remote_host_identity(identity: &gateway::GatewayHostIdentity) -> HostResult<()> {
+fn validate_remote_host_identity(identity: &RemoteHostIdentity) -> HostResult<()> {
     if identity.device_id.trim().is_empty() || !device_descriptor_is_valid(&identity.descriptor) {
         return Err(HostError::new(
             "invalid_remote_host_identity",
@@ -2216,11 +2345,4 @@ fn cursor_error(
         retryable: false,
         details: Some(details),
     }
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(0)
 }

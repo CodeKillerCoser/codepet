@@ -156,15 +156,24 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
   assert.equal(gateway.schema.$defs.ConversationSearchRequest.properties.route.$ref, "#/$defs/GatewayProviderRoute");
   assert.equal(gateway.schema.$defs.ConversationSearchRequest.properties.searchTerm.minLength, 1);
   assert.deepEqual(gateway.schema.$defs.ConversationSearchRequest.required, ["route", "searchTerm"]);
+  assert.equal(gateway.schema.$defs.HandshakeResponse.properties.devices, undefined);
   assert.equal(
-    gateway.schema.$defs.ProviderInstance.properties.pluginId.$ref,
-    "../../core/v1/schema.json#/$defs/ProviderPluginId",
+    gateway.schema.$defs.HandshakeResponse.properties.device.$ref,
+    "#/$defs/GatewayDevice",
   );
-  assert.deepEqual(gateway.schema.$defs.ProviderInstance.properties.icon, {
+  assert.equal(gateway.schema.$defs.ProviderSummary.properties.route, undefined);
+  assert.equal(gateway.schema.$defs.ProviderSummary.properties.pluginId, undefined);
+  assert.deepEqual(gateway.schema.$defs.ProviderIdentity.properties.icon, {
     type: "string",
     pattern: "^https://",
   });
-  assert.equal(gateway.schema.$defs.ProviderInstance.required.includes("icon"), false);
+  assert.equal(gateway.schema.$defs.ProviderIdentity.required.includes("icon"), false);
+  assert.equal(
+    gateway.schema.$defs.ProviderDescribeResponse.properties.capabilities.$ref,
+    "#/$defs/GatewayCapabilities",
+  );
+  assert(gateway.manifest.events.some((event) => event.name === "provider.changed"));
+  assert.equal(gateway.manifest.events.some((event) => event.name === "provider.statusChanged"), false);
   for (const definition of ["Conversation", "TurnTask", "Approval"]) {
     assert.equal(
       gateway.schema.$defs[definition].properties.resource.$ref,
@@ -191,7 +200,7 @@ test("provider descriptors and turn controls are explicit discriminated protocol
     (method) => method.name === "turn.send",
   );
   assert.equal(gatewayTurnSend.idempotency, "nonIdempotent");
-  for (const packageId of ["provider-v1", "gateway-v1"]) {
+  for (const packageId of ["provider-v1"]) {
     const definitions = record(model, packageId).schema.$defs;
     const instance = definitions.ProviderInstance;
     assert(instance.required.includes("harness"));
@@ -224,6 +233,13 @@ test("provider descriptors and turn controls are explicit discriminated protocol
     assert.equal(definitions.FlatModelSelection.properties.kind.$ref, "#/$defs/FlatModelCatalogKind");
     assert.equal(definitions.GroupedModelSelection.properties.kind.$ref, "#/$defs/GroupedModelCatalogKind");
   }
+  const gatewayDefinitions = record(model, "gateway-v1").schema.$defs;
+  assert.deepEqual(gatewayDefinitions.ProviderSummary.required, ["id", "identity", "runtime", "capabilities"]);
+  assert.deepEqual(gatewayDefinitions.ProviderCapabilitiesSummary.required, ["revision"]);
+  assert.equal(gatewayDefinitions.ProviderRuntime.properties.version.type, "string");
+  assert.equal(gatewayDefinitions.ProviderRuntime.properties.executablePath.type, "string");
+  assert.equal(gatewayDefinitions.ProviderUsage.properties.displayText.type, "string");
+  assert.equal(gatewayDefinitions.ProviderUsageDetail.properties.schemaVersion.type, "string");
 
   const gatewayRust = await readFile("sdk/rust/codepet-gateway-sdk/src/generated.rs", "utf8");
   const providerRust = await readFile("sdk/rust/codepet-provider-sdk/src/generated.rs", "utf8");
@@ -350,7 +366,7 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   const gateway = record(model, "gateway-v1");
   const gatewayIr = model.protocolIr.packagesById.get("gateway-v1");
   assert.equal(gatewayIr.service.methods.length, 18);
-  assert.equal(gatewayIr.service.events.length, 10);
+  assert.equal(gatewayIr.service.events.length, 9);
   assert.equal(
     gatewayIr.service.methods.find((method) => method.name === "turn.send").idempotency,
     "nonIdempotent",

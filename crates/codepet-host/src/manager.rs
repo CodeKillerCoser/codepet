@@ -1446,6 +1446,9 @@ impl PluginManager {
                     "Provider instance is not configured by the manifest",
                 )
             })?;
+            if runtime.instance == instance {
+                return Ok(());
+            }
             let previous_status = runtime.instance.as_ref().map(|instance| instance.status);
             runtime.instance = instance;
             if runtime.instance.is_some() {

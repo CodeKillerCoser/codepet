@@ -2,18 +2,14 @@
   "jsonrpc": "2.0",
   "id": "gateway-handshake-1",
   "result": {
-    "selectedVersion": 1,
-    "serverName": "CodePet Gateway",
-    "serverVersion": "0.1.4",
-    "device": {
-      "deviceId": "device-macbook-1",
-      "descriptor": {
-        "deviceName": "MacBook",
-        "operatingSystem": "macOS",
-        "systemVersion": "15.6"
-      }
+    "protocol": {
+      "version": 1
     },
-    "devices": [],
+    "device": {
+      "name": "MacBook",
+      "operatingSystem": "macOS",
+      "systemVersion": "15.6"
+    },
     "providers": [],
     "eventCursor": "event-40"
   }

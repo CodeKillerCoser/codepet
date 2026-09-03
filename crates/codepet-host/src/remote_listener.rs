@@ -85,7 +85,7 @@ impl RemoteLanServer {
         gateway: Arc<ProviderGatewayService>,
     ) -> HostResult<RemoteLanServerHandle> {
         let remote_identity = remote_access.remote_host_identity();
-        let gateway_identity = gateway::GatewayHostIdentity {
+        let gateway_identity = crate::RemoteHostIdentity {
             device_id: remote_identity.device_id.clone(),
             descriptor: remote_identity.descriptor.clone(),
         };
