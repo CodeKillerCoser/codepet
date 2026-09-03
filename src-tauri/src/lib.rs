@@ -540,22 +540,6 @@ pub fn run() {
                     let _ = handle.emit("collector-error", error.to_string());
                 }
             }
-            let usage_handle = handle.clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                let span = crate::app_log::PerfSpan::start("token_usage.refresh_default_usage_summary");
-                match token_usage::refresh_default_usage_summary() {
-                    Ok(summary) => {
-                        span.finish_ok(&[("sessions", summary.sessions.len().to_string())]);
-                        crate::app_log::info("token_usage", "default usage summary refreshed");
-                        let _ = usage_handle.emit("token-usage-updated", summary);
-                    }
-                    Err(error) => {
-                        span.finish_error(&error.to_string(), &[]);
-                        crate::app_log::error("token_usage", &format!("failed to refresh default usage summary error={error}"));
-                        let _ = usage_handle.emit("collector-error", error.to_string());
-                    }
-                }
-            });
             let collector_handle = handle.clone();
             let collector_state = state.clone();
             tauri::async_runtime::spawn(async move {
