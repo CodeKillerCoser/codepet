@@ -21,6 +21,7 @@ Host 启动时把 `192.168.0.105` 分别复制进 listener handle、Axum pairing
 - 失败 generation 不得放回 advertiser slot，也不得恢复旧 endpoint；listener/TLS/session/credential/Gateway 保持原对象。
 - Remote 在 App 生命周期内只维护一份共享发现目录，以 `deviceId` 更新当前 SRV/A endpoint；缓存必须有过期时间，相同地址只刷新 freshness，不制造重复重连事件。
 - Android Emulator 的 `10.0.2.0/24` NAT 不转发宿主机 LAN 上的 UDP 5353 广播。调试模拟器可以额外探测固定别名 `10.0.2.2:47622` 的公开 HTTPS discovery metadata；该回退不得在真机或发布构建启用，不得替代 mDNS，也不得绕过证书实际指纹比对、数字口令确认或 Host 接受。
+- `10.0.2.2` 只是模拟器本地可达别名，不是 Host advertised generation 的地址。Host 接受配对后可以返回真实 LAN `gatewayUrl`；Remote 只允许固定别名候选出现这一主机差异，仍须严格匹配 47622、`/remote/v2/gateway`、设备身份、证书指纹与配对码，并在建立连接时重新应用别名。
 - 连接解析优先尝试仍新鲜的发现候选，再回退持久化 endpoint 和稳定端口。已配对新候选仍必须通过既有 TLS fingerprint、credential 和 Gateway handshake。首次配对可把 TXT `fp` 用作候选 pin，但只有两端显示相同数字码并由 Host 明确接受后才能签发 credential；mDNS TXT 本身不能升级为信任来源。
 - 发现到同一已配对设备的新 endpoint 时，应立即唤醒 retryable 网络失败；credential 拒绝、身份不匹配等非重试错误不得被发现事件反复重试。
 
@@ -37,4 +38,5 @@ Host 启动时把 `192.168.0.105` 分别复制进 listener handle、Axum pairing
 - Tauri 测试必须覆盖 A→B 一致性；A→无地址时 listener/TLS/credential 不变并可恢复 B；IP/pair 竞态最终只留最新 generation；Announce 失败可重试；shutdown 后 resolver 调用停止。
 - Remote 测试必须覆盖同一 `deviceId` 的 A→B 缓存替换、过期候选淘汰、B 优先于持久化 A、发现事件立即唤醒 retryable failure，以及非重试认证失败不被唤醒。
 - 模拟器回退测试必须覆盖：HTTPS metadata 与实际叶子证书指纹一致才形成候选；回退失败仍继续 mDNS；探测仅由调试 Android 模拟器身份启用。真实模拟器 smoke 必须验证 `10.0.2.2` 候选可见且首次配对仍经过双端确认。
+- 模拟器配对测试必须覆盖 Host 返回真实 LAN `gatewayUrl` 的 accepted 响应，确认 Remote 不因 `10.0.2.2` 与 LAN IP 不同而丢弃已签发 credential；其他地址、端口或路径差异仍应失败关闭。
 - 发布 smoke 必须在当前真实 IPv4 上用 DNS-SD 看到 `_codepet._tcp.local.`，并让已安装 Remote 自动连接后只读列出数据。
