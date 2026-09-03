@@ -12,6 +12,6 @@
   },
   "expiresAt": 1787700300000,
   "confirmationCode": "777533",
-  "gatewayUrl": "wss://192.168.1.10:49152/remote/v2/gateway",
+  "gatewayUrl": "wss://192.168.1.10:49152/remote/v1/gateway",
   "credential": "opaque-remote-credential"
 }

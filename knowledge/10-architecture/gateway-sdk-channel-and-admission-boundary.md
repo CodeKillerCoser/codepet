@@ -10,7 +10,7 @@ Gateway v1 的 schema/manifest 是业务协议唯一事实来源。`cp-sdk-gen` 
 
 - `protocol/gateway/v1/{schema,manifest}.json`：Gateway 业务 DTO、18 个方法、10 个 replayable event 与 WebSocket text framing；五个 Project CRUD 方法逐项绑定 capability。
 - `protocol/channel/lan/v1/{schema,manifest}.json`：QR、pairing exchange、LAN Host identity 与 current credential revoke DTO；不声明 Gateway method。
-- `crates/codepet-host/src/remote_listener.rs`：pairing/credential 保持 `/remote/v1/...`，Gateway WSS 使用 `/remote/v2/gateway`；首个业务请求必须是 handshake。
+- `crates/codepet-host/src/remote_listener.rs`：pairing、credential 与 Gateway WSS 都保持 `/remote/v1/...`；首个业务请求必须是 handshake。
 - `sdk/rust/codepet-gateway-sdk`：Host 实现生成的 server trait，事件与响应使用 JSON-RPC 2.0。
 - `sdk/dart/codepet-gateway-sdk`：生成 transport-neutral `ProtocolClient`；Remote 的 pinned WebSocket 只移动请求信封、响应信封与 notification。
 - `tools/cp-sdk-gen/cp-sdk-gen.mjs`：支持 Provider server、Gateway client/server/both、LAN models，并记录 schema digest 与 role。
@@ -39,7 +39,7 @@ discovery ---------------------------------- mDNS
 - Gateway Host identity 只包含 `deviceId + DeviceDescriptor`。
 - Provider route 从业务资源获得。`turn.send` 不再同时携带一份可冲突的 route 和 conversation route。
 - Project 与 Conversation 的项目归属都使用四段 routed resource；项目 CRUD、项目筛选和项目归属创建不得只传 native id。`project.list` 在调用 Provider 前取得 `snapshotCursor`，使随后到达的 `project.changed` 可从该边界 replay。
-- 旧 Remote 存储的 `/remote/v1/gateway` endpoint 在读取时迁移到 `/remote/v2/gateway`；pairing 与 credential REST 路径仍为 v1。
+- 当前尚未正式发布，LAN admission 与 Gateway endpoint 统一保持 V1，不引入 V2 endpoint 或兼容迁移。
 
 ## 风险与验证
 

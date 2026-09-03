@@ -28,7 +28,7 @@
 
 ```text
 POST   /remote/v1/pairings/{pairingId}/exchange
-GET    /remote/v2/gateway                    # WSS Upgrade
+GET    /remote/v1/gateway                    # WSS Upgrade
 DELETE /remote/v1/credentials/current
 ```
 

@@ -249,7 +249,7 @@ impl PinnedTlsClient {
     ) -> Result<TestWebSocket, WebSocketError> {
         let tls = self.connect_tls().await;
         let mut request = format!(
-            "wss://localhost:{}/remote/v2/gateway",
+            "wss://localhost:{}/remote/v1/gateway",
             self.address.port()
         )
         .into_client_request()
@@ -500,7 +500,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     assert_eq!(
         wildcard_server.gateway_url(),
         Some(format!(
-            "wss://listener.local:{}/remote/v2/gateway",
+            "wss://listener.local:{}/remote/v1/gateway",
             wildcard_server.port()
         ))
     );
@@ -524,7 +524,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     );
     assert_eq!(
         server.gateway_url(),
-        Some(format!("wss://127.0.0.1:{}/remote/v2/gateway", server.port()))
+        Some(format!("wss://127.0.0.1:{}/remote/v1/gateway", server.port()))
     );
     let address = server.local_addr();
     let gateway_url = server.gateway_url().unwrap();
@@ -582,7 +582,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         serde_json::from_value(staged_response).unwrap();
     assert_eq!(
         staged_response.gateway_url,
-        format!("wss://127.0.0.2:{}/remote/v2/gateway", server.port())
+        format!("wss://127.0.0.2:{}/remote/v1/gateway", server.port())
     );
     assert_eq!(server.advertised_host().as_deref(), Some("127.0.0.1"));
     staged.commit().unwrap();

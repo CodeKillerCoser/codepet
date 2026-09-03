@@ -32,7 +32,7 @@ The generator supports a deliberately small JSON Schema Draft 2020-12 subset. Un
 The LAN transport uses three fixed routes without adding them as CodePet-envelope methods:
 
 - `POST /remote/v1/pairings/{pairingId}/exchange`
-- `GET /remote/v2/gateway` with WebSocket upgrade
+- `GET /remote/v1/gateway` with WebSocket upgrade
 - `DELETE /remote/v1/credentials/current`
 
 REST/QR bodies are generated from `channel/lan/v1/schema.json`; Gateway business DTOs and methods are generated from `gateway/v1`. `PairingExchangeRequest` contains `pairingSecret`, the existing stable `clientId`, and one required `DeviceDescriptor { deviceName, operatingSystem, systemVersion }`; `pairingId` remains the REST path parameter. `PairingExchangeResponse` contains the stable LAN Host identity, Gateway URL, and opaque credential. These admission types are not JSON-RPC methods.

@@ -25,7 +25,7 @@ fn lan_admission_fixtures_use_generated_models() {
     assert_eq!(qr.version, 1);
     assert_eq!(request.client_id, "remote-client-phone-1");
     assert_eq!(response.device.device_id, qr.host_device_id);
-    assert!(response.gateway_url.ends_with("/remote/v2/gateway"));
+    assert!(response.gateway_url.ends_with("/remote/v1/gateway"));
     assert!(deleted.revoked);
 }
 
