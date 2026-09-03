@@ -596,6 +596,8 @@ impl ProviderGatewayService {
             .manager
             .conversation_get(provider::ConversationGetRequest {
                 conversation: request.conversation.clone(),
+                cursor: None,
+                limit: Some(1),
             })
             .await
             .map_err(gateway_error)?;
@@ -854,12 +856,17 @@ impl ProtocolServer for ProviderGatewayService {
                 .manager
                 .conversation_get(provider::ConversationGetRequest {
                     conversation: request.conversation,
+                    cursor: request.cursor,
+                    limit: request.limit,
                 })
                 .await
                 .map_err(gateway_error)?;
             Ok(gateway::ConversationGetResponse {
                 conversation: map_conversation(response.conversation),
                 items: response.items.into_iter().map(map_conversation_item).collect(),
+                page_info: response.page_info.map(|page_info| gateway::PageInfo {
+                    next_cursor: page_info.next_cursor,
+                }),
                 snapshot_cursor,
             })
         })

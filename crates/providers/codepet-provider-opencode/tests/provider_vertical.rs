@@ -137,6 +137,8 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     let fetched = provider
         .conversation_get(ConversationGetRequest {
             conversation: fixture_conversation.clone(),
+            cursor: None,
+            limit: None,
         })
     .await
     .unwrap();

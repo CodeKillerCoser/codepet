@@ -387,7 +387,8 @@ impl CodexProtocolMapper {
         }
     }
 
-    pub(crate) fn append_remaining_approval_items(
+    #[cfg(test)]
+    fn append_remaining_approval_items(
         &self,
         approvals: &[(String, ProviderApproval)],
         emitted_approvals: &[bool],
@@ -725,6 +726,7 @@ impl CodexProtocolMapper {
             CodexNotification::ServerRequestResolved {
                 ..
             } => return Ok(Vec::new()),
+            CodexNotification::ThreadNameUpdated { .. } => return Ok(Vec::new()),
             CodexNotification::Unknown { .. } => return Ok(Vec::new()),
         };
         Ok(vec![event])

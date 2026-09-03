@@ -1238,6 +1238,7 @@ impl Provider for OpenCodeProvider {
             Ok(ConversationGetResponse {
                 conversation,
                 items,
+                page_info: None,
             })
         })
     }

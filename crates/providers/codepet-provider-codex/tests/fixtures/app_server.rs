@@ -17,6 +17,7 @@ fn main() {
     let mut active_thread_id = None;
     let mut created_thread_started_in_process = false;
     let mut created_thread_read_failures_remaining = 2usize;
+    let mut thread_renamed = false;
     while reader.read_line(&mut line).unwrap_or(0) > 0 {
         let message: Value = match serde_json::from_str(line.trim()) {
             Ok(message) => message,
@@ -183,6 +184,42 @@ fn main() {
             }
             "thread/read" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
+                if options.approval_mode == "unmaterialized-before-first-message"
+                    && !created_thread_started_in_process
+                    && thread_id == "thread-created"
+                    && created_thread_read_failures_remaining > 0
+                {
+                    created_thread_read_failures_remaining -= 1;
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": {
+                                "code": -32600,
+                                "message": format!("thread not loaded: {thread_id}")
+                            }
+                        }),
+                    );
+                    continue;
+                }
+                if options.approval_mode == "observer-create-read-eventually"
+                    && !created_thread_started_in_process
+                    && thread_id == "thread-created"
+                    && created_thread_read_failures_remaining > 0
+                {
+                    created_thread_read_failures_remaining -= 1;
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": {
+                                "code": -32603,
+                                "message": "failed to read thread: thread-store internal error: failed to read session metadata /fixture/rollout.jsonl: rollout at /fixture/rollout.jsonl is empty"
+                            }
+                        }),
+                    );
+                    continue;
+                }
                 if options.approval_mode == "create-read-eventually"
                     && created_thread_started_in_process
                     && thread_id == "thread-created"
@@ -207,28 +244,32 @@ fn main() {
                 } else {
                     history_turns(thread_id, turn_state.as_deref())
                 };
+                let mut response_thread = thread(
+                    thread_id,
+                    match turn_state.as_deref() {
+                        Some("inProgress") => "active",
+                        Some("waitingApproval") => "waitingApproval",
+                        Some("waitingUserInput") => "waitingUserInput",
+                        _ => "idle",
+                    },
+                    turns,
+                );
+                if thread_renamed && active_thread_id.as_deref() == Some(thread_id) {
+                    response_thread["name"] = json!("Renamed by Codex");
+                }
                 respond(
                     &mut writer,
                     id,
                     json!({
-                        "thread": thread(
-                            thread_id,
-                            match turn_state.as_deref() {
-                                Some("inProgress") => "active",
-                                Some("waitingApproval") => "waitingApproval",
-                                Some("waitingUserInput") => "waitingUserInput",
-                                _ => "idle",
-                            },
-                            turns
-                        )
+                        "thread": response_thread
                     }),
                 );
             }
             "thread/turns/list" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
-                if params["limit"] != 10
+                if params["limit"].as_u64().is_none_or(|limit| !(1..=10).contains(&limit))
                     || params["itemsView"] != "full"
-                    || params["sortDirection"] != "asc"
+                    || params["sortDirection"] != "desc"
                 {
                     write_json(
                         &mut writer,
@@ -236,7 +277,24 @@ fn main() {
                             "id": id,
                             "error": {
                                 "code": -32602,
-                                "message": "thread/turns/list must request ten full turns in ascending order"
+                                "message": "thread/turns/list must request at most ten full turns in descending order"
+                            }
+                        }),
+                    );
+                    continue;
+                }
+                if options.approval_mode == "unmaterialized-before-first-message"
+                    && thread_id == "thread-created"
+                {
+                    write_json(
+                        &mut writer,
+                        json!({
+                            "id": id,
+                            "error": {
+                                "code": -32600,
+                                "message": format!(
+                                    "thread {thread_id} is not materialized yet; thread/turns/list is unavailable before first user message"
+                                )
                             }
                         }),
                     );
@@ -375,6 +433,17 @@ fn main() {
                 let started_user_item = started_turn["items"][0].clone();
                 started_turn["items"] = json!([]);
                 respond(&mut writer, id, json!({ "turn": started_turn.clone() }));
+                if options.approval_mode == "normal" {
+                    thread_renamed = true;
+                    notify(
+                        &mut writer,
+                        "thread/name/updated",
+                        json!({
+                            "threadId": thread_id,
+                            "threadName": "Renamed by Codex"
+                        }),
+                    );
+                }
                 notify(
                     &mut writer,
                     "turn/started",
@@ -757,15 +826,15 @@ fn turn_page(
 ) -> (Vec<Value>, Option<&'static str>) {
     match (thread_id, cursor) {
         ("thread-paginated", None) => (
-            vec![paged_turn("turn-page-one", "agent-page-one", "page one")],
+            vec![paged_turn("turn-page-two", "agent-page-two", "page two")],
             Some("page-two"),
         ),
         ("thread-paginated", Some("page-two")) => (
-            vec![paged_turn("turn-page-two", "agent-page-two", "page two")],
+            vec![paged_turn("turn-page-one", "agent-page-one", "page one")],
             None,
         ),
         ("thread-output-too-large", None) => (
-            vec![large_agent_turn("turn-large-one", "agent-large-one")],
+            vec![large_agent_turn("turn-large-three", "agent-large-three")],
             Some("large-page-two"),
         ),
         ("thread-output-too-large", Some("large-page-two")) => (
@@ -773,7 +842,7 @@ fn turn_page(
             Some("large-page-three"),
         ),
         ("thread-output-too-large", Some("large-page-three")) => (
-            vec![large_agent_turn("turn-large-three", "agent-large-three")],
+            vec![large_agent_turn("turn-large-one", "agent-large-one")],
             None,
         ),
         _ => (history_turns(thread_id, turn_state), None),

@@ -266,6 +266,7 @@ impl ProtocolServer for FakeProvider {
             Ok(ConversationGetResponse {
                 conversation: configured,
                 items: history_items(&response_route, native_id),
+                page_info: None,
             })
         })
     }

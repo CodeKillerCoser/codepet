@@ -1,15 +1,17 @@
-use crate::client::{CodexAppServerSession, CodexRequestOutcome};
+use crate::client::{
+    CodexAppServerSession, CodexRequestOutcome, THREAD_TURNS_PAGE_LIMIT,
+};
 use crate::mapper::{parse_permission_level, CodexProtocolMapper};
 use crate::protocol::{
     approval_generation, approval_resource_id, CodexAppServerError, CodexApprovalRequest,
-    CodexIncoming, CodexNotification, CodexThreadListRequest, CodexThreadStartRequest,
-    CodexTurnStartRequest, CodexTurnStatus, CodexTurnSteerRequest,
+    CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexThreadListRequest,
+    CodexThreadStartRequest, CodexTurnStartRequest, CodexTurnStatus, CodexTurnSteerRequest,
     CODEX_INSTANCE_KIND, CODEX_PLUGIN_ID,
 };
 use codepet_provider_sdk::{
     ApprovalRequestedEvent, ApprovalResolveRequest, ApprovalResolveResponse,
     ConversationAcquireInteractionRequest, ConversationAcquireInteractionResponse,
-    ConversationCreateRequest,
+    ConversationCreateRequest, ConversationUpsertedEvent,
     ConversationCreateResponse, ConversationGetRequest, ConversationGetResponse,
     ConversationListRequest, ConversationListResponse, ConversationSearchRequest,
     ConversationSearchResponse, InstanceCapabilitiesRequest, InstanceCapabilitiesResponse,
@@ -41,6 +43,8 @@ static NEXT_EXECUTION_ATTEMPT: AtomicU64 = AtomicU64::new(1);
 static NEXT_INSTANCE_SESSION: AtomicU64 = AtomicU64::new(1);
 static NEXT_MANAGED_WORKTREE: AtomicU64 = AtomicU64::new(1);
 const MAX_THREAD_TURN_PAGES: usize = 10_000;
+const DEFAULT_CONVERSATION_GET_TURN_LIMIT: u64 = 40;
+const MAX_CONVERSATION_GET_TURN_LIMIT: u64 = 100;
 const INTERACTION_LEASE_DURATION: Duration = Duration::from_secs(30);
 const INTERACTION_REAPER_INTERVAL: Duration = Duration::from_secs(1);
 const CONVERSATION_CREATE_READINESS_TIMEOUT: Duration = Duration::from_secs(2);
@@ -81,6 +85,7 @@ struct InstanceMutable {
     executions: HashMap<String, Arc<ExecutionSlot>>,
     pending_approvals: HashMap<String, PendingApproval>,
     approval_history: Vec<ObservedApproval>,
+    pending_materialization: HashMap<String, CodexConversationSnapshot>,
 }
 
 enum InstanceSessionState {
@@ -492,6 +497,7 @@ impl CodexInstanceRuntime {
                 executions: HashMap::new(),
                 pending_approvals: HashMap::new(),
                 approval_history: Vec::new(),
+                pending_materialization: HashMap::new(),
             }),
             mapper: Mutex::new(CodexProtocolMapper::new(request.route)),
             events,
@@ -637,6 +643,7 @@ impl CodexInstanceRuntime {
                     let executions = mutable.executions.drain().collect();
                     mutable.pending_approvals.clear();
                     mutable.approval_history.clear();
+                    mutable.pending_materialization.clear();
                     drop(mutable);
                     let status_event_error = self.publish_status_change(previous).err();
                     StopAction::Stop {
@@ -702,6 +709,7 @@ impl CodexInstanceRuntime {
                             mutable.status = InstanceStatus::Stopped;
                             mutable.pending_approvals.clear();
                             mutable.approval_history.clear();
+                            mutable.pending_materialization.clear();
                             self.lifecycle_changed.notify_all();
                             Some(previous)
                         } else {
@@ -911,6 +919,7 @@ impl CodexInstanceRuntime {
             self.start_execution_event_forwarder(
                 conversation_id.to_string(),
                 generation,
+                session,
                 incoming,
             );
             if let Some(handle) = slot.wait_ready()? {
@@ -1108,6 +1117,7 @@ impl CodexInstanceRuntime {
     fn start_observer_forwarder(
         self: &Arc<Self>,
         observer_generation: String,
+        session: CodexAppServerSession,
         incoming: Receiver<Result<CodexIncoming, CodexAppServerError>>,
     ) {
         let runtime = Arc::downgrade(self);
@@ -1128,6 +1138,25 @@ impl CodexInstanceRuntime {
                     return;
                 }
                 match message {
+                    Ok(CodexIncoming::Notification(
+                        CodexNotification::ThreadNameUpdated {
+                            thread_id,
+                            thread_name,
+                        },
+                    )) => {
+                        if let Some(event) = runtime.conversation_upsert_event(
+                            &session,
+                            &thread_id,
+                            thread_name,
+                        ) {
+                            if let Err(error) = runtime.events.publish(event) {
+                                eprintln!(
+                                    "Codex observer title event forwarding failed: {}",
+                                    error.message
+                                );
+                            }
+                        }
+                    }
                     Ok(_) => {}
                     Err(error) => {
                         runtime.fail_observer(
@@ -1145,6 +1174,7 @@ impl CodexInstanceRuntime {
         self: &Arc<Self>,
         conversation_id: String,
         session_generation: String,
+        session: CodexAppServerSession,
         incoming: Receiver<Result<CodexIncoming, CodexAppServerError>>,
     ) {
         let runtime = Arc::downgrade(self);
@@ -1238,6 +1268,7 @@ impl CodexInstanceRuntime {
                             let forwarded = match runtime.map_execution_incoming(
                                 &conversation_id,
                                 &session_generation,
+                                &session,
                                 incoming,
                             ) {
                                 Ok(events) => {
@@ -1292,6 +1323,7 @@ impl CodexInstanceRuntime {
                         let events = runtime.map_execution_incoming(
                             &conversation_id,
                             &session_generation,
+                            &session,
                             incoming,
                         );
                         let events = match events {
@@ -1336,6 +1368,7 @@ impl CodexInstanceRuntime {
         &self,
         conversation_id: &str,
         session_generation: &str,
+        session: &CodexAppServerSession,
         incoming: CodexIncoming,
     ) -> Result<Vec<ProtocolEvent>, ProtocolError> {
         if incoming_conversation_id(&incoming)
@@ -1354,6 +1387,13 @@ impl CodexInstanceRuntime {
             }
         }
         match incoming {
+            CodexIncoming::Notification(CodexNotification::ThreadNameUpdated {
+                thread_id,
+                thread_name,
+            }) => Ok(self
+                .conversation_upsert_event(session, &thread_id, thread_name)
+                .into_iter()
+                .collect()),
             CodexIncoming::ApprovalRequested(request) => {
                 let approval = lock(&self.mapper).approval(&request);
                 let approval_id = approval.resource.native_resource_id.clone();
@@ -1412,6 +1452,43 @@ impl CodexInstanceRuntime {
         }
     }
 
+    fn conversation_upsert_event(
+        &self,
+        session: &CodexAppServerSession,
+        conversation_id: &str,
+        thread_name: Option<String>,
+    ) -> Option<ProtocolEvent> {
+        let pending = {
+            let mut mutable = lock(&self.mutable);
+            mutable
+                .pending_materialization
+                .get_mut(conversation_id)
+                .map(|snapshot| {
+                    snapshot.thread.name = thread_name.clone();
+                    snapshot.clone()
+                })
+        };
+        let mut snapshot = match session.thread_read_metadata(conversation_id) {
+            Ok(snapshot) => snapshot,
+            Err(error) => match pending {
+                Some(snapshot) => snapshot,
+                None => {
+                    eprintln!(
+                        "Codex title update could not refresh conversation {conversation_id}: {error}"
+                    );
+                    return None;
+                }
+            },
+        };
+        snapshot.thread.name = thread_name;
+        Some(ProtocolEvent::EventConversationUpserted {
+            jsonrpc: "2.0".to_string(),
+            params: ConversationUpsertedEvent {
+                conversation: lock(&self.mapper).conversation(&snapshot),
+            },
+        })
+    }
+
     fn fail_observer(
         &self,
         observer_generation: &str,
@@ -1440,6 +1517,7 @@ impl CodexInstanceRuntime {
                 .collect::<Vec<_>>();
             mutable.pending_approvals.clear();
             mutable.approval_history.clear();
+            mutable.pending_materialization.clear();
             self.lifecycle_changed.notify_all();
             drop(mutable);
             let _ = self.publish_status_change(previous);
@@ -1747,6 +1825,7 @@ impl Provider for CodexProvider {
                 mutable.observer_generation = None;
                 mutable.pending_approvals.clear();
                 mutable.approval_history.clear();
+                mutable.pending_materialization.clear();
                 let slot = Arc::new(InstanceSessionSlot::new(mutable.lifecycle_generation));
                 mutable.sessions.insert(slot.id, slot.clone());
                 drop(mutable);
@@ -1870,6 +1949,7 @@ impl Provider for CodexProvider {
                     mutable.observer_generation = Some(observer_generation.clone());
                     mutable.pending_approvals.clear();
                     mutable.approval_history.clear();
+                    mutable.pending_materialization.clear();
                     let previous = mutable.status;
                     mutable.status = InstanceStatus::Ready;
                     runtime.lifecycle_changed.notify_all();
@@ -1886,7 +1966,7 @@ impl Provider for CodexProvider {
                 runtime.fail_observer(&observer_generation, error.clone());
                 return Err(error);
             }
-            runtime.start_observer_forwarder(observer_generation, incoming);
+            runtime.start_observer_forwarder(observer_generation, observer, incoming);
             let instance = runtime.snapshot();
             Ok(InstanceStartResponse { instance })
         })
@@ -2057,11 +2137,42 @@ impl Provider for CodexProvider {
         Box::pin(async move {
             let runtime = self.resource_instance(&request.conversation)?;
             let conversation_id = request.conversation.native_resource_id;
+            let requested_limit = request
+                .limit
+                .unwrap_or(DEFAULT_CONVERSATION_GET_TURN_LIMIT);
+            if !(1..=MAX_CONVERSATION_GET_TURN_LIMIT).contains(&requested_limit) {
+                return Err(protocol_error(
+                    "invalid_request",
+                    format!(
+                        "conversation.get limit must be between 1 and {MAX_CONVERSATION_GET_TURN_LIMIT}"
+                    ),
+                    false,
+                ));
+            }
+            let initial_cursor = request.cursor;
             let session = runtime.ready_observer()?;
             tokio::task::spawn_blocking(move || {
-                let snapshot = session
-                    .thread_read_metadata(&conversation_id)
-                    .map_err(CodexProtocolMapper::error)?;
+                let (snapshot, used_pending_snapshot) =
+                    match session.thread_read_metadata(&conversation_id) {
+                        Ok(snapshot) => (snapshot, false),
+                        Err(error)
+                            if error.is_thread_not_loaded(&conversation_id)
+                                || is_created_conversation_not_ready(
+                                    &error,
+                                    &conversation_id,
+                                ) =>
+                        {
+                            let snapshot = lock(&runtime.mutable)
+                                .pending_materialization
+                                .get(&conversation_id)
+                                .cloned();
+                            match snapshot {
+                                Some(snapshot) => (snapshot, true),
+                                None => return Err(CodexProtocolMapper::error(error)),
+                            }
+                        }
+                        Err(error) => return Err(CodexProtocolMapper::error(error)),
+                    };
                 let approvals = {
                     let mutable = lock(&runtime.mutable);
                     mutable
@@ -2076,27 +2187,66 @@ impl Provider for CodexProvider {
                 let mut emitted_approvals = vec![false; approvals.len()];
                 let mut items = Vec::new();
                 let mut active_turn = None;
-                let mut cursor = None;
+                let mut turns = Vec::new();
+                let mut cursor = initial_cursor;
+                let mut remaining_turns = requested_limit;
+                let mut response_next_cursor = None;
                 let mut seen_cursors = HashSet::new();
-                for _ in 0..MAX_THREAD_TURN_PAGES {
-                    let page = session
-                        .thread_turns_list(&conversation_id, cursor)
-                        .map_err(CodexProtocolMapper::error)?;
-                    let next_cursor = page.next_cursor;
-                    {
-                        let mapper = lock(&runtime.mapper);
-                        for turn in page.data {
-                            if turn.status == CodexTurnStatus::InProgress {
-                                active_turn = Some(mapper.turn(&snapshot.thread.id, &turn));
-                            }
-                            mapper.append_conversation_turn_items(
-                                &snapshot.thread.id,
-                                &turn,
-                                &approvals,
-                                &mut emitted_approvals,
-                                &mut items,
-                            );
+                let mut page_count = 0;
+                let mut history_materialized = true;
+                loop {
+                    if page_count == MAX_THREAD_TURN_PAGES {
+                        return Err(protocol_error(
+                            "provider_protocol_error",
+                            format!(
+                                "thread/turns/list exceeded the {MAX_THREAD_TURN_PAGES}-page limit"
+                            ),
+                            false,
+                        ));
+                    }
+                    page_count += 1;
+                    let upstream_limit = remaining_turns.min(u64::from(THREAD_TURNS_PAGE_LIMIT));
+                    let page = match session.thread_turns_list(
+                        &conversation_id,
+                        cursor.clone(),
+                        upstream_limit as u32,
+                    ) {
+                        Ok(page) => page,
+                        Err(error)
+                            if cursor.is_none()
+                                && (error
+                                    .is_thread_turns_unavailable_before_first_user_message(
+                                        &conversation_id,
+                                    )
+                                    || used_pending_snapshot
+                                        && (error.is_thread_not_loaded(&conversation_id)
+                                            || is_created_conversation_not_ready(
+                                                &error,
+                                                &conversation_id,
+                                            ))) =>
+                        {
+                            history_materialized = false;
+                            break;
                         }
+                        Err(error) => return Err(CodexProtocolMapper::error(error)),
+                    };
+                    if page.data.len() as u64 > upstream_limit {
+                        return Err(protocol_error(
+                            "provider_protocol_error",
+                            format!(
+                                "thread/turns/list returned {} turns for limit {upstream_limit}",
+                                page.data.len()
+                            ),
+                            false,
+                        ));
+                    }
+                    let returned_turns = page.data.len() as u64;
+                    let next_cursor = page.next_cursor;
+                    turns.extend(page.data);
+                    remaining_turns = remaining_turns.saturating_sub(returned_turns);
+                    if remaining_turns == 0 {
+                        response_next_cursor = next_cursor;
+                        break;
                     }
                     match next_cursor {
                         Some(next_cursor) if seen_cursors.insert(next_cursor.clone()) => {
@@ -2110,25 +2260,38 @@ impl Provider for CodexProvider {
                             ));
                         }
                         None => {
-                            let mapper = lock(&runtime.mapper);
-                            mapper.append_remaining_approval_items(
-                                &approvals,
-                                &emitted_approvals,
-                                &mut items,
-                            );
-                            let conversation = mapper
-                                .conversation_with_active_turn(&snapshot, active_turn);
-                            return Ok(ConversationGetResponse { conversation, items });
+                            break;
                         }
                     }
                 }
-                Err(protocol_error(
-                    "provider_protocol_error",
-                    format!(
-                        "thread/turns/list exceeded the {MAX_THREAD_TURN_PAGES}-page limit"
-                    ),
-                    false,
-                ))
+                let mapper = lock(&runtime.mapper);
+                for turn in turns.into_iter().rev() {
+                    if turn.status == CodexTurnStatus::InProgress {
+                        active_turn = Some(mapper.turn(&snapshot.thread.id, &turn));
+                    }
+                    mapper.append_conversation_turn_items(
+                        &snapshot.thread.id,
+                        &turn,
+                        &approvals,
+                        &mut emitted_approvals,
+                        &mut items,
+                    );
+                }
+                let conversation =
+                    mapper.conversation_with_active_turn(&snapshot, active_turn);
+                drop(mapper);
+                if history_materialized {
+                    lock(&runtime.mutable)
+                        .pending_materialization
+                        .remove(&conversation_id);
+                }
+                Ok(ConversationGetResponse {
+                    conversation,
+                    items,
+                    page_info: Some(PageInfo {
+                        next_cursor: response_next_cursor,
+                    }),
+                })
             })
                 .await
                 .map_err(provider_task_error)?
@@ -2319,7 +2482,30 @@ impl Provider for CodexProvider {
             })
             .await
             .map_err(provider_task_error)??;
-            let conversation = lock(&runtime.mapper).conversation(&snapshot);
+            let observer = runtime.ready_observer()?;
+            let observer_conversation_id = snapshot.thread.id.clone();
+            tokio::task::spawn_blocking(move || {
+                wait_for_created_conversation_readable(
+                    &observer,
+                    &observer_conversation_id,
+                )
+                .map_err(CodexProtocolMapper::error)
+            })
+            .await
+            .map_err(provider_task_error)??;
+            let conversation = {
+                let _transition = lock(&runtime.lifecycle_transition);
+                let mut mutable = lock(&runtime.mutable);
+                if mutable.status != InstanceStatus::Ready {
+                    return Err(instance_session_cancelled_error(
+                        "conversation creation session",
+                    ));
+                }
+                mutable
+                    .pending_materialization
+                    .insert(snapshot.thread.id.clone(), snapshot.clone());
+                lock(&runtime.mapper).conversation(&snapshot)
+            };
             Ok(ConversationCreateResponse { conversation })
         })
     }
@@ -3016,10 +3202,19 @@ fn wait_for_created_conversation_readable(
     loop {
         let result = session
             .thread_read_metadata(conversation_id)
-            .and_then(|_| session.thread_turns_list(conversation_id, None).map(|_| ()));
+            .and_then(|_| {
+                session
+                    .thread_turns_list(conversation_id, None, THREAD_TURNS_PAGE_LIMIT)
+                    .map(|_| ())
+            });
         match result {
             Ok(()) => return Ok(()),
-            Err(error) if is_created_conversation_not_ready(&error) => {
+            Err(error)
+                if error.is_thread_turns_unavailable_before_first_user_message(conversation_id) =>
+            {
+                return Ok(());
+            }
+            Err(error) if is_created_conversation_not_ready(&error, conversation_id) => {
                 let now = Instant::now();
                 if now >= deadline {
                     return Err(CodexAppServerError::Timeout(format!(
@@ -3036,7 +3231,13 @@ fn wait_for_created_conversation_readable(
     }
 }
 
-fn is_created_conversation_not_ready(error: &CodexAppServerError) -> bool {
+fn is_created_conversation_not_ready(
+    error: &CodexAppServerError,
+    conversation_id: &str,
+) -> bool {
+    if error.is_thread_not_loaded(conversation_id) {
+        return true;
+    }
     let CodexAppServerError::Rpc { message, .. } = error else {
         return false;
     };
@@ -3084,7 +3285,8 @@ fn incoming_conversation_id(incoming: &CodexIncoming) -> Option<&str> {
             Some(&snapshot.thread.id)
         }
         CodexIncoming::Notification(
-            CodexNotification::TurnStarted { thread_id, .. }
+            CodexNotification::ThreadNameUpdated { thread_id, .. }
+            | CodexNotification::TurnStarted { thread_id, .. }
             | CodexNotification::TurnCompleted { thread_id, .. }
             | CodexNotification::OutputDelta { thread_id, .. }
             | CodexNotification::ServerRequestResolved { thread_id, .. },

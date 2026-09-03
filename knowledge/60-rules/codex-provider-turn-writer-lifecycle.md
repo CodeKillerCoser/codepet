@@ -33,6 +33,7 @@ Host stdio request 不能逐条 await：普通请求与 lifecycle control 必须
 ## 推荐做法
 
 - instance start 只创建 observer；list/search/get/model 全部走 observer，conversation.create 走完成即关闭的一次性会话。
+- 新 thread 已能被 metadata `thread/read` 读取、但首条用户消息前 `thread/turns/list` 返回当前 thread id 对应的官方 `-32600 not materialized` 响应时，Provider 将其映射为空历史，并将 create readiness 判为成功。若独立 observer 对同一个未 materialize id 返回精确的 `-32600 thread not loaded`，只允许使用当前 instance 的 create response 暂存 metadata 返回空历史；完整历史可读或 instance stop/fail/restart 后删除暂存。错误 code、message、thread id 不精确，或该 id 没有暂存证据时继续 fail closed。
 - 用 conversation-keyed 创建槽合并首次 spawn/resume，并用 per-slot operation lock 串行化 acquire/start/steer/interrupt/approval。事件线程只持 runtime 弱引用。
 - acquire 在 operation lock 内复核 Ready generation，更新单调时钟租期，并从成功 resume 的 session configuration cache 构造 response。协议时间戳使用 wall clock，只用于客户端观察，Provider 的过期判断使用单调时钟。
 - turn started/权威 in-progress snapshot 记录 active turn；terminal notification 在 operation lock 内清除 active turn。租约有效时发布事件后保持 Ready；租约缺失或过期时先切 Closing，再发布事件、shutdown/kill/wait、按 conversation + generation 删除同一槽并唤醒等待者。
@@ -52,6 +53,7 @@ Host stdio request 不能逐条 await：普通请求与 lifecycle control 必须
 ## 验证方式
 
 - 清空 fixture 进程日志后重复 `conversation.get`，observer 只允许 metadata `thread/read(includeTurns=false)` 与 cursor `thread/turns/list(itemsView=full)`，不得出现新 process、`thread/resume` 或其他写操作。
+- 用 Provider binary fixture 直接覆盖首消息前未 materialize 响应，断言 `conversation.create` 成功且 `conversation.get` 返回空 items；错误 code、thread id 或 message 近似但不相同时不得被吞掉。
 - 连续两次 acquire 只允许一次 `thread/resume`，两次都返回权威 selection 与租期；租约有效时 terminal 后的新 turn 必须复用同一 PID。
 - 覆盖首次 acquire 未完成/失败时 Remote composer 不可用，成功后才开放；acquire selection 覆盖 snapshot 默认，但周期续租不覆盖用户修改。
 - 覆盖 waiting approval、waiting user input、停止续租后的空闲过期、active turn 跨过期、terminal notification、两 conversation 隔离与并发首次 acquire/send。

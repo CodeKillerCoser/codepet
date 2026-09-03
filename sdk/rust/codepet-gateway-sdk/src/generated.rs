@@ -210,6 +210,10 @@ pub struct ConversationCreateResponse {
 #[serde(deny_unknown_fields)]
 pub struct ConversationGetRequest {
     pub conversation: RoutedResourceId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<Cursor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -218,6 +222,8 @@ pub struct ConversationGetRequest {
 pub struct ConversationGetResponse {
     pub conversation: Conversation,
     pub items: Vec<ConversationItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_info: Option<PageInfo>,
     pub snapshot_cursor: EventCursor,
 }
 

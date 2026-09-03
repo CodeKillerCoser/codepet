@@ -96,11 +96,15 @@ async fn real_stdio_lifecycle_correlates_concurrent_responses_and_separates_even
         .client()
         .conversation_get(ConversationGetRequest {
             conversation: conversation("dev.codepet.concurrent", "instance-concurrent", "slow"),
+            cursor: None,
+            limit: None,
         });
     let fast = process
         .client()
         .conversation_get(ConversationGetRequest {
             conversation: conversation("dev.codepet.concurrent", "instance-concurrent", "fast"),
+            cursor: None,
+            limit: None,
         });
     let (slow, fast) = tokio::join!(slow, fast);
     assert_eq!(
@@ -120,6 +124,8 @@ async fn real_stdio_lifecycle_correlates_concurrent_responses_and_separates_even
                 "instance-concurrent",
                 "event-first",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap();
@@ -273,6 +279,8 @@ async fn timeout_does_not_poison_later_requests() {
         .client()
         .conversation_get(ConversationGetRequest {
             conversation: conversation("dev.codepet.timeout", "instance-timeout", "timeout"),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap_err();
@@ -286,6 +294,8 @@ async fn timeout_does_not_poison_later_requests() {
                 "instance-timeout",
                 "after-timeout",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap();
@@ -314,6 +324,8 @@ async fn malformed_oversized_and_crashed_plugins_close_only_their_process() {
                     &instance_id,
                     native_id,
                 ),
+                cursor: None,
+                limit: None,
             })
             .await
             .unwrap_err();
@@ -334,6 +346,8 @@ async fn malformed_oversized_and_crashed_plugins_close_only_their_process() {
                     &healthy_instance,
                     "healthy",
                 ),
+                cursor: None,
+                limit: None,
             })
             .await
             .unwrap();

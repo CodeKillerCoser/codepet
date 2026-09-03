@@ -730,7 +730,7 @@ Provider 状态和能力
 当前事件 sequence
 ```
 
-用户打开会话后再分页读取 turns/items。实时事件携带 sequence；重连客户端提交最后 ack，Gateway 在可用窗口内重放，否则返回新 snapshot。Transport 重试不能自动重放非幂等业务 request。
+用户打开会话后通过 `conversation.get(cursor, limit)` 分页读取 turns/items。limit 是最大值；Remote 以 40 为期望值，只有收到 `provider_response_too_large` 才保持原 cursor 将 limit 减半，成功后使用 nextCursor 拉取下一页。实时事件携带 sequence；重连客户端提交最后 ack，Gateway 在可用窗口内重放，否则返回新 snapshot。Transport 重试不能自动重放非幂等业务 request。
 
 ## 安全
 

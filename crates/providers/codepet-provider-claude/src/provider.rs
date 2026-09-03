@@ -449,6 +449,7 @@ impl ClaudeInstanceRuntime {
         Ok(ConversationGetResponse {
             conversation,
             items,
+            page_info: None,
         })
     }
 

@@ -29,7 +29,7 @@
 9. 若修改 executable 或点击刷新，确认 Host 更新同一个 Codex instance setting，并按 stop → start → manifest instance create/start 显式重启插件；replacement 的 RPC 必须反映新 setting，Tauri 内不应出现第二个 observer。
 10. 对 timeout 或 process exit，不自动重放 create、turn、interrupt 或 approval。remote 结果不确定也不得触碰 Desktop companion；两条链路保持独立故障状态。
 11. 单独确认 Desktop companion：其 socket、owner/revision 和 activity projection 不应因 remote 故障清空、重启或改用 Hook/transcript。
-12. 对大历史单独分流：旧实现若在完整 `thread/read` 超限，应升级到 metadata read + `thread/turns/list(limit=10, itemsView=full, sortDirection=asc)`；新版若固定 10-turn page 仍超过 16 MiB，当前实现会 fail closed，先用诊断请求逐步降到 `limit=1` 判断是 page 聚合还是单 turn 过大；若 App Server pages 均成功而最终返回 `provider_response_too_large`，确认原请求 id、`details.maxFrameBytes=16777216`，并用后续 `provider.describe` 证明 Provider 仍存活。不要增大 page limit 或统一 frame limit。
+12. 对大历史单独分流：确认 Gateway/Provider `conversation.get` 请求携带 cursor/limit，Provider 只读取这一页并返回 pageInfo。若最终返回 `provider_response_too_large`，客户端必须保持原 cursor，将 limit 逐次减半后重试；成功后才使用 nextCursor。若 `limit=1` 仍失败，才判定为单 turn 过大。确认原请求 id、`details.maxFrameBytes=16777216`，并用后续 `provider.describe` 证明 Provider 仍存活；不要增大统一 frame limit。
 
 ## 结果判断
 
@@ -40,8 +40,8 @@
 - 单个 execution 退出：owning conversation 的写操作失败并释放 writer；observer 与其他 active conversation 应保持可用。结果未知时由调用方基于原 client request id 决定后续，不在 Provider 内盲重试。
 - writer conflict：保留纯读能力；确认真正 owner 终态退出后再由显式写请求创建新 execution。
 - 协议响应不兼容：remote error，更新 mapper/fixture 前不要放宽解析。
-- 固定 10-turn page 超过 16 MiB：当前请求 fail closed；诊断时用更小 limit 定位。若 `limit=1` 仍超限，才是单 turn 需要 item 级分页；已实测的 Codex `0.151.0-alpha.7.2` 对 `thread/items/list` 返回 `-32601`，当前 Provider 不得依赖它。
-- 最终 Provider 投影超过 16 MiB：当前请求返回 `provider_response_too_large`，Provider 继续服务；真正任意大历史需要 Provider/Gateway `conversation.get` 协议分页。
+- 上游最多 10-turn page 超过 16 MiB：当前 observer 会 fail closed；用同一 cursor 的更小 conversation limit 诊断。若 `limit=1` 仍超限，才是单 turn 需要 item 级分页；已实测的 Codex `0.151.0-alpha.7.2` 对 `thread/items/list` 返回 `-32601`，当前 Provider 不得依赖它。
+- 最终 Provider 投影超过 16 MiB：当前请求返回 `provider_response_too_large`，Provider 继续服务；Remote 使用相同 cursor 和更小 limit 重试，不把错误当作普通网络重试，也不推进 cursor。
 - remote Provider 正常但手机仍不可访问：转查 Gateway LAN/WSS、配对、凭据和网络可达性；网络连接故障本身不应关闭 active execution。
 
 ## 恢复后验证
@@ -65,4 +65,4 @@
 - 插件 restart 后旧 process 继续发布事件，或审批被路由到新实例/其他 App Server session。
 - Provider event 进入 companion replay/event 或桌宠 activity；这表示生产 wiring 发生跨链路污染。
 - Codex CLI 升级改变 App Server request/response/notification wire 语义。
-- `limit=1` 的 `thread/turns/list` page 仍超过 16 MiB，或业务需要成功返回任意大历史；这需要可用的 item 级上游分页或公共 Provider/Gateway schema 分页，不能在本 runbook 中靠调大上限处理。
+- `limit=1` 的 `thread/turns/list` page 仍超过 16 MiB；这需要可用的 item/content 级上游分页或明确的巨型输出引用/截断协议，不能靠调大上限处理。

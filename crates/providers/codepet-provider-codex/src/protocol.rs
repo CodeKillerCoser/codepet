@@ -74,6 +74,35 @@ impl fmt::Display for CodexAppServerError {
 
 impl std::error::Error for CodexAppServerError {}
 
+impl CodexAppServerError {
+    pub(crate) fn is_thread_not_loaded(&self, thread_id: &str) -> bool {
+        matches!(
+            self,
+            Self::Rpc {
+                code: -32600,
+                message,
+                ..
+            } if message == &format!("thread not loaded: {thread_id}")
+        )
+    }
+
+    pub(crate) fn is_thread_turns_unavailable_before_first_user_message(
+        &self,
+        thread_id: &str,
+    ) -> bool {
+        matches!(
+            self,
+            Self::Rpc {
+                code: -32600,
+                message,
+                ..
+            } if message == &format!(
+                "thread {thread_id} is not materialized yet; thread/turns/list is unavailable before first user message"
+            )
+        )
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexThread {
@@ -553,6 +582,10 @@ pub enum CodexNotification {
     ThreadStarted {
         snapshot: CodexConversationSnapshot,
     },
+    ThreadNameUpdated {
+        thread_id: String,
+        thread_name: Option<String>,
+    },
     TurnStarted {
         thread_id: String,
         turn: CodexTurn,
@@ -876,6 +909,42 @@ pub(crate) fn permission_from_sandbox(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classifies_only_the_exact_unmaterialized_thread_turns_error() {
+        let error = CodexAppServerError::Rpc {
+            code: -32600,
+            message: "thread thread-new is not materialized yet; thread/turns/list is unavailable before first user message".to_string(),
+            data: None,
+        };
+
+        assert!(error.is_thread_turns_unavailable_before_first_user_message("thread-new"));
+        assert!(!error.is_thread_turns_unavailable_before_first_user_message("thread-other"));
+        assert!(!CodexAppServerError::Rpc {
+            code: -32603,
+            message: "thread thread-new is not materialized yet; thread/turns/list is unavailable before first user message".to_string(),
+            data: None,
+        }
+        .is_thread_turns_unavailable_before_first_user_message("thread-new"));
+    }
+
+    #[test]
+    fn classifies_only_the_exact_thread_not_loaded_error() {
+        let error = CodexAppServerError::Rpc {
+            code: -32600,
+            message: "thread not loaded: thread-new".to_string(),
+            data: None,
+        };
+
+        assert!(error.is_thread_not_loaded("thread-new"));
+        assert!(!error.is_thread_not_loaded("thread-other"));
+        assert!(!CodexAppServerError::Rpc {
+            code: -32603,
+            message: "thread not loaded: thread-new".to_string(),
+            data: None,
+        }
+        .is_thread_not_loaded("thread-new"));
+    }
 
     #[test]
     fn thread_list_params_use_state_db_and_updated_at_order_for_list_and_search() {

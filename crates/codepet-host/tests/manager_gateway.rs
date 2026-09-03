@@ -376,6 +376,8 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
                 "instance-a1",
                 "event-first",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap();
@@ -404,6 +406,8 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
                 "instance-a2",
                 "event-first",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap();
@@ -470,6 +474,8 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
                 "instance-missing",
                 "conversation",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap_err();
@@ -482,6 +488,8 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
                 "instance-a1",
                 "conversation",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap_err();
@@ -509,6 +517,8 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
                 "instance-b1",
                 "device-b-conversation",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap();
@@ -597,6 +607,8 @@ async fn conversation_snapshot_cursors_precede_events_emitted_during_provider_qu
                     "instance-snapshot",
                     "snapshot-race",
                 ),
+                cursor: None,
+                limit: None,
             })
             .await
     });
@@ -700,6 +712,8 @@ async fn explicit_restart_continues_after_graceful_stop_error_when_process_was_k
                 "instance-restart",
                 "before-restart",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap();
@@ -738,6 +752,8 @@ async fn explicit_restart_continues_after_graceful_stop_error_when_process_was_k
                 "instance-restart",
                 "after-restart",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap();
@@ -1171,6 +1187,8 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
                     "instance-identity",
                     native_id,
                 ),
+                cursor: None,
+                limit: None,
             })
             .await
             .unwrap_err();
@@ -1189,6 +1207,8 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
                 "instance-identity",
                 "response-wrong-item-conversation",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap_err();
@@ -1204,6 +1224,8 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
                 "instance-identity",
                 "",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap_err();
@@ -1216,6 +1238,8 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
                 "instance-identity",
                 "conversation",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap_err();
@@ -1228,6 +1252,8 @@ async fn resource_identity_and_route_less_pagination_fail_closed() {
                 "instance-identity",
                 "conversation",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap_err();
@@ -1347,6 +1373,8 @@ async fn a_crashed_plugin_does_not_change_another_plugin_or_instance_route() {
                 "instance-alpha",
                 "crash",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap_err();
@@ -1380,6 +1408,8 @@ async fn a_crashed_plugin_does_not_change_another_plugin_or_instance_route() {
                 "instance-beta",
                 "healthy",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap();
@@ -1448,6 +1478,8 @@ async fn aggregate_history_starts_on_demand_and_recovers_the_crashed_plugin_gene
                 "instance-history",
                 "crash",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap_err();
@@ -1473,6 +1505,8 @@ async fn aggregate_history_starts_on_demand_and_recovers_the_crashed_plugin_gene
                 "instance-history",
                 "healthy-after-restart",
             ),
+            cursor: None,
+            limit: None,
         })
         .await
         .unwrap();

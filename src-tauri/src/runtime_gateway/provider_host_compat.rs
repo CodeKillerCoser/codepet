@@ -292,6 +292,8 @@ impl compat::ProtocolServer for CompatProviderGateway {
                 self.gateway()?.as_ref(),
                 gateway::ConversationGetRequest {
                     conversation: routed_resource(provider.route, request.conversation_id),
+                    cursor: None,
+                    limit: None,
                 },
             )
             .await

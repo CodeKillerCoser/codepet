@@ -128,7 +128,14 @@
     "ConversationGetRequest": {
       "type": "object",
       "properties": {
-        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" }
+        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "cursor": { "$ref": "../../core/v1/schema.json#/$defs/Cursor" },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum number of native conversation turns to include in this history page."
+        }
       },
       "required": ["conversation"],
       "additionalProperties": false
@@ -141,6 +148,7 @@
           "type": "array",
           "items": { "$ref": "#/$defs/ConversationItem" }
         },
+        "pageInfo": { "$ref": "../../core/v1/schema.json#/$defs/PageInfo" },
         "snapshotCursor": { "$ref": "../../core/v1/schema.json#/$defs/EventCursor" }
       },
       "required": ["conversation", "items", "snapshotCursor"],

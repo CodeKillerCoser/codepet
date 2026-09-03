@@ -311,6 +311,8 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         &provider,
         ConversationGetRequest {
             conversation: listed.conversations[0].resource.clone(),
+            cursor: None,
+            limit: None,
         },
     )
     .await
@@ -438,6 +440,8 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         &provider,
         ConversationGetRequest {
             conversation: conversation.resource.clone(),
+            cursor: None,
+            limit: None,
         },
     )
     .await
@@ -451,9 +455,13 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
 
     let mut approval = None;
     let mut saw_delta = false;
+    let mut saw_title_update = false;
     for _ in 0..8 {
         let event = event_receiver.recv_timeout(Duration::from_secs(2)).unwrap();
         match event {
+            ProtocolEvent::EventConversationUpserted { params, .. } => {
+                saw_title_update = params.conversation.title == "Renamed by Codex";
+            }
             ProtocolEvent::EventTurnOutputDelta { params, .. } => {
                 saw_delta = params.delta == "fixture output"
                     && params.item_id == "agent-one"
@@ -467,6 +475,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         }
     }
     assert!(saw_delta);
+    assert!(saw_title_update);
     let approval = approval.expect("fixture approval event");
     let resolved = ProviderProtocolServer::approval_resolve(
         &provider,
@@ -502,6 +511,8 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         &provider,
         ConversationGetRequest {
             conversation: conversation.resource.clone(),
+            cursor: None,
+            limit: None,
         },
     )
     .await
@@ -849,6 +860,96 @@ fn provider_binary_create_waits_until_conversation_is_readable() {
 }
 
 #[test]
+fn provider_binary_create_waits_until_observer_can_read_persisted_metadata() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("observer-create-readiness.txt");
+    let request_log = directory.path().join("observer-create-readiness-requests.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (conversation, _) = provider.configure_with_request_log(
+        "observer-create-read-eventually",
+        &marker,
+        Some(&request_log),
+    );
+
+    assert_eq!(
+        conversation.get("nativeResourceId").and_then(Value::as_str),
+        Some("thread-created")
+    );
+    let requests = std::fs::read_to_string(&request_log).unwrap();
+    let created_reads = requests
+        .lines()
+        .filter(|line| *line == "thread/read\tthread-created")
+        .count();
+    assert_eq!(created_reads, 4, "{requests}");
+    assert_eq!(
+        requests
+            .lines()
+            .filter(|line| *line == "thread/turns/list\tthread-created")
+            .count(),
+        2,
+        "{requests}"
+    );
+
+    provider.request("observer-create-readiness-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("observer-create-readiness-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_returns_empty_history_for_unmaterialized_new_conversation() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("unmaterialized.txt");
+    let request_log = directory.path().join("unmaterialized-requests.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (conversation, _) = provider.configure_with_request_log(
+        "unmaterialized-before-first-message",
+        &marker,
+        Some(&request_log),
+    );
+
+    let fetched = provider.request(
+        "unmaterialized-get",
+        "conversation.get",
+        json!({ "conversation": conversation }),
+    );
+
+    assert!(fetched.get("error").is_none(), "{fetched}");
+    assert_eq!(
+        fetched
+            .pointer("/result/conversation/resource/nativeResourceId")
+            .and_then(Value::as_str),
+        Some("thread-created")
+    );
+    assert_eq!(
+        fetched.pointer("/result/items").and_then(Value::as_array),
+        Some(&Vec::new())
+    );
+    assert!(fetched.pointer("/result/conversation/activeTurn").is_none());
+    assert_eq!(
+        std::fs::read_to_string(&request_log)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        vec![
+            "initialize",
+            "model/list",
+            "initialize",
+            "thread/start",
+            "thread/read\tthread-created",
+            "thread/turns/list\tthread-created",
+            "thread/read\tthread-created",
+            "thread/read\tthread-created",
+            "thread/read\tthread-created",
+            "thread/turns/list\tthread-created",
+            "thread/read\tthread-created",
+            "thread/turns/list\tthread-created"
+        ]
+    );
+
+    provider.request("unmaterialized-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("unmaterialized-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
 fn provider_binary_acquire_interaction_resumes_once_and_returns_configuration() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("acquire-interaction.txt");
@@ -959,44 +1060,45 @@ fn provider_binary_conversation_get_pages_history_without_resuming() {
     let first = provider.request(
         "paginated-history-first",
         "conversation.get",
-        json!({ "conversation": conversation.clone() }),
+        json!({ "conversation": conversation.clone(), "limit": 1 }),
     );
     let second = provider.request(
         "paginated-history-second",
         "conversation.get",
-        json!({ "conversation": conversation }),
+        json!({
+            "conversation": conversation,
+            "cursor": first.pointer("/result/pageInfo/nextCursor").unwrap(),
+            "limit": 1
+        }),
     );
 
-    for response in [&first, &second] {
-        assert!(response.get("error").is_none());
-        let items = response
-            .pointer("/result/items")
-            .and_then(Value::as_array)
-            .unwrap();
-        assert_eq!(
-            items
-                .iter()
-                .map(|item| {
-                    item.pointer("/resource/nativeResourceId")
-                        .and_then(Value::as_str)
-                        .unwrap()
-                })
-                .collect::<Vec<_>>(),
-            vec!["agent-page-one", "agent-page-two"]
-        );
-        assert_eq!(
-            items
-                .iter()
-                .map(|item| {
-                    item.pointer("/contents/0/contentId")
-                        .and_then(Value::as_str)
-                        .unwrap()
-                })
-                .collect::<Vec<_>>(),
-            vec!["agent-page-one:text", "agent-page-two:text"]
-        );
-    }
-    assert_eq!(first.pointer("/result"), second.pointer("/result"));
+    assert!(first.get("error").is_none(), "{first}");
+    assert!(second.get("error").is_none(), "{second}");
+    assert_eq!(
+        first
+            .pointer("/result/items/0/resource/nativeResourceId")
+            .and_then(Value::as_str),
+        Some("agent-page-two")
+    );
+    assert_eq!(
+        first
+            .pointer("/result/items/0/contents/0/contentId")
+            .and_then(Value::as_str),
+        Some("agent-page-two:text")
+    );
+    assert_eq!(
+        first
+            .pointer("/result/pageInfo/nextCursor")
+            .and_then(Value::as_str),
+        Some("page-two")
+    );
+    assert_eq!(
+        second
+            .pointer("/result/items/0/resource/nativeResourceId")
+            .and_then(Value::as_str),
+        Some("agent-page-one")
+    );
+    assert!(second.pointer("/result/pageInfo/nextCursor").is_none());
     assert_eq!(
         std::fs::read_to_string(&request_log)
             .unwrap()
@@ -1005,9 +1107,7 @@ fn provider_binary_conversation_get_pages_history_without_resuming() {
         vec![
             "thread/read\tthread-paginated",
             "thread/turns/list\tthread-paginated",
-            "thread/turns/list\tthread-paginated",
             "thread/read\tthread-paginated",
-            "thread/turns/list\tthread-paginated",
             "thread/turns/list\tthread-paginated"
         ]
     );
@@ -2813,6 +2913,53 @@ fn provider_binary_returns_a_stable_error_for_oversized_history_and_keeps_servin
         Some(codepet_provider_sdk::MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES as u64)
     );
 
+    let reduced = provider.request(
+        "reduced-history",
+        "conversation.get",
+        json!({
+            "conversation": conversation_resource_value("thread-output-too-large"),
+            "limit": 2
+        }),
+    );
+    assert!(reduced.get("error").is_none(), "{reduced}");
+    assert_eq!(
+        reduced
+            .pointer("/result/items")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .map(|item| item
+                .pointer("/resource/nativeResourceId")
+                .and_then(Value::as_str)
+                .unwrap())
+            .collect::<Vec<_>>(),
+        vec!["agent-large-two", "agent-large-three"]
+    );
+    assert_eq!(
+        reduced
+            .pointer("/result/pageInfo/nextCursor")
+            .and_then(Value::as_str),
+        Some("large-page-three")
+    );
+
+    let remainder = provider.request(
+        "remaining-history",
+        "conversation.get",
+        json!({
+            "conversation": conversation_resource_value("thread-output-too-large"),
+            "cursor": "large-page-three",
+            "limit": 2
+        }),
+    );
+    assert!(remainder.get("error").is_none(), "{remainder}");
+    assert_eq!(
+        remainder
+            .pointer("/result/items/0/resource/nativeResourceId")
+            .and_then(Value::as_str),
+        Some("agent-large-one")
+    );
+    assert!(remainder.pointer("/result/pageInfo/nextCursor").is_none());
+
     let described = provider.request("after-oversized-history", "provider.describe", json!({}));
     assert_eq!(
         described
@@ -2890,6 +3037,62 @@ fn provider_real_codex_app_server_smoke() {
             .pointer("/result/conversation/workspaceRoot")
             .and_then(Value::as_str)
             .is_some_and(|path| path == workspace.to_string_lossy()));
+    }
+    if let Some(workspace) = std::env::var_os("CODEPET_REAL_UNMATERIALIZED_WORKSPACE") {
+        let created = provider.request(
+            "real-unmaterialized-create",
+            "conversation.create",
+            json!({
+                "route": route_value(),
+                "permissionLevel": "workspace-write",
+                "workspaceRoot": workspace.to_string_lossy(),
+                "workspaceMode": "main"
+            }),
+        );
+        assert!(created.get("error").is_none(), "{created}");
+        let resource = created
+            .pointer("/result/conversation/resource")
+            .cloned()
+            .expect("real conversation.create must return a resource");
+        let fetched = provider.request(
+            "real-unmaterialized-get",
+            "conversation.get",
+            json!({ "conversation": resource.clone() }),
+        );
+        assert!(fetched.get("error").is_none(), "{fetched}");
+        assert_eq!(
+            fetched.pointer("/result/conversation/resource"),
+            Some(&resource)
+        );
+        assert_eq!(
+            fetched
+                .pointer("/result/items")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
+        );
+    }
+    if let Some(conversation_id) = std::env::var_os("CODEPET_REAL_CONVERSATION_ID") {
+        let conversation_id = conversation_id.to_string_lossy();
+        let fetched = provider.request(
+            "real-existing-conversation-get",
+            "conversation.get",
+            json!({
+                "conversation": conversation_resource_value(&conversation_id),
+                "limit": 1
+            }),
+        );
+        assert!(fetched.get("error").is_none(), "{fetched}");
+        assert_eq!(
+            fetched
+                .pointer("/result/conversation/resource/nativeResourceId")
+                .and_then(Value::as_str),
+            Some(conversation_id.as_ref())
+        );
+        assert!(fetched
+            .pointer("/result/items")
+            .is_some_and(Value::is_array));
+        assert!(fetched.pointer("/result/pageInfo").is_some_and(Value::is_object));
     }
     let stopped = provider.request(
         "real-stop",

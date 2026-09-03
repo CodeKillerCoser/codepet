@@ -858,47 +858,64 @@ final class ConversationCreateResponse {
 final class ConversationGetRequest {
   factory ConversationGetRequest({
     required RoutedResourceId conversation,
+    Cursor? cursor,
+    int? limit,
   }) {
     final validatedConversation = conversation;
+    final validatedCursor = cursor == null ? null : _string(cursor, 'ConversationGetRequest.cursor', minLength: 1);
+    final validatedLimit = limit == null ? null : _integer(limit, 'ConversationGetRequest.limit', minimum: 1, maximum: 100);
     return ConversationGetRequest._(
       conversation: validatedConversation,
+      cursor: validatedCursor,
+      limit: validatedLimit,
     );
   }
 
   ConversationGetRequest._({
     required this.conversation,
+    required this.cursor,
+    required this.limit,
   });
 
   final RoutedResourceId conversation;
+  final Cursor? cursor;
+  final int? limit;
 
   factory ConversationGetRequest.fromJson(Object? value, {String path = 'ConversationGetRequest'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'conversation'}, path);
+    _expectKeys(json, const {'conversation', 'cursor', 'limit'}, path);
     return ConversationGetRequest(
       conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      cursor: json.containsKey('cursor') && json['cursor'] != null ? _string(json['cursor'], '$path.cursor', minLength: 1) : null,
+      limit: json.containsKey('limit') && json['limit'] != null ? _integer(json['limit'], '$path.limit', minimum: 1, maximum: 100) : null,
     );
   }
 
   Map<String, Object?> toJson() => {
     'conversation': conversation.toJson(),
+    if (cursor != null) 'cursor': cursor!,
+    if (limit != null) 'limit': limit!,
   };
 
   @override
-  String toString() => 'ConversationGetRequest(conversation: $conversation)';
+  String toString() => 'ConversationGetRequest(conversation: $conversation, cursor: $cursor, limit: $limit)';
 }
 
 final class ConversationGetResponse {
   factory ConversationGetResponse({
     required Conversation conversation,
     required List<ConversationItem> items,
+    PageInfo? pageInfo,
     required EventCursor snapshotCursor,
   }) {
     final validatedConversation = conversation;
     final validatedItems = _freezeList<ConversationItem>(items, 'ConversationGetResponse.items', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedPageInfo = pageInfo == null ? null : pageInfo;
     final validatedSnapshotCursor = _string(snapshotCursor, 'ConversationGetResponse.snapshotCursor', minLength: 1);
     return ConversationGetResponse._(
       conversation: validatedConversation,
       items: validatedItems,
+      pageInfo: validatedPageInfo,
       snapshotCursor: validatedSnapshotCursor,
     );
   }
@@ -906,19 +923,22 @@ final class ConversationGetResponse {
   ConversationGetResponse._({
     required this.conversation,
     required this.items,
+    required this.pageInfo,
     required this.snapshotCursor,
   });
 
   final Conversation conversation;
   final List<ConversationItem> items;
+  final PageInfo? pageInfo;
   final EventCursor snapshotCursor;
 
   factory ConversationGetResponse.fromJson(Object? value, {String path = 'ConversationGetResponse'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'conversation', 'items', 'snapshotCursor'}, path);
+    _expectKeys(json, const {'conversation', 'items', 'pageInfo', 'snapshotCursor'}, path);
     return ConversationGetResponse(
       conversation: Conversation.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
       items: _decodeList<ConversationItem>(_required(json, 'items', path), '$path.items', (item, itemPath) => ConversationItem.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+      pageInfo: json.containsKey('pageInfo') && json['pageInfo'] != null ? PageInfo.fromJson(json['pageInfo'], path: '$path.pageInfo') : null,
       snapshotCursor: _string(_required(json, 'snapshotCursor', path), '$path.snapshotCursor', minLength: 1),
     );
   }
@@ -926,11 +946,12 @@ final class ConversationGetResponse {
   Map<String, Object?> toJson() => {
     'conversation': conversation.toJson(),
     'items': items.map((item) => item.toJson()).toList(growable: false),
+    if (pageInfo != null) 'pageInfo': pageInfo!.toJson(),
     'snapshotCursor': snapshotCursor,
   };
 
   @override
-  String toString() => 'ConversationGetResponse(conversation: $conversation, items: $items, snapshotCursor: $snapshotCursor)';
+  String toString() => 'ConversationGetResponse(conversation: $conversation, items: $items, pageInfo: $pageInfo, snapshotCursor: $snapshotCursor)';
 }
 
 final class ConversationItem {

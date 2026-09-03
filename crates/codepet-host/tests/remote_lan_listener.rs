@@ -695,6 +695,8 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
             id: "get-that-does-not-complete".to_string(),
             params: gateway::ConversationGetRequest {
                 conversation: conversation_resource("timeout"),
+                cursor: None,
+                limit: None,
             },
         },
     )
@@ -838,6 +840,8 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
             id: "get-a".to_string(),
             params: gateway::ConversationGetRequest {
                 conversation: conversation_resource("ordinary"),
+                cursor: None,
+                limit: None,
             },
         },
     )
@@ -853,6 +857,8 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
             id: "pre-subscribe-event".to_string(),
             params: gateway::ConversationGetRequest {
                 conversation: conversation_resource("event-first"),
+                cursor: None,
+                limit: None,
             },
         },
     )
@@ -890,6 +896,8 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
             id: "live-event-a".to_string(),
             params: gateway::ConversationGetRequest {
                 conversation: conversation_resource("event-first"),
+                cursor: None,
+                limit: None,
             },
         },
     )
@@ -962,6 +970,8 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
             id: "client-a-only".to_string(),
             params: gateway::ConversationGetRequest {
                 conversation: conversation_resource("event-first"),
+                cursor: None,
+                limit: None,
             },
         },
     )
@@ -994,6 +1004,8 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
             id: "shared-event-source-a".to_string(),
             params: gateway::ConversationGetRequest {
                 conversation: conversation_resource("event-first"),
+                cursor: None,
+                limit: None,
             },
         },
     )

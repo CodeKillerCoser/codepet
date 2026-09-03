@@ -664,6 +664,8 @@ async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desk
         provider_gateway.as_ref(),
         codepet_host::gateway_sdk::ConversationGetRequest {
             conversation: resource,
+            cursor: None,
+            limit: None,
         },
     )
     .await
@@ -694,6 +696,8 @@ async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desk
         provider_gateway.as_ref(),
         codepet_host::gateway_sdk::ConversationGetRequest {
             conversation: provider_resource(&device_id, "malformed"),
+            cursor: None,
+            limit: None,
         },
     )
     .await
@@ -706,6 +710,8 @@ async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desk
         provider_gateway.as_ref(),
         codepet_host::gateway_sdk::ConversationGetRequest {
             conversation: provider_resource(&device_id, "crash"),
+            cursor: None,
+            limit: None,
         },
     )
     .await

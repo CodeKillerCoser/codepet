@@ -27,7 +27,7 @@ const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_APP_SERVER_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const MAX_APP_SERVER_STDERR_LINE_BYTES: usize = 64 * 1024;
-const THREAD_TURNS_PAGE_LIMIT: u32 = 10;
+pub(crate) const THREAD_TURNS_PAGE_LIMIT: u32 = 10;
 static NEXT_SESSION_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 pub trait JsonRpcReader: Send + 'static {
@@ -630,14 +630,15 @@ impl CodexAppServerSession {
         &self,
         thread_id: &str,
         cursor: Option<String>,
+        limit: u32,
     ) -> Result<CodexTurnPage, CodexAppServerError> {
         let response: ThreadTurnsListResponse = self.request(
             "thread/turns/list",
             json!({
                 "threadId": thread_id,
                 "cursor": cursor,
-                "limit": THREAD_TURNS_PAGE_LIMIT,
-                "sortDirection": "asc",
+                "limit": limit,
+                "sortDirection": "desc",
                 "itemsView": "full",
             }),
         )?;
@@ -1356,7 +1357,8 @@ fn incoming_thread_id(incoming: &CodexIncoming) -> Option<&str> {
             Some(&snapshot.thread.id)
         }
         CodexIncoming::Notification(
-            CodexNotification::TurnStarted { thread_id, .. }
+            CodexNotification::ThreadNameUpdated { thread_id, .. }
+            | CodexNotification::TurnStarted { thread_id, .. }
             | CodexNotification::TurnCompleted { thread_id, .. }
             | CodexNotification::OutputDelta { thread_id, .. }
             | CodexNotification::ServerRequestResolved { thread_id, .. },
@@ -1500,6 +1502,19 @@ fn parse_notification(
                 snapshot: CodexConversationSnapshot::from_thread(thread),
             })
         }
+        "thread/name/updated" => Ok(CodexNotification::ThreadNameUpdated {
+            thread_id: required_string(&params, "threadId")?,
+            thread_name: params
+                .get("threadName")
+                .map(|value| serde_json::from_value(value.clone()))
+                .transpose()
+                .map_err(|error| {
+                    CodexAppServerError::Protocol(format!(
+                        "invalid notification field threadName: {error}"
+                    ))
+                })?
+                .flatten(),
+        }),
         "turn/started" => Ok(CodexNotification::TurnStarted {
             thread_id: required_string(&params, "threadId")?,
             turn: deserialize_field(&params, "turn")?,
@@ -1951,6 +1966,31 @@ mod tests {
             incoming,
             CodexIncoming::Notification(CodexNotification::TurnStarted { thread_id, .. })
                 if thread_id == "thread-one"
+        ));
+        session.shutdown().unwrap();
+    }
+
+    #[test]
+    fn session_parses_thread_name_updated_notifications() {
+        let (session, _, peer_sender) = mock_session();
+        let notifications = session.subscribe().unwrap();
+        peer_sender
+            .send(json!({
+                "method": "thread/name/updated",
+                "params": {
+                    "threadId": "thread-one",
+                    "threadName": "A useful title"
+                }
+            }))
+            .unwrap();
+
+        let incoming = notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
+        assert!(matches!(
+            incoming,
+            CodexIncoming::Notification(CodexNotification::ThreadNameUpdated {
+                thread_id,
+                thread_name: Some(thread_name),
+            }) if thread_id == "thread-one" && thread_name == "A useful title"
         ));
         session.shutdown().unwrap();
     }
