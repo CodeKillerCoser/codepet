@@ -1023,7 +1023,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         },
     )
     .await;
-    let (_, live_events) = collect_response_and_events(&mut socket_a, "live-event-a", 3).await;
+    let (_, live_events) = collect_response_and_events(&mut socket_a, "live-event-a", 5).await;
     let live_sequences = live_events
         .iter()
         .map(|event| cursor_sequence(event_cursor(event)))
@@ -1098,7 +1098,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     )
     .await;
     let (_, client_a_events) =
-        collect_response_and_events(&mut socket_a, "client-a-only", 3).await;
+        collect_response_and_events(&mut socket_a, "client-a-only", 5).await;
     assert!(timeout(Duration::from_millis(150), socket_b.next())
         .await
         .is_err());
@@ -1132,16 +1132,18 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     )
     .await;
     let (_, events_a) =
-        collect_response_and_events(&mut socket_a, "shared-event-source-a", 3).await;
-    let event_b_one: gateway::ProtocolEvent =
-        serde_json::from_value(next_value(&mut socket_b).await).unwrap();
-    let event_b_two: gateway::ProtocolEvent =
-        serde_json::from_value(next_value(&mut socket_b).await).unwrap();
-    let event_b_three: gateway::ProtocolEvent =
-        serde_json::from_value(next_value(&mut socket_b).await).unwrap();
-    assert_eq!(event_cursor(&events_a[0]), event_cursor(&event_b_one));
-    assert_eq!(event_cursor(&events_a[1]), event_cursor(&event_b_two));
-    assert_eq!(event_cursor(&events_a[2]), event_cursor(&event_b_three));
+        collect_response_and_events(&mut socket_a, "shared-event-source-a", 5).await;
+    let events_b = [
+        serde_json::from_value::<gateway::ProtocolEvent>(next_value(&mut socket_b).await).unwrap(),
+        serde_json::from_value::<gateway::ProtocolEvent>(next_value(&mut socket_b).await).unwrap(),
+        serde_json::from_value::<gateway::ProtocolEvent>(next_value(&mut socket_b).await).unwrap(),
+        serde_json::from_value::<gateway::ProtocolEvent>(next_value(&mut socket_b).await).unwrap(),
+        serde_json::from_value::<gateway::ProtocolEvent>(next_value(&mut socket_b).await).unwrap(),
+    ];
+    assert!(events_a
+        .iter()
+        .zip(events_b.iter())
+        .all(|(event_a, event_b)| event_cursor(event_a) == event_cursor(event_b)));
 
     let mut socket_a_second = client
         .connect_websocket(&pairing_a.credential)
