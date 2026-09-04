@@ -1693,8 +1693,7 @@ impl CodexProvider {
             plugin_id: CODEX_PLUGIN_ID.to_string(),
             display_name: "Codex".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            default_workspace_root: codex_home()
-                .map(|path| path.join("codepet-workspaces").to_string_lossy().into_owned()),
+            default_workspace_root: default_remote_workspace_root("codex"),
             supported_versions: VersionRange {
                 min_version: PROTOCOL_VERSION,
                 max_version: PROTOCOL_VERSION,
@@ -3346,6 +3345,22 @@ fn codex_home() -> Option<PathBuf> {
             std::env::var_os("HOME")
                 .filter(|value| !value.is_empty())
                 .map(|home| PathBuf::from(home).join(".codex"))
+        })
+}
+
+fn default_remote_workspace_root(harness_name: &str) -> Option<String> {
+    ["HOME", "USERPROFILE"]
+        .into_iter()
+        .find_map(std::env::var_os)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .map(|path| {
+            path.join(".codepet")
+                .join("remote_workspace")
+                .join(harness_name)
+                .to_string_lossy()
+                .into_owned()
         })
 }
 

@@ -755,12 +755,7 @@ impl OpenCodeProvider {
             plugin_id: OPENCODE_PLUGIN_ID.to_string(),
             display_name: "OpenCode".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            default_workspace_root: default_server_working_directory().map(|path| {
-                path.join(".opencode")
-                    .join("codepet-workspaces")
-                    .to_string_lossy()
-                    .into_owned()
-            }),
+            default_workspace_root: default_remote_workspace_root("opencode"),
             supported_versions: VersionRange {
                 min_version: PROTOCOL_VERSION,
                 max_version: PROTOCOL_VERSION,
@@ -2029,6 +2024,22 @@ fn default_server_working_directory() -> Option<PathBuf> {
         .find_map(std::env::var_os)
         .map(PathBuf::from)
         .filter(|path| path.is_absolute() && path.is_dir())
+}
+
+fn default_remote_workspace_root(harness_name: &str) -> Option<String> {
+    ["HOME", "USERPROFILE"]
+        .into_iter()
+        .find_map(std::env::var_os)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .map(|path| {
+            path.join(".codepet")
+                .join("remote_workspace")
+                .join(harness_name)
+                .to_string_lossy()
+                .into_owned()
+        })
 }
 
 fn ensure_opencode_workspace(workspace: PathBuf) -> Result<PathBuf, ProtocolError> {
