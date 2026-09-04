@@ -822,18 +822,21 @@ final class CommandToolInput extends ToolInput {
     required String command,
     String? cwd,
     String? shell,
+    ContentTruncation? truncation,
     List<ToolCommandAction>? actions,
   }) {
     final validatedKind = kind;
     final validatedCommand = _string(command, 'CommandToolInput.command', minLength: 1);
     final validatedCwd = cwd == null ? null : _string(cwd, 'CommandToolInput.cwd', minLength: 1);
     final validatedShell = shell == null ? null : _string(shell, 'CommandToolInput.shell', minLength: 1);
+    final validatedTruncation = truncation == null ? null : truncation;
     final validatedActions = actions == null ? null : _freezeList<ToolCommandAction>(actions, 'CommandToolInput.actions', (item, itemPath) => item, encodeItem: (item) => item.toJson());
     return CommandToolInput._(
       kind: validatedKind,
       command: validatedCommand,
       cwd: validatedCwd,
       shell: validatedShell,
+      truncation: validatedTruncation,
       actions: validatedActions,
     );
   }
@@ -843,6 +846,7 @@ final class CommandToolInput extends ToolInput {
     required this.command,
     required this.cwd,
     required this.shell,
+    required this.truncation,
     required this.actions,
   });
 
@@ -850,16 +854,18 @@ final class CommandToolInput extends ToolInput {
   final String command;
   final String? cwd;
   final String? shell;
+  final ContentTruncation? truncation;
   final List<ToolCommandAction>? actions;
 
   factory CommandToolInput.fromJson(Object? value, {String path = 'CommandToolInput'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'kind', 'command', 'cwd', 'shell', 'actions'}, path);
+    _expectKeys(json, const {'kind', 'command', 'cwd', 'shell', 'truncation', 'actions'}, path);
     return CommandToolInput(
       kind: CommandToolInputKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
       command: _string(_required(json, 'command', path), '$path.command', minLength: 1),
       cwd: json.containsKey('cwd') && json['cwd'] != null ? _string(json['cwd'], '$path.cwd', minLength: 1) : null,
       shell: json.containsKey('shell') && json['shell'] != null ? _string(json['shell'], '$path.shell', minLength: 1) : null,
+      truncation: json.containsKey('truncation') && json['truncation'] != null ? ContentTruncation.fromJson(json['truncation'], path: '$path.truncation') : null,
       actions: json.containsKey('actions') && json['actions'] != null ? _decodeList<ToolCommandAction>(json['actions'], '$path.actions', (item, itemPath) => ToolCommandAction.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()) : null,
     );
   }
@@ -870,11 +876,12 @@ final class CommandToolInput extends ToolInput {
     'command': command,
     if (cwd != null) 'cwd': cwd!,
     if (shell != null) 'shell': shell!,
+    if (truncation != null) 'truncation': truncation!.toJson(),
     if (actions != null) 'actions': actions!.map((item) => item.toJson()).toList(growable: false),
   };
 
   @override
-  String toString() => 'CommandToolInput(kind: $kind, command: $command, cwd: $cwd, shell: $shell, actions: $actions)';
+  String toString() => 'CommandToolInput(kind: $kind, command: $command, cwd: $cwd, shell: $shell, truncation: $truncation, actions: $actions)';
 }
 
 enum CommandToolInputKind {

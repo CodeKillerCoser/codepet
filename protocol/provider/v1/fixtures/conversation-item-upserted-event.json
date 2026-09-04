@@ -29,7 +29,15 @@
         "name": "shell",
         "category": "command",
         "origin": { "kind": "builtin" },
-        "input": { "kind": "command", "command": "cargo test" },
+        "input": {
+          "kind": "command",
+          "command": "cargo test",
+          "truncation": {
+            "originalBytes": 4096,
+            "retainedBytes": 10,
+            "strategy": "head-tail"
+          }
+        },
         "outcome": {
           "kind": "success",
           "content": [

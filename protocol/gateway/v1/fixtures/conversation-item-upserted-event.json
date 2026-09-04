@@ -29,6 +29,11 @@
             "kind": "command",
             "command": "cargo test",
             "cwd": "/workspace/codepet",
+            "truncation": {
+              "originalBytes": 4096,
+              "retainedBytes": 10,
+              "strategy": "head-tail"
+            },
             "actions": [
               { "kind": "execute", "command": "cargo test" }
             ]

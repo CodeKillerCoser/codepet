@@ -61,7 +61,7 @@ fn truncate_tool(tool: &mut ToolInvocation, remaining: &mut usize) {
     match &mut tool.input {
         ToolInput::StructuredToolInput(value) => truncate_json_object(&mut value.value, &mut value.truncation, remaining),
         ToolInput::OpaqueToolInput(value) => truncate_text(&mut value.value, &mut value.truncation, remaining),
-        ToolInput::CommandToolInput(_) => {}
+        ToolInput::CommandToolInput(value) => truncate_text(&mut value.command, &mut value.truncation, remaining),
     }
     match tool.outcome.as_mut() {
         Some(ToolOutcome::ToolSuccessOutcome(value)) => truncate_content_blocks(&mut value.content, remaining),
@@ -239,6 +239,45 @@ mod history_tests {
         assert!(block.text.starts_with("HEAD"));
         assert!(block.text.ends_with("TAIL"));
         let truncation = block.truncation.as_ref().expect("truncation metadata");
+        assert_eq!(truncation.original_bytes, original.len() as u64);
+        assert_eq!(truncation.retained_bytes, SEMANTIC_CONTENT_BYTES as u64);
+        assert_eq!(truncation.strategy, ContentTruncationStrategy::HeadTail);
+    }
+
+    #[test]
+    fn oversized_command_input_uses_head_tail_with_exact_byte_counts() {
+        let original = format!("HEAD{}TAIL", "x".repeat(142 * 1024));
+        let mut tool = ToolInvocation {
+            call_id: "command-one".to_string(),
+            name: "shell".to_string(),
+            namespace: None,
+            category: ToolCategory::Command,
+            origin: ToolOrigin {
+                kind: ToolOriginKind::Builtin,
+                name: None,
+            },
+            input: ToolInput::CommandToolInput(CommandToolInput {
+                kind: CommandToolInputKind::Command,
+                command: original.clone(),
+                cwd: None,
+                shell: None,
+                truncation: None,
+                actions: None,
+            }),
+            outcome: None,
+            timing: None,
+            annotations: None,
+            extension: None,
+        };
+        let mut remaining = SEMANTIC_CONTENT_BYTES;
+
+        truncate_tool(&mut tool, &mut remaining);
+
+        let ToolInput::CommandToolInput(input) = tool.input else { unreachable!() };
+        assert_eq!(input.command.len(), SEMANTIC_CONTENT_BYTES);
+        assert!(input.command.starts_with("HEAD"));
+        assert!(input.command.ends_with("TAIL"));
+        let truncation = input.truncation.expect("command truncation metadata");
         assert_eq!(truncation.original_bytes, original.len() as u64);
         assert_eq!(truncation.retained_bytes, SEMANTIC_CONTENT_BYTES as u64);
         assert_eq!(truncation.strategy, ContentTruncationStrategy::HeadTail);

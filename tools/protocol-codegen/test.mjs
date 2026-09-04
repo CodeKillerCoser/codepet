@@ -124,6 +124,7 @@ test("provider history items carry routed conversation ownership", async () => {
   assert.equal(definitions.ConversationItem.oneOf.length, 7);
   assert.deepEqual(definitions.ToolInvocation.required, ["callId", "name", "category", "origin", "input"]);
   assert.equal(definitions.ToolInvocation.properties.input.$ref, "#/$defs/ToolInput");
+  assert.equal(definitions.CommandToolInput.properties.truncation.$ref, "#/$defs/ContentTruncation");
   assert.equal(definitions.ToolInvocation.properties.outcome.$ref, "#/$defs/ToolOutcome");
   assert.equal(definitions.ToolInvocation.properties.rawInput, undefined);
   assert.equal(definitions.ToolInvocation.properties.command, undefined);
@@ -219,6 +220,7 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
   assert.equal(gateway.schema.$defs.CommandConversationItem.properties.tool.$ref, "#/$defs/ToolInvocation");
   assert.equal(gateway.schema.$defs.ConversationItem.oneOf.length, 7);
   assert.equal(gateway.schema.$defs.ToolInvocation.properties.input.$ref, "#/$defs/ToolInput");
+  assert.equal(gateway.schema.$defs.CommandToolInput.properties.truncation.$ref, "#/$defs/ContentTruncation");
   assert.equal(gateway.schema.$defs.ToolInvocation.properties.outcome.$ref, "#/$defs/ToolOutcome");
   assert.equal(gateway.schema.$defs.ToolInvocation.properties.extension, undefined);
   assert(gateway.manifest.events.some((event) => event.name === "conversation.itemUpserted"));

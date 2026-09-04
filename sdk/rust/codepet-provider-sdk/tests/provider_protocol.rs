@@ -122,7 +122,12 @@ fn conversation_get_fixture_preserves_ordered_items_and_stable_content_ids() {
         panic!("expected command item");
     };
     assert_eq!(command.resource.native_resource_id, "command-one");
-    assert!(matches!(command.tool.input, ToolInput::CommandToolInput(_)));
+    let ToolInput::CommandToolInput(input) = &command.tool.input else {
+        panic!("expected command input");
+    };
+    let input_truncation = input.truncation.as_ref().expect("expected command truncation metadata");
+    assert_eq!(input_truncation.original_bytes, 4096);
+    assert_eq!(input_truncation.retained_bytes, 10);
     let Some(ToolOutcome::ToolSuccessOutcome(outcome)) = &command.tool.outcome else {
         panic!("expected success outcome");
     };

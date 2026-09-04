@@ -195,6 +195,8 @@ pub struct CommandToolInput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shell: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<ContentTruncation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub actions: Option<Vec<ToolCommandAction>>,
 }
 

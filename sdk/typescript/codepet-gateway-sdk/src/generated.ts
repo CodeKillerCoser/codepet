@@ -108,6 +108,7 @@ export interface CommandToolInput {
   command: string;
   cwd?: string;
   shell?: string;
+  truncation?: ContentTruncation;
   actions?: Array<ToolCommandAction>;
 }
 
