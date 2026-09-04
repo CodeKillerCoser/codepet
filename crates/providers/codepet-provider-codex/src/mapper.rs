@@ -652,6 +652,7 @@ impl CodexProtocolMapper {
                         command: command.clone(),
                         cwd: cwd.clone(),
                         shell: None,
+                        truncation: None,
                         actions: (!command_actions.is_empty()).then(|| command_actions.iter().take(64).map(|action| ToolCommandAction {
                             kind: command_action_kind(&action.kind),
                             command: action.command.clone(),
@@ -1560,6 +1561,7 @@ mod tests {
         let ToolInput::CommandToolInput(input) = &command_tool.input else { panic!("command input") };
         assert_eq!(input.command, "cargo test");
         assert_eq!(input.cwd.as_deref(), Some("/workspace"));
+        assert!(input.truncation.is_none());
         assert_eq!(command_tool.timing.as_ref().unwrap().duration_ms, Some(42));
         let Some(ToolOutcome::ToolSuccessOutcome(outcome)) = &command_tool.outcome else { panic!("success outcome") };
         assert_eq!(outcome.exit_code, Some(0));

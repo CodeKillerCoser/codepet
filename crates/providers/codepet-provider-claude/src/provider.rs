@@ -2517,6 +2517,7 @@ fn read_claude_history_items(
                             command: command.to_string(),
                             cwd: input_value.as_object().and_then(|input| input.get("cwd")).and_then(Value::as_str).map(str::to_string),
                             shell: None,
+                            truncation: None,
                             actions: None,
                         })
                     } else if let Some(object) = input_value.as_object() {
@@ -2933,6 +2934,7 @@ mod tests {
         assert_eq!(tool.name, "Bash");
         let ToolInput::CommandToolInput(input) = &tool.input else { panic!("command input") };
         assert_eq!(input.cwd.as_deref(), Some("/workspace"));
+        assert!(input.truncation.is_none());
         let Some(ToolOutcome::ToolSuccessOutcome(outcome)) = &tool.outcome else { panic!("success") };
         let ContentBlock::OutputContentBlock(output) = &outcome.content[0] else { panic!("output") };
         assert_eq!(output.text, "tests passed");

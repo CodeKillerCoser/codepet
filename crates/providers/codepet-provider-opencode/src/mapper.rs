@@ -655,6 +655,7 @@ fn opencode_tool_invocation(content: &OpenCodeMessageContent) -> ToolInvocation 
             command: command.to_string(),
             cwd: input_value.and_then(Value::as_object).and_then(|input| input.get("cwd")).and_then(Value::as_str).map(str::to_string),
             shell: None,
+            truncation: None,
             actions: None,
         })
     } else if let Some(object) = input_value.and_then(Value::as_object) {
@@ -774,7 +775,7 @@ fn shell_tool_invocation(message: &OpenCodeMessage) -> ToolInvocation {
         category: ToolCategory::Command,
         origin: ToolOrigin { kind: ToolOriginKind::Server, name: Some("opencode".to_string()) },
         input: ToolInput::CommandToolInput(CommandToolInput {
-            kind: CommandToolInputKind::Command, command, cwd: None, shell: None, actions: None,
+            kind: CommandToolInputKind::Command, command, cwd: None, shell: None, truncation: None, actions: None,
         }),
         outcome,
         timing: Some(ToolTiming {
@@ -926,6 +927,16 @@ mod tests {
         let ContentBlock::TextContentBlock(second_text) = &second.contents[0] else { panic!("text") };
         assert_eq!(second_text.content_id, "assistant-two:text-0:text");
         assert_ne!(first_text.content_id, second_text.content_id);
+    }
+
+    #[test]
+    fn shell_command_input_starts_complete_for_the_shared_budget() {
+        let mut message = history_message("shell-one", "shell", None, None);
+        message.command = Some("cargo test".to_string());
+        let tool = shell_tool_invocation(&message);
+        let ToolInput::CommandToolInput(input) = tool.input else { panic!("command input") };
+        assert_eq!(input.command, "cargo test");
+        assert!(input.truncation.is_none());
     }
 
     #[test]
