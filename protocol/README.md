@@ -14,7 +14,7 @@ The current layers are:
 
 The legacy Gateway protocol has been removed. Host/Remote integration has one Gateway business protocol: Gateway v1. Discovery, channel establishment, trust admission and Gateway business RPC remain separate runtime layers.
 
-`codegen.json` declares packages, dependency direction, output targets, and the shared `codepet.protocol.codegen/v1` adapter interface. Rust is active for core, Pet, Provider, Gateway v1, LAN admission and the desktop-only v0 contract. TypeScript covers core and the desktop-only v0 contract. Dart is active for core, Gateway v1 and LAN admission. Python remains explicitly registered but unimplemented; selecting it fails closed before generation.
+`codegen.json` declares packages, dependency direction, output targets, and the shared `codepet.protocol.codegen/v1` adapter interface. Rust is active for core, Pet, Provider, Gateway v1, LAN admission and the desktop-only v0 contract. TypeScript covers core, Provider, Gateway v1 and the desktop-only v0 contract. Dart is active for core, Gateway v1 and LAN admission. Python remains explicitly registered but unimplemented; selecting it fails closed before generation.
 
 ## Versioning and discriminators
 
@@ -23,7 +23,7 @@ Every public initialize/handshake request carries an explicit supported `Version
 - Pet and the desktop-only v0 contract use CodePet envelopes discriminated by `method` and `event`; Gateway v1 uses standard JSON-RPC 2.0 requests/responses and event notifications.
 - Provider uses JSON-RPC 2.0 requests discriminated by `method`, strict result/error responses, and notification events also discriminated by `method`. Its generated `JsonLineCodec` enforces a caller-selected frame limit and classifies inbound request, response, notification, and declared event messages.
 - Gateway v1 events carry an opaque `eventCursor` for replay.
-- Union-like domain DTOs such as `PetAction` retain an explicit `kind`; receivers validate kind-specific optional fields.
+- Domain unions use a required singleton `kind` on every closed `oneOf` variant. The generator rejects ambiguous or open variants before emitting Rust, Dart, or TypeScript models. Provider/Gateway conversation items, tool inputs, tool outcomes, and content blocks use this shape so each full payload has one canonical owner.
 
 The generator supports a deliberately small JSON Schema Draft 2020-12 subset. Unsupported keywords, unresolved references, duplicate method/event names, invalid fixtures, or undeclared cross-layer dependencies fail generation.
 
@@ -122,7 +122,7 @@ npm run cp-sdk-gen -- --package provider --role server --lang rust --output /tmp
 python3 scripts/test_codex_provider_stdio.py --provider crates/target/debug/codepet-provider-codex --app-server crates/target/debug/codex-app-server-fixture
 ```
 
-`protocol:check` validates schema/manifest consistency, fixtures, schema and manifest dependency direction, capability mappings, target fail-closed behavior, and generated-file freshness. Runtime compatibility is covered by `runtime_gateway_protocol_tests` and `runtime_gateway_core_tests` in the Tauri crate.
+`protocol:check` validates schema/manifest consistency, positive and negative fixtures, schema and manifest dependency direction, capability mappings, target fail-closed behavior, and generated-file freshness. Runtime compatibility is covered by `runtime_gateway_protocol_tests` and `runtime_gateway_core_tests` in the Tauri crate.
 
 ## Current limits
 

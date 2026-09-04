@@ -31,9 +31,10 @@ Object? _nullValue(Object? value, String path) {
   return null;
 }
 
-String _string(Object? value, String path, {int? minLength, String? pattern}) {
+String _string(Object? value, String path, {int? minLength, int? maxLength, String? pattern}) {
   if (value is! String) throw ProtocolCodecException(path, 'expected a string');
   if (minLength != null && value.length < minLength) throw ProtocolCodecException(path, 'string is shorter than $minLength characters');
+  if (maxLength != null && value.length > maxLength) throw ProtocolCodecException(path, 'string is longer than $maxLength characters');
   if (pattern != null && !RegExp(pattern).hasMatch(value)) throw ProtocolCodecException(path, 'string does not match $pattern');
   return value;
 }
@@ -86,6 +87,78 @@ List<T> _freezeList<T>(Iterable<T> values, String path, T Function(T, String) va
 List<T> _decodeList<T>(Object? value, String path, T Function(Object?, String) decode, {int? minItems, bool uniqueItems = false, required Object? Function(T) encodeItem}) {
   if (value is! List) throw ProtocolCodecException(path, 'expected an array');
   return _freezeList<T>(value.indexed.map((entry) => decode(entry.$2, '$path[${entry.$1}]')), path, (item, _) => item, minItems: minItems, uniqueItems: uniqueItems, encodeItem: encodeItem);
+}
+
+final class ActivitySummaryContentBlock extends ContentBlock {
+  factory ActivitySummaryContentBlock({
+    required NativeResourceId contentId,
+    required ActivitySummaryContentBlockKind kind,
+    required String text,
+    ContentTruncation? truncation,
+  }) {
+    final validatedContentId = _string(contentId, 'ActivitySummaryContentBlock.contentId', minLength: 1);
+    final validatedKind = kind;
+    final validatedText = _string(text, 'ActivitySummaryContentBlock.text');
+    final validatedTruncation = truncation == null ? null : truncation;
+    return ActivitySummaryContentBlock._(
+      contentId: validatedContentId,
+      kind: validatedKind,
+      text: validatedText,
+      truncation: validatedTruncation,
+    );
+  }
+
+  ActivitySummaryContentBlock._({
+    required this.contentId,
+    required this.kind,
+    required this.text,
+    required this.truncation,
+  });
+
+  final NativeResourceId contentId;
+  final ActivitySummaryContentBlockKind kind;
+  final String text;
+  final ContentTruncation? truncation;
+
+  factory ActivitySummaryContentBlock.fromJson(Object? value, {String path = 'ActivitySummaryContentBlock'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'contentId', 'kind', 'text', 'truncation'}, path);
+    return ActivitySummaryContentBlock(
+      contentId: _string(_required(json, 'contentId', path), '$path.contentId', minLength: 1),
+      kind: ActivitySummaryContentBlockKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      text: _string(_required(json, 'text', path), '$path.text'),
+      truncation: json.containsKey('truncation') && json['truncation'] != null ? ContentTruncation.fromJson(json['truncation'], path: '$path.truncation') : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'contentId': contentId,
+    'kind': kind.toJson(),
+    'text': text,
+    if (truncation != null) 'truncation': truncation!.toJson(),
+  };
+
+  @override
+  String toString() => 'ActivitySummaryContentBlock(contentId: $contentId, kind: $kind, text: $text, truncation: $truncation)';
+}
+
+enum ActivitySummaryContentBlockKind {
+  activitySummary('activity-summary');
+
+  const ActivitySummaryContentBlockKind(this.wireValue);
+
+  final String wireValue;
+
+  static ActivitySummaryContentBlockKind fromJson(Object? value, {String path = 'ActivitySummaryContentBlockKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: activity-summary');
+  }
+
+  String toJson() => wireValue;
 }
 
 final class Approval {
@@ -188,6 +261,106 @@ final class Approval {
 
   @override
   String toString() => 'Approval(resource: $resource, conversation: $conversation, turn: $turn, kind: $kind, title: $title, description: $description, status: $status, decisions: $decisions, requestedAt: $requestedAt, resolvedAt: $resolvedAt, decision: $decision)';
+}
+
+final class ApprovalConversationItem extends ConversationItem {
+  factory ApprovalConversationItem({
+    required RoutedResourceId resource,
+    required RoutedResourceId turn,
+    required RoutedResourceId conversation,
+    required ApprovalConversationItemKind kind,
+    required ConversationItemStatus status,
+    String? title,
+    RoutedResourceId? relatedItem,
+    required Approval approval,
+  }) {
+    final validatedResource = resource;
+    final validatedTurn = turn;
+    final validatedConversation = conversation;
+    final validatedKind = kind;
+    final validatedStatus = status;
+    final validatedTitle = title == null ? null : _string(title, 'ApprovalConversationItem.title', minLength: 1);
+    final validatedRelatedItem = relatedItem == null ? null : relatedItem;
+    final validatedApproval = approval;
+    return ApprovalConversationItem._(
+      resource: validatedResource,
+      turn: validatedTurn,
+      conversation: validatedConversation,
+      kind: validatedKind,
+      status: validatedStatus,
+      title: validatedTitle,
+      relatedItem: validatedRelatedItem,
+      approval: validatedApproval,
+    );
+  }
+
+  ApprovalConversationItem._({
+    required this.resource,
+    required this.turn,
+    required this.conversation,
+    required this.kind,
+    required this.status,
+    required this.title,
+    required this.relatedItem,
+    required this.approval,
+  });
+
+  final RoutedResourceId resource;
+  final RoutedResourceId turn;
+  final RoutedResourceId conversation;
+  final ApprovalConversationItemKind kind;
+  final ConversationItemStatus status;
+  final String? title;
+  final RoutedResourceId? relatedItem;
+  final Approval approval;
+
+  factory ApprovalConversationItem.fromJson(Object? value, {String path = 'ApprovalConversationItem'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'resource', 'turn', 'conversation', 'kind', 'status', 'title', 'relatedItem', 'approval'}, path);
+    return ApprovalConversationItem(
+      resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
+      turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      kind: ApprovalConversationItemKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      status: ConversationItemStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
+      title: json.containsKey('title') && json['title'] != null ? _string(json['title'], '$path.title', minLength: 1) : null,
+      relatedItem: json.containsKey('relatedItem') && json['relatedItem'] != null ? RoutedResourceId.fromJson(json['relatedItem'], path: '$path.relatedItem') : null,
+      approval: Approval.fromJson(_required(json, 'approval', path), path: '$path.approval'),
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'resource': resource.toJson(),
+    'turn': turn.toJson(),
+    'conversation': conversation.toJson(),
+    'kind': kind.toJson(),
+    'status': status.toJson(),
+    if (title != null) 'title': title!,
+    if (relatedItem != null) 'relatedItem': relatedItem!.toJson(),
+    'approval': approval.toJson(),
+  };
+
+  @override
+  String toString() => 'ApprovalConversationItem(resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, title: $title, relatedItem: $relatedItem, approval: $approval)';
+}
+
+enum ApprovalConversationItemKind {
+  approval('approval');
+
+  const ApprovalConversationItemKind(this.wireValue);
+
+  final String wireValue;
+
+  static ApprovalConversationItemKind fromJson(Object? value, {String path = 'ApprovalConversationItemKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: approval');
+  }
+
+  String toJson() => wireValue;
 }
 
 enum ApprovalDecision {
@@ -365,6 +538,92 @@ enum ApprovalStatus {
   String toJson() => wireValue;
 }
 
+final class AudioContentBlock extends ContentBlock {
+  factory AudioContentBlock({
+    required NativeResourceId contentId,
+    required AudioContentBlockKind kind,
+    required String uri,
+    String? mimeType,
+    String? name,
+    ContentTruncation? truncation,
+  }) {
+    final validatedContentId = _string(contentId, 'AudioContentBlock.contentId', minLength: 1);
+    final validatedKind = kind;
+    final validatedUri = _string(uri, 'AudioContentBlock.uri', minLength: 1);
+    final validatedMimeType = mimeType == null ? null : _string(mimeType, 'AudioContentBlock.mimeType', minLength: 1);
+    final validatedName = name == null ? null : _string(name, 'AudioContentBlock.name', minLength: 1);
+    final validatedTruncation = truncation == null ? null : truncation;
+    return AudioContentBlock._(
+      contentId: validatedContentId,
+      kind: validatedKind,
+      uri: validatedUri,
+      mimeType: validatedMimeType,
+      name: validatedName,
+      truncation: validatedTruncation,
+    );
+  }
+
+  AudioContentBlock._({
+    required this.contentId,
+    required this.kind,
+    required this.uri,
+    required this.mimeType,
+    required this.name,
+    required this.truncation,
+  });
+
+  final NativeResourceId contentId;
+  final AudioContentBlockKind kind;
+  final String uri;
+  final String? mimeType;
+  final String? name;
+  final ContentTruncation? truncation;
+
+  factory AudioContentBlock.fromJson(Object? value, {String path = 'AudioContentBlock'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'contentId', 'kind', 'uri', 'mimeType', 'name', 'truncation'}, path);
+    return AudioContentBlock(
+      contentId: _string(_required(json, 'contentId', path), '$path.contentId', minLength: 1),
+      kind: AudioContentBlockKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      uri: _string(_required(json, 'uri', path), '$path.uri', minLength: 1),
+      mimeType: json.containsKey('mimeType') && json['mimeType'] != null ? _string(json['mimeType'], '$path.mimeType', minLength: 1) : null,
+      name: json.containsKey('name') && json['name'] != null ? _string(json['name'], '$path.name', minLength: 1) : null,
+      truncation: json.containsKey('truncation') && json['truncation'] != null ? ContentTruncation.fromJson(json['truncation'], path: '$path.truncation') : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'contentId': contentId,
+    'kind': kind.toJson(),
+    'uri': uri,
+    if (mimeType != null) 'mimeType': mimeType!,
+    if (name != null) 'name': name!,
+    if (truncation != null) 'truncation': truncation!.toJson(),
+  };
+
+  @override
+  String toString() => 'AudioContentBlock(contentId: $contentId, kind: $kind, uri: $uri, mimeType: $mimeType, name: $name, truncation: $truncation)';
+}
+
+enum AudioContentBlockKind {
+  audio('audio');
+
+  const AudioContentBlockKind(this.wireValue);
+
+  final String wireValue;
+
+  static AudioContentBlockKind fromJson(Object? value, {String path = 'AudioContentBlockKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: audio');
+  }
+
+  String toJson() => wireValue;
+}
+
 final class ChoiceOption {
   factory ChoiceOption({
     required ProviderId id,
@@ -462,6 +721,278 @@ final class ChoiceSet {
 
   @override
   String toString() => 'ChoiceSet(options: $options, defaultId: $defaultId)';
+}
+
+final class CommandConversationItem extends ConversationItem {
+  factory CommandConversationItem({
+    required RoutedResourceId resource,
+    required RoutedResourceId turn,
+    required RoutedResourceId conversation,
+    required CommandConversationItemKind kind,
+    required ConversationItemStatus status,
+    String? title,
+    required ToolInvocation tool,
+  }) {
+    final validatedResource = resource;
+    final validatedTurn = turn;
+    final validatedConversation = conversation;
+    final validatedKind = kind;
+    final validatedStatus = status;
+    final validatedTitle = title == null ? null : _string(title, 'CommandConversationItem.title', minLength: 1);
+    final validatedTool = tool;
+    return CommandConversationItem._(
+      resource: validatedResource,
+      turn: validatedTurn,
+      conversation: validatedConversation,
+      kind: validatedKind,
+      status: validatedStatus,
+      title: validatedTitle,
+      tool: validatedTool,
+    );
+  }
+
+  CommandConversationItem._({
+    required this.resource,
+    required this.turn,
+    required this.conversation,
+    required this.kind,
+    required this.status,
+    required this.title,
+    required this.tool,
+  });
+
+  final RoutedResourceId resource;
+  final RoutedResourceId turn;
+  final RoutedResourceId conversation;
+  final CommandConversationItemKind kind;
+  final ConversationItemStatus status;
+  final String? title;
+  final ToolInvocation tool;
+
+  factory CommandConversationItem.fromJson(Object? value, {String path = 'CommandConversationItem'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'resource', 'turn', 'conversation', 'kind', 'status', 'title', 'tool'}, path);
+    return CommandConversationItem(
+      resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
+      turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      kind: CommandConversationItemKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      status: ConversationItemStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
+      title: json.containsKey('title') && json['title'] != null ? _string(json['title'], '$path.title', minLength: 1) : null,
+      tool: ToolInvocation.fromJson(_required(json, 'tool', path), path: '$path.tool'),
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'resource': resource.toJson(),
+    'turn': turn.toJson(),
+    'conversation': conversation.toJson(),
+    'kind': kind.toJson(),
+    'status': status.toJson(),
+    if (title != null) 'title': title!,
+    'tool': tool.toJson(),
+  };
+
+  @override
+  String toString() => 'CommandConversationItem(resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, title: $title, tool: $tool)';
+}
+
+enum CommandConversationItemKind {
+  command('command');
+
+  const CommandConversationItemKind(this.wireValue);
+
+  final String wireValue;
+
+  static CommandConversationItemKind fromJson(Object? value, {String path = 'CommandConversationItemKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: command');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class CommandToolInput extends ToolInput {
+  factory CommandToolInput({
+    required CommandToolInputKind kind,
+    required String command,
+    String? cwd,
+    String? shell,
+    List<ToolCommandAction>? actions,
+  }) {
+    final validatedKind = kind;
+    final validatedCommand = _string(command, 'CommandToolInput.command', minLength: 1);
+    final validatedCwd = cwd == null ? null : _string(cwd, 'CommandToolInput.cwd', minLength: 1);
+    final validatedShell = shell == null ? null : _string(shell, 'CommandToolInput.shell', minLength: 1);
+    final validatedActions = actions == null ? null : _freezeList<ToolCommandAction>(actions, 'CommandToolInput.actions', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    return CommandToolInput._(
+      kind: validatedKind,
+      command: validatedCommand,
+      cwd: validatedCwd,
+      shell: validatedShell,
+      actions: validatedActions,
+    );
+  }
+
+  CommandToolInput._({
+    required this.kind,
+    required this.command,
+    required this.cwd,
+    required this.shell,
+    required this.actions,
+  });
+
+  final CommandToolInputKind kind;
+  final String command;
+  final String? cwd;
+  final String? shell;
+  final List<ToolCommandAction>? actions;
+
+  factory CommandToolInput.fromJson(Object? value, {String path = 'CommandToolInput'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'kind', 'command', 'cwd', 'shell', 'actions'}, path);
+    return CommandToolInput(
+      kind: CommandToolInputKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      command: _string(_required(json, 'command', path), '$path.command', minLength: 1),
+      cwd: json.containsKey('cwd') && json['cwd'] != null ? _string(json['cwd'], '$path.cwd', minLength: 1) : null,
+      shell: json.containsKey('shell') && json['shell'] != null ? _string(json['shell'], '$path.shell', minLength: 1) : null,
+      actions: json.containsKey('actions') && json['actions'] != null ? _decodeList<ToolCommandAction>(json['actions'], '$path.actions', (item, itemPath) => ToolCommandAction.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()) : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+    'command': command,
+    if (cwd != null) 'cwd': cwd!,
+    if (shell != null) 'shell': shell!,
+    if (actions != null) 'actions': actions!.map((item) => item.toJson()).toList(growable: false),
+  };
+
+  @override
+  String toString() => 'CommandToolInput(kind: $kind, command: $command, cwd: $cwd, shell: $shell, actions: $actions)';
+}
+
+enum CommandToolInputKind {
+  command('command');
+
+  const CommandToolInputKind(this.wireValue);
+
+  final String wireValue;
+
+  static CommandToolInputKind fromJson(Object? value, {String path = 'CommandToolInputKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: command');
+  }
+
+  String toJson() => wireValue;
+}
+
+sealed class ContentBlock {
+  const ContentBlock();
+
+  factory ContentBlock.fromJson(Object? value, {String path = 'ContentBlock'}) {
+    final json = _object(value, path);
+    final discriminator = _required(json, 'kind', path);
+    switch (discriminator) {
+      case 'text':
+        return TextContentBlock.fromJson(json, path: path);
+      case 'reasoning-summary':
+        return ReasoningSummaryContentBlock.fromJson(json, path: path);
+      case 'output':
+        return OutputContentBlock.fromJson(json, path: path);
+      case 'activity-summary':
+        return ActivitySummaryContentBlock.fromJson(json, path: path);
+      case 'structured-json':
+        return StructuredJsonContentBlock.fromJson(json, path: path);
+      case 'image':
+        return ImageContentBlock.fromJson(json, path: path);
+      case 'audio':
+        return AudioContentBlock.fromJson(json, path: path);
+      case 'resource-link':
+        return ResourceLinkContentBlock.fromJson(json, path: path);
+      case 'embedded-resource':
+        return EmbeddedResourceContentBlock.fromJson(json, path: path);
+      default:
+        throw ProtocolCodecException('$path.kind', 'unknown ContentBlock discriminator: $discriminator');
+    }
+  }
+
+  Map<String, Object?> toJson();
+}
+
+final class ContentTruncation {
+  factory ContentTruncation({
+    required int originalBytes,
+    required int retainedBytes,
+    required ContentTruncationStrategy strategy,
+  }) {
+    final validatedOriginalBytes = _integer(originalBytes, 'ContentTruncation.originalBytes', minimum: 0);
+    final validatedRetainedBytes = _integer(retainedBytes, 'ContentTruncation.retainedBytes', minimum: 0);
+    final validatedStrategy = strategy;
+    return ContentTruncation._(
+      originalBytes: validatedOriginalBytes,
+      retainedBytes: validatedRetainedBytes,
+      strategy: validatedStrategy,
+    );
+  }
+
+  ContentTruncation._({
+    required this.originalBytes,
+    required this.retainedBytes,
+    required this.strategy,
+  });
+
+  final int originalBytes;
+  final int retainedBytes;
+  final ContentTruncationStrategy strategy;
+
+  factory ContentTruncation.fromJson(Object? value, {String path = 'ContentTruncation'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'originalBytes', 'retainedBytes', 'strategy'}, path);
+    return ContentTruncation(
+      originalBytes: _integer(_required(json, 'originalBytes', path), '$path.originalBytes', minimum: 0),
+      retainedBytes: _integer(_required(json, 'retainedBytes', path), '$path.retainedBytes', minimum: 0),
+      strategy: ContentTruncationStrategy.fromJson(_required(json, 'strategy', path), path: '$path.strategy'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'originalBytes': originalBytes,
+    'retainedBytes': retainedBytes,
+    'strategy': strategy.toJson(),
+  };
+
+  @override
+  String toString() => 'ContentTruncation(originalBytes: $originalBytes, retainedBytes: $retainedBytes, strategy: $strategy)';
+}
+
+enum ContentTruncationStrategy {
+  head('head'),
+  tail('tail'),
+  headTail('head-tail'),
+  structuralPreview('structural-preview');
+
+  const ContentTruncationStrategy(this.wireValue);
+
+  final String wireValue;
+
+  static ContentTruncationStrategy fromJson(Object? value, {String path = 'ContentTruncationStrategy'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: head, tail, head-tail, structural-preview');
+  }
+
+  String toJson() => wireValue;
 }
 
 final class Conversation {
@@ -697,58 +1228,16 @@ final class ConversationActivityChangedEvent {
   String toString() => 'ConversationActivityChangedEvent(conversation: $conversation, activityVersion: $activityVersion)';
 }
 
-final class ConversationContent {
-  factory ConversationContent({
-    required NativeResourceId contentId,
-    required ConversationContentKind kind,
-    required String text,
-  }) {
-    final validatedContentId = _string(contentId, 'ConversationContent.contentId', minLength: 1);
-    final validatedKind = kind;
-    final validatedText = _string(text, 'ConversationContent.text');
-    return ConversationContent._(
-      contentId: validatedContentId,
-      kind: validatedKind,
-      text: validatedText,
-    );
-  }
-
-  ConversationContent._({
-    required this.contentId,
-    required this.kind,
-    required this.text,
-  });
-
-  final NativeResourceId contentId;
-  final ConversationContentKind kind;
-  final String text;
-
-  factory ConversationContent.fromJson(Object? value, {String path = 'ConversationContent'}) {
-    final json = _object(value, path);
-    _expectKeys(json, const {'contentId', 'kind', 'text'}, path);
-    return ConversationContent(
-      contentId: _string(_required(json, 'contentId', path), '$path.contentId', minLength: 1),
-      kind: ConversationContentKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
-      text: _string(_required(json, 'text', path), '$path.text'),
-    );
-  }
-
-  Map<String, Object?> toJson() => {
-    'contentId': contentId,
-    'kind': kind.toJson(),
-    'text': text,
-  };
-
-  @override
-  String toString() => 'ConversationContent(contentId: $contentId, kind: $kind, text: $text)';
-}
-
 enum ConversationContentKind {
   text('text'),
   reasoningSummary('reasoning-summary'),
-  command('command'),
   output('output'),
-  activitySummary('activity-summary');
+  activitySummary('activity-summary'),
+  structuredJson('structured-json'),
+  image('image'),
+  audio('audio'),
+  resourceLink('resource-link'),
+  embeddedResource('embedded-resource');
 
   const ConversationContentKind(this.wireValue);
 
@@ -759,7 +1248,7 @@ enum ConversationContentKind {
     for (final candidate in values) {
       if (candidate.wireValue == wireValue) return candidate;
     }
-    throw ProtocolCodecException(path, 'expected one of: text, reasoning-summary, command, output, activity-summary');
+    throw ProtocolCodecException(path, 'expected one of: text, reasoning-summary, output, activity-summary, structured-json, image, audio, resource-link, embedded-resource');
   }
 
   String toJson() => wireValue;
@@ -1023,130 +1512,33 @@ final class ConversationGetResponse {
   String toString() => 'ConversationGetResponse(conversation: $conversation, items: $items, pageInfo: $pageInfo, snapshotCursor: $snapshotCursor)';
 }
 
-final class ConversationItem {
-  factory ConversationItem({
-    required RoutedResourceId resource,
-    required RoutedResourceId turn,
-    required RoutedResourceId conversation,
-    required ConversationItemKind kind,
-    required ConversationItemStatus status,
-    ConversationItemRole? role,
-    String? title,
-    required List<ConversationContent> contents,
-    RoutedResourceId? relatedItem,
-    Approval? approval,
-    ToolInvocation? tool,
-  }) {
-    final validatedResource = resource;
-    final validatedTurn = turn;
-    final validatedConversation = conversation;
-    final validatedKind = kind;
-    final validatedStatus = status;
-    final validatedRole = role == null ? null : role;
-    final validatedTitle = title == null ? null : _string(title, 'ConversationItem.title', minLength: 1);
-    final validatedContents = _freezeList<ConversationContent>(contents, 'ConversationItem.contents', (item, itemPath) => item, encodeItem: (item) => item.toJson());
-    final validatedRelatedItem = relatedItem == null ? null : relatedItem;
-    final validatedApproval = approval == null ? null : approval;
-    final validatedTool = tool == null ? null : tool;
-    return ConversationItem._(
-      resource: validatedResource,
-      turn: validatedTurn,
-      conversation: validatedConversation,
-      kind: validatedKind,
-      status: validatedStatus,
-      role: validatedRole,
-      title: validatedTitle,
-      contents: validatedContents,
-      relatedItem: validatedRelatedItem,
-      approval: validatedApproval,
-      tool: validatedTool,
-    );
-  }
-
-  ConversationItem._({
-    required this.resource,
-    required this.turn,
-    required this.conversation,
-    required this.kind,
-    required this.status,
-    required this.role,
-    required this.title,
-    required this.contents,
-    required this.relatedItem,
-    required this.approval,
-    required this.tool,
-  });
-
-  final RoutedResourceId resource;
-  final RoutedResourceId turn;
-  final RoutedResourceId conversation;
-  final ConversationItemKind kind;
-  final ConversationItemStatus status;
-  final ConversationItemRole? role;
-  final String? title;
-  final List<ConversationContent> contents;
-  final RoutedResourceId? relatedItem;
-  final Approval? approval;
-  final ToolInvocation? tool;
+sealed class ConversationItem {
+  const ConversationItem();
 
   factory ConversationItem.fromJson(Object? value, {String path = 'ConversationItem'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'resource', 'turn', 'conversation', 'kind', 'status', 'role', 'title', 'contents', 'relatedItem', 'approval', 'tool'}, path);
-    return ConversationItem(
-      resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
-      turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
-      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
-      kind: ConversationItemKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
-      status: ConversationItemStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
-      role: json.containsKey('role') && json['role'] != null ? ConversationItemRole.fromJson(json['role'], path: '$path.role') : null,
-      title: json.containsKey('title') && json['title'] != null ? _string(json['title'], '$path.title', minLength: 1) : null,
-      contents: _decodeList<ConversationContent>(_required(json, 'contents', path), '$path.contents', (item, itemPath) => ConversationContent.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
-      relatedItem: json.containsKey('relatedItem') && json['relatedItem'] != null ? RoutedResourceId.fromJson(json['relatedItem'], path: '$path.relatedItem') : null,
-      approval: json.containsKey('approval') && json['approval'] != null ? Approval.fromJson(json['approval'], path: '$path.approval') : null,
-      tool: json.containsKey('tool') && json['tool'] != null ? ToolInvocation.fromJson(json['tool'], path: '$path.tool') : null,
-    );
-  }
-
-  Map<String, Object?> toJson() => {
-    'resource': resource.toJson(),
-    'turn': turn.toJson(),
-    'conversation': conversation.toJson(),
-    'kind': kind.toJson(),
-    'status': status.toJson(),
-    if (role != null) 'role': role!.toJson(),
-    if (title != null) 'title': title!,
-    'contents': contents.map((item) => item.toJson()).toList(growable: false),
-    if (relatedItem != null) 'relatedItem': relatedItem!.toJson(),
-    if (approval != null) 'approval': approval!.toJson(),
-    if (tool != null) 'tool': tool!.toJson(),
-  };
-
-  @override
-  String toString() => 'ConversationItem(resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, role: $role, title: $title, contents: $contents, relatedItem: $relatedItem, approval: $approval, tool: $tool)';
-}
-
-enum ConversationItemKind {
-  message('message'),
-  reasoning('reasoning'),
-  command('command'),
-  fileChange('file-change'),
-  tool('tool'),
-  approval('approval'),
-  unknown('unknown');
-
-  const ConversationItemKind(this.wireValue);
-
-  final String wireValue;
-
-  static ConversationItemKind fromJson(Object? value, {String path = 'ConversationItemKind'}) {
-    final wireValue = _string(value, path);
-    for (final candidate in values) {
-      if (candidate.wireValue == wireValue) return candidate;
+    final discriminator = _required(json, 'kind', path);
+    switch (discriminator) {
+      case 'message':
+        return MessageConversationItem.fromJson(json, path: path);
+      case 'reasoning':
+        return ReasoningConversationItem.fromJson(json, path: path);
+      case 'command':
+        return CommandConversationItem.fromJson(json, path: path);
+      case 'file-change':
+        return FileChangeConversationItem.fromJson(json, path: path);
+      case 'tool':
+        return ToolConversationItem.fromJson(json, path: path);
+      case 'approval':
+        return ApprovalConversationItem.fromJson(json, path: path);
+      case 'unknown':
+        return UnknownConversationItem.fromJson(json, path: path);
+      default:
+        throw ProtocolCodecException('$path.kind', 'unknown ConversationItem discriminator: $discriminator');
     }
-    throw ProtocolCodecException(path, 'expected one of: message, reasoning, command, file-change, tool, approval, unknown');
   }
 
-  String toJson() => wireValue;
+  Map<String, Object?> toJson();
 }
 
 enum ConversationItemRole {
@@ -1771,6 +2163,92 @@ final class ConversationUpsertedEvent {
   String toString() => 'ConversationUpsertedEvent(conversation: $conversation)';
 }
 
+final class EmbeddedResourceContentBlock extends ContentBlock {
+  factory EmbeddedResourceContentBlock({
+    required NativeResourceId contentId,
+    required EmbeddedResourceContentBlockKind kind,
+    required String text,
+    String? mimeType,
+    String? name,
+    ContentTruncation? truncation,
+  }) {
+    final validatedContentId = _string(contentId, 'EmbeddedResourceContentBlock.contentId', minLength: 1);
+    final validatedKind = kind;
+    final validatedText = _string(text, 'EmbeddedResourceContentBlock.text');
+    final validatedMimeType = mimeType == null ? null : _string(mimeType, 'EmbeddedResourceContentBlock.mimeType', minLength: 1);
+    final validatedName = name == null ? null : _string(name, 'EmbeddedResourceContentBlock.name', minLength: 1);
+    final validatedTruncation = truncation == null ? null : truncation;
+    return EmbeddedResourceContentBlock._(
+      contentId: validatedContentId,
+      kind: validatedKind,
+      text: validatedText,
+      mimeType: validatedMimeType,
+      name: validatedName,
+      truncation: validatedTruncation,
+    );
+  }
+
+  EmbeddedResourceContentBlock._({
+    required this.contentId,
+    required this.kind,
+    required this.text,
+    required this.mimeType,
+    required this.name,
+    required this.truncation,
+  });
+
+  final NativeResourceId contentId;
+  final EmbeddedResourceContentBlockKind kind;
+  final String text;
+  final String? mimeType;
+  final String? name;
+  final ContentTruncation? truncation;
+
+  factory EmbeddedResourceContentBlock.fromJson(Object? value, {String path = 'EmbeddedResourceContentBlock'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'contentId', 'kind', 'text', 'mimeType', 'name', 'truncation'}, path);
+    return EmbeddedResourceContentBlock(
+      contentId: _string(_required(json, 'contentId', path), '$path.contentId', minLength: 1),
+      kind: EmbeddedResourceContentBlockKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      text: _string(_required(json, 'text', path), '$path.text'),
+      mimeType: json.containsKey('mimeType') && json['mimeType'] != null ? _string(json['mimeType'], '$path.mimeType', minLength: 1) : null,
+      name: json.containsKey('name') && json['name'] != null ? _string(json['name'], '$path.name', minLength: 1) : null,
+      truncation: json.containsKey('truncation') && json['truncation'] != null ? ContentTruncation.fromJson(json['truncation'], path: '$path.truncation') : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'contentId': contentId,
+    'kind': kind.toJson(),
+    'text': text,
+    if (mimeType != null) 'mimeType': mimeType!,
+    if (name != null) 'name': name!,
+    if (truncation != null) 'truncation': truncation!.toJson(),
+  };
+
+  @override
+  String toString() => 'EmbeddedResourceContentBlock(contentId: $contentId, kind: $kind, text: $text, mimeType: $mimeType, name: $name, truncation: $truncation)';
+}
+
+enum EmbeddedResourceContentBlockKind {
+  embeddedResource('embedded-resource');
+
+  const EmbeddedResourceContentBlockKind(this.wireValue);
+
+  final String wireValue;
+
+  static EmbeddedResourceContentBlockKind fromJson(Object? value, {String path = 'EmbeddedResourceContentBlockKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: embedded-resource');
+  }
+
+  String toJson() => wireValue;
+}
+
 final class EventSubscribeRequest {
   factory EventSubscribeRequest({
     required EventCursor afterCursor,
@@ -1833,6 +2311,99 @@ final class EventSubscribeResponse {
 
   @override
   String toString() => 'EventSubscribeResponse(subscribedAfterCursor: $subscribedAfterCursor)';
+}
+
+final class FileChangeConversationItem extends ConversationItem {
+  factory FileChangeConversationItem({
+    required RoutedResourceId resource,
+    required RoutedResourceId turn,
+    required RoutedResourceId conversation,
+    required FileChangeConversationItemKind kind,
+    required ConversationItemStatus status,
+    String? title,
+    required List<ContentBlock> contents,
+  }) {
+    final validatedResource = resource;
+    final validatedTurn = turn;
+    final validatedConversation = conversation;
+    final validatedKind = kind;
+    final validatedStatus = status;
+    final validatedTitle = title == null ? null : _string(title, 'FileChangeConversationItem.title', minLength: 1);
+    final validatedContents = _freezeList<ContentBlock>(contents, 'FileChangeConversationItem.contents', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    return FileChangeConversationItem._(
+      resource: validatedResource,
+      turn: validatedTurn,
+      conversation: validatedConversation,
+      kind: validatedKind,
+      status: validatedStatus,
+      title: validatedTitle,
+      contents: validatedContents,
+    );
+  }
+
+  FileChangeConversationItem._({
+    required this.resource,
+    required this.turn,
+    required this.conversation,
+    required this.kind,
+    required this.status,
+    required this.title,
+    required this.contents,
+  });
+
+  final RoutedResourceId resource;
+  final RoutedResourceId turn;
+  final RoutedResourceId conversation;
+  final FileChangeConversationItemKind kind;
+  final ConversationItemStatus status;
+  final String? title;
+  final List<ContentBlock> contents;
+
+  factory FileChangeConversationItem.fromJson(Object? value, {String path = 'FileChangeConversationItem'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'resource', 'turn', 'conversation', 'kind', 'status', 'title', 'contents'}, path);
+    return FileChangeConversationItem(
+      resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
+      turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      kind: FileChangeConversationItemKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      status: ConversationItemStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
+      title: json.containsKey('title') && json['title'] != null ? _string(json['title'], '$path.title', minLength: 1) : null,
+      contents: _decodeList<ContentBlock>(_required(json, 'contents', path), '$path.contents', (item, itemPath) => ContentBlock.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'resource': resource.toJson(),
+    'turn': turn.toJson(),
+    'conversation': conversation.toJson(),
+    'kind': kind.toJson(),
+    'status': status.toJson(),
+    if (title != null) 'title': title!,
+    'contents': contents.map((item) => item.toJson()).toList(growable: false),
+  };
+
+  @override
+  String toString() => 'FileChangeConversationItem(resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, title: $title, contents: $contents)';
+}
+
+enum FileChangeConversationItemKind {
+  fileChange('file-change');
+
+  const FileChangeConversationItemKind(this.wireValue);
+
+  final String wireValue;
+
+  static FileChangeConversationItemKind fromJson(Object? value, {String path = 'FileChangeConversationItemKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: file-change');
+  }
+
+  String toJson() => wireValue;
 }
 
 final class FlatModelCatalog extends ModelCatalog {
@@ -2378,6 +2949,185 @@ final class HandshakeResponse {
   String toString() => 'HandshakeResponse(protocol: $protocol, device: $device, providers: $providers, eventCursor: $eventCursor)';
 }
 
+final class ImageContentBlock extends ContentBlock {
+  factory ImageContentBlock({
+    required NativeResourceId contentId,
+    required ImageContentBlockKind kind,
+    required String uri,
+    String? mimeType,
+    String? name,
+    ContentTruncation? truncation,
+  }) {
+    final validatedContentId = _string(contentId, 'ImageContentBlock.contentId', minLength: 1);
+    final validatedKind = kind;
+    final validatedUri = _string(uri, 'ImageContentBlock.uri', minLength: 1);
+    final validatedMimeType = mimeType == null ? null : _string(mimeType, 'ImageContentBlock.mimeType', minLength: 1);
+    final validatedName = name == null ? null : _string(name, 'ImageContentBlock.name', minLength: 1);
+    final validatedTruncation = truncation == null ? null : truncation;
+    return ImageContentBlock._(
+      contentId: validatedContentId,
+      kind: validatedKind,
+      uri: validatedUri,
+      mimeType: validatedMimeType,
+      name: validatedName,
+      truncation: validatedTruncation,
+    );
+  }
+
+  ImageContentBlock._({
+    required this.contentId,
+    required this.kind,
+    required this.uri,
+    required this.mimeType,
+    required this.name,
+    required this.truncation,
+  });
+
+  final NativeResourceId contentId;
+  final ImageContentBlockKind kind;
+  final String uri;
+  final String? mimeType;
+  final String? name;
+  final ContentTruncation? truncation;
+
+  factory ImageContentBlock.fromJson(Object? value, {String path = 'ImageContentBlock'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'contentId', 'kind', 'uri', 'mimeType', 'name', 'truncation'}, path);
+    return ImageContentBlock(
+      contentId: _string(_required(json, 'contentId', path), '$path.contentId', minLength: 1),
+      kind: ImageContentBlockKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      uri: _string(_required(json, 'uri', path), '$path.uri', minLength: 1),
+      mimeType: json.containsKey('mimeType') && json['mimeType'] != null ? _string(json['mimeType'], '$path.mimeType', minLength: 1) : null,
+      name: json.containsKey('name') && json['name'] != null ? _string(json['name'], '$path.name', minLength: 1) : null,
+      truncation: json.containsKey('truncation') && json['truncation'] != null ? ContentTruncation.fromJson(json['truncation'], path: '$path.truncation') : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'contentId': contentId,
+    'kind': kind.toJson(),
+    'uri': uri,
+    if (mimeType != null) 'mimeType': mimeType!,
+    if (name != null) 'name': name!,
+    if (truncation != null) 'truncation': truncation!.toJson(),
+  };
+
+  @override
+  String toString() => 'ImageContentBlock(contentId: $contentId, kind: $kind, uri: $uri, mimeType: $mimeType, name: $name, truncation: $truncation)';
+}
+
+enum ImageContentBlockKind {
+  image('image');
+
+  const ImageContentBlockKind(this.wireValue);
+
+  final String wireValue;
+
+  static ImageContentBlockKind fromJson(Object? value, {String path = 'ImageContentBlockKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: image');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class MessageConversationItem extends ConversationItem {
+  factory MessageConversationItem({
+    required RoutedResourceId resource,
+    required RoutedResourceId turn,
+    required RoutedResourceId conversation,
+    required MessageConversationItemKind kind,
+    required ConversationItemStatus status,
+    required ConversationItemRole role,
+    required List<ContentBlock> contents,
+  }) {
+    final validatedResource = resource;
+    final validatedTurn = turn;
+    final validatedConversation = conversation;
+    final validatedKind = kind;
+    final validatedStatus = status;
+    final validatedRole = role;
+    final validatedContents = _freezeList<ContentBlock>(contents, 'MessageConversationItem.contents', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    return MessageConversationItem._(
+      resource: validatedResource,
+      turn: validatedTurn,
+      conversation: validatedConversation,
+      kind: validatedKind,
+      status: validatedStatus,
+      role: validatedRole,
+      contents: validatedContents,
+    );
+  }
+
+  MessageConversationItem._({
+    required this.resource,
+    required this.turn,
+    required this.conversation,
+    required this.kind,
+    required this.status,
+    required this.role,
+    required this.contents,
+  });
+
+  final RoutedResourceId resource;
+  final RoutedResourceId turn;
+  final RoutedResourceId conversation;
+  final MessageConversationItemKind kind;
+  final ConversationItemStatus status;
+  final ConversationItemRole role;
+  final List<ContentBlock> contents;
+
+  factory MessageConversationItem.fromJson(Object? value, {String path = 'MessageConversationItem'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'resource', 'turn', 'conversation', 'kind', 'status', 'role', 'contents'}, path);
+    return MessageConversationItem(
+      resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
+      turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      kind: MessageConversationItemKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      status: ConversationItemStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
+      role: ConversationItemRole.fromJson(_required(json, 'role', path), path: '$path.role'),
+      contents: _decodeList<ContentBlock>(_required(json, 'contents', path), '$path.contents', (item, itemPath) => ContentBlock.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'resource': resource.toJson(),
+    'turn': turn.toJson(),
+    'conversation': conversation.toJson(),
+    'kind': kind.toJson(),
+    'status': status.toJson(),
+    'role': role.toJson(),
+    'contents': contents.map((item) => item.toJson()).toList(growable: false),
+  };
+
+  @override
+  String toString() => 'MessageConversationItem(resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, role: $role, contents: $contents)';
+}
+
+enum MessageConversationItemKind {
+  message('message');
+
+  const MessageConversationItemKind(this.wireValue);
+
+  final String wireValue;
+
+  static MessageConversationItemKind fromJson(Object? value, {String path = 'MessageConversationItemKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: message');
+  }
+
+  String toJson() => wireValue;
+}
+
 sealed class ModelCatalog {
   const ModelCatalog();
 
@@ -2414,6 +3164,150 @@ sealed class ModelSelection {
   }
 
   Map<String, Object?> toJson();
+}
+
+final class OpaqueToolInput extends ToolInput {
+  factory OpaqueToolInput({
+    required OpaqueToolInputKind kind,
+    required String value,
+    String? mimeType,
+    ContentTruncation? truncation,
+  }) {
+    final validatedKind = kind;
+    final validatedValue = _string(value, 'OpaqueToolInput.value');
+    final validatedMimeType = mimeType == null ? null : _string(mimeType, 'OpaqueToolInput.mimeType', minLength: 1);
+    final validatedTruncation = truncation == null ? null : truncation;
+    return OpaqueToolInput._(
+      kind: validatedKind,
+      value: validatedValue,
+      mimeType: validatedMimeType,
+      truncation: validatedTruncation,
+    );
+  }
+
+  OpaqueToolInput._({
+    required this.kind,
+    required this.value,
+    required this.mimeType,
+    required this.truncation,
+  });
+
+  final OpaqueToolInputKind kind;
+  final String value;
+  final String? mimeType;
+  final ContentTruncation? truncation;
+
+  factory OpaqueToolInput.fromJson(Object? value, {String path = 'OpaqueToolInput'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'kind', 'value', 'mimeType', 'truncation'}, path);
+    return OpaqueToolInput(
+      kind: OpaqueToolInputKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      value: _string(_required(json, 'value', path), '$path.value'),
+      mimeType: json.containsKey('mimeType') && json['mimeType'] != null ? _string(json['mimeType'], '$path.mimeType', minLength: 1) : null,
+      truncation: json.containsKey('truncation') && json['truncation'] != null ? ContentTruncation.fromJson(json['truncation'], path: '$path.truncation') : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+    'value': value,
+    if (mimeType != null) 'mimeType': mimeType!,
+    if (truncation != null) 'truncation': truncation!.toJson(),
+  };
+
+  @override
+  String toString() => 'OpaqueToolInput(kind: $kind, value: $value, mimeType: $mimeType, truncation: $truncation)';
+}
+
+enum OpaqueToolInputKind {
+  opaque('opaque');
+
+  const OpaqueToolInputKind(this.wireValue);
+
+  final String wireValue;
+
+  static OpaqueToolInputKind fromJson(Object? value, {String path = 'OpaqueToolInputKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: opaque');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class OutputContentBlock extends ContentBlock {
+  factory OutputContentBlock({
+    required NativeResourceId contentId,
+    required OutputContentBlockKind kind,
+    required String text,
+    ContentTruncation? truncation,
+  }) {
+    final validatedContentId = _string(contentId, 'OutputContentBlock.contentId', minLength: 1);
+    final validatedKind = kind;
+    final validatedText = _string(text, 'OutputContentBlock.text');
+    final validatedTruncation = truncation == null ? null : truncation;
+    return OutputContentBlock._(
+      contentId: validatedContentId,
+      kind: validatedKind,
+      text: validatedText,
+      truncation: validatedTruncation,
+    );
+  }
+
+  OutputContentBlock._({
+    required this.contentId,
+    required this.kind,
+    required this.text,
+    required this.truncation,
+  });
+
+  final NativeResourceId contentId;
+  final OutputContentBlockKind kind;
+  final String text;
+  final ContentTruncation? truncation;
+
+  factory OutputContentBlock.fromJson(Object? value, {String path = 'OutputContentBlock'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'contentId', 'kind', 'text', 'truncation'}, path);
+    return OutputContentBlock(
+      contentId: _string(_required(json, 'contentId', path), '$path.contentId', minLength: 1),
+      kind: OutputContentBlockKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      text: _string(_required(json, 'text', path), '$path.text'),
+      truncation: json.containsKey('truncation') && json['truncation'] != null ? ContentTruncation.fromJson(json['truncation'], path: '$path.truncation') : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'contentId': contentId,
+    'kind': kind.toJson(),
+    'text': text,
+    if (truncation != null) 'truncation': truncation!.toJson(),
+  };
+
+  @override
+  String toString() => 'OutputContentBlock(contentId: $contentId, kind: $kind, text: $text, truncation: $truncation)';
+}
+
+enum OutputContentBlockKind {
+  output('output');
+
+  const OutputContentBlockKind(this.wireValue);
+
+  final String wireValue;
+
+  static OutputContentBlockKind fromJson(Object? value, {String path = 'OutputContentBlockKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: output');
+  }
+
+  String toJson() => wireValue;
 }
 
 final class Project {
@@ -3572,6 +4466,459 @@ final class ProviderUsageDetail {
   String toString() => 'ProviderUsageDetail(namespace: $namespace, schemaVersion: $schemaVersion, data: $data)';
 }
 
+final class ReasoningConversationItem extends ConversationItem {
+  factory ReasoningConversationItem({
+    required RoutedResourceId resource,
+    required RoutedResourceId turn,
+    required RoutedResourceId conversation,
+    required ReasoningConversationItemKind kind,
+    required ConversationItemStatus status,
+    required List<ContentBlock> contents,
+  }) {
+    final validatedResource = resource;
+    final validatedTurn = turn;
+    final validatedConversation = conversation;
+    final validatedKind = kind;
+    final validatedStatus = status;
+    final validatedContents = _freezeList<ContentBlock>(contents, 'ReasoningConversationItem.contents', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    return ReasoningConversationItem._(
+      resource: validatedResource,
+      turn: validatedTurn,
+      conversation: validatedConversation,
+      kind: validatedKind,
+      status: validatedStatus,
+      contents: validatedContents,
+    );
+  }
+
+  ReasoningConversationItem._({
+    required this.resource,
+    required this.turn,
+    required this.conversation,
+    required this.kind,
+    required this.status,
+    required this.contents,
+  });
+
+  final RoutedResourceId resource;
+  final RoutedResourceId turn;
+  final RoutedResourceId conversation;
+  final ReasoningConversationItemKind kind;
+  final ConversationItemStatus status;
+  final List<ContentBlock> contents;
+
+  factory ReasoningConversationItem.fromJson(Object? value, {String path = 'ReasoningConversationItem'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'resource', 'turn', 'conversation', 'kind', 'status', 'contents'}, path);
+    return ReasoningConversationItem(
+      resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
+      turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      kind: ReasoningConversationItemKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      status: ConversationItemStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
+      contents: _decodeList<ContentBlock>(_required(json, 'contents', path), '$path.contents', (item, itemPath) => ContentBlock.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'resource': resource.toJson(),
+    'turn': turn.toJson(),
+    'conversation': conversation.toJson(),
+    'kind': kind.toJson(),
+    'status': status.toJson(),
+    'contents': contents.map((item) => item.toJson()).toList(growable: false),
+  };
+
+  @override
+  String toString() => 'ReasoningConversationItem(resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, contents: $contents)';
+}
+
+enum ReasoningConversationItemKind {
+  reasoning('reasoning');
+
+  const ReasoningConversationItemKind(this.wireValue);
+
+  final String wireValue;
+
+  static ReasoningConversationItemKind fromJson(Object? value, {String path = 'ReasoningConversationItemKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: reasoning');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class ReasoningSummaryContentBlock extends ContentBlock {
+  factory ReasoningSummaryContentBlock({
+    required NativeResourceId contentId,
+    required ReasoningSummaryContentBlockKind kind,
+    required String text,
+    ContentTruncation? truncation,
+  }) {
+    final validatedContentId = _string(contentId, 'ReasoningSummaryContentBlock.contentId', minLength: 1);
+    final validatedKind = kind;
+    final validatedText = _string(text, 'ReasoningSummaryContentBlock.text');
+    final validatedTruncation = truncation == null ? null : truncation;
+    return ReasoningSummaryContentBlock._(
+      contentId: validatedContentId,
+      kind: validatedKind,
+      text: validatedText,
+      truncation: validatedTruncation,
+    );
+  }
+
+  ReasoningSummaryContentBlock._({
+    required this.contentId,
+    required this.kind,
+    required this.text,
+    required this.truncation,
+  });
+
+  final NativeResourceId contentId;
+  final ReasoningSummaryContentBlockKind kind;
+  final String text;
+  final ContentTruncation? truncation;
+
+  factory ReasoningSummaryContentBlock.fromJson(Object? value, {String path = 'ReasoningSummaryContentBlock'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'contentId', 'kind', 'text', 'truncation'}, path);
+    return ReasoningSummaryContentBlock(
+      contentId: _string(_required(json, 'contentId', path), '$path.contentId', minLength: 1),
+      kind: ReasoningSummaryContentBlockKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      text: _string(_required(json, 'text', path), '$path.text'),
+      truncation: json.containsKey('truncation') && json['truncation'] != null ? ContentTruncation.fromJson(json['truncation'], path: '$path.truncation') : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'contentId': contentId,
+    'kind': kind.toJson(),
+    'text': text,
+    if (truncation != null) 'truncation': truncation!.toJson(),
+  };
+
+  @override
+  String toString() => 'ReasoningSummaryContentBlock(contentId: $contentId, kind: $kind, text: $text, truncation: $truncation)';
+}
+
+enum ReasoningSummaryContentBlockKind {
+  reasoningSummary('reasoning-summary');
+
+  const ReasoningSummaryContentBlockKind(this.wireValue);
+
+  final String wireValue;
+
+  static ReasoningSummaryContentBlockKind fromJson(Object? value, {String path = 'ReasoningSummaryContentBlockKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: reasoning-summary');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class ResourceLinkContentBlock extends ContentBlock {
+  factory ResourceLinkContentBlock({
+    required NativeResourceId contentId,
+    required ResourceLinkContentBlockKind kind,
+    required String uri,
+    String? name,
+    String? mimeType,
+    ContentTruncation? truncation,
+  }) {
+    final validatedContentId = _string(contentId, 'ResourceLinkContentBlock.contentId', minLength: 1);
+    final validatedKind = kind;
+    final validatedUri = _string(uri, 'ResourceLinkContentBlock.uri', minLength: 1);
+    final validatedName = name == null ? null : _string(name, 'ResourceLinkContentBlock.name', minLength: 1);
+    final validatedMimeType = mimeType == null ? null : _string(mimeType, 'ResourceLinkContentBlock.mimeType', minLength: 1);
+    final validatedTruncation = truncation == null ? null : truncation;
+    return ResourceLinkContentBlock._(
+      contentId: validatedContentId,
+      kind: validatedKind,
+      uri: validatedUri,
+      name: validatedName,
+      mimeType: validatedMimeType,
+      truncation: validatedTruncation,
+    );
+  }
+
+  ResourceLinkContentBlock._({
+    required this.contentId,
+    required this.kind,
+    required this.uri,
+    required this.name,
+    required this.mimeType,
+    required this.truncation,
+  });
+
+  final NativeResourceId contentId;
+  final ResourceLinkContentBlockKind kind;
+  final String uri;
+  final String? name;
+  final String? mimeType;
+  final ContentTruncation? truncation;
+
+  factory ResourceLinkContentBlock.fromJson(Object? value, {String path = 'ResourceLinkContentBlock'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'contentId', 'kind', 'uri', 'name', 'mimeType', 'truncation'}, path);
+    return ResourceLinkContentBlock(
+      contentId: _string(_required(json, 'contentId', path), '$path.contentId', minLength: 1),
+      kind: ResourceLinkContentBlockKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      uri: _string(_required(json, 'uri', path), '$path.uri', minLength: 1),
+      name: json.containsKey('name') && json['name'] != null ? _string(json['name'], '$path.name', minLength: 1) : null,
+      mimeType: json.containsKey('mimeType') && json['mimeType'] != null ? _string(json['mimeType'], '$path.mimeType', minLength: 1) : null,
+      truncation: json.containsKey('truncation') && json['truncation'] != null ? ContentTruncation.fromJson(json['truncation'], path: '$path.truncation') : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'contentId': contentId,
+    'kind': kind.toJson(),
+    'uri': uri,
+    if (name != null) 'name': name!,
+    if (mimeType != null) 'mimeType': mimeType!,
+    if (truncation != null) 'truncation': truncation!.toJson(),
+  };
+
+  @override
+  String toString() => 'ResourceLinkContentBlock(contentId: $contentId, kind: $kind, uri: $uri, name: $name, mimeType: $mimeType, truncation: $truncation)';
+}
+
+enum ResourceLinkContentBlockKind {
+  resourceLink('resource-link');
+
+  const ResourceLinkContentBlockKind(this.wireValue);
+
+  final String wireValue;
+
+  static ResourceLinkContentBlockKind fromJson(Object? value, {String path = 'ResourceLinkContentBlockKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: resource-link');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class StructuredJsonContentBlock extends ContentBlock {
+  factory StructuredJsonContentBlock({
+    required NativeResourceId contentId,
+    required StructuredJsonContentBlockKind kind,
+    required JsonObject value,
+    ContentTruncation? truncation,
+  }) {
+    final validatedContentId = _string(contentId, 'StructuredJsonContentBlock.contentId', minLength: 1);
+    final validatedKind = kind;
+    final validatedValue = _jsonObject(value, 'StructuredJsonContentBlock.value');
+    final validatedTruncation = truncation == null ? null : truncation;
+    return StructuredJsonContentBlock._(
+      contentId: validatedContentId,
+      kind: validatedKind,
+      value: validatedValue,
+      truncation: validatedTruncation,
+    );
+  }
+
+  StructuredJsonContentBlock._({
+    required this.contentId,
+    required this.kind,
+    required this.value,
+    required this.truncation,
+  });
+
+  final NativeResourceId contentId;
+  final StructuredJsonContentBlockKind kind;
+  final JsonObject value;
+  final ContentTruncation? truncation;
+
+  factory StructuredJsonContentBlock.fromJson(Object? value, {String path = 'StructuredJsonContentBlock'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'contentId', 'kind', 'value', 'truncation'}, path);
+    return StructuredJsonContentBlock(
+      contentId: _string(_required(json, 'contentId', path), '$path.contentId', minLength: 1),
+      kind: StructuredJsonContentBlockKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      value: _jsonObject(_required(json, 'value', path), '$path.value'),
+      truncation: json.containsKey('truncation') && json['truncation'] != null ? ContentTruncation.fromJson(json['truncation'], path: '$path.truncation') : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'contentId': contentId,
+    'kind': kind.toJson(),
+    'value': _encodeJsonObject(value, 'StructuredJsonContentBlock.value'),
+    if (truncation != null) 'truncation': truncation!.toJson(),
+  };
+
+  @override
+  String toString() => 'StructuredJsonContentBlock(contentId: $contentId, kind: $kind, value: $value, truncation: $truncation)';
+}
+
+enum StructuredJsonContentBlockKind {
+  structuredJson('structured-json');
+
+  const StructuredJsonContentBlockKind(this.wireValue);
+
+  final String wireValue;
+
+  static StructuredJsonContentBlockKind fromJson(Object? value, {String path = 'StructuredJsonContentBlockKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: structured-json');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class StructuredToolInput extends ToolInput {
+  factory StructuredToolInput({
+    required StructuredToolInputKind kind,
+    required JsonObject value,
+    ContentTruncation? truncation,
+  }) {
+    final validatedKind = kind;
+    final validatedValue = _jsonObject(value, 'StructuredToolInput.value');
+    final validatedTruncation = truncation == null ? null : truncation;
+    return StructuredToolInput._(
+      kind: validatedKind,
+      value: validatedValue,
+      truncation: validatedTruncation,
+    );
+  }
+
+  StructuredToolInput._({
+    required this.kind,
+    required this.value,
+    required this.truncation,
+  });
+
+  final StructuredToolInputKind kind;
+  final JsonObject value;
+  final ContentTruncation? truncation;
+
+  factory StructuredToolInput.fromJson(Object? value, {String path = 'StructuredToolInput'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'kind', 'value', 'truncation'}, path);
+    return StructuredToolInput(
+      kind: StructuredToolInputKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      value: _jsonObject(_required(json, 'value', path), '$path.value'),
+      truncation: json.containsKey('truncation') && json['truncation'] != null ? ContentTruncation.fromJson(json['truncation'], path: '$path.truncation') : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+    'value': _encodeJsonObject(value, 'StructuredToolInput.value'),
+    if (truncation != null) 'truncation': truncation!.toJson(),
+  };
+
+  @override
+  String toString() => 'StructuredToolInput(kind: $kind, value: $value, truncation: $truncation)';
+}
+
+enum StructuredToolInputKind {
+  structured('structured');
+
+  const StructuredToolInputKind(this.wireValue);
+
+  final String wireValue;
+
+  static StructuredToolInputKind fromJson(Object? value, {String path = 'StructuredToolInputKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: structured');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class TextContentBlock extends ContentBlock {
+  factory TextContentBlock({
+    required NativeResourceId contentId,
+    required TextContentBlockKind kind,
+    required String text,
+    ContentTruncation? truncation,
+  }) {
+    final validatedContentId = _string(contentId, 'TextContentBlock.contentId', minLength: 1);
+    final validatedKind = kind;
+    final validatedText = _string(text, 'TextContentBlock.text');
+    final validatedTruncation = truncation == null ? null : truncation;
+    return TextContentBlock._(
+      contentId: validatedContentId,
+      kind: validatedKind,
+      text: validatedText,
+      truncation: validatedTruncation,
+    );
+  }
+
+  TextContentBlock._({
+    required this.contentId,
+    required this.kind,
+    required this.text,
+    required this.truncation,
+  });
+
+  final NativeResourceId contentId;
+  final TextContentBlockKind kind;
+  final String text;
+  final ContentTruncation? truncation;
+
+  factory TextContentBlock.fromJson(Object? value, {String path = 'TextContentBlock'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'contentId', 'kind', 'text', 'truncation'}, path);
+    return TextContentBlock(
+      contentId: _string(_required(json, 'contentId', path), '$path.contentId', minLength: 1),
+      kind: TextContentBlockKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      text: _string(_required(json, 'text', path), '$path.text'),
+      truncation: json.containsKey('truncation') && json['truncation'] != null ? ContentTruncation.fromJson(json['truncation'], path: '$path.truncation') : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'contentId': contentId,
+    'kind': kind.toJson(),
+    'text': text,
+    if (truncation != null) 'truncation': truncation!.toJson(),
+  };
+
+  @override
+  String toString() => 'TextContentBlock(contentId: $contentId, kind: $kind, text: $text, truncation: $truncation)';
+}
+
+enum TextContentBlockKind {
+  text('text');
+
+  const TextContentBlockKind(this.wireValue);
+
+  final String wireValue;
+
+  static TextContentBlockKind fromJson(Object? value, {String path = 'TextContentBlockKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: text');
+  }
+
+  String toJson() => wireValue;
+}
+
 final class ToolAnnotations {
   factory ToolAnnotations({
     bool? readOnly,
@@ -3733,164 +5080,94 @@ enum ToolCommandActionKind {
   String toJson() => wireValue;
 }
 
-final class ToolCommandDetails {
-  factory ToolCommandDetails({
-    required String command,
-    String? cwd,
-    int? exitCode,
-    String? processId,
-    List<ToolCommandAction>? actions,
+final class ToolConversationItem extends ConversationItem {
+  factory ToolConversationItem({
+    required RoutedResourceId resource,
+    required RoutedResourceId turn,
+    required RoutedResourceId conversation,
+    required ToolConversationItemKind kind,
+    required ConversationItemStatus status,
+    String? title,
+    required ToolInvocation tool,
   }) {
-    final validatedCommand = _string(command, 'ToolCommandDetails.command', minLength: 1);
-    final validatedCwd = cwd == null ? null : _string(cwd, 'ToolCommandDetails.cwd', minLength: 1);
-    final validatedExitCode = exitCode == null ? null : _integer(exitCode, 'ToolCommandDetails.exitCode', minimum: -2147483648, maximum: 2147483647);
-    final validatedProcessId = processId == null ? null : _string(processId, 'ToolCommandDetails.processId', minLength: 1);
-    final validatedActions = actions == null ? null : _freezeList<ToolCommandAction>(actions, 'ToolCommandDetails.actions', (item, itemPath) => item, encodeItem: (item) => item.toJson());
-    return ToolCommandDetails._(
-      command: validatedCommand,
-      cwd: validatedCwd,
-      exitCode: validatedExitCode,
-      processId: validatedProcessId,
-      actions: validatedActions,
-    );
-  }
-
-  ToolCommandDetails._({
-    required this.command,
-    required this.cwd,
-    required this.exitCode,
-    required this.processId,
-    required this.actions,
-  });
-
-  final String command;
-  final String? cwd;
-  final int? exitCode;
-  final String? processId;
-  final List<ToolCommandAction>? actions;
-
-  factory ToolCommandDetails.fromJson(Object? value, {String path = 'ToolCommandDetails'}) {
-    final json = _object(value, path);
-    _expectKeys(json, const {'command', 'cwd', 'exitCode', 'processId', 'actions'}, path);
-    return ToolCommandDetails(
-      command: _string(_required(json, 'command', path), '$path.command', minLength: 1),
-      cwd: json.containsKey('cwd') && json['cwd'] != null ? _string(json['cwd'], '$path.cwd', minLength: 1) : null,
-      exitCode: json.containsKey('exitCode') && json['exitCode'] != null ? _integer(json['exitCode'], '$path.exitCode', minimum: -2147483648, maximum: 2147483647) : null,
-      processId: json.containsKey('processId') && json['processId'] != null ? _string(json['processId'], '$path.processId', minLength: 1) : null,
-      actions: json.containsKey('actions') && json['actions'] != null ? _decodeList<ToolCommandAction>(json['actions'], '$path.actions', (item, itemPath) => ToolCommandAction.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()) : null,
-    );
-  }
-
-  Map<String, Object?> toJson() => {
-    'command': command,
-    if (cwd != null) 'cwd': cwd!,
-    if (exitCode != null) 'exitCode': exitCode!,
-    if (processId != null) 'processId': processId!,
-    if (actions != null) 'actions': actions!.map((item) => item.toJson()).toList(growable: false),
-  };
-
-  @override
-  String toString() => 'ToolCommandDetails(command: $command, cwd: $cwd, exitCode: $exitCode, processId: $processId, actions: $actions)';
-}
-
-final class ToolContent {
-  factory ToolContent({
-    required NativeResourceId contentId,
-    required ToolContentKind kind,
-    String? text,
-    String? uri,
-    String? mimeType,
-    String? name,
-    bool? truncated,
-    int? totalBytes,
-  }) {
-    final validatedContentId = _string(contentId, 'ToolContent.contentId', minLength: 1);
+    final validatedResource = resource;
+    final validatedTurn = turn;
+    final validatedConversation = conversation;
     final validatedKind = kind;
-    final validatedText = text == null ? null : _string(text, 'ToolContent.text');
-    final validatedUri = uri == null ? null : _string(uri, 'ToolContent.uri', minLength: 1);
-    final validatedMimeType = mimeType == null ? null : _string(mimeType, 'ToolContent.mimeType', minLength: 1);
-    final validatedName = name == null ? null : _string(name, 'ToolContent.name', minLength: 1);
-    final validatedTruncated = truncated == null ? null : truncated;
-    final validatedTotalBytes = totalBytes == null ? null : _integer(totalBytes, 'ToolContent.totalBytes', minimum: 0);
-    return ToolContent._(
-      contentId: validatedContentId,
+    final validatedStatus = status;
+    final validatedTitle = title == null ? null : _string(title, 'ToolConversationItem.title', minLength: 1);
+    final validatedTool = tool;
+    return ToolConversationItem._(
+      resource: validatedResource,
+      turn: validatedTurn,
+      conversation: validatedConversation,
       kind: validatedKind,
-      text: validatedText,
-      uri: validatedUri,
-      mimeType: validatedMimeType,
-      name: validatedName,
-      truncated: validatedTruncated,
-      totalBytes: validatedTotalBytes,
+      status: validatedStatus,
+      title: validatedTitle,
+      tool: validatedTool,
     );
   }
 
-  ToolContent._({
-    required this.contentId,
+  ToolConversationItem._({
+    required this.resource,
+    required this.turn,
+    required this.conversation,
     required this.kind,
-    required this.text,
-    required this.uri,
-    required this.mimeType,
-    required this.name,
-    required this.truncated,
-    required this.totalBytes,
+    required this.status,
+    required this.title,
+    required this.tool,
   });
 
-  final NativeResourceId contentId;
-  final ToolContentKind kind;
-  final String? text;
-  final String? uri;
-  final String? mimeType;
-  final String? name;
-  final bool? truncated;
-  final int? totalBytes;
+  final RoutedResourceId resource;
+  final RoutedResourceId turn;
+  final RoutedResourceId conversation;
+  final ToolConversationItemKind kind;
+  final ConversationItemStatus status;
+  final String? title;
+  final ToolInvocation tool;
 
-  factory ToolContent.fromJson(Object? value, {String path = 'ToolContent'}) {
+  factory ToolConversationItem.fromJson(Object? value, {String path = 'ToolConversationItem'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'contentId', 'kind', 'text', 'uri', 'mimeType', 'name', 'truncated', 'totalBytes'}, path);
-    return ToolContent(
-      contentId: _string(_required(json, 'contentId', path), '$path.contentId', minLength: 1),
-      kind: ToolContentKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
-      text: json.containsKey('text') && json['text'] != null ? _string(json['text'], '$path.text') : null,
-      uri: json.containsKey('uri') && json['uri'] != null ? _string(json['uri'], '$path.uri', minLength: 1) : null,
-      mimeType: json.containsKey('mimeType') && json['mimeType'] != null ? _string(json['mimeType'], '$path.mimeType', minLength: 1) : null,
-      name: json.containsKey('name') && json['name'] != null ? _string(json['name'], '$path.name', minLength: 1) : null,
-      truncated: json.containsKey('truncated') && json['truncated'] != null ? _boolean(json['truncated'], '$path.truncated') : null,
-      totalBytes: json.containsKey('totalBytes') && json['totalBytes'] != null ? _integer(json['totalBytes'], '$path.totalBytes', minimum: 0) : null,
+    _expectKeys(json, const {'resource', 'turn', 'conversation', 'kind', 'status', 'title', 'tool'}, path);
+    return ToolConversationItem(
+      resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
+      turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      kind: ToolConversationItemKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      status: ConversationItemStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
+      title: json.containsKey('title') && json['title'] != null ? _string(json['title'], '$path.title', minLength: 1) : null,
+      tool: ToolInvocation.fromJson(_required(json, 'tool', path), path: '$path.tool'),
     );
   }
 
+  @override
   Map<String, Object?> toJson() => {
-    'contentId': contentId,
+    'resource': resource.toJson(),
+    'turn': turn.toJson(),
+    'conversation': conversation.toJson(),
     'kind': kind.toJson(),
-    if (text != null) 'text': text!,
-    if (uri != null) 'uri': uri!,
-    if (mimeType != null) 'mimeType': mimeType!,
-    if (name != null) 'name': name!,
-    if (truncated != null) 'truncated': truncated!,
-    if (totalBytes != null) 'totalBytes': totalBytes!,
+    'status': status.toJson(),
+    if (title != null) 'title': title!,
+    'tool': tool.toJson(),
   };
 
   @override
-  String toString() => 'ToolContent(contentId: $contentId, kind: $kind, text: $text, uri: $uri, mimeType: $mimeType, name: $name, truncated: $truncated, totalBytes: $totalBytes)';
+  String toString() => 'ToolConversationItem(resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, title: $title, tool: $tool)';
 }
 
-enum ToolContentKind {
-  text('text'),
-  image('image'),
-  audio('audio'),
-  resourceLink('resource-link'),
-  embeddedResource('embedded-resource');
+enum ToolConversationItemKind {
+  tool('tool');
 
-  const ToolContentKind(this.wireValue);
+  const ToolConversationItemKind(this.wireValue);
 
   final String wireValue;
 
-  static ToolContentKind fromJson(Object? value, {String path = 'ToolContentKind'}) {
+  static ToolConversationItemKind fromJson(Object? value, {String path = 'ToolConversationItemKind'}) {
     final wireValue = _string(value, path);
     for (final candidate in values) {
       if (candidate.wireValue == wireValue) return candidate;
     }
-    throw ProtocolCodecException(path, 'expected one of: text, image, audio, resource-link, embedded-resource');
+    throw ProtocolCodecException(path, 'expected one of: tool');
   }
 
   String toJson() => wireValue;
@@ -3901,17 +5178,14 @@ final class ToolExecutionError {
     String? code,
     required String message,
     bool? retryable,
-    JsonObject? details,
   }) {
     final validatedCode = code == null ? null : _string(code, 'ToolExecutionError.code', minLength: 1);
-    final validatedMessage = _string(message, 'ToolExecutionError.message', minLength: 1);
+    final validatedMessage = _string(message, 'ToolExecutionError.message', minLength: 1, maxLength: 512);
     final validatedRetryable = retryable == null ? null : retryable;
-    final validatedDetails = details == null ? null : _jsonObject(details, 'ToolExecutionError.details');
     return ToolExecutionError._(
       code: validatedCode,
       message: validatedMessage,
       retryable: validatedRetryable,
-      details: validatedDetails,
     );
   }
 
@@ -3919,22 +5193,19 @@ final class ToolExecutionError {
     required this.code,
     required this.message,
     required this.retryable,
-    required this.details,
   });
 
   final String? code;
   final String message;
   final bool? retryable;
-  final JsonObject? details;
 
   factory ToolExecutionError.fromJson(Object? value, {String path = 'ToolExecutionError'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'code', 'message', 'retryable', 'details'}, path);
+    _expectKeys(json, const {'code', 'message', 'retryable'}, path);
     return ToolExecutionError(
       code: json.containsKey('code') && json['code'] != null ? _string(json['code'], '$path.code', minLength: 1) : null,
-      message: _string(_required(json, 'message', path), '$path.message', minLength: 1),
+      message: _string(_required(json, 'message', path), '$path.message', minLength: 1, maxLength: 512),
       retryable: json.containsKey('retryable') && json['retryable'] != null ? _boolean(json['retryable'], '$path.retryable') : null,
-      details: json.containsKey('details') && json['details'] != null ? _jsonObject(json['details'], '$path.details') : null,
     );
   }
 
@@ -3942,11 +5213,110 @@ final class ToolExecutionError {
     if (code != null) 'code': code!,
     'message': message,
     if (retryable != null) 'retryable': retryable!,
-    if (details != null) 'details': _encodeJsonObject(details!, 'ToolExecutionError.details'),
   };
 
   @override
-  String toString() => 'ToolExecutionError(code: $code, message: $message, retryable: $retryable, details: $details)';
+  String toString() => 'ToolExecutionError(code: $code, message: $message, retryable: $retryable)';
+}
+
+final class ToolFailureOutcome extends ToolOutcome {
+  factory ToolFailureOutcome({
+    required ToolFailureOutcomeKind kind,
+    required List<ContentBlock> content,
+    required ToolExecutionError error,
+    int? exitCode,
+    String? processId,
+  }) {
+    final validatedKind = kind;
+    final validatedContent = _freezeList<ContentBlock>(content, 'ToolFailureOutcome.content', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedError = error;
+    final validatedExitCode = exitCode == null ? null : _integer(exitCode, 'ToolFailureOutcome.exitCode', minimum: -2147483648, maximum: 2147483647);
+    final validatedProcessId = processId == null ? null : _string(processId, 'ToolFailureOutcome.processId', minLength: 1);
+    return ToolFailureOutcome._(
+      kind: validatedKind,
+      content: validatedContent,
+      error: validatedError,
+      exitCode: validatedExitCode,
+      processId: validatedProcessId,
+    );
+  }
+
+  ToolFailureOutcome._({
+    required this.kind,
+    required this.content,
+    required this.error,
+    required this.exitCode,
+    required this.processId,
+  });
+
+  final ToolFailureOutcomeKind kind;
+  final List<ContentBlock> content;
+  final ToolExecutionError error;
+  final int? exitCode;
+  final String? processId;
+
+  factory ToolFailureOutcome.fromJson(Object? value, {String path = 'ToolFailureOutcome'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'kind', 'content', 'error', 'exitCode', 'processId'}, path);
+    return ToolFailureOutcome(
+      kind: ToolFailureOutcomeKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      content: _decodeList<ContentBlock>(_required(json, 'content', path), '$path.content', (item, itemPath) => ContentBlock.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+      error: ToolExecutionError.fromJson(_required(json, 'error', path), path: '$path.error'),
+      exitCode: json.containsKey('exitCode') && json['exitCode'] != null ? _integer(json['exitCode'], '$path.exitCode', minimum: -2147483648, maximum: 2147483647) : null,
+      processId: json.containsKey('processId') && json['processId'] != null ? _string(json['processId'], '$path.processId', minLength: 1) : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+    'content': content.map((item) => item.toJson()).toList(growable: false),
+    'error': error.toJson(),
+    if (exitCode != null) 'exitCode': exitCode!,
+    if (processId != null) 'processId': processId!,
+  };
+
+  @override
+  String toString() => 'ToolFailureOutcome(kind: $kind, content: $content, error: $error, exitCode: $exitCode, processId: $processId)';
+}
+
+enum ToolFailureOutcomeKind {
+  failure('failure');
+
+  const ToolFailureOutcomeKind(this.wireValue);
+
+  final String wireValue;
+
+  static ToolFailureOutcomeKind fromJson(Object? value, {String path = 'ToolFailureOutcomeKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: failure');
+  }
+
+  String toJson() => wireValue;
+}
+
+sealed class ToolInput {
+  const ToolInput();
+
+  factory ToolInput.fromJson(Object? value, {String path = 'ToolInput'}) {
+    final json = _object(value, path);
+    final discriminator = _required(json, 'kind', path);
+    switch (discriminator) {
+      case 'command':
+        return CommandToolInput.fromJson(json, path: path);
+      case 'structured':
+        return StructuredToolInput.fromJson(json, path: path);
+      case 'opaque':
+        return OpaqueToolInput.fromJson(json, path: path);
+      default:
+        throw ProtocolCodecException('$path.kind', 'unknown ToolInput discriminator: $discriminator');
+    }
+  }
+
+  Map<String, Object?> toJson();
 }
 
 final class ToolInvocation {
@@ -3956,11 +5326,9 @@ final class ToolInvocation {
     String? namespace,
     required ToolCategory category,
     required ToolOrigin origin,
-    required JsonObject input,
-    String? rawInput,
-    ToolResult? result,
+    required ToolInput input,
+    ToolOutcome? outcome,
     ToolTiming? timing,
-    ToolCommandDetails? command,
     ToolAnnotations? annotations,
   }) {
     final validatedCallId = _string(callId, 'ToolInvocation.callId', minLength: 1);
@@ -3968,11 +5336,9 @@ final class ToolInvocation {
     final validatedNamespace = namespace == null ? null : _string(namespace, 'ToolInvocation.namespace', minLength: 1);
     final validatedCategory = category;
     final validatedOrigin = origin;
-    final validatedInput = _jsonObject(input, 'ToolInvocation.input');
-    final validatedRawInput = rawInput == null ? null : _string(rawInput, 'ToolInvocation.rawInput');
-    final validatedResult = result == null ? null : result;
+    final validatedInput = input;
+    final validatedOutcome = outcome == null ? null : outcome;
     final validatedTiming = timing == null ? null : timing;
-    final validatedCommand = command == null ? null : command;
     final validatedAnnotations = annotations == null ? null : annotations;
     return ToolInvocation._(
       callId: validatedCallId,
@@ -3981,10 +5347,8 @@ final class ToolInvocation {
       category: validatedCategory,
       origin: validatedOrigin,
       input: validatedInput,
-      rawInput: validatedRawInput,
-      result: validatedResult,
+      outcome: validatedOutcome,
       timing: validatedTiming,
-      command: validatedCommand,
       annotations: validatedAnnotations,
     );
   }
@@ -3996,10 +5360,8 @@ final class ToolInvocation {
     required this.category,
     required this.origin,
     required this.input,
-    required this.rawInput,
-    required this.result,
+    required this.outcome,
     required this.timing,
-    required this.command,
     required this.annotations,
   });
 
@@ -4008,27 +5370,23 @@ final class ToolInvocation {
   final String? namespace;
   final ToolCategory category;
   final ToolOrigin origin;
-  final JsonObject input;
-  final String? rawInput;
-  final ToolResult? result;
+  final ToolInput input;
+  final ToolOutcome? outcome;
   final ToolTiming? timing;
-  final ToolCommandDetails? command;
   final ToolAnnotations? annotations;
 
   factory ToolInvocation.fromJson(Object? value, {String path = 'ToolInvocation'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'callId', 'name', 'namespace', 'category', 'origin', 'input', 'rawInput', 'result', 'timing', 'command', 'annotations'}, path);
+    _expectKeys(json, const {'callId', 'name', 'namespace', 'category', 'origin', 'input', 'outcome', 'timing', 'annotations'}, path);
     return ToolInvocation(
       callId: _string(_required(json, 'callId', path), '$path.callId', minLength: 1),
       name: _string(_required(json, 'name', path), '$path.name', minLength: 1),
       namespace: json.containsKey('namespace') && json['namespace'] != null ? _string(json['namespace'], '$path.namespace', minLength: 1) : null,
       category: ToolCategory.fromJson(_required(json, 'category', path), path: '$path.category'),
       origin: ToolOrigin.fromJson(_required(json, 'origin', path), path: '$path.origin'),
-      input: _jsonObject(_required(json, 'input', path), '$path.input'),
-      rawInput: json.containsKey('rawInput') && json['rawInput'] != null ? _string(json['rawInput'], '$path.rawInput') : null,
-      result: json.containsKey('result') && json['result'] != null ? ToolResult.fromJson(json['result'], path: '$path.result') : null,
+      input: ToolInput.fromJson(_required(json, 'input', path), path: '$path.input'),
+      outcome: json.containsKey('outcome') && json['outcome'] != null ? ToolOutcome.fromJson(json['outcome'], path: '$path.outcome') : null,
       timing: json.containsKey('timing') && json['timing'] != null ? ToolTiming.fromJson(json['timing'], path: '$path.timing') : null,
-      command: json.containsKey('command') && json['command'] != null ? ToolCommandDetails.fromJson(json['command'], path: '$path.command') : null,
       annotations: json.containsKey('annotations') && json['annotations'] != null ? ToolAnnotations.fromJson(json['annotations'], path: '$path.annotations') : null,
     );
   }
@@ -4039,16 +5397,14 @@ final class ToolInvocation {
     if (namespace != null) 'namespace': namespace!,
     'category': category.toJson(),
     'origin': origin.toJson(),
-    'input': _encodeJsonObject(input, 'ToolInvocation.input'),
-    if (rawInput != null) 'rawInput': rawInput!,
-    if (result != null) 'result': result!.toJson(),
+    'input': input.toJson(),
+    if (outcome != null) 'outcome': outcome!.toJson(),
     if (timing != null) 'timing': timing!.toJson(),
-    if (command != null) 'command': command!.toJson(),
     if (annotations != null) 'annotations': annotations!.toJson(),
   };
 
   @override
-  String toString() => 'ToolInvocation(callId: $callId, name: $name, namespace: $namespace, category: $category, origin: $origin, input: $input, rawInput: $rawInput, result: $result, timing: $timing, command: $command, annotations: $annotations)';
+  String toString() => 'ToolInvocation(callId: $callId, name: $name, namespace: $namespace, category: $category, origin: $origin, input: $input, outcome: $outcome, timing: $timing, annotations: $annotations)';
 }
 
 final class ToolOrigin {
@@ -4113,50 +5469,95 @@ enum ToolOriginKind {
   String toJson() => wireValue;
 }
 
-final class ToolResult {
-  factory ToolResult({
-    required List<ToolContent> content,
-    JsonObject? structuredContent,
-    ToolExecutionError? error,
+sealed class ToolOutcome {
+  const ToolOutcome();
+
+  factory ToolOutcome.fromJson(Object? value, {String path = 'ToolOutcome'}) {
+    final json = _object(value, path);
+    final discriminator = _required(json, 'kind', path);
+    switch (discriminator) {
+      case 'success':
+        return ToolSuccessOutcome.fromJson(json, path: path);
+      case 'failure':
+        return ToolFailureOutcome.fromJson(json, path: path);
+      default:
+        throw ProtocolCodecException('$path.kind', 'unknown ToolOutcome discriminator: $discriminator');
+    }
+  }
+
+  Map<String, Object?> toJson();
+}
+
+final class ToolSuccessOutcome extends ToolOutcome {
+  factory ToolSuccessOutcome({
+    required ToolSuccessOutcomeKind kind,
+    required List<ContentBlock> content,
+    int? exitCode,
+    String? processId,
   }) {
-    final validatedContent = _freezeList<ToolContent>(content, 'ToolResult.content', (item, itemPath) => item, encodeItem: (item) => item.toJson());
-    final validatedStructuredContent = structuredContent == null ? null : _jsonObject(structuredContent, 'ToolResult.structuredContent');
-    final validatedError = error == null ? null : error;
-    return ToolResult._(
+    final validatedKind = kind;
+    final validatedContent = _freezeList<ContentBlock>(content, 'ToolSuccessOutcome.content', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedExitCode = exitCode == null ? null : _integer(exitCode, 'ToolSuccessOutcome.exitCode', minimum: -2147483648, maximum: 2147483647);
+    final validatedProcessId = processId == null ? null : _string(processId, 'ToolSuccessOutcome.processId', minLength: 1);
+    return ToolSuccessOutcome._(
+      kind: validatedKind,
       content: validatedContent,
-      structuredContent: validatedStructuredContent,
-      error: validatedError,
+      exitCode: validatedExitCode,
+      processId: validatedProcessId,
     );
   }
 
-  ToolResult._({
+  ToolSuccessOutcome._({
+    required this.kind,
     required this.content,
-    required this.structuredContent,
-    required this.error,
+    required this.exitCode,
+    required this.processId,
   });
 
-  final List<ToolContent> content;
-  final JsonObject? structuredContent;
-  final ToolExecutionError? error;
+  final ToolSuccessOutcomeKind kind;
+  final List<ContentBlock> content;
+  final int? exitCode;
+  final String? processId;
 
-  factory ToolResult.fromJson(Object? value, {String path = 'ToolResult'}) {
+  factory ToolSuccessOutcome.fromJson(Object? value, {String path = 'ToolSuccessOutcome'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'content', 'structuredContent', 'error'}, path);
-    return ToolResult(
-      content: _decodeList<ToolContent>(_required(json, 'content', path), '$path.content', (item, itemPath) => ToolContent.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
-      structuredContent: json.containsKey('structuredContent') && json['structuredContent'] != null ? _jsonObject(json['structuredContent'], '$path.structuredContent') : null,
-      error: json.containsKey('error') && json['error'] != null ? ToolExecutionError.fromJson(json['error'], path: '$path.error') : null,
+    _expectKeys(json, const {'kind', 'content', 'exitCode', 'processId'}, path);
+    return ToolSuccessOutcome(
+      kind: ToolSuccessOutcomeKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      content: _decodeList<ContentBlock>(_required(json, 'content', path), '$path.content', (item, itemPath) => ContentBlock.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+      exitCode: json.containsKey('exitCode') && json['exitCode'] != null ? _integer(json['exitCode'], '$path.exitCode', minimum: -2147483648, maximum: 2147483647) : null,
+      processId: json.containsKey('processId') && json['processId'] != null ? _string(json['processId'], '$path.processId', minLength: 1) : null,
     );
   }
 
+  @override
   Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
     'content': content.map((item) => item.toJson()).toList(growable: false),
-    if (structuredContent != null) 'structuredContent': _encodeJsonObject(structuredContent!, 'ToolResult.structuredContent'),
-    if (error != null) 'error': error!.toJson(),
+    if (exitCode != null) 'exitCode': exitCode!,
+    if (processId != null) 'processId': processId!,
   };
 
   @override
-  String toString() => 'ToolResult(content: $content, structuredContent: $structuredContent, error: $error)';
+  String toString() => 'ToolSuccessOutcome(kind: $kind, content: $content, exitCode: $exitCode, processId: $processId)';
+}
+
+enum ToolSuccessOutcomeKind {
+  success('success');
+
+  const ToolSuccessOutcomeKind(this.wireValue);
+
+  final String wireValue;
+
+  static ToolSuccessOutcomeKind fromJson(Object? value, {String path = 'ToolSuccessOutcomeKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: success');
+  }
+
+  String toJson() => wireValue;
 }
 
 final class ToolTiming {
@@ -4732,6 +6133,92 @@ final class TurnUpsertedEvent {
 
   @override
   String toString() => 'TurnUpsertedEvent(turn: $turn)';
+}
+
+final class UnknownConversationItem extends ConversationItem {
+  factory UnknownConversationItem({
+    required RoutedResourceId resource,
+    required RoutedResourceId turn,
+    required RoutedResourceId conversation,
+    required UnknownConversationItemKind kind,
+    required ConversationItemStatus status,
+    String? title,
+  }) {
+    final validatedResource = resource;
+    final validatedTurn = turn;
+    final validatedConversation = conversation;
+    final validatedKind = kind;
+    final validatedStatus = status;
+    final validatedTitle = title == null ? null : _string(title, 'UnknownConversationItem.title', minLength: 1);
+    return UnknownConversationItem._(
+      resource: validatedResource,
+      turn: validatedTurn,
+      conversation: validatedConversation,
+      kind: validatedKind,
+      status: validatedStatus,
+      title: validatedTitle,
+    );
+  }
+
+  UnknownConversationItem._({
+    required this.resource,
+    required this.turn,
+    required this.conversation,
+    required this.kind,
+    required this.status,
+    required this.title,
+  });
+
+  final RoutedResourceId resource;
+  final RoutedResourceId turn;
+  final RoutedResourceId conversation;
+  final UnknownConversationItemKind kind;
+  final ConversationItemStatus status;
+  final String? title;
+
+  factory UnknownConversationItem.fromJson(Object? value, {String path = 'UnknownConversationItem'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'resource', 'turn', 'conversation', 'kind', 'status', 'title'}, path);
+    return UnknownConversationItem(
+      resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
+      turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      kind: UnknownConversationItemKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      status: ConversationItemStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
+      title: json.containsKey('title') && json['title'] != null ? _string(json['title'], '$path.title', minLength: 1) : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'resource': resource.toJson(),
+    'turn': turn.toJson(),
+    'conversation': conversation.toJson(),
+    'kind': kind.toJson(),
+    'status': status.toJson(),
+    if (title != null) 'title': title!,
+  };
+
+  @override
+  String toString() => 'UnknownConversationItem(resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, title: $title)';
+}
+
+enum UnknownConversationItemKind {
+  unknown('unknown');
+
+  const UnknownConversationItemKind(this.wireValue);
+
+  final String wireValue;
+
+  static UnknownConversationItemKind fromJson(Object? value, {String path = 'UnknownConversationItemKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: unknown');
+  }
+
+  String toJson() => wireValue;
 }
 
 const int protocolVersion = 1;

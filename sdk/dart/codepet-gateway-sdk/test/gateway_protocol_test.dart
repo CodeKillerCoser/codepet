@@ -19,6 +19,7 @@ void main() {
       final file = entry['file']! as String;
       final kind = entry['kind']! as String;
       final name = entry['name']! as String;
+      if (entry['valid'] == false) continue;
       final json = fixtureObject(file);
 
       final encoded = switch (kind) {
@@ -32,6 +33,27 @@ void main() {
       };
 
       expect(encoded, equals(json), reason: file);
+    }
+  });
+
+  test('negative union fixtures are rejected by generated codecs', () {
+    final index = fixture('index.json') as List;
+    for (final rawEntry in index) {
+      final entry = (rawEntry as Map).cast<String, Object?>();
+      if (entry['valid'] != false) continue;
+      final file = entry['file']! as String;
+      final name = entry['name']! as String;
+      final json = fixtureObject(file);
+      expect(
+        () => switch (name) {
+          'ToolInput' => ToolInput.fromJson(json),
+          'ToolOutcome' => ToolOutcome.fromJson(json),
+          'ConversationItem' => ConversationItem.fromJson(json),
+          _ => throw StateError('unhandled negative fixture type: $name'),
+        },
+        throwsA(isA<ProtocolCodecException>()),
+        reason: file,
+      );
     }
   });
 
@@ -141,7 +163,7 @@ void main() {
   });
 
   test('method and event metadata come from the manifest IR', () {
-    expect(ProtocolMethod.values, hasLength(18));
+    expect(ProtocolMethod.values, hasLength(19));
     expect(ProtocolEventName.values, hasLength(9));
     expect(ProtocolMethod.projectList.wireName, 'project.list');
     expect(ProtocolMethod.projectDelete.capability, GatewayCapability.projectDelete);

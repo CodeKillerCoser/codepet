@@ -9,5 +9,8 @@
   { "file": "conversation-create-project-request.json", "kind": "request", "name": "conversation.create" },
   { "file": "project-changed-event.json", "kind": "event", "name": "project.changed" },
   { "file": "conversation-upserted-event.json", "kind": "event", "name": "conversation.upserted" },
-  { "file": "conversation-item-upserted-event.json", "kind": "event", "name": "conversation.itemUpserted" }
+  { "file": "conversation-item-upserted-event.json", "kind": "event", "name": "conversation.itemUpserted" },
+  { "file": "invalid-tool-input-mixed.json", "kind": "type", "name": "ToolInput", "valid": false },
+  { "file": "invalid-tool-outcome-mixed.json", "kind": "type", "name": "ToolOutcome", "valid": false },
+  { "file": "invalid-command-item-duplicate-content.json", "kind": "type", "name": "ConversationItem", "valid": false }
 ]

@@ -31,9 +31,10 @@ Object? _nullValue(Object? value, String path) {
   return null;
 }
 
-String _string(Object? value, String path, {int? minLength, String? pattern}) {
+String _string(Object? value, String path, {int? minLength, int? maxLength, String? pattern}) {
   if (value is! String) throw ProtocolCodecException(path, 'expected a string');
   if (minLength != null && value.length < minLength) throw ProtocolCodecException(path, 'string is shorter than $minLength characters');
+  if (maxLength != null && value.length > maxLength) throw ProtocolCodecException(path, 'string is longer than $maxLength characters');
   if (pattern != null && !RegExp(pattern).hasMatch(value)) throw ProtocolCodecException(path, 'string does not match $pattern');
   return value;
 }

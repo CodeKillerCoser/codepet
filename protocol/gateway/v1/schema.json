@@ -162,19 +162,152 @@
       "required": ["conversation", "items", "snapshotCursor"],
       "additionalProperties": false
     },
-    "ConversationContent": {
+    "ContentBlock": {
+      "oneOf": [
+        { "$ref": "#/$defs/TextContentBlock" },
+        { "$ref": "#/$defs/ReasoningSummaryContentBlock" },
+        { "$ref": "#/$defs/OutputContentBlock" },
+        { "$ref": "#/$defs/ActivitySummaryContentBlock" },
+        { "$ref": "#/$defs/StructuredJsonContentBlock" },
+        { "$ref": "#/$defs/ImageContentBlock" },
+        { "$ref": "#/$defs/AudioContentBlock" },
+        { "$ref": "#/$defs/ResourceLinkContentBlock" },
+        { "$ref": "#/$defs/EmbeddedResourceContentBlock" }
+      ]
+    },
+    "ContentTruncation": {
+      "type": "object",
+      "properties": {
+        "originalBytes": { "type": "integer", "minimum": 0 },
+        "retainedBytes": { "type": "integer", "minimum": 0 },
+        "strategy": { "$ref": "#/$defs/ContentTruncationStrategy" }
+      },
+      "required": ["originalBytes", "retainedBytes", "strategy"],
+      "additionalProperties": false
+    },
+    "ContentTruncationStrategy": {
+      "type": "string",
+      "enum": ["head", "tail", "head-tail", "structural-preview"]
+    },
+    "TextContentBlockKind": { "type": "string", "enum": ["text"] },
+    "TextContentBlock": {
       "type": "object",
       "properties": {
         "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "kind": { "$ref": "#/$defs/ConversationContentKind" },
-        "text": { "type": "string" }
+        "kind": { "$ref": "#/$defs/TextContentBlockKind" },
+        "text": { "type": "string" },
+        "truncation": { "$ref": "#/$defs/ContentTruncation" }
+      },
+      "required": ["contentId", "kind", "text"],
+      "additionalProperties": false
+    },
+    "ReasoningSummaryContentBlockKind": { "type": "string", "enum": ["reasoning-summary"] },
+    "ReasoningSummaryContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "kind": { "$ref": "#/$defs/ReasoningSummaryContentBlockKind" },
+        "text": { "type": "string" },
+        "truncation": { "$ref": "#/$defs/ContentTruncation" }
+      },
+      "required": ["contentId", "kind", "text"],
+      "additionalProperties": false
+    },
+    "OutputContentBlockKind": { "type": "string", "enum": ["output"] },
+    "OutputContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "kind": { "$ref": "#/$defs/OutputContentBlockKind" },
+        "text": { "type": "string" },
+        "truncation": { "$ref": "#/$defs/ContentTruncation" }
+      },
+      "required": ["contentId", "kind", "text"],
+      "additionalProperties": false
+    },
+    "ActivitySummaryContentBlockKind": { "type": "string", "enum": ["activity-summary"] },
+    "ActivitySummaryContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "kind": { "$ref": "#/$defs/ActivitySummaryContentBlockKind" },
+        "text": { "type": "string" },
+        "truncation": { "$ref": "#/$defs/ContentTruncation" }
+      },
+      "required": ["contentId", "kind", "text"],
+      "additionalProperties": false
+    },
+    "StructuredJsonContentBlockKind": { "type": "string", "enum": ["structured-json"] },
+    "StructuredJsonContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "kind": { "$ref": "#/$defs/StructuredJsonContentBlockKind" },
+        "value": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" },
+        "truncation": { "$ref": "#/$defs/ContentTruncation" }
+      },
+      "required": ["contentId", "kind", "value"],
+      "additionalProperties": false
+    },
+    "ImageContentBlockKind": { "type": "string", "enum": ["image"] },
+    "ImageContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "kind": { "$ref": "#/$defs/ImageContentBlockKind" },
+        "uri": { "type": "string", "minLength": 1 },
+        "mimeType": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "truncation": { "$ref": "#/$defs/ContentTruncation" }
+      },
+      "required": ["contentId", "kind", "uri"],
+      "additionalProperties": false
+    },
+    "AudioContentBlockKind": { "type": "string", "enum": ["audio"] },
+    "AudioContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "kind": { "$ref": "#/$defs/AudioContentBlockKind" },
+        "uri": { "type": "string", "minLength": 1 },
+        "mimeType": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "truncation": { "$ref": "#/$defs/ContentTruncation" }
+      },
+      "required": ["contentId", "kind", "uri"],
+      "additionalProperties": false
+    },
+    "ResourceLinkContentBlockKind": { "type": "string", "enum": ["resource-link"] },
+    "ResourceLinkContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "kind": { "$ref": "#/$defs/ResourceLinkContentBlockKind" },
+        "uri": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "mimeType": { "type": "string", "minLength": 1 },
+        "truncation": { "$ref": "#/$defs/ContentTruncation" }
+      },
+      "required": ["contentId", "kind", "uri"],
+      "additionalProperties": false
+    },
+    "EmbeddedResourceContentBlockKind": { "type": "string", "enum": ["embedded-resource"] },
+    "EmbeddedResourceContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
+        "kind": { "$ref": "#/$defs/EmbeddedResourceContentBlockKind" },
+        "text": { "type": "string" },
+        "mimeType": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "truncation": { "$ref": "#/$defs/ContentTruncation" }
       },
       "required": ["contentId", "kind", "text"],
       "additionalProperties": false
     },
     "ConversationContentKind": {
       "type": "string",
-      "enum": ["text", "reasoning-summary", "command", "output", "activity-summary"]
+      "enum": ["text", "reasoning-summary", "output", "activity-summary", "structured-json", "image", "audio", "resource-link", "embedded-resource"]
     },
     "ToolAnnotations": {
       "type": "object",
@@ -185,7 +318,7 @@
         "openWorld": { "type": "boolean" }
       },
       "additionalProperties": false,
-      "description": "Advisory UI hints only; clients must not use these fields as authorization decisions."
+      "description": "Advisory UI hints only; hosts must not use these fields as authorization decisions."
     },
     "ToolCategory": {
       "type": "string",
@@ -207,48 +340,58 @@
       "type": "string",
       "enum": ["execute", "read", "list", "search", "unknown"]
     },
-    "ToolCommandDetails": {
+    "CommandToolInputKind": { "type": "string", "enum": ["command"] },
+    "CommandToolInput": {
       "type": "object",
       "properties": {
+        "kind": { "$ref": "#/$defs/CommandToolInputKind" },
         "command": { "type": "string", "minLength": 1 },
         "cwd": { "type": "string", "minLength": 1 },
-        "exitCode": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
-        "processId": { "type": "string", "minLength": 1 },
+        "shell": { "type": "string", "minLength": 1 },
         "actions": {
           "type": "array",
           "items": { "$ref": "#/$defs/ToolCommandAction" }
         }
       },
-      "required": ["command"],
+      "required": ["kind", "command"],
       "additionalProperties": false
     },
-    "ToolContent": {
+    "StructuredToolInputKind": { "type": "string", "enum": ["structured"] },
+    "StructuredToolInput": {
       "type": "object",
       "properties": {
-        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "kind": { "$ref": "#/$defs/ToolContentKind" },
-        "text": { "type": "string" },
-        "uri": { "type": "string", "minLength": 1 },
-        "mimeType": { "type": "string", "minLength": 1 },
-        "name": { "type": "string", "minLength": 1 },
-        "truncated": { "type": "boolean" },
-        "totalBytes": { "type": "integer", "minimum": 0 }
+        "kind": { "$ref": "#/$defs/StructuredToolInputKind" },
+        "value": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" },
+        "truncation": { "$ref": "#/$defs/ContentTruncation" }
       },
-      "required": ["contentId", "kind"],
-      "additionalProperties": false,
-      "description": "Tool result content discriminated by kind; clients validate kind-specific optional fields."
+      "required": ["kind", "value"],
+      "additionalProperties": false
     },
-    "ToolContentKind": {
-      "type": "string",
-      "enum": ["text", "image", "audio", "resource-link", "embedded-resource"]
+    "OpaqueToolInputKind": { "type": "string", "enum": ["opaque"] },
+    "OpaqueToolInput": {
+      "type": "object",
+      "properties": {
+        "kind": { "$ref": "#/$defs/OpaqueToolInputKind" },
+        "value": { "type": "string" },
+        "mimeType": { "type": "string", "minLength": 1 },
+        "truncation": { "$ref": "#/$defs/ContentTruncation" }
+      },
+      "required": ["kind", "value"],
+      "additionalProperties": false
+    },
+    "ToolInput": {
+      "oneOf": [
+        { "$ref": "#/$defs/CommandToolInput" },
+        { "$ref": "#/$defs/StructuredToolInput" },
+        { "$ref": "#/$defs/OpaqueToolInput" }
+      ]
     },
     "ToolExecutionError": {
       "type": "object",
       "properties": {
         "code": { "type": "string", "minLength": 1 },
-        "message": { "type": "string", "minLength": 1 },
-        "retryable": { "type": "boolean" },
-        "details": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" }
+        "message": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "retryable": { "type": "boolean" }
       },
       "required": ["message"],
       "additionalProperties": false
@@ -261,16 +404,14 @@
         "namespace": { "type": "string", "minLength": 1 },
         "category": { "$ref": "#/$defs/ToolCategory" },
         "origin": { "$ref": "#/$defs/ToolOrigin" },
-        "input": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" },
-        "rawInput": { "type": "string" },
-        "result": { "$ref": "#/$defs/ToolResult" },
+        "input": { "$ref": "#/$defs/ToolInput" },
+        "outcome": { "$ref": "#/$defs/ToolOutcome" },
         "timing": { "$ref": "#/$defs/ToolTiming" },
-        "command": { "$ref": "#/$defs/ToolCommandDetails" },
         "annotations": { "$ref": "#/$defs/ToolAnnotations" }
       },
       "required": ["callId", "name", "category", "origin", "input"],
       "additionalProperties": false,
-      "description": "Provider-neutral client-safe tool-call envelope. Lifecycle remains ConversationItem.status."
+      "description": "Provider-neutral client-safe tool-call envelope with one canonical input and one canonical outcome. Lifecycle remains ConversationItem.status."
     },
     "ToolOrigin": {
       "type": "object",
@@ -285,18 +426,42 @@
       "type": "string",
       "enum": ["builtin", "mcp", "plugin", "server", "custom", "unknown"]
     },
-    "ToolResult": {
+    "ToolSuccessOutcomeKind": { "type": "string", "enum": ["success"] },
+    "ToolSuccessOutcome": {
       "type": "object",
       "properties": {
+        "kind": { "$ref": "#/$defs/ToolSuccessOutcomeKind" },
         "content": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ToolContent" }
+          "items": { "$ref": "#/$defs/ContentBlock" }
         },
-        "structuredContent": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" },
-        "error": { "$ref": "#/$defs/ToolExecutionError" }
+        "exitCode": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "processId": { "type": "string", "minLength": 1 }
       },
-      "required": ["content"],
+      "required": ["kind", "content"],
       "additionalProperties": false
+    },
+    "ToolFailureOutcomeKind": { "type": "string", "enum": ["failure"] },
+    "ToolFailureOutcome": {
+      "type": "object",
+      "properties": {
+        "kind": { "$ref": "#/$defs/ToolFailureOutcomeKind" },
+        "content": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ContentBlock" }
+        },
+        "error": { "$ref": "#/$defs/ToolExecutionError" },
+        "exitCode": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "processId": { "type": "string", "minLength": 1 }
+      },
+      "required": ["kind", "content", "error"],
+      "additionalProperties": false
+    },
+    "ToolOutcome": {
+      "oneOf": [
+        { "$ref": "#/$defs/ToolSuccessOutcome" },
+        { "$ref": "#/$defs/ToolFailureOutcome" }
+      ]
     },
     "ToolTiming": {
       "type": "object",
@@ -308,24 +473,121 @@
       "additionalProperties": false
     },
     "ConversationItem": {
+      "oneOf": [
+        { "$ref": "#/$defs/MessageConversationItem" },
+        { "$ref": "#/$defs/ReasoningConversationItem" },
+        { "$ref": "#/$defs/CommandConversationItem" },
+        { "$ref": "#/$defs/FileChangeConversationItem" },
+        { "$ref": "#/$defs/ToolConversationItem" },
+        { "$ref": "#/$defs/ApprovalConversationItem" },
+        { "$ref": "#/$defs/UnknownConversationItem" }
+      ]
+    },
+    "MessageConversationItemKind": { "type": "string", "enum": ["message"] },
+    "MessageConversationItem": {
       "type": "object",
       "properties": {
         "resource": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
         "turn": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
         "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
-        "kind": { "$ref": "#/$defs/ConversationItemKind" },
+        "kind": { "$ref": "#/$defs/MessageConversationItemKind" },
         "status": { "$ref": "#/$defs/ConversationItemStatus" },
         "role": { "$ref": "#/$defs/ConversationItemRole" },
-        "title": { "type": "string", "minLength": 1 },
         "contents": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ConversationContent" }
-        },
-        "relatedItem": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
-        "approval": { "$ref": "#/$defs/Approval" },
-        "tool": { "$ref": "#/$defs/ToolInvocation" }
+          "items": { "$ref": "#/$defs/ContentBlock" }
+        }
+      },
+      "required": ["resource", "turn", "conversation", "kind", "status", "role", "contents"],
+      "additionalProperties": false
+    },
+    "ReasoningConversationItemKind": { "type": "string", "enum": ["reasoning"] },
+    "ReasoningConversationItem": {
+      "type": "object",
+      "properties": {
+        "resource": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "turn": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "kind": { "$ref": "#/$defs/ReasoningConversationItemKind" },
+        "status": { "$ref": "#/$defs/ConversationItemStatus" },
+        "contents": { "type": "array", "items": { "$ref": "#/$defs/ContentBlock" } }
       },
       "required": ["resource", "turn", "conversation", "kind", "status", "contents"],
+      "additionalProperties": false
+    },
+    "CommandConversationItemKind": { "type": "string", "enum": ["command"] },
+    "CommandConversationItem": {
+      "type": "object",
+      "properties": {
+        "resource": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "turn": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "kind": { "$ref": "#/$defs/CommandConversationItemKind" },
+        "status": { "$ref": "#/$defs/ConversationItemStatus" },
+        "title": { "type": "string", "minLength": 1 },
+        "tool": { "$ref": "#/$defs/ToolInvocation" }
+      },
+      "required": ["resource", "turn", "conversation", "kind", "status", "tool"],
+      "additionalProperties": false
+    },
+    "FileChangeConversationItemKind": { "type": "string", "enum": ["file-change"] },
+    "FileChangeConversationItem": {
+      "type": "object",
+      "properties": {
+        "resource": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "turn": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "kind": { "$ref": "#/$defs/FileChangeConversationItemKind" },
+        "status": { "$ref": "#/$defs/ConversationItemStatus" },
+        "title": { "type": "string", "minLength": 1 },
+        "contents": { "type": "array", "items": { "$ref": "#/$defs/ContentBlock" } }
+      },
+      "required": ["resource", "turn", "conversation", "kind", "status", "contents"],
+      "additionalProperties": false
+    },
+    "ToolConversationItemKind": { "type": "string", "enum": ["tool"] },
+    "ToolConversationItem": {
+      "type": "object",
+      "properties": {
+        "resource": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "turn": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "kind": { "$ref": "#/$defs/ToolConversationItemKind" },
+        "status": { "$ref": "#/$defs/ConversationItemStatus" },
+        "title": { "type": "string", "minLength": 1 },
+        "tool": { "$ref": "#/$defs/ToolInvocation" }
+      },
+      "required": ["resource", "turn", "conversation", "kind", "status", "tool"],
+      "additionalProperties": false
+    },
+    "ApprovalConversationItemKind": { "type": "string", "enum": ["approval"] },
+    "ApprovalConversationItem": {
+      "type": "object",
+      "properties": {
+        "resource": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "turn": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "kind": { "$ref": "#/$defs/ApprovalConversationItemKind" },
+        "status": { "$ref": "#/$defs/ConversationItemStatus" },
+        "title": { "type": "string", "minLength": 1 },
+        "relatedItem": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "approval": { "$ref": "#/$defs/Approval" }
+      },
+      "required": ["resource", "turn", "conversation", "kind", "status", "approval"],
+      "additionalProperties": false
+    },
+    "UnknownConversationItemKind": { "type": "string", "enum": ["unknown"] },
+    "UnknownConversationItem": {
+      "type": "object",
+      "properties": {
+        "resource": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "turn": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "kind": { "$ref": "#/$defs/UnknownConversationItemKind" },
+        "status": { "$ref": "#/$defs/ConversationItemStatus" },
+        "title": { "type": "string", "minLength": 1 }
+      },
+      "required": ["resource", "turn", "conversation", "kind", "status"],
       "additionalProperties": false
     },
     "ConversationItemKind": {
@@ -338,7 +600,18 @@
     },
     "ConversationItemStatus": {
       "type": "string",
-      "enum": ["pending", "running", "completed", "failed", "interrupted", "declined", "approved", "denied", "expired", "unknown"]
+      "enum": [
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "interrupted",
+        "declined",
+        "approved",
+        "denied",
+        "expired",
+        "unknown"
+      ]
     },
     "ConversationListRequest": {
       "type": "object",

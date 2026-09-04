@@ -111,17 +111,26 @@ test("provider history items carry routed conversation ownership", async () => {
   const model = await loadProtocolModel();
   const definitions = record(model, "provider-v1").schema.$defs;
   assert.equal(
-    definitions.ConversationItem.properties.conversation.$ref,
+    definitions.MessageConversationItem.properties.conversation.$ref,
     "#/$defs/RoutedResourceId",
   );
-  assert(definitions.ConversationItem.required.includes("conversation"));
+  assert(definitions.MessageConversationItem.required.includes("conversation"));
   assert(definitions.ConversationGetResponse.required.includes("items"));
   assert.equal(definitions.ConversationSearchRequest.properties.route.$ref, "#/$defs/ProviderInstanceRoute");
   assert.equal(definitions.ConversationSearchRequest.properties.searchTerm.minLength, 1);
   assert.deepEqual(definitions.ConversationSearchRequest.required, ["route", "searchTerm"]);
   assert.equal(definitions.ConversationSearchResponse.properties.pageInfo.$ref, "../../core/v1/schema.json#/$defs/PageInfo");
-  assert.equal(definitions.ConversationItem.properties.tool.$ref, "#/$defs/ToolInvocation");
+  assert.equal(definitions.CommandConversationItem.properties.tool.$ref, "#/$defs/ToolInvocation");
+  assert.equal(definitions.ConversationItem.oneOf.length, 7);
   assert.deepEqual(definitions.ToolInvocation.required, ["callId", "name", "category", "origin", "input"]);
+  assert.equal(definitions.ToolInvocation.properties.input.$ref, "#/$defs/ToolInput");
+  assert.equal(definitions.ToolInvocation.properties.outcome.$ref, "#/$defs/ToolOutcome");
+  assert.equal(definitions.ToolInvocation.properties.rawInput, undefined);
+  assert.equal(definitions.ToolInvocation.properties.command, undefined);
+  assert.equal(definitions.ToolSuccessOutcome.properties.structuredContent, undefined);
+  assert.equal(definitions.StructuredJsonContentBlock.required.includes("value"), true);
+  assert.deepEqual(definitions.ContentTruncation.required, ["originalBytes", "retainedBytes", "strategy"]);
+  assert.equal(definitions.ToolExecutionError.properties.message.maxLength, 512);
   assert.equal(definitions.ToolInvocation.properties.extension.$ref, "#/$defs/ProviderExtension");
   assert(record(model, "provider-v1").manifest.events.some(
     (event) => event.name === "event.conversationItemUpserted",
@@ -203,11 +212,14 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
     );
   }
   assert.equal(
-    gateway.schema.$defs.ConversationItem.properties.conversation.$ref,
+    gateway.schema.$defs.MessageConversationItem.properties.conversation.$ref,
     "../../core/v1/schema.json#/$defs/RoutedResourceId",
   );
-  assert(gateway.schema.$defs.ConversationItem.required.includes("conversation"));
-  assert.equal(gateway.schema.$defs.ConversationItem.properties.tool.$ref, "#/$defs/ToolInvocation");
+  assert(gateway.schema.$defs.MessageConversationItem.required.includes("conversation"));
+  assert.equal(gateway.schema.$defs.CommandConversationItem.properties.tool.$ref, "#/$defs/ToolInvocation");
+  assert.equal(gateway.schema.$defs.ConversationItem.oneOf.length, 7);
+  assert.equal(gateway.schema.$defs.ToolInvocation.properties.input.$ref, "#/$defs/ToolInput");
+  assert.equal(gateway.schema.$defs.ToolInvocation.properties.outcome.$ref, "#/$defs/ToolOutcome");
   assert.equal(gateway.schema.$defs.ToolInvocation.properties.extension, undefined);
   assert(gateway.manifest.events.some((event) => event.name === "conversation.itemUpserted"));
   assert.deepEqual(
@@ -440,15 +452,49 @@ test("Dart adapter rejects ambiguous oneOf before emitting source", async () => 
   }
 });
 
+test("protocol IR rejects ambiguous and open discriminated union variants", async () => {
+  const model = await loadProtocolModel();
+  const definitions = record(model, "provider-v1").schema.$defs;
+  const message = definitions.MessageConversationItem;
+  const required = message.required;
+  message.required = required.filter((field) => field !== "kind");
+  try {
+    assert.throws(() => buildProtocolIr(model), /untagged or ambiguous oneOf/);
+  } finally {
+    message.required = required;
+  }
+
+  const additionalProperties = message.additionalProperties;
+  message.additionalProperties = true;
+  try {
+    assert.throws(() => buildProtocolIr(model), /variant MessageConversationItem must be a closed object/);
+  } finally {
+    message.additionalProperties = additionalProperties;
+  }
+});
+
 test("TypeScript adapter handles multiple packages and cross-schema imports", async () => {
   const result = await generateProtocol({ checkMode: true, targets: ["typescript"] });
   assert.deepEqual(
     result.generated.map(({ packageId, targetId }) => [packageId, targetId]),
-    [["core-v1", "typescript"], ["desktop-runtime-v0", "typescript"]],
+    [
+      ["core-v1", "typescript"],
+      ["provider-v1", "typescript"],
+      ["gateway-v1", "typescript"],
+      ["desktop-runtime-v0", "typescript"],
+    ],
   );
   const source = await readFile("sdk/typescript/codepet-desktop-sdk/src/generated.ts", "utf8");
   assert.match(source, /from "\.\.\/\.\.\/codepet-core-sdk\/src\/generated"/);
   assert.match(source, /import type \{ Cursor, EventSequence, JsonObject, ProtocolError, ProtocolVersion, RequestId, TimestampMs \}/);
+  const providerSource = await readFile("sdk/typescript/codepet-provider-sdk/src/generated.ts", "utf8");
+  const gatewaySource = await readFile("sdk/typescript/codepet-gateway-sdk/src/generated.ts", "utf8");
+  for (const jsonRpcSource of [providerSource, gatewaySource]) {
+    assert.match(jsonRpcSource, /export type ConversationItem = MessageConversationItem \| ReasoningConversationItem/);
+    assert.match(jsonRpcSource, /export type ToolInput = CommandToolInput \| StructuredToolInput \| OpaqueToolInput/);
+    assert.match(jsonRpcSource, /export type ToolOutcome = ToolSuccessOutcome \| ToolFailureOutcome/);
+    assert.match(jsonRpcSource, /jsonrpc: "2\.0"/);
+  }
 });
 
 test("capability metadata rejects unknown method capability values", async () => {

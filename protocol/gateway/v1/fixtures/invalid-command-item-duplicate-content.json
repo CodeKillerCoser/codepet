@@ -1,0 +1,23 @@
+{
+  "resource": { "providerId": "codex-work", "nativeResourceId": "command-one" },
+  "turn": { "providerId": "codex-work", "nativeResourceId": "turn-one" },
+  "conversation": { "providerId": "codex-work", "nativeResourceId": "thread-01" },
+  "kind": "command",
+  "status": "completed",
+  "contents": [
+    { "contentId": "command-one:duplicate", "kind": "output", "text": "tests passed" }
+  ],
+  "tool": {
+    "callId": "command-one",
+    "name": "shell",
+    "category": "command",
+    "origin": { "kind": "builtin" },
+    "input": { "kind": "command", "command": "cargo test" },
+    "outcome": {
+      "kind": "success",
+      "content": [
+        { "contentId": "command-one:result:0", "kind": "output", "text": "tests passed" }
+      ]
+    }
+  }
+}

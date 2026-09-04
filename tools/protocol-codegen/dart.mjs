@@ -96,6 +96,7 @@ function constraintArguments(constraints = {}) {
   if (constraints.minimum !== undefined) values.push(`minimum: ${constraints.minimum}`);
   if (constraints.maximum !== undefined) values.push(`maximum: ${constraints.maximum}`);
   if (constraints.minLength !== undefined) values.push(`minLength: ${constraints.minLength}`);
+  if (constraints.maxLength !== undefined) values.push(`maxLength: ${constraints.maxLength}`);
   if (constraints.pattern !== undefined) values.push(`pattern: ${dartString(constraints.pattern)}`);
   if (constraints.minItems !== undefined) values.push(`minItems: ${constraints.minItems}`);
   if (constraints.uniqueItems === true) values.push("uniqueItems: true");
@@ -385,9 +386,10 @@ function emitCodecHelpers(writer, includeException) {
   writer.line("  return null;");
   writer.line("}");
   writer.blank();
-  writer.block("String _string(Object? value, String path, {int? minLength, String? pattern})", () => {
+  writer.block("String _string(Object? value, String path, {int? minLength, int? maxLength, String? pattern})", () => {
     writer.line("if (value is! String) throw ProtocolCodecException(path, 'expected a string');");
     writer.line("if (minLength != null && value.length < minLength) throw ProtocolCodecException(path, 'string is shorter than $minLength characters');");
+    writer.line("if (maxLength != null && value.length > maxLength) throw ProtocolCodecException(path, 'string is longer than $maxLength characters');");
     writer.line("if (pattern != null && !RegExp(pattern).hasMatch(value)) throw ProtocolCodecException(path, 'string does not match $pattern');");
     writer.line("return value;");
   });

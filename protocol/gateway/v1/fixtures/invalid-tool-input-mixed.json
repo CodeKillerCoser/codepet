@@ -1,0 +1,5 @@
+{
+  "kind": "structured",
+  "value": { "query": "schema" },
+  "command": "rg schema"
+}

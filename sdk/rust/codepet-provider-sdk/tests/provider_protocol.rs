@@ -1,10 +1,10 @@
 use codepet_provider_sdk::{
-    decode_event, decode_request, decode_response, dispatch, ConversationContentKind,
-    ConversationGetResponse, ConversationItemKind, ConversationItemStatus, InstanceCreateRequest,
+    decode_event, decode_request, decode_response, dispatch, ContentBlock, ConversationContentKind,
+    ConversationGetResponse, ConversationItem, ConversationItemStatus, InstanceCreateRequest,
     InstanceCreateResponse, JsonRpcResponsePayload, ProtocolEvent, ProtocolFuture, ProtocolMethod,
     ModelSelection, ProtocolRequest, ProtocolServer, ProviderCapability, ProviderInitializeRequest,
     ProviderInitializeResponse, ProviderPluginDescriptor, TurnStartResponse, VersionRange,
-    StdioServerOptions, serve_stdio_with_io,
+    StdioServerOptions, ToolInput, ToolOutcome, serve_stdio_with_io,
 };
 use std::io::Cursor;
 
@@ -102,29 +102,67 @@ fn conversation_get_fixture_preserves_ordered_items_and_stable_content_ids() {
     };
     let response: ConversationGetResponse = serde_json::from_value(result).unwrap();
 
-    assert_eq!(response.items[0].resource.native_resource_id, "user-one");
-    assert!(response.items.iter().all(|item| {
-        item.conversation == response.conversation.resource
-    }));
-    assert_eq!(response.items[0].kind, ConversationItemKind::Message);
-    assert_eq!(response.items[0].contents[0].content_id, "user-one:input:0");
-    assert_eq!(response.items[1].kind, ConversationItemKind::Reasoning);
+    let ConversationItem::MessageConversationItem(message) = &response.items[0] else {
+        panic!("expected message item");
+    };
+    assert_eq!(message.resource.native_resource_id, "user-one");
+    assert_eq!(message.conversation, response.conversation.resource);
+    let ContentBlock::TextContentBlock(text) = &message.contents[0] else {
+        panic!("expected text content");
+    };
+    assert_eq!(text.content_id, "user-one:input:0");
+
+    let ConversationItem::ReasoningConversationItem(reasoning) = &response.items[1] else {
+        panic!("expected reasoning item");
+    };
+    assert_eq!(reasoning.conversation, response.conversation.resource);
+    assert!(matches!(reasoning.contents[0], ContentBlock::ReasoningSummaryContentBlock(_)));
+
+    let ConversationItem::CommandConversationItem(command) = &response.items[2] else {
+        panic!("expected command item");
+    };
+    assert_eq!(command.resource.native_resource_id, "command-one");
+    assert!(matches!(command.tool.input, ToolInput::CommandToolInput(_)));
+    let Some(ToolOutcome::ToolSuccessOutcome(outcome)) = &command.tool.outcome else {
+        panic!("expected success outcome");
+    };
+    assert_eq!(outcome.content.len(), 2);
+    let ContentBlock::OutputContentBlock(output) = &outcome.content[0] else {
+        panic!("expected output content");
+    };
+    let truncation = output.truncation.as_ref().expect("expected truncation metadata");
+    assert_eq!(truncation.original_bytes, 12000);
+    assert_eq!(truncation.retained_bytes, 12);
+    assert!(matches!(outcome.content[1], ContentBlock::StructuredJsonContentBlock(_)));
+
+    let ConversationItem::ApprovalConversationItem(approval) = &response.items[3] else {
+        panic!("expected approval item");
+    };
+    assert_eq!(approval.status, ConversationItemStatus::Approved);
     assert_eq!(
-        response.items[1].contents[0].kind,
-        ConversationContentKind::ReasoningSummary
-    );
-    assert_eq!(response.items[2].resource.native_resource_id, "command-one");
-    assert_eq!(response.items[3].kind, ConversationItemKind::Approval);
-    assert_eq!(response.items[3].status, ConversationItemStatus::Approved);
-    assert_eq!(
-        response.items[3]
-            .related_item
+        approval.related_item
             .as_ref()
             .unwrap()
             .native_resource_id,
         "command-one"
     );
-    assert_eq!(response.items[4].kind, ConversationItemKind::Unknown);
+    assert!(matches!(response.items[4], ConversationItem::UnknownConversationItem(_)));
+}
+
+#[test]
+fn generated_unions_reject_mixed_authority_fixtures() {
+    assert!(serde_json::from_slice::<ToolInput>(include_bytes!(
+        "../../../../protocol/provider/v1/fixtures/invalid-tool-input-mixed.json"
+    ))
+    .is_err());
+    assert!(serde_json::from_slice::<ToolOutcome>(include_bytes!(
+        "../../../../protocol/provider/v1/fixtures/invalid-tool-outcome-mixed.json"
+    ))
+    .is_err());
+    assert!(serde_json::from_slice::<ConversationItem>(include_bytes!(
+        "../../../../protocol/provider/v1/fixtures/invalid-command-item-duplicate-content.json"
+    ))
+    .is_err());
 }
 
 #[test]

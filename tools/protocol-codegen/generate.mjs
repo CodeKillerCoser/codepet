@@ -43,6 +43,7 @@ const supportedKeywords = new Set([
   "minimum",
   "maximum",
   "minLength",
+  "maxLength",
   "minItems",
   "pattern",
   "uniqueItems",
@@ -172,16 +173,19 @@ function validateSchemaNode(node, record, model, location) {
     assert(node.items !== undefined, `${location}.items is required for arrays`);
     validateSchemaNode(node.items, record, model, `${location}.items`);
   }
-  for (const keyword of ["minimum", "maximum", "minLength", "minItems"]) {
+  for (const keyword of ["minimum", "maximum", "minLength", "maxLength", "minItems"]) {
     if (node[keyword] !== undefined) {
       assert(Number.isSafeInteger(node[keyword]), `${location}.${keyword} must be a safe integer`);
-      if (keyword === "minLength" || keyword === "minItems") {
+      if (keyword === "minLength" || keyword === "maxLength" || keyword === "minItems") {
         assert(node[keyword] >= 0, `${location}.${keyword} must be non-negative`);
       }
     }
   }
   if (node.minimum !== undefined && node.maximum !== undefined) {
     assert(node.minimum <= node.maximum, `${location}.minimum exceeds maximum`);
+  }
+  if (node.minLength !== undefined && node.maxLength !== undefined) {
+    assert(node.minLength <= node.maxLength, `${location}.minLength exceeds maxLength`);
   }
   if (node.uniqueItems !== undefined) {
     assert(typeof node.uniqueItems === "boolean", `${location}.uniqueItems must be boolean`);
@@ -410,6 +414,7 @@ function validateValue(value, node, record, model, location) {
   if (node.type === "string") {
     assert(typeof value === "string", `${location} must be a string`);
     if (node.minLength !== undefined) assert(value.length >= node.minLength, `${location} is too short`);
+    if (node.maxLength !== undefined) assert(value.length <= node.maxLength, `${location} is too long`);
     if (node.pattern !== undefined) assert(new RegExp(node.pattern).test(value), `${location} does not match ${node.pattern}`);
   } else if (node.type === "integer") {
     assert(Number.isSafeInteger(value), `${location} must be a safe integer`);
@@ -448,14 +453,26 @@ async function validateFixtures(record, model) {
   assert(Array.isArray(fixtures) && fixtures.length > 0, `${packageConfig.id} fixture index must be non-empty`);
   for (const fixture of fixtures) {
     assert(isObject(fixture) && typeof fixture.file === "string" && typeof fixture.kind === "string" && typeof fixture.name === "string", `${packageConfig.id} fixture entry is invalid`);
+    assert(fixture.valid === undefined || typeof fixture.valid === "boolean", `${packageConfig.id} fixture entry valid must be boolean`);
     const value = await readJson(resolve(dirname(fixtureIndexPath), fixture.file));
     const location = `${packageConfig.id} fixture ${fixture.file}`;
     if (fixture.kind === "type") {
       const target = record.schema.$defs[fixture.name];
       assert(target, `${location} references unknown type ${fixture.name}`);
-      validateValue(value, target, record, model, location);
+      if (fixture.valid === false) {
+        let rejected = false;
+        try {
+          validateValue(value, target, record, model, location);
+        } catch {
+          rejected = true;
+        }
+        assert(rejected, `${location} is marked invalid but matches ${fixture.name}`);
+      } else {
+        validateValue(value, target, record, model, location);
+      }
       continue;
     }
+    assert(fixture.valid !== false, `${location} negative fixtures currently require kind type`);
     const method = manifest.methods.find((entry) => entry.name === fixture.name);
     const event = manifest.events.find((entry) => entry.name === fixture.name);
     const requestId = referenceTarget(manifest.transport.requestId, manifestPath, model, `${location}.id`);
@@ -730,7 +747,7 @@ function externalReferences(record, model) {
 
 function normalizeConstraints(node) {
   return Object.fromEntries(
-    ["minimum", "maximum", "minLength", "minItems", "pattern", "uniqueItems"]
+    ["minimum", "maximum", "minLength", "maxLength", "minItems", "pattern", "uniqueItems"]
       .filter((keyword) => node[keyword] !== undefined)
       .map((keyword) => [keyword, node[keyword]]),
   );
@@ -832,7 +849,19 @@ function buildDefinitionIr(name, node, record, model) {
       );
       return { kind: "named", packageId: target.record.packageConfig.id, name: target.name };
     });
-    return { ...base, kind: "union", variants, discriminator: unionDiscriminator(variants, model) };
+    const discriminator = unionDiscriminator(variants, model);
+    assert(
+      discriminator,
+      `${record.packageConfig.id}.${name} is an untagged or ambiguous oneOf; protocol unions require one common required singleton-enum discriminator`,
+    );
+    for (const variant of variants) {
+      const definition = model.recordsById.get(variant.packageId)?.schema.$defs[variant.name];
+      assert(
+        definition?.type === "object" && definition.additionalProperties === false,
+        `${record.packageConfig.id}.${name} variant ${variant.name} must be a closed object`,
+      );
+    }
+    return { ...base, kind: "union", variants, discriminator };
   }
   if (node.enum) return { ...base, kind: "enum", values: [...node.enum], constraints: normalizeConstraints(node) };
   if (node.type === "object" && node.properties !== undefined) {
@@ -2064,6 +2093,58 @@ function generateTypeScript(record, model) {
   const header = `// @generated by tools/protocol-codegen/generate.mjs from ${sourceFiles}.\n// DO NOT EDIT MANUALLY.\n`;
   if (record.manifest.kind === "types") {
     return `${header}\n${imports ? `${imports}\n\n` : ""}${typeScriptDefinitions(record, model)}\n`;
+  }
+  if (record.manifest.transport.kind === "json-rpc-2.0") {
+    const requestMap = record.manifest.methods.map((method) => `  ${JSON.stringify(method.name)}: ${definitionName(method.request, record.manifestPath, model)};`).join("\n");
+    const responseMap = record.manifest.methods.map((method) => `  ${JSON.stringify(method.name)}: ${definitionName(method.response, record.manifestPath, model)};`).join("\n");
+    const eventMap = record.manifest.events.map((event) => `  ${JSON.stringify(event.name)}: ${definitionName(event.payload, record.manifestPath, model)};`).join("\n");
+    const methodNames = record.manifest.methods.map((method) => JSON.stringify(method.name)).join(", ");
+    const eventNames = record.manifest.events.map((event) => JSON.stringify(event.name)).join(", ");
+    const traceField = record.manifest.transport.traceContext?.field;
+    const traceType = record.manifest.transport.traceContext
+      ? referenceTarget(record.manifest.transport.traceContext.type, record.manifestPath, model, "TypeScript trace context").name
+      : undefined;
+    const requestTrace = traceField ? `; ${traceField}?: ${traceType}` : "";
+    const eventTrace = requestTrace;
+    const cursorField = record.manifest.transport.eventCursorField;
+    const eventParams = cursorField
+      ? `{ ${cursorField}: ${referenceTarget(record.manifest.transport.eventCursor, record.manifestPath, model, "TypeScript event cursor").name}; payload: ProtocolEventMap[E] }`
+      : "ProtocolEventMap[E]";
+    return `${header}
+${imports ? `${imports}\n\n` : ""}export const PROTOCOL_VERSION = ${record.manifest.version} as const;
+export const PROTOCOL_METHODS = [${methodNames}] as const;
+export const PROTOCOL_EVENTS = [${eventNames}] as const;
+
+${typeScriptDefinitions(record, model)}
+
+export interface ProtocolRequestMap {
+${requestMap}
+}
+
+export interface ProtocolResponseMap {
+${responseMap}
+}
+
+export interface ProtocolEventMap {
+${eventMap}
+}
+
+export type ProtocolMethod = keyof ProtocolRequestMap;
+export type ProtocolEventName = keyof ProtocolEventMap;
+export type ProtocolRequest = {
+  [M in ProtocolMethod]: { jsonrpc: "2.0"; id: RequestId; method: M; params: ProtocolRequestMap[M]${requestTrace} }
+}[ProtocolMethod];
+export type ProtocolSuccessResponse<M extends ProtocolMethod = ProtocolMethod> = { jsonrpc: "2.0"; id: RequestId; result: ProtocolResponseMap[M] };
+export type ProtocolErrorResponse = { jsonrpc: "2.0"; id: RequestId | null; error: RpcError };
+export type ProtocolResponse<M extends ProtocolMethod = ProtocolMethod> = ProtocolSuccessResponse<M> | ProtocolErrorResponse;
+export type ProtocolEvent = {
+  [E in ProtocolEventName]: { jsonrpc: "2.0"; method: E; params: ${eventParams}${eventTrace} }
+}[ProtocolEventName];
+
+export interface ProtocolTransport {
+  request<M extends ProtocolMethod>(method: M, params: ProtocolRequestMap[M]): Promise<ProtocolResponseMap[M]>;
+}
+`;
   }
   assert(record.manifest.transport.kind === "codepet-envelope", `${record.packageConfig.id} TypeScript generator currently supports codepet-envelope only`);
   const requestMap = record.manifest.methods.map((method) => `  ${JSON.stringify(method.name)}: ${definitionName(method.request, record.manifestPath, model)};`).join("\n");

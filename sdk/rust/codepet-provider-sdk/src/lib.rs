@@ -32,43 +32,22 @@ pub fn fit_single_turn_conversation_history(
     }
 
     for item in &mut response.items {
-        for content in &mut item.contents {
-            if content.text.len() > TRUNCATED_HISTORY_CONTENT_BYTES {
-                content.text = truncate_utf8_with_notice(
-                    &content.text,
-                    TRUNCATED_HISTORY_CONTENT_BYTES,
-                    TRUNCATED_HISTORY_NOTICE,
-                );
-            }
-        }
+        truncate_item_content(item);
     }
     if conversation_history_fits(&response) {
         return response;
     }
 
     if let Some(first) = response.items.first().cloned() {
-        let placeholder_content_id = format!(
-            "{}:provider-history-placeholder",
-            first.turn.native_resource_id
-        );
-        response.items = vec![ConversationItem {
-            resource: first.resource,
-            turn: first.turn,
-            conversation: first.conversation,
-            kind: ConversationItemKind::Unknown,
+        let (resource, turn, conversation) = item_identity(first);
+        response.items = vec![ConversationItem::UnknownConversationItem(UnknownConversationItem {
+            resource,
+            turn,
+            conversation,
+            kind: UnknownConversationItemKind::Unknown,
             status: ConversationItemStatus::Completed,
-            role: None,
             title: Some("History omitted".to_string()),
-            contents: vec![ConversationContent {
-                content_id: placeholder_content_id,
-                kind: ConversationContentKind::ActivitySummary,
-                text: "This turn is too large to transfer; the conversation remains available for new turns."
-                    .to_string(),
-            }],
-            related_item: None,
-            approval: None,
-            tool: None,
-        }];
+        })];
     } else {
         response.items.clear();
     }
@@ -99,6 +78,70 @@ pub fn fit_single_turn_conversation_history(
         }
     }
     response
+}
+
+fn item_identity(item: ConversationItem) -> (RoutedResourceId, RoutedResourceId, RoutedResourceId) {
+    match item {
+        ConversationItem::MessageConversationItem(value) => (value.resource, value.turn, value.conversation),
+        ConversationItem::ReasoningConversationItem(value) => (value.resource, value.turn, value.conversation),
+        ConversationItem::CommandConversationItem(value) => (value.resource, value.turn, value.conversation),
+        ConversationItem::FileChangeConversationItem(value) => (value.resource, value.turn, value.conversation),
+        ConversationItem::ToolConversationItem(value) => (value.resource, value.turn, value.conversation),
+        ConversationItem::ApprovalConversationItem(value) => (value.resource, value.turn, value.conversation),
+        ConversationItem::UnknownConversationItem(value) => (value.resource, value.turn, value.conversation),
+    }
+}
+
+fn truncate_item_content(item: &mut ConversationItem) {
+    match item {
+        ConversationItem::MessageConversationItem(value) => truncate_content_blocks(&mut value.contents),
+        ConversationItem::ReasoningConversationItem(value) => truncate_content_blocks(&mut value.contents),
+        ConversationItem::FileChangeConversationItem(value) => truncate_content_blocks(&mut value.contents),
+        ConversationItem::CommandConversationItem(value) => truncate_tool_content(&mut value.tool),
+        ConversationItem::ToolConversationItem(value) => truncate_tool_content(&mut value.tool),
+        ConversationItem::ApprovalConversationItem(_) | ConversationItem::UnknownConversationItem(_) => {}
+    }
+}
+
+fn truncate_tool_content(tool: &mut ToolInvocation) {
+    match tool.outcome.as_mut() {
+        Some(ToolOutcome::ToolSuccessOutcome(value)) => truncate_content_blocks(&mut value.content),
+        Some(ToolOutcome::ToolFailureOutcome(value)) => truncate_content_blocks(&mut value.content),
+        None => {}
+    }
+}
+
+fn truncate_content_blocks(contents: &mut [ContentBlock]) {
+    for content in contents {
+        match content {
+            ContentBlock::TextContentBlock(value) => truncate_text_block(&mut value.text, &mut value.truncation),
+            ContentBlock::ReasoningSummaryContentBlock(value) => truncate_text_block(&mut value.text, &mut value.truncation),
+            ContentBlock::OutputContentBlock(value) => truncate_text_block(&mut value.text, &mut value.truncation),
+            ContentBlock::ActivitySummaryContentBlock(value) => truncate_text_block(&mut value.text, &mut value.truncation),
+            ContentBlock::EmbeddedResourceContentBlock(value) => truncate_text_block(&mut value.text, &mut value.truncation),
+            ContentBlock::StructuredJsonContentBlock(_)
+            | ContentBlock::ImageContentBlock(_)
+            | ContentBlock::AudioContentBlock(_)
+            | ContentBlock::ResourceLinkContentBlock(_) => {}
+        }
+    }
+}
+
+fn truncate_text_block(text: &mut String, truncation: &mut Option<ContentTruncation>) {
+    if text.len() <= TRUNCATED_HISTORY_CONTENT_BYTES {
+        return;
+    }
+    let original_bytes = text.len() as u64;
+    *text = truncate_utf8_with_notice(
+        text,
+        TRUNCATED_HISTORY_CONTENT_BYTES,
+        TRUNCATED_HISTORY_NOTICE,
+    );
+    *truncation = Some(ContentTruncation {
+        original_bytes,
+        retained_bytes: text.len() as u64,
+        strategy: ContentTruncationStrategy::Head,
+    });
 }
 
 fn conversation_history_fits(response: &ConversationGetResponse) -> bool {
@@ -157,23 +200,20 @@ mod history_tests {
                 extension: None,
             },
             items: (0..item_count)
-                .map(|index| ConversationItem {
+                .map(|index| ConversationItem::MessageConversationItem(MessageConversationItem {
                     resource: resource(&format!("item-{index}")),
                     turn: turn.clone(),
                     conversation: conversation.clone(),
-                    kind: ConversationItemKind::Message,
+                    kind: MessageConversationItemKind::Message,
                     status: ConversationItemStatus::Completed,
-                    role: Some(ConversationItemRole::Assistant),
-                    title: None,
-                    contents: vec![ConversationContent {
+                    role: ConversationItemRole::Assistant,
+                    contents: vec![ContentBlock::TextContentBlock(TextContentBlock {
                         content_id: format!("content-{index}"),
-                        kind: ConversationContentKind::Text,
+                        kind: TextContentBlockKind::Text,
                         text: "x".repeat(text_bytes),
-                    }],
-                    related_item: None,
-                    approval: None,
-                    tool: None,
-                })
+                        truncation: None,
+                    })],
+                }))
                 .collect(),
             page_info: Some(PageInfo {
                 next_cursor: Some("next".to_string()),
@@ -193,7 +233,10 @@ mod history_tests {
                 .and_then(|page| page.next_cursor.as_deref()),
             Some("next")
         );
-        assert_eq!(fitted.items[0].kind, ConversationItemKind::Unknown);
+        assert!(matches!(
+            &fitted.items[0],
+            ConversationItem::UnknownConversationItem(_)
+        ));
     }
 
     #[test]

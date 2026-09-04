@@ -1,0 +1,5 @@
+{
+  "kind": "command",
+  "command": "cargo test",
+  "value": { "command": "cargo test" }
+}

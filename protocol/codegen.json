@@ -77,7 +77,8 @@
       "manifest": "provider/v1/manifest.json",
       "dependencies": ["core-v1"],
       "outputs": {
-        "rust": "sdk/rust/codepet-provider-sdk/src/generated.rs"
+        "rust": "sdk/rust/codepet-provider-sdk/src/generated.rs",
+        "typescript": "sdk/typescript/codepet-provider-sdk/src/generated.ts"
       }
     },
     {
@@ -89,6 +90,7 @@
       "dependencies": ["core-v1"],
       "outputs": {
         "rust": "sdk/rust/codepet-gateway-sdk/src/generated.rs",
+        "typescript": "sdk/typescript/codepet-gateway-sdk/src/generated.ts",
         "dart": "sdk/dart/codepet-gateway-sdk/lib/src/generated.dart"
       }
     },

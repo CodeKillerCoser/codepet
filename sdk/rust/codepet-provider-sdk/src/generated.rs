@@ -11,6 +11,45 @@ pub use codepet_core_sdk::{ClientId, Cursor, DeviceId, JsonObject, NativeResourc
 
 pub const PROTOCOL_VERSION: ProtocolVersion = 1;
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ActivitySummaryContentBlock {
+    pub content_id: NativeResourceId,
+    pub kind: ActivitySummaryContentBlockKind,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<ContentTruncation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ActivitySummaryContentBlockKind {
+    #[serde(rename = "activity-summary")]
+    ActivitySummary,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalConversationItem {
+    pub resource: RoutedResourceId,
+    pub turn: RoutedResourceId,
+    pub conversation: RoutedResourceId,
+    pub kind: ApprovalConversationItemKind,
+    pub status: ConversationItemStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub related_item: Option<RoutedResourceId>,
+    pub approval: ProviderApproval,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApprovalConversationItemKind {
+    #[serde(rename = "approval")]
+    Approval,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ApprovalDecision {
     #[serde(rename = "approve")]
@@ -63,6 +102,27 @@ pub enum ApprovalStatus {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct AudioContentBlock {
+    pub content_id: NativeResourceId,
+    pub kind: AudioContentBlockKind,
+    pub uri: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<ContentTruncation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AudioContentBlockKind {
+    #[serde(rename = "audio")]
+    Audio,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ChoiceOption {
     pub id: String,
     pub display_name: String,
@@ -86,6 +146,81 @@ pub struct ChoiceSet {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct CommandConversationItem {
+    pub resource: RoutedResourceId,
+    pub turn: RoutedResourceId,
+    pub conversation: RoutedResourceId,
+    pub kind: CommandConversationItemKind,
+    pub status: ConversationItemStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub tool: ToolInvocation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommandConversationItemKind {
+    #[serde(rename = "command")]
+    Command,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct CommandToolInput {
+    pub kind: CommandToolInputKind,
+    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<ToolCommandAction>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommandToolInputKind {
+    #[serde(rename = "command")]
+    Command,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ContentBlock {
+    TextContentBlock(TextContentBlock),
+    ReasoningSummaryContentBlock(ReasoningSummaryContentBlock),
+    OutputContentBlock(OutputContentBlock),
+    ActivitySummaryContentBlock(ActivitySummaryContentBlock),
+    StructuredJsonContentBlock(StructuredJsonContentBlock),
+    ImageContentBlock(ImageContentBlock),
+    AudioContentBlock(AudioContentBlock),
+    ResourceLinkContentBlock(ResourceLinkContentBlock),
+    EmbeddedResourceContentBlock(EmbeddedResourceContentBlock),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ContentTruncation {
+    pub original_bytes: u64,
+    pub retained_bytes: u64,
+    pub strategy: ContentTruncationStrategy,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContentTruncationStrategy {
+    #[serde(rename = "head")]
+    Head,
+    #[serde(rename = "tail")]
+    Tail,
+    #[serde(rename = "head-tail")]
+    HeadTail,
+    #[serde(rename = "structural-preview")]
+    StructuralPreview,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ConversationAcquireInteractionRequest {
     pub conversation: RoutedResourceId,
 }
@@ -99,27 +234,26 @@ pub struct ConversationAcquireInteractionResponse {
     pub lease_expires_at: Option<TimestampMs>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ConversationContent {
-    pub content_id: NativeResourceId,
-    pub kind: ConversationContentKind,
-    pub text: String,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConversationContentKind {
     #[serde(rename = "text")]
     Text,
     #[serde(rename = "reasoning-summary")]
     ReasoningSummary,
-    #[serde(rename = "command")]
-    Command,
     #[serde(rename = "output")]
     Output,
     #[serde(rename = "activity-summary")]
     ActivitySummary,
+    #[serde(rename = "structured-json")]
+    StructuredJson,
+    #[serde(rename = "image")]
+    Image,
+    #[serde(rename = "audio")]
+    Audio,
+    #[serde(rename = "resource-link")]
+    ResourceLink,
+    #[serde(rename = "embedded-resource")]
+    EmbeddedResource,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -184,43 +318,15 @@ pub struct ConversationGetResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ConversationItem {
-    pub resource: RoutedResourceId,
-    pub turn: RoutedResourceId,
-    pub conversation: RoutedResourceId,
-    pub kind: ConversationItemKind,
-    pub status: ConversationItemStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<ConversationItemRole>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    pub contents: Vec<ConversationContent>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub related_item: Option<RoutedResourceId>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub approval: Option<ProviderApproval>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool: Option<ToolInvocation>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ConversationItemKind {
-    #[serde(rename = "message")]
-    Message,
-    #[serde(rename = "reasoning")]
-    Reasoning,
-    #[serde(rename = "command")]
-    Command,
-    #[serde(rename = "file-change")]
-    FileChange,
-    #[serde(rename = "tool")]
-    Tool,
-    #[serde(rename = "approval")]
-    Approval,
-    #[serde(rename = "unknown")]
-    Unknown,
+#[serde(untagged)]
+pub enum ConversationItem {
+    MessageConversationItem(MessageConversationItem),
+    ReasoningConversationItem(ReasoningConversationItem),
+    CommandConversationItem(CommandConversationItem),
+    FileChangeConversationItem(FileChangeConversationItem),
+    ToolConversationItem(ToolConversationItem),
+    ApprovalConversationItem(ApprovalConversationItem),
+    UnknownConversationItem(UnknownConversationItem),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -376,6 +482,47 @@ pub struct ConversationUpsertedEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct EmbeddedResourceContentBlock {
+    pub content_id: NativeResourceId,
+    pub kind: EmbeddedResourceContentBlockKind,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<ContentTruncation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EmbeddedResourceContentBlockKind {
+    #[serde(rename = "embedded-resource")]
+    EmbeddedResource,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct FileChangeConversationItem {
+    pub resource: RoutedResourceId,
+    pub turn: RoutedResourceId,
+    pub conversation: RoutedResourceId,
+    pub kind: FileChangeConversationItemKind,
+    pub status: ConversationItemStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub contents: Vec<ContentBlock>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FileChangeConversationItemKind {
+    #[serde(rename = "file-change")]
+    FileChange,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct FlatModelCatalog {
     pub kind: FlatModelCatalogKind,
     pub models: Vec<ChoiceOption>,
@@ -443,6 +590,27 @@ pub struct HarnessDescriptor {
     pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub executable_path: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ImageContentBlock {
+    pub content_id: NativeResourceId,
+    pub kind: ImageContentBlockKind,
+    pub uri: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<ContentTruncation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ImageContentBlockKind {
+    #[serde(rename = "image")]
+    Image,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -544,6 +712,25 @@ pub struct InstanceStopResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct MessageConversationItem {
+    pub resource: RoutedResourceId,
+    pub turn: RoutedResourceId,
+    pub conversation: RoutedResourceId,
+    pub kind: MessageConversationItemKind,
+    pub status: ConversationItemStatus,
+    pub role: ConversationItemRole,
+    pub contents: Vec<ContentBlock>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MessageConversationItemKind {
+    #[serde(rename = "message")]
+    Message,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ModelCatalog {
     FlatModelCatalog(FlatModelCatalog),
@@ -555,6 +742,41 @@ pub enum ModelCatalog {
 pub enum ModelSelection {
     FlatModelSelection(FlatModelSelection),
     GroupedModelSelection(GroupedModelSelection),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct OpaqueToolInput {
+    pub kind: OpaqueToolInputKind,
+    pub value: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<ContentTruncation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OpaqueToolInputKind {
+    #[serde(rename = "opaque")]
+    Opaque,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct OutputContentBlock {
+    pub content_id: NativeResourceId,
+    pub kind: OutputContentBlockKind,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<ContentTruncation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OutputContentBlockKind {
+    #[serde(rename = "output")]
+    Output,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -938,6 +1160,62 @@ pub struct ProviderUsageDetail {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ReasoningConversationItem {
+    pub resource: RoutedResourceId,
+    pub turn: RoutedResourceId,
+    pub conversation: RoutedResourceId,
+    pub kind: ReasoningConversationItemKind,
+    pub status: ConversationItemStatus,
+    pub contents: Vec<ContentBlock>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReasoningConversationItemKind {
+    #[serde(rename = "reasoning")]
+    Reasoning,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ReasoningSummaryContentBlock {
+    pub content_id: NativeResourceId,
+    pub kind: ReasoningSummaryContentBlockKind,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<ContentTruncation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReasoningSummaryContentBlockKind {
+    #[serde(rename = "reasoning-summary")]
+    ReasoningSummary,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ResourceLinkContentBlock {
+    pub content_id: NativeResourceId,
+    pub kind: ResourceLinkContentBlockKind,
+    pub uri: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<ContentTruncation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ResourceLinkContentBlockKind {
+    #[serde(rename = "resource-link")]
+    ResourceLink,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct RoutedResourceId {
     pub device_id: DeviceId,
     pub provider_plugin_id: ProviderPluginId,
@@ -1011,6 +1289,56 @@ pub struct RuntimeSelectResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct StructuredJsonContentBlock {
+    pub content_id: NativeResourceId,
+    pub kind: StructuredJsonContentBlockKind,
+    pub value: JsonObject,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<ContentTruncation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StructuredJsonContentBlockKind {
+    #[serde(rename = "structured-json")]
+    StructuredJson,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct StructuredToolInput {
+    pub kind: StructuredToolInputKind,
+    pub value: JsonObject,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<ContentTruncation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StructuredToolInputKind {
+    #[serde(rename = "structured")]
+    Structured,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct TextContentBlock {
+    pub content_id: NativeResourceId,
+    pub kind: TextContentBlockKind,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<ContentTruncation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextContentBlockKind {
+    #[serde(rename = "text")]
+    Text,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ToolAnnotations {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub read_only: Option<bool>,
@@ -1075,50 +1403,21 @@ pub enum ToolCommandActionKind {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct ToolCommandDetails {
-    pub command: String,
+pub struct ToolConversationItem {
+    pub resource: RoutedResourceId,
+    pub turn: RoutedResourceId,
+    pub conversation: RoutedResourceId,
+    pub kind: ToolConversationItemKind,
+    pub status: ConversationItemStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub process_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub actions: Option<Vec<ToolCommandAction>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ToolContent {
-    pub content_id: NativeResourceId,
-    pub kind: ToolContentKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub uri: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncated: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_bytes: Option<u64>,
+    pub title: Option<String>,
+    pub tool: ToolInvocation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ToolContentKind {
-    #[serde(rename = "text")]
-    Text,
-    #[serde(rename = "image")]
-    Image,
-    #[serde(rename = "audio")]
-    Audio,
-    #[serde(rename = "resource-link")]
-    ResourceLink,
-    #[serde(rename = "embedded-resource")]
-    EmbeddedResource,
+pub enum ToolConversationItemKind {
+    #[serde(rename = "tool")]
+    Tool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1130,8 +1429,33 @@ pub struct ToolExecutionError {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retryable: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ToolFailureOutcome {
+    pub kind: ToolFailureOutcomeKind,
+    pub content: Vec<ContentBlock>,
+    pub error: ToolExecutionError,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<JsonObject>,
+    pub exit_code: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolFailureOutcomeKind {
+    #[serde(rename = "failure")]
+    Failure,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolInput {
+    CommandToolInput(CommandToolInput),
+    StructuredToolInput(StructuredToolInput),
+    OpaqueToolInput(OpaqueToolInput),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1144,15 +1468,11 @@ pub struct ToolInvocation {
     pub namespace: Option<String>,
     pub category: ToolCategory,
     pub origin: ToolOrigin,
-    pub input: JsonObject,
+    pub input: ToolInput,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub raw_input: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<ToolResult>,
+    pub outcome: Option<ToolOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timing: Option<ToolTiming>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub command: Option<ToolCommandDetails>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotations: Option<ToolAnnotations>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1185,14 +1505,28 @@ pub enum ToolOriginKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolOutcome {
+    ToolSuccessOutcome(ToolSuccessOutcome),
+    ToolFailureOutcome(ToolFailureOutcome),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct ToolResult {
-    pub content: Vec<ToolContent>,
+pub struct ToolSuccessOutcome {
+    pub kind: ToolSuccessOutcomeKind,
+    pub content: Vec<ContentBlock>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub structured_content: Option<JsonObject>,
+    pub exit_code: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<ToolExecutionError>,
+    pub process_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolSuccessOutcomeKind {
+    #[serde(rename = "success")]
+    Success,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1333,6 +1667,25 @@ pub struct TurnSteerResponse {
 #[serde(deny_unknown_fields)]
 pub struct TurnUpsertedEvent {
     pub turn: ProviderTurn,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UnknownConversationItem {
+    pub resource: RoutedResourceId,
+    pub turn: RoutedResourceId,
+    pub conversation: RoutedResourceId,
+    pub kind: UnknownConversationItemKind,
+    pub status: ConversationItemStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UnknownConversationItemKind {
+    #[serde(rename = "unknown")]
+    Unknown,
 }
 
 impl ProviderPluginDescriptor {

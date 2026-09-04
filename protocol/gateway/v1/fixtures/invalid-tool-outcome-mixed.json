@@ -1,0 +1,6 @@
+{
+  "kind": "failure",
+  "content": [],
+  "error": { "message": "command failed" },
+  "structuredContent": { "exitCode": 1 }
+}
