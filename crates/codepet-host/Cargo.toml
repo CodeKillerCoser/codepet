@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "ws"] }
+axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio"] }
 axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
 codepet-gateway-sdk = { path = "../../sdk/rust/codepet-gateway-sdk", version = "0.1.0" }
 codepet-lan-channel-sdk = { path = "../../sdk/rust/codepet-lan-channel-sdk", version = "0.1.0" }
@@ -24,6 +24,7 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-
 uuid = { version = "1", features = ["v4"] }
 url = "2"
 x509-parser = { version = "0.18", features = ["verify"] }
+yawc = { version = "=0.2.0", default-features = false, features = ["axum"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -260,6 +260,39 @@ impl PinnedTlsClient {
         );
         client_async(request, tls).await.map(|(socket, _)| socket)
     }
+
+    async fn websocket_upgrade_headers(
+        &self,
+        bearer: &str,
+        extensions: &str,
+    ) -> String {
+        let request = format!(
+            "GET /remote/v1/gateway HTTP/1.1\r\nHost: localhost:{}\r\nAuthorization: Bearer {bearer}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Extensions: {extensions}\r\n\r\n",
+            self.address.port(),
+        );
+        let mut tls = self.connect_tls().await;
+        tls.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        let header_end = timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(position) = response
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                {
+                    return position;
+                }
+                let mut buffer = [0_u8; 1024];
+                let read = tls.read(&mut buffer).await.unwrap();
+                assert_ne!(read, 0, "WebSocket upgrade ended before headers");
+                response.extend_from_slice(&buffer[..read]);
+            }
+        })
+        .await
+        .unwrap();
+        std::str::from_utf8(&response[..header_end])
+            .unwrap()
+            .to_ascii_lowercase()
+    }
 }
 
 async fn pair_client(
@@ -704,6 +737,16 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     let pairing_a = pair_client(host.remote_access.as_ref(), &client, "client-a").await;
     assert_eq!(pairing_a.device, host.remote_access.remote_host_identity());
     assert_eq!(pairing_a.gateway_url, gateway_url);
+    let compressed_upgrade = client
+        .websocket_upgrade_headers(
+            &pairing_a.credential,
+            "permessage-deflate; client_no_context_takeover; server_no_context_takeover",
+        )
+        .await;
+    assert!(compressed_upgrade.starts_with("http/1.1 101 "));
+    assert!(compressed_upgrade.contains("sec-websocket-extensions: permessage-deflate"));
+    assert!(compressed_upgrade.contains("client_no_context_takeover"));
+    assert!(compressed_upgrade.contains("server_no_context_takeover"));
     let mut socket_a = client
         .connect_websocket(&pairing_a.credential)
         .await

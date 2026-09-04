@@ -2,7 +2,6 @@ use crate::{
     HostError, HostResult, ProviderGatewayService, RemoteAccessManager, RemoteCredential,
 };
 use axum::extract::rejection::JsonRejection;
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -12,7 +11,6 @@ use axum_server::tls_rustls::RustlsConfig;
 use codepet_gateway_sdk as gateway;
 use codepet_lan_channel_sdk as lan;
 use futures_util::{SinkExt, StreamExt};
-use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Debug, Formatter};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
@@ -24,6 +22,9 @@ use tokio::sync::{
 };
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::timeout;
+use yawc::close::CloseCode;
+use yawc::frame::{FrameView as Message, OpCode};
+use yawc::{CompressionLevel, IncomingUpgrade, Options, WebSocket};
 
 const PAIRING_EXCHANGE_PATH: &str = "/remote/v1/pairings/:pairing_id/exchange";
 const PAIRING_REQUEST_CREATE_PATH: &str = "/remote/v1/pairing-requests";
@@ -658,7 +659,7 @@ async fn delete_current_credential(
 async fn gateway_websocket(
     State(state): State<Arc<RemoteLanState>>,
     headers: HeaderMap,
-    websocket: WebSocketUpgrade,
+    websocket: IncomingUpgrade,
 ) -> Result<Response, RestError> {
     let bearer = bearer_from_headers(&headers)?;
     let credential = state
@@ -675,10 +676,11 @@ async fn gateway_websocket(
         .map_err(RestError::authorization)?;
     let gateway = state.gateway.clone();
     let remote_access = state.remote_access.clone();
-    Ok(websocket
-        .max_frame_size(MAX_WEBSOCKET_FRAME_BYTES)
-        .max_message_size(MAX_WEBSOCKET_MESSAGE_BYTES)
-        .on_upgrade(move |socket| {
+    let (response, upgrade) = websocket
+        .upgrade(gateway_websocket_options())
+        .map_err(RestError::websocket_upgrade)?;
+    tokio::spawn(async move {
+        if let Ok(socket) = upgrade.await {
             run_gateway_socket(
                 socket,
                 gateway,
@@ -686,7 +688,20 @@ async fn gateway_websocket(
                 credential,
                 registration,
             )
-        }))
+            .await;
+        }
+    });
+    Ok(response.into_response())
+}
+
+fn gateway_websocket_options() -> Options {
+    Options::default()
+        .with_compression_level(CompressionLevel::default())
+        .server_no_context_takeover()
+        .client_no_context_takeover()
+        .with_max_payload_read(MAX_WEBSOCKET_MESSAGE_BYTES)
+        .with_max_read_buffer(MAX_WEBSOCKET_FRAME_BYTES * 2)
+        .with_utf8()
 }
 
 async fn run_gateway_socket(
@@ -706,7 +721,7 @@ async fn run_gateway_socket(
     let writer_failed = transport_failed_tx.clone();
     let writer = tokio::spawn(async move {
         while let Some(message) = outbound_rx.recv().await {
-            let closing = matches!(message, Message::Close(_));
+            let closing = message.opcode == OpCode::Close;
             let sent = timeout(WEBSOCKET_SEND_TIMEOUT, sink.send(message)).await;
             if !matches!(sent, Ok(Ok(()))) {
                 let _ = writer_failed.send(true);
@@ -757,23 +772,16 @@ async fn run_gateway_socket(
         let Some(message) = next else {
             break;
         };
-        let message = match message {
-            Ok(message) => message,
-            Err(_) => {
-                close_frame = Some(close_message(1002, "websocket_protocol_error"));
-                break;
-            }
-        };
-        let text = match message {
-            Message::Text(text) => text,
-            Message::Ping(_) | Message::Pong(_) => continue,
-            Message::Close(_) => break,
-            Message::Binary(_) => {
+        let text = match message.opcode {
+            OpCode::Text => message.payload,
+            OpCode::Ping | OpCode::Pong => continue,
+            OpCode::Close => break,
+            OpCode::Binary | OpCode::Continuation => {
                 close_frame = Some(close_message(1003, "text_frames_required"));
                 break;
             }
         };
-        let request = match gateway::decode_wire_message(text.as_bytes()) {
+        let request = match gateway::decode_wire_message(&text) {
             Ok(gateway::ProviderWireMessage::Request(
                 gateway::JsonRpcInboundRequest::Typed(request),
             )) => request,
@@ -986,7 +994,7 @@ async fn run_gateway_socket(
                             break;
                         }
                     };
-                    if !enqueue_outbound(&event_outbound, Message::Text(text)).await {
+                    if !enqueue_outbound(&event_outbound, Message::text(text)).await {
                         let _ = event_transport_failed.send(true);
                         break;
                     }
@@ -1080,7 +1088,7 @@ async fn run_gateway_requests(
                             return;
                         }
                     };
-                    if !enqueue_outbound(&request_outbound, Message::Text(text)).await {
+                    if !enqueue_outbound(&request_outbound, Message::text(text)).await {
                         let _ = request_transport_failed.send(true);
                     }
                 });
@@ -1105,7 +1113,7 @@ async fn queue_json<T: serde::Serialize>(
             let _ = cancellation;
             false
         }
-        sent = enqueue_outbound(outbound, Message::Text(text)) => sent,
+        sent = enqueue_outbound(outbound, Message::text(text)) => sent,
     }
 }
 
@@ -1206,11 +1214,8 @@ fn advertised_url_authority(host: &str, port: u16) -> String {
     }
 }
 
-fn close_message(code: u16, reason: impl Into<Cow<'static, str>>) -> Message {
-    Message::Close(Some(CloseFrame {
-        code,
-        reason: reason.into(),
-    }))
+fn close_message(code: u16, reason: impl AsRef<[u8]>) -> Message {
+    Message::close(CloseCode::from(code), reason)
 }
 
 fn cancellation_close(cancellation: SessionCancellation) -> Message {
@@ -1277,6 +1282,17 @@ struct RestError {
 }
 
 impl RestError {
+    fn websocket_upgrade(_error: yawc::WebSocketError) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            error: protocol_error(
+                "invalid_websocket_upgrade",
+                "Remote Gateway request must be a valid WebSocket upgrade",
+                false,
+            ),
+        }
+    }
+
     fn invalid_json(rejection: JsonRejection) -> Self {
         let status = if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
             StatusCode::PAYLOAD_TOO_LARGE
