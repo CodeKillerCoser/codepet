@@ -11,6 +11,10 @@
     "jsonRpcVersion": "2.0",
     "requestId": { "$ref": "../../core/v1/schema.json#/$defs/RequestId" },
     "rpcError": { "$ref": "../../core/v1/schema.json#/$defs/RpcError" },
+    "traceContext": {
+      "field": "meta",
+      "type": { "$ref": "../../core/v1/schema.json#/$defs/TraceContext" }
+    },
     "eventCursorField": "eventCursor",
     "eventCursor": { "$ref": "../../core/v1/schema.json#/$defs/EventCursor" }
   },
@@ -25,6 +29,7 @@
   },
   "methods": [
     { "name": "protocol.handshake", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/HandshakeRequest" }, "response": { "$ref": "./schema.json#/$defs/HandshakeResponse" } },
+    { "name": "protocol.describe", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/ProtocolDescribeRequest" }, "response": { "$ref": "./schema.json#/$defs/ProtocolDescribeResponse" } },
     { "name": "event.subscribe", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/EventSubscribeRequest" }, "response": { "$ref": "./schema.json#/$defs/EventSubscribeResponse" } },
     { "name": "provider.list", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/ProviderListRequest" }, "response": { "$ref": "./schema.json#/$defs/ProviderListResponse" } },
     { "name": "provider.describe", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/ProviderDescribeRequest" }, "response": { "$ref": "./schema.json#/$defs/ProviderDescribeResponse" } },

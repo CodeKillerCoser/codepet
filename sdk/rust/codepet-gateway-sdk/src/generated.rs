@@ -7,7 +7,7 @@ use std::io::{BufRead, Write};
 use std::future::Future;
 use std::pin::Pin;
 
-pub use codepet_core_sdk::{ClientId, Cursor, DeviceDescriptor, EventCursor, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, RequestId, RoutedResourceId, RpcError, TimestampMs, VersionRange};
+pub use codepet_core_sdk::{ClientId, Cursor, DeviceDescriptor, EventCursor, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, RequestId, RoutedResourceId, RpcError, TimestampMs, TraceContext, VersionRange};
 
 pub const PROTOCOL_VERSION: ProtocolVersion = 1;
 
@@ -749,6 +749,26 @@ pub struct ProjectUpdateResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ProtocolDescribeRequest {
+
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProtocolDescribeResponse {
+    pub features: Vec<ProtocolFeature>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProtocolFeature {
+    #[serde(rename = "trace-context-v1")]
+    TraceContextV1,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ProviderAuthentication {
     pub status: ProviderAuthenticationStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1219,6 +1239,8 @@ pub enum ProtocolDispatchLane {
 pub enum ProtocolMethod {
     #[serde(rename = "protocol.handshake")]
     ProtocolHandshake,
+    #[serde(rename = "protocol.describe")]
+    ProtocolDescribe,
     #[serde(rename = "event.subscribe")]
     EventSubscribe,
     #[serde(rename = "provider.list")]
@@ -1259,6 +1281,7 @@ impl ProtocolMethod {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ProtocolHandshake => "protocol.handshake",
+            Self::ProtocolDescribe => "protocol.describe",
             Self::EventSubscribe => "event.subscribe",
             Self::ProviderList => "provider.list",
             Self::ProviderDescribe => "provider.describe",
@@ -1282,6 +1305,7 @@ impl ProtocolMethod {
     pub const fn dispatch_lane(self) -> ProtocolDispatchLane {
         match self {
             Self::ProtocolHandshake => ProtocolDispatchLane::Normal,
+            Self::ProtocolDescribe => ProtocolDispatchLane::Normal,
             Self::EventSubscribe => ProtocolDispatchLane::Normal,
             Self::ProviderList => ProtocolDispatchLane::Normal,
             Self::ProviderDescribe => ProtocolDispatchLane::Normal,
@@ -1305,6 +1329,7 @@ impl ProtocolMethod {
     pub const fn capability(self) -> Option<GatewayCapability> {
         match self {
             Self::ProtocolHandshake => None,
+            Self::ProtocolDescribe => None,
             Self::EventSubscribe => None,
             Self::ProviderList => None,
             Self::ProviderDescribe => None,
@@ -1332,6 +1357,7 @@ impl std::str::FromStr for ProtocolMethod {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "protocol.handshake" => Ok(Self::ProtocolHandshake),
+            "protocol.describe" => Ok(Self::ProtocolDescribe),
             "event.subscribe" => Ok(Self::EventSubscribe),
             "provider.list" => Ok(Self::ProviderList),
             "provider.describe" => Ok(Self::ProviderDescribe),
@@ -1426,6 +1452,12 @@ pub enum ProtocolRequest {
         jsonrpc: String,
         id: RequestId,
         params: HandshakeRequest,
+    },
+    #[serde(rename = "protocol.describe")]
+    ProtocolDescribe {
+        jsonrpc: String,
+        id: RequestId,
+        params: ProtocolDescribeRequest,
     },
     #[serde(rename = "event.subscribe")]
     EventSubscribe {
@@ -1544,6 +1576,11 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode protocol.handshake request params", error))?,
             }),
+            ProtocolMethod::ProtocolDescribe => Ok(Self::ProtocolDescribe {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode protocol.describe request params", error))?,
+            }),
             ProtocolMethod::EventSubscribe => Ok(Self::EventSubscribe {
                 jsonrpc,
                 id,
@@ -1635,6 +1672,7 @@ impl ProtocolRequest {
     pub fn jsonrpc_version(&self) -> &str {
         match self {
             Self::ProtocolHandshake { jsonrpc, .. } => jsonrpc,
+            Self::ProtocolDescribe { jsonrpc, .. } => jsonrpc,
             Self::EventSubscribe { jsonrpc, .. } => jsonrpc,
             Self::ProviderList { jsonrpc, .. } => jsonrpc,
             Self::ProviderDescribe { jsonrpc, .. } => jsonrpc,
@@ -1658,6 +1696,7 @@ impl ProtocolRequest {
     pub fn id(&self) -> &RequestId {
         match self {
             Self::ProtocolHandshake { id, .. } => id,
+            Self::ProtocolDescribe { id, .. } => id,
             Self::EventSubscribe { id, .. } => id,
             Self::ProviderList { id, .. } => id,
             Self::ProviderDescribe { id, .. } => id,
@@ -1681,6 +1720,7 @@ impl ProtocolRequest {
     pub const fn method(&self) -> ProtocolMethod {
         match self {
             Self::ProtocolHandshake { .. } => ProtocolMethod::ProtocolHandshake,
+            Self::ProtocolDescribe { .. } => ProtocolMethod::ProtocolDescribe,
             Self::EventSubscribe { .. } => ProtocolMethod::EventSubscribe,
             Self::ProviderList { .. } => ProtocolMethod::ProviderList,
             Self::ProviderDescribe { .. } => ProtocolMethod::ProviderDescribe,
@@ -1898,6 +1938,13 @@ pub enum ProviderWireMessage {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct ObservedWireMessage {
+    pub message: ProviderWireMessage,
+    pub trace_context: Option<TraceContext>,
+}
+
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct JsonRpcInboundError {
     pub id: Option<RequestId>,
     pub error: RpcError,
@@ -1926,6 +1973,10 @@ pub type ProtocolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ProtocolE
 pub trait ProtocolServer: Send + Sync {
     fn protocol_handshake<'a>(&'a self, _request: HandshakeRequest) -> ProtocolFuture<'a, HandshakeResponse> {
         Box::pin(async { Err(method_not_implemented("protocol.handshake")) })
+    }
+
+    fn protocol_describe<'a>(&'a self, _request: ProtocolDescribeRequest) -> ProtocolFuture<'a, ProtocolDescribeResponse> {
+        Box::pin(async { Err(method_not_implemented("protocol.describe")) })
     }
 
     fn event_subscribe<'a>(&'a self, _request: EventSubscribeRequest) -> ProtocolFuture<'a, EventSubscribeResponse> {
@@ -2010,6 +2061,16 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
     match request {
         ProtocolRequest::ProtocolHandshake { jsonrpc, id, params } => {
             let response = match server.protocol_handshake(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ProtocolDescribe { jsonrpc, id, params } => {
+            let response = match server.protocol_describe(params).await {
                 Ok(result) => match serde_json::to_value(result) {
                     Ok(result) => JsonRpcResponsePayload::Ok { result },
                     Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
@@ -2243,6 +2304,14 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         })
     }
 
+    pub fn protocol_describe<'a>(&'a self, request: ProtocolDescribeRequest) -> ProtocolFuture<'a, ProtocolDescribeResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ProtocolDescribe, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
     pub fn event_subscribe<'a>(&'a self, request: EventSubscribeRequest) -> ProtocolFuture<'a, EventSubscribeResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
@@ -2462,7 +2531,7 @@ fn parse_jsonrpc_response(value: serde_json::Value) -> Result<JsonRpcResponse, J
     if has_result == has_error {
         return Err(inbound_error(id, JSON_RPC_INVALID_REQUEST, "JSON-RPC response must contain exactly one of result or error"));
     }
-    if !object_has_only(object, &["jsonrpc", "id", if has_result { "result" } else { "error" }]) {
+    if !object_has_only(object, &["jsonrpc", "id", if has_result { "result" } else { "error" }, "meta"]) {
         return Err(inbound_error(id, JSON_RPC_INVALID_REQUEST, "JSON-RPC response contains unknown fields"));
     }
     let response = if has_result {
@@ -2486,7 +2555,7 @@ pub fn decode_wire_message(value: &[u8]) -> Result<ProviderWireMessage, JsonRpcI
         let method = method_value.as_str().ok_or_else(|| inbound_error(id.clone(), JSON_RPC_INVALID_REQUEST, "JSON-RPC method must be a string"))?.to_string();
         if object.contains_key("id") {
             let id = id.ok_or_else(|| inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC request id must be a string"))?;
-            if !object_has_only(object, &["jsonrpc", "id", "method", "params"]) {
+            if !object_has_only(object, &["jsonrpc", "id", "method", "params", "meta"]) {
                 return Err(inbound_error(Some(id), JSON_RPC_INVALID_REQUEST, "JSON-RPC request contains unknown fields"));
             }
             if method.parse::<ProtocolMethod>().is_err() {
@@ -2496,7 +2565,7 @@ pub fn decode_wire_message(value: &[u8]) -> Result<ProviderWireMessage, JsonRpcI
                     error: RpcError { code: JSON_RPC_METHOD_NOT_FOUND, message: format!("method not found: {method}"), data: None },
                 })));
             }
-            return match serde_json::from_value(value) {
+            return match serde_json::from_value({ let mut typed = value; if let Some(object) = typed.as_object_mut() { object.remove("meta"); } typed }) {
                 Ok(request) => Ok(ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request))),
                 Err(error) => Ok(ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(JsonRpcRequestRejection {
                     id,
@@ -2506,11 +2575,11 @@ pub fn decode_wire_message(value: &[u8]) -> Result<ProviderWireMessage, JsonRpcI
             };
         }
 
-        if !object_has_only(object, &["jsonrpc", "method", "params"]) {
+        if !object_has_only(object, &["jsonrpc", "method", "params", "meta"]) {
             return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC notification contains unknown fields"));
         }
         if method.parse::<ProtocolEventName>().is_ok() {
-            let event = serde_json::from_value(value)
+            let event = serde_json::from_value({ let mut typed = value; if let Some(object) = typed.as_object_mut() { object.remove("meta"); } typed })
                 .map_err(|error| inbound_error(None, JSON_RPC_INVALID_PARAMS, format!("invalid event params for {method}: {error}")))?;
             return Ok(ProviderWireMessage::Event(event));
         }
@@ -2523,6 +2592,45 @@ pub fn decode_wire_message(value: &[u8]) -> Result<ProviderWireMessage, JsonRpcI
 
     parse_jsonrpc_response(value).map(ProviderWireMessage::Response)
 }
+
+pub fn decode_observed_wire_message(value: &[u8]) -> Result<ObservedWireMessage, JsonRpcInboundError> {
+    let decoded: serde_json::Value = serde_json::from_slice(value)
+        .map_err(|error| inbound_error(None, JSON_RPC_PARSE_ERROR, format!("parse error: {error}")))?;
+    let trace_context = decoded
+        .as_object()
+        .and_then(|object| object.get("meta"))
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()
+        .map_err(|error| inbound_error(
+            decoded.as_object().and_then(object_request_id),
+            JSON_RPC_INVALID_REQUEST,
+            format!("invalid JSON-RPC trace context: {error}"),
+        ))?;
+    let message = decode_wire_message(value)?;
+    Ok(ObservedWireMessage { message, trace_context })
+}
+
+fn encode_with_trace<T: Serialize>(
+    value: &T,
+    trace_context: Option<&TraceContext>,
+    context: &str,
+) -> Result<Vec<u8>, ProtocolError> {
+    let mut encoded = serde_json::to_value(value).map_err(|error| codec_error(context, error))?;
+    if let Some(trace_context) = trace_context {
+        let object = encoded.as_object_mut().ok_or_else(|| ProtocolError {
+            code: "protocol_codec_error".to_string(),
+            message: format!("{context}: envelope must be an object"),
+            retryable: false,
+            details: None,
+        })?;
+        object.insert(
+            "meta".to_string(),
+            serde_json::to_value(trace_context).map_err(|error| codec_error(context, error))?,
+        );
+    }
+    serde_json::to_vec(&encoded).map_err(|error| codec_error(context, error))
+}
+
 
 pub fn encode_request(value: &ProtocolRequest) -> Result<Vec<u8>, ProtocolError> {
     validate_jsonrpc(value.jsonrpc_version())?;
@@ -2550,6 +2658,15 @@ pub fn encode_response(value: &JsonRpcResponse) -> Result<Vec<u8>, ProtocolError
     serde_json::to_vec(value).map_err(|error| codec_error("encode response", error))
 }
 
+pub fn encode_response_with_trace(
+    value: &JsonRpcResponse,
+    trace_context: Option<&TraceContext>,
+) -> Result<Vec<u8>, ProtocolError> {
+    validate_jsonrpc(&value.jsonrpc)?;
+    encode_with_trace(value, trace_context, "encode response")
+}
+
+
 pub fn decode_response(value: &[u8]) -> Result<JsonRpcResponse, ProtocolError> {
     match decode_wire_message(value).map_err(inbound_protocol_error)? {
         ProviderWireMessage::Response(response) => Ok(response),
@@ -2566,6 +2683,15 @@ pub fn encode_event(value: &ProtocolEvent) -> Result<Vec<u8>, ProtocolError> {
     validate_jsonrpc(value.jsonrpc_version())?;
     serde_json::to_vec(value).map_err(|error| codec_error("encode event", error))
 }
+
+pub fn encode_event_with_trace(
+    value: &ProtocolEvent,
+    trace_context: Option<&TraceContext>,
+) -> Result<Vec<u8>, ProtocolError> {
+    validate_jsonrpc(value.jsonrpc_version())?;
+    encode_with_trace(value, trace_context, "encode event")
+}
+
 
 pub fn decode_event(value: &[u8]) -> Result<ProtocolEvent, ProtocolError> {
     match decode_wire_message(value).map_err(inbound_protocol_error)? {

@@ -2118,6 +2118,8 @@ pub enum ProviderWireMessage {
     Event(ProtocolEvent),
 }
 
+
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct JsonRpcInboundError {
     pub id: Option<RequestId>,
@@ -2877,6 +2879,8 @@ pub fn decode_wire_message(value: &[u8]) -> Result<ProviderWireMessage, JsonRpcI
     parse_jsonrpc_response(value).map(ProviderWireMessage::Response)
 }
 
+
+
 pub fn encode_request(value: &ProtocolRequest) -> Result<Vec<u8>, ProtocolError> {
     validate_jsonrpc(value.jsonrpc_version())?;
     serde_json::to_vec(value).map_err(|error| codec_error("encode request", error))
@@ -2903,6 +2907,8 @@ pub fn encode_response(value: &JsonRpcResponse) -> Result<Vec<u8>, ProtocolError
     serde_json::to_vec(value).map_err(|error| codec_error("encode response", error))
 }
 
+
+
 pub fn decode_response(value: &[u8]) -> Result<JsonRpcResponse, ProtocolError> {
     match decode_wire_message(value).map_err(inbound_protocol_error)? {
         ProviderWireMessage::Response(response) => Ok(response),
@@ -2919,6 +2925,8 @@ pub fn encode_event(value: &ProtocolEvent) -> Result<Vec<u8>, ProtocolError> {
     validate_jsonrpc(value.jsonrpc_version())?;
     serde_json::to_vec(value).map_err(|error| codec_error("encode event", error))
 }
+
+
 
 pub fn decode_event(value: &[u8]) -> Result<ProtocolEvent, ProtocolError> {
     match decode_wire_message(value).map_err(inbound_protocol_error)? {

@@ -49,6 +49,7 @@
         "RoutedResourceId",
         "RpcError",
         "TimestampMs",
+        "TraceContext",
         "VersionRange"
       ],
       "outputs": {

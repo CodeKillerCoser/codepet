@@ -278,6 +278,12 @@ export function validateManifest(record, model) {
     assert(manifest.transport.eventDiscriminator === "method", `${packageConfig.id} JSON-RPC event discriminator must be method`);
     const rpcError = referenceTarget(manifest.transport.rpcError, manifestPath, model, `${packageConfig.id}.transport.rpcError`);
     assert(rpcError.name === "RpcError", `${packageConfig.id} transport rpcError must reference core RpcError`);
+    if (manifest.transport.traceContext !== undefined) {
+      exactKeys(manifest.transport.traceContext, ["field", "type"], `${packageConfig.id}.transport.traceContext`);
+      assert(/^[a-z][A-Za-z0-9]*$/.test(manifest.transport.traceContext.field), `${packageConfig.id} traceContext field must be camelCase`);
+      const traceContext = referenceTarget(manifest.transport.traceContext.type, manifestPath, model, `${packageConfig.id}.transport.traceContext.type`);
+      assert(traceContext.name === "TraceContext", `${packageConfig.id} traceContext must reference core TraceContext`);
+    }
   } else {
     assert(manifest.transport.responseDiscriminator === "method", `${packageConfig.id} response discriminator must be method`);
     assert(manifest.transport.eventDiscriminator === "event", `${packageConfig.id} event discriminator must be event`);
@@ -866,6 +872,10 @@ export function buildProtocolIr(model) {
       eventDiscriminator: record.manifest.transport.eventDiscriminator,
       jsonRpcVersion: record.manifest.transport.jsonRpcVersion,
       eventCursorField: record.manifest.transport.eventCursorField,
+      traceContextField: record.manifest.transport.traceContext?.field,
+      traceContextType: record.manifest.transport.traceContext
+        ? namedManifestType(record.manifest.transport.traceContext.type, record.manifestPath, model, `${record.packageConfig.id}.traceContext`)
+        : undefined,
       protocolVersionType: record.manifest.transport.protocolVersion
         ? namedManifestType(record.manifest.transport.protocolVersion, record.manifestPath, model, `${record.packageConfig.id}.protocolVersion`)
         : undefined,
@@ -1279,6 +1289,10 @@ function generateJsonRpc(record, model, role = "both") {
   const { manifest, manifestPath } = record;
   const cursorField = manifest.transport.eventCursorField;
   const cursorType = cursorField ? referenceTarget(manifest.transport.eventCursor, manifestPath, model, "JSON-RPC event cursor").name : undefined;
+  const traceConfig = manifest.transport.traceContext;
+  const traceField = traceConfig?.field;
+  const traceType = traceConfig ? referenceTarget(traceConfig.type, manifestPath, model, "JSON-RPC trace context").name : undefined;
+  const traceAllowed = traceField ? `, "${traceField}"` : "";
   const requestVariants = manifest.methods.map((method) => `    #[serde(rename = "${method.name}")]
     ${pascalCase(method.name)} {
         jsonrpc: String,
@@ -1491,6 +1505,13 @@ pub enum ProviderWireMessage {
     Event(ProtocolEvent),
 }
 
+${traceType ? `#[derive(Clone, Debug, PartialEq)]
+pub struct ObservedWireMessage {
+    pub message: ProviderWireMessage,
+    pub trace_context: Option<${traceType}>,
+}
+` : ""}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct JsonRpcInboundError {
     pub id: Option<RequestId>,
@@ -1599,7 +1620,7 @@ fn parse_jsonrpc_response(value: serde_json::Value) -> Result<JsonRpcResponse, J
     if has_result == has_error {
         return Err(inbound_error(id, JSON_RPC_INVALID_REQUEST, "JSON-RPC response must contain exactly one of result or error"));
     }
-    if !object_has_only(object, &["jsonrpc", "id", if has_result { "result" } else { "error" }]) {
+    if !object_has_only(object, &["jsonrpc", "id", if has_result { "result" } else { "error" }${traceAllowed}]) {
         return Err(inbound_error(id, JSON_RPC_INVALID_REQUEST, "JSON-RPC response contains unknown fields"));
     }
     let response = if has_result {
@@ -1623,7 +1644,7 @@ pub fn decode_wire_message(value: &[u8]) -> Result<ProviderWireMessage, JsonRpcI
         let method = method_value.as_str().ok_or_else(|| inbound_error(id.clone(), JSON_RPC_INVALID_REQUEST, "JSON-RPC method must be a string"))?.to_string();
         if object.contains_key("id") {
             let id = id.ok_or_else(|| inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC request id must be a string"))?;
-            if !object_has_only(object, &["jsonrpc", "id", "method", "params"]) {
+            if !object_has_only(object, &["jsonrpc", "id", "method", "params"${traceAllowed}]) {
                 return Err(inbound_error(Some(id), JSON_RPC_INVALID_REQUEST, "JSON-RPC request contains unknown fields"));
             }
             if method.parse::<ProtocolMethod>().is_err() {
@@ -1633,7 +1654,7 @@ pub fn decode_wire_message(value: &[u8]) -> Result<ProviderWireMessage, JsonRpcI
                     error: RpcError { code: JSON_RPC_METHOD_NOT_FOUND, message: format!("method not found: {method}"), data: None },
                 })));
             }
-            return match serde_json::from_value(value) {
+            return match serde_json::from_value(${traceField ? `{ let mut typed = value; if let Some(object) = typed.as_object_mut() { object.remove("${traceField}"); } typed }` : "value"}) {
                 Ok(request) => Ok(ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request))),
                 Err(error) => Ok(ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(JsonRpcRequestRejection {
                     id,
@@ -1643,11 +1664,11 @@ pub fn decode_wire_message(value: &[u8]) -> Result<ProviderWireMessage, JsonRpcI
             };
         }
 
-        if !object_has_only(object, &["jsonrpc", "method", "params"]) {
+        if !object_has_only(object, &["jsonrpc", "method", "params"${traceAllowed}]) {
             return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC notification contains unknown fields"));
         }
         if method.parse::<ProtocolEventName>().is_ok() {
-            let event = serde_json::from_value(value)
+            let event = serde_json::from_value(${traceField ? `{ let mut typed = value; if let Some(object) = typed.as_object_mut() { object.remove("${traceField}"); } typed }` : "value"})
                 .map_err(|error| inbound_error(None, JSON_RPC_INVALID_PARAMS, format!("invalid event params for {method}: {error}")))?;
             return Ok(ProviderWireMessage::Event(event));
         }
@@ -1660,6 +1681,45 @@ pub fn decode_wire_message(value: &[u8]) -> Result<ProviderWireMessage, JsonRpcI
 
     parse_jsonrpc_response(value).map(ProviderWireMessage::Response)
 }
+
+${traceType ? `pub fn decode_observed_wire_message(value: &[u8]) -> Result<ObservedWireMessage, JsonRpcInboundError> {
+    let decoded: serde_json::Value = serde_json::from_slice(value)
+        .map_err(|error| inbound_error(None, JSON_RPC_PARSE_ERROR, format!("parse error: {error}")))?;
+    let trace_context = decoded
+        .as_object()
+        .and_then(|object| object.get("${traceField}"))
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()
+        .map_err(|error| inbound_error(
+            decoded.as_object().and_then(object_request_id),
+            JSON_RPC_INVALID_REQUEST,
+            format!("invalid JSON-RPC trace context: {error}"),
+        ))?;
+    let message = decode_wire_message(value)?;
+    Ok(ObservedWireMessage { message, trace_context })
+}
+
+fn encode_with_trace<T: Serialize>(
+    value: &T,
+    trace_context: Option<&${traceType}>,
+    context: &str,
+) -> Result<Vec<u8>, ProtocolError> {
+    let mut encoded = serde_json::to_value(value).map_err(|error| codec_error(context, error))?;
+    if let Some(trace_context) = trace_context {
+        let object = encoded.as_object_mut().ok_or_else(|| ProtocolError {
+            code: "protocol_codec_error".to_string(),
+            message: format!("{context}: envelope must be an object"),
+            retryable: false,
+            details: None,
+        })?;
+        object.insert(
+            "${traceField}".to_string(),
+            serde_json::to_value(trace_context).map_err(|error| codec_error(context, error))?,
+        );
+    }
+    serde_json::to_vec(&encoded).map_err(|error| codec_error(context, error))
+}
+` : ""}
 
 pub fn encode_request(value: &ProtocolRequest) -> Result<Vec<u8>, ProtocolError> {
     validate_jsonrpc(value.jsonrpc_version())?;
@@ -1687,6 +1747,15 @@ pub fn encode_response(value: &JsonRpcResponse) -> Result<Vec<u8>, ProtocolError
     serde_json::to_vec(value).map_err(|error| codec_error("encode response", error))
 }
 
+${traceType ? `pub fn encode_response_with_trace(
+    value: &JsonRpcResponse,
+    trace_context: Option<&${traceType}>,
+) -> Result<Vec<u8>, ProtocolError> {
+    validate_jsonrpc(&value.jsonrpc)?;
+    encode_with_trace(value, trace_context, "encode response")
+}
+` : ""}
+
 pub fn decode_response(value: &[u8]) -> Result<JsonRpcResponse, ProtocolError> {
     match decode_wire_message(value).map_err(inbound_protocol_error)? {
         ProviderWireMessage::Response(response) => Ok(response),
@@ -1703,6 +1772,15 @@ pub fn encode_event(value: &ProtocolEvent) -> Result<Vec<u8>, ProtocolError> {
     validate_jsonrpc(value.jsonrpc_version())?;
     serde_json::to_vec(value).map_err(|error| codec_error("encode event", error))
 }
+
+${traceType ? `pub fn encode_event_with_trace(
+    value: &ProtocolEvent,
+    trace_context: Option<&${traceType}>,
+) -> Result<Vec<u8>, ProtocolError> {
+    validate_jsonrpc(value.jsonrpc_version())?;
+    encode_with_trace(value, trace_context, "encode event")
+}
+` : ""}
 
 pub fn decode_event(value: &[u8]) -> Result<ProtocolEvent, ProtocolError> {
     match decode_wire_message(value).map_err(inbound_protocol_error)? {

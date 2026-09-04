@@ -60,6 +60,11 @@ export interface RpcError {
 
 export type TimestampMs = number;
 
+export interface TraceContext {
+  traceparent: string;
+  tracestate?: string;
+}
+
 export interface VersionRange {
   minVersion: ProtocolVersion;
   maxVersion: ProtocolVersion;

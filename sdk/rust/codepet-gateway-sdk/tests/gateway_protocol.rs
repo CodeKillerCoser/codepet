@@ -1,7 +1,8 @@
 use codepet_gateway_sdk::{
-    decode_event, decode_request, decode_response, GatewayCapability, HandshakeResponse,
-    JsonRpcResponsePayload, ModelCatalog, ModelSelection, ProtocolEvent, ProtocolMethod,
-    ProtocolRequest, TurnSendResponse,
+    decode_event, decode_observed_wire_message, decode_request, decode_response,
+    encode_event_with_trace, GatewayCapability, HandshakeResponse, JsonRpcResponsePayload,
+    ModelCatalog, ModelSelection, ProtocolEvent, ProtocolMethod, ProtocolRequest, TraceContext,
+    TurnSendResponse,
 };
 use serde::de::DeserializeOwned;
 
@@ -119,5 +120,34 @@ fn gateway_capability_metadata_is_typed() {
     assert_eq!(
         ProtocolMethod::TurnSend.capability(),
         Some(GatewayCapability::TurnSend)
+    );
+}
+
+#[test]
+fn trace_context_is_observed_without_entering_business_payloads() {
+    let request = br#"{"jsonrpc":"2.0","id":"request-1","method":"protocol.describe","params":{},"meta":{"traceparent":"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"}}"#;
+    let observed = decode_observed_wire_message(request).unwrap();
+    assert_eq!(
+        observed.trace_context.unwrap().traceparent,
+        "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
+    );
+
+    let event = decode_event(include_bytes!(
+        "../../../../protocol/gateway/v1/fixtures/conversation-upserted-event.json"
+    ))
+    .unwrap();
+    let encoded = encode_event_with_trace(
+        &event,
+        Some(&TraceContext {
+            traceparent:
+                "00-0123456789abcdef0123456789abcdef-fedcba9876543210-01".to_string(),
+            tracestate: None,
+        }),
+    )
+    .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(
+        json["meta"]["traceparent"],
+        "00-0123456789abcdef0123456789abcdef-fedcba9876543210-01"
     );
 }

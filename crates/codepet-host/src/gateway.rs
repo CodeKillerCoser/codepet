@@ -826,6 +826,17 @@ impl ProviderGatewayService {
 }
 
 impl ProtocolServer for ProviderGatewayService {
+    fn protocol_describe<'a>(
+        &'a self,
+        _request: gateway::ProtocolDescribeRequest,
+    ) -> gateway::ProtocolFuture<'a, gateway::ProtocolDescribeResponse> {
+        Box::pin(async move {
+            Ok(gateway::ProtocolDescribeResponse {
+                features: vec![gateway::ProtocolFeature::TraceContextV1],
+            })
+        })
+    }
+
     fn protocol_handshake<'a>(
         &'a self,
         request: gateway::HandshakeRequest,

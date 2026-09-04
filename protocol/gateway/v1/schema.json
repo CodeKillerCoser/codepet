@@ -858,6 +858,27 @@
       "required": ["protocol", "device", "providers", "eventCursor"],
       "additionalProperties": false
     },
+    "ProtocolFeature": {
+      "type": "string",
+      "enum": ["trace-context-v1"]
+    },
+    "ProtocolDescribeRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "ProtocolDescribeResponse": {
+      "type": "object",
+      "properties": {
+        "features": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProtocolFeature" },
+          "uniqueItems": true
+        }
+      },
+      "required": ["features"],
+      "additionalProperties": false
+    },
     "GatewayDevice": {
       "type": "object",
       "properties": {

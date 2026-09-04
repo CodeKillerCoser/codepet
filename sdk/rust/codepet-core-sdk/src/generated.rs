@@ -90,6 +90,15 @@ pub type TimestampMs = u64;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct TraceContext {
+    pub traceparent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tracestate: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct VersionRange {
     pub min_version: ProtocolVersion,
     pub max_version: ProtocolVersion,

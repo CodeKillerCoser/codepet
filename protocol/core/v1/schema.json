@@ -39,6 +39,22 @@
       "maximum": 9007199254740991,
       "description": "Legacy numeric event cursor retained by the v0 compatibility profile."
     },
+    "TraceContext": {
+      "type": "object",
+      "description": "W3C Trace Context propagated as protocol-envelope metadata. It carries correlation only, never application payload or baggage.",
+      "properties": {
+        "traceparent": {
+          "type": "string",
+          "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
+        },
+        "tracestate": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["traceparent"],
+      "additionalProperties": false
+    },
     "JsonObject": {
       "type": "object",
       "additionalProperties": true

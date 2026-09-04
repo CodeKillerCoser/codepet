@@ -387,7 +387,7 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   const model = await loadProtocolModel();
   const gateway = record(model, "gateway-v1");
   const gatewayIr = model.protocolIr.packagesById.get("gateway-v1");
-  assert.equal(gatewayIr.service.methods.length, 18);
+  assert.equal(gatewayIr.service.methods.length, 19);
   assert.equal(gatewayIr.service.events.length, 9);
   assert.equal(
     gatewayIr.service.methods.find((method) => method.name === "turn.send").idempotency,
@@ -412,6 +412,8 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   assert.match(first, /Future<ProjectListResponse> projectList/);
   assert.match(first, /ProtocolIdempotency\.nonIdempotent/);
   assert.match(first, /Future<TurnSendResponse> turnSend\(TurnSendRequest request\)/);
+  assert.match(first, /abstract interface class ProtocolClientInstrumentation/);
+  assert.match(first, /if \(traceContext != null\) 'meta': traceContext!\.toJson\(\)/);
 
   const result = await generateProtocol({ checkMode: true, targets: ["dart"] });
   assert.deepEqual(

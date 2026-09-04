@@ -450,6 +450,45 @@ Object? encodeTimestampMs(TimestampMs value, {String path = 'TimestampMs'}) {
   return checked;
 }
 
+final class TraceContext {
+  factory TraceContext({
+    required String traceparent,
+    String? tracestate,
+  }) {
+    final validatedTraceparent = _string(traceparent, 'TraceContext.traceparent', pattern: '^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}\$');
+    final validatedTracestate = tracestate == null ? null : _string(tracestate, 'TraceContext.tracestate', minLength: 1);
+    return TraceContext._(
+      traceparent: validatedTraceparent,
+      tracestate: validatedTracestate,
+    );
+  }
+
+  TraceContext._({
+    required this.traceparent,
+    required this.tracestate,
+  });
+
+  final String traceparent;
+  final String? tracestate;
+
+  factory TraceContext.fromJson(Object? value, {String path = 'TraceContext'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'traceparent', 'tracestate'}, path);
+    return TraceContext(
+      traceparent: _string(_required(json, 'traceparent', path), '$path.traceparent', pattern: '^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}\$'),
+      tracestate: json.containsKey('tracestate') && json['tracestate'] != null ? _string(json['tracestate'], '$path.tracestate', minLength: 1) : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'traceparent': traceparent,
+    if (tracestate != null) 'tracestate': tracestate!,
+  };
+
+  @override
+  String toString() => 'TraceContext(traceparent: $traceparent, tracestate: $tracestate)';
+}
+
 final class VersionRange {
   factory VersionRange({
     required ProtocolVersion minVersion,

@@ -2968,6 +2968,78 @@ final class ProjectUpdateResponse {
   String toString() => 'ProjectUpdateResponse(project: $project)';
 }
 
+final class ProtocolDescribeRequest {
+  factory ProtocolDescribeRequest()
+   {
+    return ProtocolDescribeRequest._(
+    );
+  }
+
+  ProtocolDescribeRequest._();
+
+  factory ProtocolDescribeRequest.fromJson(Object? value, {String path = 'ProtocolDescribeRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {}, path);
+    return ProtocolDescribeRequest();
+  }
+
+  Map<String, Object?> toJson() => {
+  };
+
+  @override
+  String toString() => 'ProtocolDescribeRequest()';
+}
+
+final class ProtocolDescribeResponse {
+  factory ProtocolDescribeResponse({
+    required List<ProtocolFeature> features,
+  }) {
+    final validatedFeatures = _freezeList<ProtocolFeature>(features, 'ProtocolDescribeResponse.features', (item, itemPath) => item, uniqueItems: true, encodeItem: (item) => item.toJson());
+    return ProtocolDescribeResponse._(
+      features: validatedFeatures,
+    );
+  }
+
+  ProtocolDescribeResponse._({
+    required this.features,
+  });
+
+  final List<ProtocolFeature> features;
+
+  factory ProtocolDescribeResponse.fromJson(Object? value, {String path = 'ProtocolDescribeResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'features'}, path);
+    return ProtocolDescribeResponse(
+      features: _decodeList<ProtocolFeature>(_required(json, 'features', path), '$path.features', (item, itemPath) => ProtocolFeature.fromJson(item, path: itemPath), uniqueItems: true, encodeItem: (item) => item.toJson()),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'features': features.map((item) => item.toJson()).toList(growable: false),
+  };
+
+  @override
+  String toString() => 'ProtocolDescribeResponse(features: $features)';
+}
+
+enum ProtocolFeature {
+  traceContextV1('trace-context-v1');
+
+  const ProtocolFeature(this.wireValue);
+
+  final String wireValue;
+
+  static ProtocolFeature fromJson(Object? value, {String path = 'ProtocolFeature'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: trace-context-v1');
+  }
+
+  String toJson() => wireValue;
+}
+
 final class ProviderAuthentication {
   factory ProviderAuthentication({
     required ProviderAuthenticationStatus status,
@@ -4673,6 +4745,7 @@ enum ProtocolIdempotency {
 
 enum ProtocolMethod {
   protocolHandshake('protocol.handshake', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: HandshakeRequest, responseType: HandshakeResponse),
+  protocolDescribe('protocol.describe', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: ProtocolDescribeRequest, responseType: ProtocolDescribeResponse),
   eventSubscribe('event.subscribe', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: EventSubscribeRequest, responseType: EventSubscribeResponse),
   providerList('provider.list', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: ProviderListRequest, responseType: ProviderListResponse),
   providerDescribe('provider.describe', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: ProviderDescribeRequest, responseType: ProviderDescribeResponse),
@@ -4745,6 +4818,8 @@ Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
   switch (method) {
     case ProtocolMethod.protocolHandshake:
       return HandshakeRequest.fromJson(value, path: path);
+    case ProtocolMethod.protocolDescribe:
+      return ProtocolDescribeRequest.fromJson(value, path: path);
     case ProtocolMethod.eventSubscribe:
       return EventSubscribeRequest.fromJson(value, path: path);
     case ProtocolMethod.providerList:
@@ -4786,6 +4861,9 @@ Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, S
   switch (method) {
     case ProtocolMethod.protocolHandshake:
       if (value is! HandshakeRequest) throw ProtocolCodecException(path, 'expected HandshakeRequest');
+      return value.toJson();
+    case ProtocolMethod.protocolDescribe:
+      if (value is! ProtocolDescribeRequest) throw ProtocolCodecException(path, 'expected ProtocolDescribeRequest');
       return value.toJson();
     case ProtocolMethod.eventSubscribe:
       if (value is! EventSubscribeRequest) throw ProtocolCodecException(path, 'expected EventSubscribeRequest');
@@ -4845,6 +4923,8 @@ Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) 
   switch (method) {
     case ProtocolMethod.protocolHandshake:
       return HandshakeResponse.fromJson(value, path: path);
+    case ProtocolMethod.protocolDescribe:
+      return ProtocolDescribeResponse.fromJson(value, path: path);
     case ProtocolMethod.eventSubscribe:
       return EventSubscribeResponse.fromJson(value, path: path);
     case ProtocolMethod.providerList:
@@ -4886,6 +4966,9 @@ Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, 
   switch (method) {
     case ProtocolMethod.protocolHandshake:
       if (value is! HandshakeResponse) throw ProtocolCodecException(path, 'expected HandshakeResponse');
+      return value.toJson();
+    case ProtocolMethod.protocolDescribe:
+      if (value is! ProtocolDescribeResponse) throw ProtocolCodecException(path, 'expected ProtocolDescribeResponse');
       return value.toJson();
     case ProtocolMethod.eventSubscribe:
       if (value is! EventSubscribeResponse) throw ProtocolCodecException(path, 'expected EventSubscribeResponse');
@@ -4997,26 +5080,27 @@ Map<String, Object?> _encodeEventPayload(ProtocolEventName event, Object value, 
 }
 
 final class ProtocolRequestEnvelope {
-  factory ProtocolRequestEnvelope({required RequestId id, required ProtocolMethod method, required Object params}) {
+  factory ProtocolRequestEnvelope({required RequestId id, required ProtocolMethod method, required Object params, TraceContext? traceContext}) {
     final checkedId = _string(id, 'id', minLength: 1);
     _encodeRequestParams(method, params, 'params');
-    return ProtocolRequestEnvelope._(id: checkedId, method: method, params: params);
+    return ProtocolRequestEnvelope._(id: checkedId, method: method, params: params, traceContext: traceContext);
   }
 
-  const ProtocolRequestEnvelope._({required this.id, required this.method, required this.params});
+  const ProtocolRequestEnvelope._({required this.id, required this.method, required this.params, this.traceContext});
   final RequestId id;
   final ProtocolMethod method;
   final Object params;
+  final TraceContext? traceContext;
 
   factory ProtocolRequestEnvelope.fromJson(Object? value, {String path = 'ProtocolRequestEnvelope'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'jsonrpc', 'id', 'method', 'params'}, path);
+    _expectKeys(json, const {'jsonrpc', 'id', 'method', 'params', 'meta'}, path);
     if (_string(_required(json, 'jsonrpc', path), '$path.jsonrpc') != jsonRpcVersion) throw ProtocolCodecException('$path.jsonrpc', 'expected JSON-RPC 2.0');
     final method = ProtocolMethod.fromJson(_required(json, 'method', path), path: '$path.method');
-    return ProtocolRequestEnvelope(id: _string(_required(json, 'id', path), '$path.id', minLength: 1), method: method, params: _decodeRequestParams(method, _required(json, 'params', path), '$path.params'));
+    return ProtocolRequestEnvelope(id: _string(_required(json, 'id', path), '$path.id', minLength: 1), method: method, params: _decodeRequestParams(method, _required(json, 'params', path), '$path.params'), traceContext: json['meta'] == null ? null : TraceContext.fromJson(json['meta'], path: '$path.meta'));
   }
 
-  Map<String, Object?> toJson() => {'jsonrpc': jsonRpcVersion, 'id': id, 'method': method.toJson(), 'params': _encodeRequestParams(method, params, 'params')};
+  Map<String, Object?> toJson() => {'jsonrpc': jsonRpcVersion, 'id': id, 'method': method.toJson(), 'params': _encodeRequestParams(method, params, 'params'), if (traceContext != null) 'meta': traceContext!.toJson()};
 }
 
 sealed class ProtocolResponsePayload {
@@ -5034,16 +5118,17 @@ final class ProtocolFailure extends ProtocolResponsePayload {
 }
 
 final class ProtocolResponseEnvelope {
-  factory ProtocolResponseEnvelope({required RequestId id, required ProtocolMethod method, required ProtocolResponsePayload response}) {
+  factory ProtocolResponseEnvelope({required RequestId id, required ProtocolMethod method, required ProtocolResponsePayload response, TraceContext? traceContext}) {
     final checkedId = _string(id, 'id', minLength: 1);
     if (response is ProtocolSuccess) _encodeResponseResult(method, response.result, 'result');
-    return ProtocolResponseEnvelope._(id: checkedId, method: method, response: response);
+    return ProtocolResponseEnvelope._(id: checkedId, method: method, response: response, traceContext: traceContext);
   }
 
-  const ProtocolResponseEnvelope._({required this.id, required this.method, required this.response});
+  const ProtocolResponseEnvelope._({required this.id, required this.method, required this.response, this.traceContext});
   final RequestId id;
   final ProtocolMethod method;
   final ProtocolResponsePayload response;
+  final TraceContext? traceContext;
 
   factory ProtocolResponseEnvelope.fromJson(Object? value, {required ProtocolMethod method, String path = 'ProtocolResponseEnvelope'}) {
     final json = _object(value, path);
@@ -5051,42 +5136,43 @@ final class ProtocolResponseEnvelope {
     final hasResult = json.containsKey('result');
     final hasError = json.containsKey('error');
     if (hasResult == hasError) throw ProtocolCodecException(path, 'response must contain exactly one of result or error');
-    _expectKeys(json, hasResult ? const {'jsonrpc', 'id', 'result'} : const {'jsonrpc', 'id', 'error'}, path);
+    _expectKeys(json, hasResult ? const {'jsonrpc', 'id', 'result', 'meta'} : const {'jsonrpc', 'id', 'error', 'meta'}, path);
     final response = hasResult ? ProtocolSuccess(_decodeResponseResult(method, _required(json, 'result', path), '$path.result')) : ProtocolFailure(RpcError.fromJson(_required(json, 'error', path), path: '$path.error'));
-    return ProtocolResponseEnvelope(id: _string(_required(json, 'id', path), '$path.id', minLength: 1), method: method, response: response);
+    return ProtocolResponseEnvelope(id: _string(_required(json, 'id', path), '$path.id', minLength: 1), method: method, response: response, traceContext: json['meta'] == null ? null : TraceContext.fromJson(json['meta'], path: '$path.meta'));
   }
 
   Map<String, Object?> toJson() {
     return switch (response) {
-      ProtocolSuccess(:final result) => {'jsonrpc': jsonRpcVersion, 'id': id, 'result': _encodeResponseResult(method, result, 'result')},
-      ProtocolFailure(:final error) => {'jsonrpc': jsonRpcVersion, 'id': id, 'error': error.toJson()},
+      ProtocolSuccess(:final result) => {'jsonrpc': jsonRpcVersion, 'id': id, 'result': _encodeResponseResult(method, result, 'result'), if (traceContext != null) 'meta': traceContext!.toJson()},
+      ProtocolFailure(:final error) => {'jsonrpc': jsonRpcVersion, 'id': id, 'error': error.toJson(), if (traceContext != null) 'meta': traceContext!.toJson()},
     };
   }
 }
 
 final class ProtocolEventEnvelope {
-  factory ProtocolEventEnvelope({required EventCursor eventCursor, required ProtocolEventName event, required Object payload}) {
+  factory ProtocolEventEnvelope({required EventCursor eventCursor, required ProtocolEventName event, required Object payload, TraceContext? traceContext}) {
     final checkedCursor = _string(eventCursor, 'eventCursor', minLength: 1);
     _encodeEventPayload(event, payload, 'params.payload');
-    return ProtocolEventEnvelope._(eventCursor: checkedCursor, event: event, payload: payload);
+    return ProtocolEventEnvelope._(eventCursor: checkedCursor, event: event, payload: payload, traceContext: traceContext);
   }
 
-  const ProtocolEventEnvelope._({required this.eventCursor, required this.event, required this.payload});
+  const ProtocolEventEnvelope._({required this.eventCursor, required this.event, required this.payload, this.traceContext});
   final EventCursor eventCursor;
   final ProtocolEventName event;
   final Object payload;
+  final TraceContext? traceContext;
 
   factory ProtocolEventEnvelope.fromJson(Object? value, {String path = 'ProtocolEventEnvelope'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'jsonrpc', 'method', 'params'}, path);
+    _expectKeys(json, const {'jsonrpc', 'method', 'params', 'meta'}, path);
     if (_string(_required(json, 'jsonrpc', path), '$path.jsonrpc') != jsonRpcVersion) throw ProtocolCodecException('$path.jsonrpc', 'expected JSON-RPC 2.0');
     final event = ProtocolEventName.fromJson(_required(json, 'method', path), path: '$path.method');
     final params = _object(_required(json, 'params', path), '$path.params');
     _expectKeys(params, const {'eventCursor', 'payload'}, '$path.params');
-    return ProtocolEventEnvelope(eventCursor: _string(_required(params, 'eventCursor', '$path.params'), '$path.params.eventCursor', minLength: 1), event: event, payload: _decodeEventPayload(event, _required(params, 'payload', '$path.params'), '$path.params.payload'));
+    return ProtocolEventEnvelope(eventCursor: _string(_required(params, 'eventCursor', '$path.params'), '$path.params.eventCursor', minLength: 1), event: event, payload: _decodeEventPayload(event, _required(params, 'payload', '$path.params'), '$path.params.payload'), traceContext: json['meta'] == null ? null : TraceContext.fromJson(json['meta'], path: '$path.meta'));
   }
 
-  Map<String, Object?> toJson() => {'jsonrpc': jsonRpcVersion, 'method': event.toJson(), 'params': {'eventCursor': eventCursor, 'payload': _encodeEventPayload(event, payload, 'params.payload')}};
+  Map<String, Object?> toJson() => {'jsonrpc': jsonRpcVersion, 'method': event.toJson(), 'params': {'eventCursor': eventCursor, 'payload': _encodeEventPayload(event, payload, 'params.payload')}, if (traceContext != null) 'meta': traceContext!.toJson()};
 }
 
 ProtocolRequestEnvelope decodeProtocolRequest(String source) => ProtocolRequestEnvelope.fromJson(jsonDecode(source));
@@ -5100,6 +5186,16 @@ abstract interface class ProtocolTransport {
   Future<Object?> request(Map<String, Object?> request);
 }
 
+abstract interface class ProtocolClientInstrumentation {
+  Future<T> traceRequest<T>({required ProtocolMethod method, required RequestId requestId, required Future<T> Function(TraceContext? traceContext) invoke});
+}
+
+final class NoopProtocolClientInstrumentation implements ProtocolClientInstrumentation {
+  const NoopProtocolClientInstrumentation();
+  @override
+  Future<T> traceRequest<T>({required ProtocolMethod method, required RequestId requestId, required Future<T> Function(TraceContext? traceContext) invoke}) => invoke(null);
+}
+
 final class ProtocolRemoteException implements Exception {
   const ProtocolRemoteException(this.error);
   final RpcError error;
@@ -5108,23 +5204,28 @@ final class ProtocolRemoteException implements Exception {
 }
 
 final class ProtocolClient {
-  const ProtocolClient(this.transport, {required this.requestIdFactory});
+  const ProtocolClient(this.transport, {required this.requestIdFactory, this.instrumentation = const NoopProtocolClientInstrumentation()});
   final ProtocolTransport transport;
   final RequestId Function() requestIdFactory;
+  final ProtocolClientInstrumentation instrumentation;
 
   Future<TResponse> _request<TResponse>(ProtocolMethod method, Object request) async {
     final id = requestIdFactory();
-    final envelope = ProtocolRequestEnvelope(id: id, method: method, params: request);
-    final response = ProtocolResponseEnvelope.fromJson(await transport.request(envelope.toJson()), method: method);
-    if (response.id != id) throw ProtocolCodecException('id', 'response id does not match request id');
-    return switch (response.response) {
-      ProtocolSuccess(:final result) when result is TResponse => result as TResponse,
-      ProtocolSuccess() => throw ProtocolCodecException('result', 'response result has the wrong generated type'),
-      ProtocolFailure(:final error) => throw ProtocolRemoteException(error),
-    };
+    return instrumentation.traceRequest<TResponse>(method: method, requestId: id, invoke: (traceContext) async {
+      final envelope = ProtocolRequestEnvelope(id: id, method: method, params: request, traceContext: traceContext);
+      final response = ProtocolResponseEnvelope.fromJson(await transport.request(envelope.toJson()), method: method);
+      if (response.id != id) throw ProtocolCodecException('id', 'response id does not match request id');
+      return switch (response.response) {
+        ProtocolSuccess(:final result) when result is TResponse => result as TResponse,
+        ProtocolSuccess() => throw ProtocolCodecException('result', 'response result has the wrong generated type'),
+        ProtocolFailure(:final error) => throw ProtocolRemoteException(error),
+      };
+    });
   }
 
   Future<HandshakeResponse> protocolHandshake(HandshakeRequest request) => _request<HandshakeResponse>(ProtocolMethod.protocolHandshake, request);
+
+  Future<ProtocolDescribeResponse> protocolDescribe(ProtocolDescribeRequest request) => _request<ProtocolDescribeResponse>(ProtocolMethod.protocolDescribe, request);
 
   Future<EventSubscribeResponse> eventSubscribe(EventSubscribeRequest request) => _request<EventSubscribeResponse>(ProtocolMethod.eventSubscribe, request);
 
