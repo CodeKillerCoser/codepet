@@ -1841,7 +1841,8 @@ fn map_tool_input(input: provider::ToolInput) -> gateway::ToolInput {
     match input {
         provider::ToolInput::CommandToolInput(input) => gateway::ToolInput::CommandToolInput(gateway::CommandToolInput {
             kind: gateway::CommandToolInputKind::Command, command: input.command, cwd: input.cwd,
-            shell: input.shell, actions: input.actions.map(|actions| actions.into_iter().map(map_tool_command_action).collect()),
+            shell: input.shell, truncation: input.truncation.map(map_content_truncation),
+            actions: input.actions.map(|actions| actions.into_iter().map(map_tool_command_action).collect()),
         }),
         provider::ToolInput::StructuredToolInput(input) => gateway::ToolInput::StructuredToolInput(gateway::StructuredToolInput {
             kind: gateway::StructuredToolInputKind::Structured, value: input.value,
@@ -2054,7 +2055,7 @@ mod conversation_projection_tests {
             {"resource": route("command-1"), "turn": route("turn-1"), "conversation": route("conversation-1"),
              "kind": "command", "status": "completed", "title": "command", "tool": {
                 "callId": "call-command", "name": "shell", "category": "command", "origin": {"kind": "builtin"},
-                "input": {"kind": "command", "command": "printf same text", "cwd": "/workspace", "shell": "zsh"},
+                "input": {"kind": "command", "command": "printf same text", "cwd": "/workspace", "shell": "zsh", "truncation": {"originalBytes": 32, "retainedBytes": 16, "strategy": "head-tail"}},
                 "outcome": {"kind": "success", "content": [{"contentId": "command:output", "kind": "output", "text": "same text"}], "exitCode": 0},
                 "extension": {"namespace": "dev.codepet.private", "data": {"secret": true}}
              }},
@@ -2090,6 +2091,7 @@ mod conversation_projection_tests {
         assert_eq!(projected[0]["contents"][0]["truncation"], json!({"originalBytes": 20, "retainedBytes": 9, "strategy": "head-tail"}));
         assert_eq!(projected[4]["tool"]["input"]["truncation"], json!({"originalBytes": 50, "retainedBytes": 25, "strategy": "structural-preview"}));
         assert_eq!(projected[2]["tool"]["input"]["command"], "printf same text");
+        assert_eq!(projected[2]["tool"]["input"]["truncation"], json!({"originalBytes": 32, "retainedBytes": 16, "strategy": "head-tail"}));
         assert_eq!(projected[2]["tool"]["outcome"]["content"][0]["contentId"], "command:output");
         assert!(projected[2].get("contents").is_none());
         assert!(projected.iter().all(|item| !item.to_string().contains("extension")));
