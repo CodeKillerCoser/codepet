@@ -5,27 +5,31 @@ use crate::protocol::{ClaudeControlRequest, ClaudeOutput, ClaudeStreamDelta, Cla
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalRequestedEvent, ApprovalResolveRequest, ApprovalResolveResponse, ApprovalResolvedEvent,
     ApprovalStatus, ConversationAcquireInteractionRequest,
-    ConversationAcquireInteractionResponse, ConversationContent,
+    ConversationAcquireInteractionResponse,
     ConversationCreateCapabilities, ConversationCreateRequest,
     ChoiceOption, ChoiceSet, ConversationContentKind, ConversationCreateResponse, ConversationGetRequest,
     ConversationGetResponse, ConversationListRequest, ConversationListResponse,
-    ConversationItem, ConversationItemKind, ConversationItemRole, ConversationItemStatus,
+    CommandConversationItem, CommandConversationItemKind, CommandToolInput, CommandToolInputKind,
+    ContentBlock, ConversationItem, ConversationItemRole, ConversationItemStatus,
     ConversationStatus, HarnessDescriptor, PageInfo,
     ConversationUpsertedEvent, FlatModelCatalog, FlatModelCatalogKind, FlatModelSelection,
     InstanceCapabilitiesRequest, InstanceCapabilitiesResponse,
     InstanceCreateRequest, InstanceCreateResponse, InstanceDestroyRequest,
     InstanceDestroyResponse, InstanceStartRequest, InstanceStartResponse, InstanceStatus,
-    InstanceStatusChangedEvent, InstanceStopRequest, InstanceStopResponse, JsonObject, ProtocolError,
+    InstanceStatusChangedEvent, InstanceStopRequest, InstanceStopResponse, ProtocolError,
     ModelCatalog, ModelSelection, ProtocolEvent, ProtocolFuture, Provider, ProviderCapabilities, ProviderCapability,
     ProviderConversation, ProviderDescribeRequest, ProviderDescribeResponse, ProviderExtension,
     ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute,
     ProviderApproval, ProviderAuthentication, ProviderAuthenticationStatus, ProviderPluginDescriptor,
     ProviderShutdownRequest, ProviderShutdownResponse, ProviderTurn, ProviderUsage,
     ProviderUsageDetail,
-    RoutedResourceId, RuntimeCandidate, RuntimeGetInstalledRequest, RuntimeGetInstalledResponse,
+    MessageConversationItem, MessageConversationItemKind, OpaqueToolInput, OpaqueToolInputKind,
+    OutputContentBlock, OutputContentBlockKind, RoutedResourceId, RuntimeCandidate, RuntimeGetInstalledRequest, RuntimeGetInstalledResponse,
     RuntimeInstallation, RuntimeSelectRequest, RuntimeSelectResponse, ToolCategory,
-    ToolCommandDetails, ToolContent, ToolContentKind,
-    ToolExecutionError, ToolInvocation, ToolOrigin, ToolOriginKind, ToolResult,
+    StructuredToolInput, StructuredToolInputKind, TextContentBlock, TextContentBlockKind,
+    ToolConversationItem, ToolConversationItemKind, ToolExecutionError, ToolFailureOutcome,
+    ToolFailureOutcomeKind, ToolInput, ToolInvocation, ToolOrigin, ToolOriginKind, ToolOutcome,
+    ToolSuccessOutcome, ToolSuccessOutcomeKind,
     TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent,
     TurnSelection, TurnSendCapabilities, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
     TurnSteerResponse,
@@ -1639,23 +1643,20 @@ impl Provider for ClaudeProvider {
             let (turn, effective_selection) = runtime.start_turn(request)?;
             Ok(TurnStartResponse {
                 accepted: true,
-                user_item: Some(ConversationItem {
+                user_item: Some(ConversationItem::MessageConversationItem(MessageConversationItem {
                     resource: runtime.resource(item_id.clone()),
                     turn: turn.resource.clone(),
                     conversation,
-                    kind: ConversationItemKind::Message,
+                    kind: MessageConversationItemKind::Message,
                     status: ConversationItemStatus::Completed,
-                    role: Some(ConversationItemRole::User),
-                    title: None,
-                    contents: vec![ConversationContent {
+                    role: ConversationItemRole::User,
+                    contents: vec![ContentBlock::TextContentBlock(TextContentBlock {
                         content_id: format!("{item_id}:text"),
-                        kind: ConversationContentKind::Text,
+                        kind: TextContentBlockKind::Text,
                         text: input_text,
-                    }],
-                    related_item: None,
-                    approval: None,
-                    tool: None,
-                }),
+                        truncation: None,
+                    })],
+                })),
                 turn,
                 effective_selection,
             })
@@ -2485,23 +2486,20 @@ fn read_claude_history_items(
         }
         let turn = routed_resource(route, format!("{native_id}:turn"));
         if let Some(text) = message.get("content").and_then(claude_message_text) {
-            items.push(ConversationItem {
+            items.push(ConversationItem::MessageConversationItem(MessageConversationItem {
                 resource: routed_resource(route, native_id.clone()),
                 turn: turn.clone(),
                 conversation: conversation.clone(),
-                kind: ConversationItemKind::Message,
+                kind: MessageConversationItemKind::Message,
                 status: ConversationItemStatus::Completed,
-                role: Some(role),
-                title: None,
-                contents: vec![ConversationContent {
+                role,
+                contents: vec![ContentBlock::TextContentBlock(TextContentBlock {
                     content_id: format!("{native_id}:text"),
-                    kind: ConversationContentKind::Text,
+                    kind: TextContentBlockKind::Text,
                     text,
-                }],
-                related_item: None,
-                approval: None,
-                tool: None,
-            });
+                    truncation: None,
+                })],
+            }));
         }
         let Some(parts) = message.get("content").and_then(Value::as_array) else {
             continue;
@@ -2512,44 +2510,60 @@ fn read_claude_history_items(
                     let Some(call_id) = part.get("id").and_then(Value::as_str) else { continue };
                     let name = part.get("name").and_then(Value::as_str).unwrap_or("tool");
                     let input_value = part.get("input").cloned().unwrap_or_else(|| json!({}));
-                    let serialized_input = input_value.to_string();
-                    let input_fits = serialized_input.len() <= 256 * 1024;
-                    let input: JsonObject = input_fits.then(|| input_value.as_object()).flatten().map(|object| {
-                        object.iter().map(|(key, value)| (key.clone(), value.clone())).collect()
-                    }).unwrap_or_default();
-                    let command = input_value.as_object().and_then(|input| input.get("command")).and_then(Value::as_str).map(|command| ToolCommandDetails {
-                        command: bounded_claude_tool_text(command).0,
-                        cwd: input_value.as_object().and_then(|input| input.get("cwd")).and_then(Value::as_str).map(str::to_string),
-                        exit_code: None,
-                        process_id: None,
-                        actions: None,
-                    });
-                    let title = command.as_ref().map(|command| concise_claude_title(&command.command)).unwrap_or_else(|| name.to_string());
-                    let item = ConversationItem {
+                    let command = input_value.as_object().and_then(|input| input.get("command")).and_then(Value::as_str);
+                    let input = if let Some(command) = command {
+                        ToolInput::CommandToolInput(CommandToolInput {
+                            kind: CommandToolInputKind::Command,
+                            command: command.to_string(),
+                            cwd: input_value.as_object().and_then(|input| input.get("cwd")).and_then(Value::as_str).map(str::to_string),
+                            shell: None,
+                            actions: None,
+                        })
+                    } else if let Some(object) = input_value.as_object() {
+                        ToolInput::StructuredToolInput(StructuredToolInput {
+                            kind: StructuredToolInputKind::Structured,
+                            value: object.iter().map(|(key, value)| (key.clone(), value.clone())).collect(),
+                            truncation: None,
+                        })
+                    } else {
+                        ToolInput::OpaqueToolInput(OpaqueToolInput {
+                            kind: OpaqueToolInputKind::Opaque,
+                            value: input_value.to_string(),
+                            mime_type: Some("application/json".to_string()),
+                            truncation: None,
+                        })
+                    };
+                    let title = command.map(concise_claude_title).unwrap_or_else(|| name.to_string());
+                    let tool = ToolInvocation {
+                        call_id: call_id.to_string(),
+                        name: name.to_string(),
+                        namespace: None,
+                        category: claude_tool_category(name, command.is_some()),
+                        origin: ToolOrigin { kind: ToolOriginKind::Server, name: Some("claude".to_string()) },
+                        input,
+                        outcome: None,
+                        timing: None,
+                        annotations: None,
+                        extension: None,
+                    };
+                    let item = if command.is_some() {
+                        ConversationItem::CommandConversationItem(CommandConversationItem {
                         resource: routed_resource(route, call_id.to_string()),
                         turn: turn.clone(),
                         conversation: conversation.clone(),
-                        kind: if command.is_some() { ConversationItemKind::Command } else { ConversationItemKind::Tool },
+                        kind: CommandConversationItemKind::Command,
                         status: ConversationItemStatus::Completed,
-                        role: None,
                         title: Some(title),
-                        contents: Vec::new(),
-                        related_item: None,
-                        approval: None,
-                        tool: Some(ToolInvocation {
-                            call_id: call_id.to_string(),
-                            name: name.to_string(),
-                            namespace: None,
-                            category: claude_tool_category(name, command.is_some()),
-                            origin: ToolOrigin { kind: ToolOriginKind::Server, name: Some("claude".to_string()) },
-                            input,
-                            raw_input: (!input_fits || !input_value.is_object()).then(|| bounded_claude_tool_text(&serialized_input).0),
-                            result: None,
-                            timing: None,
-                            command,
-                            annotations: None,
-                            extension: None,
-                        }),
+                        tool,
+                    })
+                    } else {
+                        ConversationItem::ToolConversationItem(ToolConversationItem {
+                            resource: routed_resource(route, call_id.to_string()),
+                            turn: turn.clone(), conversation: conversation.clone(),
+                            kind: ToolConversationItemKind::Tool,
+                            status: ConversationItemStatus::Completed,
+                            title: Some(title), tool,
+                        })
                     };
                     tool_indexes.insert(call_id.to_string(), items.len());
                     items.push(item);
@@ -2559,31 +2573,42 @@ fn read_claude_history_items(
                     let Some(item_index) = tool_indexes.get(call_id).copied() else { continue };
                     let is_error = part.get("is_error").and_then(Value::as_bool).unwrap_or(false);
                     let text = part.get("content").and_then(claude_result_text);
-                    let bounded_text = text.as_ref().map(|text| bounded_claude_tool_text(text));
-                    let result = ToolResult {
-                        content: bounded_text.as_ref().map(|(text, truncated, total_bytes)| ToolContent {
+                    let content = text.as_ref().map(|text| ContentBlock::OutputContentBlock(OutputContentBlock {
                             content_id: format!("{call_id}:result:{part_index}"),
-                            kind: ToolContentKind::Text,
-                            text: Some(text.clone()),
-                            uri: None,
-                            mime_type: Some("text/plain".to_string()),
-                            name: None,
-                            truncated: (*truncated).then_some(true),
-                            total_bytes: (*truncated).then_some(*total_bytes),
-                        }).into_iter().collect(),
-                        structured_content: None,
-                        error: is_error.then(|| ToolExecutionError {
-                            code: None,
-                            message: bounded_text.as_ref().map(|(text, _, _)| text.clone()).unwrap_or_else(|| "Claude tool execution failed".to_string()),
-                            retryable: None,
-                            details: None,
-                        }),
+                            kind: OutputContentBlockKind::Output,
+                            text: text.clone(),
+                            truncation: None,
+                        })).into_iter().collect();
+                    let outcome = if is_error {
+                        ToolOutcome::ToolFailureOutcome(ToolFailureOutcome {
+                            kind: ToolFailureOutcomeKind::Failure,
+                            content,
+                            error: ToolExecutionError {
+                                code: None,
+                                message: "Claude tool execution failed".to_string(),
+                                retryable: None,
+                            },
+                            exit_code: None,
+                            process_id: None,
+                        })
+                    } else {
+                        ToolOutcome::ToolSuccessOutcome(ToolSuccessOutcome {
+                            kind: ToolSuccessOutcomeKind::Success,
+                            content,
+                            exit_code: None,
+                            process_id: None,
+                        })
                     };
-                    if let Some(tool) = items[item_index].tool.as_mut() {
-                        tool.result = Some(result);
-                    }
-                    if is_error {
-                        items[item_index].status = ConversationItemStatus::Failed;
+                    match &mut items[item_index] {
+                        ConversationItem::CommandConversationItem(item) => {
+                            item.tool.outcome = Some(outcome);
+                            if is_error { item.status = ConversationItemStatus::Failed; }
+                        }
+                        ConversationItem::ToolConversationItem(item) => {
+                            item.tool.outcome = Some(outcome);
+                            if is_error { item.status = ConversationItemStatus::Failed; }
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}
@@ -2601,19 +2626,6 @@ fn claude_result_text(value: &Value) -> Option<String> {
         part.get("text").and_then(Value::as_str)
     }).collect::<Vec<_>>().join("\n");
     (!text.is_empty()).then_some(text)
-}
-
-fn bounded_claude_tool_text(text: &str) -> (String, bool, u64) {
-    const MAX_BYTES: usize = 256 * 1024;
-    let total_bytes = u64::try_from(text.len()).unwrap_or(u64::MAX);
-    if text.len() <= MAX_BYTES {
-        return (text.to_string(), false, total_bytes);
-    }
-    let mut end = MAX_BYTES;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    (format!("{}\n[tool output truncated]", &text[..end]), true, total_bytes)
 }
 
 fn claude_tool_category(name: &str, command: bool) -> ToolCategory {
@@ -2907,14 +2919,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(items.len(), 3);
-        assert_eq!(items[0].role, Some(ConversationItemRole::User));
-        assert_eq!(items[0].contents[0].text, "first question");
-        assert_eq!(items[1].role, Some(ConversationItemRole::Assistant));
-        assert_eq!(items[1].contents[0].text, "final answer");
-        assert_eq!(items[2].title.as_deref(), Some("npm test"));
-        let tool = items[2].tool.as_ref().unwrap();
+        let ConversationItem::MessageConversationItem(user) = &items[0] else { panic!("user message") };
+        assert_eq!(user.role, ConversationItemRole::User);
+        let ContentBlock::TextContentBlock(user_text) = &user.contents[0] else { panic!("text") };
+        assert_eq!(user_text.text, "first question");
+        let ConversationItem::MessageConversationItem(assistant) = &items[1] else { panic!("assistant message") };
+        assert_eq!(assistant.role, ConversationItemRole::Assistant);
+        let ContentBlock::TextContentBlock(assistant_text) = &assistant.contents[0] else { panic!("text") };
+        assert_eq!(assistant_text.text, "final answer");
+        let ConversationItem::CommandConversationItem(command) = &items[2] else { panic!("command") };
+        assert_eq!(command.title.as_deref(), Some("npm test"));
+        let tool = &command.tool;
         assert_eq!(tool.name, "Bash");
-        assert_eq!(tool.command.as_ref().unwrap().cwd.as_deref(), Some("/workspace"));
-        assert_eq!(tool.result.as_ref().unwrap().content[0].text.as_deref(), Some("tests passed"));
+        let ToolInput::CommandToolInput(input) = &tool.input else { panic!("command input") };
+        assert_eq!(input.cwd.as_deref(), Some("/workspace"));
+        let Some(ToolOutcome::ToolSuccessOutcome(outcome)) = &tool.outcome else { panic!("success") };
+        let ContentBlock::OutputContentBlock(output) = &outcome.content[0] else { panic!("output") };
+        assert_eq!(output.text, "tests passed");
     }
 }

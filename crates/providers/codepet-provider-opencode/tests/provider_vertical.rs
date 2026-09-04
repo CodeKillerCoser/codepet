@@ -3,7 +3,7 @@ use codepet_provider_opencode::{
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalResolveRequest, ConversationContentKind, ConversationCreateRequest,
-    ConversationGetRequest, ConversationItemKind, ConversationItemRole, ConversationItemStatus,
+    ContentBlock, ConversationGetRequest, ConversationItem, ConversationItemRole, ConversationItemStatus,
     ConversationListRequest, ConversationProjectFilter, ConversationProjectFilterAll,
     ConversationProjectFilterAllKind, GroupedModelCatalogKind, GroupedModelSelection, InstanceCreateRequest,
     InstanceStartRequest, InstanceStatus, InstanceStopRequest, ProtocolEvent,
@@ -153,23 +153,26 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     .unwrap();
     assert_eq!(fetched.conversation.title, "Fixture session");
     assert_eq!(fetched.items.len(), 4);
-    assert_eq!(fetched.items[0].kind, ConversationItemKind::Message);
-    assert_eq!(fetched.items[0].role, Some(ConversationItemRole::User));
-    assert_eq!(fetched.items[0].contents[0].text, "fixture question");
-    assert_eq!(fetched.items[1].kind, ConversationItemKind::Reasoning);
-    assert_eq!(
-        fetched.items[1].contents[0].kind,
-        ConversationContentKind::ReasoningSummary
-    );
-    assert_eq!(fetched.items[2].kind, ConversationItemKind::Message);
-    assert_eq!(fetched.items[2].role, Some(ConversationItemRole::Assistant));
-    assert_eq!(fetched.items[2].contents[0].text, "fixture answer");
-    assert_eq!(fetched.items[3].kind, ConversationItemKind::Tool);
-    assert_eq!(fetched.items[3].status, ConversationItemStatus::Completed);
-    let tool = fetched.items[3].tool.as_ref().unwrap();
+    let ConversationItem::MessageConversationItem(user) = &fetched.items[0] else { panic!("user") };
+    assert_eq!(user.role, ConversationItemRole::User);
+    let ContentBlock::TextContentBlock(user_text) = &user.contents[0] else { panic!("text") };
+    assert_eq!(user_text.text, "fixture question");
+    let ConversationItem::ReasoningConversationItem(reasoning) = &fetched.items[1] else { panic!("reasoning") };
+    assert!(matches!(reasoning.contents[0], ContentBlock::ReasoningSummaryContentBlock(_)));
+    let ConversationItem::MessageConversationItem(assistant) = &fetched.items[2] else { panic!("assistant") };
+    assert_eq!(assistant.role, ConversationItemRole::Assistant);
+    let ContentBlock::TextContentBlock(answer) = &assistant.contents[0] else { panic!("text") };
+    assert_eq!(answer.text, "fixture answer");
+    let ConversationItem::ToolConversationItem(tool_item) = &fetched.items[3] else { panic!("tool") };
+    assert_eq!(tool_item.status, ConversationItemStatus::Completed);
+    let tool = &tool_item.tool;
     assert_eq!(tool.name, "read");
-    assert_eq!(tool.input.get("path"), Some(&json!("README.md")));
+    let codepet_provider_sdk::ToolInput::StructuredToolInput(input) = &tool.input else { panic!("structured") };
+    assert_eq!(input.value.get("path"), Some(&json!("README.md")));
     assert_eq!(tool.origin.name.as_deref(), Some("opencode"));
+    let Some(codepet_provider_sdk::ToolOutcome::ToolSuccessOutcome(outcome)) = &tool.outcome else { panic!("success") };
+    assert_eq!(outcome.content.len(), 1);
+    assert!(matches!(outcome.content[0], ContentBlock::StructuredJsonContentBlock(_)));
 
     let created_workspace = process_directory.path().join("created-workspace");
     assert!(!created_workspace.exists());

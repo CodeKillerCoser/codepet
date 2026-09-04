@@ -1,5 +1,5 @@
 use crate::protocol::{
-    activity_summary_content_id, command_content_id, output_content_id,
+    activity_summary_content_id, output_content_id,
     reasoning_summary_content_id, text_content_id, user_input_content_id,
     CodexAppServerError, CodexApprovalRequest, CodexContentKind, CodexConversationSnapshot,
     CodexIncoming, CodexModel, CodexNotification, CodexPermissionLevel, CodexProject,
@@ -8,19 +8,29 @@ use crate::protocol::{
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalRequestedEvent, ApprovalResolvedEvent, ApprovalStatus,
-    ChoiceOption, ChoiceSet, ConversationContent, ConversationContentKind,
+    ActivitySummaryContentBlock, ActivitySummaryContentBlockKind, ApprovalConversationItem,
+    ApprovalConversationItemKind, ChoiceOption, ChoiceSet, CommandConversationItem,
+    CommandConversationItemKind, CommandToolInput, CommandToolInputKind, ContentBlock,
+    ConversationContentKind,
     ConversationCreateCapabilities, ConversationItem, ConversationItemUpsertedEvent,
-    ConversationItemKind, ConversationItemRole, ConversationItemStatus, ConversationStatus,
+    ConversationItemRole, ConversationItemStatus, ConversationStatus,
     ConversationUpsertedEvent, FlatModelCatalog, FlatModelCatalogKind, FlatModelSelection,
     HarnessDescriptor, InstanceStatus, JsonObject, ModelCatalog, ModelSelection, Project,
     ProjectChangeType, ProjectChangedEvent, ProjectRoot, ProtocolError,
     ProtocolEvent, ProviderApproval, ProviderCapabilities, ProviderCapability,
     ProviderConversation, ProviderExtension, ProviderInstance, ProviderInstanceRoute,
     ProviderAuthentication, ProviderTurn, ProviderUsage, RoutedResourceId, ToolCategory,
-    ToolCommandAction, ToolCommandActionKind,
-    ToolCommandDetails, ToolContent, ToolContentKind, ToolInvocation, ToolOrigin, ToolOriginKind,
-    ToolResult, ToolTiming, TurnOutputDeltaEvent, TurnSelection, TurnSendCapabilities, TurnStatus,
+    FileChangeConversationItem, FileChangeConversationItemKind, MessageConversationItem,
+    MessageConversationItemKind, OpaqueToolInput, OpaqueToolInputKind, OutputContentBlock,
+    OutputContentBlockKind, ReasoningConversationItem, ReasoningConversationItemKind,
+    StructuredJsonContentBlock, StructuredJsonContentBlockKind, StructuredToolInput,
+    StructuredToolInputKind, TextContentBlock, TextContentBlockKind, ToolCommandAction,
+    ToolCommandActionKind, ToolConversationItem, ToolConversationItemKind, ToolExecutionError,
+    ToolFailureOutcome, ToolFailureOutcomeKind, ToolInput, ToolInvocation, ToolOrigin,
+    ToolOriginKind, ToolOutcome, ToolSuccessOutcome, ToolSuccessOutcomeKind, ToolTiming,
+    TurnOutputDeltaEvent, TurnSelection, TurnSendCapabilities, TurnStatus,
     TurnUpsertedEvent,
+    UnknownConversationItem, UnknownConversationItemKind,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -509,94 +519,81 @@ impl CodexProtocolMapper {
         let turn_resource = self.resource(turn.id.clone());
         let mutable_text = turn.status == CodexTurnStatus::InProgress;
         match item {
-            CodexThreadItem::UserMessage { id, text_inputs } => ConversationItem {
+            CodexThreadItem::UserMessage { id, text_inputs } => ConversationItem::MessageConversationItem(MessageConversationItem {
                 resource,
                 turn: turn_resource,
                 conversation: conversation.clone(),
-                kind: ConversationItemKind::Message,
+                kind: MessageConversationItemKind::Message,
                 status: ConversationItemStatus::Completed,
-                role: Some(ConversationItemRole::User),
-                title: None,
+                role: ConversationItemRole::User,
                 contents: text_inputs
                     .iter()
                     .enumerate()
                     .filter_map(|(index, text)| {
-                        text.as_ref().map(|text| ConversationContent {
+                        text.as_ref().map(|text| ContentBlock::TextContentBlock(TextContentBlock {
                             content_id: user_input_content_id(id, index),
-                            kind: ConversationContentKind::Text,
+                            kind: TextContentBlockKind::Text,
                             text: text.clone(),
-                        })
+                            truncation: None,
+                        }))
                     })
                     .collect(),
-                related_item: None,
-                approval: None,
-                tool: None,
-            },
-            CodexThreadItem::AgentMessage { id, text } => ConversationItem {
+            }),
+            CodexThreadItem::AgentMessage { id, text } => ConversationItem::MessageConversationItem(MessageConversationItem {
                 resource,
                 turn: turn_resource,
                 conversation: conversation.clone(),
-                kind: ConversationItemKind::Message,
+                kind: MessageConversationItemKind::Message,
                 status: mutable_content_status(turn.status),
-                role: Some(ConversationItemRole::Assistant),
-                title: None,
+                role: ConversationItemRole::Assistant,
                 contents: (!mutable_text)
-                    .then(|| ConversationContent {
+                    .then(|| ContentBlock::TextContentBlock(TextContentBlock {
                         content_id: text_content_id(id),
-                        kind: ConversationContentKind::Text,
+                        kind: TextContentBlockKind::Text,
                         text: text.clone(),
-                    })
+                        truncation: None,
+                    }))
                     .into_iter()
                     .collect(),
-                related_item: None,
-                approval: None,
-                tool: None,
-            },
-            CodexThreadItem::Plan { id, text } => ConversationItem {
+            }),
+            CodexThreadItem::Plan { id, text } => ConversationItem::MessageConversationItem(MessageConversationItem {
                 resource,
                 turn: turn_resource,
                 conversation: conversation.clone(),
-                kind: ConversationItemKind::Message,
+                kind: MessageConversationItemKind::Message,
                 status: mutable_content_status(turn.status),
-                role: Some(ConversationItemRole::Assistant),
-                title: Some("Plan".to_string()),
+                role: ConversationItemRole::Assistant,
                 contents: (!mutable_text)
-                    .then(|| ConversationContent {
+                    .then(|| ContentBlock::TextContentBlock(TextContentBlock {
                         content_id: text_content_id(id),
-                        kind: ConversationContentKind::Text,
+                        kind: TextContentBlockKind::Text,
                         text: text.clone(),
-                    })
+                        truncation: None,
+                    }))
                     .into_iter()
                     .collect(),
-                related_item: None,
-                approval: None,
-                tool: None,
-            },
-            CodexThreadItem::Reasoning { id, summary } => ConversationItem {
+            }),
+            CodexThreadItem::Reasoning { id, summary } => ConversationItem::ReasoningConversationItem(ReasoningConversationItem {
                 resource,
                 turn: turn_resource,
                 conversation: conversation.clone(),
-                kind: ConversationItemKind::Reasoning,
+                kind: ReasoningConversationItemKind::Reasoning,
                 status: mutable_content_status(turn.status),
-                role: Some(ConversationItemRole::Assistant),
-                title: None,
                 contents: if mutable_text {
                     Vec::new()
                 } else {
                     summary
                         .iter()
                         .enumerate()
-                        .map(|(index, text)| ConversationContent {
+                        .map(|(index, text)| ContentBlock::ReasoningSummaryContentBlock(codepet_provider_sdk::ReasoningSummaryContentBlock {
                             content_id: reasoning_summary_content_id(id, index),
-                            kind: ConversationContentKind::ReasoningSummary,
+                            kind: codepet_provider_sdk::ReasoningSummaryContentBlockKind::ReasoningSummary,
                             text: text.clone(),
-                        })
+                            truncation: None,
+                        }))
                         .collect()
                 },
-                related_item: None,
-                approval: None,
-                tool: None,
-            },
+            }),
             CodexThreadItem::CommandExecution {
                 id,
                 command,
@@ -609,152 +606,131 @@ impl CodexProtocolMapper {
                 command_actions,
             } => {
                 let status = activity_status(status);
-                let (bounded_command, _, _) = bounded_tool_text(command);
-                let mut contents = vec![ConversationContent {
-                    content_id: command_content_id(id),
-                    kind: ConversationContentKind::Command,
-                    text: bounded_command.clone(),
-                }];
                 let mut result_content = Vec::new();
                 if status != ConversationItemStatus::Running {
                     if let Some(output) = aggregated_output {
-                        let (text, truncated, total_bytes) = bounded_tool_text(output);
-                        contents.push(ConversationContent {
+                        result_content.push(ContentBlock::OutputContentBlock(OutputContentBlock {
                             content_id: output_content_id(id),
-                            kind: ConversationContentKind::Output,
-                            text: text.clone(),
-                        });
-                        result_content.push(ToolContent {
-                            content_id: output_content_id(id),
-                            kind: ToolContentKind::Text,
-                            text: Some(text),
-                            uri: None,
-                            mime_type: Some("text/plain".to_string()),
-                            name: Some("Command output".to_string()),
-                            truncated: truncated.then_some(true),
-                            total_bytes: truncated.then_some(total_bytes),
-                        });
+                            kind: OutputContentBlockKind::Output,
+                            text: output.clone(),
+                            truncation: None,
+                        }));
                     }
                 }
-                let mut input = object([("command", json!(bounded_command))]);
-                if let Some(cwd) = cwd {
-                    input.insert("cwd".to_string(), json!(cwd));
-                }
+                let failed = matches!(status, ConversationItemStatus::Failed | ConversationItemStatus::Interrupted)
+                    || exit_code.is_some_and(|code| code != 0);
+                let outcome = (status != ConversationItemStatus::Running).then(|| {
+                    if failed {
+                        ToolOutcome::ToolFailureOutcome(ToolFailureOutcome {
+                            kind: ToolFailureOutcomeKind::Failure,
+                            content: result_content,
+                            error: ToolExecutionError {
+                                code: Some("command_failed".to_string()),
+                                message: exit_code.map_or_else(|| "Command failed".to_string(), |code| format!("Command exited with status {code}")),
+                                retryable: None,
+                            },
+                            exit_code: *exit_code,
+                            process_id: process_id.clone(),
+                        })
+                    } else {
+                        ToolOutcome::ToolSuccessOutcome(ToolSuccessOutcome {
+                            kind: ToolSuccessOutcomeKind::Success,
+                            content: result_content,
+                            exit_code: *exit_code,
+                            process_id: process_id.clone(),
+                        })
+                    }
+                });
                 let tool = ToolInvocation {
                     call_id: id.clone(),
                     name: "shell".to_string(),
                     namespace: None,
                     category: ToolCategory::Command,
                     origin: ToolOrigin { kind: ToolOriginKind::Builtin, name: Some("codex".to_string()) },
-                    input,
-                    raw_input: None,
-                    result: (status != ConversationItemStatus::Running).then_some(ToolResult {
-                        content: result_content,
-                        structured_content: None,
-                        error: None,
-                    }),
-                    timing: duration_ms.map(|duration_ms| ToolTiming {
-                        started_at: None,
-                        completed_at: None,
-                        duration_ms: Some(duration_ms),
-                    }),
-                    command: Some(ToolCommandDetails {
-                        command: bounded_command,
+                    input: ToolInput::CommandToolInput(CommandToolInput {
+                        kind: CommandToolInputKind::Command,
+                        command: command.clone(),
                         cwd: cwd.clone(),
-                        exit_code: *exit_code,
-                        process_id: process_id.clone(),
+                        shell: None,
                         actions: (!command_actions.is_empty()).then(|| command_actions.iter().take(64).map(|action| ToolCommandAction {
                             kind: command_action_kind(&action.kind),
-                            command: bounded_tool_text(&action.command).0,
+                            command: action.command.clone(),
                             name: action.name.clone(),
                             path: action.path.clone(),
                             query: action.query.clone(),
                         }).collect()),
                     }),
+                    outcome,
+                    timing: duration_ms.map(|duration_ms| ToolTiming {
+                        started_at: None,
+                        completed_at: None,
+                        duration_ms: Some(duration_ms),
+                    }),
                     annotations: None,
                     extension: None,
                 };
-                ConversationItem {
+                ConversationItem::CommandConversationItem(CommandConversationItem {
                     resource,
                     turn: turn_resource,
                     conversation: conversation.clone(),
-                    kind: ConversationItemKind::Command,
+                    kind: CommandConversationItemKind::Command,
                     status,
-                    role: None,
                     title: Some(command_title(command, command_actions)),
-                    contents,
-                    related_item: None,
-                    approval: None,
-                    tool: Some(tool),
-                }
+                    tool,
+                })
             }
             CodexThreadItem::FileChange {
                 id,
                 status,
                 change_count,
-            } => ConversationItem {
+            } => ConversationItem::FileChangeConversationItem(FileChangeConversationItem {
                 resource,
                 turn: turn_resource,
                 conversation: conversation.clone(),
-                kind: ConversationItemKind::FileChange,
+                kind: FileChangeConversationItemKind::FileChange,
                 status: activity_status(status),
-                role: None,
                 title: Some("File changes".to_string()),
-                contents: vec![ConversationContent {
+                contents: vec![ContentBlock::ActivitySummaryContentBlock(ActivitySummaryContentBlock {
                     content_id: activity_summary_content_id(id),
-                    kind: ConversationContentKind::ActivitySummary,
+                    kind: ActivitySummaryContentBlockKind::ActivitySummary,
                     text: format!("{change_count} file change(s)"),
-                }],
-                related_item: None,
-                approval: None,
-                tool: None,
-            },
-            CodexThreadItem::ToolActivity { id, title, status, details } => ConversationItem {
+                    truncation: None,
+                })],
+            }),
+            CodexThreadItem::ToolActivity { id, title, status, details } => ConversationItem::ToolConversationItem(ToolConversationItem {
                 resource,
                 turn: turn_resource,
                 conversation: conversation.clone(),
-                kind: ConversationItemKind::Tool,
+                kind: ToolConversationItemKind::Tool,
                 status: status
                     .as_deref()
                     .map(activity_status)
                     .unwrap_or_else(|| item_status_from_turn(turn.status)),
-                role: None,
                 title: Some(title.clone()),
-                contents: Vec::new(),
-                related_item: None,
-                approval: None,
-                tool: details.as_ref().map(|details| tool_invocation(id, details)),
-            },
-            CodexThreadItem::Unknown { .. } => ConversationItem {
+                tool: details.as_ref().map(|details| tool_invocation(id, details)).unwrap_or_else(|| opaque_tool_invocation(id, title)),
+            }),
+            CodexThreadItem::Unknown { .. } => ConversationItem::UnknownConversationItem(UnknownConversationItem {
                 resource,
                 turn: turn_resource,
                 conversation: conversation.clone(),
-                kind: ConversationItemKind::Unknown,
+                kind: UnknownConversationItemKind::Unknown,
                 status: item_status_from_turn(turn.status),
-                role: None,
                 title: Some("Unknown Codex activity".to_string()),
-                contents: Vec::new(),
-                related_item: None,
-                approval: None,
-                tool: None,
-            },
+            }),
         }
     }
 
     fn approval_item(&self, related_item_id: &str, approval: &ProviderApproval) -> ConversationItem {
-        ConversationItem {
+        ConversationItem::ApprovalConversationItem(ApprovalConversationItem {
             resource: approval.resource.clone(),
             turn: approval.turn.clone(),
             conversation: approval.conversation.clone(),
-            kind: ConversationItemKind::Approval,
+            kind: ApprovalConversationItemKind::Approval,
             status: approval_item_status(approval.status),
-            role: None,
             title: Some(approval.title.clone()),
-            contents: Vec::new(),
             related_item: Some(self.resource(related_item_id.to_string())),
-            approval: Some(approval.clone()),
-            tool: None,
-        }
+            approval: approval.clone(),
+        })
     }
 
     pub fn events(
@@ -1005,65 +981,53 @@ fn content_kind(kind: CodexContentKind) -> ConversationContentKind {
 
 fn tool_invocation(id: &str, details: &crate::protocol::CodexToolDetails) -> ToolInvocation {
     let serialized_input = details.input.to_string();
-    let input_fits = serialized_input.len() <= 256 * 1024;
-    let input = input_fits
-        .then(|| details.input.as_object())
-        .flatten()
-        .map(|object| object.iter().map(|(key, value)| (key.clone(), value.clone())).collect())
-        .unwrap_or_default();
-    let raw_input = (!input_fits || !details.input.is_object())
-        .then(|| bounded_tool_text(&serialized_input).0);
-    let result = details.result.as_ref().map(|value| {
+    let input = match details.input.as_object() {
+        Some(object) => ToolInput::StructuredToolInput(StructuredToolInput {
+            kind: StructuredToolInputKind::Structured,
+            value: object.iter().map(|(key, value)| (key.clone(), value.clone())).collect(),
+            truncation: None,
+        }),
+        None => ToolInput::OpaqueToolInput(OpaqueToolInput {
+            kind: OpaqueToolInputKind::Opaque,
+            value: serialized_input,
+            mime_type: Some("application/json".to_string()),
+            truncation: None,
+        }),
+    };
+    let outcome = details.result.as_ref().map(|value| {
         let mut content = Vec::new();
-        let mut structured_content = None;
         match value {
             Value::String(text) => {
-                let (text, truncated, total_bytes) = bounded_tool_text(text);
-                content.push(ToolContent {
+                content.push(ContentBlock::OutputContentBlock(OutputContentBlock {
                     content_id: format!("{id}:result:0"),
-                    kind: ToolContentKind::Text,
-                    text: Some(text),
-                    uri: None,
-                    mime_type: Some("text/plain".to_string()),
-                    name: None,
-                    truncated: truncated.then_some(true),
-                    total_bytes: truncated.then_some(total_bytes),
-                });
+                    kind: OutputContentBlockKind::Output,
+                    text: text.clone(),
+                    truncation: None,
+                }));
             }
             Value::Object(object) => {
-                if value.to_string().len() <= 256 * 1024 {
-                    structured_content = Some(object.iter().map(|(key, value)| (key.clone(), value.clone())).collect());
-                } else {
-                    let serialized = value.to_string();
-                    let (text, truncated, total_bytes) = bounded_tool_text(&serialized);
-                    content.push(ToolContent {
-                        content_id: format!("{id}:result:0"),
-                        kind: ToolContentKind::Text,
-                        text: Some(text),
-                        uri: None,
-                        mime_type: Some("application/json".to_string()),
-                        name: None,
-                        truncated: truncated.then_some(true),
-                        total_bytes: truncated.then_some(total_bytes),
-                    });
-                }
+                content.push(ContentBlock::StructuredJsonContentBlock(StructuredJsonContentBlock {
+                    content_id: format!("{id}:result:0"),
+                    kind: StructuredJsonContentBlockKind::StructuredJson,
+                    value: object.iter().map(|(key, value)| (key.clone(), value.clone())).collect(),
+                    truncation: None,
+                }));
             }
             other => {
-                let text = other.to_string();
-                let (text, truncated, total_bytes) = bounded_tool_text(&text);
-                content.push(ToolContent {
+                content.push(ContentBlock::OutputContentBlock(OutputContentBlock {
                     content_id: format!("{id}:result:0"),
-                    kind: ToolContentKind::Text,
-                    text: Some(text),
-                    uri: None,
-                    mime_type: Some("application/json".to_string()),
-                    name: None,
-                    truncated: truncated.then_some(true),
-                    total_bytes: truncated.then_some(total_bytes),
-                });
+                    kind: OutputContentBlockKind::Output,
+                    text: other.to_string(),
+                    truncation: None,
+                }));
             }
         }
-        ToolResult { content, structured_content, error: None }
+        ToolOutcome::ToolSuccessOutcome(ToolSuccessOutcome {
+            kind: ToolSuccessOutcomeKind::Success,
+            content,
+            exit_code: None,
+            process_id: None,
+        })
     });
     ToolInvocation {
         call_id: id.to_string(),
@@ -1082,10 +1046,28 @@ fn tool_invocation(id: &str, details: &crate::protocol::CodexToolDetails) -> Too
             name: details.origin_name.clone(),
         },
         input,
-        raw_input,
-        result,
+        outcome,
         timing: None,
-        command: None,
+        annotations: None,
+        extension: None,
+    }
+}
+
+fn opaque_tool_invocation(id: &str, name: &str) -> ToolInvocation {
+    ToolInvocation {
+        call_id: id.to_string(),
+        name: name.to_string(),
+        namespace: None,
+        category: tool_category(name),
+        origin: ToolOrigin { kind: ToolOriginKind::Unknown, name: None },
+        input: ToolInput::OpaqueToolInput(OpaqueToolInput {
+            kind: OpaqueToolInputKind::Opaque,
+            value: String::new(),
+            mime_type: None,
+            truncation: None,
+        }),
+        outcome: None,
+        timing: None,
         annotations: None,
         extension: None,
     }
@@ -1149,19 +1131,6 @@ fn concise_title(command: &str) -> String {
     } else {
         format!("{}…", first_line.chars().take(MAX_CHARS - 1).collect::<String>())
     }
-}
-
-fn bounded_tool_text(text: &str) -> (String, bool, u64) {
-    const MAX_BYTES: usize = 256 * 1024;
-    let total_bytes = u64::try_from(text.len()).unwrap_or(u64::MAX);
-    if text.len() <= MAX_BYTES {
-        return (text.to_string(), false, total_bytes);
-    }
-    let mut end = MAX_BYTES;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    (format!("{}\n[tool output truncated]", &text[..end]), true, total_bytes)
 }
 
 fn mutable_content_status(status: CodexTurnStatus) -> ConversationItemStatus {
@@ -1569,7 +1538,7 @@ mod tests {
         assert_eq!(
             items
                 .iter()
-                .map(|item| item.resource.native_resource_id.as_str())
+                .map(item_resource_id)
                 .collect::<Vec<_>>(),
             vec![
                 "user-one",
@@ -1581,26 +1550,22 @@ mod tests {
                 "unknown-one"
             ]
         );
-        assert_eq!(items[0].contents[0].content_id, "user-one:input:0");
-        assert_eq!(items[1].contents[0].content_id, "agent-one:text");
-        assert_eq!(
-            items[2].contents[0].content_id,
-            "reasoning-one:summary:0"
-        );
-        assert_eq!(items[3].contents[0].content_id, "command-one:command");
-        assert_eq!(items[3].contents[1].content_id, "command-one:output");
-        assert_eq!(items[3].title.as_deref(), Some("cargo test"));
-        let command_tool = items[3].tool.as_ref().unwrap();
+        assert_eq!(item_content_ids(&items[0]), vec!["user-one:input:0"]);
+        assert_eq!(item_content_ids(&items[1]), vec!["agent-one:text"]);
+        assert_eq!(item_content_ids(&items[2]), vec!["reasoning-one:summary:0"]);
+        let ConversationItem::CommandConversationItem(command) = &items[3] else { panic!("command item") };
+        assert_eq!(command.title.as_deref(), Some("cargo test"));
+        let command_tool = &command.tool;
         assert_eq!(command_tool.name, "shell");
-        assert_eq!(command_tool.command.as_ref().unwrap().cwd.as_deref(), Some("/workspace"));
-        assert_eq!(command_tool.command.as_ref().unwrap().exit_code, Some(0));
+        let ToolInput::CommandToolInput(input) = &command_tool.input else { panic!("command input") };
+        assert_eq!(input.command, "cargo test");
+        assert_eq!(input.cwd.as_deref(), Some("/workspace"));
         assert_eq!(command_tool.timing.as_ref().unwrap().duration_ms, Some(42));
-        assert_eq!(command_tool.result.as_ref().unwrap().content[0].text.as_deref(), Some("ok"));
-        assert_eq!(items[6].kind, ConversationItemKind::Unknown);
-        assert!(items[6].contents.is_empty());
-        assert!(items.iter().all(|item| {
-            item.conversation.native_resource_id == "thread-history"
-        }));
+        let Some(ToolOutcome::ToolSuccessOutcome(outcome)) = &command_tool.outcome else { panic!("success outcome") };
+        assert_eq!(outcome.exit_code, Some(0));
+        assert_eq!(item_content_ids(&items[3]), vec!["command-one:output"]);
+        assert!(matches!(items[6], ConversationItem::UnknownConversationItem(_)));
+        assert!(items.iter().all(|item| item_conversation_id(item) == "thread-history"));
     }
 
     #[test]
@@ -1633,15 +1598,14 @@ mod tests {
 
         let items = mapper.conversation_items(&snapshot, &[]);
 
-        assert!(items[0].contents.is_empty());
-        assert!(items[1].contents.is_empty());
-        assert_eq!(items[2].contents.len(), 1);
-        assert_eq!(items[2].contents[0].kind, ConversationContentKind::Command);
-        assert_eq!(items[2].status, ConversationItemStatus::Running);
+        assert!(item_content_ids(&items[0]).is_empty());
+        assert!(item_content_ids(&items[1]).is_empty());
+        let ConversationItem::CommandConversationItem(command) = &items[2] else { panic!("command item") };
+        assert_eq!(command.status, ConversationItemStatus::Running);
+        assert!(command.tool.outcome.is_none());
         let committed_content_ids = items
             .iter()
-            .flat_map(|item| item.contents.iter())
-            .map(|content| content.content_id.as_str())
+            .flat_map(item_content_ids)
             .collect::<Vec<_>>();
         assert!(!committed_content_ids.contains(&"agent-live:text"));
         assert!(!committed_content_ids.contains(&"reasoning-live:summary:0"));
@@ -1685,16 +1649,70 @@ mod tests {
         );
 
         assert_eq!(items.len(), 2);
-        assert_eq!(items[1].kind, ConversationItemKind::Approval);
-        assert_eq!(items[1].approval.as_ref(), Some(&approval));
+        let ConversationItem::ApprovalConversationItem(item) = &items[1] else { panic!("approval item") };
+        assert_eq!(item.approval, approval);
         assert_eq!(
-            items[1]
+            item
                 .related_item
                 .as_ref()
                 .unwrap()
                 .native_resource_id,
             "command-one"
         );
+    }
+
+    fn item_resource_id(item: &ConversationItem) -> &str {
+        match item {
+            ConversationItem::MessageConversationItem(value) => &value.resource.native_resource_id,
+            ConversationItem::ReasoningConversationItem(value) => &value.resource.native_resource_id,
+            ConversationItem::CommandConversationItem(value) => &value.resource.native_resource_id,
+            ConversationItem::FileChangeConversationItem(value) => &value.resource.native_resource_id,
+            ConversationItem::ToolConversationItem(value) => &value.resource.native_resource_id,
+            ConversationItem::ApprovalConversationItem(value) => &value.resource.native_resource_id,
+            ConversationItem::UnknownConversationItem(value) => &value.resource.native_resource_id,
+        }
+    }
+
+    fn item_conversation_id(item: &ConversationItem) -> &str {
+        match item {
+            ConversationItem::MessageConversationItem(value) => &value.conversation.native_resource_id,
+            ConversationItem::ReasoningConversationItem(value) => &value.conversation.native_resource_id,
+            ConversationItem::CommandConversationItem(value) => &value.conversation.native_resource_id,
+            ConversationItem::FileChangeConversationItem(value) => &value.conversation.native_resource_id,
+            ConversationItem::ToolConversationItem(value) => &value.conversation.native_resource_id,
+            ConversationItem::ApprovalConversationItem(value) => &value.conversation.native_resource_id,
+            ConversationItem::UnknownConversationItem(value) => &value.conversation.native_resource_id,
+        }
+    }
+
+    fn item_content_ids(item: &ConversationItem) -> Vec<&str> {
+        let contents = match item {
+            ConversationItem::MessageConversationItem(value) => &value.contents,
+            ConversationItem::ReasoningConversationItem(value) => &value.contents,
+            ConversationItem::FileChangeConversationItem(value) => &value.contents,
+            ConversationItem::CommandConversationItem(value) => match &value.tool.outcome {
+                Some(ToolOutcome::ToolSuccessOutcome(outcome)) => &outcome.content,
+                Some(ToolOutcome::ToolFailureOutcome(outcome)) => &outcome.content,
+                None => return Vec::new(),
+            },
+            ConversationItem::ToolConversationItem(value) => match &value.tool.outcome {
+                Some(ToolOutcome::ToolSuccessOutcome(outcome)) => &outcome.content,
+                Some(ToolOutcome::ToolFailureOutcome(outcome)) => &outcome.content,
+                None => return Vec::new(),
+            },
+            _ => return Vec::new(),
+        };
+        contents.iter().map(|content| match content {
+            ContentBlock::TextContentBlock(value) => value.content_id.as_str(),
+            ContentBlock::ReasoningSummaryContentBlock(value) => value.content_id.as_str(),
+            ContentBlock::OutputContentBlock(value) => value.content_id.as_str(),
+            ContentBlock::ActivitySummaryContentBlock(value) => value.content_id.as_str(),
+            ContentBlock::StructuredJsonContentBlock(value) => value.content_id.as_str(),
+            ContentBlock::ImageContentBlock(value) => value.content_id.as_str(),
+            ContentBlock::AudioContentBlock(value) => value.content_id.as_str(),
+            ContentBlock::ResourceLinkContentBlock(value) => value.content_id.as_str(),
+            ContentBlock::EmbeddedResourceContentBlock(value) => value.content_id.as_str(),
+        }).collect()
     }
 
     fn test_mapper() -> CodexProtocolMapper {

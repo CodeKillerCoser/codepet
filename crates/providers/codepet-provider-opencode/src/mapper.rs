@@ -5,17 +5,25 @@ use crate::protocol::{
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalRequestedEvent, ApprovalResolvedEvent, ApprovalStatus,
-    ChoiceOption, ChoiceSet, ConversationContent, ConversationContentKind,
-    ConversationCreateCapabilities, ConversationItem, ConversationItemKind,
+    ActivitySummaryContentBlock, ActivitySummaryContentBlockKind, ChoiceOption, ChoiceSet,
+    CommandConversationItem, CommandConversationItemKind, CommandToolInput, CommandToolInputKind,
+    ContentBlock, ConversationContentKind, ConversationCreateCapabilities, ConversationItem,
     ConversationItemRole, ConversationItemStatus, ConversationStatus, HarnessDescriptor,
     GroupedModelCatalog, GroupedModelCatalogKind, GroupedModelProvider, GroupedModelSelection,
-    InstanceStatus, JsonObject, ModelCatalog, ModelSelection, ProtocolError, ProtocolEvent, ProviderApproval, ProviderCapabilities,
+    InstanceStatus, ModelCatalog, ModelSelection, ProtocolError, ProtocolEvent, ProviderApproval, ProviderCapabilities,
     ProviderCapability, ProviderConversation, ProviderInstance, ProviderInstanceRoute,
-    ProviderTurn, RoutedResourceId, ToolCategory, ToolCommandDetails, ToolContent,
-    ToolContentKind, ToolExecutionError, ToolInvocation, ToolOrigin, ToolOriginKind, ToolResult,
+    MessageConversationItem, MessageConversationItemKind, OpaqueToolInput, OpaqueToolInputKind,
+    OutputContentBlock, OutputContentBlockKind, ProviderTurn, ReasoningConversationItem,
+    ReasoningConversationItemKind, RoutedResourceId, StructuredJsonContentBlock,
+    StructuredJsonContentBlockKind, StructuredToolInput, StructuredToolInputKind,
+    TextContentBlock, TextContentBlockKind, ToolCategory, ToolConversationItem,
+    ToolConversationItemKind, ToolExecutionError, ToolFailureOutcome, ToolFailureOutcomeKind,
+    ToolInput, ToolInvocation, ToolOrigin, ToolOriginKind, ToolOutcome, ToolSuccessOutcome,
+    ToolSuccessOutcomeKind,
     ToolTiming, TurnOutputDeltaEvent, TurnSelection, TurnSendCapabilities, TurnStatus, TurnUpsertedEvent,
+    UnknownConversationItem, UnknownConversationItemKind,
 };
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 
 pub struct OpenCodeProtocolMapper {
@@ -288,23 +296,20 @@ impl OpenCodeProtocolMapper {
         item_id: String,
         text: String,
     ) -> ConversationItem {
-        ConversationItem {
+        ConversationItem::MessageConversationItem(MessageConversationItem {
             resource: self.resource(item_id.clone()),
             turn: turn.resource.clone(),
             conversation: conversation.clone(),
-            kind: ConversationItemKind::Message,
+            kind: MessageConversationItemKind::Message,
             status: ConversationItemStatus::Completed,
-            role: Some(ConversationItemRole::User),
-            title: None,
-            contents: vec![ConversationContent {
+            role: ConversationItemRole::User,
+            contents: vec![ContentBlock::TextContentBlock(TextContentBlock {
                 content_id: format!("{item_id}:text"),
-                kind: ConversationContentKind::Text,
+                kind: TextContentBlockKind::Text,
                 text,
-            }],
-            related_item: None,
-            approval: None,
-            tool: None,
-        }
+                truncation: None,
+            })],
+        })
     }
 
     pub fn conversation_items(
@@ -314,25 +319,18 @@ impl OpenCodeProtocolMapper {
     ) -> Vec<ConversationItem> {
         let mut items = Vec::new();
         let mut turn = self.resource("history-turn:initial".to_string());
-        let mut text_budget = 12 * 1024 * 1024;
         for message in messages {
             if message.kind == "user" {
                 turn = self.resource(format!("history-turn:{}", message.id));
             }
             match message.kind.as_str() {
-                "user" => items.push(self.history_item(
-                    message.id.clone(),
-                    turn.clone(),
-                    conversation,
-                    ConversationItemKind::Message,
-                    ConversationItemStatus::Completed,
-                    Some(ConversationItemRole::User),
-                    None,
-                    message.text.as_deref().map(|text| ConversationContent {
+                "user" => items.push(self.message_item(
+                    message.id.clone(), turn.clone(), conversation,
+                    ConversationItemStatus::Completed, ConversationItemRole::User,
+                    message.text.as_deref().map(|text| ContentBlock::TextContentBlock(TextContentBlock {
                         content_id: format!("{}:text", message.id),
-                        kind: ConversationContentKind::Text,
-                        text: bounded_history_text(text, &mut text_budget),
-                    }).into_iter().collect(),
+                        kind: TextContentBlockKind::Text, text: text.to_string(), truncation: None,
+                    })).into_iter().collect(),
                 )),
                 "assistant" => {
                     let status = assistant_status(message);
@@ -343,106 +341,43 @@ impl OpenCodeProtocolMapper {
                             &turn,
                             conversation,
                             status,
-                            &mut text_budget,
                         ) {
                             items.push(item);
                         }
                     }
                     if message.content.as_ref().is_none_or(Vec::is_empty) {
-                        let contents = message.error.as_ref().map(|error| ConversationContent {
+                        let contents = message.error.as_ref().map(|error| ContentBlock::ActivitySummaryContentBlock(ActivitySummaryContentBlock {
                             content_id: format!("{}:error", message.id),
-                            kind: ConversationContentKind::ActivitySummary,
-                            text: bounded_history_text(&error.to_string(), &mut text_budget),
-                        }).into_iter().collect();
-                        items.push(self.history_item(
-                            message.id.clone(),
-                            turn.clone(),
-                            conversation,
-                            ConversationItemKind::Message,
-                            status,
-                            Some(ConversationItemRole::Assistant),
-                            None,
-                            contents,
+                            kind: ActivitySummaryContentBlockKind::ActivitySummary,
+                            text: error.to_string(), truncation: None,
+                        })).into_iter().collect();
+                        items.push(self.message_item(
+                            message.id.clone(), turn.clone(), conversation, status,
+                            ConversationItemRole::Assistant, contents,
                         ));
                     }
                 }
                 "shell" => {
-                    let mut contents = Vec::new();
-                    if let Some(command) = message.command.as_deref() {
-                        contents.push(ConversationContent {
-                            content_id: format!("{}:command", message.id),
-                            kind: ConversationContentKind::Command,
-                            text: bounded_history_text(command, &mut text_budget),
-                        });
-                    }
-                    if let Some(output) = message.output.as_deref() {
-                        contents.push(ConversationContent {
-                            content_id: format!("{}:output", message.id),
-                            kind: ConversationContentKind::Output,
-                            text: bounded_history_text(output, &mut text_budget),
-                        });
-                    }
-                    let mut item = self.history_item(
-                        message.id.clone(),
-                        turn.clone(),
-                        conversation,
-                        ConversationItemKind::Command,
-                        terminal_message_status(message),
-                        None,
-                        Some("Shell".to_string()),
-                        contents,
-                    );
-                    item.tool = Some(shell_tool_invocation(message));
-                    item.title = message.command.as_deref().map(concise_tool_title).or(item.title);
-                    items.push(item);
+                    items.push(ConversationItem::CommandConversationItem(CommandConversationItem {
+                        resource: self.resource(message.id.clone()), turn: turn.clone(),
+                        conversation: conversation.clone(), kind: CommandConversationItemKind::Command,
+                        status: assistant_status(message),
+                        title: message.command.as_deref().map(concise_tool_title).or_else(|| Some("Shell".to_string())),
+                        tool: shell_tool_invocation(message),
+                    }));
                 }
-                "system" | "synthetic" => items.push(self.history_item(
-                    message.id.clone(),
-                    turn.clone(),
-                    conversation,
-                    ConversationItemKind::Message,
-                    ConversationItemStatus::Completed,
-                    None,
-                    Some(if message.kind == "system" { "System" } else { "Synthetic" }.to_string()),
-                    message.text.as_deref().map(|text| ConversationContent {
+                "system" | "synthetic" => items.push(self.message_item(
+                    message.id.clone(), turn.clone(), conversation,
+                    ConversationItemStatus::Completed, ConversationItemRole::Assistant,
+                    message.text.as_deref().map(|text| ContentBlock::TextContentBlock(TextContentBlock {
                         content_id: format!("{}:text", message.id),
-                        kind: ConversationContentKind::Text,
-                        text: bounded_history_text(text, &mut text_budget),
-                    }).into_iter().collect(),
+                        kind: TextContentBlockKind::Text, text: text.to_string(), truncation: None,
+                    })).into_iter().collect(),
                 )),
-                "compaction" => {
-                    let contents = [
-                        ("summary", message.summary.as_deref()),
-                        ("recent", message.recent.as_deref()),
-                    ]
-                    .into_iter()
-                    .filter_map(|(name, text)| text.map(|text| ConversationContent {
-                        content_id: format!("{}:{name}", message.id),
-                        kind: ConversationContentKind::ActivitySummary,
-                        text: bounded_history_text(text, &mut text_budget),
-                    }))
-                    .collect();
-                    items.push(self.history_item(
-                        message.id.clone(),
-                        turn.clone(),
-                        conversation,
-                        ConversationItemKind::Unknown,
-                        ConversationItemStatus::Completed,
-                        None,
-                        Some("Compaction".to_string()),
-                        contents,
-                    ));
-                }
-                _ => items.push(self.history_item(
-                    message.id.clone(),
-                    turn.clone(),
-                    conversation,
-                    ConversationItemKind::Unknown,
-                    terminal_message_status(message),
-                    None,
-                    Some(format!("OpenCode {}", message.kind)),
-                    Vec::new(),
-                )),
+                "compaction" => items.push(self.unknown_item(message.id.clone(), turn.clone(), conversation,
+                    ConversationItemStatus::Completed, Some("Compaction".to_string()))),
+                _ => items.push(self.unknown_item(message.id.clone(), turn.clone(), conversation,
+                    terminal_message_status(message), Some(format!("OpenCode {}", message.kind)))),
             }
         }
         items
@@ -455,91 +390,55 @@ impl OpenCodeProtocolMapper {
         turn: &RoutedResourceId,
         conversation: &RoutedResourceId,
         message_status: ConversationItemStatus,
-        text_budget: &mut usize,
     ) -> Option<ConversationItem> {
         let resource_id = format!("{message_id}:{}", content.id);
         match content.kind.as_str() {
-            "text" => Some(self.history_item(
-                resource_id,
-                turn.clone(),
-                conversation,
-                ConversationItemKind::Message,
-                message_status,
-                Some(ConversationItemRole::Assistant),
-                None,
-                content.text.as_deref().map(|text| ConversationContent {
+            "text" => Some(self.message_item(resource_id, turn.clone(), conversation,
+                message_status, ConversationItemRole::Assistant,
+                content.text.as_deref().map(|text| ContentBlock::TextContentBlock(TextContentBlock {
                     content_id: format!("{message_id}:{}:text", content.id),
-                    kind: ConversationContentKind::Text,
-                    text: bounded_history_text(text, text_budget),
-                }).into_iter().collect(),
+                    kind: TextContentBlockKind::Text, text: text.to_string(), truncation: None,
+                })).into_iter().collect(),
             )),
-            "reasoning" => Some(self.history_item(
-                resource_id,
-                turn.clone(),
-                conversation,
-                ConversationItemKind::Reasoning,
-                message_status,
-                Some(ConversationItemRole::Assistant),
-                None,
-                content.text.as_deref().map(|text| ConversationContent {
+            "reasoning" => Some(ConversationItem::ReasoningConversationItem(ReasoningConversationItem {
+                resource: self.resource(resource_id), turn: turn.clone(), conversation: conversation.clone(),
+                kind: ReasoningConversationItemKind::Reasoning, status: message_status,
+                contents: content.text.as_deref().map(|text| ContentBlock::ReasoningSummaryContentBlock(codepet_provider_sdk::ReasoningSummaryContentBlock {
                     content_id: format!("{message_id}:{}:summary:0", content.id),
-                    kind: ConversationContentKind::ReasoningSummary,
-                    text: bounded_history_text(text, text_budget),
-                }).into_iter().collect(),
-            )),
+                    kind: codepet_provider_sdk::ReasoningSummaryContentBlockKind::ReasoningSummary,
+                    text: text.to_string(), truncation: None,
+                })).into_iter().collect(),
+            })),
             "tool" => {
                 let status = tool_status(content.state.as_ref());
                 let tool = opencode_tool_invocation(content);
-                let mut item = self.history_item(
-                    resource_id,
-                    turn.clone(),
-                    conversation,
-                    ConversationItemKind::Tool,
-                    status,
-                    None,
-                    content.name.clone().or_else(|| Some("Tool".to_string())),
-                    Vec::new(),
-                );
-                item.tool = Some(tool);
-                Some(item)
+                Some(ConversationItem::ToolConversationItem(ToolConversationItem {
+                    resource: self.resource(resource_id), turn: turn.clone(), conversation: conversation.clone(),
+                    kind: ToolConversationItemKind::Tool, status,
+                    title: content.name.clone().or_else(|| Some("Tool".to_string())), tool,
+                }))
             }
-            _ => Some(self.history_item(
-                resource_id,
-                turn.clone(),
-                conversation,
-                ConversationItemKind::Unknown,
-                message_status,
-                None,
-                Some(format!("OpenCode {}", content.kind)),
-                Vec::new(),
-            )),
+            _ => Some(self.unknown_item(resource_id, turn.clone(), conversation, message_status,
+                Some(format!("OpenCode {}", content.kind)))),
         }
     }
 
-    fn history_item(
-        &self,
-        resource_id: String,
-        turn: RoutedResourceId,
-        conversation: &RoutedResourceId,
-        kind: ConversationItemKind,
-        status: ConversationItemStatus,
-        role: Option<ConversationItemRole>,
-        title: Option<String>,
-        contents: Vec<ConversationContent>,
-    ) -> ConversationItem {
-        ConversationItem {
-            resource: self.resource(resource_id),
-            turn,
-            conversation: conversation.clone(),
-            kind,
-            status,
-            role,
-            title,
-            contents,
-            related_item: None,
-            approval: None,
-            tool: None,
-        }
+    fn message_item(&self, resource_id: String, turn: RoutedResourceId,
+        conversation: &RoutedResourceId, status: ConversationItemStatus,
+        role: ConversationItemRole, contents: Vec<ContentBlock>) -> ConversationItem {
+        ConversationItem::MessageConversationItem(MessageConversationItem {
+            resource: self.resource(resource_id), turn, conversation: conversation.clone(),
+            kind: MessageConversationItemKind::Message, status, role, contents,
+        })
+    }
+
+    fn unknown_item(&self, resource_id: String, turn: RoutedResourceId,
+        conversation: &RoutedResourceId, status: ConversationItemStatus,
+        title: Option<String>) -> ConversationItem {
+        ConversationItem::UnknownConversationItem(UnknownConversationItem {
+            resource: self.resource(resource_id), turn, conversation: conversation.clone(),
+            kind: UnknownConversationItemKind::Unknown, status, title,
+        })
     }
 
     pub fn turn(
@@ -745,31 +644,33 @@ fn choice_display_name(id: &str) -> String {
 fn opencode_tool_invocation(content: &OpenCodeMessageContent) -> ToolInvocation {
     let state = content.state.as_ref().and_then(Value::as_object);
     let input_value = state.and_then(|state| state.get("input"));
-    let serialized_input = input_value.map(Value::to_string);
-    let input_fits = serialized_input.as_ref().is_none_or(|value| value.len() <= 256 * 1024);
-    let input: JsonObject = input_fits
-        .then(|| input_value.and_then(Value::as_object))
-        .flatten()
-        .map(|object| object.iter().map(|(key, value)| (key.clone(), value.clone())).collect())
-        .unwrap_or_default();
-    let raw_input = serialized_input
-        .filter(|_| !input_fits || input_value.is_some_and(|value| !value.is_object()))
-        .map(|value| bounded_tool_result_text(&value).0);
     let name = content.name.clone().unwrap_or_else(|| "tool".to_string());
-    let result = state.and_then(opencode_tool_result);
     let command = input_value
         .and_then(Value::as_object)
         .and_then(|input| input.get("command"))
-        .and_then(Value::as_str)
-        .map(|command| ToolCommandDetails {
-            command: bounded_tool_result_text(command).0,
+        .and_then(Value::as_str);
+    let input = if let Some(command) = command {
+        ToolInput::CommandToolInput(CommandToolInput {
+            kind: CommandToolInputKind::Command,
+            command: command.to_string(),
             cwd: input_value.and_then(Value::as_object).and_then(|input| input.get("cwd")).and_then(Value::as_str).map(str::to_string),
-            exit_code: state
-                .and_then(|state| state.get("exitCode"))
-                .and_then(Value::as_i64),
-            process_id: None,
+            shell: None,
             actions: None,
-        });
+        })
+    } else if let Some(object) = input_value.and_then(Value::as_object) {
+        ToolInput::StructuredToolInput(StructuredToolInput {
+            kind: StructuredToolInputKind::Structured,
+            value: object.iter().map(|(key, value)| (key.clone(), value.clone())).collect(),
+            truncation: None,
+        })
+    } else {
+        ToolInput::OpaqueToolInput(OpaqueToolInput {
+            kind: OpaqueToolInputKind::Opaque,
+            value: input_value.map(Value::to_string).unwrap_or_default(),
+            mime_type: Some("application/json".to_string()),
+            truncation: None,
+        })
+    };
     ToolInvocation {
         call_id: content.call_id.clone().unwrap_or_else(|| content.id.clone()),
         name: name.clone(),
@@ -777,20 +678,18 @@ fn opencode_tool_invocation(content: &OpenCodeMessageContent) -> ToolInvocation 
         category: opencode_tool_category(&name, command.is_some()),
         origin: ToolOrigin { kind: ToolOriginKind::Server, name: Some("opencode".to_string()) },
         input,
-        raw_input,
-        result,
+        outcome: state.and_then(opencode_tool_outcome),
         timing: content.time.as_ref().map(|time| ToolTiming {
             started_at: Some(time.created),
             completed_at: time.completed,
             duration_ms: time.completed.and_then(|completed| completed.checked_sub(time.created)),
         }),
-        command,
         annotations: None,
         extension: None,
     }
 }
 
-fn opencode_tool_result(state: &serde_json::Map<String, Value>) -> Option<ToolResult> {
+fn opencode_tool_outcome(state: &serde_json::Map<String, Value>) -> Option<ToolOutcome> {
     let status = state.get("status").and_then(Value::as_str);
     let mut content = Vec::new();
     if let Some(output) = state.get("output") {
@@ -801,74 +700,70 @@ fn opencode_tool_result(state: &serde_json::Map<String, Value>) -> Option<ToolRe
             append_tool_content(&mut content, &format!("content:{index}"), part);
         }
     }
-    let structured_value = state.get("structured");
-    let structured_content = structured_value
-        .filter(|value| value.to_string().len() <= 256 * 1024)
-        .and_then(Value::as_object)
-        .map(|object| object.iter().map(|(key, value)| (key.clone(), value.clone())).collect());
-    if structured_content.is_none() {
-        if let Some(structured) = structured_value {
+    if let Some(structured) = state.get("structured") {
+        if let Some(object) = structured.as_object() {
+            content.push(ContentBlock::StructuredJsonContentBlock(StructuredJsonContentBlock {
+                content_id: "structured".to_string(),
+                kind: StructuredJsonContentBlockKind::StructuredJson,
+                value: object.iter().map(|(key, value)| (key.clone(), value.clone())).collect(),
+                truncation: None,
+            }));
+        } else {
             append_tool_content(&mut content, "structured", structured);
         }
     }
     let error = state.get("error").map(|error| ToolExecutionError {
         code: None,
-        message: error.as_str().map(str::to_string).unwrap_or_else(|| error.to_string()),
+        message: concise_error_message(error),
         retryable: None,
-        details: None,
     });
-    (matches!(status, Some("completed" | "error")) || !content.is_empty() || structured_content.is_some() || error.is_some())
-        .then_some(ToolResult { content, structured_content, error })
+    if !matches!(status, Some("completed" | "error")) && content.is_empty() && error.is_none() {
+        return None;
+    }
+    let exit_code = state.get("exitCode").and_then(Value::as_i64);
+    Some(match error {
+        Some(error) => ToolOutcome::ToolFailureOutcome(ToolFailureOutcome {
+            kind: ToolFailureOutcomeKind::Failure, content, error, exit_code, process_id: None,
+        }),
+        None => ToolOutcome::ToolSuccessOutcome(ToolSuccessOutcome {
+            kind: ToolSuccessOutcomeKind::Success, content, exit_code, process_id: None,
+        }),
+    })
 }
 
-fn append_tool_content(content: &mut Vec<ToolContent>, id: &str, value: &Value) {
-    const MAX_RESULT_BYTES: usize = 256 * 1024;
-    let used = content.iter().filter_map(|content| content.text.as_ref()).map(String::len).sum::<usize>();
-    if used >= MAX_RESULT_BYTES {
-        return;
-    }
+fn append_tool_content(content: &mut Vec<ContentBlock>, id: &str, value: &Value) {
     let text = value
         .as_str()
         .map(str::to_string)
         .or_else(|| value.get("text").and_then(Value::as_str).map(str::to_string))
         .unwrap_or_else(|| value.to_string());
-    let (text, truncated, total_bytes) = bounded_tool_result_text_with_limit(&text, MAX_RESULT_BYTES - used);
-    content.push(ToolContent {
+    content.push(ContentBlock::OutputContentBlock(OutputContentBlock {
         content_id: id.to_string(),
-        kind: ToolContentKind::Text,
-        text: Some(text),
-        uri: None,
-        mime_type: Some(if value.is_string() { "text/plain" } else { "application/json" }.to_string()),
-        name: None,
-        truncated: truncated.then_some(true),
-        total_bytes: truncated.then_some(total_bytes),
-    });
+        kind: OutputContentBlockKind::Output,
+        text,
+        truncation: None,
+    }));
 }
 
 fn shell_tool_invocation(message: &OpenCodeMessage) -> ToolInvocation {
     let command = message.command.clone().unwrap_or_default();
-    let result = (message.output.is_some() || message.error.is_some()).then(|| {
+    let outcome = (message.output.is_some() || message.error.is_some()).then(|| {
         let content = message.output.as_ref().map(|output| {
-            let (text, truncated, total_bytes) = bounded_tool_result_text(output);
-            ToolContent {
+            ContentBlock::OutputContentBlock(OutputContentBlock {
                 content_id: format!("{}:output", message.id),
-                kind: ToolContentKind::Text,
-                text: Some(text),
-                uri: None,
-                mime_type: Some("text/plain".to_string()),
-                name: Some("Command output".to_string()),
-                truncated: truncated.then_some(true),
-                total_bytes: truncated.then_some(total_bytes),
-            }
+                kind: OutputContentBlockKind::Output,
+                text: output.clone(),
+                truncation: None,
+            })
         }).into_iter().collect();
-        ToolResult {
-            content,
-            structured_content: None,
-            error: message.error.as_ref().map(|error| ToolExecutionError {
-                code: None,
-                message: error.to_string(),
-                retryable: None,
-                details: None,
+        match message.error.as_ref() {
+            Some(error) => ToolOutcome::ToolFailureOutcome(ToolFailureOutcome {
+                kind: ToolFailureOutcomeKind::Failure, content,
+                error: ToolExecutionError { code: None, message: concise_error_message(error), retryable: None },
+                exit_code: None, process_id: None,
+            }),
+            None => ToolOutcome::ToolSuccessOutcome(ToolSuccessOutcome {
+                kind: ToolSuccessOutcomeKind::Success, content, exit_code: None, process_id: None,
             }),
         }
     });
@@ -878,24 +773,23 @@ fn shell_tool_invocation(message: &OpenCodeMessage) -> ToolInvocation {
         namespace: None,
         category: ToolCategory::Command,
         origin: ToolOrigin { kind: ToolOriginKind::Server, name: Some("opencode".to_string()) },
-        input: [("command".to_string(), json!(command))].into_iter().collect(),
-        raw_input: None,
-        result,
+        input: ToolInput::CommandToolInput(CommandToolInput {
+            kind: CommandToolInputKind::Command, command, cwd: None, shell: None, actions: None,
+        }),
+        outcome,
         timing: Some(ToolTiming {
             started_at: Some(message.time.created),
             completed_at: message.time.completed,
             duration_ms: message.time.completed.and_then(|completed| completed.checked_sub(message.time.created)),
         }),
-        command: Some(ToolCommandDetails {
-            command,
-            cwd: None,
-            exit_code: None,
-            process_id: None,
-            actions: None,
-        }),
         annotations: None,
         extension: None,
     }
+}
+
+fn concise_error_message(value: &Value) -> String {
+    let message = value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string());
+    message.chars().take(512).collect()
 }
 
 fn opencode_tool_category(name: &str, command: bool) -> ToolCategory {
@@ -927,22 +821,6 @@ fn concise_tool_title(command: &str) -> String {
     }
 }
 
-fn bounded_tool_result_text(text: &str) -> (String, bool, u64) {
-    bounded_tool_result_text_with_limit(text, 256 * 1024)
-}
-
-fn bounded_tool_result_text_with_limit(text: &str, max_bytes: usize) -> (String, bool, u64) {
-    let total_bytes = u64::try_from(text.len()).unwrap_or(u64::MAX);
-    if text.len() <= max_bytes {
-        return (text.to_string(), false, total_bytes);
-    }
-    let mut end = max_bytes;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    (format!("{}\n[tool output truncated]", &text[..end]), true, total_bytes)
-}
-
 fn assistant_status(message: &OpenCodeMessage) -> ConversationItemStatus {
     if message.error.is_some() {
         ConversationItemStatus::Failed
@@ -970,26 +848,6 @@ fn tool_status(state: Option<&serde_json::Value>) -> ConversationItemStatus {
         Some("error") => ConversationItemStatus::Failed,
         _ => ConversationItemStatus::Unknown,
     }
-}
-
-fn bounded_history_text(text: &str, budget: &mut usize) -> String {
-    const MAX_CONTENT_BYTES: usize = 256 * 1024;
-    const OMITTED: &str = "\n[OpenCode history content truncated]";
-    if *budget == 0 {
-        return "[OpenCode history content omitted]".to_string();
-    }
-    let limit = (*budget).min(MAX_CONTENT_BYTES);
-    if text.len() <= limit {
-        *budget -= text.len();
-        return text.to_string();
-    }
-    let content_limit = limit.saturating_sub(OMITTED.len());
-    let mut end = content_limit.min(text.len());
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    *budget = budget.saturating_sub(end + OMITTED.len());
-    format!("{}{}", &text[..end], OMITTED)
 }
 
 #[cfg(test)]
@@ -1059,26 +917,15 @@ mod tests {
 
         let items = mapper.conversation_items(&conversation, &messages);
 
-        assert_eq!(
-            items[1].resource.native_resource_id,
-            "assistant-one:text-0"
-        );
-        assert_eq!(
-            items[1].contents[0].content_id,
-            "assistant-one:text-0:text"
-        );
-        assert_eq!(
-            items[3].resource.native_resource_id,
-            "assistant-two:text-0"
-        );
-        assert_eq!(
-            items[3].contents[0].content_id,
-            "assistant-two:text-0:text"
-        );
-        assert_ne!(
-            items[1].contents[0].content_id,
-            items[3].contents[0].content_id
-        );
+        let ConversationItem::MessageConversationItem(first) = &items[1] else { panic!("message") };
+        let ConversationItem::MessageConversationItem(second) = &items[3] else { panic!("message") };
+        assert_eq!(first.resource.native_resource_id, "assistant-one:text-0");
+        let ContentBlock::TextContentBlock(first_text) = &first.contents[0] else { panic!("text") };
+        assert_eq!(first_text.content_id, "assistant-one:text-0:text");
+        assert_eq!(second.resource.native_resource_id, "assistant-two:text-0");
+        let ContentBlock::TextContentBlock(second_text) = &second.contents[0] else { panic!("text") };
+        assert_eq!(second_text.content_id, "assistant-two:text-0:text");
+        assert_ne!(first_text.content_id, second_text.content_id);
     }
 
     #[test]

@@ -15,155 +15,144 @@ pub use stdio::{
 pub const MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES: usize = 16 * 1024 * 1024;
 
 const CONVERSATION_HISTORY_ENVELOPE_RESERVE_BYTES: usize = 64 * 1024;
-const TRUNCATED_HISTORY_CONTENT_BYTES: usize = 32 * 1024;
-const TRUNCATED_HISTORY_NOTICE: &str = "[history content truncated to fit the Provider transport]";
+const CONVERSATION_HISTORY_SOFT_BYTES: usize = 7 * 1024 * 1024;
+const SEMANTIC_CONTENT_BYTES: usize = 128 * 1024;
 
-/// Keeps a single-turn history response below the shared Provider/Host frame limit.
-///
-/// Remote clients reduce `conversation.get.limit` to one after receiving
-/// `provider_response_too_large`. At that point the Provider must return bounded
-/// history instead of asking the client to shrink the turn page again.
+/// Applies the Provider-side semantic and page budgets before stdout serialization.
 pub fn fit_single_turn_conversation_history(
-    requested_limit: Option<u64>,
+    _requested_limit: Option<u64>,
     mut response: ConversationGetResponse,
 ) -> ConversationGetResponse {
-    if requested_limit != Some(1) || conversation_history_fits(&response) {
-        return response;
-    }
-
-    for item in &mut response.items {
-        truncate_item_content(item);
-    }
-    if conversation_history_fits(&response) {
-        return response;
-    }
-
-    if let Some(first) = response.items.first().cloned() {
-        let (resource, turn, conversation) = item_identity(first);
-        response.items = vec![ConversationItem::UnknownConversationItem(UnknownConversationItem {
-            resource,
-            turn,
-            conversation,
-            kind: UnknownConversationItemKind::Unknown,
-            status: ConversationItemStatus::Completed,
-            title: Some("History omitted".to_string()),
-        })];
-    } else {
-        response.items.clear();
+    apply_history_budget(&mut response, CONVERSATION_HISTORY_SOFT_BYTES);
+    if serialized_history_bytes(&response) > 8 * 1024 * 1024 {
+        apply_history_budget(&mut response, 5 * 1024 * 1024);
     }
     if !conversation_history_fits(&response) {
-        response.conversation.title = truncate_utf8_with_notice(
-            &response.conversation.title,
-            TRUNCATED_HISTORY_CONTENT_BYTES,
-            TRUNCATED_HISTORY_NOTICE,
-        );
-        response.conversation.preview = response.conversation.preview.as_deref().map(|value| {
-            truncate_utf8_with_notice(
-                value,
-                TRUNCATED_HISTORY_CONTENT_BYTES,
-                TRUNCATED_HISTORY_NOTICE,
-            )
-        });
-        response.conversation.workspace_root = None;
+        apply_history_budget(&mut response, 0);
+        response.conversation.preview = None;
         response.conversation.extension = None;
         if let Some(active_turn) = &mut response.conversation.active_turn {
-            active_turn.display_summary = active_turn.display_summary.as_deref().map(|value| {
-                truncate_utf8_with_notice(
-                    value,
-                    TRUNCATED_HISTORY_CONTENT_BYTES,
-                    TRUNCATED_HISTORY_NOTICE,
-                )
-            });
+            active_turn.display_summary = None;
             active_turn.extension = None;
         }
     }
     response
 }
 
-fn item_identity(item: ConversationItem) -> (RoutedResourceId, RoutedResourceId, RoutedResourceId) {
-    match item {
-        ConversationItem::MessageConversationItem(value) => (value.resource, value.turn, value.conversation),
-        ConversationItem::ReasoningConversationItem(value) => (value.resource, value.turn, value.conversation),
-        ConversationItem::CommandConversationItem(value) => (value.resource, value.turn, value.conversation),
-        ConversationItem::FileChangeConversationItem(value) => (value.resource, value.turn, value.conversation),
-        ConversationItem::ToolConversationItem(value) => (value.resource, value.turn, value.conversation),
-        ConversationItem::ApprovalConversationItem(value) => (value.resource, value.turn, value.conversation),
-        ConversationItem::UnknownConversationItem(value) => (value.resource, value.turn, value.conversation),
+fn apply_history_budget(response: &mut ConversationGetResponse, limit: usize) {
+    let mut remaining = limit;
+    for item in &mut response.items {
+        truncate_item_content(item, &mut remaining);
     }
 }
 
-fn truncate_item_content(item: &mut ConversationItem) {
+fn truncate_item_content(item: &mut ConversationItem, remaining: &mut usize) {
     match item {
-        ConversationItem::MessageConversationItem(value) => truncate_content_blocks(&mut value.contents),
-        ConversationItem::ReasoningConversationItem(value) => truncate_content_blocks(&mut value.contents),
-        ConversationItem::FileChangeConversationItem(value) => truncate_content_blocks(&mut value.contents),
-        ConversationItem::CommandConversationItem(value) => truncate_tool_content(&mut value.tool),
-        ConversationItem::ToolConversationItem(value) => truncate_tool_content(&mut value.tool),
+        ConversationItem::MessageConversationItem(value) => truncate_content_blocks(&mut value.contents, remaining),
+        ConversationItem::ReasoningConversationItem(value) => truncate_content_blocks(&mut value.contents, remaining),
+        ConversationItem::FileChangeConversationItem(value) => truncate_content_blocks(&mut value.contents, remaining),
+        ConversationItem::CommandConversationItem(value) => truncate_tool(&mut value.tool, remaining),
+        ConversationItem::ToolConversationItem(value) => truncate_tool(&mut value.tool, remaining),
         ConversationItem::ApprovalConversationItem(_) | ConversationItem::UnknownConversationItem(_) => {}
     }
 }
 
-fn truncate_tool_content(tool: &mut ToolInvocation) {
+fn truncate_tool(tool: &mut ToolInvocation, remaining: &mut usize) {
+    match &mut tool.input {
+        ToolInput::StructuredToolInput(value) => truncate_json_object(&mut value.value, &mut value.truncation, remaining),
+        ToolInput::OpaqueToolInput(value) => truncate_text(&mut value.value, &mut value.truncation, remaining),
+        ToolInput::CommandToolInput(_) => {}
+    }
     match tool.outcome.as_mut() {
-        Some(ToolOutcome::ToolSuccessOutcome(value)) => truncate_content_blocks(&mut value.content),
-        Some(ToolOutcome::ToolFailureOutcome(value)) => truncate_content_blocks(&mut value.content),
+        Some(ToolOutcome::ToolSuccessOutcome(value)) => truncate_content_blocks(&mut value.content, remaining),
+        Some(ToolOutcome::ToolFailureOutcome(value)) => {
+            value.error.message = value.error.message.chars().take(512).collect();
+            truncate_content_blocks(&mut value.content, remaining)
+        }
         None => {}
     }
 }
 
-fn truncate_content_blocks(contents: &mut [ContentBlock]) {
+fn truncate_content_blocks(contents: &mut [ContentBlock], remaining: &mut usize) {
     for content in contents {
         match content {
-            ContentBlock::TextContentBlock(value) => truncate_text_block(&mut value.text, &mut value.truncation),
-            ContentBlock::ReasoningSummaryContentBlock(value) => truncate_text_block(&mut value.text, &mut value.truncation),
-            ContentBlock::OutputContentBlock(value) => truncate_text_block(&mut value.text, &mut value.truncation),
-            ContentBlock::ActivitySummaryContentBlock(value) => truncate_text_block(&mut value.text, &mut value.truncation),
-            ContentBlock::EmbeddedResourceContentBlock(value) => truncate_text_block(&mut value.text, &mut value.truncation),
-            ContentBlock::StructuredJsonContentBlock(_)
-            | ContentBlock::ImageContentBlock(_)
+            ContentBlock::TextContentBlock(value) => truncate_text(&mut value.text, &mut value.truncation, remaining),
+            ContentBlock::ReasoningSummaryContentBlock(value) => truncate_text(&mut value.text, &mut value.truncation, remaining),
+            ContentBlock::OutputContentBlock(value) => truncate_text(&mut value.text, &mut value.truncation, remaining),
+            ContentBlock::ActivitySummaryContentBlock(value) => truncate_text(&mut value.text, &mut value.truncation, remaining),
+            ContentBlock::EmbeddedResourceContentBlock(value) => truncate_text(&mut value.text, &mut value.truncation, remaining),
+            ContentBlock::StructuredJsonContentBlock(value) => truncate_json_object(&mut value.value, &mut value.truncation, remaining),
+            ContentBlock::ImageContentBlock(_)
             | ContentBlock::AudioContentBlock(_)
             | ContentBlock::ResourceLinkContentBlock(_) => {}
         }
     }
 }
 
-fn truncate_text_block(text: &mut String, truncation: &mut Option<ContentTruncation>) {
-    if text.len() <= TRUNCATED_HISTORY_CONTENT_BYTES {
-        return;
+fn truncate_text(text: &mut String, truncation: &mut Option<ContentTruncation>, remaining: &mut usize) {
+    let original_bytes = truncation.as_ref().map_or(text.len() as u64, |value| value.original_bytes);
+    let limit = SEMANTIC_CONTENT_BYTES.min(*remaining);
+    if text.len() > limit {
+        *text = head_tail_utf8(text, limit);
+        *truncation = Some(ContentTruncation {
+            original_bytes,
+            retained_bytes: text.len() as u64,
+            strategy: ContentTruncationStrategy::HeadTail,
+        });
     }
-    let original_bytes = text.len() as u64;
-    *text = truncate_utf8_with_notice(
-        text,
-        TRUNCATED_HISTORY_CONTENT_BYTES,
-        TRUNCATED_HISTORY_NOTICE,
+    *remaining = remaining.saturating_sub(text.len());
+}
+
+fn truncate_json_object(value: &mut JsonObject, truncation: &mut Option<ContentTruncation>, remaining: &mut usize) {
+    let original_bytes = truncation.as_ref().map_or_else(
+        || serde_json::to_vec(value).map_or(usize::MAX as u64, |bytes| bytes.len() as u64),
+        |value| value.original_bytes,
     );
-    *truncation = Some(ContentTruncation {
-        original_bytes,
-        retained_bytes: text.len() as u64,
-        strategy: ContentTruncationStrategy::Head,
-    });
+    let limit = SEMANTIC_CONTENT_BYTES.min(*remaining);
+    if original_bytes > limit as u64 {
+        let mut preview = JsonObject::new();
+        for (key, entry) in value.iter() {
+            preview.insert(key.clone(), entry.clone());
+            if serde_json::to_vec(&preview).map_or(usize::MAX, |bytes| bytes.len()) > limit {
+                preview.remove(key);
+                break;
+            }
+        }
+        *value = preview;
+        let retained = serde_json::to_vec(value).map_or(0, |bytes| bytes.len());
+        *truncation = Some(ContentTruncation {
+            original_bytes,
+            retained_bytes: retained as u64,
+            strategy: ContentTruncationStrategy::StructuralPreview,
+        });
+    }
+    let retained = serde_json::to_vec(value).map_or(0, |bytes| bytes.len());
+    *remaining = remaining.saturating_sub(retained);
 }
 
 fn conversation_history_fits(response: &ConversationGetResponse) -> bool {
-    serde_json::to_vec(response).is_ok_and(|payload| {
-        payload.len()
+    serialized_history_bytes(response)
             <= MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES
                 .saturating_sub(CONVERSATION_HISTORY_ENVELOPE_RESERVE_BYTES)
-    })
 }
 
-fn truncate_utf8_with_notice(value: &str, limit: usize, notice: &str) -> String {
+fn serialized_history_bytes(response: &ConversationGetResponse) -> usize {
+    serde_json::to_vec(response).map_or(usize::MAX, |payload| payload.len())
+}
+
+fn head_tail_utf8(value: &str, limit: usize) -> String {
     if value.len() <= limit {
         return value.to_string();
     }
-    let content_limit = limit.saturating_sub(notice.len());
-    let mut end = content_limit.min(value.len());
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
+    if limit == 0 {
+        return String::new();
     }
-    let mut truncated = value[..end].to_string();
-    truncated.push_str(notice);
-    truncated
+    let mut head_end = (limit / 2).min(value.len());
+    while head_end > 0 && !value.is_char_boundary(head_end) { head_end -= 1; }
+    let tail_budget = limit.saturating_sub(head_end);
+    let mut tail_start = value.len().saturating_sub(tail_budget);
+    while tail_start < value.len() && !value.is_char_boundary(tail_start) { tail_start += 1; }
+    format!("{}{}", &value[..head_end], &value[tail_start..])
 }
 
 #[cfg(test)]
@@ -225,7 +214,7 @@ mod history_tests {
     fn limit_one_truncates_by_serialized_size_and_preserves_cursor() {
         let fitted = fit_single_turn_conversation_history(Some(1), response(600, 40_000));
         assert!(conversation_history_fits(&fitted));
-        assert_eq!(fitted.items.len(), 1);
+        assert_eq!(fitted.items.len(), 600);
         assert_eq!(
             fitted
                 .page_info
@@ -233,23 +222,40 @@ mod history_tests {
                 .and_then(|page| page.next_cursor.as_deref()),
             Some("next")
         );
-        assert!(matches!(
-            &fitted.items[0],
-            ConversationItem::UnknownConversationItem(_)
-        ));
+        assert!(serialized_history_bytes(&fitted) <= 8 * 1024 * 1024);
     }
 
     #[test]
-    fn larger_page_is_left_for_remote_limit_reduction() {
-        let original = response(1, MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES);
-        let fitted = fit_single_turn_conversation_history(Some(2), original.clone());
-        assert_eq!(fitted, original);
+    fn medium_output_uses_head_tail_with_exact_byte_counts() {
+        let original = format!("HEAD{}TAIL", "x".repeat(142 * 1024));
+        let mut value = response(1, 0);
+        let ConversationItem::MessageConversationItem(item) = &mut value.items[0] else { unreachable!() };
+        let ContentBlock::TextContentBlock(block) = &mut item.contents[0] else { unreachable!() };
+        block.text = original.clone();
+        let fitted = fit_single_turn_conversation_history(Some(10), value);
+        let ConversationItem::MessageConversationItem(item) = &fitted.items[0] else { unreachable!() };
+        let ContentBlock::TextContentBlock(block) = &item.contents[0] else { unreachable!() };
+        assert_eq!(block.text.len(), SEMANTIC_CONTENT_BYTES);
+        assert!(block.text.starts_with("HEAD"));
+        assert!(block.text.ends_with("TAIL"));
+        let truncation = block.truncation.as_ref().expect("truncation metadata");
+        assert_eq!(truncation.original_bytes, original.len() as u64);
+        assert_eq!(truncation.retained_bytes, SEMANTIC_CONTENT_BYTES as u64);
+        assert_eq!(truncation.strategy, ContentTruncationStrategy::HeadTail);
     }
 
     #[test]
-    fn utf8_truncation_does_not_split_a_character() {
-        let truncated = truncate_utf8_with_notice("好".repeat(100).as_str(), 64, "[cut]");
+    fn cumulative_page_budget_preserves_items_and_cursor() {
+        let fitted = fit_single_turn_conversation_history(Some(100), response(500, 20_000));
+        assert_eq!(fitted.items.len(), 500);
+        assert!(serialized_history_bytes(&fitted) <= 8 * 1024 * 1024);
+        assert_eq!(fitted.page_info.and_then(|page| page.next_cursor), Some("next".to_string()));
+    }
+
+    #[test]
+    fn utf8_head_tail_does_not_split_a_character() {
+        let truncated = head_tail_utf8("好".repeat(100).as_str(), 64);
         assert!(truncated.len() <= 64);
-        assert!(truncated.ends_with("[cut]"));
+        assert!(truncated.is_char_boundary(truncated.len()));
     }
 }

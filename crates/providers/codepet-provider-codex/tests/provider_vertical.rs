@@ -4,7 +4,7 @@ use codepet_provider_codex::{
 };
 use codepet_provider_sdk::{
     ApprovalDecision, ApprovalResolveRequest, ConversationAcquireInteractionRequest,
-    ConversationCreateRequest, ConversationListRequest,
+    ContentBlock, ConversationCreateRequest, ConversationItem, ConversationListRequest,
     ConversationProjectFilter, ConversationProjectFilterAll, ConversationProjectFilterAllKind,
     ConversationProjectFilterProject,
     ConversationProjectFilterProjectKind,
@@ -16,7 +16,7 @@ use codepet_provider_sdk::{
     ProtocolServer as ProviderProtocolServer, ProviderInitializeRequest,
     FlatModelCatalogKind, FlatModelSelection, ModelSelection, ProviderInstanceRoute,
     ProviderShutdownRequest, RoutedResourceId, TurnInput, TurnInputKind, TurnInterruptRequest,
-    TurnSelection, TurnStartRequest, TurnSteerRequest, VersionRange, PROTOCOL_VERSION,
+    ToolOutcome, TurnSelection, TurnStartRequest, TurnSteerRequest, VersionRange, PROTOCOL_VERSION,
 };
 use serde_json::json;
 use serde_json::Value;
@@ -31,6 +31,63 @@ use std::time::{Duration, Instant};
 
 fn provider_executable() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_codepet-provider-codex"))
+}
+
+fn item_resource_id(item: &ConversationItem) -> &str {
+    match item {
+        ConversationItem::MessageConversationItem(value) => &value.resource.native_resource_id,
+        ConversationItem::ReasoningConversationItem(value) => &value.resource.native_resource_id,
+        ConversationItem::CommandConversationItem(value) => &value.resource.native_resource_id,
+        ConversationItem::FileChangeConversationItem(value) => &value.resource.native_resource_id,
+        ConversationItem::ToolConversationItem(value) => &value.resource.native_resource_id,
+        ConversationItem::ApprovalConversationItem(value) => &value.resource.native_resource_id,
+        ConversationItem::UnknownConversationItem(value) => &value.resource.native_resource_id,
+    }
+}
+
+fn item_status(item: &ConversationItem) -> codepet_provider_sdk::ConversationItemStatus {
+    match item {
+        ConversationItem::MessageConversationItem(value) => value.status,
+        ConversationItem::ReasoningConversationItem(value) => value.status,
+        ConversationItem::CommandConversationItem(value) => value.status,
+        ConversationItem::FileChangeConversationItem(value) => value.status,
+        ConversationItem::ToolConversationItem(value) => value.status,
+        ConversationItem::ApprovalConversationItem(value) => value.status,
+        ConversationItem::UnknownConversationItem(value) => value.status,
+    }
+}
+
+fn item_contents(item: &ConversationItem) -> &[ContentBlock] {
+    match item {
+        ConversationItem::MessageConversationItem(value) => &value.contents,
+        ConversationItem::ReasoningConversationItem(value) => &value.contents,
+        ConversationItem::FileChangeConversationItem(value) => &value.contents,
+        ConversationItem::CommandConversationItem(value) => match &value.tool.outcome {
+            Some(ToolOutcome::ToolSuccessOutcome(outcome)) => &outcome.content,
+            Some(ToolOutcome::ToolFailureOutcome(outcome)) => &outcome.content,
+            None => &[],
+        },
+        ConversationItem::ToolConversationItem(value) => match &value.tool.outcome {
+            Some(ToolOutcome::ToolSuccessOutcome(outcome)) => &outcome.content,
+            Some(ToolOutcome::ToolFailureOutcome(outcome)) => &outcome.content,
+            None => &[],
+        },
+        _ => &[],
+    }
+}
+
+fn content_id(content: &ContentBlock) -> &str {
+    match content {
+        ContentBlock::TextContentBlock(value) => &value.content_id,
+        ContentBlock::ReasoningSummaryContentBlock(value) => &value.content_id,
+        ContentBlock::OutputContentBlock(value) => &value.content_id,
+        ContentBlock::ActivitySummaryContentBlock(value) => &value.content_id,
+        ContentBlock::StructuredJsonContentBlock(value) => &value.content_id,
+        ContentBlock::ImageContentBlock(value) => &value.content_id,
+        ContentBlock::AudioContentBlock(value) => &value.content_id,
+        ContentBlock::ResourceLinkContentBlock(value) => &value.content_id,
+        ContentBlock::EmbeddedResourceContentBlock(value) => &value.content_id,
+    }
 }
 
 fn app_server_executable() -> PathBuf {
@@ -535,7 +592,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         fetched
             .items
             .iter()
-            .map(|item| item.resource.native_resource_id.as_str())
+            .map(item_resource_id)
             .collect::<Vec<_>>(),
         vec![
             "user-one",
@@ -548,18 +605,13 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
             "unknown-one"
         ]
     );
-    assert_eq!(fetched.items[0].contents[0].content_id, "user-one:input:0");
+    assert_eq!(content_id(&item_contents(&fetched.items[0])[0]), "user-one:input:0");
     assert_eq!(
-        fetched.items[2].contents[0].content_id,
+        content_id(&item_contents(&fetched.items[2])[0]),
         "reasoning-one:summary:0"
     );
-    assert_eq!(
-        fetched.items[7].kind,
-        codepet_provider_sdk::ConversationItemKind::Unknown
-    );
-    assert!(fetched.items.iter().all(|item| {
-        item.kind != codepet_provider_sdk::ConversationItemKind::Approval
-    }));
+    assert!(matches!(fetched.items[7], ConversationItem::UnknownConversationItem(_)));
+    assert!(fetched.items.iter().all(|item| !matches!(item, ConversationItem::ApprovalConversationItem(_))));
     let fetched_json = serde_json::to_string(&fetched).unwrap();
     assert!(!fetched_json.contains("private raw reasoning"));
     assert!(!fetched_json.contains("must not escape"));
@@ -584,6 +636,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     .unwrap_err();
     assert_eq!(unsupported_title.code, "capability_unsupported");
 
+    let fixture_workspace = tempfile::tempdir().unwrap();
     let conversation = ProviderProtocolServer::conversation_create(
         &provider,
         ConversationCreateRequest {
@@ -593,7 +646,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
             permission_level: "workspace-write".to_string(),
             model: Some("gpt-fixture".to_string()),
             reasoning_effort: Some("high".to_string()),
-            workspace_root: Some("/fixture/workspace".to_string()),
+            workspace_root: Some(fixture_workspace.path().to_string_lossy().into_owned()),
             workspace_mode: None,
             extension: None,
         },
@@ -662,7 +715,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     assert!(refreshed
         .items
         .iter()
-        .any(|item| item.resource.native_resource_id == "user-one"));
+        .any(|item| item_resource_id(item) == "user-one"));
     let turn = started_turn.turn;
     assert_eq!(turn.resource.native_resource_id, "turn-started");
 
@@ -741,26 +794,27 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let agent = active_history
         .items
         .iter()
-        .find(|item| item.resource.native_resource_id == "agent-one")
+        .find(|item| item_resource_id(item) == "agent-one")
         .unwrap();
     let reasoning = active_history
         .items
         .iter()
-        .find(|item| item.resource.native_resource_id == "reasoning-one")
+        .find(|item| item_resource_id(item) == "reasoning-one")
         .unwrap();
     let command = active_history
         .items
         .iter()
-        .find(|item| item.resource.native_resource_id == "command-one")
+        .find(|item| item_resource_id(item) == "command-one")
         .unwrap();
     let approval_item = active_history
         .items
         .iter()
-        .find(|item| item.kind == codepet_provider_sdk::ConversationItemKind::Approval)
+        .find(|item| matches!(item, ConversationItem::ApprovalConversationItem(_)))
         .unwrap();
-    assert!(agent.contents.is_empty());
-    assert!(reasoning.contents.is_empty());
-    assert_eq!(command.contents.len(), 1);
+    assert!(item_contents(agent).is_empty());
+    assert!(item_contents(reasoning).is_empty());
+    assert!(item_contents(command).is_empty());
+    let ConversationItem::ApprovalConversationItem(approval_item) = approval_item else { unreachable!() };
     assert_eq!(
         approval_item.status,
         codepet_provider_sdk::ConversationItemStatus::Approved
@@ -776,8 +830,6 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     assert_eq!(
         approval_item
             .approval
-            .as_ref()
-            .unwrap()
             .resource
             .native_resource_id,
         resolved_approval_id
@@ -2027,8 +2079,8 @@ async fn valid_lease_keeps_writer_through_delayed_output_and_terminal_forwarding
             .unwrap();
         match event {
             ProtocolEvent::EventConversationItemUpserted { params, .. }
-                if params.item.resource.native_resource_id == "user-one"
-                    && params.item.status
+                if item_resource_id(&params.item) == "user-one"
+                    && item_status(&params.item)
                         == codepet_provider_sdk::ConversationItemStatus::Completed =>
             {
                 saw_completed_user_item = true;
@@ -3376,7 +3428,7 @@ fn provider_binary_fails_stop_after_an_oversized_host_frame() {
 }
 
 #[test]
-fn provider_binary_transports_a_complete_history_larger_than_one_mebibyte() {
+fn provider_binary_truncates_a_large_history_before_stdout_and_keeps_serving() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("unused.txt");
     let mut provider = ProviderBinary::spawn();
@@ -3394,7 +3446,8 @@ fn provider_binary_transports_a_complete_history_larger_than_one_mebibyte() {
             }
         }),
     );
-    assert!(serde_json::to_vec(&fetched).unwrap().len() > 1024 * 1024);
+    assert!(serde_json::to_vec(&fetched).unwrap().len() < 1024 * 1024);
+    assert!(fetched.to_string().contains("\"truncation\""));
 
     let described = provider.request("after-large-history", "provider.describe", json!({}));
     assert_eq!(
@@ -3407,7 +3460,7 @@ fn provider_binary_transports_a_complete_history_larger_than_one_mebibyte() {
 }
 
 #[test]
-fn provider_binary_returns_a_stable_error_for_oversized_history_and_keeps_serving() {
+fn provider_binary_budgets_an_oversized_page_and_keeps_serving() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("oversized-history.txt");
     let mut provider = ProviderBinary::spawn();
@@ -3421,23 +3474,10 @@ fn provider_binary_returns_a_stable_error_for_oversized_history_and_keeps_servin
         }),
     );
     assert_eq!(fetched["id"], "oversized-history");
-    assert_eq!(fetched["error"]["code"], -32000);
-    assert_eq!(
-        fetched.pointer("/error/data/code").and_then(Value::as_str),
-        Some("provider_response_too_large")
-    );
-    assert_eq!(
-        fetched
-            .pointer("/error/data/retryable")
-            .and_then(Value::as_bool),
-        Some(false)
-    );
-    assert_eq!(
-        fetched
-            .pointer("/error/data/details/maxFrameBytes")
-            .and_then(Value::as_u64),
-        Some(codepet_provider_sdk::MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES as u64)
-    );
+    assert!(fetched.get("error").is_none(), "{fetched}");
+    let fetched_bytes = serde_json::to_vec(&fetched).unwrap();
+    assert!(fetched_bytes.len() <= 8 * 1024 * 1024);
+    assert!(fetched.to_string().contains("\"truncation\""));
 
     let reduced = provider.request(
         "reduced-history",
@@ -3878,6 +3918,8 @@ impl ProviderBinary {
     }
 
     fn create_conversation(&mut self, id: &str) -> Value {
+        let workspace = std::env::temp_dir().join(format!("codepet-codex-provider-{}-{id}", self.child.id()));
+        std::fs::create_dir_all(&workspace).unwrap();
         self.request(
             id,
             "conversation.create",
@@ -3886,7 +3928,7 @@ impl ProviderBinary {
                 "permissionLevel": "workspace-write",
                 "model": "gpt-fixture",
                 "reasoningEffort": "high",
-                "workspaceRoot": "/fixture/workspace"
+                "workspaceRoot": workspace.to_string_lossy()
             }),
         )
         .pointer("/result/conversation/resource")
@@ -4023,12 +4065,14 @@ fn fixture_args(approval_mode: &str, marker: &Path) -> Vec<String> {
 }
 
 fn conversation_create_params() -> Value {
+    let workspace = std::env::temp_dir().join(format!("codepet-codex-create-workspace-{}", std::process::id()));
+    std::fs::create_dir_all(&workspace).unwrap();
     json!({
         "route": route_value(),
         "permissionLevel": "workspace-write",
         "model": "gpt-fixture",
         "reasoningEffort": "high",
-        "workspaceRoot": "/fixture/workspace"
+        "workspaceRoot": workspace.to_string_lossy()
     })
 }
 

@@ -802,10 +802,6 @@ pub fn reasoning_summary_content_id(item_id: &str, index: usize) -> String {
     format!("{item_id}:summary:{index}")
 }
 
-pub fn command_content_id(item_id: &str) -> String {
-    format!("{item_id}:command")
-}
-
 pub fn output_content_id(item_id: &str) -> String {
     format!("{item_id}:output")
 }
@@ -1237,7 +1233,6 @@ mod tests {
             reasoning_summary_content_id("item-one", 1),
             "item-one:summary:1"
         );
-        assert_eq!(command_content_id("item-one"), "item-one:command");
         assert_eq!(output_content_id("item-one"), "item-one:output");
         assert_ne!(
             reasoning_summary_content_id("item-one", 0),
