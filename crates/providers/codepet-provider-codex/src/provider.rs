@@ -1693,7 +1693,8 @@ impl CodexProvider {
             plugin_id: CODEX_PLUGIN_ID.to_string(),
             display_name: "Codex".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            default_workspace_root: codex_home().map(|path| path.to_string_lossy().into_owned()),
+            default_workspace_root: codex_home()
+                .map(|path| path.join("codepet-workspaces").to_string_lossy().into_owned()),
             supported_versions: VersionRange {
                 min_version: PROTOCOL_VERSION,
                 max_version: PROTOCOL_VERSION,
@@ -3304,7 +3305,7 @@ fn prepare_conversation_workspace(
 ) -> Result<Option<String>, ProtocolError> {
     let mode = workspace_mode.unwrap_or("main");
     if mode == "main" {
-        return Ok(workspace_root.map(str::to_string));
+        return workspace_root.map(ensure_conversation_workspace).transpose();
     }
     if mode != "worktree" {
         return Err(protocol_error(
@@ -3347,6 +3348,25 @@ fn codex_home() -> Option<PathBuf> {
                 .filter(|value| !value.is_empty())
                 .map(|home| PathBuf::from(home).join(".codex"))
         })
+}
+
+fn ensure_conversation_workspace(path: &str) -> Result<String, ProtocolError> {
+    let workspace = Path::new(path);
+    if !workspace.is_absolute() {
+        return Err(protocol_error(
+            "invalid_workspace_root",
+            "Codex workspaceRoot must be an absolute path".to_string(),
+            false,
+        ));
+    }
+    std::fs::create_dir_all(workspace).map_err(|error| {
+        protocol_error(
+            "workspace_create_failed",
+            format!("failed to create Codex workspaceRoot: {error}"),
+            false,
+        )
+    })?;
+    Ok(path.to_string())
 }
 
 fn create_managed_worktree(
@@ -3450,10 +3470,21 @@ fn create_managed_worktree(
 
 #[cfg(test)]
 mod workspace_mode_tests {
-    use super::create_managed_worktree;
+    use super::{create_managed_worktree, ensure_conversation_workspace};
     use std::fs;
     use std::path::Path;
     use std::process::Command;
+
+    #[test]
+    fn creates_a_missing_standalone_workspace() {
+        let fixture = tempfile::tempdir().unwrap();
+        let workspace = fixture.path().join("task-1");
+
+        let prepared = ensure_conversation_workspace(workspace.to_str().unwrap()).unwrap();
+
+        assert_eq!(Path::new(&prepared), workspace);
+        assert!(workspace.is_dir());
+    }
 
     #[test]
     fn creates_a_detached_managed_worktree_and_preserves_relative_cwd() {

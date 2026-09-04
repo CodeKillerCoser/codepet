@@ -149,6 +149,7 @@ async fn configured_provider(
     .await
     .unwrap();
     assert_eq!(initialized.plugin.plugin_id, CLAUDE_PLUGIN_ID);
+    assert!(initialized.plugin.default_workspace_root.is_some());
 
     let described = ProviderProtocolServer::provider_describe(
         provider.as_ref(),

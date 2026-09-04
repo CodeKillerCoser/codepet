@@ -755,7 +755,12 @@ impl OpenCodeProvider {
             plugin_id: OPENCODE_PLUGIN_ID.to_string(),
             display_name: "OpenCode".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            default_workspace_root: None,
+            default_workspace_root: default_server_working_directory().map(|path| {
+                path.join(".opencode")
+                    .join("codepet-workspaces")
+                    .to_string_lossy()
+                    .into_owned()
+            }),
             supported_versions: VersionRange {
                 min_version: PROTOCOL_VERSION,
                 max_version: PROTOCOL_VERSION,
@@ -1372,13 +1377,7 @@ impl Provider for OpenCodeProvider {
                         false,
                     )
                 })?;
-            if !workspace_root.is_absolute() {
-                return Err(protocol_error(
-                    "invalid_workspace_root",
-                    "OpenCode workspaceRoot must be an absolute path".to_string(),
-                    false,
-                ));
-            }
+            let workspace_root = ensure_opencode_workspace(workspace_root)?;
             let directory = workspace_root.to_string_lossy().to_string();
             let session = runtime.ready_session()?;
             let client = session.client();
@@ -2032,6 +2031,24 @@ fn default_server_working_directory() -> Option<PathBuf> {
         .filter(|path| path.is_absolute() && path.is_dir())
 }
 
+fn ensure_opencode_workspace(workspace: PathBuf) -> Result<PathBuf, ProtocolError> {
+    if !workspace.is_absolute() {
+        return Err(protocol_error(
+            "invalid_workspace_root",
+            "OpenCode workspaceRoot must be an absolute path".to_string(),
+            false,
+        ));
+    }
+    std::fs::create_dir_all(&workspace).map_err(|error| {
+        protocol_error(
+            "workspace_create_failed",
+            format!("failed to create OpenCode workspaceRoot: {error}"),
+            false,
+        )
+    })?;
+    Ok(workspace)
+}
+
 fn probe_opencode_account_metadata(
     executable: &std::path::Path,
     working_directory: Option<&std::path::Path>,
@@ -2626,8 +2643,22 @@ fn selected_opencode_model(selection: &TurnSelection) -> Result<OpenCodeModelRef
 
 #[cfg(test)]
 mod tests {
-    use super::{approval_resource_id, decode_settings, message_id, turn_resource_id};
+    use super::{
+        approval_resource_id, decode_settings, ensure_opencode_workspace, message_id,
+        turn_resource_id,
+    };
     use serde_json::json;
+
+    #[test]
+    fn creates_a_missing_standalone_workspace() {
+        let fixture = tempfile::tempdir().unwrap();
+        let workspace = fixture.path().join("task-1");
+
+        let prepared = ensure_opencode_workspace(workspace.clone()).unwrap();
+
+        assert_eq!(prepared, workspace);
+        assert!(workspace.is_dir());
+    }
 
     #[test]
     fn settings_require_host_resolved_absolute_executable() {

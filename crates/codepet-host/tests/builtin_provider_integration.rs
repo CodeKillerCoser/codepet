@@ -140,10 +140,12 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
         claude.identity.icon.as_deref(),
         Some("https://cdn.prod.website-files.com/6889473510b50328dbb70ae6/68c33859cc6cd903686c66a2_apple-touch-icon.png")
     );
+    assert!(claude.identity.default_workspace_root.is_some());
     assert_eq!(
         opencode.identity.icon.as_deref(),
         Some("https://opencode.ai/favicon-96x96-v3.png")
     );
+    assert!(opencode.identity.default_workspace_root.is_some());
 
     let codex_conversations = conversation_list(gateway.as_ref(), codex, &device_id, CODEX_PLUGIN_ID).await;
     assert_eq!(codex_conversations.len(), 1);

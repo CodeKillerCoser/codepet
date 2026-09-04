@@ -255,14 +255,7 @@ impl ClaudeInstanceRuntime {
                 false,
             )
         })?;
-        let workspace_root = PathBuf::from(workspace_root);
-        if !workspace_root.is_absolute() || !workspace_root.is_dir() {
-            return Err(protocol_error(
-                "invalid_conversation_options",
-                "workspaceRoot must be an existing absolute directory".to_string(),
-                false,
-            ));
-        }
+        let workspace_root = ensure_claude_workspace(workspace_root)?;
         if request.title.as_ref().is_some_and(|title| title.trim().is_empty()) {
             return Err(protocol_error(
                 "invalid_conversation_options",
@@ -1291,7 +1284,13 @@ impl ClaudeProvider {
             plugin_id: CLAUDE_PLUGIN_ID.to_string(),
             display_name: "Claude".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            default_workspace_root: None,
+            default_workspace_root: claude_config_dir().and_then(|path| {
+                path.is_absolute().then(|| {
+                    path.join("codepet-workspaces")
+                        .to_string_lossy()
+                        .into_owned()
+                })
+            }),
             supported_versions: VersionRange {
                 min_version: PROTOCOL_VERSION,
                 max_version: PROTOCOL_VERSION,
@@ -2263,6 +2262,25 @@ fn claude_config_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude"))
 }
 
+fn ensure_claude_workspace(path: &str) -> Result<PathBuf, ProtocolError> {
+    let workspace = PathBuf::from(path);
+    if !workspace.is_absolute() {
+        return Err(protocol_error(
+            "invalid_conversation_options",
+            "workspaceRoot must be an absolute directory".to_string(),
+            false,
+        ));
+    }
+    std::fs::create_dir_all(&workspace).map_err(|error| {
+        protocol_error(
+            "workspace_create_failed",
+            format!("failed to create Claude workspaceRoot: {error}"),
+            false,
+        )
+    })?;
+    Ok(workspace)
+}
+
 fn discover_claude_conversations(
     config_dir: &Path,
     route: &ProviderInstanceRoute,
@@ -2784,6 +2802,17 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn creates_a_missing_standalone_workspace() {
+        let fixture = tempfile::tempdir().unwrap();
+        let workspace = fixture.path().join("task-1");
+
+        let prepared = ensure_claude_workspace(workspace.to_str().unwrap()).unwrap();
+
+        assert_eq!(prepared, workspace);
+        assert!(workspace.is_dir());
+    }
 
     #[test]
     fn discovers_and_reads_persisted_claude_jsonl_conversations() {

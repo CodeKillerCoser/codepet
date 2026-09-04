@@ -62,7 +62,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
             details: None,
         })
     }));
-    provider
+    let initialized = provider
         .provider_initialize(ProviderInitializeRequest {
             host_client_id: "host-fixture".to_string(),
             host_device_id: "device-fixture".to_string(),
@@ -74,6 +74,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         })
         .await
         .unwrap();
+    assert!(initialized.plugin.default_workspace_root.is_some());
     let route = ProviderInstanceRoute {
         device_id: "device-fixture".to_string(),
         provider_plugin_id: OPENCODE_PLUGIN_ID.to_string(),
@@ -170,10 +171,8 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     assert_eq!(tool.input.get("path"), Some(&json!("README.md")));
     assert_eq!(tool.origin.name.as_deref(), Some("opencode"));
 
-    let created_workspace = std::env::temp_dir()
-        .join("opencode-created")
-        .to_string_lossy()
-        .to_string();
+    let created_workspace = process_directory.path().join("created-workspace");
+    assert!(!created_workspace.exists());
     let new_conversation = provider
         .conversation_create(ConversationCreateRequest {
             route: route.clone(),
@@ -182,12 +181,13 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
             permission_level: "opencode-default".to_string(),
             model: None,
             reasoning_effort: None,
-            workspace_root: Some(created_workspace),
+            workspace_root: Some(created_workspace.to_string_lossy().into_owned()),
             workspace_mode: None,
             extension: None,
         })
         .await
         .unwrap();
+    assert!(created_workspace.is_dir());
     assert_eq!(
         new_conversation.conversation.resource.native_resource_id,
         "ses_created"
