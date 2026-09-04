@@ -16,14 +16,14 @@
 
 工具调用只拥有一份输入和一份结果：
 
-- `CommandToolInput` 表达真正的命令执行，拥有 `command`、`cwd` 和可选 shell/actions。工具内部碰巧调用 shell 不足以把它归为 command。
+- `CommandToolInput` 表达真正的命令执行，拥有 `command`、`cwd` 和可选 shell/actions。工具内部碰巧调用 shell 不足以把它归为 command。命令过长时可对 `command` 做 UTF-8 安全的 head-tail 截断，并在 input 上携带与内容块同构的截断元数据。
 - `StructuredToolInput` 表达已可靠解析的 JSON 参数。
 - `OpaqueToolInput` 表达无法可靠理解语义的原始输入。输入过大与输入不透明是两个维度；大 JSON 仍是 structured，只对其内容执行预算策略。
 - 三种输入必须通过 `oneOf` 与 singleton `kind` 互斥，不再并列提供 `input + rawInput + command` 三个完整载荷位置。
 
 工具结果使用 success/failure 判别联合。内容块是输出正文的唯一所有者；结构化 JSON 作为一种内容块表达，不再同时序列化为 `content` 与 `structuredContent`。failure 的 `error.message` 只保存有界的人类可读摘要，stdout/stderr/诊断正文仍分别属于内容块，不能把完整输出复制进错误消息。exit code、process id 等执行结果属于 outcome，不属于输入。
 
-消息正文和工具结果共用同一套稳定内容块身份与截断元数据。截断元数据位于被截断的内容块，至少包含 `originalBytes`、`retainedBytes` 和 `strategy`；`omittedBytes` 可由协议要求显式提供或从前两者推导，但所有生成 SDK 必须保持同一选择。没有截断元数据即表示该块完整。`head-tail` 用于日志、Shell 和测试输出，结构化输入可以使用 `structural-preview`，不能仅用一个布尔值让客户端猜测丢失多少内容。
+消息正文和工具结果共用同一套稳定内容块身份与截断元数据。截断元数据位于被截断的内容块或 tool input，至少包含 `originalBytes`、`retainedBytes` 和 `strategy`；`omittedBytes` 可由协议要求显式提供或从前两者推导，但所有生成 SDK 必须保持同一选择。没有截断元数据即表示对应载荷完整。`head-tail` 用于命令、日志、Shell 和测试输出，结构化输入可以使用 `structural-preview`，不能仅用一个布尔值让客户端猜测丢失多少内容。
 
 第一次截断必须发生在 Provider 对响应做 stdout JSON 序列化之前，因为 Provider→Host 的 16 MiB JSON-line 是最早会失败的边界。共享 Provider SDK 负责一致的内容预算、页软预算和最终 frame 检查；各 Provider 只提供语义分类和原生内容。Host/Gateway 可按自己的远程传输预算做第二次有损投影，但不能把它当作保护 Provider frame 的手段。
 
@@ -57,4 +57,3 @@
 - 用 65–142 KiB 的中等输出以及数百个 8–20 KiB 输出验证单块限制与累计页预算。
 - 记录 method、route、cursor、limit、最终字节数、按 kind 数量和截断字节数，不记录正文。
 - 协议实现完成后，分别验收 Provider frame、Host/Gateway 投影和 Remote snapshot/delta，不以 UI 能打开作为唯一通过标准。
-

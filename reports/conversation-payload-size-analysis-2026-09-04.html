@@ -478,7 +478,7 @@
 }</pre>
       <ul>
         <li><strong>ConversationItem 联合：</strong>message、reasoning、tool/command、file change、approval、unknown 分支互斥；不再由一个对象上的大量 optional 字段表达领域状态。</li>
-        <li><strong>ToolInput 联合：</strong><code>command | structured | opaque</code> 三选一。Command 是“语义上执行命令”，Structured 是已可靠解析的 JSON，Opaque 是无法可靠理解的输入；尺寸大不等于 opaque。</li>
+        <li><strong>ToolInput 联合：</strong><code>command | structured | opaque</code> 三选一。Command 是“语义上执行命令”，Structured 是已可靠解析的 JSON，Opaque 是无法可靠理解的输入；尺寸大不等于 opaque。三种 input 均可携带同构 truncation，超长 command 使用 UTF-8 安全的 head-tail。</li>
         <li><strong>ToolOutcome 联合：</strong><code>success | failure</code> 二选一。内容块是输出唯一所有者；结构化 JSON 作为一种内容块，不再同时写 text 与 <code>structuredContent</code>；错误 message 只保留短摘要。</li>
         <li><strong>截断元数据属于内容：</strong>截断与抽屉无关。任意 UI 都读取同一内容块，并用 <code>originalBytes</code>、<code>retainedBytes</code>、<code>strategy</code> 显示它不完整。</li>
         <li><strong>Delta 指向 canonical content：</strong>继续使用 <code>itemId + contentId</code>；客户端 committed contentId 必须遍历各 item variant 的内容块，不能依赖文本相等。</li>
@@ -566,7 +566,7 @@
             </tbody>
           </table>
         </div>
-        <p><strong>截断方式：</strong>Shell/log/test 输出建议保留开头与结尾，而非只保留开头；末尾通常包含退出码、失败摘要和断言。内容块返回 <code>truncation.originalBytes</code>、<code>retainedBytes</code>、<code>strategy=head-tail</code>；文件 diff 可按文件拆分并给出文件级摘要。该元数据描述内容完整性，与内容是在消息内、抽屉还是详情页展示无关。</p>
+        <p><strong>截断方式：</strong>command input 与 Shell/log/test 输出建议保留开头与结尾，而非只保留开头；末尾通常包含参数、退出码、失败摘要和断言。tool input 或内容块返回 <code>truncation.originalBytes</code>、<code>retainedBytes</code>、<code>strategy=head-tail</code>；文件 diff 可按文件拆分并给出文件级摘要。该元数据描述载荷完整性，与内容是在消息内、抽屉还是详情页展示无关。</p>
         <p><strong>不应统一截断：</strong>用户消息和助手最终正文在样本中占比很小，应给予更高上限或独立策略，避免为了工具噪声损害主要对话内容。</p>
       </div>
 
