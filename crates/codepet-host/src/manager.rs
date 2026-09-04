@@ -7,7 +7,7 @@ use codepet_provider_sdk::{
     ApprovalResolveRequest, ApprovalResolveResponse, ClientId, ConversationCreateRequest,
     ConversationAcquireInteractionRequest, ConversationAcquireInteractionResponse,
     ConversationCreateResponse, ConversationGetRequest, ConversationGetResponse,
-    ConversationItemKind, ConversationListRequest, ConversationListResponse,
+    ConversationListRequest, ConversationListResponse,
     ConversationSearchRequest, ConversationSearchResponse, InstanceCapabilitiesRequest,
     InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceStartRequest, InstanceStatus,
     InstanceStopRequest, ProjectCreateRequest, ProjectCreateResponse, ProjectDeleteRequest,
@@ -1255,15 +1255,22 @@ impl PluginManager {
                 &expected_conversation,
                 &route,
             )?;
+            let provider_user_item = match user_item {
+                codepet_provider_sdk::ConversationItem::MessageConversationItem(item) => item,
+                _ => {
+                    return Err(HostError::new(
+                        "provider_response_invalid",
+                        "Provider turn.start userItem must be a canonical user message when present",
+                    ));
+                }
+            };
             validate_exact_resource(
-                &user_item.turn,
+                &provider_user_item.turn,
                 &response.turn.resource,
                 "turn.start user item turn",
             )?;
-            if user_item.kind != ConversationItemKind::Message
-                || user_item.role
-                    != Some(codepet_provider_sdk::ConversationItemRole::User)
-                || user_item.contents.is_empty()
+            if provider_user_item.role != codepet_provider_sdk::ConversationItemRole::User
+                || provider_user_item.contents.is_empty()
             {
                 return Err(HostError::new(
                     "provider_response_invalid",
@@ -1884,7 +1891,7 @@ fn event_route(event: &ProtocolEvent) -> HostResult<ProviderInstanceRoute> {
             route_from_resource(&params.conversation.resource)
         }
         ProtocolEvent::EventConversationItemUpserted { params, .. } => {
-            route_from_resource(&params.item.resource)
+            route_from_resource(conversation_item_resource(&params.item))
         }
         ProtocolEvent::EventTurnUpserted { params, .. } => {
             route_from_resource(&params.turn.resource)
@@ -1917,7 +1924,11 @@ fn validate_event_routes(
             validate_conversation_routes(&params.conversation, route)
         }
         ProtocolEvent::EventConversationItemUpserted { params, .. } => {
-            validate_conversation_items(std::slice::from_ref(&params.item), &params.item.conversation, route)
+            validate_conversation_items(
+                std::slice::from_ref(&params.item),
+                conversation_item_conversation(&params.item),
+                route,
+            )
         }
         ProtocolEvent::EventTurnUpserted { params, .. } => {
             validate_turn_routes(&params.turn, route)
@@ -1989,47 +2000,45 @@ fn validate_conversation_items(
     let mut item_ids = BTreeSet::new();
     let mut content_ids = BTreeSet::new();
     for item in items {
-        validate_resource_route(&item.resource, route)?;
-        validate_resource_route(&item.turn, route)?;
-        validate_resource_route(&item.conversation, route)?;
+        let resource = conversation_item_resource(item);
+        let turn = conversation_item_turn(item);
+        let item_conversation = conversation_item_conversation(item);
+        validate_resource_route(resource, route)?;
+        validate_resource_route(turn, route)?;
+        validate_resource_route(item_conversation, route)?;
         validate_exact_resource(
-            &item.conversation,
+            item_conversation,
             conversation,
             "conversation history item",
         )?;
-        if !item_ids.insert(item.resource.native_resource_id.as_str()) {
+        if !item_ids.insert(resource.native_resource_id.as_str()) {
             return Err(HostError::new(
                 "duplicate_conversation_item",
                 "Provider conversation history contains a duplicate item identity",
             ));
         }
-        for content in &item.contents {
-            if content.content_id.trim().is_empty() {
+        for content in conversation_item_contents(item) {
+            let content_id = conversation_content_id(content);
+            if content_id.trim().is_empty() {
                 return Err(HostError::new(
                     "invalid_conversation_content",
                     "Provider conversation history contains an empty content identity",
                 ));
             }
-            if !content_ids.insert(content.content_id.as_str()) {
+            if !content_ids.insert(content_id) {
                 return Err(HostError::new(
                     "duplicate_conversation_content",
                     "Provider conversation history contains a duplicate content identity",
                 ));
             }
         }
-        if let Some(related_item) = item.related_item.as_ref() {
+        if let Some(related_item) = conversation_item_related_item(item) {
             validate_resource_route(related_item, route)?;
         }
-        if let Some(approval) = item.approval.as_ref() {
-            if item.kind != ConversationItemKind::Approval {
-                return Err(HostError::new(
-                    "invalid_conversation_approval",
-                    "Only approval history items may carry approval details",
-                ));
-            }
+        if let Some(approval) = conversation_item_approval(item) {
             validate_approval_routes(approval, route)?;
-            validate_exact_resource(&approval.resource, &item.resource, "history approval")?;
-            validate_exact_resource(&approval.turn, &item.turn, "history approval turn")?;
+            validate_exact_resource(&approval.resource, resource, "history approval")?;
+            validate_exact_resource(&approval.turn, turn, "history approval turn")?;
             validate_exact_resource(
                 &approval.conversation,
                 conversation,
@@ -2038,6 +2047,90 @@ fn validate_conversation_items(
         }
     }
     Ok(())
+}
+
+fn conversation_item_resource(item: &codepet_provider_sdk::ConversationItem) -> &RoutedResourceId {
+    match item {
+        codepet_provider_sdk::ConversationItem::MessageConversationItem(item) => &item.resource,
+        codepet_provider_sdk::ConversationItem::ReasoningConversationItem(item) => &item.resource,
+        codepet_provider_sdk::ConversationItem::CommandConversationItem(item) => &item.resource,
+        codepet_provider_sdk::ConversationItem::FileChangeConversationItem(item) => &item.resource,
+        codepet_provider_sdk::ConversationItem::ToolConversationItem(item) => &item.resource,
+        codepet_provider_sdk::ConversationItem::ApprovalConversationItem(item) => &item.resource,
+        codepet_provider_sdk::ConversationItem::UnknownConversationItem(item) => &item.resource,
+    }
+}
+
+fn conversation_item_turn(item: &codepet_provider_sdk::ConversationItem) -> &RoutedResourceId {
+    match item {
+        codepet_provider_sdk::ConversationItem::MessageConversationItem(item) => &item.turn,
+        codepet_provider_sdk::ConversationItem::ReasoningConversationItem(item) => &item.turn,
+        codepet_provider_sdk::ConversationItem::CommandConversationItem(item) => &item.turn,
+        codepet_provider_sdk::ConversationItem::FileChangeConversationItem(item) => &item.turn,
+        codepet_provider_sdk::ConversationItem::ToolConversationItem(item) => &item.turn,
+        codepet_provider_sdk::ConversationItem::ApprovalConversationItem(item) => &item.turn,
+        codepet_provider_sdk::ConversationItem::UnknownConversationItem(item) => &item.turn,
+    }
+}
+
+fn conversation_item_conversation(item: &codepet_provider_sdk::ConversationItem) -> &RoutedResourceId {
+    match item {
+        codepet_provider_sdk::ConversationItem::MessageConversationItem(item) => &item.conversation,
+        codepet_provider_sdk::ConversationItem::ReasoningConversationItem(item) => &item.conversation,
+        codepet_provider_sdk::ConversationItem::CommandConversationItem(item) => &item.conversation,
+        codepet_provider_sdk::ConversationItem::FileChangeConversationItem(item) => &item.conversation,
+        codepet_provider_sdk::ConversationItem::ToolConversationItem(item) => &item.conversation,
+        codepet_provider_sdk::ConversationItem::ApprovalConversationItem(item) => &item.conversation,
+        codepet_provider_sdk::ConversationItem::UnknownConversationItem(item) => &item.conversation,
+    }
+}
+
+fn conversation_item_contents(item: &codepet_provider_sdk::ConversationItem) -> &[codepet_provider_sdk::ContentBlock] {
+    match item {
+        codepet_provider_sdk::ConversationItem::MessageConversationItem(item) => &item.contents,
+        codepet_provider_sdk::ConversationItem::ReasoningConversationItem(item) => &item.contents,
+        codepet_provider_sdk::ConversationItem::FileChangeConversationItem(item) => &item.contents,
+        codepet_provider_sdk::ConversationItem::CommandConversationItem(item) => tool_outcome_contents(&item.tool),
+        codepet_provider_sdk::ConversationItem::ToolConversationItem(item) => tool_outcome_contents(&item.tool),
+        codepet_provider_sdk::ConversationItem::ApprovalConversationItem(_)
+        | codepet_provider_sdk::ConversationItem::UnknownConversationItem(_) => &[],
+    }
+}
+
+fn tool_outcome_contents(tool: &codepet_provider_sdk::ToolInvocation) -> &[codepet_provider_sdk::ContentBlock] {
+    match tool.outcome.as_ref() {
+        Some(codepet_provider_sdk::ToolOutcome::ToolSuccessOutcome(outcome)) => &outcome.content,
+        Some(codepet_provider_sdk::ToolOutcome::ToolFailureOutcome(outcome)) => &outcome.content,
+        None => &[],
+    }
+}
+
+fn conversation_content_id(content: &codepet_provider_sdk::ContentBlock) -> &str {
+    match content {
+        codepet_provider_sdk::ContentBlock::TextContentBlock(content) => &content.content_id,
+        codepet_provider_sdk::ContentBlock::ReasoningSummaryContentBlock(content) => &content.content_id,
+        codepet_provider_sdk::ContentBlock::OutputContentBlock(content) => &content.content_id,
+        codepet_provider_sdk::ContentBlock::ActivitySummaryContentBlock(content) => &content.content_id,
+        codepet_provider_sdk::ContentBlock::StructuredJsonContentBlock(content) => &content.content_id,
+        codepet_provider_sdk::ContentBlock::ImageContentBlock(content) => &content.content_id,
+        codepet_provider_sdk::ContentBlock::AudioContentBlock(content) => &content.content_id,
+        codepet_provider_sdk::ContentBlock::ResourceLinkContentBlock(content) => &content.content_id,
+        codepet_provider_sdk::ContentBlock::EmbeddedResourceContentBlock(content) => &content.content_id,
+    }
+}
+
+fn conversation_item_related_item(item: &codepet_provider_sdk::ConversationItem) -> Option<&RoutedResourceId> {
+    match item {
+        codepet_provider_sdk::ConversationItem::ApprovalConversationItem(item) => item.related_item.as_ref(),
+        _ => None,
+    }
+}
+
+fn conversation_item_approval(item: &codepet_provider_sdk::ConversationItem) -> Option<&codepet_provider_sdk::ProviderApproval> {
+    match item {
+        codepet_provider_sdk::ConversationItem::ApprovalConversationItem(item) => Some(&item.approval),
+        _ => None,
+    }
 }
 
 fn validate_turn_routes(
@@ -2227,4 +2320,75 @@ fn update_channel_error() -> HostError {
         "Provider Gateway update consumer is unavailable",
     )
     .retryable(true)
+}
+
+#[cfg(test)]
+mod conversation_item_validation_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn route() -> ProviderInstanceRoute {
+        ProviderInstanceRoute {
+            device_id: "device-test".to_string(),
+            provider_plugin_id: "dev.codepet.test".to_string(),
+            provider_instance_id: "instance-test".to_string(),
+        }
+    }
+
+    fn resource(native_id: &str) -> serde_json::Value {
+        json!({
+            "deviceId": "device-test", "providerPluginId": "dev.codepet.test",
+            "providerInstanceId": "instance-test", "nativeResourceId": native_id,
+        })
+    }
+
+    fn item_values() -> Vec<serde_json::Value> {
+        vec![
+            json!({"resource": resource("message"), "turn": resource("turn"), "conversation": resource("conversation"), "kind": "message", "status": "completed", "role": "assistant", "contents": [{"contentId": "message:text", "kind": "text", "text": "text"}]}),
+            json!({"resource": resource("reasoning"), "turn": resource("turn"), "conversation": resource("conversation"), "kind": "reasoning", "status": "completed", "contents": [{"contentId": "reasoning:summary", "kind": "reasoning-summary", "text": "summary"}]}),
+            json!({"resource": resource("command"), "turn": resource("turn"), "conversation": resource("conversation"), "kind": "command", "status": "completed", "tool": {"callId": "call-command", "name": "shell", "category": "command", "origin": {"kind": "builtin"}, "input": {"kind": "command", "command": "pwd"}, "outcome": {"kind": "success", "content": [{"contentId": "command:output", "kind": "output", "text": "out"}]}}}),
+            json!({"resource": resource("file"), "turn": resource("turn"), "conversation": resource("conversation"), "kind": "file-change", "status": "completed", "contents": [{"contentId": "file:output", "kind": "output", "text": "diff"}]}),
+            json!({"resource": resource("tool"), "turn": resource("turn"), "conversation": resource("conversation"), "kind": "tool", "status": "failed", "tool": {"callId": "call-tool", "name": "lookup", "category": "search", "origin": {"kind": "mcp"}, "input": {"kind": "structured", "value": {"q": "x"}}, "outcome": {"kind": "failure", "content": [{"contentId": "tool:output", "kind": "output", "text": "out"}], "error": {"message": "failed"}}}}),
+            json!({"resource": resource("approval"), "turn": resource("turn"), "conversation": resource("conversation"), "kind": "approval", "status": "pending", "approval": {"resource": resource("approval"), "turn": resource("turn"), "conversation": resource("conversation"), "kind": "command", "title": "approve", "status": "pending", "decisions": ["approve", "deny"]}}),
+            json!({"resource": resource("unknown"), "turn": resource("turn"), "conversation": resource("conversation"), "kind": "unknown", "status": "unknown"}),
+        ]
+    }
+
+    #[test]
+    fn validates_routes_for_every_item_variant() {
+        let expected_route = route();
+        let conversation: RoutedResourceId = serde_json::from_value(resource("conversation")).unwrap();
+        let valid: Vec<codepet_provider_sdk::ConversationItem> = item_values().into_iter().map(|item| serde_json::from_value(item).unwrap()).collect();
+        validate_conversation_items(&valid, &conversation, &expected_route).unwrap();
+
+        for mut value in item_values() {
+            value["turn"]["deviceId"] = json!("wrong-device");
+            let item = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                validate_conversation_items(&[item], &conversation, &expected_route).unwrap_err().code,
+                "provider_resource_route_mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn validates_canonical_content_ids_inside_tool_outcomes() {
+        let expected_route = route();
+        let conversation: RoutedResourceId = serde_json::from_value(resource("conversation")).unwrap();
+        let mut values = item_values();
+        values[4]["tool"]["outcome"]["content"][0]["contentId"] = json!("message:text");
+        let items = values.into_iter().map(|item| serde_json::from_value(item).unwrap()).collect::<Vec<_>>();
+        assert_eq!(
+            validate_conversation_items(&items, &conversation, &expected_route).unwrap_err().code,
+            "duplicate_conversation_content"
+        );
+
+        let mut values = item_values();
+        values[2]["tool"]["outcome"]["content"][0]["contentId"] = json!("");
+        let items = values.into_iter().map(|item| serde_json::from_value(item).unwrap()).collect::<Vec<_>>();
+        assert_eq!(
+            validate_conversation_items(&items, &conversation, &expected_route).unwrap_err().code,
+            "invalid_conversation_content"
+        );
+    }
 }

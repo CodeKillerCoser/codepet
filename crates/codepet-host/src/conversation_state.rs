@@ -209,15 +209,16 @@ impl ConversationStateStore {
             )),
             provider::ProtocolEvent::EventConversationItemUpserted { params, .. }
                 if matches!(
-                    params.item.status,
+                    provider_item_status(&params.item),
                     provider::ConversationItemStatus::Completed
                         | provider::ConversationItemStatus::Failed
                         | provider::ConversationItemStatus::Interrupted
                 ) => Some((
-                    params.item.conversation.clone(),
+                    provider_item_conversation(&params.item).clone(),
                     format!(
                         "item-terminal:{}:{:?}",
-                        params.item.resource.native_resource_id, params.item.status
+                        provider_item_resource(&params.item).native_resource_id,
+                        provider_item_status(&params.item)
                     ),
                 )),
             provider::ProtocolEvent::EventTurnUpserted { params, .. }
@@ -376,16 +377,90 @@ fn summary_fingerprint(conversation: &gateway::Conversation) -> Option<String> {
 
 fn detail_fingerprint(items: &[gateway::ConversationItem]) -> Option<String> {
     let item = items.iter().rev().find(|item| {
-        item.role == Some(gateway::ConversationItemRole::Assistant)
-            || item.approval.as_ref().is_some_and(|approval| {
+        gateway_item_role(item) == Some(gateway::ConversationItemRole::Assistant)
+            || gateway_item_approval(item).is_some_and(|approval| {
                 approval.status == gateway::ApprovalStatus::Pending
             })
     })?;
     Some(fingerprint([
         "detail",
-        item.resource.native_resource_id.as_str(),
-        item.turn.native_resource_id.as_str(),
+        gateway_item_resource(item).native_resource_id.as_str(),
+        gateway_item_turn(item).native_resource_id.as_str(),
     ]))
+}
+
+fn provider_item_status(item: &provider::ConversationItem) -> provider::ConversationItemStatus {
+    match item {
+        provider::ConversationItem::MessageConversationItem(item) => item.status,
+        provider::ConversationItem::ReasoningConversationItem(item) => item.status,
+        provider::ConversationItem::CommandConversationItem(item) => item.status,
+        provider::ConversationItem::FileChangeConversationItem(item) => item.status,
+        provider::ConversationItem::ToolConversationItem(item) => item.status,
+        provider::ConversationItem::ApprovalConversationItem(item) => item.status,
+        provider::ConversationItem::UnknownConversationItem(item) => item.status,
+    }
+}
+
+fn provider_item_resource(item: &provider::ConversationItem) -> &provider::RoutedResourceId {
+    match item {
+        provider::ConversationItem::MessageConversationItem(item) => &item.resource,
+        provider::ConversationItem::ReasoningConversationItem(item) => &item.resource,
+        provider::ConversationItem::CommandConversationItem(item) => &item.resource,
+        provider::ConversationItem::FileChangeConversationItem(item) => &item.resource,
+        provider::ConversationItem::ToolConversationItem(item) => &item.resource,
+        provider::ConversationItem::ApprovalConversationItem(item) => &item.resource,
+        provider::ConversationItem::UnknownConversationItem(item) => &item.resource,
+    }
+}
+
+fn provider_item_conversation(item: &provider::ConversationItem) -> &provider::RoutedResourceId {
+    match item {
+        provider::ConversationItem::MessageConversationItem(item) => &item.conversation,
+        provider::ConversationItem::ReasoningConversationItem(item) => &item.conversation,
+        provider::ConversationItem::CommandConversationItem(item) => &item.conversation,
+        provider::ConversationItem::FileChangeConversationItem(item) => &item.conversation,
+        provider::ConversationItem::ToolConversationItem(item) => &item.conversation,
+        provider::ConversationItem::ApprovalConversationItem(item) => &item.conversation,
+        provider::ConversationItem::UnknownConversationItem(item) => &item.conversation,
+    }
+}
+
+fn gateway_item_resource(item: &gateway::ConversationItem) -> &gateway::RoutedResourceId {
+    match item {
+        gateway::ConversationItem::MessageConversationItem(item) => &item.resource,
+        gateway::ConversationItem::ReasoningConversationItem(item) => &item.resource,
+        gateway::ConversationItem::CommandConversationItem(item) => &item.resource,
+        gateway::ConversationItem::FileChangeConversationItem(item) => &item.resource,
+        gateway::ConversationItem::ToolConversationItem(item) => &item.resource,
+        gateway::ConversationItem::ApprovalConversationItem(item) => &item.resource,
+        gateway::ConversationItem::UnknownConversationItem(item) => &item.resource,
+    }
+}
+
+fn gateway_item_turn(item: &gateway::ConversationItem) -> &gateway::RoutedResourceId {
+    match item {
+        gateway::ConversationItem::MessageConversationItem(item) => &item.turn,
+        gateway::ConversationItem::ReasoningConversationItem(item) => &item.turn,
+        gateway::ConversationItem::CommandConversationItem(item) => &item.turn,
+        gateway::ConversationItem::FileChangeConversationItem(item) => &item.turn,
+        gateway::ConversationItem::ToolConversationItem(item) => &item.turn,
+        gateway::ConversationItem::ApprovalConversationItem(item) => &item.turn,
+        gateway::ConversationItem::UnknownConversationItem(item) => &item.turn,
+    }
+}
+
+fn gateway_item_role(item: &gateway::ConversationItem) -> Option<gateway::ConversationItemRole> {
+    match item {
+        gateway::ConversationItem::MessageConversationItem(item) => Some(item.role),
+        _ => None,
+    }
+}
+
+fn gateway_item_approval(item: &gateway::ConversationItem) -> Option<&gateway::Approval> {
+    match item {
+        gateway::ConversationItem::ApprovalConversationItem(item) => Some(&item.approval),
+        _ => None,
+    }
 }
 
 fn fingerprint<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {

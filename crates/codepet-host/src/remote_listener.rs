@@ -125,7 +125,7 @@ fn event_turn(event: &gateway::ProtocolEvent) -> Option<&gateway::RoutedResource
     match event {
         gateway::ProtocolEvent::TurnUpserted { params, .. } => Some(&params.payload.turn.resource),
         gateway::ProtocolEvent::TurnOutputDelta { params, .. } => Some(&params.payload.turn),
-        gateway::ProtocolEvent::ConversationItemUpserted { params, .. } => Some(&params.payload.item.turn),
+        gateway::ProtocolEvent::ConversationItemUpserted { params, .. } => Some(gateway_item_turn(&params.payload.item)),
         gateway::ProtocolEvent::ApprovalRequested { params, .. } => Some(&params.payload.approval.turn),
         gateway::ProtocolEvent::ApprovalResolved { params, .. } => Some(&params.payload.approval.turn),
         _ => None,
@@ -137,10 +137,34 @@ fn event_conversation(event: &gateway::ProtocolEvent) -> Option<&gateway::Routed
         gateway::ProtocolEvent::ConversationUpserted { params, .. } => Some(&params.payload.conversation.resource),
         gateway::ProtocolEvent::TurnUpserted { params, .. } => Some(&params.payload.turn.conversation),
         gateway::ProtocolEvent::TurnOutputDelta { params, .. } => Some(&params.payload.conversation),
-        gateway::ProtocolEvent::ConversationItemUpserted { params, .. } => Some(&params.payload.item.conversation),
+        gateway::ProtocolEvent::ConversationItemUpserted { params, .. } => Some(gateway_item_conversation(&params.payload.item)),
         gateway::ProtocolEvent::ApprovalRequested { params, .. } => Some(&params.payload.approval.conversation),
         gateway::ProtocolEvent::ApprovalResolved { params, .. } => Some(&params.payload.approval.conversation),
         _ => None,
+    }
+}
+
+fn gateway_item_turn(item: &gateway::ConversationItem) -> &gateway::RoutedResourceId {
+    match item {
+        gateway::ConversationItem::MessageConversationItem(item) => &item.turn,
+        gateway::ConversationItem::ReasoningConversationItem(item) => &item.turn,
+        gateway::ConversationItem::CommandConversationItem(item) => &item.turn,
+        gateway::ConversationItem::FileChangeConversationItem(item) => &item.turn,
+        gateway::ConversationItem::ToolConversationItem(item) => &item.turn,
+        gateway::ConversationItem::ApprovalConversationItem(item) => &item.turn,
+        gateway::ConversationItem::UnknownConversationItem(item) => &item.turn,
+    }
+}
+
+fn gateway_item_conversation(item: &gateway::ConversationItem) -> &gateway::RoutedResourceId {
+    match item {
+        gateway::ConversationItem::MessageConversationItem(item) => &item.conversation,
+        gateway::ConversationItem::ReasoningConversationItem(item) => &item.conversation,
+        gateway::ConversationItem::CommandConversationItem(item) => &item.conversation,
+        gateway::ConversationItem::FileChangeConversationItem(item) => &item.conversation,
+        gateway::ConversationItem::ToolConversationItem(item) => &item.conversation,
+        gateway::ConversationItem::ApprovalConversationItem(item) => &item.conversation,
+        gateway::ConversationItem::UnknownConversationItem(item) => &item.conversation,
     }
 }
 

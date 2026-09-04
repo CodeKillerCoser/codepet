@@ -1023,13 +1023,13 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         },
     )
     .await;
-    let (_, live_events) = collect_response_and_events(&mut socket_a, "live-event-a", 2).await;
+    let (_, live_events) = collect_response_and_events(&mut socket_a, "live-event-a", 3).await;
     let live_sequences = live_events
         .iter()
         .map(|event| cursor_sequence(event_cursor(event)))
         .collect::<Vec<_>>();
     assert!(replay_sequences[1] < live_sequences[0]);
-    assert!(live_sequences[0] < live_sequences[1]);
+    assert!(live_sequences.windows(2).all(|pair| pair[0] < pair[1]));
 
     send_request(
         &mut socket_a,
@@ -1098,7 +1098,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     )
     .await;
     let (_, client_a_events) =
-        collect_response_and_events(&mut socket_a, "client-a-only", 2).await;
+        collect_response_and_events(&mut socket_a, "client-a-only", 3).await;
     assert!(timeout(Duration::from_millis(150), socket_b.next())
         .await
         .is_err());
@@ -1132,13 +1132,16 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     )
     .await;
     let (_, events_a) =
-        collect_response_and_events(&mut socket_a, "shared-event-source-a", 2).await;
+        collect_response_and_events(&mut socket_a, "shared-event-source-a", 3).await;
     let event_b_one: gateway::ProtocolEvent =
         serde_json::from_value(next_value(&mut socket_b).await).unwrap();
     let event_b_two: gateway::ProtocolEvent =
         serde_json::from_value(next_value(&mut socket_b).await).unwrap();
+    let event_b_three: gateway::ProtocolEvent =
+        serde_json::from_value(next_value(&mut socket_b).await).unwrap();
     assert_eq!(event_cursor(&events_a[0]), event_cursor(&event_b_one));
     assert_eq!(event_cursor(&events_a[1]), event_cursor(&event_b_two));
+    assert_eq!(event_cursor(&events_a[2]), event_cursor(&event_b_three));
 
     let mut socket_a_second = client
         .connect_websocket(&pairing_a.credential)
@@ -1207,7 +1210,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         },
     )
     .await;
-    let client_b_active = next_response(&mut socket_b, "client-b-still-active").await;
+    let client_b_active = next_response_after_events(&mut socket_b, "client-b-still-active").await;
     let _: gateway::ProviderListResponse = response_result(client_b_active);
 
     let pairing_c = pair_client(host.remote_access.as_ref(), &client, "client-c").await;

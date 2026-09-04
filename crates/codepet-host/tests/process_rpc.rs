@@ -136,6 +136,7 @@ async fn real_stdio_lifecycle_correlates_concurrent_responses_and_separates_even
     let first = inbound.recv().await.unwrap();
     let second = inbound.recv().await.unwrap();
     let third = inbound.recv().await.unwrap();
+    let fourth = inbound.recv().await.unwrap();
     assert!(matches!(
         first,
         codepet_provider_sdk::ProviderWireMessage::Event(
@@ -148,6 +149,12 @@ async fn real_stdio_lifecycle_correlates_concurrent_responses_and_separates_even
     ));
     assert!(matches!(
         third,
+        codepet_provider_sdk::ProviderWireMessage::Event(
+            ProtocolEvent::EventConversationItemUpserted { .. }
+        )
+    ));
+    assert!(matches!(
+        fourth,
         codepet_provider_sdk::ProviderWireMessage::Event(
             ProtocolEvent::EventTurnOutputDelta { .. }
         )

@@ -412,16 +412,28 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
         "instance-a1"
     );
     assert_eq!(response.items.len(), 2);
+    let codepet_gateway_sdk::ConversationItem::MessageConversationItem(user_item) = &response.items[0] else {
+        panic!("expected user message item");
+    };
+    let codepet_gateway_sdk::ContentBlock::TextContentBlock(user_content) = &user_item.contents[0] else {
+        panic!("expected user text content");
+    };
+    let codepet_gateway_sdk::ConversationItem::MessageConversationItem(assistant_item) = &response.items[1] else {
+        panic!("expected assistant message item");
+    };
+    let codepet_gateway_sdk::ContentBlock::TextContentBlock(assistant_content) = &assistant_item.contents[0] else {
+        panic!("expected assistant text content");
+    };
     assert_eq!(
-        response.items[0].resource.native_resource_id,
+        user_item.resource.native_resource_id,
         "event-first-user"
     );
     assert_eq!(
-        response.items[0].contents[0].content_id,
+        user_content.content_id,
         "event-first-user:input:0"
     );
     assert_eq!(
-        response.items[1].contents[0].content_id,
+        assistant_content.content_id,
         "event-first-assistant:text"
     );
     let response = gateway
@@ -444,6 +456,8 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
 
     let mut routed_event_cursors = Vec::new();
     let mut routed_instances = Vec::new();
+    let mut upserted_content_ids = BTreeMap::new();
+    let mut delta_content_ids = BTreeMap::new();
     while routed_event_cursors.len() < 4 {
         let event = tokio::time::timeout(Duration::from_secs(2), events.next_event())
             .await
@@ -465,6 +479,22 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
             } => {
                 routed_instances.push(params.payload.turn.provider_id.clone());
                 routed_event_cursors.push(event_cursor_sequence(&params.event_cursor));
+                delta_content_ids.insert(
+                    params.payload.turn.provider_id.clone(),
+                    (params.payload.item_id.clone(), params.payload.content_id.clone()),
+                );
+            }
+            GatewayEvent::ConversationItemUpserted { params, .. } => {
+                let codepet_gateway_sdk::ConversationItem::MessageConversationItem(item) = &params.payload.item else {
+                    panic!("expected assistant message upsert");
+                };
+                let codepet_gateway_sdk::ContentBlock::TextContentBlock(content) = &item.contents[0] else {
+                    panic!("expected assistant text upsert");
+                };
+                upserted_content_ids.insert(
+                    item.resource.provider_id.clone(),
+                    (item.resource.native_resource_id.clone(), content.content_id.clone()),
+                );
             }
             _ => {}
         }
@@ -478,6 +508,11 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
             .filter(|instance| instance.as_str() == "instance-a1")
             .count(),
         2
+    );
+    assert_eq!(upserted_content_ids, delta_content_ids);
+    assert_eq!(
+        upserted_content_ids.get("instance-a1"),
+        Some(&("event-first-assistant".to_string(), "event-first-assistant:text".to_string()))
     );
     assert_eq!(
         routed_instances
@@ -766,7 +801,7 @@ async fn conversation_snapshot_cursors_precede_events_emitted_during_provider_qu
             } = events.next_event().await.unwrap()
             {
                 if params.payload.conversation.resource.native_resource_id
-                    == "conversation-event-first"
+                    == "snapshot-race"
                 {
                     return params.event_cursor;
                 }
@@ -1234,6 +1269,9 @@ async fn gateway_turn_send_validates_controls_and_deduplicates_client_requests()
         .unwrap();
     assert!(accepted.accepted);
     let user_item = accepted.user_item.as_ref().unwrap();
+    let codepet_gateway_sdk::ConversationItem::MessageConversationItem(user_item) = user_item else {
+        panic!("expected canonical user message");
+    };
     assert_eq!(user_item.turn, accepted.turn.resource);
     assert_eq!(user_item.conversation, conversation);
     assert_eq!(

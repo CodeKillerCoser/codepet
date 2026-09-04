@@ -801,10 +801,21 @@ impl ProviderGatewayService {
         }
         ensure_same_resource_identity(&response.turn.conversation, &expected_conversation)?;
         if let Some(user_item) = response.user_item.as_ref() {
-            ensure_same_resource_identity(&user_item.conversation, &expected_conversation)?;
-            ensure_same_resource_identity(&user_item.turn, &response.turn.resource)?;
-            ensure_same_provider_route(&user_item.resource, &expected_conversation)?;
-            if user_item.role != Some(provider::ConversationItemRole::User) {
+            let provider_user_item = match user_item {
+                provider::ConversationItem::MessageConversationItem(item) => item,
+                _ => {
+                    return Err(gateway::ProtocolError {
+                        code: "provider_response_invalid".to_string(),
+                        message: "Provider turn.start userItem must be canonical when present".to_string(),
+                        retryable: false,
+                        details: None,
+                    });
+                }
+            };
+            ensure_same_resource_identity(&provider_user_item.conversation, &expected_conversation)?;
+            ensure_same_resource_identity(&provider_user_item.turn, &response.turn.resource)?;
+            ensure_same_provider_route(&provider_user_item.resource, &expected_conversation)?;
+            if provider_user_item.role != provider::ConversationItemRole::User {
                 return Err(gateway::ProtocolError {
                     code: "provider_response_invalid".to_string(),
                     message: "Provider turn.start userItem must be canonical when present"
@@ -1723,58 +1734,41 @@ fn map_project(project: provider::Project) -> gateway::Project {
 }
 
 fn map_conversation_item(item: provider::ConversationItem) -> gateway::ConversationItem {
-    gateway::ConversationItem {
-        resource: map_resource(item.resource),
-        turn: map_resource(item.turn),
-        conversation: map_resource(item.conversation),
-        kind: match item.kind {
-            provider::ConversationItemKind::Message => gateway::ConversationItemKind::Message,
-            provider::ConversationItemKind::Reasoning => gateway::ConversationItemKind::Reasoning,
-            provider::ConversationItemKind::Command => gateway::ConversationItemKind::Command,
-            provider::ConversationItemKind::FileChange => {
-                gateway::ConversationItemKind::FileChange
-            }
-            provider::ConversationItemKind::Tool => gateway::ConversationItemKind::Tool,
-            provider::ConversationItemKind::Approval => gateway::ConversationItemKind::Approval,
-            provider::ConversationItemKind::Unknown => gateway::ConversationItemKind::Unknown,
-        },
-        status: match item.status {
-            provider::ConversationItemStatus::Pending => gateway::ConversationItemStatus::Pending,
-            provider::ConversationItemStatus::Running => gateway::ConversationItemStatus::Running,
-            provider::ConversationItemStatus::Completed => {
-                gateway::ConversationItemStatus::Completed
-            }
-            provider::ConversationItemStatus::Failed => gateway::ConversationItemStatus::Failed,
-            provider::ConversationItemStatus::Interrupted => {
-                gateway::ConversationItemStatus::Interrupted
-            }
-            provider::ConversationItemStatus::Declined => {
-                gateway::ConversationItemStatus::Declined
-            }
-            provider::ConversationItemStatus::Approved => {
-                gateway::ConversationItemStatus::Approved
-            }
-            provider::ConversationItemStatus::Denied => gateway::ConversationItemStatus::Denied,
-            provider::ConversationItemStatus::Expired => gateway::ConversationItemStatus::Expired,
-            provider::ConversationItemStatus::Unknown => gateway::ConversationItemStatus::Unknown,
-        },
-        role: item.role.map(|role| match role {
-            provider::ConversationItemRole::User => gateway::ConversationItemRole::User,
-            provider::ConversationItemRole::Assistant => gateway::ConversationItemRole::Assistant,
+    match item {
+        provider::ConversationItem::MessageConversationItem(item) => gateway::ConversationItem::MessageConversationItem(gateway::MessageConversationItem {
+            resource: map_resource(item.resource), turn: map_resource(item.turn), conversation: map_resource(item.conversation),
+            kind: gateway::MessageConversationItemKind::Message, status: map_conversation_item_status(item.status),
+            role: map_conversation_item_role(item.role), contents: item.contents.into_iter().map(map_content_block).collect(),
         }),
-        title: item.title,
-        contents: item
-            .contents
-            .into_iter()
-            .map(|content| gateway::ConversationContent {
-                content_id: content.content_id,
-                kind: map_conversation_content_kind(content.kind),
-                text: content.text,
-            })
-            .collect(),
-        related_item: item.related_item.map(map_resource),
-        approval: item.approval.map(map_approval),
-        tool: item.tool.map(map_tool_invocation),
+        provider::ConversationItem::ReasoningConversationItem(item) => gateway::ConversationItem::ReasoningConversationItem(gateway::ReasoningConversationItem {
+            resource: map_resource(item.resource), turn: map_resource(item.turn), conversation: map_resource(item.conversation),
+            kind: gateway::ReasoningConversationItemKind::Reasoning, status: map_conversation_item_status(item.status),
+            contents: item.contents.into_iter().map(map_content_block).collect(),
+        }),
+        provider::ConversationItem::CommandConversationItem(item) => gateway::ConversationItem::CommandConversationItem(gateway::CommandConversationItem {
+            resource: map_resource(item.resource), turn: map_resource(item.turn), conversation: map_resource(item.conversation),
+            kind: gateway::CommandConversationItemKind::Command, status: map_conversation_item_status(item.status),
+            title: item.title, tool: map_tool_invocation(item.tool),
+        }),
+        provider::ConversationItem::FileChangeConversationItem(item) => gateway::ConversationItem::FileChangeConversationItem(gateway::FileChangeConversationItem {
+            resource: map_resource(item.resource), turn: map_resource(item.turn), conversation: map_resource(item.conversation),
+            kind: gateway::FileChangeConversationItemKind::FileChange, status: map_conversation_item_status(item.status),
+            title: item.title, contents: item.contents.into_iter().map(map_content_block).collect(),
+        }),
+        provider::ConversationItem::ToolConversationItem(item) => gateway::ConversationItem::ToolConversationItem(gateway::ToolConversationItem {
+            resource: map_resource(item.resource), turn: map_resource(item.turn), conversation: map_resource(item.conversation),
+            kind: gateway::ToolConversationItemKind::Tool, status: map_conversation_item_status(item.status),
+            title: item.title, tool: map_tool_invocation(item.tool),
+        }),
+        provider::ConversationItem::ApprovalConversationItem(item) => gateway::ConversationItem::ApprovalConversationItem(gateway::ApprovalConversationItem {
+            resource: map_resource(item.resource), turn: map_resource(item.turn), conversation: map_resource(item.conversation),
+            kind: gateway::ApprovalConversationItemKind::Approval, status: map_conversation_item_status(item.status),
+            title: item.title, related_item: item.related_item.map(map_resource), approval: map_approval(item.approval),
+        }),
+        provider::ConversationItem::UnknownConversationItem(item) => gateway::ConversationItem::UnknownConversationItem(gateway::UnknownConversationItem {
+            resource: map_resource(item.resource), turn: map_resource(item.turn), conversation: map_resource(item.conversation),
+            kind: gateway::UnknownConversationItemKind::Unknown, status: map_conversation_item_status(item.status), title: item.title,
+        }),
     }
 }
 
@@ -1805,56 +1799,12 @@ fn map_tool_invocation(tool: provider::ToolInvocation) -> gateway::ToolInvocatio
             },
             name: tool.origin.name,
         },
-        input: tool.input,
-        raw_input: tool.raw_input,
-        result: tool.result.map(|result| gateway::ToolResult {
-            content: result.content.into_iter().map(|content| gateway::ToolContent {
-                content_id: content.content_id,
-                kind: match content.kind {
-                    provider::ToolContentKind::Text => gateway::ToolContentKind::Text,
-                    provider::ToolContentKind::Image => gateway::ToolContentKind::Image,
-                    provider::ToolContentKind::Audio => gateway::ToolContentKind::Audio,
-                    provider::ToolContentKind::ResourceLink => gateway::ToolContentKind::ResourceLink,
-                    provider::ToolContentKind::EmbeddedResource => gateway::ToolContentKind::EmbeddedResource,
-                },
-                text: content.text,
-                uri: content.uri,
-                mime_type: content.mime_type,
-                name: content.name,
-                truncated: content.truncated,
-                total_bytes: content.total_bytes,
-            }).collect(),
-            structured_content: result.structured_content,
-            error: result.error.map(|error| gateway::ToolExecutionError {
-                code: error.code,
-                message: error.message,
-                retryable: error.retryable,
-                details: error.details,
-            }),
-        }),
+        input: map_tool_input(tool.input),
+        outcome: tool.outcome.map(map_tool_outcome),
         timing: tool.timing.map(|timing| gateway::ToolTiming {
             started_at: timing.started_at,
             completed_at: timing.completed_at,
             duration_ms: timing.duration_ms,
-        }),
-        command: tool.command.map(|command| gateway::ToolCommandDetails {
-            command: command.command,
-            cwd: command.cwd,
-            exit_code: command.exit_code,
-            process_id: command.process_id,
-            actions: command.actions.map(|actions| actions.into_iter().map(|action| gateway::ToolCommandAction {
-                kind: match action.kind {
-                    provider::ToolCommandActionKind::Execute => gateway::ToolCommandActionKind::Execute,
-                    provider::ToolCommandActionKind::Read => gateway::ToolCommandActionKind::Read,
-                    provider::ToolCommandActionKind::List => gateway::ToolCommandActionKind::List,
-                    provider::ToolCommandActionKind::Search => gateway::ToolCommandActionKind::Search,
-                    provider::ToolCommandActionKind::Unknown => gateway::ToolCommandActionKind::Unknown,
-                },
-                command: action.command,
-                name: action.name,
-                path: action.path,
-                query: action.query,
-            }).collect()),
         }),
         annotations: tool.annotations.map(|annotations| gateway::ToolAnnotations {
             read_only: annotations.read_only,
@@ -1862,6 +1812,100 @@ fn map_tool_invocation(tool: provider::ToolInvocation) -> gateway::ToolInvocatio
             idempotent: annotations.idempotent,
             open_world: annotations.open_world,
         }),
+    }
+}
+
+fn map_conversation_item_status(status: provider::ConversationItemStatus) -> gateway::ConversationItemStatus {
+    match status {
+        provider::ConversationItemStatus::Pending => gateway::ConversationItemStatus::Pending,
+        provider::ConversationItemStatus::Running => gateway::ConversationItemStatus::Running,
+        provider::ConversationItemStatus::Completed => gateway::ConversationItemStatus::Completed,
+        provider::ConversationItemStatus::Failed => gateway::ConversationItemStatus::Failed,
+        provider::ConversationItemStatus::Interrupted => gateway::ConversationItemStatus::Interrupted,
+        provider::ConversationItemStatus::Declined => gateway::ConversationItemStatus::Declined,
+        provider::ConversationItemStatus::Approved => gateway::ConversationItemStatus::Approved,
+        provider::ConversationItemStatus::Denied => gateway::ConversationItemStatus::Denied,
+        provider::ConversationItemStatus::Expired => gateway::ConversationItemStatus::Expired,
+        provider::ConversationItemStatus::Unknown => gateway::ConversationItemStatus::Unknown,
+    }
+}
+
+fn map_conversation_item_role(role: provider::ConversationItemRole) -> gateway::ConversationItemRole {
+    match role {
+        provider::ConversationItemRole::User => gateway::ConversationItemRole::User,
+        provider::ConversationItemRole::Assistant => gateway::ConversationItemRole::Assistant,
+    }
+}
+
+fn map_tool_input(input: provider::ToolInput) -> gateway::ToolInput {
+    match input {
+        provider::ToolInput::CommandToolInput(input) => gateway::ToolInput::CommandToolInput(gateway::CommandToolInput {
+            kind: gateway::CommandToolInputKind::Command, command: input.command, cwd: input.cwd,
+            shell: input.shell, actions: input.actions.map(|actions| actions.into_iter().map(map_tool_command_action).collect()),
+        }),
+        provider::ToolInput::StructuredToolInput(input) => gateway::ToolInput::StructuredToolInput(gateway::StructuredToolInput {
+            kind: gateway::StructuredToolInputKind::Structured, value: input.value,
+            truncation: input.truncation.map(map_content_truncation),
+        }),
+        provider::ToolInput::OpaqueToolInput(input) => gateway::ToolInput::OpaqueToolInput(gateway::OpaqueToolInput {
+            kind: gateway::OpaqueToolInputKind::Opaque, value: input.value, mime_type: input.mime_type,
+            truncation: input.truncation.map(map_content_truncation),
+        }),
+    }
+}
+
+fn map_tool_outcome(outcome: provider::ToolOutcome) -> gateway::ToolOutcome {
+    match outcome {
+        provider::ToolOutcome::ToolSuccessOutcome(outcome) => gateway::ToolOutcome::ToolSuccessOutcome(gateway::ToolSuccessOutcome {
+            kind: gateway::ToolSuccessOutcomeKind::Success,
+            content: outcome.content.into_iter().map(map_content_block).collect(),
+            exit_code: outcome.exit_code, process_id: outcome.process_id,
+        }),
+        provider::ToolOutcome::ToolFailureOutcome(outcome) => gateway::ToolOutcome::ToolFailureOutcome(gateway::ToolFailureOutcome {
+            kind: gateway::ToolFailureOutcomeKind::Failure,
+            content: outcome.content.into_iter().map(map_content_block).collect(),
+            error: gateway::ToolExecutionError { code: outcome.error.code, message: outcome.error.message, retryable: outcome.error.retryable },
+            exit_code: outcome.exit_code, process_id: outcome.process_id,
+        }),
+    }
+}
+
+fn map_tool_command_action(action: provider::ToolCommandAction) -> gateway::ToolCommandAction {
+    gateway::ToolCommandAction {
+        kind: match action.kind {
+            provider::ToolCommandActionKind::Execute => gateway::ToolCommandActionKind::Execute,
+            provider::ToolCommandActionKind::Read => gateway::ToolCommandActionKind::Read,
+            provider::ToolCommandActionKind::List => gateway::ToolCommandActionKind::List,
+            provider::ToolCommandActionKind::Search => gateway::ToolCommandActionKind::Search,
+            provider::ToolCommandActionKind::Unknown => gateway::ToolCommandActionKind::Unknown,
+        },
+        command: action.command, name: action.name, path: action.path, query: action.query,
+    }
+}
+
+fn map_content_block(content: provider::ContentBlock) -> gateway::ContentBlock {
+    match content {
+        provider::ContentBlock::TextContentBlock(content) => gateway::ContentBlock::TextContentBlock(gateway::TextContentBlock { content_id: content.content_id, kind: gateway::TextContentBlockKind::Text, text: content.text, truncation: content.truncation.map(map_content_truncation) }),
+        provider::ContentBlock::ReasoningSummaryContentBlock(content) => gateway::ContentBlock::ReasoningSummaryContentBlock(gateway::ReasoningSummaryContentBlock { content_id: content.content_id, kind: gateway::ReasoningSummaryContentBlockKind::ReasoningSummary, text: content.text, truncation: content.truncation.map(map_content_truncation) }),
+        provider::ContentBlock::OutputContentBlock(content) => gateway::ContentBlock::OutputContentBlock(gateway::OutputContentBlock { content_id: content.content_id, kind: gateway::OutputContentBlockKind::Output, text: content.text, truncation: content.truncation.map(map_content_truncation) }),
+        provider::ContentBlock::ActivitySummaryContentBlock(content) => gateway::ContentBlock::ActivitySummaryContentBlock(gateway::ActivitySummaryContentBlock { content_id: content.content_id, kind: gateway::ActivitySummaryContentBlockKind::ActivitySummary, text: content.text, truncation: content.truncation.map(map_content_truncation) }),
+        provider::ContentBlock::StructuredJsonContentBlock(content) => gateway::ContentBlock::StructuredJsonContentBlock(gateway::StructuredJsonContentBlock { content_id: content.content_id, kind: gateway::StructuredJsonContentBlockKind::StructuredJson, value: content.value, truncation: content.truncation.map(map_content_truncation) }),
+        provider::ContentBlock::ImageContentBlock(content) => gateway::ContentBlock::ImageContentBlock(gateway::ImageContentBlock { content_id: content.content_id, kind: gateway::ImageContentBlockKind::Image, uri: content.uri, mime_type: content.mime_type, name: content.name, truncation: content.truncation.map(map_content_truncation) }),
+        provider::ContentBlock::AudioContentBlock(content) => gateway::ContentBlock::AudioContentBlock(gateway::AudioContentBlock { content_id: content.content_id, kind: gateway::AudioContentBlockKind::Audio, uri: content.uri, mime_type: content.mime_type, name: content.name, truncation: content.truncation.map(map_content_truncation) }),
+        provider::ContentBlock::ResourceLinkContentBlock(content) => gateway::ContentBlock::ResourceLinkContentBlock(gateway::ResourceLinkContentBlock { content_id: content.content_id, kind: gateway::ResourceLinkContentBlockKind::ResourceLink, uri: content.uri, name: content.name, mime_type: content.mime_type, truncation: content.truncation.map(map_content_truncation) }),
+        provider::ContentBlock::EmbeddedResourceContentBlock(content) => gateway::ContentBlock::EmbeddedResourceContentBlock(gateway::EmbeddedResourceContentBlock { content_id: content.content_id, kind: gateway::EmbeddedResourceContentBlockKind::EmbeddedResource, text: content.text, mime_type: content.mime_type, name: content.name, truncation: content.truncation.map(map_content_truncation) }),
+    }
+}
+
+fn map_content_truncation(truncation: provider::ContentTruncation) -> gateway::ContentTruncation {
+    gateway::ContentTruncation {
+        original_bytes: truncation.original_bytes, retained_bytes: truncation.retained_bytes,
+        strategy: match truncation.strategy {
+            provider::ContentTruncationStrategy::Head => gateway::ContentTruncationStrategy::Head,
+            provider::ContentTruncationStrategy::Tail => gateway::ContentTruncationStrategy::Tail,
+            provider::ContentTruncationStrategy::HeadTail => gateway::ContentTruncationStrategy::HeadTail,
+            provider::ContentTruncationStrategy::StructuralPreview => gateway::ContentTruncationStrategy::StructuralPreview,
+        },
     }
 }
 
@@ -1873,11 +1917,15 @@ fn map_conversation_content_kind(
         provider::ConversationContentKind::ReasoningSummary => {
             gateway::ConversationContentKind::ReasoningSummary
         }
-        provider::ConversationContentKind::Command => gateway::ConversationContentKind::Command,
         provider::ConversationContentKind::Output => gateway::ConversationContentKind::Output,
         provider::ConversationContentKind::ActivitySummary => {
             gateway::ConversationContentKind::ActivitySummary
         }
+        provider::ConversationContentKind::StructuredJson => gateway::ConversationContentKind::StructuredJson,
+        provider::ConversationContentKind::Image => gateway::ConversationContentKind::Image,
+        provider::ConversationContentKind::Audio => gateway::ConversationContentKind::Audio,
+        provider::ConversationContentKind::ResourceLink => gateway::ConversationContentKind::ResourceLink,
+        provider::ConversationContentKind::EmbeddedResource => gateway::ConversationContentKind::EmbeddedResource,
     }
 }
 
@@ -1969,6 +2017,95 @@ fn map_turn_selection_to_gateway(selection: provider::TurnSelection) -> gateway:
                 })
             }
         }),
+    }
+}
+
+#[cfg(test)]
+mod conversation_projection_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn route(native_id: &str) -> serde_json::Value {
+        json!({
+            "deviceId": "device-test",
+            "providerPluginId": "dev.codepet.test",
+            "providerInstanceId": "instance-test",
+            "nativeResourceId": native_id,
+        })
+    }
+
+    #[test]
+    fn projects_every_conversation_variant_and_canonical_content_without_provider_extensions() {
+        let conversation = route("conversation-1");
+        let turn = route("turn-1");
+        let items = json!([
+            {"resource": route("message-1"), "turn": turn, "conversation": conversation,
+             "kind": "message", "status": "completed", "role": "assistant", "contents": [
+                {"contentId": "message:text", "kind": "text", "text": "same text", "truncation": {"originalBytes": 20, "retainedBytes": 9, "strategy": "head-tail"}},
+                {"contentId": "message:image", "kind": "image", "uri": "https://example.test/image", "mimeType": "image/png"},
+                {"contentId": "message:audio", "kind": "audio", "uri": "https://example.test/audio"},
+                {"contentId": "message:link", "kind": "resource-link", "uri": "https://example.test/link", "name": "link"},
+                {"contentId": "message:embedded", "kind": "embedded-resource", "text": "embedded", "mimeType": "text/plain"}
+             ]},
+            {"resource": route("reasoning-1"), "turn": route("turn-1"), "conversation": route("conversation-1"),
+             "kind": "reasoning", "status": "completed", "contents": [
+                {"contentId": "reasoning:summary", "kind": "reasoning-summary", "text": "summary"}
+             ]},
+            {"resource": route("command-1"), "turn": route("turn-1"), "conversation": route("conversation-1"),
+             "kind": "command", "status": "completed", "title": "command", "tool": {
+                "callId": "call-command", "name": "shell", "category": "command", "origin": {"kind": "builtin"},
+                "input": {"kind": "command", "command": "printf same text", "cwd": "/workspace", "shell": "zsh"},
+                "outcome": {"kind": "success", "content": [{"contentId": "command:output", "kind": "output", "text": "same text"}], "exitCode": 0},
+                "extension": {"namespace": "dev.codepet.private", "data": {"secret": true}}
+             }},
+            {"resource": route("file-1"), "turn": route("turn-1"), "conversation": route("conversation-1"),
+             "kind": "file-change", "status": "completed", "contents": [
+                {"contentId": "file:output", "kind": "output", "text": "diff"},
+                {"contentId": "file:activity", "kind": "activity-summary", "text": "changed"},
+                {"contentId": "file:json", "kind": "structured-json", "value": {"path": "a.rs"}}
+             ]},
+            {"resource": route("tool-1"), "turn": route("turn-1"), "conversation": route("conversation-1"),
+             "kind": "tool", "status": "failed", "tool": {
+                "callId": "call-tool", "name": "lookup", "category": "search", "origin": {"kind": "mcp", "name": "test"},
+                "input": {"kind": "structured", "value": {"query": "same text"}, "truncation": {"originalBytes": 50, "retainedBytes": 25, "strategy": "structural-preview"}},
+                "outcome": {"kind": "failure", "content": [{"contentId": "tool:output", "kind": "output", "text": "same text"}], "error": {"message": "short failure"}}
+             }},
+            {"resource": route("approval-1"), "turn": route("turn-1"), "conversation": route("conversation-1"),
+             "kind": "approval", "status": "pending", "approval": {
+                "resource": route("approval-1"), "turn": route("turn-1"), "conversation": route("conversation-1"),
+                "kind": "command-execution", "title": "approve", "status": "pending", "decisions": ["approve", "deny"],
+                "extension": {"namespace": "dev.codepet.private", "data": {"internal": true}}
+             }},
+            {"resource": route("unknown-1"), "turn": route("turn-1"), "conversation": route("conversation-1"),
+             "kind": "unknown", "status": "unknown", "title": "unknown"}
+        ]);
+        let provider_items: Vec<provider::ConversationItem> = serde_json::from_value(items).unwrap();
+        let projected: Vec<serde_json::Value> = provider_items
+            .into_iter()
+            .map(map_conversation_item)
+            .map(|item| serde_json::to_value(item).unwrap())
+            .collect();
+
+        assert_eq!(projected.len(), 7);
+        assert_eq!(projected[0]["contents"][0]["truncation"], json!({"originalBytes": 20, "retainedBytes": 9, "strategy": "head-tail"}));
+        assert_eq!(projected[4]["tool"]["input"]["truncation"], json!({"originalBytes": 50, "retainedBytes": 25, "strategy": "structural-preview"}));
+        assert_eq!(projected[2]["tool"]["input"]["command"], "printf same text");
+        assert_eq!(projected[2]["tool"]["outcome"]["content"][0]["contentId"], "command:output");
+        assert!(projected[2].get("contents").is_none());
+        assert!(projected.iter().all(|item| !item.to_string().contains("extension")));
+    }
+
+    #[test]
+    fn projects_opaque_tool_input_with_truncation() {
+        let input: provider::ToolInput = serde_json::from_value(json!({
+            "kind": "opaque", "value": "raw", "mimeType": "text/plain",
+            "truncation": {"originalBytes": 10, "retainedBytes": 3, "strategy": "head"}
+        })).unwrap();
+        let projected = serde_json::to_value(map_tool_input(input)).unwrap();
+        assert_eq!(projected, json!({
+            "kind": "opaque", "value": "raw", "mimeType": "text/plain",
+            "truncation": {"originalBytes": 10, "retainedBytes": 3, "strategy": "head"}
+        }));
     }
 }
 

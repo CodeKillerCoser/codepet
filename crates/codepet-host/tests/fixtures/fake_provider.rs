@@ -3,9 +3,10 @@ use codepet_provider_sdk::{
     ChoiceOption, ChoiceSet, ConversationAcquireInteractionRequest,
     ConversationAcquireInteractionResponse, ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
     ConversationGetResponse, ConversationListRequest, ConversationListResponse,
-    ConversationSearchRequest, ConversationSearchResponse, ConversationContent,
-    ConversationContentKind, ConversationCreateCapabilities, ConversationItem, ConversationItemKind,
-    ConversationItemRole, ConversationItemStatus, ConversationStatus, ConversationUpsertedEvent,
+    ConversationSearchRequest, ConversationSearchResponse, ContentBlock,
+    ConversationContentKind, ConversationCreateCapabilities, ConversationItem,
+    ConversationItemRole, ConversationItemStatus, ConversationItemUpsertedEvent, ConversationStatus,
+    ConversationUpsertedEvent,
     InstanceCapabilitiesRequest,
     InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceCreateResponse,
     InstanceDestroyRequest, InstanceDestroyResponse, InstanceStartRequest,
@@ -21,6 +22,7 @@ use codepet_provider_sdk::{
     ProviderAuthentication, ProviderAuthenticationStatus, ProviderInstance, ProviderInstanceRoute,
     ProviderPluginDescriptor, ProviderShutdownRequest, ProviderShutdownResponse, ProviderTurn,
     ProviderUsage, ProviderUsageDetail, ProviderWireMessage, RoutedResourceId,
+    MessageConversationItem, MessageConversationItemKind, TextContentBlock, TextContentBlockKind,
     TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent, TurnSendCapabilities,
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
     TurnSteerResponse, VersionRange,
@@ -439,23 +441,20 @@ impl ProtocolServer for FakeProvider {
             } else {
                 conversation
             };
-            let user_item = ConversationItem {
+            let user_item = ConversationItem::MessageConversationItem(MessageConversationItem {
                 resource: resource(&route, &format!("user-{}", request.client_request_id)),
                 turn: turn.resource.clone(),
                 conversation: user_item_conversation,
-                kind: ConversationItemKind::Message,
+                kind: MessageConversationItemKind::Message,
                 status: ConversationItemStatus::Completed,
-                role: Some(ConversationItemRole::User),
-                title: None,
-                contents: vec![ConversationContent {
+                role: ConversationItemRole::User,
+                contents: vec![ContentBlock::TextContentBlock(TextContentBlock {
                     content_id: format!("{}:input:0", request.client_request_id),
-                    kind: ConversationContentKind::Text,
+                    kind: TextContentBlockKind::Text,
                     text: request.input.text,
-                }],
-                related_item: None,
-                approval: None,
-                tool: None,
-            };
+                    truncation: None,
+                })],
+            });
             Ok(TurnStartResponse {
                 accepted: true,
                 turn,
@@ -644,6 +643,9 @@ async fn main() {
                         ProtocolRequest::ConversationList { .. } => {
                             "conversation-list-event-first"
                         }
+                        ProtocolRequest::ConversationGet { params, .. } => {
+                            params.conversation.native_resource_id.as_str()
+                        }
                         _ => "conversation-event-first",
                     };
                     let event = ProtocolEvent::EventConversationUpserted {
@@ -662,13 +664,37 @@ async fn main() {
                             params: serde_json::json!({ "step": 1 }),
                         }),
                     );
+                    let item_id = format!("{conversation_id}-assistant");
+                    let content_id = format!("{item_id}:text");
+                    let item = ConversationItem::MessageConversationItem(MessageConversationItem {
+                        resource: resource(&route, &item_id),
+                        turn: resource(&route, &format!("{conversation_id}-turn")),
+                        conversation: resource(&route, conversation_id),
+                        kind: MessageConversationItemKind::Message,
+                        status: ConversationItemStatus::Completed,
+                        role: ConversationItemRole::Assistant,
+                        contents: vec![ContentBlock::TextContentBlock(TextContentBlock {
+                            content_id: content_id.clone(),
+                            kind: TextContentBlockKind::Text,
+                            text: "fixture assistant message".to_string(),
+                            truncation: None,
+                        })],
+                    });
+                    write_message(
+                        &output,
+                        codec,
+                        ProviderWireMessage::Event(ProtocolEvent::EventConversationItemUpserted {
+                            jsonrpc: "2.0".to_string(),
+                            params: ConversationItemUpsertedEvent { item },
+                        }),
+                    );
                     let delta = ProtocolEvent::EventTurnOutputDelta {
                         jsonrpc: "2.0".to_string(),
                         params: TurnOutputDeltaEvent {
-                            turn: resource(&route, "turn-event-first"),
+                            turn: resource(&route, &format!("{conversation_id}-turn")),
                             conversation: resource(&route, conversation_id),
-                            item_id: "output-1".to_string(),
-                            content_id: "output-1:text".to_string(),
+                            item_id,
+                            content_id,
                             kind: ConversationContentKind::Text,
                             delta: "hello".to_string(),
                             extension: None,
@@ -920,40 +946,34 @@ fn history_items(route: &ProviderInstanceRoute, native_id: &str) -> Vec<Conversa
     let user_item_id = format!("{native_id}-user");
     let assistant_item_id = format!("{native_id}-assistant");
     vec![
-        ConversationItem {
+        ConversationItem::MessageConversationItem(MessageConversationItem {
             resource: resource(route, &user_item_id),
             turn: turn.clone(),
             conversation: conversation.clone(),
-            kind: ConversationItemKind::Message,
+            kind: MessageConversationItemKind::Message,
             status: ConversationItemStatus::Completed,
-            role: Some(ConversationItemRole::User),
-            title: None,
-            contents: vec![ConversationContent {
+            role: ConversationItemRole::User,
+            contents: vec![ContentBlock::TextContentBlock(TextContentBlock {
                 content_id: format!("{user_item_id}:input:0"),
-                kind: ConversationContentKind::Text,
+                kind: TextContentBlockKind::Text,
                 text: "fixture user message".to_string(),
-            }],
-            related_item: None,
-            approval: None,
-            tool: None,
-        },
-        ConversationItem {
+                truncation: None,
+            })],
+        }),
+        ConversationItem::MessageConversationItem(MessageConversationItem {
             resource: resource(route, &assistant_item_id),
             turn,
             conversation,
-            kind: ConversationItemKind::Message,
+            kind: MessageConversationItemKind::Message,
             status: ConversationItemStatus::Completed,
-            role: Some(ConversationItemRole::Assistant),
-            title: None,
-            contents: vec![ConversationContent {
+            role: ConversationItemRole::Assistant,
+            contents: vec![ContentBlock::TextContentBlock(TextContentBlock {
                 content_id: format!("{assistant_item_id}:text"),
-                kind: ConversationContentKind::Text,
+                kind: TextContentBlockKind::Text,
                 text: "fixture assistant message".to_string(),
-            }],
-            related_item: None,
-            approval: None,
-            tool: None,
-        },
+                truncation: None,
+            })],
+        }),
     ]
 }
 
