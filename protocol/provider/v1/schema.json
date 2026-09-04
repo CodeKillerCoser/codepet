@@ -1092,6 +1092,7 @@
         "pluginId": { "$ref": "../../core/v1/schema.json#/$defs/ProviderPluginId" },
         "displayName": { "type": "string", "minLength": 1 },
         "version": { "type": "string", "minLength": 1 },
+        "defaultWorkspaceRoot": { "type": "string", "minLength": 1 },
         "supportedVersions": { "$ref": "../../core/v1/schema.json#/$defs/VersionRange" },
         "instanceKinds": {
           "type": "array",

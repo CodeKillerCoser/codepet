@@ -310,6 +310,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     .await
     .unwrap();
     assert_eq!(initialized.plugin.plugin_id, CODEX_PLUGIN_ID);
+    assert!(initialized.plugin.default_workspace_root.is_some());
 
     let created = ProviderProtocolServer::instance_create(
         &provider,

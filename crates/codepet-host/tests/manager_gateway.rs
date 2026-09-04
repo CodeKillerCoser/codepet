@@ -320,6 +320,10 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
     assert_eq!(providers.providers.len(), 2);
     for provider in &providers.providers {
         assert_eq!(provider.identity.icon.as_deref(), Some("https://example.com/fake.png"));
+        assert_eq!(
+            provider.identity.default_workspace_root.as_deref(),
+            Some("/workspace/fake")
+        );
         assert_eq!(provider.runtime.status, codepet_gateway_sdk::ProviderStatus::Ready);
         let described = gateway
             .provider_describe(ProviderDescribeRequest { provider_id: provider.id.clone() })

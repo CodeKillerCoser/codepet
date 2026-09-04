@@ -1693,6 +1693,7 @@ impl CodexProvider {
             plugin_id: CODEX_PLUGIN_ID.to_string(),
             display_name: "Codex".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            default_workspace_root: codex_home().map(|path| path.to_string_lossy().into_owned()),
             supported_versions: VersionRange {
                 min_version: PROTOCOL_VERSION,
                 max_version: PROTOCOL_VERSION,
@@ -3327,7 +3328,18 @@ fn prepare_conversation_workspace(
             false,
         ));
     }
-    let codex_home = std::env::var_os("CODEX_HOME")
+    let codex_home = codex_home().ok_or_else(|| {
+        protocol_error(
+            "worktree_create_failed",
+            "cannot resolve Codex home for managed worktrees".to_string(),
+            false,
+        )
+    })?;
+    create_managed_worktree(requested, &codex_home).map(Some)
+}
+
+fn codex_home() -> Option<PathBuf> {
+    std::env::var_os("CODEX_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .or_else(|| {
@@ -3335,14 +3347,6 @@ fn prepare_conversation_workspace(
                 .filter(|value| !value.is_empty())
                 .map(|home| PathBuf::from(home).join(".codex"))
         })
-        .ok_or_else(|| {
-            protocol_error(
-                "worktree_create_failed",
-                "cannot resolve Codex home for managed worktrees".to_string(),
-                false,
-            )
-        })?;
-    create_managed_worktree(requested, &codex_home).map(Some)
 }
 
 fn create_managed_worktree(

@@ -7,6 +7,7 @@
       "pluginId": "dev.codepet.codex",
       "displayName": "Codex",
       "version": "1.0.0",
+      "defaultWorkspaceRoot": "/Users/example/.codex",
       "supportedVersions": {
         "minVersion": 1,
         "maxVersion": 1

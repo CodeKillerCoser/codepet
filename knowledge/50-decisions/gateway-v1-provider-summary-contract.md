@@ -11,7 +11,7 @@ Gateway V1 握手固定为 `protocol/device/providers/eventCursor` 四部分。`
 每个 `ProviderSummary` 只暴露：
 
 - opaque `id`：Remote 后续调用 Provider 级接口的唯一标识；Host 内部解析为 plugin/instance/route。
-- `identity`：`displayName` 与可选 HTTPS icon。
+- `identity`：`displayName`、可选 HTTPS icon，以及 Provider 报告的可选 `defaultWorkspaceRoot`。默认路径只用于无项目会话的创建表单；项目会话只发送项目引用，不重复发送路径。
 - `runtime`：状态、实际 runtime version/executable path、可选 authentication 和 usage。
 - `capabilities.revision`：完整能力通过 `provider.describe({ providerId })` 按需读取；响应同时返回最新 `ProviderSummary`，避免摘要与能力来自不同快照语义。
 

@@ -1291,6 +1291,7 @@ impl ClaudeProvider {
             plugin_id: CLAUDE_PLUGIN_ID.to_string(),
             display_name: "Claude".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            default_workspace_root: None,
             supported_versions: VersionRange {
                 min_version: PROTOCOL_VERSION,
                 max_version: PROTOCOL_VERSION,

@@ -3177,39 +3177,46 @@ final class ProviderIdentity {
   factory ProviderIdentity({
     required String displayName,
     String? icon,
+    String? defaultWorkspaceRoot,
   }) {
     final validatedDisplayName = _string(displayName, 'ProviderIdentity.displayName', minLength: 1);
     final validatedIcon = icon == null ? null : _string(icon, 'ProviderIdentity.icon', pattern: '^https://');
+    final validatedDefaultWorkspaceRoot = defaultWorkspaceRoot == null ? null : _string(defaultWorkspaceRoot, 'ProviderIdentity.defaultWorkspaceRoot', minLength: 1);
     return ProviderIdentity._(
       displayName: validatedDisplayName,
       icon: validatedIcon,
+      defaultWorkspaceRoot: validatedDefaultWorkspaceRoot,
     );
   }
 
   ProviderIdentity._({
     required this.displayName,
     required this.icon,
+    required this.defaultWorkspaceRoot,
   });
 
   final String displayName;
   final String? icon;
+  final String? defaultWorkspaceRoot;
 
   factory ProviderIdentity.fromJson(Object? value, {String path = 'ProviderIdentity'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'displayName', 'icon'}, path);
+    _expectKeys(json, const {'displayName', 'icon', 'defaultWorkspaceRoot'}, path);
     return ProviderIdentity(
       displayName: _string(_required(json, 'displayName', path), '$path.displayName', minLength: 1),
       icon: json.containsKey('icon') && json['icon'] != null ? _string(json['icon'], '$path.icon', pattern: '^https://') : null,
+      defaultWorkspaceRoot: json.containsKey('defaultWorkspaceRoot') && json['defaultWorkspaceRoot'] != null ? _string(json['defaultWorkspaceRoot'], '$path.defaultWorkspaceRoot', minLength: 1) : null,
     );
   }
 
   Map<String, Object?> toJson() => {
     'displayName': displayName,
     if (icon != null) 'icon': icon!,
+    if (defaultWorkspaceRoot != null) 'defaultWorkspaceRoot': defaultWorkspaceRoot!,
   };
 
   @override
-  String toString() => 'ProviderIdentity(displayName: $displayName, icon: $icon)';
+  String toString() => 'ProviderIdentity(displayName: $displayName, icon: $icon, defaultWorkspaceRoot: $defaultWorkspaceRoot)';
 }
 
 final class ProviderListRequest {

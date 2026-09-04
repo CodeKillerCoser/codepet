@@ -876,6 +876,8 @@ pub struct ProviderPluginDescriptor {
     pub plugin_id: ProviderPluginId,
     pub display_name: String,
     pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_workspace_root: Option<String>,
     pub supported_versions: VersionRange,
     pub instance_kinds: Vec<ProviderInstanceKind>,
 }

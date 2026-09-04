@@ -135,6 +135,7 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
         codex.identity.icon.as_deref(),
         Some("https://avatars.githubusercontent.com/u/14957082?s=200&v=4")
     );
+    assert!(codex.identity.default_workspace_root.is_some());
     assert_eq!(
         claude.identity.icon.as_deref(),
         Some("https://cdn.prod.website-files.com/6889473510b50328dbb70ae6/68c33859cc6cd903686c66a2_apple-touch-icon.png")

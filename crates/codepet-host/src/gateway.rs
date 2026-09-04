@@ -1345,6 +1345,10 @@ fn gateway_provider(
             identity: gateway::ProviderIdentity {
                 display_name: runtime.record.display_name.clone(),
                 icon: plugin.catalog.icon.clone(),
+                default_workspace_root: plugin
+                    .reported
+                    .as_ref()
+                    .and_then(|descriptor| descriptor.default_workspace_root.clone()),
             },
             runtime: gateway::ProviderRuntime {
                 status: if plugin.catalog.enabled && runtime.record.enabled {

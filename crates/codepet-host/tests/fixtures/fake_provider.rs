@@ -42,6 +42,7 @@ impl FakeProvider {
             plugin_id: self.plugin_id.clone(),
             display_name: "CodePet Fake Provider".to_string(),
             version: "1.0.0-test".to_string(),
+            default_workspace_root: Some("/workspace/fake".to_string()),
             supported_versions: VersionRange {
                 min_version: env_u32("CODEPET_FAKE_SUPPORTED_MIN_VERSION", 1),
                 max_version: env_u32("CODEPET_FAKE_SUPPORTED_MAX_VERSION", 1),
