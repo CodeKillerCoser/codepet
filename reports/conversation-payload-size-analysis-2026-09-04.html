@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Code Pet 对话列表与历史消息响应体尺寸分析</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #5f6b7d;
+      --line: #dbe3ed;
+      --paper: #ffffff;
+      --wash: #f4f7fb;
+      --blue: #2563eb;
+      --blue-soft: #e8f0ff;
+      --cyan: #0891b2;
+      --amber: #b45309;
+      --amber-soft: #fff4db;
+      --red: #b42318;
+      --red-soft: #ffebe9;
+      --green: #067647;
+      --green-soft: #e8f7ef;
+      --shadow: 0 18px 50px rgba(31, 42, 68, .08);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--wash);
+      color: var(--ink);
+      font: 15px/1.72 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+    code { padding: .12rem .32rem; border-radius: 5px; background: #edf2f7; font-size: .9em; }
+    .hero {
+      color: white;
+      background:
+        radial-gradient(circle at 86% 14%, rgba(34, 211, 238, .30), transparent 28%),
+        radial-gradient(circle at 12% 88%, rgba(96, 165, 250, .28), transparent 32%),
+        linear-gradient(135deg, #13213c 0%, #173b70 58%, #126780 100%);
+      padding: 54px 24px 50px;
+    }
+    .hero-inner, main { max-width: 1180px; margin: 0 auto; }
+    .eyebrow { margin: 0 0 12px; color: #a5e9ff; font-size: 12px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+    h1 { max-width: 900px; margin: 0; font-size: clamp(30px, 5vw, 54px); line-height: 1.12; letter-spacing: -.035em; }
+    .hero p { max-width: 870px; margin: 22px 0 0; color: #d7e8ff; font-size: 17px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+    .meta span { padding: 6px 10px; border: 1px solid rgba(255,255,255,.22); border-radius: 999px; background: rgba(255,255,255,.08); font-size: 12px; }
+    main { padding: 28px 20px 72px; }
+    .toc, section { margin: 0 0 24px; padding: 26px 28px; border: 1px solid var(--line); border-radius: 18px; background: var(--paper); box-shadow: var(--shadow); }
+    .toc { display: grid; grid-template-columns: 150px 1fr; gap: 18px; align-items: start; }
+    .toc strong { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+    .toc nav { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+    h2 { margin: 0 0 18px; font-size: 25px; line-height: 1.3; letter-spacing: -.015em; }
+    h3 { margin: 28px 0 10px; font-size: 18px; }
+    h4 { margin: 20px 0 8px; font-size: 15px; }
+    p { margin: 10px 0; }
+    ul, ol { padding-left: 22px; }
+    li + li { margin-top: 6px; }
+    .lead { font-size: 17px; color: #33425b; }
+    .grid-2, .grid-3, .metrics { display: grid; gap: 14px; }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3, .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card { padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: #fbfdff; }
+    .metric { min-height: 126px; padding: 18px; border-radius: 14px; background: linear-gradient(145deg, #f6f9ff, #edf4ff); border: 1px solid #d6e5ff; }
+    .metric .value { display: block; margin-top: 4px; color: #163f7a; font-size: 29px; font-weight: 800; line-height: 1.1; }
+    .metric .label { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+    .metric .note { display: block; margin-top: 8px; color: #536179; font-size: 12px; }
+    .callout { margin: 16px 0; padding: 16px 18px; border-left: 5px solid var(--blue); border-radius: 10px; background: var(--blue-soft); }
+    .callout.warning { border-color: var(--amber); background: var(--amber-soft); }
+    .callout.danger { border-color: var(--red); background: var(--red-soft); }
+    .callout.good { border-color: var(--green); background: var(--green-soft); }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; vertical-align: middle; }
+    .observed { color: #075985; background: #dff4ff; }
+    .codefact { color: #4c1d95; background: #ede9fe; }
+    .simulated { color: #92400e; background: #fef3c7; }
+    .unknown { color: #7f1d1d; background: #fee2e2; }
+    .table-wrap { overflow-x: auto; margin: 14px 0; border: 1px solid var(--line); border-radius: 12px; }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; background: white; }
+    th, td { padding: 11px 13px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; background: #edf3fa; color: #34425a; font-size: 12px; letter-spacing: .03em; }
+    tr:last-child td { border-bottom: 0; }
+    td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .bar-row { display: grid; grid-template-columns: 180px 1fr 100px; gap: 12px; align-items: center; margin: 10px 0; }
+    .bar-track { height: 16px; overflow: hidden; border-radius: 999px; background: #e7edf5; }
+    .bar { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--blue), var(--cyan)); }
+    .bar.red { background: linear-gradient(90deg, #ef4444, #f97316); }
+    .bar-value { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; align-items: stretch; margin: 18px 0; }
+    .flow div { position: relative; min-height: 92px; padding: 14px; border: 1px solid #cad7e8; border-radius: 12px; background: #f7faff; text-align: center; }
+    .flow div:not(:last-child)::after { content: "→"; position: absolute; right: -14px; top: 29px; z-index: 2; color: var(--blue); font-size: 22px; font-weight: 800; }
+    .flow strong { display: block; color: #1e3a5f; }
+    .flow small { display: block; margin-top: 6px; color: var(--muted); }
+    pre { overflow-x: auto; margin: 12px 0; padding: 16px; border-radius: 12px; background: #111827; color: #d9e7ff; font-size: 12px; line-height: 1.6; }
+    .recommendation { margin: 18px 0; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: #fcfdff; }
+    .recommendation h3 { margin-top: 0; }
+    .case-link { color: var(--blue); font-weight: 700; }
+    .footnote { color: var(--muted); font-size: 12px; }
+    .print-note { display: none; }
+    @media (max-width: 820px) {
+      .grid-2, .grid-3, .metrics { grid-template-columns: 1fr; }
+      .toc { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr; }
+      .flow div:not(:last-child)::after { content: "↓"; right: auto; left: 50%; top: auto; bottom: -21px; }
+      .bar-row { grid-template-columns: 120px 1fr 76px; }
+      section, .toc { padding: 21px 18px; }
+    }
+    @media print {
+      body { background: white; font-size: 11px; }
+      .hero { padding: 28px 24px; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      main { max-width: none; padding: 14px; }
+      section, .toc { break-inside: avoid; box-shadow: none; margin-bottom: 12px; }
+      .table-wrap { overflow: visible; }
+      table { min-width: 0; }
+      .print-note { display: block; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <p class="eyebrow">Payload Forensics · Bug Investigation · 2026-09-04</p>
+      <h1>Code Pet 对话列表与历史消息响应体尺寸分析</h1>
+      <p>基于本机 Context Provider 历史读取，以及已安装 <strong>Code Pet.app</strong> 内置 Codex Provider 的真实黑盒请求。报告重点回答：工具原始输入/输出是否造成频繁超限、列表接口是否属于同一根因，以及每项改进建议在真实案例上能解决什么。</p>
+      <div class="meta">
+        <span>环境：macOS / 本机历史</span>
+        <span>Code Pet 内置 Codex Provider</span>
+        <span>上游 Codex App Server 0.152.1</span>
+        <span>Provider 帧上限：16 MiB</span>
+        <span>状态：分析完成，尚未修改代码</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="toc">
+      <strong>报告导航</strong>
+      <nav>
+        <a href="#verdict">结论边界</a>
+        <a href="#method">方法与口径</a>
+        <a href="#list">对话列表案例</a>
+        <a href="#history">历史消息案例</a>
+        <a href="#largest">最大工具项</a>
+        <a href="#duplication">重复数据</a>
+        <a href="#object-design">对象设计复盘</a>
+        <a href="#code">代码机制</a>
+        <a href="#recommendations">建议与案例映射</a>
+        <a href="#verification">验证计划</a>
+        <a href="#unknowns">未知项</a>
+      </nav>
+    </div>
+
+    <section id="verdict">
+      <h2>1. 结论边界：两个接口不能混为一个根因</h2>
+      <div class="grid-2">
+        <div class="card">
+          <span class="badge observed">高置信实测</span>
+          <h3>拉取历史消息：用户推断成立</h3>
+          <p>Shell、读文件、搜索、日志抓取、diff 等操作文本是响应体的主要组成。最大真实页面约 <strong>14.4 MiB</strong>，其中 command item 约占 <strong>92%</strong>，已经逼近 16 MiB 硬上限。</p>
+        </div>
+        <div class="card">
+          <span class="badge observed">已反证同因</span>
+          <h3>拉取对话列表：不是工具原文导致</h3>
+          <p><code>conversation.list</code> 只携带 conversation 元数据，不携带 Shell 或文件工具正文。本机最大真实列表页为 <strong>257,935 bytes</strong>，明显低于 16 MiB。列表超限需要继续检查错误归属、其他 Provider、聚合层或元数据异常。</p>
+        </div>
+      </div>
+      <div class="callout warning">
+        <strong>重要口径纠正：</strong>“200 多 K 的完整 Conversation 元数据”并不是单条 conversation。实测的约 252 KiB 是 <strong>100 条 conversation 的完整列表页</strong>；最大单条 conversation 元数据约 <strong>10.7 KiB</strong>。报告后文同时保留整页与单条数据，避免误读。
+      </div>
+      <div class="metrics">
+        <div class="metric"><span class="label">最大 history 页面</span><span class="value">≈14.4 MiB</span><span class="note">40 turns，2,350 items，重复实测范围 15,089,266–15,138,623 bytes</span></div>
+        <div class="metric"><span class="label">精确重复正文</span><span class="value">6.13 MB</span><span class="note">命令重复两份 + 输出重复一份，不含 JSON 键与结构开销</span></div>
+        <div class="metric"><span class="label">组合优化模拟</span><span class="value">5.84 MiB</span><span class="note">去重 + 操作文本 8 KiB 预览；较当前下降 59.4%</span></div>
+      </div>
+    </section>
+
+    <section id="method">
+      <h2>2. 调查方法、环境与尺寸口径</h2>
+      <h3>2.1 三层证据</h3>
+      <ol>
+        <li><span class="badge observed">真实读取</span> 调用本机 Context Provider 的 <code>list_threads</code> 与 <code>read_thread</code>，抽取现存历史；对同一页面分别读取 <code>includeOutputs=true/false</code>，直接计算工具正文增量。</li>
+        <li><span class="badge observed">真实黑盒</span> 启动 <code>/Applications/Code Pet.app</code> 包内的 <code>codepet-provider-codex</code>，仅通过公开 Provider JSON-RPC 执行 initialize、instance.create/start、conversation.list/get、stop/shutdown。使用真实本机历史，不调用内部 Rust 对象。</li>
+        <li><span class="badge simulated">离线模拟</span> 对已取得的真实 JSON 响应做内存副本变换，模拟“截断”和“去重”后的序列化大小。模拟没有改变 App、Provider、历史文件或仓库代码。</li>
+      </ol>
+
+      <h3>2.2 计量口径</h3>
+      <ul>
+        <li>表中的 bytes 均按 UTF-8 JSON 紧凑序列化计算。</li>
+        <li>MiB 使用 1,048,576 bytes；KiB 使用 1,024 bytes。</li>
+        <li>黑盒 <code>conversation.get</code> 数值主要统计 <code>result</code>，实际 Provider JSON-RPC frame 还会增加 envelope，因此必须保留安全余量。</li>
+        <li>Context Provider 的 <code>read_thread</code> 单次最多 10 turns、单 item 输出最多 20,000 chars；它天然比 Code Pet Provider 的 256 KiB 单工具文本上限更保守。</li>
+      </ul>
+
+      <h3>2.3 样本范围</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>样本代号</th><th>真实任务标题</th><th>Thread ID</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td>A</td><td>Review仓库代码设计</td><td><code>01a06325-a5b4-7eb1-ab79-fd82e7e649a6</code></td><td>最大历史、Shell 密集、跨 Host/Remote 代码操作</td></tr>
+            <tr><td>B</td><td>CodePet Remote v1 — Android LAN client</td><td><code>01a04f08-c0f4-7e32-a00a-834191cda4af</code></td><td>长周期开发、MCP 工具较多</td></tr>
+            <tr><td>C</td><td>Provider 项目与握手能力完整验收（标题为长中文需求）</td><td><code>01a068e3-a391-78a2-975f-f3859c58f84a</code></td><td>Provider 接口测试、Shell 与 diff 密集</td></tr>
+            <tr><td>D</td><td>修复消息列表加载定位</td><td><code>01a060f9-7e62-7d52-884f-d6845d0fb081</code></td><td>相对较小但仍由工具输出主导的对照样本</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="footnote">未覆盖：Claude 与 OpenCode 的同规模真实历史；不同 Provider 的原生数据结构和既有预算不同，不能直接把 Codex 百分比外推为三者完全一致。</p>
+    </section>
+
+    <section id="list">
+      <h2>3. 对话列表：整页 200 多 KiB，但不是单条 200 多 KiB</h2>
+
+      <h3>3.1 Context Provider 列表</h3>
+      <p>读取最近 50 条任务得到 24,697 bytes。该接口已经对异常长标题与摘要做截断：50 条中发现 1 个标题截断、3 个摘要截断。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>指标</th><th class="num">实测值</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>完整列表响应</td><td class="num">24,697 bytes</td><td>50 threads + sections</td></tr>
+            <tr><td>threads JSON 合计</td><td class="num">22,632 bytes</td><td>不含 sections 与外层字段</td></tr>
+            <tr><td>title 文本合计</td><td class="num">8,112 bytes</td><td>最大标题返回 2,000 chars，并标记原始 2,549 chars</td></tr>
+            <tr><td>summary 文本合计</td><td class="num">2,849 bytes</td><td>3 个长 summary 有截断标记</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>3.2 Code Pet.app 内置 Provider 列表</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>页面</th><th class="num">Conversation 数</th><th class="num">响应大小</th><th class="num">最大单条</th><th>是否有下一页</th></tr></thead>
+          <tbody>
+            <tr><td>第 1 页</td><td class="num">100</td><td class="num">257,935 bytes（251.9 KiB）</td><td class="num">10,361 bytes</td><td>是</td></tr>
+            <tr><td>第 2 页</td><td class="num">72</td><td class="num">100,826 bytes（98.5 KiB）</td><td class="num">10,983 bytes</td><td>否</td></tr>
+            <tr><td><strong>合计</strong></td><td class="num"><strong>172</strong></td><td class="num"><strong>358,761 bytes</strong></td><td class="num">—</td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>3.3 最大单条 conversation 元数据</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Conversation ID</th><th class="num">单条 JSON</th><th class="num">Title</th><th class="num">Preview</th><th>观察</th></tr></thead>
+          <tbody>
+            <tr><td><code>019dfd76-d7eb-7740-aa12-1b85ae58a6ee</code></td><td class="num">10,983 B</td><td class="num">5,175 B</td><td class="num">5,175 B</td><td>逐字节确认完全相同，是同一长文本的双份携带</td></tr>
+            <tr><td><code>01a04cd9-a89c-7533-9520-425c478d603f</code></td><td class="num">10,361 B</td><td class="num">4,809 B</td><td class="num">4,809 B</td><td>逐字节确认完全相同</td></tr>
+            <tr><td><code>01a06927-e845-7242-9291-e3a03d7abaeb</code></td><td class="num">9,535 B</td><td class="num">4,341 B</td><td class="num">4,341 B</td><td>逐字节确认完全相同；Context Provider 对应标题已截到 2,000 chars</td></tr>
+            <tr><td><code>01a04f84-edef-7fe1-9503-7acb15812dcb</code></td><td class="num">5,914 B</td><td class="num">43 B</td><td class="num">5,159 B</td><td>标题短但 preview 很长，说明两字段不能简单总是合并</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>全量相等检查：</strong>172 条 conversation 均带有 preview，其中 <strong>70 条（40.7%）的 title 与 preview 逐字节完全相同</strong>；按单条 JSON 大小排序的前 8 条全部属于这种完全重复。</p>
+      <div class="callout good">
+        <strong>列表侧结论：</strong>当前样本没有接近 16 MiB，Shell 工具原文也根本不在列表响应中。列表仍值得做 title/preview 上限与相同值去重，但这是“降低浪费和防止病态元数据”的改进，不是本次历史帧超限的主要根因。
+      </div>
+    </section>
+
+    <section id="history">
+      <h2>4. 历史消息：多个真实页面达到数百 KiB到十几 MiB</h2>
+
+      <h3>4.1 Context Provider：同页包含输出与不包含输出的对照</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>案例</th><th class="num">Turns</th><th class="num">含工具输出</th><th class="num">不含工具输出</th><th class="num">输出相关增量</th><th class="num">增量占比</th></tr></thead>
+          <tbody>
+            <tr><td>A · Review仓库代码设计</td><td class="num">10</td><td class="num">1,370,803 B（1.31 MiB）</td><td class="num">170,421 B</td><td class="num">1,200,382 B</td><td class="num"><strong>87.6%</strong></td></tr>
+            <tr><td>B · Android LAN client</td><td class="num">10</td><td class="num">841,505 B（0.80 MiB）</td><td class="num">249,044 B</td><td class="num">592,461 B</td><td class="num"><strong>70.4%</strong></td></tr>
+            <tr><td>C · Provider 完整验收</td><td class="num">6</td><td class="num">1,427,539 B（1.36 MiB）</td><td class="num">168,711 B</td><td class="num">1,258,828 B</td><td class="num"><strong>88.2%</strong></td></tr>
+            <tr><td>D · 消息列表加载修复</td><td class="num">7</td><td class="num">270,563 B（264 KiB）</td><td class="num">48,328 B</td><td class="num">222,235 B</td><td class="num"><strong>82.1%</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>这里的“输出相关增量”不是估算，而是同一历史页在 <code>includeOutputs=true</code> 与 <code>false</code> 下的实际 UTF-8 JSON 差值。四个样本均显示：即使页面只有 6–10 turns，操作文本也贡献 70% 以上响应体。</p>
+
+      <h3>4.2 案例 A 的 10-turn 页面构成</h3>
+      <div class="bar-row"><span>Command execution</span><div class="bar-track"><div class="bar red" style="width:83%"></div></div><span class="bar-value">83.0%</span></div>
+      <div class="bar-row"><span>File change</span><div class="bar-track"><div class="bar" style="width:11.5%"></div></div><span class="bar-value">11.5%</span></div>
+      <div class="bar-row"><span>Reasoning</span><div class="bar-track"><div class="bar" style="width:3%"></div></div><span class="bar-value">3.0%</span></div>
+      <div class="bar-row"><span>Agent message</span><div class="bar-track"><div class="bar" style="width:1.9%"></div></div><span class="bar-value">1.9%</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Item 类型</th><th class="num">数量</th><th class="num">JSON 大小</th><th class="num">占整页</th><th>主要字段</th></tr></thead>
+          <tbody>
+            <tr><td>commandExecution</td><td class="num">198</td><td class="num">1,137,584 B</td><td class="num">83.0%</td><td><code>output.text</code> 1,015,722 B；<code>command</code> 41,884 B</td></tr>
+            <tr><td>fileChange</td><td class="num">53</td><td class="num">157,762 B</td><td class="num">11.5%</td><td><code>changes[].diff.text</code> 130,289 B</td></tr>
+            <tr><td>reasoning</td><td class="num">285</td><td class="num">40,503 B</td><td class="num">3.0%</td><td>摘要与 item identity</td></tr>
+            <tr><td>agentMessage</td><td class="num">34</td><td class="num">25,375 B</td><td class="num">1.9%</td><td>助手正文 20,976 B</td></tr>
+            <tr><td>其他</td><td class="num">28</td><td class="num">6,811 B</td><td class="num">0.5%</td><td>用户消息、搜索、图片查看、compaction</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>4.3 同一个完整历史分页后仍累计 7.19 MiB</h3>
+      <p>案例 A 通过 Context Provider 按最新优先完整翻页，共 47 turns。由于单 item 已被限制在 20,000 chars，这个 7.19 MiB 还是“已截断后的完整历史”，并非原始无界数据。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>页</th><th class="num">Turns</th><th class="num">Items</th><th class="num">Command 数</th><th class="num">Command 输出</th><th class="num">整页大小</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td class="num">10</td><td class="num">598</td><td class="num">198</td><td class="num">1,015,722 B</td><td class="num">1,370,803 B</td></tr>
+            <tr><td>2</td><td class="num">10</td><td class="num">582</td><td class="num">202</td><td class="num">1,063,503 B</td><td class="num">1,364,557 B</td></tr>
+            <tr><td>3</td><td class="num">10</td><td class="num">604</td><td class="num">239</td><td class="num">1,139,128 B</td><td class="num">1,438,653 B</td></tr>
+            <tr><td>4</td><td class="num">10</td><td class="num">566</td><td class="num">231</td><td class="num">1,350,273 B</td><td class="num">1,628,930 B</td></tr>
+            <tr><td>5</td><td class="num">7</td><td class="num">559</td><td class="num">179</td><td class="num">1,283,592 B</td><td class="num">1,741,114 B</td></tr>
+            <tr><td><strong>合计</strong></td><td class="num"><strong>47</strong></td><td class="num"><strong>2,909</strong></td><td class="num"><strong>1,049</strong></td><td class="num"><strong>5,852,218 B</strong></td><td class="num"><strong>7,544,057 B（7.19 MiB）</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>4.4 Code Pet Provider：40 turns 接近硬上限</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>真实 Conversation</th><th class="num">请求 limit</th><th class="num">返回 items</th><th class="num">响应大小</th><th>风险</th></tr></thead>
+          <tbody>
+            <tr><td>A · <code>01a06325…</code></td><td class="num">40</td><td class="num">2,350</td><td class="num"><strong>约 15.1 MB / 14.4 MiB</strong></td><td><strong>距离 16 MiB 仅约 1.6 MiB</strong></td></tr>
+            <tr><td>A · <code>01a06325…</code></td><td class="num">20</td><td class="num">1,180</td><td class="num">6,829,508 B（6.51 MiB）</td><td>帧安全余量明显改善</td></tr>
+            <tr><td>A · <code>01a06325…</code></td><td class="num">10</td><td class="num">598</td><td class="num">3,633,697 B（3.47 MiB）</td><td>适合作为默认页</td></tr>
+            <tr><td>A · <code>01a06325…</code></td><td class="num">1</td><td class="num">18</td><td class="num">45,939 B</td><td>当前最终退避目标</td></tr>
+            <tr><td>C · <code>01a068e3…</code></td><td class="num">40</td><td class="num">519</td><td class="num">4,355,817 B（4.15 MiB）</td><td>实际仅 6 turns，因此 40/20/10 返回相同全量</td></tr>
+            <tr><td>B · <code>01a04f08…</code></td><td class="num">40</td><td class="num">837</td><td class="num">3,984,236 B（3.80 MiB）</td><td>包含 177 个 tool items</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout danger">
+        案例 A 的 40-turn 响应在多次独立黑盒读取中落在 <strong>15,089,266–15,138,623 bytes</strong>。轻微差异来自读取时的响应状态/序列化内容变化，但结论稳定：它长期处在硬上限附近。再增加少量日志、diff 或结构化工具输出，就会进入 <code>provider_response_too_large</code> 路径。
+      </div>
+    </section>
+
+    <section id="largest">
+      <h2>5. 最大工具项：不是极端单项才会出问题</h2>
+      <p>下表来自案例 A 的真实 40-turn Code Pet Provider 响应。命令只展示操作类别或脱敏预览；item ID 与尺寸是原始实测值。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Item ID</th><th>真实操作类型</th><th class="num">输出正文</th><th class="num">完整 Item</th><th class="num">输出重复副本</th><th>是否触发 256 KiB 截断</th></tr></thead>
+          <tbody>
+            <tr><td><code>exec-bd27e1ec…</code></td><td>Flutter VM isolate 状态查询与 JSON 分析（本机 URL token 已脱敏）</td><td class="num">142,362 B</td><td class="num">291,513 B</td><td class="num">142,362 B</td><td>否</td></tr>
+            <tr><td><code>exec-b8cefe37…</code></td><td>查找本地 transcript 并统计文件</td><td class="num">110,819 B</td><td class="num">226,237 B</td><td class="num">110,819 B</td><td>否</td></tr>
+            <tr><td><code>exec-c72cc181…</code></td><td><code>rg</code> 搜索 Claude tool_use/tool_result 实现</td><td class="num">85,927 B</td><td class="num">177,501 B</td><td class="num">85,927 B</td><td>否</td></tr>
+            <tr><td><code>exec-b27479f7…</code></td><td>读取 Code Pet 日志并抓取 Android logcat</td><td class="num">78,969 B</td><td class="num">161,323 B</td><td class="num">78,969 B</td><td>否</td></tr>
+            <tr><td><code>exec-b0a465c0…</code></td><td><code>rg</code> 搜索 Gateway ConversationItem 协议</td><td class="num">75,490 B</td><td class="num">157,784 B</td><td class="num">75,490 B</td><td>否</td></tr>
+            <tr><td><code>exec-95cb730b…</code></td><td>读取 package.json 并搜索 Provider 源码</td><td class="num">73,619 B</td><td class="num">152,238 B</td><td class="num">73,619 B</td><td>否</td></tr>
+            <tr><td><code>exec-33de3c9e…</code></td><td>生成 Codex App Server schema 并检索字段</td><td class="num">66,931 B</td><td class="num">140,256 B</td><td class="num">66,931 B</td><td>否</td></tr>
+            <tr><td><code>exec-515fe789…</code></td><td>Android <code>adb logcat -d -t 500</code></td><td class="num">66,890 B</td><td class="num">136,702 B</td><td class="num">66,890 B</td><td>否</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout warning">
+        这些最大项的输出只有约 65–142 KiB，全部低于现有 256 KiB 单项上限，因此现有截断完全不会触发；但每项经过重复映射后几乎翻倍。真正的问题是“几十到几百个中等大小工具项累计”，不是只有某一个超过 256 KiB 的极端输出。
+      </div>
+    </section>
+
+    <section id="duplication">
+      <h2>6. 重复数据：同一命令三份、同一输出两份</h2>
+      <div class="flow">
+        <div><strong>原生 command</strong><small>App Server commandExecution</small></div>
+        <div><strong>contents.command</strong><small>时间线展示正文</small></div>
+        <div><strong>tool.input.command</strong><small>工具输入抽屉</small></div>
+        <div><strong>tool.command.command</strong><small>命令结构化详情</small></div>
+        <div><strong>JSON frame</strong><small>三个完全相同副本</small></div>
+      </div>
+      <div class="flow">
+        <div><strong>原生 output</strong><small>aggregatedOutput</small></div>
+        <div><strong>contents.output</strong><small>时间线展示正文</small></div>
+        <div><strong>tool.result.content.text</strong><small>工具结果抽屉</small></div>
+        <div><strong>JSON escaping</strong><small>换行、引号再次编码</small></div>
+        <div><strong>JSON frame</strong><small>两个完全相同副本</small></div>
+      </div>
+
+      <h3>6.1 案例 A 的精确相等检查</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>数据</th><th class="num">Item 数</th><th class="num">权威正文</th><th class="num">额外重复正文</th><th>相等检查</th></tr></thead>
+          <tbody>
+            <tr><td>Shell command</td><td class="num">870</td><td class="num">205,199 B</td><td class="num">410,398 B</td><td>870/870 同时与 <code>tool.input.command</code>、<code>tool.command.command</code> 完全相等</td></tr>
+            <tr><td>Shell output</td><td class="num">801</td><td class="num">5,719,156 B</td><td class="num">5,719,156 B</td><td>801/801 与 <code>tool.result.content.text</code> 完全相等</td></tr>
+            <tr><td><strong>合计</strong></td><td class="num">—</td><td class="num">5,924,355 B</td><td class="num"><strong>6,129,554 B</strong></td><td>额外重复正文约占整个 15.1 MB 响应的 40.5%</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="footnote">6,129,554 bytes 只统计完全相等的字符串副本，不包含重复 JSON 字段名、contentId、MIME、route identity、tool metadata 与转义开销。因此它是可确认冗余的下界。</p>
+
+      <h3>6.2 真实结构示意</h3>
+      <pre>{
+  "kind": "command",
+  "contents": [
+    { "kind": "command", "text": "&lt;command A&gt;" },
+    { "kind": "output",  "text": "&lt;output B&gt;" }
+  ],
+  "tool": {
+    "input":   { "command": "&lt;command A&gt;" },
+    "command": { "command": "&lt;command A&gt;", "cwd": "..." },
+    "result":  { "content": [{ "text": "&lt;output B&gt;" }] }
+  }
+}</pre>
+      <p>这一现象不能只归因于 Codex Mapper “写了几遍”。Schema 同时允许 <code>contents</code>、<code>tool.input</code>、<code>tool.rawInput</code>、<code>tool.command</code>、<code>tool.result.content</code> 和 <code>tool.result.structuredContent</code> 持有完整载荷，却没有规定唯一事实源、互斥关系或引用关系。Mapper 的重复是表象，对象模型的多权威设计才是系统性诱因。</p>
+    </section>
+
+    <section id="object-design">
+      <h2>7. 对象设计复盘：问题不是“字段多”，而是“同一事实有多个所有者”</h2>
+
+      <div class="callout danger">
+        <strong>修正后的架构判断：</strong><code>ToolInvocation</code> 这个抽象本身是必要的；不合理的是它与 <code>ConversationItem.contents</code> 发生了完整正文所有权重叠，而且 tool 内部又有第二轮重叠。当前协议没有建立 single source of truth，因此服务端、客户端、截断器和增量同步各自选择不同字段都算“合法”，最终必然出现重复、分歧和补丁式 fallback。
+      </div>
+
+      <h3>7.1 五组重叠分别意味着什么</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>重叠组</th><th>当前可承载的事实</th><th>真实案例</th><th>设计缺陷</th></tr></thead>
+          <tbody>
+            <tr><td><code>ConversationItem.contents</code> ↔ <code>ToolResult.content</code></td><td>工具输出正文</td><td>案例 A 的 801 条 output 在两处逐字相等，额外复制 5,719,156 B</td><td>展示层内容与领域对象结果都拥有全文，没有 canonical owner</td></tr>
+            <tr><td><code>contents.command</code> ↔ <code>ToolInvocation.input.command</code> ↔ <code>ToolCommandDetails.command</code></td><td>执行的命令</td><td>870/870 三处逐字相等，原文 205,199 B 被额外复制两次</td><td>命令同时被建模为时间线正文、一般输入和命令专属详情</td></tr>
+            <tr><td><code>input</code> ↔ <code>rawInput</code></td><td>规范化参数与原始参数</td><td>Schema 要求 <code>input</code> 必填；只想表达 raw input 时仍需要占位对象</td><td>缺少互斥联合类型，无法表达“输入只有一种形态”</td></tr>
+            <tr><td><code>result.content</code> ↔ <code>structuredContent</code></td><td>文本结果与结构化结果</td><td>通用工具可把同一 JSON 同时序列化为文本和结构对象，二者上限各自计算</td><td>没有规定一个是源、另一个是派生预览或引用</td></tr>
+            <tr><td><code>result.content</code> ↔ <code>error.message</code></td><td>失败正文</td><td>错误 Provider 路径可把相同 bounded text 同时放进 result content 和错误消息</td><td>错误摘要与完整错误载荷边界未定义</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>7.2 为什么可以确认是协议级问题，而不只是 Codex 实现错误</h3>
+      <div class="grid-2">
+        <div class="card">
+          <span class="badge codefact">Codex / OpenCode</span>
+          <h3>相同 Schema 诱导出相同重复</h3>
+          <p>Codex command mapper 同时填充顶层 command/output 和 tool input/result/command；OpenCode 的 shell mapper 也采用同样的双层填充。这说明重复不是某一行手误，而是多个实现都在满足两个看似独立、实则重叠的消费模型。</p>
+        </div>
+        <div class="card">
+          <span class="badge codefact">Claude</span>
+          <h3>另一实现选择了另一权威位置</h3>
+          <p>Claude 的 <code>tool_use</code> 映射把 <code>contents</code> 留空，主要数据放进 <code>ToolInvocation</code>。它证明顶层副本并非协议运行所必需，也暴露出跨 Provider 语义不一致：客户端不能从 Schema 得知正文一定在哪里。</p>
+        </div>
+      </div>
+      <p class="footnote">代码位置：Codex <code>crates/providers/codepet-provider-codex/src/mapper.rs:600–689</code>；OpenCode <code>crates/providers/codepet-provider-opencode/src/mapper.rs:369–397, 848–898</code>；Claude <code>crates/providers/codepet-provider-claude/src/provider.rs:2511–2583</code>；协议定义 <code>protocol/provider/v1/schema.json</code> 的 ToolContent、ToolInvocation 与 ConversationItem。</p>
+
+      <h3>7.3 重复不只浪费空间，还会产生正确性风险</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>风险</th><th>当前证据</th><th>可能表现</th></tr></thead>
+          <tbody>
+            <tr><td>截断只改到一个副本</td><td><code>fit_single_turn_conversation_history</code> 只缩减 <code>item.contents</code>，不统一处理 tool input/result</td><td>响应仍很大；时间线与详情抽屉看到的文本长度不同</td></tr>
+            <tr><td>显示权威与同步权威分裂</td><td>Remote command 展示优先读取 <code>item.tool</code>；已提交 contentId 集合却来自顶层 <code>message.contentIds</code></td><td>增量 delta 的去重/确认依据和最终展示依据不是同一对象</td></tr>
+            <tr><td>两个副本发生内容漂移</td><td>字段没有引用约束，也没有相等性校验</td><td>某个 Mapper 修复、截断或脱敏一处后，另一处仍保留旧值</td></tr>
+            <tr><td>不同 Provider 行为不一致</td><td>Codex/OpenCode 填双份，Claude 顶层 contents 为空</td><td>客户端不断加入 provider-specific fallback，协议抽象失去价值</td></tr>
+            <tr><td>预算被独立字段绕过</td><td>input、result text、structuredContent 各自允许较大载荷</td><td>任何单字段都未超限，但聚合 JSON frame 超限</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>7.4 最终协议决策：用判别联合让非法组合无法出现</h3>
+      <p>最终方案不是在投影器里做文本去重，也不是为了工具抽屉建立另一套详情对象，而是直接修改 Provider/Gateway v1：<code>ConversationItem</code>、tool input 和 tool outcome 都采用带 <code>kind</code> 的封闭 <code>oneOf</code>。每个分支只拥有自己合法的字段，命令与输出各只有一个 canonical 位置。项目尚未现场发布，因此两个协议与两端实现同步更新，<strong>版本号仍保持 v1</strong>。</p>
+      <pre>{
+  "resource": { "itemId": "exec-…", "conversationId": "…" },
+  "kind": "tool",
+  "status": "completed",
+  "title": "Shell",
+  "tool": {
+    "callId": "exec-…",
+    "name": "shell",
+    "input": {
+      "kind": "command",
+      "command": "rg …",
+      "cwd": "/workspace"
+    },
+    "outcome": {
+      "kind": "success",
+      "contents": [{
+        "contentId": "exec-…:output",
+        "kind": "text",
+        "text": "&lt;唯一一份 output preview&gt;",
+        "truncation": {
+          "originalBytes": 142362,
+          "retainedBytes": 8192,
+          "strategy": "head-tail"
+        }
+      }],
+      "exitCode": 0
+    }
+  }
+}</pre>
+      <ul>
+        <li><strong>ConversationItem 联合：</strong>message、reasoning、tool/command、file change、approval、unknown 分支互斥；不再由一个对象上的大量 optional 字段表达领域状态。</li>
+        <li><strong>ToolInput 联合：</strong><code>command | structured | opaque</code> 三选一。Command 是“语义上执行命令”，Structured 是已可靠解析的 JSON，Opaque 是无法可靠理解的输入；尺寸大不等于 opaque。</li>
+        <li><strong>ToolOutcome 联合：</strong><code>success | failure</code> 二选一。内容块是输出唯一所有者；结构化 JSON 作为一种内容块，不再同时写 text 与 <code>structuredContent</code>；错误 message 只保留短摘要。</li>
+        <li><strong>截断元数据属于内容：</strong>截断与抽屉无关。任意 UI 都读取同一内容块，并用 <code>originalBytes</code>、<code>retainedBytes</code>、<code>strategy</code> 显示它不完整。</li>
+        <li><strong>Delta 指向 canonical content：</strong>继续使用 <code>itemId + contentId</code>；客户端 committed contentId 必须遍历各 item variant 的内容块，不能依赖文本相等。</li>
+      </ul>
+
+      <h3>7.5 实施边界：协议先行，Provider 必须最先截断</h3>
+      <ol>
+        <li>先在 Provider/Gateway v1 Schema 固定联合、唯一所有权与截断元数据，并生成 Rust/Dart/TypeScript SDK。</li>
+        <li>Provider Mapper 按新类型输出单份正文；共享 Provider SDK 在 stdout JSON 序列化前执行内容预算、页软预算和最终 16 MiB frame 检查。</li>
+        <li>Host/Gateway 按联合分支校验和投影。Host 的二次预算可以保护远程链路，但不能修复已经无法写出 stdout 的 Provider response。</li>
+        <li>Remote 更新解码、分页、committed contentId 和 delta 合并；消息内折叠或抽屉都只是同一 canonical 内容的视图。</li>
+      </ol>
+      <div class="callout warning">
+        <strong>不能采用的伪修复：</strong>只在 Mapper、Host 投影器或 Remote 做文本去重都不能从类型上排除双写；Remote 去重也无法避免 Provider 的 stdio JSON frame 先超限。只开 WebSocket 压缩不影响 Provider 进程间帧；只截断顶层 <code>contents</code> 会留下 tool 内全文；为抽屉建立第二份详情 payload 会重新制造双权威。
+      </div>
+    </section>
+
+    <section id="code">
+      <h2>8. 当前代码为什么会产生这种结果</h2>
+      <div class="grid-2">
+        <div class="card">
+          <span class="badge codefact">代码事实</span>
+          <h3>工具文本普通上限为 256 KiB</h3>
+          <p><code>bounded_tool_text</code> 只在单段字符串超过 256 KiB 时截断。真实最大项多在 65–142 KiB，因此不会触发。</p>
+          <p><code>crates/providers/codepet-provider-codex/src/mapper.rs:1154</code></p>
+        </div>
+        <div class="card">
+          <span class="badge codefact">代码事实</span>
+          <h3>结构化输入同样允许 256 KiB</h3>
+          <p>工具 input 的 JSON 小于等于 256 KiB 时完整进入 <code>structured_content/input</code>；更大时才转换成截断文本。</p>
+          <p><code>crates/providers/codepet-provider-codex/src/mapper.rs:1006</code></p>
+        </div>
+        <div class="card">
+          <span class="badge codefact">代码事实</span>
+          <h3>32 KiB 补救只在 limit=1 生效</h3>
+          <p><code>fit_single_turn_conversation_history</code> 在请求 limit 不是 1 时直接返回原响应；limit=1 仍超限才缩减 <code>item.contents</code>。</p>
+          <p><code>sdk/rust/codepet-provider-sdk/src/lib.rs:21</code></p>
+        </div>
+        <div class="card">
+          <span class="badge codefact">代码事实</span>
+          <h3>Remote 默认先请求 40 turns</h3>
+          <p>只有收到 <code>provider_response_too_large</code> 后才将 limit 减半；意味着先承受一次大响应构建与失败，再重试 20/10/5/2/1。</p>
+          <p><code>codepet-remote/lib/gateway/gateway_client.dart:545</code></p>
+        </div>
+      </div>
+      <div class="callout">
+        <strong>边界问题：</strong>现有 32 KiB 补救只遍历 <code>item.contents</code>，没有统一预算 <code>tool.input</code>、<code>tool.rawInput</code>、<code>tool.result.structuredContent</code> 与 <code>tool.result.content.text</code>。因此对“正文在结构化 tool 中仍保留一份”的情况不够完整。
+      </div>
+    </section>
+
+    <section id="recommendations">
+      <h2>9. 建议方案：每一项对应什么真实案例</h2>
+
+      <div class="recommendation">
+        <span class="badge observed">优先级 P0</span>
+        <h3>建议 1：Remote 默认 history page 从 40 turns 降到 10</h3>
+        <p><strong>对应案例：</strong>案例 A 的相同起点，40 turns 为约 14.4 MiB，20 turns 为 6.51 MiB，10 turns 为 3.47 MiB，1 turn 为 44.9 KiB。</p>
+        <p><strong>直接收益：</strong>首帧从约 14.4 MiB 降到 3.47 MiB，单帧下降约 76%，避免先构建超大帧、报错、再逐次减半。</p>
+        <p><strong>代价：</strong>完整历史请求次数增加。Remote 当前最终仍会循环到全部分页并把 pages 合并到内存，因此该方案主要解决网络单帧与失败重试，不直接降低“完整历史最终内存”。</p>
+        <p><strong>验证：</strong>使用案例 A 的 cursor 顺序回放，断言 10-turn pages 无重复、无遗漏、nextCursor 稳定；记录首屏可见时间与完整加载时间。</p>
+      </div>
+
+      <div class="recommendation">
+        <span class="badge observed">优先级 P0</span>
+        <h3>建议 2：在 v1 协议层消除可共存的重复所有者</h3>
+        <p><strong>对应案例：</strong>案例 A 中 870 条命令的正文各出现 3 次；801 条输出各出现 2 次。精确重复正文至少 6,129,554 bytes。</p>
+        <p><strong>模拟结果：</strong>仅删除与 <code>contents</code> 完全相等的 tool 正文副本，14.39 MiB → <strong>8.40 MiB</strong>，下降 <strong>41.6%</strong>。</p>
+        <p><strong>推荐协议：</strong>不是约定 Mapper “不要同时填写”，而是用 <code>oneOf</code> 让双写对象无法通过 Schema。command/structured/opaque input 三选一，success/failure outcome 二选一，完整结果只在 canonical content blocks；普通 user/assistant message 继续拥有自己的 blocks。</p>
+        <p><strong>实施要求：</strong>协议与生成 SDK 先完成，Codex/OpenCode/Claude、Host/Gateway、Remote 再按同一合同并行迁移。Remote 工具详情与 command 时间线当前优先读取 <code>tool.result</code>，但 committed contentId 主要来自顶层 contents；新实现必须从判别分支遍历 canonical contentId，不能保留文本相等 fallback 作为长期机制。</p>
+      </div>
+
+      <div class="recommendation">
+        <span class="badge simulated">优先级 P0</span>
+        <h3>建议 3：操作文本使用 8–16 KiB 预览，不保留 256 KiB 默认正文</h3>
+        <p><strong>对应案例：</strong>最大 8 个真实工具输出为 65–142 KiB，全部绕过 256 KiB 上限；单项看似合理，累计后把一页推到 14.4 MiB。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>基于真实案例 A 的模拟</th><th class="num">响应大小</th><th class="num">相对当前下降</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>当前</td><td class="num">14.39 MiB</td><td class="num">—</td><td>工具普通上限 256 KiB，存在重复</td></tr>
+              <tr><td>操作字段 32 KiB</td><td class="num">13.26 MiB</td><td class="num">7.8%</td><td>幅度有限，仍偏近上限</td></tr>
+              <tr><td>操作字段 16 KiB</td><td class="num">11.55 MiB</td><td class="num">19.7%</td><td>改善，但重复仍在</td></tr>
+              <tr><td>操作字段 8 KiB</td><td class="num">9.31 MiB</td><td class="num">35.3%</td><td>单独采用已经有效</td></tr>
+              <tr><td>去重 + 8 KiB</td><td class="num"><strong>5.84 MiB</strong></td><td class="num"><strong>59.4%</strong></td><td>推荐组合</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p><strong>截断方式：</strong>Shell/log/test 输出建议保留开头与结尾，而非只保留开头；末尾通常包含退出码、失败摘要和断言。内容块返回 <code>truncation.originalBytes</code>、<code>retainedBytes</code>、<code>strategy=head-tail</code>；文件 diff 可按文件拆分并给出文件级摘要。该元数据描述内容完整性，与内容是在消息内、抽屉还是详情页展示无关。</p>
+        <p><strong>不应统一截断：</strong>用户消息和助手最终正文在样本中占比很小，应给予更高上限或独立策略，避免为了工具噪声损害主要对话内容。</p>
+      </div>
+
+      <div class="recommendation">
+        <span class="badge codefact">优先级 P1</span>
+        <h3>建议 4：建立整页 6–8 MiB 软预算，而不是只看单 item</h3>
+        <p><strong>对应案例：</strong>870 个 command 中没有任何一个必须超过 256 KiB，但总 command item 达约 13.9 MB。单项阈值无法约束累计体积。</p>
+        <p><strong>行为建议：</strong>序列化前维护响应预算；优先保留 item identity、状态、标题、exitCode、timing、truncated/totalBytes，正文按剩余预算加入。达到软预算时不必丢弃整个 turn，也不应等到 16 MiB codec 才返回错误。</p>
+        <p><strong>为什么是 6–8 MiB：</strong>案例 A 的 20-turn 页面为 6.51 MiB，说明这个区间既能承载大量真实 item，又为 Provider envelope、Gateway 转换和移动网络留出明显余量。</p>
+      </div>
+
+      <div class="recommendation">
+        <span class="badge observed">优先级 P1</span>
+        <h3>建议 5：对 conversation.list 的 title/preview 单独设界</h3>
+        <p><strong>对应案例：</strong>172 条列表总计 358,761 bytes；最大单条 10,983 bytes，其中 title 与 preview 各 5,175 bytes。另一个样本 title 仅 43 bytes、preview 为 5,159 bytes，证明不能简单删除 preview。</p>
+        <p><strong>建议：</strong>title 采用字符/字节上限（例如 1–2 KiB）；preview 采用独立 2–4 KiB 上限；当两者完全相等时只传一个权威值或加 <code>previewSameAsTitle</code>。保留 <code>truncated</code>/<code>originalBytes</code>。</p>
+        <p><strong>边界：</strong>这会让列表更稳定，但不能把现有列表超限直接判定为已解决，因为当前实测列表页仅约 252 KiB。</p>
+      </div>
+
+      <div class="recommendation">
+        <span class="badge codefact">优先级 P1</span>
+        <h3>建议 6：增加接口级尺寸观测与错误归属</h3>
+        <p><strong>对应案例：</strong>列表 UI 报错不等于失败 RPC 一定是 <code>conversation.list</code>。Remote 的列表请求并不预取 <code>conversation.get</code>，因此需要日志明确记录 method、provider、cursor、limit、响应 bytes、item counts、重试次数和最终错误码。</p>
+        <p><strong>建议字段：</strong><code>method</code>、<code>providerId</code>、<code>conversationIdHash</code>、<code>limit</code>、<code>cursorPresent</code>、<code>responseBytes</code>、<code>itemsByKind</code>、<code>truncatedBytes</code>、<code>deduplicatedBytes</code>、<code>retryFromLimit/toLimit</code>。</p>
+        <p><strong>隐私约束：</strong>日志只记尺寸和哈希，不记录完整命令、diff、用户正文或 tool result。</p>
+      </div>
+    </section>
+
+    <section id="verification">
+      <h2>10. 实现后的验证计划与回归防线</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>风险</th><th>自动化验证</th><th>真实环境验证</th><th>通过标准</th></tr></thead>
+          <tbody>
+            <tr><td>截断后丢失失败结尾</td><td>构造头部正常、尾部报错的 100 KiB 输出</td><td>运行长 cargo/flutter test 输出</td><td>预览同时包含头尾，totalBytes 准确</td></tr>
+            <tr><td>去重后工具抽屉为空</td><td>SDK mapper/UI 测试用 contentId 解析正文</td><td>打开真实 command/file/MCP 详情</td><td>时间线与详情均可读，无双份正文</td></tr>
+            <tr><td>小页导致顺序或重复错误</td><td>10-turn cursor 多页回放</td><td>加载案例 A 全部 47 turns</td><td>item ID 无重复、顺序稳定、总数一致</td></tr>
+            <tr><td>软预算错误删除 item</td><td>数百个中等输出的单 turn fixture</td><td>复读案例 A 40-turn 起点</td><td>身份/状态全保留，正文按预算截断</td></tr>
+            <tr><td>列表截断影响搜索与标题</td><td>长 title、长 preview、两者相同/不同 fixture</td><td>检查最大四条真实元数据</td><td>展示清楚，有截断标记，无重复传输</td></tr>
+            <tr><td>仍出现 16 MiB 失败</td><td>Provider 最终 JSON frame 大小断言</td><td>移动网络反复打开案例 A</td><td>普通页稳定低于软预算，不经过 too-large 重试</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>建议保留的基准样本</h3>
+      <ul>
+        <li>2,350 items / 870 command / 801 outputs 的 40-turn 等价 fixture。</li>
+        <li>单输出 142 KiB、但不超过 256 KiB 的“中等大项”fixture。</li>
+        <li>数百个 8–20 KiB 输出聚合成大页的“累计超限”fixture。</li>
+        <li>title 与 preview 完全相同、各约 5 KiB 的列表 metadata fixture。</li>
+      </ul>
+    </section>
+
+    <section id="unknowns">
+      <h2>11. 已排除方向、未知项与下一步</h2>
+      <h3>已排除</h3>
+      <ul>
+        <li>“对话列表因为携带 Shell 原文而超限”：列表协议与本机实测均不支持该判断。</li>
+        <li>“只有某个超过 256 KiB 的巨型命令输出才会触发”：最大真实工具项均未触发 256 KiB 截断，累计已经接近 16 MiB。</li>
+        <li>“目前 32 KiB fallback 能覆盖所有工具字段”：代码只在 limit=1 且整帧过大时处理 <code>item.contents</code>，并非统一工具正文预算。</li>
+        <li>“重复只是 Codex Mapper 的单点实现错误”：OpenCode 也发生双层填充，而 Claude 选择另一种放置方式，说明 Schema 缺少唯一事实源和跨 Provider 约束。</li>
+      </ul>
+      <h3>仍未知</h3>
+      <ul>
+        <li><span class="badge unknown">未确认</span> 用户现场“列表超限”对应的确切 RPC method、Provider、cursor 和 response size；需要尺寸日志或原始错误上下文。</li>
+        <li><span class="badge unknown">未确认</span> Claude/OpenCode 在本机真实大历史中的重复数据规模；代码路径已确认，但尚未做与 Codex 案例 A 同口径的黑盒量化。</li>
+        <li><span class="badge codefact">已决策</span> 当前没有现场发布兼容负担，Provider/Gateway 继续使用 v1，Code Pet 与 codepet-remote 同步升级，不维护旧字段双栈。</li>
+        <li><span class="badge unknown">未确认</span> 长列表在多个 Provider 并发请求时，UI 是否把其中一个失败统一展示成“列表加载失败”。</li>
+      </ul>
+      <h3>建议实施顺序</h3>
+      <ol>
+        <li>先修改 Provider/Gateway v1 的判别联合、唯一载荷所有权和截断元数据，并生成全部 SDK。</li>
+        <li>Provider、Host/Gateway、Remote 以该协议为共同基线并行迁移；Provider 在 stdout 序列化前执行第一次预算。</li>
+        <li>Remote 默认 limit 40 → 10，并为操作正文引入 8–16 KiB 语义预览和 6–8 MiB 页软预算。</li>
+        <li>加入只记尺寸、不记正文的接口观测，用真实 method 和 route 归因现场错误。</li>
+        <li>最后独立收口 conversation.list title/preview；两者相等是列表元数据冗余，不是 tool payload 的组成部分。</li>
+      </ol>
+      <div class="callout">
+        <strong>最终判断：</strong>历史消息尺寸问题已经有高置信、可量化的根因证据；对话列表目前只有“存在可优化的元数据冗余”证据，还没有“列表自身达到硬上限”的证据。实施时应拆成两个问题跟踪，避免用同一个截断开关掩盖错误归属。
+      </div>
+      <p class="footnote print-note">本报告为 2026-09-04 本机快照。实现变化或历史继续增长后，应重新运行相同黑盒采样。</p>
+    </section>
+  </main>
+</body>
+</html>

@@ -8,6 +8,8 @@ Gateway v1 业务协议、channel 和 admission 必须保持三层独立：chann
 
 协议事实必须从 `protocol/` 单向生成到 `sdk/`：schema 与 manifest 的全部 `$ref` 使用同一依赖审计，core 不依赖任何上层，pet/provider/gateway 只能引用显式声明的安全下层。每种输出语言必须有独立 target adapter，未实现 target 必须 fail closed。Provider plugin event 不得发布到 companion Tauri event、replay、Pet projection 或 activity store；Pet action 不得调用插件生命周期接口。Gateway 快照响应的 `snapshotCursor` 必须在发起 Provider 查询前捕获；`EventCursor` 对客户端始终 opaque，只能原样保存和回传，不能解析、排序或执行 `+1`。完整历史要分别守住 App Server→Provider 与 Provider→Host 两段有界 JSON-line：上游有 cursor API 时必须分页读取并逐页释放原生 DTO；最终投影仍超过 Provider/Host 共享上限时，Provider 必须按原请求返回稳定的小错误并继续服务，不能只放宽某一端或让写响应失败终止进程。Host 发出 `provider.shutdown` 后必须继续读取 stdout，丢弃不再有消费者的晚到 event/notification，但必须保留 shutdown response 与进程退出监管。
 
+Conversation 工具载荷还必须遵守 [`conversation-tool-payload-ownership.md`](conversation-tool-payload-ownership.md)：互斥关系由 v1 schema 的判别联合强制表达，工具输入与结果各只有一个完整载荷所有者，截断发生在 Provider stdout 序列化之前。Host 投影器或 Remote 的文本去重只能作为迁移诊断，不能成为协议正确性机制；抽屉等 UI 展示位置不进入协议。
+
 ## 适用场景
 
 - 修改任一 schema、method/event manifest、generator 或 SDK 包。
