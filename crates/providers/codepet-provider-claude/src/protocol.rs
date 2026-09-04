@@ -33,6 +33,11 @@ impl<'a> ClaudeUserMessage<'a> {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClaudeOutput {
+    #[serde(rename = "control_request")]
+    ControlRequest {
+        request_id: String,
+        request: ClaudeControlRequest,
+    },
     #[serde(rename = "system")]
     System {
         subtype: String,
@@ -81,6 +86,26 @@ pub enum ClaudeOutput {
         usage: Option<Value>,
         #[serde(default)]
         total_cost_usd: Option<f64>,
+    },
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(tag = "subtype")]
+pub enum ClaudeControlRequest {
+    #[serde(rename = "can_use_tool")]
+    CanUseTool {
+        tool_name: String,
+        input: Value,
+        #[serde(default)]
+        tool_use_id: Option<String>,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        display_name: Option<String>,
+        #[serde(default)]
+        description: Option<String>,
     },
     #[serde(other)]
     Unknown,

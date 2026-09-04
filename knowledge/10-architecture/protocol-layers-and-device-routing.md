@@ -43,7 +43,7 @@
 7. Tauri 依赖 `codepet-host`、`codepet-gateway-sdk` 与 `codepet-desktop-sdk`，并继续通过 desktop v0 re-export 使用原有桌面类型。`RuntimeGatewayState` 只适配 `ProviderHostState` 创建的 Gateway service；remote 与 companion 保持各自 EventBus/replay/Tauri event，Provider v1 event 经 Gateway 只发布到 remote channel。
 8. `crates/codepet-host` 已消费生成 SDK 实现进程外 Provider client、Plugin Manager 和 `codepet-gateway-sdk::ProtocolServer` application boundary；Manager 到 Gateway 是只能领取一次的有界单消费者队列，不指向 companion bus。详见 `provider-host-device-and-plugin-runtime.md`。
 9. `crates/providers/codepet-provider-codex` 使用生成 Provider SDK 实现全部 v1 lifecycle/业务方法和事件，官方 App Server client 不再位于 Tauri。详见 `codex-provider-plugin-runtime.md`。
-10. `crates/providers/codepet-provider-claude` 使用同一生成 Provider SDK 与 Host lifecycle，只适配官方 CLI `stream-json` 可验证的 create/start/result/Unix interrupt；list/get/steer/approval 明确关闭。详见 `claude-provider-plugin-runtime.md`。
+10. `crates/providers/codepet-provider-claude` 使用同一生成 Provider SDK 与 Host lifecycle，适配官方 CLI 双向 `stream-json` 可验证的 create/list/get/start/result、Unix interrupt 与 stdio approval；steer 明确关闭。详见 `claude-provider-plugin-runtime.md`。
 11. `crates/providers/codepet-provider-opencode` 同样只使用生成 Provider SDK；OpenCode HTTP/SSE DTO 留在插件内部，Host resolver 是 Server executable 的唯一来源。详见 `opencode-provider-plugin-runtime.md`。
 
 ## 涉及模块

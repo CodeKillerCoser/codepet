@@ -2,7 +2,7 @@ use crate::protocol::{decode_claude_output, ClaudeOutput, ClaudeUserMessage};
 use std::fmt;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::{mpsc, Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
@@ -91,6 +91,7 @@ impl ProcessExitState {
 pub struct ClaudeProcessControl {
     process_id: u32,
     exit: Arc<ProcessExitState>,
+    stdin: Arc<Mutex<Option<ChildStdin>>>,
 }
 
 impl ClaudeProcessControl {
@@ -104,6 +105,43 @@ impl ClaudeProcessControl {
 
     pub fn wait_for_exit(&self, timeout: Duration) -> bool {
         self.exit.wait(timeout)
+    }
+
+    pub fn resolve_permission(
+        &self,
+        request_id: &str,
+        allow: bool,
+        input: &serde_json::Value,
+    ) -> Result<(), ClaudeCliError> {
+        let response = if allow {
+            serde_json::json!({
+                "type": "control_response",
+                "response": {
+                    "subtype": "success",
+                    "request_id": request_id,
+                    "response": { "behavior": "allow", "updatedInput": input }
+                }
+            })
+        } else {
+            serde_json::json!({
+                "type": "control_response",
+                "response": {
+                    "subtype": "success",
+                    "request_id": request_id,
+                    "response": { "behavior": "deny", "message": "Denied by user" }
+                }
+            })
+        };
+        let mut guard = lock(&self.stdin);
+        let stdin = guard.as_mut().ok_or_else(|| {
+            ClaudeCliError::Io("Claude stdin is unavailable for permission response".to_string())
+        })?;
+        serde_json::to_writer(&mut *stdin, &response)
+            .map_err(|error| ClaudeCliError::Protocol(error.to_string()))?;
+        stdin
+            .write_all(b"\n")
+            .and_then(|_| stdin.flush())
+            .map_err(|error| ClaudeCliError::Io(error.to_string()))
     }
 
     #[cfg(unix)]
@@ -192,7 +230,9 @@ impl ClaudeTurnLaunch {
             .arg("--output-format")
             .arg("stream-json")
             .arg("--verbose")
-            .arg("--include-partial-messages");
+            .arg("--include-partial-messages")
+            .arg("--permission-prompt-tool")
+            .arg("stdio");
         if self.resume {
             command.arg("--resume").arg(&self.session_id);
         } else {
@@ -249,11 +289,11 @@ impl ClaudeTurnLaunch {
             terminate_unstarted_child(&mut child, process_id);
             return Err(error);
         }
-        drop(stdin);
         let exit = Arc::new(ProcessExitState::default());
+        let stdin = Arc::new(Mutex::new(Some(stdin)));
         Ok(SpawnedClaudeTurn {
             child,
-            control: ClaudeProcessControl { process_id, exit },
+            control: ClaudeProcessControl { process_id, exit, stdin },
             stdout,
             stderr,
         })
@@ -286,7 +326,7 @@ impl SpawnedClaudeTurn {
         let process_id = control.process_id;
         let stream_error: Arc<dyn Fn(ClaudeCliError) + Send + Sync> = Arc::new(on_stream_error);
         let reader_error = stream_error.clone();
-        let reader_control = control;
+        let reader_control = control.clone();
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             let mut saw_terminal_frame = false;
@@ -342,6 +382,7 @@ impl SpawnedClaudeTurn {
                 .wait()
                 .map_err(|error| ClaudeCliError::Io(error.to_string()));
             cleanup_process_group(process_id);
+            *lock(&control.stdin) = None;
             reaper_exit.mark_exited();
             if stdout_receiver.recv_timeout(STDOUT_DRAIN_WAIT).is_err() {
                 reaper_error(ClaudeCliError::Protocol(

@@ -2,19 +2,19 @@
 
 ## 规则
 
-Claude Provider 的上游只能是 Host resolver 注入的 Claude executable 与官方非交互机器接口。当前允许的最小接口是 `claude --version`、`claude auth status --json`、`claude --print` 的 `stream-json` 输入/输出、Provider 自建 UUID 的 `--session-id`/`--resume` 和 Unix 信号。握手版本与认证状态来自前两个命令；用量只使用官方 result 事件的 `usage` / `total_cost_usd`，未完成 Provider turn 前明确显示为本次会话尚无记录。不得通过 Hook、transcript 扫描、窗口控制、Claude Desktop/IDE 私有状态或猜测字段补能力。
+Claude Provider 的上游只能是 Host resolver 注入的 Claude executable 与官方非交互机器接口。当前允许的最小接口是 `claude --version`、`claude auth status --json`、`claude --print` 的双向 `stream-json`、`--permission-prompt-tool stdio` 的 `control_request`/`control_response`、Provider 自建 UUID 的 `--session-id`/`--resume` 和 Unix 信号。握手版本与认证状态来自前两个命令；用量只使用官方 result 事件的 `usage` / `total_cost_usd`，未完成 Provider turn 前明确显示为本次会话尚无记录。不得通过 Hook、transcript 扫描、窗口控制、Claude Desktop/IDE 私有状态或猜测字段补能力。
 
 Claude Provider 的 `runtime.getInstalled` 负责搜索当前 PATH 与登录 Shell，并以 `--version` 验证结果；不得扫描 Claude Desktop、IDE 私有目录或 transcript。选择结果缺失、非绝对、不可执行或版本验证失败时，instance lifecycle 必须 fail closed。
 
-没有稳定机器接口的 Provider Protocol 方法必须从 capabilities 中关闭，并返回 `capability_unsupported`。当前包括 `conversation.list`、`conversation.get`、`turn.steer` 和 `approval.resolve`；Provider process 重启后也不扫描 transcript 恢复 session。审批若只能通过 Agent SDK callback 或 MCP permission tool 成立，不能在禁止 SDK sidecar/MCP 的实现中伪造。
+没有稳定机器接口的 Provider Protocol 方法必须从 capabilities 中关闭，并返回 `capability_unsupported`。当前包括 `turn.steer`；Provider process 重启后也不扫描 transcript 恢复 session。Claude 的 `can_use_tool` stdio control request 必须映射为 pending Provider approval，App 的 approve/deny 必须回写同一 CLI 进程的 stdin；不得只展示一个无法回传的伪审批。进程退出时仍 pending 的审批必须发布 expired resolution。
 
 Provider Protocol event 只能进入 `ProviderGatewayService` remote replay/event，不得由 Provider mapper 写入 Pet Protocol、`SharedState` activity、companion replay、Desktop IPC、`codex-desktop-companion-event` 或 `pet-event`。Claude 继承的本机 Hook 仍可按用户配置独立调用既有 collector；这是 Claude 配置行为，不是 Provider event 路由。
 
-每个 turn 都必须使用 Claude 的默认配置发现：不得传 `--safe-mode`、空 `--setting-sources`、inline `--settings`、strict/empty MCP、`--restricted`、工具白名单或强制 permission mode，也不得改写 auto-memory 环境变量。user/project/local/managed settings、MCP、Hook、plugin、memory 和权限以本机 Claude 实际配置为准；CodePet 不提供隔离边界。
+每个 turn 都必须使用 Claude 的默认配置发现：不得传 `--safe-mode`、空 `--setting-sources`、inline `--settings`、strict/empty MCP、`--restricted` 或工具白名单，也不得改写 auto-memory 环境变量。user/project/local/managed settings、MCP、Hook、plugin 与 memory 以本机 Claude 实际配置为准；CodePet 选择的 access mode 可映射为 Claude permission mode，默认 `manual`，并以 `stdio` 承接授权交互。CodePet 不提供额外 sandbox 隔离边界。
 
 继承任意本机配置时无法保证强 `read-only`，因此 capabilities 不得广告 `read-only`，conversation.create 必须拒绝它。当前只接受 `workspace-write` 作为“继承 Claude 默认权限”的 Provider Protocol 兼容入口，不将它描述为 sandbox；`full-access` 同样不广告，避免通过 bypass flag 覆盖本机策略。
 
-每个 turn 的后台 reaper 必须独占 `Child` 和 `wait`。运行时 control 只能保存 PID/process-group ID 与退出通知；result、aborted 或 interrupt 请求都不能在进程真实退出前删除 active。interrupt、stop、destroy 和 shutdown 必须有界等待，超时杀整个进程组，并在 reaper 确认退出后才发布权威 terminal。
+每个 turn 的后台 reaper 必须独占 `Child` 和 `wait`。运行时 control 保存 PID/process-group ID、退出通知和互斥保护的 stdin writer；result、aborted 或 interrupt 请求都不能在进程真实退出前删除 active。interrupt、stop、destroy 和 shutdown 必须有界等待，超时杀整个进程组，并在 reaper 确认退出后才发布权威 terminal。
 
 Provider binary 的服务循环结果与最终进程清理必须分开。正常 EOF、坏或超大 Host frame、response write/flush 失败都必须先进入不发布状态或 terminal event 的有界 reap，再返回原始服务结果；不能把清理只放在循环的正常落点，也不能依赖 stdout 仍可写。codec fatal error 在 reap 前不得写错误响应；当前实现直接 fail-stop，不回写该响应。
 
@@ -31,9 +31,9 @@ Claude stdout 单物理行当前硬上限是 4 MiB，超过上限且未换行时
 - Provider 内调用 `which claude`、遍历扩展目录或在 Host path 失败后静默 fallback。
 - 读取 `~/.claude/projects` transcript 来实现 list/get 或恢复进程内 registry。
 - 把 Hook payload、窗口标题、Agent View UI 或未文档字段解释成 Provider session 状态。
-- 因为 CLI 返回了 permission denial，就发布一个并不存在回写通道的可批准 Approval。
+- 收到 `can_use_tool` 后关闭 stdin，导致 App 能看到授权但决策无法回写 Claude。
 - 为复用旧桌宠代码，把 remote Provider event 写进 activity store，再依赖前端过滤。
-- 为追求隔离而传 safe/restricted/strict-empty MCP 或覆盖 permission mode，使 CodePet 中的 Claude 与用户直接运行 Claude 表现不同。
+- 为追求隔离而传 safe/restricted/strict-empty MCP，使 CodePet 中的 Claude 与用户直接运行 Claude 表现不同。
 - result frame 到达就移除 active，而 Claude 根进程或其子进程仍在运行。
 - 把 2 MiB result 塞进单个 Provider event，超过生成 codec 的 1 MiB frame 上限后静默丢 terminal。
 - 在 Provider stdio loop 内用 `?` 直接返回 write/flush 错误，使循环末尾的 protocol shutdown 永远不执行。
@@ -43,7 +43,8 @@ Claude stdout 单物理行当前硬上限是 4 MiB，超过上限且未换行时
 
 - 上游 Claude DTO 只覆盖官方文档或真实 fixture 验证过的字段，使用宽松未知 variant；route、session、framing 和非法 JSON 严格失败。
 - 使用生成的 Provider SDK server trait、dispatcher、codec、DTO 与四段 route；不要手写第二份 Provider Protocol。
-- 每次 Provider-launched turn 只添加机器接口、session、model/effort 等会话参数，不覆盖 Claude 配置发现与权限模式。
+- 每次 Provider-launched turn 只添加机器接口、session、model/effort、所选 permission mode 和 stdio permission prompt 参数，不覆盖 Claude 的 settings/MCP/plugin 配置发现。
+- fixture 必须让 Claude 子进程发出真实形状的 `can_use_tool` control request、阻塞读取第二条 stdin 消息，并分别验证 allow 的 `updatedInput` 与 deny 结果。
 - 用无害 `.mcp.json` fixture 证明项目配置沿默认 cwd 可见，同时断言命令行不包含隔离参数；不要为测试执行危险 MCP 或 Hook 命令。
 - 用 result-then-sleep、ignore-SIGINT、stdout-close、超长无换行与 stop/destroy/shutdown 探针确认 root/child PID 都消失。
 - 在 active ignore-SIGINT turn 下分别关闭 Provider stdout，以及填满 stdout 后发送非法 JSON、超大 Host frame；确认 Provider 可非零退出但 root/child PID 必须有界消失。

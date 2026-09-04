@@ -18,7 +18,7 @@ fn main() {
     }
 
     let options = parse_options();
-    let input = read_input();
+    let (input, mut input_reader) = read_input();
     let command_uuid = input
         .get("uuid")
         .and_then(Value::as_str)
@@ -150,6 +150,48 @@ fn main() {
         return;
     }
 
+    if message == "needs approval" {
+        write_json(
+            &mut writer,
+            json!({
+                "type": "control_request",
+                "request_id": "permission-request-1",
+                "request": {
+                    "subtype": "can_use_tool",
+                    "tool_name": "Bash",
+                    "input": { "command": "touch approved.txt" },
+                    "tool_use_id": "tool-use-1",
+                    "title": "Run a shell command",
+                    "description": "touch approved.txt"
+                }
+            }),
+        );
+        let mut response_line = String::new();
+        assert!(input_reader.read_line(&mut response_line).unwrap() > 0);
+        let response: Value = serde_json::from_str(response_line.trim()).unwrap();
+        assert_eq!(response["type"], "control_response");
+        assert_eq!(response["response"]["subtype"], "success");
+        assert_eq!(response["response"]["request_id"], "permission-request-1");
+        let behavior = response["response"]["response"]["behavior"]
+            .as_str()
+            .unwrap();
+        if behavior == "allow" {
+            assert_eq!(
+                response["response"]["response"]["updatedInput"]["command"],
+                "touch approved.txt"
+            );
+        } else {
+            assert_eq!(behavior, "deny");
+        }
+        let output = if behavior == "allow" {
+            "fixture approved"
+        } else {
+            "fixture denied"
+        };
+        write_result(&mut writer, &options.session_id, output, false);
+        return;
+    }
+
     let output = if message == "inherit project config" {
         assert!(inherited_project_mcp, "fixture project MCP config was not visible");
         "fixture inherited project MCP"
@@ -199,7 +241,7 @@ fn parse_options() -> Options {
     assert!(args.iter().any(|arg| arg == "--verbose"));
     assert!(args.iter().any(|arg| arg == "--include-partial-messages"));
     assert!(!args.iter().any(|arg| arg == "--include-hook-events"));
-    assert!(!args.iter().any(|arg| arg == "--permission-prompt-tool"));
+    assert_eq!(value_after(&args, "--permission-prompt-tool"), "stdio");
     for inherited_flag in [
         "--safe-mode",
         "--setting-sources",
@@ -257,14 +299,12 @@ fn value_after<'a>(args: &'a [String], flag: &str) -> &'a str {
     args.get(index + 1).map(String::as_str).unwrap()
 }
 
-fn read_input() -> Value {
+fn read_input() -> (Value, BufReader<std::io::Stdin>) {
     let mut reader = BufReader::new(std::io::stdin());
     let mut line = String::new();
     assert!(reader.read_line(&mut line).unwrap() > 0);
     let input = serde_json::from_str(line.trim()).unwrap();
-    line.clear();
-    assert_eq!(reader.read_line(&mut line).unwrap(), 0);
-    input
+    (input, reader)
 }
 
 fn write_result(

@@ -228,7 +228,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     assert!(capabilities.methods.contains(&ProviderCapability::TurnInterrupt));
     assert!(!capabilities.methods.contains(&ProviderCapability::ConversationSearch));
     assert!(!capabilities.methods.contains(&ProviderCapability::TurnSteer));
-    assert!(!capabilities.methods.contains(&ProviderCapability::ApprovalResolve));
+    assert!(capabilities.methods.contains(&ProviderCapability::ApprovalResolve));
     let controls = capabilities.turn_send.as_ref().unwrap();
     assert!(controls.access_mode.as_ref().is_some_and(|choices| choices.options.len() >= 4));
     assert!(controls.reasoning_effort.as_ref().is_some_and(|choices| choices.options.len() == 5));
@@ -264,6 +264,82 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     let second = terminal_turn(&events, &second_turn.resource.native_resource_id);
     assert_eq!(second.status, TurnStatus::Completed);
     assert_eq!(second.output, "fixture resumed");
+
+    let approval_turn = ProviderProtocolServer::turn_start(
+        provider.as_ref(),
+        turn_start_request(
+            conversation.resource.clone(),
+            "message-approval".to_string(),
+            "needs approval".to_string(),
+        ),
+    )
+    .await
+    .unwrap()
+    .turn;
+    let approval = loop {
+        match events.recv_timeout(Duration::from_secs(5)).unwrap() {
+            ProtocolEvent::EventApprovalRequested { params, .. }
+                if params.approval.turn == approval_turn.resource =>
+            {
+                break params.approval
+            }
+            _ => {}
+        }
+    };
+    assert_eq!(approval.kind, "Bash");
+    assert_eq!(approval.title, "Run a shell command");
+    assert_eq!(approval.description.as_deref(), Some("touch approved.txt"));
+    let resolved = ProviderProtocolServer::approval_resolve(
+        provider.as_ref(),
+        ApprovalResolveRequest {
+            approval: approval.resource.clone(),
+            decision: ApprovalDecision::Approve,
+        },
+    )
+    .await
+    .unwrap()
+    .approval;
+    assert_eq!(resolved.status, codepet_provider_sdk::ApprovalStatus::Approved);
+    assert_eq!(resolved.decision, Some(ApprovalDecision::Approve));
+    let approval_terminal = terminal_turn(&events, &approval_turn.resource.native_resource_id);
+    assert_eq!(approval_terminal.status, TurnStatus::Completed);
+    assert_eq!(approval_terminal.output, "fixture approved");
+
+    let denied_turn = ProviderProtocolServer::turn_start(
+        provider.as_ref(),
+        turn_start_request(
+            conversation.resource.clone(),
+            "message-denied".to_string(),
+            "needs approval".to_string(),
+        ),
+    )
+    .await
+    .unwrap()
+    .turn;
+    let denied_approval = loop {
+        match events.recv_timeout(Duration::from_secs(5)).unwrap() {
+            ProtocolEvent::EventApprovalRequested { params, .. }
+                if params.approval.turn == denied_turn.resource =>
+            {
+                break params.approval
+            }
+            _ => {}
+        }
+    };
+    let denied = ProviderProtocolServer::approval_resolve(
+        provider.as_ref(),
+        ApprovalResolveRequest {
+            approval: denied_approval.resource,
+            decision: ApprovalDecision::Deny,
+        },
+    )
+    .await
+    .unwrap()
+    .approval;
+    assert_eq!(denied.status, codepet_provider_sdk::ApprovalStatus::Denied);
+    let denied_terminal = terminal_turn(&events, &denied_turn.resource.native_resource_id);
+    assert_eq!(denied_terminal.status, TurnStatus::Completed);
+    assert_eq!(denied_terminal.output, "fixture denied");
 
     let failed_turn = ProviderProtocolServer::turn_start(
         provider.as_ref(),
@@ -328,7 +404,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     )
     .await
     .unwrap_err();
-    assert_eq!(approval_error.code, "capability_unsupported");
+    assert_eq!(approval_error.code, "approval_not_found");
 
     let stopped = ProviderProtocolServer::instance_stop(
         provider.as_ref(),

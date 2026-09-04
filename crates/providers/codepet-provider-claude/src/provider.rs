@@ -1,9 +1,10 @@
 use crate::client::{
     ClaudeCliError, ClaudeProcessControl, ClaudeTurnLaunch, SpawnedClaudeTurn,
 };
-use crate::protocol::{ClaudeOutput, ClaudeStreamDelta, ClaudeStreamEvent};
+use crate::protocol::{ClaudeControlRequest, ClaudeOutput, ClaudeStreamDelta, ClaudeStreamEvent};
 use codepet_provider_sdk::{
-    ApprovalResolveRequest, ApprovalResolveResponse, ConversationAcquireInteractionRequest,
+    ApprovalDecision, ApprovalRequestedEvent, ApprovalResolveRequest, ApprovalResolveResponse, ApprovalResolvedEvent,
+    ApprovalStatus, ConversationAcquireInteractionRequest,
     ConversationAcquireInteractionResponse, ConversationContent,
     ConversationCreateCapabilities, ConversationCreateRequest,
     ChoiceOption, ChoiceSet, ConversationContentKind, ConversationCreateResponse, ConversationGetRequest,
@@ -18,7 +19,7 @@ use codepet_provider_sdk::{
     ModelCatalog, ModelSelection, ProtocolEvent, ProtocolFuture, Provider, ProviderCapabilities, ProviderCapability,
     ProviderConversation, ProviderDescribeRequest, ProviderDescribeResponse, ProviderExtension,
     ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute,
-    ProviderAuthentication, ProviderAuthenticationStatus, ProviderPluginDescriptor,
+    ProviderApproval, ProviderAuthentication, ProviderAuthenticationStatus, ProviderPluginDescriptor,
     ProviderShutdownRequest, ProviderShutdownResponse, ProviderTurn, ProviderUsage,
     ProviderUsageDetail,
     RoutedResourceId, RuntimeCandidate, RuntimeGetInstalledRequest, RuntimeGetInstalledResponse,
@@ -72,6 +73,14 @@ struct ManagedTurn {
     requested_completion: Option<TurnCompletion>,
     stream_failure: Option<String>,
     finished: Arc<TurnFinished>,
+    pending_approvals: HashMap<String, PendingClaudeApproval>,
+}
+
+#[derive(Clone)]
+struct PendingClaudeApproval {
+    approval: ProviderApproval,
+    request_id: String,
+    input: Value,
 }
 
 #[derive(Clone)]
@@ -560,6 +569,7 @@ impl ClaudeInstanceRuntime {
                 requested_completion: None,
                 stream_failure: None,
                 finished,
+                pending_approvals: HashMap::new(),
             });
             managed.conversation.status = ConversationStatus::Running;
             managed.conversation.active_turn = Some(turn.clone());
@@ -626,6 +636,62 @@ impl ClaudeInstanceRuntime {
         output: ClaudeOutput,
     ) -> Result<(), ProtocolError> {
         match output {
+            ClaudeOutput::ControlRequest {
+                request_id,
+                request:
+                    ClaudeControlRequest::CanUseTool {
+                        tool_name,
+                        input,
+                        tool_use_id,
+                        title,
+                        display_name,
+                        description,
+                    },
+            } => {
+                let approval = {
+                    let mut mutable = lock(&self.mutable);
+                    let managed = active_conversation_mut(&mut mutable, conversation_id, turn_id)?;
+                    let active = managed.active_turn.as_mut().expect("active turn checked");
+                    let approval_id = format!("{turn_id}:approval:{request_id}");
+                    let approval = ProviderApproval {
+                        resource: self.resource(approval_id.clone()),
+                        conversation: managed.conversation.resource.clone(),
+                        turn: active.turn.resource.clone(),
+                        kind: tool_name.clone(),
+                        title: title.or(display_name).unwrap_or_else(|| format!("Allow {tool_name}")),
+                        description,
+                        status: ApprovalStatus::Pending,
+                        decisions: vec![ApprovalDecision::Approve, ApprovalDecision::Deny],
+                        requested_at: Some(now_ms()),
+                        resolved_at: None,
+                        decision: None,
+                        extension: Some(extension([
+                            ("nativeRequestId", json!(request_id)),
+                            ("nativeToolUseId", json!(tool_use_id)),
+                            ("nativeToolName", json!(tool_name)),
+                        ])),
+                    };
+                    active.pending_approvals.insert(
+                        approval_id,
+                        PendingClaudeApproval {
+                            approval: approval.clone(),
+                            request_id,
+                            input,
+                        },
+                    );
+                    let now = now_ms();
+                    active.turn.status = TurnStatus::WaitingApproval;
+                    active.turn.updated_at = Some(now);
+                    managed.conversation.status = ConversationStatus::WaitingApproval;
+                    managed.conversation.active_turn = Some(active.turn.clone());
+                    managed.conversation.updated_at = Some(now);
+                    approval
+                };
+                self.events.publish(ProtocolEvent::EventApprovalRequested {
+                    jsonrpc: "2.0".to_string(),
+                    params: ApprovalRequestedEvent { approval },
+                })
+            }
             ClaudeOutput::System {
                 subtype,
                 session_id,
@@ -816,26 +882,52 @@ impl ClaudeInstanceRuntime {
         outcome: Result<std::process::ExitStatus, ClaudeCliError>,
     ) {
         let snapshot = {
-            let mutable = lock(&self.mutable);
-            let Some(managed) = mutable.conversations.get(conversation_id) else {
+            let mut mutable = lock(&self.mutable);
+            let Some(managed) = mutable.conversations.get_mut(conversation_id) else {
                 return;
             };
-            let Some(active) = managed.active_turn.as_ref() else {
+            let Some(active) = managed.active_turn.as_mut() else {
                 return;
             };
             if active.turn.resource.native_resource_id != turn_id {
                 return;
             }
             let completion = completion_for_exit(active, &outcome);
+            let expired_approvals = active
+                .pending_approvals
+                .drain()
+                .map(|(_, pending)| {
+                    let mut approval = pending.approval;
+                    approval.status = ApprovalStatus::Expired;
+                    approval.resolved_at = Some(now_ms());
+                    approval
+                })
+                .collect::<Vec<_>>();
             (
                 active.turn.clone(),
                 managed.conversation.clone(),
                 active.saw_text_delta,
                 completion,
                 active.finished.clone(),
+                expired_approvals,
             )
         };
-        let (base_turn, base_conversation, saw_text_delta, mut completion, finished) = snapshot;
+        let (
+            base_turn,
+            base_conversation,
+            saw_text_delta,
+            mut completion,
+            finished,
+            expired_approvals,
+        ) = snapshot;
+        for approval in expired_approvals {
+            if let Err(error) = self.events.publish(ProtocolEvent::EventApprovalResolved {
+                jsonrpc: "2.0".to_string(),
+                params: ApprovalResolvedEvent { approval },
+            }) {
+                eprintln!("Claude Provider approval expiration event failed: {error:?}");
+            }
+        }
         let fallback = (!saw_text_delta)
             .then_some(completion.result.as_deref())
             .flatten()
@@ -961,6 +1053,83 @@ impl ClaudeInstanceRuntime {
                 true,
             )
         })?
+    }
+
+    fn resolve_approval(
+        &self,
+        request: ApprovalResolveRequest,
+    ) -> Result<ProviderApproval, ProtocolError> {
+        validate_resource_for_instance(&request.approval, &self.route)?;
+        let approval_id = request.approval.native_resource_id.clone();
+        let (conversation_id, control, pending) = {
+            let mutable = lock(&self.mutable);
+            mutable
+                .conversations
+                .iter()
+                .find_map(|(conversation_id, managed)| {
+                    let active = managed.active_turn.as_ref()?;
+                    let pending = active.pending_approvals.get(&approval_id)?;
+                    (pending.approval.resource == request.approval).then(|| {
+                        (conversation_id.clone(), active.control.clone(), pending.clone())
+                    })
+                })
+                .ok_or_else(|| {
+                    protocol_error(
+                        "approval_not_found",
+                        format!("approval {approval_id} is not pending in this Provider instance"),
+                        false,
+                    )
+                })?
+        };
+        control
+            .resolve_permission(
+                &pending.request_id,
+                request.decision == ApprovalDecision::Approve,
+                &pending.input,
+            )
+            .map_err(cli_protocol_error)?;
+        let (approval, turn, conversation) = {
+            let mut mutable = lock(&self.mutable);
+            let managed = mutable.conversations.get_mut(&conversation_id).ok_or_else(|| {
+                protocol_error("unknown_conversation", "unknown Claude conversation".to_string(), false)
+            })?;
+            let active = managed.active_turn.as_mut().ok_or_else(|| {
+                protocol_error("turn_not_active", "Claude turn is not active".to_string(), false)
+            })?;
+            let mut approval = active
+                .pending_approvals
+                .remove(&approval_id)
+                .ok_or_else(|| {
+                    protocol_error(
+                        "approval_not_found",
+                        format!("approval {approval_id} is no longer pending"),
+                        false,
+                    )
+                })?
+                .approval;
+            let now = now_ms();
+            approval.status = match request.decision {
+                ApprovalDecision::Approve => ApprovalStatus::Approved,
+                ApprovalDecision::Deny => ApprovalStatus::Denied,
+            };
+            approval.decision = Some(request.decision);
+            approval.resolved_at = Some(now);
+            active.turn.status = TurnStatus::Running;
+            active.turn.updated_at = Some(now);
+            managed.conversation.status = ConversationStatus::Running;
+            managed.conversation.active_turn = Some(active.turn.clone());
+            managed.conversation.updated_at = Some(now);
+            (approval, active.turn.clone(), managed.conversation.clone())
+        };
+        self.events.publish(ProtocolEvent::EventApprovalResolved {
+            jsonrpc: "2.0".to_string(),
+            params: ApprovalResolvedEvent {
+                approval: approval.clone(),
+            },
+        })?;
+        self.publish_turn(turn)?;
+        self.publish_conversation(conversation)?;
+        Ok(approval)
     }
 
     fn stop(&self) -> Result<ProviderInstance, ProtocolError> {
@@ -1528,9 +1697,14 @@ impl Provider for ClaudeProvider {
 
     fn approval_resolve<'a>(
         &'a self,
-        _request: ApprovalResolveRequest,
+        request: ApprovalResolveRequest,
     ) -> ProtocolFuture<'a, ApprovalResolveResponse> {
-        Box::pin(async { Err(capability_error("Claude approval callbacks require an SDK or permission prompt tool")) })
+        Box::pin(async move {
+            let runtime = self.resource_instance(&request.approval)?;
+            Ok(ApprovalResolveResponse {
+                approval: runtime.resolve_approval(request)?,
+            })
+        })
     }
 
     fn provider_shutdown<'a>(
@@ -1563,6 +1737,7 @@ fn claude_capabilities() -> ProviderCapabilities {
     ];
     #[cfg(unix)]
     methods.push(ProviderCapability::TurnInterrupt);
+    methods.push(ProviderCapability::ApprovalResolve);
     let turn_send = TurnSendCapabilities {
         access_mode: Some(ChoiceSet {
             options: vec![
