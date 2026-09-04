@@ -4,10 +4,9 @@ use crate::client::{
 use crate::mapper::{parse_permission_level, CodexProtocolMapper};
 use crate::protocol::{
     approval_generation, approval_resource_id, CodexAppServerError, CodexApprovalRequest,
-    CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexProject,
-    CodexProjectCreateRequest, CodexProjectRoot, CodexProjectUpdateRequest,
-    CodexThreadListRequest, CodexThreadPage, CodexThreadStartRequest, CodexThreadItem, CodexTurn,
-    CodexTurnItemsView, CodexTurnStartRequest, CodexTurnStatus,
+    CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexProjectCreateRequest,
+    CodexProjectRoot, CodexProjectUpdateRequest, CodexThreadListRequest, CodexThreadStartRequest,
+    CodexThreadItem, CodexTurn, CodexTurnItemsView, CodexTurnStartRequest, CodexTurnStatus,
     CodexTurnSteerRequest,
     CODEX_INSTANCE_KIND, CODEX_PLUGIN_ID,
 };
@@ -37,7 +36,7 @@ use codepet_provider_sdk::{
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnSteerRequest, TurnSteerResponse,
     VersionRange, PROTOCOL_VERSION, fit_single_turn_conversation_history,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -54,6 +53,7 @@ static NEXT_MANAGED_WORKTREE: AtomicU64 = AtomicU64::new(1);
 const MAX_THREAD_TURN_PAGES: usize = 10_000;
 const MAX_FILTERED_THREAD_PAGES: usize = 10_000;
 const CODEX_LIST_PAGE_LIMIT: u32 = 100;
+const FILTERED_CONVERSATION_CURSOR_PREFIX: &str = "codepet-codex-membership-v1:";
 const DEFAULT_CONVERSATION_GET_TURN_LIMIT: u64 = 40;
 const MAX_CONVERSATION_GET_TURN_LIMIT: u64 = 100;
 const INTERACTION_LEASE_DURATION: Duration = Duration::from_secs(30);
@@ -2384,23 +2384,20 @@ impl Provider for CodexProvider {
     ) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async move {
             let runtime = self.instance(&request.route)?;
-            let supports_projects = lock(&runtime.mutable)
-                .capabilities
-                .methods
-                .contains(&ProviderCapability::ProjectList);
             let membership_filter = match request.project_filter {
-                ConversationProjectFilter::ConversationProjectFilterAll(_) => supports_projects
-                    .then_some(CodexConversationMembershipFilter::All),
+                ConversationProjectFilter::ConversationProjectFilterAll(_) => {
+                    CodexConversationMembershipFilter::All
+                }
                 ConversationProjectFilter::ConversationProjectFilterStandalone(_) => {
                     require_capability(&runtime, ProviderCapability::ProjectList)?;
-                    Some(CodexConversationMembershipFilter::Standalone)
+                    CodexConversationMembershipFilter::Standalone
                 }
                 ConversationProjectFilter::ConversationProjectFilterProject(filter) => {
                     validate_resource_route(&filter.project, &request.route)?;
                     require_capability(&runtime, ProviderCapability::ProjectList)?;
-                    Some(CodexConversationMembershipFilter::Project(
+                    CodexConversationMembershipFilter::Project(
                         filter.project.native_resource_id,
-                    ))
+                    )
                 }
             };
             let limit = request.limit.map(u32::try_from).transpose().map_err(|_| {
@@ -2411,6 +2408,7 @@ impl Provider for CodexProvider {
                 )
             })?;
             let session = runtime.ready_observer()?;
+            let assignments = load_codex_desktop_project_assignments()?;
             let page = tokio::task::spawn_blocking(move || {
                 list_codex_conversations(
                     &session,
@@ -2422,6 +2420,7 @@ impl Provider for CodexProvider {
                         search_term: None,
                     },
                     membership_filter,
+                    &assignments,
                 )
             })
             .await
@@ -4327,123 +4326,404 @@ fn validate_project_fields(
     Ok(())
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum CodexConversationMembershipFilter {
     All,
     Standalone,
     Project(String),
 }
 
+impl CodexConversationMembershipFilter {
+    fn cursor_filter(&self) -> Option<String> {
+        match self {
+            Self::All => None,
+            Self::Standalone => Some("standalone".to_string()),
+            Self::Project(project_id) => Some(format!("project:{project_id}")),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CodexConversationMembership {
+    Project(String),
+    UnmappedProject,
+    Standalone,
+}
+
+#[derive(Clone, Debug, Default)]
+struct CodexDesktopProjectAssignments {
+    by_thread: HashMap<String, Option<String>>,
+}
+
+impl CodexDesktopProjectAssignments {
+    fn membership(&self, snapshot: &CodexConversationSnapshot) -> CodexConversationMembership {
+        self.membership_for(
+            &snapshot.thread.id,
+            snapshot.thread.project_id.as_deref(),
+        )
+    }
+
+    fn membership_for(
+        &self,
+        thread_id: &str,
+        native_project_id: Option<&str>,
+    ) -> CodexConversationMembership {
+        if let Some(project_id) = native_project_id.filter(|project_id| !project_id.is_empty()) {
+            return CodexConversationMembership::Project(project_id.to_string());
+        }
+        match self.by_thread.get(thread_id) {
+            Some(Some(project_id)) => CodexConversationMembership::Project(project_id.clone()),
+            Some(None) => CodexConversationMembership::UnmappedProject,
+            None => CodexConversationMembership::Standalone,
+        }
+    }
+
+    fn decorate(&self, snapshot: &mut CodexConversationSnapshot) -> CodexConversationMembership {
+        let membership = self.membership(snapshot);
+        if let CodexConversationMembership::Project(project_id) = &membership {
+            snapshot.thread.project_id = Some(project_id.clone());
+        }
+        membership
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FilteredConversationCursor {
+    version: u8,
+    filter: String,
+    upstream_cursor: String,
+}
+
 fn list_codex_conversations(
     session: &CodexAppServerSession,
     mut request: CodexThreadListRequest,
-    membership_filter: Option<CodexConversationMembershipFilter>,
-) -> Result<CodexThreadPage, CodexAppServerError> {
-    let Some(membership_filter) = membership_filter else {
-        return session.thread_list(request);
-    };
-    let projects = list_all_codex_projects(session)?;
+    membership_filter: CodexConversationMembershipFilter,
+    assignments: &CodexDesktopProjectAssignments,
+) -> Result<crate::protocol::CodexThreadPage, CodexAppServerError> {
+    if membership_filter == CodexConversationMembershipFilter::All {
+        let mut page = session.thread_list(request)?;
+        for snapshot in &mut page.data {
+            assignments.decorate(snapshot);
+        }
+        return Ok(page);
+    }
+
+    let cursor_filter = membership_filter
+        .cursor_filter()
+        .expect("filtered conversation queries always have a cursor filter");
+    request.cursor = decode_filtered_conversation_cursor(request.cursor, &cursor_filter)?;
     let target_limit = request.limit.unwrap_or(CODEX_LIST_PAGE_LIMIT);
     let mut conversations = Vec::new();
     let mut next_cursor = request.cursor.clone();
     let mut seen_cursors = HashSet::new();
     for _ in 0..MAX_FILTERED_THREAD_PAGES {
         if target_limit == 0 {
-            return Ok(CodexThreadPage {
-                data: conversations,
-                next_cursor,
-            });
+            break;
         }
         let cursor_key = next_cursor.clone().unwrap_or_default();
         if !seen_cursors.insert(cursor_key) {
             return Err(CodexAppServerError::Protocol(
-                "thread/list repeated a cursor while filtering project membership".to_string(),
+                "thread/list repeated a cursor while merging project membership".to_string(),
             ));
         }
         request.cursor = next_cursor;
         request.limit = Some(target_limit.saturating_sub(conversations.len() as u32));
-        request.project_id = None;
-        let page = session.thread_list(request.clone())?;
+        let mut page = session.thread_list(request.clone())?;
         next_cursor = page.next_cursor;
-        for mut snapshot in page.data {
-            let inferred_project = inferred_codex_project_id(&snapshot, &projects);
-            let matches = match &membership_filter {
-                CodexConversationMembershipFilter::All => true,
-                CodexConversationMembershipFilter::Standalone => inferred_project.is_none(),
-                CodexConversationMembershipFilter::Project(project_id) => {
-                    inferred_project.as_deref() == Some(project_id.as_str())
-                }
+        for mut snapshot in page.data.drain(..) {
+            let membership = assignments.decorate(&mut snapshot);
+            let matches = match (&membership_filter, membership) {
+                (
+                    CodexConversationMembershipFilter::Project(expected),
+                    CodexConversationMembership::Project(actual),
+                ) => expected == &actual,
+                (
+                    CodexConversationMembershipFilter::Standalone,
+                    CodexConversationMembership::Standalone,
+                ) => true,
+                _ => false,
             };
             if matches {
-                snapshot.thread.project_id = inferred_project;
                 conversations.push(snapshot);
             }
         }
-        if conversations.len() >= target_limit as usize || next_cursor.is_none() {
-            return Ok(CodexThreadPage {
-                data: conversations,
-                next_cursor,
-            });
+        if conversations.len() >= target_limit as usize {
+            if let Some(cursor) = next_cursor.take() {
+                if filtered_conversation_exists_after(
+                    session,
+                    &request,
+                    cursor.clone(),
+                    &membership_filter,
+                    assignments,
+                )? {
+                    next_cursor = Some(cursor);
+                }
+            }
+            break;
+        }
+        if next_cursor.is_none() {
+            break;
         }
     }
-    Err(CodexAppServerError::Protocol(
-        "thread/list exceeded the project membership pagination limit".to_string(),
-    ))
+    if conversations.len() < target_limit as usize && next_cursor.is_some() {
+        return Err(CodexAppServerError::Protocol(
+            "thread/list exceeded the project membership pagination limit".to_string(),
+        ));
+    }
+    Ok(crate::protocol::CodexThreadPage {
+        data: conversations,
+        next_cursor: next_cursor
+            .map(|cursor| encode_filtered_conversation_cursor(&cursor_filter, cursor))
+            .transpose()?,
+    })
 }
 
-fn list_all_codex_projects(
+fn filtered_conversation_exists_after(
     session: &CodexAppServerSession,
-) -> Result<Vec<CodexProject>, CodexAppServerError> {
-    let mut projects = Vec::new();
-    let mut cursor = None;
+    request: &CodexThreadListRequest,
+    mut cursor: String,
+    membership_filter: &CodexConversationMembershipFilter,
+    assignments: &CodexDesktopProjectAssignments,
+) -> Result<bool, CodexAppServerError> {
+    let mut probe = request.clone();
+    probe.limit = Some(1);
     let mut seen_cursors = HashSet::new();
     for _ in 0..MAX_FILTERED_THREAD_PAGES {
-        let cursor_key = cursor.clone().unwrap_or_default();
-        if !seen_cursors.insert(cursor_key) {
+        if !seen_cursors.insert(cursor.clone()) {
             return Err(CodexAppServerError::Protocol(
-                "project/list repeated a cursor while resolving conversation membership"
-                    .to_string(),
+                "thread/list repeated a cursor while probing project membership".to_string(),
             ));
         }
-        let page = session.project_list(cursor, Some(CODEX_LIST_PAGE_LIMIT))?;
-        projects.extend(page.data);
+        probe.cursor = Some(cursor);
+        let page = session.thread_list(probe.clone())?;
+        for snapshot in &page.data {
+            let membership = assignments.membership(snapshot);
+            let matches = match (membership_filter, membership) {
+                (
+                    CodexConversationMembershipFilter::Project(expected),
+                    CodexConversationMembership::Project(actual),
+                ) => expected == &actual,
+                (
+                    CodexConversationMembershipFilter::Standalone,
+                    CodexConversationMembership::Standalone,
+                ) => true,
+                _ => false,
+            };
+            if matches {
+                return Ok(true);
+            }
+        }
         let Some(next_cursor) = page.next_cursor else {
-            return Ok(projects);
+            return Ok(false);
         };
-        cursor = Some(next_cursor);
+        cursor = next_cursor;
     }
     Err(CodexAppServerError::Protocol(
-        "project/list exceeded the conversation membership pagination limit".to_string(),
+        "thread/list exceeded the project membership look-ahead limit".to_string(),
     ))
 }
 
-fn inferred_codex_project_id(
-    snapshot: &CodexConversationSnapshot,
-    projects: &[CodexProject],
-) -> Option<String> {
-    if let Some(project_id) = snapshot
-        .thread
-        .project_id
-        .as_ref()
-        .filter(|project_id| !project_id.is_empty())
-    {
-        return Some(project_id.clone());
+fn encode_filtered_conversation_cursor(
+    filter: &str,
+    upstream_cursor: String,
+) -> Result<String, CodexAppServerError> {
+    serde_json::to_string(&FilteredConversationCursor {
+        version: 1,
+        filter: filter.to_string(),
+        upstream_cursor,
+    })
+    .map(|cursor| format!("{FILTERED_CONVERSATION_CURSOR_PREFIX}{cursor}"))
+    .map_err(|error| {
+        CodexAppServerError::Protocol(format!(
+            "failed to encode project membership cursor: {error}"
+        ))
+    })
+}
+
+fn decode_filtered_conversation_cursor(
+    cursor: Option<String>,
+    expected_filter: &str,
+) -> Result<Option<String>, CodexAppServerError> {
+    let Some(cursor) = cursor else {
+        return Ok(None);
+    };
+    let encoded = cursor
+        .strip_prefix(FILTERED_CONVERSATION_CURSOR_PREFIX)
+        .ok_or_else(|| {
+            CodexAppServerError::Protocol(
+                "conversation cursor was not issued for project membership pagination"
+                    .to_string(),
+            )
+        })?;
+    let decoded: FilteredConversationCursor = serde_json::from_str(encoded).map_err(|error| {
+        CodexAppServerError::Protocol(format!(
+            "invalid project membership conversation cursor: {error}"
+        ))
+    })?;
+    if decoded.version != 1 || decoded.filter != expected_filter {
+        return Err(CodexAppServerError::Protocol(
+            "conversation cursor does not match the requested project filter".to_string(),
+        ));
     }
-    let cwd = Path::new(&snapshot.thread.cwd);
-    projects
-        .iter()
-        .flat_map(|project| {
-            project.roots.iter().filter_map(move |root| {
-                let root_path = Path::new(&root.path);
-                cwd.starts_with(root_path).then_some((
-                    root_path.components().count(),
-                    root.path.len(),
-                    project.id.as_str(),
-                ))
+    Ok(Some(decoded.upstream_cursor))
+}
+
+fn load_codex_desktop_project_assignments(
+) -> Result<CodexDesktopProjectAssignments, ProtocolError> {
+    let Some(codex_home) = codex_home() else {
+        return Ok(CodexDesktopProjectAssignments::default());
+    };
+    let path = codex_home.join(".codex-global-state.json");
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(CodexDesktopProjectAssignments::default());
+        }
+        Err(error) => {
+            return Err(protocol_error(
+                "project_assignment_state_unavailable",
+                format!("failed to read Codex Desktop project assignments: {error}"),
+                true,
+            ));
+        }
+    };
+    parse_codex_desktop_project_assignments(&contents, &codex_home).map_err(|error| {
+        protocol_error(
+            "project_assignment_state_invalid",
+            format!("failed to parse Codex Desktop project assignments: {error}"),
+            false,
+        )
+    })
+}
+
+fn parse_codex_desktop_project_assignments(
+    contents: &str,
+    codex_home: &Path,
+) -> Result<CodexDesktopProjectAssignments, serde_json::Error> {
+    let state: Value = serde_json::from_str(contents)?;
+    let host_key = format!("local:{}", codex_home.to_string_lossy());
+    let native_projects = state
+        .get("app-server-project-id-by-legacy-project-id-by-host")
+        .and_then(Value::as_object)
+        .and_then(|hosts| hosts.get(&host_key))
+        .and_then(Value::as_object);
+    let mut by_thread = HashMap::new();
+    if let Some(assignments) = state
+        .get("thread-project-assignments")
+        .and_then(Value::as_object)
+    {
+        for (thread_id, assignment) in assignments {
+            if assignment.get("projectKind").and_then(Value::as_str) != Some("local") {
+                continue;
+            }
+            let Some(legacy_project_id) = assignment.get("projectId").and_then(Value::as_str)
+            else {
+                continue;
+            };
+            let native_project_id = native_projects
+                .and_then(|projects| projects.get(legacy_project_id))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            by_thread.insert(thread_id.clone(), native_project_id);
+        }
+    }
+    Ok(CodexDesktopProjectAssignments { by_thread })
+}
+
+#[cfg(test)]
+mod project_assignment_compat_tests {
+    use super::*;
+
+    #[test]
+    fn parses_only_local_assignments_and_maps_legacy_projects_for_the_current_host() {
+        let assignments = parse_codex_desktop_project_assignments(
+            &json!({
+                "app-server-project-id-by-legacy-project-id-by-host": {
+                    "local:/fixture/.codex": {
+                        "legacy-project": "native-project"
+                    },
+                    "remote-host": {
+                        "legacy-project": "wrong-native-project"
+                    }
+                },
+                "thread-project-assignments": {
+                    "mapped-thread": {
+                        "projectKind": "local",
+                        "projectId": "legacy-project"
+                    },
+                    "unmapped-thread": {
+                        "projectKind": "local",
+                        "projectId": "missing-project"
+                    },
+                    "remote-thread": {
+                        "projectKind": "remote",
+                        "projectId": "legacy-project"
+                    }
+                }
             })
-        })
-        .max_by_key(|(components, length, _)| (*components, *length))
-        .map(|(_, _, project_id)| project_id.to_string())
+            .to_string(),
+            Path::new("/fixture/.codex"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            assignments.by_thread.get("mapped-thread"),
+            Some(&Some("native-project".to_string()))
+        );
+        assert_eq!(assignments.by_thread.get("unmapped-thread"), Some(&None));
+        assert!(!assignments.by_thread.contains_key("remote-thread"));
+    }
+
+    #[test]
+    fn filtered_cursor_round_trips_and_rejects_a_different_project_filter() {
+        let cursor = encode_filtered_conversation_cursor(
+            "project:native-project",
+            "upstream-cursor".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            decode_filtered_conversation_cursor(
+                Some(cursor.clone()),
+                "project:native-project"
+            )
+            .unwrap()
+            .as_deref(),
+            Some("upstream-cursor")
+        );
+        assert!(decode_filtered_conversation_cursor(Some(cursor), "standalone").is_err());
+    }
+
+    #[test]
+    fn native_membership_wins_and_unmapped_legacy_projects_are_not_standalone() {
+        let assignments = CodexDesktopProjectAssignments {
+            by_thread: HashMap::from([
+                (
+                    "mapped-thread".to_string(),
+                    Some("legacy-native-project".to_string()),
+                ),
+                ("unmapped-thread".to_string(), None),
+            ]),
+        };
+
+        assert_eq!(
+            assignments.membership_for("mapped-thread", Some("app-server-project")),
+            CodexConversationMembership::Project("app-server-project".to_string())
+        );
+        assert_eq!(
+            assignments.membership_for("mapped-thread", None),
+            CodexConversationMembership::Project("legacy-native-project".to_string())
+        );
+        assert_eq!(
+            assignments.membership_for("unmapped-thread", None),
+            CodexConversationMembership::UnmappedProject
+        );
+        assert_eq!(
+            assignments.membership_for("standalone-thread", None),
+            CodexConversationMembership::Standalone
+        );
+    }
 }
 
 fn codex_authentication(response: &Value) -> Option<ProviderAuthentication> {

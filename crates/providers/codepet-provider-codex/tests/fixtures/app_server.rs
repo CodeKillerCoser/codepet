@@ -289,7 +289,9 @@ fn main() {
                         Some("search-next"),
                     )
                 } else {
-                    (vec![thread("thread-listed", "idle", Vec::new())], None)
+                    let mut listed = thread("thread-listed", "idle", Vec::new());
+                    listed["projectId"] = json!("project-fixture");
+                    (vec![listed], None)
                 };
                 if let Some(project_id) = params.get("projectId") {
                     for thread in &mut data {

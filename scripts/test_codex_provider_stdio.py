@@ -157,7 +157,11 @@ def run(provider_executable: Path, app_server_executable: Path) -> None:
             listed = provider.request(
                 "list-conversations",
                 "conversation.list",
-                {"route": route(), "limit": 10},
+                {
+                    "route": route(),
+                    "limit": 10,
+                    "projectFilter": {"kind": "all"},
+                },
             )
             assert isinstance(listed["conversations"], list)
             assert "pageInfo" in listed
