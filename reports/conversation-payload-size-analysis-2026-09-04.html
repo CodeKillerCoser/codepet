@@ -128,9 +128,9 @@
       <div class="meta">
         <span>环境：macOS / 本机历史</span>
         <span>Code Pet 内置 Codex Provider</span>
-        <span>上游 Codex App Server 0.152.1</span>
+        <span>初查 App Server 0.152.1 / 配对复测 CLI 0.151.0</span>
         <span>Provider 帧上限：16 MiB</span>
-        <span>状态：分析完成，尚未修改代码</span>
+        <span>状态：V1 优化已实现，同样例复测完成</span>
       </div>
     </div>
   </header>
@@ -143,6 +143,7 @@
         <a href="#method">方法与口径</a>
         <a href="#list">对话列表案例</a>
         <a href="#history">历史消息案例</a>
+        <a href="#optimized">压缩与优化实测</a>
         <a href="#largest">最大工具项</a>
         <a href="#duplication">重复数据</a>
         <a href="#object-design">对象设计复盘</a>
@@ -173,7 +174,7 @@
       <div class="metrics">
         <div class="metric"><span class="label">最大 history 页面</span><span class="value">≈14.4 MiB</span><span class="note">40 turns，2,350 items，重复实测范围 15,089,266–15,138,623 bytes</span></div>
         <div class="metric"><span class="label">精确重复正文</span><span class="value">6.13 MB</span><span class="note">命令重复两份 + 输出重复一份，不含 JSON 键与结构开销</span></div>
-        <div class="metric"><span class="label">组合优化模拟</span><span class="value">5.84 MiB</span><span class="note">去重 + 操作文本 8 KiB 预览；较当前下降 59.4%</span></div>
+        <div class="metric"><span class="label">新 A-40 实测</span><span class="value">7.46 MiB</span><span class="note">压缩后 1.13 MiB；同页原始 JSON 减少 48.6%，WSS wire 再减少 31.3%</span></div>
       </div>
     </section>
 
@@ -182,7 +183,7 @@
       <h3>2.1 三层证据</h3>
       <ol>
         <li><span class="badge observed">真实读取</span> 调用本机 Context Provider 的 <code>list_threads</code> 与 <code>read_thread</code>，抽取现存历史；对同一页面分别读取 <code>includeOutputs=true/false</code>，直接计算工具正文增量。</li>
-        <li><span class="badge observed">真实黑盒</span> 启动 <code>/Applications/Code Pet.app</code> 包内的 <code>codepet-provider-codex</code>，仅通过公开 Provider JSON-RPC 执行 initialize、instance.create/start、conversation.list/get、stop/shutdown。使用真实本机历史，不调用内部 Rust 对象。</li>
+        <li><span class="badge observed">真实黑盒</span> 分别启动 <code>/Applications/Code Pet.app</code> 包内旧 Provider 和当前源码构建的新 Provider，仅通过公开 JSON-RPC 执行 initialize、instance.create/start、conversation.list/get、stop/shutdown。二者连接同一 CLI、读取相同 conversation/cursor/limit，不调用内部 Rust 对象。</li>
         <li><span class="badge simulated">离线模拟</span> 对已取得的真实 JSON 响应做内存副本变换，模拟“截断”和“去重”后的序列化大小。模拟没有改变 App、Provider、历史文件或仓库代码。</li>
       </ol>
 
@@ -194,7 +195,15 @@
         <li>Context Provider 的 <code>read_thread</code> 单次最多 10 turns、单 item 输出最多 20,000 chars；它天然比 Code Pet Provider 的 256 KiB 单工具文本上限更保守。</li>
       </ul>
 
-      <h3>2.3 样本范围</h3>
+      <h3>2.3 WebSocket 压缩口径</h3>
+      <ul>
+        <li>Host 与 Remote 实际协商 <code>permessage-deflate</code>，双方都启用 <code>server_no_context_takeover</code> 和 <code>client_no_context_takeover</code>；每条消息使用独立字典。</li>
+        <li>复测按 yawc/flate2 的默认 Deflate 级别，对完整 JSON-RPC UTF-8 消息执行 raw DEFLATE + <code>Z_SYNC_FLUSH</code>，按 RFC 7692 移除末尾 <code>00 00 ff ff</code>，再加入服务端 WebSocket frame header。</li>
+        <li>“压缩后 WSS wire”包含压缩 payload 和 WebSocket frame header，不包含 TLS record、TCP/IP header、ACK、重传和链路层开销；它是按当前协商参数得到的 wire-equivalent 计量，不是抓包值。</li>
+        <li>Gateway projection 与 Provider response 在这些样例中没有 Provider extension 正文；复测以完整 Provider JSON-RPC response 作为 Gateway JSON 消息代理。该口径适合比较 payload，但不能替代真实移动网络吞吐/CPU profiling。</li>
+      </ul>
+
+      <h3>2.4 样本范围</h3>
       <div class="table-wrap">
         <table>
           <thead><tr><th>样本代号</th><th>真实任务标题</th><th>Thread ID</th><th>用途</th></tr></thead>
@@ -326,8 +335,63 @@
       </div>
     </section>
 
+    <section id="optimized">
+      <h2>5. 压缩与新方案实测：默认链路压缩后再下降 81.9%</h2>
+      <div class="callout good">
+        <strong>技术摘要：</strong>WebSocket 压缩能显著降低网络字节，但发生在 Provider→Host stdio 之后，不能保护 16 MiB Provider frame。新 V1 对同一 A-40 页把 JSON-RPC 从 15,209,176 B 降至 7,819,655 B（-48.6%），压缩 wire 从 1,729,139 B 降至 1,187,395 B（-31.3%）。结合 Remote 默认 40→10，实际首个历史页由旧 A-40 的 1,729,139 B 降至新 A-10 的 313,012 B（-81.9%）。
+      </div>
+
+      <h3>5.1 同一历史、同一 limit 的旧版与新版对照</h3>
+      <p>下表是 2026-09-04 的重新黑盒读取。旧版使用已安装 Code Pet.app 内置 Provider，新版使用当前源码构建的 Provider；二者均连接同一个 <code>/opt/homebrew/bin/codex 0.151.0</code> runtime，并使用相同 conversation ID、cursor 起点和 limit。所有正文只在内存中参与计算，落盘文件仅保存聚合尺寸。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>样例</th><th class="num">旧 JSON-RPC</th><th class="num">新 JSON-RPC</th><th class="num">原始下降</th><th class="num">旧压缩 WSS</th><th class="num">新压缩 WSS</th><th class="num">线上下降</th></tr></thead>
+          <tbody>
+            <tr><td>A · 40 turns</td><td class="num">15,209,176 B</td><td class="num">7,819,655 B</td><td class="num"><strong>48.6%</strong></td><td class="num">1,729,139 B</td><td class="num">1,187,395 B</td><td class="num"><strong>31.3%</strong></td></tr>
+            <tr><td>A · 20 turns</td><td class="num">6,882,666 B</td><td class="num">3,962,663 B</td><td class="num">42.4%</td><td class="num">751,390 B</td><td class="num">600,910 B</td><td class="num">20.0%</td></tr>
+            <tr><td>A · 10 turns</td><td class="num">3,660,665 B</td><td class="num">2,094,229 B</td><td class="num">42.8%</td><td class="num">407,440 B</td><td class="num">313,012 B</td><td class="num">23.2%</td></tr>
+            <tr><td>A · 1 turn</td><td class="num">46,806 B</td><td class="num">31,489 B</td><td class="num">32.7%</td><td class="num">4,692 B</td><td class="num">4,312 B</td><td class="num">8.1%</td></tr>
+            <tr><td>B · 40 turns</td><td class="num">4,021,959 B</td><td class="num">2,160,422 B</td><td class="num">46.3%</td><td class="num">593,882 B</td><td class="num">361,967 B</td><td class="num">39.1%</td></tr>
+            <tr><td>C · 40 turns</td><td class="num">4,379,245 B</td><td class="num">2,282,569 B</td><td class="num">47.9%</td><td class="num">596,054 B</td><td class="num">394,632 B</td><td class="num">33.8%</td></tr>
+            <tr><td>conversation.list · 100</td><td class="num">258,530 B</td><td class="num">258,530 B</td><td class="num">0.0%</td><td class="num">57,400 B</td><td class="num">57,398 B</td><td class="num">≈0.0%</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="footnote">列表压缩后的 2-byte 差异来自 JSON-RPC request/response ID 中 old/new 标签的 Deflate 编码差异；业务 result 逐字节相同，因此不应解释为列表优化收益。</p>
+
+      <h3>5.2 为什么原始下降 48.6%，网络只再下降 31.3%</h3>
+      <p>旧协议里的 command/output 副本逐字相同，本来就是 Deflate 最容易压缩的数据。以 A-40 为例，旧消息从 14.51 MiB 压至 1.65 MiB（-88.6%）；删除重复并执行预算后，新消息从 7.46 MiB 压至 1.13 MiB（-84.8%）。因此压缩会“掩盖”一部分对象设计浪费，但不会消除解析、分配、序列化、Provider stdio frame 和 Host 内存中的原始成本。</p>
+      <div class="grid-2">
+        <div class="card">
+          <span class="badge observed">同 limit 效果</span>
+          <h3>A-40：协议与预算</h3>
+          <p>2,350 items 全部保留。新响应记录 380 个截断载荷：原始合计 994,275 B，保留 131,701 B，省略 862,574 B；同时消除了旧结构的正文副本。</p>
+        </div>
+        <div class="card">
+          <span class="badge observed">实际默认效果</span>
+          <h3>旧 A-40 → 新 A-10</h3>
+          <p>JSON-RPC 15,209,176 → 2,094,229 B（-86.2%）；压缩 WSS 1,729,139 → 313,012 B（-81.9%）。A-10 本页没有触发截断，收益来自唯一所有权和更小分页。</p>
+        </div>
+      </div>
+
+      <h3>5.3 三个真实大样例的截断行为</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>样例</th><th class="num">Item 保留</th><th class="num">截断载荷</th><th class="num">原始截断内容</th><th class="num">保留</th><th class="num">省略</th><th>解释</th></tr></thead>
+          <tbody>
+            <tr><td>A-40</td><td class="num">2,350 / 2,350</td><td class="num">380</td><td class="num">994,275 B</td><td class="num">131,701 B</td><td class="num">862,574 B</td><td>页面内容预算耗尽后继续保留 item identity、状态和 cursor；正文带 truncation。</td></tr>
+            <tr><td>B-40</td><td class="num">837 / 837</td><td class="num">3</td><td class="num">1,418,127 B</td><td class="num">42 B</td><td class="num">1,418,085 B</td><td>三个超大 structured JSON 使用合法 structural preview，而非伪装成 opaque 文本。</td></tr>
+            <tr><td>C-40</td><td class="num">519 / 519</td><td class="num">2</td><td class="num">387,573 B</td><td class="num">262,144 B</td><td class="num">125,429 B</td><td>两个文本/命令载荷各保留最多 128 KiB 的 UTF-8 安全 head-tail。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout warning">
+        <strong>边界：</strong>当前共享 SDK 的“7 MiB”是 canonical 内容预算，不是最终 JSON-RPC frame 的硬目标；2,350 个 item 的 identity、kind、status、contentId 和 envelope 仍产生约 0.46 MiB 以上结构开销，所以 A-40 最终为 7.46 MiB。这仍明显低于 16 MiB，但监控必须记录最终序列化字节，不能只记录 retained content。
+      </div>
+    </section>
+
     <section id="largest">
-      <h2>5. 最大工具项：不是极端单项才会出问题</h2>
+      <h2>6. 最大工具项：不是极端单项才会出问题</h2>
       <p>下表来自案例 A 的真实 40-turn Code Pet Provider 响应。命令只展示操作类别或脱敏预览；item ID 与尺寸是原始实测值。</p>
       <div class="table-wrap">
         <table>
@@ -350,7 +414,7 @@
     </section>
 
     <section id="duplication">
-      <h2>6. 重复数据：同一命令三份、同一输出两份</h2>
+      <h2>7. 重复数据：同一命令三份、同一输出两份</h2>
       <div class="flow">
         <div><strong>原生 command</strong><small>App Server commandExecution</small></div>
         <div><strong>contents.command</strong><small>时间线展示正文</small></div>
@@ -366,7 +430,7 @@
         <div><strong>JSON frame</strong><small>两个完全相同副本</small></div>
       </div>
 
-      <h3>6.1 案例 A 的精确相等检查</h3>
+      <h3>7.1 案例 A 的精确相等检查</h3>
       <div class="table-wrap">
         <table>
           <thead><tr><th>数据</th><th class="num">Item 数</th><th class="num">权威正文</th><th class="num">额外重复正文</th><th>相等检查</th></tr></thead>
@@ -379,7 +443,7 @@
       </div>
       <p class="footnote">6,129,554 bytes 只统计完全相等的字符串副本，不包含重复 JSON 字段名、contentId、MIME、route identity、tool metadata 与转义开销。因此它是可确认冗余的下界。</p>
 
-      <h3>6.2 真实结构示意</h3>
+      <h3>7.2 真实结构示意</h3>
       <pre>{
   "kind": "command",
   "contents": [
@@ -396,13 +460,13 @@
     </section>
 
     <section id="object-design">
-      <h2>7. 对象设计复盘：问题不是“字段多”，而是“同一事实有多个所有者”</h2>
+      <h2>8. 对象设计复盘：问题不是“字段多”，而是“同一事实有多个所有者”</h2>
 
       <div class="callout danger">
         <strong>修正后的架构判断：</strong><code>ToolInvocation</code> 这个抽象本身是必要的；不合理的是它与 <code>ConversationItem.contents</code> 发生了完整正文所有权重叠，而且 tool 内部又有第二轮重叠。当前协议没有建立 single source of truth，因此服务端、客户端、截断器和增量同步各自选择不同字段都算“合法”，最终必然出现重复、分歧和补丁式 fallback。
       </div>
 
-      <h3>7.1 五组重叠分别意味着什么</h3>
+      <h3>8.1 五组重叠分别意味着什么</h3>
       <div class="table-wrap">
         <table>
           <thead><tr><th>重叠组</th><th>当前可承载的事实</th><th>真实案例</th><th>设计缺陷</th></tr></thead>
@@ -416,7 +480,7 @@
         </table>
       </div>
 
-      <h3>7.2 为什么可以确认是协议级问题，而不只是 Codex 实现错误</h3>
+      <h3>8.2 为什么可以确认是协议级问题，而不只是 Codex 实现错误</h3>
       <div class="grid-2">
         <div class="card">
           <span class="badge codefact">Codex / OpenCode</span>
@@ -431,7 +495,7 @@
       </div>
       <p class="footnote">代码位置：Codex <code>crates/providers/codepet-provider-codex/src/mapper.rs:600–689</code>；OpenCode <code>crates/providers/codepet-provider-opencode/src/mapper.rs:369–397, 848–898</code>；Claude <code>crates/providers/codepet-provider-claude/src/provider.rs:2511–2583</code>；协议定义 <code>protocol/provider/v1/schema.json</code> 的 ToolContent、ToolInvocation 与 ConversationItem。</p>
 
-      <h3>7.3 重复不只浪费空间，还会产生正确性风险</h3>
+      <h3>8.3 重复不只浪费空间，还会产生正确性风险</h3>
       <div class="table-wrap">
         <table>
           <thead><tr><th>风险</th><th>当前证据</th><th>可能表现</th></tr></thead>
@@ -445,7 +509,7 @@
         </table>
       </div>
 
-      <h3>7.4 最终协议决策：用判别联合让非法组合无法出现</h3>
+      <h3>8.4 最终协议决策：用判别联合让非法组合无法出现</h3>
       <p>最终方案不是在投影器里做文本去重，也不是为了工具抽屉建立另一套详情对象，而是直接修改 Provider/Gateway v1：<code>ConversationItem</code>、tool input 和 tool outcome 都采用带 <code>kind</code> 的封闭 <code>oneOf</code>。每个分支只拥有自己合法的字段，命令与输出各只有一个 canonical 位置。项目尚未现场发布，因此两个协议与两端实现同步更新，<strong>版本号仍保持 v1</strong>。</p>
       <pre>{
   "resource": { "itemId": "exec-…", "conversationId": "…" },
@@ -484,7 +548,7 @@
         <li><strong>Delta 指向 canonical content：</strong>继续使用 <code>itemId + contentId</code>；客户端 committed contentId 必须遍历各 item variant 的内容块，不能依赖文本相等。</li>
       </ul>
 
-      <h3>7.5 实施边界：协议先行，Provider 必须最先截断</h3>
+      <h3>8.5 实施边界：协议先行，Provider 必须最先截断</h3>
       <ol>
         <li>先在 Provider/Gateway v1 Schema 固定联合、唯一所有权与截断元数据，并生成 Rust/Dart/TypeScript SDK。</li>
         <li>Provider Mapper 按新类型输出单份正文；共享 Provider SDK 在 stdout JSON 序列化前执行内容预算、页软预算和最终 16 MiB frame 检查。</li>
@@ -497,72 +561,73 @@
     </section>
 
     <section id="code">
-      <h2>8. 当前代码为什么会产生这种结果</h2>
+      <h2>9. 修复前为什么膨胀，修复后如何守住边界</h2>
       <div class="grid-2">
         <div class="card">
-          <span class="badge codefact">代码事实</span>
-          <h3>工具文本普通上限为 256 KiB</h3>
-          <p><code>bounded_tool_text</code> 只在单段字符串超过 256 KiB 时截断。真实最大项多在 65–142 KiB，因此不会触发。</p>
-          <p><code>crates/providers/codepet-provider-codex/src/mapper.rs:1154</code></p>
+          <span class="badge codefact">修复前</span>
+          <h3>256 KiB 单字段上限看不到累计风险</h3>
+          <p>旧 <code>bounded_tool_text</code> 只在单段字符串超过 256 KiB 时截断。真实最大项多在 65–142 KiB，因此不会触发；数百项累计后才接近硬上限。</p>
+          <p><code>crates/providers/codepet-provider-codex/src/mapper.rs</code></p>
         </div>
         <div class="card">
-          <span class="badge codefact">代码事实</span>
-          <h3>结构化输入同样允许 256 KiB</h3>
-          <p>工具 input 的 JSON 小于等于 256 KiB 时完整进入 <code>structured_content/input</code>；更大时才转换成截断文本。</p>
-          <p><code>crates/providers/codepet-provider-codex/src/mapper.rs:1006</code></p>
+          <span class="badge observed">修复后实测</span>
+          <h3>单块 128 KiB，三种 input 保持语义</h3>
+          <p>command/structured/opaque 和 canonical result blocks 都进入共享预算。文本使用 UTF-8 安全 head-tail；超大 JSON 使用 structural preview，不会因为尺寸变成 opaque。</p>
+          <p><code>sdk/rust/codepet-provider-sdk/src/lib.rs</code></p>
         </div>
         <div class="card">
-          <span class="badge codefact">代码事实</span>
-          <h3>32 KiB 补救只在 limit=1 生效</h3>
-          <p><code>fit_single_turn_conversation_history</code> 在请求 limit 不是 1 时直接返回原响应；limit=1 仍超限才缩减 <code>item.contents</code>。</p>
-          <p><code>sdk/rust/codepet-provider-sdk/src/lib.rs:21</code></p>
+          <span class="badge observed">修复后实测</span>
+          <h3>每个 response 都执行内容页预算</h3>
+          <p>不再等到 <code>limit=1</code>。共享 SDK 对每个 history response 应用 7 MiB canonical 内容预算，再检查最终 16 MiB frame；A-40 保留全部 2,350 items。</p>
+          <p><code>sdk/rust/codepet-provider-sdk/src/lib.rs</code></p>
         </div>
         <div class="card">
-          <span class="badge codefact">代码事实</span>
-          <h3>Remote 默认先请求 40 turns</h3>
-          <p>只有收到 <code>provider_response_too_large</code> 后才将 limit 减半；意味着先承受一次大响应构建与失败，再重试 20/10/5/2/1。</p>
-          <p><code>codepet-remote/lib/gateway/gateway_client.dart:545</code></p>
+          <span class="badge observed">修复后实测</span>
+          <h3>Remote 默认 10 turns</h3>
+          <p>默认页不再先构建 A-40。相同起点的新 A-10 JSON-RPC 为 2.00 MiB，压缩 WSS 约 306 KiB；仍保留 too-large 的 10→5→2→1 安全回退。</p>
+          <p><code>codepet-remote/lib/gateway/gateway_client.dart:553</code></p>
         </div>
       </div>
       <div class="callout">
-        <strong>边界问题：</strong>现有 32 KiB 补救只遍历 <code>item.contents</code>，没有统一预算 <code>tool.input</code>、<code>tool.rawInput</code>、<code>tool.result.structuredContent</code> 与 <code>tool.result.content.text</code>。因此对“正文在结构化 tool 中仍保留一份”的情况不够完整。
+        <strong>边界仍需监控：</strong>7 MiB 是 canonical 内容预算，最终 frame 还包含数千个 item 的结构开销。WebSocket Deflate 只保护 Host→Remote 网络流量；Provider→Host stdio、Host 解析和内存分配仍按压缩前 JSON 发生。
       </div>
     </section>
 
     <section id="recommendations">
-      <h2>9. 建议方案：每一项对应什么真实案例</h2>
+      <h2>10. 方案状态：每一项对应什么真实案例</h2>
 
       <div class="recommendation">
-        <span class="badge observed">优先级 P0</span>
-        <h3>建议 1：Remote 默认 history page 从 40 turns 降到 10</h3>
+        <span class="badge observed">已完成 P0</span>
+        <h3>方案 1：Remote 默认 history page 从 40 turns 降到 10</h3>
         <p><strong>对应案例：</strong>案例 A 的相同起点，40 turns 为约 14.4 MiB，20 turns 为 6.51 MiB，10 turns 为 3.47 MiB，1 turn 为 44.9 KiB。</p>
-        <p><strong>直接收益：</strong>首帧从约 14.4 MiB 降到 3.47 MiB，单帧下降约 76%，避免先构建超大帧、报错、再逐次减半。</p>
+        <p><strong>实测收益：</strong>与旧默认 A-40 相比，新 A-10 的 JSON-RPC 下降 86.2%，压缩 WSS wire 下降 81.9%，避免先构建超大帧、报错、再逐次减半。</p>
         <p><strong>代价：</strong>完整历史请求次数增加。Remote 当前最终仍会循环到全部分页并把 pages 合并到内存，因此该方案主要解决网络单帧与失败重试，不直接降低“完整历史最终内存”。</p>
         <p><strong>验证：</strong>使用案例 A 的 cursor 顺序回放，断言 10-turn pages 无重复、无遗漏、nextCursor 稳定；记录首屏可见时间与完整加载时间。</p>
       </div>
 
       <div class="recommendation">
-        <span class="badge observed">优先级 P0</span>
-        <h3>建议 2：在 v1 协议层消除可共存的重复所有者</h3>
+        <span class="badge observed">已完成 P0</span>
+        <h3>方案 2：在 v1 协议层消除可共存的重复所有者</h3>
         <p><strong>对应案例：</strong>案例 A 中 870 条命令的正文各出现 3 次；801 条输出各出现 2 次。精确重复正文至少 6,129,554 bytes。</p>
-        <p><strong>模拟结果：</strong>仅删除与 <code>contents</code> 完全相等的 tool 正文副本，14.39 MiB → <strong>8.40 MiB</strong>，下降 <strong>41.6%</strong>。</p>
+        <p><strong>实测结果：</strong>在相同 A-40 页面上，新联合结构叠加当前预算把完整 JSON-RPC 从 15,209,176 B 降到 7,819,655 B，下降 48.6%；压缩 WSS wire 继续下降 31.3%。</p>
         <p><strong>推荐协议：</strong>不是约定 Mapper “不要同时填写”，而是用 <code>oneOf</code> 让双写对象无法通过 Schema。command/structured/opaque input 三选一，success/failure outcome 二选一，完整结果只在 canonical content blocks；普通 user/assistant message 继续拥有自己的 blocks。</p>
         <p><strong>实施要求：</strong>协议与生成 SDK 先完成，Codex/OpenCode/Claude、Host/Gateway、Remote 再按同一合同并行迁移。Remote 工具详情与 command 时间线当前优先读取 <code>tool.result</code>，但 committed contentId 主要来自顶层 contents；新实现必须从判别分支遍历 canonical contentId，不能保留文本相等 fallback 作为长期机制。</p>
       </div>
 
       <div class="recommendation">
-        <span class="badge simulated">优先级 P0</span>
-        <h3>建议 3：操作文本使用 8–16 KiB 预览，不保留 256 KiB 默认正文</h3>
+        <span class="badge observed">已完成（参数调整）</span>
+        <h3>方案 3：操作文本语义截断，当前实现采用单块 128 KiB</h3>
         <p><strong>对应案例：</strong>最大 8 个真实工具输出为 65–142 KiB，全部绕过 256 KiB 上限；单项看似合理，累计后把一页推到 14.4 MiB。</p>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>基于真实案例 A 的模拟</th><th class="num">响应大小</th><th class="num">相对当前下降</th><th>说明</th></tr></thead>
+            <thead><tr><th>基于真实案例 A 的敏感性/实测</th><th class="num">响应大小</th><th class="num">相对旧版</th><th>说明</th></tr></thead>
             <tbody>
-              <tr><td>当前</td><td class="num">14.39 MiB</td><td class="num">—</td><td>工具普通上限 256 KiB，存在重复</td></tr>
+              <tr><td>修复前基线</td><td class="num">14.39 MiB</td><td class="num">—</td><td>工具普通上限 256 KiB，存在重复</td></tr>
               <tr><td>操作字段 32 KiB</td><td class="num">13.26 MiB</td><td class="num">7.8%</td><td>幅度有限，仍偏近上限</td></tr>
               <tr><td>操作字段 16 KiB</td><td class="num">11.55 MiB</td><td class="num">19.7%</td><td>改善，但重复仍在</td></tr>
               <tr><td>操作字段 8 KiB</td><td class="num">9.31 MiB</td><td class="num">35.3%</td><td>单独采用已经有效</td></tr>
-              <tr><td>去重 + 8 KiB</td><td class="num"><strong>5.84 MiB</strong></td><td class="num"><strong>59.4%</strong></td><td>推荐组合</td></tr>
+              <tr><td>去重 + 8 KiB</td><td class="num"><strong>5.84 MiB</strong></td><td class="num"><strong>59.4%</strong></td><td>初查时的激进模拟，不是最终采用参数</td></tr>
+              <tr><td>实际 V1：唯一所有权 + 128 KiB + 7 MiB 内容预算</td><td class="num"><strong>7.46 MiB</strong></td><td class="num"><strong>48.6%</strong></td><td>真实黑盒；保留更多单项详情，并由累计预算兜底</td></tr>
             </tbody>
           </table>
         </div>
@@ -571,11 +636,11 @@
       </div>
 
       <div class="recommendation">
-        <span class="badge codefact">优先级 P1</span>
-        <h3>建议 4：建立整页 6–8 MiB 软预算，而不是只看单 item</h3>
+        <span class="badge observed">已完成 P1</span>
+        <h3>方案 4：建立 7 MiB canonical 内容预算，而不是只看单 item</h3>
         <p><strong>对应案例：</strong>870 个 command 中没有任何一个必须超过 256 KiB，但总 command item 达约 13.9 MB。单项阈值无法约束累计体积。</p>
-        <p><strong>行为建议：</strong>序列化前维护响应预算；优先保留 item identity、状态、标题、exitCode、timing、truncated/totalBytes，正文按剩余预算加入。达到软预算时不必丢弃整个 turn，也不应等到 16 MiB codec 才返回错误。</p>
-        <p><strong>为什么是 6–8 MiB：</strong>案例 A 的 20-turn 页面为 6.51 MiB，说明这个区间既能承载大量真实 item，又为 Provider envelope、Gateway 转换和移动网络留出明显余量。</p>
+        <p><strong>实测行为：</strong>序列化前维护响应预算；优先保留 item identity、状态、标题、exitCode、timing 和 truncation，正文按剩余预算加入。A-40 的 2,350 items 和 nextCursor 全部保留，380 个载荷明确标记截断。</p>
+        <p><strong>为什么是 7 MiB：</strong>初查案例 A 的 20-turn 页面为 6.51 MiB，说明这个量级既能承载大量真实 item，又为 16 MiB Provider frame 留出明显余量。实际 A-40 canonical 内容触顶后最终 JSON-RPC 为 7.46 MiB，验证了“内容预算必须小于 frame 上限”这一分层。</p>
       </div>
 
       <div class="recommendation">
@@ -596,36 +661,37 @@
     </section>
 
     <section id="verification">
-      <h2>10. 实现后的验证计划与回归防线</h2>
+      <h2>11. 实现后的验证结果与回归防线</h2>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>风险</th><th>自动化验证</th><th>真实环境验证</th><th>通过标准</th></tr></thead>
+          <thead><tr><th>风险</th><th>验证证据</th><th>结果</th><th>剩余边界</th></tr></thead>
           <tbody>
-            <tr><td>截断后丢失失败结尾</td><td>构造头部正常、尾部报错的 100 KiB 输出</td><td>运行长 cargo/flutter test 输出</td><td>预览同时包含头尾，totalBytes 准确</td></tr>
-            <tr><td>去重后工具抽屉为空</td><td>SDK mapper/UI 测试用 contentId 解析正文</td><td>打开真实 command/file/MCP 详情</td><td>时间线与详情均可读，无双份正文</td></tr>
-            <tr><td>小页导致顺序或重复错误</td><td>10-turn cursor 多页回放</td><td>加载案例 A 全部 47 turns</td><td>item ID 无重复、顺序稳定、总数一致</td></tr>
-            <tr><td>软预算错误删除 item</td><td>数百个中等输出的单 turn fixture</td><td>复读案例 A 40-turn 起点</td><td>身份/状态全保留，正文按预算截断</td></tr>
-            <tr><td>列表截断影响搜索与标题</td><td>长 title、长 preview、两者相同/不同 fixture</td><td>检查最大四条真实元数据</td><td>展示清楚，有截断标记，无重复传输</td></tr>
-            <tr><td>仍出现 16 MiB 失败</td><td>Provider 最终 JSON frame 大小断言</td><td>移动网络反复打开案例 A</td><td>普通页稳定低于软预算，不经过 too-large 重试</td></tr>
+            <tr><td>截断后丢失失败结尾</td><td>Provider SDK 142 KiB command/output fixture；UTF-8 head-tail 与字节数断言</td><td>通过</td><td>结构化 JSON 使用 structural preview，不承诺保留任意深层字段。</td></tr>
+            <tr><td>去重后工具抽屉为空</td><td>Remote mapper/widget 覆盖全部 item/input/outcome/content variants 与 truncation</td><td>241 项 Flutter 测试通过</td><td>尚未做真实手机逐项视觉走查。</td></tr>
+            <tr><td>小页导致顺序或重复错误</td><td>10→5→2→1 回退、cursor 顺序、snapshot/delta contentId 测试</td><td>通过</td><td>Remote 仍会继续拉取全部分页，总会话内存并未按需虚拟化。</td></tr>
+            <tr><td>软预算错误删除 item</td><td>累计大页 fixture + A-40 真实复读</td><td>2,350 / 2,350 items 保留</td><td>最终 frame 比 7 MiB 内容预算多出结构开销。</td></tr>
+            <tr><td>协议分支重新允许双写</td><td>Provider/Gateway schema 负向 fixture；三语言 SDK freshness</td><td><code>protocol:check</code> 17/17</td><td>第三方 Provider 必须重新生成 V1 SDK，旧扁平 V1 会被拒绝。</td></tr>
+            <tr><td>并行实现合并后不兼容</td><td>三个 Provider、Host、Remote 全量/定向测试</td><td>Provider 127、Host 全量、Remote 241 均通过</td><td>2 个真实 CLI smoke 按原配置 ignored。</td></tr>
+            <tr><td>压缩估算偏离真机</td><td>按实际协商参数执行 RFC 7692 raw DEFLATE，并计 WebSocket frame</td><td>算法复算通过</td><td>未包含 TLS/TCP/IP、重传、VPN 与设备 CPU；需要真机 packet/trace 验证。</td></tr>
           </tbody>
         </table>
       </div>
-      <h3>建议保留的基准样本</h3>
+      <h3>已落盘的可复算基准</h3>
       <ul>
-        <li>2,350 items / 870 command / 801 outputs 的 40-turn 等价 fixture。</li>
-        <li>单输出 142 KiB、但不超过 256 KiB 的“中等大项”fixture。</li>
-        <li>数百个 8–20 KiB 输出聚合成大页的“累计超限”fixture。</li>
-        <li>title 与 preview 完全相同、各约 5 KiB 的列表 metadata fixture。</li>
+        <li><code>reports/conversation-payload-benchmark-2026-09-04.json</code>：旧/新、raw/Deflate/WSS、item 与 truncation 聚合结果。</li>
+        <li><code>scripts/benchmark_conversation_payloads.py</code>：同一 Provider JSON-RPC 黑盒请求与 RFC 7692 复算脚本，不写入正文。</li>
+        <li>协议/Provider SDK fixture：混合 variant 拒绝、142 KiB 单块和数百个中等输出累计页。</li>
+        <li>真实样例仍使用 A/B/C 的固定 conversation ID；历史内容或 Codex runtime 变化后，应把新结果作为新一轮快照而非覆盖旧数字来源。</li>
       </ul>
     </section>
 
     <section id="unknowns">
-      <h2>11. 已排除方向、未知项与下一步</h2>
+      <h2>12. 已排除方向、未知项与下一步</h2>
       <h3>已排除</h3>
       <ul>
         <li>“对话列表因为携带 Shell 原文而超限”：列表协议与本机实测均不支持该判断。</li>
         <li>“只有某个超过 256 KiB 的巨型命令输出才会触发”：最大真实工具项均未触发 256 KiB 截断，累计已经接近 16 MiB。</li>
-        <li>“目前 32 KiB fallback 能覆盖所有工具字段”：代码只在 limit=1 且整帧过大时处理 <code>item.contents</code>，并非统一工具正文预算。</li>
+        <li>“WebSocket 压缩已经解决 16 MiB Provider 超限”：Deflate 在 Host→Remote 才发生，Provider stdout 写入、Host 解析与原始内存仍受压缩前 JSON 约束。</li>
         <li>“重复只是 Codex Mapper 的单点实现错误”：OpenCode 也发生双层填充，而 Claude 选择另一种放置方式，说明 Schema 缺少唯一事实源和跨 Provider 约束。</li>
       </ul>
       <h3>仍未知</h3>
@@ -635,16 +701,15 @@
         <li><span class="badge codefact">已决策</span> 当前没有现场发布兼容负担，Provider/Gateway 继续使用 v1，Code Pet 与 codepet-remote 同步升级，不维护旧字段双栈。</li>
         <li><span class="badge unknown">未确认</span> 长列表在多个 Provider 并发请求时，UI 是否把其中一个失败统一展示成“列表加载失败”。</li>
       </ul>
-      <h3>建议实施顺序</h3>
+      <h3>后续顺序</h3>
       <ol>
-        <li>先修改 Provider/Gateway v1 的判别联合、唯一载荷所有权和截断元数据，并生成全部 SDK。</li>
-        <li>Provider、Host/Gateway、Remote 以该协议为共同基线并行迁移；Provider 在 stdout 序列化前执行第一次预算。</li>
-        <li>Remote 默认 limit 40 → 10，并为操作正文引入 8–16 KiB 语义预览和 6–8 MiB 页软预算。</li>
-        <li>加入只记尺寸、不记正文的接口观测，用真实 method 和 route 归因现场错误。</li>
-        <li>最后独立收口 conversation.list title/preview；两者相等是列表元数据冗余，不是 tool payload 的组成部分。</li>
+        <li>在真机/WSS 上补 packet 或 transport byte counter，验证 TLS/TCP/VPN 后的实际传输量与解压 CPU。</li>
+        <li>加入只记尺寸、不记正文的接口观测，用 method、route、limit、raw/compressed bytes 和 truncation bytes 归因现场错误。</li>
+        <li>把 Remote “拉完全部历史”改成按需加载更早页面；当前 10-turn 已控制单帧，但超长会话总流量仍线性增长。</li>
+        <li>独立收口 conversation.list title/preview；列表 100 条压缩后约 56 KiB，当前不是历史超限根因。</li>
       </ol>
       <div class="callout">
-        <strong>最终判断：</strong>历史消息尺寸问题已经有高置信、可量化的根因证据；对话列表目前只有“存在可优化的元数据冗余”证据，还没有“列表自身达到硬上限”的证据。实施时应拆成两个问题跟踪，避免用同一个截断开关掩盖错误归属。
+        <strong>最终判断：</strong>新方案已经把相同 A-40 原始 JSON 降低 48.6%，并在已开启 Deflate 的线上继续降低 31.3%；结合默认 A-10，实际首帧压缩字节降低 81.9%。这证明协议唯一所有权、Provider 预算、分页和 WebSocket 压缩是互补的四层措施。对话列表 100 条压缩后约 56 KiB，仍没有证据表明它与历史工具正文属于同一超限根因。
       </div>
       <p class="footnote print-note">本报告为 2026-09-04 本机快照。实现变化或历史继续增长后，应重新运行相同黑盒采样。</p>
     </section>
