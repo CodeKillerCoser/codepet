@@ -711,6 +711,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "codepet-agent-sdk"
+version = "0.1.0"
+dependencies = [
+ "codepet-core-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "codepet-core-sdk"
 version = "0.1.0"
 dependencies = [
@@ -731,6 +740,7 @@ dependencies = [
 name = "codepet-gateway-sdk"
 version = "0.1.0"
 dependencies = [
+ "codepet-agent-sdk",
  "codepet-core-sdk",
  "serde",
  "serde_json",
@@ -776,6 +786,7 @@ dependencies = [
 name = "codepet-provider-sdk"
 version = "0.1.0"
 dependencies = [
+ "codepet-agent-sdk",
  "codepet-core-sdk",
  "serde",
  "serde_json",
