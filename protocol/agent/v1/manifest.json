@@ -1,0 +1,9 @@
+{
+  "name": "codepet-agent",
+  "layer": "agent",
+  "version": 1,
+  "kind": "types",
+  "fixtures": "fixtures/index.json",
+  "methods": [],
+  "events": []
+}

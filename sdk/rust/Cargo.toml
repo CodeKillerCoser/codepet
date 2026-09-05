@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "codepet-core-sdk",
+    "codepet-agent-sdk",
     "codepet-desktop-sdk",
     "codepet-pet-sdk",
     "codepet-provider-sdk",

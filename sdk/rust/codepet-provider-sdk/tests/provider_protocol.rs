@@ -74,7 +74,7 @@ async fn stdio_runtime_rejects_zero_capacity_before_starting_the_provider() {
 }
 
 #[test]
-fn provider_event_preserves_all_four_resource_route_dimensions() {
+fn provider_event_uses_canonical_agent_resource_identity() {
     let event = decode_event(include_bytes!(
         "../../../../protocol/provider/v1/fixtures/conversation-upserted-event.json"
     ))
@@ -82,12 +82,7 @@ fn provider_event_preserves_all_four_resource_route_dimensions() {
     let ProtocolEvent::EventConversationUpserted { params, .. } = event else {
         panic!("expected conversation event");
     };
-    assert_eq!(params.conversation.resource.device_id, "device-macbook-1");
-    assert_eq!(
-        params.conversation.resource.provider_plugin_id,
-        "dev.codepet.codex"
-    );
-    assert_eq!(params.conversation.resource.provider_instance_id, "codex-work");
+    assert_eq!(params.conversation.resource.provider_id, "codex-work");
     assert_eq!(params.conversation.resource.native_resource_id, "thread-01");
 }
 
@@ -157,15 +152,15 @@ fn conversation_get_fixture_preserves_ordered_items_and_stable_content_ids() {
 #[test]
 fn generated_unions_reject_mixed_authority_fixtures() {
     assert!(serde_json::from_slice::<ToolInput>(include_bytes!(
-        "../../../../protocol/provider/v1/fixtures/invalid-tool-input-mixed.json"
+        "../../../../protocol/agent/v1/fixtures/invalid-tool-input-mixed.json"
     ))
     .is_err());
     assert!(serde_json::from_slice::<ToolOutcome>(include_bytes!(
-        "../../../../protocol/provider/v1/fixtures/invalid-tool-outcome-mixed.json"
+        "../../../../protocol/agent/v1/fixtures/invalid-tool-outcome-mixed.json"
     ))
     .is_err());
     assert!(serde_json::from_slice::<ConversationItem>(include_bytes!(
-        "../../../../protocol/provider/v1/fixtures/invalid-command-item-duplicate-content.json"
+        "../../../../protocol/agent/v1/fixtures/invalid-command-item-duplicate-content.json"
     ))
     .is_err());
 }

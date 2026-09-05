@@ -7,6 +7,7 @@ use std::io::{BufRead, Write};
 use std::future::Future;
 use std::pin::Pin;
 
+pub use codepet_agent_sdk::*;
 pub use codepet_core_sdk::{ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RpcError, TimestampMs, VersionRange};
 
 pub const PROTOCOL_VERSION: ProtocolVersion = 1;
@@ -14,62 +15,15 @@ pub const PROTOCOL_VERSION: ProtocolVersion = 1;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct ActivitySummaryContentBlock {
-    pub content_id: NativeResourceId,
-    pub kind: ActivitySummaryContentBlockKind,
-    pub text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncation: Option<ContentTruncation>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ActivitySummaryContentBlockKind {
-    #[serde(rename = "activity-summary")]
-    ActivitySummary,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ApprovalConversationItem {
-    pub resource: RoutedResourceId,
-    pub turn: RoutedResourceId,
-    pub conversation: RoutedResourceId,
-    pub kind: ApprovalConversationItemKind,
-    pub status: ConversationItemStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub related_item: Option<RoutedResourceId>,
-    pub approval: ProviderApproval,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ApprovalConversationItemKind {
-    #[serde(rename = "approval")]
-    Approval,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ApprovalDecision {
-    #[serde(rename = "approve")]
-    Approve,
-    #[serde(rename = "deny")]
-    Deny,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
 pub struct ApprovalRequestedEvent {
-    pub approval: ProviderApproval,
+    pub approval: Approval,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ApprovalResolveRequest {
-    pub approval: RoutedResourceId,
+    pub approval: ProviderResourceId,
     pub decision: ApprovalDecision,
 }
 
@@ -77,154 +31,21 @@ pub struct ApprovalResolveRequest {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ApprovalResolveResponse {
-    pub approval: ProviderApproval,
+    pub approval: Approval,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ApprovalResolvedEvent {
-    pub approval: ProviderApproval,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ApprovalStatus {
-    #[serde(rename = "pending")]
-    Pending,
-    #[serde(rename = "approved")]
-    Approved,
-    #[serde(rename = "denied")]
-    Denied,
-    #[serde(rename = "expired")]
-    Expired,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct AudioContentBlock {
-    pub content_id: NativeResourceId,
-    pub kind: AudioContentBlockKind,
-    pub uri: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncation: Option<ContentTruncation>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AudioContentBlockKind {
-    #[serde(rename = "audio")]
-    Audio,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ChoiceOption {
-    pub id: String,
-    pub display_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub disabled_reason: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ChoiceSet {
-    pub options: Vec<ChoiceOption>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct CommandConversationItem {
-    pub resource: RoutedResourceId,
-    pub turn: RoutedResourceId,
-    pub conversation: RoutedResourceId,
-    pub kind: CommandConversationItemKind,
-    pub status: ConversationItemStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    pub tool: ToolInvocation,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CommandConversationItemKind {
-    #[serde(rename = "command")]
-    Command,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct CommandToolInput {
-    pub kind: CommandToolInputKind,
-    pub command: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub shell: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncation: Option<ContentTruncation>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub actions: Option<Vec<ToolCommandAction>>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CommandToolInputKind {
-    #[serde(rename = "command")]
-    Command,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ContentBlock {
-    TextContentBlock(TextContentBlock),
-    ReasoningSummaryContentBlock(ReasoningSummaryContentBlock),
-    OutputContentBlock(OutputContentBlock),
-    ActivitySummaryContentBlock(ActivitySummaryContentBlock),
-    StructuredJsonContentBlock(StructuredJsonContentBlock),
-    ImageContentBlock(ImageContentBlock),
-    AudioContentBlock(AudioContentBlock),
-    ResourceLinkContentBlock(ResourceLinkContentBlock),
-    EmbeddedResourceContentBlock(EmbeddedResourceContentBlock),
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ContentTruncation {
-    pub original_bytes: u64,
-    pub retained_bytes: u64,
-    pub strategy: ContentTruncationStrategy,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ContentTruncationStrategy {
-    #[serde(rename = "head")]
-    Head,
-    #[serde(rename = "tail")]
-    Tail,
-    #[serde(rename = "head-tail")]
-    HeadTail,
-    #[serde(rename = "structural-preview")]
-    StructuralPreview,
+    pub approval: Approval,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ConversationAcquireInteractionRequest {
-    pub conversation: RoutedResourceId,
+    pub conversation: ProviderResourceId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -234,39 +55,6 @@ pub struct ConversationAcquireInteractionResponse {
     pub selection: TurnSelection,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lease_expires_at: Option<TimestampMs>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ConversationContentKind {
-    #[serde(rename = "text")]
-    Text,
-    #[serde(rename = "reasoning-summary")]
-    ReasoningSummary,
-    #[serde(rename = "output")]
-    Output,
-    #[serde(rename = "activity-summary")]
-    ActivitySummary,
-    #[serde(rename = "structured-json")]
-    StructuredJson,
-    #[serde(rename = "image")]
-    Image,
-    #[serde(rename = "audio")]
-    Audio,
-    #[serde(rename = "resource-link")]
-    ResourceLink,
-    #[serde(rename = "embedded-resource")]
-    EmbeddedResource,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ConversationCreateCapabilities {
-    pub supports_title: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selection: Option<TurnSendCapabilities>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace_mode: Option<ChoiceSet>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -286,7 +74,7 @@ pub struct ConversationCreateRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub project: Option<RoutedResourceId>,
+    pub project: Option<ProviderResourceId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extension: Option<ProviderExtension>,
 }
@@ -295,14 +83,14 @@ pub struct ConversationCreateRequest {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ConversationCreateResponse {
-    pub conversation: ProviderConversation,
+    pub conversation: Conversation,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ConversationGetRequest {
-    pub conversation: RoutedResourceId,
+    pub conversation: ProviderResourceId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -313,54 +101,10 @@ pub struct ConversationGetRequest {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ConversationGetResponse {
-    pub conversation: ProviderConversation,
+    pub conversation: Conversation,
     pub items: Vec<ConversationItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page_info: Option<PageInfo>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ConversationItem {
-    MessageConversationItem(MessageConversationItem),
-    ReasoningConversationItem(ReasoningConversationItem),
-    CommandConversationItem(CommandConversationItem),
-    FileChangeConversationItem(FileChangeConversationItem),
-    ToolConversationItem(ToolConversationItem),
-    ApprovalConversationItem(ApprovalConversationItem),
-    UnknownConversationItem(UnknownConversationItem),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ConversationItemRole {
-    #[serde(rename = "user")]
-    User,
-    #[serde(rename = "assistant")]
-    Assistant,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ConversationItemStatus {
-    #[serde(rename = "pending")]
-    Pending,
-    #[serde(rename = "running")]
-    Running,
-    #[serde(rename = "completed")]
-    Completed,
-    #[serde(rename = "failed")]
-    Failed,
-    #[serde(rename = "interrupted")]
-    Interrupted,
-    #[serde(rename = "declined")]
-    Declined,
-    #[serde(rename = "approved")]
-    Approved,
-    #[serde(rename = "denied")]
-    Denied,
-    #[serde(rename = "expired")]
-    Expired,
-    #[serde(rename = "unknown")]
-    Unknown,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -386,7 +130,7 @@ pub struct ConversationListRequest {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ConversationListResponse {
-    pub conversations: Vec<ProviderConversation>,
+    pub conversations: Vec<Conversation>,
     pub page_info: PageInfo,
 }
 
@@ -416,7 +160,7 @@ pub enum ConversationProjectFilterAllKind {
 #[serde(deny_unknown_fields)]
 pub struct ConversationProjectFilterProject {
     pub kind: ConversationProjectFilterProjectKind,
-    pub project: RoutedResourceId,
+    pub project: ProviderResourceId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -454,132 +198,15 @@ pub struct ConversationSearchRequest {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ConversationSearchResponse {
-    pub conversations: Vec<ProviderConversation>,
+    pub conversations: Vec<Conversation>,
     pub page_info: PageInfo,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ConversationStatus {
-    #[serde(rename = "idle")]
-    Idle,
-    #[serde(rename = "running")]
-    Running,
-    #[serde(rename = "waiting-approval")]
-    WaitingApproval,
-    #[serde(rename = "waiting-user-input")]
-    WaitingUserInput,
-    #[serde(rename = "error")]
-    Error,
-    #[serde(rename = "archived")]
-    Archived,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ConversationUpsertedEvent {
-    pub conversation: ProviderConversation,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct EmbeddedResourceContentBlock {
-    pub content_id: NativeResourceId,
-    pub kind: EmbeddedResourceContentBlockKind,
-    pub text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncation: Option<ContentTruncation>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EmbeddedResourceContentBlockKind {
-    #[serde(rename = "embedded-resource")]
-    EmbeddedResource,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct FileChangeConversationItem {
-    pub resource: RoutedResourceId,
-    pub turn: RoutedResourceId,
-    pub conversation: RoutedResourceId,
-    pub kind: FileChangeConversationItemKind,
-    pub status: ConversationItemStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    pub contents: Vec<ContentBlock>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FileChangeConversationItemKind {
-    #[serde(rename = "file-change")]
-    FileChange,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct FlatModelCatalog {
-    pub kind: FlatModelCatalogKind,
-    pub models: Vec<ChoiceOption>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_selection: Option<FlatModelSelection>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FlatModelCatalogKind {
-    #[serde(rename = "flat")]
-    Flat,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct FlatModelSelection {
-    pub kind: FlatModelCatalogKind,
-    pub model_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct GroupedModelCatalog {
-    pub kind: GroupedModelCatalogKind,
-    pub providers: Vec<GroupedModelProvider>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_selection: Option<GroupedModelSelection>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GroupedModelCatalogKind {
-    #[serde(rename = "grouped")]
-    Grouped,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct GroupedModelProvider {
-    pub id: String,
-    pub display_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub models: Vec<ChoiceOption>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct GroupedModelSelection {
-    pub kind: GroupedModelCatalogKind,
-    pub provider_id: String,
-    pub model_id: String,
+    pub conversation: Conversation,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -592,27 +219,6 @@ pub struct HarnessDescriptor {
     pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub executable_path: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ImageContentBlock {
-    pub content_id: NativeResourceId,
-    pub kind: ImageContentBlockKind,
-    pub uri: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncation: Option<ContentTruncation>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ImageContentBlockKind {
-    #[serde(rename = "image")]
-    Image,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -716,99 +322,8 @@ pub struct InstanceStopResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct MessageConversationItem {
-    pub resource: RoutedResourceId,
-    pub turn: RoutedResourceId,
-    pub conversation: RoutedResourceId,
-    pub kind: MessageConversationItemKind,
-    pub status: ConversationItemStatus,
-    pub role: ConversationItemRole,
-    pub contents: Vec<ContentBlock>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MessageConversationItemKind {
-    #[serde(rename = "message")]
-    Message,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ModelCatalog {
-    FlatModelCatalog(FlatModelCatalog),
-    GroupedModelCatalog(GroupedModelCatalog),
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ModelSelection {
-    FlatModelSelection(FlatModelSelection),
-    GroupedModelSelection(GroupedModelSelection),
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct OpaqueToolInput {
-    pub kind: OpaqueToolInputKind,
-    pub value: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncation: Option<ContentTruncation>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum OpaqueToolInputKind {
-    #[serde(rename = "opaque")]
-    Opaque,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct OutputContentBlock {
-    pub content_id: NativeResourceId,
-    pub kind: OutputContentBlockKind,
-    pub text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncation: Option<ContentTruncation>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum OutputContentBlockKind {
-    #[serde(rename = "output")]
-    Output,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct Project {
-    pub resource: RoutedResourceId,
-    pub name: String,
-    pub roots: Vec<ProjectRoot>,
-    pub metadata: BTreeMap<String, String>,
-    pub position: i64,
-    pub created_at: TimestampMs,
-    pub updated_at: TimestampMs,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ProjectChangeType {
-    #[serde(rename = "created")]
-    Created,
-    #[serde(rename = "updated")]
-    Updated,
-    #[serde(rename = "deleted")]
-    Deleted,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
 pub struct ProjectChangedEvent {
-    pub project: RoutedResourceId,
+    pub project: ProviderResourceId,
     pub change_type: ProjectChangeType,
 }
 
@@ -834,7 +349,7 @@ pub struct ProjectCreateResponse {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ProjectDeleteRequest {
-    pub project: RoutedResourceId,
+    pub project: ProviderResourceId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -848,7 +363,7 @@ pub struct ProjectDeleteResponse {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ProjectGetRequest {
-    pub project: RoutedResourceId,
+    pub project: ProviderResourceId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -880,15 +395,8 @@ pub struct ProjectListResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct ProjectRoot {
-    pub path: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
 pub struct ProjectUpdateRequest {
-    pub project: RoutedResourceId,
+    pub project: ProviderResourceId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -902,54 +410,6 @@ pub struct ProjectUpdateRequest {
 #[serde(deny_unknown_fields)]
 pub struct ProjectUpdateResponse {
     pub project: Project,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ProviderApproval {
-    pub resource: RoutedResourceId,
-    pub conversation: RoutedResourceId,
-    pub turn: RoutedResourceId,
-    pub kind: String,
-    pub title: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub status: ApprovalStatus,
-    pub decisions: Vec<ApprovalDecision>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub requested_at: Option<TimestampMs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resolved_at: Option<TimestampMs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub decision: Option<ApprovalDecision>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extension: Option<ProviderExtension>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ProviderAuthentication {
-    pub status: ProviderAuthenticationStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_text: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ProviderAuthenticationStatus {
-    #[serde(rename = "unknown")]
-    Unknown,
-    #[serde(rename = "signed-in")]
-    SignedIn,
-    #[serde(rename = "signed-out")]
-    SignedOut,
-    #[serde(rename = "expired")]
-    Expired,
-    #[serde(rename = "error")]
-    Error,
-    #[serde(rename = "unsupported")]
-    Unsupported,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -993,36 +453,6 @@ pub enum ProviderCapability {
     TurnInterrupt,
     #[serde(rename = "approval.resolve")]
     ApprovalResolve,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ProviderConversation {
-    pub resource: RoutedResourceId,
-    pub project: Option<RoutedResourceId>,
-    pub title: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub preview: Option<String>,
-    pub status: ConversationStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_level: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selection: Option<TurnSelection>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace_root: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<TimestampMs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<TimestampMs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub active_turn: Option<ProviderTurn>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extension: Option<ProviderExtension>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1109,6 +539,16 @@ pub struct ProviderPluginDescriptor {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ProviderResourceId {
+    pub device_id: DeviceId,
+    pub provider_plugin_id: ProviderPluginId,
+    pub provider_instance_id: ProviderInstanceId,
+    pub native_resource_id: NativeResourceId,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ProviderShutdownRequest {
 
 }
@@ -1118,111 +558,6 @@ pub struct ProviderShutdownRequest {
 #[serde(deny_unknown_fields)]
 pub struct ProviderShutdownResponse {
     pub accepted: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ProviderTurn {
-    pub resource: RoutedResourceId,
-    pub conversation: RoutedResourceId,
-    pub status: TurnStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_summary: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub started_at: Option<TimestampMs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<TimestampMs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub completed_at: Option<TimestampMs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extension: Option<ProviderExtension>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ProviderUsage {
-    pub display_text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub observed_at: Option<TimestampMs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<Vec<ProviderUsageDetail>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ProviderUsageDetail {
-    pub namespace: String,
-    pub schema_version: String,
-    pub data: JsonObject,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ReasoningConversationItem {
-    pub resource: RoutedResourceId,
-    pub turn: RoutedResourceId,
-    pub conversation: RoutedResourceId,
-    pub kind: ReasoningConversationItemKind,
-    pub status: ConversationItemStatus,
-    pub contents: Vec<ContentBlock>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ReasoningConversationItemKind {
-    #[serde(rename = "reasoning")]
-    Reasoning,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ReasoningSummaryContentBlock {
-    pub content_id: NativeResourceId,
-    pub kind: ReasoningSummaryContentBlockKind,
-    pub text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncation: Option<ContentTruncation>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ReasoningSummaryContentBlockKind {
-    #[serde(rename = "reasoning-summary")]
-    ReasoningSummary,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ResourceLinkContentBlock {
-    pub content_id: NativeResourceId,
-    pub kind: ResourceLinkContentBlockKind,
-    pub uri: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncation: Option<ContentTruncation>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ResourceLinkContentBlockKind {
-    #[serde(rename = "resource-link")]
-    ResourceLink,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct RoutedResourceId {
-    pub device_id: DeviceId,
-    pub provider_plugin_id: ProviderPluginId,
-    pub provider_instance_id: ProviderInstanceId,
-    pub native_resource_id: NativeResourceId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1291,293 +626,24 @@ pub struct RuntimeSelectResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct StructuredJsonContentBlock {
-    pub content_id: NativeResourceId,
-    pub kind: StructuredJsonContentBlockKind,
-    pub value: JsonObject,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncation: Option<ContentTruncation>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum StructuredJsonContentBlockKind {
-    #[serde(rename = "structured-json")]
-    StructuredJson,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct StructuredToolInput {
-    pub kind: StructuredToolInputKind,
-    pub value: JsonObject,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncation: Option<ContentTruncation>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum StructuredToolInputKind {
-    #[serde(rename = "structured")]
-    Structured,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct TextContentBlock {
-    pub content_id: NativeResourceId,
-    pub kind: TextContentBlockKind,
-    pub text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncation: Option<ContentTruncation>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TextContentBlockKind {
-    #[serde(rename = "text")]
-    Text,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ToolAnnotations {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub read_only: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub destructive: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub idempotent: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub open_world: Option<bool>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ToolCategory {
-    #[serde(rename = "command")]
-    Command,
-    #[serde(rename = "read")]
-    Read,
-    #[serde(rename = "write")]
-    Write,
-    #[serde(rename = "search")]
-    Search,
-    #[serde(rename = "web")]
-    Web,
-    #[serde(rename = "agent")]
-    Agent,
-    #[serde(rename = "computer")]
-    Computer,
-    #[serde(rename = "media")]
-    Media,
-    #[serde(rename = "other")]
-    Other,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ToolCommandAction {
-    pub kind: ToolCommandActionKind,
-    pub command: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub query: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ToolCommandActionKind {
-    #[serde(rename = "execute")]
-    Execute,
-    #[serde(rename = "read")]
-    Read,
-    #[serde(rename = "list")]
-    List,
-    #[serde(rename = "search")]
-    Search,
-    #[serde(rename = "unknown")]
-    Unknown,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ToolConversationItem {
-    pub resource: RoutedResourceId,
-    pub turn: RoutedResourceId,
-    pub conversation: RoutedResourceId,
-    pub kind: ToolConversationItemKind,
-    pub status: ConversationItemStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    pub tool: ToolInvocation,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ToolConversationItemKind {
-    #[serde(rename = "tool")]
-    Tool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ToolExecutionError {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub code: Option<String>,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub retryable: Option<bool>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ToolFailureOutcome {
-    pub kind: ToolFailureOutcomeKind,
-    pub content: Vec<ContentBlock>,
-    pub error: ToolExecutionError,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub process_id: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ToolFailureOutcomeKind {
-    #[serde(rename = "failure")]
-    Failure,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ToolInput {
-    CommandToolInput(CommandToolInput),
-    StructuredToolInput(StructuredToolInput),
-    OpaqueToolInput(OpaqueToolInput),
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ToolInvocation {
-    pub call_id: NativeResourceId,
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub namespace: Option<String>,
-    pub category: ToolCategory,
-    pub origin: ToolOrigin,
-    pub input: ToolInput,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub outcome: Option<ToolOutcome>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timing: Option<ToolTiming>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub annotations: Option<ToolAnnotations>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extension: Option<ProviderExtension>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ToolOrigin {
-    pub kind: ToolOriginKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ToolOriginKind {
-    #[serde(rename = "builtin")]
-    Builtin,
-    #[serde(rename = "mcp")]
-    Mcp,
-    #[serde(rename = "plugin")]
-    Plugin,
-    #[serde(rename = "server")]
-    Server,
-    #[serde(rename = "custom")]
-    Custom,
-    #[serde(rename = "unknown")]
-    Unknown,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ToolOutcome {
-    ToolSuccessOutcome(ToolSuccessOutcome),
-    ToolFailureOutcome(ToolFailureOutcome),
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ToolSuccessOutcome {
-    pub kind: ToolSuccessOutcomeKind,
-    pub content: Vec<ContentBlock>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub process_id: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ToolSuccessOutcomeKind {
-    #[serde(rename = "success")]
-    Success,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ToolTiming {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub started_at: Option<TimestampMs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub completed_at: Option<TimestampMs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration_ms: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct TurnInput {
-    pub kind: TurnInputKind,
-    pub text: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TurnInputKind {
-    #[serde(rename = "text")]
-    Text,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
 pub struct TurnInterruptRequest {
-    pub conversation: RoutedResourceId,
-    pub turn: RoutedResourceId,
+    pub conversation: ProviderResourceId,
+    pub turn: ProviderResourceId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct TurnInterruptResponse {
-    pub turn: ProviderTurn,
+    pub turn: TurnTask,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct TurnOutputDeltaEvent {
-    pub turn: RoutedResourceId,
-    pub conversation: RoutedResourceId,
+    pub turn: ProviderResourceId,
+    pub conversation: ProviderResourceId,
     pub item_id: NativeResourceId,
     pub content_id: NativeResourceId,
     pub kind: ConversationContentKind,
@@ -1589,32 +655,8 @@ pub struct TurnOutputDeltaEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct TurnSelection {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub access_mode_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<ModelSelection>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct TurnSendCapabilities {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub access_mode: Option<ChoiceSet>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<ChoiceSet>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model_catalog: Option<ModelCatalog>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
 pub struct TurnStartRequest {
-    pub conversation: RoutedResourceId,
+    pub conversation: ProviderResourceId,
     pub client_request_id: RequestId,
     pub capability_revision: String,
     pub input: TurnInput,
@@ -1626,33 +668,17 @@ pub struct TurnStartRequest {
 #[serde(deny_unknown_fields)]
 pub struct TurnStartResponse {
     pub accepted: bool,
-    pub turn: ProviderTurn,
+    pub turn: TurnTask,
     pub user_item: Option<ConversationItem>,
     pub effective_selection: TurnSelection,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TurnStatus {
-    #[serde(rename = "queued")]
-    Queued,
-    #[serde(rename = "running")]
-    Running,
-    #[serde(rename = "waiting-approval")]
-    WaitingApproval,
-    #[serde(rename = "completed")]
-    Completed,
-    #[serde(rename = "failed")]
-    Failed,
-    #[serde(rename = "interrupted")]
-    Interrupted,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct TurnSteerRequest {
-    pub conversation: RoutedResourceId,
-    pub turn: RoutedResourceId,
+    pub conversation: ProviderResourceId,
+    pub turn: ProviderResourceId,
     pub client_message_id: RequestId,
     pub message: String,
 }
@@ -1661,33 +687,14 @@ pub struct TurnSteerRequest {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct TurnSteerResponse {
-    pub turn: ProviderTurn,
+    pub turn: TurnTask,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct TurnUpsertedEvent {
-    pub turn: ProviderTurn,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct UnknownConversationItem {
-    pub resource: RoutedResourceId,
-    pub turn: RoutedResourceId,
-    pub conversation: RoutedResourceId,
-    pub kind: UnknownConversationItemKind,
-    pub status: ConversationItemStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum UnknownConversationItemKind {
-    #[serde(rename = "unknown")]
-    Unknown,
+    pub turn: TurnTask,
 }
 
 impl ProviderPluginDescriptor {

@@ -17,7 +17,10 @@ test("cp-sdk-gen compiles protocol input into a complete Rust SDK", async () => 
     "--output", output,
   ], root);
   const generated = await readFile(path.join(output, "codepet-provider-sdk", "src", "generated.rs"), "utf8");
+  const agentGenerated = await readFile(path.join(output, "codepet-agent-sdk", "src", "generated.rs"), "utf8");
   assert.match(generated, /pub trait ProtocolServer/);
+  assert.match(generated, /pub use codepet_agent_sdk::\*;/);
+  assert.match(agentGenerated, /pub enum ConversationItem/);
   assert.match(generated, /ProviderInitializeRequest/);
   assert.doesNotMatch(generated, /pub struct ProtocolClient/);
   assert.equal(
@@ -59,6 +62,7 @@ test("cp-sdk-gen emits Gateway client and server packages from the same schema",
     "--output", rustOutput,
   ], root);
   const dartGenerated = await readFile(path.join(dartOutput, "codepet-gateway-sdk", "lib", "src", "generated.dart"), "utf8");
+  const dartAgentGenerated = await readFile(path.join(dartOutput, "codepet-agent-sdk", "lib", "src", "generated.dart"), "utf8");
   const rustGenerated = await readFile(path.join(rustOutput, "codepet-gateway-sdk", "src", "generated.rs"), "utf8");
   assert.match(
     dartGenerated,
@@ -68,5 +72,7 @@ test("cp-sdk-gen emits Gateway client and server packages from the same schema",
     rustGenerated,
     /pub trait ProtocolServer/,
   );
+  assert.match(dartGenerated, /import 'package:codepet_agent_sdk\/codepet_agent_sdk\.dart';/);
+  assert.match(dartAgentGenerated, /sealed class ConversationItem/);
   assert.doesNotMatch(rustGenerated, /pub struct ProtocolClient/);
 });

@@ -1,7 +1,16 @@
 {
-  "resource": { "providerId": "codex-work", "nativeResourceId": "command-one" },
-  "turn": { "providerId": "codex-work", "nativeResourceId": "turn-one" },
-  "conversation": { "providerId": "codex-work", "nativeResourceId": "thread-01" },
+  "resource": {
+    "providerId": "codex-work",
+    "nativeResourceId": "command-one"
+  },
+  "turn": {
+    "providerId": "codex-work",
+    "nativeResourceId": "turn-one"
+  },
+  "conversation": {
+    "providerId": "codex-work",
+    "nativeResourceId": "thread-01"
+  },
   "kind": "command",
   "status": "completed",
   "contents": [

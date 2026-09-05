@@ -16,8 +16,5 @@
   { "file": "conversation-item-upserted-event.json", "kind": "event", "name": "event.conversationItemUpserted" },
   { "file": "turn-output-delta-event.json", "kind": "event", "name": "event.turnOutputDelta" },
   { "file": "turn-start-request.json", "kind": "request", "name": "turn.start" },
-  { "file": "turn-start-response.json", "kind": "response", "name": "turn.start" },
-  { "file": "invalid-tool-input-mixed.json", "kind": "type", "name": "ToolInput", "valid": false },
-  { "file": "invalid-tool-outcome-mixed.json", "kind": "type", "name": "ToolOutcome", "valid": false },
-  { "file": "invalid-command-item-duplicate-content.json", "kind": "type", "name": "ConversationItem", "valid": false }
+  { "file": "turn-start-response.json", "kind": "response", "name": "turn.start" }
 ]

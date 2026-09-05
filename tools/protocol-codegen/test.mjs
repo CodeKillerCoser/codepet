@@ -35,6 +35,7 @@ test("schema and method/event manifests are self-consistent", async () => {
     [
       "core-v1",
       "pet-v1",
+      "agent-v1",
       "provider-v1",
       "gateway-v1",
       "channel-lan-v1",
@@ -60,7 +61,7 @@ test("manifest references obey the same declared dependency and layer rules as s
   try {
     assert.throws(
       () => validatePackageReferences(pet, model),
-      /pet-v1 manifest may only reference core packages, found provider-v1/,
+      /pet-v1 manifest may not reference provider package provider-v1/,
     );
   } finally {
     pet.manifest.error.$ref = original;
@@ -109,17 +110,20 @@ test("provider is JSON-RPC over stdio and owns plugin instance lifecycle", async
 
 test("provider history items carry routed conversation ownership", async () => {
   const model = await loadProtocolModel();
-  const definitions = record(model, "provider-v1").schema.$defs;
+  const providerDefinitions = record(model, "provider-v1").schema.$defs;
+  const definitions = record(model, "agent-v1").schema.$defs;
   assert.equal(
     definitions.MessageConversationItem.properties.conversation.$ref,
-    "#/$defs/RoutedResourceId",
+    "../../core/v1/schema.json#/$defs/RoutedResourceId",
   );
   assert(definitions.MessageConversationItem.required.includes("conversation"));
-  assert(definitions.ConversationGetResponse.required.includes("items"));
-  assert.equal(definitions.ConversationSearchRequest.properties.route.$ref, "#/$defs/ProviderInstanceRoute");
-  assert.equal(definitions.ConversationSearchRequest.properties.searchTerm.minLength, 1);
-  assert.deepEqual(definitions.ConversationSearchRequest.required, ["route", "searchTerm"]);
-  assert.equal(definitions.ConversationSearchResponse.properties.pageInfo.$ref, "../../core/v1/schema.json#/$defs/PageInfo");
+  assert(providerDefinitions.ConversationGetResponse.required.includes("items"));
+  assert.equal(providerDefinitions.ConversationGetResponse.properties.items.items.$ref, "../../agent/v1/schema.json#/$defs/ConversationItem");
+  assert.equal(providerDefinitions.ConversationSearchRequest.properties.route.$ref, "#/$defs/ProviderInstanceRoute");
+  assert.equal(providerDefinitions.ConversationGetRequest.properties.conversation.$ref, "#/$defs/ProviderResourceId");
+  assert.equal(providerDefinitions.ConversationSearchRequest.properties.searchTerm.minLength, 1);
+  assert.deepEqual(providerDefinitions.ConversationSearchRequest.required, ["route", "searchTerm"]);
+  assert.equal(providerDefinitions.ConversationSearchResponse.properties.pageInfo.$ref, "../../core/v1/schema.json#/$defs/PageInfo");
   assert.equal(definitions.CommandConversationItem.properties.tool.$ref, "#/$defs/ToolInvocation");
   assert.equal(definitions.ConversationItem.oneOf.length, 7);
   assert.deepEqual(definitions.ToolInvocation.required, ["callId", "name", "category", "origin", "input"]);
@@ -132,7 +136,8 @@ test("provider history items carry routed conversation ownership", async () => {
   assert.equal(definitions.StructuredJsonContentBlock.required.includes("value"), true);
   assert.deepEqual(definitions.ContentTruncation.required, ["originalBytes", "retainedBytes", "strategy"]);
   assert.equal(definitions.ToolExecutionError.properties.message.maxLength, 512);
-  assert.equal(definitions.ToolInvocation.properties.extension.$ref, "#/$defs/ProviderExtension");
+  assert.equal(definitions.ToolInvocation.properties.extension, undefined);
+  assert.equal(definitions.Conversation.properties.extension, undefined);
   assert(record(model, "provider-v1").manifest.events.some(
     (event) => event.name === "event.conversationItemUpserted",
   ));
@@ -172,7 +177,7 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
   ]) {
     assert.equal(
       gateway.schema.$defs[definition].properties.providerId.$ref,
-      "#/$defs/ProviderId",
+      "../../agent/v1/schema.json#/$defs/ProviderId",
     );
     assert(gateway.schema.$defs[definition].required.includes("providerId"));
     assert.equal(gateway.schema.$defs[definition].properties.route, undefined);
@@ -206,23 +211,24 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
   ]);
   assert(gateway.manifest.events.some((event) => event.name === "provider.changed"));
   assert.equal(gateway.manifest.events.some((event) => event.name === "provider.statusChanged"), false);
+  const agentDefinitions = record(model, "agent-v1").schema.$defs;
   for (const definition of ["Conversation", "TurnTask", "Approval"]) {
     assert.equal(
-      gateway.schema.$defs[definition].properties.resource.$ref,
+      agentDefinitions[definition].properties.resource.$ref,
       "../../core/v1/schema.json#/$defs/RoutedResourceId",
     );
   }
   assert.equal(
-    gateway.schema.$defs.MessageConversationItem.properties.conversation.$ref,
+    agentDefinitions.MessageConversationItem.properties.conversation.$ref,
     "../../core/v1/schema.json#/$defs/RoutedResourceId",
   );
-  assert(gateway.schema.$defs.MessageConversationItem.required.includes("conversation"));
-  assert.equal(gateway.schema.$defs.CommandConversationItem.properties.tool.$ref, "#/$defs/ToolInvocation");
-  assert.equal(gateway.schema.$defs.ConversationItem.oneOf.length, 7);
-  assert.equal(gateway.schema.$defs.ToolInvocation.properties.input.$ref, "#/$defs/ToolInput");
-  assert.equal(gateway.schema.$defs.CommandToolInput.properties.truncation.$ref, "#/$defs/ContentTruncation");
-  assert.equal(gateway.schema.$defs.ToolInvocation.properties.outcome.$ref, "#/$defs/ToolOutcome");
-  assert.equal(gateway.schema.$defs.ToolInvocation.properties.extension, undefined);
+  assert(agentDefinitions.MessageConversationItem.required.includes("conversation"));
+  assert.equal(agentDefinitions.CommandConversationItem.properties.tool.$ref, "#/$defs/ToolInvocation");
+  assert.equal(agentDefinitions.ConversationItem.oneOf.length, 7);
+  assert.equal(agentDefinitions.ToolInvocation.properties.input.$ref, "#/$defs/ToolInput");
+  assert.equal(agentDefinitions.CommandToolInput.properties.truncation.$ref, "#/$defs/ContentTruncation");
+  assert.equal(agentDefinitions.ToolInvocation.properties.outcome.$ref, "#/$defs/ToolOutcome");
+  assert.equal(agentDefinitions.ToolInvocation.properties.extension, undefined);
   assert(gateway.manifest.events.some((event) => event.name === "conversation.itemUpserted"));
   assert.deepEqual(
     Object.keys(gateway.schema.$defs.TurnOutputDeltaEvent.properties),
@@ -232,57 +238,52 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
 
 test("provider descriptors and turn controls are explicit discriminated protocol data", async () => {
   const model = await loadProtocolModel();
+  const agentDefinitions = record(model, "agent-v1").schema.$defs;
+  const providerDefinitions = record(model, "provider-v1").schema.$defs;
   const gatewayTurnSend = record(model, "gateway-v1").manifest.methods.find(
     (method) => method.name === "turn.send",
   );
   assert.equal(gatewayTurnSend.idempotency, "nonIdempotent");
-  for (const packageId of ["provider-v1"]) {
-    const definitions = record(model, packageId).schema.$defs;
-    const instance = definitions.ProviderInstance;
-    assert(instance.required.includes("harness"));
-    assert.equal(instance.properties.harness.$ref, "#/$defs/HarnessDescriptor");
-
-    const capabilities = packageId === "provider-v1"
-      ? definitions.ProviderCapabilities
-      : definitions.GatewayCapabilities;
-    assert(capabilities.required.includes("revision"));
-    assert.equal(capabilities.properties.turnSend.$ref, "#/$defs/TurnSendCapabilities");
-
-    assert.deepEqual(definitions.ModelCatalog.oneOf, [
-      { $ref: "#/$defs/FlatModelCatalog" },
-      { $ref: "#/$defs/GroupedModelCatalog" },
-    ]);
-    assert.deepEqual(definitions.ModelSelection.oneOf, [
-      { $ref: "#/$defs/FlatModelSelection" },
-      { $ref: "#/$defs/GroupedModelSelection" },
-    ]);
-    const turnResponse = packageId === "provider-v1"
-      ? definitions.TurnStartResponse
-      : definitions.TurnSendResponse;
-    assert(turnResponse.required.includes("userItem"));
-    assert.deepEqual(turnResponse.properties.userItem.oneOf, [
-      { $ref: "#/$defs/ConversationItem" },
-      { type: "null" },
-    ]);
-    assert.deepEqual(definitions.FlatModelSelection.required, ["kind", "modelId"]);
-    assert.deepEqual(definitions.GroupedModelSelection.required, ["kind", "providerId", "modelId"]);
-    assert.equal(definitions.FlatModelSelection.properties.kind.$ref, "#/$defs/FlatModelCatalogKind");
-    assert.equal(definitions.GroupedModelSelection.properties.kind.$ref, "#/$defs/GroupedModelCatalogKind");
-  }
+  const instance = providerDefinitions.ProviderInstance;
+  assert(instance.required.includes("harness"));
+  assert.equal(instance.properties.harness.$ref, "#/$defs/HarnessDescriptor");
+  assert(providerDefinitions.ProviderCapabilities.required.includes("revision"));
+  assert.equal(providerDefinitions.ProviderCapabilities.properties.turnSend.$ref, "../../agent/v1/schema.json#/$defs/TurnSendCapabilities");
+  assert.deepEqual(agentDefinitions.ModelCatalog.oneOf, [
+    { $ref: "#/$defs/FlatModelCatalog" },
+    { $ref: "#/$defs/GroupedModelCatalog" },
+  ]);
+  assert.deepEqual(agentDefinitions.ModelSelection.oneOf, [
+    { $ref: "#/$defs/FlatModelSelection" },
+    { $ref: "#/$defs/GroupedModelSelection" },
+  ]);
+  const turnResponse = providerDefinitions.TurnStartResponse;
+  assert(turnResponse.required.includes("userItem"));
+  assert.deepEqual(turnResponse.properties.userItem.oneOf, [
+    { $ref: "../../agent/v1/schema.json#/$defs/ConversationItem" },
+    { type: "null" },
+  ]);
+  assert.deepEqual(agentDefinitions.FlatModelSelection.required, ["kind", "modelId"]);
+  assert.deepEqual(agentDefinitions.GroupedModelSelection.required, ["kind", "providerId", "modelId"]);
+  assert.equal(agentDefinitions.FlatModelSelection.properties.kind.$ref, "#/$defs/FlatModelCatalogKind");
+  assert.equal(agentDefinitions.GroupedModelSelection.properties.kind.$ref, "#/$defs/GroupedModelCatalogKind");
   const gatewayDefinitions = record(model, "gateway-v1").schema.$defs;
   assert.deepEqual(gatewayDefinitions.ProviderSummary.required, ["id", "identity", "runtime", "capabilities"]);
   assert.deepEqual(gatewayDefinitions.ProviderCapabilitiesSummary.required, ["revision"]);
   assert.equal(gatewayDefinitions.ProviderRuntime.properties.version.type, "string");
   assert.equal(gatewayDefinitions.ProviderRuntime.properties.executablePath.type, "string");
-  assert.equal(gatewayDefinitions.ProviderUsage.properties.displayText.type, "string");
-  assert.equal(gatewayDefinitions.ProviderUsageDetail.properties.schemaVersion.type, "string");
+  assert.equal(agentDefinitions.ProviderUsage.properties.displayText.type, "string");
+  assert.equal(agentDefinitions.ProviderUsageDetail.properties.schemaVersion.type, "string");
 
   const gatewayRust = await readFile("sdk/rust/codepet-gateway-sdk/src/generated.rs", "utf8");
   const providerRust = await readFile("sdk/rust/codepet-provider-sdk/src/generated.rs", "utf8");
+  const agentRust = await readFile("sdk/rust/codepet-agent-sdk/src/generated.rs", "utf8");
+  assert.match(agentRust, /#\[serde\(untagged\)\]\npub enum ModelCatalog/);
+  assert.match(agentRust, /pub kind: FlatModelCatalogKind/);
+  assert.match(agentRust, /pub kind: GroupedModelCatalogKind/);
   for (const source of [gatewayRust, providerRust]) {
-    assert.match(source, /#\[serde\(untagged\)\]\npub enum ModelCatalog/);
-    assert.match(source, /pub kind: FlatModelCatalogKind/);
-    assert.match(source, /pub kind: GroupedModelCatalogKind/);
+    assert.match(source, /pub use codepet_agent_sdk::\*;/);
+    assert.doesNotMatch(source, /pub enum ModelCatalog/);
     assert.match(source, /pub user_item: Option<ConversationItem>/);
   }
 });
@@ -420,33 +421,36 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   const second = generatorTargetRegistry.dart.render({ record: gateway, model, ir: model.protocolIr });
   assert.equal(first, second);
   assert.match(first, /import 'package:codepet_core_sdk\/codepet_core_sdk\.dart';/);
-  assert.match(first, /sealed class ModelCatalog/);
-  assert.match(first, /final class FlatModelCatalog extends ModelCatalog/);
+  assert.match(first, /import 'package:codepet_agent_sdk\/codepet_agent_sdk\.dart';/);
   assert.match(first, /required Map<String, String> metadata/);
   assert.match(first, /Future<ProjectListResponse> projectList/);
   assert.match(first, /ProtocolIdempotency\.nonIdempotent/);
   assert.match(first, /Future<TurnSendResponse> turnSend\(TurnSendRequest request\)/);
   assert.match(first, /abstract interface class ProtocolClientInstrumentation/);
   assert.match(first, /if \(traceContext != null\) 'meta': traceContext!\.toJson\(\)/);
+  const agent = record(model, "agent-v1");
+  const agentSource = generatorTargetRegistry.dart.render({ record: agent, model, ir: model.protocolIr });
+  assert.match(agentSource, /sealed class ModelCatalog/);
+  assert.match(agentSource, /final class FlatModelCatalog extends ModelCatalog/);
 
   const result = await generateProtocol({ checkMode: true, targets: ["dart"] });
   assert.deepEqual(
     result.generated.map(({ packageId, targetId }) => [packageId, targetId]),
-    [["core-v1", "dart"], ["gateway-v1", "dart"], ["channel-lan-v1", "dart"]],
+    [["core-v1", "dart"], ["agent-v1", "dart"], ["gateway-v1", "dart"], ["channel-lan-v1", "dart"]],
   );
 });
 
 test("Dart adapter rejects ambiguous oneOf before emitting source", async () => {
   const model = await loadProtocolModel();
-  const gateway = record(model, "gateway-v1");
+  const agent = record(model, "agent-v1");
   const union = model.protocolIr.packagesById
-    .get("gateway-v1")
+    .get("agent-v1")
     .definitions.find((definition) => definition.name === "ModelCatalog");
   const discriminator = union.discriminator;
   union.discriminator = undefined;
   try {
     assert.throws(
-      () => generatorTargetRegistry.dart.render({ record: gateway, model, ir: model.protocolIr }),
+      () => generatorTargetRegistry.dart.render({ record: agent, model, ir: model.protocolIr }),
       /untagged or ambiguous oneOf/,
     );
   } finally {
@@ -456,7 +460,7 @@ test("Dart adapter rejects ambiguous oneOf before emitting source", async () => 
 
 test("protocol IR rejects ambiguous and open discriminated union variants", async () => {
   const model = await loadProtocolModel();
-  const definitions = record(model, "provider-v1").schema.$defs;
+  const definitions = record(model, "agent-v1").schema.$defs;
   const message = definitions.MessageConversationItem;
   const required = message.required;
   message.required = required.filter((field) => field !== "kind");
@@ -481,6 +485,7 @@ test("TypeScript adapter handles multiple packages and cross-schema imports", as
     result.generated.map(({ packageId, targetId }) => [packageId, targetId]),
     [
       ["core-v1", "typescript"],
+      ["agent-v1", "typescript"],
       ["provider-v1", "typescript"],
       ["gateway-v1", "typescript"],
       ["desktop-runtime-v0", "typescript"],
@@ -491,10 +496,13 @@ test("TypeScript adapter handles multiple packages and cross-schema imports", as
   assert.match(source, /import type \{ Cursor, EventSequence, JsonObject, ProtocolError, ProtocolVersion, RequestId, TimestampMs \}/);
   const providerSource = await readFile("sdk/typescript/codepet-provider-sdk/src/generated.ts", "utf8");
   const gatewaySource = await readFile("sdk/typescript/codepet-gateway-sdk/src/generated.ts", "utf8");
+  const agentSource = await readFile("sdk/typescript/codepet-agent-sdk/src/generated.ts", "utf8");
+  assert.match(agentSource, /export type ConversationItem = MessageConversationItem \| ReasoningConversationItem/);
+  assert.match(agentSource, /export type ToolInput = CommandToolInput \| StructuredToolInput \| OpaqueToolInput/);
+  assert.match(agentSource, /export type ToolOutcome = ToolSuccessOutcome \| ToolFailureOutcome/);
   for (const jsonRpcSource of [providerSource, gatewaySource]) {
-    assert.match(jsonRpcSource, /export type ConversationItem = MessageConversationItem \| ReasoningConversationItem/);
-    assert.match(jsonRpcSource, /export type ToolInput = CommandToolInput \| StructuredToolInput \| OpaqueToolInput/);
-    assert.match(jsonRpcSource, /export type ToolOutcome = ToolSuccessOutcome \| ToolFailureOutcome/);
+    assert.match(jsonRpcSource, /codepet-agent-sdk\/src\/generated/);
+    assert.doesNotMatch(jsonRpcSource, /export type ConversationItem =/);
     assert.match(jsonRpcSource, /jsonrpc: "2\.0"/);
   }
 });

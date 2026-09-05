@@ -64,10 +64,11 @@ test("staging contains Provider plugins, JSON-RPC resources, and cp-sdk-gen", as
     "# Provider SDK\n\n## cp-sdk-gen 是什么\n\n## 安装并让 Code Pet 发现\n",
   );
   await mkdir(path.join(root, "protocol", "core", "v1"), { recursive: true });
+  await mkdir(path.join(root, "protocol", "agent", "v1"), { recursive: true });
   await mkdir(path.join(root, "protocol", "provider", "v1", "fixtures"), { recursive: true });
   await mkdir(path.join(root, "protocol", "gateway", "v1"), { recursive: true });
   await mkdir(path.join(root, "protocol", "channel", "lan", "v1"), { recursive: true });
-  for (const [layer, version] of [["core", 1], ["provider", 1], ["gateway", 1]]) {
+  for (const [layer, version] of [["core", 1], ["agent", 1], ["provider", 1], ["gateway", 1]]) {
     await writeFile(
       path.join(root, "protocol", layer, `v${version}`, "schema.json"),
       JSON.stringify({
@@ -149,6 +150,8 @@ test("staging contains Provider plugins, JSON-RPC resources, and cp-sdk-gen", as
     assert.deepEqual(index.protocol.dependencies, [
       "protocol/core/v1/schema.json",
       "protocol/core/v1/manifest.json",
+      "protocol/agent/v1/schema.json",
+      "protocol/agent/v1/manifest.json",
     ]);
     assert.equal(index.generator.executable, generatorExecutable);
     assert.equal(index.generator.implementation, "javascript-bun-compile");
@@ -174,6 +177,10 @@ test("staging contains Provider plugins, JSON-RPC resources, and cp-sdk-gen", as
     );
     assert.equal(
       (await stat(path.join(sdkStagingDirectory, "protocol", "core", "v1", "schema.json"))).isFile(),
+      true,
+    );
+    assert.equal(
+      (await stat(path.join(sdkStagingDirectory, "protocol", "agent", "v1", "schema.json"))).isFile(),
       true,
     );
     assert.equal(

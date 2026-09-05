@@ -30,10 +30,8 @@ pub fn fit_single_turn_conversation_history(
     if !conversation_history_fits(&response) {
         apply_history_budget(&mut response, 0);
         response.conversation.preview = None;
-        response.conversation.extension = None;
         if let Some(active_turn) = &mut response.conversation.active_turn {
             active_turn.display_summary = None;
-            active_turn.extension = None;
         }
     }
     response
@@ -161,9 +159,7 @@ mod history_tests {
 
     fn resource(id: &str) -> RoutedResourceId {
         RoutedResourceId {
-            device_id: "device".to_string(),
-            provider_plugin_id: "plugin".to_string(),
-            provider_instance_id: "instance".to_string(),
+            provider_id: "instance".to_string(),
             native_resource_id: id.to_string(),
         }
     }
@@ -172,7 +168,7 @@ mod history_tests {
         let conversation = resource("conversation");
         let turn = resource("turn");
         ConversationGetResponse {
-            conversation: ProviderConversation {
+            conversation: Conversation {
                 resource: conversation.clone(),
                 project: None,
                 title: "Conversation".to_string(),
@@ -186,7 +182,7 @@ mod history_tests {
                 created_at: None,
                 updated_at: None,
                 active_turn: None,
-                extension: None,
+                read_state: None,
             },
             items: (0..item_count)
                 .map(|index| ConversationItem::MessageConversationItem(MessageConversationItem {
@@ -267,7 +263,6 @@ mod history_tests {
             outcome: None,
             timing: None,
             annotations: None,
-            extension: None,
         };
         let mut remaining = SEMANTIC_CONTENT_BYTES;
 

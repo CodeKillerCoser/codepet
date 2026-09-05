@@ -1,0 +1,12 @@
+{
+  "name": "@codepet/agent-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "../../../node_modules/.bin/tsc --project tsconfig.json"
+  },
+  "exports": {
+    ".": "./src/generated.ts"
+  }
+}

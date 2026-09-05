@@ -5,8 +5,11 @@ repository: https://github.com/CodeKillerCoser/codepet
 environment:
   sdk: ^3.3.0
 dependencies:
+  codepet_agent_sdk: ^0.1.0
   codepet_core_sdk: ^0.1.0
 dependency_overrides:
+  codepet_agent_sdk:
+    path: ../codepet-agent-sdk
   codepet_core_sdk:
     path: ../codepet-core-sdk
 dev_dependencies:

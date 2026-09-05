@@ -3,93 +3,149 @@
   "$id": "https://code-pet.dev/protocol/provider/v1/schema.json",
   "title": "CodePet Provider Protocol v1",
   "$defs": {
-    "ApprovalDecision": {
-      "type": "string",
-      "enum": ["approve", "deny"]
-    },
     "ApprovalRequestedEvent": {
       "type": "object",
       "properties": {
-        "approval": { "$ref": "#/$defs/ProviderApproval" }
+        "approval": {
+          "$ref": "../../agent/v1/schema.json#/$defs/Approval"
+        }
       },
-      "required": ["approval"],
+      "required": [
+        "approval"
+      ],
       "additionalProperties": false
     },
     "ApprovalResolveRequest": {
       "type": "object",
       "properties": {
-        "approval": { "$ref": "#/$defs/RoutedResourceId" },
-        "decision": { "$ref": "#/$defs/ApprovalDecision" }
+        "approval": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "decision": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ApprovalDecision"
+        }
       },
-      "required": ["approval", "decision"],
+      "required": [
+        "approval",
+        "decision"
+      ],
       "additionalProperties": false
     },
     "ApprovalResolveResponse": {
       "type": "object",
       "properties": {
-        "approval": { "$ref": "#/$defs/ProviderApproval" }
+        "approval": {
+          "$ref": "../../agent/v1/schema.json#/$defs/Approval"
+        }
       },
-      "required": ["approval"],
+      "required": [
+        "approval"
+      ],
       "additionalProperties": false
     },
     "ApprovalResolvedEvent": {
       "type": "object",
       "properties": {
-        "approval": { "$ref": "#/$defs/ProviderApproval" }
+        "approval": {
+          "$ref": "../../agent/v1/schema.json#/$defs/Approval"
+        }
       },
-      "required": ["approval"],
+      "required": [
+        "approval"
+      ],
       "additionalProperties": false
-    },
-    "ApprovalStatus": {
-      "type": "string",
-      "enum": ["pending", "approved", "denied", "expired"]
     },
     "ConversationAcquireInteractionRequest": {
       "type": "object",
       "properties": {
-        "conversation": { "$ref": "#/$defs/RoutedResourceId" }
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        }
       },
-      "required": ["conversation"],
+      "required": [
+        "conversation"
+      ],
       "additionalProperties": false
     },
     "ConversationAcquireInteractionResponse": {
       "type": "object",
       "properties": {
-        "selection": { "$ref": "#/$defs/TurnSelection" },
-        "leaseExpiresAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" }
+        "selection": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnSelection"
+        },
+        "leaseExpiresAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        }
       },
-      "required": ["selection"],
+      "required": [
+        "selection"
+      ],
       "additionalProperties": false
     },
     "ConversationCreateRequest": {
       "type": "object",
       "properties": {
-        "route": { "$ref": "#/$defs/ProviderInstanceRoute" },
-        "title": { "type": "string", "minLength": 1 },
-        "permissionLevel": { "type": "string", "minLength": 1 },
-        "model": { "type": "string", "minLength": 1 },
-        "reasoningEffort": { "type": "string", "minLength": 1 },
-        "workspaceRoot": { "type": "string", "minLength": 1 },
-        "workspaceMode": { "type": "string", "minLength": 1 },
-        "project": { "$ref": "#/$defs/RoutedResourceId" },
-        "extension": { "$ref": "#/$defs/ProviderExtension" }
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "permissionLevel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reasoningEffort": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspaceRoot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspaceMode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "extension": {
+          "$ref": "#/$defs/ProviderExtension"
+        }
       },
-      "required": ["route", "permissionLevel"],
+      "required": [
+        "route",
+        "permissionLevel"
+      ],
       "additionalProperties": false
     },
     "ConversationCreateResponse": {
       "type": "object",
       "properties": {
-        "conversation": { "$ref": "#/$defs/ProviderConversation" }
+        "conversation": {
+          "$ref": "../../agent/v1/schema.json#/$defs/Conversation"
+        }
       },
-      "required": ["conversation"],
+      "required": [
+        "conversation"
+      ],
       "additionalProperties": false
     },
     "ConversationGetRequest": {
       "type": "object",
       "properties": {
-        "conversation": { "$ref": "#/$defs/RoutedResourceId" },
-        "cursor": { "$ref": "../../core/v1/schema.json#/$defs/Cursor" },
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "cursor": {
+          "$ref": "../../core/v1/schema.json#/$defs/Cursor"
+        },
         "limit": {
           "type": "integer",
           "minimum": 1,
@@ -97,486 +153,67 @@
           "description": "Maximum number of native conversation turns to include in this history page."
         }
       },
-      "required": ["conversation"],
+      "required": [
+        "conversation"
+      ],
       "additionalProperties": false
     },
     "ConversationGetResponse": {
       "type": "object",
       "properties": {
-        "conversation": { "$ref": "#/$defs/ProviderConversation" },
+        "conversation": {
+          "$ref": "../../agent/v1/schema.json#/$defs/Conversation"
+        },
         "items": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ConversationItem" }
+          "items": {
+            "$ref": "../../agent/v1/schema.json#/$defs/ConversationItem"
+          }
         },
-        "pageInfo": { "$ref": "../../core/v1/schema.json#/$defs/PageInfo" }
-      },
-      "required": ["conversation", "items"],
-      "additionalProperties": false
-    },
-    "ContentBlock": {
-      "oneOf": [
-        { "$ref": "#/$defs/TextContentBlock" },
-        { "$ref": "#/$defs/ReasoningSummaryContentBlock" },
-        { "$ref": "#/$defs/OutputContentBlock" },
-        { "$ref": "#/$defs/ActivitySummaryContentBlock" },
-        { "$ref": "#/$defs/StructuredJsonContentBlock" },
-        { "$ref": "#/$defs/ImageContentBlock" },
-        { "$ref": "#/$defs/AudioContentBlock" },
-        { "$ref": "#/$defs/ResourceLinkContentBlock" },
-        { "$ref": "#/$defs/EmbeddedResourceContentBlock" }
-      ]
-    },
-    "ContentTruncation": {
-      "type": "object",
-      "properties": {
-        "originalBytes": { "type": "integer", "minimum": 0 },
-        "retainedBytes": { "type": "integer", "minimum": 0 },
-        "strategy": { "$ref": "#/$defs/ContentTruncationStrategy" }
-      },
-      "required": ["originalBytes", "retainedBytes", "strategy"],
-      "additionalProperties": false
-    },
-    "ContentTruncationStrategy": {
-      "type": "string",
-      "enum": ["head", "tail", "head-tail", "structural-preview"]
-    },
-    "TextContentBlockKind": { "type": "string", "enum": ["text"] },
-    "TextContentBlock": {
-      "type": "object",
-      "properties": {
-        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "kind": { "$ref": "#/$defs/TextContentBlockKind" },
-        "text": { "type": "string" },
-        "truncation": { "$ref": "#/$defs/ContentTruncation" }
-      },
-      "required": ["contentId", "kind", "text"],
-      "additionalProperties": false
-    },
-    "ReasoningSummaryContentBlockKind": { "type": "string", "enum": ["reasoning-summary"] },
-    "ReasoningSummaryContentBlock": {
-      "type": "object",
-      "properties": {
-        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "kind": { "$ref": "#/$defs/ReasoningSummaryContentBlockKind" },
-        "text": { "type": "string" },
-        "truncation": { "$ref": "#/$defs/ContentTruncation" }
-      },
-      "required": ["contentId", "kind", "text"],
-      "additionalProperties": false
-    },
-    "OutputContentBlockKind": { "type": "string", "enum": ["output"] },
-    "OutputContentBlock": {
-      "type": "object",
-      "properties": {
-        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "kind": { "$ref": "#/$defs/OutputContentBlockKind" },
-        "text": { "type": "string" },
-        "truncation": { "$ref": "#/$defs/ContentTruncation" }
-      },
-      "required": ["contentId", "kind", "text"],
-      "additionalProperties": false
-    },
-    "ActivitySummaryContentBlockKind": { "type": "string", "enum": ["activity-summary"] },
-    "ActivitySummaryContentBlock": {
-      "type": "object",
-      "properties": {
-        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "kind": { "$ref": "#/$defs/ActivitySummaryContentBlockKind" },
-        "text": { "type": "string" },
-        "truncation": { "$ref": "#/$defs/ContentTruncation" }
-      },
-      "required": ["contentId", "kind", "text"],
-      "additionalProperties": false
-    },
-    "StructuredJsonContentBlockKind": { "type": "string", "enum": ["structured-json"] },
-    "StructuredJsonContentBlock": {
-      "type": "object",
-      "properties": {
-        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "kind": { "$ref": "#/$defs/StructuredJsonContentBlockKind" },
-        "value": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" },
-        "truncation": { "$ref": "#/$defs/ContentTruncation" }
-      },
-      "required": ["contentId", "kind", "value"],
-      "additionalProperties": false
-    },
-    "ImageContentBlockKind": { "type": "string", "enum": ["image"] },
-    "ImageContentBlock": {
-      "type": "object",
-      "properties": {
-        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "kind": { "$ref": "#/$defs/ImageContentBlockKind" },
-        "uri": { "type": "string", "minLength": 1 },
-        "mimeType": { "type": "string", "minLength": 1 },
-        "name": { "type": "string", "minLength": 1 },
-        "truncation": { "$ref": "#/$defs/ContentTruncation" }
-      },
-      "required": ["contentId", "kind", "uri"],
-      "additionalProperties": false
-    },
-    "AudioContentBlockKind": { "type": "string", "enum": ["audio"] },
-    "AudioContentBlock": {
-      "type": "object",
-      "properties": {
-        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "kind": { "$ref": "#/$defs/AudioContentBlockKind" },
-        "uri": { "type": "string", "minLength": 1 },
-        "mimeType": { "type": "string", "minLength": 1 },
-        "name": { "type": "string", "minLength": 1 },
-        "truncation": { "$ref": "#/$defs/ContentTruncation" }
-      },
-      "required": ["contentId", "kind", "uri"],
-      "additionalProperties": false
-    },
-    "ResourceLinkContentBlockKind": { "type": "string", "enum": ["resource-link"] },
-    "ResourceLinkContentBlock": {
-      "type": "object",
-      "properties": {
-        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "kind": { "$ref": "#/$defs/ResourceLinkContentBlockKind" },
-        "uri": { "type": "string", "minLength": 1 },
-        "name": { "type": "string", "minLength": 1 },
-        "mimeType": { "type": "string", "minLength": 1 },
-        "truncation": { "$ref": "#/$defs/ContentTruncation" }
-      },
-      "required": ["contentId", "kind", "uri"],
-      "additionalProperties": false
-    },
-    "EmbeddedResourceContentBlockKind": { "type": "string", "enum": ["embedded-resource"] },
-    "EmbeddedResourceContentBlock": {
-      "type": "object",
-      "properties": {
-        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "kind": { "$ref": "#/$defs/EmbeddedResourceContentBlockKind" },
-        "text": { "type": "string" },
-        "mimeType": { "type": "string", "minLength": 1 },
-        "name": { "type": "string", "minLength": 1 },
-        "truncation": { "$ref": "#/$defs/ContentTruncation" }
-      },
-      "required": ["contentId", "kind", "text"],
-      "additionalProperties": false
-    },
-    "ConversationContentKind": {
-      "type": "string",
-      "enum": ["text", "reasoning-summary", "output", "activity-summary", "structured-json", "image", "audio", "resource-link", "embedded-resource"]
-    },
-    "ToolAnnotations": {
-      "type": "object",
-      "properties": {
-        "readOnly": { "type": "boolean" },
-        "destructive": { "type": "boolean" },
-        "idempotent": { "type": "boolean" },
-        "openWorld": { "type": "boolean" }
-      },
-      "additionalProperties": false,
-      "description": "Advisory UI hints only; hosts must not use these fields as authorization decisions."
-    },
-    "ToolCategory": {
-      "type": "string",
-      "enum": ["command", "read", "write", "search", "web", "agent", "computer", "media", "other"]
-    },
-    "ToolCommandAction": {
-      "type": "object",
-      "properties": {
-        "kind": { "$ref": "#/$defs/ToolCommandActionKind" },
-        "command": { "type": "string", "minLength": 1 },
-        "name": { "type": "string", "minLength": 1 },
-        "path": { "type": "string", "minLength": 1 },
-        "query": { "type": "string" }
-      },
-      "required": ["kind", "command"],
-      "additionalProperties": false
-    },
-    "ToolCommandActionKind": {
-      "type": "string",
-      "enum": ["execute", "read", "list", "search", "unknown"]
-    },
-    "CommandToolInputKind": { "type": "string", "enum": ["command"] },
-    "CommandToolInput": {
-      "type": "object",
-      "properties": {
-        "kind": { "$ref": "#/$defs/CommandToolInputKind" },
-        "command": { "type": "string", "minLength": 1 },
-        "cwd": { "type": "string", "minLength": 1 },
-        "shell": { "type": "string", "minLength": 1 },
-        "truncation": {
-          "$ref": "#/$defs/ContentTruncation"
-        },
-        "actions": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/ToolCommandAction" }
+        "pageInfo": {
+          "$ref": "../../core/v1/schema.json#/$defs/PageInfo"
         }
       },
-      "required": ["kind", "command"],
-      "additionalProperties": false
-    },
-    "StructuredToolInputKind": { "type": "string", "enum": ["structured"] },
-    "StructuredToolInput": {
-      "type": "object",
-      "properties": {
-        "kind": { "$ref": "#/$defs/StructuredToolInputKind" },
-        "value": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" },
-        "truncation": { "$ref": "#/$defs/ContentTruncation" }
-      },
-      "required": ["kind", "value"],
-      "additionalProperties": false
-    },
-    "OpaqueToolInputKind": { "type": "string", "enum": ["opaque"] },
-    "OpaqueToolInput": {
-      "type": "object",
-      "properties": {
-        "kind": { "$ref": "#/$defs/OpaqueToolInputKind" },
-        "value": { "type": "string" },
-        "mimeType": { "type": "string", "minLength": 1 },
-        "truncation": { "$ref": "#/$defs/ContentTruncation" }
-      },
-      "required": ["kind", "value"],
-      "additionalProperties": false
-    },
-    "ToolInput": {
-      "oneOf": [
-        { "$ref": "#/$defs/CommandToolInput" },
-        { "$ref": "#/$defs/StructuredToolInput" },
-        { "$ref": "#/$defs/OpaqueToolInput" }
-      ]
-    },
-    "ToolExecutionError": {
-      "type": "object",
-      "properties": {
-        "code": { "type": "string", "minLength": 1 },
-        "message": { "type": "string", "minLength": 1, "maxLength": 512 },
-        "retryable": { "type": "boolean" }
-      },
-      "required": ["message"],
-      "additionalProperties": false
-    },
-    "ToolInvocation": {
-      "type": "object",
-      "properties": {
-        "callId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "name": { "type": "string", "minLength": 1 },
-        "namespace": { "type": "string", "minLength": 1 },
-        "category": { "$ref": "#/$defs/ToolCategory" },
-        "origin": { "$ref": "#/$defs/ToolOrigin" },
-        "input": { "$ref": "#/$defs/ToolInput" },
-        "outcome": { "$ref": "#/$defs/ToolOutcome" },
-        "timing": { "$ref": "#/$defs/ToolTiming" },
-        "annotations": { "$ref": "#/$defs/ToolAnnotations" },
-        "extension": { "$ref": "#/$defs/ProviderExtension" }
-      },
-      "required": ["callId", "name", "category", "origin", "input"],
-      "additionalProperties": false,
-      "description": "Provider-neutral tool-call envelope with one canonical input and one canonical outcome. Lifecycle remains ConversationItem.status."
-    },
-    "ToolOrigin": {
-      "type": "object",
-      "properties": {
-        "kind": { "$ref": "#/$defs/ToolOriginKind" },
-        "name": { "type": "string", "minLength": 1 }
-      },
-      "required": ["kind"],
-      "additionalProperties": false
-    },
-    "ToolOriginKind": {
-      "type": "string",
-      "enum": ["builtin", "mcp", "plugin", "server", "custom", "unknown"]
-    },
-    "ToolSuccessOutcomeKind": { "type": "string", "enum": ["success"] },
-    "ToolSuccessOutcome": {
-      "type": "object",
-      "properties": {
-        "kind": { "$ref": "#/$defs/ToolSuccessOutcomeKind" },
-        "content": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/ContentBlock" }
-        },
-        "exitCode": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
-        "processId": { "type": "string", "minLength": 1 }
-      },
-      "required": ["kind", "content"],
-      "additionalProperties": false
-    },
-    "ToolFailureOutcomeKind": { "type": "string", "enum": ["failure"] },
-    "ToolFailureOutcome": {
-      "type": "object",
-      "properties": {
-        "kind": { "$ref": "#/$defs/ToolFailureOutcomeKind" },
-        "content": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/ContentBlock" }
-        },
-        "error": { "$ref": "#/$defs/ToolExecutionError" },
-        "exitCode": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
-        "processId": { "type": "string", "minLength": 1 }
-      },
-      "required": ["kind", "content", "error"],
-      "additionalProperties": false
-    },
-    "ToolOutcome": {
-      "oneOf": [
-        { "$ref": "#/$defs/ToolSuccessOutcome" },
-        { "$ref": "#/$defs/ToolFailureOutcome" }
-      ]
-    },
-    "ToolTiming": {
-      "type": "object",
-      "properties": {
-        "startedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
-        "completedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
-        "durationMs": { "type": "integer", "minimum": 0 }
-      },
-      "additionalProperties": false
-    },
-    "ConversationItem": {
-      "oneOf": [
-        { "$ref": "#/$defs/MessageConversationItem" },
-        { "$ref": "#/$defs/ReasoningConversationItem" },
-        { "$ref": "#/$defs/CommandConversationItem" },
-        { "$ref": "#/$defs/FileChangeConversationItem" },
-        { "$ref": "#/$defs/ToolConversationItem" },
-        { "$ref": "#/$defs/ApprovalConversationItem" },
-        { "$ref": "#/$defs/UnknownConversationItem" }
-      ]
-    },
-    "MessageConversationItemKind": { "type": "string", "enum": ["message"] },
-    "MessageConversationItem": {
-      "type": "object",
-      "properties": {
-        "resource": { "$ref": "#/$defs/RoutedResourceId" },
-        "turn": { "$ref": "#/$defs/RoutedResourceId" },
-        "conversation": { "$ref": "#/$defs/RoutedResourceId" },
-        "kind": { "$ref": "#/$defs/MessageConversationItemKind" },
-        "status": { "$ref": "#/$defs/ConversationItemStatus" },
-        "role": { "$ref": "#/$defs/ConversationItemRole" },
-        "contents": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/ContentBlock" }
-        }
-      },
-      "required": ["resource", "turn", "conversation", "kind", "status", "role", "contents"],
-      "additionalProperties": false
-    },
-    "ReasoningConversationItemKind": { "type": "string", "enum": ["reasoning"] },
-    "ReasoningConversationItem": {
-      "type": "object",
-      "properties": {
-        "resource": { "$ref": "#/$defs/RoutedResourceId" },
-        "turn": { "$ref": "#/$defs/RoutedResourceId" },
-        "conversation": { "$ref": "#/$defs/RoutedResourceId" },
-        "kind": { "$ref": "#/$defs/ReasoningConversationItemKind" },
-        "status": { "$ref": "#/$defs/ConversationItemStatus" },
-        "contents": { "type": "array", "items": { "$ref": "#/$defs/ContentBlock" } }
-      },
-      "required": ["resource", "turn", "conversation", "kind", "status", "contents"],
-      "additionalProperties": false
-    },
-    "CommandConversationItemKind": { "type": "string", "enum": ["command"] },
-    "CommandConversationItem": {
-      "type": "object",
-      "properties": {
-        "resource": { "$ref": "#/$defs/RoutedResourceId" },
-        "turn": { "$ref": "#/$defs/RoutedResourceId" },
-        "conversation": { "$ref": "#/$defs/RoutedResourceId" },
-        "kind": { "$ref": "#/$defs/CommandConversationItemKind" },
-        "status": { "$ref": "#/$defs/ConversationItemStatus" },
-        "title": { "type": "string", "minLength": 1 },
-        "tool": { "$ref": "#/$defs/ToolInvocation" }
-      },
-      "required": ["resource", "turn", "conversation", "kind", "status", "tool"],
-      "additionalProperties": false
-    },
-    "FileChangeConversationItemKind": { "type": "string", "enum": ["file-change"] },
-    "FileChangeConversationItem": {
-      "type": "object",
-      "properties": {
-        "resource": { "$ref": "#/$defs/RoutedResourceId" },
-        "turn": { "$ref": "#/$defs/RoutedResourceId" },
-        "conversation": { "$ref": "#/$defs/RoutedResourceId" },
-        "kind": { "$ref": "#/$defs/FileChangeConversationItemKind" },
-        "status": { "$ref": "#/$defs/ConversationItemStatus" },
-        "title": { "type": "string", "minLength": 1 },
-        "contents": { "type": "array", "items": { "$ref": "#/$defs/ContentBlock" } }
-      },
-      "required": ["resource", "turn", "conversation", "kind", "status", "contents"],
-      "additionalProperties": false
-    },
-    "ToolConversationItemKind": { "type": "string", "enum": ["tool"] },
-    "ToolConversationItem": {
-      "type": "object",
-      "properties": {
-        "resource": { "$ref": "#/$defs/RoutedResourceId" },
-        "turn": { "$ref": "#/$defs/RoutedResourceId" },
-        "conversation": { "$ref": "#/$defs/RoutedResourceId" },
-        "kind": { "$ref": "#/$defs/ToolConversationItemKind" },
-        "status": { "$ref": "#/$defs/ConversationItemStatus" },
-        "title": { "type": "string", "minLength": 1 },
-        "tool": { "$ref": "#/$defs/ToolInvocation" }
-      },
-      "required": ["resource", "turn", "conversation", "kind", "status", "tool"],
-      "additionalProperties": false
-    },
-    "ApprovalConversationItemKind": { "type": "string", "enum": ["approval"] },
-    "ApprovalConversationItem": {
-      "type": "object",
-      "properties": {
-        "resource": { "$ref": "#/$defs/RoutedResourceId" },
-        "turn": { "$ref": "#/$defs/RoutedResourceId" },
-        "conversation": { "$ref": "#/$defs/RoutedResourceId" },
-        "kind": { "$ref": "#/$defs/ApprovalConversationItemKind" },
-        "status": { "$ref": "#/$defs/ConversationItemStatus" },
-        "title": { "type": "string", "minLength": 1 },
-        "relatedItem": { "$ref": "#/$defs/RoutedResourceId" },
-        "approval": { "$ref": "#/$defs/ProviderApproval" }
-      },
-      "required": ["resource", "turn", "conversation", "kind", "status", "approval"],
-      "additionalProperties": false
-    },
-    "UnknownConversationItemKind": { "type": "string", "enum": ["unknown"] },
-    "UnknownConversationItem": {
-      "type": "object",
-      "properties": {
-        "resource": { "$ref": "#/$defs/RoutedResourceId" },
-        "turn": { "$ref": "#/$defs/RoutedResourceId" },
-        "conversation": { "$ref": "#/$defs/RoutedResourceId" },
-        "kind": { "$ref": "#/$defs/UnknownConversationItemKind" },
-        "status": { "$ref": "#/$defs/ConversationItemStatus" },
-        "title": { "type": "string", "minLength": 1 }
-      },
-      "required": ["resource", "turn", "conversation", "kind", "status"],
+      "required": [
+        "conversation",
+        "items"
+      ],
       "additionalProperties": false
     },
     "ConversationItemKind": {
       "type": "string",
-      "enum": ["message", "reasoning", "command", "file-change", "tool", "approval", "unknown"]
-    },
-    "ConversationItemRole": {
-      "type": "string",
-      "enum": ["user", "assistant"]
-    },
-    "ConversationItemStatus": {
-      "type": "string",
       "enum": [
-        "pending",
-        "running",
-        "completed",
-        "failed",
-        "interrupted",
-        "declined",
-        "approved",
-        "denied",
-        "expired",
+        "message",
+        "reasoning",
+        "command",
+        "file-change",
+        "tool",
+        "approval",
         "unknown"
       ]
     },
     "ConversationListRequest": {
       "type": "object",
       "properties": {
-        "route": { "$ref": "#/$defs/ProviderInstanceRoute" },
-        "projectFilter": { "$ref": "#/$defs/ConversationProjectFilter" },
-        "cursor": { "$ref": "../../core/v1/schema.json#/$defs/Cursor" },
-        "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "projectFilter": {
+          "$ref": "#/$defs/ConversationProjectFilter"
+        },
+        "cursor": {
+          "$ref": "../../core/v1/schema.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
       },
-      "required": ["route", "projectFilter"],
+      "required": [
+        "route",
+        "projectFilter"
+      ],
       "additionalProperties": false
     },
     "ConversationListResponse": {
@@ -584,66 +221,114 @@
       "properties": {
         "conversations": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ProviderConversation" }
+          "items": {
+            "$ref": "../../agent/v1/schema.json#/$defs/Conversation"
+          }
         },
-        "pageInfo": { "$ref": "../../core/v1/schema.json#/$defs/PageInfo" }
+        "pageInfo": {
+          "$ref": "../../core/v1/schema.json#/$defs/PageInfo"
+        }
       },
-      "required": ["conversations", "pageInfo"],
+      "required": [
+        "conversations",
+        "pageInfo"
+      ],
       "additionalProperties": false
     },
     "ConversationProjectFilter": {
       "oneOf": [
-        { "$ref": "#/$defs/ConversationProjectFilterAll" },
-        { "$ref": "#/$defs/ConversationProjectFilterStandalone" },
-        { "$ref": "#/$defs/ConversationProjectFilterProject" }
+        {
+          "$ref": "#/$defs/ConversationProjectFilterAll"
+        },
+        {
+          "$ref": "#/$defs/ConversationProjectFilterStandalone"
+        },
+        {
+          "$ref": "#/$defs/ConversationProjectFilterProject"
+        }
       ]
     },
     "ConversationProjectFilterAll": {
       "type": "object",
       "properties": {
-        "kind": { "$ref": "#/$defs/ConversationProjectFilterAllKind" }
+        "kind": {
+          "$ref": "#/$defs/ConversationProjectFilterAllKind"
+        }
       },
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "additionalProperties": false
     },
     "ConversationProjectFilterAllKind": {
       "type": "string",
-      "enum": ["all"]
+      "enum": [
+        "all"
+      ]
     },
     "ConversationProjectFilterStandalone": {
       "type": "object",
       "properties": {
-        "kind": { "$ref": "#/$defs/ConversationProjectFilterStandaloneKind" }
+        "kind": {
+          "$ref": "#/$defs/ConversationProjectFilterStandaloneKind"
+        }
       },
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "additionalProperties": false
     },
     "ConversationProjectFilterStandaloneKind": {
       "type": "string",
-      "enum": ["standalone"]
+      "enum": [
+        "standalone"
+      ]
     },
     "ConversationProjectFilterProject": {
       "type": "object",
       "properties": {
-        "kind": { "$ref": "#/$defs/ConversationProjectFilterProjectKind" },
-        "project": { "$ref": "#/$defs/RoutedResourceId" }
+        "kind": {
+          "$ref": "#/$defs/ConversationProjectFilterProjectKind"
+        },
+        "project": {
+          "$ref": "#/$defs/ProviderResourceId"
+        }
       },
-      "required": ["kind", "project"],
+      "required": [
+        "kind",
+        "project"
+      ],
       "additionalProperties": false
     },
     "ConversationProjectFilterProjectKind": {
       "type": "string",
-      "enum": ["project"]
+      "enum": [
+        "project"
+      ]
     },
     "ConversationSearchRequest": {
       "type": "object",
       "properties": {
-        "route": { "$ref": "#/$defs/ProviderInstanceRoute" },
-        "searchTerm": { "type": "string", "minLength": 1 },
-        "cursor": { "$ref": "../../core/v1/schema.json#/$defs/Cursor" },
-        "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "searchTerm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cursor": {
+          "$ref": "../../core/v1/schema.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
       },
-      "required": ["route", "searchTerm"],
+      "required": [
+        "route",
+        "searchTerm"
+      ],
       "additionalProperties": false
     },
     "ConversationSearchResponse": {
@@ -651,257 +336,177 @@
       "properties": {
         "conversations": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ProviderConversation" }
+          "items": {
+            "$ref": "../../agent/v1/schema.json#/$defs/Conversation"
+          }
         },
-        "pageInfo": { "$ref": "../../core/v1/schema.json#/$defs/PageInfo" }
+        "pageInfo": {
+          "$ref": "../../core/v1/schema.json#/$defs/PageInfo"
+        }
       },
-      "required": ["conversations", "pageInfo"],
+      "required": [
+        "conversations",
+        "pageInfo"
+      ],
       "additionalProperties": false
-    },
-    "ConversationStatus": {
-      "type": "string",
-      "enum": ["idle", "running", "waiting-approval", "waiting-user-input", "error", "archived"]
     },
     "ConversationUpsertedEvent": {
       "type": "object",
       "properties": {
-        "conversation": { "$ref": "#/$defs/ProviderConversation" }
+        "conversation": {
+          "$ref": "../../agent/v1/schema.json#/$defs/Conversation"
+        }
       },
-      "required": ["conversation"],
+      "required": [
+        "conversation"
+      ],
       "additionalProperties": false
     },
     "ConversationItemUpsertedEvent": {
       "type": "object",
       "properties": {
-        "item": { "$ref": "#/$defs/ConversationItem" }
-      },
-      "required": ["item"],
-      "additionalProperties": false
-    },
-    "ChoiceOption": {
-      "type": "object",
-      "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "displayName": { "type": "string", "minLength": 1 },
-        "description": { "type": "string" },
-        "enabled": { "type": "boolean" },
-        "disabledReason": { "type": "string", "minLength": 1 }
-      },
-      "required": ["id", "displayName"],
-      "additionalProperties": false
-    },
-    "ChoiceSet": {
-      "type": "object",
-      "properties": {
-        "options": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/ChoiceOption" },
-          "minItems": 1
-        },
-        "defaultId": { "type": "string", "minLength": 1 }
-      },
-      "required": ["options"],
-      "additionalProperties": false
-    },
-    "FlatModelCatalogKind": {
-      "type": "string",
-      "enum": ["flat"]
-    },
-    "FlatModelSelection": {
-      "type": "object",
-      "properties": {
-        "kind": { "$ref": "#/$defs/FlatModelCatalogKind" },
-        "modelId": { "type": "string", "minLength": 1 }
-      },
-      "required": ["kind", "modelId"],
-      "additionalProperties": false
-    },
-    "FlatModelCatalog": {
-      "type": "object",
-      "properties": {
-        "kind": { "$ref": "#/$defs/FlatModelCatalogKind" },
-        "models": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/ChoiceOption" },
-          "minItems": 1
-        },
-        "defaultSelection": { "$ref": "#/$defs/FlatModelSelection" }
-      },
-      "required": ["kind", "models"],
-      "additionalProperties": false
-    },
-    "GroupedModelCatalogKind": {
-      "type": "string",
-      "enum": ["grouped"]
-    },
-    "GroupedModelProvider": {
-      "type": "object",
-      "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "displayName": { "type": "string", "minLength": 1 },
-        "description": { "type": "string" },
-        "models": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/ChoiceOption" },
-          "minItems": 1
+        "item": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ConversationItem"
         }
       },
-      "required": ["id", "displayName", "models"],
-      "additionalProperties": false
-    },
-    "GroupedModelSelection": {
-      "type": "object",
-      "properties": {
-        "kind": { "$ref": "#/$defs/GroupedModelCatalogKind" },
-        "providerId": { "type": "string", "minLength": 1 },
-        "modelId": { "type": "string", "minLength": 1 }
-      },
-      "required": ["kind", "providerId", "modelId"],
-      "additionalProperties": false
-    },
-    "GroupedModelCatalog": {
-      "type": "object",
-      "properties": {
-        "kind": { "$ref": "#/$defs/GroupedModelCatalogKind" },
-        "providers": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/GroupedModelProvider" },
-          "minItems": 1
-        },
-        "defaultSelection": { "$ref": "#/$defs/GroupedModelSelection" }
-      },
-      "required": ["kind", "providers"],
-      "additionalProperties": false
-    },
-    "ModelCatalog": {
-      "oneOf": [
-        { "$ref": "#/$defs/FlatModelCatalog" },
-        { "$ref": "#/$defs/GroupedModelCatalog" }
-      ]
-    },
-    "ModelSelection": {
-      "oneOf": [
-        { "$ref": "#/$defs/FlatModelSelection" },
-        { "$ref": "#/$defs/GroupedModelSelection" }
-      ]
-    },
-    "TurnSendCapabilities": {
-      "type": "object",
-      "properties": {
-        "accessMode": { "$ref": "#/$defs/ChoiceSet" },
-        "reasoningEffort": { "$ref": "#/$defs/ChoiceSet" },
-        "modelCatalog": { "$ref": "#/$defs/ModelCatalog" }
-      },
-      "additionalProperties": false
-    },
-    "ConversationCreateCapabilities": {
-      "type": "object",
-      "properties": {
-        "supportsTitle": { "type": "boolean" },
-        "selection": { "$ref": "#/$defs/TurnSendCapabilities" },
-        "workspaceMode": { "$ref": "#/$defs/ChoiceSet" }
-      },
-      "required": ["supportsTitle"],
-      "additionalProperties": false
-    },
-    "TurnInputKind": {
-      "type": "string",
-      "enum": ["text"]
-    },
-    "TurnInput": {
-      "type": "object",
-      "properties": {
-        "kind": { "$ref": "#/$defs/TurnInputKind" },
-        "text": { "type": "string", "minLength": 1 }
-      },
-      "required": ["kind", "text"],
-      "additionalProperties": false
-    },
-    "TurnSelection": {
-      "type": "object",
-      "properties": {
-        "accessModeId": { "type": "string", "minLength": 1 },
-        "reasoningEffortId": { "type": "string", "minLength": 1 },
-        "model": { "$ref": "#/$defs/ModelSelection" }
-      },
+      "required": [
+        "item"
+      ],
       "additionalProperties": false
     },
     "HarnessDescriptor": {
       "type": "object",
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "displayName": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "minLength": 1 },
-        "executablePath": { "type": "string", "minLength": 1 }
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executablePath": {
+          "type": "string",
+          "minLength": 1
+        }
       },
-      "required": ["id", "displayName"],
+      "required": [
+        "id",
+        "displayName"
+      ],
       "additionalProperties": false
     },
     "InstanceCapabilitiesRequest": {
       "type": "object",
       "properties": {
-        "route": { "$ref": "#/$defs/ProviderInstanceRoute" }
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        }
       },
-      "required": ["route"],
+      "required": [
+        "route"
+      ],
       "additionalProperties": false
     },
     "InstanceCapabilitiesResponse": {
       "type": "object",
       "properties": {
-        "capabilities": { "$ref": "#/$defs/ProviderCapabilities" }
+        "capabilities": {
+          "$ref": "#/$defs/ProviderCapabilities"
+        }
       },
-      "required": ["capabilities"],
+      "required": [
+        "capabilities"
+      ],
       "additionalProperties": false
     },
     "InstanceCreateRequest": {
       "type": "object",
       "properties": {
-        "route": { "$ref": "#/$defs/ProviderInstanceRoute" },
-        "instanceKind": { "$ref": "#/$defs/ProviderInstanceKind" },
-        "displayName": { "type": "string", "minLength": 1 },
-        "settings": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" }
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "instanceKind": {
+          "$ref": "#/$defs/ProviderInstanceKind"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "settings": {
+          "$ref": "../../core/v1/schema.json#/$defs/JsonObject"
+        }
       },
-      "required": ["route", "instanceKind", "displayName", "settings"],
+      "required": [
+        "route",
+        "instanceKind",
+        "displayName",
+        "settings"
+      ],
       "additionalProperties": false
     },
     "InstanceCreateResponse": {
       "type": "object",
       "properties": {
-        "instance": { "$ref": "#/$defs/ProviderInstance" }
+        "instance": {
+          "$ref": "#/$defs/ProviderInstance"
+        }
       },
-      "required": ["instance"],
+      "required": [
+        "instance"
+      ],
       "additionalProperties": false
     },
     "InstanceDestroyRequest": {
       "type": "object",
       "properties": {
-        "route": { "$ref": "#/$defs/ProviderInstanceRoute" }
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        }
       },
-      "required": ["route"],
+      "required": [
+        "route"
+      ],
       "additionalProperties": false
     },
     "InstanceDestroyResponse": {
       "type": "object",
       "properties": {
-        "destroyed": { "type": "boolean" }
+        "destroyed": {
+          "type": "boolean"
+        }
       },
-      "required": ["destroyed"],
+      "required": [
+        "destroyed"
+      ],
       "additionalProperties": false
     },
     "InstanceStartRequest": {
       "type": "object",
       "properties": {
-        "route": { "$ref": "#/$defs/ProviderInstanceRoute" }
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        }
       },
-      "required": ["route"],
+      "required": [
+        "route"
+      ],
       "additionalProperties": false
     },
     "InstanceStartResponse": {
       "type": "object",
       "properties": {
-        "instance": { "$ref": "#/$defs/ProviderInstance" }
+        "instance": {
+          "$ref": "#/$defs/ProviderInstance"
+        }
       },
-      "required": ["instance"],
+      "required": [
+        "instance"
+      ],
       "additionalProperties": false
     },
     "ProviderInstanceKind": {
@@ -910,55 +515,52 @@
     },
     "InstanceStatus": {
       "type": "string",
-      "enum": ["created", "starting", "ready", "stopping", "stopped", "error"]
+      "enum": [
+        "created",
+        "starting",
+        "ready",
+        "stopping",
+        "stopped",
+        "error"
+      ]
     },
     "InstanceStatusChangedEvent": {
       "type": "object",
       "properties": {
-        "instance": { "$ref": "#/$defs/ProviderInstance" },
-        "previousStatus": { "$ref": "#/$defs/InstanceStatus" }
+        "instance": {
+          "$ref": "#/$defs/ProviderInstance"
+        },
+        "previousStatus": {
+          "$ref": "#/$defs/InstanceStatus"
+        }
       },
-      "required": ["instance"],
+      "required": [
+        "instance"
+      ],
       "additionalProperties": false
     },
     "InstanceStopRequest": {
       "type": "object",
       "properties": {
-        "route": { "$ref": "#/$defs/ProviderInstanceRoute" }
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        }
       },
-      "required": ["route"],
+      "required": [
+        "route"
+      ],
       "additionalProperties": false
     },
     "InstanceStopResponse": {
       "type": "object",
       "properties": {
-        "instance": { "$ref": "#/$defs/ProviderInstance" }
+        "instance": {
+          "$ref": "#/$defs/ProviderInstance"
+        }
       },
-      "required": ["instance"],
-      "additionalProperties": false
-    },
-    "ProviderApproval": {
-      "type": "object",
-      "properties": {
-        "resource": { "$ref": "#/$defs/RoutedResourceId" },
-        "conversation": { "$ref": "#/$defs/RoutedResourceId" },
-        "turn": { "$ref": "#/$defs/RoutedResourceId" },
-        "kind": { "type": "string", "minLength": 1 },
-        "title": { "type": "string", "minLength": 1 },
-        "description": { "type": "string" },
-        "status": { "$ref": "#/$defs/ApprovalStatus" },
-        "decisions": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/ApprovalDecision" },
-          "minItems": 1,
-          "uniqueItems": true
-        },
-        "requestedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
-        "resolvedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
-        "decision": { "$ref": "#/$defs/ApprovalDecision" },
-        "extension": { "$ref": "#/$defs/ProviderExtension" }
-      },
-      "required": ["resource", "conversation", "turn", "kind", "title", "status", "decisions"],
+      "required": [
+        "instance"
+      ],
       "additionalProperties": false
     },
     "ProviderCapability": {
@@ -982,118 +584,110 @@
     "ProviderCapabilities": {
       "type": "object",
       "properties": {
-        "revision": { "type": "string", "minLength": 1 },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
         "methods": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ProviderCapability" },
+          "items": {
+            "$ref": "#/$defs/ProviderCapability"
+          },
           "uniqueItems": true
         },
-        "turnSend": { "$ref": "#/$defs/TurnSendCapabilities" },
-        "conversationCreate": { "$ref": "#/$defs/ConversationCreateCapabilities" },
+        "turnSend": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnSendCapabilities"
+        },
+        "conversationCreate": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ConversationCreateCapabilities"
+        },
         "extensions": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ProviderExtension" }
+          "items": {
+            "$ref": "#/$defs/ProviderExtension"
+          }
         }
       },
-      "required": ["revision", "methods", "extensions"],
+      "required": [
+        "revision",
+        "methods",
+        "extensions"
+      ],
       "additionalProperties": false
-    },
-    "ProviderConversation": {
-      "type": "object",
-      "properties": {
-        "resource": { "$ref": "#/$defs/RoutedResourceId" },
-        "project": {
-          "oneOf": [
-            { "$ref": "#/$defs/RoutedResourceId" },
-            { "type": "null" }
-          ]
-        },
-        "title": { "type": "string", "minLength": 1 },
-        "preview": { "type": "string" },
-        "status": { "$ref": "#/$defs/ConversationStatus" },
-        "permissionLevel": { "type": "string", "minLength": 1 },
-        "model": { "type": "string" },
-        "reasoningEffort": { "type": "string" },
-        "selection": { "$ref": "#/$defs/TurnSelection" },
-        "workspaceRoot": { "type": "string", "minLength": 1 },
-        "createdAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
-        "updatedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
-        "activeTurn": { "$ref": "#/$defs/ProviderTurn" },
-        "extension": { "$ref": "#/$defs/ProviderExtension" }
-      },
-      "required": ["resource", "project", "title", "status"],
-      "additionalProperties": false
-    },
-    "Project": {
-      "type": "object",
-      "properties": {
-        "resource": { "$ref": "#/$defs/RoutedResourceId" },
-        "name": { "type": "string", "minLength": 1 },
-        "roots": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/ProjectRoot" }
-        },
-        "metadata": {
-          "type": "object",
-          "additionalProperties": { "type": "string" }
-        },
-        "position": {
-          "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991,
-          "description": "Provider-defined ordering position. Read-only in Project v1 operations."
-        },
-        "createdAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
-        "updatedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" }
-      },
-      "required": ["resource", "name", "roots", "metadata", "position", "createdAt", "updatedAt"],
-      "additionalProperties": false
-    },
-    "ProjectChangeType": {
-      "type": "string",
-      "enum": ["created", "updated", "deleted"]
     },
     "ProjectChangedEvent": {
       "type": "object",
       "properties": {
-        "project": { "$ref": "#/$defs/RoutedResourceId" },
-        "changeType": { "$ref": "#/$defs/ProjectChangeType" }
+        "project": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "changeType": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ProjectChangeType"
+        }
       },
-      "required": ["project", "changeType"],
+      "required": [
+        "project",
+        "changeType"
+      ],
       "additionalProperties": false
     },
     "ProjectCreateRequest": {
       "type": "object",
       "properties": {
-        "route": { "$ref": "#/$defs/ProviderInstanceRoute" },
-        "idempotencyKey": { "$ref": "../../core/v1/schema.json#/$defs/RequestId" },
-        "name": { "type": "string", "minLength": 1 },
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "idempotencyKey": {
+          "$ref": "../../core/v1/schema.json#/$defs/RequestId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
         "roots": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ProjectRoot" }
+          "items": {
+            "$ref": "../../agent/v1/schema.json#/$defs/ProjectRoot"
+          }
         },
         "metadata": {
           "type": "object",
-          "additionalProperties": { "type": "string" }
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
-      "required": ["route", "idempotencyKey", "name", "roots", "metadata"],
+      "required": [
+        "route",
+        "idempotencyKey",
+        "name",
+        "roots",
+        "metadata"
+      ],
       "additionalProperties": false
     },
     "ProjectCreateResponse": {
       "type": "object",
       "properties": {
-        "project": { "$ref": "#/$defs/Project" }
+        "project": {
+          "$ref": "../../agent/v1/schema.json#/$defs/Project"
+        }
       },
-      "required": ["project"],
+      "required": [
+        "project"
+      ],
       "additionalProperties": false
     },
     "ProjectDeleteRequest": {
       "type": "object",
       "properties": {
-        "project": { "$ref": "#/$defs/RoutedResourceId" }
+        "project": {
+          "$ref": "#/$defs/ProviderResourceId"
+        }
       },
-      "required": ["project"],
+      "required": [
+        "project"
+      ],
       "additionalProperties": false
     },
     "ProjectDeleteResponse": {
@@ -1104,27 +698,45 @@
     "ProjectGetRequest": {
       "type": "object",
       "properties": {
-        "project": { "$ref": "#/$defs/RoutedResourceId" }
+        "project": {
+          "$ref": "#/$defs/ProviderResourceId"
+        }
       },
-      "required": ["project"],
+      "required": [
+        "project"
+      ],
       "additionalProperties": false
     },
     "ProjectGetResponse": {
       "type": "object",
       "properties": {
-        "project": { "$ref": "#/$defs/Project" }
+        "project": {
+          "$ref": "../../agent/v1/schema.json#/$defs/Project"
+        }
       },
-      "required": ["project"],
+      "required": [
+        "project"
+      ],
       "additionalProperties": false
     },
     "ProjectListRequest": {
       "type": "object",
       "properties": {
-        "route": { "$ref": "#/$defs/ProviderInstanceRoute" },
-        "cursor": { "$ref": "../../core/v1/schema.json#/$defs/Cursor" },
-        "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "cursor": {
+          "$ref": "../../core/v1/schema.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
       },
-      "required": ["route"],
+      "required": [
+        "route"
+      ],
       "additionalProperties": false
     },
     "ProjectListResponse": {
@@ -1132,44 +744,58 @@
       "properties": {
         "projects": {
           "type": "array",
-          "items": { "$ref": "#/$defs/Project" }
+          "items": {
+            "$ref": "../../agent/v1/schema.json#/$defs/Project"
+          }
         },
-        "pageInfo": { "$ref": "../../core/v1/schema.json#/$defs/PageInfo" }
+        "pageInfo": {
+          "$ref": "../../core/v1/schema.json#/$defs/PageInfo"
+        }
       },
-      "required": ["projects", "pageInfo"],
-      "additionalProperties": false
-    },
-    "ProjectRoot": {
-      "type": "object",
-      "properties": {
-        "path": { "type": "string", "minLength": 1 }
-      },
-      "required": ["path"],
+      "required": [
+        "projects",
+        "pageInfo"
+      ],
       "additionalProperties": false
     },
     "ProjectUpdateRequest": {
       "type": "object",
       "properties": {
-        "project": { "$ref": "#/$defs/RoutedResourceId" },
-        "name": { "type": "string", "minLength": 1 },
+        "project": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
         "roots": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ProjectRoot" }
+          "items": {
+            "$ref": "../../agent/v1/schema.json#/$defs/ProjectRoot"
+          }
         },
         "metadata": {
           "type": "object",
-          "additionalProperties": { "type": "string" }
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
-      "required": ["project"],
+      "required": [
+        "project"
+      ],
       "additionalProperties": false
     },
     "ProjectUpdateResponse": {
       "type": "object",
       "properties": {
-        "project": { "$ref": "#/$defs/Project" }
+        "project": {
+          "$ref": "../../agent/v1/schema.json#/$defs/Project"
+        }
       },
-      "required": ["project"],
+      "required": [
+        "project"
+      ],
       "additionalProperties": false
     },
     "ProviderDescribeRequest": {
@@ -1180,9 +806,13 @@
     "ProviderDescribeResponse": {
       "type": "object",
       "properties": {
-        "plugin": { "$ref": "#/$defs/ProviderPluginDescriptor" }
+        "plugin": {
+          "$ref": "#/$defs/ProviderPluginDescriptor"
+        }
       },
-      "required": ["plugin"],
+      "required": [
+        "plugin"
+      ],
       "additionalProperties": false
     },
     "RuntimeCandidateSource": {
@@ -1199,20 +829,40 @@
     "RuntimeCandidate": {
       "type": "object",
       "properties": {
-        "executablePath": { "type": "string", "minLength": 1 },
-        "source": { "$ref": "#/$defs/RuntimeCandidateSource" }
+        "executablePath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "$ref": "#/$defs/RuntimeCandidateSource"
+        }
       },
-      "required": ["executablePath", "source"],
+      "required": [
+        "executablePath",
+        "source"
+      ],
       "additionalProperties": false
     },
     "RuntimeInstallation": {
       "type": "object",
       "properties": {
-        "executablePath": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "minLength": 1 },
-        "source": { "$ref": "#/$defs/RuntimeCandidateSource" }
+        "executablePath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "$ref": "#/$defs/RuntimeCandidateSource"
+        }
       },
-      "required": ["executablePath", "version", "source"],
+      "required": [
+        "executablePath",
+        "version",
+        "source"
+      ],
       "additionalProperties": false
     },
     "RuntimeGetInstalledRequest": {
@@ -1225,148 +875,226 @@
       "properties": {
         "installed": {
           "type": "array",
-          "items": { "$ref": "#/$defs/RuntimeInstallation" }
+          "items": {
+            "$ref": "#/$defs/RuntimeInstallation"
+          }
         },
-        "selected": { "$ref": "#/$defs/RuntimeInstallation" }
+        "selected": {
+          "$ref": "#/$defs/RuntimeInstallation"
+        }
       },
-      "required": ["installed"],
+      "required": [
+        "installed"
+      ],
       "additionalProperties": false
     },
     "RuntimeSelectRequest": {
       "type": "object",
       "properties": {
-        "candidate": { "$ref": "#/$defs/RuntimeCandidate" }
+        "candidate": {
+          "$ref": "#/$defs/RuntimeCandidate"
+        }
       },
-      "required": ["candidate"],
+      "required": [
+        "candidate"
+      ],
       "additionalProperties": false
     },
     "RuntimeSelectResponse": {
       "type": "object",
       "properties": {
-        "selected": { "$ref": "#/$defs/RuntimeInstallation" }
+        "selected": {
+          "$ref": "#/$defs/RuntimeInstallation"
+        }
       },
-      "required": ["selected"],
+      "required": [
+        "selected"
+      ],
       "additionalProperties": false
     },
     "ProviderExtension": {
       "type": "object",
       "properties": {
-        "namespace": { "type": "string", "minLength": 1 },
-        "data": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" }
+        "namespace": {
+          "type": "string",
+          "minLength": 1
+        },
+        "data": {
+          "$ref": "../../core/v1/schema.json#/$defs/JsonObject"
+        }
       },
-      "required": ["namespace", "data"],
+      "required": [
+        "namespace",
+        "data"
+      ],
       "additionalProperties": false
     },
     "ProviderInitializeRequest": {
       "type": "object",
       "properties": {
-        "hostClientId": { "$ref": "../../core/v1/schema.json#/$defs/ClientId" },
-        "hostDeviceId": { "$ref": "../../core/v1/schema.json#/$defs/DeviceId" },
-        "hostVersion": { "type": "string", "minLength": 1 },
-        "supportedVersions": { "$ref": "../../core/v1/schema.json#/$defs/VersionRange" }
+        "hostClientId": {
+          "$ref": "../../core/v1/schema.json#/$defs/ClientId"
+        },
+        "hostDeviceId": {
+          "$ref": "../../core/v1/schema.json#/$defs/DeviceId"
+        },
+        "hostVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "supportedVersions": {
+          "$ref": "../../core/v1/schema.json#/$defs/VersionRange"
+        }
       },
-      "required": ["hostClientId", "hostDeviceId", "hostVersion", "supportedVersions"],
+      "required": [
+        "hostClientId",
+        "hostDeviceId",
+        "hostVersion",
+        "supportedVersions"
+      ],
       "additionalProperties": false
     },
     "ProviderInitializeResponse": {
       "type": "object",
       "properties": {
-        "selectedVersion": { "$ref": "../../core/v1/schema.json#/$defs/ProtocolVersion" },
-        "plugin": { "$ref": "#/$defs/ProviderPluginDescriptor" }
+        "selectedVersion": {
+          "$ref": "../../core/v1/schema.json#/$defs/ProtocolVersion"
+        },
+        "plugin": {
+          "$ref": "#/$defs/ProviderPluginDescriptor"
+        }
       },
-      "required": ["selectedVersion", "plugin"],
+      "required": [
+        "selectedVersion",
+        "plugin"
+      ],
       "additionalProperties": false
     },
     "ProviderInstance": {
       "type": "object",
       "properties": {
-        "route": { "$ref": "#/$defs/ProviderInstanceRoute" },
-        "pluginId": { "$ref": "../../core/v1/schema.json#/$defs/ProviderPluginId" },
-        "instanceKind": { "$ref": "#/$defs/ProviderInstanceKind" },
-        "displayName": { "type": "string", "minLength": 1 },
-        "harness": { "$ref": "#/$defs/HarnessDescriptor" },
-        "status": { "$ref": "#/$defs/InstanceStatus" },
-        "authentication": { "$ref": "#/$defs/ProviderAuthentication" },
-        "usage": { "$ref": "#/$defs/ProviderUsage" },
-        "capabilities": { "$ref": "#/$defs/ProviderCapabilities" }
-      },
-      "required": ["route", "pluginId", "instanceKind", "displayName", "harness", "status", "capabilities"],
-      "additionalProperties": false
-    },
-    "ProviderAuthenticationStatus": {
-      "type": "string",
-      "enum": ["unknown", "signed-in", "signed-out", "expired", "error", "unsupported"]
-    },
-    "ProviderAuthentication": {
-      "type": "object",
-      "properties": {
-        "status": { "$ref": "#/$defs/ProviderAuthenticationStatus" },
-        "displayText": { "type": "string", "minLength": 1 }
-      },
-      "required": ["status"],
-      "additionalProperties": false
-    },
-    "ProviderUsage": {
-      "type": "object",
-      "properties": {
-        "displayText": { "type": "string", "minLength": 1 },
-        "observedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
-        "details": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/ProviderUsageDetail" }
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "pluginId": {
+          "$ref": "../../core/v1/schema.json#/$defs/ProviderPluginId"
+        },
+        "instanceKind": {
+          "$ref": "#/$defs/ProviderInstanceKind"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "harness": {
+          "$ref": "#/$defs/HarnessDescriptor"
+        },
+        "status": {
+          "$ref": "#/$defs/InstanceStatus"
+        },
+        "authentication": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ProviderAuthentication"
+        },
+        "usage": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ProviderUsage"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/ProviderCapabilities"
         }
       },
-      "required": ["displayText"],
+      "required": [
+        "route",
+        "pluginId",
+        "instanceKind",
+        "displayName",
+        "harness",
+        "status",
+        "capabilities"
+      ],
       "additionalProperties": false
     },
-    "ProviderUsageDetail": {
+    "ProviderResourceId": {
       "type": "object",
       "properties": {
-        "namespace": { "type": "string", "minLength": 1 },
-        "schemaVersion": { "type": "string", "minLength": 1 },
-        "data": { "$ref": "../../core/v1/schema.json#/$defs/JsonObject" }
+        "deviceId": {
+          "$ref": "../../core/v1/schema.json#/$defs/DeviceId"
+        },
+        "providerPluginId": {
+          "$ref": "../../core/v1/schema.json#/$defs/ProviderPluginId"
+        },
+        "providerInstanceId": {
+          "$ref": "../../core/v1/schema.json#/$defs/ProviderInstanceId"
+        },
+        "nativeResourceId": {
+          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+        }
       },
-      "required": ["namespace", "schemaVersion", "data"],
-      "additionalProperties": false
-    },
-    "RoutedResourceId": {
-      "type": "object",
-      "properties": {
-        "deviceId": { "$ref": "../../core/v1/schema.json#/$defs/DeviceId" },
-        "providerPluginId": { "$ref": "../../core/v1/schema.json#/$defs/ProviderPluginId" },
-        "providerInstanceId": { "$ref": "../../core/v1/schema.json#/$defs/ProviderInstanceId" },
-        "nativeResourceId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" }
-      },
-      "required": ["deviceId", "providerPluginId", "providerInstanceId", "nativeResourceId"],
+      "required": [
+        "deviceId",
+        "providerPluginId",
+        "providerInstanceId",
+        "nativeResourceId"
+      ],
       "additionalProperties": false,
       "description": "Provider-private complete route for a provider-native resource."
     },
     "ProviderInstanceRoute": {
       "type": "object",
       "properties": {
-        "deviceId": { "$ref": "../../core/v1/schema.json#/$defs/DeviceId" },
-        "providerPluginId": { "$ref": "../../core/v1/schema.json#/$defs/ProviderPluginId" },
-        "providerInstanceId": { "$ref": "../../core/v1/schema.json#/$defs/ProviderInstanceId" }
+        "deviceId": {
+          "$ref": "../../core/v1/schema.json#/$defs/DeviceId"
+        },
+        "providerPluginId": {
+          "$ref": "../../core/v1/schema.json#/$defs/ProviderPluginId"
+        },
+        "providerInstanceId": {
+          "$ref": "../../core/v1/schema.json#/$defs/ProviderInstanceId"
+        }
       },
-      "required": ["deviceId", "providerPluginId", "providerInstanceId"],
+      "required": [
+        "deviceId",
+        "providerPluginId",
+        "providerInstanceId"
+      ],
       "additionalProperties": false
     },
     "ProviderPluginDescriptor": {
       "type": "object",
       "properties": {
-        "pluginId": { "$ref": "../../core/v1/schema.json#/$defs/ProviderPluginId" },
-        "displayName": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "minLength": 1 },
-        "defaultWorkspaceRoot": { "type": "string", "minLength": 1 },
-        "supportedVersions": { "$ref": "../../core/v1/schema.json#/$defs/VersionRange" },
+        "pluginId": {
+          "$ref": "../../core/v1/schema.json#/$defs/ProviderPluginId"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "defaultWorkspaceRoot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "supportedVersions": {
+          "$ref": "../../core/v1/schema.json#/$defs/VersionRange"
+        },
         "instanceKinds": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ProviderInstanceKind" },
+          "items": {
+            "$ref": "#/$defs/ProviderInstanceKind"
+          },
           "minItems": 1,
           "uniqueItems": true
         }
       },
-      "required": ["pluginId", "displayName", "version", "supportedVersions", "instanceKinds"],
+      "required": [
+        "pluginId",
+        "displayName",
+        "version",
+        "supportedVersions",
+        "instanceKinds"
+      ],
       "additionalProperties": false
     },
     "ProviderShutdownRequest": {
@@ -1377,114 +1105,185 @@
     "ProviderShutdownResponse": {
       "type": "object",
       "properties": {
-        "accepted": { "type": "boolean" }
+        "accepted": {
+          "type": "boolean"
+        }
       },
-      "required": ["accepted"],
-      "additionalProperties": false
-    },
-    "ProviderTurn": {
-      "type": "object",
-      "properties": {
-        "resource": { "$ref": "#/$defs/RoutedResourceId" },
-        "conversation": { "$ref": "#/$defs/RoutedResourceId" },
-        "status": { "$ref": "#/$defs/TurnStatus" },
-        "displaySummary": { "type": "string" },
-        "startedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
-        "updatedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
-        "completedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
-        "extension": { "$ref": "#/$defs/ProviderExtension" }
-      },
-      "required": ["resource", "conversation", "status"],
+      "required": [
+        "accepted"
+      ],
       "additionalProperties": false
     },
     "TurnInterruptRequest": {
       "type": "object",
       "properties": {
-        "conversation": { "$ref": "#/$defs/RoutedResourceId" },
-        "turn": { "$ref": "#/$defs/RoutedResourceId" }
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "turn": {
+          "$ref": "#/$defs/ProviderResourceId"
+        }
       },
-      "required": ["conversation", "turn"],
+      "required": [
+        "conversation",
+        "turn"
+      ],
       "additionalProperties": false
     },
     "TurnInterruptResponse": {
       "type": "object",
       "properties": {
-        "turn": { "$ref": "#/$defs/ProviderTurn" }
+        "turn": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnTask"
+        }
       },
-      "required": ["turn"],
+      "required": [
+        "turn"
+      ],
       "additionalProperties": false
     },
     "TurnOutputDeltaEvent": {
       "type": "object",
       "properties": {
-        "turn": { "$ref": "#/$defs/RoutedResourceId" },
-        "conversation": { "$ref": "#/$defs/RoutedResourceId" },
-        "itemId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "contentId": { "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId" },
-        "kind": { "$ref": "#/$defs/ConversationContentKind" },
-        "delta": { "type": "string" },
-        "extension": { "$ref": "#/$defs/ProviderExtension" }
+        "turn": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "itemId": {
+          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+        },
+        "contentId": {
+          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ConversationContentKind"
+        },
+        "delta": {
+          "type": "string"
+        },
+        "extension": {
+          "$ref": "#/$defs/ProviderExtension"
+        }
       },
-      "required": ["turn", "conversation", "itemId", "contentId", "kind", "delta"],
+      "required": [
+        "turn",
+        "conversation",
+        "itemId",
+        "contentId",
+        "kind",
+        "delta"
+      ],
       "additionalProperties": false
     },
     "TurnStartRequest": {
       "type": "object",
       "properties": {
-        "conversation": { "$ref": "#/$defs/RoutedResourceId" },
-        "clientRequestId": { "$ref": "../../core/v1/schema.json#/$defs/RequestId" },
-        "capabilityRevision": { "type": "string", "minLength": 1 },
-        "input": { "$ref": "#/$defs/TurnInput" },
-        "selection": { "$ref": "#/$defs/TurnSelection" }
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "clientRequestId": {
+          "$ref": "../../core/v1/schema.json#/$defs/RequestId"
+        },
+        "capabilityRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnInput"
+        },
+        "selection": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnSelection"
+        }
       },
-      "required": ["conversation", "clientRequestId", "capabilityRevision", "input", "selection"],
+      "required": [
+        "conversation",
+        "clientRequestId",
+        "capabilityRevision",
+        "input",
+        "selection"
+      ],
       "additionalProperties": false
     },
     "TurnStartResponse": {
       "type": "object",
       "properties": {
-        "accepted": { "type": "boolean" },
-        "turn": { "$ref": "#/$defs/ProviderTurn" },
+        "accepted": {
+          "type": "boolean"
+        },
+        "turn": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnTask"
+        },
         "userItem": {
           "oneOf": [
-            { "$ref": "#/$defs/ConversationItem" },
-            { "type": "null" }
+            {
+              "$ref": "../../agent/v1/schema.json#/$defs/ConversationItem"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "effectiveSelection": { "$ref": "#/$defs/TurnSelection" }
+        "effectiveSelection": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnSelection"
+        }
       },
-      "required": ["accepted", "turn", "userItem", "effectiveSelection"],
+      "required": [
+        "accepted",
+        "turn",
+        "userItem",
+        "effectiveSelection"
+      ],
       "additionalProperties": false
-    },
-    "TurnStatus": {
-      "type": "string",
-      "enum": ["queued", "running", "waiting-approval", "completed", "failed", "interrupted"]
     },
     "TurnSteerRequest": {
       "type": "object",
       "properties": {
-        "conversation": { "$ref": "#/$defs/RoutedResourceId" },
-        "turn": { "$ref": "#/$defs/RoutedResourceId" },
-        "clientMessageId": { "$ref": "../../core/v1/schema.json#/$defs/RequestId" },
-        "message": { "type": "string", "minLength": 1 }
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "turn": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "clientMessageId": {
+          "$ref": "../../core/v1/schema.json#/$defs/RequestId"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
       },
-      "required": ["conversation", "turn", "clientMessageId", "message"],
+      "required": [
+        "conversation",
+        "turn",
+        "clientMessageId",
+        "message"
+      ],
       "additionalProperties": false
     },
     "TurnSteerResponse": {
       "type": "object",
       "properties": {
-        "turn": { "$ref": "#/$defs/ProviderTurn" }
+        "turn": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnTask"
+        }
       },
-      "required": ["turn"],
+      "required": [
+        "turn"
+      ],
       "additionalProperties": false
     },
     "TurnUpsertedEvent": {
       "type": "object",
       "properties": {
-        "turn": { "$ref": "#/$defs/ProviderTurn" }
+        "turn": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnTask"
+        }
       },
-      "required": ["turn"],
+      "required": [
+        "turn"
+      ],
       "additionalProperties": false
     }
   }

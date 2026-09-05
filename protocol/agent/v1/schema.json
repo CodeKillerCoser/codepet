@@ -1,0 +1,1706 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/agent/v1/schema.json",
+  "title": "CodePet Agent Domain Protocol v1",
+  "$defs": {
+    "Approval": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ApprovalStatus"
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ApprovalDecision"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "requestedAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        },
+        "resolvedAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        },
+        "decision": {
+          "$ref": "#/$defs/ApprovalDecision"
+        }
+      },
+      "required": [
+        "resource",
+        "conversation",
+        "turn",
+        "kind",
+        "title",
+        "status",
+        "decisions"
+      ],
+      "additionalProperties": false
+    },
+    "ApprovalDecision": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "deny"
+      ]
+    },
+    "ApprovalStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "approved",
+        "denied",
+        "expired"
+      ]
+    },
+    "Conversation": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "project": {
+          "oneOf": [
+            {
+              "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "preview": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationStatus"
+        },
+        "permissionLevel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "type": "string"
+        },
+        "selection": {
+          "$ref": "#/$defs/TurnSelection"
+        },
+        "workspaceRoot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "createdAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        },
+        "updatedAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        },
+        "activeTurn": {
+          "$ref": "#/$defs/TurnTask"
+        },
+        "readState": {
+          "$ref": "#/$defs/ConversationReadState"
+        }
+      },
+      "required": [
+        "resource",
+        "project",
+        "title",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "ContentBlock": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TextContentBlock"
+        },
+        {
+          "$ref": "#/$defs/ReasoningSummaryContentBlock"
+        },
+        {
+          "$ref": "#/$defs/OutputContentBlock"
+        },
+        {
+          "$ref": "#/$defs/ActivitySummaryContentBlock"
+        },
+        {
+          "$ref": "#/$defs/StructuredJsonContentBlock"
+        },
+        {
+          "$ref": "#/$defs/ImageContentBlock"
+        },
+        {
+          "$ref": "#/$defs/AudioContentBlock"
+        },
+        {
+          "$ref": "#/$defs/ResourceLinkContentBlock"
+        },
+        {
+          "$ref": "#/$defs/EmbeddedResourceContentBlock"
+        }
+      ]
+    },
+    "ContentTruncation": {
+      "type": "object",
+      "properties": {
+        "originalBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retainedBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "strategy": {
+          "$ref": "#/$defs/ContentTruncationStrategy"
+        }
+      },
+      "required": [
+        "originalBytes",
+        "retainedBytes",
+        "strategy"
+      ],
+      "additionalProperties": false
+    },
+    "ContentTruncationStrategy": {
+      "type": "string",
+      "enum": [
+        "head",
+        "tail",
+        "head-tail",
+        "structural-preview"
+      ]
+    },
+    "TextContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "text"
+      ]
+    },
+    "TextContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/TextContentBlockKind"
+        },
+        "text": {
+          "type": "string"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "ReasoningSummaryContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "reasoning-summary"
+      ]
+    },
+    "ReasoningSummaryContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ReasoningSummaryContentBlockKind"
+        },
+        "text": {
+          "type": "string"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "OutputContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "output"
+      ]
+    },
+    "OutputContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/OutputContentBlockKind"
+        },
+        "text": {
+          "type": "string"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "ActivitySummaryContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "activity-summary"
+      ]
+    },
+    "ActivitySummaryContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ActivitySummaryContentBlockKind"
+        },
+        "text": {
+          "type": "string"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "StructuredJsonContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "structured-json"
+      ]
+    },
+    "StructuredJsonContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/StructuredJsonContentBlockKind"
+        },
+        "value": {
+          "$ref": "../../core/v1/schema.json#/$defs/JsonObject"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "ImageContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "image"
+      ]
+    },
+    "ImageContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ImageContentBlockKind"
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "uri"
+      ],
+      "additionalProperties": false
+    },
+    "AudioContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "audio"
+      ]
+    },
+    "AudioContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/AudioContentBlockKind"
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "uri"
+      ],
+      "additionalProperties": false
+    },
+    "ResourceLinkContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "resource-link"
+      ]
+    },
+    "ResourceLinkContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceLinkContentBlockKind"
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "uri"
+      ],
+      "additionalProperties": false
+    },
+    "EmbeddedResourceContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "embedded-resource"
+      ]
+    },
+    "EmbeddedResourceContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/EmbeddedResourceContentBlockKind"
+        },
+        "text": {
+          "type": "string"
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "ConversationContentKind": {
+      "type": "string",
+      "enum": [
+        "text",
+        "reasoning-summary",
+        "output",
+        "activity-summary",
+        "structured-json",
+        "image",
+        "audio",
+        "resource-link",
+        "embedded-resource"
+      ]
+    },
+    "ToolAnnotations": {
+      "type": "object",
+      "properties": {
+        "readOnly": {
+          "type": "boolean"
+        },
+        "destructive": {
+          "type": "boolean"
+        },
+        "idempotent": {
+          "type": "boolean"
+        },
+        "openWorld": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Advisory UI hints only; hosts must not use these fields as authorization decisions."
+    },
+    "ToolCategory": {
+      "type": "string",
+      "enum": [
+        "command",
+        "read",
+        "write",
+        "search",
+        "web",
+        "agent",
+        "computer",
+        "media",
+        "other"
+      ]
+    },
+    "ToolCommandAction": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ToolCommandActionKind"
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    "ToolCommandActionKind": {
+      "type": "string",
+      "enum": [
+        "execute",
+        "read",
+        "list",
+        "search",
+        "unknown"
+      ]
+    },
+    "CommandToolInputKind": {
+      "type": "string",
+      "enum": [
+        "command"
+      ]
+    },
+    "CommandToolInput": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/CommandToolInputKind"
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "shell": {
+          "type": "string",
+          "minLength": 1
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolCommandAction"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    "StructuredToolInputKind": {
+      "type": "string",
+      "enum": [
+        "structured"
+      ]
+    },
+    "StructuredToolInput": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/StructuredToolInputKind"
+        },
+        "value": {
+          "$ref": "../../core/v1/schema.json#/$defs/JsonObject"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "OpaqueToolInputKind": {
+      "type": "string",
+      "enum": [
+        "opaque"
+      ]
+    },
+    "OpaqueToolInput": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/OpaqueToolInputKind"
+        },
+        "value": {
+          "type": "string"
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "ToolInput": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CommandToolInput"
+        },
+        {
+          "$ref": "#/$defs/StructuredToolInput"
+        },
+        {
+          "$ref": "#/$defs/OpaqueToolInput"
+        }
+      ]
+    },
+    "ToolExecutionError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "ToolInvocation": {
+      "type": "object",
+      "properties": {
+        "callId": {
+          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "namespace": {
+          "type": "string",
+          "minLength": 1
+        },
+        "category": {
+          "$ref": "#/$defs/ToolCategory"
+        },
+        "origin": {
+          "$ref": "#/$defs/ToolOrigin"
+        },
+        "input": {
+          "$ref": "#/$defs/ToolInput"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ToolOutcome"
+        },
+        "timing": {
+          "$ref": "#/$defs/ToolTiming"
+        },
+        "annotations": {
+          "$ref": "#/$defs/ToolAnnotations"
+        }
+      },
+      "required": [
+        "callId",
+        "name",
+        "category",
+        "origin",
+        "input"
+      ],
+      "additionalProperties": false,
+      "description": "Provider-neutral client-safe tool-call envelope with one canonical input and one canonical outcome. Lifecycle remains ConversationItem.status."
+    },
+    "ToolOrigin": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ToolOriginKind"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "ToolOriginKind": {
+      "type": "string",
+      "enum": [
+        "builtin",
+        "mcp",
+        "plugin",
+        "server",
+        "custom",
+        "unknown"
+      ]
+    },
+    "ToolSuccessOutcomeKind": {
+      "type": "string",
+      "enum": [
+        "success"
+      ]
+    },
+    "ToolSuccessOutcome": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ToolSuccessOutcomeKind"
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContentBlock"
+          }
+        },
+        "exitCode": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "processId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "kind",
+        "content"
+      ],
+      "additionalProperties": false
+    },
+    "ToolFailureOutcomeKind": {
+      "type": "string",
+      "enum": [
+        "failure"
+      ]
+    },
+    "ToolFailureOutcome": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ToolFailureOutcomeKind"
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContentBlock"
+          }
+        },
+        "error": {
+          "$ref": "#/$defs/ToolExecutionError"
+        },
+        "exitCode": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "processId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "kind",
+        "content",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "ToolOutcome": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ToolSuccessOutcome"
+        },
+        {
+          "$ref": "#/$defs/ToolFailureOutcome"
+        }
+      ]
+    },
+    "ToolTiming": {
+      "type": "object",
+      "properties": {
+        "startedAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        },
+        "completedAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "ConversationItem": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/MessageConversationItem"
+        },
+        {
+          "$ref": "#/$defs/ReasoningConversationItem"
+        },
+        {
+          "$ref": "#/$defs/CommandConversationItem"
+        },
+        {
+          "$ref": "#/$defs/FileChangeConversationItem"
+        },
+        {
+          "$ref": "#/$defs/ToolConversationItem"
+        },
+        {
+          "$ref": "#/$defs/ApprovalConversationItem"
+        },
+        {
+          "$ref": "#/$defs/UnknownConversationItem"
+        }
+      ]
+    },
+    "MessageConversationItemKind": {
+      "type": "string",
+      "enum": [
+        "message"
+      ]
+    },
+    "MessageConversationItem": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/MessageConversationItemKind"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationItemStatus"
+        },
+        "role": {
+          "$ref": "#/$defs/ConversationItemRole"
+        },
+        "contents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContentBlock"
+          }
+        }
+      },
+      "required": [
+        "resource",
+        "turn",
+        "conversation",
+        "kind",
+        "status",
+        "role",
+        "contents"
+      ],
+      "additionalProperties": false
+    },
+    "ReasoningConversationItemKind": {
+      "type": "string",
+      "enum": [
+        "reasoning"
+      ]
+    },
+    "ReasoningConversationItem": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ReasoningConversationItemKind"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationItemStatus"
+        },
+        "contents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContentBlock"
+          }
+        }
+      },
+      "required": [
+        "resource",
+        "turn",
+        "conversation",
+        "kind",
+        "status",
+        "contents"
+      ],
+      "additionalProperties": false
+    },
+    "CommandConversationItemKind": {
+      "type": "string",
+      "enum": [
+        "command"
+      ]
+    },
+    "CommandConversationItem": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/CommandConversationItemKind"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationItemStatus"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool": {
+          "$ref": "#/$defs/ToolInvocation"
+        }
+      },
+      "required": [
+        "resource",
+        "turn",
+        "conversation",
+        "kind",
+        "status",
+        "tool"
+      ],
+      "additionalProperties": false
+    },
+    "FileChangeConversationItemKind": {
+      "type": "string",
+      "enum": [
+        "file-change"
+      ]
+    },
+    "FileChangeConversationItem": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/FileChangeConversationItemKind"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationItemStatus"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContentBlock"
+          }
+        }
+      },
+      "required": [
+        "resource",
+        "turn",
+        "conversation",
+        "kind",
+        "status",
+        "contents"
+      ],
+      "additionalProperties": false
+    },
+    "ToolConversationItemKind": {
+      "type": "string",
+      "enum": [
+        "tool"
+      ]
+    },
+    "ToolConversationItem": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ToolConversationItemKind"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationItemStatus"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool": {
+          "$ref": "#/$defs/ToolInvocation"
+        }
+      },
+      "required": [
+        "resource",
+        "turn",
+        "conversation",
+        "kind",
+        "status",
+        "tool"
+      ],
+      "additionalProperties": false
+    },
+    "ApprovalConversationItemKind": {
+      "type": "string",
+      "enum": [
+        "approval"
+      ]
+    },
+    "ApprovalConversationItem": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ApprovalConversationItemKind"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationItemStatus"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relatedItem": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "approval": {
+          "$ref": "#/$defs/Approval"
+        }
+      },
+      "required": [
+        "resource",
+        "turn",
+        "conversation",
+        "kind",
+        "status",
+        "approval"
+      ],
+      "additionalProperties": false
+    },
+    "UnknownConversationItemKind": {
+      "type": "string",
+      "enum": [
+        "unknown"
+      ]
+    },
+    "UnknownConversationItem": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/UnknownConversationItemKind"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationItemStatus"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "resource",
+        "turn",
+        "conversation",
+        "kind",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "ConversationItemRole": {
+      "type": "string",
+      "enum": [
+        "user",
+        "assistant"
+      ]
+    },
+    "ConversationItemStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "interrupted",
+        "declined",
+        "approved",
+        "denied",
+        "expired",
+        "unknown"
+      ]
+    },
+    "ConversationReadState": {
+      "type": "object",
+      "properties": {
+        "unread": {
+          "type": "boolean"
+        },
+        "activityVersion": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "unread",
+        "activityVersion"
+      ],
+      "additionalProperties": false
+    },
+    "ConversationStatus": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "running",
+        "waiting-approval",
+        "waiting-user-input",
+        "error",
+        "archived"
+      ]
+    },
+    "ChoiceOption": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ProviderId"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "disabledReason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "displayName"
+      ],
+      "additionalProperties": false
+    },
+    "ChoiceSet": {
+      "type": "object",
+      "properties": {
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChoiceOption"
+          },
+          "minItems": 1
+        },
+        "defaultId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "options"
+      ],
+      "additionalProperties": false
+    },
+    "FlatModelCatalogKind": {
+      "type": "string",
+      "enum": [
+        "flat"
+      ]
+    },
+    "FlatModelSelection": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FlatModelCatalogKind"
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "kind",
+        "modelId"
+      ],
+      "additionalProperties": false
+    },
+    "FlatModelCatalog": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FlatModelCatalogKind"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChoiceOption"
+          },
+          "minItems": 1
+        },
+        "defaultSelection": {
+          "$ref": "#/$defs/FlatModelSelection"
+        }
+      },
+      "required": [
+        "kind",
+        "models"
+      ],
+      "additionalProperties": false
+    },
+    "GroupedModelCatalogKind": {
+      "type": "string",
+      "enum": [
+        "grouped"
+      ]
+    },
+    "GroupedModelProvider": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChoiceOption"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "id",
+        "displayName",
+        "models"
+      ],
+      "additionalProperties": false
+    },
+    "GroupedModelSelection": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/GroupedModelCatalogKind"
+        },
+        "providerId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "kind",
+        "providerId",
+        "modelId"
+      ],
+      "additionalProperties": false
+    },
+    "GroupedModelCatalog": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/GroupedModelCatalogKind"
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GroupedModelProvider"
+          },
+          "minItems": 1
+        },
+        "defaultSelection": {
+          "$ref": "#/$defs/GroupedModelSelection"
+        }
+      },
+      "required": [
+        "kind",
+        "providers"
+      ],
+      "additionalProperties": false
+    },
+    "ModelCatalog": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/FlatModelCatalog"
+        },
+        {
+          "$ref": "#/$defs/GroupedModelCatalog"
+        }
+      ]
+    },
+    "ModelSelection": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/FlatModelSelection"
+        },
+        {
+          "$ref": "#/$defs/GroupedModelSelection"
+        }
+      ]
+    },
+    "TurnSendCapabilities": {
+      "type": "object",
+      "properties": {
+        "accessMode": {
+          "$ref": "#/$defs/ChoiceSet"
+        },
+        "reasoningEffort": {
+          "$ref": "#/$defs/ChoiceSet"
+        },
+        "modelCatalog": {
+          "$ref": "#/$defs/ModelCatalog"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ConversationCreateCapabilities": {
+      "type": "object",
+      "properties": {
+        "supportsTitle": {
+          "type": "boolean"
+        },
+        "selection": {
+          "$ref": "#/$defs/TurnSendCapabilities"
+        },
+        "workspaceMode": {
+          "$ref": "#/$defs/ChoiceSet"
+        }
+      },
+      "required": [
+        "supportsTitle"
+      ],
+      "additionalProperties": false
+    },
+    "TurnInputKind": {
+      "type": "string",
+      "enum": [
+        "text"
+      ]
+    },
+    "TurnInput": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/TurnInputKind"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "kind",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "TurnSelection": {
+      "type": "object",
+      "properties": {
+        "accessModeId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reasoningEffortId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "$ref": "#/$defs/ModelSelection"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Project": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProjectRoot"
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "position": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991,
+          "description": "Provider-defined ordering position. Read-only in Project v1 operations."
+        },
+        "createdAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        },
+        "updatedAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "resource",
+        "name",
+        "roots",
+        "metadata",
+        "position",
+        "createdAt",
+        "updatedAt"
+      ],
+      "additionalProperties": false
+    },
+    "ProjectChangeType": {
+      "type": "string",
+      "enum": [
+        "created",
+        "updated",
+        "deleted"
+      ]
+    },
+    "ProjectRoot": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "ProviderAuthenticationStatus": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "signed-in",
+        "signed-out",
+        "expired",
+        "error",
+        "unsupported"
+      ]
+    },
+    "ProviderAuthentication": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/ProviderAuthenticationStatus"
+        },
+        "displayText": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "ProviderUsage": {
+      "type": "object",
+      "properties": {
+        "displayText": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observedAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderUsageDetail"
+          }
+        }
+      },
+      "required": [
+        "displayText"
+      ],
+      "additionalProperties": false
+    },
+    "ProviderUsageDetail": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schemaVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "data": {
+          "$ref": "../../core/v1/schema.json#/$defs/JsonObject"
+        }
+      },
+      "required": [
+        "namespace",
+        "schemaVersion",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "ProviderId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identity of one Gateway provider."
+    },
+    "TurnStatus": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "waiting-approval",
+        "completed",
+        "failed",
+        "interrupted"
+      ]
+    },
+    "TurnTask": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "status": {
+          "$ref": "#/$defs/TurnStatus"
+        },
+        "displaySummary": {
+          "type": "string"
+        },
+        "startedAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        },
+        "updatedAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        },
+        "completedAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "resource",
+        "conversation",
+        "status"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

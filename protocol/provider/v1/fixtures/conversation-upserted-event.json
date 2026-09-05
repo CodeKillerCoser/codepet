@@ -4,9 +4,7 @@
   "params": {
     "conversation": {
       "resource": {
-        "deviceId": "device-macbook-1",
-        "providerPluginId": "dev.codepet.codex",
-        "providerInstanceId": "codex-work",
+        "providerId": "codex-work",
         "nativeResourceId": "thread-01"
       },
       "project": null,

@@ -362,6 +362,15 @@ export function validateManifest(record, model) {
 
 export function validatePackageReferences(record, model) {
   const { packageConfig } = record;
+  const allowedDependencyLayers = {
+    core: new Set(),
+    agent: new Set(["core"]),
+    pet: new Set(["core"]),
+    provider: new Set(["core", "agent"]),
+    gateway: new Set(["core", "agent"]),
+    channel: new Set(["core"]),
+    desktop: new Set(["core"]),
+  };
   const actualDependencies = new Set();
   for (const [sourceName, source, sourcePath] of [
     ["schema", record.schema, record.schemaPath],
@@ -372,12 +381,9 @@ export function validatePackageReferences(record, model) {
       if (target.record.packageConfig.id === packageConfig.id) return;
       const targetPackage = target.record.packageConfig;
       actualDependencies.add(targetPackage.id);
-      if (packageConfig.layer === "core") {
-        fail(`${packageConfig.id} ${sourceName} cannot reference ${targetPackage.layer} package ${targetPackage.id}`);
-      }
       assert(
-        targetPackage.layer === "core",
-        `${packageConfig.id} ${sourceName} may only reference core packages, found ${targetPackage.id}`,
+        allowedDependencyLayers[packageConfig.layer].has(targetPackage.layer),
+        `${packageConfig.id} ${sourceName} may not reference ${targetPackage.layer} package ${targetPackage.id}`,
       );
     });
   }
@@ -591,7 +597,7 @@ export async function loadProtocolModel({ config: suppliedConfig } = {}) {
     assert(isObject(packageConfig), "protocol package entry must be an object");
     assert(!packageIds.has(packageConfig.id), `duplicate protocol package ${packageConfig.id}`);
     packageIds.add(packageConfig.id);
-    assert(["core", "pet", "provider", "gateway", "channel", "desktop"].includes(packageConfig.layer), `${packageConfig.id} has invalid layer`);
+    assert(["core", "agent", "pet", "provider", "gateway", "channel", "desktop"].includes(packageConfig.layer), `${packageConfig.id} has invalid layer`);
     assert(Number.isInteger(packageConfig.version) && packageConfig.version >= 0, `${packageConfig.id} has invalid version`);
     assert(Array.isArray(packageConfig.dependencies), `${packageConfig.id} dependencies must be an array`);
     const publicTypes = packageConfig.publicTypes ?? [];
@@ -961,8 +967,13 @@ function rustDependencyCrate(targetRecord) {
 function rustImports(record, model) {
   const imports = [];
   for (const [packageId, names] of [...externalReferences(record, model)].sort(([left], [right]) => left.localeCompare(right))) {
-    const crate = rustDependencyCrate(model.recordsById.get(packageId));
-    imports.push(`pub use ${crate}::{${[...names].sort().join(", ")}};`);
+    const target = model.recordsById.get(packageId);
+    const crate = rustDependencyCrate(target);
+    if (target.packageConfig.layer === "agent") {
+      imports.push(`pub use ${crate}::*;`);
+    } else {
+      imports.push(`pub use ${crate}::{${[...names].sort().join(", ")}};`);
+    }
   }
   return imports.join("\n");
 }
@@ -2082,7 +2093,11 @@ function typescriptImports(record, model) {
     if (!importPath.startsWith(".")) importPath = `./${importPath}`;
     const list = [...names].sort().join(", ");
     lines.push(`import type { ${list} } from ${JSON.stringify(importPath)};`);
-    lines.push(`export type { ${list} } from ${JSON.stringify(importPath)};`);
+    if (target.packageConfig.layer === "agent") {
+      lines.push(`export type * from ${JSON.stringify(importPath)};`);
+    } else {
+      lines.push(`export type { ${list} } from ${JSON.stringify(importPath)};`);
+    }
   }
   return lines.join("\n");
 }

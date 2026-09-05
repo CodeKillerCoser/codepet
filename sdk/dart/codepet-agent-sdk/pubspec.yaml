@@ -1,0 +1,11 @@
+name: codepet_agent_sdk
+description: Generated Dart types for the shared CodePet Agent domain protocol.
+version: 0.1.0
+repository: https://github.com/CodeKillerCoser/codepet
+environment:
+  sdk: ^3.3.0
+dependencies:
+  codepet_core_sdk: ^0.1.0
+dependency_overrides:
+  codepet_core_sdk:
+    path: ../codepet-core-sdk

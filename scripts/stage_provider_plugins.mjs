@@ -285,7 +285,7 @@ export async function stageProviderSdkResources({
 
   const protocolDestination = path.join(resolvedStagingDirectory, "protocol");
   await mkdir(protocolDestination, { recursive: true });
-  for (const relativeProtocolPath of ["core/v1", "provider/v1", "gateway/v1", "channel/lan/v1"]) {
+  for (const relativeProtocolPath of ["core/v1", "agent/v1", "provider/v1", "gateway/v1", "channel/lan/v1"]) {
     await cp(
       path.join(resolvedRepositoryRoot, "protocol", relativeProtocolPath),
       path.join(protocolDestination, relativeProtocolPath),
@@ -333,6 +333,8 @@ export async function stageProviderSdkResources({
         dependencies: [
           "protocol/core/v1/schema.json",
           "protocol/core/v1/manifest.json",
+          "protocol/agent/v1/schema.json",
+          "protocol/agent/v1/manifest.json",
         ],
       },
       generator: {

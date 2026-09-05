@@ -6,6 +6,8 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 import coreCargo from "../../sdk/rust/codepet-core-sdk/Cargo.toml" with { type: "text" };
 import coreLib from "../../sdk/rust/codepet-core-sdk/src/lib.rs" with { type: "text" };
+import agentCargo from "../../sdk/rust/codepet-agent-sdk/Cargo.toml" with { type: "text" };
+import agentLib from "../../sdk/rust/codepet-agent-sdk/src/lib.rs" with { type: "text" };
 import providerCargo from "../../sdk/rust/codepet-provider-sdk/Cargo.toml" with { type: "text" };
 import providerLib from "../../sdk/rust/codepet-provider-sdk/src/lib.rs" with { type: "text" };
 import providerStdio from "../../sdk/rust/codepet-provider-sdk/src/stdio.rs" with { type: "text" };
@@ -15,6 +17,8 @@ import lanRustCargo from "../../sdk/rust/codepet-lan-channel-sdk/Cargo.toml" wit
 import lanRustLib from "../../sdk/rust/codepet-lan-channel-sdk/src/lib.rs" with { type: "text" };
 import coreDartPubspec from "../../sdk/dart/codepet-core-sdk/pubspec.yaml" with { type: "text" };
 import coreDartLib from "../../sdk/dart/codepet-core-sdk/lib/codepet_core_sdk.dart" with { type: "text" };
+import agentDartPubspec from "../../sdk/dart/codepet-agent-sdk/pubspec.yaml" with { type: "text" };
+import agentDartLib from "../../sdk/dart/codepet-agent-sdk/lib/codepet_agent_sdk.dart" with { type: "text" };
 import gatewayDartPubspec from "../../sdk/dart/codepet-gateway-sdk/pubspec.yaml" with { type: "text" };
 import gatewayDartLib from "../../sdk/dart/codepet-gateway-sdk/lib/codepet_gateway_sdk.dart" with { type: "text" };
 import lanDartPubspec from "../../sdk/dart/codepet-lan-channel-sdk/pubspec.yaml" with { type: "text" };
@@ -101,10 +105,12 @@ async function protocolLayout(protocolDirectory) {
     return { core: "v1/core", provider: "v1/schema" };
   }
   const sourceCore = resolve(protocolDirectory, "core", "v1");
+  const sourceAgent = resolve(protocolDirectory, "agent", "v1");
   const sourceProvider = resolve(protocolDirectory, "provider", "v1");
-  if (await exists(resolve(sourceCore, "schema.json")) && await exists(resolve(sourceProvider, "schema.json"))) {
+  if (await exists(resolve(sourceCore, "schema.json")) && await exists(resolve(sourceAgent, "schema.json")) && await exists(resolve(sourceProvider, "schema.json"))) {
     return {
       core: "core/v1",
+      agent: "agent/v1",
       provider: "provider/v1",
       gateway: "gateway/v1",
       "lan-channel": "channel/lan/v1",
@@ -115,6 +121,10 @@ async function protocolLayout(protocolDirectory) {
 
 async function buildConfig(protocolDirectory, layout, options) {
   const coreSchema = JSON.parse(await readFile(resolve(protocolDirectory, layout.core, "schema.json"), "utf8"));
+  const includeAgent = options.package === "provider" || options.package === "gateway";
+  const agentSchema = includeAgent
+    ? JSON.parse(await readFile(resolve(protocolDirectory, layout.agent, "schema.json"), "utf8"))
+    : undefined;
   const selectedPath = layout[options.package];
   if (!selectedPath) fail(`protocol resources do not contain package: ${options.package}`);
   const selectedSchema = JSON.parse(await readFile(resolve(protocolDirectory, selectedPath, "schema.json"), "utf8"));
@@ -137,6 +147,9 @@ async function buildConfig(protocolDirectory, layout, options) {
   const coreOutput = language === "rust"
     ? "codepet-core-sdk/src/generated.rs"
     : "codepet-core-sdk/lib/src/generated.dart";
+  const agentOutput = language === "rust"
+    ? "codepet-agent-sdk/src/generated.rs"
+    : "codepet-agent-sdk/lib/src/generated.dart";
   return {
     generatorInterfaceVersion: 1,
     targets: [
@@ -156,13 +169,23 @@ async function buildConfig(protocolDirectory, layout, options) {
         publicTypes: Object.keys(coreSchema.$defs ?? {}),
         outputs: { [language]: coreOutput },
       },
+      ...(includeAgent ? [{
+        id: "agent-v1",
+        layer: "agent",
+        version: 1,
+        schema: `${layout.agent}/schema.json`,
+        manifest: `${layout.agent}/manifest.json`,
+        dependencies: ["core-v1"],
+        publicTypes: Object.keys(agentSchema.$defs ?? {}),
+        outputs: { [language]: agentOutput },
+      }] : []),
       {
         id: packageMetadata.id,
         layer: packageMetadata.layer,
         version: packageMetadata.version,
         schema: `${selectedPath}/schema.json`,
         manifest: `${selectedPath}/manifest.json`,
-        dependencies: ["core-v1"],
+        dependencies: includeAgent ? ["core-v1", "agent-v1"] : ["core-v1"],
         ...(options.package === "lan-channel" ? { publicTypes: Object.keys(selectedSchema.$defs ?? {}) } : {}),
         outputs: { [language]: packageMetadata.output },
       },
@@ -218,7 +241,7 @@ export async function runCpSdkGen(arguments_, currentDirectory = process.cwd()) 
     generatorVersion: VERSION,
     package: options.package,
     role: options.role,
-    protocolVersion: config.packages[1].version,
+    protocolVersion: config.packages.find((package_) => package_.id === `${options.package === "lan-channel" ? "channel-lan" : options.package}-v1`).version,
     protocolDigest: await digestProtocol(protocolDirectory, config),
     language: options.language,
   }, null, 2)}\n`;
@@ -232,9 +255,14 @@ export async function runCpSdkGen(arguments_, currentDirectory = process.cwd()) 
       : options.package === "gateway"
         ? "codepet-gateway-sdk"
         : "codepet-lan-channel-sdk";
-    staticFiles.set("Cargo.toml", `[workspace]\nmembers = [\n    "codepet-core-sdk",\n    "${packageDirectory}",\n]\nresolver = "2"\n`);
+    const members = ["codepet-core-sdk", ...(options.package === "lan-channel" ? [] : ["codepet-agent-sdk"]), packageDirectory];
+    staticFiles.set("Cargo.toml", `[workspace]\nmembers = [\n${members.map((member) => `    "${member}",`).join("\n")}\n]\nresolver = "2"\n`);
     staticFiles.set("codepet-core-sdk/Cargo.toml", coreCargo);
     staticFiles.set("codepet-core-sdk/src/lib.rs", coreLib);
+    if (options.package !== "lan-channel") {
+      staticFiles.set("codepet-agent-sdk/Cargo.toml", agentCargo);
+      staticFiles.set("codepet-agent-sdk/src/lib.rs", agentLib);
+    }
     if (options.package === "provider") {
       staticFiles.set("codepet-provider-sdk/Cargo.toml", providerCargo);
       staticFiles.set("codepet-provider-sdk/src/lib.rs", providerLib);
@@ -250,6 +278,8 @@ export async function runCpSdkGen(arguments_, currentDirectory = process.cwd()) 
     staticFiles.set("codepet-core-sdk/pubspec.yaml", coreDartPubspec);
     staticFiles.set("codepet-core-sdk/lib/codepet_core_sdk.dart", coreDartLib);
     if (options.package === "gateway") {
+      staticFiles.set("codepet-agent-sdk/pubspec.yaml", agentDartPubspec);
+      staticFiles.set("codepet-agent-sdk/lib/codepet_agent_sdk.dart", agentDartLib);
       staticFiles.set("codepet-gateway-sdk/pubspec.yaml", gatewayDartPubspec);
       staticFiles.set("codepet-gateway-sdk/lib/codepet_gateway_sdk.dart", gatewayDartLib);
     } else {
