@@ -504,8 +504,9 @@ impl CodexProtocolMapper {
         let resource = self.resource(item.id().to_string());
         let turn_resource = self.resource(turn.id.clone());
         let mutable_text = turn.status == CodexTurnStatus::InProgress;
-        match item {
+        let mut mapped = match item {
             CodexThreadItem::UserMessage { id, text_inputs } => ConversationItem::MessageConversationItem(MessageConversationItem {
+                meta: None,
                 resource,
                 turn: turn_resource,
                 conversation: conversation.clone(),
@@ -526,6 +527,7 @@ impl CodexProtocolMapper {
                     .collect(),
             }),
             CodexThreadItem::AgentMessage { id, text } => ConversationItem::MessageConversationItem(MessageConversationItem {
+                meta: None,
                 resource,
                 turn: turn_resource,
                 conversation: conversation.clone(),
@@ -543,6 +545,7 @@ impl CodexProtocolMapper {
                     .collect(),
             }),
             CodexThreadItem::Plan { id, text } => ConversationItem::MessageConversationItem(MessageConversationItem {
+                meta: None,
                 resource,
                 turn: turn_resource,
                 conversation: conversation.clone(),
@@ -560,6 +563,7 @@ impl CodexProtocolMapper {
                     .collect(),
             }),
             CodexThreadItem::Reasoning { id, summary } => ConversationItem::ReasoningConversationItem(ReasoningConversationItem {
+                meta: None,
                 resource,
                 turn: turn_resource,
                 conversation: conversation.clone(),
@@ -656,6 +660,7 @@ impl CodexProtocolMapper {
                     annotations: None,
                 };
                 ConversationItem::CommandConversationItem(CommandConversationItem {
+                    meta: None,
                     resource,
                     turn: turn_resource,
                     conversation: conversation.clone(),
@@ -670,6 +675,7 @@ impl CodexProtocolMapper {
                 status,
                 change_count,
             } => ConversationItem::FileChangeConversationItem(FileChangeConversationItem {
+                meta: None,
                 resource,
                 turn: turn_resource,
                 conversation: conversation.clone(),
@@ -684,6 +690,7 @@ impl CodexProtocolMapper {
                 })],
             }),
             CodexThreadItem::ToolActivity { id, title, status, details } => ConversationItem::ToolConversationItem(ToolConversationItem {
+                meta: None,
                 resource,
                 turn: turn_resource,
                 conversation: conversation.clone(),
@@ -696,6 +703,7 @@ impl CodexProtocolMapper {
                 tool: details.as_ref().map(|details| tool_invocation(id, details)).unwrap_or_else(|| opaque_tool_invocation(id, title)),
             }),
             CodexThreadItem::Unknown { .. } => ConversationItem::UnknownConversationItem(UnknownConversationItem {
+                meta: None,
                 resource,
                 turn: turn_resource,
                 conversation: conversation.clone(),
@@ -703,11 +711,14 @@ impl CodexProtocolMapper {
                 status: item_status_from_turn(turn.status),
                 title: Some("Unknown Codex activity".to_string()),
             }),
-        }
+        };
+        codepet_provider_sdk::truncate_tool_item_text(&mut mapped, codepet_provider_sdk::DEFAULT_TOOL_TEXT_BYTES);
+        mapped
     }
 
     fn approval_item(&self, related_item_id: &str, approval: &Approval) -> ConversationItem {
         ConversationItem::ApprovalConversationItem(ApprovalConversationItem {
+            meta: None,
             resource: approval.resource.clone(),
             turn: approval.turn.clone(),
             conversation: approval.conversation.clone(),
@@ -778,6 +789,7 @@ impl CodexProtocolMapper {
 
     pub fn error(error: CodexAppServerError) -> ProtocolError {
         match error {
+            CodexAppServerError::RejectedMessage { error, .. } => Self::error(*error),
             CodexAppServerError::Rpc { code, message, .. } => ProtocolError {
                 code: "provider_error".to_string(),
                 message,
@@ -788,10 +800,10 @@ impl CodexProtocolMapper {
                 protocol_error("provider_protocol_error", message, false)
             }
             CodexAppServerError::Spawn(message)
-            | CodexAppServerError::Io(message)
-            | CodexAppServerError::Timeout(message) => {
+            | CodexAppServerError::Io(message) => {
                 protocol_error("provider_unavailable", message, true)
             }
+            CodexAppServerError::Timeout(message) => protocol_error("provider_request_timeout", message, true),
             CodexAppServerError::ProcessExited => protocol_error(
                 "provider_unavailable",
                 "Codex App Server exited".to_string(),

@@ -38,9 +38,9 @@ Host 已持久化稳定 `deviceId`、自签名 TLS identity 和仅保存 bearer 
 ## 涉及模块
 
 - `protocol/channel/lan/v1/`：新增 pairing request/create/status DTO 与状态枚举，保持 admission 与 Gateway 分层。
-- `crates/codepet-host/src/remote_access.rs`：pending request、幂等、TTL、接受/拒绝和 credential 签发的安全状态机。
-- `crates/codepet-host/src/remote_listener.rs`：新增 TLS REST create/status 路由，只在 accepted 状态返回 bearer。
-- `crates/codepet-host/src/remote_mdns.rs`：发布候选 TLS fingerprint 和 Host pairing intent。
+- `crates/codepet-host/src/remote/access.rs`：pending request、幂等、TTL、接受/拒绝和 credential 签发的安全状态机。
+- `crates/codepet-host/src/remote/channels/lan/listener.rs`：新增 TLS REST create/status 路由，只在 accepted 状态返回 bearer。
+- `crates/codepet-host/src/remote/channels/lan/mdns.rs`：发布候选 TLS fingerprint 和 Host pairing intent。
 - `src-tauri/src/runtime_gateway/remote_access.rs`、`frontend/`：向本机 UI 投影 pending request并要求用户确认。
 - `codepet-remote/lib/discovery/`：持续投影地址变化和 `pair` 元数据变化，两类事件互不制造错误重连。
 - `codepet-remote/lib/application/pairing/`、`lib/pairing/`：配对请求用例、严格响应校验和 secure credential commit。

@@ -30,3 +30,5 @@ cargo test --manifest-path crates/Cargo.toml -p codepet-host --test builtin_prov
 ```
 
 `tests/fixtures/claude-2.1.251-no-auth.ndjson` is a path/UUID-sanitized capture from an actual `claude` 2.1.251 non-persistent `stream-json` run on an unauthenticated local installation. It preserves the observed event shapes, including the counterintuitive `subtype: "success"` plus `is_error: true` authentication result.
+
+Item mappers apply the SDK's optional `truncate_tool_item_text` helper only to `kind: tool`: text fields retain UTF-8-safe head/tail within 256 KiB and record paths and byte counts in optional item `_meta.truncations`. Other item variants stay complete. Runtime does not apply this policy or change pagination. See `knowledge/60-rules/provider-item-text-and-pagination.md`.

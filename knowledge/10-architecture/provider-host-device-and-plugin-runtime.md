@@ -2,7 +2,7 @@
 
 ## 当前结论
 
-`crates/codepet-host` 已提供可复用的 Rust Provider Host：它从显式目录读取 manifest，为本机持久化稳定 `DeviceId`，按 manifest 启动独立 Provider 二进制，并通过生成的 `codepet-provider-sdk` 在独占 stdio 上通信。它同时实现内部 `codepet-gateway-sdk::ProtocolServer`、`RemoteAccessManager` 安全核心，以及共用同一 TLS identity 的 Gateway v1 HTTPS/WSS LAN listener。Tauri 后端现已通过单个 `RemoteAccessRuntime` 接入 listener、mDNS、pairing watch 与退出生命周期；frontend UI 尚未接入。
+`crates/codepet-host` 已提供可复用的 Rust Provider Host：它从显式目录读取 manifest，为本机持久化稳定 `DeviceId`，按 manifest 启动独立 Provider 二进制，并通过生成的 `codepet-provider-sdk` 在独占 stdio 上通信。它同时实现内部 `codepet-gateway-sdk::ProtocolServer`、`RemoteAccessManager` 安全核心，以及共用同一 TLS identity 的 Gateway v1 HTTPS/WSS LAN listener。Tauri 后端现已通过单个 `RemoteAccessRuntime` 接入 listener、mDNS、pairing watch 与退出生命周期；连接页已展示 Provider 连接健康与 Harness 状态。
 
 Code Pet 发行包内置 `codepet-provider-codex`、`codepet-provider-opencode` 和 `codepet-provider-claude` 三个独立 adapter 二进制及其 manifest。内置的是 Code Pet 自有的 Provider adapter，不是 Codex、OpenCode 或 Claude runtime；runtime 仍由用户本机安装和配置，`AgentRuntimeService` 的检测/用户选择结果始终是 executable 权威。
 
@@ -17,6 +17,8 @@ Provider binary
 ```
 
 Provider 事件进入 Gateway v1 replay，并由兼容适配发布到远程 `runtime-gateway-event`；它们不进入 `SharedState` activity store、Desktop Companion replay、`codex-desktop-companion-event` 或 `pet-event`，也没有失败后回退到桌宠 IPC 的路径。真实 fixture 与 Tauri mock `AppHandle` 测试断言 remote event/replay 收到数据，同时 companion、Pet 与 Desktop adapter spy 保持不变。
+
+连接与 IPC 已按 `remote/`、`remote/channels/lan/`、`providers/` 归组；具体状态权威、两段 SDK 心跳、最后客户端断开后的 Harness 清理见 [Remote 与 Provider 连接架构](remote-and-provider-connections.md)。Tauri 启用连接心跳后，manifest 初始化只创建实例，由 SDK 根据连接集合协调 start/stop。
 
 ## 范围与非目标
 

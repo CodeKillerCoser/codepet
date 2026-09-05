@@ -3,3 +3,6 @@
 mod generated;
 
 pub use generated::*;
+
+mod heartbeat;
+pub use heartbeat::*;

@@ -297,6 +297,7 @@ impl OpenCodeProtocolMapper {
         text: String,
     ) -> ConversationItem {
         ConversationItem::MessageConversationItem(MessageConversationItem {
+            meta: None,
             resource: self.resource(item_id.clone()),
             turn: turn.resource.clone(),
             conversation: conversation.clone(),
@@ -359,6 +360,7 @@ impl OpenCodeProtocolMapper {
                 }
                 "shell" => {
                     items.push(ConversationItem::CommandConversationItem(CommandConversationItem {
+                        meta: None,
                         resource: self.resource(message.id.clone()), turn: turn.clone(),
                         conversation: conversation.clone(), kind: CommandConversationItemKind::Command,
                         status: assistant_status(message),
@@ -392,7 +394,7 @@ impl OpenCodeProtocolMapper {
         message_status: ConversationItemStatus,
     ) -> Option<ConversationItem> {
         let resource_id = format!("{message_id}:{}", content.id);
-        match content.kind.as_str() {
+        let mut mapped = match content.kind.as_str() {
             "text" => Some(self.message_item(resource_id, turn.clone(), conversation,
                 message_status, ConversationItemRole::Assistant,
                 content.text.as_deref().map(|text| ContentBlock::TextContentBlock(TextContentBlock {
@@ -401,6 +403,7 @@ impl OpenCodeProtocolMapper {
                 })).into_iter().collect(),
             )),
             "reasoning" => Some(ConversationItem::ReasoningConversationItem(ReasoningConversationItem {
+                meta: None,
                 resource: self.resource(resource_id), turn: turn.clone(), conversation: conversation.clone(),
                 kind: ReasoningConversationItemKind::Reasoning, status: message_status,
                 contents: content.text.as_deref().map(|text| ContentBlock::ReasoningSummaryContentBlock(codepet_provider_sdk::ReasoningSummaryContentBlock {
@@ -413,6 +416,7 @@ impl OpenCodeProtocolMapper {
                 let status = tool_status(content.state.as_ref());
                 let tool = opencode_tool_invocation(content);
                 Some(ConversationItem::ToolConversationItem(ToolConversationItem {
+                    meta: None,
                     resource: self.resource(resource_id), turn: turn.clone(), conversation: conversation.clone(),
                     kind: ToolConversationItemKind::Tool, status,
                     title: content.name.clone().or_else(|| Some("Tool".to_string())), tool,
@@ -420,13 +424,18 @@ impl OpenCodeProtocolMapper {
             }
             _ => Some(self.unknown_item(resource_id, turn.clone(), conversation, message_status,
                 Some(format!("OpenCode {}", content.kind)))),
+        };
+        if let Some(item) = &mut mapped {
+            codepet_provider_sdk::truncate_tool_item_text(item, codepet_provider_sdk::DEFAULT_TOOL_TEXT_BYTES);
         }
+        mapped
     }
 
     fn message_item(&self, resource_id: String, turn: RoutedResourceId,
         conversation: &RoutedResourceId, status: ConversationItemStatus,
         role: ConversationItemRole, contents: Vec<ContentBlock>) -> ConversationItem {
         ConversationItem::MessageConversationItem(MessageConversationItem {
+            meta: None,
             resource: self.resource(resource_id), turn, conversation: conversation.clone(),
             kind: MessageConversationItemKind::Message, status, role, contents,
         })
@@ -436,6 +445,7 @@ impl OpenCodeProtocolMapper {
         conversation: &RoutedResourceId, status: ConversationItemStatus,
         title: Option<String>) -> ConversationItem {
         ConversationItem::UnknownConversationItem(UnknownConversationItem {
+            meta: None,
             resource: self.resource(resource_id), turn, conversation: conversation.clone(),
             kind: UnknownConversationItemKind::Unknown, status, title,
         })

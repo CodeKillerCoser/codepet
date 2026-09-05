@@ -1,4 +1,4 @@
-use crate::manager::{
+use crate::providers::manager::{
     HostUpdate, PluginManager, PluginRuntimeSnapshot, PluginRuntimeState,
     ProviderInstanceRuntimeSnapshot,
 };
@@ -285,6 +285,8 @@ impl ProviderGatewayService {
             conversation_state,
         })
     }
+
+    pub fn remote_connections(&self) -> Arc<crate::RemoteConnections> { self.manager.remote_connections() }
 
     pub fn server_name(&self) -> &str {
         &self.server_name
@@ -844,6 +846,13 @@ impl ProtocolServer for ProviderGatewayService {
         })
     }
 
+    fn protocol_ping<'a>(&'a self, request: gateway::PingRequest) -> gateway::ProtocolFuture<'a, gateway::PingResponse> {
+        Box::pin(async move {
+            Ok(gateway::PingResponse { sequence: request.sequence,
+                providers: self.gateway_providers(None).await?.into_iter().map(|p| p.summary).collect() })
+        })
+    }
+
     fn protocol_handshake<'a>(
         &'a self,
         request: gateway::HandshakeRequest,
@@ -1220,6 +1229,58 @@ impl ProtocolServer for ProviderGatewayService {
         })
     }
 
+    fn conversation_resume<'a>(
+        &'a self,
+        request: gateway::ConversationResumeRequest,
+    ) -> gateway::ProtocolFuture<'a, gateway::ConversationResumeResponse> {
+        Box::pin(async move {
+            let limit = request.limit.unwrap_or(20);
+            if !(1..=100).contains(&limit) {
+                return Err(gateway::ProtocolError {
+                    code: "invalid_request".to_string(),
+                    message: "conversation.resume limit must be between 1 and 100".to_string(),
+                    retryable: false,
+                    details: None,
+                });
+            }
+            let interaction = match self
+                .conversation_acquire_interaction(gateway::ConversationAcquireInteractionRequest {
+                    conversation: request.conversation.clone(),
+                })
+                .await
+            {
+                Ok(interaction) => interaction,
+                Err(error) => {
+                    return Ok(gateway::ConversationResumeResponse {
+                        interaction_acquired: false,
+                        interaction: None,
+                        interaction_error: Some(error),
+                        history: None,
+                        history_error: None,
+                    });
+                }
+            };
+            let history = self
+                .conversation_get(gateway::ConversationGetRequest {
+                    conversation: request.conversation,
+                    cursor: None,
+                    limit: Some(limit),
+                })
+                .await;
+            let (history, history_error) = match history {
+                Ok(history) => (Some(history), None),
+                Err(error) => (None, Some(error)),
+            };
+            Ok(gateway::ConversationResumeResponse {
+                interaction_acquired: true,
+                interaction: Some(interaction),
+                interaction_error: None,
+                history,
+                history_error,
+            })
+        })
+    }
+
     fn conversation_mark_read<'a>(
         &'a self,
         request: gateway::ConversationMarkReadRequest,
@@ -1358,6 +1419,8 @@ fn gateway_provider(
                     .and_then(|descriptor| descriptor.default_workspace_root.clone()),
             },
             runtime: gateway::ProviderRuntime {
+                connection_status: Some(plugin.connection_status),
+                generation: Some(plugin.generation),
                 status: if plugin.catalog.enabled && runtime.record.enabled {
                     provider_runtime_status(plugin.state, runtime.instance.as_ref())
                 } else {

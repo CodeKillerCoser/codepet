@@ -1,4 +1,4 @@
-use crate::catalog::{PluginCatalog, PluginInstanceConfig};
+use crate::providers::catalog::{PluginCatalog, PluginInstanceConfig};
 use crate::persistence::{persistence_io, write_json_atomically};
 use crate::{HostError, HostResult};
 use codepet_provider_sdk::{

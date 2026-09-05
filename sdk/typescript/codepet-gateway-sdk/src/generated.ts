@@ -3,11 +3,11 @@
 
 import type { Approval, ApprovalDecision, Conversation, ConversationContentKind, ConversationCreateCapabilities, ConversationItem, ConversationReadState, Project, ProjectChangeType, ProjectRoot, ProviderAuthentication, ProviderId, ProviderUsage, TurnInput, TurnSelection, TurnSendCapabilities, TurnTask } from "../../codepet-agent-sdk/src/generated";
 export type * from "../../codepet-agent-sdk/src/generated";
-import type { ClientId, Cursor, DeviceDescriptor, EventCursor, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, RequestId, RoutedResourceId, RpcError, TimestampMs, TraceContext, VersionRange } from "../../codepet-core-sdk/src/generated";
-export type { ClientId, Cursor, DeviceDescriptor, EventCursor, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, RequestId, RoutedResourceId, RpcError, TimestampMs, TraceContext, VersionRange } from "../../codepet-core-sdk/src/generated";
+import type { ClientId, ConnectionStatus, Cursor, DeviceDescriptor, EventCursor, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, RequestId, RoutedResourceId, RpcError, TimestampMs, TraceContext, VersionRange } from "../../codepet-core-sdk/src/generated";
+export type { ClientId, ConnectionStatus, Cursor, DeviceDescriptor, EventCursor, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, RequestId, RoutedResourceId, RpcError, TimestampMs, TraceContext, VersionRange } from "../../codepet-core-sdk/src/generated";
 
 export const PROTOCOL_VERSION = 1 as const;
-export const PROTOCOL_METHODS = ["protocol.handshake", "protocol.describe", "event.subscribe", "provider.list", "provider.describe", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.list", "conversation.search", "conversation.get", "conversation.markRead", "conversation.acquireInteraction", "conversation.create", "turn.send", "turn.interrupt", "approval.resolve"] as const;
+export const PROTOCOL_METHODS = ["protocol.ping", "protocol.handshake", "protocol.describe", "event.subscribe", "provider.list", "provider.describe", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.list", "conversation.search", "conversation.get", "conversation.markRead", "conversation.acquireInteraction", "conversation.resume", "conversation.create", "turn.send", "turn.interrupt", "approval.resolve"] as const;
 export const PROTOCOL_EVENTS = ["project.changed", "provider.changed", "conversation.upserted", "conversation.itemUpserted", "conversation.activityChanged", "turn.upserted", "turn.outputDelta", "approval.requested", "approval.resolved"] as const;
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -118,6 +118,19 @@ export interface ConversationProjectFilterStandalone {
 
 export type ConversationProjectFilterStandaloneKind = "standalone";
 
+export interface ConversationResumeRequest {
+  conversation: RoutedResourceId;
+  limit?: number;
+}
+
+export interface ConversationResumeResponse {
+  interactionAcquired: boolean;
+  interaction?: ConversationAcquireInteractionResponse;
+  interactionError?: ProtocolError;
+  history?: ConversationGetResponse;
+  historyError?: ProtocolError;
+}
+
 export interface ConversationSearchRequest {
   providerId: ProviderId;
   searchTerm: string;
@@ -175,6 +188,15 @@ export interface HandshakeResponse {
   device: GatewayDevice;
   providers: Array<ProviderSummary>;
   eventCursor: EventCursor;
+}
+
+export interface PingRequest {
+  sequence: number;
+}
+
+export interface PingResponse {
+  sequence: number;
+  providers: Array<ProviderSummary>;
 }
 
 export interface ProjectChangedEvent {
@@ -275,6 +297,8 @@ export interface ProviderListResponse {
 }
 
 export interface ProviderRuntime {
+  connectionStatus?: ConnectionStatus;
+  generation?: number;
   status: ProviderStatus;
   version?: string;
   executablePath?: string;
@@ -329,6 +353,7 @@ export interface TurnUpsertedEvent {
 }
 
 export interface ProtocolRequestMap {
+  "protocol.ping": PingRequest;
   "protocol.handshake": HandshakeRequest;
   "protocol.describe": ProtocolDescribeRequest;
   "event.subscribe": EventSubscribeRequest;
@@ -344,6 +369,7 @@ export interface ProtocolRequestMap {
   "conversation.get": ConversationGetRequest;
   "conversation.markRead": ConversationMarkReadRequest;
   "conversation.acquireInteraction": ConversationAcquireInteractionRequest;
+  "conversation.resume": ConversationResumeRequest;
   "conversation.create": ConversationCreateRequest;
   "turn.send": TurnSendRequest;
   "turn.interrupt": TurnInterruptRequest;
@@ -351,6 +377,7 @@ export interface ProtocolRequestMap {
 }
 
 export interface ProtocolResponseMap {
+  "protocol.ping": PingResponse;
   "protocol.handshake": HandshakeResponse;
   "protocol.describe": ProtocolDescribeResponse;
   "event.subscribe": EventSubscribeResponse;
@@ -366,6 +393,7 @@ export interface ProtocolResponseMap {
   "conversation.get": ConversationGetResponse;
   "conversation.markRead": ConversationMarkReadResponse;
   "conversation.acquireInteraction": ConversationAcquireInteractionResponse;
+  "conversation.resume": ConversationResumeResponse;
   "conversation.create": ConversationCreateResponse;
   "turn.send": TurnSendResponse;
   "turn.interrupt": TurnInterruptResponse;

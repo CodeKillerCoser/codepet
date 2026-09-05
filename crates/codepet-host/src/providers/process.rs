@@ -1,4 +1,4 @@
-use crate::catalog::PluginDescriptor;
+use crate::providers::catalog::PluginDescriptor;
 use crate::{HostError, HostResult};
 use codepet_provider_sdk::{
     JsonRpcInboundError, JsonRpcInboundRequest, JsonRpcResponsePayload, ProviderFrameCodec,

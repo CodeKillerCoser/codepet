@@ -1,4 +1,4 @@
-use crate::catalog::{CatalogDiagnostic, PluginCatalog, PluginDescriptor};
+use crate::providers::catalog::{CatalogDiagnostic, PluginCatalog, PluginDescriptor};
 use crate::{
     DeviceRegistry, HostError, HostResult, PluginProcess, PluginProcessExit,
     PluginProcessOptions, ProviderInstanceRecord, ProviderInstanceRegistry, StderrDiagnostic,
@@ -49,6 +49,7 @@ pub struct PluginRuntimeSnapshot {
     pub state: PluginRuntimeState,
     pub diagnostic: Option<HostError>,
     pub generation: u64,
+    pub connection_status: codepet_provider_sdk::ConnectionStatus,
     pub process_exit: Option<PluginProcessExit>,
     pub stderr_diagnostics: Vec<StderrDiagnostic>,
     pub instances: Vec<ProviderInstanceRuntimeSnapshot>,
@@ -113,6 +114,7 @@ struct PluginEntry {
     state: PluginRuntimeState,
     diagnostic: Option<HostError>,
     generation: u64,
+    connection_status: codepet_provider_sdk::ConnectionStatus,
     process: Option<Arc<PluginProcess>>,
     process_exit: Option<PluginProcessExit>,
     stderr_diagnostics: Vec<StderrDiagnostic>,
@@ -127,6 +129,11 @@ impl PluginEntry {
             state: self.state,
             diagnostic: self.diagnostic.clone(),
             generation: self.generation,
+            connection_status: match self.state {
+                PluginRuntimeState::Stopped | PluginRuntimeState::Crashed => codepet_provider_sdk::ConnectionStatus::Offline,
+                PluginRuntimeState::Starting => codepet_provider_sdk::ConnectionStatus::Connecting,
+                PluginRuntimeState::Ready => self.connection_status,
+            },
             process_exit: self.process_exit.clone(),
             stderr_diagnostics: self.stderr_diagnostics.clone(),
             instances: self
@@ -149,6 +156,9 @@ struct PluginManagerInner {
     updates: mpsc::Sender<HostUpdate>,
     update_receiver: StdMutex<Option<mpsc::Receiver<HostUpdate>>>,
     shutting_down: AtomicBool,
+    remote_connections: Arc<crate::RemoteConnections>,
+    status_changes: tokio::sync::watch::Sender<u64>,
+    heartbeat_enabled: AtomicBool,
     config: PluginManagerConfig,
     catalog_diagnostics: Vec<CatalogDiagnostic>,
     runtime_selections: RwLock<BTreeMap<String, RuntimeCandidate>>,
@@ -158,6 +168,8 @@ struct PluginManagerInner {
 pub struct PluginManager {
     inner: Arc<PluginManagerInner>,
 }
+
+mod heartbeat;
 
 impl PluginManager {
     pub fn new(
@@ -217,6 +229,7 @@ impl PluginManager {
                     state: PluginRuntimeState::Stopped,
                     diagnostic: None,
                     generation: 0,
+                    connection_status: codepet_provider_sdk::ConnectionStatus::Offline,
                     process: None,
                     process_exit: None,
                     stderr_diagnostics: Vec::new(),
@@ -238,11 +251,24 @@ impl PluginManager {
                 updates,
                 update_receiver: StdMutex::new(Some(update_receiver)),
                 shutting_down: AtomicBool::new(false),
+                remote_connections: Arc::new(crate::RemoteConnections::default()),
+                status_changes: tokio::sync::watch::channel(0).0,
+                heartbeat_enabled: AtomicBool::new(false),
                 catalog_diagnostics: catalog.diagnostics().to_vec(),
                 runtime_selections: RwLock::new(config.runtime_selections.clone()),
                 config,
             }),
         })
+    }
+
+    pub fn subscribe_status_changes(&self) -> tokio::sync::watch::Receiver<u64> { self.inner.status_changes.subscribe() }
+
+    pub fn remote_connections(&self) -> Arc<crate::RemoteConnections> {
+        self.inner.remote_connections.clone()
+    }
+
+    pub fn enable_connection_heartbeats(&self) {
+        self.inner.heartbeat_enabled.store(true, Ordering::SeqCst);
     }
 
     pub(crate) fn device(&self) -> &DeviceRegistry {
@@ -408,7 +434,11 @@ impl PluginManager {
             .into_iter()
             .filter(|record| record.enabled)
         {
-            let result = self.recover_instance_record(&record).await;
+            let result = if self.inner.heartbeat_enabled.load(Ordering::SeqCst) {
+                self.create_instance_record(&record).await.map(|_| ())
+            } else {
+                self.recover_instance_record(&record).await
+            };
             if first_error.is_none() {
                 first_error = result.err();
             }
@@ -451,6 +481,7 @@ impl PluginManager {
             let previous_state = entry.state;
             entry.generation = entry.generation.saturating_add(1);
             entry.state = PluginRuntimeState::Starting;
+            entry.connection_status = codepet_provider_sdk::ConnectionStatus::Connecting;
             entry.diagnostic = None;
             entry.process_exit = None;
             entry.stderr_diagnostics.clear();
@@ -608,6 +639,9 @@ impl PluginManager {
             exit,
             diagnostics,
         );
+        if self.inner.heartbeat_enabled.load(Ordering::SeqCst) {
+            self.spawn_heartbeat(plugin_id.to_string(), generation, Arc::downgrade(&process));
+        }
         Ok(())
     }
 
@@ -759,6 +793,10 @@ impl PluginManager {
         &self,
         route: &ProviderInstanceRoute,
     ) -> HostResult<()> {
+        if self.inner.heartbeat_enabled.load(Ordering::SeqCst)
+            && self.inner.remote_connections.snapshot().connections.is_empty() {
+            return Err(HostError::new("no_connected_clients", "No authenticated client is connected").retryable(true));
+        }
         validate_route_identity(route)?;
         let record = self.inner.instances.resolve_route(route, None)?;
         if !record.enabled {
@@ -1670,6 +1708,9 @@ impl PluginManager {
     }
 
     async fn send_update(&self, update: HostUpdate) -> HostResult<()> {
+        if matches!(&update, HostUpdate::PluginStateChanged { .. } | HostUpdate::InstanceChanged { .. }) {
+            self.inner.status_changes.send_modify(|version| *version = version.wrapping_add(1));
+        }
         self.inner
             .updates
             .send(update)

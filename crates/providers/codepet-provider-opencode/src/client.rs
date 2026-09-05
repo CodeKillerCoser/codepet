@@ -313,14 +313,12 @@ pub struct OpenCodeServerSession {
 }
 
 impl OpenCodeServerSession {
-    pub fn spawn(
-        executable: &Path,
-        args: &[String],
-        server_version: &str,
-        generation: String,
-        working_directory: Option<&Path>,
+    pub(crate) fn spawn_while_current(
+        executable: &Path, args: &[String], server_version: &str, generation: String,
+        working_directory: Option<&Path>, current: impl Fn() -> bool,
     ) -> Result<Self, OpenCodeServerError> {
         validate_server_version(server_version)?;
+        if !current() { return Err(OpenCodeServerError::Protocol("Server startup cancelled".into())); }
         let deadline = Instant::now() + STARTUP_TIMEOUT;
         let username = "codepet".to_string();
         let password = Uuid::new_v4().to_string();
@@ -345,7 +343,7 @@ impl OpenCodeServerSession {
         })?;
         let (startup_sender, startup_receiver) = mpsc::sync_channel(1);
         let output = thread::spawn(move || drain_server_output(stdout, startup_sender));
-        let base_url = match wait_for_listening_address(&startup_receiver, &mut child, deadline) {
+        let base_url = match wait_for_listening_address(&startup_receiver, &mut child, deadline, &current) {
             Ok(base_url) => base_url,
             Err(error) => {
                 let _ = terminate_child(&mut child, Instant::now() + SHUTDOWN_TIMEOUT);
@@ -361,7 +359,7 @@ impl OpenCodeServerSession {
                 return Err(error);
             }
         };
-        if let Err(error) = wait_for_ready(&client, &mut child, deadline) {
+        if let Err(error) = wait_for_ready(&client, &mut child, deadline, &current) {
             let _ = terminate_child(&mut child, Instant::now() + SHUTDOWN_TIMEOUT);
             let _ = output.join();
             return Err(error);
@@ -541,8 +539,10 @@ fn wait_for_listening_address(
     receiver: &Receiver<Result<Url, OpenCodeServerError>>,
     child: &mut Child,
     deadline: Instant,
+    current: &dyn Fn() -> bool,
 ) -> Result<Url, OpenCodeServerError> {
     loop {
+        if !current() { return Err(OpenCodeServerError::Protocol("Server startup cancelled".into())); }
         if let Some(status) = child
             .try_wait()
             .map_err(|error| OpenCodeServerError::Io(error.to_string()))?
@@ -577,8 +577,10 @@ fn wait_for_ready(
     client: &OpenCodeClient,
     child: &mut Child,
     deadline: Instant,
+    current: &dyn Fn() -> bool,
 ) -> Result<(), OpenCodeServerError> {
     loop {
+        if !current() { return Err(OpenCodeServerError::Protocol("Server startup cancelled".into())); }
         if let Some(status) = child
             .try_wait()
             .map_err(|error| OpenCodeServerError::Io(error.to_string()))?
@@ -1039,6 +1041,7 @@ mod tests {
             &client,
             &mut child,
             started + std::time::Duration::from_millis(120),
+            &|| true,
         )
         .unwrap_err();
         assert!(error.to_string().contains("timeout"));

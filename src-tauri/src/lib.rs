@@ -48,7 +48,7 @@ use updates::PendingAppUpdate;
 use runtime_gateway::tauri_bridge::{
     codex_desktop_companion_replay, codex_desktop_companion_request,
     codex_desktop_companion_snapshot,
-    runtime_gateway_replay, runtime_gateway_request,
+    runtime_gateway_replay, runtime_gateway_request, provider_connection_status,
     start_codex_desktop_companion_event_bridge, start_runtime_gateway_event_bridge,
     CodexDesktopCompanionState, ProviderHostState, RuntimeGatewayState,
 };
@@ -572,6 +572,7 @@ pub fn run() {
             collector_endpoint,
             open_main_window,
             pet_asset_data_url,
+            provider_connection_status,
             runtime_gateway_request,
             runtime_gateway_replay,
             codex_desktop_companion_request,

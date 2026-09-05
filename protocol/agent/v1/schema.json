@@ -911,6 +911,9 @@
     "MessageConversationItem": {
       "type": "object",
       "properties": {
+        "_meta": {
+          "$ref": "../../core/v1/schema.json#/$defs/JsonObject"
+        },
         "resource": {
           "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
         },
@@ -956,6 +959,9 @@
     "ReasoningConversationItem": {
       "type": "object",
       "properties": {
+        "_meta": {
+          "$ref": "../../core/v1/schema.json#/$defs/JsonObject"
+        },
         "resource": {
           "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
         },
@@ -997,6 +1003,9 @@
     "CommandConversationItem": {
       "type": "object",
       "properties": {
+        "_meta": {
+          "$ref": "../../core/v1/schema.json#/$defs/JsonObject"
+        },
         "resource": {
           "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
         },
@@ -1039,6 +1048,9 @@
     "FileChangeConversationItem": {
       "type": "object",
       "properties": {
+        "_meta": {
+          "$ref": "../../core/v1/schema.json#/$defs/JsonObject"
+        },
         "resource": {
           "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
         },
@@ -1084,6 +1096,9 @@
     "ToolConversationItem": {
       "type": "object",
       "properties": {
+        "_meta": {
+          "$ref": "../../core/v1/schema.json#/$defs/JsonObject"
+        },
         "resource": {
           "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
         },
@@ -1126,6 +1141,9 @@
     "ApprovalConversationItem": {
       "type": "object",
       "properties": {
+        "_meta": {
+          "$ref": "../../core/v1/schema.json#/$defs/JsonObject"
+        },
         "resource": {
           "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
         },
@@ -1171,6 +1189,9 @@
     "UnknownConversationItem": {
       "type": "object",
       "properties": {
+        "_meta": {
+          "$ref": "../../core/v1/schema.json#/$defs/JsonObject"
+        },
         "resource": {
           "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
         },

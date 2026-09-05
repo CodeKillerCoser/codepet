@@ -930,6 +930,105 @@ enum ConversationProjectFilterStandaloneKind {
   String toJson() => wireValue;
 }
 
+final class ConversationResumeRequest {
+  factory ConversationResumeRequest({
+    required RoutedResourceId conversation,
+    int? limit,
+  }) {
+    final validatedConversation = conversation;
+    final validatedLimit = limit == null ? null : _integer(limit, 'ConversationResumeRequest.limit', minimum: 1, maximum: 100);
+    return ConversationResumeRequest._(
+      conversation: validatedConversation,
+      limit: validatedLimit,
+    );
+  }
+
+  ConversationResumeRequest._({
+    required this.conversation,
+    required this.limit,
+  });
+
+  final RoutedResourceId conversation;
+  final int? limit;
+
+  factory ConversationResumeRequest.fromJson(Object? value, {String path = 'ConversationResumeRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'conversation', 'limit'}, path);
+    return ConversationResumeRequest(
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      limit: json.containsKey('limit') && json['limit'] != null ? _integer(json['limit'], '$path.limit', minimum: 1, maximum: 100) : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'conversation': conversation.toJson(),
+    if (limit != null) 'limit': limit!,
+  };
+
+  @override
+  String toString() => 'ConversationResumeRequest(conversation: $conversation, limit: $limit)';
+}
+
+final class ConversationResumeResponse {
+  factory ConversationResumeResponse({
+    required bool interactionAcquired,
+    ConversationAcquireInteractionResponse? interaction,
+    ProtocolError? interactionError,
+    ConversationGetResponse? history,
+    ProtocolError? historyError,
+  }) {
+    final validatedInteractionAcquired = interactionAcquired;
+    final validatedInteraction = interaction == null ? null : interaction;
+    final validatedInteractionError = interactionError == null ? null : interactionError;
+    final validatedHistory = history == null ? null : history;
+    final validatedHistoryError = historyError == null ? null : historyError;
+    return ConversationResumeResponse._(
+      interactionAcquired: validatedInteractionAcquired,
+      interaction: validatedInteraction,
+      interactionError: validatedInteractionError,
+      history: validatedHistory,
+      historyError: validatedHistoryError,
+    );
+  }
+
+  ConversationResumeResponse._({
+    required this.interactionAcquired,
+    required this.interaction,
+    required this.interactionError,
+    required this.history,
+    required this.historyError,
+  });
+
+  final bool interactionAcquired;
+  final ConversationAcquireInteractionResponse? interaction;
+  final ProtocolError? interactionError;
+  final ConversationGetResponse? history;
+  final ProtocolError? historyError;
+
+  factory ConversationResumeResponse.fromJson(Object? value, {String path = 'ConversationResumeResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'interactionAcquired', 'interaction', 'interactionError', 'history', 'historyError'}, path);
+    return ConversationResumeResponse(
+      interactionAcquired: _boolean(_required(json, 'interactionAcquired', path), '$path.interactionAcquired'),
+      interaction: json.containsKey('interaction') && json['interaction'] != null ? ConversationAcquireInteractionResponse.fromJson(json['interaction'], path: '$path.interaction') : null,
+      interactionError: json.containsKey('interactionError') && json['interactionError'] != null ? ProtocolError.fromJson(json['interactionError'], path: '$path.interactionError') : null,
+      history: json.containsKey('history') && json['history'] != null ? ConversationGetResponse.fromJson(json['history'], path: '$path.history') : null,
+      historyError: json.containsKey('historyError') && json['historyError'] != null ? ProtocolError.fromJson(json['historyError'], path: '$path.historyError') : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'interactionAcquired': interactionAcquired,
+    if (interaction != null) 'interaction': interaction!.toJson(),
+    if (interactionError != null) 'interactionError': interactionError!.toJson(),
+    if (history != null) 'history': history!.toJson(),
+    if (historyError != null) 'historyError': historyError!.toJson(),
+  };
+
+  @override
+  String toString() => 'ConversationResumeResponse(interactionAcquired: $interactionAcquired, interaction: $interaction, interactionError: $interactionError, history: $history, historyError: $historyError)';
+}
+
 final class ConversationSearchRequest {
   factory ConversationSearchRequest({
     required ProviderId providerId,
@@ -1396,6 +1495,77 @@ final class HandshakeResponse {
 
   @override
   String toString() => 'HandshakeResponse(protocol: $protocol, device: $device, providers: $providers, eventCursor: $eventCursor)';
+}
+
+final class PingRequest {
+  factory PingRequest({
+    required int sequence,
+  }) {
+    final validatedSequence = _integer(sequence, 'PingRequest.sequence', minimum: 0);
+    return PingRequest._(
+      sequence: validatedSequence,
+    );
+  }
+
+  PingRequest._({
+    required this.sequence,
+  });
+
+  final int sequence;
+
+  factory PingRequest.fromJson(Object? value, {String path = 'PingRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'sequence'}, path);
+    return PingRequest(
+      sequence: _integer(_required(json, 'sequence', path), '$path.sequence', minimum: 0),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'sequence': sequence,
+  };
+
+  @override
+  String toString() => 'PingRequest(sequence: $sequence)';
+}
+
+final class PingResponse {
+  factory PingResponse({
+    required int sequence,
+    required List<ProviderSummary> providers,
+  }) {
+    final validatedSequence = _integer(sequence, 'PingResponse.sequence', minimum: 0);
+    final validatedProviders = _freezeList<ProviderSummary>(providers, 'PingResponse.providers', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    return PingResponse._(
+      sequence: validatedSequence,
+      providers: validatedProviders,
+    );
+  }
+
+  PingResponse._({
+    required this.sequence,
+    required this.providers,
+  });
+
+  final int sequence;
+  final List<ProviderSummary> providers;
+
+  factory PingResponse.fromJson(Object? value, {String path = 'PingResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'sequence', 'providers'}, path);
+    return PingResponse(
+      sequence: _integer(_required(json, 'sequence', path), '$path.sequence', minimum: 0),
+      providers: _decodeList<ProviderSummary>(_required(json, 'providers', path), '$path.providers', (item, itemPath) => ProviderSummary.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'sequence': sequence,
+    'providers': providers.map((item) => item.toJson()).toList(growable: false),
+  };
+
+  @override
+  String toString() => 'PingResponse(sequence: $sequence, providers: $providers)';
 }
 
 final class ProjectChangedEvent {
@@ -2133,18 +2303,24 @@ final class ProviderListResponse {
 
 final class ProviderRuntime {
   factory ProviderRuntime({
+    ConnectionStatus? connectionStatus,
+    int? generation,
     required ProviderStatus status,
     String? version,
     String? executablePath,
     ProviderAuthentication? authentication,
     ProviderUsage? usage,
   }) {
+    final validatedConnectionStatus = connectionStatus == null ? null : connectionStatus;
+    final validatedGeneration = generation == null ? null : _integer(generation, 'ProviderRuntime.generation', minimum: 0);
     final validatedStatus = status;
     final validatedVersion = version == null ? null : _string(version, 'ProviderRuntime.version', minLength: 1);
     final validatedExecutablePath = executablePath == null ? null : _string(executablePath, 'ProviderRuntime.executablePath', minLength: 1);
     final validatedAuthentication = authentication == null ? null : authentication;
     final validatedUsage = usage == null ? null : usage;
     return ProviderRuntime._(
+      connectionStatus: validatedConnectionStatus,
+      generation: validatedGeneration,
       status: validatedStatus,
       version: validatedVersion,
       executablePath: validatedExecutablePath,
@@ -2154,6 +2330,8 @@ final class ProviderRuntime {
   }
 
   ProviderRuntime._({
+    required this.connectionStatus,
+    required this.generation,
     required this.status,
     required this.version,
     required this.executablePath,
@@ -2161,6 +2339,8 @@ final class ProviderRuntime {
     required this.usage,
   });
 
+  final ConnectionStatus? connectionStatus;
+  final int? generation;
   final ProviderStatus status;
   final String? version;
   final String? executablePath;
@@ -2169,8 +2349,10 @@ final class ProviderRuntime {
 
   factory ProviderRuntime.fromJson(Object? value, {String path = 'ProviderRuntime'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'status', 'version', 'executablePath', 'authentication', 'usage'}, path);
+    _expectKeys(json, const {'connectionStatus', 'generation', 'status', 'version', 'executablePath', 'authentication', 'usage'}, path);
     return ProviderRuntime(
+      connectionStatus: json.containsKey('connectionStatus') && json['connectionStatus'] != null ? ConnectionStatus.fromJson(json['connectionStatus'], path: '$path.connectionStatus') : null,
+      generation: json.containsKey('generation') && json['generation'] != null ? _integer(json['generation'], '$path.generation', minimum: 0) : null,
       status: ProviderStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
       version: json.containsKey('version') && json['version'] != null ? _string(json['version'], '$path.version', minLength: 1) : null,
       executablePath: json.containsKey('executablePath') && json['executablePath'] != null ? _string(json['executablePath'], '$path.executablePath', minLength: 1) : null,
@@ -2180,6 +2362,8 @@ final class ProviderRuntime {
   }
 
   Map<String, Object?> toJson() => {
+    if (connectionStatus != null) 'connectionStatus': connectionStatus!.toJson(),
+    if (generation != null) 'generation': generation!,
     'status': status.toJson(),
     if (version != null) 'version': version!,
     if (executablePath != null) 'executablePath': executablePath!,
@@ -2188,7 +2372,7 @@ final class ProviderRuntime {
   };
 
   @override
-  String toString() => 'ProviderRuntime(status: $status, version: $version, executablePath: $executablePath, authentication: $authentication, usage: $usage)';
+  String toString() => 'ProviderRuntime(connectionStatus: $connectionStatus, generation: $generation, status: $status, version: $version, executablePath: $executablePath, authentication: $authentication, usage: $usage)';
 }
 
 enum ProviderStatus {
@@ -2559,6 +2743,7 @@ enum ProtocolIdempotency {
 }
 
 enum ProtocolMethod {
+  protocolPing('protocol.ping', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: PingRequest, responseType: PingResponse),
   protocolHandshake('protocol.handshake', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: HandshakeRequest, responseType: HandshakeResponse),
   protocolDescribe('protocol.describe', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: ProtocolDescribeRequest, responseType: ProtocolDescribeResponse),
   eventSubscribe('event.subscribe', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: EventSubscribeRequest, responseType: EventSubscribeResponse),
@@ -2574,6 +2759,7 @@ enum ProtocolMethod {
   conversationGet('conversation.get', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationGet, requestType: ConversationGetRequest, responseType: ConversationGetResponse),
   conversationMarkRead('conversation.markRead', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: null, requestType: ConversationMarkReadRequest, responseType: ConversationMarkReadResponse),
   conversationAcquireInteraction('conversation.acquireInteraction', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: null, requestType: ConversationAcquireInteractionRequest, responseType: ConversationAcquireInteractionResponse),
+  conversationResume('conversation.resume', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: null, requestType: ConversationResumeRequest, responseType: ConversationResumeResponse),
   conversationCreate('conversation.create', direction: 'clientToGateway', idempotency: ProtocolIdempotency.nonIdempotent, capability: GatewayCapability.conversationCreate, requestType: ConversationCreateRequest, responseType: ConversationCreateResponse),
   turnSend('turn.send', direction: 'clientToGateway', idempotency: ProtocolIdempotency.nonIdempotent, capability: GatewayCapability.turnSend, requestType: TurnSendRequest, responseType: TurnSendResponse),
   turnInterrupt('turn.interrupt', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.turnInterrupt, requestType: TurnInterruptRequest, responseType: TurnInterruptResponse),
@@ -2631,6 +2817,8 @@ enum ProtocolEventName {
 
 Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
   switch (method) {
+    case ProtocolMethod.protocolPing:
+      return PingRequest.fromJson(value, path: path);
     case ProtocolMethod.protocolHandshake:
       return HandshakeRequest.fromJson(value, path: path);
     case ProtocolMethod.protocolDescribe:
@@ -2661,6 +2849,8 @@ Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
       return ConversationMarkReadRequest.fromJson(value, path: path);
     case ProtocolMethod.conversationAcquireInteraction:
       return ConversationAcquireInteractionRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationResume:
+      return ConversationResumeRequest.fromJson(value, path: path);
     case ProtocolMethod.conversationCreate:
       return ConversationCreateRequest.fromJson(value, path: path);
     case ProtocolMethod.turnSend:
@@ -2674,6 +2864,9 @@ Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
 
 Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, String path) {
   switch (method) {
+    case ProtocolMethod.protocolPing:
+      if (value is! PingRequest) throw ProtocolCodecException(path, 'expected PingRequest');
+      return value.toJson();
     case ProtocolMethod.protocolHandshake:
       if (value is! HandshakeRequest) throw ProtocolCodecException(path, 'expected HandshakeRequest');
       return value.toJson();
@@ -2719,6 +2912,9 @@ Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, S
     case ProtocolMethod.conversationAcquireInteraction:
       if (value is! ConversationAcquireInteractionRequest) throw ProtocolCodecException(path, 'expected ConversationAcquireInteractionRequest');
       return value.toJson();
+    case ProtocolMethod.conversationResume:
+      if (value is! ConversationResumeRequest) throw ProtocolCodecException(path, 'expected ConversationResumeRequest');
+      return value.toJson();
     case ProtocolMethod.conversationCreate:
       if (value is! ConversationCreateRequest) throw ProtocolCodecException(path, 'expected ConversationCreateRequest');
       return value.toJson();
@@ -2736,6 +2932,8 @@ Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, S
 
 Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) {
   switch (method) {
+    case ProtocolMethod.protocolPing:
+      return PingResponse.fromJson(value, path: path);
     case ProtocolMethod.protocolHandshake:
       return HandshakeResponse.fromJson(value, path: path);
     case ProtocolMethod.protocolDescribe:
@@ -2766,6 +2964,8 @@ Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) 
       return ConversationMarkReadResponse.fromJson(value, path: path);
     case ProtocolMethod.conversationAcquireInteraction:
       return ConversationAcquireInteractionResponse.fromJson(value, path: path);
+    case ProtocolMethod.conversationResume:
+      return ConversationResumeResponse.fromJson(value, path: path);
     case ProtocolMethod.conversationCreate:
       return ConversationCreateResponse.fromJson(value, path: path);
     case ProtocolMethod.turnSend:
@@ -2779,6 +2979,9 @@ Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) 
 
 Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, String path) {
   switch (method) {
+    case ProtocolMethod.protocolPing:
+      if (value is! PingResponse) throw ProtocolCodecException(path, 'expected PingResponse');
+      return value.toJson();
     case ProtocolMethod.protocolHandshake:
       if (value is! HandshakeResponse) throw ProtocolCodecException(path, 'expected HandshakeResponse');
       return value.toJson();
@@ -2823,6 +3026,9 @@ Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, 
       return value.toJson();
     case ProtocolMethod.conversationAcquireInteraction:
       if (value is! ConversationAcquireInteractionResponse) throw ProtocolCodecException(path, 'expected ConversationAcquireInteractionResponse');
+      return value.toJson();
+    case ProtocolMethod.conversationResume:
+      if (value is! ConversationResumeResponse) throw ProtocolCodecException(path, 'expected ConversationResumeResponse');
       return value.toJson();
     case ProtocolMethod.conversationCreate:
       if (value is! ConversationCreateResponse) throw ProtocolCodecException(path, 'expected ConversationCreateResponse');
@@ -3038,6 +3244,8 @@ final class ProtocolClient {
     });
   }
 
+  Future<PingResponse> protocolPing(PingRequest request) => _request<PingResponse>(ProtocolMethod.protocolPing, request);
+
   Future<HandshakeResponse> protocolHandshake(HandshakeRequest request) => _request<HandshakeResponse>(ProtocolMethod.protocolHandshake, request);
 
   Future<ProtocolDescribeResponse> protocolDescribe(ProtocolDescribeRequest request) => _request<ProtocolDescribeResponse>(ProtocolMethod.protocolDescribe, request);
@@ -3067,6 +3275,8 @@ final class ProtocolClient {
   Future<ConversationMarkReadResponse> conversationMarkRead(ConversationMarkReadRequest request) => _request<ConversationMarkReadResponse>(ProtocolMethod.conversationMarkRead, request);
 
   Future<ConversationAcquireInteractionResponse> conversationAcquireInteraction(ConversationAcquireInteractionRequest request) => _request<ConversationAcquireInteractionResponse>(ProtocolMethod.conversationAcquireInteraction, request);
+
+  Future<ConversationResumeResponse> conversationResume(ConversationResumeRequest request) => _request<ConversationResumeResponse>(ProtocolMethod.conversationResume, request);
 
   Future<ConversationCreateResponse> conversationCreate(ConversationCreateRequest request) => _request<ConversationCreateResponse>(ProtocolMethod.conversationCreate, request);
 

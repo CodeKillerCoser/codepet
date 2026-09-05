@@ -51,6 +51,9 @@ pub struct Approval {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ApprovalConversationItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "_meta")]
+    pub meta: Option<JsonObject>,
     pub resource: RoutedResourceId,
     pub turn: RoutedResourceId,
     pub conversation: RoutedResourceId,
@@ -137,6 +140,9 @@ pub struct ChoiceSet {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct CommandConversationItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "_meta")]
+    pub meta: Option<JsonObject>,
     pub resource: RoutedResourceId,
     pub turn: RoutedResourceId,
     pub conversation: RoutedResourceId,
@@ -366,6 +372,9 @@ pub enum EmbeddedResourceContentBlockKind {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct FileChangeConversationItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "_meta")]
+    pub meta: Option<JsonObject>,
     pub resource: RoutedResourceId,
     pub turn: RoutedResourceId,
     pub conversation: RoutedResourceId,
@@ -467,6 +476,9 @@ pub enum ImageContentBlockKind {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct MessageConversationItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "_meta")]
+    pub meta: Option<JsonObject>,
     pub resource: RoutedResourceId,
     pub turn: RoutedResourceId,
     pub conversation: RoutedResourceId,
@@ -612,6 +624,9 @@ pub struct ProviderUsageDetail {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ReasoningConversationItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "_meta")]
+    pub meta: Option<JsonObject>,
     pub resource: RoutedResourceId,
     pub turn: RoutedResourceId,
     pub conversation: RoutedResourceId,
@@ -782,6 +797,9 @@ pub enum ToolCommandActionKind {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ToolConversationItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "_meta")]
+    pub meta: Option<JsonObject>,
     pub resource: RoutedResourceId,
     pub turn: RoutedResourceId,
     pub conversation: RoutedResourceId,
@@ -992,6 +1010,9 @@ pub struct TurnTask {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct UnknownConversationItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "_meta")]
+    pub meta: Option<JsonObject>,
     pub resource: RoutedResourceId,
     pub turn: RoutedResourceId,
     pub conversation: RoutedResourceId,

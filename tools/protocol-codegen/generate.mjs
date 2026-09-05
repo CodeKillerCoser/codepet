@@ -147,7 +147,7 @@ function validateSchemaNode(node, record, model, location) {
     if (node.properties !== undefined) {
       assert(isObject(node.properties), `${location}.properties must be an object`);
       for (const [name, property] of Object.entries(node.properties)) {
-        assert(/^[a-z][A-Za-z0-9]*$/.test(name), `${location} property ${name} must be camelCase`);
+        assert(name === "_meta" || /^[a-z][A-Za-z0-9]*$/.test(name), `${location} property ${name} must be camelCase or reserved _meta`);
         validateSchemaNode(property, record, model, `${location}.properties.${name}`);
       }
     }
@@ -1017,7 +1017,8 @@ function rustDefinitions(record, model) {
         const baseType = rustType(fieldSchema, record, model);
         const optional = !required.has(field);
         const attribute = optional ? "    #[serde(skip_serializing_if = \"Option::is_none\")]\n" : "";
-        return `${attribute}    pub ${snakeCase(field)}: ${optional ? `Option<${baseType}>` : baseType},`;
+        const wireName = field !== camelCase(field) ? `    #[serde(rename = "${field}")]\n` : "";
+        return `${attribute}${wireName}    pub ${snakeCase(field)}: ${optional ? `Option<${baseType}>` : baseType},`;
       }).join("\n");
       const denyUnknown = node.additionalProperties === false ? "\n#[serde(deny_unknown_fields)]" : "";
       const debugDerive = hasSensitiveFields ? "" : "Debug, ";

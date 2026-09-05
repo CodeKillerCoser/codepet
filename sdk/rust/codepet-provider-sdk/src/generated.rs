@@ -8,7 +8,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 pub use codepet_agent_sdk::*;
-pub use codepet_core_sdk::{ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RpcError, TimestampMs, VersionRange};
+pub use codepet_core_sdk::{ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RpcError, TimestampMs, VersionRange};
 
 pub const PROTOCOL_VERSION: ProtocolVersion = 1;
 
@@ -526,6 +526,24 @@ pub struct ProviderInstanceRoute {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ProviderPingRequest {
+    pub sequence: u64,
+    pub host_session_id: String,
+    pub clients: ClientConnectionsSnapshot,
+    pub instances: Vec<ProviderInstanceRoute>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProviderPingResponse {
+    pub sequence: u64,
+    pub clients_revision: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ProviderPluginDescriptor {
     pub plugin_id: ProviderPluginId,
     pub display_name: String,
@@ -754,6 +772,8 @@ pub enum ProtocolDispatchLane {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolMethod {
+    #[serde(rename = "provider.ping")]
+    ProviderPing,
     #[serde(rename = "provider.initialize")]
     ProviderInitialize,
     #[serde(rename = "provider.describe")]
@@ -807,6 +827,7 @@ pub enum ProtocolMethod {
 impl ProtocolMethod {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ProviderPing => "provider.ping",
             Self::ProviderInitialize => "provider.initialize",
             Self::ProviderDescribe => "provider.describe",
             Self::RuntimeGetInstalled => "runtime.getInstalled",
@@ -836,6 +857,7 @@ impl ProtocolMethod {
 
     pub const fn dispatch_lane(self) -> ProtocolDispatchLane {
         match self {
+            Self::ProviderPing => ProtocolDispatchLane::Control,
             Self::ProviderInitialize => ProtocolDispatchLane::Normal,
             Self::ProviderDescribe => ProtocolDispatchLane::Normal,
             Self::RuntimeGetInstalled => ProtocolDispatchLane::Normal,
@@ -865,6 +887,7 @@ impl ProtocolMethod {
 
     pub const fn capability(self) -> Option<ProviderCapability> {
         match self {
+            Self::ProviderPing => None,
             Self::ProviderInitialize => None,
             Self::ProviderDescribe => None,
             Self::RuntimeGetInstalled => None,
@@ -898,6 +921,7 @@ impl std::str::FromStr for ProtocolMethod {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
+            "provider.ping" => Ok(Self::ProviderPing),
             "provider.initialize" => Ok(Self::ProviderInitialize),
             "provider.describe" => Ok(Self::ProviderDescribe),
             "runtime.getInstalled" => Ok(Self::RuntimeGetInstalled),
@@ -990,6 +1014,12 @@ pub const DEFAULT_MAX_JSON_LINE_BYTES: usize = 1024 * 1024;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum ProtocolRequest {
+    #[serde(rename = "provider.ping")]
+    ProviderPing {
+        jsonrpc: String,
+        id: RequestId,
+        params: ProviderPingRequest,
+    },
     #[serde(rename = "provider.initialize")]
     ProviderInitialize {
         jsonrpc: String,
@@ -1144,6 +1174,11 @@ impl ProtocolRequest {
     ) -> Result<Self, ProtocolError> {
         let jsonrpc = "2.0".to_string();
         match method {
+            ProtocolMethod::ProviderPing => Ok(Self::ProviderPing {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode provider.ping request params", error))?,
+            }),
             ProtocolMethod::ProviderInitialize => Ok(Self::ProviderInitialize {
                 jsonrpc,
                 id,
@@ -1269,6 +1304,7 @@ impl ProtocolRequest {
 
     pub fn jsonrpc_version(&self) -> &str {
         match self {
+            Self::ProviderPing { jsonrpc, .. } => jsonrpc,
             Self::ProviderInitialize { jsonrpc, .. } => jsonrpc,
             Self::ProviderDescribe { jsonrpc, .. } => jsonrpc,
             Self::RuntimeGetInstalled { jsonrpc, .. } => jsonrpc,
@@ -1298,6 +1334,7 @@ impl ProtocolRequest {
 
     pub fn id(&self) -> &RequestId {
         match self {
+            Self::ProviderPing { id, .. } => id,
             Self::ProviderInitialize { id, .. } => id,
             Self::ProviderDescribe { id, .. } => id,
             Self::RuntimeGetInstalled { id, .. } => id,
@@ -1327,6 +1364,7 @@ impl ProtocolRequest {
 
     pub const fn method(&self) -> ProtocolMethod {
         match self {
+            Self::ProviderPing { .. } => ProtocolMethod::ProviderPing,
             Self::ProviderInitialize { .. } => ProtocolMethod::ProviderInitialize,
             Self::ProviderDescribe { .. } => ProtocolMethod::ProviderDescribe,
             Self::RuntimeGetInstalled { .. } => ProtocolMethod::RuntimeGetInstalled,
@@ -1509,6 +1547,10 @@ impl std::error::Error for JsonRpcInboundError {}
 pub type ProtocolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ProtocolError>> + Send + 'a>>;
 
 pub trait ProtocolServer: Send + Sync {
+    fn provider_ping<'a>(&'a self, _request: ProviderPingRequest) -> ProtocolFuture<'a, ProviderPingResponse> {
+        Box::pin(async { Err(method_not_implemented("provider.ping")) })
+    }
+
     fn provider_initialize<'a>(&'a self, _request: ProviderInitializeRequest) -> ProtocolFuture<'a, ProviderInitializeResponse> {
         Box::pin(async { Err(method_not_implemented("provider.initialize")) })
     }
@@ -1617,6 +1659,16 @@ fn method_not_implemented(method: &str) -> ProtocolError {
 
 pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolRequest) -> JsonRpcResponse {
     match request {
+        ProtocolRequest::ProviderPing { jsonrpc, id, params } => {
+            let response = match server.provider_ping(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
         ProtocolRequest::ProviderInitialize { jsonrpc, id, params } => {
             let response = match server.provider_initialize(params).await {
                 Ok(result) => match serde_json::to_value(result) {
@@ -1904,6 +1956,14 @@ impl<T> ProtocolClient<T> {
 }
 
 impl<T: ProtocolTransport> ProtocolClient<T> {
+    pub fn provider_ping<'a>(&'a self, request: ProviderPingRequest) -> ProtocolFuture<'a, ProviderPingResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ProviderPing, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
     pub fn provider_initialize<'a>(&'a self, request: ProviderInitializeRequest) -> ProtocolFuture<'a, ProviderInitializeResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;

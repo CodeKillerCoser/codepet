@@ -1636,6 +1636,7 @@ impl Provider for ClaudeProvider {
             Ok(TurnStartResponse {
                 accepted: true,
                 user_item: Some(ConversationItem::MessageConversationItem(MessageConversationItem {
+                    meta: None,
                     resource: runtime.resource(item_id.clone()),
                     turn: turn.resource.clone(),
                     conversation,
@@ -2453,6 +2454,7 @@ fn read_claude_history_items(
         let turn = routed_resource(route, format!("{native_id}:turn"));
         if let Some(text) = message.get("content").and_then(claude_message_text) {
             items.push(ConversationItem::MessageConversationItem(MessageConversationItem {
+                meta: None,
                 resource: routed_resource(route, native_id.clone()),
                 turn: turn.clone(),
                 conversation: conversation.clone(),
@@ -2514,6 +2516,7 @@ fn read_claude_history_items(
                     };
                     let item = if command.is_some() {
                         ConversationItem::CommandConversationItem(CommandConversationItem {
+                        meta: None,
                         resource: routed_resource(route, call_id.to_string()),
                         turn: turn.clone(),
                         conversation: conversation.clone(),
@@ -2524,6 +2527,7 @@ fn read_claude_history_items(
                     })
                     } else {
                         ConversationItem::ToolConversationItem(ToolConversationItem {
+                            meta: None,
                             resource: routed_resource(route, call_id.to_string()),
                             turn: turn.clone(), conversation: conversation.clone(),
                             kind: ToolConversationItemKind::Tool,
@@ -2580,6 +2584,9 @@ fn read_claude_history_items(
                 _ => {}
             }
         }
+    }
+    for item in &mut items {
+        codepet_provider_sdk::truncate_tool_item_text(item, codepet_provider_sdk::DEFAULT_TOOL_TEXT_BYTES);
     }
     Ok(items)
 }
@@ -3000,6 +3007,7 @@ mod tests {
         let items = ["oldest", "middle", "newest"]
             .into_iter()
             .map(|id| ConversationItem::MessageConversationItem(MessageConversationItem {
+                meta: None,
                 resource: routed_resource(&route, id.to_string()),
                 turn: routed_resource(&route, format!("{id}:turn")),
                 conversation: conversation.clone(),

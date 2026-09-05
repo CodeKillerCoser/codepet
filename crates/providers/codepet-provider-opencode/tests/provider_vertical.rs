@@ -50,6 +50,52 @@ fn turn_start_request(
 }
 
 #[tokio::test]
+async fn cancelling_start_before_health_or_during_discovery_cannot_orphan_server() {
+    for discovery in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let pid_file = directory.path().join("server.pid");
+        let entered = directory.path().join("model-entered");
+        let (sender, events) = mpsc::channel();
+        let provider = Arc::new(OpenCodeProvider::new(Arc::new(move |event| {
+            sender.send(event).unwrap(); Ok(())
+        })));
+        provider.provider_initialize(ProviderInitializeRequest {
+            host_client_id: "host-cancel".into(), host_device_id: "device-cancel".into(),
+            host_version: "0.1.0".into(), supported_versions: VersionRange { min_version: PROTOCOL_VERSION, max_version: PROTOCOL_VERSION },
+        }).await.unwrap();
+        let route = ProviderInstanceRoute { device_id: "device-cancel".into(),
+            provider_plugin_id: OPENCODE_PLUGIN_ID.into(), provider_instance_id: "cancel".into() };
+        std::fs::write(directory.path().join("opencode-fixture-startup.json"),
+            serde_json::to_vec(&json!({"pidFile": pid_file,
+                "startupDelayMs": if discovery { 0 } else { 3000 },
+                "modelEntered": if discovery { Some(&entered) } else { None },
+            })).unwrap()).unwrap();
+        provider.instance_create(InstanceCreateRequest { route: route.clone(),
+            instance_kind: OPENCODE_INSTANCE_KIND.into(), display_name: "Cancellation".into(),
+            settings: BTreeMap::from([
+                ("serverExecutable".into(), json!(env!("CARGO_BIN_EXE_opencode-server-fixture"))),
+                ("serverVersion".into(), json!("1.18.25")), ("serverArgs".into(), json!(["serve"])),
+                ("workspaceRoot".into(), json!(directory.path())),
+            ]),
+        }).await.unwrap();
+        let owner = provider.clone(); let start_route = route.clone();
+        let start = tokio::spawn(async move { owner.instance_start(InstanceStartRequest { route: start_route }).await });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !pid_file.exists() || (discovery && !entered.exists()) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }).await.unwrap();
+        let pid = read_pid(&pid_file);
+        start.abort(); // Same cancellation performed by the SDK presence worker.
+        let _ = start.await;
+        provider.instance_stop(InstanceStopRequest { route }).await.unwrap();
+        assert_process_exited(pid);
+        assert!(!events.try_iter().any(|event| matches!(event, ProtocolEvent::EventInstanceStatusChanged { params, .. }
+            if params.instance.status == InstanceStatus::Ready)));
+    }
+}
+
+#[tokio::test]
 async fn official_v2_shapes_map_through_the_provider_protocol() {
     let process_directory = tempfile::tempdir().unwrap();
     let first_pid_file = process_directory.path().join("opencode-first.pid");

@@ -95,7 +95,7 @@ test("provider is JSON-RPC over stdio and owns plugin instance lifecycle", async
     provider.methods
       .filter((method) => method.dispatchLane === "control")
       .map((method) => method.name),
-    ["instance.stop", "instance.destroy", "provider.shutdown"],
+    ["provider.ping", "instance.stop", "instance.destroy", "provider.shutdown"],
   );
   const providerIr = model.protocolIr.packagesById.get("provider-v1");
   assert.equal(
@@ -126,6 +126,11 @@ test("provider history items carry routed conversation ownership", async () => {
   assert.equal(providerDefinitions.ConversationSearchResponse.properties.pageInfo.$ref, "../../core/v1/schema.json#/$defs/PageInfo");
   assert.equal(definitions.CommandConversationItem.properties.tool.$ref, "#/$defs/ToolInvocation");
   assert.equal(definitions.ConversationItem.oneOf.length, 7);
+  for (const variant of definitions.ConversationItem.oneOf) {
+    const item = definitions[variant.$ref.split('/').at(-1)];
+    assert.equal(item.properties._meta.$ref, "../../core/v1/schema.json#/$defs/JsonObject");
+    assert.equal(item.required.includes('_meta'), false);
+  }
   assert.deepEqual(definitions.ToolInvocation.required, ["callId", "name", "category", "origin", "input"]);
   assert.equal(definitions.ToolInvocation.properties.input.$ref, "#/$defs/ToolInput");
   assert.equal(definitions.CommandToolInput.properties.truncation.$ref, "#/$defs/ContentTruncation");
@@ -402,7 +407,7 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   const model = await loadProtocolModel();
   const gateway = record(model, "gateway-v1");
   const gatewayIr = model.protocolIr.packagesById.get("gateway-v1");
-  assert.equal(gatewayIr.service.methods.length, 19);
+  assert.equal(gatewayIr.service.methods.length, 21);
   assert.equal(gatewayIr.service.events.length, 9);
   assert.equal(
     gatewayIr.service.methods.find((method) => method.name === "turn.send").idempotency,

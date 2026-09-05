@@ -4,7 +4,7 @@
 
 Host 已具备稳定设备身份、LAN TLS identity、一次性 pairing、credential store、HTTPS/WSS listener 与 mDNS advertiser，但此前 Code Pet App 不创建或持有这些对象。仅有 Host API 不等于产品运行时已开放远程访问：App 还需要复用 Provider Host 的唯一事实源、选择可发布 LAN IP、把 pairing 可用性同步到 mDNS，并在退出时有界释放网络与监控任务。
 
-本页记录 Phase 2B1 的实际后端接线，以及后续连接页对 pairing 命令的接入边界。事实依据是 `crates/codepet-host/src/remote_access.rs`、`remote_listener.rs`、`remote_network.rs`，以及 `src-tauri/src/runtime_gateway/remote_access.rs`、`tauri_bridge.rs`、`frontend/App.svelte` 和 `frontend/lib/PairDeviceDialog.svelte`。
+本页记录 Phase 2B1 的实际后端接线，以及后续连接页对 pairing 命令的接入边界。事实依据是 `crates/codepet-host/src/remote/access.rs`、`remote_listener.rs`、`remote_network.rs`，以及 `src-tauri/src/runtime_gateway/remote_access.rs`、`tauri_bridge.rs`、`frontend/App.svelte` 和 `frontend/lib/PairDeviceDialog.svelte`。
 
 ## 目标
 
@@ -74,13 +74,13 @@ client online 数只读取 listener 的实际 session registry。同一 `clientI
 
 ## 涉及模块
 
-- `crates/codepet-host/src/manager.rs`：让 Provider Manager 接受共享 `Arc<DeviceRegistry>`，避免复制 App 身份事实。
-- `crates/codepet-host/src/remote_access.rs`：增加 pairing watch、短期 outcome 查询、单 active 约束和按 credential id 幂等撤销。
-- `crates/codepet-host/src/remote_network.rs`：执行 IPv4 override/route probe/active-interface fail-closed 选择。
-- `crates/codepet-host/src/remote_listener.rs`：持有 committed/pending advertised endpoint、为 pairing exchange 选择同代 gateway URL，并继续暴露 session 计数和有界定向断开。
+- `crates/codepet-host/src/providers/manager.rs`：让 Provider Manager 接受共享 `Arc<DeviceRegistry>`，避免复制 App 身份事实。
+- `crates/codepet-host/src/remote/access.rs`：增加 pairing watch、短期 outcome 查询、单 active 约束和按 credential id 幂等撤销。
+- `crates/codepet-host/src/remote/channels/lan/network.rs`：执行 IPv4 override/route probe/active-interface fail-closed 选择。
+- `crates/codepet-host/src/remote/channels/lan/listener.rs`：持有 committed/pending advertised endpoint、为 pairing exchange 选择同代 gateway URL，并继续暴露 session 计数和有界定向断开。
 - `src-tauri/src/runtime_gateway/tauri_bridge.rs`：组合共享 device/manager、唯一带 remote identity 的 Gateway 与 RemoteAccessManager。
 - `src-tauri/src/runtime_gateway/remote_access.rs`：Tauri lifecycle、状态、commands、QR 和 pairing monitor。
-- `crates/codepet-host/src/remote_mdns.rs`：以同一 listener source 替换 IP/interface/pair 的完整 mDNS generation，并保留 Announce/旧 resend 屏障。
+- `crates/codepet-host/src/remote/channels/lan/mdns.rs`：以同一 listener source 替换 IP/interface/pair 的完整 mDNS generation，并保留 Announce/旧 resend 屏障。
 - `frontend/App.svelte`、`frontend/lib/remoteAccess.ts`：只让既有 pairing status 轮询替换当前 active QR，不改变 Pet UI。
 - `src-tauri/src/lib.rs`：manage、后台启动、invoke 注册和退出顺序。
 

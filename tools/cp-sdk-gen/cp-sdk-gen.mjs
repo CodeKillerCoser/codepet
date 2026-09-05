@@ -11,6 +11,10 @@ import agentLib from "../../sdk/rust/codepet-agent-sdk/src/lib.rs" with { type: 
 import providerCargo from "../../sdk/rust/codepet-provider-sdk/Cargo.toml" with { type: "text" };
 import providerLib from "../../sdk/rust/codepet-provider-sdk/src/lib.rs" with { type: "text" };
 import providerFrame from "../../sdk/rust/codepet-provider-sdk/src/frame.rs" with { type: "text" };
+import providerHeartbeat from "../../sdk/rust/codepet-provider-sdk/src/heartbeat.rs" with { type: "text" };
+import providerItemText from "../../sdk/rust/codepet-provider-sdk/src/item_text.rs" with { type: "text" };
+import gatewayRustHeartbeat from "../../sdk/rust/codepet-gateway-sdk/src/heartbeat.rs" with { type: "text" };
+import gatewayDartHeartbeat from "../../sdk/dart/codepet-gateway-sdk/lib/src/heartbeat.dart" with { type: "text" };
 import providerStdio from "../../sdk/rust/codepet-provider-sdk/src/stdio.rs" with { type: "text" };
 import gatewayRustCargo from "../../sdk/rust/codepet-gateway-sdk/Cargo.toml" with { type: "text" };
 import gatewayRustLib from "../../sdk/rust/codepet-gateway-sdk/src/lib.rs" with { type: "text" };
@@ -269,9 +273,12 @@ export async function runCpSdkGen(arguments_, currentDirectory = process.cwd()) 
       staticFiles.set("codepet-provider-sdk/src/lib.rs", providerLib);
       staticFiles.set("codepet-provider-sdk/src/frame.rs", providerFrame);
       staticFiles.set("codepet-provider-sdk/src/stdio.rs", providerStdio);
+      staticFiles.set("codepet-provider-sdk/src/heartbeat.rs", providerHeartbeat);
+      staticFiles.set("codepet-provider-sdk/src/item_text.rs", providerItemText);
     } else if (options.package === "gateway") {
       staticFiles.set("codepet-gateway-sdk/Cargo.toml", gatewayRustCargo);
-      staticFiles.set("codepet-gateway-sdk/src/lib.rs", "mod generated;\npub use generated::*;\n");
+      staticFiles.set("codepet-gateway-sdk/src/lib.rs", gatewayRustLib);
+      staticFiles.set("codepet-gateway-sdk/src/heartbeat.rs", gatewayRustHeartbeat);
     } else {
       staticFiles.set("codepet-lan-channel-sdk/Cargo.toml", lanRustCargo);
       staticFiles.set("codepet-lan-channel-sdk/src/lib.rs", lanRustLib);
@@ -284,6 +291,7 @@ export async function runCpSdkGen(arguments_, currentDirectory = process.cwd()) 
       staticFiles.set("codepet-agent-sdk/lib/codepet_agent_sdk.dart", agentDartLib);
       staticFiles.set("codepet-gateway-sdk/pubspec.yaml", gatewayDartPubspec);
       staticFiles.set("codepet-gateway-sdk/lib/codepet_gateway_sdk.dart", gatewayDartLib);
+      staticFiles.set("codepet-gateway-sdk/lib/src/heartbeat.dart", gatewayDartHeartbeat);
     } else {
       staticFiles.set("codepet-lan-channel-sdk/pubspec.yaml", lanDartPubspec);
       staticFiles.set("codepet-lan-channel-sdk/lib/codepet_lan_channel_sdk.dart", lanDartLib);

@@ -46,6 +46,11 @@ pub enum CodexAppServerError {
     Io(String),
     Timeout(String),
     Protocol(String),
+    RejectedMessage {
+        request_id: Option<JsonRpcId>,
+        method: Option<String>,
+        error: Box<CodexAppServerError>,
+    },
     Rpc {
         code: i64,
         message: String,
@@ -62,6 +67,7 @@ impl fmt::Display for CodexAppServerError {
             Self::Io(message) => write!(formatter, "codex app-server I/O error: {message}"),
             Self::Timeout(message) => write!(formatter, "codex app-server timeout: {message}"),
             Self::Protocol(message) => write!(formatter, "codex app-server protocol error: {message}"),
+            Self::RejectedMessage { error, .. } => error.fmt(formatter),
             Self::Rpc { code, message, .. } => {
                 write!(formatter, "codex app-server RPC error {code}: {message}")
             }
@@ -611,19 +617,6 @@ pub struct CodexTurnPage {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct CodexThreadItemEntry {
-    pub turn_id: String,
-    pub item: CodexThreadItem,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct CodexThreadItemPage {
-    pub data: Vec<CodexThreadItemEntry>,
-    pub next_cursor: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct CodexModel {
     pub id: String,
     pub model: String,
@@ -845,15 +838,6 @@ pub(crate) struct ThreadReadResponse {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ThreadTurnsListResponse {
     pub data: Vec<CodexTurn>,
-    pub next_cursor: Option<String>,
-    #[serde(default, rename = "backwardsCursor")]
-    pub _backwards_cursor: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ThreadItemsListResponse {
-    pub data: Vec<CodexThreadItemEntry>,
     pub next_cursor: Option<String>,
     #[serde(default, rename = "backwardsCursor")]
     pub _backwards_cursor: Option<String>,

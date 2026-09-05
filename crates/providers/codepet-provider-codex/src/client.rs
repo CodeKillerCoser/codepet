@@ -5,17 +5,17 @@ use super::protocol::{
     CodexConversationSnapshot, CodexIncoming, CodexModel, CodexModelListResponse,
     CodexNotification, CodexPermissionLevel, CodexProject, CodexProjectCreateRequest,
     CodexProjectPage, CodexProjectUpdateRequest, CodexThreadListRequest, CodexThreadPage,
-    CodexThreadStartRequest, CodexThreadItemPage, CodexTurn, CodexTurnPage, CodexTurnStatus,
+    CodexThreadStartRequest, CodexTurn, CodexTurnPage, CodexTurnStatus,
     CodexTurnItemsView, CodexTurnStartRequest, CodexTurnSteerRequest, CommandApprovalParams, FileApprovalParams,
     InitializeResponse, JsonRpcId, ProjectListResponse, ProjectResponse,
     ThreadConfiguredResponse, ThreadListResponse,
-    ThreadItemsListResponse, ThreadReadResponse, ThreadTurnsListResponse, TurnResponse, TurnSteerResponse,
+    ThreadReadResponse, ThreadTurnsListResponse, TurnResponse, TurnSteerResponse,
 };
 use codepet_provider_sdk::ApprovalDecision;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{self, Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
@@ -26,9 +26,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-const MAX_APP_SERVER_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const MAX_APP_SERVER_STDERR_LINE_BYTES: usize = 64 * 1024;
-pub(crate) const THREAD_TURNS_PAGE_LIMIT: u32 = 10;
+const APP_SERVER_CLIENT_NAME: &str = "code-pet";
 static NEXT_SESSION_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 pub trait JsonRpcReader: Send + 'static {
@@ -43,84 +42,8 @@ pub trait SessionControl: Send + 'static {
     fn shutdown(&mut self) -> Result<(), CodexAppServerError>;
 }
 
-struct JsonLineReader<R> {
-    reader: BufReader<R>,
-}
-
-impl<R: Read> JsonLineReader<R> {
-    fn new(reader: R) -> Self {
-        Self {
-            reader: BufReader::new(reader),
-        }
-    }
-}
-
-impl<R: Read + Send + 'static> JsonRpcReader for JsonLineReader<R> {
-    fn read_message(&mut self) -> Result<Option<Value>, CodexAppServerError> {
-        let Some(line) = read_bounded_line(&mut self.reader, MAX_APP_SERVER_FRAME_BYTES)? else {
-            return Ok(None);
-        };
-        serde_json::from_slice(&line)
-            .map(Some)
-            .map_err(|error| CodexAppServerError::Protocol(format!("invalid JSON: {error}")))
-    }
-}
-
-fn read_bounded_line<R: BufRead>(
-    reader: &mut R,
-    limit: usize,
-) -> Result<Option<Vec<u8>>, CodexAppServerError> {
-    let mut captured = Vec::new();
-    let mut total = 0usize;
-    loop {
-        let available = reader
-            .fill_buf()
-            .map_err(|error| CodexAppServerError::Io(error.to_string()))?;
-        if available.is_empty() {
-            if total == 0 {
-                return Ok(None);
-            }
-            break;
-        }
-        let consumed = available
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map(|index| index + 1)
-            .unwrap_or(available.len());
-        total = total.checked_add(consumed).ok_or_else(|| {
-            CodexAppServerError::Protocol("App Server line length overflow".to_string())
-        })?;
-        if captured.len() < limit {
-            let remaining = limit - captured.len();
-            captured.extend_from_slice(&available[..consumed.min(remaining)]);
-        }
-        let ended = available[consumed - 1] == b'\n';
-        reader.consume(consumed);
-        if ended {
-            break;
-        }
-    }
-    if total > limit {
-        return Err(CodexAppServerError::Protocol(format!(
-            "App Server physical line exceeds {limit} bytes"
-        )));
-    }
-    Ok(Some(captured))
-}
-
-fn drain_stderr(stderr: impl Read) -> Result<(), CodexAppServerError> {
-    let mut reader = BufReader::new(stderr);
-    loop {
-        match read_bounded_line(&mut reader, MAX_APP_SERVER_STDERR_LINE_BYTES) {
-            Ok(Some(line)) => {
-                let line = String::from_utf8_lossy(&line);
-                eprintln!("Codex App Server: {}", line.trim_end());
-            }
-            Ok(None) => return Ok(()),
-            Err(error) => return Err(error),
-        }
-    }
-}
+mod framing;
+use framing::{drain_stderr, JsonLineReader};
 
 struct JsonLineWriter<W> {
     writer: W,
@@ -248,6 +171,21 @@ impl<T> CodexRequestOutcome<T> {
 }
 
 impl SessionInner {
+    fn reject_message(&self, request_id: Option<JsonRpcId>, method: Option<String>, error: CodexAppServerError) {
+        eprintln!("Codex App Server rejected message id={request_id:?} method={method:?}: {error}");
+        let Some(id) = request_id else { return; };
+        if method.is_some() {
+            // Server request ids are independent of our pending client request ids.
+            if let Err(reply_error) = self.write(json!({
+                "id": id, "error": { "code": -32600, "message": error.to_string() },
+            })) {
+                eprintln!("Codex App Server could not reject server request: {reply_error}");
+            }
+        } else if let Ok(mut pending) = self.pending.lock() {
+            if let Some(sender) = pending.remove(&id) { let _ = sender.send(Err(error)); }
+        }
+    }
+
     fn broadcast(&self, message: Result<CodexIncoming, CodexAppServerError>) {
         let mut observers = self
             .observers
@@ -481,6 +419,15 @@ impl CodexAppServerSession {
                     }
                     break;
                 }
+                Err(CodexAppServerError::RejectedMessage { request_id, method, error }) => {
+                    let Some(inner) = weak_inner.upgrade() else { break; };
+                    inner.reject_message(request_id, method, *error);
+                    continue;
+                }
+                Err(CodexAppServerError::Protocol(message)) => {
+                    eprintln!("Codex App Server rejected message: {message}");
+                    continue;
+                }
                 Err(error) => {
                     if let Some(inner) = weak_inner.upgrade() {
                         inner.fail(error);
@@ -491,9 +438,10 @@ impl CodexAppServerSession {
             let Some(inner) = weak_inner.upgrade() else {
                 break;
             };
+            let request_id = message.get("id").cloned().and_then(|id| serde_json::from_value(id).ok());
+            let method = message.get("method").map(|method| method.as_str().unwrap_or("").to_owned());
             if let Err(error) = handle_message(&inner, message) {
-                inner.fail(error);
-                break;
+                inner.reject_message(request_id, method, error);
             }
         });
         if let Ok(mut reader_thread) = inner.reader_thread.lock() {
@@ -539,16 +487,12 @@ impl CodexAppServerSession {
         }
     }
 
-    fn start_stderr_monitor(&self, stderr: impl Read + Send + 'static) {
-        let inner = Arc::downgrade(&self.inner);
+    fn start_stderr_monitor(&self, stderr: impl Read + Send + 'static) -> JoinHandle<()> {
         thread::spawn(move || {
             if let Err(error) = drain_stderr(stderr) {
                 eprintln!("Codex App Server stderr failed: {error}");
-                if let Some(inner) = inner.upgrade() {
-                    inner.fail(error);
-                }
             }
-        });
+        })
     }
 
     pub fn shutdown(&self) -> Result<(), CodexAppServerError> {
@@ -734,34 +678,6 @@ impl CodexAppServerSession {
         })
     }
 
-    pub fn thread_items_list(
-        &self,
-        thread_id: &str,
-        turn_id: &str,
-        cursor: Option<String>,
-        limit: u32,
-    ) -> Result<CodexThreadItemPage, CodexAppServerError> {
-        let response: ThreadItemsListResponse = self.request(
-            "thread/items/list",
-            json!({
-                "threadId": thread_id,
-                "turnId": turn_id,
-                "cursor": cursor,
-                "limit": limit,
-                "sortDirection": "asc",
-            }),
-        )?;
-        if response.data.iter().any(|entry| entry.turn_id != turn_id) {
-            return Err(CodexAppServerError::Protocol(format!(
-                "thread/items/list returned an item outside turn {turn_id}"
-            )));
-        }
-        Ok(CodexThreadItemPage {
-            data: response.data,
-            next_cursor: response.next_cursor,
-        })
-    }
-
     pub fn model_list(&self) -> Result<Vec<CodexModel>, CodexAppServerError> {
         const PAGE_LIMIT: u32 = 100;
         const MAX_PAGES: usize = 100;
@@ -801,7 +717,7 @@ impl CodexAppServerSession {
     ) -> CodexRequestOutcome<CodexConversationSnapshot> {
         self.request_value_with_timeout_outcome_with_sender(
             "thread/resume",
-            json!({ "threadId": thread_id }),
+            json!({ "threadId": thread_id, "excludeTurns": true }),
             REQUEST_TIMEOUT,
             send_request,
         )
@@ -1096,7 +1012,7 @@ impl CodexAppServerSession {
             "initialize",
             json!({
                 "clientInfo": {
-                    "name": "code-pet",
+                    "name": APP_SERVER_CLIENT_NAME,
                     "title": "Code Pet",
                     "version": env!("CARGO_PKG_VERSION"),
                 },
@@ -1262,7 +1178,6 @@ impl CodexAppServerSession {
                     "{method} did not respond within {} ms",
                     timeout.as_millis()
                 ));
-                self.inner.fail(error.clone());
                 CodexRequestOutcome::SentOutcomeUnknown(error)
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => CodexRequestOutcome::SentOutcomeUnknown(
@@ -1330,7 +1245,10 @@ fn harness_version_from_user_agent(user_agent: &str) -> Option<String> {
     let mut previous_was_codex = false;
     for product in user_agent.split_whitespace() {
         if let Some((name, version)) = product.rsplit_once('/') {
-            if (name.to_ascii_lowercase().contains("codex") || previous_was_codex)
+            // Without an originator override, Codex uses initialize.clientInfo.name
+            // as the product name, followed by the native Harness version.
+            if (name.eq_ignore_ascii_case(APP_SERVER_CLIENT_NAME)
+                || name.to_ascii_lowercase().contains("codex") || previous_was_codex)
                 && !version.trim().is_empty()
             {
                 return Some(version.trim().to_string());
@@ -1754,6 +1672,13 @@ mod tests {
     #[test]
     fn extracts_cli_and_desktop_harness_versions_without_using_shell_product_versions() {
         assert_eq!(
+            harness_version_from_user_agent(
+                "code-pet/0.153.1 (Mac OS 26.3.2; arm64) iTerm.app/3.6.9 (code-pet; 0.1.0)"
+            ),
+            Some("0.153.1".to_string())
+        );
+        assert_eq!(harness_version_from_user_agent("iTerm.app/3.6.9 (code-pet; 0.1.0)"), None);
+        assert_eq!(
             harness_version_from_user_agent("codex-cli/0.151.0"),
             Some("0.151.0".to_string())
         );
@@ -1780,6 +1705,25 @@ mod tests {
 
     struct MockWriter {
         sender: Sender<Value>,
+    }
+
+    struct MockByteReader {
+        receiver: Receiver<Vec<u8>>,
+        current: std::io::Cursor<Vec<u8>>,
+    }
+
+    impl Read for MockByteReader {
+        fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+            if output.is_empty() { return Ok(0); }
+            loop {
+                let count = self.current.read(output)?;
+                if count > 0 { return Ok(count); }
+                match self.receiver.recv() {
+                    Ok(bytes) => self.current = std::io::Cursor::new(bytes),
+                    Err(_) => return Ok(0),
+                }
+            }
+        }
     }
 
     impl JsonRpcWriter for MockWriter {
@@ -1908,65 +1852,67 @@ mod tests {
     }
 
     #[test]
-    fn oversized_physical_line_is_drained_before_error() {
-        let mut reader = BufReader::new(std::io::Cursor::new(b"12345\n{}\n"));
-        let error = read_bounded_line(&mut reader, 4).unwrap_err();
-        assert!(matches!(error, CodexAppServerError::Protocol(_)));
-        assert_eq!(read_bounded_line(&mut reader, 4).unwrap(), Some(b"{}\n".to_vec()));
-    }
-
-    #[test]
-    fn oversized_stderr_line_uses_the_session_terminal_path() {
+    fn oversized_stderr_keeps_session_and_pending_requests_alive() {
         let (outgoing_sender, _outgoing_receiver) = mpsc::channel::<Value>();
         let (incoming_sender, incoming_receiver) = mpsc::channel::<Value>();
         let terminated = Arc::new(AtomicBool::new(false));
         let session = CodexAppServerSession::from_parts(
-            Box::new(MockReader {
-                receiver: incoming_receiver,
-            }),
-            Box::new(MockWriter {
-                sender: outgoing_sender,
-            }),
-            Some(Box::new(RecordingControl {
-                terminated: terminated.clone(),
+            Box::new(MockReader { receiver: incoming_receiver }),
+            Box::new(MockWriter { sender: outgoing_sender }),
+            Some(Box::new(RecordingControl { terminated: terminated.clone() })),
+        );
+        let (pending_sender, pending_receiver) = mpsc::channel();
+        session.inner.pending.lock().unwrap().insert(JsonRpcId::Number(41), pending_sender);
+        let mut stderr = vec![b'x'; MAX_APP_SERVER_STDERR_LINE_BYTES + 1];
+        stderr.extend_from_slice(b"\nnext line\n");
+        session.start_stderr_monitor(std::io::Cursor::new(stderr)).join().unwrap();
+        assert!(session.is_running());
+        assert!(!terminated.load(Ordering::SeqCst));
+        assert!(matches!(pending_receiver.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        drop(incoming_sender);
+    }
+
+    #[test]
+    fn rejected_frames_preserve_concurrent_requests_events_and_server_request_id_namespace() {
+        let (outgoing_sender, outgoing_receiver) = mpsc::channel();
+        let (incoming_sender, incoming_receiver) = mpsc::channel();
+        let terminated = Arc::new(AtomicBool::new(false));
+        let session = CodexAppServerSession::from_parts(
+            Box::new(JsonLineReader::new(MockByteReader {
+                receiver: incoming_receiver, current: std::io::Cursor::new(Vec::new()),
             })),
+            Box::new(MockWriter { sender: outgoing_sender }),
+            Some(Box::new(RecordingControl { terminated: terminated.clone() })),
         );
         let notifications = session.subscribe().unwrap();
-        let (pending_sender, pending_receiver) = mpsc::channel();
-        session
-            .inner
-            .pending
-            .lock()
-            .unwrap()
-            .insert(JsonRpcId::Number(41), pending_sender);
-        let mut stderr = vec![b'x'; MAX_APP_SERVER_STDERR_LINE_BYTES + 1];
-        stderr.push(b'\n');
+        let session_a = session.clone();
+        let request_a = thread::spawn(move || session_a.request_value_with_timeout(
+            "thread/read", json!({ "threadId": "thread-a" }), Duration::from_secs(2)));
+        let id_a = outgoing_receiver.recv_timeout(Duration::from_secs(1)).unwrap()["id"].clone();
+        let session_b = session.clone();
+        let request_b = thread::spawn(move || session_b.request_value_with_timeout(
+            "thread/read", json!({ "threadId": "thread-b" }), Duration::from_secs(2)));
+        let id_b = outgoing_receiver.recv_timeout(Duration::from_secs(1)).unwrap()["id"].clone();
 
-        session.start_stderr_monitor(std::io::Cursor::new(stderr));
+        // An incoming server request may legitimately reuse a pending client id.
+        let server_request = format!("{{\"id\":{id_b},\"method\":\"approval\",\"params\":!}}\n");
+        let invalid = format!("{{\"id\":{id_a},\"result\":!}}\n");
+        let healthy = json!({ "id": id_b, "result": { "ok": true } });
+        let event = json!({ "method": "thread/name/updated", "params": {
+            "threadId": "thread-b", "threadName": "Still receiving",
+        } });
+        incoming_sender.send(format!("{server_request}{invalid}{healthy}\n{event}\n").into_bytes()).unwrap();
 
-        let error = notifications
-            .recv_timeout(Duration::from_secs(1))
-            .unwrap()
-            .unwrap_err();
-        assert!(matches!(error, CodexAppServerError::Protocol(_)));
-        assert_eq!(
-            pending_receiver.recv_timeout(Duration::from_secs(1)).unwrap(),
-            Err(error.clone())
-        );
-        for _ in 0..100 {
-            if terminated.load(Ordering::SeqCst) {
-                break;
-            }
-            thread::sleep(Duration::from_millis(1));
-        }
-        assert!(terminated.load(Ordering::SeqCst));
-        let late_error = match session.subscribe() {
-            Err(error) => error,
-            Ok(_) => panic!("terminal fault was not retained"),
-        };
-        assert_eq!(late_error, error);
-        assert!(!session.is_running());
-        assert!(session.inner.pending.lock().unwrap().is_empty());
+        let rejected = outgoing_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(rejected["id"], id_b);
+        assert_eq!(rejected["error"]["code"], -32600);
+        assert!(matches!(request_a.join().unwrap().unwrap_err(), CodexAppServerError::Protocol(_)));
+        assert_eq!(request_b.join().unwrap().unwrap(), json!({ "ok": true }));
+        assert!(matches!(notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap(),
+            CodexIncoming::Notification(CodexNotification::ThreadNameUpdated { thread_id, .. }) if thread_id == "thread-b"));
+        assert!(session.is_running());
+        assert!(!terminated.load(Ordering::SeqCst));
+        session.shutdown().unwrap();
         drop(incoming_sender);
     }
 
@@ -2395,22 +2341,17 @@ mod tests {
     }
 
     #[test]
-    fn invalid_optional_jsonrpc_metadata_fails_the_session() {
+    fn invalid_notification_metadata_does_not_stop_other_notifications() {
         let (session, _peer_receiver, peer_sender) = mock_session();
         let notifications = session.subscribe().unwrap();
-        peer_sender
-            .send(json!({
-                "jsonrpc": "1.0",
-                "method": "remoteControl/status/changed"
-            }))
-            .unwrap();
-
-        let error = notifications
-            .recv_timeout(Duration::from_secs(1))
-            .unwrap()
-            .unwrap_err();
-        assert!(matches!(error, CodexAppServerError::Protocol(_)));
-        assert!(!session.is_running());
+        peer_sender.send(json!({ "jsonrpc": "1.0", "method": "remoteControl/status/changed" })).unwrap();
+        peer_sender.send(json!({ "method": "thread/name/updated", "params": {
+            "threadId": "thread-other", "threadName": "Still receiving",
+        } })).unwrap();
+        assert!(matches!(notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap(),
+            CodexIncoming::Notification(CodexNotification::ThreadNameUpdated { thread_id, .. }) if thread_id == "thread-other"));
+        assert!(session.is_running());
+        session.shutdown().unwrap();
     }
 
     #[test]
@@ -2487,16 +2428,22 @@ mod tests {
     }
 
     #[test]
-    fn unmatched_response_id_is_a_protocol_error() {
-        let (session, _, peer_sender) = mock_session();
-        let notifications = session.subscribe().unwrap();
+    fn unmatched_and_late_responses_do_not_stop_the_session() {
+        let (session, peer_receiver, peer_sender) = mock_session();
+        let timed = session.request_value_with_timeout("project/read", json!({}), Duration::from_millis(20));
+        assert!(matches!(timed, Err(CodexAppServerError::Timeout(_))));
+        assert!(session.is_running());
+        let old = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        peer_sender.send(json!({ "id": old["id"], "result": {} })).unwrap();
         peer_sender.send(json!({ "id": 999, "result": {} })).unwrap();
-        let error = notifications
-            .recv_timeout(Duration::from_secs(1))
-            .unwrap()
-            .unwrap_err();
-        assert!(matches!(error, CodexAppServerError::Protocol(_)));
-        assert!(!session.is_running());
+        let operation_session = session.clone();
+        let operation = thread::spawn(move || operation_session.request_value_with_timeout(
+            "project/read", json!({}), Duration::from_secs(1)));
+        let current = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        peer_sender.send(json!({ "id": current["id"], "result": { "ok": true } })).unwrap();
+        assert_eq!(operation.join().unwrap().unwrap(), json!({ "ok": true }));
+        assert!(session.is_running());
+        session.shutdown().unwrap();
     }
 
     #[test]
@@ -2844,6 +2791,7 @@ mod tests {
             let resume = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
             assert_eq!(resume["method"], "thread/resume");
             assert_eq!(resume["params"]["threadId"], "thread-historical");
+            assert_eq!(resume["params"]["excludeTurns"], true);
             peer_sender
                 .send(json!({
                     "id": resume["id"],

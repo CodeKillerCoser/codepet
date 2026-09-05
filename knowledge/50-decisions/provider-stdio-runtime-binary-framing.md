@@ -14,9 +14,11 @@ Runtime 先把 wire message 序列化一次为 JSON bytes。小于 32 KiB 时使
 
 16 MiB 只约束最终在 stdio 通道上传输的完整 frame，即固定 header 与编码后 payload 的总字节数。不定义解压后尺寸上限，也不以压缩前 JSON 大小决定是否接受。Host 按 header 的 payload length 有界读取，raw 直接解析 JSON，zstd 通过解压 reader 解析 JSON。格式错误、未知 frame version、未知 encoding、截断 payload 和非法 JSON 必须 fail closed。
 
-任意 Host→Provider 请求在编码后的 frame 超限时不得写入 stdin；任意 Provider→Host RPC 响应超限时，Runtime 丢弃原 frame，并以相同 request id 写一个小型 raw JSON `provider_response_too_large` 错误。Gateway 不探测尺寸、不修改业务对象、不自动缩页。最终调用方收到该错误后，保持 cursor 不变，按固定梯度 `40 → 20 → 10 → 5 → 1` 重试 `conversation.get`；成功后才推进 `nextCursor`，`limit=1` 仍超限则把错误交给上层。
+任意 Host→Provider 请求在编码后的 frame 超限时不得写入 stdin；任意 Provider→Host RPC 响应超限时，Runtime 丢弃原 frame，并以相同 request id 写一个小型 raw JSON `provider_response_too_large` 错误。Gateway 不探测尺寸、不修改业务对象、不自动缩页。最终调用方收到该错误后，保持 cursor 不变，按固定梯度 `20 → 10 → 5 → 1` 重试 `conversation.get`；成功后才推进 `nextCursor`，`limit=1` 仍超限则把错误交给上层。
 
-`conversation.get` 不再拥有传输专用的内容预算、全响应预序列化或静默降级。Provider 必须真实遵守 cursor/limit，只生成当前页。工具输出在原生数据转换为领域对象时可以按明确的内容策略截断并携带 `originalBytes`、`retainedBytes` 和 `strategy`；一旦领域响应形成，Runtime 只能成功传输或返回超限错误，不能再删除 preview、summary、tool input/output 或其他业务内容。
+事件在编码阶段失败时，尚未写出任何 stdout 字节，SDK 只向发布者返回错误，不发送 terminal 信号。Codex 记录该事件拒绝并继续后续事件；实际 write/flush failure 才触发连接清理。事件没有 RPC id，不伪造响应，也不承诺被拒事件自动重放。
+
+`conversation.get` 不再拥有传输专用的内容预算、全响应预序列化或静默降级。Provider 必须真实遵守 cursor/limit，只生成当前页。Codex 原生 JSONL 不再设置整行/turn 字节上限，也不在 Provider 内缩小 caller limit。仅 `kind: tool` 超大文本在映射领域对象时截断，并在 item 可选 `_meta.truncations` 记录字段路径、originalBytes、retainedBytes、strategy（见 [规约](../60-rules/provider-item-text-and-pagination.md)）；一旦领域响应形成，Runtime 只能成功传输或返回超限错误，不能再删除 preview、summary、tool input/output 或其他业务内容。
 
 ## 备选方案
 
@@ -37,7 +39,7 @@ Runtime 先把 wire message 序列化一次为 JSON bytes。小于 32 KiB 时使
 - `protocol/provider/v1/manifest.json`：transport framing 改为 Provider Frame V1，业务版本仍为 v1。
 - `sdk/rust/codepet-provider-sdk`：Runtime codec、stdio reader/writer、错误封装和 transport tests；公开 Provider trait 不增加 framing 参数。
 - `tools/protocol-codegen`：生成/分发的 Provider Runtime 模板必须与 checked-in SDK 一致，避免重新导出时退回 JSON Lines。
-- `crates/codepet-host/src/process.rs`：异步 stdin writer/stdout reader改为相同 Frame V1 codec，不复制压缩策略。
+- `crates/codepet-host/src/providers/process.rs`：异步 stdin writer/stdout reader改为相同 Frame V1 codec，不复制压缩策略。
 - `crates/providers/*`：继续只调用 `serve_stdio`；`conversation.get` 负责真实 cursor/limit 分页，不做 transport-size 探测。
 - `codepet-remote`：只消费稳定的 Gateway 错误并负责缩页，不感知 Provider stdio framing 或 encoding。
 

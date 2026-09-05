@@ -3,6 +3,53 @@
   "$id": "https://code-pet.dev/protocol/provider/v1/schema.json",
   "title": "CodePet Provider Protocol v1",
   "$defs": {
+    "ProviderPingRequest": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hostSessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "clients": {
+          "$ref": "../../core/v1/schema.json#/$defs/ClientConnectionsSnapshot"
+        },
+        "instances": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderInstanceRoute"
+          }
+        }
+      },
+      "required": [
+        "sequence",
+        "hostSessionId",
+        "clients",
+        "instances"
+      ],
+      "additionalProperties": false
+    },
+    "ProviderPingResponse": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clientsRevision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "sequence",
+        "clientsRevision"
+      ],
+      "additionalProperties": false
+    },
     "ApprovalRequestedEvent": {
       "type": "object",
       "properties": {

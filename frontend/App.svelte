@@ -32,8 +32,10 @@
     Volume2,
   } from "@lucide/svelte";
   import { onMount, tick } from "svelte";
-  import { appDataDirectory, appDataDirectoryTargetStatus, checkAppUpdate, clearAgentRuntimeExecutable, collectorEndpoint, cutOutImageSubject, deletePet, detectAgentRuntime, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listAgentRuntimes, listAgents, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentEnabled, setAgentHookEvents, setAgentRuntimeExecutable, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
-  import { agentRuntimeSourceLabel, agentRuntimeStatusMeta, canRestoreAutomaticDetection, replaceAgentRuntime } from "./lib/agentRuntime";
+  import ProviderConnectionStatus from "./lib/ProviderConnectionStatus.svelte";
+  import { observeProviderRuntimes, type ProviderConnectionState } from "./lib/providerRuntimes";
+  import { appDataDirectory, appDataDirectoryTargetStatus, checkAppUpdate, clearAgentRuntimeExecutable, collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listAgents, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentEnabled, setAgentHookEvents, setAgentRuntimeExecutable, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { agentRuntimeSourceLabel, agentRuntimeStatusMeta, canRestoreAutomaticDetection } from "./lib/agentRuntime";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
   import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
@@ -53,6 +55,13 @@
   let tab: "agents" | "connections" | "usage" | "personalize" | "events" = "agents";
   let agents: AgentView[] = [];
   let agentRuntimes: AgentRuntime[] = [];
+  let providerConnections: ProviderConnectionState[] = [];
+  let providerConnectionsLoaded = false;
+  const runtimeObserver = observeProviderRuntimes({
+    connections: (states) => { providerConnections = states; providerConnectionsLoaded = true; },
+    runtimes: (runtimes) => { agentRuntimes = runtimes; },
+    error: (currentError) => { error = String(currentError); },
+  });
   let remoteDevices: RemoteDevice[] = [];
   let pairDeviceDialogOpen = false;
   let addDeviceButton: HTMLButtonElement | null = null;
@@ -261,6 +270,7 @@
 
     return () => {
       disposed = true;
+      runtimeObserver.dispose();
       media.removeEventListener("change", syncTheme);
       unlistenPetEvent?.();
       unlistenTokenUsage?.();
@@ -290,9 +300,9 @@
     error = "";
     const startedAt = performance.now();
     try {
-      const [nextAgents, nextRuntimes, nextEvents, nextEndpoint, nextAppDataDir, nextPetLibrary, nextUsage, nextLaunchAtLogin] = await Promise.all([
+      const [nextAgents, _runtimeSubscription, nextEvents, nextEndpoint, nextAppDataDir, nextPetLibrary, nextUsage, nextLaunchAtLogin] = await Promise.all([
         measureFrontendPerf("frontend.main.list_agents", () => listAgents()),
-        measureFrontendPerf("frontend.main.list_agent_runtimes", () => listAgentRuntimes()),
+        measureFrontendPerf("frontend.main.list_agent_runtimes", () => runtimeObserver.start()),
         measureFrontendPerf("frontend.main.recent_events", () => recentEvents()),
         measureFrontendPerf("frontend.main.collector_endpoint", () => collectorEndpoint()),
         measureFrontendPerf("frontend.main.app_data_directory", () => appDataDirectory()),
@@ -301,7 +311,6 @@
         measureFrontendPerf("frontend.main.get_launch_at_login", () => getLaunchAtLoginEnabled()),
       ]);
       agents = nextAgents;
-      agentRuntimes = nextRuntimes;
       events = mergeEventFeed(events, nextEvents);
       endpoint = nextEndpoint;
       appDataDir = nextAppDataDir;
@@ -314,7 +323,7 @@
         durationMs: performance.now() - startedAt,
         fields: {
           agents: nextAgents.length,
-          runtimes: nextRuntimes.length,
+          runtimes: agentRuntimes.length,
           events: nextEvents.length,
           pets: nextPetLibrary.pets.length,
         },
@@ -480,7 +489,7 @@
     busyRuntime = "all";
     error = "";
     try {
-      agentRuntimes = await refreshAgentRuntimes();
+      await runtimeObserver.refresh(refreshAgentRuntimes);
     } catch (currentError) {
       error = String(currentError);
     } finally {
@@ -492,7 +501,7 @@
     busyRuntime = providerId;
     error = "";
     try {
-      agentRuntimes = replaceAgentRuntime(agentRuntimes, await detectAgentRuntime(providerId));
+      await runtimeObserver.refresh();
     } catch (currentError) {
       error = String(currentError);
     } finally {
@@ -511,8 +520,8 @@
     busyRuntime = runtime.providerId;
     error = "";
     try {
-      const replacement = await setAgentRuntimeExecutable(runtime.providerId, selected);
-      agentRuntimes = replaceAgentRuntime(agentRuntimes, replacement);
+      await setAgentRuntimeExecutable(runtime.providerId, selected);
+      await runtimeObserver.refresh();
       settings = normalizeSettings(await getAppSettings());
     } catch (currentError) {
       error = String(currentError);
@@ -525,8 +534,8 @@
     busyRuntime = runtime.providerId;
     error = "";
     try {
-      const replacement = await clearAgentRuntimeExecutable(runtime.providerId);
-      agentRuntimes = replaceAgentRuntime(agentRuntimes, replacement);
+      await clearAgentRuntimeExecutable(runtime.providerId);
+      await runtimeObserver.refresh();
       settings = normalizeSettings(await getAppSettings());
     } catch (currentError) {
       error = String(currentError);
@@ -539,9 +548,8 @@
     busyRuntime = runtime.providerId;
     error = "";
     try {
-      const replacement = await setAgentRuntimeExecutable(runtime.providerId, executablePath);
-      replacement.installed = runtime.installed;
-      agentRuntimes = replaceAgentRuntime(agentRuntimes, replacement);
+      await setAgentRuntimeExecutable(runtime.providerId, executablePath);
+      await runtimeObserver.refresh();
       settings = normalizeSettings(await getAppSettings());
     } catch (currentError) {
       error = String(currentError);
@@ -2022,6 +2030,7 @@
                   <span class:online={status.tone === "ready"} class:runtime-danger={status.tone === "danger"} class="status-chip">{status.label}</span>
                 </header>
 
+                <ProviderConnectionStatus current={providerConnections.find((state) => state.providerId === runtime.providerId)} available={providerConnectionsLoaded} />
                 <dl class="runtime-meta">
                   <div>
                     <dt>当前路径</dt>
@@ -2047,14 +2056,14 @@
                     <button
                       type="button"
                       class:selected={runtime.resolvedExecutable === installation.executablePath}
-                      disabled={runtimeBusy(runtime.providerId)}
+                      disabled={runtimeBusy(runtime.providerId) || runtime.status === "loading"}
                       on:click={() => selectInstalledRuntime(runtime, installation.executablePath)}
                     >
                       <span><b>{installation.version}</b> · {agentRuntimeSourceLabel(installation.source)}</span>
                       <code title={installation.executablePath}>{installation.executablePath}</code>
                     </button>
                   {:else}
-                    <p>没有通过 Provider 校验的本机安装。</p>
+                    <p>{runtime.status === "loading" ? "Provider 启动后将自动检测本机安装。" : "没有通过 Provider 校验的本机安装。"}</p>
                   {/each}
                 </div>
 
@@ -2069,13 +2078,13 @@
                 {/if}
 
                 <div class="runtime-actions">
-                  <button type="button" disabled={runtimeBusy(runtime.providerId)} on:click={() => detectRuntime(runtime.providerId)}>
+                  <button type="button" disabled={runtimeBusy(runtime.providerId) || runtime.status === "loading"} on:click={() => detectRuntime(runtime.providerId)}>
                     <RefreshCw size={16} /> 检测
                   </button>
-                  <button type="button" disabled={runtimeBusy(runtime.providerId)} on:click={() => chooseRuntimeExecutable(runtime)}>
+                  <button type="button" disabled={runtimeBusy(runtime.providerId) || runtime.status === "loading"} on:click={() => chooseRuntimeExecutable(runtime)}>
                     <FolderOpen size={16} /> 选择路径
                   </button>
-                  <button type="button" disabled={runtimeBusy(runtime.providerId) || !canRestoreAutomaticDetection(runtime)} on:click={() => restoreAutomaticRuntime(runtime)}>
+                  <button type="button" disabled={runtimeBusy(runtime.providerId) || runtime.status === "loading" || !canRestoreAutomaticDetection(runtime)} on:click={() => restoreAutomaticRuntime(runtime)}>
                     <RotateCcw size={16} /> 恢复自动检测
                   </button>
                 </div>

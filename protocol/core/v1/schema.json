@@ -3,6 +3,51 @@
   "$id": "https://code-pet.dev/protocol/core/v1/schema.json",
   "title": "CodePet Core Protocol v1",
   "$defs": {
+    "ConnectionStatus": {
+      "type": "string",
+      "enum": [
+        "connecting",
+        "online",
+        "offline"
+      ]
+    },
+    "ClientConnectionInfo": {
+      "type": "object",
+      "properties": {
+        "connectionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "clientId": {
+          "$ref": "#/$defs/ClientId"
+        }
+      },
+      "required": [
+        "connectionId",
+        "clientId"
+      ],
+      "additionalProperties": false
+    },
+    "ClientConnectionsSnapshot": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "connections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ClientConnectionInfo"
+          }
+        }
+      },
+      "required": [
+        "revision",
+        "connections"
+      ],
+      "additionalProperties": false
+    },
     "ClientId": {
       "type": "string",
       "minLength": 1,

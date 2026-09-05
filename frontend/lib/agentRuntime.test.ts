@@ -24,6 +24,7 @@ function runtime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
 
 describe("agent runtime UI state", () => {
   it("maps ready, unavailable, and invalid configuration statuses", () => {
+    expect(agentRuntimeStatusMeta(runtime({ status: "loading" }))).toEqual({ label: "启动中", tone: "neutral" });
     expect(agentRuntimeStatusMeta(runtime())).toEqual({ label: "可用", tone: "ready" });
     expect(agentRuntimeStatusMeta(runtime({ status: "unavailable" }))).toEqual({ label: "未检测到", tone: "neutral" });
     expect(agentRuntimeStatusMeta(runtime({ status: "invalid-configured-executable" }))).toEqual({ label: "配置无效", tone: "danger" });

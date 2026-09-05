@@ -75,6 +75,24 @@ pub(crate) struct ProviderHostState {
     shutdown_notify: Arc<Notify>,
 }
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProviderConnectionView {
+    provider_id: String,
+    connection_status: codepet_provider_sdk::ConnectionStatus,
+    generation: u64,
+    instances: Vec<ProviderInstanceConnectionView>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderInstanceConnectionView { id: String, status: codepet_provider_sdk::InstanceStatus }
+
+#[tauri::command]
+pub(crate) async fn provider_connection_status(state: tauri::State<'_, ProviderHostState>) -> Result<Vec<ProviderConnectionView>, String> {
+    Ok(state.connection_views().await)
+}
+
 impl ProviderHostState {
     pub(crate) fn from_app<R: Runtime>(
         app: &AppHandle<R>,
@@ -114,6 +132,19 @@ impl ProviderHostState {
         self.gateway.clone()
     }
 
+    pub(crate) async fn connection_views(&self) -> Vec<ProviderConnectionView> {
+        let Some(manager) = self.manager.as_ref() else { return vec![]; };
+        manager.snapshots().await.into_iter().map(|snapshot| ProviderConnectionView {
+            provider_id: snapshot.catalog.plugin_id,
+            connection_status: snapshot.connection_status,
+            generation: snapshot.generation,
+            instances: snapshot.instances.into_iter().map(|instance| ProviderInstanceConnectionView {
+                id: instance.record.instance_id,
+                status: instance.instance.map(|i| i.status).unwrap_or(codepet_provider_sdk::InstanceStatus::Created),
+            }).collect(),
+        }).collect()
+    }
+
     pub(crate) async fn runtime_views(&self) -> Vec<AgentRuntime> {
         let Some(manager) = self.manager.as_ref() else { return Vec::new() };
         let settings = load_app_settings().ok();
@@ -124,6 +155,23 @@ impl ProviderHostState {
                 .unwrap_or_else(|| snapshot.catalog.display_name.clone());
             let configured_executable = settings.as_ref()
                 .and_then(|settings| configured_runtime_selection(settings, &plugin_id));
+            let initializing = snapshot.state == PluginRuntimeState::Starting
+                || (snapshot.state == PluginRuntimeState::Stopped && snapshot.generation == 0
+                    && !self.shutdown_started.load(Ordering::SeqCst));
+            if initializing {
+                views.push(AgentRuntime {
+                    provider_id: plugin_id,
+                    display_name,
+                    status: AgentRuntimeStatus::Loading,
+                    resolved_executable: None,
+                    source: None,
+                    configured_executable,
+                    version: None,
+                    diagnostic: None,
+                    installed: Vec::new(),
+                });
+                continue;
+            }
             let inventory = manager.runtime_get_installed(&plugin_id, RuntimeGetInstalledRequest {}).await;
             match inventory {
                 Ok(inventory) => {
@@ -518,6 +566,7 @@ fn configured_provider_runtime(
         instances,
         provider_manager_config(&settings),
     )?);
+    manager.enable_connection_heartbeats();
     let gateway = Arc::new(ProviderGatewayService::with_remote_identity_and_state_path(
         manager.clone(),
         {
@@ -657,6 +706,20 @@ pub fn start_runtime_gateway_event_bridge<R: Runtime>(
     app: AppHandle<R>,
     state: &RuntimeGatewayState,
 ) -> Result<(), ProtocolError> {
+    if let Some(host) = app.try_state::<ProviderHostState>() {
+        let host = host.inner().clone();
+        if let Some(manager) = host.manager.as_ref() {
+            let mut changes = manager.subscribe_status_changes();
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let _ = app.emit("provider-connection-status", host.connection_views().await);
+                    if host.shutdown_started.load(Ordering::SeqCst) { break; }
+                    if changes.changed().await.is_err() { break; }
+                }
+            });
+        }
+    }
     let mut subscription = state.compat.subscribe_current()?;
     tauri::async_runtime::spawn(async move {
         loop {
@@ -720,6 +783,7 @@ fn start_local_event_bridge<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
+    use crate::agent_runtime::AgentRuntimeStatus;
     use super::{
         configured_runtime_selection, local_device_descriptor, non_empty_system_value,
         provider_catalog_config, provider_manager_config, spawn_provider_host_startup,
@@ -1168,10 +1232,16 @@ mod tests {
         let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
         assert!(gateway.start_event_forwarding());
         let provider_host = ProviderHostState::new(manager.clone(), gateway);
+        let initial_views = provider_host.runtime_views().await;
+        assert_eq!(initial_views[0].status, AgentRuntimeStatus::Loading);
+        assert!(initial_views[0].diagnostic.is_none());
         let startup_manager = manager.clone();
         let startup = tokio::spawn(async move { startup_manager.start_enabled().await });
         wait_for_file(&initialize_marker).await;
         wait_for_file(&pid_marker).await;
+        let starting_views = provider_host.runtime_views().await;
+        assert_eq!(starting_views[0].status, AgentRuntimeStatus::Loading);
+        assert!(starting_views[0].diagnostic.is_none());
 
         let barrier = Arc::new(Barrier::new(3));
         let first_host = provider_host.clone();
@@ -1203,6 +1273,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(snapshot.state, PluginRuntimeState::Stopped);
+        let stopped_views = provider_host.runtime_views().await;
+        assert_eq!(stopped_views[0].status, AgentRuntimeStatus::Unavailable);
+        assert_eq!(stopped_views[0].diagnostic.as_ref().unwrap().code, "provider-unavailable");
         assert!(snapshot
             .process_exit
             .as_ref()

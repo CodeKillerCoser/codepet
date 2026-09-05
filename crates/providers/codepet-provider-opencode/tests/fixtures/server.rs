@@ -17,8 +17,12 @@ fn main() {
     let args = std::env::args().collect::<Vec<_>>();
     let hostname = argument(&args, "--hostname").unwrap_or("127.0.0.1");
     assert_eq!(args.get(1).map(String::as_str), Some("serve"));
-    if let Ok(path) = std::env::var("OPENCODE_FIXTURE_PID_FILE") {
+    let startup = startup_config();
+    if let Some(path) = startup["pidFile"].as_str().map(str::to_owned).or_else(|| std::env::var("OPENCODE_FIXTURE_PID_FILE").ok()) {
         std::fs::write(path, std::process::id().to_string()).unwrap();
+    }
+    if let Some(delay) = startup["startupDelayMs"].as_u64() {
+        thread::sleep(std::time::Duration::from_millis(delay));
     }
     let fixture_directory = std::env::temp_dir()
         .join("opencode-fixture")
@@ -47,6 +51,11 @@ fn main() {
         let state = state.clone();
         thread::spawn(move || handle_connection(stream, state));
     }
+}
+
+fn startup_config() -> Value {
+    std::fs::read("opencode-fixture-startup.json").ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or(Value::Null)
 }
 
 fn bind_listener(hostname: &str, explicit_port: Option<&str>) -> TcpListener {
@@ -138,6 +147,11 @@ fn route(
         ]}).to_string());
     }
     if method == "GET" && path == "/api/model" {
+        let startup = startup_config();
+        if let Some(marker) = startup["modelEntered"].as_str() {
+            std::fs::write(marker, "entered").unwrap();
+            thread::sleep(std::time::Duration::from_secs(3));
+        }
         return (200, json!({"data": [{
             "id": "fixture-model",
             "providerID": "fixture",

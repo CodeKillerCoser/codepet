@@ -1177,7 +1177,7 @@ fn provider_binary_create_returns_before_conversation_is_materialized() {
 }
 
 #[test]
-fn provider_binary_create_does_not_wait_for_observer_persistence() {
+fn provider_binary_create_does_not_wait_for_history_persistence() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("observer-create-readiness.txt");
     let request_log = directory.path().join("observer-create-readiness-requests.txt");
@@ -1253,7 +1253,6 @@ fn provider_binary_returns_empty_history_for_unmaterialized_new_conversation() {
             "account/read",
             "account/rateLimits/read",
             "account/usage/read",
-            "initialize",
             "thread/start",
             "thread/read\tthread-created",
             "thread/turns/list\tthread-created"
@@ -1412,7 +1411,7 @@ fn provider_binary_acquire_interaction_reuses_created_session_and_returns_config
             response
                 .pointer("/result/leaseExpiresAt")
                 .and_then(Value::as_u64)
-                .is_some()
+                .is_none()
         );
     }
     assert_eq!(
@@ -1464,6 +1463,46 @@ fn provider_binary_acquire_interaction_reuses_created_session_and_returns_config
 
     provider.request("acquire-interaction-stop", "instance.stop", json!({ "route": route_value() }));
     provider.request("acquire-interaction-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn sdk_heartbeat_keeps_shared_server_until_last_client_disconnects_and_restarts_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("client-presence.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (_, revision) = provider.configure("none", &marker);
+    let server = session_pids(&marker, "process/start", "");
+    assert_eq!(server.len(), 1);
+    let ping = |sequence: u64, clients: &[&str]| json!({
+        "sequence": sequence, "hostSessionId": "test-host",
+        "clients": { "revision": sequence, "connections": clients.iter().map(|id|
+            json!({ "clientId": id, "connectionId": format!("connection-{id}") })).collect::<Vec<_>>() },
+        "instances": [route_value()]
+    });
+    provider.request("two-clients", "provider.ping", ping(1, &["phone-a", "phone-b"]));
+    for id in ["thread-a", "thread-b"] {
+        let response = provider.request(id, "turn.start", turn_start_params(
+            conversation_resource_value(id), &format!("message-{id}"), "keep running", &revision));
+        assert!(response.get("error").is_none(), "{response}");
+    }
+    provider.request("one-client", "provider.ping", ping(2, &["phone-b"]));
+    provider.collect_for(Duration::from_millis(80));
+    assert!(process_is_running(server[0]));
+    assert_eq!(session_pids(&marker, "process/start", ""), server);
+    provider.request("no-clients", "provider.ping", ping(3, &[]));
+    wait_for_processes_to_exit(&server, Duration::from_secs(2));
+    let alive = provider.request("provider-still-alive", "provider.describe", json!({}));
+    assert!(alive.get("error").is_none());
+    provider.buffered.retain(|message| message.get("method").and_then(Value::as_str) != Some("event.instanceStatusChanged"));
+    provider.request("reconnected", "provider.ping", ping(4, &["phone-a"]));
+    provider.receive(Duration::from_secs(3), |message|
+        message.get("method").and_then(Value::as_str) == Some("event.instanceStatusChanged")
+        && message.pointer("/params/instance/status").and_then(Value::as_str) == Some("ready"));
+    assert_eq!(session_pids(&marker, "process/start", "").len(), 2);
+    provider.request("presence-stop", "provider.ping", ping(5, &[]));
+    let all_servers = session_pids(&marker, "process/start", "");
+    wait_for_processes_to_exit(&all_servers, Duration::from_secs(2));
+    provider.request("presence-shutdown", "provider.shutdown", json!({}));
 }
 
 #[test]
@@ -1548,7 +1587,6 @@ fn provider_binary_conversation_get_pages_history_without_resuming() {
             "thread/turns/list\tthread-paginated",
             "thread/read\tthread-paginated",
             "thread/turns/list\tthread-paginated",
-            "thread/turns/list\tthread-paginated",
             "thread/read\tthread-paginated",
             "thread/turns/list\tthread-paginated"
         ]
@@ -1561,13 +1599,122 @@ fn provider_binary_conversation_get_pages_history_without_resuming() {
 }
 
 #[test]
-fn provider_binary_uses_item_pagination_for_app_server_0_152() {
+fn provider_binary_reads_full_turns_for_app_server_0_152() {
+    assert_provider_reads_full_turns("app-server-0.152-history");
+}
+
+#[test]
+fn provider_binary_read_errors_preserve_shared_server_and_other_conversations() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("read-error-isolation.txt");
+    let mut provider = ProviderBinary::spawn();
+    provider.configure("read-error-isolation", &marker);
+    let original_pids = session_pids(&marker, "process/start", "");
+    assert_eq!(original_pids.len(), 1);
+    for (conversation, error_code) in [
+        ("thread-oversized", "provider_protocol_error"),
+        ("thread-invalid-json", "provider_protocol_error"),
+        ("thread-invalid-envelope", "provider_protocol_error"),
+        ("thread-rpc-error", "provider_error"),
+    ] {
+        let response = provider.request(conversation, "conversation.get", json!({
+            "conversation": conversation_resource_value(conversation), "limit": 20,
+        }));
+        assert_eq!(response.pointer("/error/data/code").and_then(Value::as_str), Some(error_code), "{response}");
+        let healthy = provider.request("healthy-after-error", "conversation.get", json!({
+            "conversation": conversation_resource_value("thread-other"), "limit": 20,
+        }));
+        assert!(healthy.get("error").is_none(), "{healthy}");
+        assert_eq!(session_pids(&marker, "process/start", ""), original_pids);
+    }
+    provider.request("isolation-stop", "instance.stop", json!({ "route": route_value() }));
+    provider.request("isolation-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn provider_binary_reads_full_turns_with_host_client_user_agent() {
+    assert_provider_reads_full_turns("app-server-code-pet-history");
+}
+
+#[test]
+fn provider_binary_forwards_turn_limit_and_truncates_only_tool_text_with_item_metadata() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("tool-text-policy.txt");
+    let requests = directory.path().join("tool-text-policy-requests.txt");
+    let mut provider = ProviderBinary::spawn();
+    provider.configure_with_request_log("app-server-code-pet-history", &marker, Some(&requests));
+    let pids = session_pids(&marker, "process/start", "");
+    std::fs::write(&requests, "").unwrap();
+    let response = provider.request("tool-text-policy", "conversation.get", json!({
+        "conversation": conversation_resource_value("thread-tool-text-policy"), "limit": 20,
+    }));
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(response.pointer("/result/pageInfo/nextCursor"), Some(&json!("native-next-page")));
+    let items = response.pointer("/result/items").unwrap().as_array().unwrap();
+    assert_eq!(items.len(), 3);
+    let text = items[0].pointer("/tool/outcome/content/0/text").unwrap().as_str().unwrap();
+    assert!(text.len() <= codepet_provider_sdk::DEFAULT_TOOL_TEXT_BYTES);
+    assert_eq!(items[0].pointer("/_meta/truncations/0/originalBytes"), Some(&json!(20 * 1024 * 1024)));
+    assert_eq!(items[0].pointer("/_meta/truncations/0/retainedBytes"), Some(&json!(text.len())));
+    assert_eq!(items[1].pointer("/contents/0/text").unwrap().as_str().unwrap().len(), 300_000);
+    assert_eq!(items[2].pointer("/tool/outcome/content/0/text").unwrap().as_str().unwrap().len(), 300_000);
+    assert!(items[1].get("_meta").is_none() && items[2].get("_meta").is_none());
+    assert_eq!(std::fs::read_to_string(&requests).unwrap().lines().collect::<Vec<_>>(), vec![
+        "thread/read\tthread-tool-text-policy", "thread/turns/list\tthread-tool-text-policy",
+    ]);
+    assert_eq!(session_pids(&marker, "process/start", ""), pids);
+    provider.request("tool-text-policy-shutdown", "provider.shutdown", json!({}));
+}
+
+#[tokio::test]
+async fn oversized_event_keeps_shared_server_and_subsequent_events_available() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("event-error-isolation.txt");
+    let rejected = Arc::new(AtomicBool::new(false));
+    let sink_rejected = rejected.clone();
+    let (sender, receiver) = mpsc::channel();
+    let events = Arc::new(move |event| {
+        if matches!(&event, ProtocolEvent::EventTurnUpserted { .. })
+            && !sink_rejected.swap(true, Ordering::SeqCst)
+        {
+            return Err(codepet_provider_sdk::ProtocolError {
+                code: "provider_frame_too_large".to_string(),
+                message: "fixture event exceeds wire frame limit".to_string(),
+                retryable: false, details: None,
+            });
+        }
+        sender.send(event).unwrap();
+        Ok(())
+    });
+    let (provider, route, capability_revision) = configured_direct_provider_with_events(
+        "complete-on-approval", &marker, events,
+    ).await;
+    let pids = session_pids(&marker, "process/start", "");
+    assert_eq!(pids.len(), 1);
+    ProviderProtocolServer::turn_start(provider.as_ref(), TurnStartRequest {
+        conversation: conversation_resource(&route, "thread-event-isolation"),
+        client_request_id: "event-isolation-start".to_string(), capability_revision,
+        input: TurnInput { kind: TurnInputKind::Text, text: "fixture turn".to_string() },
+        selection: TurnSelection { access_mode_id: None, reasoning_effort_id: None, model: None },
+    }).await.unwrap();
+    loop {
+        if matches!(receiver.recv_timeout(Duration::from_secs(2)).unwrap(), ProtocolEvent::EventApprovalRequested { .. }) { break; }
+    }
+    assert!(rejected.load(Ordering::SeqCst));
+    ProviderProtocolServer::project_list(provider.as_ref(), ProjectListRequest {
+        route, cursor: None, limit: Some(20),
+    }).await.unwrap();
+    assert_eq!(session_pids(&marker, "process/start", ""), pids);
+    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {}).await.unwrap();
+}
+
+fn assert_provider_reads_full_turns(mode: &str) {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("item-paginated-history.txt");
     let request_log = directory.path().join("item-paginated-history-requests.txt");
     let mut provider = ProviderBinary::spawn();
     provider.configure_with_request_log(
-        "app-server-0.152-history",
+        mode,
         &marker,
         Some(&request_log),
     );
@@ -1603,8 +1750,7 @@ fn provider_binary_uses_item_pagination_for_app_server_0_152() {
             .collect::<Vec<_>>(),
         vec![
             "thread/read\tthread-paginated",
-            "thread/turns/list\tthread-paginated",
-            "thread/items/list\tthread-paginated"
+            "thread/turns/list\tthread-paginated"
         ]
     );
 
@@ -1613,7 +1759,7 @@ fn provider_binary_uses_item_pagination_for_app_server_0_152() {
 }
 
 #[test]
-fn provider_binary_falls_back_to_full_turns_when_app_server_0_151_lacks_item_pagination() {
+fn provider_binary_reads_full_turns_without_item_probes_on_app_server_0_151() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("legacy-full-history.txt");
     let request_log = directory.path().join("legacy-full-history-requests.txt");
@@ -1648,8 +1794,6 @@ fn provider_binary_falls_back_to_full_turns_when_app_server_0_151_lacks_item_pag
             .collect::<Vec<_>>(),
         vec![
             "thread/read\tthread-paginated",
-            "thread/turns/list\tthread-paginated",
-            "thread/items/list\tthread-paginated",
             "thread/turns/list\tthread-paginated"
         ]
     );
@@ -1666,7 +1810,7 @@ fn provider_binary_reuses_one_execution_session_until_authoritative_terminal_sta
     let (conversation, capability_revision) = provider.configure("normal", &marker);
     let observer_pid = session_pids(&marker, "model/list", "")[0];
     let creation_pid = session_pids(&marker, "thread/start", "")[0];
-    assert_ne!(observer_pid, creation_pid);
+    assert_eq!(observer_pid, creation_pid);
     clear_session_log(&marker);
 
     let started = provider.request(
@@ -1742,7 +1886,7 @@ fn provider_binary_reuses_one_execution_session_until_authoritative_terminal_sta
     assert_eq!(approval_pids.len(), 1);
     let first_execution = approval_pids[0];
     assert_eq!(first_execution, creation_pid);
-    assert_ne!(observer_pid, first_execution);
+    assert_eq!(observer_pid, first_execution);
     assert_eq!(
         session_pids(&marker, "turn/steer", "thread-created"),
         vec![first_execution]
@@ -1824,7 +1968,7 @@ fn provider_binary_keeps_waiting_user_input_execution_detached_from_remote_reads
 }
 
 #[test]
-fn provider_binary_terminal_notification_releases_only_its_conversation() {
+fn provider_binary_terminal_notification_preserves_other_conversations_in_shared_server() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("parallel-terminal.txt");
     let mut provider = ProviderBinary::spawn();
@@ -1917,10 +2061,9 @@ fn provider_binary_terminal_notification_releases_only_its_conversation() {
 
     let a_pids = session_pids(&marker, "thread/resume", "thread-a");
     let b_pids = session_pids(&marker, "thread/resume", "thread-b");
-    assert_eq!(a_pids.len(), 2);
+    assert_eq!(a_pids.len(), 1);
     assert_eq!(b_pids.len(), 1);
-    assert_ne!(a_pids[0], a_pids[1]);
-    assert_ne!(a_pids[0], b_pids[0]);
+    assert_eq!(a_pids[0], b_pids[0]);
     assert_eq!(
         session_pids(&marker, "turn/steer", "thread-b"),
         vec![b_pids[0]]
@@ -1949,7 +2092,7 @@ fn provider_binary_terminal_notification_releases_only_its_conversation() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn terminal_cleanup_hides_the_closing_slot_before_publishing_the_terminal_event() {
+async fn terminal_publication_precedes_next_operation_without_closing_shared_server() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("terminal-closing-race.txt");
     let terminal_entered = Arc::new(Barrier::new(2));
@@ -2062,8 +2205,8 @@ async fn terminal_cleanup_hides_the_closing_slot_before_publishing_the_terminal_
         .unwrap()
         .unwrap();
     let execution_pids = session_pids(&marker, "thread/resume", "thread-terminal-race");
-    assert_eq!(execution_pids.len(), 2);
-    assert_ne!(execution_pids[0], execution_pids[1]);
+    assert_eq!(execution_pids.len(), 1);
+    assert!(process_is_running(execution_pids[0]));
 
     ProviderProtocolServer::instance_stop(
         provider.as_ref(),
@@ -2077,7 +2220,7 @@ async fn terminal_cleanup_hides_the_closing_slot_before_publishing_the_terminal_
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn valid_lease_keeps_writer_through_delayed_output_and_terminal_forwarding() {
+async fn shared_server_keeps_writer_through_delayed_output_and_terminal_forwarding() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("delayed-user-item-output.txt");
     let (event_sender, event_receiver) = mpsc::channel();
@@ -2195,7 +2338,7 @@ async fn valid_lease_keeps_writer_through_delayed_output_and_terminal_forwarding
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn prefetched_ready_handle_retries_after_terminal_closes_its_generation() {
+async fn prefetched_ready_handle_remains_valid_after_terminal_in_shared_server() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("prefetched-ready-handle.txt");
     let handle_entered = Arc::new(Barrier::new(2));
@@ -2303,7 +2446,7 @@ async fn prefetched_ready_handle_retries_after_terminal_closes_its_generation() 
             break;
         }
     }
-    wait_for_processes_to_exit(&first_generation_pids, Duration::from_secs(2));
+    assert!(process_is_running(first_generation_pids[0]));
 
     let release = handle_release.clone();
     tokio::task::spawn_blocking(move || release.wait())
@@ -2315,8 +2458,8 @@ async fn prefetched_ready_handle_retries_after_terminal_closes_its_generation() 
         .unwrap()
         .unwrap();
     let execution_pids = session_pids(&marker, "thread/resume", "thread-prefetched-handle");
-    assert_eq!(execution_pids.len(), 2);
-    assert_ne!(execution_pids[0], execution_pids[1]);
+    assert_eq!(execution_pids.len(), 1);
+    assert_eq!(execution_pids, first_generation_pids);
 
     ProviderProtocolServer::instance_stop(
         provider.as_ref(),
@@ -2379,9 +2522,9 @@ async fn stop_cancelled_before_resume_linearization_never_writes_resume_or_start
     tokio::task::spawn_blocking(move || entered.wait())
         .await
         .unwrap();
-    let execution_pids = session_pids(&marker, "process/start", "");
-    assert_eq!(execution_pids.len(), 1);
-    assert_eq!(session_method_count(&marker, "initialize"), 1);
+    let execution_pids: Vec<u32> = vec![];
+    assert!(execution_pids.is_empty());
+    assert_eq!(session_method_count(&marker, "initialize"), 0);
 
     let stop_provider = provider.clone();
     let stop_route = route.clone();
@@ -2461,7 +2604,7 @@ async fn stop_cancelled_before_resume_linearization_never_writes_resume_or_start
 }
 
 #[test]
-fn terminal_release_and_per_process_session_evidence_are_stable_under_repetition() {
+fn shared_server_and_event_routing_are_stable_across_sixty_four_conversations() {
     const ITERATIONS: usize = 64;
 
     let directory = tempfile::tempdir().unwrap();
@@ -2513,8 +2656,8 @@ fn terminal_release_and_per_process_session_evidence_are_stable_under_repetition
         );
     }
     assert_eq!(
-        session_pids(&marker, "process/start", "").len(),
-        ITERATIONS
+        session_pids(&marker, "thread/resume", "*").len(),
+        1
     );
 
     provider.request("terminal-stress-stop", "instance.stop", json!({ "route": route_value() }));
@@ -2636,74 +2779,6 @@ async fn provider_stop_interrupts_an_execution_still_waiting_for_resume() {
         .unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn provider_stop_cancels_an_execution_still_waiting_for_initialize() {
-    let directory = tempfile::tempdir().unwrap();
-    let marker = directory.path().join("stop-during-initialize.txt");
-    let (provider, route, capability_revision) =
-        configured_direct_provider("execution-initialize-no-response", &marker).await;
-    let baseline_pids = session_pids(&marker, "process/start", "");
-    let baseline_initialize_count = session_method_count(&marker, "initialize");
-    let conversation = conversation_resource(&route, "thread-initialize-pending");
-    let operation_provider = provider.clone();
-    let operation = tokio::spawn(async move {
-        ProviderProtocolServer::turn_start(
-            operation_provider.as_ref(),
-            TurnStartRequest {
-                conversation,
-                client_request_id: "initialize-pending-message".to_string(),
-                capability_revision,
-                input: TurnInput {
-                    kind: TurnInputKind::Text,
-                    text: "wait for initialize".to_string(),
-                },
-                selection: TurnSelection {
-                    access_mode_id: None,
-                    reasoning_effort_id: None,
-                    model: None,
-                },
-            },
-        )
-        .await
-    });
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while session_method_count(&marker, "initialize") <= baseline_initialize_count {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-    let execution_pids = session_pids(&marker, "process/start", "")
-        .into_iter()
-        .filter(|process_id| !baseline_pids.contains(process_id))
-        .collect::<Vec<_>>();
-    assert_eq!(execution_pids.len(), 1);
-
-    let stopped = tokio::time::timeout(
-        Duration::from_secs(2),
-        ProviderProtocolServer::instance_stop(
-            provider.as_ref(),
-            InstanceStopRequest { route: route.clone() },
-        ),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(stopped.instance.status, codepet_provider_sdk::InstanceStatus::Stopped);
-    let operation_error = tokio::time::timeout(Duration::from_secs(2), operation)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap_err();
-    assert_eq!(operation_error.code, "provider_unavailable");
-    assert!(session_pids(&marker, "thread/resume", "thread-initialize-pending").is_empty());
-    wait_for_processes_to_exit(&execution_pids, Duration::from_secs(2));
-
-    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {})
-        .await
-        .unwrap();
-}
-
 #[test]
 fn provider_binary_dispatches_other_conversations_and_stop_while_resume_hangs() {
     let directory = tempfile::tempdir().unwrap();
@@ -2751,8 +2826,8 @@ fn provider_binary_dispatches_other_conversations_and_stop_while_resume_hangs() 
         "thread-b",
         Duration::from_secs(2),
     );
-    let execution_pids = session_pids(&marker, "process/start", "");
-    assert_eq!(execution_pids.len(), 2);
+    let execution_pids = session_pids(&marker, "thread/resume", "*");
+    assert_eq!(execution_pids.len(), 1);
 
     provider.send_request("stdio-stop", "instance.stop", json!({ "route": route_value() }));
     let stopped = provider.receive(Duration::from_secs(2), |message| {
@@ -2805,9 +2880,17 @@ fn provider_binary_reserves_dispatch_for_stop_when_all_normal_slots_are_blocked(
         session_method_count(&marker, "thread/resume"),
         MAX_CONCURRENT_HOST_REQUESTS
     );
-    let execution_pids = session_pids(&marker, "process/start", "");
-    assert_eq!(execution_pids.len(), MAX_CONCURRENT_HOST_REQUESTS);
+    let execution_pids = session_pids(&marker, "thread/resume", "*");
+    assert_eq!(execution_pids.len(), 1);
 
+    provider.send_request("saturated-heartbeat", "provider.ping", json!({
+        "sequence": 1, "hostSessionId": "saturated-host",
+        "clients": {"revision": 1, "connections": []}, "instances": []
+    }));
+    let pong = provider.receive(Duration::from_secs(2), |message| {
+        message.get("id").and_then(Value::as_str) == Some("saturated-heartbeat")
+    });
+    assert_eq!(pong.pointer("/result/sequence"), Some(&json!(1)));
     provider.send_request(
         "saturated-instance-stop",
         "instance.stop",
@@ -2868,8 +2951,8 @@ fn provider_binary_keeps_eof_visible_after_at_least_forty_nine_saturated_frames(
             ),
         );
     }
-    let execution_pids = session_pids(&marker, "process/start", "");
-    assert_eq!(execution_pids.len(), MAX_CONCURRENT_HOST_REQUESTS);
+    let execution_pids = session_pids(&marker, "thread/resume", "*");
+    assert_eq!(execution_pids.len(), 1);
 
     let status = provider.close_input_and_wait(Duration::from_secs(2));
     assert!(status.success());
@@ -2877,126 +2960,10 @@ fn provider_binary_keeps_eof_visible_after_at_least_forty_nine_saturated_frames(
 }
 
 #[cfg(unix)]
-#[test]
-fn provider_binary_stop_cancels_a_conversation_create_waiting_for_initialize() {
-    let directory = tempfile::tempdir().unwrap();
-    let marker = directory.path().join("create-initialize-stop.txt");
-    let mut provider = ProviderBinary::spawn();
-    provider.initialize_and_create_instance(
-        &app_server_executable(),
-        fixture_args("execution-initialize-no-response", &marker),
-    );
-    let started = provider.request(
-        "create-stop-start-instance",
-        "instance.start",
-        json!({ "route": route_value() }),
-    );
-    assert_eq!(
-        started.pointer("/result/instance/status").and_then(Value::as_str),
-        Some("ready")
-    );
-    let observer_pids = session_pids(&marker, "model/list", "");
-    assert_eq!(observer_pids.len(), 1);
-
-    provider.send_request(
-        "create-stop-conversation",
-        "conversation.create",
-        conversation_create_params(),
-    );
-    wait_for_session_count(&marker, "initialize", 2, Duration::from_secs(2));
-    let create_pids = session_pids(&marker, "process/start", "")
-        .into_iter()
-        .filter(|process_id| !observer_pids.contains(process_id))
-        .collect::<Vec<_>>();
-    assert_eq!(create_pids.len(), 1);
-
-    provider.send_request(
-        "create-stop-instance",
-        "instance.stop",
-        json!({ "route": route_value() }),
-    );
-    let stopped = provider.receive(Duration::from_secs(2), |message| {
-        message.get("id").and_then(Value::as_str) == Some("create-stop-instance")
-    });
-    let create_processes_still_running = create_pids
-        .iter()
-        .copied()
-        .filter(|process_id| process_is_running(*process_id))
-        .collect::<Vec<_>>();
-    if !create_processes_still_running.is_empty() {
-        terminate_processes(&create_processes_still_running);
-    }
-    assert_eq!(stopped["id"], "create-stop-instance");
-    assert_eq!(
-        stopped.pointer("/result/instance/status").and_then(Value::as_str),
-        Some("stopped")
-    );
-    assert!(
-        create_processes_still_running.is_empty(),
-        "instance.stop returned before create sessions exited: {create_processes_still_running:?}"
-    );
-    let create_response = provider.receive(Duration::from_secs(2), |message| {
-        message.get("id").and_then(Value::as_str) == Some("create-stop-conversation")
-    });
-    assert_eq!(create_response["id"], "create-stop-conversation");
-    assert!(create_response.get("error").is_some());
-    assert!(session_pids(&marker, "thread/start", "").is_empty());
-
-    provider.request("create-stop-shutdown", "provider.shutdown", json!({}));
-}
-
+#[cfg(unix)]
 #[cfg(unix)]
 #[test]
-fn provider_binary_eof_cancels_a_conversation_create_waiting_for_initialize() {
-    let directory = tempfile::tempdir().unwrap();
-    let marker = directory.path().join("create-initialize-eof.txt");
-    let mut provider = ProviderBinary::spawn();
-    provider.initialize_and_create_instance(
-        &app_server_executable(),
-        fixture_args("execution-initialize-no-response", &marker),
-    );
-    provider.request(
-        "create-eof-start-instance",
-        "instance.start",
-        json!({ "route": route_value() }),
-    );
-    let observer_pids = session_pids(&marker, "model/list", "");
-    provider.send_request(
-        "create-eof-conversation",
-        "conversation.create",
-        conversation_create_params(),
-    );
-    wait_for_session_count(&marker, "initialize", 2, Duration::from_secs(2));
-    let create_pids = session_pids(&marker, "process/start", "")
-        .into_iter()
-        .filter(|process_id| !observer_pids.contains(process_id))
-        .collect::<Vec<_>>();
-    assert_eq!(create_pids.len(), 1);
-
-    let exit_status = provider.close_input_and_wait_result(Duration::from_secs(2));
-    let create_processes_still_running = create_pids
-        .iter()
-        .copied()
-        .filter(|process_id| process_is_running(*process_id))
-        .collect::<Vec<_>>();
-    if exit_status.is_none() {
-        let _ = provider.child.kill();
-        let _ = provider.child.wait();
-    }
-    if !create_processes_still_running.is_empty() {
-        terminate_processes(&create_processes_still_running);
-    }
-    assert!(exit_status.is_some(), "Provider did not exit after EOF");
-    assert!(
-        create_processes_still_running.is_empty(),
-        "Provider EOF returned before create sessions exited: {create_processes_still_running:?}"
-    );
-    assert!(session_pids(&marker, "thread/start", "").is_empty());
-}
-
-#[cfg(unix)]
-#[test]
-fn provider_binary_stop_linearizes_repeated_observer_initialization() {
+fn provider_binary_stop_linearizes_repeated_shared_server_initialization() {
     const ROUNDS: usize = 5;
 
     let directory = tempfile::tempdir().unwrap();
@@ -3092,7 +3059,7 @@ fn provider_binary_async_event_broken_pipe_triggers_global_shutdown() {
         "thread-broken-pipe",
         Duration::from_secs(2),
     );
-    let execution_pids = session_pids(&marker, "process/start", "");
+    let execution_pids = session_pids(&marker, "thread/resume", "*");
     assert_eq!(execution_pids.len(), 1);
 
     provider.close_stdout_after_probe();
@@ -3208,50 +3175,6 @@ fn provider_binary_rejects_queue_overload_by_id_without_executing_it() {
     provider.request("overload-provider-shutdown", "provider.shutdown", json!({}));
 }
 
-#[tokio::test]
-async fn execution_initialize_failure_removes_the_conversation_slot() {
-    let directory = tempfile::tempdir().unwrap();
-    let marker = directory.path().join("execution-initialize-reject.txt");
-    let (provider, route, capability_revision) =
-        configured_direct_provider("execution-initialize-reject", &marker).await;
-    let conversation = conversation_resource(&route, "thread-initialize-reject");
-
-    for client_request_id in ["initialize-reject-one", "initialize-reject-two"] {
-        let error = ProviderProtocolServer::turn_start(
-            provider.as_ref(),
-            TurnStartRequest {
-                conversation: conversation.clone(),
-                client_request_id: client_request_id.to_string(),
-                capability_revision: capability_revision.clone(),
-                input: TurnInput {
-                    kind: TurnInputKind::Text,
-                    text: "initialize failure".to_string(),
-                },
-                selection: TurnSelection {
-                    access_mode_id: None,
-                    reasoning_effort_id: None,
-                    model: None,
-                },
-            },
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.code, "provider_error");
-    }
-    assert_eq!(session_pids(&marker, "initialize", "").len(), 3);
-    assert!(session_pids(&marker, "thread/resume", "thread-initialize-reject").is_empty());
-
-    ProviderProtocolServer::instance_stop(
-        provider.as_ref(),
-        InstanceStopRequest { route: route.clone() },
-    )
-    .await
-    .unwrap();
-    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {})
-        .await
-        .unwrap();
-}
-
 #[test]
 fn provider_binary_standardizes_writer_conflict_and_removes_failed_execution() {
     let directory = tempfile::tempdir().unwrap();
@@ -3301,8 +3224,8 @@ fn provider_binary_standardizes_writer_conflict_and_removes_failed_execution() {
         assert!(!encoded.contains("thread-active-writer already has an active writer"));
     }
     let resume_pids = session_pids(&marker, "thread/resume", "thread-active-writer");
-    assert_eq!(resume_pids.len(), 2);
-    assert_ne!(resume_pids[0], resume_pids[1]);
+    assert_eq!(resume_pids.len(), 1);
+    assert_eq!(session_method_count(&marker, "thread/resume"), 2);
     assert!(session_pids(&marker, "turn/start", "thread-active-writer").is_empty());
 
     provider.request("writer-conflict-stop", "instance.stop", json!({ "route": route_value() }));
@@ -3348,7 +3271,7 @@ fn provider_binary_does_not_guess_writer_conflicts_from_near_match_errors() {
 }
 
 #[test]
-fn provider_binary_cleans_explicit_reject_and_sent_unknown_without_automatic_retry() {
+fn provider_binary_keeps_rpc_reject_local_and_never_retries_unknown_outcome() {
     for (mode, expected_code) in [
         ("turn-reject", "provider_error"),
         ("turn-sent-unknown", "provider_unavailable"),
@@ -3397,10 +3320,10 @@ fn provider_binary_cleans_explicit_reject_and_sent_unknown_without_automatic_ret
             Some(expected_code)
         );
         let resume_pids = session_pids(&marker, "thread/resume", "thread-created");
-        assert_eq!(resume_pids.len(), 1);
+        assert!(resume_pids.is_empty());
         assert_eq!(
-            session_pids(&marker, "turn/start", "thread-created").len(),
-            2
+            session_method_count(&marker, "turn/start"),
+            if mode == "turn-reject" { 2 } else { 1 }
         );
 
         provider.request("failed-turn-stop", "instance.stop", json!({ "route": route_value() }));
@@ -3409,7 +3332,7 @@ fn provider_binary_cleans_explicit_reject_and_sent_unknown_without_automatic_ret
 }
 
 #[test]
-fn provider_binary_async_execution_crash_drops_the_mapped_session() {
+fn provider_binary_shared_server_crash_requires_instance_restart() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("execution-crash.txt");
     let mut provider = ProviderBinary::spawn();
@@ -3443,9 +3366,9 @@ fn provider_binary_async_execution_crash_drops_the_mapped_session() {
             "message": "resume after execution crash"
         }),
     );
-    assert!(steered.get("error").is_none());
+    assert!(steered.get("error").is_some());
     let resume_pids = session_pids(&marker, "thread/resume", "thread-created");
-    assert_eq!(resume_pids.len(), 1);
+    assert!(resume_pids.is_empty());
 
     provider.request("crash-stop", "instance.stop", json!({ "route": route_value() }));
     provider.request("crash-shutdown", "provider.shutdown", json!({}));
@@ -4192,18 +4115,6 @@ fn fixture_args(approval_mode: &str, marker: &Path) -> Vec<String> {
     ]
 }
 
-fn conversation_create_params() -> Value {
-    let workspace = std::env::temp_dir().join(format!("codepet-codex-create-workspace-{}", std::process::id()));
-    std::fs::create_dir_all(&workspace).unwrap();
-    json!({
-        "route": route_value(),
-        "permissionLevel": "workspace-write",
-        "model": "gpt-fixture",
-        "reasoningEffort": "high",
-        "workspaceRoot": workspace.to_string_lossy()
-    })
-}
-
 fn conversation_resource_value(native_resource_id: &str) -> Value {
     let mut resource = route_value();
     resource["nativeResourceId"] = json!(native_resource_id);
@@ -4236,7 +4147,9 @@ fn session_pids(marker: &Path, method: &str, thread_id: &str) -> Vec<u32> {
             let Some(pid) = fields.next().and_then(|value| value.parse::<u32>().ok()) else {
                 continue;
             };
-            if fields.next() != Some(method) || fields.next() != Some(thread_id) {
+            let recorded_method = fields.next();
+            let recorded_thread = fields.next();
+            if recorded_method != Some(method) || (thread_id != "*" && recorded_thread != Some(thread_id)) {
                 continue;
             }
             if !pids.contains(&pid) {

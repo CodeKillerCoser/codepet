@@ -39,3 +39,5 @@ CODEPET_OPENCODE_EXECUTABLE=/absolute/path/to/opencode cargo test --manifest-pat
 ```
 
 完整数据流、风险与限制见 `knowledge/10-architecture/opencode-provider-plugin-runtime.md`。
+
+Item mappers apply the SDK's optional `truncate_tool_item_text` helper only to `kind: tool`: text fields retain UTF-8-safe head/tail within 256 KiB and record paths and byte counts in optional item `_meta.truncations`. Other item variants stay complete. Runtime does not apply this policy or change pagination. See `knowledge/60-rules/provider-item-text-and-pagination.md`.

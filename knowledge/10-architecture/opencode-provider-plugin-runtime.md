@@ -39,6 +39,10 @@ Provider crate 的生产依赖只包含生成的 Provider SDK 和 Server adapter
 
 ### 生命周期与进程树
 
+实例继续只持有一个 OpenCode Server，多会话共享。公共 Provider SDK 现按 Host 心跳的客户端集合协调幂等 start/stop：任一客户端在线时保持 Server，最后连接离线或 Host 心跳过期则停止，包括 active turn；插件仍继续服务。页面退出不控制该生命周期。两段心跳、状态归属及 Host 目录分组见 [连接架构](remote-and-provider-connections.md)。三个内置 Provider 的 Host 集成测试覆盖此路径。
+
+Server startup 带当前 attempt/generation 的取消检查；stop/shutdown 使 attempt 失效，健康检查轮询会停止并回收尚未登记的 child。spawn blocking task 在返回前登记 session，模型发现期间取消等待也能由 stop 找到并关闭它；旧 future 不得覆盖新代状态。`cancelling_start_before_health_or_during_discovery_cannot_orphan_server` 覆盖这两个窗口，断言 PID 退出且无晚到 Ready。
+
 Server startup 使用总计 10 秒 deadline；每次 health probe 的 timeout 是剩余预算与 250ms 的较小值，成功后只做至多 100ms 的 child 存活确认。startup 失败会在同一有界路径回收 child。
 
 普通 V2 请求仍有 30 秒上限；`/api/session/:id/wait` 使用独立 client，只有 3 秒 connect timeout，没有会误杀长 turn 的 30 秒总 timeout。stop/restart/shutdown 先撤销 generation 与 active state，再直接终止自有 child，连接关闭会立即取消阻塞 wait。shutdown 不调用不存在的 V2 dispose。Provider 直接 kill/wait 自己持有的 child；SDK 在 stdio EOF 或 fatal frame 后先禁用 event output，再进入同一个 `provider_shutdown` cleanup，并对 dispatch drain 与 terminal error write 使用有界 deadline。Unix Host 把 Provider 放进独立进程组，外层 timeout/force-kill 一次终止 Provider 及其 Server 后代；Windows 沿用 `taskkill /T /F` 的最小进程树终止。
@@ -77,7 +81,7 @@ Provider 诚实声明 session list/get/create、turn start/steer/interrupt 和 a
 
 - `crates/providers/codepet-provider-opencode/`：V2 client、正式 shape、generation state、stdio cleanup、fixture 与边界测试。
 - `protocol/{provider,gateway}/v1/` 与生成 SDK：把 approval `requestedAt` 改为可选，并通过既有 generator 更新 Rust/TypeScript。
-- `crates/codepet-host/src/process.rs`：Provider 进程组/进程树的有界强杀。
+- `crates/codepet-host/src/providers/process.rs`：Provider 进程组/进程树的有界强杀。
 - `src-tauri/src/runtime_gateway/tauri_bridge.rs`：只注入 resolver 的 executable/version，不承载 OpenCode 数据。
 - Gateway/compat/现有 Codex 调用方：适配可选 approval timestamp；已有真实 timestamp 的 Provider 继续返回 `Some`。
 

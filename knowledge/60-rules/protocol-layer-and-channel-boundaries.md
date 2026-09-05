@@ -6,9 +6,11 @@ Gateway v1 业务协议、channel 和 admission 必须保持三层独立：chann
 
 长连接的 transport control plane 不得等待业务 RPC：WebSocket reader 必须持续 poll Ping/Pong/Close 和 credential cancellation，握手后的 Gateway 请求进入每连接有界队列与有界并发 dispatcher，再按 JSON-RPC id 独立返回。响应允许乱序，不能为了保持请求顺序让 `conversation.get` 阻塞 socket reader。writer 必须有界，但单次发送 deadline 要覆盖真实移动网络上的合法大响应；过载由请求队列、并发数和 outbound queue 共同 fail closed，不能用亚秒级 send timeout 把正常背压误判成断联。
 
-协议事实必须从 `protocol/` 单向生成到 `sdk/`：schema 与 manifest 的全部 `$ref` 使用同一依赖审计，Core 不依赖任何上层，Agent/Pet 只依赖 Core，Provider/Gateway 只依赖 Core 与 Agent。Agent 只定义共享业务类型，不声明 method、event、transport 或 Provider lifecycle。每种输出语言必须有独立 target adapter，未实现 target 必须 fail closed。Provider plugin event 不得发布到 companion Tauri event、replay、Pet projection 或 activity store；Pet action 不得调用插件生命周期接口。Gateway 快照响应的 `snapshotCursor` 必须在发起 Provider 查询前捕获；`EventCursor` 对客户端始终 opaque，只能原样保存和回传，不能解析、排序或执行 `+1`。完整历史要分别守住 App Server→Provider 的原生有界通道与 Provider→Host 的 CodePet Provider Frame V1：上游有 cursor API 时必须分页读取并逐页释放原生 DTO；最终编码 frame 超过 Provider/Host 共享上限时，SDK Runtime 必须按原请求返回稳定的小错误并继续服务，不能只放宽某一端、静默裁剪业务响应或让写响应失败终止进程。Host 发出 `provider.shutdown` 后必须继续读取 stdout，丢弃不再有消费者的晚到 event/notification，但必须保留 shutdown response 与进程退出监管。
+协议事实必须从 `protocol/` 单向生成到 `sdk/`：schema 与 manifest 的全部 `$ref` 使用同一依赖审计，Core 不依赖任何上层，Agent/Pet 只依赖 Core，Provider/Gateway 只依赖 Core 与 Agent。Agent 只定义共享业务类型，不声明 method、event、transport 或 Provider lifecycle。每种输出语言必须有独立 target adapter，未实现 target 必须 fail closed。Provider plugin event 不得发布到 companion Tauri event、replay、Pet projection 或 activity store；Pet action 不得调用插件生命周期接口。Gateway 快照响应的 `snapshotCursor` 必须在发起 Provider 查询前捕获；`EventCursor` 对客户端始终 opaque，只能原样保存和回传，不能解析、排序或执行 `+1`。完整历史要区分 App Server→Provider 的原生 JSONL 与 Provider→Host 的 CodePet Provider Frame V1：Codex 原生 JSONL 流式解码，不设整 turn/整行字节预算；上游有 cursor API 时必须分页读取并逐页释放原生 DTO；最终编码 frame 超过 Provider/Host 共享上限时，SDK Runtime 必须按原请求返回稳定的小错误并继续服务，不能只放宽某一端、静默裁剪业务响应或让写响应失败终止进程。Host 发出 `provider.shutdown` 后必须继续读取 stdout，丢弃不再有消费者的晚到 event/notification，但必须保留 shutdown response 与进程退出监管。
 
 Conversation 工具载荷还必须遵守 [`conversation-tool-payload-ownership.md`](conversation-tool-payload-ownership.md)：互斥关系由 v1 schema 的判别联合强制表达，工具输入与结果各只有一个完整载荷所有者；若 Provider 采用内容截断，必须在原生数据映射为 Agent 领域对象时完成并携带 truncation metadata。SDK Runtime、Host 投影器或 Remote 不得为了通过传输上限修改业务内容；抽屉等 UI 展示位置不进入协议。
+
+连接状态按 [Remote 与 Provider 连接架构](../10-architecture/remote-and-provider-connections.md) 分别归属 remote/connections 与 providers/manager。stdio 属于 Provider IPC，Remote channel 仅承载 Client↔Host。两段应用 ping 的调度、失联和校验机制放 SDK；provider.ping 不等待业务队列或实例启动，protocol.ping 返回紧凑 ProviderSummary，不能混入凭据或完整历史。原生 WebSocket Ping/Pong 继续服务 transport，不替代应用心跳。
 
 ## 适用场景
 
@@ -32,8 +34,8 @@ Conversation 工具载荷还必须遵守 [`conversation-tool-payload-ownership.m
 - Provider 查询完成后才读取 `snapshotCursor`，导致查询期间的事件可能落在客户端订阅边界之前。
 - 客户端把 `EventCursor` 当数字递增，或让 `conversation.get` 快照携带仍由 `turn.outputDelta` 修改的进行中正文。
 - Provider 与 Host 使用不同 Frame V1 上限，或第三方 Provider 绕过 `serve_stdio` 自行实现 JSON Lines；合法历史会在两端产生不一致行为。
-- observer 用 `thread/read(includeTurns=true)` 把全部历史聚成一条 App Server JSONL，导致尚未反序列化就触发 physical-line 上限。
-- 为绕过大历史同时抬高所有 frame limit，或让最终 `conversation.get` 编码超限沿 fatal 路径关闭 Provider。
+- 历史读取用 `thread/read(includeTurns=true)` 把全部历史聚成一条 App Server JSONL，导致尚未反序列化就触发 physical-line 上限。
+- 为绕过大历史同时抬高所有 frame limit，或让单个原生响应/事件编码超限沿 fatal 路径关闭 Provider/Harness。
 - 在 WebSocket `source.next()` 循环里直接 `await conversation.get`，使慢 Provider 查询期间无法读取 Ping 并导致移动端按心跳超时关闭；或给所有响应统一设置 1 秒发送超时，让真机链路上的大响应被误判为断连。
 - 为排查尺寸问题把 Provider response、工具输入输出、opaque cursor 或解压后的正文写进日志；这会复制敏感大载荷并让诊断日志本身成为新的尺寸问题。
 - 把 Dart WebSocket API 收到的 text bytes 标成压缩后 wire bytes。该 API 暴露的是 permessage-deflate 解压后的文本，真实线上压缩尺寸必须由更底层 transport 指标提供。
@@ -50,6 +52,7 @@ Conversation 工具载荷还必须遵守 [`conversation-tool-payload-ownership.m
 - App bundle 必须把完整接入 README、canonical `protocol/{core,agent,provider,gateway,channel}` 资源、fixtures、`codepet-sdk.json` 和平台原生 `cp-sdk-gen` 作为同一版本资源分发；分发 schema 的相对 `$ref` 必须在 Resources 内可解析。bundle 前先做 generated freshness 检查，并从最终 App Resources 黑盒导出、编译 SDK。
 - Gateway client 必须由生成的 typed wrapper 构造 JSON-RPC 信封；Gateway server 必须实现生成 trait 并使用生成 dispatcher。channel adapter 不得维护 method string 表，server trait 实现不得解析原始 WebSocket frame。
 - Gateway WebSocket 在完成 handshake 后，把普通业务请求投递到有界 dispatcher；reader 只负责协议帧、握手/订阅状态机与入队，独立 writer 统一发送 response/event。回归测试必须让一个 Provider 请求保持 pending，并断言同一 socket 仍能在心跳 deadline 内返回 Pong。
+- 发送前的事件编码拒绝尚未破坏字节流，SDK 只返回该事件错误；Codex 保留共享 Server 和后续转发。原生 JSONL 不以整行大小拒绝响应，单条解析失败 drain 到换行后继续，仅真实 stdout EOF/I/O 失败可终止会话。
 - SDK 识别 stdin EOF 或 fatal frame 后必须先把 event output 标记为不可用并丢弃 cleanup event，再执行 Provider cleanup；标准 terminal error 只能在 cleanup 后按同一个有界 drain deadline 尝试写出，不能让不可读 stdout 的背压阻塞子进程回收，也不能把不可观测的状态事件误报成业务清理失败。
 - Host shutdown 可以先关闭面向 Gateway 的 inbound consumer，但 wire reader 必须活到 shutdown response/EOF；`shutting_down` 状态下只忽略 event/notification，不忽略 response，也不主动关闭 stdout。
 - Provider Host 将插件事件映射到 application/gateway channel；Desktop Companion 单独映射到 pet channel。
@@ -57,9 +60,9 @@ Conversation 工具载荷还必须遵守 [`conversation-tool-payload-ownership.m
 - Gateway 在调用 Provider `conversation.list/get` 前捕获 `snapshotCursor`；客户端把该值原样传给 `event.subscribe.afterCursor`，由 Gateway 返回相同的 `subscribedAfterCursor`。
 - Conversation snapshot 只承载元数据和稳定内容，进行中正文只由 live `turn.outputDelta` 承载；不要为同步方便临时引入权威正文投影或 revision delta。
 - `conversation.get.limit` 表示单次最多读取的原生 turn 数，不是必须填满的数量；Provider/Gateway 只返回这一页并透传准确的 `pageInfo.nextCursor`，任何中间层都不得重新聚合全部历史。
-- Codex observer 先用 `thread/read(includeTurns=false)` 读取 metadata，再用 `thread/turns/list(itemsView=full, sortDirection=desc)` 按 opaque cursor 分页；单次上游请求最多 10 turns，Provider 将当前响应页恢复为时间正序，并检测返回数量、重复 cursor 与页数上限。
+- Codex Server 先用 `thread/read(includeTurns=false)` 读取 metadata，再用一次 `thread/turns/list(itemsView=full, sortDirection=desc)` 透传 caller cursor/limit；默认 20，不缩页、不补满短页、不按版本切换 item API。Provider 将当前页恢复为时间正序并透传 nextCursor。
 - SDK Runtime 只把 Provider wire message 序列化一次为 JSON；小于 32 KiB 使用 raw，较大时尝试 zstd level 1，仅在至少节省 10% 且 1 KiB 时采用压缩。最终 header 加 encoded payload 超过共享 16 MiB 时返回 `provider_response_too_large`，原请求 id 不变；不得预序列化探测或修改业务对象。
-- 客户端只对 `provider_response_too_large` 保持原 cursor，按 `40 → 20 → 10 → 5 → 1` 缩小 limit；成功响应后才推进 cursor，并让后续页沿用已成功的 limit。若 `limit=1` 仍超限，原样向上返回错误。Provider/Host/Gateway 不得返回 History omitted 等传输降级，也不得靠增大统一 frame limit 掩盖分页或巨型单 turn 问题。
+- 客户端只对最终 wire 的 `provider_response_too_large` 保持原 cursor，按 20→10→5→1 缩小 limit；成功后才推进 cursor，后续页沿用成功的 limit，limit=1 仍超限则返回错误。Provider/Host/Gateway 不返回 History omitted；独立 mapper 策略仅检查 `kind: tool` 文本，截断当场写入可选 item `_meta.truncations`，详见 [文本与分页规约](provider-item-text-and-pagination.md)。
 - Provider Runtime 对业务 response 记录 `rpc.method/requestId/status`、Provider dispatch、JSON encode、压缩、写入耗时，以及 `jsonBytes/encodedPayloadBytes/frameBytes/encoding/compressionRatio`；`compressionRatio` 固定定义为 `encodedPayloadBytes / jsonBytes`，越小表示压缩收益越高。超过上限时把同样的尺寸字段放入稳定错误 details。只允许写 stderr，Host 只把 `codepet.provider.transport.v1` 指标转存到 Desktop app log，任何日志都不得携带 payload。
 - Remote WebSocket 记录请求 JSON encode、请求/响应解压后 JSON bytes、响应 JSON decode 和 RPC 总耗时，并明确标记 `compressionRequested=permessage-deflate`，不得把这些 bytes 宣称为压缩后网络尺寸。`conversation.get` 还要逐页记录 page、attempt、limit、cursor 是否存在、item 数、next cursor 是否存在和耗时；尺寸重试记录 previous/next limit，但不得记录 opaque cursor 正文。
 - 完成 conversation 历史读取后记录 pages、requests、oversizedRetries、items、messages、领域映射与总耗时；详情控制器另记 fetch 与 install 阶段，以便区分 Provider/传输、SDK decode、领域映射和 UI 安装。
@@ -76,7 +79,7 @@ Conversation 工具载荷还必须遵守 [`conversation-tool-payload-ownership.m
 - `../../crates/providers/codepet-provider-claude/src/main.rs`
 - `../../crates/providers/codepet-provider-opencode/src/main.rs`
 - `../../src-tauri/src/runtime_gateway/tauri_bridge.rs`
-- `../../crates/codepet-host/src/process.rs`
+- `../../crates/codepet-host/src/providers/process.rs`
 
 ## 验证方式
 

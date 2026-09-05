@@ -30,6 +30,7 @@ export interface Approval {
 }
 
 export interface ApprovalConversationItem {
+  _meta?: JsonObject;
   resource: RoutedResourceId;
   turn: RoutedResourceId;
   conversation: RoutedResourceId;
@@ -71,6 +72,7 @@ export interface ChoiceSet {
 }
 
 export interface CommandConversationItem {
+  _meta?: JsonObject;
   resource: RoutedResourceId;
   turn: RoutedResourceId;
   conversation: RoutedResourceId;
@@ -153,6 +155,7 @@ export interface EmbeddedResourceContentBlock {
 export type EmbeddedResourceContentBlockKind = "embedded-resource";
 
 export interface FileChangeConversationItem {
+  _meta?: JsonObject;
   resource: RoutedResourceId;
   turn: RoutedResourceId;
   conversation: RoutedResourceId;
@@ -210,6 +213,7 @@ export interface ImageContentBlock {
 export type ImageContentBlockKind = "image";
 
 export interface MessageConversationItem {
+  _meta?: JsonObject;
   resource: RoutedResourceId;
   turn: RoutedResourceId;
   conversation: RoutedResourceId;
@@ -281,6 +285,7 @@ export interface ProviderUsageDetail {
 }
 
 export interface ReasoningConversationItem {
+  _meta?: JsonObject;
   resource: RoutedResourceId;
   turn: RoutedResourceId;
   conversation: RoutedResourceId;
@@ -357,6 +362,7 @@ export interface ToolCommandAction {
 export type ToolCommandActionKind = "execute" | "read" | "list" | "search" | "unknown";
 
 export interface ToolConversationItem {
+  _meta?: JsonObject;
   resource: RoutedResourceId;
   turn: RoutedResourceId;
   conversation: RoutedResourceId;
@@ -454,6 +460,7 @@ export interface TurnTask {
 }
 
 export interface UnknownConversationItem {
+  _meta?: JsonObject;
   resource: RoutedResourceId;
   turn: RoutedResourceId;
   conversation: RoutedResourceId;

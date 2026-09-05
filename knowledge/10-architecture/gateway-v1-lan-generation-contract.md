@@ -63,11 +63,11 @@ Tauri 在一个 lifecycle mutex 下串行网络与 pairing 变化。地址切换
 - `tools/protocol-codegen/`：支持 standalone type fixture、fingerprint pattern、normalized IR 与判别联合校验，保证 Rust/TypeScript/Dart freshness。
 - `sdk/rust/codepet-gateway-sdk`、`sdk/dart/codepet-gateway-sdk`：Gateway v1 server/client DTO、trait 与 fixture 测试。
 - `sdk/rust/codepet-lan-channel-sdk`、`sdk/dart/codepet-lan-channel-sdk`：LAN admission DTO 与 fixture 测试。
-- `crates/codepet-host/src/remote_access.rs`：消费生成 `PairingExchangeRequest`，不保留手写同义 DTO。
+- `crates/codepet-host/src/remote/access.rs`：消费生成 `PairingExchangeRequest`，不保留手写同义 DTO。
 - `crates/codepet-host/src/gateway.rs`：构造必需 handshake `device`；认证仍留在 transport 外层。
-- `crates/codepet-host/src/remote_listener.rs`：单 TLS listener、固定 REST/WSS route、per-socket 状态、撤销取消和有界 shutdown。
-- `crates/codepet-host/src/remote_mdns.rs`：只从 listener-derived source/candidate endpoint 构造唯一 service，以本机接口与 Announce 证明发布，并通过 unregister ack 与新 daemon 代际更新地址和 pairing availability。
-- `crates/codepet-host/src/remote_listener.rs`：持有 committed/pending endpoint，并让新 generation Announce 窗口内的 pairing exchange 返回同代 gateway URL。
+- `crates/codepet-host/src/remote/channels/lan/listener.rs`：单 TLS listener、固定 REST/WSS route、per-socket 状态、撤销取消和有界 shutdown。
+- `crates/codepet-host/src/remote/channels/lan/mdns.rs`：只从 listener-derived source/candidate endpoint 构造唯一 service，以本机接口与 Announce 证明发布，并通过 unregister ack 与新 daemon 代际更新地址和 pairing availability。
+- `crates/codepet-host/src/remote/channels/lan/listener.rs`：持有 committed/pending endpoint，并让新 generation Announce 窗口内的 pairing exchange 返回同代 gateway URL。
 - `crates/codepet-host/tests/remote_lan_listener.rs`：真实 loopback TLS pin 与完整 WSS/撤销/多客户端证据。
 
 ## 风险

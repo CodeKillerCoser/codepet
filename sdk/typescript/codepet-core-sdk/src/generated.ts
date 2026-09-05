@@ -3,7 +3,19 @@
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
+export interface ClientConnectionInfo {
+  connectionId: string;
+  clientId: ClientId;
+}
+
+export interface ClientConnectionsSnapshot {
+  revision: number;
+  connections: Array<ClientConnectionInfo>;
+}
+
 export type ClientId = string;
+
+export type ConnectionStatus = "connecting" | "online" | "offline";
 
 export type Cursor = string;
 

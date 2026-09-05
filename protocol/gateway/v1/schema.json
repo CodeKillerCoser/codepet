@@ -3,6 +3,39 @@
   "$id": "https://code-pet.dev/protocol/gateway/v1/schema.json",
   "title": "CodePet Gateway Protocol v1",
   "$defs": {
+    "PingRequest": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "sequence"
+      ],
+      "additionalProperties": false
+    },
+    "PingResponse": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderSummary"
+          }
+        }
+      },
+      "required": [
+        "sequence",
+        "providers"
+      ],
+      "additionalProperties": false
+    },
     "ApprovalRequestedEvent": {
       "type": "object",
       "properties": {
@@ -80,6 +113,27 @@
       "required": [
         "selection"
       ],
+      "additionalProperties": false
+    },
+    "ConversationResumeRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+      },
+      "required": ["conversation"],
+      "additionalProperties": false
+    },
+    "ConversationResumeResponse": {
+      "type": "object",
+      "properties": {
+        "interactionAcquired": { "type": "boolean" },
+        "interaction": { "$ref": "#/$defs/ConversationAcquireInteractionResponse" },
+        "interactionError": { "$ref": "../../core/v1/schema.json#/$defs/ProtocolError" },
+        "history": { "$ref": "#/$defs/ConversationGetResponse" },
+        "historyError": { "$ref": "../../core/v1/schema.json#/$defs/ProtocolError" }
+      },
+      "required": ["interactionAcquired"],
       "additionalProperties": false
     },
     "ConversationCreateRequest": {
@@ -826,6 +880,8 @@
     "ProviderRuntime": {
       "type": "object",
       "properties": {
+        "connectionStatus": { "$ref": "../../core/v1/schema.json#/$defs/ConnectionStatus" },
+        "generation": { "type": "integer", "minimum": 0 },
         "status": {
           "$ref": "#/$defs/ProviderStatus"
         },

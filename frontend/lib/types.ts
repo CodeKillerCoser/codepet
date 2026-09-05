@@ -2,7 +2,7 @@ import type { Approval, Provider, TurnTask } from "./generated/runtimeGateway";
 
 export type AgentId = "codex" | "claude" | "qoder" | "cursor";
 export type AgentRuntimeProviderId = string;
-export type AgentRuntimeStatus = "ready" | "unavailable" | "invalid-configured-executable";
+export type AgentRuntimeStatus = "loading" | "ready" | "unavailable" | "invalid-configured-executable";
 export type AgentRuntimeSource =
   | "configured"
   | "environment"

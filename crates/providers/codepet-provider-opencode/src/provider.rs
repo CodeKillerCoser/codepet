@@ -154,6 +154,28 @@ impl OpenCodeInstanceRuntime {
         )
     }
 
+    fn starting_is_current(&self, attempt: u64) -> bool {
+        let mutable = lock(&self.mutable);
+        mutable.status == InstanceStatus::Starting && mutable.generation_counter == attempt
+    }
+
+    fn set_start_status(&self, attempt: u64, status: InstanceStatus) -> Result<ProviderInstance, ProtocolError> {
+        {
+            let mut mutable = lock(&self.mutable);
+            if mutable.status != InstanceStatus::Starting || mutable.generation_counter != attempt {
+                return Err(protocol_error("provider_start_cancelled", "Server startup cancelled".into(), true));
+            }
+            mutable.status = status;
+        }
+        let instance = self.snapshot();
+        self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
+            jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent {
+                instance: instance.clone(), previous_status: Some(InstanceStatus::Starting),
+            },
+        })?;
+        Ok(instance)
+    }
+
     fn status(&self) -> InstanceStatus {
         lock(&self.mutable).status
     }
@@ -985,19 +1007,25 @@ impl Provider for OpenCodeProvider {
     ) -> ProtocolFuture<'a, InstanceStartResponse> {
         Box::pin(async move {
             let runtime = self.instance(&request.route)?;
-            if runtime.status() == InstanceStatus::Ready {
-                return Ok(InstanceStartResponse {
-                    instance: runtime.snapshot(),
-                });
-            }
-            if runtime.status() == InstanceStatus::Starting {
-                return Err(protocol_error(
-                    "provider_instance_starting",
-                    "OpenCode Provider instance is already starting".to_string(),
-                    true,
-                ));
-            }
-            runtime.set_status(InstanceStatus::Starting)?;
+            let (attempt, previous_status) = {
+                let mut mutable = lock(&runtime.mutable);
+                if mutable.status == InstanceStatus::Ready {
+                    drop(mutable);
+                    return Ok(InstanceStartResponse { instance: runtime.snapshot() });
+                }
+                if matches!(mutable.status, InstanceStatus::Starting | InstanceStatus::Stopping) {
+                    return Err(protocol_error("provider_instance_starting", "OpenCode lifecycle transition is in progress".into(), true));
+                }
+                let previous = mutable.status;
+                mutable.status = InstanceStatus::Starting;
+                mutable.generation_counter = mutable.generation_counter.saturating_add(1);
+                (mutable.generation_counter, previous)
+            };
+            runtime.events.publish(ProtocolEvent::EventInstanceStatusChanged {
+                jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent {
+                    instance: runtime.snapshot(), previous_status: Some(previous_status),
+                },
+            })?;
             let executable = runtime.settings.server_executable.clone();
             let version = runtime.settings.server_version.clone();
             let args = runtime.settings.server_args.clone();
@@ -1009,27 +1037,36 @@ impl Provider for OpenCodeProvider {
             let capability_executable = executable.clone();
             let capability_working_directory = working_directory.clone();
             let account_working_directory = working_directory.clone();
-            let generation = {
-                let mut mutable = lock(&runtime.mutable);
-                mutable.generation_counter = mutable.generation_counter.saturating_add(1);
-                format!("{}:{}", runtime.boot_id, mutable.generation_counter)
-            };
+            let generation = format!("{}:{attempt}", runtime.boot_id);
             let session_generation = generation.clone();
+            let owner = runtime.clone();
             let session = tokio::task::spawn_blocking(move || {
-                OpenCodeServerSession::spawn(
+                let session = OpenCodeServerSession::spawn_while_current(
                     &executable,
                     &args,
                     &version,
                     session_generation,
                     working_directory.as_deref(),
-                )
+                    || owner.starting_is_current(attempt),
+                )?;
+                // Register before returning from the blocking task. Dropping the
+                // awaiting future must not orphan a successfully spawned child.
+                let mut mutable = lock(&owner.mutable);
+                if mutable.status != InstanceStatus::Starting || mutable.generation_counter != attempt {
+                    drop(mutable);
+                    let _ = session.shutdown();
+                    return Err(OpenCodeServerError::Protocol("Server startup cancelled".into()));
+                }
+                mutable.session = Some(session.clone());
+                mutable.session_generation = Some(session.generation().to_string());
+                Ok(session)
             })
             .await
             .map_err(provider_task_error)?;
             let session = match session {
                 Ok(session) => session,
                 Err(error) => {
-                    let _ = runtime.set_status(InstanceStatus::Error);
+                    let _ = runtime.set_start_status(attempt, InstanceStatus::Error);
                     return Err(OpenCodeProtocolMapper::error(error));
                 }
             };
@@ -1054,7 +1091,7 @@ impl Provider for OpenCodeProvider {
                 Ok(discovered) => discovered,
                 Err(error) => {
                     let _ = session.shutdown();
-                    let _ = runtime.set_status(InstanceStatus::Error);
+                    let _ = runtime.set_start_status(attempt, InstanceStatus::Error);
                     return Err(OpenCodeProtocolMapper::error(error));
                 }
             };
@@ -1070,23 +1107,28 @@ impl Provider for OpenCodeProvider {
                 Ok(capabilities) => capabilities,
                 Err(error) => {
                     let _ = session.shutdown();
-                    let _ = runtime.set_status(InstanceStatus::Error);
+                    let _ = runtime.set_start_status(attempt, InstanceStatus::Error);
                     return Err(error);
                 }
             };
-            *lock(&runtime.capabilities) = capabilities;
             let incoming = match session.subscribe() {
                 Ok(incoming) => incoming,
                 Err(error) => {
                     let _ = session.shutdown();
-                    let _ = runtime.set_status(InstanceStatus::Error);
+                    let _ = runtime.set_start_status(attempt, InstanceStatus::Error);
                     return Err(OpenCodeProtocolMapper::error(error));
                 }
             };
             let generation = session.generation().to_string();
             {
                 let mut mutable = lock(&runtime.mutable);
-                mutable.session = Some(session);
+                if mutable.status != InstanceStatus::Starting || mutable.generation_counter != attempt {
+                    drop(mutable);
+                    let _ = session.shutdown();
+                    return Err(protocol_error("provider_start_cancelled", "Server startup cancelled".into(), true));
+                }
+                *lock(&runtime.capabilities) = capabilities;
+                mutable.session = Some(session.clone());
                 mutable.session_generation = Some(generation.clone());
                 mutable.sessions.clear();
                 mutable.active_turns.clear();
@@ -1094,17 +1136,10 @@ impl Provider for OpenCodeProvider {
                 mutable.authentication = Some(account_metadata.0);
                 mutable.usage = Some(account_metadata.1);
             }
-            let instance = match runtime.set_status(InstanceStatus::Ready) {
+            let instance = match runtime.set_start_status(attempt, InstanceStatus::Ready) {
                 Ok(instance) => instance,
                 Err(error) => {
-                    let session = {
-                        let mut mutable = lock(&runtime.mutable);
-                        mutable.session_generation = None;
-                        mutable.session.take()
-                    };
-                    if let Some(session) = session {
-                        let _ = tokio::task::spawn_blocking(move || session.shutdown()).await;
-                    }
+                    let _ = tokio::task::spawn_blocking(move || session.shutdown()).await;
                     return Err(error);
                 }
             };
@@ -1127,6 +1162,7 @@ impl Provider for OpenCodeProvider {
             runtime.set_status(InstanceStatus::Stopping)?;
             let session = {
                 let mut mutable = lock(&runtime.mutable);
+                mutable.generation_counter = mutable.generation_counter.saturating_add(1);
                 mutable.session_generation = None;
                 mutable.active_turns.clear();
                 mutable.pending_approvals.clear();
@@ -1964,6 +2000,7 @@ impl Provider for OpenCodeProvider {
                 let session = {
                     let mut mutable = lock(&runtime.mutable);
                     mutable.status = InstanceStatus::Stopping;
+                    mutable.generation_counter = mutable.generation_counter.saturating_add(1);
                     mutable.session_generation = None;
                     mutable.active_turns.clear();
                     mutable.pending_approvals.clear();

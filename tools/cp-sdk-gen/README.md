@@ -34,13 +34,15 @@ provider-sdk/
     └── channel/lan/v1/
 ```
 
-JSON Schema 定义 DTO 与约束；相邻 manifest 定义 method/event、方向、幂等性、capability 与 transport。两者缺一不可生成 service client/server。Gateway client 生成 typed 方法包装；Gateway server 生成 trait/dispatcher，trait 业务实现由接入者手写。channel（WSS、localhost 或未来 WebRTC）只实现 transport contract。
+JSON Schema 定义 DTO 与约束；相邻 manifest 定义 method/event、方向、幂等性、capability 与 transport。两者缺一不可生成 service client/server。Gateway client 生成 typed 方法包装；Gateway server 生成 trait/dispatcher，trait 业务实现由接入者手写。channel（LAN HTTPS/WSS 或未来 WebRTC；本机使用 LAN 回环地址）只实现 transport contract。
 
 这份文档随 Code Pet App 和 `cp-sdk-gen` 生成结果一起分发，面向开发独立
 Provider 插件的作者。Provider 是由 Code Pet Host 启动的独立进程，业务实现只面对
 生成的 JSON-RPC 强类型接口；SDK Runtime 会把 JSON payload 自动封装为 stdin/stdout
 Provider Frame V1。Provider 不需要感知长度前缀、raw/zstd、尺寸检查，也不需要依赖
 Tauri、Code Pet Host 或 Desktop 私有 IPC。
+
+SDK runtime 还随导出分发心跳：Dart Gateway client 的 GatewayHeartbeatClient 发送 protocol.ping 并输出 Provider 摘要；Rust Gateway 的 GatewayHeartbeat 校验顺序和失联 deadline。Host→Provider 的 run_provider_heartbeats 由连接快照与实例状态 watch 唤醒。Provider serve_stdio 直接确认 provider.ping，独立协调任务根据连接集合调用幂等 instance.start/stop。Server 模式 adapter 必须每实例仅一个 Server，start/stop 支持重复调用，并保证 stop 可以取消未完成的 initialize。最后客户端离线或 Host 心跳过期会停止 Harness，包括 active turn；插件进程仍继续服务。stdio 是 Provider IPC，不属于 Remote channel。
 
 ## 1. 分发内容
 
@@ -355,3 +357,5 @@ Provider 必须以 `provider.initialize` 协商版本，不应根据 Code Pet �
 升级 SDK 时重新运行生成器并提交新的 `cp-sdk-gen.lock.json`。新增字段、方法或事件以
 App Resources 中的 schema/manifest 为准；SDK 生成文件和 transport runtime 不应在
 Provider 项目里复制维护。
+
+所有 Agent item variant 支持可选开放 `_meta`；Rust/Dart 字段为 `meta`，wire 为 `_meta`，未提供时省略。Provider Rust 导出包包含可选 mapper helper `truncate_tool_item_text` 与默认单文本阈值 `DEFAULT_TOOL_TEXT_BYTES`（256 KiB）。helper 只处理 `kind: tool`，将路径和字节数写入 item `_meta.truncations`；Runtime 不自动应用，也不改变 caller 分页。详见 `knowledge/60-rules/provider-item-text-and-pagination.md`。

@@ -831,6 +831,16 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         .unwrap()
         .unwrap();
     assert_eq!(pong, Message::Pong(vec![4_u8, 5_u8, 6_u8]));
+    send_request(&mut heartbeat_while_loading, gateway::ProtocolRequest::ProtocolPing {
+        jsonrpc: "2.0".into(), id: "app-heartbeat".into(),
+        params: gateway::PingRequest { sequence: 1 },
+    }).await;
+    let pong = timeout(Duration::from_secs(1), next_response(&mut heartbeat_while_loading, "app-heartbeat"))
+        .await.expect("pending get must not block application heartbeat");
+    let pong: gateway::PingResponse = response_result(pong);
+    assert_eq!(pong.sequence, 1);
+    assert!(!pong.providers.is_empty());
+    assert_eq!(host.gateway.remote_connections().snapshot().connections.len(), 2);
     drop(heartbeat_while_loading);
     wait_for_active_sessions(&server, 1).await;
 

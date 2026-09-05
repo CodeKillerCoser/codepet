@@ -3,11 +3,11 @@
 
 import type { Approval, ApprovalDecision, Conversation, ConversationContentKind, ConversationCreateCapabilities, ConversationItem, Project, ProjectChangeType, ProjectRoot, ProviderAuthentication, ProviderUsage, TurnInput, TurnSelection, TurnSendCapabilities, TurnTask } from "../../codepet-agent-sdk/src/generated";
 export type * from "../../codepet-agent-sdk/src/generated";
-import type { ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RpcError, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
-export type { ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RpcError, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
+import type { ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RpcError, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
+export type { ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RpcError, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
 
 export const PROTOCOL_VERSION = 1 as const;
-export const PROTOCOL_METHODS = ["provider.initialize", "provider.describe", "runtime.getInstalled", "runtime.select", "instance.create", "instance.start", "instance.stop", "instance.destroy", "instance.capabilities", "conversation.list", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.search", "conversation.get", "conversation.acquireInteraction", "conversation.create", "turn.start", "turn.steer", "turn.interrupt", "approval.resolve", "provider.shutdown"] as const;
+export const PROTOCOL_METHODS = ["provider.ping", "provider.initialize", "provider.describe", "runtime.getInstalled", "runtime.select", "instance.create", "instance.start", "instance.stop", "instance.destroy", "instance.capabilities", "conversation.list", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.search", "conversation.get", "conversation.acquireInteraction", "conversation.create", "turn.start", "turn.steer", "turn.interrupt", "approval.resolve", "provider.shutdown"] as const;
 export const PROTOCOL_EVENTS = ["event.projectChanged", "event.instanceStatusChanged", "event.conversationUpserted", "event.conversationItemUpserted", "event.turnUpserted", "event.turnOutputDelta", "event.approvalRequested", "event.approvalResolved"] as const;
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -286,6 +286,18 @@ export interface ProviderInstanceRoute {
   providerInstanceId: ProviderInstanceId;
 }
 
+export interface ProviderPingRequest {
+  sequence: number;
+  hostSessionId: string;
+  clients: ClientConnectionsSnapshot;
+  instances: Array<ProviderInstanceRoute>;
+}
+
+export interface ProviderPingResponse {
+  sequence: number;
+  clientsRevision: number;
+}
+
 export interface ProviderPluginDescriptor {
   pluginId: ProviderPluginId;
   displayName: string;
@@ -390,6 +402,7 @@ export interface TurnUpsertedEvent {
 }
 
 export interface ProtocolRequestMap {
+  "provider.ping": ProviderPingRequest;
   "provider.initialize": ProviderInitializeRequest;
   "provider.describe": ProviderDescribeRequest;
   "runtime.getInstalled": RuntimeGetInstalledRequest;
@@ -417,6 +430,7 @@ export interface ProtocolRequestMap {
 }
 
 export interface ProtocolResponseMap {
+  "provider.ping": ProviderPingResponse;
   "provider.initialize": ProviderInitializeResponse;
   "provider.describe": ProviderDescribeResponse;
   "runtime.getInstalled": RuntimeGetInstalledResponse;

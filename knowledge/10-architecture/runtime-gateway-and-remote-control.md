@@ -841,7 +841,7 @@ Provider 状态和能力
 
 - `protocol/`、`tools/protocol-codegen/`、`sdk/rust/`、`sdk/typescript/`：当前协议事实来源、target adapters、测试和生成产物；旧 `protocol-codegen/`/`generated/` 根目录方案已 superseded。
 - `src-tauri/src/runtime_gateway/`：新增 Gateway、Application、Provider、Transport 和 projection store 边界。
-- `crates/codepet-host/src/remote_access.rs`：LAN TLS identity、pairing session 和 remote credential store；不得引用 `ProviderGatewayService`、Desktop IPC companion、Pet 或 activity store。
+- `crates/codepet-host/src/remote/access.rs`：LAN TLS identity、pairing session 和 remote credential store；不得引用 `ProviderGatewayService`、Desktop IPC companion、Pet 或 activity store。
 - `crates/codepet-host/src/persistence.rs`：沿用既有 tempfile + fsync + replace 原子写，并为 TLS/private credential 文件增加 regular-file 检查和 Unix `0600` 保护。
 - `crates/providers/codepet-provider-codex/`：长期 remote App Server session、mapper、Provider v1 server 与 stdio 主循环；不得反向依赖 Tauri/Host/Pet SDK。
 - `crates/providers/codepet-provider-opencode/`：OpenCode Server HTTP/SSE client、mapper、Provider v1 server 与 stdio 主循环；同样不得反向依赖 Tauri/Host/Pet SDK。

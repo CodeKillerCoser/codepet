@@ -388,6 +388,9 @@ impl ProtocolServer for FakeProvider {
     ) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
         Box::pin(async move {
             self.instance(&route_from_resource(&request.conversation))?;
+            if request.conversation.native_resource_id == "resume-denied" {
+                return Err(protocol_error("conversation_write_conflict", "fixture writer held"));
+            }
             Ok(ConversationAcquireInteractionResponse {
                 selection: TurnSelection {
                     access_mode_id: Some("workspace-write".to_string()),
@@ -449,7 +452,7 @@ impl ProtocolServer for FakeProvider {
             } else {
                 conversation
             };
-            let user_item = ConversationItem::MessageConversationItem(MessageConversationItem {
+            let user_item = ConversationItem::MessageConversationItem(MessageConversationItem { meta: None,
                 resource: resource(&route, &format!("user-{}", request.client_request_id)),
                 turn: turn.resource.clone(),
                 conversation: user_item_conversation,
@@ -678,7 +681,7 @@ async fn main() {
                     );
                     let item_id = format!("{conversation_id}-assistant");
                     let content_id = format!("{item_id}:text");
-                    let item = ConversationItem::MessageConversationItem(MessageConversationItem {
+                    let item = ConversationItem::MessageConversationItem(MessageConversationItem { meta: None,
                         resource: resource(&route, &item_id),
                         turn: resource(&route, &format!("{conversation_id}-turn")),
                         conversation: resource(&route, conversation_id),
@@ -958,7 +961,7 @@ fn history_items(route: &ProviderInstanceRoute, native_id: &str) -> Vec<Conversa
     let user_item_id = format!("{native_id}-user");
     let assistant_item_id = format!("{native_id}-assistant");
     vec![
-        ConversationItem::MessageConversationItem(MessageConversationItem {
+        ConversationItem::MessageConversationItem(MessageConversationItem { meta: None,
             resource: resource(route, &user_item_id),
             turn: turn.clone(),
             conversation: conversation.clone(),
@@ -972,7 +975,7 @@ fn history_items(route: &ProviderInstanceRoute, native_id: &str) -> Vec<Conversa
                 truncation: None,
             })],
         }),
-        ConversationItem::MessageConversationItem(MessageConversationItem {
+        ConversationItem::MessageConversationItem(MessageConversationItem { meta: None,
             resource: resource(route, &assistant_item_id),
             turn,
             conversation,

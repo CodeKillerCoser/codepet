@@ -16,6 +16,7 @@ fn main() {
     let mut writer = BufWriter::new(std::io::stdout());
     let mut line = String::new();
     let mut active_thread_id = None;
+    let mut approval_threads = std::collections::HashMap::<String, String>::new();
     let mut created_thread_started_in_process = false;
     let mut created_thread_read_failures_remaining = 2usize;
     let mut thread_renamed = false;
@@ -32,7 +33,7 @@ fn main() {
             handle_client_response(
                 &options,
                 &mut writer,
-                active_thread_id.as_deref(),
+                message.get("id").and_then(Value::as_str).and_then(|id| approval_threads.get(id)).map(String::as_str).or(active_thread_id.as_deref()),
                 &message,
             );
             continue;
@@ -88,6 +89,7 @@ fn main() {
                 let user_agent = match options.approval_mode.as_str() {
                     "app-server-0.151-history" => "codex-cli/0.151.0",
                     "app-server-0.152-history" => "codex-cli/0.152.0",
+                    "app-server-code-pet-history" => "code-pet/0.153.1 (Mac OS 26.3.2; arm64) iTerm.app/3.6.9 (code-pet; 0.1.0)",
                     _ => "codex-app-server-fixture/1",
                 };
                 respond(
@@ -310,6 +312,30 @@ fn main() {
             }
             "thread/read" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
+                if options.approval_mode == "read-error-isolation" {
+                    match thread_id {
+                        "thread-oversized" => {
+                            // Put id after the oversized body to verify bounded envelope extraction.
+                            writeln!(writer, "{{\"result\":\"{}\",\"id\":{id}}}", "x".repeat(16 * 1024 * 1024 + 1)).unwrap();
+                            writer.flush().unwrap();
+                            continue;
+                        }
+                        "thread-invalid-json" => {
+                            writeln!(writer, "{{\"id\":{id},\"result\":!}}").unwrap();
+                            writer.flush().unwrap();
+                            continue;
+                        }
+                        "thread-invalid-envelope" => {
+                            write_json(&mut writer, json!({ "id": id, "jsonrpc": "1.0", "result": {} }));
+                            continue;
+                        }
+                        "thread-rpc-error" => {
+                            write_json(&mut writer, json!({ "id": id, "error": { "code": -32602, "message": "invalid thread" } }));
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
                 if options.approval_mode == "unmaterialized-before-first-message"
                     && created_thread_started_in_process
                     && thread_id == "thread-created"
@@ -400,7 +426,7 @@ fn main() {
                 response_thread["projectId"] = read_thread_project(&options, thread_id)
                     .map(Value::String)
                     .unwrap_or(Value::Null);
-                if options.approval_mode == "app-server-0.152-history" {
+                if matches!(options.approval_mode.as_str(), "app-server-0.152-history" | "app-server-code-pet-history") {
                     response_thread.as_object_mut().unwrap().remove("projectId");
                     response_thread["section"] = json!({
                         "id": "section-fixture",
@@ -421,9 +447,23 @@ fn main() {
             }
             "thread/turns/list" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
+                if thread_id == "thread-tool-text-policy" {
+                    if params["limit"] != 20 || params["itemsView"] != "full" {
+                        write_json(&mut writer, json!({ "id": id, "error": { "code": -32602, "message": "expected the caller's unchanged limit=20 and full turns" } }));
+                        continue;
+                    }
+                    let mut history = turn("turn-tool-text-policy", "completed");
+                    history["items"] = json!([
+                        { "type": "mcpToolCall", "id": "tool-large", "server": "fixture", "tool": "read", "status": "completed", "arguments": {}, "result": "x".repeat(20 * 1024 * 1024) },
+                        { "type": "agentMessage", "id": "message-large", "text": "界".repeat(100_000) },
+                        { "type": "commandExecution", "id": "command-large", "command": "fixture", "status": "completed", "aggregatedOutput": "y".repeat(300_000) }
+                    ]);
+                    respond(&mut writer, id, json!({ "data": [history], "nextCursor": "native-next-page", "backwardsCursor": null }));
+                    continue;
+                }
                 let versioned_history = matches!(
                     options.approval_mode.as_str(),
-                    "app-server-0.151-history" | "app-server-0.152-history"
+                    "app-server-0.151-history" | "app-server-0.152-history" | "app-server-code-pet-history"
                 );
                 let requested_items_view = params["itemsView"].as_str().unwrap_or("");
                 let valid_items_view = if versioned_history {
@@ -431,7 +471,7 @@ fn main() {
                 } else {
                     requested_items_view == "full"
                 };
-                if params["limit"].as_u64().is_none_or(|limit| !(1..=10).contains(&limit))
+                if params["limit"].as_u64().is_none_or(|limit| !(1..=100).contains(&limit))
                     || !valid_items_view
                     || params["sortDirection"] != "desc"
                 {
@@ -469,6 +509,7 @@ fn main() {
                     thread_id,
                     params.get("cursor").and_then(Value::as_str),
                     turn_state.as_deref(),
+                    params["limit"].as_u64().unwrap() as usize,
                 );
                 if requested_items_view == "notLoaded" {
                     for turn in &mut data {
@@ -487,48 +528,9 @@ fn main() {
                 );
             }
             "thread/items/list" => {
-                if options.approval_mode != "app-server-0.152-history" {
-                    write_json(
-                        &mut writer,
-                        json!({
-                            "id": id,
-                            "error": { "code": -32601, "message": "thread/items/list is not supported yet" }
-                        }),
-                    );
-                    continue;
-                }
-                if params["limit"] != 1 || params["sortDirection"] != "asc" {
-                    write_json(
-                        &mut writer,
-                        json!({
-                            "id": id,
-                            "error": { "code": -32602, "message": "thread/items/list must use one-item ascending pages" }
-                        }),
-                    );
-                    continue;
-                }
-                let turn_id = params["turnId"].as_str().unwrap_or("");
-                let item = match turn_id {
-                    "turn-page-two" => Some(json!({
-                        "type": "agentMessage", "id": "agent-page-two", "text": "page two"
-                    })),
-                    "turn-page-one" => Some(json!({
-                        "type": "agentMessage", "id": "agent-page-one", "text": "page one"
-                    })),
-                    _ => None,
-                };
-                respond(
-                    &mut writer,
-                    id,
-                    json!({
-                        "data": item.into_iter().map(|item| json!({
-                            "turnId": turn_id,
-                            "item": item
-                        })).collect::<Vec<_>>(),
-                        "nextCursor": null,
-                        "backwardsCursor": null
-                    }),
-                );
+                write_json(&mut writer, json!({ "id": id, "error": {
+                    "code": -32601, "message": "Provider must read complete turns without item pagination",
+                } }));
             }
             "thread/resume" => {
                 let thread_id = params["threadId"].as_str().unwrap_or("thread-listed");
@@ -639,7 +641,7 @@ fn main() {
                     .get("projectId")
                     .cloned()
                     .unwrap_or(Value::Null);
-                if options.approval_mode == "app-server-0.152-history" {
+                if matches!(options.approval_mode.as_str(), "app-server-0.152-history" | "app-server-code-pet-history") {
                     result["thread"].as_object_mut().unwrap().remove("projectId");
                     result["thread"]["section"] = json!({
                         "id": "section-fixture",
@@ -770,9 +772,11 @@ fn main() {
                         approval["additionalPermissions"] =
                             json!({ "network": { "enabled": true } });
                     }
+                    let approval_id = if thread_id == "thread-created" { "approval-one".to_string() } else { format!("approval-{thread_id}") };
+                    approval_threads.insert(approval_id.clone(), thread_id.to_string());
                     request(
                         &mut writer,
-                        json!("approval-one"),
+                        json!(approval_id),
                         "item/commandExecution/requestApproval",
                         approval,
                     );
@@ -951,7 +955,7 @@ fn handle_client_response(
     active_thread_id: Option<&str>,
     message: &Value,
 ) {
-    if message.get("id") != Some(&json!("approval-one")) {
+    if !message.get("id").and_then(Value::as_str).is_some_and(|id| id.starts_with("approval-")) {
         return;
     }
     record_session_activity(
@@ -1154,29 +1158,22 @@ fn turn_page(
     thread_id: &str,
     cursor: Option<&str>,
     turn_state: Option<&str>,
+    limit: usize,
 ) -> (Vec<Value>, Option<&'static str>) {
-    match (thread_id, cursor) {
-        ("thread-paginated", None) => (
-            vec![paged_turn("turn-page-two", "agent-page-two", "page two")],
-            Some("page-two"),
-        ),
-        ("thread-paginated", Some("page-two")) => (
-            vec![paged_turn("turn-page-one", "agent-page-one", "page one")],
-            None,
-        ),
-        ("thread-output-too-large", None) => (
-            vec![large_agent_turn("turn-large-three", "agent-large-three")],
-            Some("large-page-two"),
-        ),
-        ("thread-output-too-large", Some("large-page-two")) => (
-            vec![large_agent_turn("turn-large-two", "agent-large-two")],
-            Some("large-page-three"),
-        ),
-        ("thread-output-too-large", Some("large-page-three")) => (
-            vec![large_agent_turn("turn-large-one", "agent-large-one")],
-            None,
-        ),
-        _ => (history_turns(thread_id, turn_state), None),
+    let mut data = Vec::new();
+    let mut next = cursor;
+    loop {
+        let (page, after) = match (thread_id, next) {
+            ("thread-paginated", None) => (paged_turn("turn-page-two", "agent-page-two", "page two"), Some("page-two")),
+            ("thread-paginated", Some("page-two")) => (paged_turn("turn-page-one", "agent-page-one", "page one"), None),
+            ("thread-output-too-large", None) => (large_agent_turn("turn-large-three", "agent-large-three"), Some("large-page-two")),
+            ("thread-output-too-large", Some("large-page-two")) => (large_agent_turn("turn-large-two", "agent-large-two"), Some("large-page-three")),
+            ("thread-output-too-large", Some("large-page-three")) => (large_agent_turn("turn-large-one", "agent-large-one"), None),
+            _ => return (history_turns(thread_id, turn_state), None),
+        };
+        data.push(page);
+        if data.len() == limit || after.is_none() { return (data, after); }
+        next = after;
     }
 }
 

@@ -901,6 +901,8 @@ async fn run_gateway_socket(
         trace_links.clone(),
     ));
 
+    let mut presence = None;
+    let mut heartbeat = gateway::GatewayHeartbeat::default();
     let mut handshaken = false;
     let mut subscribed = false;
     let mut event_task: Option<JoinHandle<()>> = None;
@@ -909,6 +911,10 @@ async fn run_gateway_socket(
 
     loop {
         let next = tokio::select! {
+            _ = tokio::time::sleep_until(heartbeat.deadline().into()) => {
+                close_frame = Some(close_message(1001, "heartbeat_timeout"));
+                break;
+            }
             cancellation = registration.cancelled() => {
                 close_frame = Some(match cancellation {
                     SessionCancellation::CredentialRevoked => close_message(1008, "credential_revoked"),
@@ -1054,6 +1060,8 @@ async fn run_gateway_socket(
                 }
                 break;
             }
+            presence = Some(gateway.remote_connections().register(credential.client_id.clone()));
+            heartbeat = gateway::GatewayHeartbeat::default();
             handshaken = true;
             continue;
         }
@@ -1076,6 +1084,16 @@ async fn run_gateway_socket(
             if !queue_json(&outbound_tx, &response, &mut registration).await {
                 break;
             }
+            continue;
+        }
+
+        if let gateway::ProtocolRequest::ProtocolPing { params, .. } = &request {
+            if !heartbeat.accept(params.sequence) {
+                close_frame = Some(close_message(1008, "stale_heartbeat"));
+                break;
+            }
+            let response = gateway.dispatch_for_caller_scope(&caller_scope, request).await;
+            if !queue_json(&outbound_tx, &response, &mut registration).await { break; }
             continue;
         }
 
@@ -1199,6 +1217,7 @@ async fn run_gateway_socket(
         }
     }
 
+    drop(presence);
     let _ = stop_tx.send(true);
     drop(request_tx);
     if let Some(close_frame) = close_frame {

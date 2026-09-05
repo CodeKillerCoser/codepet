@@ -125,6 +125,11 @@ where
         output_unavailable: output_unavailable.clone(),
     });
     let provider = Arc::new(factory(events));
+    let heartbeat = crate::heartbeat::HostHeartbeat::new();
+    let initialized = Arc::new(AtomicBool::new(false));
+    let monitor = tokio::spawn(heartbeat.clone().run(provider.clone()));
+    let reader_heartbeat = heartbeat.clone();
+    let reader_initialized = initialized.clone();
     let (normal_sender, normal_receiver) = mpsc::channel(options.max_pending_requests);
     let (control_sender, control_receiver) =
         mpsc::channel(options.max_pending_control_requests);
@@ -140,11 +145,13 @@ where
                 control_sender,
                 terminal_sender,
                 options,
+                reader_heartbeat,
+                reader_initialized,
             );
         })
         .map_err(|error| StdioServerError::new(format!("start Provider stdio reader: {error}")))?;
 
-    run_service_loop(
+    let result = run_service_loop(
         provider,
         codec,
         writer,
@@ -153,8 +160,13 @@ where
         terminal_receiver,
         output_unavailable,
         options,
+        initialized,
+        monitor.abort_handle(),
     )
-    .await
+    .await;
+    monitor.abort();
+    let _ = monitor.await;
+    result
 }
 
 fn validate_options(options: StdioServerOptions) -> Result<(), StdioServerError> {
@@ -206,10 +218,18 @@ where
             // still returned by the publish call that actually observed it.
             return Ok(());
         }
+        // Encoding rejects only this event. No bytes have reached stdout, so the
+        // Host connection and the Provider's Harness processes are still usable.
+        let frame = self.codec.encode_message(&ProviderWireMessage::Event(event))?;
         let result = {
             let mut writer = lock(&self.writer);
-            self.codec
-                .write_message(&mut *writer, &ProviderWireMessage::Event(event))
+            writer.write_all(&frame)
+                .map_err(|error| ProtocolError {
+                    code: "provider_frame_write_failed".to_string(),
+                    message: format!("write Provider event: {error}"),
+                    retryable: true,
+                    details: None,
+                })
                 .and_then(|()| {
                     writer.flush().map_err(|error| ProtocolError {
                         code: "provider_frame_flush_failed".to_string(),
@@ -248,6 +268,8 @@ fn read_host_messages<R, W>(
     control_requests: mpsc::Sender<ProtocolRequest>,
     terminal: mpsc::Sender<ReaderTerminal>,
     options: StdioServerOptions,
+    heartbeat: Arc<crate::heartbeat::HostHeartbeat>,
+    initialized: Arc<AtomicBool>,
 ) where
     R: Read,
     W: Write,
@@ -255,6 +277,23 @@ fn read_host_messages<R, W>(
     loop {
         match codec.read_message(&mut reader) {
             Ok(Some(ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request)))) => {
+                if let ProtocolRequest::ProviderPing { jsonrpc, id, params } = &request {
+                    let result = if initialized.load(Ordering::SeqCst) {
+                        heartbeat.ping(params.clone())
+                    } else {
+                        Err(ProtocolError { code: "provider_not_initialized".into(), message: "Initialize before heartbeat".into(), retryable: true, details: None })
+                    };
+                    let response = JsonRpcResponse { jsonrpc: jsonrpc.clone(), id: Some(id.clone()), response: match result {
+                        Ok(value) => JsonRpcResponsePayload::Ok { result: serde_json::to_value(value).expect("pong serializes") },
+                        Err(error) => JsonRpcResponsePayload::Error { error: RpcError { code: -32000, message: error.message.clone(), data: serde_json::to_value(error).ok().and_then(|v| v.as_object().map(|o| o.iter().map(|(k,v)| (k.clone(),v.clone())).collect())) } },
+                    }};
+                    if let Err(error) = write_response(&codec, &writer, response, "provider.ping", id, 0) {
+                        let _ = terminal.try_send(ReaderTerminal::Fatal { response: None, message: error.to_string() });
+                        return;
+                    }
+                    continue;
+                }
+
                 let (sender, max_concurrent, max_pending) = if is_control_request(&request) {
                     (
                         &control_requests,
@@ -333,6 +372,8 @@ async fn run_service_loop<P, W>(
     mut terminal: mpsc::Receiver<ReaderTerminal>,
     output_unavailable: Arc<AtomicBool>,
     options: StdioServerOptions,
+    initialized: Arc<AtomicBool>,
+    presence_monitor: tokio::task::AbortHandle,
 ) -> Result<(), StdioServerError>
 where
     P: ProtocolServer + 'static,
@@ -375,8 +416,9 @@ where
                 };
                 let task_provider = provider.clone();
                 let task_writer = writer.clone();
+                let task_initialized = initialized.clone();
                 control_tasks.spawn(async move {
-                    dispatch_host_request(task_provider, codec, task_writer, request).await
+                    dispatch_host_request(task_provider, codec, task_writer, request, task_initialized).await
                 });
             }
             completed = normal_tasks.join_next(), if !normal_tasks.is_empty() => {
@@ -396,13 +438,15 @@ where
                 };
                 let task_provider = provider.clone();
                 let task_writer = writer.clone();
+                let task_initialized = initialized.clone();
                 normal_tasks.spawn(async move {
-                    dispatch_host_request(task_provider, codec, task_writer, request).await
+                    dispatch_host_request(task_provider, codec, task_writer, request, task_initialized).await
                 });
             }
         }
     }
 
+    presence_monitor.abort();
     let cleanup_result = shutdown_and_drain(
         provider.as_ref(),
         &mut normal_tasks,
@@ -478,6 +522,7 @@ async fn dispatch_host_request<P, W>(
     codec: ProviderFrameCodec,
     writer: Arc<Mutex<W>>,
     request: ProtocolRequest,
+    initialized: Arc<AtomicBool>,
 ) -> Result<bool, StdioServerError>
 where
     P: ProtocolServer,
@@ -488,6 +533,9 @@ where
     let request_id = request.id().clone();
     let dispatch_stopwatch = Instant::now();
     let response = dispatch(provider.as_ref(), request).await;
+    if method == "provider.initialize" && matches!(&response.response, JsonRpcResponsePayload::Ok { .. }) {
+        initialized.store(true, Ordering::SeqCst);
+    }
     let provider_processing_us = dispatch_stopwatch.elapsed().as_micros();
     write_response(
         &codec,
@@ -756,4 +804,39 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oversized_event_does_not_close_output_or_signal_terminal_cleanup() {
+        let (terminal, mut terminal_receiver) = mpsc::channel(1);
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let sink = StdioEventWriter {
+            codec: ProviderFrameCodec::new(2048).unwrap(),
+            writer: output.clone(), terminal,
+            terminal_signalled: AtomicBool::new(false),
+            output_unavailable: Arc::new(AtomicBool::new(false)),
+        };
+        let event = crate::decode_event(br#"{
+            "jsonrpc":"2.0","method":"event.conversationUpserted",
+            "params":{"conversation":{
+                "resource":{"providerId":"fixture","nativeResourceId":"thread"},
+                "project":null,"title":"Fixture","status":"running",
+                "permissionLevel":"workspace-write","createdAt":1,"updatedAt":2
+            }}
+        }"#).unwrap();
+        let mut large = event.clone();
+        if let ProtocolEvent::EventConversationUpserted { params, .. } = &mut large {
+            params.conversation.title = "x".repeat(4096);
+        }
+        assert_eq!(sink.publish(large).unwrap_err().code, "provider_frame_too_large");
+        assert!(lock(&output).is_empty());
+        assert!(!sink.output_unavailable.load(Ordering::SeqCst));
+        assert!(matches!(terminal_receiver.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+        sink.publish(event).unwrap();
+        assert!(matches!(sink.codec.decode_frame(&lock(&output)).unwrap(), ProviderWireMessage::Event(_)));
+    }
 }

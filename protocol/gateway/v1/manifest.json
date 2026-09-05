@@ -28,6 +28,7 @@
     "field": "methods"
   },
   "methods": [
+    {"name": "protocol.ping", "direction": "clientToGateway", "idempotency": "safe", "request": {"$ref": "./schema.json#/$defs/PingRequest"}, "response": {"$ref": "./schema.json#/$defs/PingResponse"}},
     { "name": "protocol.handshake", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/HandshakeRequest" }, "response": { "$ref": "./schema.json#/$defs/HandshakeResponse" } },
     { "name": "protocol.describe", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/ProtocolDescribeRequest" }, "response": { "$ref": "./schema.json#/$defs/ProtocolDescribeResponse" } },
     { "name": "event.subscribe", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/EventSubscribeRequest" }, "response": { "$ref": "./schema.json#/$defs/EventSubscribeResponse" } },
@@ -43,6 +44,7 @@
     { "name": "conversation.get", "direction": "clientToGateway", "idempotency": "safe", "capability": "conversation.get", "request": { "$ref": "./schema.json#/$defs/ConversationGetRequest" }, "response": { "$ref": "./schema.json#/$defs/ConversationGetResponse" } },
     { "name": "conversation.markRead", "direction": "clientToGateway", "idempotency": "idempotent", "request": { "$ref": "./schema.json#/$defs/ConversationMarkReadRequest" }, "response": { "$ref": "./schema.json#/$defs/ConversationMarkReadResponse" } },
     { "name": "conversation.acquireInteraction", "direction": "clientToGateway", "idempotency": "idempotent", "request": { "$ref": "./schema.json#/$defs/ConversationAcquireInteractionRequest" }, "response": { "$ref": "./schema.json#/$defs/ConversationAcquireInteractionResponse" } },
+    { "name": "conversation.resume", "direction": "clientToGateway", "idempotency": "idempotent", "request": { "$ref": "./schema.json#/$defs/ConversationResumeRequest" }, "response": { "$ref": "./schema.json#/$defs/ConversationResumeResponse" } },
     { "name": "conversation.create", "direction": "clientToGateway", "idempotency": "nonIdempotent", "capability": "conversation.create", "request": { "$ref": "./schema.json#/$defs/ConversationCreateRequest" }, "response": { "$ref": "./schema.json#/$defs/ConversationCreateResponse" } },
     { "name": "turn.send", "direction": "clientToGateway", "idempotency": "nonIdempotent", "capability": "turn.send", "request": { "$ref": "./schema.json#/$defs/TurnSendRequest" }, "response": { "$ref": "./schema.json#/$defs/TurnSendResponse" } },
     { "name": "turn.interrupt", "direction": "clientToGateway", "idempotency": "idempotent", "capability": "turn.interrupt", "request": { "$ref": "./schema.json#/$defs/TurnInterruptRequest" }, "response": { "$ref": "./schema.json#/$defs/TurnInterruptResponse" } },

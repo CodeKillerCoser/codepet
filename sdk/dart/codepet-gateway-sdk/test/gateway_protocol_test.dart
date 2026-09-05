@@ -163,7 +163,7 @@ void main() {
   });
 
   test('method and event metadata come from the manifest IR', () {
-    expect(ProtocolMethod.values, hasLength(19));
+    expect(ProtocolMethod.values, hasLength(21));
     expect(ProtocolEventName.values, hasLength(9));
     expect(ProtocolMethod.projectList.wireName, 'project.list');
     expect(ProtocolMethod.projectDelete.capability, GatewayCapability.projectDelete);

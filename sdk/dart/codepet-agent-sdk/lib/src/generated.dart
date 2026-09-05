@@ -267,6 +267,7 @@ final class Approval {
 
 final class ApprovalConversationItem extends ConversationItem {
   factory ApprovalConversationItem({
+    JsonObject? meta,
     required RoutedResourceId resource,
     required RoutedResourceId turn,
     required RoutedResourceId conversation,
@@ -276,6 +277,7 @@ final class ApprovalConversationItem extends ConversationItem {
     RoutedResourceId? relatedItem,
     required Approval approval,
   }) {
+    final validatedMeta = meta == null ? null : _jsonObject(meta, 'ApprovalConversationItem._meta');
     final validatedResource = resource;
     final validatedTurn = turn;
     final validatedConversation = conversation;
@@ -285,6 +287,7 @@ final class ApprovalConversationItem extends ConversationItem {
     final validatedRelatedItem = relatedItem == null ? null : relatedItem;
     final validatedApproval = approval;
     return ApprovalConversationItem._(
+      meta: validatedMeta,
       resource: validatedResource,
       turn: validatedTurn,
       conversation: validatedConversation,
@@ -297,6 +300,7 @@ final class ApprovalConversationItem extends ConversationItem {
   }
 
   ApprovalConversationItem._({
+    required this.meta,
     required this.resource,
     required this.turn,
     required this.conversation,
@@ -307,6 +311,7 @@ final class ApprovalConversationItem extends ConversationItem {
     required this.approval,
   });
 
+  final JsonObject? meta;
   final RoutedResourceId resource;
   final RoutedResourceId turn;
   final RoutedResourceId conversation;
@@ -318,8 +323,9 @@ final class ApprovalConversationItem extends ConversationItem {
 
   factory ApprovalConversationItem.fromJson(Object? value, {String path = 'ApprovalConversationItem'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'resource', 'turn', 'conversation', 'kind', 'status', 'title', 'relatedItem', 'approval'}, path);
+    _expectKeys(json, const {'_meta', 'resource', 'turn', 'conversation', 'kind', 'status', 'title', 'relatedItem', 'approval'}, path);
     return ApprovalConversationItem(
+      meta: json.containsKey('_meta') && json['_meta'] != null ? _jsonObject(json['_meta'], '$path._meta') : null,
       resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
       turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
       conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
@@ -333,6 +339,7 @@ final class ApprovalConversationItem extends ConversationItem {
 
   @override
   Map<String, Object?> toJson() => {
+    if (meta != null) '_meta': _encodeJsonObject(meta!, 'ApprovalConversationItem._meta'),
     'resource': resource.toJson(),
     'turn': turn.toJson(),
     'conversation': conversation.toJson(),
@@ -344,7 +351,7 @@ final class ApprovalConversationItem extends ConversationItem {
   };
 
   @override
-  String toString() => 'ApprovalConversationItem(resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, title: $title, relatedItem: $relatedItem, approval: $approval)';
+  String toString() => 'ApprovalConversationItem(_meta: $meta, resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, title: $title, relatedItem: $relatedItem, approval: $approval)';
 }
 
 enum ApprovalConversationItemKind {
@@ -592,6 +599,7 @@ final class ChoiceSet {
 
 final class CommandConversationItem extends ConversationItem {
   factory CommandConversationItem({
+    JsonObject? meta,
     required RoutedResourceId resource,
     required RoutedResourceId turn,
     required RoutedResourceId conversation,
@@ -600,6 +608,7 @@ final class CommandConversationItem extends ConversationItem {
     String? title,
     required ToolInvocation tool,
   }) {
+    final validatedMeta = meta == null ? null : _jsonObject(meta, 'CommandConversationItem._meta');
     final validatedResource = resource;
     final validatedTurn = turn;
     final validatedConversation = conversation;
@@ -608,6 +617,7 @@ final class CommandConversationItem extends ConversationItem {
     final validatedTitle = title == null ? null : _string(title, 'CommandConversationItem.title', minLength: 1);
     final validatedTool = tool;
     return CommandConversationItem._(
+      meta: validatedMeta,
       resource: validatedResource,
       turn: validatedTurn,
       conversation: validatedConversation,
@@ -619,6 +629,7 @@ final class CommandConversationItem extends ConversationItem {
   }
 
   CommandConversationItem._({
+    required this.meta,
     required this.resource,
     required this.turn,
     required this.conversation,
@@ -628,6 +639,7 @@ final class CommandConversationItem extends ConversationItem {
     required this.tool,
   });
 
+  final JsonObject? meta;
   final RoutedResourceId resource;
   final RoutedResourceId turn;
   final RoutedResourceId conversation;
@@ -638,8 +650,9 @@ final class CommandConversationItem extends ConversationItem {
 
   factory CommandConversationItem.fromJson(Object? value, {String path = 'CommandConversationItem'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'resource', 'turn', 'conversation', 'kind', 'status', 'title', 'tool'}, path);
+    _expectKeys(json, const {'_meta', 'resource', 'turn', 'conversation', 'kind', 'status', 'title', 'tool'}, path);
     return CommandConversationItem(
+      meta: json.containsKey('_meta') && json['_meta'] != null ? _jsonObject(json['_meta'], '$path._meta') : null,
       resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
       turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
       conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
@@ -652,6 +665,7 @@ final class CommandConversationItem extends ConversationItem {
 
   @override
   Map<String, Object?> toJson() => {
+    if (meta != null) '_meta': _encodeJsonObject(meta!, 'CommandConversationItem._meta'),
     'resource': resource.toJson(),
     'turn': turn.toJson(),
     'conversation': conversation.toJson(),
@@ -662,7 +676,7 @@ final class CommandConversationItem extends ConversationItem {
   };
 
   @override
-  String toString() => 'CommandConversationItem(resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, title: $title, tool: $tool)';
+  String toString() => 'CommandConversationItem(_meta: $meta, resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, title: $title, tool: $tool)';
 }
 
 enum CommandConversationItemKind {
@@ -1289,6 +1303,7 @@ enum EmbeddedResourceContentBlockKind {
 
 final class FileChangeConversationItem extends ConversationItem {
   factory FileChangeConversationItem({
+    JsonObject? meta,
     required RoutedResourceId resource,
     required RoutedResourceId turn,
     required RoutedResourceId conversation,
@@ -1297,6 +1312,7 @@ final class FileChangeConversationItem extends ConversationItem {
     String? title,
     required List<ContentBlock> contents,
   }) {
+    final validatedMeta = meta == null ? null : _jsonObject(meta, 'FileChangeConversationItem._meta');
     final validatedResource = resource;
     final validatedTurn = turn;
     final validatedConversation = conversation;
@@ -1305,6 +1321,7 @@ final class FileChangeConversationItem extends ConversationItem {
     final validatedTitle = title == null ? null : _string(title, 'FileChangeConversationItem.title', minLength: 1);
     final validatedContents = _freezeList<ContentBlock>(contents, 'FileChangeConversationItem.contents', (item, itemPath) => item, encodeItem: (item) => item.toJson());
     return FileChangeConversationItem._(
+      meta: validatedMeta,
       resource: validatedResource,
       turn: validatedTurn,
       conversation: validatedConversation,
@@ -1316,6 +1333,7 @@ final class FileChangeConversationItem extends ConversationItem {
   }
 
   FileChangeConversationItem._({
+    required this.meta,
     required this.resource,
     required this.turn,
     required this.conversation,
@@ -1325,6 +1343,7 @@ final class FileChangeConversationItem extends ConversationItem {
     required this.contents,
   });
 
+  final JsonObject? meta;
   final RoutedResourceId resource;
   final RoutedResourceId turn;
   final RoutedResourceId conversation;
@@ -1335,8 +1354,9 @@ final class FileChangeConversationItem extends ConversationItem {
 
   factory FileChangeConversationItem.fromJson(Object? value, {String path = 'FileChangeConversationItem'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'resource', 'turn', 'conversation', 'kind', 'status', 'title', 'contents'}, path);
+    _expectKeys(json, const {'_meta', 'resource', 'turn', 'conversation', 'kind', 'status', 'title', 'contents'}, path);
     return FileChangeConversationItem(
+      meta: json.containsKey('_meta') && json['_meta'] != null ? _jsonObject(json['_meta'], '$path._meta') : null,
       resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
       turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
       conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
@@ -1349,6 +1369,7 @@ final class FileChangeConversationItem extends ConversationItem {
 
   @override
   Map<String, Object?> toJson() => {
+    if (meta != null) '_meta': _encodeJsonObject(meta!, 'FileChangeConversationItem._meta'),
     'resource': resource.toJson(),
     'turn': turn.toJson(),
     'conversation': conversation.toJson(),
@@ -1359,7 +1380,7 @@ final class FileChangeConversationItem extends ConversationItem {
   };
 
   @override
-  String toString() => 'FileChangeConversationItem(resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, title: $title, contents: $contents)';
+  String toString() => 'FileChangeConversationItem(_meta: $meta, resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, title: $title, contents: $contents)';
 }
 
 enum FileChangeConversationItemKind {
@@ -1738,6 +1759,7 @@ enum ImageContentBlockKind {
 
 final class MessageConversationItem extends ConversationItem {
   factory MessageConversationItem({
+    JsonObject? meta,
     required RoutedResourceId resource,
     required RoutedResourceId turn,
     required RoutedResourceId conversation,
@@ -1746,6 +1768,7 @@ final class MessageConversationItem extends ConversationItem {
     required ConversationItemRole role,
     required List<ContentBlock> contents,
   }) {
+    final validatedMeta = meta == null ? null : _jsonObject(meta, 'MessageConversationItem._meta');
     final validatedResource = resource;
     final validatedTurn = turn;
     final validatedConversation = conversation;
@@ -1754,6 +1777,7 @@ final class MessageConversationItem extends ConversationItem {
     final validatedRole = role;
     final validatedContents = _freezeList<ContentBlock>(contents, 'MessageConversationItem.contents', (item, itemPath) => item, encodeItem: (item) => item.toJson());
     return MessageConversationItem._(
+      meta: validatedMeta,
       resource: validatedResource,
       turn: validatedTurn,
       conversation: validatedConversation,
@@ -1765,6 +1789,7 @@ final class MessageConversationItem extends ConversationItem {
   }
 
   MessageConversationItem._({
+    required this.meta,
     required this.resource,
     required this.turn,
     required this.conversation,
@@ -1774,6 +1799,7 @@ final class MessageConversationItem extends ConversationItem {
     required this.contents,
   });
 
+  final JsonObject? meta;
   final RoutedResourceId resource;
   final RoutedResourceId turn;
   final RoutedResourceId conversation;
@@ -1784,8 +1810,9 @@ final class MessageConversationItem extends ConversationItem {
 
   factory MessageConversationItem.fromJson(Object? value, {String path = 'MessageConversationItem'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'resource', 'turn', 'conversation', 'kind', 'status', 'role', 'contents'}, path);
+    _expectKeys(json, const {'_meta', 'resource', 'turn', 'conversation', 'kind', 'status', 'role', 'contents'}, path);
     return MessageConversationItem(
+      meta: json.containsKey('_meta') && json['_meta'] != null ? _jsonObject(json['_meta'], '$path._meta') : null,
       resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
       turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
       conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
@@ -1798,6 +1825,7 @@ final class MessageConversationItem extends ConversationItem {
 
   @override
   Map<String, Object?> toJson() => {
+    if (meta != null) '_meta': _encodeJsonObject(meta!, 'MessageConversationItem._meta'),
     'resource': resource.toJson(),
     'turn': turn.toJson(),
     'conversation': conversation.toJson(),
@@ -1808,7 +1836,7 @@ final class MessageConversationItem extends ConversationItem {
   };
 
   @override
-  String toString() => 'MessageConversationItem(resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, role: $role, contents: $contents)';
+  String toString() => 'MessageConversationItem(_meta: $meta, resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, role: $role, contents: $contents)';
 }
 
 enum MessageConversationItemKind {
@@ -2301,6 +2329,7 @@ final class ProviderUsageDetail {
 
 final class ReasoningConversationItem extends ConversationItem {
   factory ReasoningConversationItem({
+    JsonObject? meta,
     required RoutedResourceId resource,
     required RoutedResourceId turn,
     required RoutedResourceId conversation,
@@ -2308,6 +2337,7 @@ final class ReasoningConversationItem extends ConversationItem {
     required ConversationItemStatus status,
     required List<ContentBlock> contents,
   }) {
+    final validatedMeta = meta == null ? null : _jsonObject(meta, 'ReasoningConversationItem._meta');
     final validatedResource = resource;
     final validatedTurn = turn;
     final validatedConversation = conversation;
@@ -2315,6 +2345,7 @@ final class ReasoningConversationItem extends ConversationItem {
     final validatedStatus = status;
     final validatedContents = _freezeList<ContentBlock>(contents, 'ReasoningConversationItem.contents', (item, itemPath) => item, encodeItem: (item) => item.toJson());
     return ReasoningConversationItem._(
+      meta: validatedMeta,
       resource: validatedResource,
       turn: validatedTurn,
       conversation: validatedConversation,
@@ -2325,6 +2356,7 @@ final class ReasoningConversationItem extends ConversationItem {
   }
 
   ReasoningConversationItem._({
+    required this.meta,
     required this.resource,
     required this.turn,
     required this.conversation,
@@ -2333,6 +2365,7 @@ final class ReasoningConversationItem extends ConversationItem {
     required this.contents,
   });
 
+  final JsonObject? meta;
   final RoutedResourceId resource;
   final RoutedResourceId turn;
   final RoutedResourceId conversation;
@@ -2342,8 +2375,9 @@ final class ReasoningConversationItem extends ConversationItem {
 
   factory ReasoningConversationItem.fromJson(Object? value, {String path = 'ReasoningConversationItem'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'resource', 'turn', 'conversation', 'kind', 'status', 'contents'}, path);
+    _expectKeys(json, const {'_meta', 'resource', 'turn', 'conversation', 'kind', 'status', 'contents'}, path);
     return ReasoningConversationItem(
+      meta: json.containsKey('_meta') && json['_meta'] != null ? _jsonObject(json['_meta'], '$path._meta') : null,
       resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
       turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
       conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
@@ -2355,6 +2389,7 @@ final class ReasoningConversationItem extends ConversationItem {
 
   @override
   Map<String, Object?> toJson() => {
+    if (meta != null) '_meta': _encodeJsonObject(meta!, 'ReasoningConversationItem._meta'),
     'resource': resource.toJson(),
     'turn': turn.toJson(),
     'conversation': conversation.toJson(),
@@ -2364,7 +2399,7 @@ final class ReasoningConversationItem extends ConversationItem {
   };
 
   @override
-  String toString() => 'ReasoningConversationItem(resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, contents: $contents)';
+  String toString() => 'ReasoningConversationItem(_meta: $meta, resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, contents: $contents)';
 }
 
 enum ReasoningConversationItemKind {
@@ -2915,6 +2950,7 @@ enum ToolCommandActionKind {
 
 final class ToolConversationItem extends ConversationItem {
   factory ToolConversationItem({
+    JsonObject? meta,
     required RoutedResourceId resource,
     required RoutedResourceId turn,
     required RoutedResourceId conversation,
@@ -2923,6 +2959,7 @@ final class ToolConversationItem extends ConversationItem {
     String? title,
     required ToolInvocation tool,
   }) {
+    final validatedMeta = meta == null ? null : _jsonObject(meta, 'ToolConversationItem._meta');
     final validatedResource = resource;
     final validatedTurn = turn;
     final validatedConversation = conversation;
@@ -2931,6 +2968,7 @@ final class ToolConversationItem extends ConversationItem {
     final validatedTitle = title == null ? null : _string(title, 'ToolConversationItem.title', minLength: 1);
     final validatedTool = tool;
     return ToolConversationItem._(
+      meta: validatedMeta,
       resource: validatedResource,
       turn: validatedTurn,
       conversation: validatedConversation,
@@ -2942,6 +2980,7 @@ final class ToolConversationItem extends ConversationItem {
   }
 
   ToolConversationItem._({
+    required this.meta,
     required this.resource,
     required this.turn,
     required this.conversation,
@@ -2951,6 +2990,7 @@ final class ToolConversationItem extends ConversationItem {
     required this.tool,
   });
 
+  final JsonObject? meta;
   final RoutedResourceId resource;
   final RoutedResourceId turn;
   final RoutedResourceId conversation;
@@ -2961,8 +3001,9 @@ final class ToolConversationItem extends ConversationItem {
 
   factory ToolConversationItem.fromJson(Object? value, {String path = 'ToolConversationItem'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'resource', 'turn', 'conversation', 'kind', 'status', 'title', 'tool'}, path);
+    _expectKeys(json, const {'_meta', 'resource', 'turn', 'conversation', 'kind', 'status', 'title', 'tool'}, path);
     return ToolConversationItem(
+      meta: json.containsKey('_meta') && json['_meta'] != null ? _jsonObject(json['_meta'], '$path._meta') : null,
       resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
       turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
       conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
@@ -2975,6 +3016,7 @@ final class ToolConversationItem extends ConversationItem {
 
   @override
   Map<String, Object?> toJson() => {
+    if (meta != null) '_meta': _encodeJsonObject(meta!, 'ToolConversationItem._meta'),
     'resource': resource.toJson(),
     'turn': turn.toJson(),
     'conversation': conversation.toJson(),
@@ -2985,7 +3027,7 @@ final class ToolConversationItem extends ConversationItem {
   };
 
   @override
-  String toString() => 'ToolConversationItem(resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, title: $title, tool: $tool)';
+  String toString() => 'ToolConversationItem(_meta: $meta, resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, title: $title, tool: $tool)';
 }
 
 enum ToolConversationItemKind {
@@ -3687,6 +3729,7 @@ final class TurnTask {
 
 final class UnknownConversationItem extends ConversationItem {
   factory UnknownConversationItem({
+    JsonObject? meta,
     required RoutedResourceId resource,
     required RoutedResourceId turn,
     required RoutedResourceId conversation,
@@ -3694,6 +3737,7 @@ final class UnknownConversationItem extends ConversationItem {
     required ConversationItemStatus status,
     String? title,
   }) {
+    final validatedMeta = meta == null ? null : _jsonObject(meta, 'UnknownConversationItem._meta');
     final validatedResource = resource;
     final validatedTurn = turn;
     final validatedConversation = conversation;
@@ -3701,6 +3745,7 @@ final class UnknownConversationItem extends ConversationItem {
     final validatedStatus = status;
     final validatedTitle = title == null ? null : _string(title, 'UnknownConversationItem.title', minLength: 1);
     return UnknownConversationItem._(
+      meta: validatedMeta,
       resource: validatedResource,
       turn: validatedTurn,
       conversation: validatedConversation,
@@ -3711,6 +3756,7 @@ final class UnknownConversationItem extends ConversationItem {
   }
 
   UnknownConversationItem._({
+    required this.meta,
     required this.resource,
     required this.turn,
     required this.conversation,
@@ -3719,6 +3765,7 @@ final class UnknownConversationItem extends ConversationItem {
     required this.title,
   });
 
+  final JsonObject? meta;
   final RoutedResourceId resource;
   final RoutedResourceId turn;
   final RoutedResourceId conversation;
@@ -3728,8 +3775,9 @@ final class UnknownConversationItem extends ConversationItem {
 
   factory UnknownConversationItem.fromJson(Object? value, {String path = 'UnknownConversationItem'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'resource', 'turn', 'conversation', 'kind', 'status', 'title'}, path);
+    _expectKeys(json, const {'_meta', 'resource', 'turn', 'conversation', 'kind', 'status', 'title'}, path);
     return UnknownConversationItem(
+      meta: json.containsKey('_meta') && json['_meta'] != null ? _jsonObject(json['_meta'], '$path._meta') : null,
       resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
       turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
       conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
@@ -3741,6 +3789,7 @@ final class UnknownConversationItem extends ConversationItem {
 
   @override
   Map<String, Object?> toJson() => {
+    if (meta != null) '_meta': _encodeJsonObject(meta!, 'UnknownConversationItem._meta'),
     'resource': resource.toJson(),
     'turn': turn.toJson(),
     'conversation': conversation.toJson(),
@@ -3750,7 +3799,7 @@ final class UnknownConversationItem extends ConversationItem {
   };
 
   @override
-  String toString() => 'UnknownConversationItem(resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, title: $title)';
+  String toString() => 'UnknownConversationItem(_meta: $meta, resource: $resource, turn: $turn, conversation: $conversation, kind: $kind, status: $status, title: $title)';
 }
 
 enum UnknownConversationItemKind {

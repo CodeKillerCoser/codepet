@@ -100,12 +100,110 @@ List<T> _decodeList<T>(Object? value, String path, T Function(Object?, String) d
 
 const int coreSchemaVersion = 1;
 
+final class ClientConnectionInfo {
+  factory ClientConnectionInfo({
+    required String connectionId,
+    required ClientId clientId,
+  }) {
+    final validatedConnectionId = _string(connectionId, 'ClientConnectionInfo.connectionId', minLength: 1);
+    final validatedClientId = _string(clientId, 'ClientConnectionInfo.clientId', minLength: 1);
+    return ClientConnectionInfo._(
+      connectionId: validatedConnectionId,
+      clientId: validatedClientId,
+    );
+  }
+
+  ClientConnectionInfo._({
+    required this.connectionId,
+    required this.clientId,
+  });
+
+  final String connectionId;
+  final ClientId clientId;
+
+  factory ClientConnectionInfo.fromJson(Object? value, {String path = 'ClientConnectionInfo'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'connectionId', 'clientId'}, path);
+    return ClientConnectionInfo(
+      connectionId: _string(_required(json, 'connectionId', path), '$path.connectionId', minLength: 1),
+      clientId: _string(_required(json, 'clientId', path), '$path.clientId', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'connectionId': connectionId,
+    'clientId': clientId,
+  };
+
+  @override
+  String toString() => 'ClientConnectionInfo(connectionId: $connectionId, clientId: $clientId)';
+}
+
+final class ClientConnectionsSnapshot {
+  factory ClientConnectionsSnapshot({
+    required int revision,
+    required List<ClientConnectionInfo> connections,
+  }) {
+    final validatedRevision = _integer(revision, 'ClientConnectionsSnapshot.revision', minimum: 0);
+    final validatedConnections = _freezeList<ClientConnectionInfo>(connections, 'ClientConnectionsSnapshot.connections', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    return ClientConnectionsSnapshot._(
+      revision: validatedRevision,
+      connections: validatedConnections,
+    );
+  }
+
+  ClientConnectionsSnapshot._({
+    required this.revision,
+    required this.connections,
+  });
+
+  final int revision;
+  final List<ClientConnectionInfo> connections;
+
+  factory ClientConnectionsSnapshot.fromJson(Object? value, {String path = 'ClientConnectionsSnapshot'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'revision', 'connections'}, path);
+    return ClientConnectionsSnapshot(
+      revision: _integer(_required(json, 'revision', path), '$path.revision', minimum: 0),
+      connections: _decodeList<ClientConnectionInfo>(_required(json, 'connections', path), '$path.connections', (item, itemPath) => ClientConnectionInfo.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'revision': revision,
+    'connections': connections.map((item) => item.toJson()).toList(growable: false),
+  };
+
+  @override
+  String toString() => 'ClientConnectionsSnapshot(revision: $revision, connections: $connections)';
+}
+
 typedef ClientId = String;
 
 ClientId decodeClientId(Object? value, {String path = 'ClientId'}) => _string(value, path, minLength: 1);
 Object? encodeClientId(ClientId value, {String path = 'ClientId'}) {
   final checked = _string(value, path, minLength: 1);
   return checked;
+}
+
+enum ConnectionStatus {
+  connecting('connecting'),
+  online('online'),
+  offline('offline');
+
+  const ConnectionStatus(this.wireValue);
+
+  final String wireValue;
+
+  static ConnectionStatus fromJson(Object? value, {String path = 'ConnectionStatus'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: connecting, online, offline');
+  }
+
+  String toJson() => wireValue;
 }
 
 typedef Cursor = String;

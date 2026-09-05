@@ -87,6 +87,28 @@ fn provider_event_uses_canonical_agent_resource_identity() {
 }
 
 #[test]
+fn every_item_variant_round_trips_optional_open_metadata_with_its_wire_name() {
+    let response: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../../protocol/provider/v1/fixtures/conversation-get-response.json"
+    )).unwrap();
+    let mut items = response["result"]["items"].as_array().unwrap().clone();
+    let mut tool = items[2].clone();
+    tool["kind"] = serde_json::json!("tool");
+    let mut file = items[1].clone();
+    file["kind"] = serde_json::json!("file-change");
+    items.extend([tool, file]);
+    assert_eq!(items.len(), 7);
+    for value in items {
+        let item: ConversationItem = serde_json::from_value(value).unwrap();
+        let mut canonical = serde_json::to_value(item).unwrap();
+        assert!(canonical.get("_meta").is_none());
+        canonical["_meta"] = serde_json::json!({ "vendor": { "future": [1, true, "kept"] }, "truncations": [] });
+        let decoded: ConversationItem = serde_json::from_value(canonical.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), canonical);
+    }
+}
+
+#[test]
 fn conversation_get_fixture_preserves_ordered_items_and_stable_content_ids() {
     let response = decode_response(include_bytes!(
         "../../../../protocol/provider/v1/fixtures/conversation-get-response.json"

@@ -576,6 +576,37 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
 }
 
 #[tokio::test]
+async fn gateway_resume_returns_history_or_preserves_the_interaction_outcome() {
+    let manager = build_manager("device-resume", vec![plugin("dev.codepet.resume", &["instance-resume"])]);
+    manager.start_enabled().await;
+    let gateway = ProviderGatewayService::new(manager.clone()).unwrap();
+    for (native_id, acquired, has_history) in [
+        ("resume-ok", true, true),
+        ("resume-denied", false, false),
+        ("response-wrong-native", true, false),
+    ] {
+        let result = gateway.conversation_resume(codepet_gateway_sdk::ConversationResumeRequest {
+            conversation: gateway_resource("device-resume", "dev.codepet.resume", "instance-resume", native_id),
+            limit: Some(20),
+        }).await.unwrap();
+        assert_eq!(result.interaction_acquired, acquired);
+        assert_eq!(result.interaction.is_some(), acquired);
+        assert_eq!(result.history.is_some(), has_history);
+        if !acquired {
+            assert_eq!(result.interaction_error.unwrap().code, "conversation_write_conflict");
+            assert!(result.history_error.is_none());
+        } else if !has_history {
+            assert_eq!(result.history_error.unwrap().code, "provider_resource_identity_mismatch");
+        } else {
+            let history = result.history.unwrap();
+            assert_eq!(history.conversation.resource.native_resource_id, native_id);
+            assert!(!history.snapshot_cursor.is_empty());
+        }
+    }
+    manager.shutdown().await;
+}
+
+#[tokio::test]
 async fn gateway_routes_project_crud_filters_and_project_owned_conversation_create() {
     let manager = build_manager(
         "device-project",

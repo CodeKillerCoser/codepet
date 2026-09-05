@@ -106,6 +106,7 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
     let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
     assert!(gateway.start_event_forwarding());
 
+    manager.enable_connection_heartbeats();
     let outcomes = manager.start_enabled().await;
     assert_eq!(outcomes.len(), 3);
     for (plugin_id, outcome) in outcomes {
@@ -121,6 +122,10 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
         assert_eq!(snapshot.instances.len(), 1);
     }
 
+    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Stopped).await;
+    let first_phone = manager.remote_connections().register("phone-a".into());
+    let second_phone = manager.remote_connections().register("phone-b".into());
+    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
     let listed = ProtocolServer::provider_list(
         gateway.as_ref(),
         ProviderListRequest {},
@@ -193,6 +198,19 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
     assert_eq!(claude_conversation.resource.provider_id, claude.id);
     assert!(!claude_conversation.resource.native_resource_id.is_empty());
 
+    drop(first_phone);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
+    drop(second_phone);
+    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Stopped).await;
+    for snapshot in manager.snapshots().await {
+        assert_eq!(snapshot.state, PluginRuntimeState::Ready);
+        assert_eq!(snapshot.connection_status, codepet_provider_sdk::ConnectionStatus::Online);
+    }
+    let reconnected = manager.remote_connections().register("phone-b".into());
+    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
+    drop(reconnected);
+    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Stopped).await;
     let shutdown = manager.shutdown().await;
     assert_eq!(shutdown.len(), 3);
     for (plugin_id, outcome) in shutdown {
@@ -204,6 +222,17 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
             snapshot.stderr_diagnostics
         );
     }
+}
+
+async fn wait_for_instances(manager: &PluginManager, status: codepet_provider_sdk::InstanceStatus) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if manager.snapshots().await.iter().all(|p|
+                p.connection_status == codepet_provider_sdk::ConnectionStatus::Online &&
+                p.instances.iter().all(|i| i.instance.as_ref().is_some_and(|i| i.status == status))) { return; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.unwrap_or_else(|_| panic!("instances did not reconcile to {status:?}"));
 }
 
 fn ready_provider<'a>(

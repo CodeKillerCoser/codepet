@@ -21,6 +21,7 @@ const DISCOVERY_COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentRuntimeStatus {
+    Loading,
     Ready,
     Unavailable,
     InvalidConfiguredExecutable,

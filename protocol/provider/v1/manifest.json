@@ -21,6 +21,7 @@
     "field": "methods"
   },
   "methods": [
+    {"name": "provider.ping", "direction": "hostToPlugin", "idempotency": "safe", "request": {"$ref": "./schema.json#/$defs/ProviderPingRequest"}, "response": {"$ref": "./schema.json#/$defs/ProviderPingResponse"}, "dispatchLane": "control"},
     {
       "name": "provider.initialize",
       "direction": "hostToPlugin",

@@ -1,5 +1,5 @@
 use crate::client::{
-    CodexAppServerSession, CodexRequestOutcome, THREAD_TURNS_PAGE_LIMIT,
+    CodexAppServerSession, CodexRequestOutcome,
 };
 use crate::mapper::{parse_permission_level, CodexProtocolMapper};
 use crate::protocol::{
@@ -47,17 +47,16 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod server_events;
+
 static NEXT_EXECUTION_ATTEMPT: AtomicU64 = AtomicU64::new(1);
 static NEXT_INSTANCE_SESSION: AtomicU64 = AtomicU64::new(1);
 static NEXT_MANAGED_WORKTREE: AtomicU64 = AtomicU64::new(1);
-const MAX_THREAD_TURN_PAGES: usize = 10_000;
 const MAX_FILTERED_THREAD_PAGES: usize = 10_000;
 const CODEX_LIST_PAGE_LIMIT: u32 = 100;
 const FILTERED_CONVERSATION_CURSOR_PREFIX: &str = "codepet-codex-membership-v1:";
-const DEFAULT_CONVERSATION_GET_TURN_LIMIT: u64 = 40;
+const DEFAULT_CONVERSATION_GET_TURN_LIMIT: u64 = 20;
 const MAX_CONVERSATION_GET_TURN_LIMIT: u64 = 100;
-const INTERACTION_LEASE_DURATION: Duration = Duration::from_secs(30);
-const INTERACTION_REAPER_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -75,9 +74,6 @@ pub trait ExecutionLifecycleHook: Send + Sync + 'static {
 
     fn after_execution_cancelled(&self, _conversation_id: &str) {}
 
-    fn interaction_lease_duration(&self) -> Duration {
-        INTERACTION_LEASE_DURATION
-    }
 }
 
 struct NoopExecutionLifecycleHook;
@@ -94,8 +90,8 @@ struct InstanceMutable {
     usage: Option<ProviderUsage>,
     lifecycle_generation: u64,
     sessions: HashMap<u64, Arc<InstanceSessionSlot>>,
-    observer_session_id: Option<u64>,
-    observer_generation: Option<String>,
+    server_session_id: Option<u64>,
+    server_generation: Option<String>,
     executions: HashMap<String, Arc<ExecutionSlot>>,
     pending_approvals: HashMap<String, PendingApproval>,
     approval_history: Vec<ObservedApproval>,
@@ -194,13 +190,11 @@ struct ExecutionSession {
     session: CodexAppServerSession,
     generation: String,
     active_turn_id: Option<String>,
-    interaction_expires_at: Option<Instant>,
 }
 
 enum ExecutionSlotState {
     Creating(Option<CodexAppServerSession>),
     Ready(ExecutionSession),
-    Closing(ExecutionSession),
     Failed(ProtocolError),
     Closed,
 }
@@ -242,7 +236,7 @@ impl ExecutionSlot {
         let mut state = lock(&self.state);
         loop {
             match &*state {
-                ExecutionSlotState::Creating(_) | ExecutionSlotState::Closing(_) => {
+                ExecutionSlotState::Creating(_) => {
                     state = self
                         .changed
                         .wait(state)
@@ -310,7 +304,6 @@ impl ExecutionSlot {
         self.changed.notify_all();
         match previous {
             ExecutionSlotState::Ready(execution) => Some(execution.session),
-            ExecutionSlotState::Closing(execution) => Some(execution.session),
             ExecutionSlotState::Creating(session) => session,
             ExecutionSlotState::Failed(_) | ExecutionSlotState::Closed => None,
         }
@@ -324,42 +317,6 @@ impl ExecutionSlot {
                 ExecutionSlotState::Creating(Some(session))
                     if session.generation() == session_generation
             )
-    }
-
-    fn begin_closing(&self, generation: &str) -> bool {
-        let mut state = lock(&self.state);
-        let previous = std::mem::replace(&mut *state, ExecutionSlotState::Closed);
-        match previous {
-            ExecutionSlotState::Ready(execution) if execution.generation == generation => {
-                self.cancelled.store(true, Ordering::SeqCst);
-                *state = ExecutionSlotState::Closing(execution);
-                true
-            }
-            previous => {
-                *state = previous;
-                false
-            }
-        }
-    }
-
-    fn closing_session(&self, generation: &str) -> Option<CodexAppServerSession> {
-        match &*lock(&self.state) {
-            ExecutionSlotState::Closing(execution) if execution.generation == generation => {
-                Some(execution.session.clone())
-            }
-            _ => None,
-        }
-    }
-
-    fn finish_closing(&self, generation: &str) {
-        let mut state = lock(&self.state);
-        if matches!(
-            &*state,
-            ExecutionSlotState::Closing(execution) if execution.generation == generation
-        ) {
-            *state = ExecutionSlotState::Closed;
-            self.changed.notify_all();
-        }
     }
 
     fn matches_generation(&self, generation: &str) -> bool {
@@ -389,68 +346,16 @@ impl ExecutionSlot {
         )
     }
 
-    fn renew_interaction(&self, generation: &str, expires_at: Instant) -> bool {
+    fn finish_active_turn(&self, generation: &str, completed_turn_id: Option<&str>) {
         let mut state = lock(&self.state);
-        let ExecutionSlotState::Ready(execution) = &mut *state else {
-            return false;
-        };
-        if execution.generation != generation {
-            return false;
+        if let ExecutionSlotState::Ready(execution) = &mut *state {
+            if execution.generation == generation && completed_turn_id.is_none_or(|id|
+                execution.active_turn_id.as_deref().is_none_or(|active| active == id)) {
+                execution.active_turn_id = None;
+            }
         }
-        execution.interaction_expires_at = Some(expires_at);
-        true
     }
 
-    fn finish_active_turn_and_should_close(
-        &self,
-        generation: &str,
-        completed_turn_id: Option<&str>,
-        now: Instant,
-    ) -> Option<bool> {
-        let mut state = lock(&self.state);
-        let ExecutionSlotState::Ready(execution) = &mut *state else {
-            return None;
-        };
-        if execution.generation != generation {
-            return None;
-        }
-        if completed_turn_id.is_some_and(|completed_turn_id| {
-            execution
-                .active_turn_id
-                .as_deref()
-                .is_some_and(|active_turn_id| active_turn_id != completed_turn_id)
-        }) {
-            return Some(false);
-        }
-        execution.active_turn_id = None;
-        Some(
-            execution
-                .interaction_expires_at
-                .is_none_or(|expires_at| expires_at <= now),
-        )
-    }
-
-    fn interaction_expired_while_idle(&self, generation: &str, now: Instant) -> bool {
-        matches!(
-            &*lock(&self.state),
-            ExecutionSlotState::Ready(execution)
-                if execution.generation == generation
-                    && execution.active_turn_id.is_none()
-                    && execution.interaction_expires_at.is_some_and(|expires_at| expires_at <= now)
-        )
-    }
-
-    fn idle_without_valid_interaction(&self, generation: &str, now: Instant) -> bool {
-        matches!(
-            &*lock(&self.state),
-            ExecutionSlotState::Ready(execution)
-                if execution.generation == generation
-                    && execution.active_turn_id.is_none()
-                    && execution
-                        .interaction_expires_at
-                        .is_none_or(|expires_at| expires_at <= now)
-        )
-    }
 }
 
 #[derive(Clone)]
@@ -510,8 +415,8 @@ impl CodexInstanceRuntime {
                 usage: None,
                 lifecycle_generation: 0,
                 sessions: HashMap::new(),
-                observer_session_id: None,
-                observer_generation: None,
+                server_session_id: None,
+                server_generation: None,
                 executions: HashMap::new(),
                 pending_approvals: HashMap::new(),
                 approval_history: Vec::new(),
@@ -571,9 +476,9 @@ impl CodexInstanceRuntime {
         {
             mutable.sessions.remove(&slot.id);
         }
-        if mutable.observer_session_id == Some(slot.id) {
-            mutable.observer_session_id = None;
-            mutable.observer_generation = None;
+        if mutable.server_session_id == Some(slot.id) {
+            mutable.server_session_id = None;
+            mutable.server_generation = None;
         }
     }
 
@@ -604,8 +509,8 @@ impl CodexInstanceRuntime {
                 return Ok(false);
             }
             mutable.sessions.remove(&slot.id);
-            mutable.observer_session_id = None;
-            mutable.observer_generation = None;
+            mutable.server_session_id = None;
+            mutable.server_generation = None;
             let previous = mutable.status;
             mutable.status = InstanceStatus::Error;
             self.lifecycle_changed.notify_all();
@@ -657,8 +562,8 @@ impl CodexInstanceRuntime {
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
                     let lifecycle_generation = mutable.lifecycle_generation;
                     mutable.status = InstanceStatus::Stopping;
-                    mutable.observer_session_id = None;
-                    mutable.observer_generation = None;
+                    mutable.server_session_id = None;
+                    mutable.server_generation = None;
                     let sessions = mutable.sessions.drain().map(|(_, slot)| slot).collect();
                     let executions = mutable.executions.drain().collect();
                     mutable.pending_approvals.clear();
@@ -702,17 +607,14 @@ impl CodexInstanceRuntime {
                 executions,
                 status_event_error,
             } => {
-                let mut execution_sessions = Vec::new();
                 for (conversation_id, slot) in executions {
-                    let session = slot.force_close();
+                    slot.force_close();
                     self.lifecycle_hook
                         .after_execution_cancelled(&conversation_id);
-                    execution_sessions.extend(session);
                 }
                 let shutdown_result = tokio::task::spawn_blocking(move || {
                     let lifecycle_result = Self::cancel_sessions(sessions);
-                    let execution_result = shutdown_sessions(execution_sessions);
-                    lifecycle_result.and(execution_result)
+                    lifecycle_result
                 })
                 .await
                 .map_err(provider_task_error)?
@@ -754,7 +656,7 @@ impl CodexInstanceRuntime {
         }
     }
 
-    fn ready_observer(&self) -> Result<CodexAppServerSession, ProtocolError> {
+    fn ready_server(&self) -> Result<CodexAppServerSession, ProtocolError> {
         let mutable = lock(&self.mutable);
         if mutable.status != InstanceStatus::Ready {
             return Err(protocol_error(
@@ -767,13 +669,13 @@ impl CodexInstanceRuntime {
             ));
         }
         let session = mutable
-            .observer_session_id
+            .server_session_id
             .and_then(|id| mutable.sessions.get(&id))
             .and_then(|slot| slot.session());
         session.ok_or_else(|| {
             protocol_error(
                 "provider_unavailable",
-                "Codex observer App Server session is unavailable".to_string(),
+                "Codex server App Server session is unavailable".to_string(),
                 true,
             )
         })
@@ -786,12 +688,12 @@ impl CodexInstanceRuntime {
         loop {
             let (slot, creator) = {
                 let mut mutable = lock(&self.mutable);
-                let observer_ready = mutable
-                    .observer_session_id
+                let server_ready = mutable
+                    .server_session_id
                     .and_then(|id| mutable.sessions.get(&id))
                     .and_then(|slot| slot.session())
                     .is_some();
-                if mutable.status != InstanceStatus::Ready || !observer_ready {
+                if mutable.status != InstanceStatus::Ready || !server_ready {
                     return Err(protocol_error(
                         "provider_unavailable",
                         format!(
@@ -820,15 +722,9 @@ impl CodexInstanceRuntime {
             }
 
             let attempt_generation = slot.attempt_generation;
-            let executable = self.settings.app_server_executable.clone();
-            let args = self.settings.app_server_args.clone();
-            let session = match CodexAppServerSession::spawn_uninitialized(&executable, &args) {
+            let session = match self.ready_server() {
                 Ok(session) => session,
-                Err(error) => {
-                    let error = CodexProtocolMapper::error(error);
-                    self.fail_execution_creation(conversation_id, &slot, error.clone());
-                    return Err(error);
-                }
+                Err(error) => { self.fail_execution_creation(conversation_id, &slot, error.clone()); return Err(error); }
             };
             let registered = {
                 let mutable = lock(&self.mutable);
@@ -841,14 +737,7 @@ impl CodexInstanceRuntime {
                     && slot.set_starting_session(session.clone())
             };
             if !registered {
-                let _ = session.shutdown();
                 let error = execution_start_cancelled_error();
-                self.fail_execution_creation(conversation_id, &slot, error.clone());
-                return Err(error);
-            }
-            if let Err(error) = session.initialize() {
-                let error = CodexProtocolMapper::error(error);
-                let _ = session.shutdown();
                 self.fail_execution_creation(conversation_id, &slot, error.clone());
                 return Err(error);
             }
@@ -859,27 +748,6 @@ impl CodexInstanceRuntime {
                 attempt_generation,
                 &generation,
             ) {
-                let _ = session.shutdown();
-                let error = execution_start_cancelled_error();
-                self.fail_execution_creation(conversation_id, &slot, error.clone());
-                return Err(error);
-            }
-            let incoming = match session.subscribe() {
-                Ok(incoming) => incoming,
-                Err(error) => {
-                    let error = CodexProtocolMapper::error(error);
-                    let _ = session.shutdown();
-                    self.fail_execution_creation(conversation_id, &slot, error.clone());
-                    return Err(error);
-                }
-            };
-            if !self.execution_creation_is_current(
-                conversation_id,
-                &slot,
-                attempt_generation,
-                &generation,
-            ) {
-                let _ = session.shutdown();
                 let error = execution_start_cancelled_error();
                 self.fail_execution_creation(conversation_id, &slot, error.clone());
                 return Err(error);
@@ -911,7 +779,6 @@ impl CodexInstanceRuntime {
                     Some(conversation_id),
                     outcome,
                 );
-                let _ = session.shutdown();
                 self.fail_execution_creation(conversation_id, &slot, error.clone());
                 return Err(error);
             }
@@ -927,21 +794,13 @@ impl CodexInstanceRuntime {
                         session: session.clone(),
                         generation: generation.clone(),
                         active_turn_id: None,
-                        interaction_expires_at: None,
                     })
             };
             if !installed {
-                let _ = session.shutdown();
                 let error = execution_start_cancelled_error();
                 slot.fail(error.clone());
                 return Err(error);
             }
-            self.start_execution_event_forwarder(
-                conversation_id.to_string(),
-                generation,
-                session,
-                incoming,
-            );
             if let Some(handle) = slot.wait_ready()? {
                 return Ok(handle);
             }
@@ -1036,385 +895,8 @@ impl CodexInstanceRuntime {
             .any(|slot| slot.matches_generation(generation))
     }
 
-    fn release_execution(&self, conversation_id: &str, generation: &str) {
-        let Some((slot, expired)) = self.begin_execution_close(conversation_id, generation) else {
-            return;
-        };
-        self.finish_execution_close(conversation_id, generation, slot, expired);
-    }
-
-    fn begin_execution_close(
-        &self,
-        conversation_id: &str,
-        generation: &str,
-    ) -> Option<(Arc<ExecutionSlot>, Vec<PendingApproval>)> {
-        let (slot, expired) = {
-            let mut mutable = lock(&self.mutable);
-            let slot = mutable.executions.get(conversation_id)?.clone();
-            if !slot.matches_generation(generation) || !slot.begin_closing(generation) {
-                return None;
-            }
-            let approval_ids = mutable
-                .pending_approvals
-                .iter()
-                .filter(|(_, pending)| pending.request.session_generation == generation)
-                .map(|(approval_id, _)| approval_id.clone())
-                .collect::<Vec<_>>();
-            let expired = approval_ids
-                .into_iter()
-                .filter_map(|approval_id| mutable.pending_approvals.remove(&approval_id))
-                .collect::<Vec<_>>();
-            (slot, expired)
-        };
-        Some((slot, expired))
-    }
-
-    fn finish_execution_close(
-        &self,
-        conversation_id: &str,
-        generation: &str,
-        slot: Arc<ExecutionSlot>,
-        expired: Vec<PendingApproval>,
-    ) {
-        let Some(session) = slot.closing_session(generation) else {
-            return;
-        };
-        if let Err(error) = session.shutdown() {
-            eprintln!("Codex execution session shutdown failed: {error}");
-        }
-        {
-            let mut mutable = lock(&self.mutable);
-            if mutable
-                .executions
-                .get(conversation_id)
-                .is_some_and(|current| Arc::ptr_eq(current, &slot))
-            {
-                mutable.executions.remove(conversation_id);
-            }
-        }
-        slot.finish_closing(generation);
-        for pending in expired {
-            let (approval, event) =
-                lock(&self.mapper).approval_expired(pending.approval, now_ms());
-            {
-                let mut mutable = lock(&self.mutable);
-                update_recorded_approval(&mut mutable, &approval);
-            }
-            if let Err(error) = self.events.publish(event) {
-                eprintln!("Codex approval expiration forwarding failed: {}", error.message);
-            }
-        }
-    }
-
-    fn release_idle_execution(&self, conversation_id: &str, handle: &ExecutionHandle) {
-        if handle.slot.idle_without_valid_interaction(
-            &handle.generation,
-            Instant::now(),
-        ) {
-            self.release_execution(conversation_id, &handle.generation);
-        }
-    }
-
-    fn finish_turn_execution(
-        &self,
-        conversation_id: &str,
-        handle: &ExecutionHandle,
-        completed_turn_id: Option<&str>,
-    ) {
-        if handle
-            .slot
-            .finish_active_turn_and_should_close(
-                &handle.generation,
-                completed_turn_id,
-                Instant::now(),
-            )
-            .unwrap_or(false)
-        {
-            self.release_execution(conversation_id, &handle.generation);
-        }
-    }
-
-    fn start_observer_forwarder(
-        self: &Arc<Self>,
-        observer_generation: String,
-        session: CodexAppServerSession,
-        incoming: Receiver<Result<CodexIncoming, CodexAppServerError>>,
-    ) {
-        let runtime = Arc::downgrade(self);
-        thread::spawn(move || {
-            while let Ok(message) = incoming.recv() {
-                let Some(runtime) = runtime.upgrade() else {
-                    return;
-                };
-                let is_current_observer = {
-                    let mutable = lock(&runtime.mutable);
-                    mutable.observer_generation.as_deref() == Some(observer_generation.as_str())
-                        && matches!(
-                            mutable.status,
-                            InstanceStatus::Ready | InstanceStatus::Starting
-                        )
-                };
-                if !is_current_observer {
-                    return;
-                }
-                match message {
-                    Ok(CodexIncoming::Notification(
-                        CodexNotification::ThreadNameUpdated {
-                            thread_id,
-                            thread_name,
-                        },
-                    )) => {
-                        if let Some(event) = runtime.conversation_upsert_event(
-                            &session,
-                            &thread_id,
-                            thread_name,
-                        ) {
-                            if let Err(error) = runtime.events.publish(event) {
-                                eprintln!(
-                                    "Codex observer title event forwarding failed: {}",
-                                    error.message
-                                );
-                            }
-                        }
-                    }
-                    Ok(CodexIncoming::Notification(
-                        CodexNotification::ThreadStatusChanged { thread_id, status },
-                    )) => {
-                        if let Some(event) = runtime.conversation_status_upsert_event(
-                            &session,
-                            &thread_id,
-                            status,
-                        ) {
-                            if let Err(error) = runtime.events.publish(event) {
-                                eprintln!(
-                                    "Codex observer status event forwarding failed: {}",
-                                    error.message
-                                );
-                            }
-                        }
-                    }
-                    Ok(incoming @ CodexIncoming::Notification(
-                        CodexNotification::ProjectChanged { .. },
-                    )) => match lock(&runtime.mapper).events(incoming) {
-                        Ok(events) => {
-                            for event in events {
-                                if let Err(error) = runtime.events.publish(event) {
-                                    eprintln!(
-                                        "Codex observer project event forwarding failed: {}",
-                                        error.message
-                                    );
-                                }
-                            }
-                        }
-                        Err(error) => {
-                            eprintln!("Codex observer project event mapping failed: {}", error.message);
-                        }
-                    },
-                    Ok(_) => {}
-                    Err(error) => {
-                        runtime.fail_observer(
-                            &observer_generation,
-                            CodexProtocolMapper::error(error),
-                        );
-                        return;
-                    }
-                }
-            }
-        });
-    }
-
-    fn start_execution_event_forwarder(
-        self: &Arc<Self>,
-        conversation_id: String,
-        session_generation: String,
-        session: CodexAppServerSession,
-        incoming: Receiver<Result<CodexIncoming, CodexAppServerError>>,
-    ) {
-        let runtime = Arc::downgrade(self);
-        thread::spawn(move || {
-            loop {
-                let message = match incoming.recv_timeout(INTERACTION_REAPER_INTERVAL) {
-                    Ok(message) => message,
-                    Err(RecvTimeoutError::Timeout) => {
-                        let Some(runtime) = runtime.upgrade() else {
-                            return;
-                        };
-                        let Some(slot) =
-                            runtime.execution_slot(&conversation_id, &session_generation)
-                        else {
-                            return;
-                        };
-                        let _operation = lock(&slot.operation);
-                        if slot.interaction_expired_while_idle(
-                            &session_generation,
-                            Instant::now(),
-                        ) {
-                            runtime.release_execution(&conversation_id, &session_generation);
-                            return;
-                        }
-                        continue;
-                    }
-                    Err(RecvTimeoutError::Disconnected) => {
-                        if let Some(runtime) = runtime.upgrade() {
-                            runtime.release_execution(&conversation_id, &session_generation);
-                        }
-                        return;
-                    }
-                };
-                let Some(runtime) = runtime.upgrade() else {
-                    return;
-                };
-                let Some(slot) = runtime.execution_slot(&conversation_id, &session_generation)
-                else {
-                    return;
-                };
-                let _operation = lock(&slot.operation);
-                match message {
-                    Ok(incoming) => {
-                        let terminal_turn_id = match &incoming {
-                            CodexIncoming::Notification(CodexNotification::TurnCompleted {
-                                thread_id,
-                                turn,
-                            }) if turn.status != CodexTurnStatus::InProgress => {
-                                if thread_id != &conversation_id {
-                                    eprintln!(
-                                        "Codex execution session emitted a terminal event for another conversation"
-                                    );
-                                    runtime.release_execution(
-                                        &conversation_id,
-                                        &session_generation,
-                                    );
-                                    return;
-                                }
-                                Some(turn.id.clone())
-                            }
-                            CodexIncoming::Notification(CodexNotification::TurnCompleted {
-                                ..
-                            }) => {
-                                eprintln!(
-                                    "Codex execution session emitted turn/completed with an in-progress turn"
-                                );
-                                runtime.release_execution(
-                                    &conversation_id,
-                                    &session_generation,
-                                );
-                                return;
-                            }
-                            _ => None,
-                        };
-                        if let Some(terminal_turn_id) = terminal_turn_id {
-                            let Some(should_close) = slot.finish_active_turn_and_should_close(
-                                &session_generation,
-                                Some(&terminal_turn_id),
-                                Instant::now(),
-                            ) else {
-                                return;
-                            };
-                            let closing = if should_close {
-                                runtime.begin_execution_close(
-                                    &conversation_id,
-                                    &session_generation,
-                                )
-                            } else {
-                                None
-                            };
-                            let forwarded = match runtime.map_execution_incoming(
-                                &conversation_id,
-                                &session_generation,
-                                &session,
-                                incoming,
-                            ) {
-                                Ok(events) => {
-                                    let mut published = true;
-                                    for event in events {
-                                        if let Err(error) = runtime.events.publish(event) {
-                                            eprintln!(
-                                                "Codex execution event forwarding failed: {}",
-                                                error.message
-                                            );
-                                            published = false;
-                                            break;
-                                        }
-                                    }
-                                    published
-                                }
-                                Err(error) => {
-                                    eprintln!(
-                                        "Codex execution event mapping failed: {}",
-                                        error.message
-                                    );
-                                    false
-                                }
-                            };
-                            if !forwarded {
-                                if let Some((closing_slot, expired)) = closing {
-                                    runtime.finish_execution_close(
-                                        &conversation_id,
-                                        &session_generation,
-                                        closing_slot,
-                                        expired,
-                                    );
-                                } else {
-                                    runtime.release_execution(
-                                        &conversation_id,
-                                        &session_generation,
-                                    );
-                                }
-                                return;
-                            }
-                            if let Some((closing_slot, expired)) = closing {
-                                runtime.finish_execution_close(
-                                    &conversation_id,
-                                    &session_generation,
-                                    closing_slot,
-                                    expired,
-                                );
-                                return;
-                            }
-                            continue;
-                        }
-                        let events = runtime.map_execution_incoming(
-                            &conversation_id,
-                            &session_generation,
-                            &session,
-                            incoming,
-                        );
-                        let events = match events {
-                            Ok(events) => events,
-                            Err(error) => {
-                                eprintln!(
-                                    "Codex execution event mapping failed: {}",
-                                    error.message
-                                );
-                                runtime.release_execution(
-                                    &conversation_id,
-                                    &session_generation,
-                                );
-                                return;
-                            }
-                        };
-                        for event in events {
-                            if let Err(error) = runtime.events.publish(event) {
-                                eprintln!(
-                                    "Codex execution event forwarding failed: {}",
-                                    error.message
-                                );
-                                runtime.release_execution(
-                                    &conversation_id,
-                                    &session_generation,
-                                );
-                                return;
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        eprintln!("Codex execution App Server failed: {error}");
-                        runtime.release_execution(&conversation_id, &session_generation);
-                        return;
-                    }
-                }
-            }
-        });
+    fn finish_turn_execution(&self, _conversation_id: &str, handle: &ExecutionHandle, completed_turn_id: Option<&str>) {
+        handle.slot.finish_active_turn(&handle.generation, completed_turn_id);
     }
 
     fn map_execution_incoming(
@@ -1588,16 +1070,16 @@ impl CodexInstanceRuntime {
         })
     }
 
-    fn fail_observer(
+    fn fail_server(
         &self,
-        observer_generation: &str,
+        server_generation: &str,
         error: ProtocolError,
     ) {
-        eprintln!("Codex observer App Server failed: {}", error.message);
+        eprintln!("Codex server App Server failed: {}", error.message);
         let (failure_generation, sessions, execution_slots) = {
             let _transition = lock(&self.lifecycle_transition);
             let mut mutable = lock(&self.mutable);
-            if mutable.observer_generation.as_deref() != Some(observer_generation)
+            if mutable.server_generation.as_deref() != Some(server_generation)
                 || !matches!(mutable.status, InstanceStatus::Ready | InstanceStatus::Starting)
             {
                 return;
@@ -1607,8 +1089,8 @@ impl CodexInstanceRuntime {
             let failure_generation = mutable.lifecycle_generation;
             mutable.cleanup_in_progress = true;
             mutable.status = InstanceStatus::Error;
-            mutable.observer_session_id = None;
-            mutable.observer_generation = None;
+            mutable.server_session_id = None;
+            mutable.server_generation = None;
             let sessions = mutable.sessions.drain().map(|(_, slot)| slot).collect();
             let execution_slots = mutable
                 .executions
@@ -1953,8 +1435,8 @@ impl Provider for CodexProvider {
                 let previous = mutable.status;
                 mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
                 mutable.status = InstanceStatus::Starting;
-                mutable.observer_session_id = None;
-                mutable.observer_generation = None;
+                mutable.server_session_id = None;
+                mutable.server_generation = None;
                 mutable.pending_approvals.clear();
                 mutable.approval_history.clear();
                 mutable.pending_materialization.clear();
@@ -1970,21 +1452,21 @@ impl Provider for CodexProvider {
             }
             if !slot.begin_spawn() {
                 runtime.unregister_session(&slot);
-                return Err(instance_session_cancelled_error("observer session"));
+                return Err(instance_session_cancelled_error("server session"));
             }
             let executable = runtime.settings.app_server_executable.clone();
             let args = runtime.settings.app_server_args.clone();
-            let observer = match tokio::task::spawn_blocking(move || {
+            let server = match tokio::task::spawn_blocking(move || {
                 CodexAppServerSession::spawn_uninitialized(&executable, &args)
             })
             .await {
-                Ok(Ok(observer)) => observer,
+                Ok(Ok(server)) => server,
                 Ok(Err(error)) => {
                     let mapped = CodexProtocolMapper::error(error);
                     if runtime.mark_start_failed(&slot)? {
                         return Err(mapped);
                     }
-                    return Err(instance_session_cancelled_error("observer session"));
+                    return Err(instance_session_cancelled_error("server session"));
                 }
                 Err(error) => {
                     let mapped = protocol_error(
@@ -1995,27 +1477,27 @@ impl Provider for CodexProvider {
                     if runtime.mark_start_failed(&slot)? {
                         return Err(mapped);
                     }
-                    return Err(instance_session_cancelled_error("observer session"));
+                    return Err(instance_session_cancelled_error("server session"));
                 }
             };
-            if !slot.register_spawned(observer.clone()) || !runtime.session_is_current(&slot) {
-                let _ = observer.shutdown();
+            if !slot.register_spawned(server.clone()) || !runtime.session_is_current(&slot) {
+                let _ = server.shutdown();
                 runtime.unregister_session(&slot);
-                return Err(instance_session_cancelled_error("observer session"));
+                return Err(instance_session_cancelled_error("server session"));
             }
-            let initialize_session = observer.clone();
+            let initialize_session = server.clone();
             let initialize_result = tokio::task::spawn_blocking(move || initialize_session.initialize())
                 .await
                 .map_err(provider_task_error)?;
             if let Err(error) = initialize_result {
                 let mapped = CodexProtocolMapper::error(error);
-                let _ = observer.shutdown();
+                let _ = server.shutdown();
                 if runtime.mark_start_failed(&slot)? {
                     return Err(mapped);
                 }
-                return Err(instance_session_cancelled_error("observer session"));
+                return Err(instance_session_cancelled_error("server session"));
             }
-            let discovery_session = observer.clone();
+            let discovery_session = server.clone();
             let models = match tokio::task::spawn_blocking(move || discovery_session.model_list())
                 .await
                 .map_err(provider_task_error)?
@@ -2023,14 +1505,14 @@ impl Provider for CodexProvider {
                 Ok(models) => models,
                 Err(error) => {
                     let mapped = CodexProtocolMapper::error(error);
-                    let _ = observer.shutdown();
+                    let _ = server.shutdown();
                     if runtime.mark_start_failed(&slot)? {
                         return Err(mapped);
                     }
-                    return Err(instance_session_cancelled_error("observer session"));
+                    return Err(instance_session_cancelled_error("server session"));
                 }
             };
-            let project_discovery_session = observer.clone();
+            let project_discovery_session = server.clone();
             let project_api_supported = match tokio::task::spawn_blocking(move || {
                 project_discovery_session.project_list(None, Some(1))
             })
@@ -2041,14 +1523,14 @@ impl Provider for CodexProvider {
                 Err(error) if error.is_method_not_found() => false,
                 Err(error) => {
                     let mapped = CodexProtocolMapper::error(error);
-                    let _ = observer.shutdown();
+                    let _ = server.shutdown();
                     if runtime.mark_start_failed(&slot)? {
                         return Err(mapped);
                     }
-                    return Err(instance_session_cancelled_error("observer session"));
+                    return Err(instance_session_cancelled_error("server session"));
                 }
             };
-            let metadata_session = observer.clone();
+            let metadata_session = server.clone();
             let (account, rate_limits, token_usage) = tokio::task::spawn_blocking(move || {
                 (
                     metadata_session.account_read(),
@@ -2079,37 +1561,37 @@ impl Provider for CodexProvider {
                 token_usage.as_ref().ok(),
             );
             let capabilities = match CodexProtocolMapper::capabilities(
-                observer.generation().to_string(),
+                server.generation().to_string(),
                 models,
                 project_api_supported,
             ) {
                 Ok(capabilities) => capabilities,
                 Err(error) => {
-                    let _ = observer.shutdown();
+                    let _ = server.shutdown();
                     if runtime.mark_start_failed(&slot)? {
                         return Err(error);
                     }
-                    return Err(instance_session_cancelled_error("observer session"));
+                    return Err(instance_session_cancelled_error("server session"));
                 }
             };
             let harness = HarnessDescriptor {
                 id: CODEX_INSTANCE_KIND.to_string(),
                 display_name: "Codex".to_string(),
-                version: observer.harness_version(),
+                version: server.harness_version(),
                 executable_path: Some(runtime.settings.app_server_executable.to_string_lossy().into_owned()),
             };
-            let incoming = match observer.subscribe() {
+            let incoming = match server.subscribe() {
                 Ok(incoming) => incoming,
                 Err(error) => {
                     let mapped = CodexProtocolMapper::error(error);
-                    let _ = observer.shutdown();
+                    let _ = server.shutdown();
                     if runtime.mark_start_failed(&slot)? {
                         return Err(mapped);
                     }
-                    return Err(instance_session_cancelled_error("observer session"));
+                    return Err(instance_session_cancelled_error("server session"));
                 }
             };
-            let observer_generation = observer.generation().to_string();
+            let server_generation = server.generation().to_string();
             let (installed, ready_event_error) = {
                 let _transition = lock(&runtime.lifecycle_transition);
                 let mut mutable = lock(&runtime.mutable);
@@ -2120,7 +1602,7 @@ impl Provider for CodexProvider {
                         .get(&slot.id)
                         .is_some_and(|current| Arc::ptr_eq(current, &slot))
                     && !slot.cancelled.load(Ordering::SeqCst)
-                    && mutable.observer_session_id.is_none()
+                    && mutable.server_session_id.is_none()
                     && mutable.executions.is_empty();
                 if !current {
                     (false, None)
@@ -2129,8 +1611,8 @@ impl Provider for CodexProvider {
                     mutable.harness = harness;
                     mutable.authentication = authentication;
                     mutable.usage = usage;
-                    mutable.observer_session_id = Some(slot.id);
-                    mutable.observer_generation = Some(observer_generation.clone());
+                    mutable.server_session_id = Some(slot.id);
+                    mutable.server_generation = Some(server_generation.clone());
                     mutable.pending_approvals.clear();
                     mutable.approval_history.clear();
                     mutable.pending_materialization.clear();
@@ -2142,15 +1624,14 @@ impl Provider for CodexProvider {
                 }
             };
             if !installed {
-                let _ = observer.shutdown();
+                let _ = server.shutdown();
                 runtime.unregister_session(&slot);
-                return Err(instance_session_cancelled_error("observer session"));
+                return Err(instance_session_cancelled_error("server session"));
             }
             if let Some(error) = ready_event_error {
-                runtime.fail_observer(&observer_generation, error.clone());
-                return Err(error);
+                runtime.handle_event_error(&server_generation, error)?;
             }
-            runtime.start_observer_forwarder(observer_generation, observer, incoming);
+            runtime.start_server_forwarder(server_generation, server, incoming);
             let instance = runtime.snapshot();
             Ok(InstanceStartResponse { instance })
         })
@@ -2196,8 +1677,8 @@ impl Provider for CodexProvider {
                 }
                 mutable.destroyed = true;
                 mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
-                mutable.observer_session_id = None;
-                mutable.observer_generation = None;
+                mutable.server_session_id = None;
+                mutable.server_generation = None;
                 runtime.lifecycle_changed.notify_all();
             }
             let mut state = lock(&self.state);
@@ -2239,7 +1720,7 @@ impl Provider for CodexProvider {
                     false,
                 )
             })?;
-            let session = runtime.ready_observer()?;
+            let session = runtime.ready_server()?;
             let page = tokio::task::spawn_blocking(move || {
                 session.project_list(request.cursor, limit)
             })
@@ -2270,7 +1751,7 @@ impl Provider for CodexProvider {
             let runtime = self.resource_instance(&request.project)?;
             require_capability(&runtime, ProviderCapability::ProjectGet)?;
             let project_id = request.project.native_resource_id;
-            let session = runtime.ready_observer()?;
+            let session = runtime.ready_server()?;
             let project = tokio::task::spawn_blocking(move || session.project_read(&project_id))
                 .await
                 .map_err(provider_task_error)?
@@ -2288,7 +1769,7 @@ impl Provider for CodexProvider {
             let runtime = self.instance(&request.route)?;
             require_capability(&runtime, ProviderCapability::ProjectCreate)?;
             validate_project_fields(&request.name, &request.roots)?;
-            let session = runtime.ready_observer()?;
+            let session = runtime.ready_server()?;
             let native_request = CodexProjectCreateRequest {
                 idempotency_key: request.idempotency_key,
                 name: request.name,
@@ -2337,7 +1818,7 @@ impl Provider for CodexProvider {
                     false,
                 ));
             }
-            let session = runtime.ready_observer()?;
+            let session = runtime.ready_server()?;
             let native_request = CodexProjectUpdateRequest {
                 project_id: request.project.native_resource_id,
                 name: request.name,
@@ -2368,7 +1849,7 @@ impl Provider for CodexProvider {
             let runtime = self.resource_instance(&request.project)?;
             require_capability(&runtime, ProviderCapability::ProjectDelete)?;
             let project_id = request.project.native_resource_id;
-            let session = runtime.ready_observer()?;
+            let session = runtime.ready_server()?;
             tokio::task::spawn_blocking(move || session.project_delete(&project_id))
                 .await
                 .map_err(provider_task_error)?
@@ -2406,7 +1887,7 @@ impl Provider for CodexProvider {
                     false,
                 )
             })?;
-            let session = runtime.ready_observer()?;
+            let session = runtime.ready_server()?;
             let assignments = load_codex_desktop_project_assignments()?;
             let page = tokio::task::spawn_blocking(move || {
                 list_codex_conversations(
@@ -2461,7 +1942,7 @@ impl Provider for CodexProvider {
                     false,
                 )
             })?;
-            let session = runtime.ready_observer()?;
+            let session = runtime.ready_server()?;
             let page = tokio::task::spawn_blocking(move || {
                 session.thread_list(CodexThreadListRequest {
                     cursor: request.cursor,
@@ -2510,7 +1991,7 @@ impl Provider for CodexProvider {
                 ));
             }
             let initial_cursor = request.cursor;
-            let session = runtime.ready_observer()?;
+            let session = runtime.ready_server()?;
             tokio::task::spawn_blocking(move || {
                 let (snapshot, used_pending_snapshot) =
                     match session.thread_read_metadata(&conversation_id) {
@@ -2615,13 +2096,6 @@ impl Provider for CodexProvider {
                                     false,
                                 )
                             })?;
-                        let lease_duration = runtime.lifecycle_hook.interaction_lease_duration();
-                        if !handle.slot.renew_interaction(
-                            &handle.generation,
-                            Instant::now() + lease_duration,
-                        ) {
-                            return Ok(ExecutionStep::Retry);
-                        }
                         Ok(ExecutionStep::Complete(
                             ConversationAcquireInteractionResponse {
                                 selection: TurnSelection {
@@ -2637,12 +2111,7 @@ impl Provider for CodexProvider {
                                         })
                                     }),
                                 },
-                                lease_expires_at: Some(now_ms().saturating_add(
-                                    lease_duration
-                                        .as_millis()
-                                        .min(u128::from(u64::MAX))
-                                        as u64,
-                                )),
+                                lease_expires_at: None,
                             },
                         ))
                     },
@@ -2681,157 +2150,45 @@ impl Provider for CodexProvider {
                 None
             };
             let permission_level = parse_permission_level(&request.permission_level)?;
-            let slot = {
-                let _transition = lock(&runtime.lifecycle_transition);
-                let mut mutable = lock(&runtime.mutable);
-                let observer_ready = mutable
-                    .observer_session_id
-                    .and_then(|id| mutable.sessions.get(&id))
-                    .and_then(|slot| slot.session())
-                    .is_some();
-                if mutable.status != InstanceStatus::Ready || !observer_ready {
-                    return Err(protocol_error(
-                        "provider_unavailable",
-                        format!(
-                            "Codex Provider instance {} is not ready",
-                            runtime.route.provider_instance_id
-                        ),
-                        true,
-                    ));
-                }
-                let slot = Arc::new(InstanceSessionSlot::new(mutable.lifecycle_generation));
-                mutable.sessions.insert(slot.id, slot.clone());
-                slot
-            };
-            let workspace_root = match prepare_conversation_workspace(
-                request.workspace_root.as_deref(),
-                request.workspace_mode.as_deref(),
-            ) {
-                Ok(workspace_root) => workspace_root,
-                Err(error) => {
-                    runtime.unregister_session(&slot);
-                    return Err(error);
-                }
-            };
-            if !slot.begin_spawn() {
-                runtime.unregister_session(&slot);
-                return Err(instance_session_cancelled_error("conversation creation session"));
-            }
-            let executable = runtime.settings.app_server_executable.clone();
-            let args = runtime.settings.app_server_args.clone();
+            let workspace_root = prepare_conversation_workspace(
+                request.workspace_root.as_deref(), request.workspace_mode.as_deref(),
+            )?;
+            let session = runtime.ready_server()?;
             let operation_runtime = runtime.clone();
-            let operation_slot = slot.clone();
-            let (snapshot, execution_slot, execution_generation, execution_session, incoming) = tokio::task::spawn_blocking(move || {
-                let session = match CodexAppServerSession::spawn_uninitialized(&executable, &args) {
-                    Ok(session) => session,
-                    Err(error) => {
-                        operation_runtime.unregister_session(&operation_slot);
-                        return Err(CodexProtocolMapper::error(error));
-                    }
-                };
-                if !operation_slot.register_spawned(session.clone())
-                    || !operation_runtime.session_is_current(&operation_slot)
-                {
-                    let _ = session.shutdown();
-                    operation_runtime.unregister_session(&operation_slot);
-                    return Err(instance_session_cancelled_error(
-                        "conversation creation session",
-                    ));
-                }
-                if let Err(error) = session.initialize() {
-                    let cancelled = operation_slot.cancelled.load(Ordering::SeqCst)
-                        || !operation_runtime.session_is_current(&operation_slot);
-                    let _ = session.shutdown();
-                    operation_runtime.unregister_session(&operation_slot);
-                    return Err(if cancelled {
-                        instance_session_cancelled_error("conversation creation session")
-                    } else {
-                        CodexProtocolMapper::error(error)
-                    });
-                }
-                let incoming = match session.subscribe() {
-                    Ok(incoming) => incoming,
-                    Err(error) => {
-                        let _ = session.shutdown();
-                        operation_runtime.unregister_session(&operation_slot);
-                        return Err(CodexProtocolMapper::error(error));
-                    }
+            let snapshot = tokio::task::spawn_blocking(move || {
+                let server_slot = {
+                    let mutable = lock(&operation_runtime.mutable);
+                    mutable.server_session_id.and_then(|id| mutable.sessions.get(&id)).cloned()
+                        .ok_or_else(|| instance_session_cancelled_error("server"))?
                 };
                 let outcome = session.thread_start_outcome_with_sender(CodexThreadStartRequest {
-                    workspace_root,
-                    project_id,
-                    permission_level,
-                    model: request.model,
-                    reasoning_effort: request.reasoning_effort,
+                    workspace_root, project_id, permission_level,
+                    model: request.model, reasoning_effort: request.reasoning_effort,
                 }, |message| {
-                    let _send_gate = lock(&operation_slot.send_gate);
-                    let current = !operation_slot.cancelled.load(Ordering::SeqCst)
-                        && operation_runtime.session_is_current(&operation_slot)
-                        && lock(&operation_runtime.mutable).status == InstanceStatus::Ready;
-                    if !current {
+                    let _send_gate = lock(&server_slot.send_gate);
+                    if !operation_runtime.session_is_current(&server_slot) || server_slot.cancelled.load(Ordering::SeqCst) {
                         return CodexRequestOutcome::NotSent(CodexAppServerError::Shutdown);
                     }
                     session.write_prepared_request(message)
                 });
-                let snapshot = match outcome {
-                    CodexRequestOutcome::Success(snapshot) => snapshot,
-                    outcome => {
-                        let error = execution_outcome_error("thread/start", None, outcome);
-                        let _ = session.shutdown();
-                        operation_runtime.unregister_session(&operation_slot);
-                        return Err(error);
+                match outcome {
+                    CodexRequestOutcome::Success(snapshot) => {
+                        let mut mutable = lock(&operation_runtime.mutable);
+                        if mutable.server_generation.as_deref() != Some(session.generation())
+                            || mutable.status != InstanceStatus::Ready {
+                            return Err(instance_session_cancelled_error("server"));
+                        }
+                        let slot = Arc::new(ExecutionSlot::new());
+                        slot.set_starting_session(session.clone());
+                        slot.set_ready(ExecutionSession { session: session.clone(), generation: session.generation().to_string(), active_turn_id: None });
+                        mutable.executions.insert(snapshot.thread.id.clone(), slot);
+                        mutable.pending_materialization.insert(snapshot.thread.id.clone(), snapshot.clone());
+                        Ok(snapshot)
                     }
-                };
-                let execution_slot = Arc::new(ExecutionSlot::new());
-                if !execution_slot.set_starting_session(session.clone()) {
-                    let _ = session.shutdown();
-                    operation_runtime.unregister_session(&operation_slot);
-                    return Err(execution_start_cancelled_error());
+                    outcome => Err(execution_outcome_error("thread/start", None, outcome)),
                 }
-                let execution_generation = session.generation().to_string();
-                if !execution_slot.set_ready(ExecutionSession {
-                    session: session.clone(),
-                    generation: execution_generation.clone(),
-                    active_turn_id: None,
-                    interaction_expires_at: Some(
-                        Instant::now() + operation_runtime.lifecycle_hook.interaction_lease_duration(),
-                    ),
-                }) {
-                    let _ = session.shutdown();
-                    operation_runtime.unregister_session(&operation_slot);
-                    return Err(execution_start_cancelled_error());
-                }
-                operation_runtime.unregister_session(&operation_slot);
-                Ok((snapshot, execution_slot, execution_generation, session, incoming))
-            })
-            .await
-            .map_err(provider_task_error)??;
-            let conversation = {
-                let _transition = lock(&runtime.lifecycle_transition);
-                let mut mutable = lock(&runtime.mutable);
-                if mutable.status != InstanceStatus::Ready
-                    || mutable.executions.contains_key(&snapshot.thread.id)
-                {
-                    drop(mutable);
-                    let _ = execution_session.shutdown();
-                    return Err(instance_session_cancelled_error(
-                        "conversation creation session",
-                    ));
-                }
-                mutable
-                    .executions
-                    .insert(snapshot.thread.id.clone(), execution_slot);
-                mutable
-                    .pending_materialization
-                    .insert(snapshot.thread.id.clone(), snapshot.clone());
-                lock(&runtime.mapper).conversation(&snapshot)
-            };
-            runtime.start_execution_event_forwarder(
-                snapshot.thread.id.clone(),
-                execution_generation,
-                execution_session,
-                incoming,
-            );
+            }).await.map_err(provider_task_error)??;
+            let conversation = lock(&runtime.mapper).conversation(&snapshot);
             Ok(ConversationCreateResponse { conversation })
         })
     }
@@ -2880,10 +2237,6 @@ impl Provider for CodexProvider {
                             None => match handle.session.thread_read(&execution_conversation_id) {
                                 Ok(snapshot) => snapshot,
                                 Err(error) => {
-                                    execution_runtime.release_execution(
-                                        &execution_conversation_id,
-                                        &handle.generation,
-                                    );
                                     return Err(CodexProtocolMapper::error(error));
                                 }
                             },
@@ -2932,8 +2285,6 @@ impl Provider for CodexProvider {
                         ) {
                             Ok(selection) => selection,
                             Err(error) => {
-                                execution_runtime
-                                    .release_idle_execution(&execution_conversation_id, handle);
                                 return Err(error);
                             }
                         };
@@ -2945,8 +2296,6 @@ impl Provider for CodexProvider {
                         {
                             Ok(permission_level) => permission_level,
                             Err(error) => {
-                                execution_runtime
-                                    .release_idle_execution(&execution_conversation_id, handle);
                                 return Err(error);
                             }
                         };
@@ -2955,8 +2304,6 @@ impl Provider for CodexProvider {
                                 Some(selection.model_id.clone())
                             }
                             Some(ModelSelection::GroupedModelSelection(_)) => {
-                                execution_runtime
-                                    .release_idle_execution(&execution_conversation_id, handle);
                                 return Err(protocol_error(
                                     "invalid_model_selection",
                                     "Codex Provider requires a flat model selection".to_string(),
@@ -2987,10 +2334,6 @@ impl Provider for CodexProvider {
                                 Ok(ExecutionStep::Complete((turn, effective_selection)))
                             }
                             outcome => {
-                                execution_runtime.release_execution(
-                                    &execution_conversation_id,
-                                    &handle.generation,
-                                );
                                 Err(execution_outcome_error(
                                     "turn/start",
                                     Some(&execution_conversation_id),
@@ -3057,10 +2400,6 @@ impl Provider for CodexProvider {
                                 Ok(ExecutionStep::Complete(turn))
                             }
                             outcome => {
-                                execution_runtime.release_execution(
-                                    &execution_conversation_id,
-                                    &handle.generation,
-                                );
                                 Err(execution_outcome_error(
                                     "turn/steer",
                                     Some(&execution_conversation_id),
@@ -3118,10 +2457,6 @@ impl Provider for CodexProvider {
                                 Ok(ExecutionStep::Complete(turn))
                             }
                             outcome => {
-                                execution_runtime.release_execution(
-                                    &execution_conversation_id,
-                                    &handle.generation,
-                                );
                                 Err(execution_outcome_error(
                                     "turn/interrupt",
                                     Some(&execution_conversation_id),
@@ -3202,10 +2537,6 @@ impl Provider for CodexProvider {
                     "approval.resolve",
                     move |handle| {
                         if handle.generation != operation_generation {
-                            execution_runtime.release_idle_execution(
-                                &execution_conversation_id,
-                                handle,
-                            );
                             return Err(protocol_error(
                                 "stale_approval_session",
                                 "approval belongs to a closed Codex execution session".to_string(),
@@ -3231,19 +2562,11 @@ impl Provider for CodexProvider {
                                     update_recorded_approval(&mut mutable, &approval);
                                 }
                                 if let Err(error) = execution_runtime.events.publish(event) {
-                                    execution_runtime.release_execution(
-                                        &execution_conversation_id,
-                                        &handle.generation,
-                                    );
                                     return Err(error);
                                 }
                                 Ok(ExecutionStep::Complete(approval))
                             }
                             outcome => {
-                                execution_runtime.release_execution(
-                                    &execution_conversation_id,
-                                    &handle.generation,
-                                );
                                 Err(execution_outcome_error(
                                     "approval/resolve",
                                     Some(&execution_conversation_id),
@@ -3584,236 +2907,29 @@ struct LoadedConversationTurns {
 fn load_conversation_turns(
     session: &CodexAppServerSession,
     conversation_id: &str,
-    initial_cursor: Option<String>,
+    cursor: Option<String>,
     requested_limit: u64,
     used_pending_snapshot: bool,
 ) -> Result<LoadedConversationTurns, ProtocolError> {
-    let harness_version = session.harness_version();
-    if harness_uses_item_pagination(harness_version.as_deref()) {
-        let mut loaded = load_conversation_turn_pages(
-            session,
-            conversation_id,
-            initial_cursor.clone(),
-            requested_limit,
-            used_pending_snapshot,
-            CodexTurnItemsView::NotLoaded,
-        )?;
-        if !loaded.materialized || loaded.turns.is_empty() {
-            return Ok(loaded);
+    let page = match session.thread_turns_list_with_view(
+        conversation_id, cursor.clone(), requested_limit as u32, CodexTurnItemsView::Full,
+    ) {
+        Ok(page) => page,
+        Err(error) if cursor.is_none()
+            && (error.is_thread_turns_unavailable_before_first_user_message(conversation_id)
+                || used_pending_snapshot && (error.is_thread_not_loaded(conversation_id)
+                    || is_created_conversation_not_ready(&error, conversation_id))) =>
+        {
+            return Ok(LoadedConversationTurns { turns: Vec::new(), next_cursor: None, materialized: false });
         }
-        match hydrate_turn_items(session, conversation_id, &mut loaded.turns) {
-            Ok(ItemPaginationProbe::Supported) => return Ok(loaded),
-            Ok(ItemPaginationProbe::Unsupported) => {
-                if harness_allows_full_turn_fallback(harness_version.as_deref()) {
-                    return load_conversation_turn_pages(
-                        session,
-                        conversation_id,
-                        initial_cursor,
-                        requested_limit,
-                        used_pending_snapshot,
-                        CodexTurnItemsView::Full,
-                    );
-                }
-                for turn in &mut loaded.turns {
-                    set_history_placeholder(turn);
-                }
-                return Ok(loaded);
-            }
-            Err(()) => return Ok(loaded),
-        }
-    }
-    load_conversation_turn_pages(
-        session,
-        conversation_id,
-        initial_cursor,
-        requested_limit,
-        used_pending_snapshot,
-        CodexTurnItemsView::Full,
-    )
-}
-
-fn load_conversation_turn_pages(
-    session: &CodexAppServerSession,
-    conversation_id: &str,
-    initial_cursor: Option<String>,
-    requested_limit: u64,
-    used_pending_snapshot: bool,
-    items_view: CodexTurnItemsView,
-) -> Result<LoadedConversationTurns, ProtocolError> {
-    let mut turns = Vec::new();
-    let mut cursor = initial_cursor;
-    let mut remaining_turns = requested_limit;
-    let mut response_next_cursor = None;
-    let mut seen_cursors = HashSet::new();
-    let mut page_count = 0;
-    loop {
-        if page_count == MAX_THREAD_TURN_PAGES {
-            return Err(protocol_error(
-                "provider_protocol_error",
-                format!("thread/turns/list exceeded the {MAX_THREAD_TURN_PAGES}-page limit"),
-                false,
-            ));
-        }
-        page_count += 1;
-        let upstream_limit = remaining_turns.min(u64::from(THREAD_TURNS_PAGE_LIMIT));
-        let page = match session.thread_turns_list_with_view(
-            conversation_id,
-            cursor.clone(),
-            upstream_limit as u32,
-            items_view,
-        ) {
-            Ok(page) => page,
-            Err(error)
-                if cursor.is_none()
-                    && (error.is_thread_turns_unavailable_before_first_user_message(
-                        conversation_id,
-                    ) || used_pending_snapshot
-                        && (error.is_thread_not_loaded(conversation_id)
-                            || is_created_conversation_not_ready(&error, conversation_id))) =>
-            {
-                return Ok(LoadedConversationTurns {
-                    turns,
-                    next_cursor: None,
-                    materialized: false,
-                });
-            }
-            Err(error) => return Err(CodexProtocolMapper::error(error)),
-        };
-        if page.data.len() as u64 > upstream_limit {
-            return Err(protocol_error(
-                "provider_protocol_error",
-                format!(
-                    "thread/turns/list returned {} turns for limit {upstream_limit}",
-                    page.data.len()
-                ),
-                false,
-            ));
-        }
-        let returned_turns = page.data.len() as u64;
-        let next_cursor = page.next_cursor;
-        turns.extend(page.data);
-        remaining_turns = remaining_turns.saturating_sub(returned_turns);
-        if remaining_turns == 0 {
-            response_next_cursor = next_cursor;
-            break;
-        }
-        match next_cursor {
-            Some(next_cursor) if seen_cursors.insert(next_cursor.clone()) => {
-                cursor = Some(next_cursor);
-            }
-            Some(_) => {
-                return Err(protocol_error(
-                    "provider_protocol_error",
-                    "thread/turns/list returned a repeated cursor".to_string(),
-                    false,
-                ));
-            }
-            None => break,
-        }
-    }
-    Ok(LoadedConversationTurns {
-        turns,
-        next_cursor: response_next_cursor,
-        materialized: true,
-    })
-}
-
-enum ItemPaginationProbe {
-    Supported,
-    Unsupported,
-}
-
-fn hydrate_turn_items(
-    session: &CodexAppServerSession,
-    conversation_id: &str,
-    turns: &mut [CodexTurn],
-) -> Result<ItemPaginationProbe, ()> {
-    let mut method_was_observed = false;
-    let mut history_failed = false;
-    for turn in turns {
-        if history_failed {
-            set_history_placeholder(turn);
-            continue;
-        }
-        let mut cursor = None;
-        let mut seen_cursors = HashSet::new();
-        let mut items = Vec::new();
-        for page_count in 0..MAX_THREAD_TURN_PAGES {
-            let page = match session.thread_items_list(
-                conversation_id,
-                &turn.id,
-                cursor.clone(),
-                1,
-            ) {
-                Ok(page) => {
-                    method_was_observed = true;
-                    page
-                }
-                Err(error) if !method_was_observed && error.is_method_not_found() => {
-                    return Ok(ItemPaginationProbe::Unsupported);
-                }
-                Err(_) => {
-                    set_history_placeholder(turn);
-                    history_failed = true;
-                    break;
-                }
-            };
-            items.extend(page.data.into_iter().map(|entry| entry.item));
-            match page.next_cursor {
-                Some(next_cursor) if seen_cursors.insert(next_cursor.clone()) => {
-                    cursor = Some(next_cursor);
-                }
-                Some(_) => {
-                    set_history_placeholder(turn);
-                    history_failed = true;
-                    break;
-                }
-                None => {
-                    turn.items = items;
-                    break;
-                }
-            }
-            if page_count + 1 == MAX_THREAD_TURN_PAGES {
-                set_history_placeholder(turn);
-                history_failed = true;
-            }
-        }
-    }
-    if history_failed {
-        Err(())
-    } else {
-        Ok(ItemPaginationProbe::Supported)
-    }
-}
-
-fn set_history_placeholder(turn: &mut CodexTurn) {
-    turn.items = vec![CodexThreadItem::Unknown {
-        id: format!("{}:history-not-loaded", turn.id),
-    }];
-}
-
-fn harness_uses_item_pagination(version: Option<&str>) -> bool {
-    let Some(version) = version else {
-        return false;
+        Err(error) => return Err(CodexProtocolMapper::error(error)),
     };
-    let mut components = version.split(['.', '-']);
-    let major = components.next().and_then(|value| value.parse::<u64>().ok());
-    let minor = components.next().and_then(|value| value.parse::<u64>().ok());
-    matches!((major, minor), (Some(major), Some(minor)) if major > 0 || minor >= 151)
-}
-
-fn harness_allows_full_turn_fallback(version: Option<&str>) -> bool {
-    !harness_uses_item_pagination(version)
-        || !matches!(
-            version.map(|version| {
-                let mut components = version.split(['.', '-']);
-                (
-                    components.next().and_then(|value| value.parse::<u64>().ok()),
-                    components.next().and_then(|value| value.parse::<u64>().ok()),
-                )
-            }),
-            Some((Some(major), Some(minor))) if major > 0 || minor >= 152
-        )
+    if page.data.len() as u64 > requested_limit {
+        return Err(protocol_error("provider_protocol_error", format!(
+            "thread/turns/list returned {} turns for limit {requested_limit}", page.data.len(),
+        ), false));
+    }
+    Ok(LoadedConversationTurns { turns: page.data, next_cursor: page.next_cursor, materialized: true })
 }
 
 fn runtime_inventory(candidates: Vec<RuntimeCandidate>, selected: Option<RuntimeInstallation>, product: &str) -> RuntimeGetInstalledResponse {

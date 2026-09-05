@@ -7,7 +7,33 @@ use std::collections::BTreeMap;
 
 pub const CORE_SCHEMA_VERSION: u64 = 1;
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ClientConnectionInfo {
+    pub connection_id: String,
+    pub client_id: ClientId,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ClientConnectionsSnapshot {
+    pub revision: u64,
+    pub connections: Vec<ClientConnectionInfo>,
+}
+
 pub type ClientId = String;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConnectionStatus {
+    #[serde(rename = "connecting")]
+    Connecting,
+    #[serde(rename = "online")]
+    Online,
+    #[serde(rename = "offline")]
+    Offline,
+}
 
 pub type Cursor = String;
 
