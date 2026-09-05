@@ -17,9 +17,9 @@ use codepet_provider_sdk::{
     ConversationUpsertedEvent, FlatModelCatalog, FlatModelCatalogKind, FlatModelSelection,
     HarnessDescriptor, InstanceStatus, JsonObject, ModelCatalog, ModelSelection, Project,
     ProjectChangeType, ProjectChangedEvent, ProjectRoot, ProtocolError,
-    ProtocolEvent, ProviderApproval, ProviderCapabilities, ProviderCapability,
-    ProviderConversation, ProviderExtension, ProviderInstance, ProviderInstanceRoute,
-    ProviderAuthentication, ProviderTurn, ProviderUsage, RoutedResourceId, ToolCategory,
+    ProtocolEvent, Approval, ProviderCapabilities, ProviderCapability,
+    Conversation, ProviderExtension, ProviderInstance, ProviderInstanceRoute, ProviderResourceId,
+    ProviderAuthentication, TurnTask, ProviderUsage, RoutedResourceId, ToolCategory,
     FileChangeConversationItem, FileChangeConversationItemKind, MessageConversationItem,
     MessageConversationItemKind, OpaqueToolInput, OpaqueToolInputKind, OutputContentBlock,
     OutputContentBlockKind, ReasoningConversationItem, ReasoningConversationItemKind,
@@ -33,7 +33,6 @@ use codepet_provider_sdk::{
     UnknownConversationItem, UnknownConversationItemKind,
 };
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
 
 pub struct CodexProtocolMapper {
     route: ProviderInstanceRoute,
@@ -279,7 +278,7 @@ impl CodexProtocolMapper {
         }
     }
 
-    pub fn conversation(&self, snapshot: &CodexConversationSnapshot) -> ProviderConversation {
+    pub fn conversation(&self, snapshot: &CodexConversationSnapshot) -> Conversation {
         let active_turn = snapshot
             .thread
             .turns
@@ -295,8 +294,8 @@ impl CodexProtocolMapper {
     pub(crate) fn conversation_with_active_turn(
         &self,
         snapshot: &CodexConversationSnapshot,
-        active_turn: Option<ProviderTurn>,
-    ) -> ProviderConversation {
+        active_turn: Option<TurnTask>,
+    ) -> Conversation {
         let status = match snapshot.thread.status {
             CodexThreadStatus::Active { ref active_flags }
                 if active_flags.contains(&CodexThreadActiveFlag::WaitingOnApproval) => {
@@ -310,13 +309,7 @@ impl CodexProtocolMapper {
             CodexThreadStatus::SystemError => ConversationStatus::Error,
             CodexThreadStatus::NotLoaded | CodexThreadStatus::Idle => ConversationStatus::Idle,
         };
-        let mut extension_data = BTreeMap::new();
-        extension_data.insert(
-            "nativeThreadStatus".to_string(),
-            json!(thread_status_name(&snapshot.thread.status)),
-        );
-        extension_data.insert("nativeCwd".to_string(), json!(snapshot.thread.cwd));
-        ProviderConversation {
+        Conversation {
             resource: self.resource(snapshot.thread.id.clone()),
             project: snapshot
                 .thread
@@ -346,10 +339,7 @@ impl CodexProtocolMapper {
             created_at: seconds_to_ms(snapshot.thread.created_at),
             updated_at: seconds_to_ms(snapshot.thread.updated_at),
             active_turn,
-            extension: Some(ProviderExtension {
-                namespace: CODEX_EXTENSION_NAMESPACE.to_string(),
-                data: extension_data,
-            }),
+            read_state: None,
         }
     }
 
@@ -425,10 +415,10 @@ impl CodexProtocolMapper {
         &self,
         conversation_id: &str,
         turn: &CodexTurn,
-    ) -> ProviderTurn {
+    ) -> TurnTask {
         let started_at = turn.started_at.and_then(seconds_to_ms);
         let completed_at = turn.completed_at.and_then(seconds_to_ms);
-        ProviderTurn {
+        TurnTask {
             resource: self.resource(turn.id.clone()),
             conversation: self.resource(conversation_id.to_string()),
             status: turn_status(turn.status),
@@ -436,10 +426,6 @@ impl CodexProtocolMapper {
             started_at,
             updated_at: None,
             completed_at,
-            extension: Some(extension([(
-                "nativeStatus",
-                json!(turn_status_name(turn.status)),
-            )])),
         }
     }
 
@@ -447,7 +433,7 @@ impl CodexProtocolMapper {
     pub fn conversation_items(
         &self,
         snapshot: &CodexConversationSnapshot,
-        approvals: &[(String, ProviderApproval)],
+        approvals: &[(String, Approval)],
     ) -> Vec<ConversationItem> {
         let mut items = Vec::new();
         let mut emitted_approvals = vec![false; approvals.len()];
@@ -468,7 +454,7 @@ impl CodexProtocolMapper {
         &self,
         conversation_id: &str,
         turn: &CodexTurn,
-        approvals: &[(String, ProviderApproval)],
+        approvals: &[(String, Approval)],
         emitted_approvals: &mut [bool],
         items: &mut Vec<ConversationItem>,
     ) {
@@ -497,7 +483,7 @@ impl CodexProtocolMapper {
     #[cfg(test)]
     fn append_remaining_approval_items(
         &self,
-        approvals: &[(String, ProviderApproval)],
+        approvals: &[(String, Approval)],
         emitted_approvals: &[bool],
         items: &mut Vec<ConversationItem>,
     ) {
@@ -668,7 +654,6 @@ impl CodexProtocolMapper {
                         duration_ms: Some(duration_ms),
                     }),
                     annotations: None,
-                    extension: None,
                 };
                 ConversationItem::CommandConversationItem(CommandConversationItem {
                     resource,
@@ -721,7 +706,7 @@ impl CodexProtocolMapper {
         }
     }
 
-    fn approval_item(&self, related_item_id: &str, approval: &ProviderApproval) -> ConversationItem {
+    fn approval_item(&self, related_item_id: &str, approval: &Approval) -> ConversationItem {
         ConversationItem::ApprovalConversationItem(ApprovalConversationItem {
             resource: approval.resource.clone(),
             turn: approval.turn.clone(),
@@ -756,10 +741,10 @@ impl CodexProtocolMapper {
 
     pub fn approval_resolved(
         &self,
-        mut approval: ProviderApproval,
+        mut approval: Approval,
         decision: ApprovalDecision,
         resolved_at_ms: u64,
-    ) -> Result<(ProviderApproval, ProtocolEvent), ProtocolError> {
+    ) -> Result<(Approval, ProtocolEvent), ProtocolError> {
         approval.status = match decision {
             ApprovalDecision::Approve => ApprovalStatus::Approved,
             ApprovalDecision::Deny => ApprovalStatus::Denied,
@@ -777,9 +762,9 @@ impl CodexProtocolMapper {
 
     pub fn approval_expired(
         &self,
-        mut approval: ProviderApproval,
+        mut approval: Approval,
         resolved_at_ms: u64,
-    ) -> (ProviderApproval, ProtocolEvent) {
+    ) -> (Approval, ProtocolEvent) {
         approval.status = ApprovalStatus::Expired;
         approval.resolved_at = Some(resolved_at_ms);
         let event = ProtocolEvent::EventApprovalResolved {
@@ -831,7 +816,7 @@ impl CodexProtocolMapper {
             } => ProtocolEvent::EventProjectChanged {
                 jsonrpc: "2.0".to_string(),
                 params: ProjectChangedEvent {
-                    project: self.resource(project_id),
+                    project: self.provider_resource(project_id),
                     change_type: match change_type {
                         CodexProjectChangeType::Created => ProjectChangeType::Created,
                         CodexProjectChangeType::Updated => ProjectChangeType::Updated,
@@ -888,8 +873,8 @@ impl CodexProtocolMapper {
             } => ProtocolEvent::EventTurnOutputDelta {
                 jsonrpc: "2.0".to_string(),
                 params: TurnOutputDeltaEvent {
-                    turn: self.resource(turn_id),
-                    conversation: self.resource(thread_id),
+                    turn: self.provider_resource(turn_id),
+                    conversation: self.provider_resource(thread_id),
                     item_id,
                     content_id,
                     kind: content_kind(kind),
@@ -907,16 +892,9 @@ impl CodexProtocolMapper {
         Ok(vec![event])
     }
 
-    pub fn approval(&self, request: &CodexApprovalRequest) -> ProviderApproval {
+    pub fn approval(&self, request: &CodexApprovalRequest) -> Approval {
         let decisions = approval_decisions(request);
-        let mut decision_mapping = BTreeMap::new();
-        if decisions.contains(&ApprovalDecision::Approve) {
-            decision_mapping.insert("approve", "accept");
-        }
-        if decisions.contains(&ApprovalDecision::Deny) {
-            decision_mapping.insert("deny", "decline");
-        }
-        ProviderApproval {
+        Approval {
             resource: self.resource(request.approval_id()),
             conversation: self.resource(request.thread_id.clone()),
             turn: self.resource(request.turn_id.clone()),
@@ -928,23 +906,18 @@ impl CodexProtocolMapper {
             requested_at: Some(request.requested_at_ms),
             resolved_at: None,
             decision: None,
-            extension: Some(extension([
-                ("nativeMethod", json!(request.native_method())),
-                ("nativeItemId", json!(request.item_id)),
-                (
-                    "nativeAvailableDecisions",
-                    json!(request.available_decisions),
-                ),
-                (
-                    "decisionMapping",
-                    json!(decision_mapping),
-                ),
-            ])),
         }
     }
 
     fn resource(&self, native_resource_id: String) -> RoutedResourceId {
         RoutedResourceId {
+            provider_id: self.route.provider_instance_id.clone(),
+            native_resource_id,
+        }
+    }
+
+    fn provider_resource(&self, native_resource_id: String) -> ProviderResourceId {
+        ProviderResourceId {
             device_id: self.route.device_id.clone(),
             provider_plugin_id: self.route.provider_plugin_id.clone(),
             provider_instance_id: self.route.provider_instance_id.clone(),
@@ -1050,7 +1023,6 @@ fn tool_invocation(id: &str, details: &crate::protocol::CodexToolDetails) -> Too
         outcome,
         timing: None,
         annotations: None,
-        extension: None,
     }
 }
 
@@ -1070,7 +1042,6 @@ fn opaque_tool_invocation(id: &str, name: &str) -> ToolInvocation {
         outcome: None,
         timing: None,
         annotations: None,
-        extension: None,
     }
 }
 
@@ -1180,24 +1151,6 @@ fn turn_status(status: CodexTurnStatus) -> TurnStatus {
     }
 }
 
-fn turn_status_name(status: CodexTurnStatus) -> &'static str {
-    match status {
-        CodexTurnStatus::InProgress => "inProgress",
-        CodexTurnStatus::Completed => "completed",
-        CodexTurnStatus::Failed => "failed",
-        CodexTurnStatus::Interrupted => "interrupted",
-    }
-}
-
-fn thread_status_name(status: &CodexThreadStatus) -> &'static str {
-    match status {
-        CodexThreadStatus::NotLoaded => "notLoaded",
-        CodexThreadStatus::Idle => "idle",
-        CodexThreadStatus::SystemError => "systemError",
-        CodexThreadStatus::Active { .. } => "active",
-    }
-}
-
 fn permission_level_name(permission: CodexPermissionLevel) -> &'static str {
     match permission {
         CodexPermissionLevel::ReadOnly => "read-only",
@@ -1294,6 +1247,7 @@ fn extension<const N: usize>(entries: [(&str, Value); N]) -> ProviderExtension {
 mod tests {
     use super::*;
     use crate::protocol::CodexThread;
+    use std::collections::BTreeMap;
 
     #[test]
     fn active_thread_flags_keep_approval_and_user_input_states_distinct() {
@@ -1434,6 +1388,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(project.resource.native_resource_id, "project-one");
+        assert_eq!(project.resource.provider_id, "codex");
         assert_eq!(project.position, 7);
         assert_eq!(project.metadata["team"], "gateway");
 
@@ -1447,6 +1402,9 @@ mod tests {
             &events[0],
             ProtocolEvent::EventProjectChanged { params, .. }
                 if params.project.native_resource_id == "project-one"
+                    && params.project.device_id == "device-test"
+                    && params.project.provider_plugin_id == "dev.codepet.codex"
+                    && params.project.provider_instance_id == "codex"
                     && params.change_type == ProjectChangeType::Updated
         ));
     }
@@ -1763,7 +1721,7 @@ mod tests {
     }
 
     #[test]
-    fn conversation_preserves_resource_identity_and_native_cwd() {
+    fn conversation_uses_agent_identity_and_preserves_workspace_root() {
         let native_cwd = "/fixture/project/nested/..".to_string();
         let snapshot = CodexConversationSnapshot::from_thread(CodexThread {
             id: "thread-stable".to_string(),
@@ -1794,18 +1752,9 @@ mod tests {
             Some(native_cwd.clone())
         );
         assert_eq!(conversation.resource.native_resource_id, "thread-stable");
-        assert_eq!(conversation.resource.device_id, "device-stable");
         assert_eq!(
-            conversation.resource.provider_plugin_id,
-            "dev.codepet.codex"
-        );
-        assert_eq!(
-            conversation.resource.provider_instance_id,
+            conversation.resource.provider_id,
             "codex-stable"
-        );
-        assert_eq!(
-            conversation.extension.unwrap().data["nativeCwd"],
-            json!(native_cwd)
         );
     }
 

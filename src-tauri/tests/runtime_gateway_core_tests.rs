@@ -678,7 +678,7 @@ async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desk
             } = event
             {
                 if params.payload.conversation.resource.native_resource_id
-                    == "conversation-event-first"
+                    == "event-first"
                 {
                     return params.payload.conversation.resource;
                 }
@@ -724,7 +724,7 @@ async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desk
         .iter()
         .find_map(|event| match event {
             ProtocolEvent::ConversationUpserted { payload, .. }
-                if payload.conversation.id == "conversation-event-first" =>
+                if payload.conversation.id == "event-first" =>
             {
                 Some(&payload.conversation)
             }
@@ -745,7 +745,7 @@ async fn real_provider_events_only_emit_remote_tauri_channel_and_never_call_desk
     );
     assert_eq!(
         route.data.get("nativeResourceId"),
-        Some(&serde_json::json!("conversation-event-first"))
+        Some(&serde_json::json!("event-first"))
     );
     assert!(companion.transport().replay(None).unwrap().is_empty());
     assert!(pet_activity.recent_events().is_empty());

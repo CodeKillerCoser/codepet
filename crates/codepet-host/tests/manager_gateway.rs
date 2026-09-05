@@ -23,7 +23,7 @@ use codepet_host::{
     ProviderGatewayService, ProviderInstanceRegistry, RemoteHostIdentity,
 };
 use codepet_provider_sdk::{
-    ConversationGetRequest, JsonObject, ProviderInstanceRoute, RoutedResourceId, TurnInput,
+    ConversationGetRequest, JsonObject, ProviderInstanceRoute, ProviderResourceId, TurnInput,
     TurnInputKind, TurnSelection, TurnStartRequest,
 };
 use std::collections::BTreeMap;
@@ -143,8 +143,8 @@ fn resource(
     plugin_id: &str,
     instance_id: &str,
     native_id: &str,
-) -> RoutedResourceId {
-    RoutedResourceId {
+) -> ProviderResourceId {
+    ProviderResourceId {
         device_id: device_id.to_string(),
         provider_plugin_id: plugin_id.to_string(),
         provider_instance_id: instance_id.to_string(),
@@ -1599,7 +1599,7 @@ async fn a_crashed_plugin_does_not_change_another_plugin_or_instance_route() {
         })
         .await
         .unwrap();
-    assert_eq!(beta.conversation.resource.provider_instance_id, "instance-beta");
+    assert_eq!(beta.conversation.resource.provider_id, "instance-beta");
     assert_eq!(
         manager
             .snapshot("dev.codepet.beta")

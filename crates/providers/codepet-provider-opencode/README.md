@@ -19,7 +19,7 @@ cargo build --manifest-path crates/Cargo.toml -p codepet-provider-opencode
 - 支持 session list/get/create、prompt queue、活跃 turn steer/interrupt、一次性 approve/deny 和实时 SSE 事件；
 - 上述 prompt/control 实现目前不通过 capability 对 Remote 宣告 `turn.start` / Gateway `turn.send`；在缺少稳定、完整的 model/reasoning discovery contract 时不会伪造可选择目录；
 - `opencode-default` 表示沿用 OpenCode 自己的权限规则，Provider 不构造第二套沙箱或权限策略；approve 只映射为 `once`，从不写入 `always`；
-- OpenCode 没有 Provider Protocol 的原生 Turn 对象；Provider 只把一个 session 当前活动执行投影成一个 `ProviderTurn`，用 `session.next.step.ended` 加 `/api/session/:id/wait` 确认一次成功终态；
+- OpenCode 没有 Provider Protocol 的原生 Turn 对象；Provider 只把一个 session 当前活动执行投影成共享 `TurnTask`，用 `session.next.step.ended` 加 `/api/session/:id/wait` 确认一次成功终态；
 - 不支持 create title、model/reasoning 选择、Provider extension、question 回答、历史 delta replay、自动重启或断线补偿；这些请求返回标准错误，不伪造成功；
 - V2 `Session.location` 缺失、SSE 断开、资源超限或已支持事件出现非法官方形状时，instance 进入 Error。未知 OpenCode 事件被忽略，不通过 Hook、transcript 或字段猜测补齐。
 

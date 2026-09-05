@@ -197,7 +197,7 @@ impl ConversationStateStore {
             provider::ProtocolEvent::EventTurnOutputDelta { params, .. }
                 if params.kind == provider::ConversationContentKind::Text
                     && !params.delta.is_empty() => Some((
-                        params.conversation.clone(),
+                        gateway_resource(params.conversation.clone()),
                         format!(
                             "output:{}:{}",
                             params.turn.native_resource_id, params.content_id
@@ -209,16 +209,16 @@ impl ConversationStateStore {
             )),
             provider::ProtocolEvent::EventConversationItemUpserted { params, .. }
                 if matches!(
-                    provider_item_status(&params.item),
+                    item_status(&params.item),
                     provider::ConversationItemStatus::Completed
                         | provider::ConversationItemStatus::Failed
                         | provider::ConversationItemStatus::Interrupted
                 ) => Some((
-                    provider_item_conversation(&params.item).clone(),
+                    item_conversation(&params.item).clone(),
                     format!(
                         "item-terminal:{}:{:?}",
-                        provider_item_resource(&params.item).native_resource_id,
-                        provider_item_status(&params.item)
+                        item_resource(&params.item).native_resource_id,
+                        item_status(&params.item)
                     ),
                 )),
             provider::ProtocolEvent::EventTurnUpserted { params, .. }
@@ -252,7 +252,6 @@ impl ConversationStateStore {
         let Some((resource, fingerprint)) = observed else {
             return Ok(None);
         };
-        let resource = gateway_resource(resource);
         let Some(version) = self.observe_fingerprint(
             &resource,
             FingerprintKind::Event,
@@ -377,55 +376,31 @@ fn summary_fingerprint(conversation: &gateway::Conversation) -> Option<String> {
 
 fn detail_fingerprint(items: &[gateway::ConversationItem]) -> Option<String> {
     let item = items.iter().rev().find(|item| {
-        gateway_item_role(item) == Some(gateway::ConversationItemRole::Assistant)
-            || gateway_item_approval(item).is_some_and(|approval| {
+        item_role(item) == Some(gateway::ConversationItemRole::Assistant)
+            || item_approval(item).is_some_and(|approval| {
                 approval.status == gateway::ApprovalStatus::Pending
             })
     })?;
     Some(fingerprint([
         "detail",
-        gateway_item_resource(item).native_resource_id.as_str(),
-        gateway_item_turn(item).native_resource_id.as_str(),
+        item_resource(item).native_resource_id.as_str(),
+        item_turn(item).native_resource_id.as_str(),
     ]))
 }
 
-fn provider_item_status(item: &provider::ConversationItem) -> provider::ConversationItemStatus {
+fn item_status(item: &gateway::ConversationItem) -> gateway::ConversationItemStatus {
     match item {
-        provider::ConversationItem::MessageConversationItem(item) => item.status,
-        provider::ConversationItem::ReasoningConversationItem(item) => item.status,
-        provider::ConversationItem::CommandConversationItem(item) => item.status,
-        provider::ConversationItem::FileChangeConversationItem(item) => item.status,
-        provider::ConversationItem::ToolConversationItem(item) => item.status,
-        provider::ConversationItem::ApprovalConversationItem(item) => item.status,
-        provider::ConversationItem::UnknownConversationItem(item) => item.status,
+        gateway::ConversationItem::MessageConversationItem(item) => item.status,
+        gateway::ConversationItem::ReasoningConversationItem(item) => item.status,
+        gateway::ConversationItem::CommandConversationItem(item) => item.status,
+        gateway::ConversationItem::FileChangeConversationItem(item) => item.status,
+        gateway::ConversationItem::ToolConversationItem(item) => item.status,
+        gateway::ConversationItem::ApprovalConversationItem(item) => item.status,
+        gateway::ConversationItem::UnknownConversationItem(item) => item.status,
     }
 }
 
-fn provider_item_resource(item: &provider::ConversationItem) -> &provider::RoutedResourceId {
-    match item {
-        provider::ConversationItem::MessageConversationItem(item) => &item.resource,
-        provider::ConversationItem::ReasoningConversationItem(item) => &item.resource,
-        provider::ConversationItem::CommandConversationItem(item) => &item.resource,
-        provider::ConversationItem::FileChangeConversationItem(item) => &item.resource,
-        provider::ConversationItem::ToolConversationItem(item) => &item.resource,
-        provider::ConversationItem::ApprovalConversationItem(item) => &item.resource,
-        provider::ConversationItem::UnknownConversationItem(item) => &item.resource,
-    }
-}
-
-fn provider_item_conversation(item: &provider::ConversationItem) -> &provider::RoutedResourceId {
-    match item {
-        provider::ConversationItem::MessageConversationItem(item) => &item.conversation,
-        provider::ConversationItem::ReasoningConversationItem(item) => &item.conversation,
-        provider::ConversationItem::CommandConversationItem(item) => &item.conversation,
-        provider::ConversationItem::FileChangeConversationItem(item) => &item.conversation,
-        provider::ConversationItem::ToolConversationItem(item) => &item.conversation,
-        provider::ConversationItem::ApprovalConversationItem(item) => &item.conversation,
-        provider::ConversationItem::UnknownConversationItem(item) => &item.conversation,
-    }
-}
-
-fn gateway_item_resource(item: &gateway::ConversationItem) -> &gateway::RoutedResourceId {
+fn item_resource(item: &gateway::ConversationItem) -> &gateway::RoutedResourceId {
     match item {
         gateway::ConversationItem::MessageConversationItem(item) => &item.resource,
         gateway::ConversationItem::ReasoningConversationItem(item) => &item.resource,
@@ -437,7 +412,19 @@ fn gateway_item_resource(item: &gateway::ConversationItem) -> &gateway::RoutedRe
     }
 }
 
-fn gateway_item_turn(item: &gateway::ConversationItem) -> &gateway::RoutedResourceId {
+fn item_conversation(item: &gateway::ConversationItem) -> &gateway::RoutedResourceId {
+    match item {
+        gateway::ConversationItem::MessageConversationItem(item) => &item.conversation,
+        gateway::ConversationItem::ReasoningConversationItem(item) => &item.conversation,
+        gateway::ConversationItem::CommandConversationItem(item) => &item.conversation,
+        gateway::ConversationItem::FileChangeConversationItem(item) => &item.conversation,
+        gateway::ConversationItem::ToolConversationItem(item) => &item.conversation,
+        gateway::ConversationItem::ApprovalConversationItem(item) => &item.conversation,
+        gateway::ConversationItem::UnknownConversationItem(item) => &item.conversation,
+    }
+}
+
+fn item_turn(item: &gateway::ConversationItem) -> &gateway::RoutedResourceId {
     match item {
         gateway::ConversationItem::MessageConversationItem(item) => &item.turn,
         gateway::ConversationItem::ReasoningConversationItem(item) => &item.turn,
@@ -449,14 +436,14 @@ fn gateway_item_turn(item: &gateway::ConversationItem) -> &gateway::RoutedResour
     }
 }
 
-fn gateway_item_role(item: &gateway::ConversationItem) -> Option<gateway::ConversationItemRole> {
+fn item_role(item: &gateway::ConversationItem) -> Option<gateway::ConversationItemRole> {
     match item {
         gateway::ConversationItem::MessageConversationItem(item) => Some(item.role),
         _ => None,
     }
 }
 
-fn gateway_item_approval(item: &gateway::ConversationItem) -> Option<&gateway::Approval> {
+fn item_approval(item: &gateway::ConversationItem) -> Option<&gateway::Approval> {
     match item {
         gateway::ConversationItem::ApprovalConversationItem(item) => Some(&item.approval),
         _ => None,
@@ -477,7 +464,7 @@ fn resource_key(resource: &gateway::RoutedResourceId) -> String {
     format!("{}\u{1f}{}", resource.provider_id, resource.native_resource_id)
 }
 
-fn gateway_resource(resource: provider::RoutedResourceId) -> gateway::RoutedResourceId {
+fn gateway_resource(resource: provider::ProviderResourceId) -> gateway::RoutedResourceId {
     gateway::RoutedResourceId {
         provider_id: resource.provider_instance_id,
         native_resource_id: resource.native_resource_id,

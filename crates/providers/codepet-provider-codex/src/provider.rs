@@ -27,10 +27,10 @@ use codepet_provider_sdk::{
     ProviderAuthentication, ProviderAuthenticationStatus, ProviderCapability,
     ProviderDescribeRequest, ProviderDescribeResponse, ProviderEventSink, ProviderUsage,
     ProviderUsageDetail,
-    FlatModelCatalogKind, FlatModelSelection, HarnessDescriptor, ModelCatalog, ModelSelection, ProviderApproval,
+    FlatModelCatalogKind, FlatModelSelection, HarnessDescriptor, ModelCatalog, ModelSelection, Approval,
     ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance,
-    ProviderInstanceRoute, ProviderPluginDescriptor, ProviderShutdownRequest,
-    ProviderShutdownResponse, RoutedResourceId, RuntimeCandidate, RuntimeGetInstalledRequest,
+    ProviderInstanceRoute, ProviderPluginDescriptor, ProviderResourceId, ProviderShutdownRequest,
+    ProviderShutdownResponse, RuntimeCandidate, RuntimeGetInstalledRequest,
     RuntimeGetInstalledResponse, RuntimeInstallation, RuntimeSelectRequest, RuntimeSelectResponse,
     TurnInterruptRequest, TurnInterruptResponse,
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnSteerRequest, TurnSteerResponse,
@@ -456,13 +456,13 @@ impl ExecutionSlot {
 #[derive(Clone)]
 struct PendingApproval {
     request: CodexApprovalRequest,
-    approval: ProviderApproval,
+    approval: Approval,
 }
 
 #[derive(Clone)]
 struct ObservedApproval {
     item_id: String,
-    approval: ProviderApproval,
+    approval: Approval,
 }
 
 struct CodexInstanceRuntime {
@@ -1735,7 +1735,7 @@ impl CodexProvider {
             })
     }
 
-    fn resource_instance(&self, resource: &RoutedResourceId) -> Result<Arc<CodexInstanceRuntime>, ProtocolError> {
+    fn resource_instance(&self, resource: &ProviderResourceId) -> Result<Arc<CodexInstanceRuntime>, ProtocolError> {
         validate_resource(resource)?;
         self.instance(&ProviderInstanceRoute {
             device_id: resource.device_id.clone(),
@@ -3177,7 +3177,8 @@ impl Provider for CodexProvider {
                     )
                 })?;
             if pending.request.session_generation != resource_generation
-                || pending.approval.resource != request.approval
+                || pending.approval.resource.native_resource_id
+                    != request.approval.native_resource_id
             {
                 return Err(protocol_error(
                     "stale_approval_session",
@@ -4036,7 +4037,7 @@ fn shutdown_sessions(
 fn record_approval(
     mutable: &mut InstanceMutable,
     item_id: String,
-    approval: ProviderApproval,
+    approval: Approval,
 ) {
     if let Some(observed) = mutable.approval_history.iter_mut().find(|observed| {
         observed.approval.resource.native_resource_id == approval.resource.native_resource_id
@@ -4048,7 +4049,7 @@ fn record_approval(
     }
 }
 
-fn update_recorded_approval(mutable: &mut InstanceMutable, approval: &ProviderApproval) {
+fn update_recorded_approval(mutable: &mut InstanceMutable, approval: &Approval) {
     if let Some(observed) = mutable.approval_history.iter_mut().find(|observed| {
         observed.approval.resource.native_resource_id == approval.resource.native_resource_id
     }) {
@@ -4246,7 +4247,7 @@ fn validate_route(route: &ProviderInstanceRoute) -> Result<(), ProtocolError> {
     Ok(())
 }
 
-fn validate_resource(resource: &RoutedResourceId) -> Result<(), ProtocolError> {
+fn validate_resource(resource: &ProviderResourceId) -> Result<(), ProtocolError> {
     validate_route(&ProviderInstanceRoute {
         device_id: resource.device_id.clone(),
         provider_plugin_id: resource.provider_plugin_id.clone(),
@@ -4263,8 +4264,8 @@ fn validate_resource(resource: &RoutedResourceId) -> Result<(), ProtocolError> {
 }
 
 fn validate_same_resource_route(
-    left: &RoutedResourceId,
-    right: &RoutedResourceId,
+    left: &ProviderResourceId,
+    right: &ProviderResourceId,
 ) -> Result<(), ProtocolError> {
     validate_resource(left)?;
     validate_resource(right)?;
@@ -4283,7 +4284,7 @@ fn validate_same_resource_route(
 }
 
 fn validate_resource_route(
-    resource: &RoutedResourceId,
+    resource: &ProviderResourceId,
     route: &ProviderInstanceRoute,
 ) -> Result<(), ProtocolError> {
     validate_resource(resource)?;

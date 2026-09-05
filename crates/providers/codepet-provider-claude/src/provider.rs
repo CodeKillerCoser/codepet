@@ -18,10 +18,10 @@ use codepet_provider_sdk::{
     InstanceDestroyResponse, InstanceStartRequest, InstanceStartResponse, InstanceStatus,
     InstanceStatusChangedEvent, InstanceStopRequest, InstanceStopResponse, ProtocolError,
     ModelCatalog, ModelSelection, ProtocolEvent, ProtocolFuture, Provider, ProviderCapabilities, ProviderCapability,
-    ProviderConversation, ProviderDescribeRequest, ProviderDescribeResponse, ProviderExtension,
-    ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute,
-    ProviderApproval, ProviderAuthentication, ProviderAuthenticationStatus, ProviderPluginDescriptor,
-    ProviderShutdownRequest, ProviderShutdownResponse, ProviderTurn, ProviderUsage,
+    Conversation, ProviderDescribeRequest, ProviderDescribeResponse, ProviderExtension,
+    ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute, ProviderResourceId,
+    Approval, ProviderAuthentication, ProviderAuthenticationStatus, ProviderPluginDescriptor,
+    ProviderShutdownRequest, ProviderShutdownResponse, TurnTask, ProviderUsage,
     ProviderUsageDetail,
     MessageConversationItem, MessageConversationItemKind, OpaqueToolInput, OpaqueToolInputKind,
     OutputContentBlock, OutputContentBlockKind, RoutedResourceId, RuntimeCandidate, RuntimeGetInstalledRequest, RuntimeGetInstalledResponse,
@@ -70,7 +70,7 @@ struct ClaudeInstanceSettings {
 use codepet_provider_sdk::ProviderEventSink;
 
 struct ManagedTurn {
-    turn: ProviderTurn,
+    turn: TurnTask,
     control: ClaudeProcessControl,
     saw_text_delta: bool,
     pending_completion: Option<TurnCompletion>,
@@ -82,7 +82,7 @@ struct ManagedTurn {
 
 #[derive(Clone)]
 struct PendingClaudeApproval {
-    approval: ProviderApproval,
+    approval: Approval,
     request_id: String,
     input: Value,
 }
@@ -91,18 +91,17 @@ struct PendingClaudeApproval {
 struct TurnCompletion {
     status: TurnStatus,
     result: Option<String>,
-    stop_reason: Option<String>,
     terminal_reason: Option<String>,
 }
 
 #[derive(Default)]
 struct TurnFinished {
-    outcome: Mutex<Option<Result<ProviderTurn, ProtocolError>>>,
+    outcome: Mutex<Option<Result<TurnTask, ProtocolError>>>,
     changed: Condvar,
 }
 
 impl TurnFinished {
-    fn complete(&self, outcome: Result<ProviderTurn, ProtocolError>) {
+    fn complete(&self, outcome: Result<TurnTask, ProtocolError>) {
         let mut stored = lock(&self.outcome);
         if stored.is_none() {
             *stored = Some(outcome);
@@ -110,7 +109,7 @@ impl TurnFinished {
         }
     }
 
-    fn wait(&self, timeout: Duration) -> Option<Result<ProviderTurn, ProtocolError>> {
+    fn wait(&self, timeout: Duration) -> Option<Result<TurnTask, ProtocolError>> {
         let stored = lock(&self.outcome);
         if stored.is_some() {
             return stored.clone();
@@ -124,7 +123,7 @@ impl TurnFinished {
 }
 
 struct ManagedConversation {
-    conversation: ProviderConversation,
+    conversation: Conversation,
     workspace_root: PathBuf,
     title: Option<String>,
     access_mode: String,
@@ -136,7 +135,7 @@ struct ManagedConversation {
 }
 
 struct DiscoveredConversation {
-    conversation: ProviderConversation,
+    conversation: Conversation,
     workspace_root: PathBuf,
     title: Option<String>,
     model: Option<String>,
@@ -235,7 +234,7 @@ impl ClaudeInstanceRuntime {
     fn create_conversation(
         &self,
         request: ConversationCreateRequest,
-    ) -> Result<ProviderConversation, ProtocolError> {
+    ) -> Result<Conversation, ProtocolError> {
         if self.status() != InstanceStatus::Ready {
             return Err(provider_unavailable(&self.route));
         }
@@ -289,7 +288,7 @@ impl ClaudeInstanceRuntime {
             .title
             .clone()
             .unwrap_or_else(|| format!("Claude {}", &session_id[..8]));
-        let conversation = ProviderConversation {
+        let conversation = Conversation {
             resource: self.resource(session_id.clone()),
             project: None,
             title,
@@ -307,12 +306,7 @@ impl ClaudeInstanceRuntime {
             created_at: Some(now),
             updated_at: Some(now),
             active_turn: None,
-            extension: Some(extension([
-                ("nativeInterface", json!("claude-print-stream-json")),
-                ("sessionScope", json!("provider-managed")),
-                ("configurationMode", json!("inherit-claude-defaults")),
-                ("externalSessionDiscovery", json!(false)),
-            ])),
+            read_state: None,
         };
         {
             let mut mutable = lock(&self.mutable);
@@ -479,7 +473,7 @@ impl ClaudeInstanceRuntime {
     fn start_turn(
         self: &Arc<Self>,
         request: TurnStartRequest,
-    ) -> Result<(ProviderTurn, TurnSelection), ProtocolError> {
+    ) -> Result<(TurnTask, TurnSelection), ProtocolError> {
         validate_resource_for_instance(&request.conversation, &self.route)?;
         if request.input.text.trim().is_empty() || request.client_request_id.trim().is_empty() {
             return Err(protocol_error(
@@ -544,18 +538,14 @@ impl ClaudeInstanceRuntime {
             .spawn()
             .map_err(cli_protocol_error)?;
             let now = now_ms();
-            let turn = ProviderTurn {
+            let turn = TurnTask {
                 resource: self.resource(turn_id.clone()),
-                conversation: request.conversation.clone(),
+                conversation: self.resource(conversation_id.clone()),
                 status: TurnStatus::Running,
                 display_summary: None,
                 started_at: Some(now),
                 updated_at: Some(now),
                 completed_at: None,
-                extension: Some(extension([
-                    ("nativeInterface", json!("claude-print-stream-json")),
-                    ("clientRequestId", json!(request.client_request_id)),
-                ])),
             };
             let finished = Arc::new(TurnFinished::default());
             managed.active_turn = Some(ManagedTurn {
@@ -639,7 +629,7 @@ impl ClaudeInstanceRuntime {
                     ClaudeControlRequest::CanUseTool {
                         tool_name,
                         input,
-                        tool_use_id,
+                        tool_use_id: _,
                         title,
                         display_name,
                         description,
@@ -650,7 +640,7 @@ impl ClaudeInstanceRuntime {
                     let managed = active_conversation_mut(&mut mutable, conversation_id, turn_id)?;
                     let active = managed.active_turn.as_mut().expect("active turn checked");
                     let approval_id = format!("{turn_id}:approval:{request_id}");
-                    let approval = ProviderApproval {
+                    let approval = Approval {
                         resource: self.resource(approval_id.clone()),
                         conversation: managed.conversation.resource.clone(),
                         turn: active.turn.resource.clone(),
@@ -662,11 +652,6 @@ impl ClaudeInstanceRuntime {
                         requested_at: Some(now_ms()),
                         resolved_at: None,
                         decision: None,
-                        extension: Some(extension([
-                            ("nativeRequestId", json!(request_id)),
-                            ("nativeToolUseId", json!(tool_use_id)),
-                            ("nativeToolName", json!(tool_name)),
-                        ])),
                     };
                     active.pending_approvals.insert(
                         approval_id,
@@ -772,7 +757,6 @@ impl ClaudeInstanceRuntime {
                     TurnCompletion {
                         status: TurnStatus::Interrupted,
                         result: None,
-                        stop_reason: None,
                         terminal_reason: None,
                     },
                 )
@@ -782,7 +766,7 @@ impl ClaudeInstanceRuntime {
                 is_error,
                 session_id,
                 result,
-                stop_reason,
+                stop_reason: _,
                 terminal_reason,
                 usage,
                 total_cost_usd,
@@ -796,7 +780,6 @@ impl ClaudeInstanceRuntime {
                     TurnCompletion {
                         status,
                         result,
-                        stop_reason,
                         terminal_reason,
                     },
                 )
@@ -949,7 +932,6 @@ impl ClaudeInstanceRuntime {
                 completion = TurnCompletion {
                     status: TurnStatus::Failed,
                     result: Some("Provider failed to publish Claude output".to_string()),
-                    stop_reason: None,
                     terminal_reason: Some("provider_event_publish_failed".to_string()),
                 };
                 eprintln!("Claude Provider output event failed: {error:?}");
@@ -1000,8 +982,14 @@ impl ClaudeInstanceRuntime {
             self.events.publish(ProtocolEvent::EventTurnOutputDelta {
                 jsonrpc: "2.0".to_string(),
                 params: TurnOutputDeltaEvent {
-                    turn: turn.clone(),
-                    conversation: conversation.clone(),
+                    turn: provider_resource(
+                        &self.route,
+                        turn.native_resource_id.clone(),
+                    ),
+                    conversation: provider_resource(
+                        &self.route,
+                        conversation.native_resource_id.clone(),
+                    ),
                     item_id: item_id.to_string(),
                     content_id: content_id.to_string(),
                     kind,
@@ -1014,7 +1002,7 @@ impl ClaudeInstanceRuntime {
     }
 
     #[cfg(unix)]
-    fn interrupt_turn(&self, request: TurnInterruptRequest) -> Result<ProviderTurn, ProtocolError> {
+    fn interrupt_turn(&self, request: TurnInterruptRequest) -> Result<TurnTask, ProtocolError> {
         validate_resource_for_instance(&request.conversation, &self.route)?;
         validate_resource_for_instance(&request.turn, &self.route)?;
         let conversation_id = request.conversation.native_resource_id.clone();
@@ -1026,7 +1014,10 @@ impl ClaudeInstanceRuntime {
             let active = managed.active_turn.as_mut().ok_or_else(|| {
                 protocol_error("turn_not_active", "Claude turn is not active".to_string(), false)
             })?;
-            if active.turn.resource != request.turn || active.turn.conversation != request.conversation {
+            if active.turn.resource.native_resource_id != request.turn.native_resource_id
+                || active.turn.conversation.native_resource_id
+                    != request.conversation.native_resource_id
+            {
                 return Err(protocol_error(
                     "turn_route_mismatch",
                     "turn and conversation resources do not identify the active Claude turn".to_string(),
@@ -1036,7 +1027,6 @@ impl ClaudeInstanceRuntime {
             active.requested_completion = Some(TurnCompletion {
                 status: TurnStatus::Interrupted,
                 result: None,
-                stop_reason: None,
                 terminal_reason: Some("interrupt_requested".to_string()),
             });
             (active.control.clone(), active.finished.clone())
@@ -1055,7 +1045,7 @@ impl ClaudeInstanceRuntime {
     fn resolve_approval(
         &self,
         request: ApprovalResolveRequest,
-    ) -> Result<ProviderApproval, ProtocolError> {
+    ) -> Result<Approval, ProtocolError> {
         validate_resource_for_instance(&request.approval, &self.route)?;
         let approval_id = request.approval.native_resource_id.clone();
         let (conversation_id, control, pending) = {
@@ -1066,7 +1056,9 @@ impl ClaudeInstanceRuntime {
                 .find_map(|(conversation_id, managed)| {
                     let active = managed.active_turn.as_ref()?;
                     let pending = active.pending_approvals.get(&approval_id)?;
-                    (pending.approval.resource == request.approval).then(|| {
+                    (pending.approval.resource.native_resource_id
+                        == request.approval.native_resource_id)
+                    .then(|| {
                         (conversation_id.clone(), active.control.clone(), pending.clone())
                     })
                 })
@@ -1142,7 +1134,6 @@ impl ClaudeInstanceRuntime {
                     active.requested_completion = Some(TurnCompletion {
                         status: TurnStatus::Interrupted,
                         result: None,
-                        stop_reason: None,
                         terminal_reason: Some("instance_stop".to_string()),
                     });
                     active_turns.push((active.control.clone(), active.finished.clone()));
@@ -1191,7 +1182,6 @@ impl ClaudeInstanceRuntime {
                     active.requested_completion = Some(TurnCompletion {
                         status: TurnStatus::Interrupted,
                         result: None,
-                        stop_reason: None,
                         terminal_reason: Some("provider_exit".to_string()),
                     });
                     Some(active.control.clone())
@@ -1212,21 +1202,19 @@ impl ClaudeInstanceRuntime {
 
     fn resource(&self, native_resource_id: String) -> RoutedResourceId {
         RoutedResourceId {
-            device_id: self.route.device_id.clone(),
-            provider_plugin_id: self.route.provider_plugin_id.clone(),
-            provider_instance_id: self.route.provider_instance_id.clone(),
+            provider_id: self.route.provider_instance_id.clone(),
             native_resource_id,
         }
     }
 
-    fn publish_conversation(&self, conversation: ProviderConversation) -> Result<(), ProtocolError> {
+    fn publish_conversation(&self, conversation: Conversation) -> Result<(), ProtocolError> {
         self.events.publish(ProtocolEvent::EventConversationUpserted {
             jsonrpc: "2.0".to_string(),
             params: ConversationUpsertedEvent { conversation },
         })
     }
 
-    fn publish_turn(&self, turn: ProviderTurn) -> Result<(), ProtocolError> {
+    fn publish_turn(&self, turn: TurnTask) -> Result<(), ProtocolError> {
         self.events.publish(ProtocolEvent::EventTurnUpserted {
             jsonrpc: "2.0".to_string(),
             params: TurnUpsertedEvent { turn },
@@ -1327,7 +1315,7 @@ impl ClaudeProvider {
             })
     }
 
-    fn resource_instance(&self, resource: &RoutedResourceId) -> Result<Arc<ClaudeInstanceRuntime>, ProtocolError> {
+    fn resource_instance(&self, resource: &ProviderResourceId) -> Result<Arc<ClaudeInstanceRuntime>, ProtocolError> {
         validate_resource(resource)?;
         self.instance(&ProviderInstanceRoute {
             device_id: resource.device_id.clone(),
@@ -1637,7 +1625,7 @@ impl Provider for ClaudeProvider {
     ) -> ProtocolFuture<'a, TurnStartResponse> {
         Box::pin(async move {
             let runtime = self.resource_instance(&request.conversation)?;
-            let conversation = request.conversation.clone();
+            let conversation = runtime.resource(request.conversation.native_resource_id.clone());
             let item_id = request.client_request_id.clone();
             let input_text = request.input.text.clone();
             let (turn, effective_selection) = runtime.start_turn(request)?;
@@ -2151,7 +2139,6 @@ fn completion_for_exit(
         return TurnCompletion {
             status: TurnStatus::Failed,
             result: Some(message.clone()),
-            stop_reason: None,
             terminal_reason: Some("claude_stream_failed".to_string()),
         };
     }
@@ -2168,7 +2155,6 @@ fn completion_for_exit(
     TurnCompletion {
         status: TurnStatus::Failed,
         result: Some(process_exit_reason(outcome)),
-        stop_reason: None,
         terminal_reason: Some("process_exit".to_string()),
     }
 }
@@ -2184,32 +2170,14 @@ fn process_exit_reason(
 }
 
 fn terminal_snapshot(
-    mut turn: ProviderTurn,
-    mut conversation: ProviderConversation,
+    mut turn: TurnTask,
+    mut conversation: Conversation,
     completion: &TurnCompletion,
-) -> (ProviderTurn, ProviderConversation) {
+) -> (TurnTask, Conversation) {
     let now = now_ms();
     turn.status = completion.status;
     turn.updated_at = Some(now);
     turn.completed_at = Some(now);
-    let native_subtype = match completion.status {
-        TurnStatus::Completed => "success",
-        TurnStatus::Interrupted => "interrupted",
-        _ => "error",
-    };
-    let stop_reason = completion
-        .stop_reason
-        .as_deref()
-        .map(|value| truncate_text(value, MAX_CLAUDE_METADATA_BYTES));
-    let terminal_reason = completion
-        .terminal_reason
-        .as_deref()
-        .map(|value| truncate_text(value, MAX_CLAUDE_METADATA_BYTES));
-    turn.extension = Some(extension([
-        ("nativeSubtype", json!(native_subtype)),
-        ("stopReason", json!(stop_reason)),
-        ("terminalReason", json!(terminal_reason)),
-    ]));
     conversation.status = match completion.status {
         TurnStatus::Failed => ConversationStatus::Error,
         _ => ConversationStatus::Idle,
@@ -2408,13 +2376,11 @@ fn summarize_claude_history(
         .or_else(|| first_user_text.as_deref().map(|value| truncate_text(value, 120)))
         .unwrap_or_else(|| session_id.clone());
     let resource = RoutedResourceId {
-        device_id: route.device_id.clone(),
-        provider_plugin_id: route.provider_plugin_id.clone(),
-        provider_instance_id: route.provider_instance_id.clone(),
+        provider_id: route.provider_instance_id.clone(),
         native_resource_id: session_id,
     };
     Ok(Some(DiscoveredConversation {
-        conversation: ProviderConversation {
+        conversation: Conversation {
             resource,
             project: None,
             title: title.clone(),
@@ -2435,11 +2401,7 @@ fn summarize_claude_history(
             created_at: Some(created_at),
             updated_at: Some(updated_at),
             active_turn: None,
-            extension: Some(extension([
-                ("nativeInterface", json!("claude-history-jsonl")),
-                ("sessionScope", json!("claude-persisted")),
-                ("externalSessionDiscovery", json!(true)),
-            ])),
+            read_state: None,
         },
         workspace_root,
         title: Some(title),
@@ -2545,7 +2507,6 @@ fn read_claude_history_items(
                         outcome: None,
                         timing: None,
                         annotations: None,
-                        extension: None,
                     };
                     let item = if command.is_some() {
                         ConversationItem::CommandConversationItem(CommandConversationItem {
@@ -2676,6 +2637,16 @@ fn claude_message_text(value: &Value) -> Option<String> {
 
 fn routed_resource(route: &ProviderInstanceRoute, native_resource_id: String) -> RoutedResourceId {
     RoutedResourceId {
+        provider_id: route.provider_instance_id.clone(),
+        native_resource_id,
+    }
+}
+
+fn provider_resource(
+    route: &ProviderInstanceRoute,
+    native_resource_id: String,
+) -> ProviderResourceId {
+    ProviderResourceId {
         device_id: route.device_id.clone(),
         provider_plugin_id: route.provider_plugin_id.clone(),
         provider_instance_id: route.provider_instance_id.clone(),
@@ -2740,7 +2711,7 @@ fn validate_route(route: &ProviderInstanceRoute) -> Result<(), ProtocolError> {
     Ok(())
 }
 
-fn validate_resource(resource: &RoutedResourceId) -> Result<(), ProtocolError> {
+fn validate_resource(resource: &ProviderResourceId) -> Result<(), ProtocolError> {
     validate_route(&ProviderInstanceRoute {
         device_id: resource.device_id.clone(),
         provider_plugin_id: resource.provider_plugin_id.clone(),
@@ -2757,7 +2728,7 @@ fn validate_resource(resource: &RoutedResourceId) -> Result<(), ProtocolError> {
 }
 
 fn validate_resource_for_instance(
-    resource: &RoutedResourceId,
+    resource: &ProviderResourceId,
     route: &ProviderInstanceRoute,
 ) -> Result<(), ProtocolError> {
     validate_resource(resource)?;

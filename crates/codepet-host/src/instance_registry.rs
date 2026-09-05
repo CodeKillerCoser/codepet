@@ -294,6 +294,38 @@ impl ProviderInstanceRegistry {
         }
         Ok(record)
     }
+
+    pub(crate) fn resolve_provider_id(
+        &self,
+        provider_id: &str,
+        expected_plugin_id: Option<&str>,
+    ) -> HostResult<ProviderInstanceRecord> {
+        if provider_id.trim().is_empty() {
+            return Err(HostError::new(
+                "invalid_provider_resource",
+                "Provider resource providerId must not be empty",
+            ));
+        }
+        let state = self.state.read().map_err(|_| registry_lock_error())?;
+        let record = state.records.get(provider_id).cloned().ok_or_else(|| {
+            HostError::new(
+                "unknown_provider_instance",
+                "Provider resource targets an unknown Provider instance",
+            )
+            .with_detail("providerId", provider_id.to_string())
+        })?;
+        if let Some(expected_plugin_id) = expected_plugin_id {
+            if record.plugin_id != expected_plugin_id {
+                return Err(HostError::new(
+                    "provider_instance_plugin_mismatch",
+                    "Provider resource belongs to a different plugin",
+                )
+                .with_detail("expectedPluginId", expected_plugin_id.to_string())
+                .with_detail("actualPluginId", record.plugin_id));
+            }
+        }
+        Ok(record)
+    }
 }
 
 fn load_registry(

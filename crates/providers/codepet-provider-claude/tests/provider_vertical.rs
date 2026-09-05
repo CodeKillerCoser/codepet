@@ -8,8 +8,8 @@ use codepet_provider_sdk::{
     ConversationProjectFilterAll, ConversationProjectFilterAllKind, InstanceCapabilitiesRequest,
     InstanceCreateRequest, InstanceDestroyRequest, InstanceStartRequest, InstanceStopRequest,
     JsonLineCodec, JsonObject, ProtocolEvent, ProtocolServer as ProviderProtocolServer,
-    ProviderCapability, ProviderInitializeRequest, ProviderInstanceRoute, ProviderShutdownRequest,
-    ProviderWireMessage, RoutedResourceId, TurnInput, TurnInputKind, TurnInterruptRequest,
+    ProviderCapability, ProviderInitializeRequest, ProviderInstanceRoute, ProviderResourceId,
+    ProviderShutdownRequest, ProviderWireMessage, RoutedResourceId, TurnInput, TurnInputKind, TurnInterruptRequest,
     TurnSelection, TurnStartRequest, TurnStatus, TurnSteerRequest, VersionRange,
     PROTOCOL_VERSION,
 };
@@ -37,7 +37,7 @@ fn all_project_filter() -> ConversationProjectFilter {
 }
 
 fn turn_start_request(
-    conversation: RoutedResourceId,
+    conversation: ProviderResourceId,
     client_request_id: String,
     text: String,
 ) -> TurnStartRequest {
@@ -84,7 +84,7 @@ async fn ready_provider(
     Arc<ClaudeProvider>,
     mpsc::Receiver<ProtocolEvent>,
     ProviderInstanceRoute,
-    codepet_provider_sdk::ProviderConversation,
+    codepet_provider_sdk::Conversation,
 ) {
     ready_provider_with_permission(workspace_root, "workspace-write").await
 }
@@ -96,7 +96,7 @@ async fn ready_provider_with_permission(
     Arc<ClaudeProvider>,
     mpsc::Receiver<ProtocolEvent>,
     ProviderInstanceRoute,
-    codepet_provider_sdk::ProviderConversation,
+    codepet_provider_sdk::Conversation,
 ) {
     let (event_sender, event_receiver) = mpsc::channel();
     let events: Arc<dyn ProviderEventSink> = Arc::new(move |event: ProtocolEvent| {
@@ -129,7 +129,7 @@ async fn configured_provider(
 ) -> (
     Arc<ClaudeProvider>,
     ProviderInstanceRoute,
-    codepet_provider_sdk::ProviderConversation,
+    codepet_provider_sdk::Conversation,
 ) {
     let provider = Arc::new(ClaudeProvider::new(events));
     let device_id = "device-claude-fixture";
@@ -237,7 +237,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
 
     let first_turn = ProviderProtocolServer::turn_start(
         provider.as_ref(),
-        turn_start_request(conversation.resource.clone(), "message-first".to_string(), "run fixture".to_string()),
+        turn_start_request(provider_resource(&route, &conversation.resource), "message-first".to_string(), "run fixture".to_string()),
     )
     .await
     .unwrap()
@@ -257,7 +257,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
 
     let second_turn = ProviderProtocolServer::turn_start(
         provider.as_ref(),
-        turn_start_request(conversation.resource.clone(), "message-second".to_string(), "run fixture again".to_string()),
+        turn_start_request(provider_resource(&route, &conversation.resource), "message-second".to_string(), "run fixture again".to_string()),
     )
     .await
     .unwrap()
@@ -269,7 +269,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     let approval_turn = ProviderProtocolServer::turn_start(
         provider.as_ref(),
         turn_start_request(
-            conversation.resource.clone(),
+            provider_resource(&route, &conversation.resource),
             "message-approval".to_string(),
             "needs approval".to_string(),
         ),
@@ -293,7 +293,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     let resolved = ProviderProtocolServer::approval_resolve(
         provider.as_ref(),
         ApprovalResolveRequest {
-            approval: approval.resource.clone(),
+            approval: provider_resource(&route, &approval.resource),
             decision: ApprovalDecision::Approve,
         },
     )
@@ -309,7 +309,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     let denied_turn = ProviderProtocolServer::turn_start(
         provider.as_ref(),
         turn_start_request(
-            conversation.resource.clone(),
+            provider_resource(&route, &conversation.resource),
             "message-denied".to_string(),
             "needs approval".to_string(),
         ),
@@ -330,7 +330,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     let denied = ProviderProtocolServer::approval_resolve(
         provider.as_ref(),
         ApprovalResolveRequest {
-            approval: denied_approval.resource,
+            approval: provider_resource(&route, &denied_approval.resource),
             decision: ApprovalDecision::Deny,
         },
     )
@@ -344,7 +344,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
 
     let failed_turn = ProviderProtocolServer::turn_start(
         provider.as_ref(),
-        turn_start_request(conversation.resource.clone(), "message-failed".to_string(), "fail".to_string()),
+        turn_start_request(provider_resource(&route, &conversation.resource), "message-failed".to_string(), "fail".to_string()),
     )
     .await
     .unwrap()
@@ -376,7 +376,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     let fetched = ProviderProtocolServer::conversation_get(
         provider.as_ref(),
         ConversationGetRequest {
-            conversation: conversation.resource.clone(),
+            conversation: provider_resource(&route, &conversation.resource),
             cursor: None,
             limit: None,
         },
@@ -387,8 +387,8 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     let steer_error = ProviderProtocolServer::turn_steer(
         provider.as_ref(),
         TurnSteerRequest {
-            conversation: conversation.resource.clone(),
-            turn: failed_turn.resource.clone(),
+            conversation: provider_resource(&route, &conversation.resource),
+            turn: provider_resource(&route, &failed_turn.resource),
             client_message_id: "message-steer".to_string(),
             message: "steer".to_string(),
         },
@@ -399,7 +399,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     let approval_error = ProviderProtocolServer::approval_resolve(
         provider.as_ref(),
         ApprovalResolveRequest {
-            approval: failed_turn.resource,
+            approval: provider_resource(&route, &failed_turn.resource),
             decision: ApprovalDecision::Approve,
         },
     )
@@ -439,7 +439,7 @@ async fn provider_interrupts_an_active_claude_process_with_sigint() {
     let (provider, events, route, conversation) = ready_provider(workspace.path()).await;
     let turn = ProviderProtocolServer::turn_start(
         provider.as_ref(),
-        turn_start_request(conversation.resource.clone(), "message-interrupt".to_string(), "wait for interrupt".to_string()),
+        turn_start_request(provider_resource(&route, &conversation.resource), "message-interrupt".to_string(), "wait for interrupt".to_string()),
     )
     .await
     .unwrap()
@@ -449,8 +449,8 @@ async fn provider_interrupts_an_active_claude_process_with_sigint() {
     let interrupted = ProviderProtocolServer::turn_interrupt(
         provider.as_ref(),
         TurnInterruptRequest {
-            conversation: conversation.resource,
-            turn: turn.resource.clone(),
+            conversation: provider_resource(&route, &conversation.resource),
+            turn: provider_resource(&route, &turn.resource),
         },
     )
     .await
@@ -491,13 +491,11 @@ async fn provider_inherits_claude_project_configuration_and_rejects_strong_acces
     )
     .unwrap();
     let (provider, events, route, conversation) = ready_provider(workspace.path()).await;
-    let extension = conversation.extension.as_ref().unwrap();
-    assert!(!extension.data.contains_key("hooksDisabled"));
-    assert_eq!(extension.data["configurationMode"], "inherit-claude-defaults");
+    assert_eq!(conversation.resource.provider_id, route.provider_instance_id);
 
     let inherited = ProviderProtocolServer::turn_start(
         provider.as_ref(),
-        turn_start_request(conversation.resource.clone(), "inherit-project-config".to_string(), "inherit project config".to_string()),
+        turn_start_request(provider_resource(&route, &conversation.resource), "inherit-project-config".to_string(), "inherit project config".to_string()),
     )
     .await
     .unwrap()
@@ -546,7 +544,7 @@ async fn provider_chunks_two_mib_result_before_the_provider_frame_limit() {
     let (provider, events, route, conversation) = ready_provider(workspace.path()).await;
     let turn = ProviderProtocolServer::turn_start(
         provider.as_ref(),
-        turn_start_request(conversation.resource, "large-result".to_string(), "two mib result".to_string()),
+        turn_start_request(provider_resource(&route, &conversation.resource), "large-result".to_string(), "two mib result".to_string()),
     )
     .await
     .unwrap()
@@ -615,7 +613,7 @@ async fn provider_event_failure_still_publishes_a_small_failed_terminal() {
     .await;
     let turn = ProviderProtocolServer::turn_start(
         provider.as_ref(),
-        turn_start_request(conversation.resource, "event-failure".to_string(), "run fixture".to_string()),
+        turn_start_request(provider_resource(&route, &conversation.resource), "event-failure".to_string(), "run fixture".to_string()),
     )
     .await
     .unwrap()
@@ -645,7 +643,7 @@ async fn provider_reaps_result_interrupt_stdout_and_oversize_process_trees() {
     let (provider, events, route, conversation) = ready_provider(workspace.path()).await;
     let turn = ProviderProtocolServer::turn_start(
         provider.as_ref(),
-        turn_start_request(conversation.resource.clone(), "result-then-sleep".to_string(), "result then sleep".to_string()),
+        turn_start_request(provider_resource(&route, &conversation.resource), "result-then-sleep".to_string(), "result then sleep".to_string()),
     )
     .await
     .unwrap()
@@ -654,7 +652,7 @@ async fn provider_reaps_result_interrupt_stdout_and_oversize_process_trees() {
     assert_no_terminal(&events, &turn.resource.native_resource_id, Duration::from_millis(150));
     let active_error = ProviderProtocolServer::turn_start(
         provider.as_ref(),
-        turn_start_request(conversation.resource, "must-stay-blocked".to_string(), "run fixture".to_string()),
+        turn_start_request(provider_resource(&route, &conversation.resource), "must-stay-blocked".to_string(), "run fixture".to_string()),
     )
     .await
     .unwrap_err();
@@ -681,7 +679,7 @@ async fn provider_reaps_result_interrupt_stdout_and_oversize_process_trees() {
     let (provider, events, route, conversation) = ready_provider(workspace.path()).await;
     let turn = ProviderProtocolServer::turn_start(
         provider.as_ref(),
-        turn_start_request(conversation.resource.clone(), "ignore-sigint".to_string(), "ignore sigint".to_string()),
+        turn_start_request(provider_resource(&route, &conversation.resource), "ignore-sigint".to_string(), "ignore sigint".to_string()),
     )
     .await
     .unwrap()
@@ -691,8 +689,8 @@ async fn provider_reaps_result_interrupt_stdout_and_oversize_process_trees() {
     let interrupted = ProviderProtocolServer::turn_interrupt(
         provider.as_ref(),
         TurnInterruptRequest {
-            conversation: conversation.resource,
-            turn: turn.resource.clone(),
+            conversation: provider_resource(&route, &conversation.resource),
+            turn: provider_resource(&route, &turn.resource),
         },
     )
     .await
@@ -722,7 +720,7 @@ async fn provider_reaps_result_interrupt_stdout_and_oversize_process_trees() {
         let (provider, events, route, conversation) = ready_provider(workspace.path()).await;
         let turn = ProviderProtocolServer::turn_start(
             provider.as_ref(),
-            turn_start_request(conversation.resource, message.to_string(), message.to_string()),
+            turn_start_request(provider_resource(&route, &conversation.resource), message.to_string(), message.to_string()),
         )
         .await
         .unwrap()
@@ -753,7 +751,7 @@ async fn provider_reaps_result_interrupt_stdout_and_oversize_process_trees() {
         let (provider, events, route, conversation) = ready_provider(workspace.path()).await;
         let turn = ProviderProtocolServer::turn_start(
             provider.as_ref(),
-            turn_start_request(conversation.resource, format!("active-{lifecycle}"), "result then sleep".to_string()),
+            turn_start_request(provider_resource(&route, &conversation.resource), format!("active-{lifecycle}"), "result then sleep".to_string()),
         )
         .await
         .unwrap()
@@ -1227,10 +1225,20 @@ fn assert_resource_route(
     resource: &codepet_provider_sdk::RoutedResourceId,
     route: &ProviderInstanceRoute,
 ) {
-    assert_eq!(resource.device_id, route.device_id);
-    assert_eq!(resource.provider_plugin_id, route.provider_plugin_id);
-    assert_eq!(resource.provider_instance_id, route.provider_instance_id);
+    assert_eq!(resource.provider_id, route.provider_instance_id);
     assert!(!resource.native_resource_id.is_empty());
+}
+
+fn provider_resource(
+    route: &ProviderInstanceRoute,
+    resource: &RoutedResourceId,
+) -> ProviderResourceId {
+    ProviderResourceId {
+        device_id: route.device_id.clone(),
+        provider_plugin_id: route.provider_plugin_id.clone(),
+        provider_instance_id: route.provider_instance_id.clone(),
+        native_resource_id: resource.native_resource_id.clone(),
+    }
 }
 
 #[cfg(unix)]
@@ -1310,7 +1318,12 @@ fn active_provider_binary(workspace: &Path) -> ActiveProviderBinary {
         }),
         &mut pending,
     );
-    let conversation = created["result"]["conversation"]["resource"].clone();
+    let conversation = json!({
+        "deviceId": "active-device",
+        "providerPluginId": CLAUDE_PLUGIN_ID,
+        "providerInstanceId": "claude",
+        "nativeResourceId": created["result"]["conversation"]["resource"]["nativeResourceId"]
+    });
     binary_request_collecting_events(
         &mut stdin,
         &mut stdout,

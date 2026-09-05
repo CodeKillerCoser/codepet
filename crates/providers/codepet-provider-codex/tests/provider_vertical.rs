@@ -15,7 +15,7 @@ use codepet_provider_sdk::{
     ProjectUpdateRequest,
     ProtocolServer as ProviderProtocolServer, ProviderInitializeRequest,
     FlatModelCatalogKind, FlatModelSelection, ModelSelection, ProviderInstanceRoute,
-    ProviderShutdownRequest, RoutedResourceId, TurnInput, TurnInputKind, TurnInterruptRequest,
+    ProviderResourceId, ProviderShutdownRequest, TurnInput, TurnInputKind, TurnInterruptRequest,
     ToolOutcome, TurnSelection, TurnStartRequest, TurnSteerRequest, VersionRange, PROTOCOL_VERSION,
 };
 use serde_json::json;
@@ -258,7 +258,7 @@ async fn project_methods_and_project_owned_conversation_fail_closed_when_probe_i
         .methods
         .contains(&codepet_provider_sdk::ProviderCapability::ProjectList));
 
-    let project = RoutedResourceId {
+    let project = ProviderResourceId {
         device_id: route.device_id.clone(),
         provider_plugin_id: route.provider_plugin_id.clone(),
         provider_instance_id: route.provider_instance_id.clone(),
@@ -311,19 +311,36 @@ async fn project_owned_conversation_uses_native_project_id_without_inferring_cwd
     .await
     .unwrap()
     .conversation;
-    assert_eq!(created.project.as_ref(), Some(&project));
+    assert_eq!(
+        created.project.as_ref().map(|resource| resource.provider_id.as_str()),
+        Some(project.provider_instance_id.as_str())
+    );
+    assert_eq!(
+        created.project.as_ref().map(|resource| resource.native_resource_id.as_str()),
+        Some(project.native_resource_id.as_str())
+    );
 
     let fetched = ProviderProtocolServer::conversation_get(
         provider.as_ref(),
         ConversationGetRequest {
-            conversation: created.resource,
+            conversation: conversation_resource(
+                &route,
+                &created.resource.native_resource_id,
+            ),
             cursor: None,
             limit: None,
         },
     )
     .await
     .unwrap();
-    assert_eq!(fetched.conversation.project.as_ref(), Some(&project));
+    assert_eq!(
+        fetched
+            .conversation
+            .project
+            .as_ref()
+            .map(|resource| resource.native_resource_id.as_str()),
+        Some(project.native_resource_id.as_str())
+    );
 
     ProviderProtocolServer::instance_stop(
         provider.as_ref(),
@@ -446,7 +463,10 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let fetched_project = ProviderProtocolServer::project_get(
         &provider,
         ProjectGetRequest {
-            project: fixture_project.clone(),
+            project: conversation_resource(
+                &route,
+                &fixture_project.native_resource_id,
+            ),
         },
     )
     .await
@@ -470,7 +490,10 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let updated_project = ProviderProtocolServer::project_update(
         &provider,
         ProjectUpdateRequest {
-            project: created_project.project.resource.clone(),
+            project: conversation_resource(
+                &route,
+                &created_project.project.resource.native_resource_id,
+            ),
             name: Some("Renamed Project".to_string()),
             roots: None,
             metadata: None,
@@ -482,7 +505,10 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     ProviderProtocolServer::project_delete(
         &provider,
         ProjectDeleteRequest {
-            project: created_project.project.resource,
+            project: conversation_resource(
+                &route,
+                &created_project.project.resource.native_resource_id,
+            ),
         },
     )
     .await
@@ -499,9 +525,8 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     )
     .await
     .unwrap();
-    assert_eq!(listed.conversations[0].resource.device_id, device_id);
     assert_eq!(
-        listed.conversations[0].resource.provider_instance_id,
+        listed.conversations[0].resource.provider_id,
         "codex"
     );
     assert_eq!(
@@ -518,7 +543,10 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
             project_filter: ConversationProjectFilter::ConversationProjectFilterProject(
                 ConversationProjectFilterProject {
                     kind: ConversationProjectFilterProjectKind::Project,
-                    project: fixture_project.clone(),
+                    project: conversation_resource(
+                        &route,
+                        &fixture_project.native_resource_id,
+                    ),
                 },
             ),
         },
@@ -577,7 +605,10 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let fetched = ProviderProtocolServer::conversation_get(
         &provider,
         ConversationGetRequest {
-            conversation: listed.conversations[0].resource.clone(),
+            conversation: conversation_resource(
+                &route,
+                &listed.conversations[0].resource.native_resource_id,
+            ),
             cursor: None,
             limit: None,
         },
@@ -641,7 +672,10 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         &provider,
         ConversationCreateRequest {
             route: route.clone(),
-            project: Some(fixture_project.clone()),
+            project: Some(conversation_resource(
+                &route,
+                &fixture_project.native_resource_id,
+            )),
             title: None,
             permission_level: "workspace-write".to_string(),
             model: Some("gpt-fixture".to_string()),
@@ -658,7 +692,10 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let rejected_reasoning = ProviderProtocolServer::turn_start(
         &provider,
         TurnStartRequest {
-            conversation: conversation.resource.clone(),
+            conversation: conversation_resource(
+                &route,
+                &conversation.resource.native_resource_id,
+            ),
             client_request_id: "message-rejected".to_string(),
             capability_revision: capabilities.capabilities.revision.clone(),
             input: TurnInput {
@@ -681,7 +718,10 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let started_turn = ProviderProtocolServer::turn_start(
         &provider,
         TurnStartRequest {
-            conversation: conversation.resource.clone(),
+            conversation: conversation_resource(
+                &route,
+                &conversation.resource.native_resource_id,
+            ),
             client_request_id: "message-one".to_string(),
             capability_revision: capabilities.capabilities.revision.clone(),
             input: TurnInput {
@@ -705,7 +745,10 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let refreshed = ProviderProtocolServer::conversation_get(
         &provider,
         ConversationGetRequest {
-            conversation: conversation.resource.clone(),
+            conversation: conversation_resource(
+                &route,
+                &conversation.resource.native_resource_id,
+            ),
             cursor: None,
             limit: None,
         },
@@ -746,7 +789,10 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let resolved = ProviderProtocolServer::approval_resolve(
         &provider,
         ApprovalResolveRequest {
-            approval: approval.resource.clone(),
+            approval: conversation_resource(
+                &route,
+                &approval.resource.native_resource_id,
+            ),
             decision: ApprovalDecision::Approve,
         },
     )
@@ -776,7 +822,10 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let active_history = ProviderProtocolServer::conversation_get(
         &provider,
         ConversationGetRequest {
-            conversation: conversation.resource.clone(),
+            conversation: conversation_resource(
+                &route,
+                &conversation.resource.native_resource_id,
+            ),
             cursor: None,
             limit: None,
         },
@@ -838,8 +887,11 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let steered = ProviderProtocolServer::turn_steer(
         &provider,
         TurnSteerRequest {
-            conversation: conversation.resource.clone(),
-            turn: turn.resource.clone(),
+            conversation: conversation_resource(
+                &route,
+                &conversation.resource.native_resource_id,
+            ),
+            turn: conversation_resource(&route, &turn.resource.native_resource_id),
             client_message_id: "message-two".to_string(),
             message: "steer fixture".to_string(),
         },
@@ -850,8 +902,11 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let interrupted = ProviderProtocolServer::turn_interrupt(
         &provider,
         TurnInterruptRequest {
-            conversation: conversation.resource,
-            turn: turn.resource,
+            conversation: conversation_resource(
+                &route,
+                &conversation.resource.native_resource_id,
+            ),
+            turn: conversation_resource(&route, &turn.resource.native_resource_id),
         },
     )
     .await
@@ -1935,7 +1990,7 @@ async fn terminal_cleanup_hides_the_closing_slot_before_publishing_the_terminal_
     ProviderProtocolServer::approval_resolve(
         provider.as_ref(),
         ApprovalResolveRequest {
-            approval,
+            approval: conversation_resource(&route, &approval.native_resource_id),
             decision: ApprovalDecision::Approve,
         },
     )
@@ -2209,7 +2264,7 @@ async fn prefetched_ready_handle_retries_after_terminal_closes_its_generation() 
     ProviderProtocolServer::approval_resolve(
         provider.as_ref(),
         ApprovalResolveRequest {
-            approval,
+            approval: conversation_resource(&route, &approval.native_resource_id),
             decision: ApprovalDecision::Approve,
         },
     )
@@ -3937,7 +3992,7 @@ impl ProviderBinary {
     }
 
     fn request(&mut self, id: &str, method: &str, params: Value) -> Value {
-        self.send_request(id, method, params);
+        self.send_request(id, method, provider_request_params(method, params));
         self.receive(Duration::from_secs(5), |message| {
             message.get("id").and_then(Value::as_str) == Some(id)
         })
@@ -4040,6 +4095,35 @@ impl ProviderBinary {
     }
 }
 
+fn provider_request_params(method: &str, mut params: Value) -> Value {
+    let resource_fields: &[&str] = match method {
+        "conversation.get" | "conversation.acquireInteraction" => &["conversation"],
+        "turn.start" => &["conversation"],
+        "turn.steer" | "turn.interrupt" => &["conversation", "turn"],
+        "approval.resolve" => &["approval"],
+        "project.get" | "project.update" | "project.delete" => &["project"],
+        _ => &[],
+    };
+    for field in resource_fields {
+        let Some(resource) = params.get_mut(*field) else {
+            continue;
+        };
+        if resource.get("deviceId").is_some() {
+            continue;
+        }
+        let native_resource_id = resource.get("nativeResourceId").cloned();
+        if let Some(native_resource_id) = native_resource_id {
+            *resource = json!({
+                "deviceId": "device-provider-binary",
+                "providerPluginId": CODEX_PLUGIN_ID,
+                "providerInstanceId": "codex",
+                "nativeResourceId": native_resource_id,
+            });
+        }
+    }
+    params
+}
+
 impl Drop for ProviderBinary {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -4082,8 +4166,8 @@ fn conversation_resource_value(native_resource_id: &str) -> Value {
     resource
 }
 
-fn conversation_resource(route: &ProviderInstanceRoute, native_resource_id: &str) -> RoutedResourceId {
-    RoutedResourceId {
+fn conversation_resource(route: &ProviderInstanceRoute, native_resource_id: &str) -> ProviderResourceId {
+    ProviderResourceId {
         device_id: route.device_id.clone(),
         provider_plugin_id: route.provider_plugin_id.clone(),
         provider_instance_id: route.provider_instance_id.clone(),

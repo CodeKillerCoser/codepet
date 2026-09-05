@@ -20,12 +20,12 @@ use codepet_provider_sdk::{
     InstanceStartRequest, InstanceStartResponse, InstanceStatus, InstanceStatusChangedEvent,
     GroupedModelCatalogKind, GroupedModelSelection, HarnessDescriptor, InstanceStopRequest,
     InstanceStopResponse, ModelCatalog, ModelSelection, PageInfo, ProtocolError, ProtocolEvent,
-    ProtocolFuture, Provider, ProviderApproval, ProviderAuthentication,
+    ProtocolFuture, Provider, Approval, ProviderAuthentication,
     ProviderAuthenticationStatus, ProviderCapabilities,
     ProviderDescribeRequest, ProviderDescribeResponse, ProviderInitializeRequest,
-    ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute,
+    ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute, ProviderResourceId,
     ProviderPluginDescriptor, ProviderShutdownRequest, ProviderShutdownResponse,
-    ProviderTurn, ProviderUsage, ProviderUsageDetail, RoutedResourceId, RuntimeCandidate, RuntimeGetInstalledRequest,
+    TurnTask, ProviderUsage, ProviderUsageDetail, RuntimeCandidate, RuntimeGetInstalledRequest,
     RuntimeGetInstalledResponse, RuntimeInstallation, RuntimeSelectRequest, RuntimeSelectResponse,
     TurnInterruptRequest, TurnInterruptResponse, TurnSelection,
     TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest, TurnSteerResponse,
@@ -62,13 +62,13 @@ struct PendingApproval {
     session_generation: String,
     session_id: String,
     request_id: String,
-    approval: ProviderApproval,
+    approval: Approval,
 }
 
 #[derive(Clone)]
 struct ActiveTurnState {
     epoch: u64,
-    turn: ProviderTurn,
+    turn: TurnTask,
     prompt_message_id: String,
     assistant_message_id: Option<String>,
     wait_started: bool,
@@ -809,7 +809,7 @@ impl OpenCodeProvider {
 
     fn resource_instance(
         &self,
-        resource: &RoutedResourceId,
+        resource: &ProviderResourceId,
     ) -> Result<Arc<OpenCodeInstanceRuntime>, ProtocolError> {
         validate_resource(resource)?;
         self.instance(&ProviderInstanceRoute {
@@ -1431,8 +1431,10 @@ impl Provider for OpenCodeProvider {
             let requested_selection = request.selection;
             let input_text = request.input.text;
             let client_request_id = request.client_request_id;
-            let conversation_resource = request.conversation.clone();
             let runtime = self.resource_instance(&request.conversation)?;
+            let conversation_resource = runtime
+                .mapper
+                .resource(request.conversation.native_resource_id.clone());
             let conversation_id = request.conversation.native_resource_id;
             let session = runtime.ready_session()?;
             let generation = session.generation().to_string();
@@ -1668,7 +1670,9 @@ impl Provider for OpenCodeProvider {
                     false,
                 )
             })?;
-            if expected_active.turn.resource != request.turn {
+            if expected_active.turn.resource.native_resource_id
+                != request.turn.native_resource_id
+            {
                 return Err(protocol_error(
                     "stale_turn",
                     "turn.steer targets a stale OpenCode Provider turn".to_string(),
@@ -1710,7 +1714,8 @@ impl Provider for OpenCodeProvider {
                     .get_mut(&conversation_id)
                     .filter(|active| {
                         active.epoch == expected_active.epoch
-                            && active.turn.resource == request.turn
+                            && active.turn.resource.native_resource_id
+                                == request.turn.native_resource_id
                     })
                     .ok_or_else(|| {
                         protocol_error(
@@ -1752,7 +1757,7 @@ impl Provider for OpenCodeProvider {
                         false,
                     )
                 })?;
-            if active.turn.resource != request.turn {
+            if active.turn.resource.native_resource_id != request.turn.native_resource_id {
                 return Err(protocol_error(
                     "stale_turn",
                     "turn.interrupt targets a stale OpenCode Provider turn".to_string(),
@@ -1777,7 +1782,9 @@ impl Provider for OpenCodeProvider {
                     .active_turns
                     .get(&conversation_id)
                     .filter(|current| {
-                        current.epoch == active.epoch && current.turn.resource == request.turn
+                        current.epoch == active.epoch
+                            && current.turn.resource.native_resource_id
+                                == request.turn.native_resource_id
                     })
                     .map(|current| current.turn.clone())
                     .ok_or_else(|| {
@@ -1801,7 +1808,10 @@ impl Provider for OpenCodeProvider {
                         false,
                     )
                 })?;
-                if current.epoch != active.epoch || current.turn.resource != request.turn {
+                if current.epoch != active.epoch
+                    || current.turn.resource.native_resource_id
+                        != request.turn.native_resource_id
+                {
                     return Err(protocol_error(
                         "stale_turn",
                         "turn.interrupt targets a stale OpenCode Provider turn".to_string(),
@@ -1861,7 +1871,9 @@ impl Provider for OpenCodeProvider {
                         false,
                     )
                 })?;
-            if pending.approval.resource != request.approval {
+            if pending.approval.resource.native_resource_id
+                != request.approval.native_resource_id
+            {
                 return Err(protocol_error(
                     "stale_approval_session",
                     "approval route does not match the pending OpenCode permission".to_string(),
@@ -2281,7 +2293,7 @@ fn validate_route(route: &ProviderInstanceRoute) -> Result<(), ProtocolError> {
     Ok(())
 }
 
-fn validate_resource(resource: &RoutedResourceId) -> Result<(), ProtocolError> {
+fn validate_resource(resource: &ProviderResourceId) -> Result<(), ProtocolError> {
     validate_route(&ProviderInstanceRoute {
         device_id: resource.device_id.clone(),
         provider_plugin_id: resource.provider_plugin_id.clone(),
@@ -2298,8 +2310,8 @@ fn validate_resource(resource: &RoutedResourceId) -> Result<(), ProtocolError> {
 }
 
 fn validate_same_resource_route(
-    left: &RoutedResourceId,
-    right: &RoutedResourceId,
+    left: &ProviderResourceId,
+    right: &ProviderResourceId,
 ) -> Result<(), ProtocolError> {
     validate_resource(left)?;
     validate_resource(right)?;

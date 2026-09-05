@@ -710,12 +710,6 @@ impl CodexApprovalRequest {
         approval_resource_id(&self.session_generation, &self.request_id)
     }
 
-    pub const fn native_method(&self) -> &'static str {
-        match self.kind {
-            CodexApprovalKind::CommandExecution => "item/commandExecution/requestApproval",
-            CodexApprovalKind::FileChange => "item/fileChange/requestApproval",
-        }
-    }
 }
 
 pub fn approval_resource_id(session_generation: &str, request_id: &JsonRpcId) -> String {

@@ -14,7 +14,8 @@ use codepet_provider_sdk::{
     ProjectDeleteResponse, ProjectGetRequest, ProjectGetResponse, ProjectListRequest,
     ProjectListResponse, ProjectUpdateRequest, ProjectUpdateResponse, ProtocolEvent, ProtocolMethod,
     ProviderDescribeRequest, ProviderInitializeRequest, ProviderInstance, ProviderInstanceRoute,
-    ProviderPluginDescriptor, ProviderWireMessage, RoutedResourceId, TurnInterruptRequest,
+    ProviderPluginDescriptor, ProviderResourceId, ProviderWireMessage, RoutedResourceId,
+    TurnInterruptRequest,
     RuntimeCandidate, RuntimeGetInstalledRequest, RuntimeGetInstalledResponse, RuntimeSelectRequest,
     RuntimeSelectResponse, TurnInterruptResponse, TurnStartRequest, TurnStartResponse, TurnSteerRequest,
     TurnSteerResponse, VersionRange, PROTOCOL_VERSION,
@@ -1044,8 +1045,8 @@ impl PluginManager {
         if let codepet_provider_sdk::ConversationProjectFilter::ConversationProjectFilterProject(filter) =
             &request.project_filter
         {
-            validate_resource_identity(&filter.project)?;
-            validate_resource_route(&filter.project, &route)?;
+            validate_provider_resource_identity(&filter.project)?;
+            validate_provider_resource_route(&filter.project, &route)?;
         }
         self.ensure_historical_route_ready(&route).await?;
         let (_, process, instance) = self.routing_context(&route).await?;
@@ -1084,9 +1085,9 @@ impl PluginManager {
     }
 
     pub async fn project_get(&self, request: ProjectGetRequest) -> HostResult<ProjectGetResponse> {
-        validate_resource_identity(&request.project)?;
+        validate_provider_resource_identity(&request.project)?;
         let expected = request.project.clone();
-        let route = route_from_resource(&expected);
+        let route = route_from_provider_resource(&expected);
         self.ensure_historical_route_ready(&route).await?;
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::ProjectGet)?;
@@ -1096,7 +1097,7 @@ impl PluginManager {
             .await
             .map_err(HostError::from)?;
         validate_project_routes(&response.project, &route)?;
-        validate_exact_resource(&response.project.resource, &expected, "project.get")?;
+        validate_provider_response_resource(&response.project.resource, &expected, "project.get")?;
         Ok(response)
     }
 
@@ -1121,9 +1122,9 @@ impl PluginManager {
         &self,
         request: ProjectUpdateRequest,
     ) -> HostResult<ProjectUpdateResponse> {
-        validate_resource_identity(&request.project)?;
+        validate_provider_resource_identity(&request.project)?;
         let expected = request.project.clone();
-        let route = route_from_resource(&expected);
+        let route = route_from_provider_resource(&expected);
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::ProjectUpdate)?;
         let response = process
@@ -1132,7 +1133,7 @@ impl PluginManager {
             .await
             .map_err(HostError::from)?;
         validate_project_routes(&response.project, &route)?;
-        validate_exact_resource(&response.project.resource, &expected, "project.update")?;
+        validate_provider_response_resource(&response.project.resource, &expected, "project.update")?;
         Ok(response)
     }
 
@@ -1140,8 +1141,8 @@ impl PluginManager {
         &self,
         request: ProjectDeleteRequest,
     ) -> HostResult<ProjectDeleteResponse> {
-        validate_resource_identity(&request.project)?;
-        let route = route_from_resource(&request.project);
+        validate_provider_resource_identity(&request.project)?;
+        let route = route_from_provider_resource(&request.project);
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::ProjectDelete)?;
         process
@@ -1174,9 +1175,9 @@ impl PluginManager {
         &self,
         request: ConversationGetRequest,
     ) -> HostResult<ConversationGetResponse> {
-        validate_resource_identity(&request.conversation)?;
+        validate_provider_resource_identity(&request.conversation)?;
         let expected = request.conversation.clone();
-        let route = route_from_resource(&expected);
+        let route = route_from_provider_resource(&expected);
         self.ensure_historical_route_ready(&route).await?;
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::ConversationGet)?;
@@ -1186,8 +1187,13 @@ impl PluginManager {
             .await
             .map_err(HostError::from)?;
         validate_conversation_routes(&response.conversation, &route)?;
-        validate_exact_resource(&response.conversation.resource, &expected, "conversation.get")?;
-        validate_conversation_items(&response.items, &expected, &route)?;
+        validate_provider_response_resource(
+            &response.conversation.resource,
+            &expected,
+            "conversation.get",
+        )?;
+        let expected_agent_resource = agent_resource_from_provider(&expected);
+        validate_conversation_items(&response.items, &expected_agent_resource, &route)?;
         Ok(response)
     }
 
@@ -1195,8 +1201,8 @@ impl PluginManager {
         &self,
         request: ConversationAcquireInteractionRequest,
     ) -> HostResult<ConversationAcquireInteractionResponse> {
-        validate_resource_identity(&request.conversation)?;
-        let route = route_from_resource(&request.conversation);
+        validate_provider_resource_identity(&request.conversation)?;
+        let route = route_from_provider_resource(&request.conversation);
         let (_, process, _) = self.routing_context(&route).await?;
         process
             .client()
@@ -1212,8 +1218,8 @@ impl PluginManager {
         validate_route_identity(&request.route)?;
         let route = request.route.clone();
         if let Some(project) = request.project.as_ref() {
-            validate_resource_identity(project)?;
-            validate_resource_route(project, &route)?;
+            validate_provider_resource_identity(project)?;
+            validate_provider_resource_route(project, &route)?;
         }
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::ConversationCreate)?;
@@ -1227,9 +1233,9 @@ impl PluginManager {
     }
 
     pub async fn turn_start(&self, request: TurnStartRequest) -> HostResult<TurnStartResponse> {
-        validate_resource_identity(&request.conversation)?;
+        validate_provider_resource_identity(&request.conversation)?;
         let expected_conversation = request.conversation.clone();
-        let route = route_from_resource(&expected_conversation);
+        let route = route_from_provider_resource(&expected_conversation);
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::TurnStart)?;
         let response = process
@@ -1244,15 +1250,16 @@ impl PluginManager {
             ));
         }
         validate_turn_routes(&response.turn, &route)?;
-        validate_exact_resource(
+        validate_provider_response_resource(
             &response.turn.conversation,
             &expected_conversation,
             "turn.start conversation",
         )?;
         if let Some(user_item) = response.user_item.as_ref() {
+            let expected_agent_conversation = agent_resource_from_provider(&expected_conversation);
             validate_conversation_items(
                 std::slice::from_ref(user_item),
-                &expected_conversation,
+                &expected_agent_conversation,
                 &route,
             )?;
             let provider_user_item = match user_item {
@@ -1264,7 +1271,7 @@ impl PluginManager {
                     ));
                 }
             };
-            validate_exact_resource(
+            validate_exact_agent_resource(
                 &provider_user_item.turn,
                 &response.turn.resource,
                 "turn.start user item turn",
@@ -1282,12 +1289,12 @@ impl PluginManager {
     }
 
     pub async fn turn_steer(&self, request: TurnSteerRequest) -> HostResult<TurnSteerResponse> {
-        validate_resource_identity(&request.conversation)?;
-        validate_resource_identity(&request.turn)?;
-        validate_same_resource_route(&request.conversation, &request.turn)?;
+        validate_provider_resource_identity(&request.conversation)?;
+        validate_provider_resource_identity(&request.turn)?;
+        validate_same_provider_resource_route(&request.conversation, &request.turn)?;
         let expected_conversation = request.conversation.clone();
         let expected_turn = request.turn.clone();
-        let route = route_from_resource(&expected_conversation);
+        let route = route_from_provider_resource(&expected_conversation);
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::TurnSteer)?;
         let response = process
@@ -1296,8 +1303,8 @@ impl PluginManager {
             .await
             .map_err(HostError::from)?;
         validate_turn_routes(&response.turn, &route)?;
-        validate_exact_resource(&response.turn.resource, &expected_turn, "turn.steer")?;
-        validate_exact_resource(
+        validate_provider_response_resource(&response.turn.resource, &expected_turn, "turn.steer")?;
+        validate_provider_response_resource(
             &response.turn.conversation,
             &expected_conversation,
             "turn.steer conversation",
@@ -1309,12 +1316,12 @@ impl PluginManager {
         &self,
         request: TurnInterruptRequest,
     ) -> HostResult<TurnInterruptResponse> {
-        validate_resource_identity(&request.conversation)?;
-        validate_resource_identity(&request.turn)?;
-        validate_same_resource_route(&request.conversation, &request.turn)?;
+        validate_provider_resource_identity(&request.conversation)?;
+        validate_provider_resource_identity(&request.turn)?;
+        validate_same_provider_resource_route(&request.conversation, &request.turn)?;
         let expected_conversation = request.conversation.clone();
         let expected_turn = request.turn.clone();
-        let route = route_from_resource(&expected_conversation);
+        let route = route_from_provider_resource(&expected_conversation);
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::TurnInterrupt)?;
         let response = process
@@ -1323,8 +1330,8 @@ impl PluginManager {
             .await
             .map_err(HostError::from)?;
         validate_turn_routes(&response.turn, &route)?;
-        validate_exact_resource(&response.turn.resource, &expected_turn, "turn.interrupt")?;
-        validate_exact_resource(
+        validate_provider_response_resource(&response.turn.resource, &expected_turn, "turn.interrupt")?;
+        validate_provider_response_resource(
             &response.turn.conversation,
             &expected_conversation,
             "turn.interrupt conversation",
@@ -1336,9 +1343,9 @@ impl PluginManager {
         &self,
         request: ApprovalResolveRequest,
     ) -> HostResult<ApprovalResolveResponse> {
-        validate_resource_identity(&request.approval)?;
+        validate_provider_resource_identity(&request.approval)?;
         let expected_approval = request.approval.clone();
-        let route = route_from_resource(&expected_approval);
+        let route = route_from_provider_resource(&expected_approval);
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::ApprovalResolve)?;
         let response = process
@@ -1347,7 +1354,7 @@ impl PluginManager {
             .await
             .map_err(HostError::from)?;
         validate_approval_routes(&response.approval, &route)?;
-        validate_exact_resource(
+        validate_provider_response_resource(
             &response.approval.resource,
             &expected_approval,
             "approval.resolve",
@@ -1360,11 +1367,17 @@ impl PluginManager {
         plugin_id: &str,
         event: ProtocolEvent,
     ) -> HostResult<()> {
-        let route = event_route(&event)?;
-        let record = self
-            .inner
-            .instances
-            .resolve_route(&route, Some(plugin_id))?;
+        let record = match &event {
+            ProtocolEvent::EventInstanceStatusChanged { params, .. } => self
+                .inner
+                .instances
+                .resolve_route(&params.instance.route, Some(plugin_id))?,
+            _ => self
+                .inner
+                .instances
+                .resolve_provider_id(event_provider_id(&event)?, Some(plugin_id))?,
+        };
+        let route = record.route();
         validate_event_routes(&event, &route, &record)?;
         if let ProtocolEvent::EventInstanceStatusChanged { params, .. } = event {
             return self
@@ -1883,29 +1896,37 @@ fn ensure_capability(instance: &ProviderInstance, method: ProtocolMethod) -> Hos
     .with_detail("method", method.as_str().to_string()))
 }
 
-fn event_route(event: &ProtocolEvent) -> HostResult<ProviderInstanceRoute> {
-    let route = match event {
-        ProtocolEvent::EventInstanceStatusChanged { params, .. } => params.instance.route.clone(),
-        ProtocolEvent::EventProjectChanged { params, .. } => route_from_resource(&params.project),
+fn event_provider_id(event: &ProtocolEvent) -> HostResult<&str> {
+    let provider_id = match event {
+        ProtocolEvent::EventInstanceStatusChanged { .. } => {
+            return Err(HostError::new(
+                "invalid_provider_event",
+                "Instance status events use their explicit Provider route",
+            ));
+        }
+        ProtocolEvent::EventProjectChanged { params, .. } => params.project.provider_instance_id.as_str(),
         ProtocolEvent::EventConversationUpserted { params, .. } => {
-            route_from_resource(&params.conversation.resource)
+            params.conversation.resource.provider_id.as_str()
         }
         ProtocolEvent::EventConversationItemUpserted { params, .. } => {
-            route_from_resource(conversation_item_resource(&params.item))
+            conversation_item_resource(&params.item).provider_id.as_str()
         }
-        ProtocolEvent::EventTurnUpserted { params, .. } => {
-            route_from_resource(&params.turn.resource)
-        }
-        ProtocolEvent::EventTurnOutputDelta { params, .. } => route_from_resource(&params.turn),
+        ProtocolEvent::EventTurnUpserted { params, .. } => params.turn.resource.provider_id.as_str(),
+        ProtocolEvent::EventTurnOutputDelta { params, .. } => params.turn.provider_instance_id.as_str(),
         ProtocolEvent::EventApprovalRequested { params, .. } => {
-            route_from_resource(&params.approval.resource)
+            params.approval.resource.provider_id.as_str()
         }
         ProtocolEvent::EventApprovalResolved { params, .. } => {
-            route_from_resource(&params.approval.resource)
+            params.approval.resource.provider_id.as_str()
         }
     };
-    validate_route_identity(&route)?;
-    Ok(route)
+    if provider_id.trim().is_empty() {
+        return Err(HostError::new(
+            "invalid_provider_resource",
+            "Provider event resource providerId must not be empty",
+        ));
+    }
+    Ok(provider_id)
 }
 
 fn validate_event_routes(
@@ -1918,7 +1939,7 @@ fn validate_event_routes(
             validate_instance_response(record, &params.instance)
         }
         ProtocolEvent::EventProjectChanged { params, .. } => {
-            validate_resource_route(&params.project, route)
+            validate_provider_resource_route(&params.project, route)
         }
         ProtocolEvent::EventConversationUpserted { params, .. } => {
             validate_conversation_routes(&params.conversation, route)
@@ -1934,8 +1955,8 @@ fn validate_event_routes(
             validate_turn_routes(&params.turn, route)
         }
         ProtocolEvent::EventTurnOutputDelta { params, .. } => {
-            validate_resource_route(&params.turn, route)?;
-            validate_resource_route(&params.conversation, route)?;
+            validate_provider_resource_route(&params.turn, route)?;
+            validate_provider_resource_route(&params.conversation, route)?;
             if params.item_id.trim().is_empty() || params.content_id.trim().is_empty() {
                 return Err(HostError::new(
                     "invalid_turn_output_delta",
@@ -1954,7 +1975,7 @@ fn validate_event_routes(
 }
 
 fn validate_conversation_routes(
-    conversation: &codepet_provider_sdk::ProviderConversation,
+    conversation: &codepet_provider_sdk::Conversation,
     route: &ProviderInstanceRoute,
 ) -> HostResult<()> {
     validate_resource_route(&conversation.resource, route)?;
@@ -1963,7 +1984,7 @@ fn validate_conversation_routes(
     }
     if let Some(turn) = conversation.active_turn.as_ref() {
         validate_turn_routes(turn, route)?;
-        validate_exact_resource(
+        validate_exact_agent_resource(
             &turn.conversation,
             &conversation.resource,
             "conversation active turn",
@@ -2006,7 +2027,7 @@ fn validate_conversation_items(
         validate_resource_route(resource, route)?;
         validate_resource_route(turn, route)?;
         validate_resource_route(item_conversation, route)?;
-        validate_exact_resource(
+        validate_exact_agent_resource(
             item_conversation,
             conversation,
             "conversation history item",
@@ -2037,9 +2058,9 @@ fn validate_conversation_items(
         }
         if let Some(approval) = conversation_item_approval(item) {
             validate_approval_routes(approval, route)?;
-            validate_exact_resource(&approval.resource, resource, "history approval")?;
-            validate_exact_resource(&approval.turn, turn, "history approval turn")?;
-            validate_exact_resource(
+            validate_exact_agent_resource(&approval.resource, resource, "history approval")?;
+            validate_exact_agent_resource(&approval.turn, turn, "history approval turn")?;
+            validate_exact_agent_resource(
                 &approval.conversation,
                 conversation,
                 "history approval conversation",
@@ -2126,7 +2147,7 @@ fn conversation_item_related_item(item: &codepet_provider_sdk::ConversationItem)
     }
 }
 
-fn conversation_item_approval(item: &codepet_provider_sdk::ConversationItem) -> Option<&codepet_provider_sdk::ProviderApproval> {
+fn conversation_item_approval(item: &codepet_provider_sdk::ConversationItem) -> Option<&codepet_provider_sdk::Approval> {
     match item {
         codepet_provider_sdk::ConversationItem::ApprovalConversationItem(item) => Some(&item.approval),
         _ => None,
@@ -2134,7 +2155,7 @@ fn conversation_item_approval(item: &codepet_provider_sdk::ConversationItem) -> 
 }
 
 fn validate_turn_routes(
-    turn: &codepet_provider_sdk::ProviderTurn,
+    turn: &codepet_provider_sdk::TurnTask,
     route: &ProviderInstanceRoute,
 ) -> HostResult<()> {
     validate_resource_route(&turn.resource, route)?;
@@ -2142,7 +2163,7 @@ fn validate_turn_routes(
 }
 
 fn validate_approval_routes(
-    approval: &codepet_provider_sdk::ProviderApproval,
+    approval: &codepet_provider_sdk::Approval,
     route: &ProviderInstanceRoute,
 ) -> HostResult<()> {
     validate_resource_route(&approval.resource, route)?;
@@ -2154,32 +2175,30 @@ fn validate_resource_route(
     resource: &RoutedResourceId,
     route: &ProviderInstanceRoute,
 ) -> HostResult<()> {
-    validate_resource_identity(resource)?;
+    validate_agent_resource_identity(resource)?;
+    if resource.provider_id != route.provider_instance_id {
+        return Err(HostError::new(
+            "provider_resource_route_mismatch",
+            "Provider returned a resource owned by a different Provider instance",
+        )
+        .with_detail("expectedProviderId", route.provider_instance_id.clone())
+        .with_detail("actualProviderId", resource.provider_id.clone()));
+    }
+    Ok(())
+}
+
+fn validate_provider_resource_route(
+    resource: &ProviderResourceId,
+    route: &ProviderInstanceRoute,
+) -> HostResult<()> {
+    validate_provider_resource_identity(resource)?;
     if resource.device_id != route.device_id
         || resource.provider_plugin_id != route.provider_plugin_id
         || resource.provider_instance_id != route.provider_instance_id
     {
         return Err(HostError::new(
             "provider_resource_route_mismatch",
-            "Provider returned a resource for a different device, plugin, or instance",
-        )
-        .with_detail("expectedDeviceId", route.device_id.clone())
-        .with_detail(
-            "expectedProviderPluginId",
-            route.provider_plugin_id.clone(),
-        )
-        .with_detail(
-            "expectedProviderInstanceId",
-            route.provider_instance_id.clone(),
-        )
-        .with_detail("actualDeviceId", resource.device_id.clone())
-        .with_detail(
-            "actualProviderPluginId",
-            resource.provider_plugin_id.clone(),
-        )
-        .with_detail(
-            "actualProviderInstanceId",
-            resource.provider_instance_id.clone(),
+            "Provider request resource targets a different device, plugin, or instance",
         ));
     }
     Ok(())
@@ -2204,8 +2223,8 @@ fn validate_route_identity(route: &ProviderInstanceRoute) -> HostResult<()> {
     Ok(())
 }
 
-fn validate_resource_identity(resource: &RoutedResourceId) -> HostResult<()> {
-    validate_route_identity(&route_from_resource(resource))?;
+fn validate_provider_resource_identity(resource: &ProviderResourceId) -> HostResult<()> {
+    validate_route_identity(&route_from_provider_resource(resource))?;
     if resource.native_resource_id.trim().is_empty() {
         return Err(HostError::new(
             "invalid_provider_resource",
@@ -2221,12 +2240,26 @@ fn validate_resource_identity(resource: &RoutedResourceId) -> HostResult<()> {
     Ok(())
 }
 
-fn validate_exact_resource(
+fn validate_agent_resource_identity(resource: &RoutedResourceId) -> HostResult<()> {
+    if resource.provider_id.trim().is_empty() || resource.native_resource_id.trim().is_empty() {
+        return Err(HostError::new(
+            "invalid_provider_resource",
+            "Provider response resource requires non-empty providerId and nativeResourceId",
+        )
+        .with_detail("providerId", resource.provider_id.clone())
+        .with_detail("nativeResourceId", resource.native_resource_id.clone()));
+    }
+    Ok(())
+}
+
+fn validate_provider_response_resource(
     actual: &RoutedResourceId,
-    expected: &RoutedResourceId,
+    expected: &ProviderResourceId,
     operation: &str,
 ) -> HostResult<()> {
-    if actual == expected {
+    if actual.provider_id == expected.provider_instance_id
+        && actual.native_resource_id == expected.native_resource_id
+    {
         return Ok(());
     }
     Err(HostError::new(
@@ -2237,7 +2270,23 @@ fn validate_exact_resource(
     .with_detail("actualNativeResourceId", actual.native_resource_id.clone()))
 }
 
-fn route_from_resource(resource: &RoutedResourceId) -> ProviderInstanceRoute {
+fn validate_exact_agent_resource(
+    actual: &RoutedResourceId,
+    expected: &RoutedResourceId,
+    operation: &str,
+) -> HostResult<()> {
+    if actual == expected {
+        return Ok(());
+    }
+    Err(HostError::new(
+        "provider_resource_identity_mismatch",
+        format!("Provider {operation} response changed the resource identity"),
+    )
+    .with_detail("expectedNativeResourceId", expected.native_resource_id.clone())
+    .with_detail("actualNativeResourceId", actual.native_resource_id.clone()))
+}
+
+fn route_from_provider_resource(resource: &ProviderResourceId) -> ProviderInstanceRoute {
     ProviderInstanceRoute {
         device_id: resource.device_id.clone(),
         provider_plugin_id: resource.provider_plugin_id.clone(),
@@ -2245,9 +2294,16 @@ fn route_from_resource(resource: &RoutedResourceId) -> ProviderInstanceRoute {
     }
 }
 
-fn validate_same_resource_route(
-    left: &RoutedResourceId,
-    right: &RoutedResourceId,
+fn agent_resource_from_provider(resource: &ProviderResourceId) -> RoutedResourceId {
+    RoutedResourceId {
+        provider_id: resource.provider_instance_id.clone(),
+        native_resource_id: resource.native_resource_id.clone(),
+    }
+}
+
+fn validate_same_provider_resource_route(
+    left: &ProviderResourceId,
+    right: &ProviderResourceId,
 ) -> HostResult<()> {
     if left.device_id == right.device_id
         && left.provider_plugin_id == right.provider_plugin_id
@@ -2337,8 +2393,7 @@ mod conversation_item_validation_tests {
 
     fn resource(native_id: &str) -> serde_json::Value {
         json!({
-            "deviceId": "device-test", "providerPluginId": "dev.codepet.test",
-            "providerInstanceId": "instance-test", "nativeResourceId": native_id,
+            "providerId": "instance-test", "nativeResourceId": native_id,
         })
     }
 
@@ -2362,7 +2417,7 @@ mod conversation_item_validation_tests {
         validate_conversation_items(&valid, &conversation, &expected_route).unwrap();
 
         for mut value in item_values() {
-            value["turn"]["deviceId"] = json!("wrong-device");
+            value["turn"]["providerId"] = json!("wrong-provider");
             let item = serde_json::from_value(value).unwrap();
             assert_eq!(
                 validate_conversation_items(&[item], &conversation, &expected_route).unwrap_err().code,

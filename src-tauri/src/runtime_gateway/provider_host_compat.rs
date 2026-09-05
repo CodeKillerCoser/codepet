@@ -124,9 +124,13 @@ fn map_content_kind(kind: gateway::ConversationContentKind) -> &'static str {
     match kind {
         gateway::ConversationContentKind::Text => "text",
         gateway::ConversationContentKind::ReasoningSummary => "reasoning-summary",
-        gateway::ConversationContentKind::Command => "command",
         gateway::ConversationContentKind::Output => "output",
         gateway::ConversationContentKind::ActivitySummary => "activity-summary",
+        gateway::ConversationContentKind::StructuredJson => "structured-json",
+        gateway::ConversationContentKind::Image => "image",
+        gateway::ConversationContentKind::Audio => "audio",
+        gateway::ConversationContentKind::ResourceLink => "resource-link",
+        gateway::ConversationContentKind::EmbeddedResource => "embedded-resource",
     }
 }
 

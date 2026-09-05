@@ -16,12 +16,12 @@ use codepet_provider_sdk::{
     Project, ProjectChangeType, ProjectChangedEvent, ProjectCreateRequest, ProjectCreateResponse, ProjectDeleteRequest,
     ProjectDeleteResponse, ProjectGetRequest, ProjectGetResponse, ProjectListRequest,
     ProjectListResponse, ProjectRoot, ProjectUpdateRequest, ProjectUpdateResponse, ProtocolFuture,
-    ProtocolRequest, ProtocolServer, ProviderApproval, ProviderCapabilities,
-    ProviderCapability, ProviderConversation, ProviderDescribeRequest,
+    ProtocolRequest, ProtocolServer, Approval, ProviderCapabilities,
+    ProviderCapability, Conversation, ProviderDescribeRequest,
     ProviderDescribeResponse, ProviderInitializeRequest, ProviderInitializeResponse,
     ProviderAuthentication, ProviderAuthenticationStatus, ProviderInstance, ProviderInstanceRoute,
-    ProviderPluginDescriptor, ProviderShutdownRequest, ProviderShutdownResponse, ProviderTurn,
-    ProviderUsage, ProviderUsageDetail, ProviderWireMessage, RoutedResourceId,
+    ProviderPluginDescriptor, ProviderResourceId, ProviderShutdownRequest, ProviderShutdownResponse,
+    TurnTask, ProviderUsage, ProviderUsageDetail, ProviderWireMessage, RoutedResourceId,
     MessageConversationItem, MessageConversationItemKind, TextContentBlock, TextContentBlockKind,
     TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent, TurnSendCapabilities,
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
@@ -302,7 +302,10 @@ impl ProtocolServer for FakeProvider {
                 filter,
             ) = request.project_filter
             {
-                listed.project = Some(filter.project);
+                listed.project = Some(resource(
+                    &request.route,
+                    &filter.project.native_resource_id,
+                ));
             }
             Ok(ConversationListResponse {
                 conversations: vec![listed],
@@ -349,9 +352,9 @@ impl ProtocolServer for FakeProvider {
             };
             let response_route = if request.conversation.native_resource_id == "response-wrong-route" {
                 ProviderInstanceRoute {
-                    device_id: "device-other".to_string(),
+                    device_id: route.device_id.clone(),
                     provider_plugin_id: route.provider_plugin_id.clone(),
-                    provider_instance_id: route.provider_instance_id.clone(),
+                    provider_instance_id: "instance-other".to_string(),
                 }
             } else {
                 route
@@ -403,7 +406,9 @@ impl ProtocolServer for FakeProvider {
         Box::pin(async move {
             self.instance(&request.route)?;
             let mut created = conversation(&request.route, "conversation-created");
-            created.project = request.project;
+            created.project = request
+                .project
+                .map(|project| resource(&request.route, &project.native_resource_id));
             Ok(ConversationCreateResponse {
                 conversation: created,
             })
@@ -433,7 +438,7 @@ impl ProtocolServer for FakeProvider {
             {
                 resource(&route, "different-conversation")
             } else {
-                request.conversation
+                resource(&route, &request.conversation.native_resource_id)
             };
             let turn = turn(&route, "turn-started", conversation.clone());
             let user_item_conversation = if wrong_user_item_conversation {
@@ -474,7 +479,7 @@ impl ProtocolServer for FakeProvider {
             let conversation = if request.turn.native_resource_id == "steer-wrong-conversation" {
                 resource(&route, "conversation-b")
             } else {
-                request.conversation
+                resource(&route, &request.conversation.native_resource_id)
             };
             Ok(TurnSteerResponse {
                 turn: turn(
@@ -496,7 +501,7 @@ impl ProtocolServer for FakeProvider {
             let mut interrupted = turn(
                 &route,
                 &request.turn.native_resource_id,
-                request.conversation,
+                resource(&route, &request.conversation.native_resource_id),
             );
             interrupted.status = TurnStatus::Interrupted;
             Ok(TurnInterruptResponse { turn: interrupted })
@@ -511,8 +516,8 @@ impl ProtocolServer for FakeProvider {
             let route = route_from_resource(&request.approval);
             self.instance(&route)?;
             Ok(ApprovalResolveResponse {
-                approval: ProviderApproval {
-                    resource: request.approval,
+                approval: Approval {
+                    resource: resource(&route, &request.approval.native_resource_id),
                     conversation: resource(&route, "conversation-event-first"),
                     turn: resource(&route, "turn-event-first"),
                     kind: "command-execution".to_string(),
@@ -526,7 +531,6 @@ impl ProtocolServer for FakeProvider {
                     requested_at: Some(1),
                     resolved_at: Some(2),
                     decision: Some(request.decision),
-                    extension: None,
                 },
             })
         })
@@ -691,8 +695,8 @@ async fn main() {
                     let delta = ProtocolEvent::EventTurnOutputDelta {
                         jsonrpc: "2.0".to_string(),
                         params: TurnOutputDeltaEvent {
-                            turn: resource(&route, &format!("{conversation_id}-turn")),
-                            conversation: resource(&route, conversation_id),
+                            turn: provider_resource(&route, &format!("{conversation_id}-turn")),
+                            conversation: provider_resource(&route, conversation_id),
                             item_id,
                             content_id,
                             kind: ConversationContentKind::Text,
@@ -893,8 +897,8 @@ fn choice(id: &str, display_name: &str) -> ChoiceOption {
     }
 }
 
-fn conversation(route: &ProviderInstanceRoute, native_id: &str) -> ProviderConversation {
-    ProviderConversation {
+fn conversation(route: &ProviderInstanceRoute, native_id: &str) -> Conversation {
+    Conversation {
         resource: resource(route, native_id),
         project: None,
         title: format!("Fake {native_id}"),
@@ -915,7 +919,7 @@ fn conversation(route: &ProviderInstanceRoute, native_id: &str) -> ProviderConve
         created_at: Some(1),
         updated_at: Some(2),
         active_turn: None,
-        extension: None,
+        read_state: None,
     }
 }
 
@@ -981,8 +985,8 @@ fn turn(
     route: &ProviderInstanceRoute,
     native_id: &str,
     conversation: RoutedResourceId,
-) -> ProviderTurn {
-    ProviderTurn {
+) -> TurnTask {
+    TurnTask {
         resource: resource(route, native_id),
         conversation,
         status: TurnStatus::Running,
@@ -990,12 +994,18 @@ fn turn(
         started_at: Some(2),
         updated_at: Some(3),
         completed_at: None,
-        extension: None,
     }
 }
 
 fn resource(route: &ProviderInstanceRoute, native_id: &str) -> RoutedResourceId {
     RoutedResourceId {
+        provider_id: route.provider_instance_id.clone(),
+        native_resource_id: native_id.to_string(),
+    }
+}
+
+fn provider_resource(route: &ProviderInstanceRoute, native_id: &str) -> ProviderResourceId {
+    ProviderResourceId {
         device_id: route.device_id.clone(),
         provider_plugin_id: route.provider_plugin_id.clone(),
         provider_instance_id: route.provider_instance_id.clone(),
@@ -1003,7 +1013,7 @@ fn resource(route: &ProviderInstanceRoute, native_id: &str) -> RoutedResourceId 
     }
 }
 
-fn route_from_resource(resource: &RoutedResourceId) -> ProviderInstanceRoute {
+fn route_from_resource(resource: &ProviderResourceId) -> ProviderInstanceRoute {
     ProviderInstanceRoute {
         device_id: resource.device_id.clone(),
         provider_plugin_id: resource.provider_plugin_id.clone(),

@@ -7,7 +7,8 @@ use codepet_provider_sdk::{
     ConversationListRequest, ConversationProjectFilter, ConversationProjectFilterAll,
     ConversationProjectFilterAllKind, GroupedModelCatalogKind, GroupedModelSelection, InstanceCreateRequest,
     InstanceStartRequest, InstanceStatus, InstanceStopRequest, ProtocolEvent,
-    ModelSelection, ProtocolServer, ProviderInitializeRequest, ProviderInstanceRoute, RoutedResourceId,
+    ModelSelection, ProtocolServer, ProviderInitializeRequest, ProviderInstanceRoute,
+    ProviderResourceId, RoutedResourceId,
     TurnInput, TurnInputKind, TurnInterruptRequest, TurnSelection, TurnStartRequest, TurnStatus,
     TurnSteerRequest, VersionRange, PROTOCOL_VERSION,
 };
@@ -28,7 +29,7 @@ fn all_project_filter() -> ConversationProjectFilter {
 }
 
 fn turn_start_request(
-    conversation: RoutedResourceId,
+    conversation: ProviderResourceId,
     client_request_id: &str,
     message: &str,
 ) -> TurnStartRequest {
@@ -220,7 +221,14 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         .unwrap();
     assert_eq!(successful_turn.effective_selection.access_mode_id.as_deref(), Some("plan"));
     assert_eq!(successful_turn.effective_selection.reasoning_effort_id.as_deref(), Some("high"));
-    assert_eq!(successful_turn.turn.conversation, fixture_conversation);
+    assert_eq!(
+        successful_turn.turn.conversation.provider_id,
+        fixture_conversation.provider_instance_id
+    );
+    assert_eq!(
+        successful_turn.turn.conversation.native_resource_id,
+        fixture_conversation.native_resource_id
+    );
     assert_eq!(successful_turn.turn.started_at, None);
     let completed = wait_for_turn_status(
         &event_receiver,
@@ -238,7 +246,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     let created_conversation = new_conversation.conversation.resource.clone();
     let same_client_other_session = provider
         .turn_start(turn_start_request(
-            created_conversation.clone(),
+            provider_resource(&route, &created_conversation),
             "shared-client-id",
             "complete normally",
         ))
@@ -310,7 +318,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     provider
         .turn_interrupt(TurnInterruptRequest {
             conversation: fixture_conversation.clone(),
-            turn: delayed.turn.resource,
+            turn: provider_resource(&route, &delayed.turn.resource),
         })
         .await
         .unwrap();
@@ -389,7 +397,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     let approval_resource = approval.resource.clone();
     let resolved = provider
         .approval_resolve(ApprovalResolveRequest {
-            approval: approval_resource.clone(),
+            approval: provider_resource(&route, &approval_resource),
             decision: ApprovalDecision::Approve,
         })
         .await
@@ -397,7 +405,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     assert_eq!(resolved.approval.decision, Some(ApprovalDecision::Approve));
     let repeated = provider
         .approval_resolve(ApprovalResolveRequest {
-            approval: approval_resource,
+            approval: provider_resource(&route, &approval_resource),
             decision: ApprovalDecision::Approve,
         })
         .await
@@ -407,7 +415,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     let steered = provider
         .turn_steer(TurnSteerRequest {
             conversation: fixture_conversation.clone(),
-            turn: started_turn.turn.resource.clone(),
+            turn: provider_resource(&route, &started_turn.turn.resource),
             client_message_id: "client-steer-1".to_string(),
             message: "steer fixture".to_string(),
         })
@@ -418,7 +426,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     let interrupted = provider
         .turn_interrupt(TurnInterruptRequest {
             conversation: fixture_conversation.clone(),
-            turn: started_turn.turn.resource,
+            turn: provider_resource(&route, &started_turn.turn.resource),
         })
         .await
         .unwrap();
@@ -426,7 +434,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
 
     let idle_turn = provider
         .turn_start(turn_start_request(
-            created_conversation.clone(),
+            provider_resource(&route, &created_conversation),
             "idle-interrupt",
             "idle interrupt",
         ))
@@ -435,8 +443,8 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     wait_for_turn_status(&event_receiver, &idle_turn.turn.resource, TurnStatus::Running);
     let idle_interrupt = provider
         .turn_interrupt(TurnInterruptRequest {
-            conversation: created_conversation,
-            turn: idle_turn.turn.resource,
+            conversation: provider_resource(&route, &created_conversation),
+            turn: provider_resource(&route, &idle_turn.turn.resource),
         })
         .await
         .unwrap();
@@ -491,7 +499,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     assert_ne!(stale_turn.turn.resource, current_turn.turn.resource);
     let stale_approval_error = provider
         .approval_resolve(ApprovalResolveRequest {
-            approval: stale_approval,
+            approval: provider_resource(&route, &stale_approval),
             decision: ApprovalDecision::Deny,
         })
         .await
@@ -500,7 +508,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     let stale_turn_error = provider
         .turn_interrupt(TurnInterruptRequest {
             conversation: fixture_conversation.clone(),
-            turn: stale_turn.turn.resource,
+            turn: provider_resource(&route, &stale_turn.turn.resource),
         })
         .await
         .unwrap_err();
@@ -508,7 +516,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     provider
         .turn_interrupt(TurnInterruptRequest {
             conversation: fixture_conversation.clone(),
-            turn: current_turn.turn.resource,
+            turn: provider_resource(&route, &current_turn.turn.resource),
         })
         .await
         .unwrap();
@@ -685,8 +693,8 @@ fn assert_process_exited(pid: i32) {
 #[cfg(not(unix))]
 fn assert_process_exited(_pid: i32) {}
 
-fn resource(route: &ProviderInstanceRoute, native_resource_id: &str) -> RoutedResourceId {
-    RoutedResourceId {
+fn resource(route: &ProviderInstanceRoute, native_resource_id: &str) -> ProviderResourceId {
+    ProviderResourceId {
         device_id: route.device_id.clone(),
         provider_plugin_id: route.provider_plugin_id.clone(),
         provider_instance_id: route.provider_instance_id.clone(),
@@ -694,11 +702,23 @@ fn resource(route: &ProviderInstanceRoute, native_resource_id: &str) -> RoutedRe
     }
 }
 
+fn provider_resource(
+    route: &ProviderInstanceRoute,
+    resource: &RoutedResourceId,
+) -> ProviderResourceId {
+    ProviderResourceId {
+        device_id: route.device_id.clone(),
+        provider_plugin_id: route.provider_plugin_id.clone(),
+        provider_instance_id: route.provider_instance_id.clone(),
+        native_resource_id: resource.native_resource_id.clone(),
+    }
+}
+
 fn wait_for_turn_status(
     receiver: &mpsc::Receiver<ProtocolEvent>,
     resource: &RoutedResourceId,
     status: TurnStatus,
-) -> codepet_provider_sdk::ProviderTurn {
+) -> codepet_provider_sdk::TurnTask {
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -717,7 +737,7 @@ fn wait_for_turn_status(
 fn wait_for_conversation(
     receiver: &mpsc::Receiver<ProtocolEvent>,
     native_resource_id: &str,
-) -> codepet_provider_sdk::ProviderConversation {
+) -> codepet_provider_sdk::Conversation {
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(Instant::now());

@@ -10,10 +10,10 @@ use codepet_provider_sdk::{
     ContentBlock, ConversationContentKind, ConversationCreateCapabilities, ConversationItem,
     ConversationItemRole, ConversationItemStatus, ConversationStatus, HarnessDescriptor,
     GroupedModelCatalog, GroupedModelCatalogKind, GroupedModelProvider, GroupedModelSelection,
-    InstanceStatus, ModelCatalog, ModelSelection, ProtocolError, ProtocolEvent, ProviderApproval, ProviderCapabilities,
-    ProviderCapability, ProviderConversation, ProviderInstance, ProviderInstanceRoute,
+    InstanceStatus, ModelCatalog, ModelSelection, ProtocolError, ProtocolEvent, Approval, ProviderCapabilities,
+    ProviderCapability, Conversation, ProviderInstance, ProviderInstanceRoute, ProviderResourceId,
     MessageConversationItem, MessageConversationItemKind, OpaqueToolInput, OpaqueToolInputKind,
-    OutputContentBlock, OutputContentBlockKind, ProviderTurn, ReasoningConversationItem,
+    OutputContentBlock, OutputContentBlockKind, TurnTask, ReasoningConversationItem,
     ReasoningConversationItemKind, RoutedResourceId, StructuredJsonContentBlock,
     StructuredJsonContentBlockKind, StructuredToolInput, StructuredToolInputKind,
     TextContentBlock, TextContentBlockKind, ToolCategory, ToolConversationItem,
@@ -255,9 +255,9 @@ impl OpenCodeProtocolMapper {
         &self,
         session: &OpenCodeSession,
         server_active: bool,
-        active_turn: Option<ProviderTurn>,
+        active_turn: Option<TurnTask>,
         waiting_approval: bool,
-    ) -> ProviderConversation {
+    ) -> Conversation {
         let status = if session.time.archived.is_some() {
             ConversationStatus::Archived
         } else if waiting_approval {
@@ -267,7 +267,7 @@ impl OpenCodeProtocolMapper {
         } else {
             ConversationStatus::Idle
         };
-        ProviderConversation {
+        Conversation {
             resource: self.resource(session.id.clone()),
             project: None,
             title: if session.title.trim().is_empty() {
@@ -285,14 +285,14 @@ impl OpenCodeProtocolMapper {
             created_at: Some(session.time.created),
             updated_at: Some(session.time.updated),
             active_turn,
-            extension: None,
+            read_state: None,
         }
     }
 
     pub fn user_message_item(
         &self,
         conversation: &RoutedResourceId,
-        turn: &ProviderTurn,
+        turn: &TurnTask,
         item_id: String,
         text: String,
     ) -> ConversationItem {
@@ -449,8 +449,8 @@ impl OpenCodeProtocolMapper {
         started_at: Option<u64>,
         updated_at: Option<u64>,
         completed_at: Option<u64>,
-    ) -> ProviderTurn {
-        ProviderTurn {
+    ) -> TurnTask {
+        TurnTask {
             resource: self.resource(turn_id.to_string()),
             conversation: self.resource(conversation_id.to_string()),
             status,
@@ -458,17 +458,16 @@ impl OpenCodeProtocolMapper {
             started_at,
             updated_at,
             completed_at,
-            extension: None,
         }
     }
 
     pub fn approval(
         &self,
         request: &OpenCodePermissionAskedEventData,
-        turn: &ProviderTurn,
+        turn: &TurnTask,
         approval_resource_id: String,
-    ) -> ProviderApproval {
-        ProviderApproval {
+    ) -> Approval {
+        Approval {
             resource: self.resource(approval_resource_id),
             conversation: self.resource(request.session_id.clone()),
             turn: turn.resource.clone(),
@@ -480,11 +479,10 @@ impl OpenCodeProtocolMapper {
             requested_at: None,
             resolved_at: None,
             decision: None,
-            extension: None,
         }
     }
 
-    pub fn turn_event(&self, turn: ProviderTurn) -> ProtocolEvent {
+    pub fn turn_event(&self, turn: TurnTask) -> ProtocolEvent {
         ProtocolEvent::EventTurnUpserted {
             jsonrpc: "2.0".to_string(),
             params: TurnUpsertedEvent { turn },
@@ -493,7 +491,7 @@ impl OpenCodeProtocolMapper {
 
     pub fn delta_event(
         &self,
-        turn: &ProviderTurn,
+        turn: &TurnTask,
         item_id: String,
         content_id: String,
         kind: ConversationContentKind,
@@ -502,8 +500,10 @@ impl OpenCodeProtocolMapper {
         ProtocolEvent::EventTurnOutputDelta {
             jsonrpc: "2.0".to_string(),
             params: TurnOutputDeltaEvent {
-                turn: turn.resource.clone(),
-                conversation: turn.conversation.clone(),
+                turn: self.provider_resource(turn.resource.native_resource_id.clone()),
+                conversation: self.provider_resource(
+                    turn.conversation.native_resource_id.clone(),
+                ),
                 item_id,
                 content_id,
                 kind,
@@ -513,7 +513,7 @@ impl OpenCodeProtocolMapper {
         }
     }
 
-    pub fn approval_requested_event(&self, approval: ProviderApproval) -> ProtocolEvent {
+    pub fn approval_requested_event(&self, approval: Approval) -> ProtocolEvent {
         ProtocolEvent::EventApprovalRequested {
             jsonrpc: "2.0".to_string(),
             params: ApprovalRequestedEvent { approval },
@@ -522,10 +522,10 @@ impl OpenCodeProtocolMapper {
 
     pub fn resolve_approval(
         &self,
-        mut approval: ProviderApproval,
+        mut approval: Approval,
         decision: ApprovalDecision,
         resolved_at: Option<u64>,
-    ) -> (ProviderApproval, ProtocolEvent) {
+    ) -> (Approval, ProtocolEvent) {
         approval.status = match decision {
             ApprovalDecision::Approve => ApprovalStatus::Approved,
             ApprovalDecision::Deny => ApprovalStatus::Denied,
@@ -543,9 +543,9 @@ impl OpenCodeProtocolMapper {
 
     pub fn expire_approval(
         &self,
-        mut approval: ProviderApproval,
+        mut approval: Approval,
         resolved_at: Option<u64>,
-    ) -> (ProviderApproval, ProtocolEvent) {
+    ) -> (Approval, ProtocolEvent) {
         approval.status = ApprovalStatus::Expired;
         approval.resolved_at = resolved_at;
         let event = ProtocolEvent::EventApprovalResolved {
@@ -559,6 +559,13 @@ impl OpenCodeProtocolMapper {
 
     pub fn resource(&self, native_resource_id: String) -> RoutedResourceId {
         RoutedResourceId {
+            provider_id: self.route.provider_instance_id.clone(),
+            native_resource_id,
+        }
+    }
+
+    fn provider_resource(&self, native_resource_id: String) -> ProviderResourceId {
+        ProviderResourceId {
             device_id: self.route.device_id.clone(),
             provider_plugin_id: self.route.provider_plugin_id.clone(),
             provider_instance_id: self.route.provider_instance_id.clone(),
@@ -686,7 +693,6 @@ fn opencode_tool_invocation(content: &OpenCodeMessageContent) -> ToolInvocation 
             duration_ms: time.completed.and_then(|completed| completed.checked_sub(time.created)),
         }),
         annotations: None,
-        extension: None,
     }
 }
 
@@ -784,7 +790,6 @@ fn shell_tool_invocation(message: &OpenCodeMessage) -> ToolInvocation {
             duration_ms: message.time.completed.and_then(|completed| completed.checked_sub(message.time.created)),
         }),
         annotations: None,
-        extension: None,
     }
 }
 

@@ -2,7 +2,7 @@ use codepet_host::{PluginDescriptor, PluginProcess, PluginProcessOptions};
 use codepet_provider_sdk::{
     ConversationGetRequest, InstanceCreateRequest, InstanceDestroyRequest, InstanceStartRequest,
     InstanceStatus, InstanceStopRequest, JsonObject, ProtocolEvent, ProviderDescribeRequest,
-    ProviderInitializeRequest, ProviderInstanceRoute, RoutedResourceId, VersionRange,
+    ProviderInitializeRequest, ProviderInstanceRoute, ProviderResourceId, VersionRange,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -79,8 +79,8 @@ async fn ready_process(plugin_id: &str, instance_id: &str) -> PluginProcess {
     process
 }
 
-fn conversation(plugin_id: &str, instance_id: &str, native_id: &str) -> RoutedResourceId {
-    RoutedResourceId {
+fn conversation(plugin_id: &str, instance_id: &str, native_id: &str) -> ProviderResourceId {
+    ProviderResourceId {
         device_id: "device-test".to_string(),
         provider_plugin_id: plugin_id.to_string(),
         provider_instance_id: instance_id.to_string(),

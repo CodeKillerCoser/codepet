@@ -322,10 +322,10 @@ impl ProviderGatewayService {
     async fn resolve_resource(
         &self,
         resource: gateway::RoutedResourceId,
-    ) -> Result<provider::RoutedResourceId, gateway::ProtocolError> {
+    ) -> Result<provider::ProviderResourceId, gateway::ProtocolError> {
         validate_gateway_resource(&resource)?;
         let route = self.resolve_provider_route(&resource.provider_id).await?;
-        Ok(provider::RoutedResourceId {
+        Ok(provider::ProviderResourceId {
             device_id: route.device_id,
             provider_plugin_id: route.provider_plugin_id,
             provider_instance_id: route.provider_instance_id,
@@ -593,12 +593,8 @@ impl ProviderGatewayService {
                     params: gateway::ProtocolEventParams {
                         event_cursor: event_cursor(0),
                         payload: gateway::ProjectChangedEvent {
-                            project: map_resource(params.project),
-                            change_type: match params.change_type {
-                                provider::ProjectChangeType::Created => gateway::ProjectChangeType::Created,
-                                provider::ProjectChangeType::Updated => gateway::ProjectChangeType::Updated,
-                                provider::ProjectChangeType::Deleted => gateway::ProjectChangeType::Deleted,
-                            },
+                            project: gateway_resource(params.project),
+                            change_type: params.change_type,
                         },
                     },
                 }
@@ -609,7 +605,7 @@ impl ProviderGatewayService {
                     params: gateway::ProtocolEventParams {
                         event_cursor: event_cursor(0),
                         payload: gateway::ConversationUpsertedEvent {
-                            conversation: map_conversation(params.conversation),
+                            conversation: sanitize_provider_conversation(params.conversation),
                         },
                     },
                 }
@@ -620,7 +616,7 @@ impl ProviderGatewayService {
                     params: gateway::ProtocolEventParams {
                         event_cursor: event_cursor(0),
                         payload: gateway::ConversationItemUpsertedEvent {
-                            item: map_conversation_item(params.item),
+                            item: params.item,
                         },
                     },
                 }
@@ -631,7 +627,7 @@ impl ProviderGatewayService {
                     params: gateway::ProtocolEventParams {
                         event_cursor: event_cursor(0),
                         payload: gateway::TurnUpsertedEvent {
-                            turn: map_turn(params.turn),
+                            turn: params.turn,
                         },
                     },
                 }
@@ -642,11 +638,11 @@ impl ProviderGatewayService {
                     params: gateway::ProtocolEventParams {
                         event_cursor: event_cursor(0),
                         payload: gateway::TurnOutputDeltaEvent {
-                            turn: map_resource(params.turn),
-                            conversation: map_resource(params.conversation),
+                            turn: gateway_resource(params.turn),
+                            conversation: gateway_resource(params.conversation),
                             item_id: params.item_id,
                             content_id: params.content_id,
-                            kind: map_conversation_content_kind(params.kind),
+                            kind: params.kind,
                             delta: params.delta,
                         },
                     },
@@ -658,7 +654,7 @@ impl ProviderGatewayService {
                     params: gateway::ProtocolEventParams {
                         event_cursor: event_cursor(0),
                         payload: gateway::ApprovalRequestedEvent {
-                            approval: map_approval(params.approval),
+                            approval: params.approval,
                         },
                     },
                 }
@@ -669,7 +665,7 @@ impl ProviderGatewayService {
                     params: gateway::ProtocolEventParams {
                         event_cursor: event_cursor(0),
                         payload: gateway::ApprovalResolvedEvent {
-                            approval: map_approval(params.approval),
+                            approval: params.approval,
                         },
                     },
                 }
@@ -785,8 +781,8 @@ impl ProviderGatewayService {
                 conversation: expected_conversation.clone(),
                 client_request_id: request.client_request_id,
                 capability_revision: request.capability_revision,
-                input: map_turn_input_to_provider(request.input),
-                selection: map_turn_selection_to_provider(request.selection),
+                input: request.input,
+                selection: request.selection,
             })
             .await
             .map_err(gateway_error)?;
@@ -813,9 +809,9 @@ impl ProviderGatewayService {
                 }
             };
             ensure_same_resource_identity(&provider_user_item.conversation, &expected_conversation)?;
-            ensure_same_resource_identity(&provider_user_item.turn, &response.turn.resource)?;
+            ensure_same_agent_resource_identity(&provider_user_item.turn, &response.turn.resource)?;
             ensure_same_provider_route(&provider_user_item.resource, &expected_conversation)?;
-            if provider_user_item.role != provider::ConversationItemRole::User {
+            if provider_user_item.role != gateway::ConversationItemRole::User {
                 return Err(gateway::ProtocolError {
                     code: "provider_response_invalid".to_string(),
                     message: "Provider turn.start userItem must be canonical when present"
@@ -825,12 +821,12 @@ impl ProviderGatewayService {
                 });
             }
         }
-        let effective_selection = map_turn_selection_to_gateway(response.effective_selection);
+        let effective_selection = response.effective_selection;
         validate_gateway_turn_selection(&provider_instance.capabilities, &effective_selection)?;
         Ok(gateway::TurnSendResponse {
             accepted: true,
-            turn: map_turn(response.turn),
-            user_item: response.user_item.map(map_conversation_item),
+            turn: response.turn,
+            user_item: response.user_item,
             effective_selection,
         })
     }
@@ -969,7 +965,7 @@ impl ProtocolServer for ProviderGatewayService {
                 .await
                 .map_err(gateway_error)?;
             Ok(gateway::ProjectListResponse {
-                projects: response.projects.into_iter().map(map_project).collect(),
+                projects: response.projects,
                 page_info: gateway::PageInfo {
                     next_cursor: response.page_info.next_cursor,
                 },
@@ -992,7 +988,7 @@ impl ProtocolServer for ProviderGatewayService {
                 .await
                 .map_err(gateway_error)?;
             Ok(gateway::ProjectGetResponse {
-                project: map_project(response.project),
+                project: response.project,
             })
         })
     }
@@ -1012,14 +1008,13 @@ impl ProtocolServer for ProviderGatewayService {
                     roots: request
                         .roots
                         .into_iter()
-                        .map(|root| provider::ProjectRoot { path: root.path })
                         .collect(),
                     metadata: request.metadata,
                 })
                 .await
                 .map_err(gateway_error)?;
             Ok(gateway::ProjectCreateResponse {
-                project: map_project(response.project),
+                project: response.project,
             })
         })
     }
@@ -1036,17 +1031,14 @@ impl ProtocolServer for ProviderGatewayService {
                     project,
                     name: request.name,
                     roots: request.roots.map(|roots| {
-                        roots
-                            .into_iter()
-                            .map(|root| provider::ProjectRoot { path: root.path })
-                            .collect()
+                        roots.into_iter().collect()
                     }),
                     metadata: request.metadata,
                 })
                 .await
                 .map_err(gateway_error)?;
             Ok(gateway::ProjectUpdateResponse {
-                project: map_project(response.project),
+                project: response.project,
             })
         })
     }
@@ -1103,7 +1095,7 @@ impl ProtocolServer for ProviderGatewayService {
                 .map_err(gateway_error)?;
             let mut conversations = Vec::with_capacity(response.conversations.len());
             for conversation in response.conversations {
-                let mut conversation = map_conversation(conversation);
+                let mut conversation = sanitize_provider_conversation(conversation);
                 self.conversation_state
                     .observe_summary(&conversation)
                     .map_err(gateway_error)?;
@@ -1149,7 +1141,7 @@ impl ProtocolServer for ProviderGatewayService {
                 .map_err(gateway_error)?;
             let mut conversations = Vec::with_capacity(response.conversations.len());
             for conversation in response.conversations {
-                let mut conversation = map_conversation(conversation);
+                let mut conversation = sanitize_provider_conversation(conversation);
                 self.conversation_state
                     .observe_summary(&conversation)
                     .map_err(gateway_error)?;
@@ -1184,12 +1176,8 @@ impl ProtocolServer for ProviderGatewayService {
                 })
                 .await
                 .map_err(gateway_error)?;
-            let mut conversation = map_conversation(response.conversation);
-            let items = response
-                .items
-                .into_iter()
-                .map(map_conversation_item)
-                .collect::<Vec<_>>();
+            let mut conversation = sanitize_provider_conversation(response.conversation);
+            let items = response.items;
             self.conversation_state
                 .observe_summary(&conversation)
                 .map_err(gateway_error)?;
@@ -1226,7 +1214,7 @@ impl ProtocolServer for ProviderGatewayService {
                 .await
                 .map_err(gateway_error)?;
             Ok(gateway::ConversationAcquireInteractionResponse {
-                selection: map_turn_selection_to_gateway(response.selection),
+                selection: response.selection,
                 lease_expires_at: response.lease_expires_at,
             })
         })
@@ -1275,7 +1263,7 @@ impl ProtocolServer for ProviderGatewayService {
                 .await
                 .map_err(gateway_error)?;
             Ok(gateway::ConversationCreateResponse {
-                conversation: map_conversation(response.conversation),
+                conversation: sanitize_provider_conversation(response.conversation),
             })
         })
     }
@@ -1307,7 +1295,7 @@ impl ProtocolServer for ProviderGatewayService {
                 .await
                 .map_err(gateway_error)?;
             Ok(gateway::TurnInterruptResponse {
-                turn: map_turn(response.turn),
+                turn: response.turn,
             })
         })
     }
@@ -1322,15 +1310,12 @@ impl ProtocolServer for ProviderGatewayService {
                 .manager
                 .approval_resolve(provider::ApprovalResolveRequest {
                     approval,
-                    decision: match request.decision {
-                        gateway::ApprovalDecision::Approve => provider::ApprovalDecision::Approve,
-                        gateway::ApprovalDecision::Deny => provider::ApprovalDecision::Deny,
-                    },
+                    decision: request.decision,
                 })
                 .await
                 .map_err(gateway_error)?;
             Ok(gateway::ApprovalResolveResponse {
-                approval: map_approval(response.approval),
+                approval: response.approval,
             })
         })
     }
@@ -1384,7 +1369,7 @@ fn gateway_provider(
                     .instance
                     .as_ref()
                     .and_then(|instance| instance.authentication.as_ref())
-                    .map(map_authentication),
+                    .cloned(),
                 usage: runtime
                     .instance
                     .as_ref()
@@ -1405,20 +1390,6 @@ fn configured_executable_path(settings: &provider::JsonObject) -> Option<String>
         .find_map(|key| settings.get(key).and_then(|value| value.as_str()))
         .filter(|path| !path.trim().is_empty())
         .map(ToOwned::to_owned)
-}
-
-fn map_authentication(authentication: &provider::ProviderAuthentication) -> gateway::ProviderAuthentication {
-    gateway::ProviderAuthentication {
-        status: match authentication.status {
-            provider::ProviderAuthenticationStatus::Unknown => gateway::ProviderAuthenticationStatus::Unknown,
-            provider::ProviderAuthenticationStatus::SignedIn => gateway::ProviderAuthenticationStatus::SignedIn,
-            provider::ProviderAuthenticationStatus::SignedOut => gateway::ProviderAuthenticationStatus::SignedOut,
-            provider::ProviderAuthenticationStatus::Expired => gateway::ProviderAuthenticationStatus::Expired,
-            provider::ProviderAuthenticationStatus::Error => gateway::ProviderAuthenticationStatus::Error,
-            provider::ProviderAuthenticationStatus::Unsupported => gateway::ProviderAuthenticationStatus::Unsupported,
-        },
-        display_text: authentication.display_text.clone(),
-    }
 }
 
 fn map_usage(usage: &provider::ProviderUsage) -> gateway::ProviderUsage {
@@ -1558,11 +1529,8 @@ fn map_capabilities(capabilities: &provider::ProviderCapabilities) -> gateway::G
     gateway::GatewayCapabilities {
         revision: capabilities.revision.clone(),
         methods,
-        turn_send: capabilities.turn_send.as_ref().map(map_turn_send_capabilities),
-        conversation_create: capabilities
-            .conversation_create
-            .as_ref()
-            .map(map_conversation_create_capabilities),
+        turn_send: capabilities.turn_send.clone(),
+        conversation_create: capabilities.conversation_create.clone(),
     }
 }
 
@@ -1575,539 +1543,15 @@ fn empty_gateway_capabilities(revision: String) -> gateway::GatewayCapabilities 
     }
 }
 
-fn map_conversation_create_capabilities(
-    capabilities: &provider::ConversationCreateCapabilities,
-) -> gateway::ConversationCreateCapabilities {
-    gateway::ConversationCreateCapabilities {
-        supports_title: capabilities.supports_title,
-        selection: capabilities
-            .selection
-            .as_ref()
-            .map(map_turn_send_capabilities),
-        workspace_mode: capabilities.workspace_mode.as_ref().map(map_choice_set),
-    }
+fn sanitize_provider_conversation(mut conversation: gateway::Conversation) -> gateway::Conversation {
+    conversation.read_state = None;
+    conversation
 }
 
-fn map_turn_send_capabilities(
-    capabilities: &provider::TurnSendCapabilities,
-) -> gateway::TurnSendCapabilities {
-    gateway::TurnSendCapabilities {
-        access_mode: capabilities.access_mode.as_ref().map(map_choice_set),
-        reasoning_effort: capabilities.reasoning_effort.as_ref().map(map_choice_set),
-        model_catalog: capabilities.model_catalog.as_ref().map(map_model_catalog),
-    }
-}
-
-fn map_choice_set(choice_set: &provider::ChoiceSet) -> gateway::ChoiceSet {
-    gateway::ChoiceSet {
-        options: choice_set.options.iter().map(map_choice_option).collect(),
-        default_id: choice_set.default_id.clone(),
-    }
-}
-
-fn map_choice_option(option: &provider::ChoiceOption) -> gateway::ChoiceOption {
-    gateway::ChoiceOption {
-        id: option.id.clone(),
-        display_name: option.display_name.clone(),
-        description: option.description.clone(),
-        enabled: option.enabled,
-        disabled_reason: option.disabled_reason.clone(),
-    }
-}
-
-fn map_model_catalog(catalog: &provider::ModelCatalog) -> gateway::ModelCatalog {
-    match catalog {
-        provider::ModelCatalog::FlatModelCatalog(catalog) => {
-            gateway::ModelCatalog::FlatModelCatalog(gateway::FlatModelCatalog {
-                kind: gateway::FlatModelCatalogKind::Flat,
-                models: catalog.models.iter().map(map_choice_option).collect(),
-                default_selection: catalog
-                    .default_selection
-                    .as_ref()
-                    .map(map_flat_model_selection_to_gateway),
-            })
-        }
-        provider::ModelCatalog::GroupedModelCatalog(catalog) => {
-            gateway::ModelCatalog::GroupedModelCatalog(gateway::GroupedModelCatalog {
-                kind: gateway::GroupedModelCatalogKind::Grouped,
-                providers: catalog
-                    .providers
-                    .iter()
-                    .map(|group| gateway::GroupedModelProvider {
-                        id: group.id.clone(),
-                        display_name: group.display_name.clone(),
-                        description: group.description.clone(),
-                        models: group.models.iter().map(map_choice_option).collect(),
-                    })
-                    .collect(),
-                default_selection: catalog
-                    .default_selection
-                    .as_ref()
-                    .map(map_grouped_model_selection_to_gateway),
-            })
-        }
-    }
-}
-
-fn map_flat_model_selection_to_gateway(
-    selection: &provider::FlatModelSelection,
-) -> gateway::FlatModelSelection {
-    gateway::FlatModelSelection {
-        kind: gateway::FlatModelCatalogKind::Flat,
-        model_id: selection.model_id.clone(),
-    }
-}
-
-fn map_grouped_model_selection_to_gateway(
-    selection: &provider::GroupedModelSelection,
-) -> gateway::GroupedModelSelection {
-    gateway::GroupedModelSelection {
-        kind: gateway::GroupedModelCatalogKind::Grouped,
-        provider_id: selection.provider_id.clone(),
-        model_id: selection.model_id.clone(),
-    }
-}
-
-fn map_conversation(conversation: provider::ProviderConversation) -> gateway::Conversation {
-    gateway::Conversation {
-        resource: map_resource(conversation.resource),
-        project: conversation.project.map(map_resource),
-        title: conversation.title,
-        preview: conversation.preview,
-        status: match conversation.status {
-            provider::ConversationStatus::Idle => gateway::ConversationStatus::Idle,
-            provider::ConversationStatus::Running => gateway::ConversationStatus::Running,
-            provider::ConversationStatus::WaitingApproval => {
-                gateway::ConversationStatus::WaitingApproval
-            }
-            provider::ConversationStatus::WaitingUserInput => {
-                gateway::ConversationStatus::WaitingUserInput
-            }
-            provider::ConversationStatus::Error => gateway::ConversationStatus::Error,
-            provider::ConversationStatus::Archived => gateway::ConversationStatus::Archived,
-        },
-        permission_level: conversation.permission_level,
-        model: conversation.model,
-        reasoning_effort: conversation.reasoning_effort,
-        selection: conversation.selection.map(map_turn_selection_to_gateway),
-        workspace_root: conversation.workspace_root,
-        created_at: conversation.created_at,
-        updated_at: conversation.updated_at,
-        active_turn: conversation.active_turn.map(map_turn),
-        read_state: None,
-    }
-}
-
-fn map_turn(turn: provider::ProviderTurn) -> gateway::TurnTask {
-    gateway::TurnTask {
-        resource: map_resource(turn.resource),
-        conversation: map_resource(turn.conversation),
-        status: match turn.status {
-            provider::TurnStatus::Queued => gateway::TurnStatus::Queued,
-            provider::TurnStatus::Running => gateway::TurnStatus::Running,
-            provider::TurnStatus::WaitingApproval => gateway::TurnStatus::WaitingApproval,
-            provider::TurnStatus::Completed => gateway::TurnStatus::Completed,
-            provider::TurnStatus::Failed => gateway::TurnStatus::Failed,
-            provider::TurnStatus::Interrupted => gateway::TurnStatus::Interrupted,
-        },
-        display_summary: turn.display_summary,
-        started_at: turn.started_at,
-        updated_at: turn.updated_at,
-        completed_at: turn.completed_at,
-    }
-}
-
-fn map_project(project: provider::Project) -> gateway::Project {
-    gateway::Project {
-        resource: map_resource(project.resource),
-        name: project.name,
-        roots: project
-            .roots
-            .into_iter()
-            .map(|root| gateway::ProjectRoot { path: root.path })
-            .collect(),
-        metadata: project.metadata,
-        position: project.position,
-        created_at: project.created_at,
-        updated_at: project.updated_at,
-    }
-}
-
-fn map_conversation_item(item: provider::ConversationItem) -> gateway::ConversationItem {
-    match item {
-        provider::ConversationItem::MessageConversationItem(item) => gateway::ConversationItem::MessageConversationItem(gateway::MessageConversationItem {
-            resource: map_resource(item.resource), turn: map_resource(item.turn), conversation: map_resource(item.conversation),
-            kind: gateway::MessageConversationItemKind::Message, status: map_conversation_item_status(item.status),
-            role: map_conversation_item_role(item.role), contents: item.contents.into_iter().map(map_content_block).collect(),
-        }),
-        provider::ConversationItem::ReasoningConversationItem(item) => gateway::ConversationItem::ReasoningConversationItem(gateway::ReasoningConversationItem {
-            resource: map_resource(item.resource), turn: map_resource(item.turn), conversation: map_resource(item.conversation),
-            kind: gateway::ReasoningConversationItemKind::Reasoning, status: map_conversation_item_status(item.status),
-            contents: item.contents.into_iter().map(map_content_block).collect(),
-        }),
-        provider::ConversationItem::CommandConversationItem(item) => gateway::ConversationItem::CommandConversationItem(gateway::CommandConversationItem {
-            resource: map_resource(item.resource), turn: map_resource(item.turn), conversation: map_resource(item.conversation),
-            kind: gateway::CommandConversationItemKind::Command, status: map_conversation_item_status(item.status),
-            title: item.title, tool: map_tool_invocation(item.tool),
-        }),
-        provider::ConversationItem::FileChangeConversationItem(item) => gateway::ConversationItem::FileChangeConversationItem(gateway::FileChangeConversationItem {
-            resource: map_resource(item.resource), turn: map_resource(item.turn), conversation: map_resource(item.conversation),
-            kind: gateway::FileChangeConversationItemKind::FileChange, status: map_conversation_item_status(item.status),
-            title: item.title, contents: item.contents.into_iter().map(map_content_block).collect(),
-        }),
-        provider::ConversationItem::ToolConversationItem(item) => gateway::ConversationItem::ToolConversationItem(gateway::ToolConversationItem {
-            resource: map_resource(item.resource), turn: map_resource(item.turn), conversation: map_resource(item.conversation),
-            kind: gateway::ToolConversationItemKind::Tool, status: map_conversation_item_status(item.status),
-            title: item.title, tool: map_tool_invocation(item.tool),
-        }),
-        provider::ConversationItem::ApprovalConversationItem(item) => gateway::ConversationItem::ApprovalConversationItem(gateway::ApprovalConversationItem {
-            resource: map_resource(item.resource), turn: map_resource(item.turn), conversation: map_resource(item.conversation),
-            kind: gateway::ApprovalConversationItemKind::Approval, status: map_conversation_item_status(item.status),
-            title: item.title, related_item: item.related_item.map(map_resource), approval: map_approval(item.approval),
-        }),
-        provider::ConversationItem::UnknownConversationItem(item) => gateway::ConversationItem::UnknownConversationItem(gateway::UnknownConversationItem {
-            resource: map_resource(item.resource), turn: map_resource(item.turn), conversation: map_resource(item.conversation),
-            kind: gateway::UnknownConversationItemKind::Unknown, status: map_conversation_item_status(item.status), title: item.title,
-        }),
-    }
-}
-
-fn map_tool_invocation(tool: provider::ToolInvocation) -> gateway::ToolInvocation {
-    gateway::ToolInvocation {
-        call_id: tool.call_id,
-        name: tool.name,
-        namespace: tool.namespace,
-        category: match tool.category {
-            provider::ToolCategory::Command => gateway::ToolCategory::Command,
-            provider::ToolCategory::Read => gateway::ToolCategory::Read,
-            provider::ToolCategory::Write => gateway::ToolCategory::Write,
-            provider::ToolCategory::Search => gateway::ToolCategory::Search,
-            provider::ToolCategory::Web => gateway::ToolCategory::Web,
-            provider::ToolCategory::Agent => gateway::ToolCategory::Agent,
-            provider::ToolCategory::Computer => gateway::ToolCategory::Computer,
-            provider::ToolCategory::Media => gateway::ToolCategory::Media,
-            provider::ToolCategory::Other => gateway::ToolCategory::Other,
-        },
-        origin: gateway::ToolOrigin {
-            kind: match tool.origin.kind {
-                provider::ToolOriginKind::Builtin => gateway::ToolOriginKind::Builtin,
-                provider::ToolOriginKind::Mcp => gateway::ToolOriginKind::Mcp,
-                provider::ToolOriginKind::Plugin => gateway::ToolOriginKind::Plugin,
-                provider::ToolOriginKind::Server => gateway::ToolOriginKind::Server,
-                provider::ToolOriginKind::Custom => gateway::ToolOriginKind::Custom,
-                provider::ToolOriginKind::Unknown => gateway::ToolOriginKind::Unknown,
-            },
-            name: tool.origin.name,
-        },
-        input: map_tool_input(tool.input),
-        outcome: tool.outcome.map(map_tool_outcome),
-        timing: tool.timing.map(|timing| gateway::ToolTiming {
-            started_at: timing.started_at,
-            completed_at: timing.completed_at,
-            duration_ms: timing.duration_ms,
-        }),
-        annotations: tool.annotations.map(|annotations| gateway::ToolAnnotations {
-            read_only: annotations.read_only,
-            destructive: annotations.destructive,
-            idempotent: annotations.idempotent,
-            open_world: annotations.open_world,
-        }),
-    }
-}
-
-fn map_conversation_item_status(status: provider::ConversationItemStatus) -> gateway::ConversationItemStatus {
-    match status {
-        provider::ConversationItemStatus::Pending => gateway::ConversationItemStatus::Pending,
-        provider::ConversationItemStatus::Running => gateway::ConversationItemStatus::Running,
-        provider::ConversationItemStatus::Completed => gateway::ConversationItemStatus::Completed,
-        provider::ConversationItemStatus::Failed => gateway::ConversationItemStatus::Failed,
-        provider::ConversationItemStatus::Interrupted => gateway::ConversationItemStatus::Interrupted,
-        provider::ConversationItemStatus::Declined => gateway::ConversationItemStatus::Declined,
-        provider::ConversationItemStatus::Approved => gateway::ConversationItemStatus::Approved,
-        provider::ConversationItemStatus::Denied => gateway::ConversationItemStatus::Denied,
-        provider::ConversationItemStatus::Expired => gateway::ConversationItemStatus::Expired,
-        provider::ConversationItemStatus::Unknown => gateway::ConversationItemStatus::Unknown,
-    }
-}
-
-fn map_conversation_item_role(role: provider::ConversationItemRole) -> gateway::ConversationItemRole {
-    match role {
-        provider::ConversationItemRole::User => gateway::ConversationItemRole::User,
-        provider::ConversationItemRole::Assistant => gateway::ConversationItemRole::Assistant,
-    }
-}
-
-fn map_tool_input(input: provider::ToolInput) -> gateway::ToolInput {
-    match input {
-        provider::ToolInput::CommandToolInput(input) => gateway::ToolInput::CommandToolInput(gateway::CommandToolInput {
-            kind: gateway::CommandToolInputKind::Command, command: input.command, cwd: input.cwd,
-            shell: input.shell, truncation: input.truncation.map(map_content_truncation),
-            actions: input.actions.map(|actions| actions.into_iter().map(map_tool_command_action).collect()),
-        }),
-        provider::ToolInput::StructuredToolInput(input) => gateway::ToolInput::StructuredToolInput(gateway::StructuredToolInput {
-            kind: gateway::StructuredToolInputKind::Structured, value: input.value,
-            truncation: input.truncation.map(map_content_truncation),
-        }),
-        provider::ToolInput::OpaqueToolInput(input) => gateway::ToolInput::OpaqueToolInput(gateway::OpaqueToolInput {
-            kind: gateway::OpaqueToolInputKind::Opaque, value: input.value, mime_type: input.mime_type,
-            truncation: input.truncation.map(map_content_truncation),
-        }),
-    }
-}
-
-fn map_tool_outcome(outcome: provider::ToolOutcome) -> gateway::ToolOutcome {
-    match outcome {
-        provider::ToolOutcome::ToolSuccessOutcome(outcome) => gateway::ToolOutcome::ToolSuccessOutcome(gateway::ToolSuccessOutcome {
-            kind: gateway::ToolSuccessOutcomeKind::Success,
-            content: outcome.content.into_iter().map(map_content_block).collect(),
-            exit_code: outcome.exit_code, process_id: outcome.process_id,
-        }),
-        provider::ToolOutcome::ToolFailureOutcome(outcome) => gateway::ToolOutcome::ToolFailureOutcome(gateway::ToolFailureOutcome {
-            kind: gateway::ToolFailureOutcomeKind::Failure,
-            content: outcome.content.into_iter().map(map_content_block).collect(),
-            error: gateway::ToolExecutionError { code: outcome.error.code, message: outcome.error.message, retryable: outcome.error.retryable },
-            exit_code: outcome.exit_code, process_id: outcome.process_id,
-        }),
-    }
-}
-
-fn map_tool_command_action(action: provider::ToolCommandAction) -> gateway::ToolCommandAction {
-    gateway::ToolCommandAction {
-        kind: match action.kind {
-            provider::ToolCommandActionKind::Execute => gateway::ToolCommandActionKind::Execute,
-            provider::ToolCommandActionKind::Read => gateway::ToolCommandActionKind::Read,
-            provider::ToolCommandActionKind::List => gateway::ToolCommandActionKind::List,
-            provider::ToolCommandActionKind::Search => gateway::ToolCommandActionKind::Search,
-            provider::ToolCommandActionKind::Unknown => gateway::ToolCommandActionKind::Unknown,
-        },
-        command: action.command, name: action.name, path: action.path, query: action.query,
-    }
-}
-
-fn map_content_block(content: provider::ContentBlock) -> gateway::ContentBlock {
-    match content {
-        provider::ContentBlock::TextContentBlock(content) => gateway::ContentBlock::TextContentBlock(gateway::TextContentBlock { content_id: content.content_id, kind: gateway::TextContentBlockKind::Text, text: content.text, truncation: content.truncation.map(map_content_truncation) }),
-        provider::ContentBlock::ReasoningSummaryContentBlock(content) => gateway::ContentBlock::ReasoningSummaryContentBlock(gateway::ReasoningSummaryContentBlock { content_id: content.content_id, kind: gateway::ReasoningSummaryContentBlockKind::ReasoningSummary, text: content.text, truncation: content.truncation.map(map_content_truncation) }),
-        provider::ContentBlock::OutputContentBlock(content) => gateway::ContentBlock::OutputContentBlock(gateway::OutputContentBlock { content_id: content.content_id, kind: gateway::OutputContentBlockKind::Output, text: content.text, truncation: content.truncation.map(map_content_truncation) }),
-        provider::ContentBlock::ActivitySummaryContentBlock(content) => gateway::ContentBlock::ActivitySummaryContentBlock(gateway::ActivitySummaryContentBlock { content_id: content.content_id, kind: gateway::ActivitySummaryContentBlockKind::ActivitySummary, text: content.text, truncation: content.truncation.map(map_content_truncation) }),
-        provider::ContentBlock::StructuredJsonContentBlock(content) => gateway::ContentBlock::StructuredJsonContentBlock(gateway::StructuredJsonContentBlock { content_id: content.content_id, kind: gateway::StructuredJsonContentBlockKind::StructuredJson, value: content.value, truncation: content.truncation.map(map_content_truncation) }),
-        provider::ContentBlock::ImageContentBlock(content) => gateway::ContentBlock::ImageContentBlock(gateway::ImageContentBlock { content_id: content.content_id, kind: gateway::ImageContentBlockKind::Image, uri: content.uri, mime_type: content.mime_type, name: content.name, truncation: content.truncation.map(map_content_truncation) }),
-        provider::ContentBlock::AudioContentBlock(content) => gateway::ContentBlock::AudioContentBlock(gateway::AudioContentBlock { content_id: content.content_id, kind: gateway::AudioContentBlockKind::Audio, uri: content.uri, mime_type: content.mime_type, name: content.name, truncation: content.truncation.map(map_content_truncation) }),
-        provider::ContentBlock::ResourceLinkContentBlock(content) => gateway::ContentBlock::ResourceLinkContentBlock(gateway::ResourceLinkContentBlock { content_id: content.content_id, kind: gateway::ResourceLinkContentBlockKind::ResourceLink, uri: content.uri, name: content.name, mime_type: content.mime_type, truncation: content.truncation.map(map_content_truncation) }),
-        provider::ContentBlock::EmbeddedResourceContentBlock(content) => gateway::ContentBlock::EmbeddedResourceContentBlock(gateway::EmbeddedResourceContentBlock { content_id: content.content_id, kind: gateway::EmbeddedResourceContentBlockKind::EmbeddedResource, text: content.text, mime_type: content.mime_type, name: content.name, truncation: content.truncation.map(map_content_truncation) }),
-    }
-}
-
-fn map_content_truncation(truncation: provider::ContentTruncation) -> gateway::ContentTruncation {
-    gateway::ContentTruncation {
-        original_bytes: truncation.original_bytes, retained_bytes: truncation.retained_bytes,
-        strategy: match truncation.strategy {
-            provider::ContentTruncationStrategy::Head => gateway::ContentTruncationStrategy::Head,
-            provider::ContentTruncationStrategy::Tail => gateway::ContentTruncationStrategy::Tail,
-            provider::ContentTruncationStrategy::HeadTail => gateway::ContentTruncationStrategy::HeadTail,
-            provider::ContentTruncationStrategy::StructuralPreview => gateway::ContentTruncationStrategy::StructuralPreview,
-        },
-    }
-}
-
-fn map_conversation_content_kind(
-    kind: provider::ConversationContentKind,
-) -> gateway::ConversationContentKind {
-    match kind {
-        provider::ConversationContentKind::Text => gateway::ConversationContentKind::Text,
-        provider::ConversationContentKind::ReasoningSummary => {
-            gateway::ConversationContentKind::ReasoningSummary
-        }
-        provider::ConversationContentKind::Output => gateway::ConversationContentKind::Output,
-        provider::ConversationContentKind::ActivitySummary => {
-            gateway::ConversationContentKind::ActivitySummary
-        }
-        provider::ConversationContentKind::StructuredJson => gateway::ConversationContentKind::StructuredJson,
-        provider::ConversationContentKind::Image => gateway::ConversationContentKind::Image,
-        provider::ConversationContentKind::Audio => gateway::ConversationContentKind::Audio,
-        provider::ConversationContentKind::ResourceLink => gateway::ConversationContentKind::ResourceLink,
-        provider::ConversationContentKind::EmbeddedResource => gateway::ConversationContentKind::EmbeddedResource,
-    }
-}
-
-fn map_approval(approval: provider::ProviderApproval) -> gateway::Approval {
-    gateway::Approval {
-        resource: map_resource(approval.resource),
-        conversation: map_resource(approval.conversation),
-        turn: map_resource(approval.turn),
-        kind: approval.kind,
-        title: approval.title,
-        description: approval.description,
-        status: match approval.status {
-            provider::ApprovalStatus::Pending => gateway::ApprovalStatus::Pending,
-            provider::ApprovalStatus::Approved => gateway::ApprovalStatus::Approved,
-            provider::ApprovalStatus::Denied => gateway::ApprovalStatus::Denied,
-            provider::ApprovalStatus::Expired => gateway::ApprovalStatus::Expired,
-        },
-        decisions: approval
-            .decisions
-            .into_iter()
-            .map(|decision| match decision {
-                provider::ApprovalDecision::Approve => gateway::ApprovalDecision::Approve,
-                provider::ApprovalDecision::Deny => gateway::ApprovalDecision::Deny,
-            })
-            .collect(),
-        requested_at: approval.requested_at,
-        resolved_at: approval.resolved_at,
-        decision: approval.decision.map(|decision| match decision {
-            provider::ApprovalDecision::Approve => gateway::ApprovalDecision::Approve,
-            provider::ApprovalDecision::Deny => gateway::ApprovalDecision::Deny,
-        }),
-    }
-}
-
-fn map_resource(resource: provider::RoutedResourceId) -> gateway::RoutedResourceId {
+fn gateway_resource(resource: provider::ProviderResourceId) -> gateway::RoutedResourceId {
     gateway::RoutedResourceId {
         provider_id: resource.provider_instance_id,
         native_resource_id: resource.native_resource_id,
-    }
-}
-
-fn map_turn_input_to_provider(input: gateway::TurnInput) -> provider::TurnInput {
-    provider::TurnInput {
-        kind: match input.kind {
-            gateway::TurnInputKind::Text => provider::TurnInputKind::Text,
-        },
-        text: input.text,
-    }
-}
-
-fn map_turn_selection_to_provider(selection: gateway::TurnSelection) -> provider::TurnSelection {
-    provider::TurnSelection {
-        access_mode_id: selection.access_mode_id,
-        reasoning_effort_id: selection.reasoning_effort_id,
-        model: selection.model.map(|model| match model {
-            gateway::ModelSelection::FlatModelSelection(selection) => {
-                provider::ModelSelection::FlatModelSelection(provider::FlatModelSelection {
-                    kind: provider::FlatModelCatalogKind::Flat,
-                    model_id: selection.model_id,
-                })
-            }
-            gateway::ModelSelection::GroupedModelSelection(selection) => {
-                provider::ModelSelection::GroupedModelSelection(provider::GroupedModelSelection {
-                    kind: provider::GroupedModelCatalogKind::Grouped,
-                    provider_id: selection.provider_id,
-                    model_id: selection.model_id,
-                })
-            }
-        }),
-    }
-}
-
-fn map_turn_selection_to_gateway(selection: provider::TurnSelection) -> gateway::TurnSelection {
-    gateway::TurnSelection {
-        access_mode_id: selection.access_mode_id,
-        reasoning_effort_id: selection.reasoning_effort_id,
-        model: selection.model.map(|model| match model {
-            provider::ModelSelection::FlatModelSelection(selection) => {
-                gateway::ModelSelection::FlatModelSelection(gateway::FlatModelSelection {
-                    kind: gateway::FlatModelCatalogKind::Flat,
-                    model_id: selection.model_id,
-                })
-            }
-            provider::ModelSelection::GroupedModelSelection(selection) => {
-                gateway::ModelSelection::GroupedModelSelection(gateway::GroupedModelSelection {
-                    kind: gateway::GroupedModelCatalogKind::Grouped,
-                    provider_id: selection.provider_id,
-                    model_id: selection.model_id,
-                })
-            }
-        }),
-    }
-}
-
-#[cfg(test)]
-mod conversation_projection_tests {
-    use super::*;
-    use serde_json::json;
-
-    fn route(native_id: &str) -> serde_json::Value {
-        json!({
-            "deviceId": "device-test",
-            "providerPluginId": "dev.codepet.test",
-            "providerInstanceId": "instance-test",
-            "nativeResourceId": native_id,
-        })
-    }
-
-    #[test]
-    fn projects_every_conversation_variant_and_canonical_content_without_provider_extensions() {
-        let conversation = route("conversation-1");
-        let turn = route("turn-1");
-        let items = json!([
-            {"resource": route("message-1"), "turn": turn, "conversation": conversation,
-             "kind": "message", "status": "completed", "role": "assistant", "contents": [
-                {"contentId": "message:text", "kind": "text", "text": "same text", "truncation": {"originalBytes": 20, "retainedBytes": 9, "strategy": "head-tail"}},
-                {"contentId": "message:image", "kind": "image", "uri": "https://example.test/image", "mimeType": "image/png"},
-                {"contentId": "message:audio", "kind": "audio", "uri": "https://example.test/audio"},
-                {"contentId": "message:link", "kind": "resource-link", "uri": "https://example.test/link", "name": "link"},
-                {"contentId": "message:embedded", "kind": "embedded-resource", "text": "embedded", "mimeType": "text/plain"}
-             ]},
-            {"resource": route("reasoning-1"), "turn": route("turn-1"), "conversation": route("conversation-1"),
-             "kind": "reasoning", "status": "completed", "contents": [
-                {"contentId": "reasoning:summary", "kind": "reasoning-summary", "text": "summary"}
-             ]},
-            {"resource": route("command-1"), "turn": route("turn-1"), "conversation": route("conversation-1"),
-             "kind": "command", "status": "completed", "title": "command", "tool": {
-                "callId": "call-command", "name": "shell", "category": "command", "origin": {"kind": "builtin"},
-                "input": {"kind": "command", "command": "printf same text", "cwd": "/workspace", "shell": "zsh", "truncation": {"originalBytes": 32, "retainedBytes": 16, "strategy": "head-tail"}},
-                "outcome": {"kind": "success", "content": [{"contentId": "command:output", "kind": "output", "text": "same text"}], "exitCode": 0},
-                "extension": {"namespace": "dev.codepet.private", "data": {"secret": true}}
-             }},
-            {"resource": route("file-1"), "turn": route("turn-1"), "conversation": route("conversation-1"),
-             "kind": "file-change", "status": "completed", "contents": [
-                {"contentId": "file:output", "kind": "output", "text": "diff"},
-                {"contentId": "file:activity", "kind": "activity-summary", "text": "changed"},
-                {"contentId": "file:json", "kind": "structured-json", "value": {"path": "a.rs"}}
-             ]},
-            {"resource": route("tool-1"), "turn": route("turn-1"), "conversation": route("conversation-1"),
-             "kind": "tool", "status": "failed", "tool": {
-                "callId": "call-tool", "name": "lookup", "category": "search", "origin": {"kind": "mcp", "name": "test"},
-                "input": {"kind": "structured", "value": {"query": "same text"}, "truncation": {"originalBytes": 50, "retainedBytes": 25, "strategy": "structural-preview"}},
-                "outcome": {"kind": "failure", "content": [{"contentId": "tool:output", "kind": "output", "text": "same text"}], "error": {"message": "short failure"}}
-             }},
-            {"resource": route("approval-1"), "turn": route("turn-1"), "conversation": route("conversation-1"),
-             "kind": "approval", "status": "pending", "approval": {
-                "resource": route("approval-1"), "turn": route("turn-1"), "conversation": route("conversation-1"),
-                "kind": "command-execution", "title": "approve", "status": "pending", "decisions": ["approve", "deny"],
-                "extension": {"namespace": "dev.codepet.private", "data": {"internal": true}}
-             }},
-            {"resource": route("unknown-1"), "turn": route("turn-1"), "conversation": route("conversation-1"),
-             "kind": "unknown", "status": "unknown", "title": "unknown"}
-        ]);
-        let provider_items: Vec<provider::ConversationItem> = serde_json::from_value(items).unwrap();
-        let projected: Vec<serde_json::Value> = provider_items
-            .into_iter()
-            .map(map_conversation_item)
-            .map(|item| serde_json::to_value(item).unwrap())
-            .collect();
-
-        assert_eq!(projected.len(), 7);
-        assert_eq!(projected[0]["contents"][0]["truncation"], json!({"originalBytes": 20, "retainedBytes": 9, "strategy": "head-tail"}));
-        assert_eq!(projected[4]["tool"]["input"]["truncation"], json!({"originalBytes": 50, "retainedBytes": 25, "strategy": "structural-preview"}));
-        assert_eq!(projected[2]["tool"]["input"]["command"], "printf same text");
-        assert_eq!(projected[2]["tool"]["input"]["truncation"], json!({"originalBytes": 32, "retainedBytes": 16, "strategy": "head-tail"}));
-        assert_eq!(projected[2]["tool"]["outcome"]["content"][0]["contentId"], "command:output");
-        assert!(projected[2].get("contents").is_none());
-        assert!(projected.iter().all(|item| !item.to_string().contains("extension")));
-    }
-
-    #[test]
-    fn projects_opaque_tool_input_with_truncation() {
-        let input: provider::ToolInput = serde_json::from_value(json!({
-            "kind": "opaque", "value": "raw", "mimeType": "text/plain",
-            "truncation": {"originalBytes": 10, "retainedBytes": 3, "strategy": "head"}
-        })).unwrap();
-        let projected = serde_json::to_value(map_tool_input(input)).unwrap();
-        assert_eq!(projected, json!({
-            "kind": "opaque", "value": "raw", "mimeType": "text/plain",
-            "truncation": {"originalBytes": 10, "retainedBytes": 3, "strategy": "head"}
-        }));
     }
 }
 
@@ -2298,10 +1742,12 @@ fn ensure_same_gateway_route(
 }
 
 fn ensure_same_resource_identity(
-    actual: &provider::RoutedResourceId,
-    expected: &provider::RoutedResourceId,
+    actual: &gateway::RoutedResourceId,
+    expected: &provider::ProviderResourceId,
 ) -> Result<(), gateway::ProtocolError> {
-    if actual == expected {
+    if actual.provider_id == expected.provider_instance_id
+        && actual.native_resource_id == expected.native_resource_id
+    {
         return Ok(());
     }
     Err(gateway::ProtocolError {
@@ -2312,14 +1758,26 @@ fn ensure_same_resource_identity(
     })
 }
 
-fn ensure_same_provider_route(
-    left: &provider::RoutedResourceId,
-    right: &provider::RoutedResourceId,
+fn ensure_same_agent_resource_identity(
+    actual: &gateway::RoutedResourceId,
+    expected: &gateway::RoutedResourceId,
 ) -> Result<(), gateway::ProtocolError> {
-    if left.device_id == right.device_id
-        && left.provider_plugin_id == right.provider_plugin_id
-        && left.provider_instance_id == right.provider_instance_id
-    {
+    if actual == expected {
+        return Ok(());
+    }
+    Err(gateway::ProtocolError {
+        code: "provider_resource_identity_mismatch".to_string(),
+        message: "Provider returned a resource with a different identity".to_string(),
+        retryable: false,
+        details: None,
+    })
+}
+
+fn ensure_same_provider_route(
+    left: &gateway::RoutedResourceId,
+    right: &provider::ProviderResourceId,
+) -> Result<(), gateway::ProtocolError> {
+    if left.provider_id == right.provider_instance_id {
         return Ok(());
     }
     Err(gateway::ProtocolError {
