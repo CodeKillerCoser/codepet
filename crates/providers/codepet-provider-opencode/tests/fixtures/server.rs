@@ -116,7 +116,7 @@ fn handle_connection(stream: TcpStream, state: Arc<Mutex<FixtureState>>) {
         serve_events(reader.into_inner(), state);
         return;
     }
-    let response = route(&method, path, &body, &state);
+    let response = route(&method, path, &target, &body, &state);
     let mut stream = reader.into_inner();
     let _ = write_response(&mut stream, response.0, response.1.as_bytes());
 }
@@ -124,6 +124,7 @@ fn handle_connection(stream: TcpStream, state: Arc<Mutex<FixtureState>>) {
 fn route(
     method: &str,
     path: &str,
+    target: &str,
     body: &[u8],
     state: &Arc<Mutex<FixtureState>>,
 ) -> (u16, String) {
@@ -183,10 +184,7 @@ fn route(
         if !lock(state).sessions.contains_key(session_id) {
             return (404, json!({"error": "not found"}).to_string());
         }
-        return (
-            200,
-            json!({
-                "data": [
+        let messages = json!([
                     {
                         "id": "msg_fixture_user",
                         "time": {"created": 1_700_000_000_100u64},
@@ -231,11 +229,21 @@ fn route(
                             "cache": {"read": 0, "write": 0}
                         }
                     }
-                ],
-                "cursor": {"previous": null, "next": null}
-            })
-            .to_string(),
-        );
+                ]);
+        let messages = messages.as_array().unwrap();
+        let offset = query_parameter(target, "cursor")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or_default();
+        let limit = query_parameter(target, "limit")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(messages.len());
+        let end = offset.saturating_add(limit).min(messages.len());
+        let data = messages.get(offset..end).unwrap_or_default();
+        let next = (end < messages.len()).then(|| end.to_string());
+        return (200, json!({
+            "data": data,
+            "cursor": {"previous": null, "next": next}
+        }).to_string());
     }
     if let Some(session_id) = path.strip_prefix("/api/session/") {
         if !session_id.contains('/') && method == "GET" {
@@ -366,6 +374,13 @@ fn route(
         return (204, String::new());
     }
     (404, json!({"error": "fixture route not found"}).to_string())
+}
+
+fn query_parameter<'a>(target: &'a str, name: &str) -> Option<&'a str> {
+    target.split_once('?')?.1.split('&').find_map(|entry| {
+        let (key, value) = entry.split_once('=')?;
+        (key == name).then_some(value)
+    })
 }
 
 fn run_prompt_scenario(

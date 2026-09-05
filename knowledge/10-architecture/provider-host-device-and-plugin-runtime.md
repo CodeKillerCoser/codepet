@@ -24,7 +24,7 @@ Provider 事件进入 Gateway v1 replay，并由兼容适配发布到远程 `run
 
 - 持久设备身份和 manifest 实例的稳定 ID 映射；
 - 显式插件目录、进程启动、协议协商、实例启动、能力查询和业务路由；
-- 有界 JSON-lines、并发 request id 关联、事件分流、超时、崩溃隔离、stderr 诊断和有界 shutdown；
+- 有界 CodePet Provider Frame V1、JSON/raw-zstd codec、并发 request id 关联、事件分流、超时、崩溃隔离、stderr 诊断和有界 shutdown；
 - 内部 Gateway v1 的 device/provider/capability/conversation/turn/approval 与 event replay 边界。
 - 从 App Resources 的单一 `provider-plugins/` 目录自动发现三个默认 Provider adapter，并在 Tauri 开发态及 macOS/Windows 发布构建中 staging。
 - 持久化自签 LAN TLS identity、五分钟内存配对 session、只保存 bearer SHA-256 的可撤销远程 credential store，以及固定 pairing/current-credential REST 与 Gateway WSS route。

@@ -1,0 +1,290 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "Remote App 覆盖安装前后链路耗时分析",
+    "description": "基于手机端两份 JSONL 诊断日志，对同一 Host、同一 Codex 会话及大型会话加载链路进行证据化对比。",
+    "generatedAt": "2026-09-05T09:49:02Z",
+    "cards": [
+      {
+        "id": "same_conversation_card",
+        "description": "同一 Codex 会话安装后成功加载的端到端耗时与消息数。",
+        "dataset": "summary",
+        "sourceId": "after_log",
+        "metrics": [
+          { "label": "同会话加载耗时（ms）", "field": "same_conversation_ms", "format": "number" },
+          { "label": "生成 UI 消息数", "field": "same_conversation_messages", "format": "number" }
+        ]
+      },
+      {
+        "id": "large_conversation_card",
+        "description": "安装后大型 Codex 会话通过两次 conversation.get 完成加载。",
+        "dataset": "summary",
+        "sourceId": "after_log",
+        "metrics": [
+          { "label": "大型会话加载耗时（ms）", "field": "large_conversation_ms", "format": "number" },
+          { "label": "生成 UI 消息数", "field": "large_conversation_messages", "format": "number" }
+        ]
+      },
+      {
+        "id": "online_card",
+        "description": "从连接请求到设备 online 的冷启动链路；安装后并未变快。",
+        "dataset": "summary",
+        "sourceId": "combined_logs",
+        "metrics": [
+          { "label": "安装前 online（ms）", "field": "before_online_ms", "format": "number" },
+          { "label": "安装后 online（ms）", "field": "after_online_ms", "format": "number" }
+        ]
+      }
+    ],
+    "charts": [
+      {
+        "id": "cold_start_stages",
+        "title": "冷启动主链路分段：安装后没有出现耗时优化",
+        "subtitle": "同一 Host 192.168.0.105；provider.describe 的并发关键路径和初始化 conversation.list 是主要新增耗时。",
+        "headerMarkdown": "柱长为客户端 trace 或相邻日志时间戳推导的毫秒数。provider.describe 取三个并发请求的最大值；初始化 conversation.list 为三个串行请求之和。",
+        "type": "bar",
+        "dataset": "cold_start_stages",
+        "sourceId": "combined_logs",
+        "encodings": {
+          "x": { "field": "stage", "type": "ordinal", "label": "链路阶段" },
+          "y": { "field": "duration_ms", "type": "quantitative", "label": "耗时（ms）", "format": "number" },
+          "color": { "field": "window", "type": "nominal", "label": "版本窗口" }
+        },
+        "yAxisTitle": "耗时（ms）",
+        "valueFormat": "number",
+        "layout": "full"
+      },
+      {
+        "id": "snapshot_comparison",
+        "title": "会话加载：功能修复确定，纯性能提升尚不能由同会话样本证明",
+        "subtitle": "同一会话安装前在 229.6 ms 时解码失败，安装后在 256.9 ms RPC / 259 ms 端到端成功。",
+        "type": "bar",
+        "dataset": "snapshot_chart",
+        "sourceId": "combined_logs",
+        "encodings": {
+          "x": { "field": "sample", "type": "ordinal", "label": "样本" },
+          "y": { "field": "elapsed_ms", "type": "quantitative", "label": "耗时（ms）", "format": "number" },
+          "color": { "field": "result", "type": "nominal", "label": "结果" }
+        },
+        "yAxisTitle": "耗时（ms）",
+        "valueFormat": "number",
+        "layout": "full"
+      }
+    ],
+    "tables": [
+      {
+        "id": "chain_detail",
+        "title": "可比链路指标明细",
+        "subtitle": "正的变化值表示安装后更慢；样本数很小，不做显著性推断。",
+        "dataset": "chain_detail",
+        "sourceId": "combined_logs",
+        "density": "dense",
+        "layout": "full",
+        "columns": [
+          { "field": "metric", "label": "指标", "type": "text" },
+          { "field": "before_ms", "label": "安装前 ms", "format": "number" },
+          { "field": "after_ms", "label": "安装后 ms", "format": "number" },
+          { "field": "delta_ms", "label": "变化 ms", "format": "number", "movement": true },
+          { "field": "delta_pct", "label": "变化比例", "format": "percent", "movement": true },
+          { "field": "definition", "label": "口径 / 样本", "type": "text" }
+        ]
+      },
+      {
+        "id": "snapshot_evidence",
+        "title": "conversation.get 与会话快照证据",
+        "subtitle": "保留会话、请求次数、状态和可观察客户端开销，区分同会话对照与仅供方向判断的大型样本。",
+        "dataset": "snapshot_evidence",
+        "sourceId": "combined_logs",
+        "density": "dense",
+        "layout": "full",
+        "columns": [
+          { "field": "window", "label": "窗口", "type": "text" },
+          { "field": "conversation", "label": "Conversation", "type": "text" },
+          { "field": "messages", "label": "UI 消息", "format": "number" },
+          { "field": "get_calls", "label": "get 次数", "format": "number" },
+          { "field": "rpc_ms", "label": "RPC 合计 ms", "format": "number" },
+          { "field": "snapshot_ms", "label": "端到端 ms", "format": "number" },
+          { "field": "result", "label": "结果", "type": "text" },
+          { "field": "interpretation", "label": "解释", "type": "text" }
+        ]
+      },
+      {
+        "id": "data_quality",
+        "title": "数据范围与可比性审计",
+        "dataset": "data_quality",
+        "sourceId": "combined_logs",
+        "density": "dense",
+        "layout": "full",
+        "columns": [
+          { "field": "item", "label": "项目", "type": "text" },
+          { "field": "before", "label": "安装前", "type": "text" },
+          { "field": "after", "label": "安装后", "type": "text" },
+          { "field": "impact", "label": "对结论的影响", "type": "text" }
+        ]
+      }
+    ],
+    "sources": [
+      { "id": "before_log", "label": "安装前手机诊断日志", "path": "before-install/codepet.log" },
+      { "id": "after_log", "label": "安装后手机诊断日志", "path": "after-install/codepet.log" },
+      { "id": "combined_logs", "label": "安装前后手机诊断日志联合分析", "path": "before-after/comparison" }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# Remote App 覆盖安装前后链路耗时分析\n\n**结论先行：这次升级带来了明确的功能性修复，但现有两份手机日志不能证明同链路耗时变快。** 同一个 Codex 会话在安装前于客户端协议解码阶段失败；安装后成功得到 582 条 UI 消息。与此同时，冷启动到 online 从 189 ms 增至 294 ms，同会话 `conversation.get` trace 从 229.6 ms 增至 256.9 ms。大型会话在安装后能以 917 ms 完成 2,909 条 UI 消息加载，这是很好的绝对表现，但缺少同 Host、同会话的安装前成功样本，不能严谨归因为本次优化。"
+      },
+      { "id": "metrics", "type": "metric-strip", "cardIds": ["same_conversation_card", "large_conversation_card", "online_card"] },
+      {
+        "id": "technical_summary",
+        "type": "markdown",
+        "sourceId": "combined_logs",
+        "body": "## Technical summary\n\n主链路为：**App 初始化 →（首次安装：创建 identity 与 QR 配对）→ 读取设备凭据 → 解析 Gateway 地址 → 建立 WebSocket → handshake → protocol.describe → event.subscribe → 并发 provider.describe → project.list → 三次初始化 conversation.list → online → 项目级 conversation.list fan-out → acquireInteraction 与 conversation.get → UI 消息组装 → markRead**。\n\n安装后首次 QR 配对从开始到成功为 **1,251 ms**：HTTPS exchange 约 99 ms，exchange 验证后到设备持久化约 1,144 ms。安装前主窗口没有对应的首次配对动作，因此这段只报告绝对耗时，不做前后比较。\n\n安装后没有 `ProtocolCodecException`、`too_large`、Frame 解码错误或 WARNING。最直接的改善是协议兼容性：旧客户端把 `items[3].contents` 当必填字段，导致同一会话拿到响应后仍无法展示；新客户端已能正确解码并组装消息。"
+      },
+      { "id": "cold_start_chart", "type": "chart", "chartId": "cold_start_stages", "layout": "full" },
+      {
+        "id": "cold_start_findings",
+        "type": "markdown",
+        "sourceId": "combined_logs",
+        "body": "### 冷启动增量来自哪里\n\n安装后 online 总耗时多 **105 ms（+55.6%）**。按关键路径拆分，WebSocket 建连多 14.9 ms，`provider.describe` 并发关键路径多 63.5 ms，三次初始化 `conversation.list` 合计多 21.0 ms；三项已解释约 99.4 ms 的增量。这里更像一次单样本的冷启动抖动，尤其是三个 provider.describe 中有一个达到 72.5 ms，而另外两个只有 19.7/20.5 ms。不能据此判断新传输帧造成了稳定回退。"
+      },
+      { "id": "chain_table", "type": "table", "tableId": "chain_detail", "layout": "full" },
+      { "id": "snapshot_chart_block", "type": "chart", "chartId": "snapshot_comparison", "layout": "full" },
+      {
+        "id": "snapshot_analysis",
+        "type": "markdown",
+        "sourceId": "combined_logs",
+        "body": "## 会话加载链路分析\n\n### 同会话强对照\n\n会话 `01a06af2…49c2` 是唯一严格匹配的前后样本。安装前，`conversation.get` 在 229.6 ms 后以 `ProtocolCodecException at ...items[3].contents: required field is missing` 失败；安装后同一请求在 256.9 ms 成功，控制器于 259 ms 报告 582 条消息。**收益是从不可用变为可用，而不是变快**；成功样本比失败样本多 27.4 ms（+11.9%），但失败链路没有完成同等解码和组装，二者也不是完全等价的工作量。\n\n### 大型会话绝对表现\n\n会话 `01a06325…49a6` 通过两次顺序 `conversation.get`（715.9 ms + 191.1 ms）完成，共 2,909 条 UI 消息，控制器端到端 917 ms。RPC trace 合计 907.1 ms，剩余可观察客户端组装开销约 9.9 ms；若以 WebSocket 层日志 678 ms + 178 ms 计算，trace 解码与控制器组装等客户端侧增量合计约 61 ms，占端到端 6.7%。日志中未发生尺寸超限重试。\n\n安装前历史日志中另有 3,927 条消息耗时 5,626 ms 和 12,950 ms，以及一次 15,339 ms 失败；但这些发生在另一个 Host/device、另一个会话和更早会话窗口，只能说明安装后大型样本的绝对值较好，不能作为严格 A/B。"
+      },
+      { "id": "snapshot_table", "type": "table", "tableId": "snapshot_evidence", "layout": "full" },
+      {
+        "id": "scope_methodology",
+        "type": "markdown",
+        "sourceId": "combined_logs",
+        "body": "## Scope、数据与指标定义\n\n- **安装前主窗口**：2026-09-05 09:38:26.513Z 起的最后一个进程会话，共 70 条日志；只使用 device `892a997a…88e75` 作为前后对照。\n- **安装后窗口**：2026-09-05 09:39:28.326Z–09:40:34.856Z，共 87 条日志；覆盖全新身份创建、配对、连接、列表和两次会话打开。\n- **RPC 耗时**：优先使用 `gateway.rpc.client` trace 的 `durationUs`；控制器快照使用 `Conversation snapshot ... elapsedMs`。\n- **冷启动 online**：日志直接记录的 connection-attempt `elapsedMs`。并行 fan-out 使用最大耗时作为关键路径，串行请求使用求和。\n- **项目列表 fan-out**：只统计点击项目后同时发出的 6 个 `conversation.list`，分别报告中位数和最大值。\n- **成功率**：仅描述观察到的请求，不把单次结果外推为长期比例。\n\n## Methodology\n\n逐行解析两份 JSONL；校验两份日志均无坏行；按 `Local diagnostics initialized` 划分进程会话；用 `processInstanceId`、`rpc.requestId`、时间戳和控制器日志关联 RPC 与用户动作；将安装前跨天累计历史与最后会话分开。所有百分比均为 `(after-before)/before`。"
+      },
+      { "id": "quality_table", "type": "table", "tableId": "data_quality", "layout": "full" },
+      {
+        "id": "limitations",
+        "type": "markdown",
+        "sourceId": "combined_logs",
+        "body": "## Limitations 与稳健性\n\n1. 每个可比动作只有一次冷启动样本，无法区分版本影响、网络抖动、Provider 冷缓存和后台负载。\n2. 安装前日志累计约 24 小时、5 个 App 会话；安装后只有约 67 秒。文件大小 518,121 B 对 24,364 B 主要反映采集时长，**不能用作传输体积或性能指标**。\n3. 安装后是重新安装后的空设备状态（`Loaded 0 registered device(s)`），安装前加载 2 个设备；主对照剔除了另一个设备 13,009 ms 的失败连接，但状态差异仍可能影响启动调度。\n4. 日志没有记录 Frame 的 raw/compressed 字节数、压缩算法、压缩耗时、解压耗时和 Provider 内部处理耗时，因此不能从手机日志直接量化“压缩”带来的收益。\n5. 同会话安装前失败于客户端解码，完成的工作少于安装后成功链路；耗时差只用于描述，不构成性能回归结论。"
+      },
+      {
+        "id": "recommendations",
+        "type": "markdown",
+        "sourceId": "combined_logs",
+        "body": "## Recommended next steps\n\n1. **先定性验收为通过**：协议兼容问题已修复；同一会话从必现解码失败变为成功，且大型会话无尺寸错误。\n2. **暂不宣称耗时优化**：当前严格可比指标均持平或略慢，样本不足。\n3. **补一轮可归因基准**：固定同一手机、同一 Host、同一会话，安装前后各做 10 次冷启动、10 次项目列表、10 次 582-message 会话和 10 次 2,909-message 会话；同时区分冷缓存与热缓存，报告 p50/p95。\n4. **补齐 Frame 遥测**：每个响应记录 `rawBytes`、`encodedBytes`、`compressionRatio`、Provider 处理、压缩、WebSocket、解压、JSON decode、领域组装各阶段耗时；只记数值，不记录 payload。\n5. **重点复测 provider.describe**：安装后第三个 provider 的 72.5 ms 是 online 增量的最大单点，需确认是一次性冷启动还是稳定变化。\n\n## Further questions\n\n- 本次安装前后 Host 桌面进程是否保持同一版本、同一运行时长和同一缓存状态？\n- 大型会话的两次 get 是正常分页（例如 40 + 余量）还是一次尺寸重试？现有 Remote 日志没有记录 limit/cursor，建议补字段确认。\n- WebSocket 压缩和新 stdio Frame 分别在哪一跳生效？只有分阶段字节数和耗时才能拆开两者贡献。"
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-09-05T09:49:02Z",
+    "status": "ready",
+    "datasets": {
+      "summary": [
+        {
+          "same_conversation_ms": 259,
+          "same_conversation_messages": 582,
+          "large_conversation_ms": 917,
+          "large_conversation_messages": 2909,
+          "before_online_ms": 189,
+          "after_online_ms": 294
+        }
+      ],
+      "cold_start_stages": [
+        { "stage": "WebSocket 建连", "window": "安装前", "duration_ms": 79.7 },
+        { "stage": "WebSocket 建连", "window": "安装后", "duration_ms": 94.6 },
+        { "stage": "handshake", "window": "安装前", "duration_ms": 14.6 },
+        { "stage": "handshake", "window": "安装后", "duration_ms": 16.9 },
+        { "stage": "protocol.describe", "window": "安装前", "duration_ms": 5.9 },
+        { "stage": "protocol.describe", "window": "安装后", "duration_ms": 9.5 },
+        { "stage": "event.subscribe", "window": "安装前", "duration_ms": 7.3 },
+        { "stage": "event.subscribe", "window": "安装后", "duration_ms": 8.6 },
+        { "stage": "provider.describe 关键路径", "window": "安装前", "duration_ms": 9.1 },
+        { "stage": "provider.describe 关键路径", "window": "安装后", "duration_ms": 72.5 },
+        { "stage": "project.list", "window": "安装前", "duration_ms": 11.3 },
+        { "stage": "project.list", "window": "安装后", "duration_ms": 11.0 },
+        { "stage": "初始化 conversation.list 合计", "window": "安装前", "duration_ms": 57.8 },
+        { "stage": "初始化 conversation.list 合计", "window": "安装后", "duration_ms": 78.8 }
+      ],
+      "snapshot_chart": [
+        { "sample": "同会话·安装前", "result": "解码失败", "elapsed_ms": 229.6 },
+        { "sample": "同会话·安装后", "result": "成功 582 条", "elapsed_ms": 256.9 },
+        { "sample": "大型会话·安装后", "result": "成功 2,909 条", "elapsed_ms": 917.0 }
+      ],
+      "chain_detail": [
+        { "order": 1, "metric": "连接请求 → online", "before_ms": 189.0, "after_ms": 294.0, "delta_ms": 105.0, "delta_pct": 0.5556, "definition": "各 1 次；日志直接 elapsedMs" },
+        { "order": 2, "metric": "WebSocket 建连", "before_ms": 79.7, "after_ms": 94.6, "delta_ms": 14.9, "delta_pct": 0.187, "definition": "各 1 次；Opening→connected" },
+        { "order": 3, "metric": "protocol.handshake", "before_ms": 14.6, "after_ms": 16.9, "delta_ms": 2.3, "delta_pct": 0.1575, "definition": "各 1 次 trace" },
+        { "order": 4, "metric": "provider.describe 并发关键路径", "before_ms": 9.1, "after_ms": 72.5, "delta_ms": 63.4, "delta_pct": 6.967, "definition": "各 3 次并发；取 max" },
+        { "order": 5, "metric": "初始化 conversation.list 串行合计", "before_ms": 57.8, "after_ms": 78.8, "delta_ms": 21.0, "delta_pct": 0.3633, "definition": "各 3 次串行；求和" },
+        { "order": 6, "metric": "项目 conversation.list fan-out 中位数", "before_ms": 86.5, "after_ms": 95.1, "delta_ms": 8.6, "delta_pct": 0.0994, "definition": "各 6 次并发；median" },
+        { "order": 7, "metric": "项目 conversation.list fan-out 关键路径", "before_ms": 88.8, "after_ms": 111.8, "delta_ms": 23.0, "delta_pct": 0.259, "definition": "各 6 次并发；max" },
+        { "order": 8, "metric": "同会话 conversation.get trace", "before_ms": 229.6, "after_ms": 256.9, "delta_ms": 27.3, "delta_pct": 0.1189, "definition": "前=失败；后=成功，不等工作量" },
+        { "order": 9, "metric": "同会话 acquireInteraction", "before_ms": 269.6, "after_ms": 282.3, "delta_ms": 12.7, "delta_pct": 0.0471, "definition": "各 1 次成功 trace" }
+      ],
+      "snapshot_evidence": [
+        { "window": "安装前·主对照", "conversation": "01a06af2…49c2", "messages": null, "get_calls": 1, "rpc_ms": 229.6, "snapshot_ms": 229, "result": "失败", "interpretation": "客户端要求 items[3].contents，协议解码失败" },
+        { "window": "安装后·主对照", "conversation": "01a06af2…49c2", "messages": 582, "get_calls": 1, "rpc_ms": 256.9, "snapshot_ms": 259, "result": "成功", "interpretation": "同一 Host、同一会话；功能修复的最强证据" },
+        { "window": "安装后·大型样本", "conversation": "01a06325…49a6", "messages": 2909, "get_calls": 2, "rpc_ms": 907.1, "snapshot_ms": 917, "result": "成功", "interpretation": "两次顺序 get；未观察到 too_large 或重试日志" },
+        { "window": "安装前·历史方向样本", "conversation": "01a06690…8945", "messages": 3927, "get_calls": null, "rpc_ms": null, "snapshot_ms": 5626, "result": "成功", "interpretation": "另一 Host/会话/时间，只可作方向参照" },
+        { "window": "安装前·历史方向样本", "conversation": "01a06690…8945", "messages": 3927, "get_calls": null, "rpc_ms": null, "snapshot_ms": 12950, "result": "成功", "interpretation": "同一历史会话另一次加载，波动很大" },
+        { "window": "安装前·历史方向样本", "conversation": "01a06690…8945", "messages": null, "get_calls": null, "rpc_ms": null, "snapshot_ms": 15339, "result": "失败", "interpretation": "另一 Host；失败原因需结合对应窗口细查" }
+      ],
+      "data_quality": [
+        { "item": "JSONL 解析", "before": "1,561 行，0 坏行", "after": "87 行，0 坏行", "impact": "结构完整，可按时间与 trace 关联" },
+        { "item": "采集时间", "before": "约 24 小时，5 个 App 会话", "after": "约 67 秒，1 个 App 会话", "impact": "不能比较文件大小或全局均值" },
+        { "item": "安装状态", "before": "Loaded 2 registered devices", "after": "Loaded 0；新建 identity 并重新配对", "impact": "冷启动环境不完全一致" },
+        { "item": "主对照 Host", "before": "device-892a…；192.168.0.105", "after": "device-892a…；192.168.0.105", "impact": "网络端点与目标 Host 一致" },
+        { "item": "同会话", "before": "01a06af2…49c2；失败", "after": "01a06af2…49c2；成功 582 条", "impact": "足以确认兼容修复，不足以确认性能提升" },
+        { "item": "压缩 / Frame 遥测", "before": "无字节与阶段字段", "after": "无字节与阶段字段", "impact": "无法直接归因压缩收益" }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "id": "before_log",
+      "label": "安装前手机诊断日志",
+      "path": "before-install/codepet.log",
+      "query": {
+        "engine": "jsonl-log-review",
+        "sql": "SELECT * FROM read_json_auto('before-install/codepet.log', format = 'newline_delimited') WHERE timestamp >= TIMESTAMP '2026-09-05 09:38:26.513322'",
+        "description": "安装前导出：1,561 条有效 JSONL 记录；主分析使用最后一个 App 会话。",
+        "executed_at": "2026-09-05T09:49:02Z",
+        "tables_used": ["before-install/codepet.log"]
+      }
+    },
+    {
+      "id": "after_log",
+      "label": "安装后手机诊断日志",
+      "path": "after-install/codepet.log",
+      "query": {
+        "engine": "jsonl-log-review",
+        "sql": "SELECT * FROM read_json_auto('after-install/codepet.log', format = 'newline_delimited') WHERE timestamp BETWEEN TIMESTAMP '2026-09-05 09:39:28.325910' AND TIMESTAMP '2026-09-05 09:40:34.855997'",
+        "description": "安装后导出：87 条有效 JSONL 记录，覆盖重新配对、连接、列表和两个会话加载。",
+        "executed_at": "2026-09-05T09:49:02Z",
+        "tables_used": ["after-install/codepet.log"]
+      }
+    },
+    {
+      "id": "combined_logs",
+      "label": "安装前后手机诊断日志联合分析",
+      "path": "before-after/comparison",
+      "query": {
+        "engine": "derived-metrics",
+        "sql": "WITH before_rows AS (SELECT * FROM read_json_auto('before-install/codepet.log', format = 'newline_delimited')), after_rows AS (SELECT * FROM read_json_auto('after-install/codepet.log', format = 'newline_delimited')) SELECT * FROM before_rows UNION ALL SELECT * FROM after_rows",
+        "description": "使用同一 device、同一 Gateway endpoint 和同一 conversation 的可比记录；历史大型样本单独标记为方向证据。",
+        "executed_at": "2026-09-05T09:49:02Z",
+        "tables_used": ["before-install/codepet.log", "after-install/codepet.log"]
+      }
+    }
+  ],
+  "package_info": {
+    "originUrl": "artifact://remote-install-latency-comparison-2026-09-05",
+    "controls": { "edit": false, "refresh": false }
+  }
+}

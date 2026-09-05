@@ -11,7 +11,7 @@ use codepet_provider_sdk::{
     InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceCreateResponse,
     InstanceDestroyRequest, InstanceDestroyResponse, InstanceStartRequest,
     InstanceStartResponse, InstanceStatus, InstanceStopRequest, InstanceStopResponse,
-    FlatModelCatalog, FlatModelCatalogKind, FlatModelSelection, HarnessDescriptor, JsonLineCodec,
+    FlatModelCatalog, FlatModelCatalogKind, FlatModelSelection, HarnessDescriptor, ProviderFrameCodec,
     JsonObject, JsonRpcInboundRequest, JsonRpcNotification, ModelCatalog, ModelSelection, PageInfo, ProtocolEvent,
     Project, ProjectChangeType, ProjectChangedEvent, ProjectCreateRequest, ProjectCreateResponse, ProjectDeleteRequest,
     ProjectDeleteResponse, ProjectGetRequest, ProjectGetResponse, ProjectListRequest,
@@ -25,7 +25,7 @@ use codepet_provider_sdk::{
     MessageConversationItem, MessageConversationItemKind, TextContentBlock, TextContentBlockKind,
     TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent, TurnSendCapabilities,
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
-    TurnSteerResponse, VersionRange,
+    TurnSteerResponse, VersionRange, PROVIDER_FRAME_MAGIC, PROVIDER_FRAME_VERSION,
 };
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -371,6 +371,9 @@ impl ProtocolServer for FakeProvider {
             if let Some(configured_revision) = configured_revision {
                 configured.preview = Some(configured_revision);
             }
+            if request.conversation.native_resource_id == "compressed" {
+                configured.preview = Some("provider-frame-v1-".repeat(4_096));
+            }
             Ok(ConversationGetResponse {
                 conversation: configured,
                 items: history_items(&response_route, native_id),
@@ -563,7 +566,7 @@ async fn main() {
         instance_settings: Mutex::new(BTreeMap::new()),
     });
     let output = Arc::new(Mutex::new(std::io::stdout()));
-    let codec = JsonLineCodec::default();
+    let codec = ProviderFrameCodec::default();
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
     loop {
@@ -619,14 +622,19 @@ async fn main() {
         }
         if behavior == RequestBehavior::Malformed {
             let mut output = output.lock().unwrap();
-            let _ = output.write_all(b"{malformed-json}\n");
+            let payload = b"{malformed-json}";
+            let _ = output.write_all(&PROVIDER_FRAME_MAGIC);
+            let _ = output.write_all(&[PROVIDER_FRAME_VERSION, 0]);
+            let _ = output.write_all(&(payload.len() as u32).to_be_bytes());
+            let _ = output.write_all(payload);
             let _ = output.flush();
             continue;
         }
         if behavior == RequestBehavior::Oversized {
             let mut output = output.lock().unwrap();
-            let _ = output.write_all(&vec![b'x'; 2 * 1024 * 1024]);
-            let _ = output.write_all(b"\n");
+            let _ = output.write_all(&PROVIDER_FRAME_MAGIC);
+            let _ = output.write_all(&[PROVIDER_FRAME_VERSION, 0]);
+            let _ = output.write_all(&(2_u32 * 1024 * 1024).to_be_bytes());
             let _ = output.flush();
             continue;
         }
@@ -831,7 +839,7 @@ fn request_route(request: &ProtocolRequest) -> Option<ProviderInstanceRoute> {
 
 fn write_message(
     output: &Arc<Mutex<std::io::Stdout>>,
-    codec: JsonLineCodec,
+    codec: ProviderFrameCodec,
     message: ProviderWireMessage,
 ) {
     let mut output = output.lock().unwrap();

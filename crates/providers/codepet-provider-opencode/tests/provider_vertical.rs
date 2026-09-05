@@ -144,6 +144,30 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     );
 
     let fixture_conversation = resource(&route, "ses_fixture");
+    let narrow_page = provider
+        .conversation_get(ConversationGetRequest {
+            conversation: fixture_conversation.clone(),
+            cursor: Some("0".to_string()),
+            limit: Some(1),
+        })
+        .await
+        .unwrap();
+    let wider_page = provider
+        .conversation_get(ConversationGetRequest {
+            conversation: fixture_conversation.clone(),
+            cursor: Some("0".to_string()),
+            limit: Some(2),
+        })
+        .await
+        .unwrap();
+    assert_eq!(narrow_page.items.len(), 1);
+    assert_eq!(
+        narrow_page.page_info.and_then(|page| page.next_cursor),
+        Some("1".to_string())
+    );
+    assert_eq!(wider_page.items.len(), 4);
+    assert!(wider_page.page_info.and_then(|page| page.next_cursor).is_none());
+
     let fetched = provider
         .conversation_get(ConversationGetRequest {
             conversation: fixture_conversation.clone(),

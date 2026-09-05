@@ -1,4 +1,4 @@
-use crate::client::{OpenCodeClient, OpenCodeServerSession};
+use crate::client::OpenCodeServerSession;
 use crate::mapper::{protocol_error, OpenCodeProtocolMapper};
 use crate::protocol::{
     OpenCodeDelivery, OpenCodeDeltaEventData, OpenCodeEvent,
@@ -29,7 +29,7 @@ use codepet_provider_sdk::{
     RuntimeGetInstalledResponse, RuntimeInstallation, RuntimeSelectRequest, RuntimeSelectResponse,
     TurnInterruptRequest, TurnInterruptResponse, TurnSelection,
     TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest, TurnSteerResponse,
-    VersionRange, PROTOCOL_VERSION, fit_single_turn_conversation_history,
+    VersionRange, PROTOCOL_VERSION,
 };
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -56,6 +56,9 @@ struct OpenCodeInstanceSettings {
 }
 
 use codepet_provider_sdk::ProviderEventSink;
+
+const DEFAULT_CONVERSATION_GET_MESSAGE_LIMIT: u64 = 40;
+const MAX_CONVERSATION_GET_MESSAGE_LIMIT: u64 = 100;
 
 #[derive(Clone)]
 struct PendingApproval {
@@ -1251,17 +1254,19 @@ impl Provider for OpenCodeProvider {
         request: ConversationGetRequest,
     ) -> ProtocolFuture<'a, ConversationGetResponse> {
         Box::pin(async move {
-            let requested_limit = request.limit;
             let runtime = self.resource_instance(&request.conversation)?;
             let conversation_id = request.conversation.native_resource_id;
+            let cursor = request.cursor;
+            let limit = conversation_get_limit(request.limit)?;
             let session = runtime.ready_session()?;
             let client = session.client();
             let requested_id = conversation_id.clone();
-            let (session, active, messages) = tokio::task::spawn_blocking(move || {
+            let (session, active, message_page) = tokio::task::spawn_blocking(move || {
                 let session = client.get_session(&requested_id)?;
                 let active = client.active_sessions()?.contains_key(&requested_id);
-                let messages = load_conversation_messages(&client, &requested_id)?;
-                Ok::<_, OpenCodeServerError>((session, active, messages))
+                let page = client.list_messages(&requested_id, cursor.as_deref(), limit)?;
+                validate_conversation_message_page(&page, cursor.as_deref(), limit)?;
+                Ok::<_, OpenCodeServerError>((session, active, page))
             })
             .await
             .map_err(provider_task_error)?
@@ -1288,12 +1293,14 @@ impl Provider for OpenCodeProvider {
             };
             let items = runtime
                 .mapper
-                .conversation_items(&conversation.resource, &messages);
-            Ok(fit_single_turn_conversation_history(requested_limit, ConversationGetResponse {
+                .conversation_items(&conversation.resource, &message_page.data);
+            Ok(ConversationGetResponse {
                 conversation,
                 items,
-                page_info: None,
-            }))
+                page_info: Some(PageInfo {
+                    next_cursor: message_page.cursor.next,
+                }),
+            })
         })
     }
 
@@ -2367,56 +2374,53 @@ fn validate_opencode_session(session: &OpenCodeSession) -> Result<(), ProtocolEr
     Ok(())
 }
 
-fn load_conversation_messages(
-    client: &OpenCodeClient,
-    session_id: &str,
-) -> Result<Vec<crate::protocol::OpenCodeMessage>, OpenCodeServerError> {
-    const PAGE_SIZE: u64 = 100;
-    const MAX_PAGES: usize = 100;
-    const MAX_MESSAGES: usize = 10_000;
-    let mut messages = Vec::new();
-    let mut cursor = None;
-    let mut seen_cursors = HashSet::new();
-    for _ in 0..MAX_PAGES {
-        let page = client.list_messages(session_id, cursor.as_deref(), PAGE_SIZE)?;
-        for message in &page.data {
-            if message.id.trim().is_empty() || message.kind.trim().is_empty() {
-                return Err(OpenCodeServerError::Protocol(
-                    "OpenCode message history contains an empty id or type".to_string(),
-                ));
-            }
-            if message.content.as_ref().is_some_and(|contents| {
-                contents
-                    .iter()
-                    .any(|content| content.id.trim().is_empty() || content.kind.trim().is_empty())
-            }) {
-                return Err(OpenCodeServerError::Protocol(
-                    "OpenCode message history contains an empty content id or type".to_string(),
-                ));
-            }
-        }
-        if page.data.is_empty() {
-            return Ok(messages);
-        }
-        messages.extend(page.data);
-        if messages.len() > MAX_MESSAGES {
-            return Err(OpenCodeServerError::Protocol(format!(
-                "OpenCode conversation exceeds the {MAX_MESSAGES} message history limit"
-            )));
-        }
-        let Some(next_cursor) = page.cursor.next else {
-            return Ok(messages);
-        };
-        if !seen_cursors.insert(next_cursor.clone()) {
+fn conversation_get_limit(limit: Option<u64>) -> Result<u64, ProtocolError> {
+    let limit = limit.unwrap_or(DEFAULT_CONVERSATION_GET_MESSAGE_LIMIT);
+    if !(1..=MAX_CONVERSATION_GET_MESSAGE_LIMIT).contains(&limit) {
+        return Err(protocol_error(
+            "invalid_request",
+            format!(
+                "conversation.get limit must be between 1 and {MAX_CONVERSATION_GET_MESSAGE_LIMIT}"
+            ),
+            false,
+        ));
+    }
+    Ok(limit)
+}
+
+fn validate_conversation_message_page(
+    page: &crate::protocol::OpenCodeMessagePage,
+    cursor: Option<&str>,
+    limit: u64,
+) -> Result<(), OpenCodeServerError> {
+    if page.data.len() as u64 > limit {
+        return Err(OpenCodeServerError::Protocol(format!(
+            "OpenCode message history returned {} messages for limit {limit}",
+            page.data.len()
+        )));
+    }
+    if page.cursor.next.as_deref().is_some_and(|next| Some(next) == cursor) {
+        return Err(OpenCodeServerError::Protocol(
+            "OpenCode message history repeated a pagination cursor".to_string(),
+        ));
+    }
+    for message in &page.data {
+        if message.id.trim().is_empty() || message.kind.trim().is_empty() {
             return Err(OpenCodeServerError::Protocol(
-                "OpenCode message history repeated a pagination cursor".to_string(),
+                "OpenCode message history contains an empty id or type".to_string(),
             ));
         }
-        cursor = Some(next_cursor);
+        if message.content.as_ref().is_some_and(|contents| {
+            contents
+                .iter()
+                .any(|content| content.id.trim().is_empty() || content.kind.trim().is_empty())
+        }) {
+            return Err(OpenCodeServerError::Protocol(
+                "OpenCode message history contains an empty content id or type".to_string(),
+            ));
+        }
     }
-    Err(OpenCodeServerError::Protocol(format!(
-        "OpenCode conversation exceeds the {MAX_PAGES}-page history limit"
-    )))
+    Ok(())
 }
 
 fn decode_event<T: DeserializeOwned>(event: &OpenCodeEvent) -> Result<T, ProtocolError> {

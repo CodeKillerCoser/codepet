@@ -278,7 +278,7 @@ export function validateManifest(record, model) {
   assert(requestId.name === "RequestId", `${packageConfig.id} transport requestId must reference core RequestId`);
   if (manifest.transport.kind === "json-rpc-2.0") {
     assert(manifest.transport.jsonRpcVersion === "2.0", `${packageConfig.id} must use JSON-RPC 2.0`);
-    assert(["stdio-json-lines", "websocket-text"].includes(manifest.transport.framing), `${packageConfig.id} JSON-RPC framing must be stdio-json-lines or websocket-text`);
+    assert(["stdio-json-lines", "stdio-codepet-frame-v1", "websocket-text"].includes(manifest.transport.framing), `${packageConfig.id} JSON-RPC framing must be stdio-json-lines, stdio-codepet-frame-v1, or websocket-text`);
     assert(manifest.transport.eventDiscriminator === "method", `${packageConfig.id} JSON-RPC event discriminator must be method`);
     const rpcError = referenceTarget(manifest.transport.rpcError, manifestPath, model, `${packageConfig.id}.transport.rpcError`);
     assert(rpcError.name === "RpcError", `${packageConfig.id} transport rpcError must reference core RpcError`);

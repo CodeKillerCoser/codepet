@@ -37,9 +37,10 @@ provider-sdk/
 JSON Schema 定义 DTO 与约束；相邻 manifest 定义 method/event、方向、幂等性、capability 与 transport。两者缺一不可生成 service client/server。Gateway client 生成 typed 方法包装；Gateway server 生成 trait/dispatcher，trait 业务实现由接入者手写。channel（WSS、localhost 或未来 WebRTC）只实现 transport contract。
 
 这份文档随 Code Pet App 和 `cp-sdk-gen` 生成结果一起分发，面向开发独立
-Provider 插件的作者。Provider 是由 Code Pet Host 启动的独立进程，通过 stdin/stdout
-上的 JSON-RPC 2.0 JSON Lines 与 Host 通信；Provider 不需要依赖 Tauri、Code Pet Host
-或 Desktop 私有 IPC。
+Provider 插件的作者。Provider 是由 Code Pet Host 启动的独立进程，业务实现只面对
+生成的 JSON-RPC 强类型接口；SDK Runtime 会把 JSON payload 自动封装为 stdin/stdout
+Provider Frame V1。Provider 不需要感知长度前缀、raw/zstd、尺寸检查，也不需要依赖
+Tauri、Code Pet Host 或 Desktop 私有 IPC。
 
 ## 1. 分发内容
 
@@ -174,9 +175,10 @@ SDK 公开以下主要边界：
 - `Provider` trait：所有 Host → Provider 方法的 typed interface。
 - request/response/model 类型：从 JSON Schema 与 method manifest 生成。
 - `ProviderEventSink`：发布 typed Provider → Host 事件。
-- `serve_stdio`：JSON-RPC 2.0、JSON Lines framing、并发队列、控制通路、错误响应和
-  stdout 串行写入。
-- `StdioServerOptions`：frame 大小、普通/控制请求并发数和 drain timeout。
+- `serve_stdio`：JSON-RPC 2.0 JSON 序列化、Provider Frame V1、自动 raw/zstd、最终
+  encoded-frame 限制、并发队列、控制通路、错误响应和 stdout 串行写入。
+- `StdioServerOptions`：最终 frame 大小、普通/控制请求并发数和 drain timeout；Provider
+  业务代码通常直接使用默认值。
 
 最小入口结构如下：
 

@@ -276,7 +276,7 @@ manifest 中的方法条目直接引用同层 schema，并以 `capability` 映�
 - TypeScript core 与 desktop-v0 类型、discriminated union、typed client 和 event map；
 - Dart 当前从 normalized IR 生成 Core/Agent/Gateway null-safe package、strict codec、manifest metadata 与 typed client；Python 只有 planned target adapter entry，显式选择会在写文件前失败。
 
-Provider Rust SDK 还生成有界 JSON-line framing、统一 request/response/notification/event classifier、标准 JSON-RPC error mapping、inbound transport 接口与 typed request-to-wire 构造器。业务 handler、进程 supervisor、Provider manager 和 UI renderer 仍属于各自运行时。
+Provider Rust SDK Runtime 还提供有界 CodePet Provider Frame V1、固定 JSON、自动 raw/zstd、统一 request/response/notification/event classifier、标准 JSON-RPC error mapping、inbound transport 接口与 typed request-to-wire 构造器。业务 handler、进程 supervisor、Provider manager 和 UI renderer 仍属于各自运行时。
 
 ### 跨语言 Schema 约束
 
@@ -293,7 +293,7 @@ Provider Rust SDK 还生成有界 JSON-line framing、统一 request/response/no
 
 ### Wire Envelope
 
-此前“所有 Transport 共用一个带 `type` 的 envelope”草案已 superseded。当前协议按边界使用两种明确 transport：Pet/Gateway 使用 CodePet envelope；Provider plugin 使用 JSON-RPC 2.0/stdio-json-lines。实际 discriminator 和字段以各层 manifest 为准。
+此前“所有 Transport 共用一个带 `type` 的 envelope”草案已 superseded。当前协议按边界使用两种明确 transport：Pet/Gateway 使用各自 channel envelope；Provider plugin 的业务 payload 是 JSON-RPC 2.0，物理 stdin/stdout 由 SDK Runtime 的 CodePet Provider Frame V1 承载。实际 discriminator 和字段以各层 manifest 为准。
 
 Gateway v1 request：
 
@@ -759,7 +759,7 @@ Provider 状态和能力
 - 建立 `protocol/{core,pet,provider,gateway}/v1`、分层 manifest、JSON Schema 子集和显式版本协商。
 - 定义 Provider lifecycle/conversation/turn/approval/event/shutdown、Gateway device/instance routing 与 Pet snapshot/patch/action 边界。
 - 实现 Rust/TypeScript/Dart target adapter；Dart 覆盖 Core/Agent/Gateway v1，Python 保持 planned 且 fail closed。
-- 生成六个 Rust SDK 的 DTO、server/client、dispatcher、typed capability mapping 和 codec；Agent 提供 Provider/Gateway 共享业务类型，Provider 包含有界 stdio-json-lines framing。
+- 生成六个 Rust SDK 的 DTO、server/client、dispatcher、typed capability mapping 和 codec；Agent 提供 Provider/Gateway 共享业务类型，Provider SDK Runtime 包含有界 CodePet Provider Frame V1、固定 JSON 与自动 raw/zstd 编解码，业务 Provider 不感知 transport 细节。
 - 建立 fixture、dependency/capability/target 负例、Rust SDK 和 desktop-v0 round-trip 测试。
 - 现有 Tauri Runtime Gateway 通过 desktop SDK re-export 保持编译和双链路行为；未实现旧草案中的 `system.health` 或 UI 全量迁移。
 

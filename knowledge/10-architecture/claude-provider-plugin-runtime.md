@@ -98,7 +98,7 @@ Access mode：
 - interrupt、instance.stop、destroy 和 protocol shutdown 先给有界 grace，再杀整个 process group并等待 reaper。
 - 公共 SDK 把 transport terminal 与 Provider cleanup 分开。stdin EOF 或坏/超大 Host frame 出现时先将 typed event output 标记为不可用，并把此后不可观测的 cleanup event 当作已丢弃，再调用 Claude 的 `provider_shutdown` 回收活动进程；fatal frame 的标准 JSON-RPC error 只在 cleanup 后按 2 秒 drain deadline 尝试写出。即使 stdout 不可写或持续背压，清理与 runtime 返回都保持有界。
 - Claude stdout 单物理行硬限制为 4 MiB；超过限制且无换行时立即杀进程组。stderr 单行限制 64 KiB。
-- Provider codec frame 上限是 1 MiB。所有对外 text delta/result 按 UTF-8 边界切为最多 64 KiB；终态 metadata 限制为 4 KiB。
+- Provider Frame V1 的最终编码 frame 上限是 16 MiB。所有对外 text delta/result 仍按 UTF-8 边界切为最多 64 KiB；终态 metadata 限制为 4 KiB。
 - output event 失败时 active 不会先删除；正常 lifecycle 仍尝试尺寸安全的 failed terminal。致命 stdio cleanup 不等待 terminal event 成功，只等待进程退出。
 
 ## 涉及模块

@@ -21,7 +21,7 @@ use codepet_provider_sdk::{
 use codepet_host::{
     DeviceRegistry, HostError, PluginCatalog, PluginCatalogConfig, PluginManager,
     PluginManagerConfig, PluginRuntimeState, ProviderGatewayService, ProviderInstanceRegistry,
-    RemoteAccessConfig, RemoteAccessManager,
+    RemoteAccessConfig, RemoteAccessManager, StderrDiagnostic,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -414,8 +414,8 @@ fn provider_catalog_config(
 
 fn provider_manager_config(settings: &crate::settings::AppSettings) -> PluginManagerConfig {
     let mut config = PluginManagerConfig::default();
-    config.process.max_frame_bytes =
-        codepet_host::provider_sdk::MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES;
+    config.process.max_frame_bytes = codepet_host::provider_sdk::MAX_PROVIDER_FRAME_BYTES;
+    config.process.stderr_observer = Some(record_provider_transport_diagnostic);
     for (provider_id, preference) in &settings.agent_runtimes.by_provider {
         let Some(executable_path) = preference.configured_executable.clone() else { continue };
         let plugin_id = match provider_id.as_str() {
@@ -433,6 +433,21 @@ fn provider_manager_config(settings: &crate::settings::AppSettings) -> PluginMan
         });
     }
     config
+}
+
+fn record_provider_transport_diagnostic(diagnostic: &StderrDiagnostic) {
+    if diagnostic
+        .line
+        .contains("\"schema\":\"codepet.provider.transport.v1\"")
+    {
+        crate::app_log::info(
+            "provider_transport",
+            &format!(
+                "Provider Runtime transport metric truncated={} payload={}",
+                diagnostic.truncated, diagnostic.line
+            ),
+        );
+    }
 }
 
 fn configured_runtime_selection(
@@ -763,14 +778,10 @@ mod tests {
     }
 
     #[test]
-    fn provider_host_accepts_bounded_complete_conversation_history_frames() {
+    fn provider_host_uses_the_shared_provider_frame_v1_limit() {
         assert_eq!(
             provider_manager_config(&crate::settings::AppSettings::default()).process.max_frame_bytes,
-            codepet_host::provider_sdk::MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES
-        );
-        assert!(
-            provider_manager_config(&crate::settings::AppSettings::default()).process.max_frame_bytes
-                > codepet_host::provider_sdk::DEFAULT_MAX_JSON_LINE_BYTES
+            codepet_host::provider_sdk::MAX_PROVIDER_FRAME_BYTES
         );
     }
 

@@ -68,7 +68,7 @@ compat 是无状态 DTO/event 映射：delta 自带 conversation route，所有�
 ## 涉及模块
 
 - `crates/providers/codepet-provider-codex/src/{client,protocol,mapper,provider}.rs`：App Server 子进程、官方 DTO、Provider v1 映射与实例路由。
-- `crates/providers/codepet-provider-codex/src/main.rs`：生成 SDK codec/dispatcher 驱动的 stdio JSON-lines 主循环。
+- `crates/providers/codepet-provider-codex/src/main.rs`：调用公共 `serve_stdio`，由 SDK Runtime 驱动 Provider Frame V1 codec/dispatcher；业务 Provider 不感知 framing。
 - `crates/codepet-host`：manifest、进程、实例、Gateway route 与事件 replay。
 - `src-tauri/src/runtime_gateway/provider_host_compat.rs`：既有远程调用面到 Gateway v1 的薄适配。
 - `src-tauri/src/runtime_gateway/tauri_bridge.rs`、`src-tauri/src/lib.rs`：resolver 注入、插件 refresh 与 remote event bridge。
@@ -80,7 +80,7 @@ compat 是无状态 DTO/event 映射：delta 自带 conversation route，所有�
 - 本机可执行文件兼容性：显式 integration test 使用 resolver 得到的绝对 executable，已覆盖 initialize、instance create/start、conversation list 与 instance stop；无 executable 的环境只跑官方录制 fixture，不把 integration test 假装成必过。
 - 历史 thread 生命周期：`conversation.get` 重复读取只在 observer 发送 metadata `thread/read` 与 `thread/turns/list` pages，不创建新进程、不参与 loaded-thread 状态机；后续首次写动作才允许 execution session resume。测试清空进程日志后重复读取，断言只有只读分页方法，没有 `process/start` 或 `thread/resume`。
 - 新 thread 首消息边界：二进制 fixture 让 create session 返回官方未 materialize 错误、observer 返回 `thread not loaded`，验证 `conversation.create` 立即成功、`conversation.get` 使用暂存的权威 metadata 返回同一 conversation 与空 items，且不会启动或 resume writer；真实 Codex App Server smoke 也执行相同 create/get 流程。
-- 历史帧边界：App Server 单 page 与 Provider→Host 最终 JSONL 分别受 16 MiB 限制。binary fixture 用多个单页均小于上限、合并后大于上限的历史证明 Provider 先返回稳定 `provider_response_too_large`，再以相同起点和较小 limit 成功返回 nextCursor，且进程仍可服务；bounded-line 单元测试只证明超长上游物理行会完整 drain 并形成 protocol error，尚未纵向覆盖某个 turns page 超限。`limit=1` 仍超限时需要更细的 item/content 级分页。
+- 历史帧边界：App Server 单 page 受上游 JSONL 16 MiB 限制；Provider→Host 使用独立的 Frame V1 16 MiB encoded-wire 限制。binary fixture 用多个单页均小于上游上限、合并后大于 Provider wire 上限的历史证明 Runtime 先返回稳定 `provider_response_too_large`，再以相同起点和较小 limit 成功返回 nextCursor，且进程仍可服务；bounded-line 单元测试只证明超长上游物理行会完整 drain 并形成 protocol error，尚未纵向覆盖某个 turns page 超限。`limit=1` 仍超限时需要更细的 item/content 级分页或内容引用，不能由传输层静默裁剪。
 - 历史分页一致性：App Server 没有给 metadata read、turn pages 与 Provider approval ledger 提供共同 snapshot token；分页期间若 turn/approval 正在变化，同一次 `conversation.get` 可能混合相邻时刻的 metadata、active turn 或 approval 状态。当前静态 fixture 只验证确定性历史；在宣称原子 snapshot 前必须增加跨页并发变更 fixture，或由上游/公共协议提供 revision 语义。
 - turn/writer 生命周期：纵向 fixture 使用每 PID 独立日志证明 observer、一次性 create 与 execution 是三个边界；首次 acquire resume，重复 acquire 不产生第二个进程并返回真实 permission/model/reasoning；同一 active turn 的 steer/interrupt/approval 与租约内下一轮 turn 复用 execution。未 acquire 的兼容写路径仍在 terminal 后关闭，因此既有 handle barrier、resume barrier 与 64 轮终态压力测试继续覆盖 Closing/cancel 竞态。
 - 并发与失败清理：并发首次 `turn.start` 只有一次 resume/一次 `turn/start`；observer、one-shot create 与 execution 的 initialize/resume 悬挂时 instance stop 都在 2 秒内关闭子进程并唤醒请求。one-shot EOF、五轮 observer start/stop 以及异步 event stdout broken pipe 分别证明全局 shutdown、generation 终态和 PID 回收。生产 Provider binary 在 16 个普通 dispatch 全悬挂时仍用保留通路完成 stop；16 active + 32 pending 后第 49 个请求按 id 明确过载且未执行，EOF 仍在 2 秒内回收。fixture 另行覆盖 execution initialize reject、官方 writer conflict 及反例、turn RPC reject、App Server crash 与 sent-outcome-unknown。

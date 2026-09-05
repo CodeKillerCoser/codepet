@@ -1,10 +1,11 @@
 use crate::catalog::PluginDescriptor;
 use crate::{HostError, HostResult};
 use codepet_provider_sdk::{
-    JsonLineCodec, JsonRpcInboundError, JsonRpcInboundRequest, JsonRpcResponsePayload,
+    JsonRpcInboundError, JsonRpcInboundRequest, JsonRpcResponsePayload, ProviderFrameCodec,
     ProtocolClient, ProtocolError, ProtocolInboundFuture, ProtocolMethod, ProtocolRequest,
     ProtocolTransport, ProtocolTransportFuture, ProviderShutdownRequest,
     ProviderShutdownResponse, ProviderWireMessage, RequestId, RpcError,
+    MAX_PROVIDER_FRAME_BYTES, PROVIDER_FRAME_HEADER_BYTES,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -16,7 +17,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
@@ -31,18 +32,20 @@ pub struct PluginProcessOptions {
     pub inbound_capacity: usize,
     pub stderr_line_bytes: usize,
     pub stderr_history_lines: usize,
+    pub stderr_observer: Option<fn(&StderrDiagnostic)>,
 }
 
 impl Default for PluginProcessOptions {
     fn default() -> Self {
         Self {
-            max_frame_bytes: codepet_provider_sdk::DEFAULT_MAX_JSON_LINE_BYTES,
+            max_frame_bytes: MAX_PROVIDER_FRAME_BYTES,
             request_timeout: Duration::from_secs(10),
             shutdown_timeout: Duration::from_secs(3),
             outbound_capacity: 64,
             inbound_capacity: 256,
             stderr_line_bytes: 16 * 1024,
             stderr_history_lines: 128,
+            stderr_observer: None,
         }
     }
 }
@@ -71,7 +74,7 @@ enum ProcessCommand {
 }
 
 struct RpcShared {
-    codec: JsonLineCodec,
+    codec: ProviderFrameCodec,
     writer: StdMutex<Option<mpsc::Sender<WriterCommand>>>,
     pending: StdMutex<HashMap<RequestId, oneshot::Sender<Result<Value, ProtocolError>>>>,
     inbound: StdMutex<Option<mpsc::Sender<ProviderWireMessage>>>,
@@ -377,7 +380,7 @@ impl PluginProcess {
         options: PluginProcessOptions,
     ) -> HostResult<Self> {
         validate_executable(&descriptor.executable)?;
-        let codec = JsonLineCodec::new(options.max_frame_bytes).map_err(HostError::from)?;
+        let codec = ProviderFrameCodec::new(options.max_frame_bytes).map_err(HostError::from)?;
         let mut command = Command::new(&descriptor.executable);
         command
             .args(&descriptor.args)
@@ -460,6 +463,7 @@ impl PluginProcess {
             diagnostics.clone(),
             options.stderr_line_bytes.max(1),
             options.stderr_history_lines.max(1),
+            options.stderr_observer,
         ));
         spawn_tracked(process_monitor(
             child,
@@ -657,13 +661,7 @@ async fn reader_loop(
 ) {
     let mut reader = BufReader::new(stdout);
     loop {
-        let frame = match read_bounded_frame(
-            &mut reader,
-            shared.codec.max_frame_bytes(),
-            "Provider stdout",
-        )
-        .await
-        {
+        let frame = match read_provider_frame(&mut reader, shared.codec, "Provider stdout").await {
             Ok(Some(frame)) => frame,
             Ok(None) if shared.is_shutting_down() => return,
             Ok(None) => {
@@ -684,7 +682,7 @@ async fn reader_loop(
                 return;
             }
         };
-        let message = match shared.codec.decode_line(&frame) {
+        let message = match shared.codec.decode_frame(&frame) {
             Ok(message) => message,
             Err(error) => {
                 fail_transport(&shared, &control, inbound_error_to_protocol(error)).await;
@@ -771,15 +769,20 @@ async fn stderr_loop(
     diagnostics: Arc<StdMutex<VecDeque<StderrDiagnostic>>>,
     line_limit: usize,
     history_limit: usize,
+    observer: Option<fn(&StderrDiagnostic)>,
 ) {
     let mut reader = BufReader::new(stderr);
     while let Ok(Some((line, truncated))) = read_diagnostic_line(&mut reader, line_limit).await {
-        if let Ok(mut diagnostics) = diagnostics.lock() {
-            diagnostics.push_back(StderrDiagnostic {
+        let diagnostic = StderrDiagnostic {
                 timestamp_ms: now_ms(),
                 line,
                 truncated,
-            });
+            };
+        if let Some(observer) = observer {
+            observer(&diagnostic);
+        }
+        if let Ok(mut diagnostics) = diagnostics.lock() {
+            diagnostics.push_back(diagnostic);
             while diagnostics.len() > history_limit {
                 diagnostics.pop_front();
             }
@@ -978,53 +981,46 @@ async fn wait_for_exit_completion(
     }
 }
 
-async fn read_bounded_frame<R: AsyncBufRead + Unpin>(
+async fn read_provider_frame<R: AsyncRead + Unpin>(
     reader: &mut R,
-    limit: usize,
+    codec: ProviderFrameCodec,
     source: &str,
 ) -> Result<Option<Vec<u8>>, ProtocolError> {
-    let mut frame = Vec::with_capacity(limit.min(8192));
-    loop {
-        let (consumed, complete) = {
-            let available = reader.fill_buf().await.map_err(|error| {
-                protocol_error(
-                    "provider_frame_read_failed",
-                    format!("read {source}: {error}"),
-                    true,
-                )
-            })?;
-            if available.is_empty() {
-                if frame.is_empty() {
-                    return Ok(None);
-                }
-                if frame.ends_with(b"\r") {
-                    frame.pop();
-                }
-                return Ok(Some(frame));
-            }
-            let newline = available.iter().position(|byte| *byte == b'\n');
-            let payload_bytes = newline.unwrap_or(available.len());
-            if frame.len().saturating_add(payload_bytes) > limit {
-                return Err(protocol_error(
-                    "provider_frame_too_large",
-                    format!("{source} JSON line exceeds {limit} bytes"),
-                    false,
-                ));
-            }
-            frame.extend_from_slice(&available[..payload_bytes]);
-            (
-                newline.map_or(payload_bytes, |index| index + 1),
-                newline.is_some(),
-            )
-        };
-        reader.consume(consumed);
-        if complete {
-            if frame.ends_with(b"\r") {
-                frame.pop();
-            }
-            return Ok(Some(frame));
-        }
+    let mut header = [0_u8; PROVIDER_FRAME_HEADER_BYTES];
+    let first = reader.read(&mut header[..1]).await.map_err(|error| {
+        protocol_error(
+            "provider_frame_read_failed",
+            format!("read {source} frame header: {error}"),
+            true,
+        )
+    })?;
+    if first == 0 {
+        return Ok(None);
     }
+    reader.read_exact(&mut header[1..]).await.map_err(|error| {
+        protocol_error(
+            "provider_frame_truncated",
+            format!("read {source} frame header: {error}"),
+            false,
+        )
+    })?;
+    let decoded_header = codec
+        .decode_header(&header)
+        .map_err(inbound_error_to_protocol)?;
+    let mut frame = Vec::with_capacity(PROVIDER_FRAME_HEADER_BYTES + decoded_header.payload_length);
+    frame.extend_from_slice(&header);
+    frame.resize(PROVIDER_FRAME_HEADER_BYTES + decoded_header.payload_length, 0);
+    reader
+        .read_exact(&mut frame[PROVIDER_FRAME_HEADER_BYTES..])
+        .await
+        .map_err(|error| {
+            protocol_error(
+                "provider_frame_truncated",
+                format!("read {source} frame payload: {error}"),
+                false,
+            )
+        })?;
+    Ok(Some(frame))
 }
 
 async fn read_diagnostic_line<R: AsyncBufRead + Unpin>(
@@ -1231,37 +1227,37 @@ mod tests {
         let cases = [
             TerminalCase {
                 name: "malformed",
-                script: "IFS= read -r request; printf '{malformed-json}\\n'; sleep 1",
+                script: "dd bs=10 count=1 of=/dev/null 2>/dev/null; printf 'CPRF\\001\\000\\000\\000\\000\\020{malformed-json}'; sleep 1",
                 action: TerminalAction::RequestFailure,
             },
             TerminalCase {
                 name: "oversized",
-                script: "IFS= read -r request; printf '%20000s\\n' x; sleep 1",
+                script: "dd bs=10 count=1 of=/dev/null 2>/dev/null; printf 'CPRF\\001\\000\\000\\000\\116\\040'; sleep 1",
                 action: TerminalAction::RequestFailure,
             },
             TerminalCase {
                 name: "eof",
-                script: "IFS= read -r request",
+                script: "dd bs=10 count=1 of=/dev/null 2>/dev/null",
                 action: TerminalAction::RequestFailure,
             },
             TerminalCase {
                 name: "crash",
-                script: "IFS= read -r request; exit 17",
+                script: "dd bs=10 count=1 of=/dev/null 2>/dev/null; exit 17",
                 action: TerminalAction::RequestFailure,
             },
             TerminalCase {
                 name: "timeout",
-                script: "IFS= read -r request; sleep 1",
+                script: "dd bs=10 count=1 of=/dev/null 2>/dev/null; sleep 1",
                 action: TerminalAction::Timeout,
             },
             TerminalCase {
                 name: "normal-shutdown",
-                script: "IFS= read -r request; printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":\"host-1\",\"result\":{\"accepted\":true}}'",
+                script: "dd bs=10 count=1 of=/dev/null 2>/dev/null; printf 'CPRF\\001\\000\\000\\000\\000\\072{\"jsonrpc\":\"2.0\",\"id\":\"host-1\",\"result\":{\"accepted\":true}}'",
                 action: TerminalAction::Shutdown,
             },
             TerminalCase {
                 name: "drop",
-                script: "IFS= read -r request; sleep 1",
+                script: "dd bs=10 count=1 of=/dev/null 2>/dev/null; sleep 1",
                 action: TerminalAction::Drop,
             },
         ];

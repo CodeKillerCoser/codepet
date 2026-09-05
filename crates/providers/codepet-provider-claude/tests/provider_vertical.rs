@@ -7,7 +7,7 @@ use codepet_provider_sdk::{
     ConversationGetRequest, ConversationListRequest, ConversationProjectFilter,
     ConversationProjectFilterAll, ConversationProjectFilterAllKind, InstanceCapabilitiesRequest,
     InstanceCreateRequest, InstanceDestroyRequest, InstanceStartRequest, InstanceStopRequest,
-    JsonLineCodec, JsonObject, ProtocolEvent, ProtocolServer as ProviderProtocolServer,
+    JsonObject, ProtocolEvent, ProtocolServer as ProviderProtocolServer, ProviderFrameCodec,
     ProviderCapability, ProviderInitializeRequest, ProviderInstanceRoute, ProviderResourceId,
     ProviderShutdownRequest, ProviderWireMessage, RoutedResourceId, TurnInput, TurnInputKind, TurnInterruptRequest,
     TurnSelection, TurnStartRequest, TurnStatus, TurnSteerRequest, VersionRange,
@@ -100,7 +100,7 @@ async fn ready_provider_with_permission(
 ) {
     let (event_sender, event_receiver) = mpsc::channel();
     let events: Arc<dyn ProviderEventSink> = Arc::new(move |event: ProtocolEvent| {
-        JsonLineCodec::default()
+        ProviderFrameCodec::default()
             .encode_message(&ProviderWireMessage::Event(event.clone()))?;
         event_sender
             .send(event)
@@ -432,6 +432,94 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     .accepted);
 }
 
+#[tokio::test]
+async fn conversation_get_pages_discovered_history_by_cursor_and_limit() {
+    let workspace = tempfile::tempdir().unwrap();
+    let history_dir = workspace
+        .path()
+        .join(".claude-test/projects/paginated-history");
+    std::fs::create_dir_all(&history_dir).unwrap();
+    let records = [
+        ("oldest", "user", "oldest text"),
+        ("middle", "assistant", "middle text"),
+        ("newest", "assistant", "newest text"),
+    ]
+    .into_iter()
+    .map(|(id, role, text)| {
+        serde_json::to_string(&json!({
+            "type": role,
+            "uuid": id,
+            "sessionId": "session-paginated",
+            "cwd": workspace.path(),
+            "message": { "role": role, "content": text }
+        }))
+        .unwrap()
+    })
+    .collect::<Vec<_>>()
+    .join("\n");
+    std::fs::write(history_dir.join("session-paginated.jsonl"), records).unwrap();
+    let (provider, _events, route, _) = ready_provider(workspace.path()).await;
+    let conversation = ProviderResourceId {
+        device_id: route.device_id.clone(),
+        provider_plugin_id: route.provider_plugin_id.clone(),
+        provider_instance_id: route.provider_instance_id.clone(),
+        native_resource_id: "session-paginated".to_string(),
+    };
+
+    let narrow = ProviderProtocolServer::conversation_get(
+        provider.as_ref(),
+        ConversationGetRequest {
+            conversation: conversation.clone(),
+            cursor: None,
+            limit: Some(1),
+        },
+    )
+    .await
+    .unwrap();
+    let wide = ProviderProtocolServer::conversation_get(
+        provider.as_ref(),
+        ConversationGetRequest {
+            conversation: conversation.clone(),
+            cursor: None,
+            limit: Some(2),
+        },
+    )
+    .await
+    .unwrap();
+    let continued = ProviderProtocolServer::conversation_get(
+        provider.as_ref(),
+        ConversationGetRequest {
+            conversation,
+            cursor: narrow
+                .page_info
+                .as_ref()
+                .and_then(|page| page.next_cursor.clone()),
+            limit: Some(1),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(narrow.items.len(), 1);
+    assert_eq!(conversation_item_id(&narrow.items[0]), "newest");
+    assert_eq!(
+        narrow.page_info.and_then(|page| page.next_cursor),
+        Some("middle:turn".to_string())
+    );
+    assert_eq!(wide.items.len(), 2);
+    assert_eq!(conversation_item_id(&wide.items[0]), "middle");
+    assert_eq!(conversation_item_id(&wide.items[1]), "newest");
+    assert_eq!(continued.items.len(), 1);
+    assert_eq!(conversation_item_id(&continued.items[0]), "middle");
+
+    ProviderProtocolServer::instance_stop(
+        provider.as_ref(),
+        InstanceStopRequest { route },
+    )
+    .await
+    .unwrap();
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn provider_interrupts_an_active_claude_process_with_sigint() {
@@ -583,7 +671,7 @@ async fn provider_event_failure_still_publishes_a_small_failed_terminal() {
     let fail_first_delta = Arc::new(AtomicBool::new(true));
     let failure = fail_first_delta.clone();
     let sink: Arc<dyn ProviderEventSink> = Arc::new(move |event: ProtocolEvent| {
-        JsonLineCodec::default()
+        ProviderFrameCodec::default()
             .encode_message(&ProviderWireMessage::Event(event.clone()))?;
         if matches!(event, ProtocolEvent::EventTurnOutputDelta { .. })
             && failure.swap(false, Ordering::SeqCst)
@@ -835,7 +923,7 @@ fn captured_claude_2_1_251_output_decodes_without_guessed_fields() {
 }
 
 #[test]
-fn provider_binary_uses_generated_json_line_dispatcher() {
+fn provider_binary_uses_generated_dispatcher_over_binary_frame_v1() {
     let mut child = Command::new(provider_executable())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -915,18 +1003,15 @@ fn provider_binary_reaps_active_tree_after_response_pipe_breaks() {
         pids,
     } = active_provider_binary(workspace.path());
     drop(stdout);
-    serde_json::to_writer(
+    write_provider_value(
         &mut stdin,
-        &json!({
+        json!({
             "jsonrpc": "2.0",
             "id": "broken-response-pipe",
             "method": "provider.describe",
             "params": {}
         }),
-    )
-    .unwrap();
-    stdin.write_all(b"\n").unwrap();
-    stdin.flush().unwrap();
+    );
 
     let status = wait_for_provider_exit(&mut child);
     drop(stdin);
@@ -946,7 +1031,7 @@ fn provider_binary_reaps_active_tree_after_invalid_json_under_stdout_backpressur
         pids,
     } = active_provider_binary(workspace.path());
     saturate_provider_stdout(&mut stdout_backpressure);
-    stdin.write_all(b"{not-json}\n").unwrap();
+    write_raw_provider_frame(&mut stdin, b"{not-json}");
     stdin.flush().unwrap();
     drop(stdin);
 
@@ -967,13 +1052,7 @@ fn provider_binary_reaps_active_tree_after_an_oversized_host_frame_under_stdout_
         pids,
     } = active_provider_binary(workspace.path());
     saturate_provider_stdout(&mut stdout_backpressure);
-    stdin
-        .write_all(&vec![
-            b'x';
-            codepet_provider_sdk::MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES + 1
-        ])
-        .unwrap();
-    stdin.write_all(b"\n").unwrap();
+    write_oversized_provider_header(&mut stdin);
     stdin.flush().unwrap();
     drop(stdin);
 
@@ -991,24 +1070,7 @@ fn provider_binary_returns_a_standard_error_then_fail_stops_after_an_oversized_h
         .spawn()
         .unwrap();
     let mut stdin = child.stdin.take().unwrap();
-    stdin
-        .write_all(&vec![
-            b'x';
-            codepet_provider_sdk::MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES + 1
-        ])
-        .unwrap();
-    stdin.write_all(b"\n").unwrap();
-    serde_json::to_writer(
-        &mut stdin,
-        &json!({
-            "jsonrpc": "2.0",
-            "id": "must-not-run",
-            "method": "provider.describe",
-            "params": {}
-        }),
-    )
-    .unwrap();
-    stdin.write_all(b"\n").unwrap();
+    write_oversized_provider_header(&mut stdin);
     stdin.flush().unwrap();
     drop(stdin);
 
@@ -1021,20 +1083,12 @@ fn provider_binary_returns_a_standard_error_then_fail_stops_after_an_oversized_h
         std::thread::sleep(Duration::from_millis(5));
     };
     assert!(!status.success());
-    let mut output = String::new();
-    child
-        .stdout
-        .take()
-        .unwrap()
-        .read_to_string(&mut output)
-        .unwrap();
-    let responses = output.lines().collect::<Vec<_>>();
-    assert_eq!(responses.len(), 1, "{output}");
-    let response: Value = serde_json::from_str(responses[0]).unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let response = read_provider_value(&mut stdout).expect("one fatal response frame");
+    assert!(read_provider_value(&mut stdout).is_none());
     assert_eq!(response["jsonrpc"], "2.0");
     assert!(response["id"].is_null());
     assert_eq!(response["error"]["code"], -32600);
-    assert!(!output.contains("must-not-run"));
 }
 
 #[test]
@@ -1229,6 +1283,15 @@ fn assert_resource_route(
     assert!(!resource.native_resource_id.is_empty());
 }
 
+fn conversation_item_id(item: &codepet_provider_sdk::ConversationItem) -> &str {
+    match item {
+        codepet_provider_sdk::ConversationItem::MessageConversationItem(item) => {
+            &item.resource.native_resource_id
+        }
+        _ => panic!("message item"),
+    }
+}
+
 fn provider_resource(
     route: &ProviderInstanceRoute,
     resource: &RoutedResourceId,
@@ -1384,16 +1447,11 @@ fn binary_request(
     method: &str,
     params: Value,
 ) -> Value {
-    serde_json::to_writer(
+    write_provider_value(
         &mut *stdin,
-        &json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }),
-    )
-    .unwrap();
-    stdin.write_all(b"\n").unwrap();
-    stdin.flush().unwrap();
-    let mut line = String::new();
-    stdout.read_line(&mut line).unwrap();
-    serde_json::from_str(&line).unwrap()
+        json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }),
+    );
+    read_provider_value(stdout).expect("Provider response frame")
 }
 
 fn binary_request_collecting_events(
@@ -1404,20 +1462,71 @@ fn binary_request_collecting_events(
     params: Value,
     pending: &mut Vec<Value>,
 ) -> Value {
-    serde_json::to_writer(
+    write_provider_value(
         &mut *stdin,
-        &json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }),
-    )
-    .unwrap();
-    stdin.write_all(b"\n").unwrap();
-    stdin.flush().unwrap();
+        json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }),
+    );
     loop {
-        let mut line = String::new();
-        assert!(stdout.read_line(&mut line).unwrap() > 0);
-        let message: Value = serde_json::from_str(&line).unwrap();
+        let message = read_provider_value(stdout).expect("Provider response or event frame");
         if message["id"] == id {
             return message;
         }
         pending.push(message);
     }
+}
+
+fn write_provider_value(writer: &mut impl Write, value: Value) {
+    let payload = serde_json::to_vec(&value).unwrap();
+    let message = codepet_provider_sdk::decode_wire_message(&payload).unwrap();
+    ProviderFrameCodec::default()
+        .write_message(writer, &message)
+        .unwrap();
+    writer.flush().unwrap();
+}
+
+fn read_provider_value(reader: &mut impl Read) -> Option<Value> {
+    ProviderFrameCodec::default()
+        .read_message(reader)
+        .unwrap()
+        .map(provider_wire_value)
+}
+
+fn provider_wire_value(message: ProviderWireMessage) -> Value {
+    match message {
+        ProviderWireMessage::Response(value) => serde_json::to_value(value).unwrap(),
+        ProviderWireMessage::Notification(value) => serde_json::to_value(value).unwrap(),
+        ProviderWireMessage::Event(value) => serde_json::to_value(value).unwrap(),
+        ProviderWireMessage::Request(_) => panic!("Provider stdout emitted a request"),
+    }
+}
+
+fn write_raw_provider_frame(writer: &mut impl Write, payload: &[u8]) {
+    writer
+        .write_all(&codepet_provider_sdk::PROVIDER_FRAME_MAGIC)
+        .unwrap();
+    writer
+        .write_all(&[
+            codepet_provider_sdk::PROVIDER_FRAME_VERSION,
+            codepet_provider_sdk::ProviderFrameEncoding::RawJson as u8,
+        ])
+        .unwrap();
+    writer
+        .write_all(&(payload.len() as u32).to_be_bytes())
+        .unwrap();
+    writer.write_all(payload).unwrap();
+}
+
+fn write_oversized_provider_header(writer: &mut impl Write) {
+    writer
+        .write_all(&codepet_provider_sdk::PROVIDER_FRAME_MAGIC)
+        .unwrap();
+    writer
+        .write_all(&[
+            codepet_provider_sdk::PROVIDER_FRAME_VERSION,
+            codepet_provider_sdk::ProviderFrameEncoding::RawJson as u8,
+        ])
+        .unwrap();
+    writer
+        .write_all(&(codepet_provider_sdk::MAX_PROVIDER_FRAME_BYTES as u32).to_be_bytes())
+        .unwrap();
 }

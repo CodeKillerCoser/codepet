@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Measure old/new conversation payloads and RFC 7692 wire compression.
+"""Measure legacy JSONL and Provider Frame V1 conversation payloads.
 
 The benchmark talks only to built Provider binaries over JSON-RPC stdio. It keeps
-conversation text in memory, writes aggregate metrics only, and models the
-negotiated Gateway setting: permessage-deflate at zlib's default level with
-server_no_context_takeover. The WebSocket payload estimate excludes TLS/TCP/IP.
+conversation text in memory, writes aggregate metrics only, records the actual
+Provider stdio wire bytes, and models Gateway permessage-deflate. The old binary
+uses JSON Lines; the new binary uses CodePet Provider Frame V1.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import queue
+import struct
 import subprocess
 import threading
 import time
@@ -39,26 +40,59 @@ CASES = (
 )
 
 
+FRAME_MAGIC = b"CPRF"
+FRAME_VERSION = 1
+FRAME_HEADER_BYTES = 10
+
+
 class ProviderProcess:
-    def __init__(self, executable: Path) -> None:
+    def __init__(self, executable: Path, framing: str) -> None:
+        self._framing = framing
         self._process = subprocess.Popen(
             [str(executable)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
         )
         assert self._process.stdin is not None
         assert self._process.stdout is not None
-        self._messages: queue.Queue[tuple[dict[str, Any], str]] = queue.Queue()
-        self._buffered: list[tuple[dict[str, Any], str]] = []
+        self._messages: queue.Queue[tuple[dict[str, Any], bytes, int, str]] = queue.Queue()
+        self._buffered: list[tuple[dict[str, Any], bytes, int, str]] = []
         threading.Thread(target=self._read_stdout, daemon=True).start()
 
     def _read_stdout(self) -> None:
         assert self._process.stdout is not None
-        for line in self._process.stdout:
-            self._messages.put((json.loads(line), line.rstrip("\n")))
+        if self._framing == "jsonl":
+            for line in self._process.stdout:
+                payload = line.rstrip(b"\n")
+                self._messages.put((json.loads(payload), payload, len(line), "raw"))
+            return
+        while True:
+            header = self._process.stdout.read(FRAME_HEADER_BYTES)
+            if not header:
+                return
+            if len(header) != FRAME_HEADER_BYTES or header[:4] != FRAME_MAGIC:
+                raise RuntimeError("invalid Provider Frame V1 header")
+            version, encoding, payload_length = struct.unpack(">BBI", header[4:])
+            if version != FRAME_VERSION or encoding not in (0, 1):
+                raise RuntimeError("unsupported Provider Frame V1")
+            payload = self._process.stdout.read(payload_length)
+            if len(payload) != payload_length:
+                raise RuntimeError("truncated Provider Frame V1 payload")
+            if encoding == 1:
+                decoded = subprocess.run(
+                    ["zstd", "-q", "-d", "-c"],
+                    input=payload,
+                    check=True,
+                    capture_output=True,
+                ).stdout
+                encoding_name = "zstd"
+            else:
+                decoded = payload
+                encoding_name = "raw"
+            self._messages.put(
+                (json.loads(decoded), decoded, FRAME_HEADER_BYTES + payload_length, encoding_name)
+            )
 
     def request(
         self,
@@ -66,7 +100,7 @@ class ProviderProcess:
         method: str,
         params: dict[str, Any],
         timeout_seconds: float = 180,
-    ) -> tuple[dict[str, Any], str]:
+    ) -> tuple[dict[str, Any], bytes, int, str]:
         assert self._process.stdin is not None
         request = {
             "jsonrpc": "2.0",
@@ -74,27 +108,35 @@ class ProviderProcess:
             "method": method,
             "params": params,
         }
-        self._process.stdin.write(compact_json(request).decode("utf-8") + "\n")
+        payload = compact_json(request)
+        if self._framing == "jsonl":
+            self._process.stdin.write(payload + b"\n")
+        else:
+            self._process.stdin.write(
+                FRAME_MAGIC
+                + struct.pack(">BBI", FRAME_VERSION, 0, len(payload))
+                + payload
+            )
         self._process.stdin.flush()
-        message, raw = self._receive(request_id, timeout_seconds)
+        message, raw, wire_bytes, encoding = self._receive(request_id, timeout_seconds)
         if "error" in message:
             raise RuntimeError(f"{method} failed: {message['error']}")
-        return message["result"], raw
+        return message["result"], raw, wire_bytes, encoding
 
     def _receive(
         self, request_id: str, timeout_seconds: float
-    ) -> tuple[dict[str, Any], str]:
-        for index, (message, raw) in enumerate(self._buffered):
+    ) -> tuple[dict[str, Any], bytes, int, str]:
+        for index, (message, raw, wire_bytes, encoding) in enumerate(self._buffered):
             if message.get("id") == request_id:
                 self._buffered.pop(index)
-                return message, raw
+                return message, raw, wire_bytes, encoding
         deadline = time.monotonic() + timeout_seconds
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError(f"timed out waiting for {request_id}")
             try:
-                message, raw = self._messages.get(timeout=remaining)
+                message, raw, wire_bytes, encoding = self._messages.get(timeout=remaining)
             except queue.Empty as error:
                 stderr = ""
                 if self._process.poll() is not None and self._process.stderr is not None:
@@ -103,8 +145,8 @@ class ProviderProcess:
                     f"provider exited={self._process.poll()} stderr={stderr}"
                 ) from error
             if message.get("id") == request_id:
-                return message, raw
-            self._buffered.append((message, raw))
+                return message, raw, wire_bytes, encoding
+            self._buffered.append((message, raw, wire_bytes, encoding))
 
     def close(self) -> None:
         try:
@@ -172,15 +214,19 @@ def count_shape(value: Any) -> tuple[Counter[str], int, int, int]:
     return kinds, truncations, original_bytes, retained_bytes
 
 
-def measure_case(result: dict[str, Any], raw_frame: str) -> dict[str, Any]:
+def measure_case(
+    result: dict[str, Any], raw_frame: bytes, provider_wire_bytes: int, provider_encoding: str
+) -> dict[str, Any]:
     result_payload = compact_json(result)
-    websocket_payload = raw_frame.encode("utf-8")
+    websocket_payload = raw_frame
     compressed = permessage_deflate(websocket_payload)
     kinds, truncations, original_bytes, retained_bytes = count_shape(result)
     items = result.get("items")
     return {
         "resultBytes": len(result_payload),
         "jsonRpcBytes": len(websocket_payload),
+        "providerStdioWireBytes": provider_wire_bytes,
+        "providerStdioEncoding": provider_encoding,
         "deflatePayloadBytes": len(compressed),
         "webSocketWireBytes": len(compressed) + server_frame_overhead(len(compressed)),
         "compressionRatio": round(len(compressed) / len(websocket_payload), 6),
@@ -217,7 +263,7 @@ def measure_case(result: dict[str, Any], raw_frame: str) -> dict[str, Any]:
 
 
 def benchmark(label: str, provider_path: Path, codex_path: Path) -> dict[str, Any]:
-    provider = ProviderProcess(provider_path)
+    provider = ProviderProcess(provider_path, "jsonl" if label == "old" else "frame-v1")
     try:
         provider.request(
             f"{label}-initialize",
@@ -244,14 +290,16 @@ def benchmark(label: str, provider_path: Path, codex_path: Path) -> dict[str, An
         )
         provider.request(f"{label}-start", "instance.start", {"route": ROUTE}, 180)
         measurements: dict[str, Any] = {}
-        listed, listed_raw = provider.request(
+        listed, listed_raw, listed_wire, listed_encoding = provider.request(
             f"{label}-list-100",
             "conversation.list",
             {"route": ROUTE, "limit": 100, "projectFilter": {"kind": "all"}},
         )
-        measurements["list-100"] = measure_case(listed, listed_raw)
+        measurements["list-100"] = measure_case(
+            listed, listed_raw, listed_wire, listed_encoding
+        )
         for case_label, conversation_id, limit in CASES:
-            result, raw = provider.request(
+            result, raw, wire_bytes, encoding = provider.request(
                 f"{label}-{case_label}",
                 "conversation.get",
                 {
@@ -259,7 +307,9 @@ def benchmark(label: str, provider_path: Path, codex_path: Path) -> dict[str, An
                     "limit": limit,
                 },
             )
-            measurements[case_label] = measure_case(result, raw)
+            measurements[case_label] = measure_case(
+                result, raw, wire_bytes, encoding
+            )
         return measurements
     finally:
         provider.close()
@@ -320,7 +370,8 @@ def main() -> None:
             "newProvider": file_identity(arguments.new_provider),
         },
         "method": {
-            "transport": "Provider JSON-RPC stdio response used as Gateway payload proxy",
+            "transport": "old=JSONL; new=CodePet Provider Frame V1; decoded JSON-RPC also used as Gateway payload proxy",
+            "providerFrame": "CPRF + version + encoding + u32 payloadLength; raw below 32 KiB, otherwise zstd level 1 when savings are >=10% and >=1 KiB",
             "compression": "RFC 7692 permessage-deflate, zlib default level, raw DEFLATE, Z_SYNC_FLUSH trailer removed",
             "contextTakeover": False,
             "webSocketWireExcludes": ["TLS", "TCP", "IP"],

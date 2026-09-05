@@ -1,13 +1,13 @@
 use crate::{
-    dispatch, JsonLineCodec, JsonRpcInboundRequest, JsonRpcResponse, JsonRpcResponsePayload,
+    dispatch, ProviderFrameCodec, JsonRpcInboundRequest, JsonRpcResponse, JsonRpcResponsePayload,
     ProtocolDispatchLane, ProtocolError, ProtocolEvent, ProtocolMethod, ProtocolRequest, ProtocolServer,
-    ProviderShutdownRequest, ProviderWireMessage, RpcError, DEFAULT_MAX_JSON_LINE_BYTES,
+    ProviderShutdownRequest, ProviderWireMessage, RpcError, MAX_PROVIDER_FRAME_BYTES,
 };
 use std::fmt::{Display, Formatter};
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
@@ -38,7 +38,7 @@ pub struct StdioServerOptions {
 impl Default for StdioServerOptions {
     fn default() -> Self {
         Self {
-            max_frame_bytes: DEFAULT_MAX_JSON_LINE_BYTES,
+            max_frame_bytes: MAX_PROVIDER_FRAME_BYTES,
             max_concurrent_requests: 16,
             max_pending_requests: 32,
             max_concurrent_control_requests: 2,
@@ -96,7 +96,7 @@ where
     .await
 }
 
-/// Runs the stdio JSON-lines runtime over caller-provided I/O.
+/// Runs the stdio binary Frame V1 runtime over caller-provided I/O.
 ///
 /// This is public so Provider authors can build process-level conformance tests without
 /// reimplementing the transport. Production plugins should normally call [`serve_stdio`].
@@ -107,13 +107,13 @@ pub async fn serve_stdio_with_io<R, W, P, F>(
     factory: F,
 ) -> Result<(), StdioServerError>
 where
-    R: BufRead + Send + 'static,
+    R: Read + Send + 'static,
     W: Write + Send + 'static,
     P: ProtocolServer + 'static,
     F: FnOnce(Arc<dyn ProviderEventSink>) -> P,
 {
     validate_options(options)?;
-    let codec = JsonLineCodec::new(options.max_frame_bytes)?;
+    let codec = ProviderFrameCodec::new(options.max_frame_bytes)?;
     let writer = Arc::new(Mutex::new(writer));
     let output_unavailable = Arc::new(AtomicBool::new(false));
     let (terminal_sender, terminal_receiver) = mpsc::channel(1);
@@ -186,7 +186,7 @@ fn validate_options(options: StdioServerOptions) -> Result<(), StdioServerError>
 }
 
 struct StdioEventWriter<W> {
-    codec: JsonLineCodec,
+    codec: ProviderFrameCodec,
     writer: Arc<Mutex<W>>,
     terminal: mpsc::Sender<ReaderTerminal>,
     terminal_signalled: AtomicBool,
@@ -212,7 +212,7 @@ where
                 .write_message(&mut *writer, &ProviderWireMessage::Event(event))
                 .and_then(|()| {
                     writer.flush().map_err(|error| ProtocolError {
-                        code: "json_line_flush_failed".to_string(),
+                        code: "provider_frame_flush_failed".to_string(),
                         message: format!("flush Provider event: {error}"),
                         retryable: true,
                         details: None,
@@ -242,14 +242,14 @@ enum ReaderTerminal {
 
 fn read_host_messages<R, W>(
     mut reader: R,
-    codec: JsonLineCodec,
+    codec: ProviderFrameCodec,
     writer: Arc<Mutex<W>>,
     normal_requests: mpsc::Sender<ProtocolRequest>,
     control_requests: mpsc::Sender<ProtocolRequest>,
     terminal: mpsc::Sender<ReaderTerminal>,
     options: StdioServerOptions,
 ) where
-    R: BufRead,
+    R: Read,
     W: Write,
 {
     loop {
@@ -326,7 +326,7 @@ fn read_host_messages<R, W>(
 
 async fn run_service_loop<P, W>(
     provider: Arc<P>,
-    codec: JsonLineCodec,
+    codec: ProviderFrameCodec,
     writer: Arc<Mutex<W>>,
     mut normal_requests: mpsc::Receiver<ProtocolRequest>,
     mut control_requests: mpsc::Receiver<ProtocolRequest>,
@@ -438,7 +438,7 @@ where
 }
 
 fn write_terminal_message_with_timeout<W>(
-    codec: JsonLineCodec,
+    codec: ProviderFrameCodec,
     writer: Arc<Mutex<W>>,
     message: ProviderWireMessage,
     timeout: Duration,
@@ -475,7 +475,7 @@ fn dispatch_completion(
 
 async fn dispatch_host_request<P, W>(
     provider: Arc<P>,
-    codec: JsonLineCodec,
+    codec: ProviderFrameCodec,
     writer: Arc<Mutex<W>>,
     request: ProtocolRequest,
 ) -> Result<bool, StdioServerError>
@@ -484,22 +484,79 @@ where
     W: Write,
 {
     let should_stop = request.method() == ProtocolMethod::ProviderShutdown;
+    let method = request.method().as_str().to_string();
+    let request_id = request.id().clone();
+    let dispatch_stopwatch = Instant::now();
     let response = dispatch(provider.as_ref(), request).await;
-    write_response(&codec, &writer, response)?;
+    let provider_processing_us = dispatch_stopwatch.elapsed().as_micros();
+    write_response(
+        &codec,
+        &writer,
+        response,
+        &method,
+        &request_id,
+        provider_processing_us,
+    )?;
     Ok(should_stop)
 }
 
 fn write_response<W: Write>(
-    codec: &JsonLineCodec,
+    codec: &ProviderFrameCodec,
     writer: &Arc<Mutex<W>>,
     response: JsonRpcResponse,
+    method: &str,
+    request_id: &str,
+    provider_processing_us: u128,
 ) -> Result<(), StdioServerError> {
     let jsonrpc = response.jsonrpc.clone();
     let id = response.id.clone();
+    let status = if matches!(&response.response, JsonRpcResponsePayload::Ok { .. }) {
+        "ok"
+    } else {
+        "error"
+    };
     let message = ProviderWireMessage::Response(response);
-    match codec.encode_message(&message) {
-        Ok(frame) => write_frame(writer, &frame),
-        Err(error) if error.code == "json_line_frame_too_large" => {
+    match codec.encode_message_with_metrics(&message) {
+        Ok(encoded) => {
+            let write_stopwatch = Instant::now();
+            write_frame(writer, &encoded.frame)?;
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "schema": "codepet.provider.transport.v1",
+                    "recordType": "metric",
+                    "name": "provider.frame.written",
+                    "rpc.method": method,
+                    "rpc.requestId": request_id,
+                    "status": status,
+                    "encoding": encoded.metrics.encoding.as_str(),
+                    "jsonBytes": encoded.metrics.json_bytes,
+                    "encodedPayloadBytes": encoded.metrics.encoded_payload_bytes,
+                    "frameBytes": encoded.metrics.frame_bytes,
+                    "compressionRatio": encoded.metrics.encoded_payload_bytes as f64
+                        / encoded.metrics.json_bytes.max(1) as f64,
+                    "providerProcessingUs": provider_processing_us.to_string(),
+                    "jsonEncodeUs": encoded.metrics.json_encode_us.to_string(),
+                    "compressionUs": encoded.metrics.compression_us.to_string(),
+                    "writeAndFlushUs": write_stopwatch.elapsed().as_micros().to_string(),
+                })
+            );
+            Ok(())
+        }
+        Err(error) if error.code == "provider_frame_too_large" => {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "schema": "codepet.provider.transport.v1",
+                    "recordType": "metric",
+                    "name": "provider.frame.rejected",
+                    "rpc.method": method,
+                    "rpc.requestId": request_id,
+                    "status": "too_large",
+                    "providerProcessingUs": provider_processing_us.to_string(),
+                    "details": &error.details,
+                })
+            );
             drop(message);
             write_message(
                 codec,
@@ -508,6 +565,7 @@ fn write_response<W: Write>(
                     jsonrpc,
                     id,
                     codec.max_frame_bytes(),
+                    error,
                 )),
             )
         }
@@ -519,18 +577,20 @@ fn response_too_large(
     jsonrpc: String,
     id: Option<String>,
     max_frame_bytes: usize,
+    frame_error: ProtocolError,
 ) -> JsonRpcResponse {
+    let mut details = frame_error.details.unwrap_or_default();
+    details.insert(
+        "maxFrameBytes".to_string(),
+        serde_json::json!(max_frame_bytes),
+    );
     let error = ProtocolError {
         code: "provider_response_too_large".to_string(),
         message: format!(
-            "Provider response exceeds the {max_frame_bytes}-byte JSON-line limit"
+            "Provider response exceeds the {max_frame_bytes}-byte binary frame limit"
         ),
         retryable: false,
-        details: Some(
-            [("maxFrameBytes".to_string(), serde_json::json!(max_frame_bytes))]
-                .into_iter()
-                .collect(),
-        ),
+        details: Some(details),
     };
     let message = error.message.clone();
     let data = serde_json::to_value(error)
@@ -618,7 +678,7 @@ fn is_control_request(request: &ProtocolRequest) -> bool {
 }
 
 fn write_overload_response<W: Write>(
-    codec: &JsonLineCodec,
+    codec: &ProviderFrameCodec,
     writer: &Arc<Mutex<W>>,
     request: ProtocolRequest,
     max_concurrent: usize,
@@ -668,14 +728,14 @@ fn write_overload_response<W: Write>(
 }
 
 fn write_message<W: Write>(
-    codec: &JsonLineCodec,
+    codec: &ProviderFrameCodec,
     writer: &Arc<Mutex<W>>,
     message: ProviderWireMessage,
 ) -> Result<(), StdioServerError> {
     let mut writer = lock(writer);
     codec.write_message(&mut *writer, &message)?;
     writer.flush().map_err(|error| {
-        StdioServerError::new(format!("flush Provider JSON-line message: {error}"))
+        StdioServerError::new(format!("flush Provider binary frame message: {error}"))
     })
 }
 
@@ -686,10 +746,10 @@ fn write_frame<W: Write>(
     let mut writer = lock(writer);
     writer
         .write_all(frame)
-        .map_err(|error| StdioServerError::new(format!("write Provider JSON line: {error}")))?;
+        .map_err(|error| StdioServerError::new(format!("write Provider binary frame: {error}")))?;
     writer
         .flush()
-        .map_err(|error| StdioServerError::new(format!("flush Provider JSON line: {error}")))
+        .map_err(|error| StdioServerError::new(format!("flush Provider binary frame: {error}")))
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

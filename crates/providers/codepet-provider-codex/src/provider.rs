@@ -34,7 +34,7 @@ use codepet_provider_sdk::{
     RuntimeGetInstalledResponse, RuntimeInstallation, RuntimeSelectRequest, RuntimeSelectResponse,
     TurnInterruptRequest, TurnInterruptResponse,
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnSteerRequest, TurnSteerResponse,
-    VersionRange, PROTOCOL_VERSION, fit_single_turn_conversation_history,
+    VersionRange, PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -2578,13 +2578,13 @@ impl Provider for CodexProvider {
                         .pending_materialization
                         .remove(&conversation_id);
                 }
-                Ok(fit_single_turn_conversation_history(Some(requested_limit), ConversationGetResponse {
+                Ok(ConversationGetResponse {
                     conversation,
                     items,
                     page_info: Some(PageInfo {
                         next_cursor: response_next_cursor,
                     }),
-                }))
+                })
             })
                 .await
                 .map_err(provider_task_error)?

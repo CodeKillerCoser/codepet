@@ -13,15 +13,15 @@ use codepet_provider_sdk::{
     InstanceDestroyRequest, InstanceStartRequest, InstanceStopRequest, JsonObject, ProtocolEvent,
     ProjectCreateRequest, ProjectDeleteRequest, ProjectGetRequest, ProjectListRequest, ProjectRoot,
     ProjectUpdateRequest,
-    ProtocolServer as ProviderProtocolServer, ProviderInitializeRequest,
+    ProtocolServer as ProviderProtocolServer, ProviderFrameCodec, ProviderInitializeRequest,
     FlatModelCatalogKind, FlatModelSelection, ModelSelection, ProviderInstanceRoute,
-    ProviderResourceId, ProviderShutdownRequest, TurnInput, TurnInputKind, TurnInterruptRequest,
+    ProviderResourceId, ProviderShutdownRequest, ProviderWireMessage, TurnInput, TurnInputKind, TurnInterruptRequest,
     ToolOutcome, TurnSelection, TurnStartRequest, TurnSteerRequest, VersionRange, PROTOCOL_VERSION,
 };
 use serde_json::json;
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1482,6 +1482,11 @@ fn provider_binary_conversation_get_pages_history_without_resuming() {
         "conversation.get",
         json!({ "conversation": conversation.clone(), "limit": 1 }),
     );
+    let wider = provider.request(
+        "paginated-history-wider",
+        "conversation.get",
+        json!({ "conversation": conversation.clone(), "limit": 2 }),
+    );
     let second = provider.request(
         "paginated-history-second",
         "conversation.get",
@@ -1493,6 +1498,7 @@ fn provider_binary_conversation_get_pages_history_without_resuming() {
     );
 
     assert!(first.get("error").is_none(), "{first}");
+    assert!(wider.get("error").is_none(), "{wider}");
     assert!(second.get("error").is_none(), "{second}");
     assert_eq!(
         first
@@ -1513,6 +1519,19 @@ fn provider_binary_conversation_get_pages_history_without_resuming() {
         Some("page-two")
     );
     assert_eq!(
+        wider
+            .pointer("/result/items/0/resource/nativeResourceId")
+            .and_then(Value::as_str),
+        Some("agent-page-one")
+    );
+    assert_eq!(
+        wider
+            .pointer("/result/items/1/resource/nativeResourceId")
+            .and_then(Value::as_str),
+        Some("agent-page-two")
+    );
+    assert!(wider.pointer("/result/pageInfo/nextCursor").is_none());
+    assert_eq!(
         second
             .pointer("/result/items/0/resource/nativeResourceId")
             .and_then(Value::as_str),
@@ -1526,6 +1545,9 @@ fn provider_binary_conversation_get_pages_history_without_resuming() {
             .collect::<Vec<_>>(),
         vec![
             "thread/read\tthread-paginated",
+            "thread/turns/list\tthread-paginated",
+            "thread/read\tthread-paginated",
+            "thread/turns/list\tthread-paginated",
             "thread/turns/list\tthread-paginated",
             "thread/read\tthread-paginated",
             "thread/turns/list\tthread-paginated"
@@ -3438,24 +3460,13 @@ fn provider_binary_fails_stop_after_an_oversized_host_frame() {
         .spawn()
         .unwrap();
     let mut stdin = child.stdin.take().unwrap();
-    stdin
-        .write_all(&vec![
-            b'x';
-            codepet_provider_sdk::MAX_CONVERSATION_HISTORY_JSON_LINE_BYTES + 1
-        ])
-        .unwrap();
-    stdin.write_all(b"\n").unwrap();
-    serde_json::to_writer(
-        &mut stdin,
-        &json!({
-            "jsonrpc": "2.0",
-            "id": "must-not-run",
-            "method": "provider.describe",
-            "params": {}
-        }),
-    )
-    .unwrap();
-    stdin.write_all(b"\n").unwrap();
+    let mut oversized_header = Vec::from(codepet_provider_sdk::PROVIDER_FRAME_MAGIC);
+    oversized_header.push(codepet_provider_sdk::PROVIDER_FRAME_VERSION);
+    oversized_header.push(codepet_provider_sdk::ProviderFrameEncoding::RawJson as u8);
+    oversized_header.extend_from_slice(
+        &(codepet_provider_sdk::MAX_PROVIDER_FRAME_BYTES as u32).to_be_bytes(),
+    );
+    stdin.write_all(&oversized_header).unwrap();
     stdin.flush().unwrap();
     drop(stdin);
 
@@ -3468,22 +3479,23 @@ fn provider_binary_fails_stop_after_an_oversized_host_frame() {
         std::thread::sleep(Duration::from_millis(5));
     };
     assert!(!status.success());
-    let mut output = String::new();
-    child
-        .stdout
-        .take()
+    let mut stdout = child.stdout.take().unwrap();
+    let response = provider_wire_value(
+        ProviderFrameCodec::default()
+            .read_message(&mut stdout)
+            .unwrap()
+            .expect("one fatal response frame"),
+    );
+    assert!(ProviderFrameCodec::default()
+        .read_message(&mut stdout)
         .unwrap()
-        .read_to_string(&mut output)
-        .unwrap();
-    let frames = output.lines().collect::<Vec<_>>();
-    assert_eq!(frames.len(), 1);
-    let response: Value = serde_json::from_str(frames[0]).unwrap();
+        .is_none());
     assert_eq!(response["error"]["code"], -32600);
     assert_ne!(response["id"], "must-not-run");
 }
 
 #[test]
-fn provider_binary_truncates_a_large_history_before_stdout_and_keeps_serving() {
+fn provider_binary_preserves_large_history_content_and_keeps_serving() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("unused.txt");
     let mut provider = ProviderBinary::spawn();
@@ -3501,8 +3513,15 @@ fn provider_binary_truncates_a_large_history_before_stdout_and_keeps_serving() {
             }
         }),
     );
-    assert!(serde_json::to_vec(&fetched).unwrap().len() < 1024 * 1024);
-    assert!(fetched.to_string().contains("\"truncation\""));
+    assert!(fetched.get("error").is_none(), "{fetched}");
+    let text = fetched
+        .pointer("/result/items/1/contents/0/text")
+        .and_then(Value::as_str)
+        .unwrap();
+    assert_eq!(text.len(), 1024 * 1024 + 4096);
+    assert!(fetched
+        .pointer("/result/items/1/contents/0/truncation")
+        .is_none());
 
     let described = provider.request("after-large-history", "provider.describe", json!({}));
     assert_eq!(
@@ -3515,7 +3534,7 @@ fn provider_binary_truncates_a_large_history_before_stdout_and_keeps_serving() {
 }
 
 #[test]
-fn provider_binary_budgets_an_oversized_page_and_keeps_serving() {
+fn provider_binary_pages_large_turns_without_transport_budgeting() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("oversized-history.txt");
     let mut provider = ProviderBinary::spawn();
@@ -3530,9 +3549,22 @@ fn provider_binary_budgets_an_oversized_page_and_keeps_serving() {
     );
     assert_eq!(fetched["id"], "oversized-history");
     assert!(fetched.get("error").is_none(), "{fetched}");
-    let fetched_bytes = serde_json::to_vec(&fetched).unwrap();
-    assert!(fetched_bytes.len() <= 8 * 1024 * 1024);
-    assert!(fetched.to_string().contains("\"truncation\""));
+    assert_eq!(
+        fetched
+            .pointer("/result/items")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .map(|item| item
+                .pointer("/resource/nativeResourceId")
+                .and_then(Value::as_str)
+                .unwrap())
+            .collect::<Vec<_>>(),
+        vec!["agent-large-one", "agent-large-two", "agent-large-three"]
+    );
+    assert!(fetched
+        .pointer("/result/items/0/contents/0/truncation")
+        .is_none());
 
     let reduced = provider.request(
         "reduced-history",
@@ -3892,9 +3924,10 @@ impl ProviderBinary {
         let reader_close_requested = close_stdout_requested.clone();
         let reader_stdout_closed = stdout_closed.clone();
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let line = line.unwrap();
-                if sender.send(serde_json::from_str(&line).unwrap()).is_err() {
+            let mut stdout = BufReader::new(stdout);
+            let codec = ProviderFrameCodec::default();
+            while let Ok(Some(message)) = codec.read_message(&mut stdout) {
+                if sender.send(provider_wire_value(message)).is_err() {
                     break;
                 }
                 if reader_close_requested.load(Ordering::SeqCst) {
@@ -4000,12 +4033,14 @@ impl ProviderBinary {
 
     fn send_request(&mut self, id: &str, method: &str, params: Value) {
         let stdin = self.stdin.as_mut().expect("Provider stdin is closed");
-        serde_json::to_writer(
-            &mut *stdin,
+        let payload = serde_json::to_vec(
             &json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }),
         )
         .unwrap();
-        stdin.write_all(b"\n").unwrap();
+        let message = codepet_provider_sdk::decode_wire_message(&payload).unwrap();
+        ProviderFrameCodec::default()
+            .write_message(&mut *stdin, &message)
+            .unwrap();
         stdin.flush().unwrap();
     }
 
@@ -4092,6 +4127,15 @@ impl ProviderBinary {
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
             }
         }
+    }
+}
+
+fn provider_wire_value(message: ProviderWireMessage) -> Value {
+    match message {
+        ProviderWireMessage::Response(value) => serde_json::to_value(value).unwrap(),
+        ProviderWireMessage::Notification(value) => serde_json::to_value(value).unwrap(),
+        ProviderWireMessage::Event(value) => serde_json::to_value(value).unwrap(),
+        ProviderWireMessage::Request(_) => panic!("Provider stdout emitted a request"),
     }
 }
 

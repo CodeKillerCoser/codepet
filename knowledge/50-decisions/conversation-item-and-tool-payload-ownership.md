@@ -25,7 +25,7 @@
 
 消息正文和工具结果共用同一套稳定内容块身份与截断元数据。截断元数据位于被截断的内容块或 tool input，至少包含 `originalBytes`、`retainedBytes` 和 `strategy`；`omittedBytes` 可由协议要求显式提供或从前两者推导，但所有生成 SDK 必须保持同一选择。没有截断元数据即表示对应载荷完整。`head-tail` 用于命令、日志、Shell 和测试输出，结构化输入可以使用 `structural-preview`，不能仅用一个布尔值让客户端猜测丢失多少内容。
 
-第一次截断必须发生在 Provider 对响应做 stdout JSON 序列化之前，因为 Provider→Host 的 16 MiB JSON-line 是最早会失败的边界。共享 Provider SDK 负责一致的内容预算、页软预算和最终 frame 检查；各 Provider 只提供语义分类和原生内容。Host/Gateway 可按自己的远程传输预算做第二次有损投影，但不能把它当作保护 Provider frame 的手段。
+内容截断只能作为原生 harness 数据映射为 Agent 领域对象时的显式内容策略，不能作为传输层为了通过帧上限而执行的降级。共享 Provider SDK Runtime 只负责序列化、压缩、最终 frame 检查和稳定错误，不理解或修改 tool/message/preview 等业务字段。`conversation.get` 必须真实遵守 cursor/limit；最终帧超限时返回 `provider_response_too_large`，由最终调用方保持 cursor 并缩小 limit，Host/Gateway 不做二次有损投影。
 
 `conversation.get` 的 item/content identity 继续支持 snapshot 与 `turn.outputDelta` 去重。客户端提交集合必须遍历每个判别分支的 canonical content blocks；协议不能要求客户端通过文本相等判断副本。详情抽屉、列表内折叠和独立详情页都读取同一 canonical blocks，并根据截断元数据提示内容不完整。
 
@@ -46,7 +46,7 @@
 
 - `protocol/provider/v1`、`protocol/gateway/v1` 及 Rust/Dart/TypeScript 生成物需要同步修改；生成器必须继续保留 `oneOf` 的 discriminator 互斥语义。
 - Codex、Claude 与 OpenCode Mapper 必须只填充一个输入 variant 和一个 outcome，不再向顶层 contents 写工具正文副本。
-- Provider SDK 必须在写 stdout 前执行按块截断、响应软预算与最终 16 MiB frame 检查；`limit=1` 的事后顶层 contents 补救不能作为主要机制。
+- Provider mapper 可按明确内容策略生成带 truncation metadata 的领域内容；Provider SDK Runtime 只能对最终编码 frame 执行 16 MiB 检查，禁止按块截断、响应软预算或 History omitted 等传输降级。
 - Host/Gateway 校验和投影必须按 item variant 遍历 canonical contents，并保持 Provider-only extension 不出 Host。
 - codepet-remote 的解码、提交 contentId 集合、delta 合并、工具展示和分页策略必须读取新联合结构；抽屉交互本身不要求协议特例。
 - `conversation.list` 的 title/preview 是独立问题。相等样本证明存在元数据冗余，但当前实测列表未达到 16 MiB；不要把它与工具正文治理混为同一个根因。
@@ -54,6 +54,6 @@
 ## 后续观察
 
 - 用 2,350 items、870 command、801 output 的等价 fixture 锁定“无完整正文副本”和整页大小。
-- 用 65–142 KiB 的中等输出以及数百个 8–20 KiB 输出验证单块限制与累计页预算。
-- 记录 method、route、cursor、limit、最终字节数、按 kind 数量和截断字节数，不记录正文。
+- 用 65–142 KiB 的中等输出以及数百个 8–20 KiB 输出验证 Provider mapper 的显式内容策略与 truncation metadata，不再建立传输层累计页预算。
+- 记录 method、route、cursor、limit、JSON 字节数、最终 wire 字节数、encoding、按 kind 数量和截断字节数，不记录正文。
 - 协议实现完成后，分别验收 Provider frame、Host/Gateway 投影和 Remote snapshot/delta，不以 UI 能打开作为唯一通过标准。

@@ -33,7 +33,7 @@ use codepet_provider_sdk::{
     TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent,
     TurnSelection, TurnSendCapabilities, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
     TurnSteerResponse,
-    TurnUpsertedEvent, VersionRange, PROTOCOL_VERSION, fit_single_turn_conversation_history,
+    TurnUpsertedEvent, VersionRange, PROTOCOL_VERSION,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -57,6 +57,8 @@ const TURN_COMPLETION_WAIT: Duration = Duration::from_secs(4);
 const CLAUDE_DEFAULT_MODEL: &str = "claude-default";
 const CLAUDE_DEFAULT_ACCESS_MODE: &str = "manual";
 const CLAUDE_DEFAULT_EFFORT: &str = "high";
+const DEFAULT_CONVERSATION_GET_TURN_LIMIT: u64 = 40;
+const MAX_CONVERSATION_GET_TURN_LIMIT: u64 = 100;
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -463,10 +465,15 @@ impl ClaudeInstanceRuntime {
             Some(path) => read_claude_history_items(&path, &self.route, &conversation.resource)?,
             None => Vec::new(),
         };
+        let (items, next_cursor) = paginate_claude_history(
+            items,
+            request.cursor.as_deref(),
+            request.limit,
+        )?;
         Ok(ConversationGetResponse {
             conversation,
             items,
-            page_info: None,
+            page_info: Some(PageInfo { next_cursor }),
         })
     }
 
@@ -1574,11 +1581,8 @@ impl Provider for ClaudeProvider {
         request: ConversationGetRequest,
     ) -> ProtocolFuture<'a, ConversationGetResponse> {
         Box::pin(async move {
-            let requested_limit = request.limit;
             let runtime = self.resource_instance(&request.conversation)?;
-            runtime
-                .get_conversation(request)
-                .map(|response| fit_single_turn_conversation_history(requested_limit, response))
+            runtime.get_conversation(request)
         })
     }
 
@@ -2580,6 +2584,80 @@ fn read_claude_history_items(
     Ok(items)
 }
 
+fn paginate_claude_history(
+    items: Vec<ConversationItem>,
+    cursor: Option<&str>,
+    requested_limit: Option<u64>,
+) -> Result<(Vec<ConversationItem>, Option<String>), ProtocolError> {
+    let limit = requested_limit.unwrap_or(DEFAULT_CONVERSATION_GET_TURN_LIMIT);
+    if !(1..=MAX_CONVERSATION_GET_TURN_LIMIT).contains(&limit) {
+        return Err(protocol_error(
+            "invalid_request",
+            format!(
+                "conversation.get limit must be between 1 and {MAX_CONVERSATION_GET_TURN_LIMIT}"
+            ),
+            false,
+        ));
+    }
+    let mut turn_starts = Vec::new();
+    let mut previous_turn = None;
+    for (index, item) in items.iter().enumerate() {
+        let turn = conversation_item_turn(item);
+        if previous_turn != Some(turn) {
+            turn_starts.push(index);
+            previous_turn = Some(turn);
+        }
+    }
+    if turn_starts.is_empty() {
+        if cursor.is_some() {
+            return Err(protocol_error(
+                "invalid_cursor",
+                "Claude conversation cursor is outside the history".to_string(),
+                false,
+            ));
+        }
+        return Ok((Vec::new(), None));
+    }
+    let turn_count = turn_starts.len();
+    let end_turn = match cursor {
+        None => turn_count,
+        Some(cursor) => turn_starts
+            .iter()
+            .position(|start| {
+                conversation_item_turn(&items[*start]).native_resource_id == cursor
+            })
+            .map(|index| index + 1)
+            .ok_or_else(|| {
+                protocol_error(
+                    "invalid_cursor",
+                    "Claude conversation cursor is outside the history".to_string(),
+                    false,
+                )
+            })?,
+    };
+    let start_turn = end_turn.saturating_sub(limit as usize);
+    let start_item = turn_starts[start_turn];
+    let end_item = turn_starts.get(end_turn).copied().unwrap_or(items.len());
+    let next_cursor = (start_turn > 0).then(|| {
+        conversation_item_turn(&items[turn_starts[start_turn - 1]])
+            .native_resource_id
+            .clone()
+    });
+    Ok((items[start_item..end_item].to_vec(), next_cursor))
+}
+
+fn conversation_item_turn(item: &ConversationItem) -> &RoutedResourceId {
+    match item {
+        ConversationItem::MessageConversationItem(item) => &item.turn,
+        ConversationItem::ReasoningConversationItem(item) => &item.turn,
+        ConversationItem::CommandConversationItem(item) => &item.turn,
+        ConversationItem::FileChangeConversationItem(item) => &item.turn,
+        ConversationItem::ToolConversationItem(item) => &item.turn,
+        ConversationItem::ApprovalConversationItem(item) => &item.turn,
+        ConversationItem::UnknownConversationItem(item) => &item.turn,
+    }
+}
+
 fn claude_result_text(value: &Value) -> Option<String> {
     if let Some(text) = value.as_str() {
         return Some(text.to_string());
@@ -2909,5 +2987,57 @@ mod tests {
         let Some(ToolOutcome::ToolSuccessOutcome(outcome)) = &tool.outcome else { panic!("success") };
         let ContentBlock::OutputContentBlock(output) = &outcome.content[0] else { panic!("output") };
         assert_eq!(output.text, "tests passed");
+    }
+
+    #[test]
+    fn paginates_persisted_history_by_turn_and_preserves_the_cursor_boundary() {
+        let route = ProviderInstanceRoute {
+            device_id: "device".to_string(),
+            provider_plugin_id: CLAUDE_PLUGIN_ID.to_string(),
+            provider_instance_id: "claude".to_string(),
+        };
+        let conversation = routed_resource(&route, "conversation".to_string());
+        let items = ["oldest", "middle", "newest"]
+            .into_iter()
+            .map(|id| ConversationItem::MessageConversationItem(MessageConversationItem {
+                resource: routed_resource(&route, id.to_string()),
+                turn: routed_resource(&route, format!("{id}:turn")),
+                conversation: conversation.clone(),
+                kind: MessageConversationItemKind::Message,
+                status: ConversationItemStatus::Completed,
+                role: ConversationItemRole::Assistant,
+                contents: vec![ContentBlock::TextContentBlock(TextContentBlock {
+                    content_id: format!("{id}:text"),
+                    kind: TextContentBlockKind::Text,
+                    text: id.to_string(),
+                    truncation: None,
+                })],
+            }))
+            .collect::<Vec<_>>();
+
+        let (narrow, narrow_cursor) =
+            paginate_claude_history(items.clone(), None, Some(1)).unwrap();
+        let (wide, wide_cursor) =
+            paginate_claude_history(items.clone(), None, Some(2)).unwrap();
+        let (continued, continued_cursor) =
+            paginate_claude_history(items, narrow_cursor.as_deref(), Some(1)).unwrap();
+
+        assert_eq!(narrow.len(), 1);
+        assert_eq!(item_resource(&narrow[0]).native_resource_id, "newest");
+        assert_eq!(narrow_cursor.as_deref(), Some("middle:turn"));
+        assert_eq!(wide.len(), 2);
+        assert_eq!(item_resource(&wide[0]).native_resource_id, "middle");
+        assert_eq!(item_resource(&wide[1]).native_resource_id, "newest");
+        assert_eq!(wide_cursor.as_deref(), Some("oldest:turn"));
+        assert_eq!(continued.len(), 1);
+        assert_eq!(item_resource(&continued[0]).native_resource_id, "middle");
+        assert_eq!(continued_cursor.as_deref(), Some("oldest:turn"));
+    }
+
+    fn item_resource(item: &ConversationItem) -> &RoutedResourceId {
+        match item {
+            ConversationItem::MessageConversationItem(item) => &item.resource,
+            _ => panic!("message item"),
+        }
     }
 }

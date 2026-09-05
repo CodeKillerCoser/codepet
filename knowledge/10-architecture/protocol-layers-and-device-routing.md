@@ -36,7 +36,7 @@
 
 1. `tools/protocol-codegen/generate.mjs` 读取所有包，统一审计 schema 和 manifest 中的全部 `$ref`，验证 Draft 2020-12 子集、依赖声明、method/event/capability metadata、transport discriminator 和 fixture。
 2. schema/manifest 校验后先生成唯一 normalized typed IR；target registry 把 Rust、TypeScript、Dart、Python 映射到独立 adapter，未实现 adapter 不允许降级到其他语言。Dart 的 DTO、constraint、sealed union、CodePet envelope、method/event metadata 与 typed client 都从同一 IR 生成；无共同 required singleton-enum discriminator 的 union 在写文件前失败。
-3. Provider 根据 JSON-RPC 2.0/stdio-json-lines 生成有界 `JsonLineCodec`、request/response/notification/event 入站分类、标准错误映射、含入站接口的 transport，以及 `ProtocolRequest::from_method_params` typed request-to-wire 入口。Host 调用该入口，不再手写 method 到 JSON-RPC envelope variant 的枚举。未知 method 与非法 params 保留 request id，分别映射 `-32601` 与 `-32602`；response 必须满足 result/error XOR。
+3. Provider 根据 JSON-RPC 2.0 生成 request/response/notification/event 入站分类、标准错误映射、含入站接口的 transport，以及 `ProtocolRequest::from_method_params` typed request-to-wire 入口；SDK Runtime 在其外统一实现 CodePet Provider Frame V1、JSON 和 raw/zstd。Host 调用同一 codec 与 typed 入口，不再手写 framing、压缩策略或 method 到 JSON-RPC envelope variant 的枚举。未知 method 与非法 params 保留 request id，分别映射 `-32601` 与 `-32602`；response 必须满足 result/error XOR。
 4. v1 initialize/handshake 通过 `VersionRange` 提交支持范围，并返回 selected version。manifest version、wire version 与生成常量由同一输入产生。
 5. Provider lifecycle 与 Host→Provider 资源请求使用 `ProviderInstanceRoute` / `ProviderResourceId` 保留完整 device、plugin、instance 路由；Provider 返回的 Agent 业务对象与 Gateway 使用两段 `RoutedResourceId`。Host 在调用上下文中校验业务对象的 `providerId` 等于目标 instance，并只在入站 Gateway 请求处解析 opaque provider route。Provider descriptor 的 `instanceKinds` 非空，create request/instance 都携带稳定 `instanceKind`，生成 helper 供服务实现 fail closed 选择。
 6. capability enum、capability container 与 method mapping 同时受 manifest/schema 校验，并生成 typed `ProtocolMethod::capability()`。
@@ -69,7 +69,7 @@
 - 风险：生成代码被手改或 Rust/TypeScript/Dart 输出漂移。验证：`npm run protocol:check` 比较完整内容并报告 stale file。
 - 风险：planned target 被错误交给其他语言或静默无输出，或 Dart 为 model/service 维护两份映射。验证：fake/Python fail-closed、normalized IR route/metadata、deterministic output 与多包 cross-schema 测试。
 - 风险：Dart 把 `oneOf` 降级为多个 optional 字段、接受未知字段/非法约束或日志泄露 pairing secret。验证：ambiguous union 生成负例、canonical fixture round-trip、constraint/closed-object 和 redaction 测试。
-- 风险：Provider stdio reader 无界增长、混淆 notification/event 或吞掉 JSON-RPC request id。验证：真实 line framing、超限、坏包、XOR、标准错误和 transport inbound 测试。
+- 风险：Provider stdio reader 无界增长、Host/Provider Frame V1 漂移、混淆 notification/event 或吞掉 JSON-RPC request id。验证：二进制长度前缀、raw/zstd、超限、截断/坏 header、XOR、标准错误和 transport inbound 测试。
 - 风险：instance kind 或 capability 继续成为自由字符串并在实现间漂移。验证：schema/manifest contract audit、lifecycle fixture、typed mapping 和服务侧选择失败测试。
 - 风险：compat v0 搬迁改变 serde/wire 行为。验证：共享 v0 fixtures round-trip、generated dispatcher 和 Runtime Gateway core tests。
 - 风险：Tauri 构建机械改写 `macOS-schema.json`。验证：测试后检查 `git diff`；若漂移，只从本次基线精确恢复该文件。
@@ -77,7 +77,7 @@
 ## 测试计划
 
 - `npm run protocol:check`：schema/manifest/fixture、自洽、联合层依赖、capability contract、target registry 与 freshness。
-- `cargo test --manifest-path sdk/rust/Cargo.toml`：六个 SDK 生成/编译、version、Agent concrete type re-export、typed request-to-wire、JSON-RPC dispatcher/line framing/标准错误、instance kind、event cursor 和 route round-trip。
+- `cargo test --manifest-path sdk/rust/Cargo.toml`：六个 SDK 生成/编译、version、Agent concrete type re-export、typed request-to-wire、JSON-RPC dispatcher、Provider Frame V1 raw/zstd/尺寸边界/标准错误、instance kind、event cursor 和 route round-trip。
 - `cargo package --manifest-path sdk/rust/Cargo.toml --workspace --allow-dirty`：Cargo 建立临时本地 registry，按依赖顺序打包并验证六个 SDK，无需先上传 Core/Agent。
 - `cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_protocol_tests --test runtime_gateway_core_tests`：v0 wire 与双链路隔离。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --all-targets`：Provider v1、真实 App Server fixture 与实际 Provider 二进制回归。

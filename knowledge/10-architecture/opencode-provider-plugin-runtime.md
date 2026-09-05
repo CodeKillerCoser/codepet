@@ -14,14 +14,14 @@
 
 ## 架构边界
 
-OpenCode binary 实现生成的 `Provider` trait，`main.rs` 只构造 `OpenCodeProvider` 并调用公共 `codepet-provider-sdk::serve_stdio`。SDK 统一负责 JSON-RPC JSON-lines、普通/控制双通路、有界 queue、过载响应、typed event、串行 stdout、terminal cleanup 和 shutdown drain；本 crate 只负责 OpenCode Server HTTP/SSE adapter、实例状态与子进程生命周期。
+OpenCode binary 实现生成的 `Provider` trait，`main.rs` 只构造 `OpenCodeProvider` 并调用公共 `codepet-provider-sdk::serve_stdio`。SDK Runtime 统一负责 JSON-RPC JSON、CodePet Provider Frame V1、raw/zstd、普通/控制双通路、有界 queue、过载响应、typed event、串行 stdout、terminal cleanup 和 shutdown drain；本 crate 不感知 framing，只负责 OpenCode Server HTTP/SSE adapter、实例状态与子进程生命周期。
 
 运行数据链只有：
 
 ```text
 OpenCode Server（child 自行绑定并报告的 127.0.0.1 端口）
   ↔ codepet-provider-opencode（正式 V2 HTTP + SSE）
-  ↔ Provider Protocol v1（JSON-RPC 2.0 / stdio JSON-lines）
+  ↔ Provider Protocol v1（JSON-RPC 2.0 / CodePet Provider Frame V1）
   ↔ PluginManager / ProviderGatewayService
 ```
 

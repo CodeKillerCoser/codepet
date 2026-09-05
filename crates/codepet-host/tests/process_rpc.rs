@@ -314,6 +314,27 @@ async fn timeout_does_not_poison_later_requests() {
 }
 
 #[tokio::test]
+async fn host_decodes_a_zstd_provider_frame_larger_than_its_raw_frame_limit() {
+    let process = ready_process("dev.codepet.compressed", "instance-compressed").await;
+    let response = process
+        .client()
+        .conversation_get(ConversationGetRequest {
+            conversation: conversation(
+                "dev.codepet.compressed",
+                "instance-compressed",
+                "compressed",
+            ),
+            cursor: None,
+            limit: None,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(response.conversation.preview.unwrap().len(), 72 * 1_024);
+    process.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn malformed_oversized_and_crashed_plugins_close_only_their_process() {
     for native_id in ["malformed", "oversized", "crash"] {
         let instance_id = format!("instance-{native_id}");

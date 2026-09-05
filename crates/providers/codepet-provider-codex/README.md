@@ -1,8 +1,8 @@
 # CodePet Codex Provider
 
-`codepet-provider-codex` 是独立的 Provider Protocol v1 / stdio JSON-lines 二进制。它由 `codepet-host` 启动；每个 Codex instance 长期持有一个纯读 observer App Server，`conversation.create` 使用完成即关闭的一次性 App Server，历史 conversation 的写操作则使用按 conversation 隔离、随 active turn 终态关闭的 execution App Server。运行依赖不包含 Host、Tauri、Pet SDK 或 Desktop 私有 IPC。
+`codepet-provider-codex` 是独立的 Provider Protocol v1 二进制。它由 `codepet-host` 启动；业务 payload 是 JSON-RPC JSON，stdin/stdout 物理通道由公共 SDK Runtime 封装为 Provider Frame V1。每个 Codex instance 长期持有一个纯读 observer App Server，`conversation.create` 使用完成即关闭的一次性 App Server，历史 conversation 的写操作则使用按 conversation 隔离、随 active turn 终态关闭的 execution App Server。运行依赖不包含 Host、Tauri、Pet SDK 或 Desktop 私有 IPC。
 
-两层 wire 不相同：Provider 与 Host 之间严格使用 JSON-RPC 2.0；上游 App Server 按官方 schema 使用 `id/method/result/error`，不要求 `jsonrpc`，并允许 request 的 `trace`、notification 的 `emittedAtMs` 和缺失的 `params`。具体 method 的参数仍由 typed DTO 严格校验。
+两层 wire 不相同：Provider 与 Host 之间严格使用 JSON-RPC 2.0 业务语义，并由 Runtime 自动选择 raw/zstd、写入长度前缀、检查最终 encoded frame；上游 App Server 按官方 schema 使用 JSONL 的 `id/method/result/error`，不要求 `jsonrpc`，并允许 request 的 `trace`、notification 的 `emittedAtMs` 和缺失的 `params`。具体 method 的参数仍由 typed DTO 严格校验。
 
 公共 Provider SDK 的 stdio reader 不逐条等待 RPC，也不在普通队列满时阻塞读 stdin：普通请求最多并发 16 个、排队 32 个；manifest 以 `dispatchLane: control` 标记的 `instance.stop`、`instance.destroy`、`provider.shutdown` 使用 2 个并发与 4 个排队的保留通路。普通或控制队列过载时，请求以原 JSON-RPC id 收到 retryable `provider_overloaded`，不会进入 Provider 方法。response 允许按完成顺序乱序返回，并与 typed event sink 共用串行 stdout writer；因此 stdin EOF/fatal 即使在普通请求饱和时仍可见，并会触发 Provider/App Server 清理和有界 dispatch drain/abort。Codex `main.rs` 只调用 `codepet_provider_sdk::serve_stdio`，不拥有另一套 transport 实现。
 

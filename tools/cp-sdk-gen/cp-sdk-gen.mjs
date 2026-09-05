@@ -10,6 +10,7 @@ import agentCargo from "../../sdk/rust/codepet-agent-sdk/Cargo.toml" with { type
 import agentLib from "../../sdk/rust/codepet-agent-sdk/src/lib.rs" with { type: "text" };
 import providerCargo from "../../sdk/rust/codepet-provider-sdk/Cargo.toml" with { type: "text" };
 import providerLib from "../../sdk/rust/codepet-provider-sdk/src/lib.rs" with { type: "text" };
+import providerFrame from "../../sdk/rust/codepet-provider-sdk/src/frame.rs" with { type: "text" };
 import providerStdio from "../../sdk/rust/codepet-provider-sdk/src/stdio.rs" with { type: "text" };
 import gatewayRustCargo from "../../sdk/rust/codepet-gateway-sdk/Cargo.toml" with { type: "text" };
 import gatewayRustLib from "../../sdk/rust/codepet-gateway-sdk/src/lib.rs" with { type: "text" };
@@ -266,6 +267,7 @@ export async function runCpSdkGen(arguments_, currentDirectory = process.cwd()) 
     if (options.package === "provider") {
       staticFiles.set("codepet-provider-sdk/Cargo.toml", providerCargo);
       staticFiles.set("codepet-provider-sdk/src/lib.rs", providerLib);
+      staticFiles.set("codepet-provider-sdk/src/frame.rs", providerFrame);
       staticFiles.set("codepet-provider-sdk/src/stdio.rs", providerStdio);
     } else if (options.package === "gateway") {
       staticFiles.set("codepet-gateway-sdk/Cargo.toml", gatewayRustCargo);

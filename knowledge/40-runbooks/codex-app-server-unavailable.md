@@ -6,7 +6,7 @@
 - `turn.start` 返回 `conversation_write_conflict`，但 `conversation.get` 仍可读取历史。
 - Codex Desktop companion 和桌宠仍可工作。
 - 日志出现 executable 解析、spawn、initialize、进程退出或 App Server request timeout。
-- `conversation.get` 出现 `App Server physical line exceeds 16777216 bytes`，或返回 non-retryable `provider_response_too_large`。
+- `conversation.get` 出现 `App Server physical line exceeds 16777216 bytes`，或 Provider Frame V1 返回 `provider_response_too_large`。
 
 ## 需要收集的证据
 

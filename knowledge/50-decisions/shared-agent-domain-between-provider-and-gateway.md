@@ -50,7 +50,7 @@ ACP 对消息内容提供了有价值的参考，但不表达 CodePet 的 Projec
 - Provider 返回对象和事件必须填充两段共享资源 ID；Host 必须验证其中 `providerId` 与被调用实例一致。
 - Provider 私有请求继续使用四段 `ProviderResourceId`，不能把共享两段 ID 直接当作进程路由。
 - 新增 SDK 依赖层：`agent -> core`，`provider/gateway -> agent + core`。SDK 导出、App staging 和独立 `cp-sdk-gen` 必须递归携带 Agent 包。
-- 这项重组减少对象复制和 schema 漂移，但不能代替正文截断、分页和 16 MiB Provider frame 检查；大 Turn 的主要字节来源仍由 payload ownership 规约治理。
+- 这项重组减少对象复制和 schema 漂移，但不能代替准确分页、Mapper 阶段的显式内容策略和 SDK Runtime 对最终 encoded Provider frame 的 16 MiB 检查；大 Turn 的主要字节来源仍由 payload ownership 规约治理。
 
 ## 验证
 
@@ -58,7 +58,7 @@ ACP 对消息内容提供了有价值的参考，但不表达 CodePet 的 Projec
 - Rust/TypeScript/Dart SDK 分别编译；Provider/Gateway SDK 能重新导出同一 Agent concrete type。
 - Host 测试覆盖错误 `providerId`、错误 native ID、跨实例资源、事件路由与 cursor；业务对象路径不得再调用逐字段 mapper。
 - 三个内置 Provider 的快照和事件均输出两段共享资源 ID，私有 extension 不泄露。
-- 用同一历史样例复测序列化前 JSON、WebSocket 压缩后字节和截断统计，区分“结构去重收益”与“正文预算收益”。
+- 用同一历史样例复测业务 JSON、Provider stdio encoded-frame、WebSocket 压缩后字节和截断统计，区分“结构去重收益”“Provider zstd 收益”与“显式内容策略收益”。
 
 ## 状态
 

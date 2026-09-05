@@ -23,6 +23,14 @@ test("cp-sdk-gen compiles protocol input into a complete Rust SDK", async () => 
   assert.match(agentGenerated, /pub enum ConversationItem/);
   assert.match(generated, /ProviderInitializeRequest/);
   assert.doesNotMatch(generated, /pub struct ProtocolClient/);
+  assert.match(
+    await readFile(path.join(output, "codepet-provider-sdk", "src", "frame.rs"), "utf8"),
+    /PROVIDER_FRAME_MAGIC: \[u8; 4\] = \*b"CPRF"/,
+  );
+  assert.match(
+    await readFile(path.join(output, "codepet-provider-sdk", "Cargo.toml"), "utf8"),
+    /zstd = "0\.13"/,
+  );
   assert.equal(
     await readFile(path.join(output, "codepet-core-sdk", "src", "generated.rs"), "utf8"),
     await readFile(path.join(repositoryRoot, "sdk", "rust", "codepet-core-sdk", "src", "generated.rs"), "utf8"),

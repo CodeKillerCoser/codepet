@@ -6,13 +6,13 @@ Agent v1 的 `ConversationItem`、tool input 和 tool outcome 必须使用带 si
 
 内容是否截断与内容语义正交。发生截断时，内容块或 tool input 必须携带结构化元数据，至少说明原始字节数、保留字节数和策略；未携带截断元数据表示对应载荷完整。Command input、Shell、日志和测试输出优先使用 UTF-8 安全的 head-tail，结构化输入使用保持合法结构或明确标记的 structural preview。UI 在消息列表展开、抽屉或详情页展示同一 canonical block，展示位置不能改变 wire object。
 
-保护 Provider→Host 16 MiB JSON-line 的第一次预算必须在 Provider stdout 序列化之前完成。共享 Provider SDK 统一实施内容预算、页软预算与最终 frame 检查，Host/Gateway 的二次投影只用于下游预算，不能替代最早边界保护。继续沿用 v1 版本号，直到出现真实发布兼容需求。
+内容策略必须在 Provider 把原生 harness 数据映射为 Agent 领域对象时完成；共享 Provider SDK Runtime 不实施内容预算或页软预算，只把 wire message 序列化一次，自动选择 raw/zstd，并对最终 encoded frame 执行统一 16 MiB 检查。超限返回稳定错误，由最终调用方缩小分页；Host/Gateway 不做二次有损投影。继续沿用业务协议 v1，transport 使用独立的 Provider Frame V1。
 
 ## 适用场景
 
 - 修改 `ConversationItem`、工具调用、工具结果、内容块或截断字段。
 - 编写 Codex、Claude、OpenCode 或第三方 Provider 的历史 Mapper。
-- 修改 Provider SDK 的 response budgeting、stdio codec 或 oversized fallback。
+- 修改 Provider mapper 的内容策略，或 Provider SDK Runtime 的 framing、压缩和 oversized error。
 - 修改 Host/Gateway 的 conversation 校验、投影、snapshot/delta identity。
 - 修改 Remote 的历史分页、工具展示、contentId 提交或 delta 合并。
 
@@ -33,7 +33,7 @@ Agent v1 的 `ConversationItem`、tool input 和 tool outcome 必须使用带 si
 - command、structured、opaque 三种 input 都允许同构的 truncation 元数据；大输入保持原语义 variant，不得因截断改成 opaque。
 - 普通消息与 tool outcome 复用同一内容块语义；每个 canonical block 保持稳定 contentId。
 - error message 保持短摘要；stdout、stderr、diff 和 JSON 结果分别是内容块。
-- 在共享 Provider SDK 中按语义截断并对最终序列化响应做预算；达到页软预算时保留 item identity、状态、标题、timing、exit code 与 truncation metadata。
+- Provider mapper 需要截断时按语义生成 truncation metadata；SDK Runtime 禁止为通过 frame 上限修改任何领域字段。
 - Remote 从联合分支遍历 canonical contentId，不能依赖旧顶层 contents fallback 作为长期行为。
 - 对 title/preview 单独设列表元数据预算；两者相等的问题单独治理，不用它解释 conversation.get 的工具正文膨胀。
 
@@ -52,6 +52,6 @@ Agent v1 的 `ConversationItem`、tool input 和 tool outcome 必须使用带 si
 - `npm run protocol:check` 验证 v1 schema、fixtures、生成物 freshness，以及所有联合的 discriminator。
 - 负向 schema/codec fixtures 验证 command+structured、success+failure、顶层工具 contents+outcome 正文等非法组合被拒绝。
 - Provider Mapper 测试断言一条 command 和 output 各只有一个 canonical 全文位置，且三个内置 Provider 产生相同领域形状。
-- Provider SDK 使用 142 KiB 单输出、数百个中等输出和超大 structured JSON fixture，断言 stdout frame 不超过硬上限、截断元数据准确且进程继续服务。
+- Provider mapper 使用 142 KiB 单输出、数百个中等输出和超大 structured JSON fixture 验证内容策略；Provider SDK Runtime 独立验证 raw/zstd 选择、最终 frame 上限、稳定超限错误和进程继续服务。
 - Host/Gateway 测试验证所有 item variant 的 route、contentId 与 Provider-only extension 边界。
 - Remote 测试验证 committed contentId、snapshot+delta 去重、截断提示和多页顺序；抽屉与列表内摘要读取同一 canonical blocks。

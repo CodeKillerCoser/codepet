@@ -122,7 +122,7 @@
 <body>
   <header class="hero">
     <div class="hero-inner">
-      <p class="eyebrow">Payload Forensics · Bug Investigation · 2026-09-04</p>
+      <p class="eyebrow">Payload Forensics · Bug Investigation · 2026-09-04—2026-09-05</p>
       <h1>Code Pet 对话列表与历史消息响应体尺寸分析</h1>
       <p>基于本机 Context Provider 历史读取，以及已安装 <strong>Code Pet.app</strong> 内置 Codex Provider 的真实黑盒请求。报告重点回答：工具原始输入/输出是否造成频繁超限、列表接口是否属于同一根因，以及每项改进建议在真实案例上能解决什么。</p>
       <div class="meta">
@@ -130,7 +130,7 @@
         <span>Code Pet 内置 Codex Provider</span>
         <span>初查 App Server 0.152.1 / 配对复测 CLI 0.151.0</span>
         <span>Provider 帧上限：16 MiB</span>
-        <span>状态：V1 优化已实现，同样例复测完成</span>
+        <span>状态：Provider Frame V1 已实现，同样例最终复测完成</span>
       </div>
     </div>
   </header>
@@ -174,7 +174,7 @@
       <div class="metrics">
         <div class="metric"><span class="label">最大 history 页面</span><span class="value">≈14.4 MiB</span><span class="note">40 turns，2,350 items，重复实测范围 15,089,266–15,138,623 bytes</span></div>
         <div class="metric"><span class="label">精确重复正文</span><span class="value">6.13 MB</span><span class="note">命令重复两份 + 输出重复一份，不含 JSON 键与结构开销</span></div>
-        <div class="metric"><span class="label">最终 Agent A-40</span><span class="value">7.69 MiB</span><span class="note">压缩后 1.28 MiB；相对旧版原始 JSON 减少 47.0%，WSS wire 减少 22.5%，并少截断 379 个载荷</span></div>
+        <div class="metric"><span class="label">最终 A-40 stdio wire</span><span class="value">1.27 MiB</span><span class="note">8,077,047 B JSON 经 Frame V1/zstd 成为 1,329,231 B；相对旧 JSONL stdio 减少 91.3%，传输层截断为 0</span></div>
       </div>
     </section>
 
@@ -203,7 +203,15 @@
         <li>Gateway projection 与 Provider response 在这些样例中没有 Provider extension 正文；复测以完整 Provider JSON-RPC response 作为 Gateway JSON 消息代理。该口径适合比较 payload，但不能替代真实移动网络吞吐/CPU profiling。</li>
       </ul>
 
-      <h3>2.4 样本范围</h3>
+      <h3>2.4 Provider Frame V1 口径</h3>
+      <ul>
+        <li>旧 App 内 Provider 的 stdout 仍为 UTF-8 JSONL，wire bytes 是实际 JSON-RPC bytes 加换行；新源码构建 Provider 的 stdout 是实际读取到的二进制 Frame V1 bytes，不是压缩率推算。</li>
+        <li>Frame 固定 10-byte header：<code>CPRF</code>、version、encoding、big-endian payload length；V1 payload 固定为 JSON。小于 32 KiB 使用 raw，达到阈值后尝试 zstd level 1，只有同时节省至少 10% 和 1 KiB 才采用压缩。</li>
+        <li>16 MiB 只检查 header 加编码后 payload。测试不设置解压后/JSON 尺寸上限，也不让 Runtime 截断内容；因此“JSON 大于某阈值但压缩 frame 合法”是设计允许的正常结果。</li>
+        <li>新 Provider frame 在脚本中按 header 解析，并调用本机 zstd 解压后再校验 JSON-RPC。最终聚合证据保存为 <code>reports/conversation-payload-benchmark-frame-v1-2026-09-05.json</code>。</li>
+      </ul>
+
+      <h3>2.5 样本范围</h3>
       <div class="table-wrap">
         <table>
           <thead><tr><th>样本代号</th><th>真实任务标题</th><th>Thread ID</th><th>用途</th></tr></thead>
@@ -336,12 +344,36 @@
     </section>
 
     <section id="optimized">
-      <h2>5. 压缩与新方案实测：最终默认链路下降 82.2%</h2>
+      <h2>5. Provider Frame V1 最终实测：A-40 stdio wire 下降 91.3%</h2>
       <div class="callout good">
-        <strong>技术摘要：</strong>WebSocket 压缩能显著降低网络字节，但发生在 Provider→Host stdio 之后，不能保护 16 MiB Provider frame。2026-09-04 的唯一所有权版对同一 A-40 页把 JSON-RPC 从 15,209,176 B 降至 7,819,655 B；2026-09-05 共享 Agent 领域版为 8,065,684 B。最终值略大不是回退：它避免了 8 MiB 阈值触发的第二轮过度预算，将截断载荷从 380 个降到 1 个。结合 Remote 默认 40→10，实际首个历史页由旧 A-40 的 1,729,139 B 压缩 wire 降至最终 A-10 的 308,242 B（-82.2%）。
+        <strong>最终技术摘要：</strong>WebSocket 压缩只负责 Host→Remote；现在 Provider→Host 也由 SDK Runtime 使用独立的 Frame V1/zstd。相同 A-40 页从旧 JSONL 的 15,209,177 B 降至 1,329,231 B（-91.3%）。新领域 JSON 为 8,077,047 B，2,350 items 全部保留，传输层截断为 0。Provider 业务实现只返回强类型对象，不感知 frame、zstd 或尺寸检查。
       </div>
 
-      <h3>5.1 同一历史、同一 limit 的旧版与新版对照</h3>
+      <h3>5.1 最终 Frame V1：同一历史、同一 cursor、同一 limit</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>样例</th><th class="num">旧 JSONL stdout</th><th class="num">新业务 JSON</th><th>Frame encoding</th><th class="num">新 Frame stdout</th><th class="num">stdio 下降</th><th class="num">新 WSS wire</th><th>完整性</th></tr></thead>
+          <tbody>
+            <tr><td>A · 40 turns</td><td class="num">15,209,177 B</td><td class="num">8,077,047 B</td><td>zstd</td><td class="num"><strong>1,329,231 B</strong></td><td class="num"><strong>91.3%</strong></td><td class="num">1,342,596 B</td><td>2,350 items；0 个传输截断</td></tr>
+            <tr><td>A · 20 turns</td><td class="num">6,882,667 B</td><td class="num">3,661,531 B</td><td>zstd</td><td class="num">583,532 B</td><td class="num">91.5%</td><td class="num">592,338 B</td><td>1,180 items；0 个传输截断</td></tr>
+            <tr><td>A · 10 turns</td><td class="num">3,660,666 B</td><td class="num">1,941,507 B</td><td>zstd</td><td class="num">313,868 B</td><td class="num">91.4%</td><td class="num">308,242 B</td><td>598 items；0 个传输截断</td></tr>
+            <tr><td>A · 1 turn</td><td class="num">46,807 B</td><td class="num">26,667 B</td><td>raw</td><td class="num">26,677 B</td><td class="num">43.0%</td><td class="num">4,180 B</td><td>低于 32 KiB，不压缩</td></tr>
+            <tr><td>B · 40 turns</td><td class="num">4,021,960 B</td><td class="num">3,364,562 B</td><td>zstd</td><td class="num">661,231 B</td><td class="num">83.6%</td><td class="num">653,874 B</td><td>837 items；0 个传输截断</td></tr>
+            <tr><td>C · 40 turns</td><td class="num">4,379,246 B</td><td class="num">2,276,982 B</td><td>zstd</td><td class="num">408,918 B</td><td class="num">90.7%</td><td class="num">406,889 B</td><td>519 items；0 个传输截断</td></tr>
+            <tr><td>conversation.list · 100</td><td class="num">258,531 B</td><td class="num">229,168 B</td><td>zstd</td><td class="num">61,982 B</td><td class="num">76.0%</td><td class="num">56,025 B</td><td>100 条元数据，不含工具正文</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="footnote">stdio 下降同时包含领域去重与 zstd 的收益；单独比较新业务 JSON 与新 Frame，zstd 对 A-40 再减少 83.5%。A-1 保持 raw，证明 Runtime 按帧自适应，而不是一律支付压缩成本。</p>
+      <div class="callout">
+        <strong>16 MiB 的正确含义：</strong>限制对象是最终写入 stdio 的 frame，而不是业务 JSON，也不是解压后对象。A-40 的 8.08 MB JSON 经 zstd 后仅 1.33 MB，因此合法通过。只有最终 frame 超限时 Runtime 才返回 <code>provider_response_too_large</code>；Host/Gateway 不裁切、不重试，Remote 保持 cursor 按 <code>40 → 20 → 10 → 5 → 1</code> 缩页。
+      </div>
+
+      <div class="callout warning">
+        <strong>历史阶段说明：</strong>下面 5.2–5.5 保留 09-04 至 09-05 早期方案的真实数据，用于说明去重、固定内容预算和默认 10-turn 曾分别带来什么效果。它们不是当前 Runtime 行为；最终实现已经删除 7/5 MiB 传输内容预算与静默截断，也不把默认页固定改成 10。
+      </div>
+
+      <h3>5.2 历史阶段：同一历史、同一 limit 的旧版与唯一所有权版对照</h3>
       <p>下表是 2026-09-04 的重新黑盒读取。旧版使用已安装 Code Pet.app 内置 Provider，新版使用当前源码构建的 Provider；二者均连接同一个 <code>/opt/homebrew/bin/codex 0.151.0</code> runtime，并使用相同 conversation ID、cursor 起点和 limit。所有正文只在内存中参与计算，落盘文件仅保存聚合尺寸。</p>
       <div class="table-wrap">
         <table>
@@ -359,7 +391,7 @@
       </div>
       <p class="footnote">列表压缩后的 2-byte 差异来自 JSON-RPC request/response ID 中 old/new 标签的 Deflate 编码差异；业务 result 逐字节相同，因此不应解释为列表优化收益。</p>
 
-      <h3>5.2 09-04 阶段：为什么原始下降 48.6%，网络只下降 31.3%</h3>
+      <h3>5.3 历史阶段：为什么原始下降 48.6%，网络只下降 31.3%</h3>
       <p>旧协议里的 command/output 副本逐字相同，本来就是 Deflate 最容易压缩的数据。以 A-40 为例，旧消息从 14.51 MiB 压至 1.65 MiB（-88.6%）；删除重复并执行预算后，新消息从 7.46 MiB 压至 1.13 MiB（-84.8%）。因此压缩会“掩盖”一部分对象设计浪费，但不会消除解析、分配、序列化、Provider stdio frame 和 Host 内存中的原始成本。</p>
       <div class="grid-2">
         <div class="card">
@@ -374,7 +406,7 @@
         </div>
       </div>
 
-      <h3>5.3 三个真实大样例的截断行为</h3>
+      <h3>5.4 历史阶段：三个真实大样例的预算截断行为</h3>
       <div class="table-wrap">
         <table>
           <thead><tr><th>样例</th><th class="num">Item 保留</th><th class="num">截断载荷</th><th class="num">原始截断内容</th><th class="num">保留</th><th class="num">省略</th><th>解释</th></tr></thead>
@@ -389,7 +421,7 @@
         <strong>09-04 阶段边界：</strong>“7 MiB”是 canonical 内容预算，不是最终 JSON-RPC frame 的硬目标；2,350 个 item 的 identity、kind、status、contentId 和 envelope 仍产生结构开销。该阶段 A-40 在二次预算后为 7.46 MiB；最终 Agent 版因保留更多正文为 7.69 MiB。两者都明显低于 16 MiB，但监控必须记录最终序列化字节，不能只记录 retained content。
       </div>
 
-      <h3>5.4 共享 Agent 领域协议合入后的同样例复测</h3>
+      <h3>5.5 历史阶段：共享 Agent 领域协议合入后的同样例复测</h3>
       <p>2026-09-05 在协议与三套 Provider 完成迁移后，再次使用完全相同的 A/B/C conversation ID、同一个已安装旧 Provider、同一份 <code>codex-cli 0.151.0</code> 和相同 limit 黑盒读取。新的原始聚合结果保存于 <code>reports/conversation-payload-benchmark-agent-domain-2026-09-05.json</code>。这一次 Provider 返回的 Conversation、Turn、Item、Approval 已经直接是共享 <code>agent/v1</code> 对象；每个业务资源从四段内部路由缩为两段 opaque ID，Host 不再逐字段复制到 Gateway 对象。</p>
       <p><strong>定义数量核对：</strong>重组前 Provider/Gateway 分别有 167/157 个 definition，128 个同名、90 个原始 JSON 完全相同；重组后 Agent 集中 92 个领域 definition，Provider/Gateway 降为 76/64。双方不再各自声明 Conversation、Project、Turn、Approval、Item、Tool、Content 等共享实体。仍有 19 个原始 JSON 相同的本地定义，都是 method result、event payload 或 filter wrapper；它们引用 Agent 实体，保留在边界层是为了允许 Provider 与 Gateway 的方法语义独立演进，并不会要求 Host 复制嵌套业务对象。</p>
       <div class="table-wrap">
@@ -569,15 +601,16 @@
         <li><strong>Delta 指向 canonical content：</strong>继续使用 <code>itemId + contentId</code>；客户端 committed contentId 必须遍历各 item variant 的内容块，不能依赖文本相等。</li>
       </ul>
 
-      <h3>8.5 实施边界：协议先行，Provider 必须最先截断</h3>
+      <h3>8.5 实施边界：协议先行，传输细节止于 Runtime</h3>
       <ol>
         <li>先在 Provider/Gateway v1 Schema 固定联合、唯一所有权与截断元数据，并生成 Rust/Dart/TypeScript SDK。</li>
-        <li>Provider Mapper 按新类型输出单份正文；共享 Provider SDK 在 stdout JSON 序列化前执行内容预算、页软预算和最终 16 MiB frame 检查。</li>
-        <li>Host/Gateway 按联合分支校验和投影。Host 的二次预算可以保护远程链路，但不能修复已经无法写出 stdout 的 Provider response。</li>
+        <li>Provider Mapper 按新类型输出单份正文，并可在“原生 harness → 领域对象”阶段执行显式内容策略；Provider 实现本身只实现 generated trait 与业务分页。</li>
+        <li>共享 SDK Runtime 执行一次 JSON 序列化、raw/zstd 选择、Frame V1 封装和最终 encoded-frame 16 MiB 检查。它不认识 message/tool/preview，也不修改已经形成的响应。</li>
+        <li>Host 使用同一个 SDK frame codec 读写，不重复实现压缩策略；Gateway 只做路由与边界投影，不探测、不裁切、不重试。</li>
         <li>Remote 更新解码、分页、committed contentId 和 delta 合并；消息内折叠或抽屉都只是同一 canonical 内容的视图。</li>
       </ol>
       <div class="callout warning">
-        <strong>不能采用的伪修复：</strong>只在 Mapper、Host 投影器或 Remote 做文本去重都不能从类型上排除双写；Remote 去重也无法避免 Provider 的 stdio JSON frame 先超限。只开 WebSocket 压缩不影响 Provider 进程间帧；只截断顶层 <code>contents</code> 会留下 tool 内全文；为抽屉建立第二份详情 payload 会重新制造双权威。
+        <strong>不能采用的伪修复：</strong>只在 Host 投影器或 Remote 做文本去重不能从类型上排除双写；为抽屉建立第二份详情 payload 会重新制造双权威；让 Runtime 根据业务字段做页预算或静默截断，会把内容政策重新塞回传输层。WebSocket 压缩与 Provider Frame V1 分别保护两条物理通道，不能互相替代。
       </div>
     </section>
 
@@ -591,26 +624,26 @@
           <p><code>crates/providers/codepet-provider-codex/src/mapper.rs</code></p>
         </div>
         <div class="card">
-          <span class="badge observed">修复后实测</span>
-          <h3>单块 128 KiB，三种 input 保持语义</h3>
-          <p>command/structured/opaque 和 canonical result blocks 都进入共享预算。文本使用 UTF-8 安全 head-tail；超大 JSON 使用 structural preview，不会因为尺寸变成 opaque。</p>
-          <p><code>sdk/rust/codepet-provider-sdk/src/lib.rs</code></p>
+          <span class="badge observed">协议已完成</span>
+          <h3>唯一所有权由判别联合保证</h3>
+          <p>command/structured/opaque input 与 success/failure outcome 在协议层互斥；canonical content block 是正文唯一所有者。Provider Mapper 不再需要把同一文本同步写进多个可选字段。</p>
+          <p><code>protocol/agent/v1/</code></p>
         </div>
         <div class="card">
           <span class="badge observed">修复后实测</span>
-          <h3>每个 response 都执行内容页预算</h3>
-          <p>不再等到 <code>limit=1</code>。共享 SDK 对每个 history response 应用 7 MiB canonical 内容预算，再检查最终 16 MiB frame；A-40 保留全部 2,350 items。</p>
-          <p><code>sdk/rust/codepet-provider-sdk/src/lib.rs</code></p>
+          <h3>Runtime 只做 Frame V1</h3>
+          <p>JSON 小于 32 KiB 直接 raw；更大时尝试 zstd level 1，并要求至少节省 10% 和 1 KiB。只检查最终 10-byte header + encoded payload 是否超过 16 MiB。</p>
+          <p><code>sdk/rust/codepet-provider-sdk/src/frame.rs</code></p>
         </div>
         <div class="card">
           <span class="badge observed">修复后实测</span>
-          <h3>Remote 默认 10 turns</h3>
-          <p>默认页不再先构建 A-40。相同起点的新 A-10 JSON-RPC 为 2.00 MiB，压缩 WSS 约 306 KiB；仍保留 too-large 的 10→5→2→1 安全回退。</p>
+          <h3>调用方固定缩页，链路不降级</h3>
+          <p>Remote 从 40 开始；只在收到 <code>provider_response_too_large</code> 时保持同一 cursor，按 20、10、5、1 重试。中间 Host/Gateway 不感知该策略，limit=1 仍失败则原样上抛。</p>
           <p><code>codepet-remote/lib/gateway/gateway_client.dart:553</code></p>
         </div>
       </div>
       <div class="callout">
-        <strong>边界仍需监控：</strong>7 MiB 是 canonical 内容预算，最终 frame 还包含数千个 item 的结构开销。WebSocket Deflate 只保护 Host→Remote 网络流量；Provider→Host stdio、Host 解析和内存分配仍按压缩前 JSON 发生。
+        <strong>Provider 作者看到的边界：</strong>实现 generated <code>Provider</code>/<code>ProtocolServer</code> trait，返回强类型领域对象，并调用 <code>serve_stdio</code>。stdin/stdout、长度前缀、zstd、16 MiB 与稳定错误都由 SDK Runtime 处理，不进入 Provider 业务 API。
       </div>
     </section>
 
@@ -619,11 +652,11 @@
 
       <div class="recommendation">
         <span class="badge observed">已完成 P0</span>
-        <h3>方案 1：Remote 默认 history page 从 40 turns 降到 10</h3>
+        <h3>方案 1：Remote 只在明确超限时按固定梯度缩页</h3>
         <p><strong>对应案例：</strong>案例 A 的相同起点，40 turns 为约 14.4 MiB，20 turns 为 6.51 MiB，10 turns 为 3.47 MiB，1 turn 为 44.9 KiB。</p>
-        <p><strong>最终实测收益：</strong>与旧默认 A-40 相比，共享 Agent 版 A-10 的 JSON-RPC 从 15,209,176 B 降至 1,941,507 B（-87.2%），压缩 WSS wire 从 1,729,139 B 降至 308,242 B（-82.2%），避免先构建超大帧、报错、再逐次减半。</p>
-        <p><strong>代价：</strong>完整历史请求次数增加。Remote 当前最终仍会循环到全部分页并把 pages 合并到内存，因此该方案主要解决网络单帧与失败重试，不直接降低“完整历史最终内存”。</p>
-        <p><strong>验证：</strong>使用案例 A 的 cursor 顺序回放，断言 10-turn pages 无重复、无遗漏、nextCursor 稳定；记录首屏可见时间与完整加载时间。</p>
+        <p><strong>最终行为：</strong>首个请求仍可取 40；只有稳定错误码为 <code>provider_response_too_large</code> 时，调用方才保持同一 cursor 按 <code>40 → 20 → 10 → 5 → 1</code> 重试。成功后沿用较小 limit 并推进 nextCursor，其他错误不重试，limit=1 仍超限则上抛。</p>
+        <p><strong>为什么不在中间链路处理：</strong>Provider、Host 与 Gateway 不应猜测调用方希望牺牲页大小还是内容完整性。分页是 API 调用策略，Frame V1 只负责成功传输或明确拒绝。</p>
+        <p><strong>验证：</strong>覆盖首帧和后续页超限、同 cursor 重试、成功后 limit 继承、非尺寸错误不重试，以及 limit=1 错误透传。</p>
       </div>
 
       <div class="recommendation">
@@ -636,8 +669,8 @@
       </div>
 
       <div class="recommendation">
-        <span class="badge observed">已完成（参数调整）</span>
-        <h3>方案 3：操作文本语义截断，当前实现采用单块 128 KiB</h3>
+        <span class="badge observed">协议已完成，策略留在 Mapper</span>
+        <h3>方案 3：操作文本允许语义截断，但禁止 Runtime 截断</h3>
         <p><strong>对应案例：</strong>最大 8 个真实工具输出为 65–142 KiB，全部绕过 256 KiB 上限；单项看似合理，累计后把一页推到 14.4 MiB。</p>
         <div class="table-wrap">
           <table>
@@ -648,21 +681,21 @@
               <tr><td>操作字段 16 KiB</td><td class="num">11.55 MiB</td><td class="num">19.7%</td><td>改善，但重复仍在</td></tr>
               <tr><td>操作字段 8 KiB</td><td class="num">9.31 MiB</td><td class="num">35.3%</td><td>单独采用已经有效</td></tr>
               <tr><td>去重 + 8 KiB</td><td class="num"><strong>5.84 MiB</strong></td><td class="num"><strong>59.4%</strong></td><td>初查时的激进模拟，不是最终采用参数</td></tr>
-              <tr><td>09-04 V1：唯一所有权 + 128 KiB + 7 MiB 内容预算</td><td class="num"><strong>7.46 MiB</strong></td><td class="num"><strong>48.6%</strong></td><td>真实黑盒；二次预算触发后截断 380 个值</td></tr>
-              <tr><td>09-05 V1：再加共享 Agent 类型与两段业务路由</td><td class="num"><strong>7.69 MiB</strong></td><td class="num"><strong>47.0%</strong></td><td>真实黑盒；避免二次预算，只截断 1 个值并保留更多正文</td></tr>
+              <tr><td>09-04 中间版：唯一所有权 + 128 KiB + 7 MiB 内容预算</td><td class="num"><strong>7.46 MiB</strong></td><td class="num"><strong>48.6%</strong></td><td>历史黑盒；传输层预算截断 380 个值，最终未采用</td></tr>
+              <tr><td>09-05 最终领域对象（无传输截断）</td><td class="num"><strong>7.70 MiB</strong></td><td class="num"><strong>46.9%</strong></td><td>真实黑盒；8,077,047 B JSON，Frame V1/zstd 后 1,329,231 B</td></tr>
             </tbody>
           </table>
         </div>
-        <p><strong>截断方式：</strong>command input 与 Shell/log/test 输出建议保留开头与结尾，而非只保留开头；末尾通常包含参数、退出码、失败摘要和断言。tool input 或内容块返回 <code>truncation.originalBytes</code>、<code>retainedBytes</code>、<code>strategy=head-tail</code>；文件 diff 可按文件拆分并给出文件级摘要。该元数据描述载荷完整性，与内容是在消息内、抽屉还是详情页展示无关。</p>
+        <p><strong>截断位置：</strong>若某个 harness 的原始 command、Shell/log/test 输出确实需要内容治理，应在原生 DTO 转为领域对象的 Mapper 阶段完成。tool input 或内容块返回 <code>truncation.originalBytes</code>、<code>retainedBytes</code>、<code>strategy=head-tail</code>；Runtime 对形成后的对象不再二次裁切。该元数据描述载荷完整性，与内容是在消息内、抽屉还是详情页展示无关。</p>
         <p><strong>不应统一截断：</strong>用户消息和助手最终正文在样本中占比很小，应给予更高上限或独立策略，避免为了工具噪声损害主要对话内容。</p>
       </div>
 
       <div class="recommendation">
-        <span class="badge observed">已完成 P1</span>
-        <h3>方案 4：建立 7 MiB canonical 内容预算，而不是只看单 item</h3>
+        <span class="badge observed">已完成 P0</span>
+        <h3>方案 4：用 Runtime Frame V1 替代响应内容预算</h3>
         <p><strong>对应案例：</strong>870 个 command 中没有任何一个必须超过 256 KiB，但总 command item 达约 13.9 MB。单项阈值无法约束累计体积。</p>
-        <p><strong>实测行为：</strong>序列化前维护响应预算；优先保留 item identity、状态、标题、exitCode、timing 和 truncation，正文按剩余预算加入。A-40 的 2,350 items 和 nextCursor 全部保留，380 个载荷明确标记截断。</p>
-        <p><strong>为什么是 7 MiB：</strong>初查案例 A 的 20-turn 页面为 6.51 MiB，说明这个量级既能承载大量真实 item，又为 16 MiB Provider frame 留出明显余量。最终 Agent 版 A-40 为 7.69 MiB，仍验证“内容预算必须小于 frame 上限”；同时 8→5 MiB 二段阈值的非连续性应改成基于最终 frame 的渐进预算。</p>
+        <p><strong>实测行为：</strong>SDK Runtime 对业务响应只序列化一次，按阈值选择 raw/zstd，再检查最终 frame。A-40 的 2,350 items 全部保留，8,077,047 B JSON 形成 1,329,231 B frame，没有任何传输层 truncation。</p>
+        <p><strong>为什么删除 7 MiB：</strong>它按业务内容做传输降级，会产生阈值不连续、额外序列化和不可预测的信息损失。16 MiB 的目标只是保护 stdio 通道，因此只约束最终编码 frame 才与目标一致。</p>
       </div>
 
       <div class="recommendation">
@@ -688,13 +721,13 @@
         <table>
           <thead><tr><th>风险</th><th>验证证据</th><th>结果</th><th>剩余边界</th></tr></thead>
           <tbody>
-            <tr><td>截断后丢失失败结尾</td><td>Provider SDK 142 KiB command/output fixture；UTF-8 head-tail 与字节数断言</td><td>通过</td><td>结构化 JSON 使用 structural preview，不承诺保留任意深层字段。</td></tr>
+            <tr><td>Runtime 静默改变业务内容</td><td>删除 history fit/content budget；同一 A-40 黑盒复读并统计 truncation</td><td>2,350 items；0 个传输截断</td><td>Mapper 仍可按 harness 明确策略生成带 metadata 的内容截断。</td></tr>
             <tr><td>去重后工具抽屉为空</td><td>Remote mapper/widget 覆盖全部 item/input/outcome/content variants 与 truncation</td><td>241 项 Flutter 测试通过</td><td>尚未做真实手机逐项视觉走查。</td></tr>
-            <tr><td>小页导致顺序或重复错误</td><td>10→5→2→1 回退、cursor 顺序、snapshot/delta contentId 测试</td><td>通过</td><td>Remote 仍会继续拉取全部分页，总会话内存并未按需虚拟化。</td></tr>
-            <tr><td>软预算错误删除 item</td><td>累计大页 fixture + A-40 真实复读</td><td>2,350 / 2,350 items 保留</td><td>最终 frame 比 7 MiB 内容预算多出结构开销。</td></tr>
+            <tr><td>缩页导致顺序、重复或错误吞没</td><td>40→20→10→5→1、同 cursor、后续页、非尺寸错误与 limit=1 测试</td><td>通过</td><td>Remote 仍会继续拉取全部分页，总会话内存并未按需虚拟化。</td></tr>
+            <tr><td>帧压缩或 16 MiB 语义漂移</td><td>raw/zstd 阈值、收益门槛、header、未知版本/encoding、截断 body、最终 encoded-frame 超限 fixture</td><td>Provider SDK 与 Host process 测试通过</td><td>按决策不限制 decoded size；需继续观察异常压缩比的内存风险。</td></tr>
             <tr><td>协议分支重新允许双写</td><td>Agent schema 单一负向 fixture；Provider/Gateway 只引用 Agent；三语言 SDK freshness</td><td><code>protocol:check</code> 17/17；共享业务实体重复数为 0</td><td>19 个相同的 result/event/filter wrapper 有意留在各自边界；第三方 Provider 必须重新生成 V1 SDK。</td></tr>
             <tr><td>Host 继续逐字段复制业务对象</td><td>Agent concrete type 由 Provider/Gateway SDK 共同 re-export；Host mapper 删除与路由归属负例</td><td>Host 63 项通过；ConversationItem/Tool 子树 mapper 已删除</td><td>事件 envelope、cursor、usage 脱敏与 capability 策略仍属于必要边界转换。</td></tr>
-            <tr><td>并行实现合并后不兼容</td><td>三个 Provider、Host、Remote 全量/定向测试</td><td>Provider 127、Host 全量、Remote 241 均通过</td><td>2 个真实 CLI smoke 按原配置 ignored。</td></tr>
+            <tr><td>Provider 作者被迫实现传输</td><td>三个 Provider main 仍只调用 <code>serve_stdio</code>；二进制 process fixture 走 SDK Runtime</td><td>业务 trait 未增加 framing/encoding 参数</td><td>第三方 Provider 需要用同步导出的新版 SDK Runtime。</td></tr>
             <tr><td>压缩估算偏离真机</td><td>按实际协商参数执行 RFC 7692 raw DEFLATE，并计 WebSocket frame</td><td>算法复算通过</td><td>未包含 TLS/TCP/IP、重传、VPN 与设备 CPU；需要真机 packet/trace 验证。</td></tr>
           </tbody>
         </table>
@@ -703,6 +736,7 @@
       <ul>
         <li><code>reports/conversation-payload-benchmark-2026-09-04.json</code>：旧/新、raw/Deflate/WSS、item 与 truncation 聚合结果。</li>
         <li><code>reports/conversation-payload-benchmark-agent-domain-2026-09-05.json</code>：共享 Agent 领域版对同一 A/B/C 样例的二次黑盒快照，保留独立 provenance 与 binary SHA-256。</li>
+        <li><code>reports/conversation-payload-benchmark-frame-v1-2026-09-05.json</code>：最终 Frame V1 同样例快照，分别记录 decoded JSON-RPC、实际 Provider stdio frame、encoding 与 WSS wire-equivalent。</li>
         <li><code>scripts/benchmark_conversation_payloads.py</code>：同一 Provider JSON-RPC 黑盒请求与 RFC 7692 复算脚本，不写入正文。</li>
         <li>协议/Provider SDK fixture：混合 variant 拒绝、142 KiB 单块和数百个中等输出累计页。</li>
         <li>真实样例仍使用 A/B/C 的固定 conversation ID；历史内容或 Codex runtime 变化后，应把新结果作为新一轮快照而非覆盖旧数字来源。</li>
@@ -715,7 +749,8 @@
       <ul>
         <li>“对话列表因为携带 Shell 原文而超限”：列表协议与本机实测均不支持该判断。</li>
         <li>“只有某个超过 256 KiB 的巨型命令输出才会触发”：最大真实工具项均未触发 256 KiB 截断，累计已经接近 16 MiB。</li>
-        <li>“WebSocket 压缩已经解决 16 MiB Provider 超限”：Deflate 在 Host→Remote 才发生，Provider stdout 写入、Host 解析与原始内存仍受压缩前 JSON 约束。</li>
+        <li>“WebSocket 压缩可以直接解决 Provider stdio”：Deflate 只属于 Host→Remote；Provider→Host 需要独立的 Frame V1/zstd。最终实现后 stdio 上限按编码后 frame 判断，不再按压缩前 JSON 判断。</li>
+        <li>“Runtime 应按 7/5 MiB 内容预算截断 response”：这会混淆业务内容与通道保护，已经由最终设计删除。</li>
         <li>“重复只是 Codex Mapper 的单点实现错误”：OpenCode 也发生双层填充，而 Claude 选择另一种放置方式，说明 Schema 缺少唯一事实源和跨 Provider 约束。</li>
       </ul>
       <h3>仍未知</h3>
@@ -729,13 +764,13 @@
       <ol>
         <li>在真机/WSS 上补 packet 或 transport byte counter，验证 TLS/TCP/VPN 后的实际传输量与解压 CPU。</li>
         <li>加入只记尺寸、不记正文的接口观测，用 method、route、limit、raw/compressed bytes 和 truncation bytes 归因现场错误。</li>
-        <li>把 Remote “拉完全部历史”改成按需加载更早页面；当前 10-turn 已控制单帧，但超长会话总流量仍线性增长。</li>
+        <li>把 Remote “拉完全部历史”改成按需加载更早页面；当前超限缩页只控制单帧，超长会话总流量仍线性增长。</li>
         <li>独立收口 conversation.list title/preview；列表 100 条压缩后约 56 KiB，当前不是历史超限根因。</li>
       </ol>
       <div class="callout">
-        <strong>最终判断：</strong>共享 Agent 领域版把相同 A-40 原始 JSON 相对已安装旧版降低 47.0%，压缩 WSS 降低 22.5%；结合默认 A-10，实际首帧压缩字节降低 82.2%。与 09-04 的唯一所有权版相比，多数样例又减少了 4.8–301 KiB 原始 JSON；A-40 因避开二次预算阈值而多保留约 831 KiB 正文，最终帧净增约 240 KiB，这属于信息保真提升而不是结构回退。协议唯一所有权、共享领域类型、Provider 预算、分页和 WebSocket 压缩是互补措施。对话列表 100 条最终压缩后约 54.7 KiB，仍没有证据表明它与历史工具正文属于同一超限根因。
+        <strong>最终判断：</strong>协议唯一所有权先消除了非法重复，Provider Frame V1 再独立压缩 stdio。相同 A-40 的最终业务 JSON 为 8,077,047 B，实际 zstd frame 为 1,329,231 B，相对旧 JSONL stdout 下降 91.3%，且 2,350 items 与正文没有被 Runtime 截断。Remote 的 40→20→10→5→1 只在明确超限时生效；Provider、Host 与 Gateway 不降级。对话列表 100 条的最终 frame 为 61,982 B，仍没有证据表明它与历史工具正文属于同一超限根因。Provider 开发者继续只实现强类型协议接口并调用 <code>serve_stdio</code>，无需理解物理帧。
       </div>
-      <p class="footnote print-note">本报告初始快照为 2026-09-04，并于 2026-09-05 追加共享 Agent 协议同样例复测。实现变化或历史继续增长后，应生成新的带 provenance 快照，不覆盖既有数据。</p>
+      <p class="footnote print-note">本报告初始快照为 2026-09-04，并于 2026-09-05 追加共享 Agent 协议与 Provider Frame V1 同样例复测。历史阶段数字为证据链的一部分，但不代表最终 Runtime 行为。实现变化或历史继续增长后，应生成新的带 provenance 快照，不覆盖既有数据。</p>
     </section>
   </main>
 </body>

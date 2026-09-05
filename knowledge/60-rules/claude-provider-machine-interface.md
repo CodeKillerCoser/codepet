@@ -18,7 +18,7 @@ Provider Protocol event 只能进入 `ProviderGatewayService` remote replay/even
 
 Provider binary 的服务循环结果与最终进程清理必须分开。正常 EOF、坏或超大 Host frame、response write/flush 失败都必须先进入不发布状态或 terminal event 的有界 reap，再返回原始服务结果；不能把清理只放在循环的正常落点，也不能依赖 stdout 仍可写。codec fatal error 在 reap 前不得写错误响应；当前实现直接 fail-stop，不回写该响应。
 
-Claude stdout 单物理行当前硬上限是 4 MiB，超过上限且未换行时应立即终止进程组。Provider codec frame 上限是 1 MiB；所有对外文本必须按 UTF-8 边界切成不超过 64 KiB 的事件。output 发送失败时不得先删除 active，必须在进程退出后尝试发送尺寸安全的 failed terminal。
+Claude stdout 单物理行当前硬上限是 4 MiB，超过上限且未换行时应立即终止进程组。Provider→Host 使用 SDK Runtime 管理的 Frame V1，最终编码 frame 上限是 16 MiB；所有对外文本必须按 UTF-8 边界切成不超过 64 KiB 的事件。output 发送失败时不得先删除 active，必须在进程退出后尝试发送尺寸安全的 failed terminal。
 
 ## 适用场景
 
@@ -35,7 +35,7 @@ Claude stdout 单物理行当前硬上限是 4 MiB，超过上限且未换行时
 - 为复用旧桌宠代码，把 remote Provider event 写进 activity store，再依赖前端过滤。
 - 为追求隔离而传 safe/restricted/strict-empty MCP，使 CodePet 中的 Claude 与用户直接运行 Claude 表现不同。
 - result frame 到达就移除 active，而 Claude 根进程或其子进程仍在运行。
-- 把 2 MiB result 塞进单个 Provider event，超过生成 codec 的 1 MiB frame 上限后静默丢 terminal。
+- 把巨型 result 塞进单个 Provider event，并在 Provider Frame V1 超限后静默丢 terminal；Runtime 必须显式返回稳定错误，业务实现不得绕过 SDK transport。
 - 在 Provider stdio loop 内用 `?` 直接返回 write/flush 错误，使循环末尾的 protocol shutdown 永远不执行。
 - 收到非法或超大 Host frame 后先同步 flush 错误响应；Host 不读取 stdout 时会在进入外层 reap 前永久阻塞。
 
