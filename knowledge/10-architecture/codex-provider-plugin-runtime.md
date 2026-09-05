@@ -105,11 +105,17 @@ Gateway v1 的 `turn.send` 只对已有空闲 conversation 启动新 turn，并�
 
 Provider 发送全部八种 v1 事件：`event.instanceStatusChanged`、`event.projectChanged`、`event.conversationUpserted`、`event.conversationItemUpserted`、`event.turnUpserted`、`event.turnOutputDelta`、`event.approvalRequested`、`event.approvalResolved`。所有事件由唯一 Server reader 映射，避免多 reader 重复发布；delta 自带 conversation route，不依赖 replay 顺序补状态；item upsert 用于提交工具调用的结构化状态和结果。App Server 的 `waitingOnApproval` 与 `waitingOnUserInput` 分别映射为 v1 的 `waiting-approval` 与 `waiting-user-input`。未知 notification 被忽略；未知或无法无损表达的 server request 使用原 request id 返回上游 error `-32601`，不会发布可批准的 Approval。
 
+## 新建会话的工作目录
+
+Remote 按所选项目传递 routed project 和 workspaceRoot。main 模式使用项目原目录；worktree 模式由 Provider 从 workspaceRoot 创建 detached Git 工作树，放到 `~/.codepet/remote_workspace/codex/worktree/<工作树ID>/`，保留请求目录相对仓库根目录的子路径，再把新位置作为 thread/start 的 cwd。projectId 始终保留原项目身份。App Server 不负责通过 workspaceMode 创建工作树。
+
+非项目会话的默认目录为 `~/.codepet/remote_workspace/<provider>/task/<任务ID>/`。Provider 广告的 defaultWorkspaceRoot 仍是 `<provider>` 层；Remote 在其下分配 task 路径，Provider 创建实际目录。Claude/OpenCode 沿用相同 task 分层，worktree 仅向支持该模式的 Provider 开放。已有会话继续使用原路径，本次不迁移旧目录。
+
 ## 身份与审批路由
 
 Provider 私有 `ProviderResourceId` 是 `deviceId + providerPluginId + providerInstanceId + nativeResourceId` 四段身份，instance route 是前三段；Agent/Gateway 的语言中立 `RoutedResourceId` 是 `providerId + nativeResourceId` 两段 opaque identity。Host 在 Gateway 入站处解析 instance，在 Provider 响应/事件处校验 `providerId == providerInstanceId`，但 Conversation/Turn/Item/Approval 对象本身直接共享，不再逐字段映射。旧 v0 对象自身的 `id` 继续等于 `nativeResourceId`，两段身份位于 `codepet.gateway.route` extension。
 
-Provider 请求中的 Project 使用四段身份，共享 Agent Project 与 Conversation.project 使用两段身份。Conversation 的 `project` 只映射 App Server `Thread.projectId`，而 `workspaceRoot` 原样映射 `Thread.cwd`；Provider 不再扫描 Git metadata、归并 worktree 或用 cwd 推断项目。项目筛选和项目归属创建都在 Provider 与 Host 两层校验 route。
+Provider 请求中的 Project 使用四段身份，共享 Agent Project 与 Conversation.project 使用两段身份。Conversation 的 `project` 只映射 App Server `Thread.projectId`，而 `workspaceRoot` 原样映射 `Thread.cwd`；Provider 不通过扫描 Git metadata、归并 worktree 或 cwd 推断项目归属。项目筛选和项目归属创建都在 Provider 与 Host 两层校验 route。
 
 每个实例有一个 Server session registry 和 conversation-keyed 执行槽。槽以 Creating→Ready→Closed 管理，失败进入 Failed 并淘汰；每槽 operation lock 串行 acquire/turn/approval。不同会话共享进程与 Server generation，但不共享 operation lock 或 active turn。首次 resume 的 frame 写入与 cancel 共用短 send gate；stop 先线性化后不得再向旧代发送。
 

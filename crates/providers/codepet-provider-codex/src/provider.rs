@@ -2651,14 +2651,14 @@ fn prepare_conversation_workspace(
             false,
         ));
     }
-    let codex_home = codex_home().ok_or_else(|| {
+    let workspace_root = default_remote_workspace_root("codex").ok_or_else(|| {
         protocol_error(
             "worktree_create_failed",
-            "cannot resolve Codex home for managed worktrees".to_string(),
+            "cannot resolve CodePet workspace for managed worktrees".to_string(),
             false,
         )
     })?;
-    create_managed_worktree(requested, &codex_home).map(Some)
+    create_managed_worktree(requested, Path::new(&workspace_root)).map(Some)
 }
 
 fn codex_home() -> Option<PathBuf> {
@@ -2709,7 +2709,7 @@ fn ensure_conversation_workspace(path: &str) -> Result<String, ProtocolError> {
 
 fn create_managed_worktree(
     requested: &Path,
-    codex_home: &Path,
+    workspace_root: &Path,
 ) -> Result<String, ProtocolError> {
     let requested = requested.canonicalize().map_err(|error| {
         protocol_error(
@@ -2753,18 +2753,13 @@ fn create_managed_worktree(
             false,
         )
     })?;
-    let project_name = repository_root
-        .file_name()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("workspace");
     let unique = format!(
         "remote-{}-{}-{}",
         now_ms(),
         std::process::id(),
         NEXT_MANAGED_WORKTREE.fetch_add(1, Ordering::SeqCst),
     );
-    let worktree_root = codex_home.join("worktrees").join(unique).join(project_name);
+    let worktree_root = workspace_root.join("worktree").join(unique);
     if let Some(parent) = worktree_root.parent() {
         std::fs::create_dir_all(parent).map_err(|error| {
             protocol_error(
@@ -2808,7 +2803,7 @@ fn create_managed_worktree(
 
 #[cfg(test)]
 mod workspace_mode_tests {
-    use super::{create_managed_worktree, ensure_conversation_workspace};
+    use super::{create_managed_worktree, ensure_conversation_workspace, prepare_conversation_workspace};
     use std::fs;
     use std::path::Path;
     use std::process::Command;
@@ -2816,12 +2811,22 @@ mod workspace_mode_tests {
     #[test]
     fn creates_a_missing_standalone_workspace() {
         let fixture = tempfile::tempdir().unwrap();
-        let workspace = fixture.path().join("task-1");
+        let workspace = fixture.path().join("codex/task/task-1");
 
         let prepared = ensure_conversation_workspace(workspace.to_str().unwrap()).unwrap();
 
         assert_eq!(Path::new(&prepared), workspace);
         assert!(workspace.is_dir());
+    }
+
+    #[test]
+    fn main_workspace_keeps_the_requested_project_directory() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().to_str().unwrap();
+        assert_eq!(
+            prepare_conversation_workspace(Some(root), Some("main")).unwrap(),
+            Some(root.to_string())
+        );
     }
 
     #[test]
@@ -2837,12 +2842,15 @@ mod workspace_mode_tests {
         git(&repository, &["add", "README.md"]);
         git(&repository, &["commit", "-m", "fixture"]);
 
-        let codex_home = fixture.path().join("codex-home");
-        let cwd = create_managed_worktree(&nested, &codex_home).unwrap();
+        let workspace_root = fixture.path().join(".codepet/remote_workspace/codex");
+        let cwd = create_managed_worktree(&nested, &workspace_root).unwrap();
         let cwd = Path::new(&cwd);
 
         assert!(cwd.is_dir());
-        assert!(cwd.starts_with(codex_home.join("worktrees")));
+        assert!(cwd.starts_with(workspace_root.join("worktree")));
+        let relative = cwd.strip_prefix(workspace_root.join("worktree")).unwrap();
+        assert_eq!(relative.components().count(), 3);
+        assert!(cwd.join("../../README.md").is_file());
         assert_eq!(cwd.file_name().and_then(|value| value.to_str()), Some("app"));
         let output = Command::new("git")
             .arg("-C")
@@ -2852,6 +2860,15 @@ mod workspace_mode_tests {
             .unwrap();
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "true");
+        let detached = Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(["symbolic-ref", "-q", "HEAD"])
+            .output()
+            .unwrap();
+        assert_eq!(detached.status.code(), Some(1));
+        let second = create_managed_worktree(&nested, &workspace_root).unwrap();
+        assert_ne!(Path::new(&second), cwd);
     }
 
     fn git(repository: &Path, args: &[&str]) {
