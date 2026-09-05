@@ -181,18 +181,6 @@
       ],
       "additionalProperties": false
     },
-    "ConversationItemKind": {
-      "type": "string",
-      "enum": [
-        "message",
-        "reasoning",
-        "command",
-        "file-change",
-        "tool",
-        "approval",
-        "unknown"
-      ]
-    },
     "ConversationListRequest": {
       "type": "object",
       "properties": {
