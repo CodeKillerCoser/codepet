@@ -38,7 +38,7 @@ discovery ---------------------------------- mDNS
 - credential 绑定逻辑 client identity。WSS 首次 `protocol.handshake.clientId` 必须与 bearer 绑定的 client 一致。
 - Gateway Host identity 只包含 `deviceId + DeviceDescriptor`。
 - Provider route 从业务资源获得。`turn.send` 不再同时携带一份可冲突的 route 和 conversation route。
-- Project 与 Conversation 的项目归属都使用四段 routed resource；项目 CRUD、项目筛选和项目归属创建不得只传 native id。`project.list` 在调用 Provider 前取得 `snapshotCursor`，使随后到达的 `project.changed` 可从该边界 replay。
+- Gateway 的 Project 与 Conversation 项目归属都使用两段 opaque routed resource；Host 解析后向 Provider 发送四段 `ProviderResourceId`，项目 CRUD、项目筛选和项目归属创建不得只传 native id。`project.list` 在调用 Provider 前取得 `snapshotCursor`，使随后到达的 `project.changed` 可从该边界 replay。
 - 当前尚未正式发布，LAN admission 与 Gateway endpoint 统一保持 V1，不引入 V2 endpoint 或兼容迁移。
 
 ## 风险与验证

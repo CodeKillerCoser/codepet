@@ -2,11 +2,11 @@
 
 ## 规则
 
-Gateway v1 业务协议、channel 和 admission 必须保持三层独立：channel 只传输 JSON-RPC object/bytes，admission 只建立设备级信任，Gateway 只处理业务方法。证书指纹、pairing secret、bearer 和 mDNS TXT 不得进入 Gateway schema；Gateway method、Provider capability、conversation/turn DTO 不得进入 channel 或 LAN admission schema。准入成功默认可访问 Host 全部 Provider，不做 Provider ACL，但每个 Provider 范围的请求、响应与事件必须保留 `deviceId + providerPluginId + providerInstanceId`。LAN pairing QR 的 `version` 必须读取 LAN types SDK 从 manifest 生成的 `CHANNEL_LAN_SCHEMA_VERSION`，不得复用 Gateway `PROTOCOL_VERSION`；二者即使曾经数值相同也不是同一个版本空间。types-only SDK 的 schema version 常量必须带 package 前缀，避免 Dart SDK re-export 依赖包时产生命名冲突。
+Gateway v1 业务协议、channel 和 admission 必须保持三层独立：channel 只传输 JSON-RPC object/bytes，admission 只建立设备级信任，Gateway 只处理业务方法。证书指纹、pairing secret、bearer 和 mDNS TXT 不得进入 Gateway schema；Gateway method、Provider capability、conversation/turn DTO 不得进入 channel 或 LAN admission schema。准入成功默认可访问 Host 全部 Provider，不做 Provider ACL。Remote 资源只暴露 opaque `providerId + nativeResourceId`；Host→Provider 请求用 `ProviderResourceId` 保留 `deviceId + providerPluginId + providerInstanceId + nativeResourceId`，Provider lifecycle 用 `ProviderInstanceRoute`。Host 必须在调用上下文中校验两段业务资源确实属于目标 instance。LAN pairing QR 的 `version` 必须读取 LAN types SDK 从 manifest 生成的 `CHANNEL_LAN_SCHEMA_VERSION`，不得复用 Gateway `PROTOCOL_VERSION`；二者即使曾经数值相同也不是同一个版本空间。types-only SDK 的 schema version 常量必须带 package 前缀，避免 Dart SDK re-export 依赖包时产生命名冲突。
 
 长连接的 transport control plane 不得等待业务 RPC：WebSocket reader 必须持续 poll Ping/Pong/Close 和 credential cancellation，握手后的 Gateway 请求进入每连接有界队列与有界并发 dispatcher，再按 JSON-RPC id 独立返回。响应允许乱序，不能为了保持请求顺序让 `conversation.get` 阻塞 socket reader。writer 必须有界，但单次发送 deadline 要覆盖真实移动网络上的合法大响应；过载由请求队列、并发数和 outbound queue 共同 fail closed，不能用亚秒级 send timeout 把正常背压误判成断联。
 
-协议事实必须从 `protocol/` 单向生成到 `sdk/`：schema 与 manifest 的全部 `$ref` 使用同一依赖审计，core 不依赖任何上层，pet/provider/gateway 只能引用显式声明的安全下层。每种输出语言必须有独立 target adapter，未实现 target 必须 fail closed。Provider plugin event 不得发布到 companion Tauri event、replay、Pet projection 或 activity store；Pet action 不得调用插件生命周期接口。Gateway 快照响应的 `snapshotCursor` 必须在发起 Provider 查询前捕获；`EventCursor` 对客户端始终 opaque，只能原样保存和回传，不能解析、排序或执行 `+1`。完整历史要分别守住 App Server→Provider 与 Provider→Host 两段有界 JSON-line：上游有 cursor API 时必须分页读取并逐页释放原生 DTO；最终投影仍超过 Provider/Host 共享上限时，Provider 必须按原请求返回稳定的小错误并继续服务，不能只放宽某一端或让写响应失败终止进程。Host 发出 `provider.shutdown` 后必须继续读取 stdout，丢弃不再有消费者的晚到 event/notification，但必须保留 shutdown response 与进程退出监管。
+协议事实必须从 `protocol/` 单向生成到 `sdk/`：schema 与 manifest 的全部 `$ref` 使用同一依赖审计，Core 不依赖任何上层，Agent/Pet 只依赖 Core，Provider/Gateway 只依赖 Core 与 Agent。Agent 只定义共享业务类型，不声明 method、event、transport 或 Provider lifecycle。每种输出语言必须有独立 target adapter，未实现 target 必须 fail closed。Provider plugin event 不得发布到 companion Tauri event、replay、Pet projection 或 activity store；Pet action 不得调用插件生命周期接口。Gateway 快照响应的 `snapshotCursor` 必须在发起 Provider 查询前捕获；`EventCursor` 对客户端始终 opaque，只能原样保存和回传，不能解析、排序或执行 `+1`。完整历史要分别守住 App Server→Provider 与 Provider→Host 两段有界 JSON-line：上游有 cursor API 时必须分页读取并逐页释放原生 DTO；最终投影仍超过 Provider/Host 共享上限时，Provider 必须按原请求返回稳定的小错误并继续服务，不能只放宽某一端或让写响应失败终止进程。Host 发出 `provider.shutdown` 后必须继续读取 stdout，丢弃不再有消费者的晚到 event/notification，但必须保留 shutdown response 与进程退出监管。
 
 Conversation 工具载荷还必须遵守 [`conversation-tool-payload-ownership.md`](conversation-tool-payload-ownership.md)：互斥关系由 v1 schema 的判别联合强制表达，工具输入与结果各只有一个完整载荷所有者，截断发生在 Provider stdout 序列化之前。Host 投影器或 Remote 的文本去重只能作为迁移诊断，不能成为协议正确性机制；抽屉等 UI 展示位置不进入协议。
 
@@ -22,7 +22,7 @@ Conversation 工具载荷还必须遵守 [`conversation-tool-payload-ownership.m
 ## 反例
 
 - 在 Rust 业务模块手写一套与 IDL 相同的 DTO，再让 generator 追随 Rust。
-- 在 core 放入 Conversation、Turn、Approval、PetTask 或插件进程状态。
+- 在 Core 放入 Conversation、Turn、Approval、PetTask 或插件进程状态；或在 Agent 放入 transport、event cursor、Provider process lifecycle。
 - 只带 native conversation id 穿过 Remote Client 边界。
 - 让 Provider SDK event enum复用 companion event sink，之后依赖前端过滤 remote task。
 - 为方便启动插件，把 `instance.start` 或 `provider.shutdown` 暴露到 gateway manifest。
@@ -42,10 +42,10 @@ Conversation 工具载荷还必须遵守 [`conversation-tool-payload-ownership.m
 - 先修改 `protocol/<layer>/vN`，运行 `npm run protocol:generate`，业务代码只 import SDK。
 - 新语言实现 `codepet.protocol.codegen/v1` adapter；在 package outputs 与负向测试就绪前保持 planned。
 - 已实现的 Dart target 必须消费 normalized IR，并对无共同 required singleton-enum discriminator 的 `oneOf` fail closed；不得退化为 `dynamic` 或多个互不约束的 optional 字段。
-- 共享资源使用 `RoutedResourceId`；实例级请求显式携带 deviceId 与 providerInstanceId。
+- Agent/Gateway 共享资源使用两段 `RoutedResourceId`；Provider 请求资源使用四段 `ProviderResourceId`；实例级请求使用 `ProviderInstanceRoute`。不要把三者互相别名化。
 - Provider 使用生成 `JsonLineCodec`、wire classifier、`ProtocolRequest::from_method_params`、typed capability mapping 和 instance-kind validation helper；Host 不枚举 request envelope variant。
 - Provider binary 通过 SDK `serve_stdio` 和 typed `ProviderEventSink` 接入；控制通路分类来自 manifest `dispatchLane` 生成 metadata。
-- App bundle 必须把完整接入 README、canonical `protocol/{core,provider,gateway,channel}` 资源、fixtures、`codepet-sdk.json` 和平台原生 `cp-sdk-gen` 作为同一版本资源分发；分发 schema 的相对 `$ref` 必须在 Resources 内可解析。bundle 前先做 generated freshness 检查，并从最终 App Resources 黑盒导出、编译 SDK。
+- App bundle 必须把完整接入 README、canonical `protocol/{core,agent,provider,gateway,channel}` 资源、fixtures、`codepet-sdk.json` 和平台原生 `cp-sdk-gen` 作为同一版本资源分发；分发 schema 的相对 `$ref` 必须在 Resources 内可解析。bundle 前先做 generated freshness 检查，并从最终 App Resources 黑盒导出、编译 SDK。
 - Gateway client 必须由生成的 typed wrapper 构造 JSON-RPC 信封；Gateway server 必须实现生成 trait 并使用生成 dispatcher。channel adapter 不得维护 method string 表，server trait 实现不得解析原始 WebSocket frame。
 - Gateway WebSocket 在完成 handshake 后，把普通业务请求投递到有界 dispatcher；reader 只负责协议帧、握手/订阅状态机与入队，独立 writer 统一发送 response/event。回归测试必须让一个 Provider 请求保持 pending，并断言同一 socket 仍能在心跳 deadline 内返回 Pong。
 - SDK 识别 stdin EOF 或 fatal frame 后必须先把 event output 标记为不可用并丢弃 cleanup event，再执行 Provider cleanup；标准 terminal error 只能在 cleanup 后按同一个有界 drain deadline 尝试写出，不能让不可读 stdout 的背压阻塞子进程回收，也不能把不可观测的状态事件误报成业务清理失败。

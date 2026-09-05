@@ -1,0 +1,392 @@
+{
+  "provenance": {
+    "generatedAtLocal": "2026-09-05T13:05:55+08:00",
+    "codexVersion": "codex-cli 0.151.0",
+    "oldProvider": {
+      "path": "/Applications/Code Pet.app/Contents/Resources/provider-plugins/codex/codepet-provider-codex",
+      "bytes": 4408304,
+      "sha256": "3737ee3d6071dac3efcb2cba88580e57736c158268b1eab5ac0690c3009d4a98"
+    },
+    "newProvider": {
+      "path": "/Users/wangxin/Documents/Codex/codepet/crates/target/debug/codepet-provider-codex",
+      "bytes": 15128648,
+      "sha256": "098369bb37c353a879b0071bd6de21c60b6f6af2e661ed5a19ee03507cd97177"
+    }
+  },
+  "method": {
+    "transport": "Provider JSON-RPC stdio response used as Gateway payload proxy",
+    "compression": "RFC 7692 permessage-deflate, zlib default level, raw DEFLATE, Z_SYNC_FLUSH trailer removed",
+    "contextTakeover": false,
+    "webSocketWireExcludes": [
+      "TLS",
+      "TCP",
+      "IP"
+    ]
+  },
+  "old": {
+    "list-100": {
+      "resultBytes": 258483,
+      "jsonRpcBytes": 258530,
+      "deflatePayloadBytes": 57400,
+      "webSocketWireBytes": 57404,
+      "compressionRatio": 0.222025,
+      "wireReductionPercent": 77.796,
+      "itemCount": null,
+      "conversationCount": 100,
+      "nextCursorPresent": true,
+      "truncatedValueCount": 0,
+      "originalTruncatedBytes": 0,
+      "retainedTruncatedBytes": 0,
+      "omittedTruncatedBytes": 0,
+      "selectedKindCounts": {}
+    },
+    "A-40": {
+      "resultBytes": 15209133,
+      "jsonRpcBytes": 15209176,
+      "deflatePayloadBytes": 1729129,
+      "webSocketWireBytes": 1729139,
+      "compressionRatio": 0.11369,
+      "wireReductionPercent": 88.631,
+      "itemCount": 2350,
+      "conversationCount": null,
+      "nextCursorPresent": true,
+      "truncatedValueCount": 0,
+      "originalTruncatedBytes": 0,
+      "retainedTruncatedBytes": 0,
+      "omittedTruncatedBytes": 0,
+      "selectedKindCounts": {
+        "message": 185,
+        "reasoning": 1095,
+        "command": 1740,
+        "file-change": 150,
+        "tool": 50,
+        "unknown": 510,
+        "output": 801
+      }
+    },
+    "A-20": {
+      "resultBytes": 6882623,
+      "jsonRpcBytes": 6882666,
+      "deflatePayloadBytes": 751380,
+      "webSocketWireBytes": 751390,
+      "compressionRatio": 0.10917,
+      "wireReductionPercent": 89.083,
+      "itemCount": 1180,
+      "conversationCount": null,
+      "nextCursorPresent": true,
+      "truncatedValueCount": 0,
+      "originalTruncatedBytes": 0,
+      "retainedTruncatedBytes": 0,
+      "omittedTruncatedBytes": 0,
+      "selectedKindCounts": {
+        "message": 92,
+        "reasoning": 563,
+        "command": 800,
+        "file-change": 103,
+        "tool": 22,
+        "unknown": 232,
+        "output": 372
+      }
+    },
+    "A-10": {
+      "resultBytes": 3660622,
+      "jsonRpcBytes": 3660665,
+      "deflatePayloadBytes": 407430,
+      "webSocketWireBytes": 407440,
+      "compressionRatio": 0.111299,
+      "wireReductionPercent": 88.87,
+      "itemCount": 598,
+      "conversationCount": null,
+      "nextCursorPresent": true,
+      "truncatedValueCount": 0,
+      "originalTruncatedBytes": 0,
+      "retainedTruncatedBytes": 0,
+      "omittedTruncatedBytes": 0,
+      "selectedKindCounts": {
+        "message": 46,
+        "reasoning": 285,
+        "command": 396,
+        "file-change": 53,
+        "tool": 16,
+        "unknown": 123,
+        "output": 182
+      }
+    },
+    "A-1": {
+      "resultBytes": 46764,
+      "jsonRpcBytes": 46806,
+      "deflatePayloadBytes": 4688,
+      "webSocketWireBytes": 4692,
+      "compressionRatio": 0.100158,
+      "wireReductionPercent": 89.976,
+      "itemCount": 18,
+      "conversationCount": null,
+      "nextCursorPresent": true,
+      "truncatedValueCount": 0,
+      "originalTruncatedBytes": 0,
+      "retainedTruncatedBytes": 0,
+      "omittedTruncatedBytes": 0,
+      "selectedKindCounts": {
+        "message": 5,
+        "reasoning": 5,
+        "command": 16,
+        "unknown": 8,
+        "output": 7
+      }
+    },
+    "B-40": {
+      "resultBytes": 4021916,
+      "jsonRpcBytes": 4021959,
+      "deflatePayloadBytes": 593872,
+      "webSocketWireBytes": 593882,
+      "compressionRatio": 0.147657,
+      "wireReductionPercent": 85.234,
+      "itemCount": 837,
+      "conversationCount": null,
+      "nextCursorPresent": false,
+      "truncatedValueCount": 0,
+      "originalTruncatedBytes": 0,
+      "retainedTruncatedBytes": 0,
+      "omittedTruncatedBytes": 0,
+      "selectedKindCounts": {
+        "message": 107,
+        "reasoning": 395,
+        "command": 288,
+        "file-change": 14,
+        "tool": 177,
+        "unknown": 124,
+        "output": 141
+      }
+    },
+    "C-40": {
+      "resultBytes": 4379202,
+      "jsonRpcBytes": 4379245,
+      "deflatePayloadBytes": 596044,
+      "webSocketWireBytes": 596054,
+      "compressionRatio": 0.136107,
+      "wireReductionPercent": 86.389,
+      "itemCount": 519,
+      "conversationCount": null,
+      "nextCursorPresent": false,
+      "truncatedValueCount": 0,
+      "originalTruncatedBytes": 0,
+      "retainedTruncatedBytes": 0,
+      "omittedTruncatedBytes": 0,
+      "selectedKindCounts": {
+        "message": 38,
+        "reasoning": 240,
+        "command": 360,
+        "file-change": 59,
+        "tool": 2,
+        "unknown": 119,
+        "output": 175
+      }
+    }
+  },
+  "new": {
+    "list-100": {
+      "resultBytes": 229121,
+      "jsonRpcBytes": 229168,
+      "deflatePayloadBytes": 56018,
+      "webSocketWireBytes": 56022,
+      "compressionRatio": 0.244441,
+      "wireReductionPercent": 75.554,
+      "itemCount": null,
+      "conversationCount": 100,
+      "nextCursorPresent": true,
+      "truncatedValueCount": 0,
+      "originalTruncatedBytes": 0,
+      "retainedTruncatedBytes": 0,
+      "omittedTruncatedBytes": 0,
+      "selectedKindCounts": {}
+    },
+    "A-40": {
+      "resultBytes": 8065641,
+      "jsonRpcBytes": 8065684,
+      "deflatePayloadBytes": 1340002,
+      "webSocketWireBytes": 1340012,
+      "compressionRatio": 0.166136,
+      "wireReductionPercent": 83.386,
+      "itemCount": 2350,
+      "conversationCount": null,
+      "nextCursorPresent": true,
+      "truncatedValueCount": 1,
+      "originalTruncatedBytes": 142362,
+      "retainedTruncatedBytes": 131072,
+      "omittedTruncatedBytes": 11290,
+      "selectedKindCounts": {
+        "message": 185,
+        "reasoning": 1095,
+        "command": 1740,
+        "file-change": 150,
+        "tool": 50,
+        "unknown": 559,
+        "output": 801,
+        "structured-json": 1
+      }
+    },
+    "A-20": {
+      "resultBytes": 3661488,
+      "jsonRpcBytes": 3661531,
+      "deflatePayloadBytes": 592328,
+      "webSocketWireBytes": 592338,
+      "compressionRatio": 0.161771,
+      "wireReductionPercent": 83.823,
+      "itemCount": 1180,
+      "conversationCount": null,
+      "nextCursorPresent": true,
+      "truncatedValueCount": 0,
+      "originalTruncatedBytes": 0,
+      "retainedTruncatedBytes": 0,
+      "omittedTruncatedBytes": 0,
+      "selectedKindCounts": {
+        "message": 92,
+        "reasoning": 563,
+        "command": 800,
+        "file-change": 103,
+        "tool": 22,
+        "unknown": 254,
+        "output": 372
+      }
+    },
+    "A-10": {
+      "resultBytes": 1941464,
+      "jsonRpcBytes": 1941507,
+      "deflatePayloadBytes": 308232,
+      "webSocketWireBytes": 308242,
+      "compressionRatio": 0.158759,
+      "wireReductionPercent": 84.124,
+      "itemCount": 598,
+      "conversationCount": null,
+      "nextCursorPresent": true,
+      "truncatedValueCount": 0,
+      "originalTruncatedBytes": 0,
+      "retainedTruncatedBytes": 0,
+      "omittedTruncatedBytes": 0,
+      "selectedKindCounts": {
+        "message": 46,
+        "reasoning": 285,
+        "command": 396,
+        "file-change": 53,
+        "tool": 16,
+        "unknown": 139,
+        "output": 182
+      }
+    },
+    "A-1": {
+      "resultBytes": 26625,
+      "jsonRpcBytes": 26667,
+      "deflatePayloadBytes": 4176,
+      "webSocketWireBytes": 4180,
+      "compressionRatio": 0.156598,
+      "wireReductionPercent": 84.325,
+      "itemCount": 18,
+      "conversationCount": null,
+      "nextCursorPresent": true,
+      "truncatedValueCount": 0,
+      "originalTruncatedBytes": 0,
+      "retainedTruncatedBytes": 0,
+      "omittedTruncatedBytes": 0,
+      "selectedKindCounts": {
+        "message": 5,
+        "reasoning": 5,
+        "command": 16,
+        "unknown": 8,
+        "output": 7
+      }
+    },
+    "B-40": {
+      "resultBytes": 1946701,
+      "jsonRpcBytes": 1946744,
+      "deflatePayloadBytes": 353595,
+      "webSocketWireBytes": 353605,
+      "compressionRatio": 0.181634,
+      "wireReductionPercent": 81.836,
+      "itemCount": 837,
+      "conversationCount": null,
+      "nextCursorPresent": false,
+      "truncatedValueCount": 3,
+      "originalTruncatedBytes": 1418127,
+      "retainedTruncatedBytes": 42,
+      "omittedTruncatedBytes": 1418085,
+      "selectedKindCounts": {
+        "message": 107,
+        "reasoning": 395,
+        "command": 288,
+        "file-change": 14,
+        "tool": 177,
+        "unknown": 140,
+        "output": 141,
+        "structured-json": 161
+      }
+    },
+    "C-40": {
+      "resultBytes": 2149864,
+      "jsonRpcBytes": 2149907,
+      "deflatePayloadBytes": 387917,
+      "webSocketWireBytes": 387927,
+      "compressionRatio": 0.180434,
+      "wireReductionPercent": 81.956,
+      "itemCount": 519,
+      "conversationCount": null,
+      "nextCursorPresent": false,
+      "truncatedValueCount": 2,
+      "originalTruncatedBytes": 387573,
+      "retainedTruncatedBytes": 262144,
+      "omittedTruncatedBytes": 125429,
+      "selectedKindCounts": {
+        "message": 38,
+        "reasoning": 240,
+        "command": 360,
+        "file-change": 59,
+        "tool": 2,
+        "unknown": 121,
+        "output": 175
+      }
+    }
+  },
+  "comparison": {
+    "A-1": {
+      "jsonRpcReductionPercent": 43.027,
+      "compressedWireReductionPercent": 10.912,
+      "oldCompressedWireBytes": 4692,
+      "newCompressedWireBytes": 4180
+    },
+    "A-10": {
+      "jsonRpcReductionPercent": 46.963,
+      "compressedWireReductionPercent": 24.347,
+      "oldCompressedWireBytes": 407440,
+      "newCompressedWireBytes": 308242
+    },
+    "A-20": {
+      "jsonRpcReductionPercent": 46.801,
+      "compressedWireReductionPercent": 21.168,
+      "oldCompressedWireBytes": 751390,
+      "newCompressedWireBytes": 592338
+    },
+    "A-40": {
+      "jsonRpcReductionPercent": 46.968,
+      "compressedWireReductionPercent": 22.504,
+      "oldCompressedWireBytes": 1729139,
+      "newCompressedWireBytes": 1340012
+    },
+    "B-40": {
+      "jsonRpcReductionPercent": 51.597,
+      "compressedWireReductionPercent": 40.459,
+      "oldCompressedWireBytes": 593882,
+      "newCompressedWireBytes": 353605
+    },
+    "C-40": {
+      "jsonRpcReductionPercent": 50.907,
+      "compressedWireReductionPercent": 34.917,
+      "oldCompressedWireBytes": 596054,
+      "newCompressedWireBytes": 387927
+    },
+    "list-100": {
+      "jsonRpcReductionPercent": 11.357,
+      "compressedWireReductionPercent": 2.407,
+      "oldCompressedWireBytes": 57404,
+      "newCompressedWireBytes": 56022
+    }
+  }
+}

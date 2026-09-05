@@ -146,7 +146,7 @@ Manager 到 Gateway 只有一个有界 `mpsc` receiver，且只能领取一次�
 
 ## SDK 边界
 
-Host 只依赖 `codepet-provider-sdk` 和 `codepet-gateway-sdk`，不定义第二套 Provider/Gateway DTO。五个 Rust SDK 都具备 description/authors/repository metadata，不再 `publish = false`；内部 path dependency 同时声明 `version = "0.1.0"`，可用 `cargo package --allow-dirty` 检查包内容。仓库当前没有 LICENSE 文件，因此 manifest 不虚构 license 声明；正式发布前仍需仓库所有者补充许可证决策。
+Host 只直接依赖 `codepet-provider-sdk` 和 `codepet-gateway-sdk`，二者共同重新导出 Agent 业务类型；Host 不定义第二套 Provider/Gateway DTO，也不逐字段复制共享业务对象。六个 Rust SDK 都具备 description/authors/repository metadata，不再 `publish = false`；内部 path dependency 同时声明 `version = "0.1.0"`，可用 `cargo package --allow-dirty` 检查包内容。仓库当前没有 LICENSE 文件，因此 manifest 不虚构 license 声明；正式发布前仍需仓库所有者补充许可证决策。
 
 App 内 `provider-sdk/cp-sdk-gen` 是 JavaScript 编写并由 Bun `--compile` 产出的单体原生协议编译器。它运行时读取相邻 Core/Provider schema、manifest 与 fixtures，经与仓库生成流程相同的校验和 normalized typed IR 生成 `generated.rs`，再写入 Bun executable 内嵌的 Cargo package scaffold、稳定 stdio runtime 和接入 README；它不嵌入或复制仓库预生成的 `generated.rs`。`cp-sdk-gen.lock.json` 的 digest 来自本次实际输入协议，`--check` 重新编译并比对所有已知输出。相邻 `provider-sdk/protocol/v1/{core,schema}/` 是面向插件作者、引用可直接解析的 JSON-RPC 2.0 输入事实。
 

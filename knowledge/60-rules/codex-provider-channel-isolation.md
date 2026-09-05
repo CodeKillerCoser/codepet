@@ -16,7 +16,7 @@ Provider 事件只能进入 `ProviderGatewayService` 的 cursor/replay 与 `runt
 ## 证据边界
 
 - `RuntimeGatewayState` 只持有 `CompatProviderGateway`；compat 只调用 `ProviderGatewayService`，不持有 Pet/companion/scope 状态。
-- `TurnOutputDeltaEvent` 在 Provider/Gateway v1 中自带 conversation 四段 route，因此 compat 不需要 turn replay map。
+- `TurnOutputDeltaEvent` 在 Provider 边界携带四段 `ProviderResourceId`，Host 验证后投影为 Gateway 的两段 opaque resource，因此 compat 不需要 turn replay map。
 - Provider resource 直接携带 `deviceId + providerPluginId + providerInstanceId + nativeResourceId`；compat 不通过 registry 回查 plugin id。
 - 生产 `lib.rs` 分别构造 Provider Host/Gateway 和 Desktop Companion；Provider state 不接收 companion state。
 
@@ -48,7 +48,7 @@ Provider 事件只能进入 `ProviderGatewayService` 的 cursor/replay 与 `runt
 
 - Provider 污染桌宠：Tauri mock runtime 使用生产 bridge。真实 Provider fixture 产生正常事件、坏帧和 crash 后，只允许 remote channel/replay 有数据；companion replay/event、activity store、Desktop adapter spy 与 pet event 计数必须不变。
 - Desktop 数据源被替换：Desktop IPC adapter 测试继续覆盖 bootstrap/snapshot/patch/owner/action；PetApp 静态测试只允许 companion snapshot/replay/event/request。
-- 路由状态回流：检查生产源码不包含 `CodexThreadScope`/`mark_remote` 或 companion 写入口，compat 不包含 `turn_conversations` 或 plugin registry lookup；四段 route 的 schema/generated/Host tests 必须通过。
+- 路由状态回流：检查生产源码不包含 `CodexThreadScope`/`mark_remote` 或 companion 写入口，compat 不包含 `turn_conversations`；Provider 四段请求路由、Agent 两段业务身份和 Host 归属测试必须通过。
 - 生命周期串扰：分别让 Provider 与 Desktop IPC unavailable，断言另一条链路不重启、不清空且仍使用自己的 transport。
 
 ## 来源

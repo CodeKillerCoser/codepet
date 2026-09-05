@@ -2,7 +2,7 @@
 
 ## 规则
 
-Provider v1 与 Gateway v1 的 `ConversationItem`、tool input 和 tool outcome 必须使用带 singleton `kind` 的 `oneOf` 判别联合表达互斥状态。一个领域事实只能有一个完整载荷所有者：工具命令只存在于 command input，结构化参数只存在于 structured input，不透明参数只存在于 opaque input；工具输出只存在于 outcome 的 canonical content blocks。不得在 `ConversationItem.contents`、tool input、command facet、result text、structured result或 error message 之间复制完整正文。
+Agent v1 的 `ConversationItem`、tool input 和 tool outcome 必须使用带 singleton `kind` 的 `oneOf` 判别联合表达互斥状态；Provider v1 与 Gateway v1 只能引用并重新导出这一份定义，不得复制领域结构。一个领域事实只能有一个完整载荷所有者：工具命令只存在于 command input，结构化参数只存在于 structured input，不透明参数只存在于 opaque input；工具输出只存在于 outcome 的 canonical content blocks。不得在 `ConversationItem.contents`、tool input、command facet、result text、structured result或 error message 之间复制完整正文。
 
 内容是否截断与内容语义正交。发生截断时，内容块或 tool input 必须携带结构化元数据，至少说明原始字节数、保留字节数和策略；未携带截断元数据表示对应载荷完整。Command input、Shell、日志和测试输出优先使用 UTF-8 安全的 head-tail，结构化输入使用保持合法结构或明确标记的 structural preview。UI 在消息列表展开、抽屉或详情页展示同一 canonical block，展示位置不能改变 wire object。
 
@@ -28,7 +28,7 @@ Provider v1 与 Gateway v1 的 `ConversationItem`、tool input 和 tool outcome 
 
 ## 推荐做法
 
-- 先修改 v1 schema 并生成所有 SDK，再让各实现按生成类型迁移；不在业务 crate 手写临时并行 DTO。
+- 先修改 `agent/v1` schema 并生成所有 SDK，再让 Provider/Gateway 各自引用生成类型；不在边界 schema 或业务 crate 手写临时并行 DTO。
 - command/structured/opaque input 与 success/failure outcome 分别使用封闭联合，编解码负向 fixture 必须拒绝同时出现两个 variant 的对象。
 - command、structured、opaque 三种 input 都允许同构的 truncation 元数据；大输入保持原语义 variant，不得因截断改成 opaque。
 - 普通消息与 tool outcome 复用同一内容块语义；每个 canonical block 保持稳定 contentId。
@@ -41,8 +41,7 @@ Provider v1 与 Gateway v1 的 `ConversationItem`、tool input 和 tool outcome 
 
 - `../50-decisions/conversation-item-and-tool-payload-ownership.md`
 - `../../reports/conversation-payload-size-analysis-2026-09-04.html`
-- `../../protocol/provider/v1/schema.json`
-- `../../protocol/gateway/v1/schema.json`
+- `../../protocol/agent/v1/schema.json`
 - `../../sdk/rust/codepet-provider-sdk/src/lib.rs`
 - `../../crates/providers/codepet-provider-codex/src/mapper.rs`
 - `../../crates/providers/codepet-provider-opencode/src/mapper.rs`

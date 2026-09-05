@@ -94,7 +94,7 @@ Codex Desktop 私有 IPC
 | `conversation.acquireInteraction` | conversation 执行 App Server `thread/resume`，或对当前执行槽续租 | 支持且幂等；返回 resume 得到的真实 permission/model/reasoning selection 与 30 秒租期。Claude/OpenCode 等无 writer lock 的 Provider 可返回成功与当前/空 selection，不执行 resume。 |
 | `conversation.create` | 独立 App Server `thread/start`，成功 session 转移到 execution slot | 支持 permission/model/reasoning/workspace 和可选显式 project；项目同路由且能力探测成功时映射 `projectId`，省略即 standalone，不根据 cwd 推断。从 spawn 前就在 instance registry 可见，最终 `thread/start` 写入与 cancel 通过短门线性化。response 立即可供首条 `turn.start`，不等待 observer 物化；session 受 30 秒临时租期和 active turn 管理。App Server 不支持 title 或 Provider extension，传入时明确返回 `capability_unsupported`。 |
 | `turn.start` | conversation 执行 App Server `thread/resume`、权威 `thread/read`、`turn/start` | 支持，保留 `clientUserMessageId`；同 conversation 并发首次请求共享一个创建槽，只发送一次 resume。 |
-| `turn.steer` | 同一 conversation 执行 App Server `turn/steer`，随后 `thread/read` | 支持；请求显式携带 conversation 与 turn 四段身份，响应使用权威 turn 状态。 |
+| `turn.steer` | 同一 conversation 执行 App Server `turn/steer`，随后 `thread/read` | 支持；Provider 请求显式携带 conversation 与 turn 四段身份，响应使用共享 Agent 两段身份与权威 turn 状态。 |
 | `turn.interrupt` | 同一 conversation 执行 App Server `turn/interrupt`，随后 `thread/read` | 支持；不根据 interrupt ack 伪造完整 Turn。权威 terminal snapshot 会清除 active turn；仍有有效交互租约时保留 writer，否则退出。 |
 | `approval.resolve` | 对 owning execution session 的原 server request id 回写 command/file decision | 仅支持普通 accept/decline 二元审批；generation 与 pending approval 必须同时匹配，不能换进程回写。 |
 | `provider.shutdown` | 关闭全部实例的 observer、一次性 create 与执行 App Server，结束 stdio 主循环 | 支持且幂等；并发 shutdown 等待同一清理完成，即使某个 shutdown 失败也会先尝试关闭其他 session。stdio EOF、坏帧、response/event stdout 写失败同样先调用该清理，再在 2 秒 drain 边界后中止未收敛的 dispatch task。 |
@@ -105,9 +105,9 @@ Provider 发送全部八种 v1 事件：`event.instanceStatusChanged`、`event.p
 
 ## 身份与审批路由
 
-Provider/Gateway 的语言中立 `RoutedResourceId` 是 `deviceId + providerPluginId + providerInstanceId + nativeResourceId` 四段身份。instance route 是前三段。SDK、Host、Gateway、Provider、compat extension 在每个请求、响应、事件和审批入口逐跳保留并校验四段；compat 不再通过 registry 事后回查 plugin id。旧 v0 对象自身的 `id` 继续等于 `nativeResourceId`，完整身份位于 `codepet.gateway.route` extension。
+Provider 私有 `ProviderResourceId` 是 `deviceId + providerPluginId + providerInstanceId + nativeResourceId` 四段身份，instance route 是前三段；Agent/Gateway 的语言中立 `RoutedResourceId` 是 `providerId + nativeResourceId` 两段 opaque identity。Host 在 Gateway 入站处解析 instance，在 Provider 响应/事件处校验 `providerId == providerInstanceId`，但 Conversation/Turn/Item/Approval 对象本身直接共享，不再逐字段映射。旧 v0 对象自身的 `id` 继续等于 `nativeResourceId`，两段身份位于 `codepet.gateway.route` extension。
 
-Project 使用相同四段身份。Conversation 的 `project` 只映射 App Server `Thread.projectId`，而 `workspaceRoot` 原样映射 `Thread.cwd`；Provider 不再扫描 Git metadata、归并 worktree 或用 cwd 推断项目。项目筛选和项目归属创建都在 Provider 与 Host 两层校验 route。
+Provider 请求中的 Project 使用四段身份，共享 Agent Project 与 Conversation.project 使用两段身份。Conversation 的 `project` 只映射 App Server `Thread.projectId`，而 `workspaceRoot` 原样映射 `Thread.cwd`；Provider 不再扫描 Git metadata、归并 worktree 或用 cwd 推断项目。项目筛选和项目归属创建都在 Provider 与 Host 两层校验 route。
 
 每个 Provider instance 持有一个 observer 和按 conversation 索引的执行槽。执行槽以 `Creating → Ready → Closing → Closed` 管理，创建失败则进入 `Failed` 并从 map 淘汰；并发等待者共享同一创建结果。槽从插入 map 起就有独立 attempt generation 与 cancellation 状态；子进程完成 spawn、尚未 initialize 前即登记到 Creating，因此 stop 能关闭其 stdin/进程并唤醒 initialize。initialize 返回与 subscribe 后都会重新核对 instance、slot、attempt/session generation。首次 `thread/resume` 的实际 request 写入与 cancel 共用一把只覆盖“复核 + 写 frame”的短锁：cancel 先线性化则不再写 resume/start；resume 写入先线性化则 stop 随后关闭 session，但不等待悬挂 response。Ready 槽关联一个 App Server generation、当前 active turn 与可选交互租期；不同 conversation 不共享进程、operation lock、租期或 loaded-thread 状态。
 

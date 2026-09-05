@@ -9,11 +9,11 @@
 ## 目标
 
 - 让 `protocol/` 成为唯一语言无关的手写协议事实来源。
-- 建立 `core`、`pet`、`provider`、`gateway` 业务层与独立 `channel/lan` admission 层，并用生成检查守住依赖方向。
-- 把 `DeviceId`、`ProviderPluginId`、`ProviderInstanceId`、`ClientId` 和完整 `RoutedResourceId` 提升为显式类型。
+- 建立 `core`、`agent`、`pet`、`provider`、`gateway` 与独立 `channel/lan` admission 层，并用生成检查守住依赖方向。
+- 区分客户端 opaque `RoutedResourceId { providerId, nativeResourceId }`、Provider 私有四段 `ProviderResourceId` 与实例级 `ProviderInstanceRoute`，不再用同一个类型名表达不同路由语义。
 - Provider v1 形成 Host 与独立二进制之间的 JSON-RPC 2.0/stdin-stdout 契约；Gateway v1 形成 Host 与 Remote Client 的 JSON-RPC 2.0 设备/实例路由契约。
 - 生成可独立编译的 Rust SDK，包含 DTO、异步 server trait、dispatcher、typed client/transport、method/event enum、wire envelope 和 codec。
-- 生成纯 null-safe Dart core/Gateway SDK，供未来 `codepet-remote` 复用 DTO、strict codec、method/event metadata 与 typed client。
+- 生成纯 null-safe Dart Core/Agent/Gateway SDK，供 `codepet-remote` 复用共享领域 DTO、strict codec、method/event metadata 与 typed client。
 - 保持现有 Runtime Gateway v0 wire 与双链路行为可编译、可测试，不把 Desktop IPC 迁入 Provider 协议。
 
 ## 非目标
@@ -26,9 +26,9 @@
 
 ## 现状理解
 
-协议布局现在是 `core/v1`、`pet/v1`、`provider/v1`、`gateway/v1`、`channel/lan/v1` 和桌面私有的 `desktop/v0`。旧 Gateway 协议已删除；`gateway/v1` 是唯一 Gateway 业务协议。`protocol/codegen.json` 记录包、依赖、输出与 `codepet.protocol.codegen/v1` target adapter 接口。Rust、TypeScript、Dart 有显式 adapter；Python 只有 fail-closed 的 planned registry entry。Rust 输出位于 `sdk/rust/codepet-*-sdk`；Dart 生成 core、Gateway v1 和 LAN admission SDK。
+协议布局现在是 `core/v1`、types-only 的 `agent/v1`、`pet/v1`、`provider/v1`、`gateway/v1`、`channel/lan/v1` 和桌面私有的 `desktop/v0`。旧 Gateway 协议已删除；`gateway/v1` 是唯一 Gateway 业务协议。`protocol/codegen.json` 记录包、依赖、输出与 `codepet.protocol.codegen/v1` target adapter 接口。Rust、TypeScript、Dart 有显式 adapter；Python 只有 fail-closed 的 planned registry entry。Rust 输出位于 `sdk/rust/codepet-*-sdk`；Dart 生成 Core、Agent、Gateway v1 和 LAN admission SDK。
 
-`core/v1` 只包含可安全共享的 ID、版本范围、时间戳、分页、错误、JSON 对象、JSON-RPC error 和 `RoutedResourceId`。`pet/v1` 只出现 PetTask/PetApproval/PetAction/Snapshot/Patch；`provider/v1` 拥有 Provider 插件描述、instance 生命周期、Project CRUD 与 harness 能力；`gateway/v1` 拥有 handshake、device/provider 枚举、project/conversation/turn/approval 与 replayable event cursor，不包含插件进程控制。`channel/lan/v1` 只包含 discovery/admission 所需 DTO，不声明 Gateway method。
+`core/v1` 只包含可安全共享的 ID、版本范围、时间戳、分页、错误、JSON 对象、JSON-RPC error 和两段 opaque `RoutedResourceId`。`agent/v1` 只包含 Project、Conversation、Turn、Approval、ConversationItem、Tool/Content、Selection、Authentication 和 Usage 等共享领域对象，不声明 method、event 或 transport。`pet/v1` 只出现 PetTask/PetApproval/PetAction/Snapshot/Patch；`provider/v1` 拥有 Provider 插件描述、instance 生命周期、四段 `ProviderResourceId`、业务 envelope 与 harness 能力；`gateway/v1` 拥有 handshake、device/provider 枚举、业务 envelope 与 replayable event cursor，不包含插件进程控制。`channel/lan/v1` 只包含 discovery/admission 所需 DTO，不声明 Gateway method。
 
 旧 Runtime Gateway 契约没有被复制回 Tauri 源码。它作为 `protocol/desktop/v0` 的 IDL profile 生成到 `codepet-desktop-sdk`；`src-tauri/src/runtime_gateway/generated.rs` 和 `frontend/lib/generated/runtimeGateway.ts` 只是 re-export 薄层。这样桌面 profile 仍由同一个 IDL 根和同一个生成器约束，但不再占用 Gateway 命名空间或伪装成网络协议版本。
 
@@ -38,7 +38,7 @@
 2. schema/manifest 校验后先生成唯一 normalized typed IR；target registry 把 Rust、TypeScript、Dart、Python 映射到独立 adapter，未实现 adapter 不允许降级到其他语言。Dart 的 DTO、constraint、sealed union、CodePet envelope、method/event metadata 与 typed client 都从同一 IR 生成；无共同 required singleton-enum discriminator 的 union 在写文件前失败。
 3. Provider 根据 JSON-RPC 2.0/stdio-json-lines 生成有界 `JsonLineCodec`、request/response/notification/event 入站分类、标准错误映射、含入站接口的 transport，以及 `ProtocolRequest::from_method_params` typed request-to-wire 入口。Host 调用该入口，不再手写 method 到 JSON-RPC envelope variant 的枚举。未知 method 与非法 params 保留 request id，分别映射 `-32601` 与 `-32602`；response 必须满足 result/error XOR。
 4. v1 initialize/handshake 通过 `VersionRange` 提交支持范围，并返回 selected version。manifest version、wire version 与生成常量由同一输入产生。
-5. Provider 和 gateway 的资源 ID 均使用 `RoutedResourceId { deviceId, providerPluginId, providerInstanceId, nativeResourceId }`；Provider descriptor 的 `instanceKinds` 非空，create request/instance 都携带稳定 `instanceKind`，生成 helper 供服务实现 fail closed 选择。请求、响应、事件和审批必须逐跳校验四段身份，不能事后回查 plugin id 补齐 route。
+5. Provider lifecycle 与 Host→Provider 资源请求使用 `ProviderInstanceRoute` / `ProviderResourceId` 保留完整 device、plugin、instance 路由；Provider 返回的 Agent 业务对象与 Gateway 使用两段 `RoutedResourceId`。Host 在调用上下文中校验业务对象的 `providerId` 等于目标 instance，并只在入站 Gateway 请求处解析 opaque provider route。Provider descriptor 的 `instanceKinds` 非空，create request/instance 都携带稳定 `instanceKind`，生成 helper 供服务实现 fail closed 选择。
 6. capability enum、capability container 与 method mapping 同时受 manifest/schema 校验，并生成 typed `ProtocolMethod::capability()`。
 7. Tauri 依赖 `codepet-host`、`codepet-gateway-sdk` 与 `codepet-desktop-sdk`，并继续通过 desktop v0 re-export 使用原有桌面类型。`RuntimeGatewayState` 只适配 `ProviderHostState` 创建的 Gateway service；remote 与 companion 保持各自 EventBus/replay/Tauri event，Provider v1 event 经 Gateway 只发布到 remote channel。
 8. `crates/codepet-host` 已消费生成 SDK 实现进程外 Provider client、Plugin Manager 和 `codepet-gateway-sdk::ProtocolServer` application boundary；Manager 到 Gateway 是只能领取一次的有界单消费者队列，不指向 companion bus。详见 `provider-host-device-and-plugin-runtime.md`。
@@ -50,9 +50,9 @@
 
 - `protocol/`：唯一手写 schema、service manifest、transport discriminator、fixture 和 target manifest。
 - `tools/protocol-codegen/`：生成与 freshness/边界检查；不包含业务 handler。
-- `sdk/rust/`：四个可独立编译、可执行 `cargo package` 检查的 SDK；Provider 与 gateway 只依赖 core，pet 只依赖 core。path dependency 同时声明发布 version。
-- `sdk/typescript/`：生成 core 与 Desktop Runtime v0 输入，不生成 Gateway 业务 SDK。
-- `sdk/dart/`：生成 core/Gateway v1/LAN admission null-safe package；channel、TLS、credential、重连与事件持久化留给 `codepet-remote`。
+- `sdk/rust/`：六个可独立编译、可执行 `cargo package` 检查的 SDK；Agent 只依赖 Core，Provider/Gateway 依赖 Core 与 Agent，Pet 只依赖 Core。path dependency 同时声明发布 version。
+- `sdk/typescript/`：生成 Core、Agent、Provider、Gateway 与 Desktop Runtime v0 输入。
+- `sdk/dart/`：生成 Core/Agent/Gateway v1/LAN admission null-safe package；channel、TLS、credential、重连与事件持久化留给 `codepet-remote`。
 - `src-tauri/src/runtime_gateway/generated.rs`：只把 desktop v0 SDK 暴露给现有桌面内部调用面。
 - `frontend/lib/generated/runtimeGateway.ts`：只把 desktop v0 TypeScript 类型暴露给当前前端。
 - `crates/providers/codepet-provider-codex/`：首个 production Provider binary；运行依赖只有 Provider SDK 与纯 Rust App Server adapter。
@@ -65,7 +65,7 @@
 
 - 风险：在 core 放入 Pet/Provider/Gateway 领域对象，导致层间重新耦合。验证：codegen dependency audit 与 Node 测试断言 core 无上行依赖。
 - 风险：Pet schema 或 manifest 偷用 Provider conversation/approval，未来再次把 remote 事件投影到桌宠。验证：统一 `$ref` audit 和 manifest 反向负例；现有双 transport Rust 测试继续运行。
-- 风险：资源漏掉 plugin identity，在相同 device/instance/native 组合间误路由。验证：core/provider/gateway fixture、生成 SDK 与 Host 负例测试断言四段身份同时存在且错误 plugin fail closed。
+- 风险：两段 Agent identity 被错误解释为完整进程路由，或 Provider 返回其他 instance 的 providerId。验证：Provider request fixture 保留四段身份，Agent/Gateway fixture 保留两段 opaque identity；Host 负例断言错误 providerId、plugin 与 instance 均 fail closed。
 - 风险：生成代码被手改或 Rust/TypeScript/Dart 输出漂移。验证：`npm run protocol:check` 比较完整内容并报告 stale file。
 - 风险：planned target 被错误交给其他语言或静默无输出，或 Dart 为 model/service 维护两份映射。验证：fake/Python fail-closed、normalized IR route/metadata、deterministic output 与多包 cross-schema 测试。
 - 风险：Dart 把 `oneOf` 降级为多个 optional 字段、接受未知字段/非法约束或日志泄露 pairing secret。验证：ambiguous union 生成负例、canonical fixture round-trip、constraint/closed-object 和 redaction 测试。
@@ -77,15 +77,15 @@
 ## 测试计划
 
 - `npm run protocol:check`：schema/manifest/fixture、自洽、联合层依赖、capability contract、target registry 与 freshness。
-- `cargo test --manifest-path sdk/rust/Cargo.toml`：四个 SDK 生成/编译、version、typed request-to-wire、JSON-RPC dispatcher/line framing/标准错误、instance kind、event cursor 和 route round-trip。
-- `cargo package --manifest-path sdk/rust/Cargo.toml --workspace --allow-dirty`：Cargo 建立临时本地 registry，按依赖顺序打包并验证四个 SDK，无需先上传 core。
+- `cargo test --manifest-path sdk/rust/Cargo.toml`：六个 SDK 生成/编译、version、Agent concrete type re-export、typed request-to-wire、JSON-RPC dispatcher/line framing/标准错误、instance kind、event cursor 和 route round-trip。
+- `cargo package --manifest-path sdk/rust/Cargo.toml --workspace --allow-dirty`：Cargo 建立临时本地 registry，按依赖顺序打包并验证六个 SDK，无需先上传 Core/Agent。
 - `cargo test --manifest-path src-tauri/Cargo.toml --test runtime_gateway_protocol_tests --test runtime_gateway_core_tests`：v0 wire 与双链路隔离。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --all-targets`：Provider v1、真实 App Server fixture 与实际 Provider 二进制回归。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-claude --all-targets`：Claude CLI fixture、真实输出映射、stdio framing、能力负例与依赖隔离。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-opencode --all-targets`：Provider framing、OpenCode V2 fixture 垂直映射与 Pet 隔离。
-- `cargo test --manifest-path crates/Cargo.toml -p codepet-host --all-targets`：Host 从 manifest 启动 Provider binary、Gateway 纵向 RPC、四段路由与 restart/fault isolation。
+- `cargo test --manifest-path crates/Cargo.toml -p codepet-host --all-targets`：Host 从 manifest 启动 Provider binary、Gateway 纵向 RPC、两段/四段边界路由与 restart/fault isolation。
 - TypeScript 对兼容 SDK 执行独立 `tsc --noEmit`，并运行现有前端 protocol/component tests。
-- Dart 对 core/Gateway package 执行 `dart analyze`；Gateway package runtime tests 覆盖 canonical fixture、nullable、discriminated union、约束/unknown field、redaction、manifest metadata 与 typed client。
+- Dart 对 Core/Agent/Gateway package 执行 `dart analyze`；Gateway package runtime tests 覆盖 canonical fixture、nullable、discriminated union、约束/unknown field、redaction、manifest metadata 与 typed client。
 - 测试后确认 `src-tauri/gen/schemas/macOS-schema.json` 无提交差异。
 
 ## 知识沉淀

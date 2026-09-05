@@ -42,7 +42,7 @@ Claude stdout 单物理行当前硬上限是 4 MiB，超过上限且未换行时
 ## 推荐做法
 
 - 上游 Claude DTO 只覆盖官方文档或真实 fixture 验证过的字段，使用宽松未知 variant；route、session、framing 和非法 JSON 严格失败。
-- 使用生成的 Provider SDK server trait、dispatcher、codec、DTO 与四段 route；不要手写第二份 Provider Protocol。
+- 使用生成的 Provider SDK server trait、dispatcher、codec、四段请求 route 与共享 Agent DTO；不要手写第二份 Provider Protocol 或 Provider→Gateway 业务对象。
 - 每次 Provider-launched turn 只添加机器接口、session、model/effort、所选 permission mode 和 stdio permission prompt 参数，不覆盖 Claude 的 settings/MCP/plugin 配置发现。
 - fixture 必须让 Claude 子进程发出真实形状的 `can_use_tool` control request、阻塞读取第二条 stdin 消息，并分别验证 allow 的 `updatedInput` 与 deny 结果。
 - 用无害 `.mcp.json` fixture 证明项目配置沿默认 cwd 可见，同时断言命令行不包含隔离参数；不要为测试执行危险 MCP 或 Hook 命令。

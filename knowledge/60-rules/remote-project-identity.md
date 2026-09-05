@@ -27,7 +27,7 @@ Codex Desktop 0.151/0.152 若已迁移项目但尚未把 legacy thread assignmen
 
 ## 推荐做法
 
-- Provider/Gateway schema 中 Project 使用 routed `resource`、`name`、`roots[{path}]`、`metadata: Map<String,String>`、只读 `position`、`createdAt`、`updatedAt`。
+- Agent schema 中 Project 使用两段 routed `resource`、`name`、`roots[{path}]`、`metadata: Map<String,String>`、只读 `position`、`createdAt`、`updatedAt`；Provider/Gateway 共同引用该定义。
 - `conversation.list(all)` 逐页读取 App Server 会话并用 legacy assignment 补齐缺失的 `projectId`。`standalone` 与 `project` 在原生 thread 流上按“原生 projectId 优先、legacy 映射补缺”分类；Provider cursor 封装 filter identity 与上游 opaque cursor，只有完整消费上游页后才推进，客户端必须原样回传。
 - `conversation.create` 只在调用方显式传入项目时映射 Codex `thread/start.projectId`；省略即 standalone，不根据 workspaceRoot 推断。
 - Codex instance start 在已启用 experimental API 的 session 上探测 `project/list`。只有成功时才整组广告并映射五个项目方法；`-32601` 表示不支持，其他探测错误使 instance start 失败。

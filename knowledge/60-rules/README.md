@@ -15,6 +15,7 @@
 - `npm-install-registry-host.md`
 - `pet-window-click-through.md`
 - `protocol-layer-and-channel-boundaries.md`
+- `conversation-tool-payload-ownership.md`
 - `transcript-path-display.md`
 - `vite-realpath-root.md`
 
