@@ -221,6 +221,7 @@ jobs:
           TAG: ${{ needs.preflight.outputs.tag }}
           RELEASE_NAME: ${{ needs.preflight.outputs.release_name }}
           RELEASE_NOTES: ${{ needs.preflight.outputs.release_notes }}
+          RELEASE_COMMIT: ${{ needs.preflight.outputs.commit_sha }}
         run: |
           mapfile -d '' ASSETS < <(find dist/release-assets -type f -print0)
           ASSETS+=(dist/latest.json)
@@ -232,5 +233,5 @@ jobs:
             gh release upload "$TAG" "${ASSETS[@]}"
             gh release edit "$TAG" --title "$RELEASE_NAME" --notes "$RELEASE_NOTES" --latest
           else
-            gh release create "$TAG" "${ASSETS[@]}" --title "$RELEASE_NAME" --notes "$RELEASE_NOTES" --latest
+            gh release create "$TAG" "${ASSETS[@]}" --target "$RELEASE_COMMIT" --title "$RELEASE_NAME" --notes "$RELEASE_NOTES" --latest
           fi

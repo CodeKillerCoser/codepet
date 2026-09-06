@@ -25,6 +25,7 @@
 - 仓库提交的版本必须是基础版本，例如 `0.1.4`，不要提交 `0.1.4+<sha>`。构建版本由 workflow 基于版本同步后的 commit 派生。
 - 发布新版本时优先在 workflow 的 `version` 输入中填写基础版本，或通过本地 `npm run release:github -- --version <version> --ref main` 触发。`preflight` job 会先把基础版本同步并推送回当前分支，再输出 `version=<base>+<short_commit>` 给 macOS/Windows 构建。
 - Release workflow 会先运行 `preflight` job。基础版本格式错误、版本源不一致、无法同步分支，或手动 tag 与最终构建版本不一致时，会在 macOS/Windows 构建开始前失败。手动 tag 若只是 `v<base>` 或 `<base>`，会按留空处理并自动派生最终 tag。
+- 从 `v0` 等非默认分支发布时，`gh release create` 必须显式传入 `--target`，值为 preflight 的完整 `commit_sha`。否则尚不存在的 tag 会落在默认分支，导致安装包来自所选分支而 Release 源码指向其他提交。2026-09-06 发布前检查发现并修正此遗漏；验收时比对远端 tag 与 preflight commit。
 - 公共 GitHub Release asset 可匿名下载，客户端检查更新不需要 GitHub 身份验证。私有仓库或私有 Release 不适合当前静态 endpoint 方案。
 
 ## 发布步骤
