@@ -1,0 +1,100 @@
+use codepet_provider_sdk::*;
+use serde_json::json;
+
+// Opt-in: probes installed binaries without sending prompts or changing user settings.
+pub async fn check_native_runtime(
+    provider: impl Provider,
+    plugin: &str,
+    kind: &str,
+    mut settings: JsonObject,
+) {
+    let data = tempfile::tempdir().unwrap();
+    let directory = data.path().join("data with spaces 中文");
+    std::fs::create_dir_all(&directory).unwrap();
+    settings.insert("dataDirectory".into(), json!(directory));
+    if kind == "opencode" {
+        let workspace = data.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        settings.insert("workspaceRoot".into(), json!(workspace));
+    }
+    provider
+        .provider_initialize(ProviderInitializeRequest {
+            host_client_id: "runtime-smoke".into(),
+            host_device_id: "runtime-smoke-device".into(),
+            host_version: "test".into(),
+            supported_versions: VersionRange {
+                min_version: PROTOCOL_VERSION,
+                max_version: PROTOCOL_VERSION,
+            },
+        })
+        .await
+        .unwrap();
+    let result: Result<(), ProtocolError> = async {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
+        let installed = loop {
+            let inventory = tokio::time::timeout(std::time::Duration::from_secs(1), provider.runtime_get_installed(RuntimeGetInstalledRequest { refresh: None })).await.expect("inventory RPC blocked")?;
+            if inventory.scanning != Some(true) { break inventory; }
+            assert!(tokio::time::Instant::now() < deadline, "scan did not complete");
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        };
+        assert!(!installed.installed.is_empty(), "No {kind} runtime found");
+        for runtime in &installed.installed {
+            println!(
+                "{kind}: {:?} {} ({})",
+                runtime.source, runtime.executable_path, runtime.version
+            );
+        }
+        let selected = provider
+            .runtime_select(RuntimeSelectRequest {
+                candidate: RuntimeCandidate {
+                    executable_path: installed.installed[0].executable_path.clone(),
+                    source: RuntimeCandidateSource::Configured,
+                },
+            })
+            .await?
+            .selected;
+        let reread = provider
+            .runtime_get_installed(RuntimeGetInstalledRequest { refresh: None })
+            .await?;
+        assert_eq!(
+            reread.selected.as_ref().map(|r| &r.executable_path),
+            Some(&selected.executable_path)
+        );
+        let route = ProviderInstanceRoute {
+            device_id: "runtime-smoke-device".into(),
+            provider_plugin_id: plugin.into(),
+            provider_instance_id: "native-runtime".into(),
+        };
+        provider
+            .instance_create(InstanceCreateRequest {
+                route: route.clone(),
+                instance_kind: kind.into(),
+                display_name: "Native runtime smoke".into(),
+                settings,
+            })
+            .await?;
+        let started = provider
+            .instance_start(InstanceStartRequest {
+                route: route.clone(),
+            })
+            .await?;
+        assert_eq!(started.instance.status, InstanceStatus::Ready);
+        println!("{kind}: ready with isolated data directory");
+        provider
+            .conversation_list(ConversationListRequest {
+                route: route.clone(),
+                cursor: None,
+                limit: Some(10),
+                project_filter: serde_json::from_value(json!({"kind":"all"})).unwrap(),
+            })
+            .await?;
+        provider
+            .instance_stop(InstanceStopRequest { route })
+            .await?;
+        Ok(())
+    }
+    .await;
+    let shutdown = provider.provider_shutdown(ProviderShutdownRequest {}).await;
+    assert!(result.is_ok(), "{kind} native runtime: {result:?}");
+    assert!(shutdown.is_ok(), "{kind} shutdown: {shutdown:?}");
+}

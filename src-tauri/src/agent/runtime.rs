@@ -7,7 +7,8 @@ use std::fmt;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{ExitStatus, Stdio};
+use codepet_provider_sdk::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -622,7 +623,7 @@ fn append_login_shell_candidates(
         {
             continue;
         }
-        let mut command = Command::new(&shell);
+        let mut command = codepet_provider_sdk::local_runtime::command(&shell);
         command.args(["-l", "-c", &format!("command -v -- {command_name}")]);
         let Ok(output) = run_captured_command(command, DISCOVERY_COMMAND_TIMEOUT) else {
             continue;
@@ -672,7 +673,7 @@ fn macos_login_shell_path() -> Option<PathBuf> {
     if user.is_empty() {
         return None;
     }
-    let mut command = Command::new("/usr/bin/dscl");
+    let mut command = codepet_provider_sdk::local_runtime::command("/usr/bin/dscl");
     command.args([
         ".",
         "-read",
@@ -702,7 +703,7 @@ fn append_macos_application_candidates(
 ) {
     for bundle in descriptor.macos_bundles {
         let bundle_identifier = bundle.bundle_identifier.replace('\'', "\\'");
-        let mut command = Command::new("/usr/bin/mdfind");
+        let mut command = codepet_provider_sdk::local_runtime::command("/usr/bin/mdfind");
         command.arg(format!(
             "kMDItemCFBundleIdentifier == '{bundle_identifier}'"
         ));
@@ -839,7 +840,7 @@ fn probe_version(
     executable: &Path,
     version_args: &[&str],
 ) -> Result<Option<String>, AgentRuntimeDiagnostic> {
-    let mut command = Command::new(executable);
+    let mut command = codepet_provider_sdk::local_runtime::command(executable);
     command.args(version_args);
     let output = run_captured_command(command, VERSION_PROBE_TIMEOUT).map_err(|error| {
         let code = if error.kind() == io::ErrorKind::TimedOut {

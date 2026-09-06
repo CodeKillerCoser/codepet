@@ -633,7 +633,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
 }
 
 #[tokio::test]
-#[ignore = "requires CODEPET_OPENCODE_EXECUTABLE pointing to OpenCode 1.18.25 exactly"]
+#[ignore = "requires CODEPET_OPENCODE_EXECUTABLE pointing to a real OpenCode executable"]
 async fn provider_real_opencode_server_smoke() {
     let executable = std::env::var("CODEPET_OPENCODE_EXECUTABLE")
         .expect("CODEPET_OPENCODE_EXECUTABLE is required for the ignored smoke test");

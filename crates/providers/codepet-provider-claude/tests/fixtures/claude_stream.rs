@@ -194,6 +194,8 @@ fn main() {
 
     let output = if message == "inherit project config" {
         assert!(inherited_project_mcp, "fixture project MCP config was not visible");
+        let configured = std::env::var_os("CLAUDE_CONFIG_DIR").expect("configured data directory must reach the turn process");
+        assert_eq!(std::path::PathBuf::from(configured), std::env::current_dir().unwrap().join(".claude-test"));
         "fixture inherited project MCP"
     } else if options.resumed {
         "fixture resumed"

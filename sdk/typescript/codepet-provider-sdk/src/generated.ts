@@ -8,7 +8,7 @@ export type { ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject,
 
 export const PROTOCOL_VERSION = 1 as const;
 export const PROTOCOL_METHODS = ["provider.ping", "provider.initialize", "provider.describe", "runtime.getInstalled", "runtime.select", "instance.create", "instance.start", "instance.stop", "instance.destroy", "instance.capabilities", "conversation.list", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.search", "conversation.get", "conversation.acquireInteraction", "conversation.create", "turn.start", "turn.steer", "turn.interrupt", "approval.resolve", "provider.shutdown", "event.subscribe", "event.unsubscribe"] as const;
-export const PROTOCOL_EVENTS = ["event.projectChanged", "event.instanceStatusChanged", "event.conversationUpserted", "event.conversationItemUpserted", "event.turnUpserted", "event.turnOutputDelta", "event.approvalRequested", "event.approvalResolved", "event.notification"] as const;
+export const PROTOCOL_EVENTS = ["event.projectChanged", "event.instanceStatusChanged", "event.conversationUpserted", "event.conversationItemUpserted", "event.turnUpserted", "event.turnOutputDelta", "event.approvalRequested", "event.approvalResolved", "event.notification", "runtime.inventoryChanged"] as const;
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -383,12 +383,14 @@ export interface RuntimeCandidate {
 export type RuntimeCandidateSource = "configured" | "environment" | "current-path" | "login-shell" | "macos-application" | "windows-application";
 
 export interface RuntimeGetInstalledRequest {
-
+  refresh?: boolean;
 }
 
 export interface RuntimeGetInstalledResponse {
   installed: Array<RuntimeInstallation>;
   selected?: RuntimeInstallation;
+  scanning?: boolean;
+  scanError?: string;
 }
 
 export interface RuntimeInstallation {
@@ -524,6 +526,7 @@ export interface ProtocolEventMap {
   "event.approvalRequested": ApprovalRequestedEvent;
   "event.approvalResolved": ApprovalResolvedEvent;
   "event.notification": ProviderNotificationEvent;
+  "runtime.inventoryChanged": RuntimeGetInstalledResponse;
 }
 
 export type ProtocolMethod = keyof ProtocolRequestMap;

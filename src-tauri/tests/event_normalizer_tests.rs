@@ -225,7 +225,7 @@ fn tool_event_uses_file_path_as_message_when_present() {
 
     let event = normalize_hook_payload(AgentId::Claude, payload).unwrap();
 
-    assert_eq!(event.message, "Read · src/styles.css");
+    assert_eq!(event.message, format!("Read · {}", std::path::Path::new("src").join("styles.css").display()));
 }
 
 #[test]

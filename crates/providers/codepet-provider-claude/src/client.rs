@@ -2,7 +2,8 @@ use crate::protocol::{decode_claude_output, ClaudeOutput, ClaudeUserMessage};
 use std::fmt;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+use std::process::{ChildStderr, ChildStdin, ChildStdout, ExitStatus, Stdio};
+use codepet_provider_sdk::process::Child;
 use std::sync::{mpsc, Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
@@ -47,6 +48,7 @@ impl std::error::Error for ClaudeCliError {}
 
 pub struct ClaudeTurnLaunch {
     pub executable: PathBuf,
+    pub config_directory: Option<PathBuf>,
     pub workspace_root: PathBuf,
     pub session_id: String,
     pub resume: bool,
@@ -89,6 +91,7 @@ impl ProcessExitState {
 
 #[derive(Clone)]
 pub struct ClaudeProcessControl {
+    process: codepet_provider_sdk::process::ProcessControl,
     process_id: u32,
     exit: Arc<ProcessExitState>,
     stdin: Arc<Mutex<Option<ChildStdin>>>,
@@ -144,23 +147,11 @@ impl ClaudeProcessControl {
             .map_err(|error| ClaudeCliError::Io(error.to_string()))
     }
 
-    #[cfg(unix)]
     pub fn interrupt(&self) -> Result<(), ClaudeCliError> {
-        signal_process_group(self.process_id, libc::SIGINT)?;
-        if self.wait_for_exit(INTERRUPT_GRACE) {
-            return Ok(());
-        }
+        self.process.interrupt().map_err(|error| if error.kind() == std::io::ErrorKind::Unsupported { ClaudeCliError::InterruptUnsupported } else { ClaudeCliError::Io(error.to_string()) })?;
+        if self.wait_for_exit(INTERRUPT_GRACE) { return Ok(()); }
         self.force_kill()?;
-        if self.wait_for_exit(KILL_WAIT) {
-            Ok(())
-        } else {
-            Err(ClaudeCliError::ProcessDidNotExit)
-        }
-    }
-
-    #[cfg(not(unix))]
-    pub fn interrupt(&self) -> Result<(), ClaudeCliError> {
-        Err(ClaudeCliError::InterruptUnsupported)
+        if self.wait_for_exit(KILL_WAIT) { Ok(()) } else { Err(ClaudeCliError::ProcessDidNotExit) }
     }
 
     pub fn terminate(&self) -> Result<(), ClaudeCliError> {
@@ -178,39 +169,13 @@ impl ClaudeProcessControl {
         }
     }
 
-    #[cfg(unix)]
     fn request_terminate(&self) -> Result<(), ClaudeCliError> {
-        signal_process_group(self.process_id, libc::SIGTERM)
+        self.process.terminate().map_err(|error| ClaudeCliError::Io(error.to_string()))
     }
-
-    #[cfg(windows)]
-    fn request_terminate(&self) -> Result<(), ClaudeCliError> {
-        self.force_kill()
-    }
-
-    #[cfg(unix)]
     fn force_kill(&self) -> Result<(), ClaudeCliError> {
-        signal_process_group(self.process_id, libc::SIGKILL)
+        self.process.kill().map_err(|error| ClaudeCliError::Io(error.to_string()))
     }
 
-    #[cfg(windows)]
-    fn force_kill(&self) -> Result<(), ClaudeCliError> {
-        let status = Command::new("taskkill")
-            .args(["/PID", &self.process_id.to_string(), "/T", "/F"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|error| ClaudeCliError::Io(error.to_string()))?;
-        if status.success() || self.is_exited() {
-            Ok(())
-        } else {
-            Err(ClaudeCliError::Io(format!(
-                "taskkill failed for Claude process {}: {status}",
-                self.process_id
-            )))
-        }
-    }
 }
 
 pub(crate) struct SpawnedClaudeTurn {
@@ -222,7 +187,11 @@ pub(crate) struct SpawnedClaudeTurn {
 
 impl ClaudeTurnLaunch {
     pub(crate) fn spawn(self) -> Result<SpawnedClaudeTurn, ClaudeCliError> {
-        let mut command = Command::new(&self.executable);
+        let mut command = codepet_provider_sdk::local_runtime::command(&self.executable);
+        if let Some(directory) = self.config_directory.as_ref() {
+            std::fs::create_dir_all(directory).map_err(|error| ClaudeCliError::Spawn(error.to_string()))?;
+            command.env("CLAUDE_CONFIG_DIR", directory);
+        }
         command
             .arg("--print")
             .arg("--input-format")
@@ -250,11 +219,7 @@ impl ClaudeTurnLaunch {
         command
             .arg("--permission-mode")
             .arg(&self.permission_mode);
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
+
         let mut child = command
             .current_dir(&self.workspace_root)
             .stdin(Stdio::piped())
@@ -291,9 +256,10 @@ impl ClaudeTurnLaunch {
         }
         let exit = Arc::new(ProcessExitState::default());
         let stdin = Arc::new(Mutex::new(Some(stdin)));
+        let process = child.control();
         Ok(SpawnedClaudeTurn {
             child,
-            control: ClaudeProcessControl { process_id, exit, stdin },
+            control: ClaudeProcessControl { process, process_id, exit, stdin },
             stdout,
             stderr,
         })
@@ -323,7 +289,6 @@ impl SpawnedClaudeTurn {
 
         let (stdout_sender, stdout_receiver) = mpsc::sync_channel(1);
         let reaper_exit = control.exit.clone();
-        let process_id = control.process_id;
         let stream_error: Arc<dyn Fn(ClaudeCliError) + Send + Sync> = Arc::new(on_stream_error);
         let reader_error = stream_error.clone();
         let reader_control = control.clone();
@@ -381,7 +346,6 @@ impl SpawnedClaudeTurn {
             let outcome = child
                 .wait()
                 .map_err(|error| ClaudeCliError::Io(error.to_string()));
-            cleanup_process_group(process_id);
             *lock(&control.stdin) = None;
             reaper_exit.mark_exited();
             if stdout_receiver.recv_timeout(STDOUT_DRAIN_WAIT).is_err() {
@@ -459,37 +423,10 @@ fn abort_spawn<T>(
     Err(ClaudeCliError::Spawn(message.to_string()))
 }
 
-fn terminate_unstarted_child(child: &mut Child, process_id: u32) {
-    #[cfg(unix)]
-    let _ = signal_process_group(process_id, libc::SIGKILL);
-    #[cfg(windows)]
+fn terminate_unstarted_child(child: &mut Child, _process_id: u32) {
     let _ = child.kill();
     let _ = child.wait();
-    cleanup_process_group(process_id);
 }
-
-#[cfg(unix)]
-fn signal_process_group(process_id: u32, signal: libc::c_int) -> Result<(), ClaudeCliError> {
-    let process_group = -(process_id as libc::pid_t);
-    let result = unsafe { libc::kill(process_group, signal) };
-    if result == 0 {
-        return Ok(());
-    }
-    let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::ESRCH) {
-        Ok(())
-    } else {
-        Err(ClaudeCliError::Io(error.to_string()))
-    }
-}
-
-#[cfg(unix)]
-fn cleanup_process_group(process_id: u32) {
-    let _ = signal_process_group(process_id, libc::SIGKILL);
-}
-
-#[cfg(windows)]
-fn cleanup_process_group(_process_id: u32) {}
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex

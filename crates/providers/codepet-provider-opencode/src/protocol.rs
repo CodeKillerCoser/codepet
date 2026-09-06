@@ -5,7 +5,6 @@ use std::fmt;
 
 pub const OPENCODE_PLUGIN_ID: &str = "dev.codepet.opencode";
 pub const OPENCODE_INSTANCE_KIND: &str = "opencode";
-pub const OPENCODE_VERIFIED_SERVER_VERSION: &str = "1.18.25";
 pub const OPENCODE_PERMISSION_LEVEL: &str = "opencode-default";
 
 #[derive(Clone, Debug, Eq, PartialEq)]

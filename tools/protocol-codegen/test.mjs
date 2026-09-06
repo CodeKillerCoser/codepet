@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
   GENERATOR_TARGET_INTERFACE,
   buildProtocolIr,
+  configureProtocolGenerator,
   generateProtocol,
   generatorTargetRegistry,
   loadProtocolModel,
+  repositoryRoot,
   validateManifest,
   validatePackageReferences,
 } from "./generate.mjs";
@@ -284,7 +288,7 @@ test("provider descriptors and turn controls are explicit discriminated protocol
   const gatewayRust = await readFile("sdk/rust/codepet-gateway-sdk/src/generated.rs", "utf8");
   const providerRust = await readFile("sdk/rust/codepet-provider-sdk/src/generated.rs", "utf8");
   const agentRust = await readFile("sdk/rust/codepet-agent-sdk/src/generated.rs", "utf8");
-  assert.match(agentRust, /#\[serde\(untagged\)\]\npub enum ModelCatalog/);
+  assert.match(agentRust, /#\[serde\(untagged\)\]\r?\npub enum ModelCatalog/);
   assert.match(agentRust, /pub kind: FlatModelCatalogKind/);
   assert.match(agentRust, /pub kind: GroupedModelCatalogKind/);
   for (const source of [gatewayRust, providerRust]) {
@@ -532,4 +536,25 @@ test("capability metadata rejects unknown method capability values", async () =>
 
 test("checked-in SDK files are fresh", async () => {
   await generateProtocol({ checkMode: true });
+});
+
+test("freshness accepts CRLF checkouts but still rejects content changes", async () => {
+  const outputRoot = await mkdtemp(path.join(os.tmpdir(), "codepet-protocol-newlines-"));
+  try {
+    configureProtocolGenerator({ generatedOutputRoot: outputRoot });
+    const result = await generateProtocol();
+    const rust = result.generated.find((artifact) => artifact.targetId === "rust");
+    const output = path.resolve(outputRoot, rust.output);
+    const content = await readFile(output, "utf8");
+    assert.match(content.split("\n")[0], /from protocol\/core\/v1\/manifest.json/);
+    assert.doesNotMatch(content.split("\n")[0], /\\/);
+    await writeFile(output, content.replaceAll("\n", "\r\n"));
+    await generateProtocol({ checkMode: true });
+    await writeFile(output, `${content}// unexpected content\n`);
+    await assert.rejects(generateProtocol({ checkMode: true }), /generated protocol files are stale/);
+  } finally {
+    configureProtocolGenerator({ generatedOutputRoot: repositoryRoot });
+    assert.equal(path.dirname(outputRoot), path.resolve(os.tmpdir()));
+    await rm(outputRoot, { recursive: true, force: true });
+  }
 });

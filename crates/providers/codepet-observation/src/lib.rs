@@ -15,6 +15,8 @@ pub struct Definition {
     pub events: &'static [&'static str],
     /// Native harness plugin, supplied by its Provider.
     pub plugin: Option<&'static str>,
+    /// Harnesses supporting commandWindows may execute hooks through PowerShell or CMD.
+    pub windows_command_override: bool,
 }
 
 pub fn home() -> PathBuf { dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")) }
@@ -67,7 +69,7 @@ impl Observation {
                 fs::create_dir_all(&plugins).map_err(error)?;
                 atomic_write(&plugins.join("codepet-observation.ts"), plugin.as_bytes())?;
             } else {
-                install_hooks(&self.definition.config, &script_path, &endpoint_path, self.definition.events)?;
+                install_hooks_with_options(&self.definition.config, &script_path, &endpoint_path, self.definition.events, self.definition.windows_command_override)?;
             }
             let subscriptions = Arc::new(Mutex::new(BTreeSet::from([id.clone()])));
             let state = Intake { token, sink: self.sink.clone(), subscriptions: subscriptions.clone(),
@@ -146,6 +148,9 @@ fn quote(path: &Path) -> String {
     #[cfg(windows)] { format!("\"{}\"", value.replace('%', "%%").replace('"', "\\\"")) }
 }
 pub fn install_hooks(config: &Path, script: &Path, endpoint: &Path, events: &[&str]) -> Result<(), ProtocolError> {
+    install_hooks_with_options(config, script, endpoint, events, false)
+}
+fn install_hooks_with_options(config: &Path, script: &Path, endpoint: &Path, events: &[&str], windows_override: bool) -> Result<(), ProtocolError> {
     let target = fs::canonicalize(config).unwrap_or_else(|_| config.to_owned());
     let node = node_executable()?;
     let mut root = read_config(&target)?;
@@ -155,8 +160,11 @@ pub fn install_hooks(config: &Path, script: &Path, endpoint: &Path, events: &[&s
         if let Some(groups) = groups.as_array_mut() {
             for group in groups.iter_mut() {
                 if let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) {
-                    handlers.retain(|h| !h.get("command").and_then(Value::as_str).is_some_and(|c|
-                        c.contains("code-pet-hook.mjs") || c.contains(&script.to_string_lossy().to_string())));
+                    handlers.retain(|h| {
+                        let owned=|c:&str| c.contains("code-pet-hook.mjs") || c.contains(&script.to_string_lossy().to_string());
+                        !h.get("command").and_then(Value::as_str).is_some_and(owned)
+                            && !h.get("args").and_then(Value::as_array).is_some_and(|args|args.iter().filter_map(Value::as_str).any(owned))
+                    });
                 }
             }
             groups.retain(|g| !g.get("hooks").and_then(Value::as_array).is_some_and(Vec::is_empty));
@@ -164,7 +172,24 @@ pub fn install_hooks(config: &Path, script: &Path, endpoint: &Path, events: &[&s
     }
     for event in events {
         let groups = hooks.entry(*event).or_insert(json!([])).as_array_mut().ok_or_else(|| error("Hook groups must be arrays"))?;
-        groups.push(json!({"hooks":[{"type":"command","command":format!("{} {} {}", quote(&node), quote(script), quote(endpoint)),"timeout":3}]}));
+        let mut handler = json!({"type":"command","command":format!("{} {} {}", quote(&node), quote(script), quote(endpoint)),"timeout":3});
+        if !windows_override {
+            handler["command"]=json!(node);
+            handler["args"]=json!([script,endpoint]);
+        }
+        #[cfg(windows)]
+        if windows_override {
+            use base64::Engine;
+            let ps_quote = |path: &Path| format!("'{}'", path.to_string_lossy().replace('\'', "''"));
+            let invocation = format!("& {} {} {}", ps_quote(&node), ps_quote(script), ps_quote(endpoint));
+            let bytes: Vec<u8> = invocation.encode_utf16().flat_map(u16::to_le_bytes).collect();
+            handler["commandWindows"] = json!(format!("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {}", base64::engine::general_purpose::STANDARD.encode(bytes)));
+            // Codex caps Interrupt at three seconds; other events also need Windows shell startup time.
+            if *event != "Interrupt" { handler["timeout"] = json!(10); }
+        }
+        #[cfg(not(windows))]
+        let _ = (windows_override, &mut handler);
+        groups.push(json!({"hooks":[handler]}));
     }
     atomic_write(&target, &serde_json::to_vec_pretty(&root).map_err(error)?)
 }
@@ -187,6 +212,12 @@ mod tests {
         assert_eq!(root["unrelated"], true);
         assert_eq!(root["hooks"]["Stop"][0]["hooks"], json!([{"command":"my-script"}]));
         assert_eq!(root["hooks"]["Stop"].as_array().unwrap().len(), 2);
+        install_hooks_with_options(&config, &script, &endpoint, &["Stop"], true).unwrap();
+        let override_config = fs::read(&config).unwrap();
+        install_hooks_with_options(&config, &script, &endpoint, &["Stop"], true).unwrap();
+        assert_eq!(override_config, fs::read(&config).unwrap());
+        #[cfg(windows)]
+        assert!(read_config(&config).unwrap()["hooks"]["Stop"][1]["hooks"][0]["commandWindows"].as_str().unwrap().starts_with("powershell.exe "));
     }
     #[cfg(unix)]
     #[test]
@@ -208,7 +239,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
         let sink: Arc<dyn ProviderEventSink> = Arc::new(move |e| { sender.send(e).unwrap(); Ok(()) });
-        let make = || Observation::new(Definition { name:"test", config:temp.path().join("hooks.json"), events:&["Stop"], plugin:None }, sink.clone());
+        let make = || Observation::new(Definition { windows_command_override: true, name:"test", config:temp.path().join("hooks.json"), events:&["Stop"], plugin:None }, sink.clone());
         let observer = make();
         observer.subscribe("one".into()).await.unwrap();
         observer.subscribe("two".into()).await.unwrap();
@@ -230,19 +261,61 @@ mod tests {
     }
     #[tokio::test]
     async fn installed_bridge_receives_multiple_processes_and_fails_open_when_offline() {
+        check_installed_bridge(true).await;
+    }
+    #[tokio::test]
+    async fn claude_exec_hook_preserves_argv_and_delivers_events() {
+        check_installed_bridge(false).await;
+    }
+    async fn check_installed_bridge(codex: bool) {
         let temp = tempfile::tempdir().unwrap();
         let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
         let sink: Arc<dyn ProviderEventSink> = Arc::new(move |e| { sender.send(e).unwrap(); Ok(()) });
-        let observer = Observation::new(Definition { name:"test", config:temp.path().join("hooks.json"), events:&["UserPromptSubmit"], plugin:None }, sink);
+        let observer = Observation::new(Definition { windows_command_override: codex, name:"test", config:temp.path().join("hooks.json"), events:&["UserPromptSubmit"], plugin:None }, sink);
         observer.subscribe("host".into()).await.unwrap();
-        let script = temp.path().join("codepet-observation/forward.mjs");
-        let endpoint = temp.path().join("codepet-observation/endpoint.json");
+        let script = temp.path().join("codepet-observation").join("forward.mjs");
+        let endpoint = temp.path().join("codepet-observation").join("endpoint.json");
+        let installed = read_config(&temp.path().join("hooks.json")).unwrap();
+        let handler = &installed["hooks"]["UserPromptSubmit"][0]["hooks"][0];
+        let hook_command = handler.get(if codex && cfg!(windows) { "commandWindows" } else { "command" }).unwrap().as_str().unwrap().to_owned();
+        let hook_executable = handler["command"].as_str().unwrap().to_owned();
+        let hook_args: Vec<String> = handler.get("args").and_then(Value::as_array).map(|args| args.iter().map(|arg| arg.as_str().unwrap().to_owned()).collect()).unwrap_or_default();
         let run = |session: &str, event: &str| {
             let script = script.clone(); let endpoint = endpoint.clone();
+            let hook_executable = hook_executable.clone(); let hook_args = hook_args.clone();
+            let hook_command = hook_command.clone();
+            let powershell = session == "two";
             let input = json!({"session_id":session,"hook_event_name":event}).to_string();
             tokio::task::spawn_blocking(move || {
                 use std::io::Write;
-                let mut child = std::process::Command::new("node").arg(script).arg(endpoint)
+                #[cfg(windows)]
+                let mut command = {
+                    use std::os::windows::process::CommandExt;
+                    let command = if powershell {
+                        let mut command = codepet_provider_sdk::local_runtime::command("powershell.exe");
+                        command.args(["-NoProfile", "-NonInteractive", "-Command"]).arg(hook_command);
+                        command
+                    } else {
+                        let mut command = codepet_provider_sdk::local_runtime::command(std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into()));
+                        command.arg("/C").raw_arg(format!("\"{hook_command}\""));
+                        command
+                    };
+                    let _ = (script, endpoint);
+                    command
+                };
+                #[cfg(not(windows))]
+                let mut command = {
+                    let _ = powershell;
+                    let mut command = codepet_provider_sdk::local_runtime::command("/bin/sh");
+                    command.arg("-c").arg(hook_command);
+                    let _ = (script, endpoint);
+                    command
+                };
+                if !codex {
+                    command = codepet_provider_sdk::local_runtime::command(hook_executable);
+                    command.args(hook_args);
+                }
+                let mut child = command
                     .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
                 child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
                 let result = child.wait_with_output().unwrap();
@@ -261,7 +334,7 @@ mod tests {
         run("noise", "Notification").await.unwrap();
         assert!(events.try_recv().is_err());
         observer.shutdown().await;
-        tokio::time::timeout(std::time::Duration::from_secs(3), run("offline", "UserPromptSubmit")).await.unwrap().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), run("offline", "UserPromptSubmit")).await.unwrap().unwrap();
     }
 
 }

@@ -268,16 +268,10 @@ impl MdnsServiceSpec {
         advertised_host: &str,
         local_addr: SocketAddr,
     ) -> HostResult<Self> {
-        let local_addresses = if_addrs::get_if_addrs()
-            .map_err(|error| {
-                mdns_backend_error(
-                    "interface_query",
-                    format!("enumerate local network interfaces: {error}"),
-                )
-            })?
+        let local_addresses = super::network::remote_lan_interfaces()
             .into_iter()
-            .filter(|interface| interface.is_oper_up())
-            .map(|interface| interface.ip())
+            .filter(|interface| interface.available)
+            .map(|interface| IpAddr::V4(interface.ipv4))
             .collect::<Vec<_>>();
         Self::from_listener_with_local_addresses(
             identity,

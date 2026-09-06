@@ -14,6 +14,7 @@ export interface RemoteAccessStatus {
   hostDeviceId?: string | null;
   displayName?: string | null;
   advertisedHost?: string | null;
+  networkInterface?: { index: number; name: string; kind: string; ipv4: string; physical: boolean; available: boolean } | null;
   httpsBaseUrl?: string | null;
   activeSessionCount: number;
   pairingAvailable: boolean;

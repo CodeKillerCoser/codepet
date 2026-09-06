@@ -5,6 +5,8 @@ mod transport;
 mod message;
 mod runtime;
 mod content;
+pub mod local_runtime;
+pub mod process;
 
 pub use generated::*;
 pub use generated::ProtocolServer as Provider;

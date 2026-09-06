@@ -179,7 +179,7 @@ impl ProviderHostState {
                 });
                 continue;
             }
-            let inventory = manager.runtime_get_installed(&plugin_id, RuntimeGetInstalledRequest {}).await;
+            let inventory = manager.runtime_get_installed(&plugin_id, RuntimeGetInstalledRequest { refresh: None }).await;
             match inventory {
                 Ok(inventory) => {
                     let installed = inventory.installed.into_iter().map(|installation| AgentRuntimeInstallation {
@@ -196,7 +196,9 @@ impl ProviderHostState {
                     views.push(AgentRuntime {
                         provider_id: plugin_id,
                         display_name: display_name.clone(),
-                        status: if selection_unconfirmed {
+                        status: if inventory.scanning==Some(true) {
+                            AgentRuntimeStatus::Loading
+                        } else if selection_unconfirmed {
                             AgentRuntimeStatus::InvalidConfiguredExecutable
                         } else if installed.is_empty() {
                             AgentRuntimeStatus::Unavailable
@@ -207,7 +209,9 @@ impl ProviderHostState {
                         source: selected.as_ref().map(|installation| installation.source),
                         configured_executable,
                         version: selected.as_ref().map(|installation| installation.version.clone()),
-                        diagnostic: if selection_unconfirmed {
+                        diagnostic: if inventory.scanning==Some(true) { None } else if let Some(message)=inventory.scan_error {
+                            Some(AgentRuntimeDiagnostic {code:"runtime-scan-failed".into(),message})
+                        } else if selection_unconfirmed {
                             Some(AgentRuntimeDiagnostic {
                                 code: "provider-selection-unconfirmed".to_string(),
                                 message: format!("{display_name} Provider did not confirm the persisted runtime selection"),
@@ -238,6 +242,11 @@ impl ProviderHostState {
             }
         }
         views
+    }
+
+    pub(crate) async fn rescan_runtime(&self, plugin_id: &str) -> Result<(), String> {
+        self.manager.as_ref().ok_or_else(|| "Provider Host is unavailable".to_string())?
+            .runtime_get_installed(plugin_id, RuntimeGetInstalledRequest { refresh: Some(true) }).await.map(|_| ()).map_err(|error| error.to_string())
     }
 
     pub(crate) async fn runtime_view(&self, plugin_id: &str) -> Result<AgentRuntime, String> {
@@ -717,6 +726,13 @@ pub fn start_runtime_gateway_event_bridge<R: Runtime>(
     if let Some(host) = app.try_state::<ProviderHostState>() {
         let host = host.inner().clone();
         if let Some(manager) = host.manager.as_ref() {
+            let mut runtime_changes = manager.subscribe_runtime_changes();
+            let runtime_app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                while runtime_changes.changed().await.is_ok() {
+                    let _ = runtime_app.emit("provider-runtime-changed", ());
+                }
+            });
             let mut changes = manager.subscribe_status_changes();
             let app = app.clone();
             tauri::async_runtime::spawn(async move {

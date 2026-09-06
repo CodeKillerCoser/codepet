@@ -19,7 +19,9 @@ use std::collections::{HashMap, HashSet};
 mod title;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::process::{self, Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{self, ChildStdin, ChildStdout, Stdio};
+use codepet_provider_sdk::process::Child;
+use codepet_provider_sdk::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -340,8 +342,14 @@ impl CodexAppServerSession {
     pub(crate) fn spawn_uninitialized(
         executable: &Path,
         args: &[String],
+        data_directory: Option<&Path>,
     ) -> Result<Self, CodexAppServerError> {
-        let mut child = codex_app_server_command(executable, args)
+        let mut command = codex_app_server_command(executable, args);
+        if let Some(directory) = data_directory {
+            std::fs::create_dir_all(directory).map_err(|error| CodexAppServerError::Spawn(error.to_string()))?;
+            command.env("CODEX_HOME", directory);
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1214,7 +1222,7 @@ impl CodexAppServerSession {
 }
 
 fn codex_app_server_command(binary: &Path, args: &[String]) -> Command {
-    let mut command = Command::new(binary);
+    let mut command = codepet_provider_sdk::local_runtime::command(binary);
     command.args(args);
     command
 }

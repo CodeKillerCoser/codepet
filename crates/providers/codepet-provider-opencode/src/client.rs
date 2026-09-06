@@ -4,14 +4,15 @@ use crate::protocol::{
     OpenCodeModel, OpenCodeModelRef, OpenCodeModelSwitch, OpenCodePermissionReply, OpenCodePermissionReplyRequest,
     OpenCodePromptAdmission, OpenCodePromptRequest, OpenCodeServerError, OpenCodeSession,
     OpenCodeSessionCreate,
-    OpenCodeProvider, OpenCodeSessionPage, OPENCODE_VERIFIED_SERVER_VERSION,
+    OpenCodeProvider, OpenCodeSessionPage,
 };
 use reqwest::blocking::{Client, Response};
 use reqwest::Url;
 use serde::de::DeserializeOwned;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{ChildStdout, Stdio};
+use codepet_provider_sdk::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -309,14 +310,15 @@ pub struct OpenCodeServerSession {
 impl OpenCodeServerSession {
     pub(crate) fn spawn_while_current(
         executable: &Path, args: &[String], server_version: &str, generation: String,
-        working_directory: Option<&Path>, current: impl Fn() -> bool,
+        working_directory: Option<&Path>, data_directory: Option<&Path>, current: impl Fn() -> bool,
     ) -> Result<Self, OpenCodeServerError> {
-        validate_server_version(server_version)?;
+        let _ = server_version; // Informational; compatibility is established by requests.
         if !current() { return Err(OpenCodeServerError::Protocol("Server startup cancelled".into())); }
         let deadline = Instant::now() + STARTUP_TIMEOUT;
         let username = "codepet".to_string();
         let password = Uuid::new_v4().to_string();
-        let mut command = Command::new(executable);
+        let mut command = codepet_provider_sdk::local_runtime::command(executable);
+        codepet_provider_sdk::local_runtime::opencode_environment(&mut command, data_directory);
         command
             .args(args)
             .arg("--hostname")
@@ -624,14 +626,6 @@ fn wait_for_ready(
     }
 }
 
-fn validate_server_version(version: &str) -> Result<(), OpenCodeServerError> {
-    if version.trim() != OPENCODE_VERIFIED_SERVER_VERSION {
-        return Err(OpenCodeServerError::Protocol(format!(
-            "OpenCode Server version {version:?} is unsupported; only {OPENCODE_VERIFIED_SERVER_VERSION} is verified"
-        )));
-    }
-    Ok(())
-}
 
 fn terminate_child(
     child: &mut Child,
@@ -868,21 +862,13 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 mod tests {
     use super::{
         decode_json_with_limit, parse_listening_address, read_bounded_body,
-        read_bounded_line, read_sse, send_event, validate_server_version,
+        read_bounded_line, read_sse, send_event,
     };
     use crate::protocol::OpenCodeEvent;
     use serde_json::json;
     use std::io::{BufReader, Cursor};
     use std::sync::atomic::AtomicBool;
 
-    #[test]
-    fn accepts_only_the_verified_server_version() {
-        assert!(validate_server_version("1.18.25").is_ok());
-        assert!(validate_server_version("1.18.26").is_err());
-        assert!(validate_server_version("v1.18.25").is_err());
-        assert!(validate_server_version("1.18.24").is_err());
-        assert!(validate_server_version("development").is_err());
-    }
 
     #[test]
     fn parses_official_sse_framing_and_heartbeats() {
@@ -1021,7 +1007,7 @@ mod tests {
             "deadline-secret".to_string(),
         )
         .unwrap();
-        let mut child = std::process::Command::new("/bin/sh")
+        let mut child = codepet_provider_sdk::local_runtime::command("/bin/sh")
             .args(["-c", "sleep 5"])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())

@@ -4,7 +4,7 @@
 
 `crates/codepet-host` 已提供可复用的 Rust Provider Host：它从显式目录读取 manifest，为本机持久化稳定 `DeviceId`，按 manifest 启动独立 Provider 二进制，并通过生成的 `codepet-provider-sdk` 在独占 stdio 上通信。它同时实现内部 `codepet-gateway-sdk::ProtocolServer`、`RemoteAccessManager` 安全核心，以及共用同一 TLS identity 的 Gateway v1 HTTPS/WSS LAN listener。Tauri 后端现已通过单个 `RemoteAccessRuntime` 接入 listener、mDNS、pairing watch 与退出生命周期；连接页已展示 Provider 连接健康与 Harness 状态。
 
-Code Pet 发行包内置 `codepet-provider-codex`、`codepet-provider-opencode` 和 `codepet-provider-claude` 三个独立 adapter 二进制及其 manifest。内置的是 Code Pet 自有的 Provider adapter，不是 Codex、OpenCode 或 Claude runtime；runtime 仍由用户本机安装和配置，`AgentRuntimeService` 的检测/用户选择结果始终是 executable 权威。
+Code Pet 发行包内置 `codepet-provider-codex`、`codepet-provider-opencode` 和 `codepet-provider-claude` 三个独立 adapter 二进制及其 manifest。内置的是 Code Pet 自有的 Provider adapter，不是 Codex、OpenCode 或 Claude runtime；runtime 仍由用户本机安装和配置，Provider 的 `runtime.getInstalled/select` 返回结果是 executable 权威，Host 只持久化选择。
 
 Tauri 由 `ProviderHostState` 管理 Plugin Manager 与 Gateway service；desktop-v0 `RuntimeGatewayState` 只持有同一个 service 的薄适配引用。Provider 数据只有一条远程路径：
 

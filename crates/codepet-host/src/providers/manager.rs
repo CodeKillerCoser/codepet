@@ -109,6 +109,7 @@ enum HistoricalRouteRecovery {
 }
 
 struct PluginEntry {
+    runtime_inventory: Option<RuntimeGetInstalledResponse>,
     catalog: PluginDescriptor,
     reported: Option<ProviderPluginDescriptor>,
     state: PluginRuntimeState,
@@ -160,6 +161,7 @@ struct PluginManagerInner {
     shutting_down: AtomicBool,
     remote_connections: Arc<crate::RemoteConnections>,
     status_changes: tokio::sync::watch::Sender<u64>,
+    runtime_changes: tokio::sync::watch::Sender<u64>,
     heartbeat_enabled: AtomicBool,
     config: PluginManagerConfig,
     catalog_diagnostics: Vec<CatalogDiagnostic>,
@@ -228,6 +230,7 @@ impl PluginManager {
             plugins.insert(
                 descriptor.plugin_id.clone(),
                 PluginEntry {
+                    runtime_inventory: None,
                     catalog: descriptor.clone(),
                     reported: None,
                     state: PluginRuntimeState::Stopped,
@@ -259,6 +262,7 @@ impl PluginManager {
                 shutting_down: AtomicBool::new(false),
                 remote_connections: Arc::new(crate::RemoteConnections::default()),
                 status_changes: tokio::sync::watch::channel(0).0,
+                runtime_changes: tokio::sync::watch::channel(0).0,
                 heartbeat_enabled: AtomicBool::new(false),
                 catalog_diagnostics: catalog.diagnostics().to_vec(),
                 runtime_selections: RwLock::new(config.runtime_selections.clone()),
@@ -267,6 +271,7 @@ impl PluginManager {
         })
     }
 
+    pub fn subscribe_runtime_changes(&self) -> tokio::sync::watch::Receiver<u64> { self.inner.runtime_changes.subscribe() }
     pub fn subscribe_status_changes(&self) -> tokio::sync::watch::Receiver<u64> { self.inner.status_changes.subscribe() }
 
     pub fn remote_connections(&self) -> Arc<crate::RemoteConnections> {
@@ -441,12 +446,15 @@ impl PluginManager {
             .filter(|record| record.enabled)
         {
             let result = if self.inner.heartbeat_enabled.load(Ordering::SeqCst) {
-                self.create_instance_record(&record).await.map(|_| ())
+                let created = self.inner.plugins.read().await.get(plugin_id)
+                    .and_then(|entry| entry.instances.get(&record.instance_id))
+                    .is_some_and(|runtime| runtime.instance.is_some());
+                if created { Ok(()) } else { self.create_instance_record(&record).await.map(|_| ()) }
             } else {
                 self.recover_instance_record(&record).await
             };
             if first_error.is_none() {
-                first_error = result.err();
+                first_error = result.err().filter(|error|error.code != "runtime_scanning");
             }
         }
         match first_error {
@@ -456,6 +464,7 @@ impl PluginManager {
     }
 
     pub async fn start_plugin(&self, plugin_id: &str) -> HostResult<()> {
+        let saved_candidate = self.inner.runtime_selections.read().await.get(plugin_id).cloned();
         let preparation = {
             let mut plugins = self.inner.plugins.write().await;
             if self.inner.shutting_down.load(Ordering::SeqCst) {
@@ -494,7 +503,10 @@ impl PluginManager {
             for instance in entry.instances.values_mut() {
                 instance.instance = None;
             }
-            let descriptor = entry.catalog.clone();
+            let mut descriptor = entry.catalog.clone();
+            if let Some(candidate) = saved_candidate {
+                descriptor.env.insert("CODEPET_RUNTIME_EXECUTABLE".into(), candidate.executable_path);
+            }
             match PluginProcess::spawn(&descriptor, self.inner.config.process.clone()) {
                 Ok(process) => {
                     let process = Arc::new(process);
@@ -587,13 +599,6 @@ impl PluginManager {
                 return Err(error);
             }
         };
-        if let Some(candidate) = self.inner.runtime_selections.read().await.get(plugin_id).cloned() {
-            if let Err(error) = process.client().runtime_select(RuntimeSelectRequest { candidate }).await {
-                let error = HostError::from(error);
-                self.fail_started_process(plugin_id, generation, process, error.clone()).await;
-                return Err(error);
-            }
-        }
         let inbound = match process.take_inbound().await {
             Ok(inbound) => inbound,
             Err(error) => {
@@ -628,6 +633,7 @@ impl PluginManager {
             entry.reported = Some(reported);
             entry.process = Some(process.clone());
             entry.state = PluginRuntimeState::Ready;
+            entry.runtime_inventory = None;
             entry.diagnostic = None;
             previous_state
         };
@@ -1048,12 +1054,15 @@ impl PluginManager {
         plugin_id: &str,
         request: RuntimeGetInstalledRequest,
     ) -> HostResult<RuntimeGetInstalledResponse> {
-        self.process_for_plugin(plugin_id)
-            .await?
-            .client()
-            .runtime_get_installed(request)
-            .await
-            .map_err(HostError::from)
+        let process = self.process_for_plugin(plugin_id).await?;
+        if request.refresh == Some(true) {
+            if let Some(entry) = self.inner.plugins.write().await.get_mut(plugin_id) {
+                entry.runtime_inventory = None;
+            }
+        } else if let Some(inventory) = self.inner.plugins.read().await.get(plugin_id).and_then(|entry| entry.runtime_inventory.clone()) {
+            return Ok(inventory);
+        }
+        process.client().runtime_get_installed(request).await.map_err(HostError::from)
     }
 
     pub async fn runtime_select(
@@ -1411,6 +1420,30 @@ impl PluginManager {
         plugin_id: &str,
         event: ProtocolEvent,
     ) -> HostResult<()> {
+        if let ProtocolEvent::RuntimeInventoryChanged {params,..} = event {
+            let (first,generation)={
+                let mut plugins=self.inner.plugins.write().await;
+                let entry=plugins.get_mut(plugin_id).ok_or_else(||unknown_plugin(plugin_id))?;
+                let first=entry.runtime_inventory.is_none();
+                entry.runtime_inventory=Some(params.clone());(first,entry.generation)
+            };
+            self.inner.runtime_changes.send_modify(|version| *version = version.wrapping_add(1));
+            if first && params.scanning != Some(true) {
+                let manager=self.clone();let plugin_id=plugin_id.to_owned();
+                tokio::spawn(async move {
+                    let Ok(operation) = manager.plugin_operation(&plugin_id) else { return; };
+                    let _operation = operation.lock().await;
+                    if manager.inner.shutting_down.load(Ordering::SeqCst) || !manager.inner.plugins.read().await.get(&plugin_id)
+                        .is_some_and(|entry| entry.generation == generation && entry.state == PluginRuntimeState::Ready) { return; }
+                    let candidate = manager.inner.runtime_selections.read().await.get(&plugin_id).cloned();
+                    if let Some(candidate)=candidate {
+                        let _=manager.runtime_select(&plugin_id,RuntimeSelectRequest{candidate}).await;
+                    }
+                    let _=manager.start_manifest_instances(&plugin_id).await;
+                });
+            }
+            return Ok(());
+        }
         if let ProtocolEvent::EventNotification { params, .. } = event {
             return self.deliver_notification(plugin_id, params).await;
         }
@@ -1948,7 +1981,7 @@ fn ensure_capability(instance: &ProviderInstance, method: ProtocolMethod) -> Hos
 
 fn event_provider_id(event: &ProtocolEvent) -> HostResult<&str> {
     let provider_id = match event {
-        ProtocolEvent::EventNotification { .. } => return Err(HostError::new("invalid_provider_event", "Notification uses a subscription")),
+        ProtocolEvent::EventNotification { .. } | ProtocolEvent::RuntimeInventoryChanged { .. } => return Err(HostError::new("invalid_provider_event", "Notification uses a subscription")),
         ProtocolEvent::EventInstanceStatusChanged { .. } => {
             return Err(HostError::new(
                 "invalid_provider_event",
@@ -1986,7 +2019,7 @@ fn validate_event_routes(
     record: &ProviderInstanceRecord,
 ) -> HostResult<()> {
     match event {
-        ProtocolEvent::EventNotification { .. } => Err(HostError::new("invalid_provider_event", "Notification uses a subscription")),
+        ProtocolEvent::EventNotification { .. } | ProtocolEvent::RuntimeInventoryChanged { .. } => Err(HostError::new("invalid_provider_event", "Notification uses a subscription")),
         ProtocolEvent::EventInstanceStatusChanged { params, .. } => {
             validate_instance_response(record, &params.instance)
         }

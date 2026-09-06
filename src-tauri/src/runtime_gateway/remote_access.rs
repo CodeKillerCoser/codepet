@@ -95,6 +95,7 @@ pub struct RemoteAccessStatusView {
     pub host_device_id: Option<String>,
     pub display_name: Option<String>,
     pub advertised_host: Option<String>,
+    pub network_interface: Option<codepet_host::RemoteLanInterface>,
     pub https_base_url: Option<String>,
     pub active_session_count: usize,
     pub pairing_available: bool,
@@ -338,6 +339,11 @@ impl RemoteAccessRuntime {
             display_name: identity
                 .as_ref()
                 .map(|identity| identity.descriptor.device_name.clone()),
+            network_interface: inner
+                .listener
+                .as_ref()
+                .and_then(RemoteLanServerHandle::advertised_host)
+                .and_then(|address| codepet_host::remote_lan_interface_for(&address)),
             advertised_host: inner
                 .listener
                 .as_ref()
@@ -1336,6 +1342,11 @@ impl RemoteAccessRuntime {
             display_name: identity
                 .as_ref()
                 .map(|identity| identity.descriptor.device_name.clone()),
+            network_interface: inner
+                .listener
+                .as_ref()
+                .and_then(RemoteLanServerHandle::advertised_host)
+                .and_then(|address| codepet_host::remote_lan_interface_for(&address)),
             advertised_host: inner
                 .listener
                 .as_ref()

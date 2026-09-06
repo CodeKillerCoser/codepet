@@ -133,11 +133,28 @@ export function sdkGeneratorBuildArguments(repositoryRoot, output, target, profi
   return args;
 }
 
+export async function resolveBunExecutable({ env = process.env, platform = process.platform } = {}) {
+  if (env.BUN) return env.BUN;
+  if (platform !== "win32") return "bun";
+  const searchPath = Object.entries(env).find(([key]) => key.toLowerCase() === "path")?.[1] ?? "";
+  for (const directory of searchPath.split(path.delimiter).filter(Boolean)) {
+    if (!path.isAbsolute(directory)) continue;
+    // npm's .cmd/.ps1 shims cannot be passed to spawnSync without a shell.
+    for (const executable of [
+      path.join(directory, "bun.exe"),
+      path.join(directory, "node_modules", "bun", "bin", "bun.exe"),
+    ]) {
+      if (await stat(executable).then((entry) => entry.isFile(), () => false)) return executable;
+    }
+  }
+  return "bun";
+}
+
 async function buildSdkGeneratorBinary(repositoryRoot, target, profile) {
   const output = builtBinaryPath(repositoryRoot, SDK_GENERATOR, target, profile);
   await mkdir(path.dirname(output), { recursive: true });
   run(
-    process.env.BUN || "bun",
+    await resolveBunExecutable(),
     sdkGeneratorBuildArguments(repositoryRoot, output, target, profile),
     path.dirname(output),
   );

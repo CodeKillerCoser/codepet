@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { basename, extname, join } from "@tauri-apps/api/path";
   import PetSources from "./lib/PetSources.svelte";
   import type { PetSource } from "./lib/petGateway";
   import { confirm as confirmDialog, open } from "@tauri-apps/plugin-dialog";
@@ -36,7 +37,7 @@
   import { onMount, tick } from "svelte";
   import ProviderConnectionStatus from "./lib/ProviderConnectionStatus.svelte";
   import { observeProviderRuntimes, type ProviderConnectionState } from "./lib/providerRuntimes";
-  import { appDataDirectory, appDataDirectoryTargetStatus, checkAppUpdate, clearAgentRuntimeExecutable, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentRuntimeExecutable, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { appDataDirectory, appDataDirectoryTargetStatus, checkAppUpdate, clearAgentRuntimeExecutable, cutOutImageSubject, deletePet, detectAgentRuntime, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentRuntimeExecutable, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
   import { agentRuntimeSourceLabel, agentRuntimeStatusMeta, canRestoreAutomaticDetection } from "./lib/agentRuntime";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
@@ -442,6 +443,7 @@
     busyRuntime = providerId;
     error = "";
     try {
+      await detectAgentRuntime(providerId);
       await runtimeObserver.refresh();
     } catch (currentError) {
       error = String(currentError);
@@ -1009,8 +1011,8 @@
     busyPet = cutOutSubject ? "cutout-import" : "import";
     error = "";
     try {
-      const filename = selected.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "Imported Pet";
-      const sourcePath = cutOutSubject ? (await cutOutImageSubject(selected, cutoutOutputPath(selected))).outputPath : selected;
+      const filename = await basename(selected, `.${await extname(selected)}`) || "Imported Pet";
+      const sourcePath = cutOutSubject ? (await cutOutImageSubject(selected, await cutoutOutputPath(selected))).outputPath : selected;
       petLibrary = await importPetImage(sourcePath, filename, settings?.pet.imagePixelSize ?? defaultImagePixelSize);
       settings = normalizeSettings(await getAppSettings());
     } catch (currentError) {
@@ -1020,13 +1022,12 @@
     }
   }
 
-  function cutoutOutputPath(sourcePath: string) {
+  async function cutoutOutputPath(sourcePath: string) {
     const baseDirectory = petLibrary?.dataDirectory ?? settings?.petLibrary.dataDirectory ?? "";
-    const filename = sourcePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "subject";
-    const separator = baseDirectory.includes("\\") ? "\\" : "/";
+    const filename = await basename(sourcePath, `.${await extname(sourcePath)}`) || "subject";
     const timestamp = Date.now();
     return baseDirectory
-      ? `${baseDirectory}${separator}cutouts${separator}${filename}-${timestamp}.png`
+      ? await join(baseDirectory, "cutouts", `${filename}-${timestamp}.png`)
       : undefined;
   }
 
@@ -1820,6 +1821,9 @@
             <div>
               <strong>{remoteAccessPhaseMeta(remoteRuntimeStatus, remoteClientsLoading).title}</strong>
               <span>{remoteAccessPhaseMeta(remoteRuntimeStatus, remoteClientsLoading).detail}</span>
+              {#if remoteRuntimeStatus?.networkInterface}
+                <span class="remote-network-interface">网卡：{remoteRuntimeStatus.networkInterface.name} · {remoteRuntimeStatus.networkInterface.kind === "wifi" ? "Wi-Fi" : remoteRuntimeStatus.networkInterface.kind === "ethernet" ? "以太网" : "网络接口"} · {remoteRuntimeStatus.networkInterface.ipv4}</span>
+              {/if}
             </div>
             <span
               class:online={remoteAccessPhaseMeta(remoteRuntimeStatus, remoteClientsLoading).tone === "ready"}

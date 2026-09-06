@@ -28,12 +28,14 @@ function runtime(status: AgentRuntime["status"]): AgentRuntime[] {
 
 describe("Provider lifecycle and runtime inventory", () => {
   let emit: (states: ProviderConnectionState[]) => void;
+  let emitRuntime: () => void;
   let unlisten: ReturnType<typeof vi.fn>;
   beforeEach(() => {
     vi.resetAllMocks();
     unlisten = vi.fn();
     vi.mocked(listen).mockImplementation(async (_event, handler) => {
-      emit = (payload) => handler({ payload } as never);
+      if (_event === "provider-connection-status") emit = (payload) => handler({ payload } as never);
+      else emitRuntime = () => handler({ payload: null } as never);
       return unlisten;
     });
     vi.mocked(invoke).mockResolvedValue(state("connecting"));
@@ -53,7 +55,19 @@ describe("Provider lifecycle and runtime inventory", () => {
     await vi.waitFor(() => expect(runtimes).toHaveBeenLastCalledWith(runtime("ready")));
     expect(error).not.toHaveBeenCalled();
     observer.dispose();
-    expect(unlisten).toHaveBeenCalledOnce();
+    expect(unlisten).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes completed scans while the Provider remains online", async () => {
+    vi.mocked(invoke).mockResolvedValue(state("online"));
+    vi.mocked(listAgentRuntimes).mockResolvedValueOnce(runtime("loading")).mockResolvedValue(runtime("ready"));
+    const { observer, runtimes } = setup();
+    await observer.start();
+    emitRuntime();
+    await vi.waitFor(() => expect(runtimes).toHaveBeenLastCalledWith(runtime("ready")));
+    observer.dispose();
+    emitRuntime();
+    expect(listAgentRuntimes).toHaveBeenCalledTimes(2);
   });
 
   it("ignores a late initial connection snapshot after an online event", async () => {

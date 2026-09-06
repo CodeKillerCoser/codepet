@@ -1,3 +1,4 @@
+use codepet_provider_sdk::local_runtime;
 use crate::client::{
     ClaudeCliError, ClaudeProcessControl, ClaudeTurnLaunch, SpawnedClaudeTurn,
 };
@@ -41,7 +42,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
@@ -65,7 +66,7 @@ const MAX_CONVERSATION_GET_TURN_LIMIT: u64 = 100;
 #[serde(deny_unknown_fields)]
 struct ClaudeInstanceSettings {
     claude_executable: PathBuf,
-    #[serde(default)]
+    #[serde(default, alias = "dataDirectory")]
     claude_config_dir: Option<PathBuf>,
 }
 
@@ -532,6 +533,7 @@ impl ClaudeInstanceRuntime {
             managed.conversation.selection = Some(effective_selection.clone());
             let spawned = ClaudeTurnLaunch {
                 executable: self.settings.claude_executable.clone(),
+                config_directory: self.settings.claude_config_dir.clone(),
                 workspace_root: managed.workspace_root.clone(),
                 session_id: conversation_id.clone(),
                 resume: managed.materialized,
@@ -1238,6 +1240,7 @@ struct ProviderState {
 
 pub struct ClaudeProvider {
     observation: codepet_observation::Observation,
+    scanner: local_runtime::RuntimeScanner,
     state: Mutex<ProviderState>,
     events: Arc<dyn ProviderEventSink>,
     shutdown: AtomicBool,
@@ -1246,7 +1249,9 @@ pub struct ClaudeProvider {
 impl ClaudeProvider {
     pub fn new(events: Arc<dyn ProviderEventSink>) -> Self {
         Self {
+            scanner: local_runtime::RuntimeScanner::new(events.clone()),
             observation: codepet_observation::Observation::new(codepet_observation::Definition {
+                windows_command_override: false,
                 name: "claude", config: codepet_observation::config_home("CLAUDE_CONFIG_DIR", codepet_observation::home().join(".claude")).join("settings.json"), events: &["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Stop", "SubagentStart", "SubagentStop", "PostToolUseFailure", "StopFailure", "Elicitation", "ElicitationResult"], plugin: None,
             }, events.clone()),
             state: Mutex::new(ProviderState {
@@ -1394,6 +1399,8 @@ impl Provider for ClaudeProvider {
                 state.host_device_id = Some(request.host_device_id);
                 state.initialized_client_id = Some(request.host_client_id);
             }
+            drop(state);
+            self.scanner.start("claude", "@anthropic-ai/claude-code", || discover_path_candidates("claude"), |candidate, timeout| inspect_runtime_candidate(candidate, "claude", timeout));
             Ok(ProviderInitializeResponse {
                 selected_version: PROTOCOL_VERSION,
                 plugin: Self::descriptor(),
@@ -1412,24 +1419,23 @@ impl Provider for ClaudeProvider {
         })
     }
 
-    fn runtime_get_installed<'a>(
-        &'a self,
-        _request: RuntimeGetInstalledRequest,
-    ) -> ProtocolFuture<'a, RuntimeGetInstalledResponse> {
+    fn runtime_get_installed<'a>(&'a self, request: RuntimeGetInstalledRequest) -> ProtocolFuture<'a, RuntimeGetInstalledResponse> {
         Box::pin(async move {
-            let selected = lock(&self.state).selected_runtime.clone();
-            Ok(runtime_inventory(discover_path_candidates("claude"), selected, "claude"))
+            if request.refresh == Some(true) && self.scanner.snapshot().scanning != Some(true) {
+                self.scanner.stop();
+                self.scanner.start("claude", "@anthropic-ai/claude-code", || discover_path_candidates("claude"), |candidate, timeout| inspect_runtime_candidate(candidate, "claude", timeout));
+            }
+            Ok(self.scanner.snapshot())
         })
     }
-
-    fn runtime_select<'a>(
-        &'a self,
-        request: RuntimeSelectRequest,
-    ) -> ProtocolFuture<'a, RuntimeSelectResponse> {
+    fn runtime_select<'a>(&'a self, request: RuntimeSelectRequest) -> ProtocolFuture<'a, RuntimeSelectResponse> {
         Box::pin(async move {
-            let selected = inspect_runtime_candidate(request.candidate, "claude")?;
-            lock(&self.state).selected_runtime = Some(selected.clone());
-            Ok(RuntimeSelectResponse { selected })
+            let mut candidate = request.candidate;
+            candidate.executable_path = local_runtime::resolve_executable(std::path::Path::new(&candidate.executable_path), "claude", "@anthropic-ai/claude-code")
+                .map_err(|error| protocol_error("invalid_runtime_selection", error, false))?.to_string_lossy().into_owned();
+            let selected=self.scanner.select(&candidate)?;
+            lock(&self.state).selected_runtime=Some(selected.clone());
+            Ok(RuntimeSelectResponse {selected})
         })
     }
 
@@ -1448,9 +1454,16 @@ impl Provider for ClaudeProvider {
                 ));
             }
             let selected = if request.settings.contains_key("claudeExecutable") { None } else {
-                Some(lock(&self.state).selected_runtime.clone().or_else(|| {
-                    runtime_inventory(discover_path_candidates("claude"), None, "claude").installed.into_iter().next()
-                }).ok_or_else(|| protocol_error("provider_unavailable", "Claude Provider did not find a compatible local runtime".to_string(), true))?)
+                let current = { lock(&self.state).selected_runtime.clone() };
+                let installation = match current {
+                    Some(selected) => Some(selected),
+                    None => {
+                        let inventory=self.scanner.snapshot();
+                        if inventory.scanning==Some(true) {return Err(protocol_error("runtime_scanning", "Runtime discovery is still in progress".into(), true));}
+                        inventory.installed.into_iter().next()
+                    },
+                };
+                Some(installation.ok_or_else(|| protocol_error("provider_unavailable", "Claude Provider did not find a local runtime".to_string(), true))?)
             };
             if let Some(selected) = selected.as_ref() {
                 request.settings.insert("claudeExecutable".to_string(), json!(selected.executable_path.clone()));
@@ -1715,6 +1728,7 @@ impl Provider for ClaudeProvider {
         _request: ProviderShutdownRequest,
     ) -> ProtocolFuture<'a, ProviderShutdownResponse> {
         Box::pin(async move {
+            self.scanner.stop();
             self.observation.shutdown().await;
             let instances = lock(&self.state).instances.values().cloned().collect::<Vec<_>>();
             let mut first_error = None;
@@ -1975,8 +1989,8 @@ fn probe_claude_metadata(
     executable: PathBuf,
     config_dir: Option<PathBuf>,
 ) -> Result<ClaudeRuntimeMetadata, ProtocolError> {
-    let version = verify_claude_executable(executable.clone())?;
-    let mut command = Command::new(executable);
+    let version = verify_claude_executable(executable.clone(), Duration::from_secs(5))?;
+    let mut command = codepet_provider_sdk::local_runtime::command(executable);
     command.args(["auth", "status", "--json"]);
     if let Some(config_dir) = config_dir {
         command.env("CLAUDE_CONFIG_DIR", config_dir);
@@ -2003,7 +2017,7 @@ fn probe_claude_metadata(
     Ok(ClaudeRuntimeMetadata { version, authentication })
 }
 
-fn verify_claude_executable(executable: PathBuf) -> Result<String, ProtocolError> {
+fn verify_claude_executable(executable: PathBuf, timeout: Duration) -> Result<String, ProtocolError> {
     if !executable.is_file() {
         return Err(protocol_error(
             "provider_unavailable",
@@ -2011,7 +2025,7 @@ fn verify_claude_executable(executable: PathBuf) -> Result<String, ProtocolError
             true,
         ));
     }
-    let mut child = Command::new(&executable)
+    let mut child = codepet_provider_sdk::local_runtime::command(&executable)
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -2022,7 +2036,7 @@ fn verify_claude_executable(executable: PathBuf) -> Result<String, ProtocolError
             format!("start Host-resolved Claude executable: {error}"),
             true,
         ))?;
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => {
@@ -2067,45 +2081,23 @@ fn verify_claude_executable(executable: PathBuf) -> Result<String, ProtocolError
     }
 }
 
-fn runtime_inventory(candidates: Vec<RuntimeCandidate>, selected: Option<RuntimeInstallation>, product: &str) -> RuntimeGetInstalledResponse {
-    let mut seen = HashSet::new();
-    let installed = candidates.into_iter()
-        .filter_map(|candidate| inspect_runtime_candidate(candidate, product).ok())
-        .filter(|installation| seen.insert(installation.executable_path.clone()))
-        .collect::<Vec<_>>();
-    let selected = selected.and_then(|selected| installed.iter()
-        .find(|installation| installation.executable_path == selected.executable_path).cloned());
-    RuntimeGetInstalledResponse { installed, selected }
-}
-
 fn discover_path_candidates(command: &str) -> Vec<RuntimeCandidate> {
-    let mut candidates = std::env::var_os("PATH").into_iter().flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
-        .map(|directory| RuntimeCandidate {
-            executable_path: directory.join(command).to_string_lossy().into_owned(),
-            source: codepet_provider_sdk::RuntimeCandidateSource::CurrentPath,
-        }).collect::<Vec<_>>();
-    if let Some(path) = discover_login_shell_command(command) {
-        candidates.push(RuntimeCandidate { executable_path: path, source: codepet_provider_sdk::RuntimeCandidateSource::LoginShell });
+    let mut candidates = local_runtime::discover(command, "@anthropic-ai/claude-code");
+    if let Some(path) = std::env::var_os("CODE_PET_CLAUDE_BIN").filter(|value| !value.is_empty()) {
+        candidates.insert(0, local_runtime::candidate(PathBuf::from(path), codepet_provider_sdk::RuntimeCandidateSource::Environment));
+    }
+    if let Some(home) = local_runtime::home_dir() {
+        for directory in [home.join(".local").join("bin")] {
+            candidates.extend(local_runtime::candidates_in(&directory, command, "@anthropic-ai/claude-code").into_iter().map(|path| local_runtime::candidate(path, codepet_provider_sdk::RuntimeCandidateSource::CurrentPath)));
+        }
     }
     candidates
 }
 
-fn discover_login_shell_command(command_name: &str) -> Option<String> {
-    let shell = std::env::var_os("SHELL").map(PathBuf::from).filter(|path| path.is_absolute())
-        .unwrap_or_else(|| PathBuf::from("/bin/zsh"));
-    let output = Command::new(shell).args(["-lc", &format!("command -v {command_name}")]).output().ok()?;
-    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .filter(|path| !path.is_empty())
-}
-
-fn inspect_runtime_candidate(candidate: RuntimeCandidate, product: &str) -> Result<RuntimeInstallation, ProtocolError> {
-    let path = PathBuf::from(&candidate.executable_path);
-    if !path.is_absolute() || !path.is_file() {
-        return Err(protocol_error("invalid_runtime_selection", format!("Runtime executable is unavailable: {}", path.display()), false));
-    }
-    let canonical = std::fs::canonicalize(&path).map_err(|error| protocol_error(
-        "invalid_runtime_selection", format!("Resolve runtime executable {}: {error}", path.display()), false))?;
-    let version = verify_claude_executable(canonical.clone()).map_err(|error| protocol_error(
+fn inspect_runtime_candidate(candidate: RuntimeCandidate, product: &str, timeout: Duration) -> Result<RuntimeInstallation, ProtocolError> {
+    let canonical = local_runtime::resolve_executable(Path::new(&candidate.executable_path), "claude", "@anthropic-ai/claude-code")
+        .map_err(|error| protocol_error("invalid_runtime_selection", error, false))?;
+    let version = verify_claude_executable(canonical.clone(), timeout).map_err(|error| protocol_error(
         "invalid_runtime_selection", format!("{product} runtime validation failed: {}", error.message), error.retryable))?;
     Ok(RuntimeInstallation { executable_path: canonical.to_string_lossy().into_owned(), version, source: candidate.source })
 }
@@ -2238,20 +2230,11 @@ fn truncate_text(value: &str, limit: usize) -> String {
 }
 
 fn claude_config_dir() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("CLAUDE_CONFIG_DIR") {
-        if !path.is_empty() {
-            return Some(PathBuf::from(path));
-        }
-    }
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude"))
+    local_runtime::data_dir("CLAUDE_CONFIG_DIR", ".claude")
 }
 
 fn default_remote_workspace_root(harness_name: &str) -> Option<String> {
-    ["HOME", "USERPROFILE"]
-        .into_iter()
-        .find_map(std::env::var_os)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
+    local_runtime::home_dir()
         .filter(|path| path.is_absolute())
         .map(|path| {
             path.join(".codepet")
@@ -3063,5 +3046,26 @@ mod tests {
             ConversationItem::MessageConversationItem(item) => &item.resource,
             _ => panic!("message item"),
         }
+    }
+}
+
+#[cfg(test)]
+mod storage_path_tests {
+    use super::*;
+    #[test]
+    fn executable_and_data_directory_are_independent() {
+        let temp = tempfile::tempdir().unwrap();
+        let data = temp.path().join("custom data 中文");
+        let executable = std::env::current_exe().unwrap();
+        let settings = decode_settings(serde_json::from_value(json!({
+            "claudeExecutable": executable,
+            "dataDirectory": data,
+        })).unwrap()).unwrap();
+        assert_eq!(settings.claude_config_dir.as_deref(), Some(data.as_path()));
+        let invalid = decode_settings(serde_json::from_value(json!({
+            "claudeExecutable": executable,
+            "dataDirectory": "relative-storage",
+        })).unwrap());
+        assert!(invalid.is_err());
     }
 }

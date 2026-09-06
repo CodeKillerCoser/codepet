@@ -902,7 +902,7 @@
     },
     "RuntimeGetInstalledRequest": {
       "type": "object",
-      "properties": {},
+      "properties": {"refresh": {"type": "boolean"}},
       "additionalProperties": false
     },
     "RuntimeGetInstalledResponse": {
@@ -916,6 +916,12 @@
         },
         "selected": {
           "$ref": "#/$defs/RuntimeInstallation"
+        },
+        "scanning": {
+          "type": "boolean"
+        },
+        "scanError": {
+          "type": "string"
         }
       },
       "required": [

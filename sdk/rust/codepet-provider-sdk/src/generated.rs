@@ -683,7 +683,8 @@ pub enum RuntimeCandidateSource {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeGetInstalledRequest {
-
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -693,6 +694,10 @@ pub struct RuntimeGetInstalledResponse {
     pub installed: Vec<RuntimeInstallation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected: Option<RuntimeInstallation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scanning: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scan_error: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1060,6 +1065,8 @@ pub enum ProtocolEventName {
     EventApprovalResolved,
     #[serde(rename = "event.notification")]
     EventNotification,
+    #[serde(rename = "runtime.inventoryChanged")]
+    RuntimeInventoryChanged,
 }
 
 impl ProtocolEventName {
@@ -1074,6 +1081,7 @@ impl ProtocolEventName {
             Self::EventApprovalRequested => "event.approvalRequested",
             Self::EventApprovalResolved => "event.approvalResolved",
             Self::EventNotification => "event.notification",
+            Self::RuntimeInventoryChanged => "runtime.inventoryChanged",
         }
     }
 }
@@ -1092,6 +1100,7 @@ impl std::str::FromStr for ProtocolEventName {
             "event.approvalRequested" => Ok(Self::EventApprovalRequested),
             "event.approvalResolved" => Ok(Self::EventApprovalResolved),
             "event.notification" => Ok(Self::EventNotification),
+            "runtime.inventoryChanged" => Ok(Self::RuntimeInventoryChanged),
             _ => Err(()),
         }
     }
@@ -1562,6 +1571,11 @@ pub enum ProtocolEvent {
         jsonrpc: String,
         params: ProviderNotificationEvent,
     },
+    #[serde(rename = "runtime.inventoryChanged")]
+    RuntimeInventoryChanged {
+        jsonrpc: String,
+        params: RuntimeGetInstalledResponse,
+    },
 }
 
 impl ProtocolEvent {
@@ -1576,6 +1590,7 @@ impl ProtocolEvent {
             Self::EventApprovalRequested { jsonrpc, .. } => jsonrpc,
             Self::EventApprovalResolved { jsonrpc, .. } => jsonrpc,
             Self::EventNotification { jsonrpc, .. } => jsonrpc,
+            Self::RuntimeInventoryChanged { jsonrpc, .. } => jsonrpc,
         }
     }
 }

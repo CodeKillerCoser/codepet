@@ -370,7 +370,7 @@ fn compact_path(value: &str) -> String {
     let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or(value);
     let parent = path.parent().and_then(|parent| parent.file_name()).and_then(|name| name.to_str());
     match parent {
-        Some(parent) if parent != "." => format!("{parent}/{file_name}"),
+        Some(parent) if parent != "." => std::path::Path::new(parent).join(file_name).to_string_lossy().into_owned(),
         _ => file_name.to_string(),
     }
 }

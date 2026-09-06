@@ -76,6 +76,7 @@ async fn detect_agent_runtime(
     provider_id: String,
 ) -> Result<AgentRuntime, String> {
     let _ = service;
+    provider_host.rescan_runtime(&provider_id).await?;
     provider_host.runtime_view(&provider_id).await
 }
 
@@ -86,6 +87,13 @@ async fn refresh_agent_runtimes(
     provider_host: tauri::State<'_, ProviderHostState>,
 ) -> Result<Vec<AgentRuntime>, String> {
     let _ = service;
+    let providers = provider_host.runtime_views().await;
+    let mut scans = tokio::task::JoinSet::new();
+    for runtime in providers {
+        let host = provider_host.inner().clone();
+        scans.spawn(async move { host.rescan_runtime(&runtime.provider_id).await });
+    }
+    while let Some(result) = scans.join_next().await { result.map_err(|error| error.to_string())??; }
     let runtimes = provider_host.runtime_views().await;
     let _ = app.emit("agent-runtimes-updated", runtimes.clone());
     Ok(runtimes)

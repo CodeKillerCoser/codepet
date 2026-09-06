@@ -2,7 +2,7 @@
 
 ## 审计结论
 
-2026-08-30 的实现基线只接受 OpenCode 正式发行版 `1.18.25`；2026-09-06 补充实际发送验证并修正完成等待。Provider 使用 `GET /api/health`、`/api/session` 的 list/get/create/active/prompt/interrupt、`/api/event` SSE 和 permission reply。正式二进制的 `/api/session/:id/wait` 虽存在于 schema，但实际返回 503 `Session wait is not available yet`，不能调用。它不调用 `/global/*`，不使用 V1 DTO fallback，也不把 `session.idle`、`session.error` 当作 V2 turn 终态。
+2026-08-30 的验证基线是 OpenCode 正式发行版 `1.18.25`；2026-09-06 补充实际发送验证并修正完成等待，同日 Windows 实测 `1.18.29` 的发现、启动和会话列表。Provider 不再按 Harness 版本号限制准入，兼容性由实际接口探测判断。Provider 使用 `GET /api/health`、`/api/session` 的 list/get/create/active/prompt/interrupt、`/api/event` SSE 和 permission reply。正式二进制的 `/api/session/:id/wait` 虽存在于 schema，但实际返回 503 `Session wait is not available yet`，不能调用。它不调用 `/global/*`，不使用 V1 DTO fallback，也不把 `session.idle`、`session.error` 当作 V2 turn 终态。
 
 正式 V2 shape 对本实现有三项直接约束：
 
@@ -25,7 +25,7 @@ OpenCode Server（child 自行绑定并报告的 127.0.0.1 端口）
   ↔ PluginManager / ProviderGatewayService
 ```
 
-独立 manifest 只固定 `serverArgs: ["serve"]`。Tauri `AgentRuntimeService` resolver 是 executable 和 version 的唯一权威来源：Host 在 catalog 同步前删除 manifest 中的 `serverExecutable`、`serverVersion`，再注入 resolver 返回的规范化绝对路径和版本；runtime 刷新沿用既有 Manager setting replacement 与 plugin restart。Provider 要求路径为绝对路径、参数精确为 `serve`、版本精确为 `1.18.25`，不搜索 PATH、不再次探测版本，也不附着外部 Server。
+独立 manifest 固定 `serverArgs: ["serve"]`，可以额外配置绝对 `dataDirectory` 存储根。运行时由 Provider 的 `runtime.getInstalled/select` 发现和校验，Host 负责转发及持久化选择；Windows PATH 中的 npm shim 通过 package.json 解析到原生可执行文件。版本仅用于展示，不作精确或范围限制；路径仍须为绝对路径，Server 参数仍为 `serve`，不附着外部 Server。数据目录与安装位置独立，详见 [Windows Provider 验证路径](../40-runbooks/windows-provider-runtime.md)。
 
 Provider crate 的生产依赖只包含生成的 Provider SDK 和 Server adapter 所需库。它不依赖 Host、Gateway、Pet SDK、Tauri、Desktop IPC、companion 或 activity store，也不发布任何 OpenCode 专用 Tauri/Pet 事件。
 
@@ -112,10 +112,10 @@ fixture 覆盖正式 chunked SSE/framing、prompt response 在 SSE 前后两种�
 
 ## 回归防线与未知项
 
-- 版本 validator 同时拒绝 `1.18.24`、`1.18.26`、`v1.18.25` 和 development 字符串。
+- 版本不参与准入；测试覆盖不同版本元数据不会被 decode_settings 拒绝。
 - fixture 对所有请求验证随机 Basic auth；foreign port fixture 即使读取该 header 并返回 200 healthy，也验证 Provider 只联系自有 child stdout 报告的端口。
 - Provider boundary test 扫描 production manifest/source，禁止 Host、Pet、Desktop、Tauri 依赖和数据链引用。
-- 当前真实 smoke 只在 macOS/OpenCode 1.18.25 完成；跨平台发行只保证 adapter binary/manifest 进入 bundle，OpenCode runtime 仍由用户本机 resolver 提供并按精确版本 fail closed。
+- macOS/OpenCode 1.18.25 已验证发送路径；Windows/OpenCode 1.18.29 已验证发现、启动和列表，不能将后者扩展成真实模型发送已验证。
 - OpenCode V2 仍可能在未来版本变化；精确版本 fail closed 是当前安全边界，不是长期兼容承诺。
 
 长期跨层约束继续以 `../60-rules/protocol-layer-and-channel-boundaries.md` 为准；Host lifecycle 与 manifest 事实见 `provider-host-device-and-plugin-runtime.md`。

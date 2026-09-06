@@ -17,6 +17,7 @@ export function observeProviderRuntimes(callbacks: {
 }) {
   let disposed = false;
   let unlisten: (() => void) | undefined;
+  let unlistenRuntime: (() => void) | undefined;
   let eventVersion = 0;
   let connectionKey: string | undefined;
   let revision = 0;
@@ -68,6 +69,10 @@ export function observeProviderRuntimes(callbacks: {
       acceptConnections(payload);
     });
     if (disposed) { unlisten(); return; }
+    unlistenRuntime = await listen("provider-runtime-changed", () => {
+      void refresh().catch(callbacks.error);
+    });
+    if (disposed) { unlistenRuntime(); return; }
     const version = eventVersion;
     const snapshot = await invoke<ProviderConnectionState[]>("provider_connection_status");
     if (!disposed && version === eventVersion) acceptConnections(snapshot);
@@ -77,6 +82,6 @@ export function observeProviderRuntimes(callbacks: {
   return {
     start,
     refresh,
-    dispose() { disposed = true; unlisten?.(); },
+    dispose() { disposed = true; unlisten?.(); unlistenRuntime?.(); },
   };
 }

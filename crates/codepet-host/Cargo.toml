@@ -12,7 +12,7 @@ codepet-gateway-sdk = { path = "../../sdk/rust/codepet-gateway-sdk", version = "
 codepet-lan-channel-sdk = { path = "../../sdk/rust/codepet-lan-channel-sdk", version = "0.1.0" }
 codepet-provider-sdk = { path = "../../sdk/rust/codepet-provider-sdk", version = "0.1.0" }
 futures-util = "0.3"
-if-addrs = "0.15"
+netdev = { version = "0.46", default-features = false }
 mdns-sd = { version = "0.21", default-features = false }
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 ring = "0.17"
@@ -26,6 +26,9 @@ uuid = { version = "1", features = ["v4"] }
 url = "2"
 x509-parser = { version = "0.18", features = ["verify"] }
 yawc = { version = "=0.2.0", default-features = false, features = ["axum"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

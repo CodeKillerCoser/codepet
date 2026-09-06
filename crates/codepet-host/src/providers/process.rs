@@ -301,7 +301,7 @@ impl PluginProcess {
         if profile != codepet_provider_sdk::MUX_PROFILE {
             return Err(HostError::new("unsupported_provider_transport", format!("unsupported Provider transport: {profile}")));
         }
-        let mut command = Command::new(&descriptor.executable);
+        let mut command = Command::from(codepet_provider_sdk::local_runtime::command(&descriptor.executable).into_std());
         command
             .args(&descriptor.args)
             .envs(&descriptor.env)
@@ -310,9 +310,8 @@ impl PluginProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        #[cfg(unix)]
-        command.process_group(0);
-        let mut child = command.spawn().map_err(|error| {
+
+        let mut child = codepet_provider_sdk::process::spawn_async(command).map_err(|error| {
             HostError::new(
                 "provider_spawn_failed",
                 format!(
@@ -595,76 +594,12 @@ async fn stderr_loop(
     }
 }
 
-#[cfg(unix)]
-fn signal_process_group(process_id: u32) -> std::io::Result<()> {
-    let process_group = i32::try_from(process_id)
-        .map_err(|_| std::io::Error::other("Provider process id exceeds i32"))?;
-    let result = unsafe { libc::kill(-process_group, libc::SIGKILL) };
-    if result == 0 {
-        return Ok(());
-    }
-    let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::ESRCH) {
-        Ok(())
-    } else {
-        Err(error)
-    }
-}
-
-#[cfg(unix)]
-async fn kill_process_tree(
-    child: &mut tokio::process::Child,
-    process_id: u32,
-) -> std::io::Result<()> {
-    match signal_process_group(process_id) {
-        Ok(()) => Ok(()),
-        Err(group_error) => {
-            if child.try_wait()?.is_none() {
-                child.kill().await
-            } else {
-                Err(group_error)
-            }
-        }
-    }
-}
-
-#[cfg(windows)]
-async fn kill_process_tree(
-    child: &mut tokio::process::Child,
-    process_id: u32,
-) -> std::io::Result<()> {
-    let status = Command::new("taskkill")
-        .args(["/PID", &process_id.to_string(), "/T", "/F"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await?;
-    if status.success() || child.try_wait()?.is_some() {
-        Ok(())
-    } else {
-        child.kill().await
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-async fn kill_process_tree(
-    child: &mut tokio::process::Child,
-    _process_id: u32,
-) -> std::io::Result<()> {
+async fn kill_process_tree(child: &mut codepet_provider_sdk::process::AsyncChild, _process_id: u32) -> std::io::Result<()> {
     child.kill().await
 }
 
-#[cfg(unix)]
-fn cleanup_descendants_after_exit(process_id: u32) {
-    let _ = signal_process_group(process_id);
-}
-
-#[cfg(not(unix))]
-fn cleanup_descendants_after_exit(_process_id: u32) {}
-
 async fn process_monitor(
-    mut child: tokio::process::Child,
+    mut child: codepet_provider_sdk::process::AsyncChild,
     process_id: u32,
     mut control: mpsc::Receiver<ProcessCommand>,
     exit_sender: watch::Sender<Option<PluginProcessExit>>,
@@ -714,7 +649,7 @@ async fn process_monitor(
             }
         },
     };
-    cleanup_descendants_after_exit(process_id);
+    let _ = child.start_kill();
     shared.terminate(protocol_error(
         "provider_process_exited",
         exit.reason

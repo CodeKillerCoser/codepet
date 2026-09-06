@@ -39,7 +39,7 @@ pub use remote::channels::lan::listener::{
     RemoteLanAdvertisementSource, RemoteLanServer, RemoteLanServerConfig,
     RemoteLanServerHandle,
 };
-pub use remote::channels::lan::network::select_remote_lan_ipv4;
+pub use remote::channels::lan::network::{select_remote_lan_ipv4, remote_lan_interfaces, remote_lan_interface_for, RemoteLanInterface};
 
 pub use remote::connections::RemoteConnections;
 

@@ -8,6 +8,7 @@ import {
   PROVIDERS,
   SDK_GENERATOR,
   providerCargoBuildArguments,
+  resolveBunExecutable,
   sdkGeneratorBuildArguments,
   stageProviderPlugins,
   stageProviderSdkResources,
@@ -25,8 +26,22 @@ test("Provider build profile selects the matching Cargo output profile", () => {
   assert.equal(release.includes(SDK_GENERATOR.packageName), false);
   assert.equal(debug.includes(SDK_GENERATOR.packageName), false);
   const bun = sdkGeneratorBuildArguments("/repository", "/output/cp-sdk-gen", "aarch64-apple-darwin");
-  assert.deepEqual(bun.slice(0, 2), ["build", "/repository/tools/cp-sdk-gen/cp-sdk-gen.mjs"]);
+  assert.deepEqual(bun.slice(0, 2), ["build", path.join("/repository", "tools", "cp-sdk-gen", "cp-sdk-gen.mjs")]);
   assert.equal(bun.includes("bun-darwin-arm64"), true);
+});
+
+test("Windows Bun discovery resolves npm shims to the native executable", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codepet-bun 中文-"));
+  const native = path.join(root, "node_modules", "bun", "bin", "bun.exe");
+  await mkdir(path.dirname(native), { recursive: true });
+  await writeFile(path.join(root, "bun.cmd"), "shim must not be executed");
+  await writeFile(native, "native fixture");
+  assert.equal(await resolveBunExecutable({ env: { Path: root }, platform: "win32" }), native);
+  const standalone = path.join(root, "bun.exe");
+  await writeFile(standalone, "standalone fixture");
+  assert.equal(await resolveBunExecutable({ env: { PATH: root }, platform: "win32" }), standalone);
+  assert.equal(await resolveBunExecutable({ env: { BUN: native, PATH: root }, platform: "win32" }), native);
+  assert.equal(await resolveBunExecutable({ env: { PATH: root }, platform: "darwin" }), "bun");
 });
 
 test("staging contains Provider plugins, JSON-RPC resources, and cp-sdk-gen", async () => {
@@ -97,7 +112,11 @@ test("staging contains Provider plugins, JSON-RPC resources, and cp-sdk-gen", as
     "{}",
   );
 
-  for (const target of [undefined, "x86_64-pc-windows-msvc"]) {
+  for (const [target, windowsTarget] of [
+    [undefined, process.platform === "win32"],
+    ["x86_64-unknown-linux-gnu", false],
+    ["x86_64-pc-windows-msvc", true],
+  ]) {
     const stagingDirectory = path.join(root, target || "native");
     await stageProviderPlugins({
       repositoryRoot: root,
@@ -111,7 +130,7 @@ test("staging contains Provider plugins, JSON-RPC resources, and cp-sdk-gen", as
     );
     for (const provider of PROVIDERS) {
       const providerDirectory = path.join(stagingDirectory, provider.name);
-      const executable = `${provider.packageName}${target ? ".exe" : ""}`;
+      const executable = `${provider.packageName}${windowsTarget ? ".exe" : ""}`;
       const manifest = JSON.parse(
         await readFile(path.join(providerDirectory, "codepet-provider.json"), "utf8"),
       );
@@ -122,7 +141,7 @@ test("staging contains Provider plugins, JSON-RPC resources, and cp-sdk-gen", as
         "codepet-provider.json",
         executable,
       ].sort());
-      if (!target) {
+      if (!windowsTarget && process.platform !== "win32") {
         assert.notEqual((await stat(path.join(providerDirectory, executable))).mode & 0o111, 0);
       }
     }
@@ -134,9 +153,9 @@ test("staging contains Provider plugins, JSON-RPC resources, and cp-sdk-gen", as
       target,
       binaries,
     });
-    const generatorExecutable = `cp-sdk-gen${target ? ".exe" : ""}`;
+    const generatorExecutable = `cp-sdk-gen${windowsTarget ? ".exe" : ""}`;
     assert.equal((await stat(path.join(sdkStagingDirectory, generatorExecutable))).isFile(), true);
-    if (!target) {
+    if (!windowsTarget && process.platform !== "win32") {
       assert.notEqual((await stat(path.join(sdkStagingDirectory, generatorExecutable))).mode & 0o111, 0);
     }
     const index = JSON.parse(

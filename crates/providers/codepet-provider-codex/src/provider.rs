@@ -1,3 +1,4 @@
+use codepet_provider_sdk::local_runtime;
 use crate::client::{
     CodexAppServerSession, CodexRequestOutcome,
 };
@@ -40,7 +41,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -64,6 +65,8 @@ const MAX_CONVERSATION_GET_TURN_LIMIT: u64 = 100;
 struct CodexInstanceSettings {
     app_server_executable: PathBuf,
     app_server_args: Vec<String>,
+    #[serde(default, alias = "codexHome")]
+    data_directory: Option<PathBuf>,
 }
 
 #[doc(hidden)]
@@ -1138,6 +1141,7 @@ struct ProviderState {
 
 pub struct CodexProvider {
     observation: codepet_observation::Observation,
+    scanner: local_runtime::RuntimeScanner,
     state: Mutex<ProviderState>,
     events: Arc<dyn ProviderEventSink>,
     lifecycle_hook: Arc<dyn ExecutionLifecycleHook>,
@@ -1160,7 +1164,9 @@ impl CodexProvider {
         lifecycle_hook: Arc<dyn ExecutionLifecycleHook>,
     ) -> Self {
         Self {
+            scanner: local_runtime::RuntimeScanner::new(events.clone()),
             observation: codepet_observation::Observation::new(codepet_observation::Definition {
+                windows_command_override: true,
                 name: "codex", config: codepet_observation::config_home("CODEX_HOME", codepet_observation::home().join(".codex")).join("hooks.json"), events: &["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Stop", "SubagentStart", "SubagentStop", "Interrupt"], plugin: None,
             }, events.clone()),
             state: Mutex::new(ProviderState {
@@ -1296,6 +1302,8 @@ impl Provider for CodexProvider {
                 state.host_device_id = Some(request.host_device_id);
                 state.initialized_client_id = Some(request.host_client_id);
             }
+            drop(state);
+            self.scanner.start("codex", "@openai/codex", discover_codex_candidates, |candidate, timeout| inspect_runtime_candidate(candidate, "codex", timeout));
             Ok(ProviderInitializeResponse {
                 selected_version: PROTOCOL_VERSION,
                 plugin: Self::descriptor(),
@@ -1314,24 +1322,23 @@ impl Provider for CodexProvider {
         })
     }
 
-    fn runtime_get_installed<'a>(
-        &'a self,
-        _request: RuntimeGetInstalledRequest,
-    ) -> ProtocolFuture<'a, RuntimeGetInstalledResponse> {
+    fn runtime_get_installed<'a>(&'a self, request: RuntimeGetInstalledRequest) -> ProtocolFuture<'a, RuntimeGetInstalledResponse> {
         Box::pin(async move {
-            let selected = lock(&self.state).selected_runtime.clone();
-            Ok(runtime_inventory(discover_codex_candidates(), selected, "codex"))
+            if request.refresh == Some(true) && self.scanner.snapshot().scanning != Some(true) {
+                self.scanner.stop();
+                self.scanner.start("codex", "@openai/codex", discover_codex_candidates, |candidate, timeout| inspect_runtime_candidate(candidate, "codex", timeout));
+            }
+            Ok(self.scanner.snapshot())
         })
     }
-
-    fn runtime_select<'a>(
-        &'a self,
-        request: RuntimeSelectRequest,
-    ) -> ProtocolFuture<'a, RuntimeSelectResponse> {
+    fn runtime_select<'a>(&'a self, request: RuntimeSelectRequest) -> ProtocolFuture<'a, RuntimeSelectResponse> {
         Box::pin(async move {
-            let selected = inspect_runtime_candidate(request.candidate, "codex")?;
-            lock(&self.state).selected_runtime = Some(selected.clone());
-            Ok(RuntimeSelectResponse { selected })
+            let mut candidate = request.candidate;
+            candidate.executable_path = local_runtime::resolve_executable(std::path::Path::new(&candidate.executable_path), "codex", "@openai/codex")
+                .map_err(|error| protocol_error("invalid_runtime_selection", error, false))?.to_string_lossy().into_owned();
+            let selected=self.scanner.select(&candidate)?;
+            lock(&self.state).selected_runtime=Some(selected.clone());
+            Ok(RuntimeSelectResponse {selected})
         })
     }
 
@@ -1350,9 +1357,16 @@ impl Provider for CodexProvider {
                 ));
             }
             let selected = if request.settings.contains_key("appServerExecutable") { None } else {
-                Some(lock(&self.state).selected_runtime.clone().or_else(|| {
-                    runtime_inventory(discover_codex_candidates(), None, "codex").installed.into_iter().next()
-                }).ok_or_else(|| protocol_error("provider_unavailable", "Codex Provider did not find a compatible local runtime".to_string(), true))?)
+                let current = { lock(&self.state).selected_runtime.clone() };
+                let installation = match current {
+                    Some(selected) => Some(selected),
+                    None => {
+                        let inventory=self.scanner.snapshot();
+                        if inventory.scanning==Some(true) {return Err(protocol_error("runtime_scanning", "Runtime discovery is still in progress".into(), true));}
+                        inventory.installed.into_iter().next()
+                    },
+                };
+                Some(installation.ok_or_else(|| protocol_error("provider_unavailable", "Codex Provider did not find a local runtime".to_string(), true))?)
             };
             if let Some(selected) = selected.as_ref() {
                 request.settings.insert("appServerExecutable".to_string(), json!(selected.executable_path.clone()));
@@ -1479,8 +1493,9 @@ impl Provider for CodexProvider {
             }
             let executable = runtime.settings.app_server_executable.clone();
             let args = runtime.settings.app_server_args.clone();
+            let data_directory = runtime.settings.data_directory.clone();
             let server = match tokio::task::spawn_blocking(move || {
-                CodexAppServerSession::spawn_uninitialized(&executable, &args)
+                CodexAppServerSession::spawn_uninitialized(&executable, &args, data_directory.as_deref())
             })
             .await {
                 Ok(Ok(server)) => server,
@@ -1912,7 +1927,7 @@ impl Provider for CodexProvider {
                 )
             })?;
             let session = runtime.ready_server()?;
-            let assignments = load_codex_desktop_project_assignments()?;
+            let assignments = load_codex_desktop_project_assignments(runtime.settings.data_directory.as_deref())?;
             let page = tokio::task::spawn_blocking(move || {
                 list_codex_conversations(
                     &session,
@@ -2636,6 +2651,7 @@ impl Provider for CodexProvider {
         _request: ProviderShutdownRequest,
     ) -> ProtocolFuture<'a, ProviderShutdownResponse> {
         Box::pin(async move {
+            self.scanner.stop();
             self.observation.shutdown().await;
             if self.shutdown.swap(true, Ordering::SeqCst) {
                 loop {
@@ -2711,22 +2727,11 @@ fn prepare_conversation_workspace(
 }
 
 fn codex_home() -> Option<PathBuf> {
-    std::env::var_os("CODEX_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .filter(|value| !value.is_empty())
-                .map(|home| PathBuf::from(home).join(".codex"))
-        })
+    local_runtime::data_dir("CODEX_HOME", ".codex")
 }
 
 fn default_remote_workspace_root(harness_name: &str) -> Option<String> {
-    ["HOME", "USERPROFILE"]
-        .into_iter()
-        .find_map(std::env::var_os)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
+    local_runtime::home_dir()
         .filter(|path| path.is_absolute())
         .map(|path| {
             path.join(".codepet")
@@ -2767,7 +2772,7 @@ fn create_managed_worktree(
             false,
         )
     })?;
-    let output = Command::new("git")
+    let output = codepet_provider_sdk::local_runtime::command("git")
         .arg("-C")
         .arg(&requested)
         .args(["rev-parse", "--show-toplevel"])
@@ -2818,7 +2823,7 @@ fn create_managed_worktree(
             )
         })?;
     }
-    let output = Command::new("git")
+    let output = codepet_provider_sdk::local_runtime::command("git")
         .arg("-C")
         .arg(&repository_root)
         .args(["worktree", "add", "--detach"])
@@ -2901,7 +2906,7 @@ mod workspace_mode_tests {
         assert_eq!(relative.components().count(), 3);
         assert!(cwd.join("../../README.md").is_file());
         assert_eq!(cwd.file_name().and_then(|value| value.to_str()), Some("app"));
-        let output = Command::new("git")
+        let output = codepet_provider_sdk::local_runtime::command("git")
             .arg("-C")
             .arg(cwd)
             .args(["rev-parse", "--is-inside-work-tree"])
@@ -2909,7 +2914,7 @@ mod workspace_mode_tests {
             .unwrap();
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "true");
-        let detached = Command::new("git")
+        let detached = codepet_provider_sdk::local_runtime::command("git")
             .arg("-C")
             .arg(cwd)
             .args(["symbolic-ref", "-q", "HEAD"])
@@ -2921,7 +2926,7 @@ mod workspace_mode_tests {
     }
 
     fn git(repository: &Path, args: &[&str]) {
-        let status = Command::new("git")
+        let status = codepet_provider_sdk::local_runtime::command("git")
             .arg("-C")
             .arg(repository)
             .args(args)
@@ -2998,68 +3003,46 @@ fn load_conversation_turns(
     Ok(LoadedConversationTurns { turns: page.data, next_cursor: page.next_cursor, materialized: true })
 }
 
-fn runtime_inventory(candidates: Vec<RuntimeCandidate>, selected: Option<RuntimeInstallation>, product: &str) -> RuntimeGetInstalledResponse {
-    let mut seen = HashSet::new();
-    let installed = candidates
-        .into_iter()
-        .filter_map(|candidate| inspect_runtime_candidate(candidate, product).ok())
-        .filter(|installation| seen.insert(installation.executable_path.clone()))
-        .collect::<Vec<_>>();
-    let selected = selected.and_then(|selected| installed.iter()
-        .find(|installation| installation.executable_path == selected.executable_path).cloned());
-    RuntimeGetInstalledResponse { installed, selected }
-}
-
 fn discover_codex_candidates() -> Vec<RuntimeCandidate> {
     let mut candidates = Vec::new();
     if let Some(path) = std::env::var_os("CODE_PET_CODEX_BIN").filter(|value| !value.is_empty()) {
-        candidates.push(RuntimeCandidate { executable_path: PathBuf::from(path).to_string_lossy().into_owned(), source: codepet_provider_sdk::RuntimeCandidateSource::Environment });
+        candidates.push(local_runtime::candidate(PathBuf::from(path), codepet_provider_sdk::RuntimeCandidateSource::Environment));
     }
-    if let Some(paths) = std::env::var_os("PATH") {
-        for directory in std::env::split_paths(&paths) {
-            candidates.push(RuntimeCandidate { executable_path: directory.join("codex").to_string_lossy().into_owned(), source: codepet_provider_sdk::RuntimeCandidateSource::CurrentPath });
+    candidates.extend(local_runtime::discover("codex", "@openai/codex"));
+    #[cfg(target_os = "macos")]
+    for app in ["Codex.app", "ChatGPT.app"] {
+        candidates.push(local_runtime::candidate(Path::new("/Applications").join(app).join("Contents").join("Resources").join("codex"), codepet_provider_sdk::RuntimeCandidateSource::MacosApplication));
+    }
+    #[cfg(windows)]
+    if let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        let mut roots = vec![local.join("OpenAI").join("Codex").join("bin")];
+        if let Ok(packages) = std::fs::read_dir(local.join("Packages")) {
+            for package in packages.flatten().filter(|entry| entry.file_name().to_string_lossy().starts_with("OpenAI.Codex_")) {
+                roots.push(package.path().join("LocalCache").join("Local").join("OpenAI").join("Codex").join("bin"));
+            }
+        }
+        for root in roots {
+            candidates.push(local_runtime::candidate(root.join("codex.exe"), codepet_provider_sdk::RuntimeCandidateSource::WindowsApplication));
+            if let Ok(versions) = std::fs::read_dir(root) {
+                let mut versions: Vec<_> = versions.flatten().collect();
+                versions.sort_by_key(|entry| std::cmp::Reverse(entry.metadata().and_then(|m| m.modified()).ok()));
+                for version in versions {
+                    candidates.push(local_runtime::candidate(version.path().join("codex.exe"), codepet_provider_sdk::RuntimeCandidateSource::WindowsApplication));
+                }
+            }
         }
     }
-    if let Some(path) = discover_login_shell_command("codex") {
-        candidates.push(RuntimeCandidate { executable_path: path, source: codepet_provider_sdk::RuntimeCandidateSource::LoginShell });
-    }
-    for path in [
-        "/Applications/Codex.app/Contents/Resources/codex",
-        "/Applications/ChatGPT.app/Contents/Resources/codex",
-    ] {
-        candidates.push(RuntimeCandidate { executable_path: path.to_string(), source: codepet_provider_sdk::RuntimeCandidateSource::MacosApplication });
-    }
     candidates
-}
-
-fn discover_login_shell_command(command_name: &str) -> Option<String> {
-    let shell = std::env::var_os("SHELL").map(PathBuf::from).filter(|path| path.is_absolute())
-        .unwrap_or_else(|| PathBuf::from("/bin/zsh"));
-    let output = Command::new(shell).args(["-lc", &format!("command -v {command_name}")]).output().ok()?;
-    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .filter(|path| !path.is_empty())
 }
 
 fn inspect_runtime_candidate(
     candidate: RuntimeCandidate,
     product: &str,
+    timeout: Duration,
 ) -> Result<RuntimeInstallation, ProtocolError> {
-    let path = PathBuf::from(&candidate.executable_path);
-    if !path.is_absolute() || !path.is_file() {
-        return Err(protocol_error(
-            "invalid_runtime_selection",
-            format!("Runtime executable is unavailable: {}", path.display()),
-            false,
-        ));
-    }
-    let canonical = std::fs::canonicalize(&path).map_err(|error| {
-        protocol_error(
-            "invalid_runtime_selection",
-            format!("Resolve runtime executable {}: {error}", path.display()),
-            false,
-        )
-    })?;
-    let line = bounded_runtime_version(&canonical)?;
+    let canonical = local_runtime::resolve_executable(Path::new(&candidate.executable_path), "codex", "@openai/codex")
+        .map_err(|error| protocol_error("invalid_runtime_selection", error, false))?;
+    let line = bounded_runtime_version(&canonical, timeout)?;
     if line.is_empty() || !line.to_ascii_lowercase().contains(product) {
         return Err(protocol_error(
             "invalid_runtime_selection",
@@ -3080,8 +3063,8 @@ fn inspect_runtime_candidate(
     })
 }
 
-fn bounded_runtime_version(executable: &Path) -> Result<String, ProtocolError> {
-    let mut child = Command::new(executable).arg("--version")
+fn bounded_runtime_version(executable: &Path, timeout: Duration) -> Result<String, ProtocolError> {
+    let mut child = codepet_provider_sdk::local_runtime::command(executable).arg("--version")
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| {
         protocol_error(
             "invalid_runtime_selection",
@@ -3089,7 +3072,7 @@ fn bounded_runtime_version(executable: &Path) -> Result<String, ProtocolError> {
             false,
         )
     })?;
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -3401,6 +3384,9 @@ fn decode_settings(settings: codepet_provider_sdk::JsonObject) -> Result<CodexIn
             "appServerExecutable must be an absolute path resolved by the Host".to_string(),
             false,
         ));
+    }
+    if settings.data_directory.as_ref().is_some_and(|path| !path.is_absolute()) {
+        return Err(protocol_error("invalid_instance_settings", "dataDirectory must be absolute".into(), false));
     }
     Ok(settings)
 }
@@ -3767,9 +3753,9 @@ fn decode_filtered_conversation_cursor(
     Ok(Some(decoded.upstream_cursor))
 }
 
-fn load_codex_desktop_project_assignments(
+fn load_codex_desktop_project_assignments(configured: Option<&Path>
 ) -> Result<CodexDesktopProjectAssignments, ProtocolError> {
-    let Some(codex_home) = codex_home() else {
+    let Some(codex_home) = configured.map(Path::to_path_buf).or_else(codex_home) else {
         return Ok(CodexDesktopProjectAssignments::default());
     };
     let path = codex_home.join(".codex-global-state.json");
@@ -4103,4 +4089,25 @@ fn now_ms() -> u64 {
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod storage_path_tests {
+    use super::*;
+    #[test]
+    fn executable_and_data_directory_are_independent() {
+        let temp = tempfile::tempdir().unwrap();
+        let data = temp.path().join("custom data 中文");
+        let executable = std::env::current_exe().unwrap();
+        let settings = decode_settings(serde_json::from_value(json!({
+            "appServerExecutable": executable, "appServerArgs": [],
+            "dataDirectory": data,
+        })).unwrap()).unwrap();
+        assert_eq!(settings.data_directory.as_deref(), Some(data.as_path()));
+        let invalid = decode_settings(serde_json::from_value(json!({
+            "appServerExecutable": executable, "appServerArgs": [],
+            "dataDirectory": "relative-storage",
+        })).unwrap());
+        assert!(invalid.is_err());
+    }
 }

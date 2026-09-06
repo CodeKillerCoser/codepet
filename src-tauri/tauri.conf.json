@@ -49,8 +49,7 @@
           "$RESOURCE/**"
         ]
       }
-    },
-    "macOSPrivateApi": true
+    }
   },
   "bundle": {
     "active": true,

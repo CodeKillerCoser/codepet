@@ -268,7 +268,8 @@
       "scope": "approval",
       "payload": { "$ref": "./schema.json#/$defs/ApprovalResolvedEvent" }
     },
-    {"name": "event.notification", "direction": "pluginToHost", "delivery": "ordered", "scope": "subscription", "payload": {"$ref": "./schema.json#/$defs/ProviderNotificationEvent"}}
+    {"name": "event.notification", "direction": "pluginToHost", "delivery": "ordered", "scope": "subscription", "payload": {"$ref": "./schema.json#/$defs/ProviderNotificationEvent"}},
+    {"name": "runtime.inventoryChanged", "direction": "pluginToHost", "delivery": "ordered", "scope": "plugin", "payload": {"$ref": "./schema.json#/$defs/RuntimeGetInstalledResponse"}}
   ],
   "fixtures": "fixtures/index.json"
 }
