@@ -10,7 +10,7 @@
 
 ## 反例
 
-`package-lock.json` 的大量 `resolved` 指向 `https://registry.anpm.alibaba-inc.com/`，但当前网络对该 host 下载 tarball 时持续 `ECONNRESET`。即使全局 npm registry 已设置为腾讯镜像，默认 `replace-registry-host=npmjs` 也不会替换这个旧 host，`npm i` 会长时间重试并可能触发 npm 自身的 `Exit handler never called`。
+`package-lock.json` 的大量 `resolved` 指向某个内部 registry，但当前网络对该 host 下载 tarball 时持续 `ECONNRESET`。即使全局 npm registry 已设置为腾讯镜像，默认 `replace-registry-host=npmjs` 也不会替换这个旧 host，`npm i` 会长时间重试并可能触发 npm 自身的 `Exit handler never called`。
 
 ## 推荐做法
 
@@ -18,14 +18,15 @@
 - 设置 `replace-registry-host=always`，让 npm 使用当前 registry 替换 lockfile 中的旧 host。
 - 如果镜像 audit endpoint 返回 404，设置 `audit=false`。
 - 更新 lockfile 时检查 `resolved` 是否仍包含旧 registry host。
+- 文档中的内部 registry 使用泛称，避免把公司域名带入仓库。
 
 ## 来源
 
-2026-06-07 排查 `npm i` 卡住：`npm i --timing --loglevel verbose` 显示大量 tarball 从 `registry.anpm.alibaba-inc.com` 下载时 `ECONNRESET`，而 `mirrors.cloud.tencent.com` 可正常返回。
+2026-06-07 排查 `npm i` 卡住：`npm i --timing --loglevel verbose` 显示大量 tarball 从旧内部 registry 下载时 `ECONNRESET`，而 `mirrors.cloud.tencent.com` 可正常返回。
 
 ## 验证方式
 
 - `npm i`
 - 使用空临时 cache 执行 `npm ci --cache <temp-cache> --prefer-online`
-- `rg "registry\.anpm\.alibaba-inc\.com" package-lock.json` 应无结果
+- 检查 `package-lock.json` 的 `resolved` URL：npm tarball 应使用 `registry.npmjs.org`，不保留内部 registry 地址。
 - `rg "mirrors\.cloud\.tencent\.com" package-lock.json .npmrc` 应无结果；2026-06-08 GitHub Actions 在 macOS 与 Windows runner 上曾因 `zimmerframe` 的腾讯镜像 tarball 404 导致 `npm ci` 失败。

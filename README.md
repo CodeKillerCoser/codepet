@@ -229,6 +229,8 @@ npm run package:signed
 - 或 `APPLE_ID`、`APPLE_PASSWORD` / `APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`
 - 兼容旧变量：`APPLE_NOTARIZE_APPLE_ID`、`APPLE_NOTARIZE_PWD`、`APPLE_NOTARIZE_TEAM_ID`
 
+签名脚本仅使用启动进程继承的环境变量，不会启动交互式 shell 或主动读取 shell 配置。请在调用前显式配置本项目使用的公证账号或 keychain profile；缺少配置时会在构建及清理旧 DMG 前退出。
+
 ## 项目结构
 
 ```text

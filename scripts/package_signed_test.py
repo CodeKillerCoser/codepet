@@ -5,6 +5,7 @@ import unittest
 from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -45,7 +46,7 @@ class NotarizationArgsTest(unittest.TestCase):
             ],
         )
 
-    def test_uses_existing_zshrc_notarize_variable_names(self):
+    def test_uses_legacy_notarize_variable_names(self):
         args = package_signed.notarization_args(
             {
                 "APPLE_NOTARIZE_APPLE_ID": "dev@example.com",
@@ -73,29 +74,33 @@ class NotarizationArgsTest(unittest.TestCase):
 
         self.assertEqual(error.exception.code, 2)
 
-    def test_shell_fallback_imports_only_notary_environment(self):
-        class Result:
-            returncode = 0
-            stdout = "\n".join(
-                [
-                    "APPLE_NOTARIZE_APPLE_ID=dev@example.com",
-                    "APPLE_NOTARIZE_PWD=app-password",
-                    "APPLE_NOTARIZE_TEAM_ID=TEAM123",
-                    "UNRELATED_SECRET=ignored",
-                ]
-            )
+    def test_missing_credentials_stops_before_build_or_shell(self):
+        with patch.dict(package_signed.os.environ, {}, clear=True), \
+                patch.object(package_signed.platform, "system", return_value="Darwin"), \
+                patch.object(package_signed.subprocess, "run") as run, \
+                patch.object(package_signed, "remove_old_dmg_files") as remove, \
+                redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit) as error:
+                package_signed.main()
 
-        original_run = package_signed.subprocess.run
-        package_signed.subprocess.run = lambda *args, **kwargs: Result()
-        try:
-            env = package_signed.notary_env_with_shell_fallback({})
-        finally:
-            package_signed.subprocess.run = original_run
+        self.assertEqual(error.exception.code, 2)
+        run.assert_not_called()
+        remove.assert_not_called()
 
-        self.assertEqual(env["APPLE_NOTARIZE_APPLE_ID"], "dev@example.com")
-        self.assertEqual(env["APPLE_NOTARIZE_PWD"], "app-password")
-        self.assertEqual(env["APPLE_NOTARIZE_TEAM_ID"], "TEAM123")
-        self.assertNotIn("UNRELATED_SECRET", env)
+    def test_main_passes_explicit_environment_to_notarization(self):
+        env = {"CODE_PET_NOTARY_KEYCHAIN_PROFILE": "code-pet-notary"}
+        dmg = Path("test.dmg")
+        with patch.dict(package_signed.os.environ, env, clear=True), \
+                patch.object(package_signed.platform, "system", return_value="Darwin"), \
+                patch.object(package_signed, "run") as run, \
+                patch.object(package_signed, "remove_old_dmg_files"), \
+                patch.object(package_signed, "find_created_dmg", return_value=dmg), \
+                patch.object(package_signed, "notarize_dmg") as notarize:
+            self.assertEqual(package_signed.main(), 0)
+
+        notarize.assert_called_once_with(dmg, env)
+        self.assertEqual(run.call_args_list[0].args[0],
+                         ["npm", "run", "tauri", "build", "--", "--bundles", "dmg"])
 
 
 if __name__ == "__main__":
