@@ -29,6 +29,7 @@ Codex Desktop 0.151/0.152 若已迁移项目但尚未把 legacy thread assignmen
 
 - Agent schema 中 Project 使用两段 routed `resource`、`name`、`roots[{path}]`、`metadata: Map<String,String>`、只读 `position`、`createdAt`、`updatedAt`；Provider/Gateway 共同引用该定义。
 - `conversation.list(all)` 逐页读取 App Server 会话并用 legacy assignment 补齐缺失的 `projectId`。`standalone` 与 `project` 在原生 thread 流上按“原生 projectId 优先、legacy 映射补缺”分类；Provider cursor 封装 filter identity 与上游 opaque cursor，只有完整消费上游页后才推进，客户端必须原样回传。
+- Remote 对 resume/get 与 conversation.upserted 的运行时 metadata 采用有限合并：同会话的 project 为 null 时保留已知归属，非空 project 正常覆盖；状态、标题和执行配置仍以新值为准。列表替换不使用此 fallback。当前 DTO 无法区分 missing/null，未来显式解除项目关联必须给出可区分的操作语义，不能让运行时缺值误清归属。详见 [resume 排查](../40-runbooks/codex-resume-no-output-and-incomplete-history.md)。
 - `conversation.create` 只在调用方显式传入项目时映射 Codex `thread/start.projectId`；省略即 standalone，不根据 workspaceRoot 推断。
 - Codex instance start 在已启用 experimental API 的 session 上探测 `project/list`。只有成功时才整组广告并映射五个项目方法；`-32601` 表示不支持，其他探测错误使 instance start 失败。
 - `project/changed` 只由 observer session 映射为 Provider `event.projectChanged`，再由 Host 转换为 Gateway replayable `project.changed`；conversation writer session 不重复发布。

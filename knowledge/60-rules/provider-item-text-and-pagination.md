@@ -17,7 +17,7 @@ Codex 历史读取、三个内置 Provider 的 item mapper、Agent schema 与生
 
 ## 推荐做法
 
-Codex get 先 `thread/read(includeTurns=false)`，再一次 `thread/turns/list(itemsView=full, sortDirection=desc)`，原样传递 caller cursor/limit（省略时默认 20），返回原生 nextCursor。协议仍验证 limit 在 1–100；这不改变合法请求数量。当前页恢复为时间正序，客户端自动拉完后续页。删除版本判断、item probe/hydration/fallback、Provider 内 10-turn 分批与短页补齐。Harness 版本只用于描述。resume 继续 `excludeTurns=true`，Gateway 复用 acquire/get 返回首屏。
+Codex get 先 `thread/read(includeTurns=false)`，再一次 `thread/turns/list(itemsView=full, sortDirection=desc)`，原样传递 caller cursor/limit（省略时默认 20），返回原生 nextCursor。协议仍验证 limit 在 1–100；这不改变合法请求数量。当前页恢复为时间正序，客户端仅加载首屏，后续页由用户上翻手动请求，按稳定消息身份去重后前插，不覆盖实时内容。参见[消息数据源与 LRU 规约](remote-conversation-message-sources.md)。删除版本判断、item probe/hydration/fallback、Provider 内 10-turn 分批与短页补齐。Harness 版本只用于描述。resume 继续 `excludeTurns=true`，Gateway 复用 acquire/get 返回首屏。
 
 原生 JSONL 流式解码，不以整行大小拒绝响应；坏行 drain 到换行，只影响对应请求，真正 EOF/I/O 故障仍清理 Server。完整原生对象仍会占用内存；这次不引入另一种隐式 turn 预算。
 

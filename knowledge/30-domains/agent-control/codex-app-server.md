@@ -23,7 +23,7 @@ Provider→Host 是严格 JSON-RPC 2.0，经 SDK Frame V1 raw/zstd 传输；上�
 
 `initialize` 必须返回 codexHome/platformFamily/platformOs/userAgent。Thread、Turn、start/resume 的必需字段严格解码，SandboxPolicy 是实际权限证据；不能用默认值伪造。
 
-conversation.get 是纯读：metadata thread/read(includeTurns=false) 加 turns/items 分页，不调用 resume。0.152+ 可用 item API 时读取 notLoaded turns，再以 item 页释放原生 DTO；-32601 环境回退 full turns。Gateway conversation.resume 复用 acquire/get，Codex 原生 resume 固定 excludeTurns=true。Remote 每页 20、自动拉完，只有 provider_response_too_large 使用 20→10→5→1 缩页，保持 cursor 不变直到成功。
+conversation.get 是纯读：metadata thread/read(includeTurns=false) 加 turns/items 分页，不调用 resume。0.152+ 可用 item API 时读取 notLoaded turns，再以 item 页释放原生 DTO；-32601 环境回退 full turns。Gateway conversation.resume 复用 acquire/get，Codex 原生 resume 固定 excludeTurns=true。Remote 每页初值 20、首屏一页、后续手动分页，只有 provider_response_too_large 使用 20→10→5→1 缩页，保持 cursor 不变直到成功。
 
 App Server 原生单行与下游 encoded frame 各有 16 MiB 边界。上游读取失败不能靠下游压缩解决，单 turn/item 仍可能超限；不能由 Host/SDK 裁剪正文。metadata 与跨页历史没有共同原子 snapshot token，客户端继续依靠事件窗口和 generation fence 收敛，不能宣称跨页原子快照。
 
@@ -40,7 +40,7 @@ App Server 原生单行与下游 encoded frame 各有 16 MiB 边界。上游读�
 - 多会话串扰：64 会话同 PID、并发首次 resume、A 终态保留 B、command/file 审批与新旧 generation 测试。
 - 初始化和取消窗口：延迟 Server initialize 连续五轮 start/stop，resume/cancel barrier、stdio saturation stop/ping/EOF、异步 Broken pipe 测试。
 - 共享故障：Server crash 使整个实例 Error，所有会话槽失效；Host 在线时 SDK 后续 ping 可再次尝试 start，但不会重发 turn/start。
-- 详情与项目恢复：Remote 测试等待完整 capabilities、Provider Ready 后补拉、旧 generation 丢弃、首屏复用及全历史缩页。
+- 详情与项目恢复：Remote 测试等待完整 capabilities、Provider Ready 后补拉、旧 generation 丢弃、首屏复用、手动分页缩页与实时数据保留。
 - 传输与身份：Host LAN 测试覆盖认证、撤销、pending get 下应用心跳；Tauri 双链路测试确认 Provider 不污染桌宠。
 
 ## 测试计划
@@ -53,4 +53,4 @@ App Server 原生单行与下游 encoded frame 各有 16 MiB 边界。上游读�
 
 ## 未知项
 
-跨 CLI 版本的 writer ownership 错误形状仍需持续实测。超长单 item 的原生响应与跨页并发变化没有额外协议承诺；Remote 当前自动拉完历史仍有总内存与总传输量成本。手机系统长期挂起会按心跳超时离线处理。
+跨 CLI 版本的 writer ownership 错误形状仍需持续实测。超长单 item 的原生响应与跨页并发变化没有额外协议承诺；Remote 采用手动分页和会话 LRU 缓存；单个正在查看的大会话仍可能占用较多内存。手机系统长期挂起会按心跳超时离线处理。

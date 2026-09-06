@@ -22,7 +22,7 @@ Codex lifecycle、conversation acquire/create、turn、approval、事件分发�
 ## 推荐做法
 
 - instance.start 是唯一 Server 启动入口；每会话 Creating/Ready/Failed/Closed 槽合并首次 acquire，同一个 conversation 的操作持 operation lock 并复核 generation。
-- 原生 thread/resume 固定 excludeTurns=true。Gateway conversation.resume 顺序 acquire/get，首屏结构复用 ConversationGetResponse。Remote 每页初值 20 并自动拉完；只对尺寸错误按 20→10→5→1 缩页，不重做已成功的 acquire。
+- 原生 thread/resume 固定 excludeTurns=true。Gateway conversation.resume 顺序 acquire/get，首屏结构复用 ConversationGetResponse。Remote 首屏只取一页，用户手动加载更早消息，每页初值 20；只对尺寸错误按 20→10→5→1 缩页，不重做已成功的 acquire。
 - create 使用共享 Server 的 thread/start，响应直接建立槽，首条 turn/start 复用。未 materialized 的精确官方响应只对有 create 证据的当前 generation 映射空历史，不能吞掉近似错误。
 - 一个 Server reader 按 conversation ID 分发事件。start/resume 安装槽前到达的通知暂存，不能丢弃其他会话事件；同会话终态在 operation lock 内完成映射与发布后，才允许下一操作。
 - turn 完成只清理 active turn，不释放 writer。响应超限、单条协议错误、RPC reject/timeout 只影响对应请求；坏事件或日志不得关闭共享进程。原生 stdout EOF/I/O 断开、Server crash 才使整个实例不可用并清理全部映射。未知发送结果不得自动重发 turn/start。
