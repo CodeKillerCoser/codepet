@@ -1,0 +1,330 @@
+{
+  "rows": [
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 2470.172042,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 2093.335,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 2093.3665,
+      "stderrTail": [
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":58,\"encoding\":\"raw-json\",\"frameBytes\":68,\"jsonBytes\":58,\"jsonEncodeUs\":\"0\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"11\",\"recordType\":\"metric\",\"rpc.method\":\"provider.shutdown\",\"rpc.requestId\":\"host-5\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"5\"}",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":75,\"encoding\":\"raw-json\",\"frameBytes\":85,\"jsonBytes\":75,\"jsonEncodeUs\":\"1\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"0\",\"recordType\":\"metric\",\"rpc.method\":\"provider.ping\",\"rpc.requestId\":\"host-4\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"6\"}",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":70,\"encoding\":\"raw-json\",\"frameBytes\":80,\"jsonBytes\":70,\"jsonEncodeUs\":\"0\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"84\",\"recordType\":\"metric\",\"rpc.method\":\"project.list\",\"rpc.requestId\":\"host-3\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"6\"}",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":218,\"encoding\":\"raw-json\",\"frameBytes\":228,\"jsonBytes\":218,\"jsonEncodeUs\":\"6\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"18\",\"recordType\":\"metric\",\"rpc.method\":\"provider.initialize\",\"rpc.requestId\":\"host-2\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"18\"}",
+        "MUX_BENCH_BODY_STARTED",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":218,\"encoding\":\"raw-json\",\"frameBytes\":228,\"jsonBytes\":218,\"jsonEncodeUs\":\"49\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"82\",\"recordType\":\"metric\",\"rpc.method\":\"provider.initialize\",\"rpc.requestId\":\"host-1\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"31\"}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 2483.924042,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 123.64975,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 123.615666,
+      "stderrTail": [
+        "MUX_BENCH_BODY_STARTED",
+        "{\"name\":\"provider.mux.ready\",\"profile\":\"stdio-codepet-mux-v1\",\"receive\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000},\"role\":\"provider\",\"schema\":\"codepet.provider.transport.v1\",\"send\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000}}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 2473.0619159999997,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 2090.3236669999997,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 2090.360833,
+      "stderrTail": [
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":58,\"encoding\":\"raw-json\",\"frameBytes\":68,\"jsonBytes\":58,\"jsonEncodeUs\":\"1\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"3\",\"recordType\":\"metric\",\"rpc.method\":\"provider.shutdown\",\"rpc.requestId\":\"host-5\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"42\"}",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":70,\"encoding\":\"raw-json\",\"frameBytes\":80,\"jsonBytes\":70,\"jsonEncodeUs\":\"2\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"2074251\",\"recordType\":\"metric\",\"rpc.method\":\"project.list\",\"rpc.requestId\":\"host-3\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"41\"}",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":75,\"encoding\":\"raw-json\",\"frameBytes\":85,\"jsonBytes\":75,\"jsonEncodeUs\":\"3\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"0\",\"recordType\":\"metric\",\"rpc.method\":\"provider.ping\",\"rpc.requestId\":\"host-4\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"2073804\"}",
+        "{\"compressionRatio\":0.8252356922044044,\"compressionUs\":\"5908\",\"encodedPayloadBytes\":6922738,\"encoding\":\"zstd-json\",\"frameBytes\":6922748,\"jsonBytes\":8388801,\"jsonEncodeUs\":\"2979\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"1153\",\"recordType\":\"metric\",\"rpc.method\":\"provider.describe\",\"rpc.requestId\":\"host-2\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"2446568\"}",
+        "MUX_BENCH_BODY_STARTED",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":218,\"encoding\":\"raw-json\",\"frameBytes\":228,\"jsonBytes\":218,\"jsonEncodeUs\":\"13\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"17\",\"recordType\":\"metric\",\"rpc.method\":\"provider.initialize\",\"rpc.requestId\":\"host-1\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"104\"}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 2457.675042,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 109.920291,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 109.943,
+      "stderrTail": [
+        "MUX_BENCH_BODY_STARTED",
+        "{\"name\":\"provider.mux.ready\",\"profile\":\"stdio-codepet-mux-v1\",\"receive\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000},\"role\":\"provider\",\"schema\":\"codepet.provider.transport.v1\",\"send\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000}}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 4939.120209000001,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 4546.682125,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 4546.6410000000005,
+      "stderrTail": [
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":58,\"encoding\":\"raw-json\",\"frameBytes\":68,\"jsonBytes\":58,\"jsonEncodeUs\":\"0\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"0\",\"recordType\":\"metric\",\"rpc.method\":\"provider.shutdown\",\"rpc.requestId\":\"host-5\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"5\"}",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":75,\"encoding\":\"raw-json\",\"frameBytes\":85,\"jsonBytes\":75,\"jsonEncodeUs\":\"0\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"0\",\"recordType\":\"metric\",\"rpc.method\":\"provider.ping\",\"rpc.requestId\":\"host-4\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"8\"}",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":70,\"encoding\":\"raw-json\",\"frameBytes\":80,\"jsonBytes\":70,\"jsonEncodeUs\":\"0\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"47\",\"recordType\":\"metric\",\"rpc.method\":\"project.list\",\"rpc.requestId\":\"host-3\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"3\"}",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":218,\"encoding\":\"raw-json\",\"frameBytes\":228,\"jsonBytes\":218,\"jsonEncodeUs\":\"5\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"19\",\"recordType\":\"metric\",\"rpc.method\":\"provider.initialize\",\"rpc.requestId\":\"host-2\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"24\"}",
+        "MUX_BENCH_BODY_STARTED",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":218,\"encoding\":\"raw-json\",\"frameBytes\":228,\"jsonBytes\":218,\"jsonEncodeUs\":\"17\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"23\",\"recordType\":\"metric\",\"rpc.method\":\"provider.initialize\",\"rpc.requestId\":\"host-1\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"11\"}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 4948.9403330000005,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 123.38975,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 123.399042,
+      "stderrTail": [
+        "MUX_BENCH_BODY_STARTED",
+        "{\"name\":\"provider.mux.ready\",\"profile\":\"stdio-codepet-mux-v1\",\"receive\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000},\"role\":\"provider\",\"schema\":\"codepet.provider.transport.v1\",\"send\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000}}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 4941.777833,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 4547.655958,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 4547.696,
+      "stderrTail": [
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":58,\"encoding\":\"raw-json\",\"frameBytes\":68,\"jsonBytes\":58,\"jsonEncodeUs\":\"1\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"12\",\"recordType\":\"metric\",\"rpc.method\":\"provider.shutdown\",\"rpc.requestId\":\"host-5\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"41\"}",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":70,\"encoding\":\"raw-json\",\"frameBytes\":80,\"jsonBytes\":70,\"jsonEncodeUs\":\"2\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"4514425\",\"recordType\":\"metric\",\"rpc.method\":\"project.list\",\"rpc.requestId\":\"host-3\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"44\"}",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":75,\"encoding\":\"raw-json\",\"frameBytes\":85,\"jsonBytes\":75,\"jsonEncodeUs\":\"3\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"0\",\"recordType\":\"metric\",\"rpc.method\":\"provider.ping\",\"rpc.requestId\":\"host-4\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"4514003\"}",
+        "{\"compressionRatio\":0.825211389911279,\"compressionUs\":\"10492\",\"encodedPayloadBytes\":13844909,\"encoding\":\"zstd-json\",\"frameBytes\":13844919,\"jsonBytes\":16777409,\"jsonEncodeUs\":\"5561\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"2344\",\"recordType\":\"metric\",\"rpc.method\":\"provider.describe\",\"rpc.requestId\":\"host-2\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"4889676\"}",
+        "MUX_BENCH_BODY_STARTED",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":218,\"encoding\":\"raw-json\",\"frameBytes\":228,\"jsonBytes\":218,\"jsonEncodeUs\":\"9\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"19\",\"recordType\":\"metric\",\"rpc.method\":\"provider.initialize\",\"rpc.requestId\":\"host-1\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"101\"}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 4961.647833999999,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 121.251458,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 121.2425,
+      "stderrTail": [
+        "MUX_BENCH_BODY_STARTED",
+        "{\"name\":\"provider.mux.ready\",\"profile\":\"stdio-codepet-mux-v1\",\"receive\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000},\"role\":\"provider\",\"schema\":\"codepet.provider.transport.v1\",\"send\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000}}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 10005.15075,
+        "error": "provider_request_timeout"
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": false,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 10000.925958,
+        "error": "provider_request_timeout"
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 1048576,
+      "shutdownError": null,
+      "smallError": "provider_request_timeout",
+      "smallMs": 10000.946375,
+      "stderrTail": [
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":58,\"encoding\":\"raw-json\",\"frameBytes\":68,\"jsonBytes\":58,\"jsonEncodeUs\":\"0\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"6\",\"recordType\":\"metric\",\"rpc.method\":\"provider.shutdown\",\"rpc.requestId\":\"host-5\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"4\"}",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":75,\"encoding\":\"raw-json\",\"frameBytes\":85,\"jsonBytes\":75,\"jsonEncodeUs\":\"0\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"0\",\"recordType\":\"metric\",\"rpc.method\":\"provider.ping\",\"rpc.requestId\":\"host-4\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"7\"}",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":70,\"encoding\":\"raw-json\",\"frameBytes\":80,\"jsonBytes\":70,\"jsonEncodeUs\":\"0\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"40\",\"recordType\":\"metric\",\"rpc.method\":\"project.list\",\"rpc.requestId\":\"host-3\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"2\"}",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":218,\"encoding\":\"raw-json\",\"frameBytes\":228,\"jsonBytes\":218,\"jsonEncodeUs\":\"5\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"18\",\"recordType\":\"metric\",\"rpc.method\":\"provider.initialize\",\"rpc.requestId\":\"host-2\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"21\"}",
+        "MUX_BENCH_BODY_STARTED",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":218,\"encoding\":\"raw-json\",\"frameBytes\":228,\"jsonBytes\":218,\"jsonEncodeUs\":\"11\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"18\",\"recordType\":\"metric\",\"rpc.method\":\"provider.initialize\",\"rpc.requestId\":\"host-1\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"8\"}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 10006.362291,
+        "error": "provider_request_timeout"
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 425.134083,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 1048576,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 425.155041,
+      "stderrTail": [
+        "Provider stream ended: stream ended before message completed",
+        "MUX_BENCH_BODY_STARTED",
+        "{\"name\":\"provider.mux.ready\",\"profile\":\"stdio-codepet-mux-v1\",\"receive\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000},\"role\":\"provider\",\"schema\":\"codepet.provider.transport.v1\",\"send\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000}}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 10002.054250000001,
+        "error": "provider_request_timeout"
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": false,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 10002.280834000001,
+        "error": "provider_request_timeout"
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 1048576,
+      "shutdownError": null,
+      "smallError": "provider_request_timeout",
+      "smallMs": 10002.297875,
+      "stderrTail": [
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":58,\"encoding\":\"raw-json\",\"frameBytes\":68,\"jsonBytes\":58,\"jsonEncodeUs\":\"1\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"5\",\"recordType\":\"metric\",\"rpc.method\":\"provider.shutdown\",\"rpc.requestId\":\"host-5\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"131\"}",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":70,\"encoding\":\"raw-json\",\"frameBytes\":80,\"jsonBytes\":70,\"jsonEncodeUs\":\"2\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"16055493\",\"recordType\":\"metric\",\"rpc.method\":\"project.list\",\"rpc.requestId\":\"host-3\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"129\"}",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":75,\"encoding\":\"raw-json\",\"frameBytes\":85,\"jsonBytes\":75,\"jsonEncodeUs\":\"2\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"0\",\"recordType\":\"metric\",\"rpc.method\":\"provider.ping\",\"rpc.requestId\":\"host-4\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"16054187\"}",
+        "{\"compressionRatio\":0.825211389911279,\"compressionUs\":\"11194\",\"encodedPayloadBytes\":13844909,\"encoding\":\"zstd-json\",\"frameBytes\":13844919,\"jsonBytes\":16777409,\"jsonEncodeUs\":\"6169\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"2640\",\"recordType\":\"metric\",\"rpc.method\":\"provider.describe\",\"rpc.requestId\":\"host-2\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"17410274\"}",
+        "MUX_BENCH_BODY_STARTED",
+        "{\"compressionRatio\":1.0,\"compressionUs\":\"0\",\"encodedPayloadBytes\":218,\"encoding\":\"raw-json\",\"frameBytes\":228,\"jsonBytes\":218,\"jsonEncodeUs\":\"11\",\"name\":\"provider.frame.written\",\"providerProcessingUs\":\"18\",\"recordType\":\"metric\",\"rpc.method\":\"provider.initialize\",\"rpc.requestId\":\"host-1\",\"schema\":\"codepet.provider.transport.v1\",\"status\":\"ok\",\"writeAndFlushUs\":\"345\"}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 10001.931708,
+        "error": "provider_request_timeout"
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 426.81475,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 1048576,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 426.756416,
+      "stderrTail": [
+        "Provider stream ended: 00000001/3: connection is closed",
+        "MUX_BENCH_BODY_STARTED",
+        "{\"name\":\"provider.mux.ready\",\"profile\":\"stdio-codepet-mux-v1\",\"receive\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000},\"role\":\"provider\",\"schema\":\"codepet.provider.transport.v1\",\"send\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000}}"
+      ],
+      "trial": 1
+    }
+  ]
+}

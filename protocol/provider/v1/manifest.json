@@ -5,7 +5,9 @@
   "kind": "service",
   "transport": {
     "kind": "json-rpc-2.0",
-    "framing": "stdio-codepet-frame-v1",
+    "framing": "stdio-codepet-mux-v1",
+    "hello": { "$ref": "./schema.json#/$defs/ProviderTransportHello" },
+    "selection": { "$ref": "./schema.json#/$defs/ProviderTransportSelection" },
     "requestDiscriminator": "method",
     "eventDiscriminator": "method",
     "jsonRpcVersion": "2.0",

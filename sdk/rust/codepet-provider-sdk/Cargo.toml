@@ -12,8 +12,11 @@ codepet-agent-sdk = { path = "../codepet-agent-sdk", version = "0.1.0" }
 codepet-core-sdk = { path = "../codepet-core-sdk", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "rt", "sync", "time", "io-util"] }
 zstd = "0.13"
+futures = "0.3"
+tokio-util = { version = "0.7", features = ["compat"] }
+yamux = "=0.14.0"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt"] }
+tokio = { version = "1", features = ["macros", "rt", "net"] }

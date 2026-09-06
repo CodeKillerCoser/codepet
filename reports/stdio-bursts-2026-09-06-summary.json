@@ -1,0 +1,794 @@
+[
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 1024,
+    "count": 8,
+    "rateBytesPerSecond": 0,
+    "n": 3,
+    "small": {
+      "medianMs": 1.767125,
+      "minMs": 1.7340840000000002,
+      "maxMs": 2.169958,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 1.878958,
+      "minMs": 1.467625,
+      "maxMs": 2.323042,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 1.8612090000000001,
+      "min": 1.8261250000000002,
+      "max": 2.251
+    },
+    "recoveryPingMaxMs": 0.266333,
+    "providerReadyPeakRssBytes": 2293760,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 4276224,
+      "max": 4292608
+    },
+    "providerPeakRssBytes": {
+      "median": 4014080,
+      "max": 4030464
+    },
+    "triggerMs": {
+      "median": 0.092041,
+      "max": 0.094084
+    },
+    "firstIoObservedMs": {
+      "median": 0.08562499999999318,
+      "max": 0.08779199999999321
+    }
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "count": 1,
+    "rateBytesPerSecond": 0,
+    "n": 3,
+    "small": {
+      "medianMs": 9.985624999999999,
+      "minMs": 9.657041999999999,
+      "maxMs": 10.924833,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 10.119083,
+      "minMs": 9.772542,
+      "maxMs": 11.058791,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 17.884583,
+      "min": 17.587874999999997,
+      "max": 18.802042
+    },
+    "recoveryPingMaxMs": 0.171958,
+    "providerReadyPeakRssBytes": 2310144,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 36569088,
+      "max": 36569088
+    },
+    "providerPeakRssBytes": {
+      "median": 31080448,
+      "max": 31096832
+    },
+    "triggerMs": {
+      "median": 7.8989579999999995,
+      "max": 7.930833
+    },
+    "firstIoObservedMs": {
+      "median": 7.892540999999994,
+      "max": 7.9211659999999995
+    }
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "count": 4,
+    "rateBytesPerSecond": 0,
+    "n": 3,
+    "small": {
+      "medianMs": 27.336292,
+      "minMs": 10.018,
+      "maxMs": 27.655041,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 27.450208,
+      "minMs": 10.143834,
+      "maxMs": 27.782083,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 36.538459,
+      "min": 19.251916,
+      "max": 36.878749
+    },
+    "recoveryPingMaxMs": 0.162208,
+    "providerReadyPeakRssBytes": 2310144,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 135315456,
+      "max": 135331840
+    },
+    "providerPeakRssBytes": {
+      "median": 56393728,
+      "max": 56410112
+    },
+    "triggerMs": {
+      "median": 9.223708,
+      "max": 9.233916
+    },
+    "firstIoObservedMs": {
+      "median": 9.216791999999998,
+      "max": 9.221083000000007
+    }
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "count": 8,
+    "rateBytesPerSecond": 0,
+    "n": 3,
+    "small": {
+      "medianMs": 46.03725,
+      "minMs": 45.2435,
+      "maxMs": 46.096958,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 46.15625,
+      "minMs": 45.360042,
+      "maxMs": 46.237333,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 64.527166,
+      "min": 63.861208000000005,
+      "max": 65.258792
+    },
+    "recoveryPingMaxMs": 0.175291,
+    "providerReadyPeakRssBytes": 2310144,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 205996032,
+      "max": 207454208
+    },
+    "providerPeakRssBytes": {
+      "median": 90095616,
+      "max": 90112000
+    },
+    "triggerMs": {
+      "median": 18.489915999999997,
+      "max": 20.015292
+    },
+    "firstIoObservedMs": {
+      "median": 18.476207999999986,
+      "max": 19.99395800000002
+    }
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "count": 16,
+    "rateBytesPerSecond": 0,
+    "n": 3,
+    "small": {
+      "medianMs": 124.79145799999999,
+      "minMs": 120.410792,
+      "maxMs": 125.98220800000001,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 124.66025,
+      "minMs": 120.237417,
+      "maxMs": 126.09341600000002,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 162.728,
+      "min": 156.64516700000001,
+      "max": 164.30320799999998
+    },
+    "recoveryPingMaxMs": 0.221125,
+    "providerReadyPeakRssBytes": 2310144,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 328220672,
+      "max": 330022912
+    },
+    "providerPeakRssBytes": {
+      "median": 157581312,
+      "max": 158679040
+    },
+    "triggerMs": {
+      "median": 36.745792,
+      "max": 39.51175
+    },
+    "firstIoObservedMs": {
+      "median": 36.733750000000015,
+      "max": 39.45904200000004
+    }
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "count": 1,
+    "rateBytesPerSecond": 4194304,
+    "n": 3,
+    "small": {
+      "medianMs": 1664.5172499999999,
+      "minMs": 1664.391417,
+      "maxMs": 1665.321625,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 1664.7755,
+      "minMs": 1664.517917,
+      "maxMs": 1665.534333,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 1673.581834,
+      "min": 1673.430959,
+      "max": 1675.589583
+    },
+    "recoveryPingMaxMs": 0.26766700000000004,
+    "providerReadyPeakRssBytes": 2310144,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 36569088,
+      "max": 36585472
+    },
+    "providerPeakRssBytes": {
+      "median": 31096832,
+      "max": 31113216
+    },
+    "triggerMs": {
+      "median": 9.190417,
+      "max": 11.072333
+    },
+    "firstIoObservedMs": {
+      "median": 9.182167,
+      "max": 11.059415999999999
+    }
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "count": 4,
+    "rateBytesPerSecond": 4194304,
+    "n": 3,
+    "small": {
+      "medianMs": 4991.885834,
+      "minMs": 4987.777958,
+      "maxMs": 4993.3724999999995,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 4992.0197499999995,
+      "minMs": 4987.901125,
+      "maxMs": 4993.653709,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 5001.391001,
+      "min": 4996.965958,
+      "max": 5002.511457999999
+    },
+    "recoveryPingMaxMs": 0.20350000000000001,
+    "providerReadyPeakRssBytes": 2310144,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 135315456,
+      "max": 135331840
+    },
+    "providerPeakRssBytes": {
+      "median": 56492032,
+      "max": 59686912
+    },
+    "triggerMs": {
+      "median": 9.188,
+      "max": 9.505167
+    },
+    "firstIoObservedMs": {
+      "median": 9.177042,
+      "max": 9.497083000000003
+    }
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "count": 8,
+    "rateBytesPerSecond": 4194304,
+    "n": 3,
+    "small": {
+      "medianMs": 8311.846334,
+      "minMs": 8308.900208000001,
+      "maxMs": 8312.946,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 8312.030959,
+      "minMs": 8309.030208,
+      "maxMs": 8313.189375,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 8330.259375,
+      "min": 8328.366458,
+      "max": 8332.441542
+    },
+    "recoveryPingMaxMs": 0.35795899999999997,
+    "providerReadyPeakRssBytes": 2293760,
+    "largeTimeouts": 6,
+    "hostPeakRssBytes": {
+      "median": 207454208,
+      "max": 207536128
+    },
+    "providerPeakRssBytes": {
+      "median": 90193920,
+      "max": 93470720
+    },
+    "triggerMs": {
+      "median": 19.466250000000002,
+      "max": 19.495542
+    },
+    "firstIoObservedMs": {
+      "median": 19.441417,
+      "max": 19.483666999999997
+    }
+  },
+  {
+    "direction": "request",
+    "kind": "repeat",
+    "payloadBytes": 67108864,
+    "count": 8,
+    "rateBytesPerSecond": 0,
+    "n": 3,
+    "small": {
+      "medianMs": 14.756541,
+      "minMs": 13.655125,
+      "maxMs": 31.110125,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 14.892000000000001,
+      "minMs": 13.771291999999999,
+      "maxMs": 31.227332999999998,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 102.138042,
+      "min": 101.953125,
+      "max": 102.31691599999999
+    },
+    "recoveryPingMaxMs": 0.17545899999999998,
+    "providerReadyPeakRssBytes": 2310144,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 1347878912,
+      "max": 1347911680
+    },
+    "providerPeakRssBytes": {
+      "median": 611467264,
+      "max": 614350848
+    },
+    "triggerMs": {
+      "median": 87.560375,
+      "max": 88.298
+    },
+    "firstIoObservedMs": {
+      "median": 87.542875,
+      "max": 88.28741700000002
+    }
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 1024,
+    "count": 8,
+    "rateBytesPerSecond": 0,
+    "n": 3,
+    "small": {
+      "medianMs": 1.515375,
+      "minMs": 1.504458,
+      "maxMs": 1.558375,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 1.6439169999999999,
+      "minMs": 1.62675,
+      "maxMs": 1.680625,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 1.719875,
+      "min": 1.6744169999999998,
+      "max": 1.770333
+    },
+    "recoveryPingMaxMs": 0.17945799999999998,
+    "providerReadyPeakRssBytes": 2310144,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 4210688,
+      "max": 4243456
+    },
+    "providerPeakRssBytes": {
+      "median": 4014080,
+      "max": 4063232
+    },
+    "triggerMs": {
+      "median": 0.21195799999999998,
+      "max": 0.215417
+    },
+    "firstIoObservedMs": {
+      "median": 0.2062089999999941,
+      "max": 0.20925000000000438
+    }
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "count": 1,
+    "rateBytesPerSecond": 0,
+    "n": 3,
+    "small": {
+      "medianMs": 9.868791,
+      "minMs": 9.856583,
+      "maxMs": 9.961958,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 9.865832999999999,
+      "minMs": 9.853583,
+      "maxMs": 9.958666,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 18.32125,
+      "min": 18.251833,
+      "max": 18.360332999999997
+    },
+    "recoveryPingMaxMs": 0.1685,
+    "providerReadyPeakRssBytes": 10747904,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 39600128,
+      "max": 39600128
+    },
+    "providerPeakRssBytes": {
+      "median": 44859392,
+      "max": 44875776
+    },
+    "triggerMs": {
+      "median": 8.398375,
+      "max": 8.452459000000001
+    },
+    "firstIoObservedMs": {
+      "median": 8.389584,
+      "max": 8.445000000000007
+    }
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "count": 4,
+    "rateBytesPerSecond": 0,
+    "n": 3,
+    "small": {
+      "medianMs": 35.174208,
+      "minMs": 35.089292,
+      "maxMs": 35.833957999999996,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 35.175583,
+      "minMs": 35.092084,
+      "maxMs": 35.837917,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 45.77425,
+      "min": 45.532125,
+      "max": 46.586957999999996
+    },
+    "recoveryPingMaxMs": 0.154667,
+    "providerReadyPeakRssBytes": 10731520,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 64978944,
+      "max": 64978944
+    },
+    "providerPeakRssBytes": {
+      "median": 176046080,
+      "max": 176078848
+    },
+    "triggerMs": {
+      "median": 10.684958,
+      "max": 10.753
+    },
+    "firstIoObservedMs": {
+      "median": 10.674167000000004,
+      "max": 10.742916999999998
+    }
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "count": 8,
+    "rateBytesPerSecond": 0,
+    "n": 3,
+    "small": {
+      "medianMs": 52.895959,
+      "minMs": 52.64925,
+      "maxMs": 53.198083,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 27.136292,
+      "minMs": 18.980458,
+      "maxMs": 35.841084,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 63.421667,
+      "min": 62.798542000000005,
+      "max": 63.459374
+    },
+    "recoveryPingMaxMs": 0.163375,
+    "providerReadyPeakRssBytes": 10747904,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 98795520,
+      "max": 98795520
+    },
+    "providerPeakRssBytes": {
+      "median": 176111616,
+      "max": 176111616
+    },
+    "triggerMs": {
+      "median": 10.261291,
+      "max": 10.525708
+    },
+    "firstIoObservedMs": {
+      "median": 10.251749999999994,
+      "max": 10.510334
+    }
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "count": 16,
+    "rateBytesPerSecond": 0,
+    "n": 3,
+    "small": {
+      "medianMs": 131.47541700000002,
+      "minMs": 131.430042,
+      "maxMs": 132.003375,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 27.145334000000002,
+      "minMs": 10.076459,
+      "maxMs": 35.711375,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 142.298541,
+      "min": 142.09775000000002,
+      "max": 142.35783299999997
+    },
+    "recoveryPingMaxMs": 0.16037500000000002,
+    "providerReadyPeakRssBytes": 10731520,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 166412288,
+      "max": 168443904
+    },
+    "providerPeakRssBytes": {
+      "median": 176160768,
+      "max": 176226304
+    },
+    "triggerMs": {
+      "median": 10.622333,
+      "max": 10.927791
+    },
+    "firstIoObservedMs": {
+      "median": 10.608666999999997,
+      "max": 10.920167
+    }
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "count": 1,
+    "rateBytesPerSecond": 4194304,
+    "n": 3,
+    "small": {
+      "medianMs": 1664.725416,
+      "minMs": 1664.0975,
+      "maxMs": 1664.750291,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 1664.718958,
+      "minMs": 1664.096458,
+      "maxMs": 1664.7488329999999,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 1673.063958,
+      "min": 1672.4835,
+      "max": 1674.1747500000001
+    },
+    "recoveryPingMaxMs": 0.211166,
+    "providerReadyPeakRssBytes": 10747904,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 39616512,
+      "max": 39665664
+    },
+    "providerPeakRssBytes": {
+      "median": 44843008,
+      "max": 44859392
+    },
+    "triggerMs": {
+      "median": 8.386,
+      "max": 9.424458999999999
+    },
+    "firstIoObservedMs": {
+      "median": 8.381750000000004,
+      "max": 9.419041999999997
+    }
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "count": 4,
+    "rateBytesPerSecond": 4194304,
+    "n": 3,
+    "small": {
+      "medianMs": 6616.285833,
+      "minMs": 6615.9289579999995,
+      "maxMs": 6616.704583,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 6615.930958,
+      "minMs": 4966.55625,
+      "maxMs": 6616.288542,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 6627.334125,
+      "min": 6627.266624999999,
+      "max": 6629.33425
+    },
+    "recoveryPingMaxMs": 0.172542,
+    "providerReadyPeakRssBytes": 10731520,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 64978944,
+      "max": 68255744
+    },
+    "providerPeakRssBytes": {
+      "median": 176062464,
+      "max": 176095232
+    },
+    "triggerMs": {
+      "median": 11.337667,
+      "max": 12.629667000000001
+    },
+    "firstIoObservedMs": {
+      "median": 11.326249999999987,
+      "max": 12.618042000000003
+    }
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "count": 8,
+    "rateBytesPerSecond": 4194304,
+    "n": 3,
+    "small": {
+      "medianMs": 10001.378292,
+      "minMs": 10001.039375,
+      "maxMs": 10002.229583,
+      "timeouts": 3
+    },
+    "ping": {
+      "medianMs": 3316.907958,
+      "minMs": 1664.3760410000002,
+      "maxMs": 3318.221208,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 10013.155751,
+      "min": 10011.968167,
+      "max": 10015.083208
+    },
+    "recoveryPingMaxMs": 0.219167,
+    "providerReadyPeakRssBytes": 10731520,
+    "largeTimeouts": 6,
+    "hostPeakRssBytes": {
+      "median": 98828288,
+      "max": 98861056
+    },
+    "providerPeakRssBytes": {
+      "median": 176439296,
+      "max": 176717824
+    },
+    "triggerMs": {
+      "median": 11.777459,
+      "max": 12.853625000000001
+    },
+    "firstIoObservedMs": {
+      "median": 11.763041999999999,
+      "max": 12.841415999999995
+    }
+  },
+  {
+    "direction": "response",
+    "kind": "repeat",
+    "payloadBytes": 67108864,
+    "count": 8,
+    "rateBytesPerSecond": 0,
+    "n": 3,
+    "small": {
+      "medianMs": 93.975125,
+      "minMs": 74.993458,
+      "maxMs": 94.361458,
+      "timeouts": 0
+    },
+    "ping": {
+      "medianMs": 62.73970800000001,
+      "minMs": 50.140584000000004,
+      "maxMs": 74.131833,
+      "timeouts": 0
+    },
+    "smallFromBurstStartMs": {
+      "median": 139.913208,
+      "min": 120.12045800000001,
+      "max": 140.29000000000002
+    },
+    "recoveryPingMaxMs": 0.171792,
+    "providerReadyPeakRssBytes": 69451776,
+    "largeTimeouts": 0,
+    "hostPeakRssBytes": {
+      "median": 713523200,
+      "max": 747094016
+    },
+    "providerPeakRssBytes": {
+      "median": 1146388480,
+      "max": 1146454016
+    },
+    "triggerMs": {
+      "median": 45.55175,
+      "max": 46.314875
+    },
+    "firstIoObservedMs": {
+      "median": 45.53629200000001,
+      "max": 46.304334
+    }
+  }
+]

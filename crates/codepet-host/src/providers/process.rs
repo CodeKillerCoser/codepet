@@ -1,25 +1,25 @@
 use crate::providers::catalog::PluginDescriptor;
 use crate::{HostError, HostResult};
 use codepet_provider_sdk::{
-    JsonRpcInboundError, JsonRpcInboundRequest, JsonRpcResponsePayload, ProviderFrameCodec,
+    JsonRpcInboundError, JsonRpcInboundRequest, JsonRpcResponsePayload,
     ProtocolClient, ProtocolError, ProtocolInboundFuture, ProtocolMethod, ProtocolRequest,
     ProtocolTransport, ProtocolTransportFuture, ProviderShutdownRequest,
-    ProviderShutdownResponse, ProviderWireMessage, RequestId, RpcError,
-    MAX_PROVIDER_FRAME_BYTES, PROVIDER_FRAME_HEADER_BYTES,
+    ProviderShutdownResponse, ProviderWireMessage, RpcError,
+    MAX_PROVIDER_FRAME_BYTES,
 };
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
-use std::sync::{Arc, Mutex as StdMutex, Weak};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 use tokio::process::{ChildStderr, ChildStdin, ChildStdout, Command};
-use tokio::sync::{mpsc, oneshot, watch, Mutex};
+use tokio::sync::{mpsc, watch, Mutex};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
@@ -28,7 +28,6 @@ pub struct PluginProcessOptions {
     pub max_frame_bytes: usize,
     pub request_timeout: Duration,
     pub shutdown_timeout: Duration,
-    pub outbound_capacity: usize,
     pub inbound_capacity: usize,
     pub stderr_line_bytes: usize,
     pub stderr_history_lines: usize,
@@ -41,7 +40,6 @@ impl Default for PluginProcessOptions {
             max_frame_bytes: MAX_PROVIDER_FRAME_BYTES,
             request_timeout: Duration::from_secs(10),
             shutdown_timeout: Duration::from_secs(3),
-            outbound_capacity: 64,
             inbound_capacity: 256,
             stderr_line_bytes: 16 * 1024,
             stderr_history_lines: 128,
@@ -64,19 +62,12 @@ pub struct StderrDiagnostic {
     pub truncated: bool,
 }
 
-enum WriterCommand {
-    Frame(Vec<u8>),
-    Close,
-}
-
 enum ProcessCommand {
     Kill { reason: String },
 }
 
 struct RpcShared {
-    codec: ProviderFrameCodec,
-    writer: StdMutex<Option<mpsc::Sender<WriterCommand>>>,
-    pending: StdMutex<HashMap<RequestId, oneshot::Sender<Result<Value, ProtocolError>>>>,
+    mux: watch::Receiver<Option<Result<codepet_provider_sdk::ProviderMux, ProtocolError>>>,
     inbound: StdMutex<Option<mpsc::Sender<ProviderWireMessage>>>,
     next_request_id: AtomicU64,
     request_timeout: Duration,
@@ -95,33 +86,19 @@ impl RpcShared {
                 *close_error = Some(error.clone());
             }
             self.close_inbound();
-            self.fail_pending(error);
         }
         started
     }
 
     fn terminate(&self, error: ProtocolError) {
+        if let Some(Ok(peer)) = self.mux.borrow().as_ref() { peer.close(); }
         self.begin_shutdown(error.clone());
         self.close_inbound();
-        self.fail_pending(error);
-        if let Ok(mut writer) = self.writer.lock() {
-            if let Some(writer) = writer.take() {
-                let _ = writer.try_send(WriterCommand::Close);
-            }
-        }
     }
 
     fn close_inbound(&self) {
         if let Ok(mut inbound) = self.inbound.lock() {
             inbound.take();
-        }
-    }
-
-    fn fail_pending(&self, error: ProtocolError) {
-        if let Ok(mut pending) = self.pending.lock() {
-            for (_, sender) in pending.drain() {
-                let _ = sender.send(Err(error.clone()));
-            }
         }
     }
 
@@ -143,48 +120,6 @@ impl RpcShared {
             })
     }
 
-    fn writer(&self) -> Result<mpsc::Sender<WriterCommand>, ProtocolError> {
-        self.writer
-            .lock()
-            .ok()
-            .and_then(|writer| writer.clone())
-            .ok_or_else(|| self.closed_error())
-    }
-
-    fn insert_pending(
-        &self,
-        request_id: RequestId,
-        sender: oneshot::Sender<Result<Value, ProtocolError>>,
-    ) -> Result<(), ProtocolError> {
-        self.pending
-            .lock()
-            .map_err(|_| {
-                protocol_error(
-                    "provider_pending_unavailable",
-                    "Provider pending request state is unavailable",
-                    true,
-                )
-            })?
-            .insert(request_id, sender);
-        Ok(())
-    }
-
-    fn remove_pending(&self, request_id: &str) {
-        if let Ok(mut pending) = self.pending.lock() {
-            pending.remove(request_id);
-        }
-    }
-
-    fn take_pending(
-        &self,
-        request_id: &str,
-    ) -> Option<oneshot::Sender<Result<Value, ProtocolError>>> {
-        self.pending
-            .lock()
-            .ok()
-            .and_then(|mut pending| pending.remove(request_id))
-    }
-
     fn send_inbound(&self, message: ProviderWireMessage) -> Result<(), ProtocolError> {
         let sender = self
             .inbound
@@ -201,37 +136,18 @@ impl RpcShared {
         })
     }
 
-    async fn close_writer(&self, deadline: Instant) -> Result<(), ProtocolError> {
-        let writer = self
-            .writer
-            .lock()
-            .ok()
-            .and_then(|mut writer| writer.take());
-        let Some(writer) = writer else {
-            return Ok(());
-        };
-        match tokio::time::timeout_at(deadline, writer.send(WriterCommand::Close)).await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(_)) => Err(self.closed_error()),
-            Err(_) => Err(protocol_error(
-                "provider_writer_close_timeout",
-                "timed out closing Provider stdin",
-                true,
-            )),
-        }
+    async fn wait_inbound_consumed(&self) -> Result<(), ProtocolError> {
+        let sender = self.inbound.lock().ok().and_then(|sender| sender.clone())
+            .ok_or_else(|| self.closed_error())?;
+        // Mux events are serial. Reserving the entire queue waits until its consumer has
+        // taken the event; the caller retains that event's receive budget until this point.
+        let permits = sender.reserve_many(sender.max_capacity()).await.map_err(|_| self.closed_error())?;
+        drop(permits);
+        Ok(())
     }
-}
 
-struct PendingRequest {
-    shared: Weak<RpcShared>,
-    request_id: RequestId,
-}
-
-impl Drop for PendingRequest {
-    fn drop(&mut self) {
-        if let Some(shared) = self.shared.upgrade() {
-            shared.remove_pending(&self.request_id);
-        }
+    fn close_transport(&self) {
+        if let Some(Ok(peer)) = self.mux.borrow().as_ref() { peer.close(); }
     }
 }
 
@@ -284,30 +200,27 @@ impl ProviderRpcClient {
         if self.shared.is_shutting_down() && !during_shutdown {
             return Err(self.shared.closed_error());
         }
-        let writer = self.shared.writer()?;
         let sequence = self.shared.next_request_id.fetch_add(1, Ordering::SeqCst);
         let request_id = format!("host-{sequence}");
         let request = ProtocolRequest::from_method_params(method, request_id.clone(), params)?;
         let message = ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request));
-        let frame = self.shared.codec.encode_message(&message)?;
-        let (response_sender, response_receiver) = oneshot::channel();
-        self.shared
-            .insert_pending(request_id.clone(), response_sender)?;
-        let _pending = PendingRequest {
-            shared: Arc::downgrade(&self.shared),
-            request_id: request_id.clone(),
-        };
-
-        match tokio::time::timeout_at(deadline, writer.send(WriterCommand::Frame(frame))).await {
-            Ok(Ok(())) => {}
-            Ok(Err(_)) => return Err(self.shared.closed_error()),
-            Err(_) => return Err(request_timeout_error(method, &request_id, "write queue")),
-        }
-
-        match tokio::time::timeout_at(deadline, response_receiver).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err(self.shared.closed_error()),
-            Err(_) => Err(request_timeout_error(method, &request_id, "response")),
+        let mut state = self.shared.mux.clone();
+        match tokio::time::timeout_at(deadline, async {
+                let peer = loop {
+                    if let Some(result) = state.borrow().clone() { break result?; }
+                    state.changed().await.map_err(|_| self.shared.closed_error())?;
+                };
+                let received = peer.exchange(message).await?;
+                match received.message {
+                    ProviderWireMessage::Response(response) if response.id.as_deref() == Some(&request_id) => match response.response {
+                        JsonRpcResponsePayload::Ok { result } => Ok(result),
+                        JsonRpcResponsePayload::Error { error } => Err(rpc_error_to_protocol(error)),
+                    },
+                    _ => Err(protocol_error("provider_mux_response_mismatch", "Provider response does not match request stream", false)),
+                }
+            }).await {
+                Ok(result) => result,
+                Err(_) => Err(request_timeout_error(method, &request_id, "stream")),
         }
     }
 
@@ -380,11 +293,19 @@ impl PluginProcess {
         options: PluginProcessOptions,
     ) -> HostResult<Self> {
         validate_executable(&descriptor.executable)?;
-        let codec = ProviderFrameCodec::new(options.max_frame_bytes).map_err(HostError::from)?;
+        if !(1024..=MAX_PROVIDER_FRAME_BYTES).contains(&options.max_frame_bytes) {
+            return Err(HostError::new("invalid_frame_limit", "mux encoded message limit must be between 1024 bytes and 16 MiB"));
+        }
+        let profile = descriptor.env.get(codepet_provider_sdk::TRANSPORT_ENV).map(String::as_str)
+            .unwrap_or(codepet_provider_sdk::MUX_PROFILE);
+        if profile != codepet_provider_sdk::MUX_PROFILE {
+            return Err(HostError::new("unsupported_provider_transport", format!("unsupported Provider transport: {profile}")));
+        }
         let mut command = Command::new(&descriptor.executable);
         command
             .args(&descriptor.args)
             .envs(&descriptor.env)
+            .env(codepet_provider_sdk::TRANSPORT_ENV, profile)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -429,17 +350,15 @@ impl PluginProcess {
             )
         })?;
 
-        let (writer_sender, writer_receiver) = mpsc::channel(options.outbound_capacity.max(1));
         let (inbound_sender, inbound_receiver) = mpsc::channel(options.inbound_capacity.max(1));
         let (control_sender, control_receiver) = mpsc::channel(4);
         let (exit_sender, exit_receiver) = watch::channel(None);
         let diagnostics = Arc::new(StdMutex::new(VecDeque::with_capacity(
             options.stderr_history_lines.max(1),
         )));
+        let (mux_ready, mux_state) = watch::channel(None);
         let shared = Arc::new(RpcShared {
-            codec,
-            writer: StdMutex::new(Some(writer_sender)),
-            pending: StdMutex::new(HashMap::new()),
+            mux: mux_state,
             inbound: StdMutex::new(Some(inbound_sender)),
             next_request_id: AtomicU64::new(1),
             request_timeout: options.request_timeout,
@@ -447,17 +366,7 @@ impl PluginProcess {
             close_error: StdMutex::new(None),
         });
 
-        let writer = spawn_tracked(writer_loop(
-            stdin,
-            writer_receiver,
-            Arc::downgrade(&shared),
-            control_sender.clone(),
-        ));
-        let reader = spawn_tracked(reader_loop(
-            stdout,
-            shared.clone(),
-            control_sender.clone(),
-        ));
+        let transport = spawn_tracked(mux_loop(stdout, stdin, shared.clone(), control_sender.clone(), mux_ready, options.max_frame_bytes));
         let stderr = spawn_tracked(stderr_loop(
             stderr,
             diagnostics.clone(),
@@ -471,8 +380,7 @@ impl PluginProcess {
             control_receiver,
             exit_sender,
             shared.clone(),
-            writer,
-            reader,
+            transport,
             stderr,
             options.shutdown_timeout,
         ));
@@ -554,7 +462,7 @@ impl PluginProcess {
         } else {
             Ok(())
         };
-        let _ = self.shared.close_writer(deadline).await;
+        self.shared.close_transport();
         if let Some(exit) = wait_for_exit_until(&self.exit, deadline).await {
             shutdown_result?;
             return Ok(exit);
@@ -601,153 +509,50 @@ impl Drop for PluginProcess {
     }
 }
 
-async fn writer_loop(
-    mut stdin: ChildStdin,
-    mut receiver: mpsc::Receiver<WriterCommand>,
-    shared: Weak<RpcShared>,
-    control: mpsc::Sender<ProcessCommand>,
+async fn mux_loop(
+    stdout: ChildStdout, stdin: ChildStdin, shared: Arc<RpcShared>, control: mpsc::Sender<ProcessCommand>,
+    ready: watch::Sender<Option<Result<codepet_provider_sdk::ProviderMux, ProtocolError>>>, max_frame_bytes: usize,
 ) {
-    while let Some(command) = receiver.recv().await {
-        let result = match command {
-            WriterCommand::Frame(frame) => async {
-                stdin.write_all(&frame).await?;
-                stdin.flush().await
-            }
-            .await,
-            WriterCommand::Close => {
-                let result = stdin.shutdown().await;
-                if let Err(error) = result {
-                    if let Some(shared) = shared.upgrade() {
-                        let failure = protocol_error(
-                            "provider_stdin_close_failed",
-                            format!("close Provider stdin: {error}"),
-                            true,
-                        );
-                        shared.terminate(failure.clone());
-                        let _ = control
-                            .send(ProcessCommand::Kill {
-                                reason: failure.message,
-                            })
-                            .await;
-                    }
-                }
-                return;
-            }
-        };
-        if let Err(error) = result {
-            if let Some(shared) = shared.upgrade() {
-                let failure = protocol_error(
-                    "provider_stdin_write_failed",
-                    format!("write Provider stdin: {error}"),
-                    true,
-                );
-                shared.terminate(failure.clone());
-                let _ = control
-                    .send(ProcessCommand::Kill {
-                        reason: failure.message,
-                    })
-                    .await;
-            }
-            return;
-        }
-    }
-    let _ = stdin.shutdown().await;
-}
-
-async fn reader_loop(
-    stdout: ChildStdout,
-    shared: Arc<RpcShared>,
-    control: mpsc::Sender<ProcessCommand>,
-) {
-    let mut reader = BufReader::new(stdout);
-    loop {
-        let frame = match read_provider_frame(&mut reader, shared.codec, "Provider stdout").await {
-            Ok(Some(frame)) => frame,
-            Ok(None) if shared.is_shutting_down() => return,
-            Ok(None) => {
-                fail_transport(
-                    &shared,
-                    &control,
-                    protocol_error(
-                        "provider_stdout_eof",
-                        "Provider stdout reached EOF",
-                        true,
-                    ),
-                )
-                .await;
-                return;
-            }
-            Err(error) => {
-                fail_transport(&shared, &control, error).await;
-                return;
-            }
-        };
-        let message = match shared.codec.decode_frame(&frame) {
-            Ok(message) => message,
-            Err(error) => {
-                fail_transport(&shared, &control, inbound_error_to_protocol(error)).await;
-                return;
-            }
-        };
-        match message {
-            ProviderWireMessage::Response(response) => {
-                let Some(id) = response.id else {
-                    fail_transport(
-                        &shared,
-                        &control,
-                        protocol_error(
-                            "provider_response_missing_id",
-                            "Provider response did not contain a request id",
-                            false,
-                        ),
-                    )
-                    .await;
-                    return;
+    let mut limits = codepet_provider_sdk::default_transport_limits();
+    limits.max_encoded_message_bytes = max_frame_bytes as u64;
+    let connected = codepet_provider_sdk::ProviderMux::connect(stdout, stdin, true, limits).await;
+    let (peer, mut incoming, mut driver) = match connected {
+        Ok(value) => value,
+        Err(e) => { ready.send_replace(Some(Err(e.clone()))); fail_transport(&shared, &control, e).await; return; }
+    };
+    ready.send_replace(Some(Ok(peer.clone())));
+    let result = loop {
+        tokio::select! {
+            result = &mut driver => break result.unwrap_or_else(|e| Err(protocol_error("provider_mux_driver_failed", e.to_string(), true))),
+            next = incoming.recv() => {
+                let Some(mut stream) = next else {
+                    break (&mut driver).await.unwrap_or_else(|e| Err(protocol_error("provider_mux_driver_failed", e.to_string(), true)));
                 };
-                if let Some(sender) = shared.take_pending(&id) {
-                    let result = match response.response {
-                        JsonRpcResponsePayload::Ok { result } => Ok(result),
-                        JsonRpcResponsePayload::Error { error } => {
-                            Err(rpc_error_to_protocol(error))
+                let received = tokio::time::timeout(peer.stream_timeout(), stream.receive()).await;
+                match received {
+                    Ok(Ok(received)) => match received.message {
+                        ProviderWireMessage::Event(event) => {
+                            if !shared.is_shutting_down() {
+                                if let Err(e) = shared.send_inbound(ProviderWireMessage::Event(event)) { break Err(e); }
+                                let consumed = tokio::select! {
+                                    consumed = shared.wait_inbound_consumed() => consumed,
+                                    result = &mut driver => break result.unwrap_or_else(|e| Err(protocol_error("provider_mux_driver_failed", e.to_string(), true))),
+                                };
+                                if let Err(e) = consumed { if !shared.is_shutting_down() { break Err(e); } }
+                            }
+                            if let Err(e) = stream.acknowledge().await { if !shared.is_shutting_down() { break Err(e); } }
                         }
-                    };
-                    let _ = sender.send(result);
+                        _ => break Err(protocol_error("unexpected_provider_request", "Provider may only open event streams", false)),
+                    },
+                    Ok(Err(e)) => break Err(e),
+                    Err(_) => break Err(protocol_error("provider_event_timeout", "Provider event stream expired", true)),
                 }
-            }
-            ProviderWireMessage::Event(event) => {
-                if shared.is_shutting_down() {
-                    continue;
-                }
-                if let Err(error) = shared.send_inbound(ProviderWireMessage::Event(event)) {
-                    fail_transport(&shared, &control, error).await;
-                    return;
-                }
-            }
-            ProviderWireMessage::Notification(notification) => {
-                if shared.is_shutting_down() {
-                    continue;
-                }
-                if let Err(error) = shared
-                    .send_inbound(ProviderWireMessage::Notification(notification))
-                {
-                    fail_transport(&shared, &control, error).await;
-                    return;
-                }
-            }
-            ProviderWireMessage::Request(_) => {
-                fail_transport(
-                    &shared,
-                    &control,
-                    protocol_error(
-                        "unexpected_provider_request",
-                        "Provider sent a host-to-plugin request on stdout",
-                        false,
-                    ),
-                )
-                .await;
-                return;
             }
         }
+    };
+    peer.close(); driver.abort();
+    if !shared.is_shutting_down() {
+        fail_transport(&shared, &control, result.err().unwrap_or_else(|| protocol_error("provider_process_closed", "Provider mux closed", true))).await;
     }
 }
 
@@ -864,8 +669,7 @@ async fn process_monitor(
     mut control: mpsc::Receiver<ProcessCommand>,
     exit_sender: watch::Sender<Option<PluginProcessExit>>,
     shared: Arc<RpcShared>,
-    writer: JoinHandle<()>,
-    reader: JoinHandle<()>,
+    transport: JoinHandle<()>,
     stderr: JoinHandle<()>,
     drain_timeout: Duration,
 ) {
@@ -918,20 +722,18 @@ async fn process_monitor(
             .unwrap_or_else(|| "Provider process exited".to_string()),
         true,
     ));
-    drain_io_tasks(writer, reader, stderr, drain_timeout).await;
+    drain_io_tasks(transport, stderr, drain_timeout).await;
     let _ = exit_sender.send(Some(exit));
 }
 
 async fn drain_io_tasks(
-    writer: JoinHandle<()>,
-    reader: JoinHandle<()>,
+    transport: JoinHandle<()>,
     stderr: JoinHandle<()>,
     timeout: Duration,
 ) {
     let deadline = Instant::now() + timeout;
     tokio::join!(
-        drain_task(writer, deadline),
-        drain_task(reader, deadline),
+        drain_task(transport, deadline),
         drain_task(stderr, deadline),
     );
 }
@@ -981,48 +783,6 @@ async fn wait_for_exit_completion(
     }
 }
 
-async fn read_provider_frame<R: AsyncRead + Unpin>(
-    reader: &mut R,
-    codec: ProviderFrameCodec,
-    source: &str,
-) -> Result<Option<Vec<u8>>, ProtocolError> {
-    let mut header = [0_u8; PROVIDER_FRAME_HEADER_BYTES];
-    let first = reader.read(&mut header[..1]).await.map_err(|error| {
-        protocol_error(
-            "provider_frame_read_failed",
-            format!("read {source} frame header: {error}"),
-            true,
-        )
-    })?;
-    if first == 0 {
-        return Ok(None);
-    }
-    reader.read_exact(&mut header[1..]).await.map_err(|error| {
-        protocol_error(
-            "provider_frame_truncated",
-            format!("read {source} frame header: {error}"),
-            false,
-        )
-    })?;
-    let decoded_header = codec
-        .decode_header(&header)
-        .map_err(inbound_error_to_protocol)?;
-    let mut frame = Vec::with_capacity(PROVIDER_FRAME_HEADER_BYTES + decoded_header.payload_length);
-    frame.extend_from_slice(&header);
-    frame.resize(PROVIDER_FRAME_HEADER_BYTES + decoded_header.payload_length, 0);
-    reader
-        .read_exact(&mut frame[PROVIDER_FRAME_HEADER_BYTES..])
-        .await
-        .map_err(|error| {
-            protocol_error(
-                "provider_frame_truncated",
-                format!("read {source} frame payload: {error}"),
-                false,
-            )
-        })?;
-    Ok(Some(frame))
-}
-
 async fn read_diagnostic_line<R: AsyncBufRead + Unpin>(
     reader: &mut R,
     limit: usize,
@@ -1058,20 +818,6 @@ async fn read_diagnostic_line<R: AsyncBufRead + Unpin>(
             }
             return Ok(Some((String::from_utf8_lossy(&payload).into_owned(), truncated)));
         }
-    }
-}
-
-fn inbound_error_to_protocol(error: JsonRpcInboundError) -> ProtocolError {
-    let mut details = error.error.data.unwrap_or_default();
-    if let Some(id) = error.id {
-        details.insert("requestId".to_string(), Value::String(id));
-    }
-    details.insert("rpcCode".to_string(), Value::from(error.error.code));
-    ProtocolError {
-        code: "provider_invalid_frame".to_string(),
-        message: error.error.message,
-        retryable: false,
-        details: Some(details),
     }
 }
 
@@ -1210,7 +956,6 @@ mod tests {
     enum TerminalAction {
         RequestFailure,
         Timeout,
-        Shutdown,
         Drop,
     }
 
@@ -1249,11 +994,6 @@ mod tests {
                 name: "timeout",
                 script: "dd bs=10 count=1 of=/dev/null 2>/dev/null; sleep 1",
                 action: TerminalAction::Timeout,
-            },
-            TerminalCase {
-                name: "normal-shutdown",
-                script: "dd bs=10 count=1 of=/dev/null 2>/dev/null; printf 'CPRF\\001\\000\\000\\000\\000\\072{\"jsonrpc\":\"2.0\",\"id\":\"host-1\",\"result\":{\"accepted\":true}}'",
-                action: TerminalAction::Shutdown,
             },
             TerminalCase {
                 name: "drop",
@@ -1306,11 +1046,7 @@ mod tests {
                         .await
                         .unwrap_err();
                     assert_eq!(error.code, "provider_request_timeout");
-                    assert!(process.shared.pending.lock().unwrap().is_empty());
                     process.force_kill("terminal timeout test").await.unwrap();
-                }
-                TerminalAction::Shutdown => {
-                    assert!(process.shutdown().await.unwrap().success);
                 }
                 TerminalAction::Drop => {
                     drop(process);
@@ -1328,8 +1064,6 @@ mod tests {
                     continue;
                 }
             }
-            assert!(process.shared.writer.lock().unwrap().is_none());
-            assert!(process.shared.pending.lock().unwrap().is_empty());
             assert!(process.shared.inbound.lock().unwrap().is_none());
             assert!(inbound.recv().await.is_none());
             drop(process);
@@ -1377,18 +1111,13 @@ mod tests {
             },
         )
         .unwrap();
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while !descendant_pid.exists() {
+        let pid = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(pid) = std::fs::read_to_string(&descendant_pid).ok()
+                    .and_then(|value| value.trim().parse::<i32>().ok()) { break pid; }
                 tokio::task::yield_now().await;
             }
-        })
-        .await
-        .unwrap();
-        let pid = std::fs::read_to_string(&descendant_pid)
-            .unwrap()
-            .trim()
-            .parse::<i32>()
-            .unwrap();
+        }).await.unwrap();
 
         process.force_kill("process tree test").await.unwrap();
 

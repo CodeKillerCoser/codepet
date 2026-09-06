@@ -1,4 +1,4 @@
-use crate::{
+use crate::generated::{
     decode_wire_message, encode_event, encode_request, encode_response, JsonRpcInboundError,
     JsonRpcInboundRequest, ProtocolError, ProviderWireMessage, RpcError,
     JSON_RPC_INTERNAL_ERROR, JSON_RPC_INVALID_REQUEST,
@@ -6,43 +6,15 @@ use crate::{
 use std::io::{ErrorKind, Read, Write};
 use std::time::Instant;
 
-pub const PROVIDER_FRAME_MAGIC: [u8; 4] = *b"CPRF";
-pub const PROVIDER_FRAME_VERSION: u8 = 1;
-pub const PROVIDER_FRAME_HEADER_BYTES: usize = 10;
-pub const MAX_PROVIDER_FRAME_BYTES: usize = 16 * 1024 * 1024;
-pub const PROVIDER_FRAME_COMPRESSION_THRESHOLD_BYTES: usize = 32 * 1024;
+use crate::transport::frame::*;
+use crate::transport::frame::encode_header;
 
 const MIN_COMPRESSION_SAVINGS_BYTES: usize = 1024;
 const ZSTD_COMPRESSION_LEVEL: i32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ProviderFrameEncoding {
-    RawJson = 0,
-    ZstdJson = 1,
-}
-
-impl ProviderFrameEncoding {
-    fn from_byte(value: u8) -> Result<Self, JsonRpcInboundError> {
-        match value {
-            0 => Ok(Self::RawJson),
-            1 => Ok(Self::ZstdJson),
-            _ => Err(inbound_frame_error(format!(
-                "unsupported Provider frame encoding: {value}"
-            ))),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProviderFrameCodec {
     max_frame_bytes: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ProviderFrameHeader {
-    pub payload_length: usize,
-    encoding: ProviderFrameEncoding,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,15 +31,6 @@ pub struct ProviderFrameEncodeMetrics {
 pub struct EncodedProviderFrame {
     pub frame: Vec<u8>,
     pub metrics: ProviderFrameEncodeMetrics,
-}
-
-impl ProviderFrameEncoding {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::RawJson => "raw-json",
-            Self::ZstdJson => "zstd-json",
-        }
-    }
 }
 
 impl ProviderFrameCodec {
@@ -92,34 +55,9 @@ impl ProviderFrameCodec {
     }
 
     pub fn decode_header(
-        &self,
-        header: &[u8; PROVIDER_FRAME_HEADER_BYTES],
+        &self, header: &[u8; PROVIDER_FRAME_HEADER_BYTES],
     ) -> Result<ProviderFrameHeader, JsonRpcInboundError> {
-        if header[..4] != PROVIDER_FRAME_MAGIC {
-            return Err(inbound_frame_error("invalid Provider frame magic"));
-        }
-        if header[4] != PROVIDER_FRAME_VERSION {
-            return Err(inbound_frame_error(format!(
-                "unsupported Provider frame version: {}",
-                header[4]
-            )));
-        }
-        let encoding = ProviderFrameEncoding::from_byte(header[5])?;
-        let payload_length =
-            u32::from_be_bytes(header[6..10].try_into().expect("fixed header")) as usize;
-        let frame_length = PROVIDER_FRAME_HEADER_BYTES
-            .checked_add(payload_length)
-            .ok_or_else(|| inbound_frame_error("Provider frame length overflow"))?;
-        if frame_length > self.max_frame_bytes {
-            return Err(inbound_frame_error(format!(
-                "Provider frame exceeds {} bytes",
-                self.max_frame_bytes
-            )));
-        }
-        Ok(ProviderFrameHeader {
-            payload_length,
-            encoding,
-        })
+        ProviderFrameHeader::decode(header, self.max_frame_bytes).map_err(|e| inbound_frame_error(e.message))
     }
 
     pub fn encode_message(
@@ -277,10 +215,7 @@ impl ProviderFrameCodec {
             ));
         }
         let mut frame = Vec::with_capacity(frame_length);
-        frame.extend_from_slice(&PROVIDER_FRAME_MAGIC);
-        frame.push(PROVIDER_FRAME_VERSION);
-        frame.push(encoding as u8);
-        frame.extend_from_slice(&(encoded_payload.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&encode_header(encoded_payload.len(), encoding));
         frame.extend_from_slice(&encoded_payload);
         Ok(EncodedProviderFrame {
             metrics: ProviderFrameEncodeMetrics {

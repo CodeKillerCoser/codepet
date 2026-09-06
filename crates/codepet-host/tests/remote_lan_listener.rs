@@ -429,14 +429,20 @@ fn cursor_sequence(cursor: &str) -> u64 {
     cursor.strip_prefix("event-").unwrap().parse().unwrap()
 }
 
+fn fixture_event_batch_complete(events: &[gateway::ProtocolEvent]) -> bool {
+    events.windows(2).any(|pair| matches!(pair,
+        [gateway::ProtocolEvent::TurnOutputDelta { .. }, gateway::ProtocolEvent::ConversationActivityChanged { .. }]))
+}
+
 async fn collect_response_and_events(
     socket: &mut TestWebSocket,
     response_id: &str,
-    event_count: usize,
 ) -> (gateway::JsonRpcResponse, Vec<gateway::ProtocolEvent>) {
     let mut response = None;
     let mut events = Vec::new();
-    while response.is_none() || events.len() < event_count {
+    // Mux response/event streams can complete in either order. Drain the fixture's
+    // final delta and the activity event that Gateway publishes immediately after it.
+    while response.is_none() || !fixture_event_batch_complete(&events) {
         let value = next_value(socket).await;
         if value.get("id").is_some() {
             assert_eq!(value.get("id").and_then(|id| id.as_str()), Some(response_id));
@@ -455,7 +461,7 @@ async fn assert_close_reason(socket: &mut TestWebSocket, expected: &str) {
         .unwrap()
         .unwrap();
     let Message::Close(Some(frame)) = message else {
-        panic!("expected a WebSocket close frame");
+        panic!("expected a WebSocket close frame ({expected}), got {message:?}");
     };
     assert_eq!(frame.reason, expected);
 }
@@ -1012,13 +1018,13 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     .await;
     let subscribed = next_response(&mut socket_a, "subscribe-a").await;
     let _: gateway::EventSubscribeResponse = response_result(subscribed);
-    let replay_one: gateway::ProtocolEvent = serde_json::from_value(next_value(&mut socket_a).await).unwrap();
-    let replay_two: gateway::ProtocolEvent = serde_json::from_value(next_value(&mut socket_a).await).unwrap();
-    let replay_sequences = [
-        cursor_sequence(event_cursor(&replay_one)),
-        cursor_sequence(event_cursor(&replay_two)),
-    ];
-    assert!(replay_sequences[0] < replay_sequences[1]);
+    let mut replay_events = Vec::new();
+    while !fixture_event_batch_complete(&replay_events) {
+        replay_events.push(serde_json::from_value(next_value(&mut socket_a).await).unwrap());
+    }
+    let replay_sequences = replay_events.iter().map(|event| cursor_sequence(event_cursor(event))).collect::<Vec<_>>();
+    assert!(replay_sequences.len() >= 3);
+    assert!(replay_sequences.windows(2).all(|pair| pair[0] < pair[1]));
 
     send_request(
         &mut socket_a,
@@ -1033,12 +1039,12 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         },
     )
     .await;
-    let (_, live_events) = collect_response_and_events(&mut socket_a, "live-event-a", 5).await;
+    let (_, live_events) = collect_response_and_events(&mut socket_a, "live-event-a").await;
     let live_sequences = live_events
         .iter()
         .map(|event| cursor_sequence(event_cursor(event)))
         .collect::<Vec<_>>();
-    assert!(replay_sequences[1] < live_sequences[0]);
+    assert!(*replay_sequences.last().unwrap() < live_sequences[0]);
     assert!(live_sequences.windows(2).all(|pair| pair[0] < pair[1]));
 
     send_request(
@@ -1108,7 +1114,7 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     )
     .await;
     let (_, client_a_events) =
-        collect_response_and_events(&mut socket_a, "client-a-only", 5).await;
+        collect_response_and_events(&mut socket_a, "client-a-only").await;
     assert!(timeout(Duration::from_millis(150), socket_b.next())
         .await
         .is_err());
@@ -1142,14 +1148,11 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     )
     .await;
     let (_, events_a) =
-        collect_response_and_events(&mut socket_a, "shared-event-source-a", 5).await;
-    let events_b = [
-        serde_json::from_value::<gateway::ProtocolEvent>(next_value(&mut socket_b).await).unwrap(),
-        serde_json::from_value::<gateway::ProtocolEvent>(next_value(&mut socket_b).await).unwrap(),
-        serde_json::from_value::<gateway::ProtocolEvent>(next_value(&mut socket_b).await).unwrap(),
-        serde_json::from_value::<gateway::ProtocolEvent>(next_value(&mut socket_b).await).unwrap(),
-        serde_json::from_value::<gateway::ProtocolEvent>(next_value(&mut socket_b).await).unwrap(),
-    ];
+        collect_response_and_events(&mut socket_a, "shared-event-source-a").await;
+    let mut events_b = Vec::new();
+    for _ in 0..events_a.len() {
+        events_b.push(serde_json::from_value::<gateway::ProtocolEvent>(next_value(&mut socket_b).await).unwrap());
+    }
     assert!(events_a
         .iter()
         .zip(events_b.iter())

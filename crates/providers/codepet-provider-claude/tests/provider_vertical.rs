@@ -1,3 +1,6 @@
+#[path = "../../test_support/mux_stdio.rs"]
+mod mux_stdio;
+
 use codepet_provider_claude::{
     decode_claude_output, ClaudeOutput, ClaudeProvider, ProviderEventSink,
     CLAUDE_INSTANCE_KIND, CLAUDE_PLUGIN_ID,
@@ -15,7 +18,7 @@ use codepet_provider_sdk::{
 };
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::fd::OwnedFd;
 #[cfg(unix)]
@@ -923,15 +926,14 @@ fn captured_claude_2_1_251_output_decodes_without_guessed_fields() {
 }
 
 #[test]
-fn provider_binary_uses_generated_dispatcher_over_binary_frame_v1() {
+fn provider_binary_negotiates_mux_by_default_before_generated_dispatch() {
     let mut child = Command::new(provider_executable())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    let mut stdin = child.stdin.take().unwrap();
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let (mut stdin, mut stdout) = mux_stdio::connect(child.stdin.take().unwrap(), child.stdout.take().unwrap());
 
     let initialized = binary_request(
         &mut stdin,
@@ -1002,7 +1004,7 @@ fn provider_binary_reaps_active_tree_after_response_pipe_breaks() {
         stdout_backpressure: _,
         pids,
     } = active_provider_binary(workspace.path());
-    drop(stdout);
+    stdout.pause();
     write_provider_value(
         &mut stdin,
         json!({
@@ -1013,6 +1015,7 @@ fn provider_binary_reaps_active_tree_after_response_pipe_breaks() {
         }),
     );
 
+    drop(stdout);
     let status = wait_for_provider_exit(&mut child);
     drop(stdin);
     assert!(!status.success());
@@ -1021,7 +1024,7 @@ fn provider_binary_reaps_active_tree_after_response_pipe_breaks() {
 
 #[cfg(unix)]
 #[test]
-fn provider_binary_reaps_active_tree_after_invalid_json_under_stdout_backpressure() {
+fn provider_binary_reaps_active_tree_after_invalid_mux_header_under_stdout_backpressure() {
     let workspace = tempfile::tempdir().unwrap();
     let ActiveProviderBinary {
         mut child,
@@ -1030,9 +1033,9 @@ fn provider_binary_reaps_active_tree_after_invalid_json_under_stdout_backpressur
         mut stdout_backpressure,
         pids,
     } = active_provider_binary(workspace.path());
+    _stdout.pause();
     saturate_provider_stdout(&mut stdout_backpressure);
-    write_raw_provider_frame(&mut stdin, b"{not-json}");
-    stdin.flush().unwrap();
+    stdin.corrupt_transport(false);
     drop(stdin);
 
     let status = wait_for_provider_exit(&mut child);
@@ -1051,9 +1054,9 @@ fn provider_binary_reaps_active_tree_after_an_oversized_host_frame_under_stdout_
         mut stdout_backpressure,
         pids,
     } = active_provider_binary(workspace.path());
+    _stdout.pause();
     saturate_provider_stdout(&mut stdout_backpressure);
-    write_oversized_provider_header(&mut stdin);
-    stdin.flush().unwrap();
+    stdin.corrupt_transport(true);
     drop(stdin);
 
     let status = wait_for_provider_exit(&mut child);
@@ -1062,7 +1065,7 @@ fn provider_binary_reaps_active_tree_after_an_oversized_host_frame_under_stdout_
 }
 
 #[test]
-fn provider_binary_returns_a_standard_error_then_fail_stops_after_an_oversized_host_frame() {
+fn provider_binary_rejects_legacy_framing_before_initialization() {
     let mut child = Command::new(provider_executable())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1084,11 +1087,9 @@ fn provider_binary_returns_a_standard_error_then_fail_stops_after_an_oversized_h
     };
     assert!(!status.success());
     let mut stdout = child.stdout.take().unwrap();
-    let response = read_provider_value(&mut stdout).expect("one fatal response frame");
-    assert!(read_provider_value(&mut stdout).is_none());
-    assert_eq!(response["jsonrpc"], "2.0");
-    assert!(response["id"].is_null());
-    assert_eq!(response["error"]["code"], -32600);
+    let mut output = Vec::new();
+    stdout.read_to_end(&mut output).unwrap();
+    assert!(output.is_empty(), "Unnegotiated input must not dispatch or emit business messages");
 }
 
 #[test]
@@ -1307,8 +1308,8 @@ fn provider_resource(
 #[cfg(unix)]
 struct ActiveProviderBinary {
     child: std::process::Child,
-    stdin: std::process::ChildStdin,
-    stdout: BufReader<UnixStream>,
+    stdin: mux_stdio::Writer,
+    stdout: mux_stdio::Reader,
     stdout_backpressure: UnixStream,
     pids: [u32; 2],
 }
@@ -1324,8 +1325,7 @@ fn active_provider_binary(workspace: &Path) -> ActiveProviderBinary {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    let mut stdin = child.stdin.take().unwrap();
-    let mut stdout = BufReader::new(host_stdout);
+    let (mut stdin, mut stdout) = mux_stdio::connect_socket(child.stdin.take().unwrap(), host_stdout);
     let mut pending = Vec::new();
     binary_request_collecting_events(
         &mut stdin,
@@ -1441,8 +1441,8 @@ fn wait_for_provider_exit(child: &mut std::process::Child) -> std::process::Exit
 }
 
 fn binary_request(
-    stdin: &mut impl Write,
-    stdout: &mut impl BufRead,
+    stdin: &mut mux_stdio::Writer,
+    stdout: &mut mux_stdio::Reader,
     id: &str,
     method: &str,
     params: Value,
@@ -1455,8 +1455,8 @@ fn binary_request(
 }
 
 fn binary_request_collecting_events(
-    stdin: &mut impl Write,
-    stdout: &mut impl BufRead,
+    stdin: &mut mux_stdio::Writer,
+    stdout: &mut mux_stdio::Reader,
     id: &str,
     method: &str,
     params: Value,
@@ -1475,45 +1475,12 @@ fn binary_request_collecting_events(
     }
 }
 
-fn write_provider_value(writer: &mut impl Write, value: Value) {
-    let payload = serde_json::to_vec(&value).unwrap();
-    let message = codepet_provider_sdk::decode_wire_message(&payload).unwrap();
-    ProviderFrameCodec::default()
-        .write_message(writer, &message)
-        .unwrap();
-    writer.flush().unwrap();
+fn write_provider_value(writer: &mut mux_stdio::Writer, value: Value) {
+    writer.send(value);
 }
 
-fn read_provider_value(reader: &mut impl Read) -> Option<Value> {
-    ProviderFrameCodec::default()
-        .read_message(reader)
-        .unwrap()
-        .map(provider_wire_value)
-}
-
-fn provider_wire_value(message: ProviderWireMessage) -> Value {
-    match message {
-        ProviderWireMessage::Response(value) => serde_json::to_value(value).unwrap(),
-        ProviderWireMessage::Notification(value) => serde_json::to_value(value).unwrap(),
-        ProviderWireMessage::Event(value) => serde_json::to_value(value).unwrap(),
-        ProviderWireMessage::Request(_) => panic!("Provider stdout emitted a request"),
-    }
-}
-
-fn write_raw_provider_frame(writer: &mut impl Write, payload: &[u8]) {
-    writer
-        .write_all(&codepet_provider_sdk::PROVIDER_FRAME_MAGIC)
-        .unwrap();
-    writer
-        .write_all(&[
-            codepet_provider_sdk::PROVIDER_FRAME_VERSION,
-            codepet_provider_sdk::ProviderFrameEncoding::RawJson as u8,
-        ])
-        .unwrap();
-    writer
-        .write_all(&(payload.len() as u32).to_be_bytes())
-        .unwrap();
-    writer.write_all(payload).unwrap();
+fn read_provider_value(reader: &mut mux_stdio::Reader) -> Option<Value> {
+    reader.recv()
 }
 
 fn write_oversized_provider_header(writer: &mut impl Write) {

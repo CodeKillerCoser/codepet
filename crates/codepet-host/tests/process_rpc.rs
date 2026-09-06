@@ -136,29 +136,14 @@ async fn real_stdio_lifecycle_correlates_concurrent_responses_and_separates_even
     let first = inbound.recv().await.unwrap();
     let second = inbound.recv().await.unwrap();
     let third = inbound.recv().await.unwrap();
-    let fourth = inbound.recv().await.unwrap();
     assert!(matches!(
         first,
         codepet_provider_sdk::ProviderWireMessage::Event(
             ProtocolEvent::EventConversationUpserted { .. }
         )
     ));
-    assert!(matches!(
-        second,
-        codepet_provider_sdk::ProviderWireMessage::Notification(_)
-    ));
-    assert!(matches!(
-        third,
-        codepet_provider_sdk::ProviderWireMessage::Event(
-            ProtocolEvent::EventConversationItemUpserted { .. }
-        )
-    ));
-    assert!(matches!(
-        fourth,
-        codepet_provider_sdk::ProviderWireMessage::Event(
-            ProtocolEvent::EventTurnOutputDelta { .. }
-        )
-    ));
+    assert!(matches!(second, codepet_provider_sdk::ProviderWireMessage::Event(ProtocolEvent::EventConversationItemUpserted { .. })));
+    assert!(matches!(third, codepet_provider_sdk::ProviderWireMessage::Event(ProtocolEvent::EventTurnOutputDelta { .. })));
     let route = ProviderInstanceRoute {
         device_id: "device-test".to_string(),
         provider_plugin_id: "dev.codepet.concurrent".to_string(),
@@ -254,7 +239,7 @@ async fn shutdown_waits_for_a_provider_that_closes_stdout_before_delayed_clean_e
 }
 
 #[tokio::test]
-async fn shutdown_discards_late_notifications_without_closing_provider_stdout() {
+async fn shutdown_discards_late_events_without_closing_provider_stdout() {
     let mut descriptor = descriptor("dev.codepet.shutdown-notification");
     descriptor.env.insert(
         "CODEPET_FAKE_SHUTDOWN_NOTIFICATION".to_string(),
@@ -314,7 +299,7 @@ async fn timeout_does_not_poison_later_requests() {
 }
 
 #[tokio::test]
-async fn host_decodes_a_zstd_provider_frame_larger_than_its_raw_frame_limit() {
+async fn host_decodes_a_mux_message_larger_than_its_encoded_message_limit() {
     let process = ready_process("dev.codepet.compressed", "instance-compressed").await;
     let response = process
         .client()
@@ -359,9 +344,9 @@ async fn malformed_oversized_and_crashed_plugins_close_only_their_process() {
             .unwrap_err();
         assert!(matches!(
             error.code.as_str(),
-            "provider_invalid_frame"
-                | "provider_frame_too_large"
-                | "provider_stdout_eof"
+            "provider_mux_error"
+                | "provider_mux_driver_failed"
+                | "provider_process_closed"
                 | "provider_process_exited"
         ));
 
@@ -382,4 +367,37 @@ async fn malformed_oversized_and_crashed_plugins_close_only_their_process() {
         assert_eq!(response.conversation.resource.native_resource_id, "healthy");
         healthy.shutdown().await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn mux_handshake_cancel_and_shutdown_use_the_production_sdk_runtime() {
+    let mut plugin = descriptor("dev.codepet.mux");
+    plugin.env.insert("CODEPET_FAKE_INITIALIZE_DELAY_MS".into(), "1000".into());
+    let process = Arc::new(PluginProcess::spawn(&plugin, options()).unwrap());
+    let p = process.clone();
+    let pending = tokio::spawn(async move {
+        p.client().provider_initialize(ProviderInitializeRequest { host_client_id: "test".into(), host_device_id: "test".into(), host_version: "test".into(), supported_versions: VersionRange { min_version: 1, max_version: 1 } }).await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    pending.abort(); let _ = pending.await;
+    let described = process.client().provider_describe(ProviderDescribeRequest {}).await.unwrap_or_else(|e| panic!("{e:?}; diagnostics: {:?}", process.stderr_diagnostics()));
+    assert_eq!(described.plugin.plugin_id, "dev.codepet.mux");
+    assert!(process.shutdown().await.unwrap().success);
+}
+
+#[tokio::test]
+async fn mux_slow_event_consumer_keeps_one_budgeted_event_without_blocking_rpc_or_shutdown() {
+    let mut plugin = descriptor("dev.codepet.mux-events");
+    plugin.env.insert("CODEPET_FAKE_MUX_EVENTS".into(), "1".into());
+    let process = PluginProcess::spawn(&plugin, options()).unwrap();
+    let mut inbound = process.take_inbound().await.unwrap();
+    for _ in 0..2 { process.client().provider_describe(ProviderDescribeRequest {}).await.unwrap(); }
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while inbound.is_empty() { tokio::time::sleep(Duration::from_millis(10)).await; }
+    }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(inbound.len(), 1, "unconsumed events must keep their budget and withhold the next ACK");
+    assert!(process.shutdown().await.unwrap().success);
+    assert!(inbound.recv().await.is_some());
+    assert!(inbound.recv().await.is_none());
 }

@@ -1,5 +1,7 @@
 # Provider stdio 由 SDK Runtime 统一使用二进制帧
 
+> 2026-09-06：本文保留旧 `stdio-codepet-frame-v1` 的决策依据。内置 Provider 已迁移到[协商式消息复用](../10-architecture/provider-stdio-message-multiplexing.md)，新 profile 额外限制解码 JSON 大小并使用分片；旧 runtime/Host 分支现已删除，mux 是默认且唯一 STDIO 模式；本文的“无 decoded-size cap”和整帧写入仅记录历史行为。
+
 ## 背景
 
 Provider 通过 stdin/stdout 与 Host 交换 JSON-RPC。旧实现以物理换行分隔 UTF-8 JSON，并在 `conversation.get` 返回前由共享 SDK 反复序列化响应、按 7 MiB/5 MiB 内容预算静默裁剪，再由 JSON-line writer 执行 16 MiB 硬限制。该设计把领域内容策略、分页策略和传输保护混在一起：调用方无法通过 `provider_response_too_large` 缩小同一 cursor 的 `limit`，大型结构化内容还会因尺寸探测产生重复遍历和临时字节缓冲。

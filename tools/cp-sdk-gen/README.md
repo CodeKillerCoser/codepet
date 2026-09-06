@@ -39,7 +39,7 @@ JSON Schema 定义 DTO 与约束；相邻 manifest 定义 method/event、方向�
 这份文档随 Code Pet App 和 `cp-sdk-gen` 生成结果一起分发，面向开发独立
 Provider 插件的作者。Provider 是由 Code Pet Host 启动的独立进程，业务实现只面对
 生成的 JSON-RPC 强类型接口；SDK Runtime 会把 JSON payload 自动封装为 stdin/stdout
-Provider Frame V1。Provider 不需要感知长度前缀、raw/zstd、尺寸检查，也不需要依赖
+协商后的 `stdio-codepet-mux-v1` 通道。Provider 不需要感知分片、窗口、raw/zstd、尺寸检查，也不需要依赖
 Tauri、Code Pet Host 或 Desktop 私有 IPC。
 
 SDK runtime 还随导出分发心跳：Dart Gateway client 的 GatewayHeartbeatClient 发送 protocol.ping 并输出 Provider 摘要；Rust Gateway 的 GatewayHeartbeat 校验顺序和失联 deadline。Host→Provider 的 run_provider_heartbeats 由连接快照与实例状态 watch 唤醒。Provider serve_stdio 直接确认 provider.ping，独立协调任务根据连接集合调用幂等 instance.start/stop。Server 模式 adapter 必须每实例仅一个 Server，start/stop 支持重复调用，并保证 stop 可以取消未完成的 initialize。最后客户端离线或 Host 心跳过期会停止 Harness，包括 active turn；插件进程仍继续服务。stdio 是 Provider IPC，不属于 Remote channel。
@@ -174,11 +174,16 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 SDK 公开以下主要边界：
 
+Rust SDK 内部按 `transport/`（握手、帧与流控）、`message/`（Provider 消息适配）、
+`runtime/`（派发、事件与进程 I/O）、`content/`（可选内容策略）组织，`generated.rs`
+继续由协议编译器生成。公开 API 仍从 crate 根导入；Provider 业务代码无需引用内部目录。
+
 - `Provider` trait：所有 Host → Provider 方法的 typed interface。
 - request/response/model 类型：从 JSON Schema 与 method manifest 生成。
 - `ProviderEventSink`：发布 typed Provider → Host 事件。
-- `serve_stdio`：JSON-RPC 2.0 JSON 序列化、Provider Frame V1、自动 raw/zstd、最终
-  encoded-frame 限制、并发队列、控制通路、错误响应和 stdout 串行写入。
+- `serve_stdio`：根据 Host 注入的 `CODEPET_PROVIDER_TRANSPORT` 选择通道；mux 模式拥有启动协商、Yamux 分片与流控、独立控制容量、编码/解码上限、超时与 reset。业务 JSON-RPC 版本仍为 1。
+- 新 profile 默认分片 16 KiB，完整编码消息不超过 16 MiB，解码 JSON 不超过 128 MiB；接收预算按方向协商。请求与响应共用一条双向 stream，事件串行确认以维持顺序。
+- `ProviderEventSink::publish` 在 mux 模式表示进入有界队列，队列按序交付；异步编码拒绝写入 stderr 并继续后续事件，不自动重放。队列容量不足会同步返回错误。
 - `StdioServerOptions`：最终 frame 大小、普通/控制请求并发数和 drain timeout；Provider
   业务代码通常直接使用默认值。
 
@@ -275,6 +280,7 @@ transport。诊断日志写 stderr。异步状态变化通过 `self.events.publi
 ```json
 {
   "manifestVersion": 1,
+  "transport": "stdio-codepet-mux-v1",
   "pluginId": "com.example.my-provider",
   "displayName": "My Provider",
   "executable": "my-codepet-provider",
@@ -296,6 +302,9 @@ transport。诊断日志写 stderr。异步状态变化通过 `self.events.publi
 约束：
 
 - `manifestVersion` 当前必须为 `1`。
+- `transport` 显式声明 `stdio-codepet-mux-v1`。Host 在业务 initialize 前完成 HELLO / SELECT / CONFIRM / READY，协商不兼容会终止启动，不在同一字节流试探回退。
+- 未声明 `transport` 时默认使用 mux；只接受 `stdio-codepet-mux-v1`。显式旧 profile、未知 profile 或冲突的 env 都拒绝，不提供回退。旧二进制必须升级 SDK 并重新构建。
+- 单独启动新版 Provider 且未注入环境变量时也默认 mux；测试端使用 `ProviderMux::connect`，在业务 initialize 前完成传输握手。
 - manifest 的 `pluginId` 必须与 `provider.initialize/provider.describe` 返回值一致。
 - `instanceKind` 必须出现在 descriptor 的 `instanceKinds` 中。
 - `executable` 推荐使用 manifest 同目录的相对路径；Windows 写 `.exe`。
@@ -304,7 +313,7 @@ transport。诊断日志写 stderr。异步状态变化通过 `self.events.publi
 
 ## 6. 独立进程测试
 
-先直接构建并启动 Provider，确认 stdout 每行只有一个 JSON-RPC message：
+先构建 Provider。stdout 是二进制协议通道，诊断只能写入 stderr：
 
 ```sh
 cargo build --release --manifest-path ./my-provider/Cargo.toml
@@ -322,7 +331,7 @@ cargo build --release --manifest-path ./my-provider/Cargo.toml
 
 可直接使用 `protocol/provider/v1/fixtures` 作为合法 wire message 的起点。JSON-RPC
 请求必须使用 `"jsonrpc":"2.0"`、唯一 `id`、manifest 中的方法名以及匹配 schema 的
-`params`，每条消息以单个换行结束。
+`params`。夹具描述业务 JSON，物理传输必须经 SDK runtime 封装，不能直接向 stdin 追加 JSON 或换行。
 
 ## 7. 安装并让 Code Pet 发现
 

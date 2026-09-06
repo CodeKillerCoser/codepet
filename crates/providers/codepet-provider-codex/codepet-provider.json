@@ -1,5 +1,6 @@
 {
   "manifestVersion": 1,
+  "transport": "stdio-codepet-mux-v1",
   "pluginId": "dev.codepet.codex",
   "displayName": "Codex",
   "icon": "https://avatars.githubusercontent.com/u/14957082?s=200&v=4",

@@ -72,7 +72,8 @@ test("provider is JSON-RPC over stdio and owns plugin instance lifecycle", async
   const model = await loadProtocolModel();
   const provider = record(model, "provider-v1").manifest;
   assert.equal(provider.transport.kind, "json-rpc-2.0");
-  assert.equal(provider.transport.framing, "stdio-codepet-frame-v1");
+  assert.equal(provider.transport.framing, "stdio-codepet-mux-v1");
+  assert.equal(provider.transport.legacyFraming, undefined);
   const methods = new Set(provider.methods.map((method) => method.name));
   for (const required of [
     "provider.initialize",

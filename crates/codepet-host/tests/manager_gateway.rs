@@ -1597,7 +1597,7 @@ async fn a_crashed_plugin_does_not_change_another_plugin_or_instance_route() {
         .unwrap_err();
     assert!(matches!(
         alpha_error.code.as_str(),
-        "provider_stdout_eof" | "provider_process_exited"
+        "provider_mux_error" | "provider_mux_driver_failed" | "provider_process_exited" | "provider_process_closed"
     ));
 
     tokio::time::timeout(Duration::from_secs(2), async {
@@ -1699,7 +1699,7 @@ async fn provider_scoped_history_starts_on_demand_and_recovers_the_crashed_plugi
         .unwrap_err();
     assert!(matches!(
         crashed.code.as_str(),
-        "provider_stdout_eof" | "provider_process_exited"
+        "provider_mux_error" | "provider_mux_driver_failed" | "provider_process_exited" | "provider_process_closed"
     ));
 
     let recovered_list = gateway
