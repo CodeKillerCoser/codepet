@@ -7,8 +7,8 @@ import type { ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject,
 export type { ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RpcError, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
 
 export const PROTOCOL_VERSION = 1 as const;
-export const PROTOCOL_METHODS = ["provider.ping", "provider.initialize", "provider.describe", "runtime.getInstalled", "runtime.select", "instance.create", "instance.start", "instance.stop", "instance.destroy", "instance.capabilities", "conversation.list", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.search", "conversation.get", "conversation.acquireInteraction", "conversation.create", "turn.start", "turn.steer", "turn.interrupt", "approval.resolve", "provider.shutdown"] as const;
-export const PROTOCOL_EVENTS = ["event.projectChanged", "event.instanceStatusChanged", "event.conversationUpserted", "event.conversationItemUpserted", "event.turnUpserted", "event.turnOutputDelta", "event.approvalRequested", "event.approvalResolved"] as const;
+export const PROTOCOL_METHODS = ["provider.ping", "provider.initialize", "provider.describe", "runtime.getInstalled", "runtime.select", "instance.create", "instance.start", "instance.stop", "instance.destroy", "instance.capabilities", "conversation.list", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.search", "conversation.get", "conversation.acquireInteraction", "conversation.create", "turn.start", "turn.steer", "turn.interrupt", "approval.resolve", "provider.shutdown", "event.subscribe", "event.unsubscribe"] as const;
+export const PROTOCOL_EVENTS = ["event.projectChanged", "event.instanceStatusChanged", "event.conversationUpserted", "event.conversationItemUpserted", "event.turnUpserted", "event.turnOutputDelta", "event.approvalRequested", "event.approvalResolved", "event.notification"] as const;
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -117,6 +117,23 @@ export interface ConversationSearchResponse {
 
 export interface ConversationUpsertedEvent {
   conversation: Conversation;
+}
+
+export interface EventSubscribeRequest {
+  subscriptionId: string;
+}
+
+export interface EventSubscribeResponse {
+  subscriptionId: string;
+  message: string;
+}
+
+export interface EventUnsubscribeRequest {
+  subscriptionId: string;
+}
+
+export interface EventUnsubscribeResponse {
+  subscriptionId: string;
 }
 
 export interface HarnessDescriptor {
@@ -284,6 +301,13 @@ export interface ProviderInstanceRoute {
   deviceId: DeviceId;
   providerPluginId: ProviderPluginId;
   providerInstanceId: ProviderInstanceId;
+}
+
+export interface ProviderNotificationEvent {
+  subscriptionId: string;
+  eventId: string;
+  receivedAt: TimestampMs;
+  payload: JsonObject;
 }
 
 export interface ProviderPingRequest {
@@ -456,6 +480,8 @@ export interface ProtocolRequestMap {
   "turn.interrupt": TurnInterruptRequest;
   "approval.resolve": ApprovalResolveRequest;
   "provider.shutdown": ProviderShutdownRequest;
+  "event.subscribe": EventSubscribeRequest;
+  "event.unsubscribe": EventUnsubscribeRequest;
 }
 
 export interface ProtocolResponseMap {
@@ -484,6 +510,8 @@ export interface ProtocolResponseMap {
   "turn.interrupt": TurnInterruptResponse;
   "approval.resolve": ApprovalResolveResponse;
   "provider.shutdown": ProviderShutdownResponse;
+  "event.subscribe": EventSubscribeResponse;
+  "event.unsubscribe": EventUnsubscribeResponse;
 }
 
 export interface ProtocolEventMap {
@@ -495,6 +523,7 @@ export interface ProtocolEventMap {
   "event.turnOutputDelta": TurnOutputDeltaEvent;
   "event.approvalRequested": ApprovalRequestedEvent;
   "event.approvalResolved": ApprovalResolvedEvent;
+  "event.notification": ProviderNotificationEvent;
 }
 
 export type ProtocolMethod = keyof ProtocolRequestMap;

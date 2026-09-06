@@ -37,7 +37,6 @@ const MAX_STARTUP_OUTPUT_LINE_BYTES: usize = 16 * 1024;
 pub struct OpenCodeClient {
     base_url: Url,
     requests: Client,
-    waits: Client,
     events: Client,
     auth: Option<(String, String)>,
 }
@@ -62,10 +61,6 @@ impl OpenCodeClient {
             .timeout(request_timeout)
             .build()
             .map_err(|error| OpenCodeServerError::Protocol(error.to_string()))?;
-        let waits = Client::builder()
-            .connect_timeout(CONNECT_TIMEOUT)
-            .build()
-            .map_err(|error| OpenCodeServerError::Protocol(error.to_string()))?;
         let events = Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .build()
@@ -73,7 +68,6 @@ impl OpenCodeClient {
         Ok(Self {
             base_url,
             requests,
-            waits,
             events,
             auth: Some((username, password)),
         })
@@ -240,15 +234,15 @@ impl OpenCodeClient {
         )
     }
 
-    pub fn wait_session(&self, session_id: &str) -> Result<(), OpenCodeServerError> {
-        decode_no_content(
-            self.request(
-                self.waits
-                    .post(self.url(&["api", "session", session_id, "wait"])?),
-            )
-            .send()
-            .map_err(transport_error)?,
-        )
+    pub fn wait_session(&self, session_id: &str, current: impl Fn() -> bool) -> Result<(), OpenCodeServerError> {
+        // 1.18.25 exposes /wait in its schema but returns ServiceUnavailableError.
+        // After the terminal model step, its implemented active-session query is
+        // the completion evidence. Individual reads stay bounded; the run has no timer.
+        while current() {
+            if !self.active_sessions()?.contains_key(session_id) { return Ok(()); }
+            thread::sleep(Duration::from_millis(100));
+        }
+        Err(OpenCodeServerError::Shutdown)
     }
 
     pub fn reply_permission(
@@ -969,23 +963,20 @@ mod tests {
     }
 
     #[test]
-    fn session_wait_does_not_inherit_the_normal_request_timeout() {
+    fn session_completion_polls_active_until_idle_and_can_cancel() {
         use std::io::{Read, Write};
 
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0u8; 2048];
-            let read = stream.read(&mut request).unwrap();
-            assert!(String::from_utf8_lossy(&request[..read])
-                .starts_with("POST /api/session/ses_wait/wait "));
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            stream
-                .write_all(
-                    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                )
-                .unwrap();
+            for active in [true, false] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 2048];
+                let read = stream.read(&mut request).unwrap();
+                assert!(String::from_utf8_lossy(&request[..read]).starts_with("GET /api/session/active "));
+                let body = if active { r#"{"data":{"ses_wait":{"type":"running"}}}"# } else { r#"{"data":{}}"# };
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
         });
         let client = super::OpenCodeClient::new_with_request_timeout(
             reqwest::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),
@@ -995,9 +986,10 @@ mod tests {
         )
         .unwrap();
         let started = std::time::Instant::now();
-        client.wait_session("ses_wait").unwrap();
+        client.wait_session("ses_wait", || true).unwrap();
         assert!(started.elapsed() >= std::time::Duration::from_millis(80));
         server.join().unwrap();
+        assert!(matches!(client.wait_session("ses_wait", || false), Err(super::OpenCodeServerError::Shutdown)));
     }
 
     #[test]

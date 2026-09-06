@@ -16,5 +16,8 @@
   { "file": "conversation-item-upserted-event.json", "kind": "event", "name": "event.conversationItemUpserted" },
   { "file": "turn-output-delta-event.json", "kind": "event", "name": "event.turnOutputDelta" },
   { "file": "turn-start-request.json", "kind": "request", "name": "turn.start" },
-  { "file": "turn-start-response.json", "kind": "response", "name": "turn.start" }
+  { "file": "turn-start-response.json", "kind": "response", "name": "turn.start" },
+  {"file": "event-subscribe-request.json", "kind": "request", "name": "event.subscribe"},
+  {"file": "event-subscribe-response.json", "kind": "response", "name": "event.subscribe"},
+  {"file": "notification-event.json", "kind": "event", "name": "event.notification"}
 ]

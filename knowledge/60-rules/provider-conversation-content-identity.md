@@ -16,6 +16,7 @@ OpenCode 的不同 assistant message 都可以包含原生 part ID `text-0`。�
 
 - 优先直接使用原生会话级唯一 item ID。
 - 原生 part ID 仅局部唯一时，使用 `<messageId>:<partId>` 作为 item identity，再按语义位置派生 `<itemIdentity>:text`、`<itemIdentity>:summary:0` 等 content identity。
+- 工具结果同样需要作用域：`<itemIdentity>:output`、`<itemIdentity>:content:<index>`、`<itemIdentity>:structured`。成功、失败结果中的嵌套 content 都受会话级唯一性约束，不能重复使用字面量 `output` 或 `structured`。
 - ID 只依赖原生稳定标识和语义位置，不得依赖文本内容、加载顺序或随机值。
 - 同一原生内容在历史快照、item upsert 和 delta 中必须收敛到相同 ID。
 - Host 保留会话范围的重复 ID 校验并失败关闭，不在 Host 中根据文本修补 Provider ID。
@@ -24,9 +25,12 @@ OpenCode 的不同 assistant message 都可以包含原生 part ID `text-0`。�
 
 2026-09-03 真实 OpenCode 1.18.25 会话 `Greeting` 返回两条不同 assistant message，它们的 text part ID 均为 `text-0`。`codepet-provider-opencode` 原实现仅生成 `text-0:text`，触发 Host 的 `Provider conversation history contains a duplicate content identity`。引入历史确认该规则由提交 `3b34901c` 引入。
 
+2026-09-06 工具 outcome 仍使用固定 `output/content:0/structured`，多个工具结果再次触发同一校验，见 [OpenCode 历史与完成修复](../40-runbooks/opencode-history-controls-and-completion.md)。
+
 ## 验证方式
 
 - Provider mapper 测试必须构造两条共用同一原生 part ID 的不同 message，确认 item/content ID 不重复。
+- 工具结果测试覆盖同消息多工具、跨消息复用原生 tool ID、成功和失败结果；Host 集成测试实际读取包含多个工具结果的历史，不只断言 mapper 输出。
 - Provider 纵向测试必须确认 text/reasoning delta 同时包含 assistant message ID 和原生 part ID，且 `contentId` 由该 `itemId` 稳定派生。
 - Host 保留空 ID、重复 item ID 和重复 content ID 的边界校验测试。
 - 真实 Provider smoke 应重新加载曾触发冲突的会话，确认 Host 不再返回 `duplicate_conversation_content`。

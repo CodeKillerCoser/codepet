@@ -29,7 +29,6 @@ pub use pet::theme_defaults;
 #[cfg(target_os = "macos")]
 pub use platform::macos_window;
 
-use agents::{AgentId, AgentView};
 use agent_runtime::{
     AgentRuntime, AgentRuntimeCandidate, AgentRuntimeService, AgentRuntimeSource,
 };
@@ -41,70 +40,26 @@ use settings::{
     load_app_settings, save_app_settings, update_app_data_directory, AppDataDirectoryTargetStatus,
     AppSettings,
 };
-use state::{ApprovalBehavior, ApprovalDecision, SharedState, COLLECTOR_PORT};
+use state::{ApprovalBehavior, ApprovalDecision, SharedState};
 use subject_cutout::SubjectCutoutResult;
 use token_usage::TokenUsageSummary;
 use updates::PendingAppUpdate;
 use runtime_gateway::tauri_bridge::{
-    codex_desktop_companion_replay, codex_desktop_companion_request,
-    codex_desktop_companion_snapshot,
     runtime_gateway_replay, runtime_gateway_request, provider_connection_status,
-    start_codex_desktop_companion_event_bridge, start_runtime_gateway_event_bridge,
-    CodexDesktopCompanionState, ProviderHostState, RuntimeGatewayState,
+    start_runtime_gateway_event_bridge,
+    ProviderHostState, RuntimeGatewayState,
 };
 use runtime_gateway::remote_access::{
     cancel_remote_pairing, copy_remote_pairing_json, get_remote_pairing_status, list_remote_clients,
     list_remote_pairing_requests, remote_access_status, resolve_remote_pairing_request,
     retry_remote_access, revoke_remote_credential, start_remote_pairing, RemoteAccessRuntime,
 };
-use std::str::FromStr;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const TRAY_MENU_OPEN: &str = "open-main";
 const TRAY_MENU_QUIT: &str = "quit";
-
-#[tauri::command]
-fn list_agents(state: tauri::State<'_, SharedState>) -> Result<Vec<AgentView>, String> {
-    let views = agent_control::list_agent_views().map_err(|error| error.to_string())?;
-    state.set_agents(views.clone());
-    Ok(views)
-}
-
-#[tauri::command]
-fn set_agent_enabled(
-    app: AppHandle,
-    state: tauri::State<'_, SharedState>,
-    agent_id: String,
-    enabled: bool,
-) -> Result<Vec<AgentView>, String> {
-    let id = AgentId::from_str(&agent_id)?;
-    let views = agent_control::set_agent_enabled(id, enabled).map_err(|error| error.to_string())?;
-    state.set_agents(views.clone());
-    if !enabled {
-        state.remove_events_for_agent(id);
-        let _ = app.emit("agent-disabled", id.as_str());
-    }
-    Ok(views)
-}
-
-#[tauri::command]
-fn set_agent_hook_events(
-    app: AppHandle,
-    state: tauri::State<'_, SharedState>,
-    agent_id: String,
-    hook_events: Vec<String>,
-) -> Result<Vec<AgentView>, String> {
-    let id = AgentId::from_str(&agent_id)?;
-    let views = agent_control::set_agent_hook_events(id, hook_events)
-        .map_err(|error| error.to_string())?;
-    state.set_agents(views.clone());
-    if let Ok(settings) = load_app_settings() {
-        let _ = app.emit("settings-updated", settings);
-    }
-    Ok(views)
-}
 
 #[tauri::command]
 async fn list_agent_runtimes(
@@ -365,11 +320,6 @@ fn resolve_activity_approval(
 }
 
 #[tauri::command]
-fn collector_endpoint() -> String {
-    format!("http://127.0.0.1:{COLLECTOR_PORT}/hook")
-}
-
-#[tauri::command]
 fn open_main_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         window.show().map_err(|error| error.to_string())?;
@@ -414,7 +364,6 @@ pub fn run() {
     app_log::log_app_start_banner();
     app_log::info("app", "tauri builder initializing");
 
-    let desktop_companion_state = CodexDesktopCompanionState::default();
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
@@ -436,12 +385,10 @@ pub fn run() {
         .manage(SharedState::default())
         .manage(PendingAppUpdate::default())
         .manage(AgentRuntimeService::default())
-        .manage(desktop_companion_state)
         .setup(|app| {
             let setup_span = app_log::PerfSpan::start("startup.total");
             app_log::info("startup", "setup started");
             let handle = app.handle().clone();
-            let state = app.state::<SharedState>().inner().clone();
             let (provider_host_state, remote_access_runtime) =
                 match ProviderHostState::from_app(&handle) {
                     Ok((state, remote_access)) => {
@@ -484,14 +431,8 @@ pub fn run() {
                 );
             }
             provider_host_state.start_in_background();
+            provider_host_state.start_pet();
             remote_access_runtime.start_in_background();
-            let desktop_companion_state = app.state::<CodexDesktopCompanionState>().inner().clone();
-            if let Err(error) = start_codex_desktop_companion_event_bridge(handle.clone(), &desktop_companion_state) {
-                app_log::error(
-                    "codex_desktop_companion",
-                    &format!("failed to start Desktop companion event bridge error={error:?}"),
-                );
-            }
             if let Err(error) = install_tray_icon(&handle) {
                 app_log::error("startup", &format!("failed to create tray icon error={error}"));
                 let _ = handle.emit("collector-error", error);
@@ -500,49 +441,11 @@ pub fn run() {
             configure_pet_overlay_window(&handle);
             overlay_span.finish_ok(&[]);
             app_log::info("startup", "pet overlay window configured");
-            let agents_span = app_log::PerfSpan::start("startup.list_agent_views");
-            match agent_control::list_agent_views() {
-                Ok(views) => {
-                    agents_span.finish_ok(&[("agents", views.len().to_string())]);
-                    app_log::info("startup", &format!("agent views loaded count={}", views.len()));
-                    state.set_agents(views);
-                }
-                Err(error) => {
-                    agents_span.finish_error(&error.to_string(), &[]);
-                    app_log::error("startup", &format!("failed to list agent views error={error}"));
-                    let _ = handle.emit("collector-error", error.to_string());
-                }
-            }
-            let spool_span = app_log::PerfSpan::start("startup.replay_spooled_events");
-            match collector::replay_default_spooled_events(&state) {
-                Ok(count) => {
-                    spool_span.finish_ok(&[("events", count.to_string())]);
-                    app_log::info("startup", &format!("spooled events replayed count={count}"));
-                }
-                Err(error) => {
-                    spool_span.finish_error(&error.to_string(), &[]);
-                    app_log::error("startup", &format!("failed to replay spooled events error={error}"));
-                    let _ = handle.emit("collector-error", error.to_string());
-                }
-            }
-            let collector_handle = handle.clone();
-            let collector_state = state.clone();
-            tauri::async_runtime::spawn(async move {
-                crate::app_log::info("collector", "collector starting");
-                if let Err(error) = collector::run_collector(collector_state, collector_handle.clone()).await {
-                    crate::app_log::error("collector", &format!("collector exited error={error}"));
-                    let _ = collector_handle.emit("collector-error", error.to_string());
-                    request_app_exit(&collector_handle, 1);
-                }
-            });
             app_log::info("startup", "setup finished");
             setup_span.finish_ok(&[]);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            list_agents,
-            set_agent_enabled,
-            set_agent_hook_events,
             list_agent_runtimes,
             detect_agent_runtime,
             refresh_agent_runtimes,
@@ -569,15 +472,12 @@ pub fn run() {
             activate_activity,
             send_activity_reply,
             resolve_activity_approval,
-            collector_endpoint,
+            runtime_gateway::tauri_bridge::pet_gateway_request,
             open_main_window,
             pet_asset_data_url,
             provider_connection_status,
             runtime_gateway_request,
             runtime_gateway_replay,
-            codex_desktop_companion_request,
-            codex_desktop_companion_replay,
-            codex_desktop_companion_snapshot,
             remote_access_status,
             retry_remote_access,
             list_remote_clients,

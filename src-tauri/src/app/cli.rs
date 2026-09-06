@@ -1,28 +1,9 @@
-use crate::agent_control::{current_agent_statuses, set_all_agents_enabled, AgentStatus};
-
 pub fn try_handle_cli() -> Result<bool, Box<dyn std::error::Error>> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    if args.is_empty() {
-        return Ok(false);
-    }
-
-    match args[0].as_str() {
-        "--install-hooks" => {
-            print_status(set_all_agents_enabled(true)?);
-            Ok(true)
-        }
-        "--disable-hooks" => {
-            print_status(set_all_agents_enabled(false)?);
-            Ok(true)
-        }
-        "--status-hooks" => {
-            print_status(current_agent_statuses()?);
-            Ok(true)
+    match args.first().map(String::as_str) {
+        Some("--install-hooks" | "--disable-hooks" | "--status-hooks") => {
+            Err("旧 Hook 管理命令已停用，请在 App 的活动来源中启停 Provider 订阅".into())
         }
         _ => Ok(false),
     }
-}
-
-fn print_status(statuses: Vec<AgentStatus>) {
-    println!("{}", serde_json::to_string_pretty(&statuses).unwrap_or_default());
 }

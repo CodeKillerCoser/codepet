@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AgentRuntime, AgentView, AppSettings, AppUpdate, PetEvent, PetLibraryView, SubjectCutoutResult, TokenUsageSummary } from "./types";
+import type { AgentRuntime, AppSettings, AppUpdate, PetEvent, PetLibraryView, SubjectCutoutResult, TokenUsageSummary } from "./types";
 
 export interface PerfEventPayload {
   name: string;
@@ -13,18 +13,6 @@ export interface AppDataDirectoryTargetStatus {
   isCurrent: boolean;
   isEmpty: boolean;
   requiresClear: boolean;
-}
-
-export async function listAgents(): Promise<AgentView[]> {
-  return invoke<AgentView[]>("list_agents");
-}
-
-export async function setAgentEnabled(agentId: string, enabled: boolean): Promise<AgentView[]> {
-  return invoke<AgentView[]>("set_agent_enabled", { agentId, enabled });
-}
-
-export async function setAgentHookEvents(agentId: string, hookEvents: string[]): Promise<AgentView[]> {
-  return invoke<AgentView[]>("set_agent_hook_events", { agentId, hookEvents });
 }
 
 export async function listAgentRuntimes(): Promise<AgentRuntime[]> {
@@ -157,9 +145,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   });
 }
 
-export async function collectorEndpoint(): Promise<string> {
-  return invoke<string>("collector_endpoint");
-}
+
 
 export async function activateActivity(eventId: string): Promise<void> {
   return invoke<void>("activate_activity", { eventId });

@@ -491,6 +491,7 @@ test("TypeScript adapter handles multiple packages and cross-schema imports", as
     result.generated.map(({ packageId, targetId }) => [packageId, targetId]),
     [
       ["core-v1", "typescript"],
+      ["pet-v1", "typescript"],
       ["agent-v1", "typescript"],
       ["provider-v1", "typescript"],
       ["gateway-v1", "typescript"],

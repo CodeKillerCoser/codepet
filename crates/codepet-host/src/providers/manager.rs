@@ -153,6 +153,8 @@ struct PluginManagerInner {
     instances: ProviderInstanceRegistry,
     plugins: RwLock<BTreeMap<String, PluginEntry>>,
     plugin_operations: BTreeMap<String, Arc<Mutex<()>>>,
+    subscriptions: StdMutex<BTreeMap<String, subscriptions::SubscriptionHub>>,
+    subscription_operations: tokio::sync::Mutex<()>,
     updates: mpsc::Sender<HostUpdate>,
     update_receiver: StdMutex<Option<mpsc::Receiver<HostUpdate>>>,
     shutting_down: AtomicBool,
@@ -170,6 +172,8 @@ pub struct PluginManager {
 }
 
 mod heartbeat;
+mod subscriptions;
+pub use subscriptions::ProviderEventSubscription;
 
 impl PluginManager {
     pub fn new(
@@ -248,6 +252,8 @@ impl PluginManager {
                 instances,
                 plugins: RwLock::new(plugins),
                 plugin_operations,
+                subscriptions: StdMutex::new(BTreeMap::new()),
+                subscription_operations: tokio::sync::Mutex::new(()),
                 updates,
                 update_receiver: StdMutex::new(Some(update_receiver)),
                 shutting_down: AtomicBool::new(false),
@@ -1405,6 +1411,9 @@ impl PluginManager {
         plugin_id: &str,
         event: ProtocolEvent,
     ) -> HostResult<()> {
+        if let ProtocolEvent::EventNotification { params, .. } = event {
+            return self.deliver_notification(plugin_id, params).await;
+        }
         let record = match &event {
             ProtocolEvent::EventInstanceStatusChanged { params, .. } => self
                 .inner
@@ -1939,6 +1948,7 @@ fn ensure_capability(instance: &ProviderInstance, method: ProtocolMethod) -> Hos
 
 fn event_provider_id(event: &ProtocolEvent) -> HostResult<&str> {
     let provider_id = match event {
+        ProtocolEvent::EventNotification { .. } => return Err(HostError::new("invalid_provider_event", "Notification uses a subscription")),
         ProtocolEvent::EventInstanceStatusChanged { .. } => {
             return Err(HostError::new(
                 "invalid_provider_event",
@@ -1976,6 +1986,7 @@ fn validate_event_routes(
     record: &ProviderInstanceRecord,
 ) -> HostResult<()> {
     match event {
+        ProtocolEvent::EventNotification { .. } => Err(HostError::new("invalid_provider_event", "Notification uses a subscription")),
         ProtocolEvent::EventInstanceStatusChanged { params, .. } => {
             validate_instance_response(record, &params.instance)
         }

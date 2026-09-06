@@ -212,6 +212,35 @@ pub struct ConversationUpsertedEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct EventSubscribeRequest {
+    pub subscription_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct EventSubscribeResponse {
+    pub subscription_id: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct EventUnsubscribeRequest {
+    pub subscription_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct EventUnsubscribeResponse {
+    pub subscription_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct HarnessDescriptor {
     pub id: String,
     pub display_name: String,
@@ -521,6 +550,16 @@ pub struct ProviderInstanceRoute {
     pub device_id: DeviceId,
     pub provider_plugin_id: ProviderPluginId,
     pub provider_instance_id: ProviderInstanceId,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProviderNotificationEvent {
+    pub subscription_id: String,
+    pub event_id: String,
+    pub received_at: TimestampMs,
+    pub payload: JsonObject,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -860,6 +899,10 @@ pub enum ProtocolMethod {
     ApprovalResolve,
     #[serde(rename = "provider.shutdown")]
     ProviderShutdown,
+    #[serde(rename = "event.subscribe")]
+    EventSubscribe,
+    #[serde(rename = "event.unsubscribe")]
+    EventUnsubscribe,
 }
 
 impl ProtocolMethod {
@@ -890,6 +933,8 @@ impl ProtocolMethod {
             Self::TurnInterrupt => "turn.interrupt",
             Self::ApprovalResolve => "approval.resolve",
             Self::ProviderShutdown => "provider.shutdown",
+            Self::EventSubscribe => "event.subscribe",
+            Self::EventUnsubscribe => "event.unsubscribe",
         }
     }
 
@@ -920,6 +965,8 @@ impl ProtocolMethod {
             Self::TurnInterrupt => ProtocolDispatchLane::Normal,
             Self::ApprovalResolve => ProtocolDispatchLane::Normal,
             Self::ProviderShutdown => ProtocolDispatchLane::Control,
+            Self::EventSubscribe => ProtocolDispatchLane::Normal,
+            Self::EventUnsubscribe => ProtocolDispatchLane::Normal,
         }
     }
 
@@ -950,6 +997,8 @@ impl ProtocolMethod {
             Self::TurnInterrupt => Some(ProviderCapability::TurnInterrupt),
             Self::ApprovalResolve => Some(ProviderCapability::ApprovalResolve),
             Self::ProviderShutdown => None,
+            Self::EventSubscribe => None,
+            Self::EventUnsubscribe => None,
         }
     }
 }
@@ -984,6 +1033,8 @@ impl std::str::FromStr for ProtocolMethod {
             "turn.interrupt" => Ok(Self::TurnInterrupt),
             "approval.resolve" => Ok(Self::ApprovalResolve),
             "provider.shutdown" => Ok(Self::ProviderShutdown),
+            "event.subscribe" => Ok(Self::EventSubscribe),
+            "event.unsubscribe" => Ok(Self::EventUnsubscribe),
             _ => Err(()),
         }
     }
@@ -1007,6 +1058,8 @@ pub enum ProtocolEventName {
     EventApprovalRequested,
     #[serde(rename = "event.approvalResolved")]
     EventApprovalResolved,
+    #[serde(rename = "event.notification")]
+    EventNotification,
 }
 
 impl ProtocolEventName {
@@ -1020,6 +1073,7 @@ impl ProtocolEventName {
             Self::EventTurnOutputDelta => "event.turnOutputDelta",
             Self::EventApprovalRequested => "event.approvalRequested",
             Self::EventApprovalResolved => "event.approvalResolved",
+            Self::EventNotification => "event.notification",
         }
     }
 }
@@ -1037,6 +1091,7 @@ impl std::str::FromStr for ProtocolEventName {
             "event.turnOutputDelta" => Ok(Self::EventTurnOutputDelta),
             "event.approvalRequested" => Ok(Self::EventApprovalRequested),
             "event.approvalResolved" => Ok(Self::EventApprovalResolved),
+            "event.notification" => Ok(Self::EventNotification),
             _ => Err(()),
         }
     }
@@ -1202,6 +1257,18 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: ProviderShutdownRequest,
     },
+    #[serde(rename = "event.subscribe")]
+    EventSubscribe {
+        jsonrpc: String,
+        id: RequestId,
+        params: EventSubscribeRequest,
+    },
+    #[serde(rename = "event.unsubscribe")]
+    EventUnsubscribe {
+        jsonrpc: String,
+        id: RequestId,
+        params: EventUnsubscribeRequest,
+    },
 }
 
 impl ProtocolRequest {
@@ -1337,6 +1404,16 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode provider.shutdown request params", error))?,
             }),
+            ProtocolMethod::EventSubscribe => Ok(Self::EventSubscribe {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode event.subscribe request params", error))?,
+            }),
+            ProtocolMethod::EventUnsubscribe => Ok(Self::EventUnsubscribe {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode event.unsubscribe request params", error))?,
+            }),
         }
     }
 
@@ -1367,6 +1444,8 @@ impl ProtocolRequest {
             Self::TurnInterrupt { jsonrpc, .. } => jsonrpc,
             Self::ApprovalResolve { jsonrpc, .. } => jsonrpc,
             Self::ProviderShutdown { jsonrpc, .. } => jsonrpc,
+            Self::EventSubscribe { jsonrpc, .. } => jsonrpc,
+            Self::EventUnsubscribe { jsonrpc, .. } => jsonrpc,
         }
     }
 
@@ -1397,6 +1476,8 @@ impl ProtocolRequest {
             Self::TurnInterrupt { id, .. } => id,
             Self::ApprovalResolve { id, .. } => id,
             Self::ProviderShutdown { id, .. } => id,
+            Self::EventSubscribe { id, .. } => id,
+            Self::EventUnsubscribe { id, .. } => id,
         }
     }
 
@@ -1427,6 +1508,8 @@ impl ProtocolRequest {
             Self::TurnInterrupt { .. } => ProtocolMethod::TurnInterrupt,
             Self::ApprovalResolve { .. } => ProtocolMethod::ApprovalResolve,
             Self::ProviderShutdown { .. } => ProtocolMethod::ProviderShutdown,
+            Self::EventSubscribe { .. } => ProtocolMethod::EventSubscribe,
+            Self::EventUnsubscribe { .. } => ProtocolMethod::EventUnsubscribe,
         }
     }
 }
@@ -1474,6 +1557,11 @@ pub enum ProtocolEvent {
         jsonrpc: String,
         params: ApprovalResolvedEvent,
     },
+    #[serde(rename = "event.notification")]
+    EventNotification {
+        jsonrpc: String,
+        params: ProviderNotificationEvent,
+    },
 }
 
 impl ProtocolEvent {
@@ -1487,6 +1575,7 @@ impl ProtocolEvent {
             Self::EventTurnOutputDelta { jsonrpc, .. } => jsonrpc,
             Self::EventApprovalRequested { jsonrpc, .. } => jsonrpc,
             Self::EventApprovalResolved { jsonrpc, .. } => jsonrpc,
+            Self::EventNotification { jsonrpc, .. } => jsonrpc,
         }
     }
 }
@@ -1683,6 +1772,14 @@ pub trait ProtocolServer: Send + Sync {
 
     fn provider_shutdown<'a>(&'a self, _request: ProviderShutdownRequest) -> ProtocolFuture<'a, ProviderShutdownResponse> {
         Box::pin(async { Err(method_not_implemented("provider.shutdown")) })
+    }
+
+    fn event_subscribe<'a>(&'a self, _request: EventSubscribeRequest) -> ProtocolFuture<'a, EventSubscribeResponse> {
+        Box::pin(async { Err(method_not_implemented("event.subscribe")) })
+    }
+
+    fn event_unsubscribe<'a>(&'a self, _request: EventUnsubscribeRequest) -> ProtocolFuture<'a, EventUnsubscribeResponse> {
+        Box::pin(async { Err(method_not_implemented("event.unsubscribe")) })
     }
 }
 
@@ -1946,6 +2043,26 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
             JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::EventSubscribe { jsonrpc, id, params } => {
+            let response = match server.event_subscribe(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::EventUnsubscribe { jsonrpc, id, params } => {
+            let response = match server.event_unsubscribe(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         }
     }
 }
@@ -2190,6 +2307,22 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             let result = self.transport.request(ProtocolMethod::ProviderShutdown, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn event_subscribe<'a>(&'a self, request: EventSubscribeRequest) -> ProtocolFuture<'a, EventSubscribeResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::EventSubscribe, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn event_unsubscribe<'a>(&'a self, request: EventUnsubscribeRequest) -> ProtocolFuture<'a, EventUnsubscribeResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::EventUnsubscribe, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

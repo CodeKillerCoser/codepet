@@ -21,7 +21,7 @@ pub use error::{HostError, HostResult};
 pub use gateway::{GatewayEventSubscription, ProviderGatewayService, RemoteHostIdentity};
 pub use providers::instance_registry::{ProviderInstanceRecord, ProviderInstanceRegistry};
 pub use providers::manager::{
-    PluginManager, PluginManagerConfig, PluginRuntimeSnapshot, PluginRuntimeState,
+    ProviderEventSubscription, PluginManager, PluginManagerConfig, PluginRuntimeSnapshot, PluginRuntimeState,
     ProviderInstanceRuntimeSnapshot,
 };
 pub use providers::process::{
@@ -42,3 +42,6 @@ pub use remote::channels::lan::listener::{
 pub use remote::channels::lan::network::select_remote_lan_ipv4;
 
 pub use remote::connections::RemoteConnections;
+
+pub mod pet_gateway;
+pub use pet_gateway::PetGateway;

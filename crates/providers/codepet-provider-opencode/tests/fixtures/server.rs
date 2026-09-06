@@ -184,7 +184,9 @@ fn route(
     if method == "POST" && path == "/api/session" {
         let request: Value = serde_json::from_slice(body).unwrap();
         let directory = request["location"]["directory"].as_str().unwrap();
-        let created = session("ses_created", "New session", directory, 1_700_000_001_000);
+        let mut created = session("ses_created", "New session", directory, 1_700_000_001_000);
+        if request.get("agent").is_some() { created["agent"] = request["agent"].clone(); }
+        if request.get("model").is_some() { created["model"] = request["model"].clone(); }
         lock(state)
             .sessions
             .insert("ses_created".to_string(), created.clone());
@@ -232,6 +234,10 @@ fn route(
                                     "structured": {}
                                 },
                                 "time": {"created": 1_700_000_000_210u64}
+                            },
+                            {
+                                "type": "tool", "id": "tool_fixture_second", "name": "read",
+                                "state": {"status":"completed", "input":{"path":"Cargo.toml"}, "structured":{}}
                             }
                         ],
                         "finish": "stop",
@@ -357,16 +363,7 @@ fn route(
         return (204, String::new());
     }
     if method == "POST" && path.ends_with("/wait") {
-        let session_id = path
-            .trim_start_matches("/api/session/")
-            .trim_end_matches("/wait")
-            .trim_end_matches('/');
-        loop {
-            if !lock(state).active.contains(session_id) {
-                return (204, String::new());
-            }
-            thread::sleep(std::time::Duration::from_millis(5));
-        }
+        return (503, json!({"_tag":"ServiceUnavailableError", "message":"Session wait is not available yet", "service":"session.wait"}).to_string());
     }
     if method == "POST" && path.ends_with("/reply") && path.contains("/permission/") {
         let segments = path.split('/').collect::<Vec<_>>();

@@ -1989,3 +1989,36 @@ async fn history_recovery_racing_shutdown_does_not_resurrect_the_plugin() {
     #[cfg(unix)]
     assert!(!pid_is_alive(&pid_marker));
 }
+
+#[tokio::test]
+async fn observation_fans_out_locally_without_a_remote_instance() {
+    let plugin_id = "dev.codepet.codex";
+    let manager = build_manager("pet-device", vec![plugin(plugin_id, &[])]);
+    manager.enable_connection_heartbeats();
+    let remote = ProviderGatewayService::new(manager.clone()).unwrap();
+    assert!(manager.start_enabled().await.into_iter().all(|(_, result)| result.is_ok()));
+    let mut one = manager.subscribe_events(plugin_id, "consumer-one").await.unwrap();
+    let mut two = manager.subscribe_events(plugin_id, "consumer-two").await.unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(3), one.receiver.recv()).await.unwrap().unwrap();
+    let second = tokio::time::timeout(Duration::from_secs(3), two.receiver.recv()).await.unwrap().unwrap();
+    assert_eq!(first.event_id, second.event_id);
+    assert_eq!(first.subscription_id, second.subscription_id);
+    assert!(first.subscription_id.starts_with("host-"));
+    manager.unsubscribe_events(plugin_id, "consumer-one").await.unwrap();
+    assert!(tokio::time::timeout(Duration::from_secs(3), two.receiver.recv()).await.unwrap().is_some());
+    let directory = tempfile::tempdir().unwrap();
+    let pet = codepet_host::PetGateway::new(manager.clone(), directory.path().join("sources.json"));
+    pet.start();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while pet.snapshot().tasks.is_empty() { tokio::time::sleep(Duration::from_millis(50)).await; }
+    }).await.unwrap();
+    assert_eq!(pet.snapshot().tasks[0].title, "Observed outside Remote");
+    assert!(manager.snapshot(plugin_id).await.unwrap().instances.is_empty());
+    pet.set_enabled(codepet_pet_sdk::PetSourceSetEnabledRequest { source_id: "codex".into(), enabled: false }).unwrap();
+    assert!(pet.snapshot().tasks.is_empty());
+    assert!(tokio::time::timeout(Duration::from_secs(3), two.receiver.recv()).await.unwrap().is_some());
+    // Keeping Remote alive must not receive or validate an observation as a routed control event.
+    assert_eq!(manager.snapshot(plugin_id).await.unwrap().state, PluginRuntimeState::Ready);
+    drop(remote);
+    manager.shutdown().await;
+}

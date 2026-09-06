@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PetSources from "./lib/PetSources.svelte";
+  import type { PetSource } from "./lib/petGateway";
   import { confirm as confirmDialog, open } from "@tauri-apps/plugin-dialog";
   import { LogicalPosition } from "@tauri-apps/api/dpi";
   import { listen } from "@tauri-apps/api/event";
@@ -34,7 +36,7 @@
   import { onMount, tick } from "svelte";
   import ProviderConnectionStatus from "./lib/ProviderConnectionStatus.svelte";
   import { observeProviderRuntimes, type ProviderConnectionState } from "./lib/providerRuntimes";
-  import { appDataDirectory, appDataDirectoryTargetStatus, checkAppUpdate, clearAgentRuntimeExecutable, collectorEndpoint, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listAgents, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentEnabled, setAgentHookEvents, setAgentRuntimeExecutable, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { appDataDirectory, appDataDirectoryTargetStatus, checkAppUpdate, clearAgentRuntimeExecutable, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentRuntimeExecutable, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
   import { agentRuntimeSourceLabel, agentRuntimeStatusMeta, canRestoreAutomaticDetection } from "./lib/agentRuntime";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
@@ -53,7 +55,7 @@
   type ActivityFilterKind = keyof ActivityKeywordFilterSettings;
 
   let tab: "agents" | "connections" | "usage" | "personalize" | "events" = "agents";
-  let agents: AgentView[] = [];
+  let petSources: PetSource[] = [];
   let agentRuntimes: AgentRuntime[] = [];
   let providerConnections: ProviderConnectionState[] = [];
   let providerConnectionsLoaded = false;
@@ -93,9 +95,7 @@
   let petLibrary: PetLibraryView | null = null;
   let usage: TokenUsageSummary | null = null;
   let events: PetEvent[] = [];
-  let endpoint = "";
   let appDataDir = "";
-  let busyAgent: string | null = null;
   let busyRuntime: string | null = null;
   let busyPet = "";
   let busyAppDataDirectory = false;
@@ -300,19 +300,15 @@
     error = "";
     const startedAt = performance.now();
     try {
-      const [nextAgents, _runtimeSubscription, nextEvents, nextEndpoint, nextAppDataDir, nextPetLibrary, nextUsage, nextLaunchAtLogin] = await Promise.all([
-        measureFrontendPerf("frontend.main.list_agents", () => listAgents()),
+      const [_runtimeSubscription, nextEvents, nextAppDataDir, nextPetLibrary, nextUsage, nextLaunchAtLogin] = await Promise.all([
         measureFrontendPerf("frontend.main.list_agent_runtimes", () => runtimeObserver.start()),
         measureFrontendPerf("frontend.main.recent_events", () => recentEvents()),
-        measureFrontendPerf("frontend.main.collector_endpoint", () => collectorEndpoint()),
         measureFrontendPerf("frontend.main.app_data_directory", () => appDataDirectory()),
         measureFrontendPerf("frontend.main.list_pets", () => listPets()),
         measureFrontendPerf("frontend.main.token_usage_summary", () => tokenUsageSummary()),
         measureFrontendPerf("frontend.main.get_launch_at_login", () => getLaunchAtLoginEnabled()),
       ]);
-      agents = nextAgents;
       events = mergeEventFeed(events, nextEvents);
-      endpoint = nextEndpoint;
       appDataDir = nextAppDataDir;
       petLibrary = nextPetLibrary;
       usage = nextUsage;
@@ -322,7 +318,6 @@
         name: "frontend.main.refresh",
         durationMs: performance.now() - startedAt,
         fields: {
-          agents: nextAgents.length,
           runtimes: agentRuntimes.length,
           events: nextEvents.length,
           pets: nextPetLibrary.pets.length,
@@ -424,60 +419,6 @@
     if (remoteDeviceClockTimer) {
       window.clearInterval(remoteDeviceClockTimer);
       remoteDeviceClockTimer = null;
-    }
-  }
-
-  async function toggleAgent(agent: AgentView) {
-    busyAgent = agent.id;
-    error = "";
-    try {
-      agents = await setAgentEnabled(agent.id, !agent.enabled);
-    } catch (currentError) {
-      error = String(currentError);
-    } finally {
-      busyAgent = null;
-    }
-  }
-
-  function agentBusy(agent: AgentView) {
-    return busyAgent === agent.id || busyAgent === hookBusyKey(agent.id);
-  }
-
-  function hookBusyKey(agentId: AgentId) {
-    return `${agentId}:hooks`;
-  }
-
-  function selectedHookEvents(agent: AgentView) {
-    return normalizeHookEventsForAgent(agent, agent.selectedHookEvents);
-  }
-
-  function hookEventSelected(agent: AgentView, hookEvent: string) {
-    return selectedHookEvents(agent).includes(hookEvent);
-  }
-
-  function isLastSelectedHookEvent(agent: AgentView, hookEvent: string) {
-    const selectedEvents = selectedHookEvents(agent);
-    return selectedEvents.length <= 1 && selectedEvents.includes(hookEvent);
-  }
-
-  async function toggleHookEvent(agent: AgentView, hookEvent: string, checked: boolean) {
-    const currentEvents = selectedHookEvents(agent);
-    const nextEvents = checked
-      ? agent.hookEvents.filter((event) => event === hookEvent || currentEvents.includes(event))
-      : currentEvents.filter((event) => event !== hookEvent);
-    if (nextEvents.length === 0) {
-      return;
-    }
-
-    busyAgent = hookBusyKey(agent.id);
-    error = "";
-    try {
-      agents = await setAgentHookEvents(agent.id, nextEvents);
-      settings = normalizeSettings(await getAppSettings());
-    } catch (currentError) {
-      error = String(currentError);
-    } finally {
-      busyAgent = null;
     }
   }
 
@@ -1419,20 +1360,7 @@
   }
 
   function normalizeAgentSettings(agentSettings: Partial<AppSettings["agents"]> | null | undefined): AppSettings["agents"] {
-    const rawByAgent = agentSettings?.byAgent ?? {};
-    const byAgent = agents.reduce<AppSettings["agents"]["byAgent"]>((nextByAgent, agent) => {
-      const configured = rawByAgent[agent.id]?.hookEvents ?? agent.selectedHookEvents;
-      nextByAgent[agent.id] = {
-        hookEvents: normalizeHookEventsForAgent(agent, configured),
-      };
-      return nextByAgent;
-    }, { ...agentSettingsDefaults.byAgent });
-    return { byAgent };
-  }
-
-  function normalizeHookEventsForAgent(agent: AgentView, hookEvents: string[] | null | undefined) {
-    const selected = agent.hookEvents.filter((event) => hookEvents?.includes(event));
-    return selected.length ? selected : [...agent.hookEvents];
+    return { byAgent: {} };
   }
 
   function normalizeFilterKeywords(keywords: string[] | null | undefined): string[] {
@@ -1802,8 +1730,8 @@
 
   $: latest = events.at(-1);
   $: recentVisibleEvents = events.slice(-5).reverse();
-  $: enabledAgents = agents.filter((agent) => agent.enabled);
-  $: enabledHookCount = enabledAgents.reduce((count, agent) => count + selectedHookEvents(agent).length, 0);
+  $: enabledSources = petSources.filter(source => source.enabled);
+  $: receivingSources = petSources.filter(source => source.status === "receiving");
   $: usageData = buildUsageChartData(usage, { range: usageRange, bucketSize: usageBucketSize });
   $: usageBuckets = usageData.buckets;
   $: usageMaxTokens = usageData.maxTokens;
@@ -1845,19 +1773,19 @@
       <div class="agent-workspace">
         <section class="overview-grid" aria-label="运行概览">
           <article class="overview-card pixel-panel">
-            <span><PlugZap size={17} /> Hooks</span>
-            <strong>{enabledHookCount}</strong>
-            <p>{enabledAgents.length}/{agents.length || 0} 个 agent 已启用</p>
+            <span><PlugZap size={17} /> 活动来源</span>
+            <strong>{enabledSources.length}/{petSources.length}</strong>
+            <p>已启用的任务活动来源</p>
           </article>
           <article class="overview-card pixel-panel">
-            <span><Activity size={17} /> 最新状态</span>
-            <strong>{latest ? statusLabel(latest.status) : "待命"}</strong>
-            <p>{latest?.title ?? "还没有收到新的任务事件"}</p>
+            <span><Activity size={17} /> 接收状态</span>
+            <strong>{receivingSources.length}</strong>
+            <p>已收到活动的来源</p>
           </article>
           <article class="overview-card pixel-panel">
-            <span><ShieldAlert size={17} /> 授权提醒</span>
-            <strong>{settings?.notifications.ringOnPermission ? "响铃" : "静音"}</strong>
-            <p>{endpoint || "collector endpoint starting"}</p>
+            <span><ShieldAlert size={17} /> 桌宠任务列表</span>
+            <strong>只读</strong>
+            <p>回复与授权请在原应用处理</p>
           </article>
         </section>
 
@@ -1867,88 +1795,10 @@
               <span class="agent-kicker">CONNECTED AGENTS</span>
               <h3>接入状态</h3>
             </div>
-            <span>{agents.length} agents</span>
+            <span>Codex · Claude · OpenCode</span>
           </header>
 
-          <div class="agent-list">
-            {#each agents as agent}
-              <article class="agent-card">
-                <div class="agent-title">
-                  <span class="agent-kicker">{agent.id}</span>
-                  <h3>{agent.name}</h3>
-                  <p class="agent-description">{agent.description}</p>
-                </div>
-                <dl class="agent-meta">
-                  <div>
-                    <dt>配置</dt>
-                    <dd>{agent.configPath}</dd>
-                  </div>
-                  <div>
-                    <dt>事件</dt>
-                    <dd>{selectedHookEvents(agent).length}/{agent.hookEvents.length} 个 hooks</dd>
-                  </div>
-                </dl>
-
-                <div class="event-row">
-                  {#each agent.hookEvents as hookEvent}
-                    <label class="hook-event-check" class:active={hookEventSelected(agent, hookEvent)}>
-                      <input
-                        type="checkbox"
-                        checked={hookEventSelected(agent, hookEvent)}
-                        disabled={agentBusy(agent) || isLastSelectedHookEvent(agent, hookEvent)}
-                        on:change={(event) => toggleHookEvent(agent, hookEvent, event.currentTarget.checked)}
-                      />
-                      <span>{hookEvent}</span>
-                    </label>
-                  {/each}
-                </div>
-                {#if settings}
-                  <div class="agent-filter-panel">
-                    <div class="filter-card-head compact">
-                      <h3><Filter size={16} /> 任务过滤</h3>
-                      <button class="filter-clear-button" disabled={agentActivityFilterCount(agentActivityFilters(agent.id)) === 0} on:click={() => clearAgentActivityFilters(agent.id)}>
-                        <Trash2 size={15} /> 清空
-                      </button>
-                    </div>
-                    <div class="compact-filter-groups">
-                      {#each activityFilterGroups as group}
-                        <div class="compact-filter-group">
-                          <span>{group.label}</span>
-                          <div class="filter-chip-row">
-                            {#each agentActivityFilters(agent.id)[group.key] as keyword}
-                              <button class="filter-chip" type="button" on:click={() => removeFilterKeyword(agent.id, group.key, keyword)} aria-label={`移除${agent.name} ${group.label}过滤 ${keyword}`}>
-                                {keyword}
-                                <Trash2 size={12} />
-                              </button>
-                            {/each}
-                            <input
-                              value={filterDrafts[agent.id][group.key]}
-                              placeholder={group.placeholder}
-                              on:input={(event) => updateFilterDraft(agent.id, group.key, event.currentTarget.value)}
-                              on:keydown={(event) => handleFilterDraftKeydown(event, agent.id, group.key)}
-                            />
-                            <button class="filter-add-button" type="button" on:click={() => addFilterKeyword(agent.id, group.key)}>添加</button>
-                          </div>
-                        </div>
-                      {/each}
-                    </div>
-                  </div>
-                {/if}
-                <div class="agent-controls">
-                  <span class:online={agent.enabled} class="status-chip">{agent.hookEvents.length === 0 ? "旧 Hook 已停用" : agent.enabled ? "已启用" : "未启用"}</span>
-                  <button
-                    class:enabled={agent.enabled}
-                    class="power-button"
-                    disabled={agentBusy(agent) || agent.hookEvents.length === 0}
-                    on:click={() => toggleAgent(agent)}
-                    aria-label={`${agent.name} ${agent.enabled ? "关闭" : "启用"}`}
-                  >
-                    <Power size={17} />
-                  </button>
-                </div>
-              </article>
-            {/each}
-          </div>
+          <PetSources bind:sources={petSources} />
         </section>
       </div>
     {:else if tab === "connections"}

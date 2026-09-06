@@ -119,7 +119,7 @@ fn start_turn_resource_from_fresh_provider() -> String {
                     "nativeResourceId": "ses_fixture"
                 },
                 "clientRequestId": "same-client-message",
-                "capabilityRevision": "opencode-server-1.18.25-controls-v1",
+                "capabilityRevision": "opencode-server-1.18.25-controls-v2",
                 "input": { "kind": "text", "text": "needs approval" },
                 "selection": {}
             }

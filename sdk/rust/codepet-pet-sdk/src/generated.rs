@@ -132,6 +132,8 @@ pub struct PetSnapshot {
     pub generated_at: TimestampMs,
     pub tasks: Vec<PetTask>,
     pub approvals: Vec<PetApproval>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<PetSource>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -158,6 +160,32 @@ pub struct PetSnapshotResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct PetSource {
+    pub id: String,
+    pub display_name: String,
+    pub enabled: bool,
+    pub status: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct PetSourceSetEnabledRequest {
+    pub source_id: String,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct PetSourceSetEnabledResponse {
+    pub source: PetSource,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct PetTask {
     pub id: PetTaskId,
     pub title: String,
@@ -165,6 +193,12 @@ pub struct PetTask {
     pub summary: Option<String>,
     pub status: PetTaskStatus,
     pub updated_at: TimestampMs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
 }
 
 pub type PetTaskId = String;
@@ -183,6 +217,10 @@ pub enum PetTaskStatus {
     Failed,
     #[serde(rename = "interrupted")]
     Interrupted,
+    #[serde(rename = "waiting-input")]
+    WaitingInput,
+    #[serde(rename = "unknown")]
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,6 +231,8 @@ pub enum ProtocolMethod {
     PetSnapshot,
     #[serde(rename = "pet.action")]
     PetAction,
+    #[serde(rename = "source.setEnabled")]
+    SourceSetEnabled,
 }
 
 impl ProtocolMethod {
@@ -201,6 +241,7 @@ impl ProtocolMethod {
             Self::ProtocolInitialize => "protocol.initialize",
             Self::PetSnapshot => "pet.snapshot",
             Self::PetAction => "pet.action",
+            Self::SourceSetEnabled => "source.setEnabled",
         }
     }
 }
@@ -213,6 +254,7 @@ impl std::str::FromStr for ProtocolMethod {
             "protocol.initialize" => Ok(Self::ProtocolInitialize),
             "pet.snapshot" => Ok(Self::PetSnapshot),
             "pet.action" => Ok(Self::PetAction),
+            "source.setEnabled" => Ok(Self::SourceSetEnabled),
             _ => Err(()),
         }
     }
@@ -278,6 +320,13 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: PetActionRequest,
     },
+    #[serde(rename = "source.setEnabled")]
+    SourceSetEnabled {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: ProtocolVersion,
+        id: RequestId,
+        params: PetSourceSetEnabledRequest,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -303,6 +352,13 @@ pub enum ProtocolResponse {
         protocol_version: ProtocolVersion,
         id: RequestId,
         response: ResponsePayload<PetActionResponse>,
+    },
+    #[serde(rename = "source.setEnabled")]
+    SourceSetEnabled {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: ProtocolVersion,
+        id: RequestId,
+        response: ResponsePayload<PetSourceSetEnabledResponse>,
     },
 }
 
@@ -337,6 +393,10 @@ pub trait ProtocolServer: Send + Sync {
     fn pet_action<'a>(&'a self, _request: PetActionRequest) -> ProtocolFuture<'a, PetActionResponse> {
         Box::pin(async { Err(method_not_implemented("pet.action")) })
     }
+
+    fn source_set_enabled<'a>(&'a self, _request: PetSourceSetEnabledRequest) -> ProtocolFuture<'a, PetSourceSetEnabledResponse> {
+        Box::pin(async { Err(method_not_implemented("source.setEnabled")) })
+    }
 }
 
 fn method_not_implemented(method: &str) -> ProtocolError {
@@ -370,6 +430,13 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 Err(error) => ResponsePayload::Error { error },
             };
             ProtocolResponse::PetAction { protocol_version, id, response }
+        },
+        ProtocolRequest::SourceSetEnabled { protocol_version, id, params } => {
+            let response = match server.source_set_enabled(params).await {
+                Ok(result) => ResponsePayload::Ok { result },
+                Err(error) => ResponsePayload::Error { error },
+            };
+            ProtocolResponse::SourceSetEnabled { protocol_version, id, response }
         }
     }
 }
@@ -435,6 +502,14 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             let result = self.transport.request(ProtocolMethod::PetAction, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn source_set_enabled<'a>(&'a self, request: PetSourceSetEnabledRequest) -> ProtocolFuture<'a, PetSourceSetEnabledResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::SourceSetEnabled, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

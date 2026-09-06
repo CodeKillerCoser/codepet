@@ -36,7 +36,7 @@ fn turn_start_request(
     TurnStartRequest {
         conversation,
         client_request_id: client_request_id.to_string(),
-        capability_revision: "opencode-server-1.18.25-controls-v1".to_string(),
+        capability_revision: "opencode-server-1.18.25-controls-v2".to_string(),
         input: TurnInput {
             kind: TurnInputKind::Text,
             text: message.to_string(),
@@ -145,7 +145,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     .await
     .unwrap();
     assert_eq!(created.instance.status, InstanceStatus::Created);
-    assert_eq!(created.instance.capabilities.revision, "opencode-server-1.18.25-controls-v1");
+    assert_eq!(created.instance.capabilities.revision, "opencode-server-1.18.25-controls-v2");
     assert!(created.instance.capabilities.turn_send.is_some());
     assert!(created
         .instance
@@ -166,6 +166,9 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     assert_eq!(controls.access_mode.as_ref().unwrap().options.len(), 2);
     assert_eq!(controls.reasoning_effort.as_ref().unwrap().options.len(), 2);
     assert!(controls.model_catalog.is_some());
+    let create_controls = started.instance.capabilities.conversation_create.as_ref().unwrap().selection.as_ref().unwrap();
+    assert_eq!(create_controls.access_mode.as_ref().unwrap().options.len(), 2);
+    assert!(create_controls.model_catalog.is_some());
     let first_server_pid = read_pid(&first_pid_file);
     std::thread::sleep(Duration::from_millis(100));
 
@@ -211,7 +214,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         narrow_page.page_info.and_then(|page| page.next_cursor),
         Some("1".to_string())
     );
-    assert_eq!(wider_page.items.len(), 4);
+    assert_eq!(wider_page.items.len(), 5);
     assert!(wider_page.page_info.and_then(|page| page.next_cursor).is_none());
 
     let fetched = provider
@@ -223,7 +226,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     .await
     .unwrap();
     assert_eq!(fetched.conversation.title, "Fixture session");
-    assert_eq!(fetched.items.len(), 4);
+    assert_eq!(fetched.items.len(), 5);
     let ConversationItem::MessageConversationItem(user) = &fetched.items[0] else { panic!("user") };
     assert_eq!(user.role, ConversationItemRole::User);
     let ContentBlock::TextContentBlock(user_text) = &user.contents[0] else { panic!("text") };
@@ -270,6 +273,23 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         wait_for_conversation(&event_receiver, "ses_created").resource,
         new_conversation.conversation.resource
     );
+
+    let configured = provider.conversation_create(ConversationCreateRequest {
+        route:route.clone(), project:None, title:None, permission_level:"plan".into(),
+        model:Some("fixture/fixture-model".into()), reasoning_effort:Some("high".into()),
+        workspace_root:Some(created_workspace.to_string_lossy().into_owned()), workspace_mode:None, extension:None,
+    }).await.unwrap();
+    assert_eq!(configured.conversation.permission_level.as_deref(), Some("plan"));
+    assert_eq!(configured.conversation.model.as_deref(), Some("fixture/fixture-model"));
+    assert_eq!(configured.conversation.reasoning_effort.as_deref(), Some("high"));
+    for (permission, model, reasoning) in [("unknown", "fixture/fixture-model", "high"), ("plan", "fixture/unknown", "high"), ("plan", "fixture/fixture-model", "unknown")] {
+        let error = provider.conversation_create(ConversationCreateRequest {
+            route:route.clone(), project:None, title:None, permission_level:permission.into(),
+            model:Some(model.into()), reasoning_effort:Some(reasoning.into()),
+            workspace_root:Some(created_workspace.to_string_lossy().into_owned()), workspace_mode:None, extension:None,
+        }).await.unwrap_err();
+        assert_eq!(error.code, "invalid_turn_selection");
+    }
 
     let mut selected_turn = turn_start_request(
         fixture_conversation.clone(),

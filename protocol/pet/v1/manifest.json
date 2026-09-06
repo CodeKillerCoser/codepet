@@ -37,7 +37,8 @@
       "idempotency": "nonIdempotent",
       "request": { "$ref": "./schema.json#/$defs/PetActionRequest" },
       "response": { "$ref": "./schema.json#/$defs/PetActionResponse" }
-    }
+    },
+    {"name": "source.setEnabled", "direction": "clientToCompanion", "idempotency": "idempotent", "request": {"$ref": "./schema.json#/$defs/PetSourceSetEnabledRequest"}, "response": {"$ref": "./schema.json#/$defs/PetSourceSetEnabledResponse"}}
   ],
   "events": [
     {

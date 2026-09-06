@@ -178,6 +178,16 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
         opencode_conversations[0].resource.native_resource_id,
         "ses_fixture"
     );
+    let history = ProtocolServer::conversation_get(gateway.as_ref(), codepet_gateway_sdk::ConversationGetRequest {
+        conversation:opencode_conversations[0].resource.clone(), cursor:None, limit:Some(100),
+    }).await.unwrap();
+    assert_eq!(history.items.len(), 5); // Includes two tool results; Host must accept both identities.
+    let description = ProtocolServer::provider_describe(gateway.as_ref(), codepet_gateway_sdk::ProviderDescribeRequest {
+        provider_id:opencode.id.clone(),
+    }).await.unwrap();
+    let controls = description.capabilities.conversation_create.unwrap().selection.unwrap();
+    assert_eq!(controls.access_mode.unwrap().options.len(), 2);
+    assert!(controls.model_catalog.is_some());
 
     let claude_conversation = ProtocolServer::conversation_create(
         gateway.as_ref(),

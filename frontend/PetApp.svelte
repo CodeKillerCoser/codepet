@@ -1,50 +1,27 @@
 <script lang="ts">
-  import { listen } from "@tauri-apps/api/event";
-  import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
-  import { availableMonitors, cursorPosition, getCurrentWindow, primaryMonitor, type Monitor } from "@tauri-apps/api/window";
-  import { onMount, tick } from "svelte";
-  import { getAppSettings, openMainWindow, recordPerfEvent } from "./lib/api";
-  import { activityCapabilities, activityKey, cardAgentLabel, cardEndTime, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
-  import { activityActiveTurnFor, activityCanResolveApproval, activityQuickRepliesFor } from "./lib/agentInteractions";
-  import {
-    codexDesktopCompanionClient,
-    codexDesktopCompanionErrorMessage,
-    codexDesktopCompanionEventName,
-    createCodexDesktopCompanionClientMessageId,
-    readCodexDesktopCompanionSnapshot,
-    replayCodexDesktopCompanionEvents,
-  } from "./lib/codexDesktopCompanion";
-  import { mergeEventFeed } from "./lib/eventFeed";
-  import { PROTOCOL_VERSION, type ProtocolEvent, type Provider, type QuickReply } from "./lib/generated/runtimeGateway";
-  import { runningBubbleStyle } from "./lib/gradientColor";
-  import { isOpaqueCssColor, rectFromElementBounds, shouldIgnorePetWindowCursor, type PetHitRect } from "./lib/petHitTest";
-  import PetAvatar from "./lib/PetAvatar.svelte";
-  import { RuntimeGatewayActivityProjection } from "./lib/runtimeGatewayActivity";
-  import { playNotificationSound, playWhipSound, shouldRepeatNotification, shouldRing } from "./lib/sound";
-  import { defaultPetSprite, defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
-  import type { AppSettings, PetEvent } from "./lib/types";
-
+  import { listen } from '@tauri-apps/api/event';
+  import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
+  import { availableMonitors, cursorPosition, getCurrentWindow, primaryMonitor, type Monitor } from '@tauri-apps/api/window';
+  import { onMount, tick } from 'svelte';
+  import { getAppSettings, openMainWindow } from './lib/api';
+  import { petSnapshot, petStatusLabel, type PetTask, type PetSource } from './lib/petGateway';
+  import { runningBubbleStyle } from './lib/gradientColor';
+  import { isOpaqueCssColor, rectFromElementBounds, shouldIgnorePetWindowCursor, type PetHitRect } from './lib/petHitTest';
+  import PetAvatar from './lib/PetAvatar.svelte';
+  import { playWhipSound } from './lib/sound';
+  import { defaultPetSprite, defaultRunningBubbleSettings, themeClassNames } from './lib/theme';
+  import type { AppSettings } from './lib/types';
   let settings: AppSettings | null = null;
-  let activities: PetEvent[] = [];
-  let recentEventCache: PetEvent[] = [];
-  let repeatTimer: number | null = null;
-  let repeatEventId: string | null = null;
-  let repeatEvent: PetEvent | null = null;
-  let repeatExpiresAt = 0;
-  let seenEventIds = new Set<string>();
-  let dismissedActivityKeys = new Set<string>();
-  let hiddenInternalActivityKeys = new Set<string>();
+  let activities: PetTask[] = [];
+  let sources: PetSource[] = [];
+  let dismissed = new Map<string, number>();
+  let gatewayError = '';
   let systemDark = false;
   let tasksCollapsed = false;
   let activityStack: HTMLElement | null = null;
   let lastTopActivityId: string | null = null;
   let ready = false;
-  let replyingToId: string | null = null;
-  let replyText = "";
-  let replySubmitting = false;
-  let controlSubmittingId: string | null = null;
-  let actionNotice = "";
-  let replyTextarea: HTMLTextAreaElement | null = null;
+  let actionNotice = '';
   let noticeTimer: number | null = null;
   let whipAnimating = false;
   let whipAnimationKey = 0;
@@ -55,17 +32,7 @@
   let cursorPassthroughTimer: number | null = null;
   let cursorEventsIgnored = false;
   let cursorPassthroughInFlight = false;
-  let gatewayProviders: Provider[] = [];
-  let gatewayPhase: "loading" | "ready" | "error" = "loading";
-  let gatewayError = "";
-  let gatewayInitialized = false;
-  let lastGatewayEventSequence = 0;
-  let bufferedGatewayEvents: ProtocolEvent[] = [];
-  let gatewayEventQueue = Promise.resolve();
-  let gatewaySyncPromise: Promise<void> | null = null;
-  const runtimeGatewayProjection = new RuntimeGatewayActivityProjection();
   const petImageAlphaCache = new WeakMap<HTMLImageElement, { src: string; width: number; height: number; data: Uint8ClampedArray }>();
-
   const petWindowWidth = 360;
   const activityPetGap = 8;
   const activityStackMaxHeight = 368;
@@ -73,517 +40,67 @@
   const petWindowPresetHeight = 22 + maxPetStageHeight + activityPetGap + activityStackMaxHeight;
   const noticeVisibleMs = 2500;
   const whipVisibleMs = 760;
-  const permissionRepeatMaxMs = 590_000;
-  const replyEditorMaxRows = 5;
   const cursorPassthroughPollMs = 60;
   const petHitPadding = 2;
   const devMode = import.meta.env.DEV;
   const fallbackRunningBubble = defaultRunningBubbleSettings;
   const defaultPetOpacity = 1;
   const minPetOpacity = 0.25;
-
-  $: themeClass = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
+  $: themeClass = themeClassNames(settings?.appearance.theme === 'dark' || (settings?.appearance.theme === 'system' && systemDark) ? 'dark' : 'light');
   $: runningBubble = settings?.appearance.runningBubble ?? fallbackRunningBubble;
   $: runningBubbleStyleText = runningBubbleStyle(runningBubble);
-  $: primary = primaryActivity(activities);
   $: hasActivities = activities.length > 0;
-  $: hasLiveActivities = activities.some((activity) => activity.status === "thinking" || activity.status === "running" || activity.status === "waiting-approval");
-  $: hasCompletedActivities = activities.some((activity) => activity.status === "done");
-  $: showActivities = hasActivities && !tasksCollapsed;
-  $: renderedActivities = showActivities ? activities : [];
-  $: gatewayEmptyState = hasActivities ? null : runtimeGatewayEmptyState(gatewayPhase, gatewayProviders, gatewayError);
-  $: showActivityStack = showActivities || Boolean(gatewayEmptyState);
-  $: clearReplyIfNoLongerAvailable(activities, replyingToId);
-  $: petScale = Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4);
+  $: hasCompletedActivities = activities.some(a => a.status === 'completed');
+  $: primary = activities.find(a => a.status === 'running') ?? activities[0];
+  $: avatarStatus = primary?.status === 'running' ? 'running' : primary?.status === 'failed' ? 'failed' : primary?.status === 'completed' ? 'done' : primary?.status === 'waiting-approval' ? 'waiting-approval' : 'idle';
   $: petWindowOpacity = clampPetOpacity(settings?.pet.opacity);
-  $: topActivityId = showActivities ? activities[0]?.id ?? null : null;
-  $: if (!hasActivities && tasksCollapsed) {
-    tasksCollapsed = false;
-  }
-  $: if (ready) {
-    void ensureWindowFrameAndBounds();
-  }
-  $: if (activityStack && topActivityId && topActivityId !== lastTopActivityId) {
-    lastTopActivityId = topActivityId;
-    requestAnimationFrame(() => {
-      if (activityStack) {
-        activityStack.scrollTop = 0;
-      }
-    });
-  }
-
+  $: topActivityId = activities[0]?.id ?? null;
+  $: if (ready) scheduleEnsureWindowFrameAndBounds();
+  $: if (activityStack && topActivityId !== lastTopActivityId) { lastTopActivityId = topActivityId; void tick().then(() => { if (activityStack) activityStack.scrollTop = 0; }); }
   onMount(() => {
-    const mountedAt = performance.now();
-    const appWindow = getCurrentWindow();
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    systemDark = media.matches;
-    const syncTheme = () => {
-      systemDark = media.matches;
-    };
-    media.addEventListener("change", syncTheme);
-    void appWindow.setResizable(false).catch((error) => {
-      console.error("failed to disable pet window resizing", error);
-    });
-    cursorPassthroughTimer = window.setInterval(() => {
-      void syncCursorPassthrough();
-    }, cursorPassthroughPollMs);
-    void syncCursorPassthrough();
-
     let disposed = false;
-    let unlistenGatewayEvent: (() => void) | null = null;
-    let unlistenSettings: (() => void) | null = null;
-    let unlistenWindowMoved: (() => void) | null = null;
-    let unlistenWindowResized: (() => void) | null = null;
-
-    void appWindow.onMoved(() => {
-      scheduleEnsureWindowFrameAndBounds();
-    }).then((unlisten) => {
-      if (disposed) {
-        unlisten();
-      } else {
-        unlistenWindowMoved = unlisten;
-      }
-    }).catch((error) => {
-      console.error("failed to watch pet window movement", error);
-    });
-
-    void appWindow.onResized(() => {
-      scheduleEnsureWindowFrameAndBounds();
-    }).then((unlisten) => {
-      if (disposed) {
-        unlisten();
-      } else {
-        unlistenWindowResized = unlisten;
-      }
-    }).catch((error) => {
-      console.error("failed to watch pet window resize", error);
-    });
-
-    const gatewayListenerReady = listen<ProtocolEvent>(codexDesktopCompanionEventName, (event) => {
-      if (disposed) {
-        return;
-      }
-      receiveRuntimeGatewayEvent(event.payload);
-    }).then((unlisten) => {
-      if (disposed) {
-        unlisten();
-      } else {
-        unlistenGatewayEvent = unlisten;
-      }
-    }).catch((error) => {
-      gatewayPhase = "error";
-      gatewayError = codexDesktopCompanionErrorMessage(error);
-      console.error("failed to listen Codex Desktop companion events", error);
-      throw error;
-    });
-
-    void listen<AppSettings>("settings-updated", (event) => {
-      settings = event.payload;
-      rebuildActivitiesFromRecentEvents();
-    }).then((unlisten) => {
-      if (disposed) {
-        unlisten();
-      } else {
-        unlistenSettings = unlisten;
-      }
-    }).catch((error) => {
-      console.error("failed to listen settings updates", error);
-    });
-
-    void (async () => {
+    let busy = false;
+    const cleanup: (() => void)[] = [];
+    const register = (promise: Promise<() => void>) => void promise.then(fn => { if (disposed) fn(); else cleanup.push(fn); }).catch(error => console.error("Pet window listener failed", error));
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const syncTheme = () => { systemDark = media.matches; };
+    syncTheme(); media.addEventListener('change', syncTheme);
+    register(listen<AppSettings>('settings-updated', event => { settings = event.payload; }));
+    const windowHandle = getCurrentWindow();
+    void windowHandle.setResizable(false);
+    register(windowHandle.onMoved(() => scheduleEnsureWindowFrameAndBounds()));
+    register(windowHandle.onResized(() => scheduleEnsureWindowFrameAndBounds()));
+    cursorPassthroughTimer = window.setInterval(() => void syncCursorPassthrough(), cursorPassthroughPollMs);
+    const refresh = async () => {
+      if (busy || disposed) return;
+      busy = true;
       try {
-        settings = await getAppSettings();
-        void recordPerfEvent({
-          name: "frontend.pet.get_settings",
-          durationMs: performance.now() - mountedAt,
-        }).catch(() => {});
-      } catch (error) {
-        void recordPerfEvent({
-          name: "frontend.pet.get_settings",
-          status: "error",
-          durationMs: performance.now() - mountedAt,
-          error: String(error),
-        }).catch(() => {});
-        console.error("failed to load pet settings", error);
-      }
-      if (disposed) {
-        return;
-      }
-
-      ready = true;
-      void dockToLowerRight().catch((error) => {
-        console.error("failed to dock pet window", error);
-      });
-      void recordPerfEvent({
-        name: "frontend.pet.ready",
-        durationMs: performance.now() - mountedAt,
-        fields: { activities: activities.length },
-      }).catch(() => {});
-      try {
-        await gatewayListenerReady;
-        if (!disposed) {
-          await synchronizeRuntimeGateway();
-        }
-      } catch (error) {
-        if (!disposed) {
-          gatewayPhase = "error";
-          gatewayError = codexDesktopCompanionErrorMessage(error);
-          console.error("failed to initialize Codex Desktop companion", error);
-        }
-      }
-    })();
-
+        const snapshot = await petSnapshot();
+        if (disposed) return;
+        sources = snapshot.sources ?? [];
+        const previousLive = new Set(activities.filter(a => ["running", "waiting-approval", "waiting-input"].includes(a.status)).map(a => a.id));
+        const hasNewLive = snapshot.tasks.some(a => ["running", "waiting-approval", "waiting-input"].includes(a.status) && !previousLive.has(a.id) && (dismissed.get(a.id) ?? -1) < a.updatedAt);
+        if (hasNewLive) tasksCollapsed = false;
+        activities = snapshot.tasks.filter(a => (dismissed.get(a.id) ?? -1) < a.updatedAt);
+        gatewayError = '';
+      } catch (error) { if (!disposed) { gatewayError = String(error); activities = activities.map(a => ["running", "waiting-approval", "waiting-input"].includes(a.status) ? { ...a, status: "unknown" } : a); } }
+      finally { busy = false; }
+    };
+    void getAppSettings().then(value => { if (!disposed) { settings = value; ready = true; void dockToLowerRight(); } }).catch(error => { if (!disposed) showNotice(String(error)); });
+    void refresh();
+    const poll = window.setInterval(() => void refresh(), 1000);
     return () => {
-      disposed = true;
-      media.removeEventListener("change", syncTheme);
-      unlistenGatewayEvent?.();
-      unlistenSettings?.();
-      unlistenWindowMoved?.();
-      unlistenWindowResized?.();
-      clearRepeat();
-      clearNoticeTimer();
-      clearWhipTimer();
-      clearEnsureWindowFrameTimer();
-      clearCursorPassthroughTimer();
-      void setPetWindowCursorEventsIgnored(false);
+      disposed = true; window.clearInterval(poll); cleanup.forEach(fn => fn()); media.removeEventListener('change', syncTheme);
+      clearNoticeTimer(); clearWhipTimer(); clearEnsureWindowFrameTimer(); clearCursorPassthroughTimer(); void setPetWindowCursorEventsIgnored(false);
     };
   });
-
-  function receiveRuntimeGatewayEvent(event: ProtocolEvent) {
-    if (!gatewayInitialized) {
-      bufferedGatewayEvents.push(event);
-      return;
-    }
-    gatewayEventQueue = gatewayEventQueue
-      .then(() => ingestRuntimeGatewayEvent(event))
-      .catch((error) => {
-        gatewayPhase = "error";
-        gatewayError = codexDesktopCompanionErrorMessage(error);
-        console.error("failed to apply Codex Desktop companion event", error);
-      });
+  function dismissActivity(event: MouseEvent, task: PetTask) {
+    event.stopPropagation(); dismissed.set(task.id, task.updatedAt); activities = activities.filter(a => a.id !== task.id);
   }
-
-  async function synchronizeRuntimeGateway() {
-    if (gatewaySyncPromise) {
-      return gatewaySyncPromise;
-    }
-    const startedAt = performance.now();
-    gatewayPhase = "loading";
-    gatewayError = "";
-    gatewayInitialized = false;
-    const sync = (async () => {
-      let lastError: unknown = null;
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        try {
-          await performRuntimeGatewaySynchronization(startedAt);
-          return;
-        } catch (error) {
-          lastError = error;
-          gatewayInitialized = false;
-        }
-      }
-      throw lastError;
-    })();
-    gatewaySyncPromise = sync;
-    try {
-      await sync;
-    } finally {
-      if (gatewaySyncPromise === sync) {
-        gatewaySyncPromise = null;
-      }
-    }
+  function clearCompletedActivities(event: MouseEvent) {
+    event.stopPropagation(); activities.filter(a => a.status === 'completed').forEach(a => dismissed.set(a.id, a.updatedAt));
+    activities = activities.filter(a => a.status !== 'completed');
   }
-
-  async function performRuntimeGatewaySynchronization(startedAt: number) {
-    const handshake = await codexDesktopCompanionClient.protocolHandshake({
-      clientName: "code-pet-pet-ui",
-      clientVersion: "0",
-      minProtocolVersion: PROTOCOL_VERSION,
-      maxProtocolVersion: PROTOCOL_VERSION,
-    });
-    const snapshot = await readCodexDesktopCompanionSnapshot();
-    runtimeGatewayProjection.replaceProviders([snapshot.provider]);
-    gatewayProviders = runtimeGatewayProjection.providers();
-
-    const snapshotActivities = runtimeGatewayProjection.replaceConversations(
-      snapshot.provider.status === "ready" ? snapshot.conversations : [],
-    );
-    recentEventCache = [];
-    activities = [];
-    seenEventIds = new Set<string>();
-    hiddenInternalActivityKeys = new Set<string>();
-    replyingToId = null;
-    replyText = "";
-    replySubmitting = false;
-    clearRepeat();
-    applyIncomingEvents(snapshotActivities);
-
-    lastGatewayEventSequence = handshake.eventSequence;
-    const replayed = await replayCodexDesktopCompanionEvents(lastGatewayEventSequence);
-    const buffered = bufferedGatewayEvents;
-    bufferedGatewayEvents = [];
-    gatewayInitialized = true;
-    for (const event of orderedRuntimeGatewayEvents([...replayed, ...buffered])) {
-      await ingestRuntimeGatewayEvent(event);
-    }
-
-    gatewayPhase = "ready";
-    gatewayError = "";
-    void recordPerfEvent({
-      name: "frontend.pet.codex_desktop_companion_sync",
-      durationMs: performance.now() - startedAt,
-      status: "ok",
-      fields: {
-        providers: gatewayProviders.length,
-        conversations: snapshot.conversations.length,
-        activities: activities.length,
-        eventSequence: lastGatewayEventSequence,
-      },
-    }).catch(() => {});
-  }
-
-  async function ingestRuntimeGatewayEvent(event: ProtocolEvent) {
-    if (event.protocolVersion !== PROTOCOL_VERSION) {
-      throw new Error(`Codex Desktop companion event protocol mismatch: ${event.protocolVersion}`);
-    }
-    if (event.eventSequence <= lastGatewayEventSequence) {
-      return;
-    }
-    if (event.eventSequence > lastGatewayEventSequence + 1) {
-      try {
-        const replayed = orderedRuntimeGatewayEvents(await replayCodexDesktopCompanionEvents(lastGatewayEventSequence));
-        for (const replayedEvent of replayed) {
-          if (replayedEvent.eventSequence <= lastGatewayEventSequence) {
-            continue;
-          }
-          if (replayedEvent.eventSequence > lastGatewayEventSequence + 1) {
-            break;
-          }
-          await applyRuntimeGatewayEvent(replayedEvent);
-        }
-      } catch (error) {
-        bufferedGatewayEvents.push(event);
-        await synchronizeRuntimeGateway();
-        return;
-      }
-    }
-    if (event.eventSequence <= lastGatewayEventSequence) {
-      return;
-    }
-    if (event.eventSequence > lastGatewayEventSequence + 1) {
-      bufferedGatewayEvents.push(event);
-      await synchronizeRuntimeGateway();
-      return;
-    }
-    await applyRuntimeGatewayEvent(event);
-  }
-
-  async function applyRuntimeGatewayEvent(event: ProtocolEvent) {
-    const result = runtimeGatewayProjection.applyEvent(event);
-    lastGatewayEventSequence = event.eventSequence;
-    gatewayPhase = "ready";
-    gatewayError = "";
-    if (result.provider) {
-      gatewayProviders = runtimeGatewayProjection.providers();
-      if (result.provider.status === "ready") {
-        recentEventCache = recentEventCache.map((activity) => runtimeGatewayProjection.refreshActivityProvider(activity));
-        activities = activities.map((activity) => runtimeGatewayProjection.refreshActivityProvider(activity));
-      } else {
-        removeRuntimeActivitiesForProvider(result.provider.id);
-      }
-    }
-    const unseenActivities = result.activities.filter((activity) => !seenEventIds.has(activity.id));
-    applyIncomingEvents(unseenActivities);
-    for (const activity of unseenActivities) {
-      if (activity.shouldRing) {
-        await handleRing(activity);
-      }
-    }
-  }
-
-  function orderedRuntimeGatewayEvents(events: ProtocolEvent[]): ProtocolEvent[] {
-    const bySequence = new Map<number, ProtocolEvent>();
-    for (const event of events) {
-      bySequence.set(event.eventSequence, event);
-    }
-    return Array.from(bySequence.values()).sort((first, second) => first.eventSequence - second.eventSequence);
-  }
-
-  function clearReplyIfNoLongerAvailable(currentActivities: PetEvent[], activeReplyingToId: string | null) {
-    if (!activeReplyingToId) {
-      return;
-    }
-    if (currentActivities.some((activity) => activity.id === activeReplyingToId && activityCapabilities(activity).canReply)) {
-      return;
-    }
-    replyingToId = null;
-    replyText = "";
-    replySubmitting = false;
-  }
-
-  function applyIncomingEvents(incoming: PetEvent[], updateCache = true) {
-    if (incoming.length === 0) {
-      return;
-    }
-    if (updateCache) {
-      recentEventCache = mergeEventFeed(recentEventCache, incoming);
-    }
-    const previousLiveKeys = new Set(activities.filter(isLiveActivity).map(activityKey));
-    for (const event of incoming) {
-      seenEventIds.add(event.id);
-    }
-    seenEventIds = new Set(seenEventIds);
-    const nextActivities = updateActivityList(activities, incoming, dismissedActivityKeys, new Date(), hiddenInternalActivityKeys, settings?.activityFilters);
-    const hasNewLiveActivity = nextActivities.some((activity) => isLiveActivity(activity) && !previousLiveKeys.has(activityKey(activity)));
-    activities = nextActivities;
-    if (tasksCollapsed && hasNewLiveActivity) {
-      tasksCollapsed = false;
-    }
-    stopRepeatIfNoLongerNeedsAttention();
-  }
-
-  function rebuildActivitiesFromRecentEvents() {
-    if (recentEventCache.length === 0) {
-      activities = [];
-      stopRepeatIfNoLongerNeedsAttention();
-      return;
-    }
-    hiddenInternalActivityKeys = new Set<string>();
-    activities = updateActivityList([], recentEventCache, dismissedActivityKeys, new Date(), hiddenInternalActivityKeys, settings?.activityFilters);
-    stopRepeatIfNoLongerNeedsAttention();
-  }
-
-  function isLiveActivity(activity: PetEvent) {
-    return activity.status === "thinking" || activity.status === "running" || activity.status === "waiting-approval";
-  }
-
-  function isActiveActivity(activity: PetEvent) {
-    return activity.status === "thinking" || activity.status === "running";
-  }
-
-  function runtimeGatewayEmptyState(
-    phase: "loading" | "ready" | "error",
-    providers: Provider[],
-    error: string,
-  ): { className: string; title: string; message: string } {
-    if (phase === "loading") {
-      return {
-        className: "loading",
-        title: "正在连接 Codex Desktop",
-        message: "正在同步 Desktop companion 状态",
-      };
-    }
-    if (phase === "error") {
-      return {
-        className: "unavailable",
-        title: "Codex Desktop companion 不可用",
-        message: error || "无法读取本机 Codex Desktop IPC",
-      };
-    }
-    if (providers.length === 0) {
-      return {
-        className: "unavailable",
-        title: "暂无 Desktop companion",
-        message: "Codex Desktop companion 未注册",
-      };
-    }
-
-    const readyProviders = providers.filter((provider) => provider.status === "ready");
-    if (readyProviders.length === 0) {
-      return {
-        className: "unavailable",
-        title: "Provider 不可用",
-        message: providers.map((provider) => `${provider.displayName}：${providerUnavailableMessage(provider)}`).join(" · "),
-      };
-    }
-    const unavailableProviders = providers.filter((provider) => provider.status !== "ready");
-    const desktopFollowerHint = "这里只显示 Desktop follower 已公告或显式已知的 Codex 任务";
-    return {
-      className: unavailableProviders.length > 0 ? "partial" : "empty",
-      title: unavailableProviders.length > 0 ? "部分 Provider 不可用" : "暂无任务",
-      message: unavailableProviders.length > 0
-        ? `${unavailableProviders.map((provider) => `${provider.displayName}：${providerUnavailableMessage(provider)}`).join(" · ")} · ${desktopFollowerHint}`
-        : desktopFollowerHint,
-    };
-  }
-
-  function providerUnavailableMessage(provider: Provider): string {
-    const unavailableReason = provider.extension?.data?.unavailableReason;
-    return typeof unavailableReason === "string" && unavailableReason.trim()
-      ? unavailableReason.trim()
-      : providerStatusLabel(provider);
-  }
-
-  function providerStatusLabel(provider: Provider): string {
-    switch (provider.status) {
-      case "ready":
-        return "可用";
-      case "connecting":
-        return "连接中";
-      case "disconnected":
-        return "未连接";
-      case "unavailable":
-        return "不可用";
-      case "error":
-        return "异常";
-      default:
-        return "未知";
-    }
-  }
-
-  function removeRuntimeActivitiesForProvider(providerId: string) {
-    recentEventCache = recentEventCache.filter((activity) => activity.runtimeGateway?.provider.id !== providerId);
-    activities = activities.filter((activity) => activity.runtimeGateway?.provider.id !== providerId);
-    hiddenInternalActivityKeys = new Set(Array.from(hiddenInternalActivityKeys).filter((key) => !key.startsWith(`${providerId}:`)));
-    if (replyingToId && !activities.some((activity) => activity.id === replyingToId)) {
-      replyingToId = null;
-      replyText = "";
-      replySubmitting = false;
-    }
-    clearRepeat();
-  }
-
-  async function handleRing(event: PetEvent) {
-    if (!settings || !shouldRing(settings, event)) {
-      clearRepeat();
-      return;
-    }
-
-    await playNotificationSound(settings);
-    clearRepeat();
-    if (event.status === "waiting-approval" && settings.notifications.repeatSeconds > 0) {
-      repeatEventId = event.id;
-      repeatEvent = event;
-      repeatExpiresAt = Date.now() + permissionRepeatMaxMs;
-      repeatTimer = window.setInterval(() => {
-        if (!settings || !repeatEvent || !shouldRepeatNotification(settings, repeatEvent, activities, Date.now(), repeatExpiresAt)) {
-          clearRepeat();
-          return;
-        }
-        void playNotificationSound(settings);
-      }, settings.notifications.repeatSeconds * 1000);
-    }
-  }
-
-  function clearRepeat() {
-    if (repeatTimer) {
-      window.clearInterval(repeatTimer);
-      repeatTimer = null;
-    }
-    repeatEventId = null;
-    repeatEvent = null;
-    repeatExpiresAt = 0;
-  }
-
-  function stopRepeatIfNoLongerNeedsAttention() {
-    if (!settings || !repeatEvent) {
-      return;
-    }
-    if (!shouldRepeatNotification(settings, repeatEvent, activities, Date.now(), repeatExpiresAt)) {
-      clearRepeat();
-    }
-  }
-
   function showNotice(message: string) {
     actionNotice = message;
     clearNoticeTimer();
@@ -954,48 +471,6 @@
     tasksCollapsed = !tasksCollapsed;
   }
 
-  function dismissActivity(event: MouseEvent, activity: PetEvent) {
-    event.stopPropagation();
-    dismissedActivityKeys.add(activityKey(activity));
-    dismissedActivityKeys = new Set(dismissedActivityKeys);
-    activities = activities.filter((candidate) => activityKey(candidate) !== activityKey(activity));
-    if (repeatEvent && activityKey(repeatEvent) === activityKey(activity)) {
-      clearRepeat();
-    }
-    if (replyingToId === activity.id) {
-      replyingToId = null;
-      replyText = "";
-      replySubmitting = false;
-    }
-  }
-
-  function clearCompletedActivities(event: MouseEvent) {
-    event.stopPropagation();
-    const completedKeys = new Set(activities.filter((activity) => activity.status === "done").map(activityKey));
-    if (completedKeys.size === 0) {
-      return;
-    }
-
-    for (const key of completedKeys) {
-      dismissedActivityKeys.add(key);
-    }
-    dismissedActivityKeys = new Set(dismissedActivityKeys);
-    activities = activities.filter((activity) => !completedKeys.has(activityKey(activity)));
-    if (repeatEvent && completedKeys.has(activityKey(repeatEvent))) {
-      clearRepeat();
-    }
-    if (replyingToId && !activities.some((activity) => activity.id === replyingToId)) {
-      replyingToId = null;
-      replyText = "";
-      replySubmitting = false;
-    }
-    showNotice("已清除完成任务");
-  }
-
-  function activate(activity: PetEvent) {
-    showNotice(activity.runtimeGateway ? "Desktop companion 暂不支持打开会话" : "当前来源暂不支持打开");
-  }
-
   async function openMain(event: MouseEvent) {
     event.stopPropagation();
     try {
@@ -1020,140 +495,6 @@
     }, whipVisibleMs);
   }
 
-  function toggleReply(event: MouseEvent, activity: PetEvent) {
-    event.stopPropagation();
-    const capabilities = activityCapabilities(activity);
-    if (!capabilities.canReply) {
-      showNotice(capabilities.replyReason ?? "当前来源不支持可靠回复");
-      return;
-    }
-    const opening = replyingToId !== activity.id;
-    replyingToId = opening ? activity.id : null;
-    replyText = "";
-    replySubmitting = false;
-    if (opening) {
-      void focusReplyEditor(activity.id);
-    }
-  }
-
-  async function focusReplyEditor(activityId: string) {
-    await tick();
-    if (replyingToId !== activityId || !replyTextarea) {
-      return;
-    }
-    resizeReplyEditor(replyTextarea);
-    await getCurrentWindow().setFocus().catch((error) => {
-      console.error("failed to focus pet window for reply", error);
-    });
-    replyTextarea.focus({ preventScroll: true });
-    replyTextarea.setSelectionRange(replyTextarea.value.length, replyTextarea.value.length);
-  }
-
-  function cancelReply(event?: Event) {
-    event?.preventDefault();
-    event?.stopPropagation();
-    replyingToId = null;
-    replyText = "";
-    replySubmitting = false;
-  }
-
-  async function submitReply(event: SubmitEvent, activity: PetEvent) {
-    event.preventDefault();
-    event.stopPropagation();
-    await sendReply(activity);
-  }
-
-  async function sendReply(activity: PetEvent) {
-    const message = replyText.trim();
-    if (!message || replySubmitting || controlSubmittingId) {
-      return;
-    }
-    replySubmitting = true;
-    try {
-      await sendRuntimeGatewayMessage(activity, message);
-      replyText = "";
-      replyingToId = null;
-      showNotice("回复已接受，等待任务更新");
-    } catch (error) {
-      showNotice(codexDesktopCompanionErrorMessage(error));
-    } finally {
-      replySubmitting = false;
-    }
-  }
-
-  async function sendQuickReply(event: MouseEvent, activity: PetEvent, quickReply: QuickReply) {
-    event.preventDefault();
-    event.stopPropagation();
-    if (replySubmitting || controlSubmittingId) {
-      return;
-    }
-    replySubmitting = true;
-    try {
-      await sendRuntimeGatewayMessage(activity, quickReply.text, quickReply.id);
-      replyText = "";
-      replyingToId = null;
-      showNotice("快捷回复已接受，等待任务更新");
-    } catch (error) {
-      showNotice(codexDesktopCompanionErrorMessage(error));
-    } finally {
-      replySubmitting = false;
-    }
-  }
-
-  async function sendRuntimeGatewayMessage(activity: PetEvent, message: string, quickReplyId?: string) {
-    const context = activity.runtimeGateway;
-    if (!context || !activityCapabilities(activity).canReply) {
-      throw new Error("当前任务状态不支持继续消息");
-    }
-    const activeTurn = activityActiveTurnFor(activity);
-    await codexDesktopCompanionClient.turnSend({
-      providerId: context.provider.id,
-      conversationId: context.conversationId,
-      clientMessageId: createCodexDesktopCompanionClientMessageId(),
-      message,
-      quickReplyId,
-      steerTurnId: activeTurn?.id,
-    });
-  }
-
-  function handleReplyKeydown(event: KeyboardEvent, activity: PetEvent) {
-    event.stopPropagation();
-    if (event.key === "Escape") {
-      cancelReply(event);
-      return;
-    }
-    if (event.key === "Enter" && !event.isComposing && (event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
-      void sendReply(activity);
-    }
-  }
-
-  function handleReplyInput(event: Event) {
-    resizeReplyEditor(event.currentTarget as HTMLTextAreaElement);
-  }
-
-  function stopReplyEditorEvent(event: Event) {
-    event.stopPropagation();
-  }
-
-  function resizeReplyEditor(editor: HTMLTextAreaElement) {
-    editor.style.height = "auto";
-    const maxHeight = replyEditorMaxHeight(editor);
-    const nextHeight = Math.min(editor.scrollHeight, maxHeight);
-    editor.style.height = `${nextHeight}px`;
-    editor.style.overflowY = editor.scrollHeight > maxHeight ? "auto" : "hidden";
-  }
-
-  function replyEditorMaxHeight(editor: HTMLTextAreaElement) {
-    const style = window.getComputedStyle(editor);
-    const lineHeight = Number.parseFloat(style.lineHeight) || 16;
-    const paddingTop = Number.parseFloat(style.paddingTop) || 0;
-    const paddingBottom = Number.parseFloat(style.paddingBottom) || 0;
-    const borderTop = Number.parseFloat(style.borderTopWidth) || 0;
-    const borderBottom = Number.parseFloat(style.borderBottomWidth) || 0;
-    return Math.ceil(lineHeight * replyEditorMaxRows + paddingTop + paddingBottom + borderTop + borderBottom);
-  }
-
   function clampPetOpacity(value: number | null | undefined) {
     const numericValue = Number(value);
     if (!Number.isFinite(numericValue)) {
@@ -1162,62 +503,6 @@
     return Math.min(defaultPetOpacity, Math.max(minPetOpacity, numericValue));
   }
 
-  async function approve(event: MouseEvent, activity: PetEvent, behavior: "allow" | "deny") {
-    event.stopPropagation();
-    if (replySubmitting || controlSubmittingId) {
-      return;
-    }
-    const decision = behavior === "allow" ? "approve" : "deny";
-    const context = activity.runtimeGateway;
-    if (!context?.approval || !activityCanResolveApproval(activity, decision)) {
-      showNotice("当前授权请求已不可处理");
-      return;
-    }
-    controlSubmittingId = activity.id;
-    try {
-      await codexDesktopCompanionClient.approvalResolve({
-        providerId: context.provider.id,
-        approvalId: context.approval.id,
-        decision,
-      });
-      clearRepeat();
-      showNotice(behavior === "allow" ? "允许操作已接受，等待任务更新" : "拒绝操作已接受，等待任务更新");
-    } catch (error) {
-      showNotice(codexDesktopCompanionErrorMessage(error));
-    } finally {
-      if (controlSubmittingId === activity.id) {
-        controlSubmittingId = null;
-      }
-    }
-  }
-
-  async function interrupt(event: MouseEvent, activity: PetEvent) {
-    event.stopPropagation();
-    if (replySubmitting || controlSubmittingId) {
-      return;
-    }
-    const context = activity.runtimeGateway;
-    const turn = activityActiveTurnFor(activity);
-    if (!context || !turn || !activityCapabilities(activity).canInterrupt) {
-      showNotice("当前任务已不可停止");
-      return;
-    }
-    controlSubmittingId = activity.id;
-    try {
-      await codexDesktopCompanionClient.turnInterrupt({
-        providerId: context.provider.id,
-        conversationId: context.conversationId,
-        turnId: turn.id,
-      });
-      showNotice("停止请求已接受，等待任务更新");
-    } catch (error) {
-      showNotice(codexDesktopCompanionErrorMessage(error));
-    } finally {
-      if (controlSubmittingId === activity.id) {
-        controlSubmittingId = null;
-      }
-    }
-  }
 </script>
 
 <main
@@ -1226,137 +511,32 @@
   style={`--pet-window-opacity: ${petWindowOpacity};`}
   on:dblclick={preventPetWindowDoubleClick}
 >
-  {#if showActivityStack}
+  {#if !tasksCollapsed}
     <section class="activity-stack" bind:this={activityStack} aria-live="polite" style={`--pet-activity-stack-max-height: ${activityStackMaxHeight}px`}>
-      {#if gatewayEmptyState}
-        <article class={`status-pill gateway-state-pill ${gatewayEmptyState.className}`}>
+      {#if activities.length === 0}
+        <article class="status-pill gateway-state-pill"><div class="status-content">
+          <span class="status-title">{gatewayError ? "活动连接不可用" : "暂无任务"}</span>
+          <span class="status-message">{gatewayError || sources.filter(s => s.enabled).map(s => `${s.displayName}：${s.message || "等待活动"}`).join(" · ") || "请在主窗口启用活动来源"}</span>
+        </div></article>
+      {/if}
+      {#each activities as activity (activity.id)}
+        <article class="status-pill" class:active-status={activity.status === "running"}
+          class:active-breath={activity.status === "running" && runningBubble.backgroundBreathing}
+          class:active-marquee={activity.status === "running" && runningBubble.borderMarquee}
+          class:urgent={activity.status === "waiting-approval" || activity.status === "waiting-input"}
+          class:failed={activity.status === "failed"} class:done={activity.status === "completed"}
+          style={activity.status === "running" ? runningBubbleStyleText : undefined}>
           <div class="status-content">
-            <div class="status-title-row">
-              <span class="status-title">{gatewayEmptyState.title}</span>
+            <div class="status-title-row"><span class="status-title"><span title={activity.title}>{activity.title}</span></span>
+              <button class="dismiss-button" type="button" aria-label={`隐藏 ${activity.title}`} on:click={(event) => dismissActivity(event, activity)}></button>
             </div>
-            <span class="status-message gateway-state-message">{gatewayEmptyState.message}</span>
-            <div class="status-footer">
-              <span class="status-meta">Desktop Companion</span>
-            </div>
-          </div>
-        </article>
-      {:else}
-      {#each renderedActivities as activity (activity.id)}
-        {@const capabilities = activityCapabilities(activity)}
-        {@const quickReplies = activityQuickRepliesFor(activity)}
-        {@const activeActivity = isActiveActivity(activity)}
-        {@const endedAt = cardEndTime(activity)}
-        <article
-          class="status-pill"
-          class:active-status={activeActivity}
-          class:active-breath={activeActivity && runningBubble.backgroundBreathing}
-          class:active-marquee={activeActivity && runningBubble.borderMarquee}
-          class:urgent={activity.status === "waiting-approval"}
-          class:failed={activity.status === "failed"}
-          class:done={activity.status === "done"}
-          class:replying={replyingToId === activity.id}
-          style={activeActivity ? runningBubbleStyleText : undefined}
-          title={`${cardTitle(activity)}\n${cardMessage(activity)}\n${cardMeta(activity)}`}
-        >
-          <div class="status-content">
-            <div class="status-title-row">
-              <button class="status-open title-open" type="button" disabled={!capabilities.canActivate} aria-label={`打开 ${cardTitle(activity)}`} title={cardTitle(activity)} on:click={() => activate(activity)}>
-                <span>{cardTitle(activity)}</span>
-              </button>
-              {#if activity.status === "done"}
-                <i class="inline-done-mark" aria-hidden="true"></i>
-              {/if}
-              <button class="dismiss-button inline-dismiss" type="button" aria-label="从列表移除" on:click={(event) => dismissActivity(event, activity)}></button>
-            </div>
-            <button class="status-open" type="button" disabled={!capabilities.canActivate} aria-label={`打开 ${cardTitle(activity)}`} title={cardMessage(activity)} on:click={() => activate(activity)}>
-              <span class="status-message">{cardMessage(activity)}</span>
-            </button>
-            {#if replyingToId === activity.id}
-              <form class="reply-row" on:submit={(event) => submitReply(event, activity)}>
-                {#if quickReplies.length > 0}
-                  <div class="quick-reply-options" aria-label="快捷回复">
-                    {#each quickReplies as quickReply (quickReply.id)}
-                      <button
-                        class="quick-reply-option"
-                        type="button"
-                        disabled={replySubmitting || Boolean(controlSubmittingId)}
-                        on:mousedown={(event) => event.stopPropagation()}
-                        on:click={(event) => sendQuickReply(event, activity, quickReply)}
-                      >{quickReply.label}</button>
-                    {/each}
-                  </div>
-                {/if}
-                <textarea
-                  bind:this={replyTextarea}
-                  bind:value={replyText}
-                  aria-label="回复"
-                  placeholder="回复"
-                  rows="1"
-                  on:pointerdown={stopReplyEditorEvent}
-                  on:mousedown={stopReplyEditorEvent}
-                  on:input={handleReplyInput}
-                  on:click={stopReplyEditorEvent}
-                  on:focus={stopReplyEditorEvent}
-                  on:keydown={(event) => handleReplyKeydown(event, activity)}
-                ></textarea>
-                <div class="reply-controls">
-                  <button
-                    class="reply-submit"
-                    type="submit"
-                    disabled={replySubmitting || Boolean(controlSubmittingId) || !replyText.trim()}
-                    on:mousedown={(event) => event.stopPropagation()}
-                    on:click={(event) => event.stopPropagation()}
-                  >{replySubmitting ? "发送中" : "发送"}</button>
-                  <button
-                    class="reply-cancel"
-                    type="button"
-                    disabled={replySubmitting || Boolean(controlSubmittingId)}
-                    on:mousedown={(event) => event.stopPropagation()}
-                    on:click={cancelReply}
-                  >取消</button>
-                </div>
-              </form>
-            {/if}
-            <div class="status-footer" class:with-actions={capabilities.canApprove || capabilities.canInterrupt || (capabilities.canReply && replyingToId !== activity.id)}>
-              <span class="status-meta" title={cardMeta(activity)}>
-                <span class="status-agent">{cardAgentLabel(activity)}</span>
-                <span class="status-separator"> · </span>
-                <span class={`status-state status-${activity.status}`}>{statusLabel(activity.status)}</span>
-                {#if endedAt}
-                  <span class="status-separator"> · </span>
-                  <span class="status-ended-at">{endedAt}</span>
-                {/if}
-              </span>
-              {#if capabilities.canApprove || capabilities.canInterrupt || (capabilities.canReply && replyingToId !== activity.id)}
-                <div class="status-actions" class:approval-mode={capabilities.canApprove} class:interrupt-mode={capabilities.canInterrupt} aria-label="任务操作">
-                  {#if capabilities.canApprove}
-                    {#if activityCanResolveApproval(activity, "approve")}
-                      <button class="approval-button allow" type="button" aria-label="同意" disabled={Boolean(controlSubmittingId) || replySubmitting} on:click={(event) => approve(event, activity, "allow")}>
-                        <span>同意</span>
-                      </button>
-                    {/if}
-                    {#if activityCanResolveApproval(activity, "deny")}
-                      <button class="approval-button deny" type="button" aria-label="拒绝" disabled={Boolean(controlSubmittingId) || replySubmitting} on:click={(event) => approve(event, activity, "deny")}>
-                        <span>拒绝</span>
-                      </button>
-                    {/if}
-                  {/if}
-                  {#if capabilities.canInterrupt}
-                    <button class="interrupt-button" type="button" aria-label="停止任务" disabled={Boolean(controlSubmittingId) || replySubmitting} on:click={(event) => interrupt(event, activity)}>停止</button>
-                  {/if}
-                  {#if capabilities.canReply && replyingToId !== activity.id}
-                    <button class="reply-button" type="button" disabled={Boolean(controlSubmittingId)} on:click={(event) => toggleReply(event, activity)}>回复</button>
-                  {/if}
-                </div>
-              {/if}
-            </div>
+            <span class="status-message" title={activity.summary || activity.cwd || ""}>{activity.summary || activity.toolName || activity.cwd || ""}</span>
+            <div class="status-footer"><span class="status-meta">{sources.find(s => s.id === activity.providerId)?.displayName || activity.providerId} · {petStatusLabel(activity.status)} · <time class="status-ended-at" datetime={new Date(activity.updatedAt).toISOString()}>{new Date(activity.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></span></div>
           </div>
         </article>
       {/each}
-      {/if}
     </section>
   {/if}
-
   <section class="pet-stage" aria-label="拖动移动桌宠">
     <button class="pet-drag-target" data-pet-hit-target="stage" type="button" tabindex="-1" aria-label="拖动移动桌宠" on:mousedown={dragWindow}></button>
     <div class="pet-action-rail">
@@ -1466,7 +646,7 @@
       sprite={settings?.pet.sprite ?? defaultPetSprite}
       kind={settings?.pet.kind}
       imagePath={settings?.pet.imagePath}
-      status={primary?.status ?? "idle"}
+      status={avatarStatus}
       scale={Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4)}
     />
     {#if actionNotice}
@@ -1474,3 +654,10 @@
     {/if}
   </section>
 </main>
+
+<style>
+  .status-pill { cursor: default; }
+  .status-title-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .status-title { min-width: 0; display: grid; }
+  .dismiss-button::before, .dismiss-button::after { left: 5px; top: 8px; }
+</style>
