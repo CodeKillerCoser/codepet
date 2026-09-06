@@ -8,6 +8,7 @@
 - `task-card-interaction.md`：任务卡片内容、操作、移除、回复和审批。
 - `personalization.md`：宠物、气泡、声音、主题和透明度设置。
 - `notification-and-approval.md`：需要注意的状态和审批流程。
+- `task-lineage-management.md`：主对话树、Task 自由图/泳道图、工作区状态和原始线程回溯的产品与 UI 设计稿。
 
 ## 证据来源
 

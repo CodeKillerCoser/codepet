@@ -17,6 +17,7 @@ Code Pet 是一个 Tauri 2 应用，前端使用 Svelte，后端使用 Rust。�
 - `provider-host-device-and-plugin-runtime.md`：Provider Host 的设备身份、manifest、进程、实例与 Gateway 路由边界。
 - `codex-provider-plugin-runtime.md`：Codex 独立 Provider 二进制、App Server 映射、配置权威、协议覆盖与双链路隔离。
 - `claude-provider-plugin-runtime.md`：Claude 独立 Provider 二进制、官方 CLI stream-json 适配、能力降级与 Pet 隔离。
+- `task-lineage-and-extraction.md`：基于 Transcript 增量扫描、AI 任务抽取、Thread/Task 谱系和本地 JSON 存储的目标方案。
 
 ## 模块证据
 
