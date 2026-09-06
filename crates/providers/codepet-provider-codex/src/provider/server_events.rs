@@ -27,6 +27,9 @@ impl CodexInstanceRuntime {
                 let count = pending.len();
                 for _ in 0..count {
                     let message = pending.pop_front().expect("pending event");
+                    if incoming_conversation_id(&message).is_some_and(|id| session.is_ephemeral_thread(id)) {
+                        continue;
+                    }
                     let events = match message {
                         CodexIncoming::Notification(CodexNotification::ThreadNameUpdated { thread_id, thread_name }) => {
                             runtime.conversation_upsert_event(&session, &thread_id, thread_name).into_iter().collect()

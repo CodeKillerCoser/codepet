@@ -3814,6 +3814,42 @@ fn provider_binary_public_mux_smoke() {
     assert!(provider.close_input_and_wait(Duration::from_secs(3)).success());
 }
 
+#[test]
+fn automatic_title_is_saved_once_without_blocking_execution_or_publishing_ephemeral_events() {
+    for mode in ["auto-title", "auto-title-failure"] {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("title.marker");
+        let requests = directory.path().join("requests.log");
+        let mut provider = ProviderBinary::spawn();
+        let (conversation, revision) = provider.configure_with_request_log(mode, &marker, Some(&requests));
+        let started = provider.request("first-title-turn", "turn.start",
+            turn_start_params(conversation.clone(), "first", "需要一个简短标题", &revision));
+        assert_eq!(started["result"]["accepted"], true, "{started}");
+        let output = provider.event("event.turnOutputDelta");
+        assert_eq!(output["params"]["delta"], "fixture output");
+        wait_for_session_count(&marker, "thread/unsubscribe", 1, Duration::from_secs(3));
+        if mode == "auto-title" {
+            let named = provider.receive(Duration::from_secs(3), |event| {
+                event["method"] == "event.conversationUpserted" && event["params"]["conversation"]["title"] == "测试自动会话标题"
+            });
+            assert_eq!(named["params"]["conversation"]["resource"]["nativeResourceId"], "thread-created");
+        }
+        let interrupted = provider.request("interrupt-title-turn", "turn.interrupt", json!({
+            "conversation": conversation, "turn": started["result"]["turn"]["resource"]
+        }));
+        assert!(interrupted.get("error").is_none(), "{interrupted}");
+        let second = provider.request("second-title-turn", "turn.start",
+            turn_start_params(conversation, "second", "继续对话", &revision));
+        assert_eq!(second["result"]["accepted"], true, "{second}");
+        provider.collect_for(Duration::from_millis(150));
+        let log = std::fs::read_to_string(&requests).unwrap();
+        assert_eq!(log.lines().filter(|line| *line == "turn/start\ttitle-job").count(), 1, "{log}");
+        assert!(provider.buffered.iter().all(|event| !event.to_string().contains("title-job")));
+        provider.request("title-stop", "instance.stop", json!({"route": route_value()}));
+        provider.request("title-shutdown", "provider.shutdown", json!({}));
+    }
+}
+
 struct ProviderBinary {
     child: Child,
     stdin: Option<mux_stdio::Writer>,

@@ -96,6 +96,7 @@ struct InstanceMutable {
     pending_approvals: HashMap<String, PendingApproval>,
     approval_history: Vec<ObservedApproval>,
     pending_materialization: HashMap<String, CodexConversationSnapshot>,
+    auto_title_attempted: HashSet<String>,
 }
 
 enum InstanceSessionState {
@@ -377,6 +378,7 @@ struct CodexInstanceRuntime {
     settings: CodexInstanceSettings,
     lifecycle_transition: Mutex<()>,
     lifecycle_changed: Condvar,
+    title_slots: Arc<tokio::sync::Semaphore>,
     mutable: Mutex<InstanceMutable>,
     mapper: Mutex<CodexProtocolMapper>,
     events: Arc<dyn ProviderEventSink>,
@@ -398,6 +400,7 @@ impl CodexInstanceRuntime {
             settings,
             lifecycle_transition: Mutex::new(()),
             lifecycle_changed: Condvar::new(),
+            title_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             mutable: Mutex::new(InstanceMutable {
                 destroyed: false,
                 cleanup_in_progress: false,
@@ -421,6 +424,7 @@ impl CodexInstanceRuntime {
                 pending_approvals: HashMap::new(),
                 approval_history: Vec::new(),
                 pending_materialization: HashMap::new(),
+                auto_title_attempted: HashSet::new(),
             }),
             mapper: Mutex::new(CodexProtocolMapper::new(request.route)),
             events,
@@ -569,6 +573,7 @@ impl CodexInstanceRuntime {
                     mutable.pending_approvals.clear();
                     mutable.approval_history.clear();
                     mutable.pending_materialization.clear();
+                    mutable.auto_title_attempted.clear();
                     drop(mutable);
                     let status_event_error = self.publish_status_change(previous).err();
                     StopAction::Stop {
@@ -632,6 +637,7 @@ impl CodexInstanceRuntime {
                             mutable.pending_approvals.clear();
                             mutable.approval_history.clear();
                             mutable.pending_materialization.clear();
+                            mutable.auto_title_attempted.clear();
                             self.lifecycle_changed.notify_all();
                             Some(previous)
                         } else {
@@ -1099,6 +1105,7 @@ impl CodexInstanceRuntime {
             mutable.pending_approvals.clear();
             mutable.approval_history.clear();
             mutable.pending_materialization.clear();
+            mutable.auto_title_attempted.clear();
             self.lifecycle_changed.notify_all();
             drop(mutable);
             let _ = self.publish_status_change(previous);
@@ -1440,6 +1447,7 @@ impl Provider for CodexProvider {
                 mutable.pending_approvals.clear();
                 mutable.approval_history.clear();
                 mutable.pending_materialization.clear();
+                mutable.auto_title_attempted.clear();
                 let slot = Arc::new(InstanceSessionSlot::new(mutable.lifecycle_generation));
                 mutable.sessions.insert(slot.id, slot.clone());
                 drop(mutable);
@@ -1616,6 +1624,7 @@ impl Provider for CodexProvider {
                     mutable.pending_approvals.clear();
                     mutable.approval_history.clear();
                     mutable.pending_materialization.clear();
+                    mutable.auto_title_attempted.clear();
                     let previous = mutable.status;
                     mutable.status = InstanceStatus::Ready;
                     runtime.lifecycle_changed.notify_all();
@@ -2216,6 +2225,7 @@ impl Provider for CodexProvider {
                     false,
                 ));
             }
+            let title_input: String = request.input.text.chars().take(6000).collect();
             let input_text = request.input.text;
             let client_request_id = request.client_request_id;
             let requested_selection = request.selection;
@@ -2225,7 +2235,7 @@ impl Provider for CodexProvider {
                 .cloned();
             let operation_runtime = runtime.clone();
             let operation_conversation_id = conversation_id.clone();
-            let (turn, effective_selection) = tokio::task::spawn_blocking(move || {
+            let (turn, effective_selection, needs_title) = tokio::task::spawn_blocking(move || {
                 let execution_runtime = operation_runtime.clone();
                 let execution_conversation_id = operation_conversation_id.clone();
                 operation_runtime.with_current_execution(
@@ -2266,6 +2276,7 @@ impl Provider for CodexProvider {
                                 return Ok(ExecutionStep::Retry);
                             }
                         }
+                        let needs_title = snapshot.thread.name.as_deref().is_none_or(|name| name.trim().is_empty());
                         let effective_selection = match resolve_turn_selection(
                             &capabilities,
                             requested_selection.clone(),
@@ -2331,7 +2342,7 @@ impl Provider for CodexProvider {
                                         Some(&turn.id),
                                     );
                                 }
-                                Ok(ExecutionStep::Complete((turn, effective_selection)))
+                                Ok(ExecutionStep::Complete((turn, effective_selection, needs_title)))
                             }
                             outcome => {
                                 Err(execution_outcome_error(
@@ -2346,6 +2357,28 @@ impl Provider for CodexProvider {
             })
             .await
             .map_err(provider_task_error)??;
+            let schedule_title = needs_title && lock(&runtime.mutable).auto_title_attempted.insert(conversation_id.clone());
+            if let (true, Ok(title_session)) = (schedule_title, runtime.ready_server()) {
+                let title_runtime = runtime.clone();
+                let title_conversation = conversation_id.clone();
+                let title_model = match &effective_selection.model {
+                    Some(ModelSelection::FlatModelSelection(model)) => Some(model.model_id.clone()),
+                    _ => None,
+                };
+                tokio::spawn(async move {
+                    let Ok(_permit) = title_runtime.title_slots.clone().acquire_owned().await else { return; };
+                    if lock(&title_runtime.mutable).server_generation.as_deref() != Some(title_session.generation()) { return; }
+                    let diagnostic_id = title_conversation.clone();
+                    let outcome = tokio::task::spawn_blocking(move || {
+                        title_session.generate_thread_title(&title_conversation, &title_input, title_model.as_deref())
+                    }).await;
+                    match outcome {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(error)) => eprintln!("Codex automatic title generation failed conversation_id={diagnostic_id}: {error}"),
+                        Err(error) => eprintln!("Codex automatic title task failed conversation_id={diagnostic_id}: {error}"),
+                    }
+                });
+            }
             let mapper = lock(&runtime.mapper);
             let user_item = mapper.turn_user_item(&conversation_id, &turn);
             let mapped_turn = mapper.turn(&conversation_id, &turn);

@@ -170,3 +170,28 @@ CodePet Provider `provider.rs::turn_start` 将成功的原生 turn/start 映射�
 - `lib/features/conversations/conversation_detail_screen.dart`：更早消息入口实际触发单页网络请求，保留阅读锚点和分页错误重试入口。
 
 验证：`flutter test --no-pub` 共 269 项通过；其中包含 390×844 手机尺寸分页锚点测试、离页事件与重新进入缓存测试、LRU/过期/运行时失效测试、分页期间实时消息保留与循环游标测试。最后补充 Provider 定向失效后，重新运行相关会话和设备测试，87 项通过；命令与结果见[规约](../60-rules/remote-conversation-message-sources.md)。未运行格式化工具，未构建或安装 APK。原生 JSONL/SQLite 未修改；这次修复不会恢复其已损坏的投影历史。
+
+
+## 移动后历史缺失复核（2026-09-06 18:16 左右）
+
+用户报告将 `01a07311-59d5-7790-8c93-5d50cb40aa57` 移动后，手机再次拉取消息不全。只读复核得到：
+
+- `state_5.sqlite` 当前 cwd 为 `/Users/wangxin/Documents/Codex/codepet`，thread ID 和原 rollout 路径保持一致。rollout 首条 cwd 为 Remote 管理的 worktree；第 1311 行（北京时间 16:52:38）首次观察到主工作区 turn_context。该时间是记录到新 cwd 的时间，不等同于移动按钮点击时间。
+- 原始文件已 2,124 行、13,217,318 字节，最后 ordinal 2120，包含 31 个不同 task_started。最后 task_complete 为北京时间 18:03:38。历史表仍只有 9 turn / 45 item，投影进度仍为 byte offset 1102107、next ordinal 183。
+- 原始文件第 184 行在北京时间 04:31:48 重复 ordinal 182；第 199、229 行还分别重复 196、225。`logs_2.sqlite` 在 18:03:38 仍报 `expected ordinal 183, got 182`，故障早于这次工作区变化。
+- 通过桌面任务读取接口请求最近 10 轮，实际只返回 9 轮、45 个 item，`hasMore=false`、`nextCursor=null`。历史读取缺项在绕过手机 UI 的情况下同样存在；不能靠继续请求下一页找回缺失内容。
+
+结论：已证实旧的原生投影故障持续存在，移动没有恢复它。增量消息与 LRU 修复只保护缓存中的已收内容；重新读取损坏投影仍会得到旧历史。此次移动后手机究竟是首次打开、缓存淘汰、连接变化，还是 Provider 路由切换触发了重新读取，尚无最新手机日志来区分，不宣称移动必然清空缓存。Host 现有传输指标有 get 成功记录，但缺少足够会话身份信息，不能把某条请求直接归属给这次操作。未修改原始 JSONL、SQLite 或业务代码。
+
+
+## Remote 创建会话未生成摘要标题（2026-09-06）
+
+用户观察 Remote 发起的会话似乎不会总结标题。只读核对 `state_5.sqlite`：`01a07311-59d5-7790-8c93-5d50cb40aa57` 与 hello 会话 `01a072fa-95d8-7770-88cc-3cb2305e5533` 的 `name` 均为 NULL，`title` 等于首条用户输入；资源挂载会话的 `name` 则为“查看文档中的资源挂载方案”。这些示例的差异存在于原生存储中。
+
+CodePet Codex Provider `provider.rs::conversation_create` 调用原生 thread/start；非空 request.title 当前会被明确拒绝，因为该接口不接受设置标题。`mapper.rs` 的显示标题依次选择 thread.name、preview、ID。`server_events.rs` 已接收 thread/name/updated，并通过 conversation.upserted 更新下游，但 CodePet 当前没有标题生成及 thread/name/set 调用链路。
+
+本机 `/Applications/ChatGPT.app/Contents/Resources/app.asar` 可核对到桌面端 `ThreadMetadataGenerationService.generateTitle`：桌面根据输入准备标题生成请求，得到结果后 `setThreadTitle(..., source: generated)`，最终通过 thread/name/set 持久化；另有临时输入截短标题和生成失败 fallback。不能把桌面这段客户端编排当成仅调用原生 thread/start/turn/start 就必然附带的行为。
+
+初始诊断：已检查的 Remote 示例缺少原生 name，原代码只接收标题事件，没有发起摘要标题生成。
+
+随后按用户要求补充 Codex Provider 自动标题：成功受理未命名会话的发送后，后台用 ephemeral 线程生成结构化标题并以 thread/name/set 保存，复用原事件通路；已有标题跳过、失败不改变发送结果、临时事件过滤。已通过 55 个单元和 45 个纵向测试，原生实测入口 1 项默认忽略。具体边界和部署状态见[自动标题规约](../60-rules/codex-automatic-conversation-titles.md)。未对现场会话执行改名或模型推理。该问题与历史 ordinal 投影损坏分别处理。

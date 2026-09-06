@@ -20,6 +20,7 @@ fn main() {
     let mut created_thread_started_in_process = false;
     let mut created_thread_read_failures_remaining = 2usize;
     let mut thread_renamed = false;
+    let mut generated_title: Option<String> = None;
     while reader.read_line(&mut line).unwrap_or(0) > 0 {
         let message: Value = match serde_json::from_str(line.trim()) {
             Ok(message) => message,
@@ -48,6 +49,38 @@ fn main() {
             method,
             params.get("threadId").and_then(Value::as_str).unwrap_or(""),
         );
+        if method == "thread/start" && params["ephemeral"] == true {
+            let mut result = configured_thread_result("title-job", params.get("model").cloned());
+            result["thread"]["ephemeral"] = json!(true);
+            notify(&mut writer, "thread/started", json!({"thread": result["thread"]}));
+            notify(&mut writer, "thread/status/changed", json!({"threadId": "title-job", "status": {"type": "idle"}}));
+            respond(&mut writer, id, result);
+            continue;
+        }
+        if method == "turn/start" && params["threadId"] == "title-job" {
+            if options.approval_mode == "auto-title-failure" {
+                write_json(&mut writer, json!({"id": id, "error": {"code": -32000, "message": "title model unavailable"}}));
+            } else {
+                respond(&mut writer, id, json!({"turn": turn("title-turn", "inProgress")}));
+                notify(&mut writer, "item/completed", json!({"threadId": "title-job", "turnId": "title-turn", "item": {
+                    "id": "title-answer", "type": "agentMessage", "text": "{\"title\":\"测试自动会话标题\"}"
+                }}));
+                let mut completed = turn("title-turn", "completed");
+                completed["items"] = json!([]);
+                notify(&mut writer, "turn/completed", json!({"threadId": "title-job", "turn": completed}));
+            }
+            continue;
+        }
+        if method == "thread/unsubscribe" {
+            respond(&mut writer, id, json!({}));
+            continue;
+        }
+        if method == "thread/name/set" {
+            generated_title = params["name"].as_str().map(str::to_string);
+            respond(&mut writer, id, json!({}));
+            notify(&mut writer, "thread/name/updated", json!({"threadId": params["threadId"], "threadName": generated_title}));
+            continue;
+        }
         match method {
             "initialize" => {
                 if options.approval_mode == "observer-initialize-no-response" {
@@ -434,6 +467,9 @@ fn main() {
                         "appearance": null
                     });
                 }
+                if options.approval_mode.starts_with("auto-title") {
+                    response_thread["name"] = json!(generated_title);
+                }
                 if thread_renamed && active_thread_id.as_deref() == Some(thread_id) {
                     response_thread["name"] = json!("Renamed by Codex");
                 }
@@ -637,6 +673,7 @@ fn main() {
                 );
                 let mut result =
                     configured_thread_result("thread-created", params.get("model").cloned());
+                if options.approval_mode.starts_with("auto-title") { result["thread"]["name"] = Value::Null; }
                 result["thread"]["projectId"] = params
                     .get("projectId")
                     .cloned()
