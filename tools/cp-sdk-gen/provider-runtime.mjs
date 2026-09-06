@@ -23,6 +23,8 @@ import providerTransportMuxIo from "../../sdk/rust/codepet-provider-sdk/src/tran
 import providerTransportMuxMod from "../../sdk/rust/codepet-provider-sdk/src/transport/mux/mod.rs" with { type: "text" };
 import providerTransportMuxTests from "../../sdk/rust/codepet-provider-sdk/src/transport/mux/tests.rs" with { type: "text" };
 
+import providerRuntimeActivity from "../../sdk/rust/codepet-provider-sdk/src/runtime/activity.rs" with { type: "text" };
+
 export const providerRuntimeFiles = new Map([
   ["content/item_text.rs", providerContentItemText],
   ["content/mod.rs", providerContentMod],
@@ -32,6 +34,7 @@ export const providerRuntimeFiles = new Map([
   ["message/mod.rs", providerMessageMod],
   ["message/mux.rs", providerMessageMux],
   ["runtime/events.rs", providerRuntimeEvents],
+  ["runtime/activity.rs", providerRuntimeActivity],
   ["runtime/heartbeat.rs", providerRuntimeHeartbeat],
   ["runtime/io.rs", providerRuntimeIo],
   ["runtime/mod.rs", providerRuntimeMod],

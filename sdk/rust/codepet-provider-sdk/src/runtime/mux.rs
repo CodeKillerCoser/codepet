@@ -31,7 +31,13 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
     let (peer, mut incoming, mut driver) = ProviderMux::connect(read, write, false, limits).await?;
     let output_closed = Arc::new(AtomicBool::new(false));
     let (sink, mut event_rx) = super::events::queued_events(output_closed.clone());
-    let provider = Arc::new(factory(sink.clone()));
+    let activity = Arc::new(super::activity::Activity::default());
+    let observed_activity = activity.clone();
+    let observed_sink: Arc<dyn ProviderEventSink> = Arc::new(move |event: crate::generated::ProtocolEvent| {
+        observed_activity.event(&event);
+        sink.publish(event)
+    });
+    let provider = Arc::new(factory(observed_sink.clone()));
     let event_peer = peer.clone();
     let mut event_task = tokio::spawn(async move {
         while let Some((event, _permit)) = event_rx.recv().await {
@@ -44,8 +50,10 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
         Ok::<_, ProtocolError>(())
     });
     let heartbeat = super::heartbeat::HostHeartbeat::new();
-    let monitor = tokio::spawn(heartbeat.clone().run(provider.clone()));
+    let monitor = tokio::spawn(heartbeat.clone().run(provider.clone(), activity.clone()));
     let initialized = Arc::new(AtomicBool::new(false));
+    let dispatch_closed = Arc::new(AtomicBool::new(false));
+    let executions = Arc::new(std::sync::Mutex::new(Vec::<tokio::task::AbortHandle>::new()));
     let normal = Arc::new(Semaphore::new(options.max_concurrent_requests));
     let control = Arc::new(Semaphore::new(options.max_concurrent_control_requests));
     let mut tasks: tokio::task::JoinSet<Result<bool, ProtocolError>> = tokio::task::JoinSet::new();
@@ -84,6 +92,8 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
             next = incoming.recv() => {
                 let Some(mut stream) = next else { break; };
                 let provider = provider.clone(); let heartbeat = heartbeat.clone();
+                let activity = activity.clone();
+                let executions = executions.clone(); let dispatch_closed = dispatch_closed.clone();
                 let initialized = initialized.clone(); let normal = normal.clone(); let control = control.clone();
                 let lifetime = peer.stream_timeout();
                 tasks.spawn(async move {
@@ -99,13 +109,39 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
                                         heartbeat.ping(params).and_then(|v| serde_json::to_value(v).map_err(error))
                                     } else { Err(ProtocolError { code: "provider_not_initialized".into(), message: "Initialize before heartbeat".into(), retryable: true, details: None }) })
                                 } else {
-                                    let work = async {
+                                    let detached_start = matches!(method, ProtocolMethod::TurnStart | ProtocolMethod::TurnSteer);
+                                    let pending_executions = executions.clone();
+                                    let work = async move {
+                                        let _execution = activity.gate.read().await;
                                         let _permit = lane.acquire_owned().await.map_err(error)?;
-                                        Ok::<_, ProtocolError>(dispatch(provider.as_ref(), request).await)
+                                        if dispatch_closed.load(Ordering::SeqCst) { return Err(error("Provider is shutting down")); }
+                                        if method == ProtocolMethod::ProviderShutdown {
+                                            dispatch_closed.store(true, Ordering::SeqCst);
+                                            for execution in pending_executions.lock().unwrap_or_else(|e| e.into_inner()).drain(..) { execution.abort(); }
+                                        }
+                                        let reply = dispatch(provider.as_ref(), request).await;
+                                        activity.response(method, &reply);
+                                        Ok::<_, ProtocolError>(reply)
                                     };
-                                    tokio::select! {
-                                        result = work => result?,
-                                        _ = stream.cancelled() => return Ok(false),
+                                    if detached_start {
+                                        // Once admitted, a turn mutation outlives its response stream.
+                                        // The task retains the execution guard until its result is recorded;
+                                        // Host EOF/shutdown still force-cleans the adapter generation.
+                                        let mut execution = tokio::spawn(work);
+                                        {
+                                            let mut pending = executions.lock().unwrap_or_else(|e| e.into_inner());
+                                            pending.retain(|task| !task.is_finished());
+                                            pending.push(execution.abort_handle());
+                                        }
+                                        tokio::select! {
+                                            result = &mut execution => result.map_err(error)??,
+                                            _ = stream.cancelled() => return Ok(false),
+                                        }
+                                    } else {
+                                        tokio::select! {
+                                            result = work => result?,
+                                            _ = stream.cancelled() => return Ok(false),
+                                        }
                                     }
                                 };
                                 if method == ProtocolMethod::ProviderInitialize && matches!(reply.response, JsonRpcResponsePayload::Ok { .. }) { initialized.store(true, Ordering::SeqCst); }
@@ -125,6 +161,8 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
             }
         }
     }
+    dispatch_closed.store(true, Ordering::SeqCst);
+    for execution in executions.lock().unwrap_or_else(|e| e.into_inner()).drain(..) { execution.abort(); }
     output_closed.store(true, Ordering::SeqCst);
     monitor.abort(); event_task.abort();
     // Once the connection is lost, queued handlers cannot deliver a response.
@@ -201,6 +239,66 @@ mod tests {
         assert!(result.is_ok()); assert!(response.is_ok());
         assert!(flushed, "serve_mux_with_io returned before its stdout owner finished flushing");
     }
+    struct StartProbe {
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Semaphore>,
+        finished: Arc<AtomicBool>,
+    }
+    impl ProtocolServer for StartProbe {
+        fn turn_start<'a>(&'a self, _: crate::TurnStartRequest) -> crate::ProtocolFuture<'a, crate::TurnStartResponse> {
+            Box::pin(async move {
+                self.entered.notify_one();
+                let _permit = self.release.acquire().await.unwrap();
+                self.finished.store(true, Ordering::SeqCst);
+                Err(error("fixture completed"))
+            })
+        }
+        fn provider_shutdown<'a>(&'a self, _: ProviderShutdownRequest) -> crate::ProtocolFuture<'a, crate::ProviderShutdownResponse> {
+            Box::pin(async { Ok(crate::ProviderShutdownResponse { accepted: true }) })
+        }
+    }
+
+    #[tokio::test]
+    async fn admitted_start_outlives_response_cancellation_but_not_provider_shutdown() {
+        for shutdown_during_start in [false, true] {
+            let (host, provider) = std::os::unix::net::UnixStream::pair().unwrap();
+            host.set_nonblocking(true).unwrap();
+            let host = tokio::net::UnixStream::from_std(host).unwrap();
+            let (read, write) = tokio::io::split(host);
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Semaphore::new(0));
+            let finished = Arc::new(AtomicBool::new(false));
+            let probe = StartProbe { entered: entered.clone(), release: release.clone(), finished: finished.clone() };
+            let server = tokio::spawn(async move {
+                serve_mux_with_io(provider.try_clone().unwrap(), provider, StdioServerOptions::default(), |_| probe).await
+            });
+            let (peer, _, _driver) = ProviderMux::connect(read, write, true, default_transport_limits()).await.unwrap();
+            let request = crate::ProtocolRequest::from_method_params(ProtocolMethod::TurnStart, "start".into(), serde_json::json!({
+                "conversation":{"deviceId":"d","providerPluginId":"p","providerInstanceId":"i","nativeResourceId":"c"},
+                "clientRequestId":"message", "capabilityRevision":"1", "input":{"kind":"text","text":"hello"},
+                "selection":{"accessModeId":"workspace-write","model":{"kind":"flat","modelId":"fixture"}}
+            })).unwrap();
+            let start_peer = peer.clone();
+            let start = tokio::spawn(async move { start_peer.exchange(ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request))).await });
+            tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified()).await.unwrap();
+            start.abort(); let _ = start.await;
+            if !shutdown_during_start {
+                release.add_permits(1);
+                tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                    while !finished.load(Ordering::SeqCst) { tokio::task::yield_now().await; }
+                }).await.expect("cancelled response must not cancel admitted execution");
+            }
+            let shutdown = crate::ProtocolRequest::from_method_params(ProtocolMethod::ProviderShutdown, "shutdown".into(), serde_json::json!({})).unwrap();
+            peer.exchange(ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(shutdown))).await.unwrap();
+            server.await.unwrap().unwrap();
+            if shutdown_during_start {
+                release.add_permits(1);
+                tokio::task::yield_now().await;
+                assert!(!finished.load(Ordering::SeqCst), "shutdown must abort outstanding detached starts");
+            }
+        }
+    }
+
     struct CleanupProbe(Arc<AtomicBool>);
     impl ProtocolServer for CleanupProbe {
         fn provider_shutdown<'a>(&'a self, _: ProviderShutdownRequest) -> crate::ProtocolFuture<'a, crate::ProviderShutdownResponse> {

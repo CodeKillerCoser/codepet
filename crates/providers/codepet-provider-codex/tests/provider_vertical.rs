@@ -1471,7 +1471,7 @@ fn provider_binary_acquire_interaction_reuses_created_session_and_returns_config
 }
 
 #[test]
-fn sdk_heartbeat_keeps_shared_server_until_last_client_disconnects_and_restarts_once() {
+fn sdk_heartbeat_retains_offline_turns_until_finished_and_restarts_once() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("client-presence.txt");
     let mut provider = ProviderBinary::spawn();
@@ -1495,7 +1495,20 @@ fn sdk_heartbeat_keeps_shared_server_until_last_client_disconnects_and_restarts_
     assert!(process_is_running(server[0]));
     assert_eq!(session_pids(&marker, "process/start", ""), server);
     provider.request("no-clients", "provider.ping", ping(3, &[]));
-    wait_for_processes_to_exit(&server, Duration::from_secs(2));
+    provider.collect_for(Duration::from_millis(1200));
+    assert!(process_is_running(server[0]), "offline running turns must keep the Server alive");
+    for id in ["thread-a", "thread-b"] {
+        let interrupted = provider.request(&format!("finish-{id}"), "turn.interrupt", json!({
+            "conversation": conversation_resource_value(id),
+            "turn": conversation_resource_value("turn-started")
+        }));
+        assert!(interrupted.get("error").is_none(), "{interrupted}");
+        if id == "thread-a" {
+            provider.collect_for(Duration::from_millis(1200));
+            assert!(process_is_running(server[0]), "another conversation is still running");
+        }
+    }
+    wait_for_processes_to_exit(&server, Duration::from_secs(3));
     let alive = provider.request("provider-still-alive", "provider.describe", json!({}));
     assert!(alive.get("error").is_none());
     provider.buffered.retain(|message| message.get("method").and_then(Value::as_str) != Some("event.instanceStatusChanged"));
@@ -1508,6 +1521,35 @@ fn sdk_heartbeat_keeps_shared_server_until_last_client_disconnects_and_restarts_
     let all_servers = session_pids(&marker, "process/start", "");
     wait_for_processes_to_exit(&all_servers, Duration::from_secs(2));
     provider.request("presence-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn sdk_heartbeat_retains_offline_approval_until_completion() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("offline-approval.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (_, revision) = provider.configure("complete-on-approval", &marker);
+    let server = session_pids(&marker, "process/start", "");
+    let ping = |sequence: u64, online: bool| json!({
+        "sequence": sequence, "hostSessionId": "test-host",
+        "clients": {"revision": sequence, "connections": if online {
+            vec![json!({"clientId":"phone", "connectionId":"connection"})]
+        } else { vec![] }}, "instances":[route_value()]
+    });
+    provider.request("online", "provider.ping", ping(1, true));
+    let started = provider.request("start", "turn.start", turn_start_params(
+        conversation_resource_value("thread-created"), "offline-approval-turn", "approval", &revision));
+    assert!(started.get("error").is_none(), "{started}");
+    let approval = provider.event("event.approvalRequested").pointer("/params/approval/resource").cloned().unwrap();
+    provider.request("offline", "provider.ping", ping(2, false));
+    provider.collect_for(Duration::from_millis(1200));
+    assert!(process_is_running(server[0]));
+    // A real phone reconnects to resolve this; the binary fixture sends the decision directly
+    // while presence remains empty, allowing terminal-event-driven cleanup to be verified.
+    let resolved = provider.request("approve", "approval.resolve", json!({"approval":approval, "decision":"approve"}));
+    assert!(resolved.get("error").is_none(), "{resolved}");
+    wait_for_processes_to_exit(&server, Duration::from_secs(3));
+    provider.request("shutdown", "provider.shutdown", json!({}));
 }
 
 #[test]

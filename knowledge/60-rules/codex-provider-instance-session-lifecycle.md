@@ -27,4 +27,4 @@ Provider instance 生命周期、SDK 心跳协调、stdio EOF/fatal、App Server
 
 ## 验证方式
 
-延迟共享 Server initialize 连续五轮 start/stop，断言 stop 响应前 PID 退出、没有晚到 Ready；保留 resume/cancel barrier、16+32 饱和 stop/EOF、异步 Broken pipe 清理。连接级 binary 测试确认最后断开关闭 Server、Provider 仍可 describe、重连只启动一个新 PID。已删除只验证“每会话第二次 initialize”的测试：该创建路径已不存在，以共享初始化与进程计数断言替代。
+延迟共享 Server initialize 连续五轮 start/stop，断言 stop 响应前 PID 退出、没有晚到 Ready；保留 resume/cancel barrier、16+32 饱和 stop/EOF、异步 Broken pipe 清理。连接级 binary 测试确认最后断开后运行中或待审批任务继续保留，全部终结后关闭 Server；Provider 仍可 describe、重连只启动一个新 PID。已删除只验证“每会话第二次 initialize”的测试：该创建路径已不存在，以共享初始化与进程计数断言替代。
