@@ -1,0 +1,564 @@
+{
+  "rows": [
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 2465.181917,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 2084.1023330000003,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 2084.119291,
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 2481.586417,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 124.26462500000001,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 124.264708,
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 2470.9441659999998,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 2089.312083,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 2089.339708,
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 2487.0815,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 121.92316699999999,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 121.943833,
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 4927.91375,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 4537.493375,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 4537.477209000001,
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 4917.8384160000005,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 122.962709,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 122.987292,
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 4952.893708,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 4559.065041,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 4559.09625,
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 4976.153542000001,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 122.91325,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 122.936042,
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 2469.655125,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 2088.7070830000002,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 2088.674542,
+      "trial": 2
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 2479.36925,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 121.653833,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 121.671,
+      "trial": 2
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 2482.6161669999997,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 2097.1472919999997,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 2097.1803750000004,
+      "trial": 2
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 2478.269583,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 120.108333,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 120.1335,
+      "trial": 2
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 4933.003208,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 4540.828,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 4540.78425,
+      "trial": 2
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 4918.205958,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 121.962958,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 121.978458,
+      "trial": 2
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 4943.582542,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 4547.03475,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 4547.06,
+      "trial": 2
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 4959.002958,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 122.997709,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 123.02000000000001,
+      "trial": 2
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 2474.194458,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 2093.2035419999997,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 2093.197667,
+      "trial": 3
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 2485.174042,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 125.02037499999999,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 125.04120799999998,
+      "trial": 3
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 2480.3084590000003,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 2095.8156670000003,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 2095.85425,
+      "trial": 3
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 2483.787875,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 122.32225,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 122.325583,
+      "trial": 3
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 4943.1858330000005,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 4549.7385,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 4549.748041,
+      "trial": 3
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 4907.1370830000005,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 123.856875,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 123.88612499999999,
+      "trial": 3
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 4951.678917,
+        "error": null
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 4555.959333,
+        "error": null
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 4555.989084,
+      "trial": 3
+    },
+    {
+      "cleanShutdown": false,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 4968.979791,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 120.63,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "smallError": null,
+      "smallMs": 120.656,
+      "trial": 3
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 10005.01625,
+        "error": "provider_request_timeout"
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": false,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 10001.241291,
+        "error": "provider_request_timeout"
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 1048576,
+      "smallError": "provider_request_timeout",
+      "smallMs": 10001.258290999998,
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 10005.09375,
+        "error": "provider_request_timeout"
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 448.199208,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 1048576,
+      "smallError": null,
+      "smallMs": 448.236334,
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 10001.214667,
+        "error": "provider_request_timeout"
+      },
+      "largePendingWhenSmallDone": false,
+      "orderedEvents": false,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 10002.170417000001,
+        "error": "provider_request_timeout"
+      },
+      "profile": "stdio-codepet-frame-v1",
+      "rateBytesPerSecond": 1048576,
+      "smallError": "provider_request_timeout",
+      "smallMs": 10002.195457999998,
+      "trial": 1
+    },
+    {
+      "cleanShutdown": false,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 10001.167167,
+        "error": "provider_request_timeout"
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 433.713625,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 1048576,
+      "smallError": null,
+      "smallMs": 433.735125,
+      "trial": 1
+    }
+  ]
+}

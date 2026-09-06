@@ -1320,6 +1320,152 @@
         "turn"
       ],
       "additionalProperties": false
+    },
+    "ProviderTransportLimits": {
+      "type": "object",
+      "properties": {
+        "maxFramePayloadBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65536
+        },
+        "maxEncodedMessageBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 16777216
+        },
+        "maxDecodedMessageBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 134217728
+        },
+        "receiveBudgetBytes": {
+          "type": "integer",
+          "minimum": 2048,
+          "maximum": 1073741824
+        },
+        "normalStreams": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "smallStreams": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "controlStreams": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "smallMessageBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65536
+        },
+        "smallReceiveBudgetBytes": {
+          "type": "integer",
+          "minimum": 2048,
+          "maximum": 16777216
+        },
+        "controlMessageBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 16384
+        },
+        "controlReceiveBudgetBytes": {
+          "type": "integer",
+          "minimum": 2048,
+          "maximum": 1048576
+        },
+        "connectionWindowBytes": {
+          "type": "integer",
+          "minimum": 33554432,
+          "maximum": 268435456
+        },
+        "idleTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        },
+        "streamTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 300000
+        }
+      },
+      "required": [
+        "maxFramePayloadBytes",
+        "maxEncodedMessageBytes",
+        "maxDecodedMessageBytes",
+        "receiveBudgetBytes",
+        "normalStreams",
+        "smallStreams",
+        "controlStreams",
+        "smallMessageBytes",
+        "smallReceiveBudgetBytes",
+        "controlMessageBytes",
+        "controlReceiveBudgetBytes",
+        "connectionWindowBytes",
+        "idleTimeoutMs",
+        "streamTimeoutMs"
+      ],
+      "additionalProperties": false
+    },
+    "ProviderTransportHello": {
+      "type": "object",
+      "properties": {
+        "supportedVersions": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 1
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "receive": {
+          "$ref": "#/$defs/ProviderTransportLimits"
+        }
+      },
+      "required": [
+        "supportedVersions",
+        "features",
+        "receive"
+      ],
+      "additionalProperties": false
+    },
+    "ProviderTransportSelection": {
+      "type": "object",
+      "properties": {
+        "selectedVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "receive": {
+          "$ref": "#/$defs/ProviderTransportLimits"
+        }
+      },
+      "required": [
+        "selectedVersion",
+        "features",
+        "receive"
+      ],
+      "additionalProperties": false
     }
   }
 }

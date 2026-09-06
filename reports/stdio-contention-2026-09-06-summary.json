@@ -1,0 +1,1226 @@
+[
+  {
+    "direction": "request",
+    "kind": "repeat",
+    "payloadBytes": 1024,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 0.347375,
+      "min": 0.242209,
+      "max": 0.369625
+    },
+    "pingMs": {
+      "median": 0.46954199999999996,
+      "min": 0.42612500000000003,
+      "max": 0.484625
+    },
+    "eventMs": {
+      "median": 0.31462500000000004,
+      "min": 0.17475,
+      "max": 0.330333
+    },
+    "triggerMs": {
+      "median": 0.07550000000000001,
+      "min": 0.060667,
+      "max": 0.08466699999999999
+    },
+    "primaryIoMs": {
+      "median": 0.051709000000000005,
+      "min": 0.026458,
+      "max": 0.063958
+    },
+    "frameBytes": 1222,
+    "largeCompletionMs": 0.254917
+  },
+  {
+    "direction": "request",
+    "kind": "repeat",
+    "payloadBytes": 1024,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 0.7140420000000001,
+      "min": 0.6041249999999999,
+      "max": 0.738375
+    },
+    "pingMs": {
+      "median": 0.843125,
+      "min": 0.713875,
+      "max": 0.9814170000000001
+    },
+    "eventMs": {
+      "median": 0.66725,
+      "min": 0.557959,
+      "max": 0.704542
+    },
+    "triggerMs": {
+      "median": 0.075708,
+      "min": 0.069917,
+      "max": 0.078417
+    },
+    "primaryIoMs": {
+      "median": 0.411042,
+      "min": 0.408542,
+      "max": 0.414541
+    },
+    "frameBytes": 1222,
+    "largeCompletionMs": 0.628959
+  },
+  {
+    "direction": "request",
+    "kind": "repeat",
+    "payloadBytes": 1048576,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 0.646208,
+      "min": 0.6033329999999999,
+      "max": 0.742583
+    },
+    "pingMs": {
+      "median": 0.753917,
+      "min": 0.6244580000000001,
+      "max": 0.795709
+    },
+    "eventMs": {
+      "median": 0.579209,
+      "min": 0.46279200000000004,
+      "max": 0.597291
+    },
+    "triggerMs": {
+      "median": 0.407458,
+      "min": 0.395584,
+      "max": 0.410625
+    },
+    "primaryIoMs": {
+      "median": 0.025208,
+      "min": 0.019667,
+      "max": 0.036333
+    },
+    "frameBytes": 211,
+    "largeCompletionMs": 0.8721249999999999
+  },
+  {
+    "direction": "request",
+    "kind": "repeat",
+    "payloadBytes": 1048576,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 0.675083,
+      "min": 0.56775,
+      "max": 0.696583
+    },
+    "pingMs": {
+      "median": 0.791875,
+      "min": 0.688542,
+      "max": 0.820917
+    },
+    "eventMs": {
+      "median": 0.6365000000000001,
+      "min": 0.5214580000000001,
+      "max": 0.639
+    },
+    "triggerMs": {
+      "median": 0.40575,
+      "min": 0.392083,
+      "max": 0.415875
+    },
+    "primaryIoMs": {
+      "median": 0.067542,
+      "min": 0.06375,
+      "max": 0.07120900000000001
+    },
+    "frameBytes": 211,
+    "largeCompletionMs": 0.9167500000000001
+  },
+  {
+    "direction": "request",
+    "kind": "repeat",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 2.301875,
+      "min": 2.25775,
+      "max": 2.523875
+    },
+    "pingMs": {
+      "median": 2.417416,
+      "min": 2.3774170000000003,
+      "max": 2.6466250000000002
+    },
+    "eventMs": {
+      "median": 2.263583,
+      "min": 2.214292,
+      "max": 2.479958
+    },
+    "triggerMs": {
+      "median": 3.9772080000000005,
+      "min": 3.9180420000000002,
+      "max": 4.302958
+    },
+    "primaryIoMs": {
+      "median": 0.0275,
+      "min": 0.019333,
+      "max": 0.030458
+    },
+    "frameBytes": 435,
+    "largeCompletionMs": 6.073083
+  },
+  {
+    "direction": "request",
+    "kind": "repeat",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 2.4541250000000003,
+      "min": 2.348083,
+      "max": 2.5175
+    },
+    "pingMs": {
+      "median": 2.59,
+      "min": 2.472208,
+      "max": 2.6314580000000003
+    },
+    "eventMs": {
+      "median": 2.411209,
+      "min": 2.3068329999999997,
+      "max": 2.47825
+    },
+    "triggerMs": {
+      "median": 4.073416,
+      "min": 3.9163339999999995,
+      "max": 4.205042
+    },
+    "primaryIoMs": {
+      "median": 0.148458,
+      "min": 0.142583,
+      "max": 0.152792
+    },
+    "frameBytes": 435,
+    "largeCompletionMs": 6.365208
+  },
+  {
+    "direction": "request",
+    "kind": "repeat",
+    "payloadBytes": 16777216,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 3.8747909999999997,
+      "min": 3.831709,
+      "max": 4.013708
+    },
+    "pingMs": {
+      "median": 4.00975,
+      "min": 3.965916,
+      "max": 4.125792
+    },
+    "eventMs": {
+      "median": 3.796666,
+      "min": 3.7641660000000003,
+      "max": 3.9635419999999995
+    },
+    "triggerMs": {
+      "median": 7.578375,
+      "min": 7.53025,
+      "max": 7.6642079999999995
+    },
+    "primaryIoMs": {
+      "median": 0.019875,
+      "min": 0.018708,
+      "max": 0.023959
+    },
+    "frameBytes": 691,
+    "largeCompletionMs": 11.366875
+  },
+  {
+    "direction": "request",
+    "kind": "repeat",
+    "payloadBytes": 16777216,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 4.211791000000001,
+      "min": 4.0935,
+      "max": 4.232958
+    },
+    "pingMs": {
+      "median": 4.316209,
+      "min": 4.22975,
+      "max": 4.344708
+    },
+    "eventMs": {
+      "median": 4.165375,
+      "min": 4.057625,
+      "max": 4.191375
+    },
+    "triggerMs": {
+      "median": 7.6378330000000005,
+      "min": 7.550541,
+      "max": 7.893374999999999
+    },
+    "primaryIoMs": {
+      "median": 0.24425,
+      "min": 0.241083,
+      "max": 0.246375
+    },
+    "frameBytes": 691,
+    "largeCompletionMs": 11.690375
+  },
+  {
+    "direction": "request",
+    "kind": "repeat",
+    "payloadBytes": 67108864,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 14.966375000000001,
+      "min": 14.750375,
+      "max": 15.140708
+    },
+    "pingMs": {
+      "median": 15.082333,
+      "min": 14.8755,
+      "max": 15.276916
+    },
+    "eventMs": {
+      "median": 14.92825,
+      "min": 14.715625,
+      "max": 15.088625
+    },
+    "triggerMs": {
+      "median": 33.491,
+      "min": 33.384334,
+      "max": 33.643874999999994
+    },
+    "primaryIoMs": {
+      "median": 0.029458,
+      "min": 0.025959,
+      "max": 0.035750000000000004
+    },
+    "frameBytes": 2227,
+    "largeCompletionMs": 48.362375
+  },
+  {
+    "direction": "request",
+    "kind": "repeat",
+    "payloadBytes": 67108864,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 15.734084,
+      "min": 15.107792,
+      "max": 15.999375
+    },
+    "pingMs": {
+      "median": 15.895375,
+      "min": 15.222084,
+      "max": 16.184957999999998
+    },
+    "eventMs": {
+      "median": 15.690249999999999,
+      "min": 15.068833999999999,
+      "max": 15.945708
+    },
+    "triggerMs": {
+      "median": 33.362083,
+      "min": 32.940542,
+      "max": 34.305334
+    },
+    "primaryIoMs": {
+      "median": 0.791166,
+      "min": 0.78875,
+      "max": 0.8031670000000001
+    },
+    "frameBytes": 2227,
+    "largeCompletionMs": 48.802083
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 1024,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 0.339333,
+      "min": 0.334375,
+      "max": 0.401125
+    },
+    "pingMs": {
+      "median": 0.461625,
+      "min": 0.455917,
+      "max": 0.5221250000000001
+    },
+    "eventMs": {
+      "median": 0.297375,
+      "min": 0.291458,
+      "max": 0.358167
+    },
+    "triggerMs": {
+      "median": 0.077042,
+      "min": 0.070792,
+      "max": 0.08625
+    },
+    "primaryIoMs": {
+      "median": 0.053792,
+      "min": 0.041749999999999995,
+      "max": 0.062917
+    },
+    "frameBytes": 1222,
+    "largeCompletionMs": 0.24654199999999998
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 1024,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 0.727708,
+      "min": 0.645333,
+      "max": 0.744583
+    },
+    "pingMs": {
+      "median": 0.851833,
+      "min": 0.8097500000000001,
+      "max": 0.867958
+    },
+    "eventMs": {
+      "median": 0.682292,
+      "min": 0.5886659999999999,
+      "max": 0.700833
+    },
+    "triggerMs": {
+      "median": 0.06899999999999999,
+      "min": 0.058667,
+      "max": 0.107
+    },
+    "primaryIoMs": {
+      "median": 0.41675,
+      "min": 0.398,
+      "max": 0.417167
+    },
+    "frameBytes": 1222,
+    "largeCompletionMs": 0.6390840000000001
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 1048576,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 1.556167,
+      "min": 1.525708,
+      "max": 1.835625
+    },
+    "pingMs": {
+      "median": 1.675458,
+      "min": 1.6559579999999998,
+      "max": 2.007375
+    },
+    "eventMs": {
+      "median": 1.504875,
+      "min": 1.453458,
+      "max": 1.767125
+    },
+    "triggerMs": {
+      "median": 0.9310419999999999,
+      "min": 0.914292,
+      "max": 1.100084
+    },
+    "primaryIoMs": {
+      "median": 0.215208,
+      "min": 0.192791,
+      "max": 0.252458
+    },
+    "frameBytes": 865702,
+    "largeCompletionMs": 2.301375
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 1048576,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 209.80675,
+      "min": 209.46020800000002,
+      "max": 211.25254199999998
+    },
+    "pingMs": {
+      "median": 210.19899999999998,
+      "min": 209.282666,
+      "max": 211.448334
+    },
+    "eventMs": {
+      "median": 209.755875,
+      "min": 209.185541,
+      "max": 211.1825
+    },
+    "triggerMs": {
+      "median": 0.945916,
+      "min": 0.9055829999999999,
+      "max": 0.9643330000000001
+    },
+    "primaryIoMs": {
+      "median": 206.591166,
+      "min": 206.532,
+      "max": 206.879875
+    },
+    "frameBytes": 865702,
+    "largeCompletionMs": 210.482083
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 9.857709,
+      "min": 9.411542,
+      "max": 10.090333
+    },
+    "pingMs": {
+      "median": 9.965875,
+      "min": 9.618708999999999,
+      "max": 10.2045
+    },
+    "eventMs": {
+      "median": 9.815166999999999,
+      "min": 9.373167,
+      "max": 10.053958
+    },
+    "triggerMs": {
+      "median": 8.622665999999999,
+      "min": 8.044832999999999,
+      "max": 8.734584
+    },
+    "primaryIoMs": {
+      "median": 1.418416,
+      "min": 1.261,
+      "max": 1.649541
+    },
+    "frameBytes": 6922741,
+    "largeCompletionMs": 18.307042
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 1664.911625,
+      "min": 1662.964667,
+      "max": 1665.866166
+    },
+    "pingMs": {
+      "median": 1665.0553340000001,
+      "min": 1663.193292,
+      "max": 1665.986833
+    },
+    "eventMs": {
+      "median": 1664.8233750000002,
+      "min": 1662.898584,
+      "max": 1665.8314579999999
+    },
+    "triggerMs": {
+      "median": 8.985417,
+      "min": 8.409708,
+      "max": 9.1495
+    },
+    "primaryIoMs": {
+      "median": 1650.752458,
+      "min": 1650.536083,
+      "max": 1651.6463749999998
+    },
+    "frameBytes": 6922741,
+    "largeCompletionMs": 1673.592125
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 16777216,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 18.812667,
+      "min": 18.601083,
+      "max": 19.238042
+    },
+    "pingMs": {
+      "median": 18.934375,
+      "min": 18.776874999999997,
+      "max": 19.350417
+    },
+    "eventMs": {
+      "median": 18.7755,
+      "min": 18.553416,
+      "max": 19.186542
+    },
+    "triggerMs": {
+      "median": 16.318875,
+      "min": 16.187375,
+      "max": 16.573833
+    },
+    "primaryIoMs": {
+      "median": 2.77575,
+      "min": 2.6451249999999997,
+      "max": 3.109917
+    },
+    "frameBytes": 13844924,
+    "largeCompletionMs": 34.865708000000005
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 16777216,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 3324.42575,
+      "min": 3322.81025,
+      "max": 3327.7960000000003
+    },
+    "pingMs": {
+      "median": 3324.241625,
+      "min": 3322.9297500000002,
+      "max": 3327.914167
+    },
+    "eventMs": {
+      "median": 3324.408584,
+      "min": 3322.708291,
+      "max": 3327.759583
+    },
+    "triggerMs": {
+      "median": 17.556959,
+      "min": 15.880542,
+      "max": 25.713875
+    },
+    "primaryIoMs": {
+      "median": 3301.508208,
+      "min": 3300.922084,
+      "max": 3301.8018749999997
+    },
+    "frameBytes": 13844924,
+    "largeCompletionMs": 3343.504084
+  },
+  {
+    "direction": "response",
+    "kind": "repeat",
+    "payloadBytes": 1024,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 0.296875,
+      "min": 0.283541,
+      "max": 0.432167
+    },
+    "pingMs": {
+      "median": 0.40466599999999997,
+      "min": 0.185792,
+      "max": 0.408375
+    },
+    "eventMs": {
+      "median": 0.261541,
+      "min": 0.242083,
+      "max": 0.387292
+    },
+    "triggerMs": {
+      "median": 0.151375,
+      "min": 0.141875,
+      "max": 0.160167
+    },
+    "primaryIoMs": {
+      "median": 0.026,
+      "min": 0.023041,
+      "max": 0.030790999999999995
+    },
+    "frameBytes": 1224,
+    "largeCompletionMs": 0.158417
+  },
+  {
+    "direction": "response",
+    "kind": "repeat",
+    "payloadBytes": 1024,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 0.5950000000000001,
+      "min": 0.577375,
+      "max": 0.6308750000000001
+    },
+    "pingMs": {
+      "median": 0.711542,
+      "min": 0.71,
+      "max": 0.819125
+    },
+    "eventMs": {
+      "median": 0.543083,
+      "min": 0.540958,
+      "max": 0.5779580000000001
+    },
+    "triggerMs": {
+      "median": 0.13362500000000002,
+      "min": 0.12000000000000001,
+      "max": 0.160459
+    },
+    "primaryIoMs": {
+      "median": 0.430708,
+      "min": 0.4290830000000001,
+      "max": 0.439
+    },
+    "frameBytes": 1224,
+    "largeCompletionMs": 0.14291600000000002
+  },
+  {
+    "direction": "response",
+    "kind": "repeat",
+    "payloadBytes": 1048576,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 0.32941600000000004,
+      "min": 0.299,
+      "max": 0.451417
+    },
+    "pingMs": {
+      "median": 0.390083,
+      "min": 0.304542,
+      "max": 0.427958
+    },
+    "eventMs": {
+      "median": 0.283042,
+      "min": 0.2565,
+      "max": 0.39325
+    },
+    "triggerMs": {
+      "median": 0.7102919999999999,
+      "min": 0.684541,
+      "max": 0.745333
+    },
+    "primaryIoMs": {
+      "median": 0.022292,
+      "min": 0.016125,
+      "max": 0.024833
+    },
+    "frameBytes": 225,
+    "largeCompletionMs": 0.925375
+  },
+  {
+    "direction": "response",
+    "kind": "repeat",
+    "payloadBytes": 1048576,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 0.373083,
+      "min": 0.32929200000000003,
+      "max": 0.5175
+    },
+    "pingMs": {
+      "median": 0.440083,
+      "min": 0.386541,
+      "max": 0.463917
+    },
+    "eventMs": {
+      "median": 0.338875,
+      "min": 0.33345800000000003,
+      "max": 0.464917
+    },
+    "triggerMs": {
+      "median": 0.7249589999999999,
+      "min": 0.7162499999999999,
+      "max": 0.751792
+    },
+    "primaryIoMs": {
+      "median": 0.079334,
+      "min": 0.07470800000000001,
+      "max": 0.07975
+    },
+    "frameBytes": 225,
+    "largeCompletionMs": 1.061292
+  },
+  {
+    "direction": "response",
+    "kind": "repeat",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 5.597042,
+      "min": 3.015125,
+      "max": 11.16025
+    },
+    "pingMs": {
+      "median": 5.607208,
+      "min": 3.019708,
+      "max": 11.147334
+    },
+    "eventMs": {
+      "median": 5.608375,
+      "min": 3.019416,
+      "max": 11.157459
+    },
+    "triggerMs": {
+      "median": 5.662208000000001,
+      "min": 3.907458,
+      "max": 6.7206660000000005
+    },
+    "primaryIoMs": {
+      "median": 0.021417,
+      "min": 0.015666,
+      "max": 0.03625
+    },
+    "frameBytes": 449,
+    "largeCompletionMs": 11.942834
+  },
+  {
+    "direction": "response",
+    "kind": "repeat",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 5.247334,
+      "min": 4.484875,
+      "max": 7.73725
+    },
+    "pingMs": {
+      "median": 5.233667,
+      "min": 4.492917,
+      "max": 7.743209
+    },
+    "eventMs": {
+      "median": 5.244875,
+      "min": 4.498666999999999,
+      "max": 7.744834
+    },
+    "triggerMs": {
+      "median": 7.335875000000001,
+      "min": 5.895833,
+      "max": 7.428541
+    },
+    "primaryIoMs": {
+      "median": 0.17925,
+      "min": 0.14475,
+      "max": 1.09525
+    },
+    "frameBytes": 449,
+    "largeCompletionMs": 12.67125
+  },
+  {
+    "direction": "response",
+    "kind": "repeat",
+    "payloadBytes": 16777216,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 7.18175,
+      "min": 6.739249999999999,
+      "max": 11.928417
+    },
+    "pingMs": {
+      "median": 7.175833000000001,
+      "min": 6.733417,
+      "max": 11.917417
+    },
+    "eventMs": {
+      "median": 7.183833,
+      "min": 6.739917,
+      "max": 11.925875000000001
+    },
+    "triggerMs": {
+      "median": 9.083834000000001,
+      "min": 8.928749999999999,
+      "max": 12.97275
+    },
+    "primaryIoMs": {
+      "median": 0.020665999999999997,
+      "min": 0.016958,
+      "max": 0.025375
+    },
+    "frameBytes": 705,
+    "largeCompletionMs": 16.269375
+  },
+  {
+    "direction": "response",
+    "kind": "repeat",
+    "payloadBytes": 16777216,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 7.263541,
+      "min": 6.914417,
+      "max": 7.343375
+    },
+    "pingMs": {
+      "median": 7.259625,
+      "min": 6.911542,
+      "max": 7.346958
+    },
+    "eventMs": {
+      "median": 7.262125,
+      "min": 6.912542,
+      "max": 7.351624999999999
+    },
+    "triggerMs": {
+      "median": 8.841625,
+      "min": 8.332625,
+      "max": 9.233959
+    },
+    "primaryIoMs": {
+      "median": 0.247916,
+      "min": 0.245958,
+      "max": 0.250667
+    },
+    "frameBytes": 705,
+    "largeCompletionMs": 16.149333
+  },
+  {
+    "direction": "response",
+    "kind": "repeat",
+    "payloadBytes": 67108864,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 26.082125,
+      "min": 25.756500000000003,
+      "max": 26.646542
+    },
+    "pingMs": {
+      "median": 26.076915999999997,
+      "min": 25.752208,
+      "max": 26.639625
+    },
+    "eventMs": {
+      "median": 26.079292,
+      "min": 25.75375,
+      "max": 26.6395
+    },
+    "triggerMs": {
+      "median": 34.457125,
+      "min": 33.9455,
+      "max": 39.279
+    },
+    "primaryIoMs": {
+      "median": 0.020541,
+      "min": 0.019208999999999997,
+      "max": 0.024
+    },
+    "frameBytes": 2241,
+    "largeCompletionMs": 61.102042000000004
+  },
+  {
+    "direction": "response",
+    "kind": "repeat",
+    "payloadBytes": 67108864,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 26.759958,
+      "min": 25.587042,
+      "max": 27.094542
+    },
+    "pingMs": {
+      "median": 26.764416,
+      "min": 25.582209000000002,
+      "max": 27.091667
+    },
+    "eventMs": {
+      "median": 26.75975,
+      "min": 25.582792,
+      "max": 27.090333
+    },
+    "triggerMs": {
+      "median": 34.437957999999995,
+      "min": 33.996125,
+      "max": 36.230959
+    },
+    "primaryIoMs": {
+      "median": 0.801084,
+      "min": 0.79875,
+      "max": 0.8015840000000001
+    },
+    "frameBytes": 2241,
+    "largeCompletionMs": 61.288875
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 1024,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 0.279083,
+      "min": 0.24820899999999999,
+      "max": 0.42204200000000003
+    },
+    "pingMs": {
+      "median": 0.383958,
+      "min": 0.287792,
+      "max": 0.43866700000000003
+    },
+    "eventMs": {
+      "median": 0.233292,
+      "min": 0.208709,
+      "max": 0.2705
+    },
+    "triggerMs": {
+      "median": 0.153667,
+      "min": 0.117709,
+      "max": 0.174458
+    },
+    "primaryIoMs": {
+      "median": 0.023167,
+      "min": 0.019042000000000003,
+      "max": 0.025
+    },
+    "frameBytes": 1224,
+    "largeCompletionMs": 0.159209
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 1024,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 0.6732090000000001,
+      "min": 0.61925,
+      "max": 0.781
+    },
+    "pingMs": {
+      "median": 0.748166,
+      "min": 0.55825,
+      "max": 0.7651249999999999
+    },
+    "eventMs": {
+      "median": 0.605584,
+      "min": 0.56525,
+      "max": 0.7503749999999999
+    },
+    "triggerMs": {
+      "median": 0.147125,
+      "min": 0.12875,
+      "max": 0.151459
+    },
+    "primaryIoMs": {
+      "median": 0.43575,
+      "min": 0.426334,
+      "max": 0.442667
+    },
+    "frameBytes": 1224,
+    "largeCompletionMs": 0.149875
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 1048576,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 1.213666,
+      "min": 1.117917,
+      "max": 1.301291
+    },
+    "pingMs": {
+      "median": 1.210041,
+      "min": 1.114584,
+      "max": 1.297916
+    },
+    "eventMs": {
+      "median": 1.211083,
+      "min": 1.115459,
+      "max": 1.298958
+    },
+    "triggerMs": {
+      "median": 1.254083,
+      "min": 1.229,
+      "max": 1.3437080000000001
+    },
+    "primaryIoMs": {
+      "median": 0.241709,
+      "min": 0.190209,
+      "max": 0.28129099999999996
+    },
+    "frameBytes": 865694,
+    "largeCompletionMs": 2.446208
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 1048576,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 210.692667,
+      "min": 209.916042,
+      "max": 216.111083
+    },
+    "pingMs": {
+      "median": 210.687792,
+      "min": 209.92525,
+      "max": 216.114458
+    },
+    "eventMs": {
+      "median": 210.68995900000002,
+      "min": 209.922625,
+      "max": 216.11137499999998
+    },
+    "triggerMs": {
+      "median": 1.293166,
+      "min": 1.246,
+      "max": 1.356042
+    },
+    "primaryIoMs": {
+      "median": 207.385834,
+      "min": 206.969709,
+      "max": 207.858958
+    },
+    "frameBytes": 865694,
+    "largeCompletionMs": 211.91954199999998
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 10.675583000000001,
+      "min": 9.709541999999999,
+      "max": 10.993041999999999
+    },
+    "pingMs": {
+      "median": 10.680166,
+      "min": 9.705416999999999,
+      "max": 10.996125000000001
+    },
+    "eventMs": {
+      "median": 10.680708000000001,
+      "min": 9.707542,
+      "max": 10.997
+    },
+    "triggerMs": {
+      "median": 8.485,
+      "min": 8.349125,
+      "max": 8.738958
+    },
+    "primaryIoMs": {
+      "median": 1.243458,
+      "min": 1.022666,
+      "max": 1.275083
+    },
+    "frameBytes": 6922742,
+    "largeCompletionMs": 19.1045
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 1665.075208,
+      "min": 1664.611459,
+      "max": 1665.661083
+    },
+    "pingMs": {
+      "median": 1665.078333,
+      "min": 1664.615875,
+      "max": 1665.662875
+    },
+    "eventMs": {
+      "median": 1665.077833,
+      "min": 1664.6223340000001,
+      "max": 1665.663916
+    },
+    "triggerMs": {
+      "median": 8.769041,
+      "min": 8.59275,
+      "max": 8.872041000000001
+    },
+    "primaryIoMs": {
+      "median": 1650.913166,
+      "min": 1650.682916,
+      "max": 1651.469042
+    },
+    "frameBytes": 6922742,
+    "largeCompletionMs": 1673.8245
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 16777216,
+    "rateBytesPerSecond": 0,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 46.654333,
+      "min": 20.139416999999998,
+      "max": 53.911959
+    },
+    "pingMs": {
+      "median": 46.666042,
+      "min": 20.145291999999998,
+      "max": 53.922
+    },
+    "eventMs": {
+      "median": 46.667542,
+      "min": 20.145166999999997,
+      "max": 53.923375
+    },
+    "triggerMs": {
+      "median": 30.199417,
+      "min": 18.283417,
+      "max": 34.121167
+    },
+    "primaryIoMs": {
+      "median": 14.513708,
+      "min": 2.107,
+      "max": 17.449708
+    },
+    "frameBytes": 13844914,
+    "largeCompletionMs": 80.784125
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 16777216,
+    "rateBytesPerSecond": 4194304,
+    "n": 5,
+    "smallRpcMs": {
+      "median": 3325.048,
+      "min": 3321.484458,
+      "max": 3326.226916
+    },
+    "pingMs": {
+      "median": 3325.050666,
+      "min": 3321.48875,
+      "max": 3326.233416
+    },
+    "eventMs": {
+      "median": 3325.0509159999997,
+      "min": 3321.485416,
+      "max": 3326.2298330000003
+    },
+    "triggerMs": {
+      "median": 18.481875,
+      "min": 17.831542,
+      "max": 35.951041000000004
+    },
+    "primaryIoMs": {
+      "median": 3301.505416,
+      "min": 3301.085292,
+      "max": 3301.544708
+    },
+    "frameBytes": 13844914,
+    "largeCompletionMs": 3343.4965829999996
+  }
+]

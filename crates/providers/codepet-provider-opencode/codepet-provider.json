@@ -1,5 +1,6 @@
 {
   "manifestVersion": 1,
+  "transport": "stdio-codepet-mux-v1",
   "pluginId": "dev.codepet.opencode",
   "displayName": "OpenCode",
   "icon": "https://opencode.ai/favicon-96x96-v3.png",

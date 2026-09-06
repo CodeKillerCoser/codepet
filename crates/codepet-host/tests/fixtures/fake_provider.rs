@@ -1,5 +1,5 @@
 use codepet_provider_sdk::{
-    dispatch, ApprovalDecision, ApprovalResolveRequest, ApprovalResolveResponse, ApprovalStatus,
+    ApprovalDecision, ApprovalResolveRequest, ApprovalResolveResponse, ApprovalStatus,
     ChoiceOption, ChoiceSet, ConversationAcquireInteractionRequest,
     ConversationAcquireInteractionResponse, ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
     ConversationGetResponse, ConversationListRequest, ConversationListResponse,
@@ -11,21 +11,21 @@ use codepet_provider_sdk::{
     InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceCreateResponse,
     InstanceDestroyRequest, InstanceDestroyResponse, InstanceStartRequest,
     InstanceStartResponse, InstanceStatus, InstanceStopRequest, InstanceStopResponse,
-    FlatModelCatalog, FlatModelCatalogKind, FlatModelSelection, HarnessDescriptor, ProviderFrameCodec,
-    JsonObject, JsonRpcInboundRequest, JsonRpcNotification, ModelCatalog, ModelSelection, PageInfo, ProtocolEvent,
+    FlatModelCatalog, FlatModelCatalogKind, FlatModelSelection, HarnessDescriptor,
+    JsonObject, ModelCatalog, ModelSelection, PageInfo, ProtocolEvent,
     Project, ProjectChangeType, ProjectChangedEvent, ProjectCreateRequest, ProjectCreateResponse, ProjectDeleteRequest,
     ProjectDeleteResponse, ProjectGetRequest, ProjectGetResponse, ProjectListRequest,
     ProjectListResponse, ProjectRoot, ProjectUpdateRequest, ProjectUpdateResponse, ProtocolFuture,
-    ProtocolRequest, ProtocolServer, Approval, ProviderCapabilities,
+    ProtocolServer, Approval, ProviderCapabilities,
     ProviderCapability, Conversation, ProviderDescribeRequest,
     ProviderDescribeResponse, ProviderInitializeRequest, ProviderInitializeResponse,
     ProviderAuthentication, ProviderAuthenticationStatus, ProviderInstance, ProviderInstanceRoute,
     ProviderPluginDescriptor, ProviderResourceId, ProviderShutdownRequest, ProviderShutdownResponse,
-    TurnTask, ProviderUsage, ProviderUsageDetail, ProviderWireMessage, RoutedResourceId,
+    TurnTask, ProviderUsage, ProviderUsageDetail, RoutedResourceId,
     MessageConversationItem, MessageConversationItemKind, TextContentBlock, TextContentBlockKind,
     TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent, TurnSendCapabilities,
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
-    TurnSteerResponse, VersionRange, PROVIDER_FRAME_MAGIC, PROVIDER_FRAME_VERSION,
+    TurnSteerResponse, VersionRange,
 };
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -33,6 +33,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 struct FakeProvider {
+    events: Option<Arc<dyn codepet_provider_sdk::ProviderEventSink>>,
     plugin_id: String,
     instances: Mutex<BTreeMap<String, ProviderInstance>>,
     instance_settings: Mutex<BTreeMap<String, JsonObject>>,
@@ -92,7 +93,18 @@ impl ProtocolServer for FakeProvider {
         _request: ProviderDescribeRequest,
     ) -> ProtocolFuture<'a, ProviderDescribeResponse> {
         let descriptor = self.descriptor();
-        Box::pin(async move { Ok(ProviderDescribeResponse { plugin: descriptor }) })
+        Box::pin(async move {
+            if std::env::var_os("CODEPET_FAKE_MUX_EVENTS").is_some() {
+                if let Some(events) = &self.events {
+                    for i in 0..8 {
+                        events.publish(ProtocolEvent::EventProjectChanged { jsonrpc: "2.0".into(), params: ProjectChangedEvent {
+                            project: ProviderResourceId { device_id: "test".into(), provider_plugin_id: self.plugin_id.clone(), provider_instance_id: "test".into(), native_resource_id: i.to_string() }, change_type: ProjectChangeType::Updated,
+                        } })?;
+                    }
+                }
+            }
+            Ok(ProviderDescribeResponse { plugin: descriptor })
+        })
     }
 
     fn instance_create<'a>(
@@ -240,6 +252,10 @@ impl ProtocolServer for FakeProvider {
         Box::pin(async move {
             let route = route_from_resource(&request.project);
             self.instance(&route)?;
+            if request.project.native_resource_id == "event-project" {
+                self.events.as_ref().unwrap().publish(ProtocolEvent::EventProjectChanged { jsonrpc: "2.0".into(),
+                    params: ProjectChangedEvent { project: request.project.clone(), change_type: ProjectChangeType::Updated } })?;
+            }
             Ok(ProjectGetResponse {
                 project: project(&route, &request.project.native_resource_id, "Fetched Project"),
             })
@@ -297,6 +313,10 @@ impl ProtocolServer for FakeProvider {
     ) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async move {
             self.instance(&request.route)?;
+            if std::env::var("CODEPET_FAKE_CONVERSATION_LIST_SNAPSHOT_RACE").as_deref() == Ok("1") {
+                self.publish_conversation(&request.route, "conversation-list-event-first")?;
+                wait_for_snapshot_release().await;
+            }
             let mut listed = conversation(&request.route, "conversation-list");
             if let codepet_provider_sdk::ConversationProjectFilter::ConversationProjectFilterProject(
                 filter,
@@ -345,6 +365,7 @@ impl ProtocolServer for FakeProvider {
         Box::pin(async move {
             let route = route_from_resource(&request.conversation);
             self.instance(&route)?;
+            self.before_conversation(&route, &request.conversation.native_resource_id).await?;
             let native_id = match request.conversation.native_resource_id.as_str() {
                 "response-wrong-native" => "different-native-id",
                 "response-empty-native" => "",
@@ -548,11 +569,62 @@ impl ProtocolServer for FakeProvider {
     ) -> ProtocolFuture<'a, ProviderShutdownResponse> {
         let delay = env_u64("CODEPET_FAKE_SHUTDOWN_RESPONSE_DELAY_MS", 0);
         Box::pin(async move {
+            if let Ok(path) = std::env::var("CODEPET_FAKE_SHUTDOWN_MARKER") {
+                let _ = std::fs::write(path, b"shutdown received\n");
+            }
+            if std::env::var_os("CODEPET_FAKE_SHUTDOWN_NOTIFICATION").is_some() {
+                self.publish_conversation(&ProviderInstanceRoute { device_id: "shutdown".into(), provider_plugin_id: self.plugin_id.clone(), provider_instance_id: "shutdown".into() }, "shutdown")?;
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
             if delay > 0 {
                 tokio::time::sleep(Duration::from_millis(delay)).await;
             }
             Ok(ProviderShutdownResponse { accepted: true })
         })
+    }
+}
+
+impl FakeProvider {
+    async fn before_conversation(&self, route: &ProviderInstanceRoute, id: &str) -> Result<(), codepet_provider_sdk::ProtocolError> {
+        match id {
+            "slow" => tokio::time::sleep(Duration::from_millis(120)).await,
+            "fast" => tokio::time::sleep(Duration::from_millis(5)).await,
+            "timeout" => std::future::pending::<()>().await,
+            "crash" => { eprintln!("fixture crash requested"); std::process::exit(17); },
+            "malformed" | "oversized" => {
+                // Deliberately corrupt the physical mux transport for Host failure-isolation tests.
+                let mut header = [0u8; 12];
+                if id == "malformed" { header[0] = 255; }
+                else { header[8..].copy_from_slice(&u32::MAX.to_be_bytes()); }
+                let mut output = std::io::stdout();
+                output.write_all(&header).unwrap(); output.flush().unwrap();
+                std::future::pending::<()>().await;
+            }
+            "event-first" | "snapshot-race" => {
+                self.publish_conversation(route, id)?;
+                if id == "snapshot-race" { wait_for_snapshot_release().await; }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn publish_conversation(&self, route: &ProviderInstanceRoute, id: &str) -> Result<(), codepet_provider_sdk::ProtocolError> {
+        let sink = self.events.as_ref().unwrap();
+        sink.publish(ProtocolEvent::EventConversationUpserted { jsonrpc: "2.0".into(), params: ConversationUpsertedEvent { conversation: conversation(route, id) } })?;
+        let item_id = format!("{id}-assistant");
+        let content_id = format!("{item_id}:text");
+        let item = ConversationItem::MessageConversationItem(MessageConversationItem { meta: None,
+            resource: resource(route, &item_id), turn: resource(route, &format!("{id}-turn")), conversation: resource(route, id),
+            kind: MessageConversationItemKind::Message, status: ConversationItemStatus::Completed, role: ConversationItemRole::Assistant,
+            contents: vec![ContentBlock::TextContentBlock(TextContentBlock { content_id: content_id.clone(), kind: TextContentBlockKind::Text,
+                text: "fixture assistant message".into(), truncation: None })],
+        });
+        sink.publish(ProtocolEvent::EventConversationItemUpserted { jsonrpc: "2.0".into(), params: ConversationItemUpsertedEvent { item } })?;
+        sink.publish(ProtocolEvent::EventTurnOutputDelta { jsonrpc: "2.0".into(), params: TurnOutputDeltaEvent {
+            turn: provider_resource(route, &format!("{id}-turn")), conversation: provider_resource(route, id), item_id, content_id,
+            kind: ConversationContentKind::Text, delta: "hello".into(), extension: None,
+        } })
     }
 }
 
@@ -563,183 +635,15 @@ async fn main() {
     }
     let plugin_id = std::env::var("CODEPET_FAKE_PLUGIN_ID")
         .unwrap_or_else(|_| "dev.codepet.fake".to_string());
-    let server = Arc::new(FakeProvider {
-        plugin_id,
-        instances: Mutex::new(BTreeMap::new()),
-        instance_settings: Mutex::new(BTreeMap::new()),
-    });
-    let output = Arc::new(Mutex::new(std::io::stdout()));
-    let codec = ProviderFrameCodec::default();
-    let stdin = std::io::stdin();
-    let mut input = stdin.lock();
-    loop {
-        let message = match codec.read_message(&mut input) {
-            Ok(Some(message)) => message,
-            Ok(None) => break,
-            Err(error) => {
-                eprintln!("fake Provider input error: {}", error.error.message);
-                std::process::exit(2);
-            }
-        };
-        let ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request)) = message else {
-            eprintln!("fake Provider expected a typed request");
-            std::process::exit(3);
-        };
-        if matches!(request, ProtocolRequest::ProviderShutdown { .. }) {
-            if let Ok(path) = std::env::var("CODEPET_FAKE_SHUTDOWN_MARKER") {
-                let _ = std::fs::write(path, b"shutdown received\n");
-            }
-            if std::env::var_os("CODEPET_FAKE_SHUTDOWN_NOTIFICATION").is_some() {
-                write_message(
-                    &output,
-                    codec,
-                    ProviderWireMessage::Notification(JsonRpcNotification {
-                        jsonrpc: "2.0".to_string(),
-                        method: "fixture.shutdownProgress".to_string(),
-                        params: serde_json::json!({ "stage": "stopping" }),
-                    }),
-                );
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-            let response = dispatch(server.as_ref(), request).await;
-            write_message(&output, codec, ProviderWireMessage::Response(response));
-            close_stdout_pipe();
-            if let Ok(path) = std::env::var("CODEPET_FAKE_STDOUT_CLOSED_MARKER") {
-                let _ = std::fs::write(path, b"stdout closed\n");
-            }
-            eprintln!("fixture shutdown stderr tail");
-            std::thread::sleep(Duration::from_millis(env_u64(
-                "CODEPET_FAKE_SHUTDOWN_DELAY_MS",
-                0,
-            )));
-            return;
-        }
-        let behavior = request_behavior(&request);
-        if behavior == RequestBehavior::Timeout {
-            continue;
-        }
-        if behavior == RequestBehavior::Crash {
-            eprintln!("fixture crash requested");
-            std::thread::sleep(Duration::from_millis(10));
-            std::process::exit(17);
-        }
-        if behavior == RequestBehavior::Malformed {
-            let mut output = output.lock().unwrap();
-            let payload = b"{malformed-json}";
-            let _ = output.write_all(&PROVIDER_FRAME_MAGIC);
-            let _ = output.write_all(&[PROVIDER_FRAME_VERSION, 0]);
-            let _ = output.write_all(&(payload.len() as u32).to_be_bytes());
-            let _ = output.write_all(payload);
-            let _ = output.flush();
-            continue;
-        }
-        if behavior == RequestBehavior::Oversized {
-            let mut output = output.lock().unwrap();
-            let _ = output.write_all(&PROVIDER_FRAME_MAGIC);
-            let _ = output.write_all(&[PROVIDER_FRAME_VERSION, 0]);
-            let _ = output.write_all(&(2_u32 * 1024 * 1024).to_be_bytes());
-            let _ = output.flush();
-            continue;
-        }
-        let server = server.clone();
-        let output = output.clone();
-        tokio::spawn(async move {
-            match behavior {
-                RequestBehavior::Slow => tokio::time::sleep(Duration::from_millis(120)).await,
-                RequestBehavior::Fast => tokio::time::sleep(Duration::from_millis(5)).await,
-                _ => {}
-            }
-            if matches!(
-                behavior,
-                RequestBehavior::EventFirst | RequestBehavior::SnapshotRace
-            ) {
-                if let Some(route) = request_route(&request) {
-                    let conversation_id = match &request {
-                        ProtocolRequest::ConversationList { .. } => {
-                            "conversation-list-event-first"
-                        }
-                        ProtocolRequest::ConversationGet { params, .. } => {
-                            params.conversation.native_resource_id.as_str()
-                        }
-                        _ => "conversation-event-first",
-                    };
-                    let event = ProtocolEvent::EventConversationUpserted {
-                        jsonrpc: "2.0".to_string(),
-                        params: ConversationUpsertedEvent {
-                            conversation: conversation(&route, conversation_id),
-                        },
-                    };
-                    write_message(&output, codec, ProviderWireMessage::Event(event));
-                    write_message(
-                        &output,
-                        codec,
-                        ProviderWireMessage::Notification(JsonRpcNotification {
-                            jsonrpc: "2.0".to_string(),
-                            method: "fixture.progress".to_string(),
-                            params: serde_json::json!({ "step": 1 }),
-                        }),
-                    );
-                    let item_id = format!("{conversation_id}-assistant");
-                    let content_id = format!("{item_id}:text");
-                    let item = ConversationItem::MessageConversationItem(MessageConversationItem { meta: None,
-                        resource: resource(&route, &item_id),
-                        turn: resource(&route, &format!("{conversation_id}-turn")),
-                        conversation: resource(&route, conversation_id),
-                        kind: MessageConversationItemKind::Message,
-                        status: ConversationItemStatus::Completed,
-                        role: ConversationItemRole::Assistant,
-                        contents: vec![ContentBlock::TextContentBlock(TextContentBlock {
-                            content_id: content_id.clone(),
-                            kind: TextContentBlockKind::Text,
-                            text: "fixture assistant message".to_string(),
-                            truncation: None,
-                        })],
-                    });
-                    write_message(
-                        &output,
-                        codec,
-                        ProviderWireMessage::Event(ProtocolEvent::EventConversationItemUpserted {
-                            jsonrpc: "2.0".to_string(),
-                            params: ConversationItemUpsertedEvent { item },
-                        }),
-                    );
-                    let delta = ProtocolEvent::EventTurnOutputDelta {
-                        jsonrpc: "2.0".to_string(),
-                        params: TurnOutputDeltaEvent {
-                            turn: provider_resource(&route, &format!("{conversation_id}-turn")),
-                            conversation: provider_resource(&route, conversation_id),
-                            item_id,
-                            content_id,
-                            kind: ConversationContentKind::Text,
-                            delta: "hello".to_string(),
-                            extension: None,
-                        },
-                    };
-                    write_message(&output, codec, ProviderWireMessage::Event(delta));
-                }
-            }
-            if let ProtocolRequest::ProjectGet { params, .. } = &request {
-                if params.project.native_resource_id == "event-project" {
-                    write_message(
-                        &output,
-                        codec,
-                        ProviderWireMessage::Event(ProtocolEvent::EventProjectChanged {
-                            jsonrpc: "2.0".to_string(),
-                            params: ProjectChangedEvent {
-                                project: params.project.clone(),
-                                change_type: ProjectChangeType::Updated,
-                            },
-                        }),
-                    );
-                }
-            }
-            if behavior == RequestBehavior::SnapshotRace {
-                wait_for_snapshot_release().await;
-            }
-            let response = dispatch(server.as_ref(), request).await;
-            write_message(&output, codec, ProviderWireMessage::Response(response));
-        });
+    codepet_provider_sdk::serve_stdio(codepet_provider_sdk::StdioServerOptions::default(), |events| FakeProvider {
+        events: Some(events), plugin_id, instances: Mutex::new(BTreeMap::new()), instance_settings: Mutex::new(BTreeMap::new()),
+    }).await.unwrap();
+    close_stdout_pipe();
+    if let Ok(path) = std::env::var("CODEPET_FAKE_STDOUT_CLOSED_MARKER") {
+        let _ = std::fs::write(path, b"stdout closed\n");
     }
+    eprintln!("fixture shutdown stderr tail");
+    std::thread::sleep(Duration::from_millis(env_u64("CODEPET_FAKE_SHUTDOWN_DELAY_MS", 0)));
 }
 
 fn env_u32(name: &str, fallback: u32) -> u32 {
@@ -783,71 +687,12 @@ fn close_stdout_pipe() {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum RequestBehavior {
-    Normal,
-    Slow,
-    Fast,
-    EventFirst,
-    SnapshotRace,
-    Timeout,
-    Crash,
-    Malformed,
-    Oversized,
-}
-
-fn request_behavior(request: &ProtocolRequest) -> RequestBehavior {
-    if matches!(request, ProtocolRequest::ConversationList { .. })
-        && std::env::var("CODEPET_FAKE_CONVERSATION_LIST_SNAPSHOT_RACE").as_deref()
-            == Ok("1")
-    {
-        return RequestBehavior::SnapshotRace;
-    }
-    let native_id = match request {
-        ProtocolRequest::ConversationGet { params, .. } => {
-            Some(params.conversation.native_resource_id.as_str())
-        }
-        _ => None,
-    };
-    match native_id {
-        Some("slow") => RequestBehavior::Slow,
-        Some("fast") => RequestBehavior::Fast,
-        Some("event-first") => RequestBehavior::EventFirst,
-        Some("snapshot-race") => RequestBehavior::SnapshotRace,
-        Some("timeout") => RequestBehavior::Timeout,
-        Some("crash") => RequestBehavior::Crash,
-        Some("malformed") => RequestBehavior::Malformed,
-        Some("oversized") => RequestBehavior::Oversized,
-        _ => RequestBehavior::Normal,
-    }
-}
-
 async fn wait_for_snapshot_release() {
     let marker = std::env::var("CODEPET_FAKE_SNAPSHOT_RELEASE_MARKER")
         .expect("snapshot race fixture requires a release marker");
     while !std::path::Path::new(&marker).exists() {
         tokio::time::sleep(Duration::from_millis(1)).await;
     }
-}
-
-fn request_route(request: &ProtocolRequest) -> Option<ProviderInstanceRoute> {
-    match request {
-        ProtocolRequest::ConversationList { params, .. } => Some(params.route.clone()),
-        ProtocolRequest::ConversationGet { params, .. } => {
-            Some(route_from_resource(&params.conversation))
-        }
-        _ => None,
-    }
-}
-
-fn write_message(
-    output: &Arc<Mutex<std::io::Stdout>>,
-    codec: ProviderFrameCodec,
-    message: ProviderWireMessage,
-) {
-    let mut output = output.lock().unwrap();
-    codec.write_message(&mut *output, &message).unwrap();
-    output.flush().unwrap();
 }
 
 fn capabilities() -> ProviderCapabilities {

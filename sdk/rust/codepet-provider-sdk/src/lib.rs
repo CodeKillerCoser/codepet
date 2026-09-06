@@ -1,19 +1,22 @@
-//! Generated CodePet Host ↔ out-of-process Provider plugin SDK.
+//! CodePet Host ↔ out-of-process Provider SDK: generated contract and handwritten runtime.
 
 mod generated;
-mod frame;
-mod stdio;
-mod heartbeat;
-mod item_text;
-pub use item_text::{truncate_tool_item_text, DEFAULT_TOOL_TEXT_BYTES};
-pub use heartbeat::{run_provider_heartbeats, PROVIDER_HEARTBEAT_INTERVAL, PROVIDER_HEARTBEAT_TIMEOUT};
+mod transport;
+mod message;
+mod runtime;
+mod content;
 
 pub use generated::*;
-pub use frame::*;
 pub use generated::ProtocolServer as Provider;
-pub use stdio::{
-    serve_stdio, serve_stdio_with_io, ProviderEventSink, StdioServerError,
-    StdioServerOptions,
+pub use transport::{default_transport_limits, MUX_PROFILE, TRANSPORT_ENV};
+pub use transport::frame::{
+    ProviderFrameEncoding, ProviderFrameHeader, PROVIDER_FRAME_MAGIC, PROVIDER_FRAME_VERSION,
+    PROVIDER_FRAME_HEADER_BYTES, MAX_PROVIDER_FRAME_BYTES, PROVIDER_FRAME_COMPRESSION_THRESHOLD_BYTES,
 };
-
+pub use message::{ProviderFrameCodec, ProviderFrameEncodeMetrics, EncodedProviderFrame,
+    ProviderMux, MuxIncoming, MuxMessage, MuxDriver};
+pub use runtime::{serve_stdio, serve_stdio_with_io, serve_mux_with_io, ProviderEventSink,
+    StdioServerError, StdioServerOptions, run_provider_heartbeats,
+    PROVIDER_HEARTBEAT_INTERVAL, PROVIDER_HEARTBEAT_TIMEOUT};
+pub use content::{truncate_tool_item_text, DEFAULT_TOOL_TEXT_BYTES};
 pub use codepet_core_sdk::{ClientConnectionInfo, ConnectionStatus};

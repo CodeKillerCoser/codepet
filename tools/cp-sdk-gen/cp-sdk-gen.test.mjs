@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { runCpSdkGen } from "./cp-sdk-gen.mjs";
+import { providerRuntimeFiles } from "./provider-runtime.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 
@@ -21,10 +22,26 @@ test("cp-sdk-gen compiles protocol input into a complete Rust SDK", async () => 
   assert.match(generated, /pub trait ProtocolServer/);
   assert.match(generated, /pub use codepet_agent_sdk::\*;/);
   assert.match(agentGenerated, /pub enum ConversationItem/);
+  assert.match(generated, /pub struct ProviderTransportHello/);
+  assert.match(await readFile(path.join(output, "codepet-provider-sdk", "src", "transport", "handshake.rs"), "utf8"), /stdio-codepet-mux-v1/);
+  assert.match(await readFile(path.join(output, "codepet-provider-sdk", "src", "runtime", "mux.rs"), "utf8"), /serve_mux_with_io/);
+  // Every handwritten module (including local unit tests) must survive standalone export.
+  const runtimeRoot = path.join(repositoryRoot, "sdk", "rust", "codepet-provider-sdk", "src");
+  const sourcePaths = (await readdir(runtimeRoot, { recursive: true }))
+    .filter((name) => name.endsWith(".rs") && name !== "generated.rs")
+    .map((name) => name.split(path.sep).join("/"));
+  assert.deepEqual([...providerRuntimeFiles.keys()].sort(), sourcePaths.sort());
+  for (const relativePath of sourcePaths) {
+    assert.equal(
+      await readFile(path.join(output, "codepet-provider-sdk", "src", relativePath), "utf8"),
+      await readFile(path.join(runtimeRoot, relativePath), "utf8"),
+      `Standalone SDK omitted or changed ${relativePath}`,
+    );
+  }
   assert.match(generated, /ProviderInitializeRequest/);
   assert.doesNotMatch(generated, /pub struct ProtocolClient/);
   assert.match(
-    await readFile(path.join(output, "codepet-provider-sdk", "src", "frame.rs"), "utf8"),
+    await readFile(path.join(output, "codepet-provider-sdk", "src", "transport", "frame.rs"), "utf8"),
     /PROVIDER_FRAME_MAGIC: \[u8; 4\] = \*b"CPRF"/,
   );
   assert.match(

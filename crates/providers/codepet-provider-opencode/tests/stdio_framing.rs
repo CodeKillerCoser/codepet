@@ -1,10 +1,10 @@
-use codepet_provider_sdk::{ProviderFrameCodec, ProviderWireMessage};
+#[path = "../../test_support/mux_stdio.rs"]
+mod mux_stdio;
 use serde_json::Value;
-use std::io::{BufReader, Write};
 use std::process::{Command, Stdio};
 
 #[test]
-fn standalone_binary_uses_provider_binary_frame_v1() {
+fn standalone_binary_negotiates_mux_by_default() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_codepet-provider-opencode"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -37,14 +37,13 @@ fn standalone_binary_uses_provider_binary_frame_v1() {
         }),
     ];
     let mut responses = Vec::new();
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let (mut stdin, mut stdout) = mux_stdio::connect(child.stdin.take().unwrap(), child.stdout.take().unwrap());
     for frame in frames {
         let expected_id = frame["id"].as_str().unwrap();
-        let stdin = child.stdin.as_mut().unwrap();
-        write_frame(stdin, &frame);
+        write_frame(&mut stdin, &frame);
         responses.push(read_response(&mut stdout, expected_id));
     }
-    drop(child.stdin.take());
+    drop(stdin);
     let status = child.wait().unwrap();
     assert!(status.success());
     assert_eq!(responses.len(), 3);
@@ -68,8 +67,7 @@ fn start_turn_resource_from_fresh_provider() -> String {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    let mut stdin = child.stdin.take().unwrap();
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let (mut stdin, mut stdout) = mux_stdio::connect(child.stdin.take().unwrap(), child.stdout.take().unwrap());
     let route = serde_json::json!({
         "deviceId": "generation-device",
         "providerPluginId": "dev.codepet.opencode",
@@ -155,25 +153,14 @@ fn start_turn_resource_from_fresh_provider() -> String {
     resource.unwrap()
 }
 
-fn write_frame(stdin: &mut std::process::ChildStdin, frame: &Value) {
-    let payload = serde_json::to_vec(frame).unwrap();
-    let message = codepet_provider_sdk::decode_wire_message(&payload).unwrap();
-    ProviderFrameCodec::default()
-        .write_message(&mut *stdin, &message)
-        .unwrap();
-    stdin.flush().unwrap();
+fn write_frame(stdin: &mut mux_stdio::Writer, frame: &Value) {
+    stdin.send(frame.clone());
 }
 
-fn read_response(stdout: &mut BufReader<std::process::ChildStdout>, id: &str) -> Value {
+fn read_response(stdout: &mut mux_stdio::Reader, id: &str) -> Value {
     loop {
-        let message = ProviderFrameCodec::default()
-            .read_message(stdout)
-            .unwrap()
-            .expect("Provider response or event frame");
-        let response = provider_wire_value(message);
-        if response["id"] == id {
-            return response;
-        }
+        let response = stdout.recv().expect("Provider mux response or event");
+        if response["id"] == id { return response; }
     }
 }
 
@@ -189,8 +176,7 @@ fn malformed_host_frame_still_cleans_up_the_owned_server() {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    let mut stdin = child.stdin.take().unwrap();
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let (mut stdin, stdout) = mux_stdio::connect(child.stdin.take().unwrap(), child.stdout.take().unwrap());
     let route = serde_json::json!({
         "deviceId": "framing-device",
         "providerPluginId": "dev.codepet.opencode",
@@ -233,12 +219,7 @@ fn malformed_host_frame_still_cleans_up_the_owned_server() {
         let expected_id = frame["id"].clone();
         write_frame(&mut stdin, &frame);
         let response = loop {
-            let response = provider_wire_value(
-                ProviderFrameCodec::default()
-                    .read_message(&mut stdout)
-                    .unwrap()
-                    .expect("Provider response or event frame"),
-            );
+            let response = stdout.recv().expect("Provider mux response or event");
             if response["id"] == expected_id {
                 break response;
             }
@@ -252,8 +233,7 @@ fn malformed_host_frame_still_cleans_up_the_owned_server() {
         .parse::<i32>()
         .unwrap();
 
-    write_raw_provider_frame(&mut stdin, b"{\"jsonrpc\":");
-    stdin.flush().unwrap();
+    stdin.corrupt_transport(false);
     drop(stdin);
     drop(stdout);
     let status = child.wait().unwrap();
@@ -264,30 +244,4 @@ fn malformed_host_frame_still_cleans_up_the_owned_server() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert_ne!(unsafe { libc::kill(server_pid, 0) }, 0);
-}
-
-fn provider_wire_value(message: ProviderWireMessage) -> Value {
-    match message {
-        ProviderWireMessage::Response(value) => serde_json::to_value(value).unwrap(),
-        ProviderWireMessage::Notification(value) => serde_json::to_value(value).unwrap(),
-        ProviderWireMessage::Event(value) => serde_json::to_value(value).unwrap(),
-        ProviderWireMessage::Request(_) => panic!("Provider stdout emitted a request"),
-    }
-}
-
-fn write_raw_provider_frame(writer: &mut impl Write, payload: &[u8]) {
-    writer
-        .write_all(&codepet_provider_sdk::PROVIDER_FRAME_MAGIC)
-        .unwrap();
-    writer
-        .write_all(&[
-            codepet_provider_sdk::PROVIDER_FRAME_VERSION,
-            codepet_provider_sdk::ProviderFrameEncoding::RawJson as u8,
-        ])
-        .unwrap();
-    writer
-        .write_all(&(payload.len() as u32).to_be_bytes())
-        .unwrap();
-    writer.write_all(payload).unwrap();
-    writer.flush().unwrap();
 }

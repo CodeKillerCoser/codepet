@@ -1,5 +1,5 @@
 //! Host liveness and client-presence reconciliation, independent of Harness adapters.
-use crate::{InstanceStartRequest, InstanceStopRequest, ProtocolError, ProtocolServer,
+use crate::generated::{InstanceStartRequest, InstanceStopRequest, ProtocolError, ProtocolServer,
     ProviderInstanceRoute, ProviderPingRequest, ProviderPingResponse};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -13,10 +13,10 @@ pub const PROVIDER_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(60);
 /// Runs one bounded exchange at a time. A presence change wakes the next exchange immediately.
 /// Returning false ends the driver (for example when the owning process generation exits).
 pub async fn run_provider_heartbeats<F, Fut>(
-    mut clients: watch::Receiver<crate::ClientConnectionsSnapshot>,
+    mut clients: watch::Receiver<crate::generated::ClientConnectionsSnapshot>,
     mut runtime_changes: watch::Receiver<u64>, mut exchange: F,
 ) where
-    F: FnMut(u64, crate::ClientConnectionsSnapshot) -> Fut,
+    F: FnMut(u64, crate::generated::ClientConnectionsSnapshot) -> Fut,
     Fut: std::future::Future<Output = bool>,
 {
     let mut sequence = 0;
@@ -105,7 +105,7 @@ mod tests {
     use super::*;
     fn ping(sequence: u64, revision: u64) -> ProviderPingRequest {
         ProviderPingRequest { sequence, host_session_id: "host-run".into(),
-            clients: crate::ClientConnectionsSnapshot { revision, connections: vec![] }, instances: vec![] }
+            clients: crate::generated::ClientConnectionsSnapshot { revision, connections: vec![] }, instances: vec![] }
     }
 
     #[test]

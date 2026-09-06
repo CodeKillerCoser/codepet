@@ -50,6 +50,8 @@ pub struct PluginDescriptor {
 #[serde(deny_unknown_fields)]
 struct PluginManifest {
     manifest_version: u32,
+    #[serde(default)]
+    transport: Option<String>,
     #[serde(flatten)]
     descriptor: PluginDescriptor,
 }
@@ -257,6 +259,18 @@ fn read_manifest(
         });
     match result {
         Ok(mut manifest) if manifest.manifest_version == 1 => {
+            {
+                let profile = manifest.transport.unwrap_or_else(|| codepet_provider_sdk::MUX_PROFILE.into());
+                let key = codepet_provider_sdk::TRANSPORT_ENV;
+                if profile != codepet_provider_sdk::MUX_PROFILE
+                    || manifest.descriptor.env.get(key).is_some_and(|value| value != &profile) {
+                    diagnostics.push(CatalogDiagnostic { code: "invalid_plugin_transport".into(),
+                        message: format!("unsupported or conflicting Provider transport in {}", path.display()),
+                        path: Some(path.to_path_buf()), plugin_id: Some(manifest.descriptor.plugin_id) });
+                    return;
+                }
+                manifest.descriptor.env.insert(key.into(), profile);
+            }
             if manifest.descriptor.executable.is_relative() {
                 if let Some(parent) = path.parent() {
                     manifest.descriptor.executable = parent.join(&manifest.descriptor.executable);
@@ -340,4 +354,31 @@ fn validate_descriptor(descriptor: &PluginDescriptor) -> HostResult<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    #[test]
+    fn manifest_selects_transport_explicitly_and_rejects_conflicting_env() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("codepet-provider.json");
+        let mut value = serde_json::json!({"manifestVersion":1,"pluginId":"test.mux","displayName":"Mux","executable":"provider","transport":codepet_provider_sdk::MUX_PROFILE});
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        let mut candidates = vec![]; let mut diagnostics = vec![];
+        read_manifest(&path, &mut candidates, &mut diagnostics);
+        assert!(diagnostics.is_empty());
+        assert_eq!(candidates[0].1.env[codepet_provider_sdk::TRANSPORT_ENV], codepet_provider_sdk::MUX_PROFILE);
+        value.as_object_mut().unwrap().remove("transport");
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        candidates.clear();
+        read_manifest(&path, &mut candidates, &mut diagnostics);
+        assert!(diagnostics.is_empty());
+        assert_eq!(candidates[0].1.env[codepet_provider_sdk::TRANSPORT_ENV], codepet_provider_sdk::MUX_PROFILE);
+        value["env"] = serde_json::json!({codepet_provider_sdk::TRANSPORT_ENV:"stdio-codepet-frame-v1"});
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        candidates.clear();
+        read_manifest(&path, &mut candidates, &mut diagnostics);
+        assert!(candidates.is_empty()); assert_eq!(diagnostics[0].code, "invalid_plugin_transport");
+    }
 }

@@ -8,14 +8,10 @@ import coreCargo from "../../sdk/rust/codepet-core-sdk/Cargo.toml" with { type: 
 import coreLib from "../../sdk/rust/codepet-core-sdk/src/lib.rs" with { type: "text" };
 import agentCargo from "../../sdk/rust/codepet-agent-sdk/Cargo.toml" with { type: "text" };
 import agentLib from "../../sdk/rust/codepet-agent-sdk/src/lib.rs" with { type: "text" };
+import { providerRuntimeFiles } from "./provider-runtime.mjs";
 import providerCargo from "../../sdk/rust/codepet-provider-sdk/Cargo.toml" with { type: "text" };
-import providerLib from "../../sdk/rust/codepet-provider-sdk/src/lib.rs" with { type: "text" };
-import providerFrame from "../../sdk/rust/codepet-provider-sdk/src/frame.rs" with { type: "text" };
-import providerHeartbeat from "../../sdk/rust/codepet-provider-sdk/src/heartbeat.rs" with { type: "text" };
-import providerItemText from "../../sdk/rust/codepet-provider-sdk/src/item_text.rs" with { type: "text" };
 import gatewayRustHeartbeat from "../../sdk/rust/codepet-gateway-sdk/src/heartbeat.rs" with { type: "text" };
 import gatewayDartHeartbeat from "../../sdk/dart/codepet-gateway-sdk/lib/src/heartbeat.dart" with { type: "text" };
-import providerStdio from "../../sdk/rust/codepet-provider-sdk/src/stdio.rs" with { type: "text" };
 import gatewayRustCargo from "../../sdk/rust/codepet-gateway-sdk/Cargo.toml" with { type: "text" };
 import gatewayRustLib from "../../sdk/rust/codepet-gateway-sdk/src/lib.rs" with { type: "text" };
 import lanRustCargo from "../../sdk/rust/codepet-lan-channel-sdk/Cargo.toml" with { type: "text" };
@@ -270,11 +266,9 @@ export async function runCpSdkGen(arguments_, currentDirectory = process.cwd()) 
     }
     if (options.package === "provider") {
       staticFiles.set("codepet-provider-sdk/Cargo.toml", providerCargo);
-      staticFiles.set("codepet-provider-sdk/src/lib.rs", providerLib);
-      staticFiles.set("codepet-provider-sdk/src/frame.rs", providerFrame);
-      staticFiles.set("codepet-provider-sdk/src/stdio.rs", providerStdio);
-      staticFiles.set("codepet-provider-sdk/src/heartbeat.rs", providerHeartbeat);
-      staticFiles.set("codepet-provider-sdk/src/item_text.rs", providerItemText);
+      for (const [relativePath, source] of providerRuntimeFiles) {
+        staticFiles.set(`codepet-provider-sdk/src/${relativePath}`, source);
+      }
     } else if (options.package === "gateway") {
       staticFiles.set("codepet-gateway-sdk/Cargo.toml", gatewayRustCargo);
       staticFiles.set("codepet-gateway-sdk/src/lib.rs", gatewayRustLib);

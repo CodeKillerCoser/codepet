@@ -1,0 +1,654 @@
+{
+  "samples": [
+    {
+      "direction": "request",
+      "large": {
+        "elapsedMs": 10003.961874999999,
+        "error": "provider_request_timeout"
+      },
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 10002.445915999999,
+        "error": "provider_request_timeout"
+      },
+      "rateBytesPerSecond": 1048576,
+      "recoveryPingMs": 0.50675,
+      "small": {
+        "elapsedMs": 10002.465,
+        "error": "provider_request_timeout"
+      },
+      "trace": [
+        {
+          "bench": "io_begin",
+          "bytes": 203,
+          "index": 0,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 203,
+          "elapsedMs": 0.059875,
+          "index": 0,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "dispatch",
+          "inputBytes": 5,
+          "method": "initialize"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 225,
+          "index": 0,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 225,
+          "elapsedMs": 0.034499999999999996,
+          "index": 0,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "compressionRatio": 1.0,
+          "compressionUs": "0",
+          "encodedPayloadBytes": 215,
+          "encoding": "raw-json",
+          "frameBytes": 225,
+          "jsonBytes": 215,
+          "jsonEncodeUs": "6",
+          "name": "provider.frame.written",
+          "providerProcessingUs": "75",
+          "recordType": "metric",
+          "rpc.method": "provider.initialize",
+          "rpc.requestId": "host-1",
+          "schema": "codepet.provider.transport.v1",
+          "status": "ok",
+          "writeAndFlushUs": "76"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 13844924,
+          "index": 1,
+          "primary": true,
+          "side": "request"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 13844924,
+          "elapsedMs": 13204.313667,
+          "index": 1,
+          "primary": true,
+          "side": "request"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 183,
+          "index": 2,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 183,
+          "elapsedMs": 0.04675,
+          "index": 2,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "dispatch",
+          "inputBytes": 16777216,
+          "method": "initialize"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 225,
+          "index": 1,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 225,
+          "elapsedMs": 0.025583,
+          "index": 1,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 171,
+          "index": 3,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "compressionRatio": 1.0,
+          "compressionUs": "0",
+          "encodedPayloadBytes": 215,
+          "encoding": "raw-json",
+          "frameBytes": 225,
+          "jsonBytes": 215,
+          "jsonEncodeUs": "5",
+          "name": "provider.frame.written",
+          "providerProcessingUs": "79",
+          "recordType": "metric",
+          "rpc.method": "provider.initialize",
+          "rpc.requestId": "host-2",
+          "schema": "codepet.provider.transport.v1",
+          "status": "ok",
+          "writeAndFlushUs": "66"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 219,
+          "index": 2,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 219,
+          "elapsedMs": 0.14375,
+          "index": 2,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 171,
+          "elapsedMs": 0.055458,
+          "index": 3,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 80,
+          "index": 3,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 80,
+          "elapsedMs": 0.076125,
+          "index": 3,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "compressionRatio": 1.0,
+          "compressionUs": "0",
+          "encodedPayloadBytes": 70,
+          "encoding": "raw-json",
+          "frameBytes": 80,
+          "jsonBytes": 70,
+          "jsonEncodeUs": "0",
+          "name": "provider.frame.written",
+          "providerProcessingUs": "217",
+          "recordType": "metric",
+          "rpc.method": "project.list",
+          "rpc.requestId": "host-3",
+          "schema": "codepet.provider.transport.v1",
+          "status": "ok",
+          "writeAndFlushUs": "122"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 85,
+          "index": 4,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 85,
+          "elapsedMs": 0.1015,
+          "index": 4,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "compressionRatio": 1.0,
+          "compressionUs": "0",
+          "encodedPayloadBytes": 75,
+          "encoding": "raw-json",
+          "frameBytes": 85,
+          "jsonBytes": 75,
+          "jsonEncodeUs": "0",
+          "name": "provider.frame.written",
+          "providerProcessingUs": "0",
+          "recordType": "metric",
+          "rpc.method": "provider.ping",
+          "rpc.requestId": "host-4",
+          "schema": "codepet.provider.transport.v1",
+          "status": "ok",
+          "writeAndFlushUs": "147"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 171,
+          "index": 4,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 171,
+          "elapsedMs": 0.077,
+          "index": 4,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 85,
+          "index": 5,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 85,
+          "elapsedMs": 0.094709,
+          "index": 5,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "compressionRatio": 1.0,
+          "compressionUs": "0",
+          "encodedPayloadBytes": 75,
+          "encoding": "raw-json",
+          "frameBytes": 85,
+          "jsonBytes": 75,
+          "jsonEncodeUs": "1",
+          "name": "provider.frame.written",
+          "providerProcessingUs": "0",
+          "recordType": "metric",
+          "rpc.method": "provider.ping",
+          "rpc.requestId": "host-5",
+          "schema": "codepet.provider.transport.v1",
+          "status": "ok",
+          "writeAndFlushUs": "172"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 82,
+          "index": 5,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 82,
+          "elapsedMs": 0.031833,
+          "index": 5,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 68,
+          "index": 6,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 68,
+          "elapsedMs": 0.05575,
+          "index": 6,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "compressionRatio": 1.0,
+          "compressionUs": "0",
+          "encodedPayloadBytes": 58,
+          "encoding": "raw-json",
+          "frameBytes": 68,
+          "jsonBytes": 58,
+          "jsonEncodeUs": "0",
+          "name": "provider.frame.written",
+          "providerProcessingUs": "2",
+          "recordType": "metric",
+          "rpc.method": "provider.shutdown",
+          "rpc.requestId": "host-6",
+          "schema": "codepet.provider.transport.v1",
+          "status": "ok",
+          "writeAndFlushUs": "121"
+        }
+      ]
+    },
+    {
+      "direction": "response",
+      "large": {
+        "elapsedMs": 10001.037625,
+        "error": "provider_request_timeout"
+      },
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 10001.126292,
+        "error": "provider_request_timeout"
+      },
+      "rateBytesPerSecond": 1048576,
+      "recoveryPingMs": 0.408667,
+      "small": {
+        "elapsedMs": 10001.119917,
+        "error": "provider_request_timeout"
+      },
+      "trace": [
+        {
+          "bench": "io_begin",
+          "bytes": 203,
+          "index": 0,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 203,
+          "elapsedMs": 0.045125,
+          "index": 0,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "dispatch",
+          "inputBytes": 5,
+          "method": "initialize"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 225,
+          "index": 0,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 225,
+          "elapsedMs": 0.038708,
+          "index": 0,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "compressionRatio": 1.0,
+          "compressionUs": "0",
+          "encodedPayloadBytes": 215,
+          "encoding": "raw-json",
+          "frameBytes": 225,
+          "jsonBytes": 215,
+          "jsonEncodeUs": "5",
+          "name": "provider.frame.written",
+          "providerProcessingUs": "41",
+          "recordType": "metric",
+          "rpc.method": "provider.initialize",
+          "rpc.requestId": "host-1",
+          "schema": "codepet.provider.transport.v1",
+          "status": "ok",
+          "writeAndFlushUs": "80"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 82,
+          "index": 1,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 82,
+          "elapsedMs": 0.053209,
+          "index": 1,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 13844914,
+          "index": 1,
+          "primary": true,
+          "side": "response"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 171,
+          "index": 2,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 171,
+          "elapsedMs": 0.022208,
+          "index": 2,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 13844914,
+          "elapsedMs": 13207.916875,
+          "index": 1,
+          "primary": true,
+          "side": "response"
+        },
+        {
+          "compressionRatio": 0.8252112394490543,
+          "compressionUs": "9598",
+          "encodedPayloadBytes": 13844904,
+          "encoding": "zstd-json",
+          "frameBytes": 13844914,
+          "jsonBytes": 16777406,
+          "jsonEncodeUs": "5447",
+          "name": "provider.frame.written",
+          "providerProcessingUs": "2588",
+          "recordType": "metric",
+          "rpc.method": "provider.describe",
+          "rpc.requestId": "host-2",
+          "schema": "codepet.provider.transport.v1",
+          "status": "ok",
+          "writeAndFlushUs": "13208014"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 85,
+          "index": 2,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 85,
+          "elapsedMs": 0.094458,
+          "index": 2,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "compressionRatio": 1.0,
+          "compressionUs": "0",
+          "encodedPayloadBytes": 75,
+          "encoding": "raw-json",
+          "frameBytes": 85,
+          "jsonBytes": 75,
+          "jsonEncodeUs": "0",
+          "name": "provider.frame.written",
+          "providerProcessingUs": "0",
+          "recordType": "metric",
+          "rpc.method": "provider.ping",
+          "rpc.requestId": "host-3",
+          "schema": "codepet.provider.transport.v1",
+          "status": "ok",
+          "writeAndFlushUs": "13208004"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 183,
+          "index": 3,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 183,
+          "elapsedMs": 0.024792,
+          "index": 3,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 219,
+          "index": 3,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 219,
+          "elapsedMs": 0.023458,
+          "index": 3,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 80,
+          "index": 4,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 80,
+          "elapsedMs": 0.022291,
+          "index": 4,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "compressionRatio": 1.0,
+          "compressionUs": "0",
+          "encodedPayloadBytes": 70,
+          "encoding": "raw-json",
+          "frameBytes": 80,
+          "jsonBytes": 70,
+          "jsonEncodeUs": "1",
+          "name": "provider.frame.written",
+          "providerProcessingUs": "72",
+          "recordType": "metric",
+          "rpc.method": "project.list",
+          "rpc.requestId": "host-4",
+          "schema": "codepet.provider.transport.v1",
+          "status": "ok",
+          "writeAndFlushUs": "51"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 171,
+          "index": 4,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 171,
+          "elapsedMs": 0.08612500000000001,
+          "index": 4,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 85,
+          "index": 5,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 85,
+          "elapsedMs": 0.067833,
+          "index": 5,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "compressionRatio": 1.0,
+          "compressionUs": "0",
+          "encodedPayloadBytes": 75,
+          "encoding": "raw-json",
+          "frameBytes": 85,
+          "jsonBytes": 75,
+          "jsonEncodeUs": "7",
+          "name": "provider.frame.written",
+          "providerProcessingUs": "0",
+          "recordType": "metric",
+          "rpc.method": "provider.ping",
+          "rpc.requestId": "host-5",
+          "schema": "codepet.provider.transport.v1",
+          "status": "ok",
+          "writeAndFlushUs": "116"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 82,
+          "index": 5,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 82,
+          "elapsedMs": 0.032583,
+          "index": 5,
+          "primary": false,
+          "side": "request"
+        },
+        {
+          "bench": "io_begin",
+          "bytes": 68,
+          "index": 6,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "bench": "io_end",
+          "bytes": 68,
+          "elapsedMs": 0.040333,
+          "index": 6,
+          "primary": false,
+          "side": "response"
+        },
+        {
+          "compressionRatio": 1.0,
+          "compressionUs": "0",
+          "encodedPayloadBytes": 58,
+          "encoding": "raw-json",
+          "frameBytes": 68,
+          "jsonBytes": 58,
+          "jsonEncodeUs": "0",
+          "name": "provider.frame.written",
+          "providerProcessingUs": "1",
+          "recordType": "metric",
+          "rpc.method": "provider.shutdown",
+          "rpc.requestId": "host-6",
+          "schema": "codepet.provider.transport.v1",
+          "status": "ok",
+          "writeAndFlushUs": "107"
+        }
+      ]
+    }
+  ],
+  "schema": "codepet.stdio-deadlines.v1"
+}

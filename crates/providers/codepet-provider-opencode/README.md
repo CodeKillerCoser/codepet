@@ -1,8 +1,8 @@
 # CodePet OpenCode Provider
 
-`codepet-provider-opencode` 是独立的 Provider Protocol v1 二进制。它由 `codepet-host` 启动；业务 payload 是 JSON-RPC JSON，stdin/stdout 物理通道由公共 SDK Runtime 封装为 Provider Frame V1。Provider 为每个 instance 管理一个仅监听 loopback 的官方 OpenCode Server 子进程。运行依赖不包含 Host、Gateway、Tauri、Pet SDK、Desktop IPC 或 activity store。
+`codepet-provider-opencode` 是独立的 Provider Protocol v1 二进制。它由 `codepet-host` 启动；业务 payload 是 JSON-RPC JSON，stdin/stdout 物理通道由公共 SDK Runtime 封装为协商式 Yamux 多路复用。Provider 为每个 instance 管理一个仅监听 loopback 的官方 OpenCode Server 子进程。运行依赖不包含 Host、Gateway、Tauri、Pet SDK、Desktop IPC 或 activity store。
 
-Provider 实现生成的 `Provider` trait，入口只构造 `OpenCodeProvider` 并调用 `codepet-provider-sdk::serve_stdio`。公共 SDK 统一拥有 JSON 序列化、Frame V1、raw/zstd、encoded-frame 限制、有界普通/控制 dispatch、过载错误、typed event、串行 stdout、terminal cleanup 和 shutdown drain；Provider 内部的 HTTP/SSE DTO 只描述 OpenCode v1.18.25 正式发行版实际提供的 V2 `/api` Server 形状。OpenCode 可执行文件和版本必须由 Host resolver 作为绝对 `serverExecutable` 与 `serverVersion` 注入，Provider 不搜索 PATH、应用目录或其他候选位置，也不再次探测版本。
+默认且仅支持 `stdio-codepet-mux-v1`，省略 transport 环境变量也使用 mux。CPRF 消息正文封装在 Yamux stream 内。Provider 实现生成的 `Provider` trait，入口只构造 `OpenCodeProvider` 并调用 `codepet-provider-sdk::serve_stdio`。公共 SDK 统一拥有 业务 initialize 前的 mux 握手、独立请求/响应 stream、JSON/raw/zstd、encoded/decoded 预算、normal/small/control 通路、背压、保序 typed event、terminal cleanup 和 shutdown drain；Provider 内部的 HTTP/SSE DTO 只描述 OpenCode v1.18.25 正式发行版实际提供的 V2 `/api` Server 形状。OpenCode 可执行文件和版本必须由 Host resolver 作为绝对 `serverExecutable` 与 `serverVersion` 注入，Provider 不搜索 PATH、应用目录或其他候选位置，也不再次探测版本。
 
 ## 构建与开发安装
 

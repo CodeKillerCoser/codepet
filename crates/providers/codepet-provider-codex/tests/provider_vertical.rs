@@ -1,3 +1,6 @@
+#[path = "../../test_support/mux_stdio.rs"]
+mod mux_stdio;
+
 use codepet_provider_codex::{
     CodexProvider, ExecutionLifecycleHook, ProviderEventSink, CODEX_INSTANCE_KIND,
     CODEX_PLUGIN_ID,
@@ -13,24 +16,25 @@ use codepet_provider_sdk::{
     InstanceDestroyRequest, InstanceStartRequest, InstanceStopRequest, JsonObject, ProtocolEvent,
     ProjectCreateRequest, ProjectDeleteRequest, ProjectGetRequest, ProjectListRequest, ProjectRoot,
     ProjectUpdateRequest,
-    ProtocolServer as ProviderProtocolServer, ProviderFrameCodec, ProviderInitializeRequest,
+    ProtocolServer as ProviderProtocolServer, ProviderInitializeRequest,
     FlatModelCatalogKind, FlatModelSelection, ModelSelection, ProviderInstanceRoute,
-    ProviderResourceId, ProviderShutdownRequest, ProviderWireMessage, TurnInput, TurnInputKind, TurnInterruptRequest,
+    ProviderResourceId, ProviderShutdownRequest, TurnInput, TurnInputKind, TurnInterruptRequest,
     ToolOutcome, TurnSelection, TurnStartRequest, TurnSteerRequest, VersionRange, PROTOCOL_VERSION,
 };
 use serde_json::json;
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{BufReader, BufWriter, Write};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 
 fn provider_executable() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_codepet-provider-codex"))
+    std::env::var_os("CODEPET_TEST_PROVIDER_EXE").map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_codepet-provider-codex")))
 }
 
 fn item_resource_id(item: &ConversationItem) -> &str {
@@ -91,7 +95,8 @@ fn content_id(content: &ContentBlock) -> &str {
 }
 
 fn app_server_executable() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_codex-app-server-fixture"))
+    std::env::var_os("CODEPET_TEST_APP_SERVER_EXE").map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_codex-app-server-fixture")))
 }
 
 fn route(device_id: &str) -> ProviderInstanceRoute {
@@ -3088,7 +3093,7 @@ fn provider_binary_async_event_broken_pipe_triggers_global_shutdown() {
 }
 
 #[test]
-fn provider_binary_rejects_queue_overload_by_id_without_executing_it() {
+fn provider_binary_backpressures_excess_mux_requests_and_keeps_control_available() {
     const MAX_CONCURRENT_HOST_REQUESTS: usize = 16;
     const MAX_PENDING_HOST_MESSAGES: usize = 32;
     const OVERLOADED_INDEX: usize = MAX_CONCURRENT_HOST_REQUESTS + MAX_PENDING_HOST_MESSAGES;
@@ -3128,21 +3133,10 @@ fn provider_binary_rejects_queue_overload_by_id_without_executing_it() {
             ),
         );
     }
-    let overloaded_id = format!("overload-request-{OVERLOADED_INDEX}");
-    let overloaded = provider.receive(Duration::from_secs(2), |message| {
-        message.get("id").and_then(Value::as_str) == Some(overloaded_id.as_str())
-    });
-    assert_eq!(overloaded["id"], overloaded_id);
-    assert_eq!(
-        overloaded.pointer("/error/data/code").and_then(Value::as_str),
-        Some("provider_overloaded")
-    );
-    assert_eq!(
-        overloaded
-            .pointer("/error/data/retryable")
-            .and_then(Value::as_bool),
-        Some(true)
-    );
+    // Mux holds excess senders before opening streams; it does not dispatch them
+    // and then synthesize the old flat-queue provider_overloaded response.
+    provider.collect_for(Duration::from_millis(100));
+    assert_eq!(session_method_count(&marker, "thread/resume"), MAX_CONCURRENT_HOST_REQUESTS);
     assert!(
         session_pids(
             &marker,
@@ -3375,7 +3369,7 @@ fn provider_binary_shared_server_crash_requires_instance_restart() {
 }
 
 #[test]
-fn provider_binary_fails_stop_after_an_oversized_host_frame() {
+fn provider_binary_rejects_legacy_framing_before_initialization() {
     let mut child = Command::new(provider_executable())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -3403,18 +3397,9 @@ fn provider_binary_fails_stop_after_an_oversized_host_frame() {
     };
     assert!(!status.success());
     let mut stdout = child.stdout.take().unwrap();
-    let response = provider_wire_value(
-        ProviderFrameCodec::default()
-            .read_message(&mut stdout)
-            .unwrap()
-            .expect("one fatal response frame"),
-    );
-    assert!(ProviderFrameCodec::default()
-        .read_message(&mut stdout)
-        .unwrap()
-        .is_none());
-    assert_eq!(response["error"]["code"], -32600);
-    assert_ne!(response["id"], "must-not-run");
+    let mut output = Vec::new();
+    stdout.read_to_end(&mut output).unwrap();
+    assert!(output.is_empty(), "Unnegotiated input must not dispatch or emit business messages");
 }
 
 #[test]
@@ -3808,13 +3793,32 @@ fn provider_real_codex_app_server_smoke() {
     provider.request("real-shutdown", "provider.shutdown", json!({}));
 }
 
+#[test]
+fn provider_binary_public_mux_smoke() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut provider = ProviderBinary::spawn();
+    let (conversation, _) = provider.configure("normal", &directory.path().join("smoke.txt"));
+    let described = provider.request("smoke-describe", "provider.describe", json!({}));
+    assert_eq!(described["result"]["plugin"]["pluginId"], CODEX_PLUGIN_ID);
+    let listed = provider.request("smoke-list", "conversation.list", json!({
+        "route": route_value(), "limit": 10, "projectFilter": { "kind": "all" }
+    }));
+    assert!(listed["result"]["conversations"].is_array());
+    let fetched = provider.request("smoke-get", "conversation.get", json!({ "conversation": conversation }));
+    assert_eq!(fetched["result"]["conversation"]["resource"], conversation);
+    assert!(fetched["result"]["items"].is_array());
+    let stopped = provider.request("smoke-stop", "instance.stop", json!({ "route": route_value() }));
+    assert_eq!(stopped["result"]["instance"]["status"], "stopped");
+    let shutdown = provider.request("smoke-shutdown", "provider.shutdown", json!({}));
+    assert_eq!(shutdown["result"]["accepted"], true);
+    assert!(provider.close_input_and_wait(Duration::from_secs(3)).success());
+}
+
 struct ProviderBinary {
     child: Child,
-    stdin: Option<BufWriter<ChildStdin>>,
-    messages: mpsc::Receiver<Value>,
+    stdin: Option<mux_stdio::Writer>,
+    stdout: mux_stdio::Reader,
     buffered: VecDeque<Value>,
-    close_stdout_requested: Arc<AtomicBool>,
-    stdout_closed: Arc<AtomicBool>,
 }
 
 impl ProviderBinary {
@@ -3839,34 +3843,8 @@ impl ProviderBinary {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        let stdin = BufWriter::new(child.stdin.take().unwrap());
-        let stdout = child.stdout.take().unwrap();
-        let (sender, messages) = mpsc::channel();
-        let close_stdout_requested = Arc::new(AtomicBool::new(false));
-        let stdout_closed = Arc::new(AtomicBool::new(false));
-        let reader_close_requested = close_stdout_requested.clone();
-        let reader_stdout_closed = stdout_closed.clone();
-        std::thread::spawn(move || {
-            let mut stdout = BufReader::new(stdout);
-            let codec = ProviderFrameCodec::default();
-            while let Ok(Some(message)) = codec.read_message(&mut stdout) {
-                if sender.send(provider_wire_value(message)).is_err() {
-                    break;
-                }
-                if reader_close_requested.load(Ordering::SeqCst) {
-                    break;
-                }
-            }
-            reader_stdout_closed.store(true, Ordering::SeqCst);
-        });
-        Self {
-            child,
-            stdin: Some(stdin),
-            messages,
-            buffered: VecDeque::new(),
-            close_stdout_requested,
-            stdout_closed,
-        }
+        let (stdin, stdout) = mux_stdio::connect(child.stdin.take().unwrap(), child.stdout.take().unwrap());
+        Self { child, stdin: Some(stdin), stdout, buffered: VecDeque::new() }
     }
 
     fn configure(&mut self, approval_mode: &str, marker: &Path) -> (Value, String) {
@@ -3956,15 +3934,7 @@ impl ProviderBinary {
 
     fn send_request(&mut self, id: &str, method: &str, params: Value) {
         let stdin = self.stdin.as_mut().expect("Provider stdin is closed");
-        let payload = serde_json::to_vec(
-            &json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }),
-        )
-        .unwrap();
-        let message = codepet_provider_sdk::decode_wire_message(&payload).unwrap();
-        ProviderFrameCodec::default()
-            .write_message(&mut *stdin, &message)
-            .unwrap();
-        stdin.flush().unwrap();
+        stdin.send(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
     }
 
     fn close_input_and_wait(&mut self, timeout: Duration) -> std::process::ExitStatus {
@@ -4003,14 +3973,9 @@ impl ProviderBinary {
     }
 
     fn close_stdout_after_probe(&mut self) {
-        self.close_stdout_requested.store(true, Ordering::SeqCst);
         let described = self.request("close-stdout-probe", "provider.describe", json!({}));
         assert_eq!(described["id"], "close-stdout-probe");
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while !self.stdout_closed.load(Ordering::SeqCst) {
-            assert!(Instant::now() < deadline, "Provider stdout reader did not close");
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        self.stdout.close();
     }
 
     fn event(&mut self, method: &str) -> Value {
@@ -4029,7 +3994,7 @@ impl ProviderBinary {
         let deadline = Instant::now() + timeout;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            let message = self.messages.recv_timeout(remaining).unwrap();
+            let message = self.stdout.messages.recv_timeout(remaining).unwrap();
             if predicate(&message) {
                 return message;
             }
@@ -4044,21 +4009,12 @@ impl ProviderBinary {
             if remaining.is_zero() {
                 return;
             }
-            match self.messages.recv_timeout(remaining) {
+            match self.stdout.messages.recv_timeout(remaining) {
                 Ok(message) => self.buffered.push_back(message),
                 Err(mpsc::RecvTimeoutError::Timeout) => return,
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
             }
         }
-    }
-}
-
-fn provider_wire_value(message: ProviderWireMessage) -> Value {
-    match message {
-        ProviderWireMessage::Response(value) => serde_json::to_value(value).unwrap(),
-        ProviderWireMessage::Notification(value) => serde_json::to_value(value).unwrap(),
-        ProviderWireMessage::Event(value) => serde_json::to_value(value).unwrap(),
-        ProviderWireMessage::Request(_) => panic!("Provider stdout emitted a request"),
     }
 }
 

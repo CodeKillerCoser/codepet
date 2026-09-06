@@ -1,0 +1,156 @@
+{
+  "rows": [
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 2080.871209,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 102.434458,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 102.47108300000001,
+      "stderrTail": [
+        "MUX_BENCH_BODY_STARTED",
+        "{\"name\":\"provider.mux.ready\",\"profile\":\"stdio-codepet-mux-v1\",\"receive\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000},\"role\":\"provider\",\"schema\":\"codepet.provider.transport.v1\",\"send\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000}}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 2095.706584,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 8388608,
+      "ping": {
+        "elapsedMs": 102.533833,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 102.456959,
+      "stderrTail": [
+        "MUX_BENCH_BODY_STARTED",
+        "{\"name\":\"provider.mux.ready\",\"profile\":\"stdio-codepet-mux-v1\",\"receive\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000},\"role\":\"provider\",\"schema\":\"codepet.provider.transport.v1\",\"send\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000}}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 4173.18075,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 103.99137499999999,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 103.992542,
+      "stderrTail": [
+        "MUX_BENCH_BODY_STARTED",
+        "{\"name\":\"provider.mux.ready\",\"profile\":\"stdio-codepet-mux-v1\",\"receive\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000},\"role\":\"provider\",\"schema\":\"codepet.provider.transport.v1\",\"send\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000}}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 4165.6041669999995,
+        "error": null
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 102.929458,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 4194304,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 102.947125,
+      "stderrTail": [
+        "MUX_BENCH_BODY_STARTED",
+        "{\"name\":\"provider.mux.ready\",\"profile\":\"stdio-codepet-mux-v1\",\"receive\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000},\"role\":\"provider\",\"schema\":\"codepet.provider.transport.v1\",\"send\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000}}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "request",
+      "large": {
+        "elapsedMs": 10003.1445,
+        "error": "provider_request_timeout"
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 387.163458,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 1048576,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 387.17266700000005,
+      "stderrTail": [
+        "Provider stream ended: stream ended before message completed",
+        "MUX_BENCH_BODY_STARTED",
+        "{\"name\":\"provider.mux.ready\",\"profile\":\"stdio-codepet-mux-v1\",\"receive\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000},\"role\":\"provider\",\"schema\":\"codepet.provider.transport.v1\",\"send\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000}}"
+      ],
+      "trial": 1
+    },
+    {
+      "cleanShutdown": true,
+      "direction": "response",
+      "large": {
+        "elapsedMs": 10001.904625,
+        "error": "provider_request_timeout"
+      },
+      "largePendingWhenSmallDone": true,
+      "orderedEvents": true,
+      "payloadBytes": 16777216,
+      "ping": {
+        "elapsedMs": 387.75312499999995,
+        "error": null
+      },
+      "profile": "stdio-codepet-mux-v1",
+      "rateBytesPerSecond": 1048576,
+      "shutdownError": null,
+      "smallError": null,
+      "smallMs": 387.797208,
+      "stderrTail": [
+        "Provider stream ended: 00000001/3: connection is closed",
+        "MUX_BENCH_BODY_STARTED",
+        "{\"name\":\"provider.mux.ready\",\"profile\":\"stdio-codepet-mux-v1\",\"receive\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000},\"role\":\"provider\",\"schema\":\"codepet.provider.transport.v1\",\"send\":{\"connectionWindowBytes\":33554432,\"controlMessageBytes\":16384,\"controlReceiveBudgetBytes\":262144,\"controlStreams\":4,\"idleTimeoutMs\":10000,\"maxDecodedMessageBytes\":134217728,\"maxEncodedMessageBytes\":16777216,\"maxFramePayloadBytes\":16384,\"normalStreams\":24,\"receiveBudgetBytes\":268435456,\"smallMessageBytes\":65536,\"smallReceiveBudgetBytes\":1048576,\"smallStreams\":16,\"streamTimeoutMs\":60000}}"
+      ],
+      "trial": 1
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 //! Optional content policy for Provider mappers, never applied by the transport Runtime.
-use crate::{ContentBlock, ConversationItem, JsonObject, ToolInput, ToolOutcome};
+use crate::generated::{ContentBlock, ConversationItem, JsonObject, ToolInput, ToolOutcome};
 use serde_json::{json, Value};
 
 pub const DEFAULT_TOOL_TEXT_BYTES: usize = 256 * 1024;

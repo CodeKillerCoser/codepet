@@ -1,0 +1,434 @@
+[
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 0,
+    "hostWorkers": 1,
+    "n": 3,
+    "probeCount": 36,
+    "largeTimeouts": 0,
+    "smallRpcMs": {
+      "median": 0.2977295,
+      "min": 0.201958,
+      "max": 0.492541
+    },
+    "pingMs": {
+      "median": 0.3998335,
+      "min": 0.22162500000000002,
+      "max": 0.7246670000000001
+    },
+    "schedulerLagMs": {
+      "median": 1.365062,
+      "min": 0.283667,
+      "max": 59.885542
+    },
+    "smallDueToCompletionMs": {
+      "median": 1.7162290000000002,
+      "min": 0.515417,
+      "max": 60.108542
+    },
+    "baselineSmallMs": {
+      "median": 0.31995850000000003,
+      "min": 0.29025,
+      "max": 0.349666
+    },
+    "drainMedianMs": 138.164541
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 0,
+    "hostWorkers": 4,
+    "n": 3,
+    "probeCount": 36,
+    "largeTimeouts": 0,
+    "smallRpcMs": {
+      "median": 0.3063335,
+      "min": 0.251125,
+      "max": 0.470166
+    },
+    "pingMs": {
+      "median": 0.41600000000000004,
+      "min": 0.178375,
+      "max": 0.544584
+    },
+    "schedulerLagMs": {
+      "median": 1.256104,
+      "min": 0.01525,
+      "max": 19.129459
+    },
+    "smallDueToCompletionMs": {
+      "median": 1.584646,
+      "min": 0.357917,
+      "max": 19.452959
+    },
+    "baselineSmallMs": {
+      "median": 0.323125,
+      "min": 0.2675,
+      "max": 0.49175
+    },
+    "drainMedianMs": 96.46083399999999
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 4194304,
+    "hostWorkers": 1,
+    "n": 3,
+    "probeCount": 159,
+    "largeTimeouts": 6,
+    "smallRpcMs": {
+      "median": 0.646625,
+      "min": 0.24158400000000002,
+      "max": 1.297458
+    },
+    "pingMs": {
+      "median": 0.817709,
+      "min": 0.32295799999999997,
+      "max": 1.517666
+    },
+    "schedulerLagMs": {
+      "median": 1.205375,
+      "min": 0.229167,
+      "max": 58.856875
+    },
+    "smallDueToCompletionMs": {
+      "median": 1.9386259999999997,
+      "min": 0.80025,
+      "max": 59.135708
+    },
+    "baselineSmallMs": {
+      "median": 0.32581249999999995,
+      "min": 0.2725,
+      "max": 0.610625
+    },
+    "drainMedianMs": 13325.620083
+  },
+  {
+    "direction": "request",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 4194304,
+    "hostWorkers": 4,
+    "n": 3,
+    "probeCount": 159,
+    "largeTimeouts": 6,
+    "smallRpcMs": {
+      "median": 0.650875,
+      "min": 0.283125,
+      "max": 9.404791
+    },
+    "pingMs": {
+      "median": 0.811208,
+      "min": 0.321875,
+      "max": 9.399958
+    },
+    "schedulerLagMs": {
+      "median": 1.1995829999999998,
+      "min": 0.227583,
+      "max": 22.093041
+    },
+    "smallDueToCompletionMs": {
+      "median": 1.8784999999999998,
+      "min": 0.6978340000000001,
+      "max": 22.509666
+    },
+    "baselineSmallMs": {
+      "median": 0.370958,
+      "min": 0.268542,
+      "max": 0.587375
+    },
+    "drainMedianMs": 13329.526667
+  },
+  {
+    "direction": "request",
+    "kind": "repeat",
+    "payloadBytes": 67108864,
+    "rateBytesPerSecond": 0,
+    "hostWorkers": 1,
+    "n": 3,
+    "probeCount": 8,
+    "largeTimeouts": 0,
+    "smallRpcMs": {
+      "median": 0.27064600000000005,
+      "min": 0.226417,
+      "max": 0.44125000000000003
+    },
+    "pingMs": {
+      "median": 0.374583,
+      "min": 0.187959,
+      "max": 0.568292
+    },
+    "schedulerLagMs": {
+      "median": 1.772958,
+      "min": 0.683666,
+      "max": 200.142084
+    },
+    "smallDueToCompletionMs": {
+      "median": 2.043604,
+      "min": 1.114458,
+      "max": 200.55687600000002
+    },
+    "baselineSmallMs": {
+      "median": 0.333646,
+      "min": 0.264167,
+      "max": 0.507583
+    },
+    "drainMedianMs": 202.861458
+  },
+  {
+    "direction": "request",
+    "kind": "repeat",
+    "payloadBytes": 67108864,
+    "rateBytesPerSecond": 0,
+    "hostWorkers": 4,
+    "n": 3,
+    "probeCount": 25,
+    "largeTimeouts": 0,
+    "smallRpcMs": {
+      "median": 0.303084,
+      "min": 0.252791,
+      "max": 0.49025
+    },
+    "pingMs": {
+      "median": 0.43720899999999996,
+      "min": 0.230458,
+      "max": 0.544292
+    },
+    "schedulerLagMs": {
+      "median": 1.823542,
+      "min": 0.593291,
+      "max": 98.1195
+    },
+    "smallDueToCompletionMs": {
+      "median": 2.1269590000000003,
+      "min": 0.890208,
+      "max": 98.60975
+    },
+    "baselineSmallMs": {
+      "median": 0.32720899999999997,
+      "min": 0.291917,
+      "max": 0.382167
+    },
+    "drainMedianMs": 151.737042
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 0,
+    "hostWorkers": 1,
+    "n": 3,
+    "probeCount": 30,
+    "largeTimeouts": 0,
+    "smallRpcMs": {
+      "median": 0.2744375,
+      "min": 0.2,
+      "max": 0.42370800000000003
+    },
+    "pingMs": {
+      "median": 0.36431250000000004,
+      "min": 0.169791,
+      "max": 0.57175
+    },
+    "schedulerLagMs": {
+      "median": 3.77,
+      "min": 0.850833,
+      "max": 8.6005
+    },
+    "smallDueToCompletionMs": {
+      "median": 4.0444375,
+      "min": 1.1783739999999998,
+      "max": 9.021292
+    },
+    "baselineSmallMs": {
+      "median": 0.3224585,
+      "min": 0.296125,
+      "max": 0.406083
+    },
+    "drainMedianMs": 86.83749999999999
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 0,
+    "hostWorkers": 4,
+    "n": 3,
+    "probeCount": 31,
+    "largeTimeouts": 0,
+    "smallRpcMs": {
+      "median": 0.29975,
+      "min": 0.231125,
+      "max": 0.522167
+    },
+    "pingMs": {
+      "median": 0.410333,
+      "min": 0.290042,
+      "max": 0.8628750000000001
+    },
+    "schedulerLagMs": {
+      "median": 3.664209,
+      "min": 0.777334,
+      "max": 7.814082999999999
+    },
+    "smallDueToCompletionMs": {
+      "median": 3.9311249999999998,
+      "min": 1.0768339999999998,
+      "max": 8.116999999999999
+    },
+    "baselineSmallMs": {
+      "median": 0.3189375,
+      "min": 0.276833,
+      "max": 0.4335
+    },
+    "drainMedianMs": 86.370625
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 4194304,
+    "hostWorkers": 1,
+    "n": 3,
+    "probeCount": 159,
+    "largeTimeouts": 6,
+    "smallRpcMs": {
+      "median": 0.6514169999999999,
+      "min": 0.278833,
+      "max": 1.4865
+    },
+    "pingMs": {
+      "median": 0.8334590000000001,
+      "min": 0.24216600000000002,
+      "max": 1.5347080000000002
+    },
+    "schedulerLagMs": {
+      "median": 1.124375,
+      "min": 0.20566700000000002,
+      "max": 2.250416
+    },
+    "smallDueToCompletionMs": {
+      "median": 1.806916,
+      "min": 0.780875,
+      "max": 3.075624
+    },
+    "baselineSmallMs": {
+      "median": 0.3230835,
+      "min": 0.277333,
+      "max": 0.499292
+    },
+    "drainMedianMs": 13235.099959
+  },
+  {
+    "direction": "response",
+    "kind": "entropy",
+    "payloadBytes": 8388608,
+    "rateBytesPerSecond": 4194304,
+    "hostWorkers": 4,
+    "n": 3,
+    "probeCount": 159,
+    "largeTimeouts": 6,
+    "smallRpcMs": {
+      "median": 0.627209,
+      "min": 0.26125,
+      "max": 1.290834
+    },
+    "pingMs": {
+      "median": 0.819834,
+      "min": 0.34299999999999997,
+      "max": 1.5642919999999998
+    },
+    "schedulerLagMs": {
+      "median": 1.280292,
+      "min": 0.339,
+      "max": 2.169625
+    },
+    "smallDueToCompletionMs": {
+      "median": 1.893541,
+      "min": 0.8952500000000001,
+      "max": 3.048166
+    },
+    "baselineSmallMs": {
+      "median": 0.302104,
+      "min": 0.24025000000000002,
+      "max": 0.3665
+    },
+    "drainMedianMs": 13233.419958
+  },
+  {
+    "direction": "response",
+    "kind": "repeat",
+    "payloadBytes": 67108864,
+    "rateBytesPerSecond": 0,
+    "hostWorkers": 1,
+    "n": 3,
+    "probeCount": 24,
+    "largeTimeouts": 0,
+    "smallRpcMs": {
+      "median": 0.396333,
+      "min": 0.23358299999999999,
+      "max": 107.996375
+    },
+    "pingMs": {
+      "median": 0.583458,
+      "min": 0.35770799999999997,
+      "max": 107.994208
+    },
+    "schedulerLagMs": {
+      "median": 2.524687,
+      "min": 0.927584,
+      "max": 49.238583000000006
+    },
+    "smallDueToCompletionMs": {
+      "median": 2.8836665000000004,
+      "min": 1.6639160000000002,
+      "max": 127.316458
+    },
+    "baselineSmallMs": {
+      "median": 0.32218749999999996,
+      "min": 0.29291700000000004,
+      "max": 0.472625
+    },
+    "drainMedianMs": 184.274375
+  },
+  {
+    "direction": "response",
+    "kind": "repeat",
+    "payloadBytes": 67108864,
+    "rateBytesPerSecond": 0,
+    "hostWorkers": 4,
+    "n": 3,
+    "probeCount": 75,
+    "largeTimeouts": 0,
+    "smallRpcMs": {
+      "median": 0.35550000000000004,
+      "min": 0.24579199999999998,
+      "max": 0.790667
+    },
+    "pingMs": {
+      "median": 0.468959,
+      "min": 0.29958300000000004,
+      "max": 0.8915000000000001
+    },
+    "schedulerLagMs": {
+      "median": 1.959584,
+      "min": 0.479625,
+      "max": 2.6845
+    },
+    "smallDueToCompletionMs": {
+      "median": 2.3396670000000004,
+      "min": 0.871167,
+      "max": 3.144417
+    },
+    "baselineSmallMs": {
+      "median": 0.3415,
+      "min": 0.278084,
+      "max": 0.45637500000000003
+    },
+    "drainMedianMs": 181.467583
+  }
+]

@@ -1,12 +1,12 @@
 # CodePet Codex Provider
 
-`codepet-provider-codex` 是独立的 Provider Protocol v1 二进制。它由 `codepet-host` 启动；业务 payload 是 JSON-RPC JSON，stdin/stdout 物理通道由公共 SDK Runtime 封装为 Provider Frame V1。每个 Codex instance 只有一个共享 App Server，所有会话的 create/resume/get/turn/approval 复用它。SDK 用 Host 心跳中的客户端集合协调 start/stop：任一客户端在线时保留已 resume 会话，最后连接离开或心跳超时则停止 Server（包括 active turn），Provider 插件继续在线；没有会话续租或独立 observer。运行依赖不包含 Host、Tauri、Pet SDK 或 Desktop 私有 IPC。
+`codepet-provider-codex` 是独立的 Provider Protocol v1 二进制。它由 `codepet-host` 启动；业务 payload 是 JSON-RPC JSON，stdin/stdout 物理通道由公共 SDK Runtime 封装为协商式 Yamux 多路复用。每个 Codex instance 只有一个共享 App Server，所有会话的 create/resume/get/turn/approval 复用它。SDK 用 Host 心跳中的客户端集合协调 start/stop：任一客户端在线时保留已 resume 会话，最后连接离开或心跳超时则停止 Server（包括 active turn），Provider 插件继续在线；没有会话续租或独立 observer。运行依赖不包含 Host、Tauri、Pet SDK 或 Desktop 私有 IPC。
 
 两层 wire 不相同：Provider 与 Host 之间严格使用 JSON-RPC 2.0 业务语义，并由 Runtime 自动选择 raw/zstd、写入长度前缀、检查最终 encoded frame；上游 App Server 按官方 schema 使用 JSONL 的 `id/method/result/error`，不要求 `jsonrpc`，并允许 request 的 `trace`、notification 的 `emittedAtMs` 和缺失的 `params`。具体 method 的参数仍由 typed DTO 严格校验。
 
-公共 Provider SDK 的 stdio reader 不逐条等待 RPC，也不在普通队列满时阻塞读 stdin：普通请求最多并发 16 个、排队 32 个；manifest 以 `dispatchLane: control` 标记的 `instance.stop`、`instance.destroy`、`provider.shutdown` 使用 2 个并发与 4 个排队的保留通路。普通或控制队列过载时，请求以原 JSON-RPC id 收到 retryable `provider_overloaded`，不会进入 Provider 方法。response 允许按完成顺序乱序返回，并与 typed event sink 共用串行 stdout writer；因此 stdin EOF/fatal 即使在普通请求饱和时仍可见，并会触发 Provider/App Server 清理和有界 dispatch drain/abort。Codex `main.rs` 只调用 `codepet_provider_sdk::serve_stdio`，不拥有另一套 transport 实现。
+公共 Provider SDK 默认且仅支持 `stdio-codepet-mux-v1`：在业务 initialize 前完成传输握手，一个请求/响应使用一个 Yamux stream，事件使用独立 stream 并按 ACK 保序。普通业务最多并发 16 个；normal/small/control 传输额度分开，超出额度的发送者等待，control 方法和心跳保留通路。EOF、断管或物理协议错误触发 Provider/App Server 清理，单 stream 的取消不影响健康 stream。`main.rs` 只调用 `codepet_provider_sdk::serve_stdio`。CPRF 长度头仍用于 stream 内的消息正文，不能直接写入 STDIO。
 
-共享 Server 上的单条解析错误和 RPC timeout 只影响对应请求。`client/framing.rs` 流式读取原生 JSONL，不限制 turn/整行大小；坏行 drain 后继续，stderr 保留前 64 KiB。历史以一次 full turns 请求透传 caller cursor/limit，默认 20。只有 `kind: tool` 在 item 生成时检测超大文本，每字段 256 KiB，UTF-8 head-tail，记录可选 `_meta.truncations`；其余 item 不截断。最终 Provider Frame V1 上限与错误隔离不变。详见 `knowledge/60-rules/provider-item-text-and-pagination.md`。
+共享 Server 上的单条解析错误和 RPC timeout 只影响对应请求。`client/framing.rs` 流式读取原生 JSONL，不限制 turn/整行大小；坏行 drain 后继续，stderr 保留前 64 KiB。历史以一次 full turns 请求透传 caller cursor/limit，默认 20。只有 `kind: tool` 在 item 生成时检测超大文本，每字段 256 KiB，UTF-8 head-tail，记录可选 `_meta.truncations`；其余 item 不截断。消息正文受 mux encoded/decoded 容量约束，单 stream 错误隔离。详见 `knowledge/60-rules/provider-item-text-and-pagination.md`。
 
 资源身份始终是 `deviceId + providerPluginId + providerInstanceId + nativeResourceId`。每次 App Server session 使用独立 generation；只有普通 command/file 的 accept/decline 二元审批会发布，额外权限、结构化 decision 和未知 server request 使用原 JSON-RPC id 返回 `-32601`。
 

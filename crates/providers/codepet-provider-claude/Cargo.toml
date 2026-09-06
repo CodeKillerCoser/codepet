@@ -16,7 +16,7 @@ libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "process", "net", "rt-multi-thread", "sync", "time"] }
 
 [[bin]]
 name = "claude-stream-fixture"

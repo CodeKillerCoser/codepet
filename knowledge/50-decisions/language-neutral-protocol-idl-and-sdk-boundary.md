@@ -65,7 +65,7 @@ JSON Schema Draft 2020-12 加 method/event manifest 能同时表达跨语言 DTO
 
 - Provider Host 已使用 generated `ProtocolClient` 覆盖 initialize、describe、instance lifecycle、业务请求与 shutdown；进程启动、超时和生命周期监管仍属于 Host，而不是协议 SDK。
 - Codex、Claude 与 OpenCode 三个内置 Provider 已统一使用公共 Rust Provider runtime：入口只构造各自 Provider 并调用 `serve_stdio`；App Server、CLI stream-json、HTTP/SSE client、mapper 与业务生命周期仍完全属于各自 adapter。
-- `scripts/test_codex_provider_stdio.py` 从独立 Python 进程执行公共 wire smoke；SDK 的通用 transport 行为仍由 Rust SDK tests 与 Codex 饱和/EOF/坏帧/断管纵向测试共同守护。
+- `scripts/test_codex_provider_stdio.py` 通过 Python 命令包装调用 Rust 公共 mux wire smoke；SDK 的通用 transport 行为仍由 Rust SDK tests 与 Codex 饱和/EOF/坏帧/断管纵向测试共同守护。
 - `codepet-provider-codex`、`codepet-provider-claude` 与 `codepet-provider-opencode` 已实现 generated `Provider` trait，并共享 SDK dispatcher、Provider Frame V1 codec 与 stdio runtime；各自的 App Server / CLI / HTTP+SSE 私有协议只存在于对应插件内部。
 - Gateway v1 transport 对 event cursor、分页 cursor、断线恢复和版本不重叠错误的持续兼容性。
 - desktop v0 使用点是否持续收敛；它只能服务 Desktop Companion/Pet 本地链路，不得重新成为 Remote Gateway 兼容层。

@@ -581,6 +581,44 @@ pub struct ProviderShutdownResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ProviderTransportHello {
+    pub supported_versions: Vec<u64>,
+    pub features: Vec<String>,
+    pub receive: ProviderTransportLimits,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProviderTransportLimits {
+    pub max_frame_payload_bytes: u64,
+    pub max_encoded_message_bytes: u64,
+    pub max_decoded_message_bytes: u64,
+    pub receive_budget_bytes: u64,
+    pub normal_streams: u64,
+    pub small_streams: u64,
+    pub control_streams: u64,
+    pub small_message_bytes: u64,
+    pub small_receive_budget_bytes: u64,
+    pub control_message_bytes: u64,
+    pub control_receive_budget_bytes: u64,
+    pub connection_window_bytes: u64,
+    pub idle_timeout_ms: u64,
+    pub stream_timeout_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProviderTransportSelection {
+    pub selected_version: u64,
+    pub features: Vec<String>,
+    pub receive: ProviderTransportLimits,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeCandidate {
     pub executable_path: String,
     pub source: RuntimeCandidateSource,
