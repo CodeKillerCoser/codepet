@@ -60,3 +60,34 @@ Mapper 覆盖同消息多工具、跨消息复用原生工具 ID、成功及失�
 - Remote UI 源码控件路径与 Host 能力返回已检查，但未连接用户设备点击新对话；安装后检查模型、访问模式显示及选择创建。
 - 本次真实 runtime 验证限 macOS 与正式版 1.18.25；Windows 和其他 OpenCode 版本需独立执行同一流程。
 - active 查询仍采用既有单次 30 秒 HTTP 上限，整体循环无任务总时限；取消与旧 turn 不得污染新 turn，由生命周期纵向测试覆盖。
+
+
+## 2026-09-07 Windows：启动超时与旧历史空页
+
+### 证据
+
+使用 SQLite backup 从本机数据库建立隔离副本，配置、缓存、状态均指向临时目录；不发送模型请求、不修改原始数据库。实际已安装 Provider 经 Host mux 在默认 10 秒预算下返回 `provider_request_timeout`，method=`instance.start`、stage=`stream`。仅将诊断测试预算改为 60 秒后，同一 Provider 在 19.99 秒完成启动，三条会话分别成功返回 0、3、0 个 item。源码 Provider 直调也成功，原生 HTTP 消息查询约 0.45～3.24 秒。首次隔离启动还曾触发 Server 自身的 10 秒监听地址超时；后续原生启动为 4.47 秒，首次额外耗时来源未确认。
+
+只读数据库统计另显示：三条 session 的旧 `message` 表各有两条记录，而 V2 `session_message` 只有一条 session 有三条记录。原生 `/api/session/:id/message` 对另两条返回 HTTP 成功的空页，与 Provider 输出一致。原生日志另有模型 `FreeUsageLimitError` HTTP 429；目前没有证据将该发送错误当作历史查询错误。
+
+### 结论与范围
+
+已确认 Host 的请求预算短于本机完整 instance.start，启动失败可使后续历史读取不可用。OpenCode 的 instance.start 仍串行执行 Server 启动、模型/agent/provider 目录发现、`auth list` 与 `stats --days 30`，完成后才返回 Ready；可执行文件后台扫描改造没有涵盖这些初始化步骤。尚未分别计时所有步骤，不能把约 20 秒全部归到某一个 CLI 命令。
+
+另两条空历史发生在原生 V2 API 与其存储层，不是消息传输丢失。不能直接把旧表数据插入新表，也不能据此自动新增 V1 兼容映射。本次尚未收到手机完整错误文本，因此上述两个断点与用户具体一次报错的对应关系仍待核对。
+
+### 模块及后续验证
+
+- Host `providers/process.rs`：默认所有 RPC 10 秒；设计修复时区分启动与普通查询预算，保留有界取消，不能全局无限等待。
+- OpenCode `provider.rs`、`client.rs`：把非必需账号/用量探测从 Ready 路径移出，按统一接口有界执行并通知更新；验证慢 CLI、初始化期间断开、stop/restart 与旧代结果隔离。
+- OpenCode 原生存储/API：核对指定会话旧表和 V2 结果；若要兼容旧历史，另行确定原生迁移/查询规范并验证顺序、去重、分页，不能跳过 API 私自写库。
+- 手机端：保留完整错误 code/method，区分 provider 未就绪与 HTTP 成功空历史。
+
+### 复现命令与结果
+
+新增两个默认 ignored 的 opt-in 诊断测试，需要显式提供 `CODEPET_OPENCODE_EXECUTABLE`、`CODEPET_OPENCODE_HISTORY_SNAPSHOT`（已隔离的配置/数据根目录）；Host 测试另需 `CODEPET_OPENCODE_PROVIDER`。只输出记录数、耗时与错误，不输出消息正文。大数据只检查首批 20 条会话及各自首批 20 条消息，不能据此声称完整历史验证。
+
+- `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-opencode --test native_history -- --ignored --nocapture`：本机隔离副本通过。
+- `cargo test --manifest-path crates/Cargo.toml -p codepet-host --test native_history -- --ignored --nocapture`：默认 10 秒在 instance.start 超时；设置 `CODEPET_HISTORY_DIAGNOSTIC_TIMEOUT_SECONDS=60` 后通过。
+
+60 秒只用于诊断对照，没有改生产默认超时，也未重打包、安装、升级 OpenCode 或迁移用户数据。排查暴露出的后续设计约束是启动可用性不能等待非必需的账号/用量统计；其修复仍需单独实现和回归。
