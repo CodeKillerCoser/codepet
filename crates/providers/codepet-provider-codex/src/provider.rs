@@ -1130,6 +1130,7 @@ struct ProviderState {
 }
 
 pub struct CodexProvider {
+    observation: codepet_observation::Observation,
     state: Mutex<ProviderState>,
     events: Arc<dyn ProviderEventSink>,
     lifecycle_hook: Arc<dyn ExecutionLifecycleHook>,
@@ -1152,6 +1153,9 @@ impl CodexProvider {
         lifecycle_hook: Arc<dyn ExecutionLifecycleHook>,
     ) -> Self {
         Self {
+            observation: codepet_observation::Observation::new(codepet_observation::Definition {
+                name: "codex", config: codepet_observation::config_home("CODEX_HOME", codepet_observation::home().join(".codex")).join("hooks.json"), events: &["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Stop", "SubagentStart", "SubagentStop", "Interrupt"], plugin: None,
+            }, events.clone()),
             state: Mutex::new(ProviderState {
                 host_device_id: None,
                 initialized_client_id: None,
@@ -1228,6 +1232,17 @@ impl CodexProvider {
 }
 
 impl Provider for CodexProvider {
+    fn event_subscribe<'a>(&'a self, request: codepet_provider_sdk::EventSubscribeRequest) -> codepet_provider_sdk::ProtocolFuture<'a, codepet_provider_sdk::EventSubscribeResponse> {
+        Box::pin(async move {
+            if self.is_shutdown() { return Err(codepet_provider_sdk::ProtocolError { code: "provider_shutdown".into(), message: "Provider stopped".into(), retryable: false, details: None }); }
+            if lock(&self.state).host_device_id.is_none() { return Err(protocol_error("provider_not_initialized", "Initialize Provider before subscribing".into(), false)); }
+            self.observation.subscribe(request.subscription_id).await
+        })
+    }
+    fn event_unsubscribe<'a>(&'a self, request: codepet_provider_sdk::EventUnsubscribeRequest) -> codepet_provider_sdk::ProtocolFuture<'a, codepet_provider_sdk::EventUnsubscribeResponse> {
+        Box::pin(async move { self.observation.unsubscribe(request.subscription_id).await })
+    }
+
     fn provider_initialize<'a>(
         &'a self,
         request: ProviderInitializeRequest,
@@ -2588,6 +2603,7 @@ impl Provider for CodexProvider {
         _request: ProviderShutdownRequest,
     ) -> ProtocolFuture<'a, ProviderShutdownResponse> {
         Box::pin(async move {
+            self.observation.shutdown().await;
             if self.shutdown.swap(true, Ordering::SeqCst) {
                 loop {
                     let notified = self.shutdown_changed.notified();

@@ -580,7 +580,14 @@ impl OpenCodeInstanceRuntime {
         let client = self.ready_session()?.client();
         let runtime = Arc::downgrade(self);
         thread::spawn(move || {
-            let result = client.wait_session(&session_id);
+            let result = client.wait_session(&session_id, || {
+                runtime.upgrade().is_some_and(|runtime| {
+                    let mutable = lock(&runtime.mutable);
+                    mutable.session_generation.as_deref() == Some(generation.as_str())
+                        && mutable.active_turns.get(&session_id).is_some_and(|active|
+                            active.epoch == epoch && active.turn.resource.native_resource_id == turn_resource_id)
+                })
+            });
             let Some(runtime) = runtime.upgrade() else {
                 return;
             };
@@ -750,6 +757,7 @@ struct ProviderState {
 }
 
 pub struct OpenCodeProvider {
+    observation: codepet_observation::Observation,
     state: Mutex<ProviderState>,
     events: Arc<dyn ProviderEventSink>,
     boot_id: String,
@@ -759,6 +767,9 @@ pub struct OpenCodeProvider {
 impl OpenCodeProvider {
     pub fn new(events: Arc<dyn ProviderEventSink>) -> Self {
         Self {
+            observation: codepet_observation::Observation::new(codepet_observation::Definition {
+                name: "opencode", config: codepet_observation::config_home("XDG_CONFIG_HOME", codepet_observation::home().join(".config")).join("opencode/opencode.json"), events: &["session.created", "session.updated", "session.deleted", "session.status", "session.idle", "session.error", "permission.asked", "permission.replied", "question.asked", "question.replied", "question.rejected"], plugin: Some(include_str!("observation-plugin.ts")),
+            }, events.clone()),
             state: Mutex::new(ProviderState {
                 host_device_id: None,
                 initialized_client_id: None,
@@ -846,6 +857,17 @@ impl OpenCodeProvider {
 }
 
 impl Provider for OpenCodeProvider {
+    fn event_subscribe<'a>(&'a self, request: codepet_provider_sdk::EventSubscribeRequest) -> codepet_provider_sdk::ProtocolFuture<'a, codepet_provider_sdk::EventSubscribeResponse> {
+        Box::pin(async move {
+            if self.is_shutdown() { return Err(codepet_provider_sdk::ProtocolError { code: "provider_shutdown".into(), message: "Provider stopped".into(), retryable: false, details: None }); }
+            if lock(&self.state).host_device_id.is_none() { return Err(protocol_error("provider_not_initialized", "Initialize Provider before subscribing".into(), false)); }
+            self.observation.subscribe(request.subscription_id).await
+        })
+    }
+    fn event_unsubscribe<'a>(&'a self, request: codepet_provider_sdk::EventUnsubscribeRequest) -> codepet_provider_sdk::ProtocolFuture<'a, codepet_provider_sdk::EventUnsubscribeResponse> {
+        Box::pin(async move { self.observation.unsubscribe(request.subscription_id).await })
+    }
+
     fn provider_initialize<'a>(
         &'a self,
         request: ProviderInitializeRequest,
@@ -1372,16 +1394,6 @@ impl Provider for OpenCodeProvider {
                     "OpenCode V2 session.create does not support setting a title",
                 ));
             }
-            if request.model.is_some() {
-                return Err(capability_unsupported(
-                    "OpenCode Provider does not advertise model selection",
-                ));
-            }
-            if request.reasoning_effort.is_some() {
-                return Err(capability_unsupported(
-                    "OpenCode Provider does not support reasoning effort selection",
-                ));
-            }
             if request.extension.is_some() {
                 return Err(capability_unsupported(
                     "OpenCode Provider does not define conversation.create extensions",
@@ -1394,16 +1406,11 @@ impl Provider for OpenCodeProvider {
                     false,
                 ));
             }
-            if request.permission_level != OPENCODE_PERMISSION_LEVEL {
-                return Err(protocol_error(
-                    "unsupported_permission_level",
-                    format!(
-                        "OpenCode Provider only supports permission level {OPENCODE_PERMISSION_LEVEL}"
-                    ),
-                    false,
-                ));
-            }
             let runtime = self.instance(&request.route)?;
+            let (agent, model) = resolve_create_selection(
+                &lock(&runtime.capabilities), &request.permission_level,
+                request.model, request.reasoning_effort,
+            )?;
             let workspace_root = request
                 .workspace_root
                 .map(PathBuf::from)
@@ -1421,8 +1428,8 @@ impl Provider for OpenCodeProvider {
             let client = session.client();
             let created = tokio::task::spawn_blocking(move || {
                 client.create_session(&OpenCodeSessionCreate {
-                    agent: None,
-                    model: None,
+                    agent,
+                    model,
                     location: OpenCodeLocationRef {
                         directory,
                         workspace_id: None,
@@ -1463,7 +1470,8 @@ impl Provider for OpenCodeProvider {
                     false,
                 ));
             }
-            if request.capability_revision != "opencode-server-1.18.25-controls-v1" {
+            let runtime = self.resource_instance(&request.conversation)?;
+            if request.capability_revision != lock(&runtime.capabilities).revision {
                 return Err(protocol_error(
                     "stale_capability_revision",
                     "turn.start capabilityRevision no longer matches the Provider instance"
@@ -1474,7 +1482,6 @@ impl Provider for OpenCodeProvider {
             let requested_selection = request.selection;
             let input_text = request.input.text;
             let client_request_id = request.client_request_id;
-            let runtime = self.resource_instance(&request.conversation)?;
             let conversation_resource = runtime
                 .mapper
                 .resource(request.conversation.native_resource_id.clone());
@@ -1987,6 +1994,7 @@ impl Provider for OpenCodeProvider {
         _request: ProviderShutdownRequest,
     ) -> ProtocolFuture<'a, ProviderShutdownResponse> {
         Box::pin(async move {
+            self.observation.shutdown().await;
             if self.shutdown.swap(true, Ordering::SeqCst) {
                 return Ok(ProviderShutdownResponse { accepted: true });
             }
@@ -2637,6 +2645,35 @@ fn resolve_opencode_selection(
         reasoning_effort_id,
         model: Some(ModelSelection::GroupedModelSelection(model)),
     })
+}
+
+fn resolve_create_selection(
+    capabilities: &ProviderCapabilities,
+    permission_level: &str,
+    model: Option<String>,
+    reasoning_effort: Option<String>,
+) -> Result<(Option<String>, Option<OpenCodeModelRef>), ProtocolError> {
+    let controls = capabilities.conversation_create.as_ref().and_then(|create| create.selection.as_ref())
+        .ok_or_else(|| capability_unsupported("OpenCode conversation creation controls are unavailable"))?;
+    let agent = if permission_level == OPENCODE_PERMISSION_LEVEL {
+        None // Preserve the native default for older callers.
+    } else {
+        resolve_control_choice(controls.access_mode.as_ref(), Some(permission_level.to_string()), None, "accessModeId")?
+    };
+    if model.is_none() && reasoning_effort.is_none() { return Ok((agent, None)); }
+    let variant = resolve_control_choice(controls.reasoning_effort.as_ref(), reasoning_effort, None, "reasoningEffortId")?;
+    let Some(ModelCatalog::FlatModelCatalog(catalog)) = controls.model_catalog.as_ref() else {
+        return Err(capability_unsupported("OpenCode conversation creation model catalog is unavailable"));
+    };
+    let model = model.or_else(|| catalog.default_selection.as_ref().map(|selection| selection.model_id.clone()))
+        .ok_or_else(|| capability_unsupported("OpenCode model catalog has no default selection"))?;
+    if !catalog.models.iter().any(|option| option.id == model && option.enabled != Some(false)) {
+        return Err(protocol_error("invalid_turn_selection", format!("unknown or disabled OpenCode model: {model}"), false));
+    }
+    let (provider_id, id) = model.split_once('/').ok_or_else(|| protocol_error(
+        "provider_capability_invalid", "OpenCode create model must include its provider".into(), false,
+    ))?;
+    Ok((agent, Some(OpenCodeModelRef { id:id.into(), provider_id:provider_id.into(), variant })))
 }
 
 fn resolve_control_choice(

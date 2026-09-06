@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": "sub-1",
+  "method": "event.subscribe",
+  "params": {
+    "subscriptionId": "host-1"
+  }
+}

@@ -1126,6 +1126,7 @@ fn provider_runtime_dependency_boundary_excludes_host_gateway_pet_and_tauri() {
         .map(|dependency| dependency["name"].as_str().unwrap().to_string())
         .collect::<BTreeSet<_>>();
     let expected = [
+        "codepet-observation",
         "codepet-provider-sdk",
         "libc",
         "serde",

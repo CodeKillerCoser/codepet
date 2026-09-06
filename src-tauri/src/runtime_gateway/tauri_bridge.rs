@@ -68,6 +68,7 @@ impl RuntimeGatewayState {
 #[derive(Clone)]
 pub(crate) struct ProviderHostState {
     manager: Option<Arc<PluginManager>>,
+    pet: Option<Arc<codepet_host::PetGateway>>,
     gateway: Option<Arc<ProviderGatewayService>>,
     started: Arc<AtomicBool>,
     shutdown_started: Arc<AtomicBool>,
@@ -108,6 +109,7 @@ impl ProviderHostState {
         gateway: Arc<ProviderGatewayService>,
     ) -> Self {
         Self {
+            pet: Some(codepet_host::PetGateway::new(manager.clone(), crate::settings::configured_app_data_dir(&crate::settings::load_app_settings().unwrap_or_default()).join("pet-sources.json"))),
             manager: Some(manager),
             gateway: Some(gateway),
             started: Arc::new(AtomicBool::new(false)),
@@ -120,12 +122,17 @@ impl ProviderHostState {
     pub(crate) fn unavailable() -> Self {
         Self {
             manager: None,
+            pet: None,
             gateway: None,
             started: Arc::new(AtomicBool::new(false)),
             shutdown_started: Arc::new(AtomicBool::new(false)),
             shutdown_completed: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(Notify::new()),
         }
+    }
+
+    pub(crate) fn start_pet(&self) {
+        if let Some(pet) = self.pet.clone() { tauri::async_runtime::spawn(async move { pet.start(); }); }
     }
 
     pub(crate) fn gateway(&self) -> Option<Arc<ProviderGatewayService>> {
@@ -300,6 +307,7 @@ impl ProviderHostState {
             return true;
         }
 
+        if let Some(pet) = self.pet.as_ref() { pet.stop(); }
         if let Some(manager) = self.manager.as_ref() {
             let shutdown_timeout = manager.shutdown_timeout();
             let force_kill = match tokio::time::timeout(shutdown_timeout, manager.shutdown()).await {
@@ -1353,4 +1361,10 @@ mod tests {
             .unwrap();
         unsafe { kill(pid, 0) == 0 }
     }
+}
+
+#[tauri::command]
+pub(crate) async fn pet_gateway_request(state: tauri::State<'_, ProviderHostState>, request: codepet_host::pet_gateway::protocol::ProtocolRequest) -> Result<codepet_host::pet_gateway::protocol::ProtocolResponse, String> {
+    let pet = state.pet.clone().ok_or("Pet Gateway unavailable")?;
+    Ok(codepet_host::pet_gateway::protocol::dispatch(pet.as_ref(), request).await)
 }

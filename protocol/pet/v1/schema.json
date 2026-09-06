@@ -117,18 +117,37 @@
     "PetSnapshot": {
       "type": "object",
       "properties": {
-        "revision": { "$ref": "#/$defs/PetRevision" },
-        "generatedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" },
+        "revision": {
+          "$ref": "#/$defs/PetRevision"
+        },
+        "generatedAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        },
         "tasks": {
           "type": "array",
-          "items": { "$ref": "#/$defs/PetTask" }
+          "items": {
+            "$ref": "#/$defs/PetTask"
+          }
         },
         "approvals": {
           "type": "array",
-          "items": { "$ref": "#/$defs/PetApproval" }
+          "items": {
+            "$ref": "#/$defs/PetApproval"
+          }
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PetSource"
+          }
         }
       },
-      "required": ["revision", "generatedAt", "tasks", "approvals"],
+      "required": [
+        "revision",
+        "generatedAt",
+        "tasks",
+        "approvals"
+      ],
       "additionalProperties": false
     },
     "PetSnapshotEvent": {
@@ -155,13 +174,39 @@
     "PetTask": {
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/$defs/PetTaskId" },
-        "title": { "type": "string", "minLength": 1 },
-        "summary": { "type": "string" },
-        "status": { "$ref": "#/$defs/PetTaskStatus" },
-        "updatedAt": { "$ref": "../../core/v1/schema.json#/$defs/TimestampMs" }
+        "id": {
+          "$ref": "#/$defs/PetTaskId"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/PetTaskStatus"
+        },
+        "updatedAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        },
+        "providerId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        }
       },
-      "required": ["id", "title", "status", "updatedAt"],
+      "required": [
+        "id",
+        "title",
+        "status",
+        "updatedAt"
+      ],
       "additionalProperties": false
     },
     "PetTaskId": {
@@ -170,7 +215,76 @@
     },
     "PetTaskStatus": {
       "type": "string",
-      "enum": ["idle", "running", "waiting-approval", "completed", "failed", "interrupted"]
+      "enum": [
+        "idle",
+        "running",
+        "waiting-approval",
+        "completed",
+        "failed",
+        "interrupted",
+        "waiting-input",
+        "unknown"
+      ]
+    },
+    "PetSource": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "displayName",
+        "enabled",
+        "status",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "PetSourceSetEnabledRequest": {
+      "type": "object",
+      "properties": {
+        "sourceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sourceId",
+        "enabled"
+      ],
+      "additionalProperties": false
+    },
+    "PetSourceSetEnabledResponse": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/PetSource"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "additionalProperties": false
     }
   }
 }

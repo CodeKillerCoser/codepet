@@ -332,6 +332,7 @@ pub struct AgentSettings {
 #[serde(rename_all = "camelCase")]
 pub struct AgentPreferenceSettings {
     #[serde(default)]
+    #[serde(skip_serializing)]
     pub hook_events: Vec<String>,
 }
 

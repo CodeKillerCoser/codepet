@@ -37,7 +37,7 @@ impl OpenCodeProtocolMapper {
 
     pub fn base_capabilities() -> ProviderCapabilities {
         ProviderCapabilities {
-            revision: "opencode-server-1.18.25-controls-v1".to_string(),
+            revision: "opencode-server-1.18.25-controls-v2".to_string(),
             methods: vec![
                 ProviderCapability::ConversationList,
                 ProviderCapability::ConversationGet,
@@ -224,6 +224,22 @@ impl OpenCodeProtocolMapper {
                 }),
             })),
         });
+        // conversation.create uses a string model field. Qualify it by provider so
+        // the same model name from two providers remains selectable without ambiguity.
+        let mut create_controls = capabilities.turn_send.clone().unwrap();
+        create_controls.model_catalog = Some(ModelCatalog::FlatModelCatalog(codepet_provider_sdk::FlatModelCatalog {
+            kind: codepet_provider_sdk::FlatModelCatalogKind::Flat,
+            models: visible_models.iter().map(|model| ChoiceOption {
+                id: format!("{}/{}", model.provider_id, model.id),
+                display_name: format!("{} / {}", provider_names.get(model.provider_id.as_str()).copied().unwrap_or(&model.provider_id), model.name),
+                description: None, enabled: Some(true), disabled_reason: None,
+            }).collect(),
+            default_selection: Some(codepet_provider_sdk::FlatModelSelection {
+                kind: codepet_provider_sdk::FlatModelCatalogKind::Flat,
+                model_id: format!("{}/{}", default_model.provider_id, default_model.id),
+            }),
+        }));
+        capabilities.conversation_create.as_mut().unwrap().selection = Some(create_controls);
         Ok(capabilities)
     }
 
@@ -414,7 +430,7 @@ impl OpenCodeProtocolMapper {
             })),
             "tool" => {
                 let status = tool_status(content.state.as_ref());
-                let tool = opencode_tool_invocation(content);
+                let tool = opencode_tool_invocation(&resource_id, content);
                 Some(ConversationItem::ToolConversationItem(ToolConversationItem {
                     meta: None,
                     resource: self.resource(resource_id), turn: turn.clone(), conversation: conversation.clone(),
@@ -658,7 +674,7 @@ fn choice_display_name(id: &str) -> String {
         .join(" ")
 }
 
-fn opencode_tool_invocation(content: &OpenCodeMessageContent) -> ToolInvocation {
+fn opencode_tool_invocation(item_id: &str, content: &OpenCodeMessageContent) -> ToolInvocation {
     let state = content.state.as_ref().and_then(Value::as_object);
     let input_value = state.and_then(|state| state.get("input"));
     let name = content.name.clone().unwrap_or_else(|| "tool".to_string());
@@ -696,7 +712,7 @@ fn opencode_tool_invocation(content: &OpenCodeMessageContent) -> ToolInvocation 
         category: opencode_tool_category(&name, command.is_some()),
         origin: ToolOrigin { kind: ToolOriginKind::Server, name: Some("opencode".to_string()) },
         input,
-        outcome: state.and_then(opencode_tool_outcome),
+        outcome: state.and_then(|state| opencode_tool_outcome(item_id, state)),
         timing: content.time.as_ref().map(|time| ToolTiming {
             started_at: Some(time.created),
             completed_at: time.completed,
@@ -706,30 +722,30 @@ fn opencode_tool_invocation(content: &OpenCodeMessageContent) -> ToolInvocation 
     }
 }
 
-fn opencode_tool_outcome(state: &serde_json::Map<String, Value>) -> Option<ToolOutcome> {
+fn opencode_tool_outcome(item_id: &str, state: &serde_json::Map<String, Value>) -> Option<ToolOutcome> {
     let status = state.get("status").and_then(Value::as_str);
     let mut content = Vec::new();
     if let Some(output) = state.get("output") {
-        append_tool_content(&mut content, "output", output);
+        append_tool_content(&mut content, &format!("{item_id}:output"), output);
     }
     if let Some(parts) = state.get("content").and_then(Value::as_array) {
         for (index, part) in parts.iter().take(128).enumerate() {
-            append_tool_content(&mut content, &format!("content:{index}"), part);
+            append_tool_content(&mut content, &format!("{item_id}:content:{index}"), part);
         }
     }
     if let Some(structured) = state.get("structured") {
         if let Some(object) = structured.as_object() {
             content.push(ContentBlock::StructuredJsonContentBlock(StructuredJsonContentBlock {
-                content_id: "structured".to_string(),
+                content_id: format!("{item_id}:structured"),
                 kind: StructuredJsonContentBlockKind::StructuredJson,
                 value: object.iter().map(|(key, value)| (key.clone(), value.clone())).collect(),
                 truncation: None,
             }));
         } else {
-            append_tool_content(&mut content, "structured", structured);
+            append_tool_content(&mut content, &format!("{item_id}:structured"), structured);
         }
     }
-    let error = state.get("error").map(|error| ToolExecutionError {
+    let error = state.get("error").filter(|value| !value.is_null()).map(|error| ToolExecutionError {
         code: None,
         message: concise_error_message(error),
         retryable: None,
@@ -942,6 +958,55 @@ mod tests {
         let ContentBlock::TextContentBlock(second_text) = &second.contents[0] else { panic!("text") };
         assert_eq!(second_text.content_id, "assistant-two:text-0:text");
         assert_ne!(first_text.content_id, second_text.content_id);
+    }
+
+    #[test]
+    fn tool_result_content_ids_are_unique_across_tools_and_messages() {
+        let mapper = OpenCodeProtocolMapper::new(ProviderInstanceRoute {
+            device_id: "device".into(), provider_plugin_id: "opencode".into(), provider_instance_id: "default".into(),
+        });
+        let tool = |id: &str, failed: bool| {
+            let mut content = text_content(id, "");
+            content.kind = "tool".into();
+            content.state = Some(serde_json::json!({
+                "status": if failed { "error" } else { "completed" }, "output": "output text",
+                "content": [{"text":"detail"}], "structured":{"ok":true},
+                "error": if failed { Some("tool failed") } else { None },
+            }));
+            content
+        };
+        let messages = vec![
+            history_message("assistant-one", "assistant", None, Some(vec![tool("call-0", false), tool("call-1", false)])),
+            history_message("assistant-two", "assistant", None, Some(vec![tool("call-0", true)])),
+        ];
+        let items = mapper.conversation_items(&mapper.resource("session".into()), &messages);
+        let mut ids = std::collections::HashSet::new();
+        for item in &items {
+            let ConversationItem::ToolConversationItem(item) = item else { panic!("tool") };
+            let contents = match item.tool.outcome.as_ref().unwrap() {
+                ToolOutcome::ToolSuccessOutcome(outcome) => &outcome.content,
+                ToolOutcome::ToolFailureOutcome(outcome) => &outcome.content,
+            };
+            for content in contents {
+                let json = serde_json::to_value(content).unwrap();
+                let id = json["contentId"].as_str().unwrap();
+                assert!(id.starts_with(&format!("{}:", item.resource.native_resource_id)));
+                assert!(ids.insert(id.to_string()), "duplicate content identity: {id}");
+            }
+        }
+        assert_eq!(ids.len(), 9);
+    }
+
+    #[test]
+    fn new_conversation_advertises_native_controls_and_unambiguous_models() {
+        let model = |provider: &str| OpenCodeModel { id:"shared-model".into(), provider_id:provider.into(),
+            name:"Shared model".into(), status:"active".into(), enabled:true, variants:Vec::new() };
+        let provider = |id: &str| OpenCodeProvider { id:id.into(), name:id.into(), disabled:None };
+        let capabilities = OpenCodeProtocolMapper::capabilities(&[], &[model("one"), model("two")], &[provider("one"), provider("two")]).unwrap();
+        let create = capabilities.conversation_create.unwrap().selection.unwrap();
+        assert_eq!(create.access_mode.unwrap().options.iter().map(|option| option.id.as_str()).collect::<Vec<_>>(), vec!["build", "plan"]);
+        let Some(ModelCatalog::FlatModelCatalog(catalog)) = create.model_catalog else { panic!("create uses provider-qualified string model IDs") };
+        assert_eq!(catalog.models.iter().map(|model| model.id.as_str()).collect::<Vec<_>>(), vec!["one/shared-model", "two/shared-model"]);
     }
 
     #[test]

@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+codepet-observation = { path = "../codepet-observation" }
 codepet-provider-sdk = { path = "../../../sdk/rust/codepet-provider-sdk", version = "0.1.0" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json"] }
 serde = { version = "1", features = ["derive"] }

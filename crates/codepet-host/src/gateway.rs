@@ -586,6 +586,7 @@ impl ProviderGatewayService {
 
     fn map_provider_event(&self, event: provider::ProtocolEvent) -> gateway::ProtocolEvent {
         match event {
+            provider::ProtocolEvent::EventNotification { .. } => unreachable!("subscription notifications are delivered only to their subscriber"),
             provider::ProtocolEvent::EventInstanceStatusChanged { .. } => {
                 unreachable!("instance status events are converted to one Host state update")
             }

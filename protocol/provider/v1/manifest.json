@@ -207,7 +207,9 @@
       "dispatchLane": "control",
       "request": { "$ref": "./schema.json#/$defs/ProviderShutdownRequest" },
       "response": { "$ref": "./schema.json#/$defs/ProviderShutdownResponse" }
-    }
+    },
+    {"name": "event.subscribe", "direction": "hostToPlugin", "idempotency": "idempotent", "request": {"$ref": "./schema.json#/$defs/EventSubscribeRequest"}, "response": {"$ref": "./schema.json#/$defs/EventSubscribeResponse"}},
+    {"name": "event.unsubscribe", "direction": "hostToPlugin", "idempotency": "idempotent", "request": {"$ref": "./schema.json#/$defs/EventUnsubscribeRequest"}, "response": {"$ref": "./schema.json#/$defs/EventUnsubscribeResponse"}}
   ],
   "events": [
     {
@@ -265,7 +267,8 @@
       "delivery": "ordered",
       "scope": "approval",
       "payload": { "$ref": "./schema.json#/$defs/ApprovalResolvedEvent" }
-    }
+    },
+    {"name": "event.notification", "direction": "pluginToHost", "delivery": "ordered", "scope": "subscription", "payload": {"$ref": "./schema.json#/$defs/ProviderNotificationEvent"}}
   ],
   "fixtures": "fixtures/index.json"
 }

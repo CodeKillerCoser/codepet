@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "providers/codepet-observation",
     "codepet-host",
     "providers/codepet-provider-codex",
     "providers/codepet-provider-claude",
