@@ -4,7 +4,7 @@
 
 支持 Server 模式的 Harness，每个 Provider 运行实例只有一个 Server。Codex list/get/create/resume/turn/approval 共用该 Server；会话槽只负责串行、配置与路由，不创建独立进程。删除会话租约、续租 timer 和过期 reaper。
 
-SDK 根据 Host 心跳携带的客户端连接集合协调实例：仍有任意客户端时保留所有已 resume 会话；最后连接消失或 Host 心跳超时后停止 Server，包括 active turn。页面退出不会改变连接集合。Provider 插件进程与 Harness 状态分开，插件保持在线等待重连。
+SDK 根据 Host 心跳携带的客户端连接集合协调实例：仍有任意客户端时保留所有已 resume 会话；最后连接消失后，必须保留执行中的请求、未结束 turn 和待审批，全部空闲才能停止 Server。Host 心跳超时仍强制清理。页面退出不会改变连接集合。Provider 插件进程与 Harness 状态分开，插件保持在线等待重连。
 
 ## 适用场景
 
@@ -15,6 +15,7 @@ Codex lifecycle、conversation acquire/create、turn、approval、事件分发�
 - 十个会话启动十个 App Server，或保留另一个只读 observer。
 - Remote 每 10 秒续租、页面退出释放 writer，导致仍在线时丢失后续变化。
 - A 的终态或明确业务 RPC reject 关闭共享进程，破坏 B 的事件与审批。
+- 手机锁屏或网络切换导致最后连接消失，就直接中断所有任务。
 - 只按 clientId 删除在线记录，使同一客户端重连时旧 socket 关闭误删新 socket。
 - 把 thread/unsubscribe 成功当作立即交还 writer；实测 0.153.1 仍持有已加载 thread。
 - resume 默认返回全部 turns，绕开 caller 选择的分页并重复读取大历史。
@@ -31,6 +32,7 @@ Codex lifecycle、conversation acquire/create、turn、approval、事件分发�
 - Remote 成功获取交互权后开放 composer，成功后不定时 acquire；失败重试属于恢复流程。重连、Provider generation/可用状态改变后重新检查。首次 selection 可初始化 UI，后续重试不得覆盖用户修改。
 - SDK 应用 ping 直接处理，生命周期协调与普通 RPC 分离。普通请求保持 16 active + 32 pending，生命周期 control 保留 2 active + 4 pending；队列满按原 id 返回 provider_overloaded。EOF/fatal 先停止心跳协调再关闭 Provider，不能在清理时再次启动 Server。
 - `leaseExpiresAt` 暂留为可选 wire 兼容字段；Codex 返回 None，客户端不使用它调度或决定 Server 存活。
+- SDK activity 只用于回收判定，不能成为第二份 UI 会话状态。按实例、会话、turn ID 区分活动；终态不能被晚到 start 响应复活。审批终结或对应 turn 终结都解除该审批保留。已接收的 start/steer 不随响应流取消而丢失启动保护，Provider shutdown/EOF 必须取消这些执行。
 
 ## 来源
 

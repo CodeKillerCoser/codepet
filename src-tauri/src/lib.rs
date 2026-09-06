@@ -388,6 +388,20 @@ pub fn run() {
         .setup(|app| {
             let setup_span = app_log::PerfSpan::start("startup.total");
             app_log::info("startup", "setup started");
+            #[cfg(target_os = "macos")]
+            {
+                let guard = match platform::power::AwakeGuard::acquire() {
+                    Ok(guard) => {
+                        app_log::info("power", "preventing idle system sleep while Code Pet runs");
+                        Some(guard)
+                    }
+                    Err(error) => {
+                        app_log::error("power", &error);
+                        None
+                    }
+                };
+                app.manage(std::sync::Mutex::new(guard));
+            }
             let handle = app.handle().clone();
             let (provider_host_state, remote_access_runtime) =
                 match ProviderHostState::from_app(&handle) {
@@ -584,6 +598,10 @@ fn handle_run_event(app: &AppHandle, event: tauri::RunEvent) {
             });
         }
         tauri::RunEvent::Exit => {
+            #[cfg(target_os = "macos")]
+            if let Some(guard) = app.try_state::<std::sync::Mutex<Option<platform::power::AwakeGuard>>>() {
+                guard.lock().unwrap_or_else(|e| e.into_inner()).take();
+            }
             let provider_host = app.state::<ProviderHostState>().inner().clone();
             let remote_access = app.state::<RemoteAccessRuntime>().inner().clone();
             if !provider_host.shutdown_completed() || !remote_access.shutdown_completed() {

@@ -76,7 +76,7 @@ impl HostHeartbeat {
         }
     }
 
-    pub(crate) async fn run<P: ProtocolServer + 'static>(self: Arc<Self>, provider: Arc<P>) {
+    pub(crate) async fn run<P: ProtocolServer + 'static>(self: Arc<Self>, provider: Arc<P>, activity: Arc<super::activity::Activity>) {
         let mut receiver = self.desired.subscribe();
         let mut known = HashSet::new();
         let mut workers = JoinSet::new();
@@ -92,7 +92,7 @@ impl HostHeartbeat {
                 for route in snapshot.instances {
                     let key = serde_json::to_string(&route).expect("route serializes");
                     if known.insert(key) {
-                        workers.spawn(manage_instance(provider.clone(), route, self.desired.subscribe()));
+                        workers.spawn(manage_instance(provider.clone(), route, self.desired.subscribe(), activity.clone()));
                     }
                 }
             }
@@ -137,6 +137,7 @@ async fn wait_inactive(receiver: &mut watch::Receiver<Option<ProviderPingRequest
 async fn manage_instance<P: ProtocolServer + 'static>(
     provider: Arc<P>, route: ProviderInstanceRoute,
     mut receiver: watch::Receiver<Option<ProviderPingRequest>>,
+    activity: Arc<super::activity::Activity>,
 ) {
     loop {
         let desired = wanted(&receiver, &route);
@@ -152,12 +153,77 @@ async fn manage_instance<P: ProtocolServer + 'static>(
             };
             if cancelled {
                 // Stop also cancels in-flight initialize; the adapter owns generation checks.
-                let _ = provider.instance_stop(InstanceStopRequest { route: route.clone() }).await;
+                stop_if_idle(provider.as_ref(), &route, &receiver, &activity).await;
             }
         } else {
-            let _ = provider.instance_stop(InstanceStopRequest { route: route.clone() }).await;
+            stop_if_idle(provider.as_ref(), &route, &receiver, &activity).await;
         }
         if wanted(&receiver, &route) != desired { continue; }
-        if receiver.changed().await.is_err() { break; }
+        tokio::select! {
+            changed = receiver.changed() => { if changed.is_err() { break; } },
+            _ = tokio::time::sleep(Duration::from_secs(1)), if !desired => {},
+        }
+    }
+}
+
+async fn stop_if_idle<P: ProtocolServer>(provider: &P, route: &ProviderInstanceRoute,
+    receiver: &watch::Receiver<Option<ProviderPingRequest>>, activity: &super::activity::Activity) {
+    // Host loss / instance removal is still a forced cleanup, even during active execution.
+    let host_owns_instance = receiver.borrow().as_ref().is_some_and(|value| value.instances.contains(route));
+    if !host_owns_instance {
+        let _ = provider.instance_stop(InstanceStopRequest { route: route.clone() }).await;
+        return;
+    }
+    let Ok(_exclusive) = activity.gate.try_write() else { return; };
+    if !wanted(receiver, route) && !activity.busy(route) {
+        let _ = provider.instance_stop(InstanceStopRequest { route: route.clone() }).await;
+    }
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+    use crate::generated::*;
+    use super::super::activity::Activity;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Default)]
+    struct Provider(AtomicUsize);
+    impl ProtocolServer for Provider {
+        fn instance_stop<'a>(&'a self, _: InstanceStopRequest) -> ProtocolFuture<'a, InstanceStopResponse> {
+            Box::pin(async move {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Err(ProtocolError { code: "fixture".into(), message: "count only".into(), retryable: false, details: None })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn offline_retains_execution_and_startup_but_host_loss_forces_cleanup() {
+        let provider = Provider::default();
+        let activity = Activity::default();
+        let route = ProviderInstanceRoute { device_id: "d".into(), provider_plugin_id: "p".into(), provider_instance_id: "i".into() };
+        let (sender, receiver) = watch::channel(Some(ProviderPingRequest { sequence: 1, host_session_id: "h".into(),
+            clients: ClientConnectionsSnapshot { revision: 1, connections: vec![] }, instances: vec![route.clone()] }));
+        let starting = activity.gate.read().await;
+        stop_if_idle(&provider, &route, &receiver, &activity).await;
+        assert_eq!(provider.0.load(Ordering::SeqCst), 0);
+        drop(starting);
+        let mut turn: TurnTask = serde_json::from_value(serde_json::json!({
+            "resource":{"providerId":"i","nativeResourceId":"t"},
+            "conversation":{"providerId":"i","nativeResourceId":"c"},"status":"running"
+        })).unwrap();
+        activity.event(&ProtocolEvent::EventTurnUpserted { jsonrpc: "2.0".into(), params: TurnUpsertedEvent { turn: turn.clone() } });
+        stop_if_idle(&provider, &route, &receiver, &activity).await;
+        assert_eq!(provider.0.load(Ordering::SeqCst), 0);
+        sender.send_replace(None);
+        stop_if_idle(&provider, &route, &receiver, &activity).await;
+        assert_eq!(provider.0.load(Ordering::SeqCst), 1);
+        sender.send_replace(Some(ProviderPingRequest { sequence: 2, host_session_id: "h".into(),
+            clients: ClientConnectionsSnapshot { revision: 1, connections: vec![] }, instances: vec![route.clone()] }));
+        turn.status = TurnStatus::Completed;
+        activity.event(&ProtocolEvent::EventTurnUpserted { jsonrpc: "2.0".into(), params: TurnUpsertedEvent { turn } });
+        stop_if_idle(&provider, &route, &receiver, &activity).await;
+        assert_eq!(provider.0.load(Ordering::SeqCst), 2);
     }
 }

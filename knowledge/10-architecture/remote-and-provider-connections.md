@@ -8,7 +8,7 @@
 
 - 支持 Server 模式的 Harness，每个 Provider **运行实例**只有一个 Server，多会话共用。插件可以配置多个实例，实例间继续隔离。
 - 两段应用心跳传播真实在线状态；任一已认证客户端仍连接时，保留该实例 resume 过的会话和事件。
-- 最后一个客户端离线或 Host 心跳过期时停止 Harness；Provider 插件进程继续存在并接收下一次心跳。
+- 最后一个客户端离线后，仅在没有执行中请求、未结束 turn 和待审批时停止 Harness；Host 心跳过期仍强制清理。Provider 插件进程继续存在并接收下一次心跳。
 - Host 连接页和 Remote Provider 位置同时显示连接健康与 Harness 状态。
 
 ## 非目标
@@ -44,13 +44,15 @@ Host Provider 管理 <-- pong(sequence, clientsRevision) -- Provider SDK
 
 两段均每 20 秒交换，失联阈值 60 秒。Remote 请求超时 10 秒，持续未得到有效 pong 达阈值后进入既有重连流程；Host 的应用心跳超时关闭 socket。WebSocket 原生 Ping/Pong 保留，不能替代携带业务状态的应用心跳。连接增减或实例状态变化会唤醒 Host→Provider 的下一次交换，不等完整周期。应用 ping 绕过普通 RPC 排队，所以慢 get/resume 不阻塞其处理。
 
-Provider SDK 立即确认有效 ping，另用每实例独立协调任务调用幂等 start/stop；启动等待不延迟 pong。无客户端的首次快照、最后连接离开和 Host 心跳过期都会停止实例。启动过程中离线，先取消等待再调用 stop；adapter 必须用 generation/cancellation 保证不出现晚到 Ready。重复心跳重新协调 adapter 状态，故 Server 故障后，只要客户端仍在线，后续心跳可再次尝试启动；不自动重发失败的业务请求。
+Provider SDK 立即确认有效 ping，另用每实例独立协调任务调用幂等 start/stop；启动等待不延迟 pong。无客户端时通过 SDK activity 保留未结束 turn、待审批与执行中请求，空闲时才停止实例；离线实例每秒复核一次回收条件。Host 心跳过期、实例移除仍强制停止。启动过程中离线先取消心跳协调的 start 等待，再按活动状态决定是否 stop；adapter 必须用 generation/cancellation 保证不出现晚到 Ready。重复心跳重新协调 adapter 状态，故 Server 故障后，只要客户端仍在线，后续心跳可再次尝试启动；不自动重发失败的业务请求。
 
 `hostSessionId` 绑定当前插件进程；sequence 必须递增，client revision 不倒退，相同 revision 不得改变集合。旧包既不能改在线集合，也不能延长存活时间。Host 收到 pong 后复核插件 generation 与进程 identity；Remote 以连接 generation 和 Provider generation 丢弃旧响应。心跳摘要使用独立状态流，不伪装成有 cursor 的 replay event；同一次 ping 期间已发生的 provider.changed 优先于晚到摘要。
 
 Provider `connectionStatus` 为 connecting/online/offline，表示 Host↔插件通信；实例原有 status 表示 Harness 是否 Ready。因此“Provider 在线，Harness 已停止”是无客户端时的正常状态。摘要沿用 capability revision，完整能力仍由 describe 获取；Remote 不把摘要的空 methods 当作不支持，能力到达或实例恢复 Ready 后补拉项目。
 
-Codex 的一个 Server 负责 list/get/create/resume/turn/approval，一条 reader 按 thread ID 分发，多会话仍各有 operation lock。退出详情不 unsubscribe、不续租、不停止 Server；最后一条连接离开会关闭整个 Server，**包括正在运行的任务**。stdin EOF、Provider shutdown 同样清理 Server。两部手机经同一 Host 操作同一会话共用该 Server；并发 start 仍受原生 turn 状态和每会话串行控制，不能承诺同时启动两个 turn。
+Codex 的一个 Server 负责 list/get/create/resume/turn/approval，一条 reader 按 thread ID 分发，多会话仍各有 operation lock。退出详情不 unsubscribe、不续租、不停止 Server；最后一条连接离开后，运行中或待审批任务继续执行，全部终结后才关闭 Server。stdin EOF、Provider shutdown 同样清理 Server。两部手机经同一 Host 操作同一会话共用该 Server；并发 start 仍受原生 turn 状态和每会话串行控制，不能承诺同时启动两个 turn。
+
+完整活动判定、请求取消与 macOS 防休眠见 [Host 常驻与离线执行](host-awake-and-offline-execution.md)。
 
 ## 涉及模块
 

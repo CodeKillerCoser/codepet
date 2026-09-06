@@ -5,6 +5,7 @@ mod stdio;
 mod mux;
 mod io;
 mod heartbeat;
+mod activity;
 
 pub use options::{StdioServerOptions, StdioServerError};
 pub use events::ProviderEventSink;
