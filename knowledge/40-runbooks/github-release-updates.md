@@ -20,6 +20,7 @@
 - workflow 会在构建前检查 `TAURI_SIGNING_PRIVATE_KEY` 非空；Tauri build 需要通过这个环境变量读取 updater 私钥。
 - 当前 `latest.json` 只发布 `macos-universal` 和 `windows-x86_64` 两个平台键。
 - Tauri `beforeBuildCommand` 会先运行 `npm run providers:stage`。macOS job 必须设置 `CODEPET_PROVIDER_TARGET=universal-apple-darwin`，Windows job 必须设置 `CODEPET_PROVIDER_TARGET=x86_64-pc-windows-msvc`；不要只把 App 主程序构建成 universal。
+- 两个构建 job 都必须先通过 `oven-sh/setup-bun@v2` 安装 Bun（当前固定 `1.4.2`）。`providers:stage` 除 Rust Provider 外还调用 `bun build --compile` 生成 `cp-sdk-gen`；`npm ci` 不会安装此构建工具。调整 staging 工具依赖时，必须同步检查两个平台的 runner 初始化步骤。
 - 三个内置二进制是 Code Pet Provider adapter，不是 Codex、OpenCode 或 Claude runtime。安装包不会替用户安装或选择底层 runtime，本机 `AgentRuntimeService` 检测与用户配置仍是权威。
 - `src-tauri/tauri.conf.json` 中的 updater endpoint 必须是固定检查入口 `https://github.com/CodeKillerCoser/codepet/releases/latest/download/latest.json`。不要配置成 `releases/download/<tag>/latest.json`，否则旧客户端会一直检查旧 tag 下的 manifest，无法发现新版本。
 - 仓库提交的版本必须是基础版本，例如 `0.1.4`，不要提交 `0.1.4+<sha>`。构建版本由 workflow 基于版本同步后的 commit 派生。
@@ -84,6 +85,14 @@ GitHub Release 上传资产时会把文件名中的空格规范化为 `.`，`lat
 - manifest 生成脚本会校验 release tag 与传入的构建版本一致。该检查失败时，应先确认 `preflight` 输出的 `version` 和 `tag`，不要手动发布 tag 是新版本但 `latest.json.version` 仍是旧版本的 release。
 - Release 后检查 `https://github.com/CodeKillerCoser/codepet/releases/latest/download/latest.json` 可公开访问，且 JSON 中两个 URL 都能下载。
 - 客户端验证：安装旧版本后手动检查更新，确认弹窗出现；取消后自动检查不再提示同一版本，手动检查仍会提示。
+
+## Bun 缺失导致 staging 失败
+
+- 证据：2026-09-07 的 [Release run 34085083215](https://github.com/CodeKillerCoser/codepet/actions/runs/34085083215) 构建提交 `1c4e33d`，macOS 和 Windows 都在 Rust release 编译成功后于 `buildSdkGeneratorBinary` 报 `spawnSync bun ENOENT`，三次重试结果相同。
+- 根因：staging 依赖 Bun 编译 SDK 生成器，但 workflow 只安装 Node 和 Rust；本地已安装 Bun 的环境不能覆盖干净 runner 的依赖缺失。缺失的引入提交未确认。
+- 修复：在两个构建 job 的 `npm ci` 前显式安装 Bun；保持现有统一 staging 入口和各目标平台编译参数。
+- 本地验证：`npm run providers:test` 三项通过；用 staging 导出的 `resolveBunExecutable` 和 `sdkGeneratorBuildArguments` 实际编译 Windows `cp-sdk-gen.exe`，并执行 `--help`。macOS universal 合并和完整签名打包仍需在新提交的 Release workflow 中验证。
+- 回归检查：遇到 `ENOENT` 先确认缺失的工具及 PATH，并检查所有构建 job 的安装步骤；重复构建不能修复缺少依赖。Bun 版本升级后重新验证 Windows executable 与 macOS 两种架构的编译、合并。
 
 ## 风险
 
