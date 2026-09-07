@@ -76,7 +76,14 @@ pub async fn check_native_runtime(
         let timer = std::time::Instant::now();
         let started = tokio::time::timeout(std::time::Duration::from_secs(10), provider.instance_start(InstanceStartRequest {route:route.clone()})).await.expect("handshake exceeded Host startup budget")?;
         println!("{kind}: handshake {:?}", timer.elapsed());
-        assert_eq!(started.instance.status, InstanceStatus::Ready);
+        assert!(matches!(started.instance.status, InstanceStatus::Starting | InstanceStatus::Ready));
+        tokio::time::timeout(std::time::Duration::from_secs(90), async {
+            loop {
+                let snapshot = provider.instance_start(InstanceStartRequest { route: route.clone() }).await.unwrap();
+                if snapshot.instance.status == InstanceStatus::Ready { break; }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        }).await.expect("startup metadata did not complete");
         println!("{kind}: ready with isolated data directory");
         provider
             .conversation_list(ConversationListRequest {

@@ -187,7 +187,8 @@ async fn configured_provider(
     )
     .await
     .unwrap();
-    assert_eq!(started.instance.status, codepet_provider_sdk::InstanceStatus::Ready);
+    assert_eq!(started.instance.status, codepet_provider_sdk::InstanceStatus::Starting);
+    wait_for_ready(provider.as_ref(), &route).await;
 
     let conversation = ProviderProtocolServer::conversation_create(
         provider.as_ref(),
@@ -1367,6 +1368,14 @@ fn active_provider_binary(workspace: &Path) -> ActiveProviderBinary {
         json!({ "route": route }),
         &mut pending,
     );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let snapshot = binary_request_collecting_events(&mut stdin, &mut stdout,
+            "active-wait-ready", "instance.start", json!({ "route": route }), &mut pending);
+        if snapshot.pointer("/result/instance/status").and_then(Value::as_str) == Some("ready") { break; }
+        assert!(Instant::now() < deadline, "startup probes incomplete: {snapshot}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
     let created = binary_request_collecting_events(
         &mut stdin,
         &mut stdout,
@@ -1500,15 +1509,25 @@ fn write_oversized_provider_header(writer: &mut impl Write) {
 }
 
 #[tokio::test]
-async fn startup_precedes_parallel_probes_and_refresh_failure_keeps_ready() {
+async fn starting_waits_for_parallel_probes_and_refresh_failure_keeps_ready() {
     let directory = tempfile::tempdir().unwrap();
     let config = directory.path().join(".claude-test");
     std::fs::create_dir_all(&config).unwrap();
     std::fs::write(config.join("block-probes"), "").unwrap();
-    let (provider, events, route, _) =
-        tokio::time::timeout(Duration::from_secs(3), ready_provider(directory.path()))
-            .await
-            .unwrap();
+    let (sender, events) = mpsc::channel();
+    let provider = Arc::new(ClaudeProvider::new(Arc::new(move |event| { let _ = sender.send(event); Ok(()) })));
+    let route = route("startup-probes");
+    ProviderProtocolServer::provider_initialize(provider.as_ref(), ProviderInitializeRequest {
+        host_client_id: "startup".into(), host_device_id: route.device_id.clone(), host_version: "test".into(),
+        supported_versions: VersionRange { min_version: PROTOCOL_VERSION, max_version: PROTOCOL_VERSION },
+    }).await.unwrap();
+    let mut settings = instance_settings(&fixture_executable());
+    settings.insert("claudeConfigDir".into(), json!(config));
+    ProviderProtocolServer::instance_create(provider.as_ref(), InstanceCreateRequest {
+        route: route.clone(), instance_kind: CLAUDE_INSTANCE_KIND.into(), display_name: "startup".into(), settings,
+    }).await.unwrap();
+    let started = ProviderProtocolServer::instance_start(provider.as_ref(), InstanceStartRequest { route: route.clone() }).await.unwrap();
+    assert_eq!(started.instance.status, codepet_provider_sdk::InstanceStatus::Starting);
     tokio::time::timeout(Duration::from_secs(10), async {
         while !config.join("version.pid").exists() || !config.join("auth.pid").exists() {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1516,6 +1535,8 @@ async fn startup_precedes_parallel_probes_and_refresh_failure_keeps_ready() {
     })
     .await
     .unwrap();
+    assert!(!events.try_iter().any(|event| matches!(event, ProtocolEvent::EventInstanceStatusChanged {params,..}
+        if params.instance.status == codepet_provider_sdk::InstanceStatus::Ready)));
     std::fs::write(config.join("release"), "").unwrap();
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -1559,4 +1580,15 @@ async fn startup_precedes_parallel_probes_and_refresh_failure_keeps_ready() {
     ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {})
         .await
         .unwrap();
+}
+
+async fn wait_for_ready(provider: &ClaudeProvider, route: &ProviderInstanceRoute) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let snapshot = ProviderProtocolServer::instance_start(provider,
+                InstanceStartRequest { route: route.clone() }).await.unwrap();
+            if snapshot.instance.status == codepet_provider_sdk::InstanceStatus::Ready { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("complete startup metadata");
 }

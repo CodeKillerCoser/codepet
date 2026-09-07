@@ -186,7 +186,7 @@ async fn configured_direct_provider_with_events_and_hook(
     )
     .await
     .unwrap();
-    let started = ProviderProtocolServer::instance_start(
+    ProviderProtocolServer::instance_start(
         provider.as_ref(),
         InstanceStartRequest {
             route: route.clone(),
@@ -195,11 +195,10 @@ async fn configured_direct_provider_with_events_and_hook(
     .await
     .unwrap();
     if !approval_mode.starts_with("metadata-") { wait_for_capabilities(provider.as_ref(), &route).await; }
-    (
-        provider,
-        route,
-        started.instance.capabilities.revision,
-    )
+    let revision = ProviderProtocolServer::instance_capabilities(provider.as_ref(),
+        codepet_provider_sdk::InstanceCapabilitiesRequest { route: route.clone() })
+        .await.unwrap().capabilities.revision;
+    (provider, route, revision)
 }
 
 struct BlockHandleOnceHook {
@@ -413,7 +412,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     )
     .await
     .unwrap();
-    assert_eq!(started.instance.status, codepet_provider_sdk::InstanceStatus::Ready);
+    assert_eq!(started.instance.status, codepet_provider_sdk::InstanceStatus::Starting);
     wait_for_capabilities(&provider, &route).await;
     let capabilities = ProviderProtocolServer::instance_capabilities(
         &provider,
@@ -1003,17 +1002,18 @@ fn provider_binary_rejects_stale_approval_when_app_server_request_id_is_reused()
         .unwrap();
 
     provider.request("stop-first", "instance.stop", json!({ "route": route_value() }));
-    let second_start = provider.request(
+    provider.request(
         "start-second",
         "instance.start",
         json!({ "route": route_value() }),
     );
-    let second_capability_revision = second_start
-        .pointer("/result/instance/capabilities/revision")
+    let second_conversation = provider.create_conversation("conversation-second");
+    let second_capabilities = provider.request("catalog-second", "instance.capabilities", json!({ "route": route_value() }));
+    let second_capability_revision = second_capabilities
+        .pointer("/result/capabilities/revision")
         .and_then(Value::as_str)
         .unwrap()
         .to_string();
-    let second_conversation = provider.create_conversation("conversation-second");
     provider.request(
         "turn-second",
         "turn.start",
@@ -1324,7 +1324,7 @@ fn provider_binary_exposes_codex_authentication_usage_and_projects() {
         "instance.start",
         json!({ "route": route_value() }),
     );
-    assert_eq!(started.pointer("/result/instance/status"), Some(&json!("ready")));
+    assert_eq!(started.pointer("/result/instance/status"), Some(&json!("starting")));
     let event = provider.receive(Duration::from_secs(3), |event| {
         event.get("method").and_then(Value::as_str) == Some("event.instanceStatusChanged")
             && event.pointer("/params/instance/authentication").is_some()
@@ -2120,6 +2120,13 @@ fn provider_binary_terminal_notification_preserves_other_conversations_in_shared
 
     provider.request("parallel-stop", "instance.stop", json!({ "route": route_value() }));
     provider.request("parallel-start-provider", "instance.start", json!({ "route": route_value() }));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let state = provider.request("parallel-wait-ready", "instance.start", json!({ "route": route_value() }));
+        if state.pointer("/result/instance/status").and_then(Value::as_str) == Some("ready") { break; }
+        assert!(Instant::now() < deadline, "restart probes did not finish");
+        std::thread::sleep(Duration::from_millis(10));
+    }
     let resumed_b = provider.request(
         "parallel-steer-b-after-stop",
         "turn.steer",
@@ -3945,14 +3952,16 @@ impl ProviderBinary {
             app_server_args.push(request_log.to_string_lossy().into_owned());
         }
         self.initialize_and_create_instance(&app_server_executable(), app_server_args);
-        let started = self.request("start", "instance.start", json!({ "route": route_value() }));
-        let capability_revision = started
-            .pointer("/result/instance/capabilities/revision")
+        self.request("start", "instance.start", json!({ "route": route_value() }));
+        let conversation = self.create_conversation("conversation-first");
+        let capabilities = self.request("catalog", "instance.capabilities", json!({ "route": route_value() }));
+        let capability_revision = capabilities
+            .pointer("/result/capabilities/revision")
             .and_then(Value::as_str)
             .unwrap()
             .to_string();
         (
-            self.create_conversation("conversation-first"),
+            conversation,
             capability_revision,
         )
     }
@@ -4370,7 +4379,7 @@ async fn wait_for_capabilities(provider: &CodexProvider, route: &ProviderInstanc
 }
 
 #[tokio::test]
-async fn handshake_does_not_wait_for_metadata_and_stop_discards_pending_probes() {
+async fn start_returns_starting_and_stop_discards_pending_probes() {
     for mode in ["metadata-no-response", "metadata-error"] {
         let directory = tempfile::tempdir().unwrap();
         let marker = directory.path().join("metadata.txt");
@@ -4415,7 +4424,8 @@ async fn handshake_does_not_wait_for_metadata_and_stop_discards_pending_probes()
         .unwrap();
         assert_eq!(
             snapshot.instance.status,
-            codepet_provider_sdk::InstanceStatus::Ready
+            if mode == "metadata-no-response" { codepet_provider_sdk::InstanceStatus::Starting }
+            else { codepet_provider_sdk::InstanceStatus::Ready }
         );
         assert!(snapshot.instance.authentication.is_none());
         assert!(snapshot.instance.capabilities.turn_send.is_none());
@@ -4429,4 +4439,40 @@ async fn handshake_does_not_wait_for_metadata_and_stop_discards_pending_probes()
             .await
             .unwrap();
     }
+}
+
+#[tokio::test]
+async fn startup_publishes_one_complete_ready_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("catalog-revision.txt");
+    let (sender, events) = mpsc::channel();
+    let sink: Arc<dyn ProviderEventSink> = Arc::new(move |event| {
+        let _ = sender.send(event);
+        Ok(())
+    });
+    let (provider, route, _) =
+        configured_direct_provider_with_events("normal", &marker, sink).await;
+    let snapshots = tokio::time::timeout(Duration::from_secs(3), async {
+        let mut snapshots = Vec::new();
+        loop {
+            for event in events.try_iter() {
+                if let ProtocolEvent::EventInstanceStatusChanged { params, .. } = event {
+                    if params.instance.status == codepet_provider_sdk::InstanceStatus::Ready {
+                        snapshots.push(params.instance.capabilities);
+                    }
+                }
+            }
+            if snapshots.iter().any(|caps| caps.methods.contains(
+                &codepet_provider_sdk::ProviderCapability::ProjectList)) {
+                return snapshots;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("catalog change notification");
+    assert_eq!(snapshots.len(), 1, "publish the complete startup catalog once");
+    let discovered = &snapshots[0];
+    assert!(discovered.turn_send.is_some());
+    assert!(!discovered.revision.contains(":catalog:"), "keep the existing revision scheme");
+    ProviderProtocolServer::instance_stop(provider.as_ref(), InstanceStopRequest { route }).await.unwrap();
+    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {}).await.unwrap();
 }

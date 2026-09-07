@@ -252,13 +252,10 @@ impl ClaudeInstanceRuntime {
 
     fn start(&self) -> Result<ProviderInstance, ProtocolError> {
         let mut mutable = lock(&self.mutable);
-        if mutable.status == InstanceStatus::Ready {
+        if matches!(mutable.status, InstanceStatus::Starting | InstanceStatus::Ready) {
             return Ok(self.snapshot_locked(&mutable));
         }
-        if matches!(
-            mutable.status,
-            InstanceStatus::Starting | InstanceStatus::Stopping
-        ) {
+        if mutable.status == InstanceStatus::Stopping {
             return Err(protocol_error(
                 "provider_instance_starting",
                 "Claude lifecycle transition is in progress".into(),
@@ -271,24 +268,22 @@ impl ClaudeInstanceRuntime {
         }
         // There is no persistent Claude daemon. Publish this local transition
         // atomically with respect to stop; no CLI query belongs in this section.
-        for status in [InstanceStatus::Starting, InstanceStatus::Ready] {
-            let previous = mutable.status;
-            mutable.status = status;
-            self.events
-                .publish(ProtocolEvent::EventInstanceStatusChanged {
-                    jsonrpc: "2.0".into(),
-                    params: InstanceStatusChangedEvent {
-                        instance: self.snapshot_locked(&mutable),
-                        previous_status: Some(previous),
-                    },
-                })?;
-        }
+        let previous = mutable.status;
+        mutable.status = InstanceStatus::Starting;
+        self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
+            jsonrpc: "2.0".into(),
+            params: InstanceStatusChangedEvent {
+                instance: self.snapshot_locked(&mutable),
+                previous_status: Some(previous),
+            },
+        })?;
         Ok(self.snapshot_locked(&mutable))
     }
 
     fn refresh_metadata(self: &Arc<Self>) {
         let mut mutable = lock(&self.mutable);
-        if mutable.status != InstanceStatus::Ready {
+        if !matches!(mutable.status, InstanceStatus::Starting | InstanceStatus::Ready)
+            || (mutable.status == InstanceStatus::Starting && mutable.metadata_task.is_some()) {
             return;
         }
         mutable.metadata_epoch = mutable.metadata_epoch.wrapping_add(1);
@@ -321,9 +316,7 @@ impl ClaudeInstanceRuntime {
                         })
                     })
                     .map(|s| s.trim_start_matches('v').to_string());
-                if let Some(owner) = owner.upgrade() {
-                    owner.apply_metadata(epoch, version, None);
-                }
+                version
             };
             let auth = async {
                 let mut command = tokio::process::Command::new(&executable);
@@ -341,12 +334,12 @@ impl ClaudeInstanceRuntime {
                 let text = result
                     .as_ref()
                     .and_then(|output| std::str::from_utf8(&output.stdout).ok());
-                let authentication = claude_authentication(text);
-                if let Some(owner) = owner.upgrade() {
-                    owner.apply_metadata(epoch, None, Some(authentication));
-                }
+                claude_authentication(text)
             };
-            tokio::join!(version, auth);
+            let (version, authentication) = tokio::join!(version, auth);
+            if let Some(owner) = owner.upgrade() {
+                owner.apply_metadata(epoch, version, Some(authentication));
+            }
         }));
     }
 
@@ -357,7 +350,7 @@ impl ClaudeInstanceRuntime {
         authentication: Option<ProviderAuthentication>,
     ) {
         let mut mutable = lock(&self.mutable);
-        if mutable.status != InstanceStatus::Ready || mutable.metadata_epoch != epoch {
+        if !matches!(mutable.status, InstanceStatus::Starting | InstanceStatus::Ready) || mutable.metadata_epoch != epoch {
             return;
         }
         if let Some(version) = version {
@@ -366,13 +359,15 @@ impl ClaudeInstanceRuntime {
         if let Some(authentication) = authentication {
             mutable.authentication = Some(authentication);
         }
+        let previous = mutable.status;
+        mutable.status = InstanceStatus::Ready;
         let published = self
             .events
             .publish(ProtocolEvent::EventInstanceStatusChanged {
                 jsonrpc: "2.0".into(),
                 params: InstanceStatusChangedEvent {
                     instance: self.snapshot_locked(&mutable),
-                    previous_status: Some(mutable.status),
+                    previous_status: Some(previous),
                 },
             });
         if let Err(error) = published { eprintln!("Claude metadata notification failed: {error:?}"); }
@@ -1664,7 +1659,7 @@ impl Provider for ClaudeProvider {
     ) -> ProtocolFuture<'a, InstanceStartResponse> {
         Box::pin(async move {
             let runtime = self.instance(&request.route)?;
-            if runtime.status() == InstanceStatus::Ready {
+            if matches!(runtime.status(), InstanceStatus::Starting | InstanceStatus::Ready) {
                 return Ok(InstanceStartResponse {
                     instance: runtime.snapshot(),
                 });

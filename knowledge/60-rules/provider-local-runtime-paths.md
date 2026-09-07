@@ -21,6 +21,7 @@
 
 - 共享跨平台基础能力放在 Provider SDK 的 `local_runtime`；产品安装布局由各 Provider 持有，Host 不重新引入产品路径规则。
 - Windows 优先原生 `.exe` / `.com`；npm 从 package.json 的 bin 字段解析原生文件。对用户选择的已知 npm shim 做同样解析，不执行任意 shell 文本。旧式纯 JS npm 包没有原生 bin 时，不宣称已支持。
+- Unix GUI 进程的 PATH 不能代替用户交互 shell 的 PATH；npm/nvm 常只在 `.zshrc` 中初始化。后台读取交互登录 shell 的 PATH，再查找真实文件；不要将 `command -v` 的函数名或带启动提示的完整 stdout 当作可执行路径。保持 shell 超时和进程树清理。
 - 使用平台目录库解析 home；专用环境变量仍可覆盖数据目录。自定义 runtime 选择应保留在安装列表，即便不在 PATH。
 - 实例 `settings.dataDirectory` 为绝对路径；Codex 映射 CODEX_HOME，Claude 映射 CLAUDE_CONFIG_DIR，OpenCode 映射独立 XDG config/data/cache/state 子目录。未配置时沿用 Harness 原有环境和默认位置。
 - 对实例设置的目录，启动、账号/模型探测和读取历史使用同一上下文；不要修改 Host 进程全局环境来切换实例目录。

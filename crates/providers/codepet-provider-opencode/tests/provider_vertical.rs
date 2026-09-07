@@ -86,8 +86,7 @@ async fn cancelling_start_before_health_or_during_discovery_cannot_orphan_server
             }
         }).await.unwrap();
         let pid = read_pid(&pid_file);
-        // Discovery now starts after Ready. Only events after stop are forbidden.
-        if discovery { let _ = events.try_iter().collect::<Vec<_>>(); }
+        // Discovery keeps the instance Starting; no Ready event may escape cancellation.
         start.abort(); // Same cancellation performed by the SDK presence worker.
         let _ = start.await;
         provider.instance_stop(InstanceStopRequest { route }).await.unwrap();
@@ -163,7 +162,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         .await
         .unwrap();
     std::env::remove_var("OPENCODE_FIXTURE_PID_FILE");
-    assert_eq!(started.instance.status, InstanceStatus::Ready);
+    assert_eq!(started.instance.status, InstanceStatus::Starting);
     let capabilities = wait_for_capabilities(&provider, &route).await;
     let controls = capabilities.turn_send.as_ref().unwrap();
     assert_eq!(controls.access_mode.as_ref().unwrap().options.len(), 2);
@@ -924,7 +923,7 @@ async fn account_probes_are_parallel_notify_later_and_cancel_on_stop() {
     .await
     .unwrap()
     .unwrap();
-    assert_eq!(started.instance.status, InstanceStatus::Ready);
+    assert_eq!(started.instance.status, InstanceStatus::Starting);
     assert!(started.instance.authentication.is_none());
     assert!(started.instance.usage.is_none());
     // Both commands must have started while neither can finish: proves parallelism without timing ratios.
@@ -944,6 +943,8 @@ async fn account_probes_are_parallel_notify_later_and_cancel_on_stop() {
     })
     .await
     .unwrap();
+    assert!(!events.try_iter().any(|event| matches!(event, ProtocolEvent::EventInstanceStatusChanged {params,..}
+        if params.instance.status == InstanceStatus::Ready)));
     std::fs::write(directory.path().join("release"), "").unwrap();
     tokio::time::timeout(Duration::from_secs(3),async {
         loop {

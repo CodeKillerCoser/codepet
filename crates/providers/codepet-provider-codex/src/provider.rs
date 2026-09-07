@@ -480,10 +480,13 @@ impl CodexInstanceRuntime {
 
     fn refresh_metadata(self: &Arc<Self>) {
         let _transition = lock(&self.lifecycle_transition);
-        let Ok(server) = self.ready_server() else {
-            return;
-        };
         let mut mutable = lock(&self.mutable);
+        if !matches!(mutable.status, InstanceStatus::Starting | InstanceStatus::Ready)
+            || (mutable.status == InstanceStatus::Starting && mutable.metadata_task.is_some()) {
+            return;
+        }
+        let Some(server) = mutable.server_session_id
+            .and_then(|id| mutable.sessions.get(&id)).and_then(|slot| slot.session()) else { return; };
         Self::cancel_metadata(&mut mutable);
         let epoch = mutable.metadata_epoch;
         let owner = Arc::downgrade(self);
@@ -504,56 +507,44 @@ impl CodexInstanceRuntime {
             let usage = tokio::task::spawn_blocking(move || usage_server.account_usage_read());
             let catalog = async {
                 let (models, projects) = tokio::join!(models, projects);
-                let Ok(Ok(models)) = models else {
-                    return;
-                };
+                let Ok(Ok(models)) = models else { return None; };
                 let supported = match projects {
                     Ok(Ok(_)) => true,
                     Ok(Err(error)) if error.is_method_not_found() => false,
-                    _ => return, // Failure is unknown, not evidence of an unsupported API.
+                    _ => return None,
                 };
-                if let Ok(capabilities) = CodexProtocolMapper::capabilities(
-                    server.generation().to_string(),
-                    models,
-                    supported,
-                ) {
-                    if let Some(owner) = owner.upgrade() {
-                        owner.apply_metadata(epoch, |state| state.capabilities = capabilities);
-                    }
-                }
+                CodexProtocolMapper::capabilities(server.generation().to_string(), models, supported).ok()
             };
             let authentication = async {
-                if let Ok(Ok(account)) = account.await {
-                    if let Some(owner) = owner.upgrade() {
-                        owner.apply_metadata(epoch, |state| {
-                            state.authentication = codex_authentication(&account)
-                        });
-                    }
-                }
+                account.await.ok().and_then(Result::ok).map(|account| codex_authentication(&account))
             };
             let consumption = async {
                 let (limits, usage) = tokio::join!(limits, usage);
-                let limits = limits.ok().and_then(Result::ok);
-                let usage = usage.ok().and_then(Result::ok);
-                if let Some(owner) = owner.upgrade() {
-                    owner.apply_metadata(epoch, |state| {
-                        state.usage = codex_usage(limits.as_ref(), usage.as_ref())
-                    });
-                }
+                codex_usage(limits.ok().and_then(Result::ok).as_ref(), usage.ok().and_then(Result::ok).as_ref())
             };
-            tokio::join!(catalog, authentication, consumption);
+            let (capabilities, authentication, usage) = tokio::join!(catalog, authentication, consumption);
+            if let Some(owner) = owner.upgrade() {
+                owner.apply_metadata(epoch, |state| {
+                    if let Some(capabilities) = capabilities { state.capabilities = capabilities; }
+                    state.authentication = authentication.flatten();
+                    state.usage = usage;
+                });
+            }
         }));
     }
 
     fn apply_metadata(&self, epoch: u64, update: impl FnOnce(&mut InstanceMutable)) {
         let _transition = lock(&self.lifecycle_transition);
         let mut mutable = lock(&self.mutable);
-        if mutable.status != InstanceStatus::Ready || mutable.metadata_epoch != epoch {
+        if !matches!(mutable.status, InstanceStatus::Starting | InstanceStatus::Ready) || mutable.metadata_epoch != epoch {
             return;
         }
+        let previous = mutable.status;
         update(&mut mutable);
+        mutable.status = InstanceStatus::Ready;
+        self.lifecycle_changed.notify_all();
         drop(mutable);
-        let _ = self.publish_status_change(InstanceStatus::Ready);
+        let _ = self.publish_status_change(previous);
     }
 
     fn session_is_current(&self, slot: &Arc<InstanceSessionSlot>) -> bool {
@@ -1552,11 +1543,8 @@ impl Provider for CodexProvider {
                         });
                     }
                     InstanceStatus::Starting => {
-                        return Err(protocol_error(
-                            "provider_instance_starting",
-                            "Codex Provider instance is already starting".to_string(),
-                            true,
-                        ));
+                        drop(mutable);
+                        return Ok(InstanceStartResponse { instance: runtime.snapshot() });
                     }
                     InstanceStatus::Stopping => {
                         return Err(protocol_error(
@@ -1653,7 +1641,7 @@ impl Provider for CodexProvider {
                 }
             };
             let server_generation = server.generation().to_string();
-            let (installed, ready_event_error) = {
+            let installed = {
                 let _transition = lock(&runtime.lifecycle_transition);
                 let mut mutable = lock(&runtime.mutable);
                 let current = mutable.status == InstanceStatus::Starting
@@ -1666,7 +1654,7 @@ impl Provider for CodexProvider {
                     && mutable.server_session_id.is_none()
                     && mutable.executions.is_empty();
                 if !current {
-                    (false, None)
+                    false
                 } else {
                     mutable.capabilities = CodexProtocolMapper::unavailable_capabilities(server_generation.clone());
                     mutable.harness = harness;
@@ -1678,20 +1666,14 @@ impl Provider for CodexProvider {
                     mutable.approval_history.clear();
                     mutable.pending_materialization.clear();
                     mutable.auto_title_attempted.clear();
-                    let previous = mutable.status;
-                    mutable.status = InstanceStatus::Ready;
                     runtime.lifecycle_changed.notify_all();
-                    drop(mutable);
-                    (true, runtime.publish_status_change(previous).err())
+                    true
                 }
             };
             if !installed {
                 let _ = server.shutdown();
                 runtime.unregister_session(&slot);
                 return Err(instance_session_cancelled_error("server session"));
-            }
-            if let Some(error) = ready_event_error {
-                runtime.handle_event_error(&server_generation, error)?;
             }
             runtime.start_server_forwarder(server_generation, server, incoming);
             let instance = runtime.snapshot();

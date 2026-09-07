@@ -521,7 +521,7 @@ pub fn discover(command: &str, npm_package: &str) -> Vec<RuntimeCandidate> {
                 .map(|path| candidate(path, RuntimeCandidateSource::WindowsApplication)),
         );
     }
-    if let Some(path) = login_shell_command(command) {
+    if let Some(path) = login_shell_command(command, npm_package) {
         candidates.push(candidate(path, RuntimeCandidateSource::LoginShell));
     }
     candidates
@@ -569,22 +569,12 @@ pub fn resolve_executable(
 }
 
 #[cfg(windows)]
-fn login_shell_command(_command: &str) -> Option<PathBuf> {
+fn login_shell_command(_command: &str, _npm_package: &str) -> Option<PathBuf> {
     None
 }
 
 #[cfg(not(windows))]
-fn login_shell_command(command: &str) -> Option<PathBuf> {
-    use std::{
-        process::Stdio,
-        time::{Duration, Instant},
-    };
-    if !command
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-    {
-        return None;
-    }
+fn login_shell_command(command: &str, npm_package: &str) -> Option<PathBuf> {
     let shell = std::env::var_os("SHELL")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
@@ -595,8 +585,21 @@ fn login_shell_command(command: &str) -> Option<PathBuf> {
                 "/bin/sh"
             })
         });
-    let mut child = crate::process::Command::new(shell)
-        .args(["-lc", &format!("command -v {command}")])
+    login_shell_command_with_shell(command, npm_package, crate::process::Command::new(shell))
+}
+
+#[cfg(not(windows))]
+fn login_shell_command_with_shell(
+    command: &str,
+    npm_package: &str,
+    mut shell: crate::process::Command,
+) -> Option<PathBuf> {
+    use std::{process::Stdio, time::{Duration, Instant}};
+    use std::os::unix::ffi::OsStringExt;
+    // Interactive startup files commonly own npm/nvm PATH entries. Read the PATH
+    // itself so aliases/functions and startup banners cannot masquerade as a file.
+    let mut child = shell
+        .args(["-lic", "command printf '\\0%s\\0' \"$PATH\""])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -607,8 +610,12 @@ fn login_shell_command(command: &str) -> Option<PathBuf> {
         match child.try_wait() {
             Ok(Some(status)) => {
                 let output = child.wait_with_output().ok()?;
-                let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-                return (status.success() && native_file(&path)).then_some(path);
+                if !status.success() { return None; }
+                let paths = output.stdout.split(|byte| *byte == 0).nth(1)?;
+                let paths = std::ffi::OsString::from_vec(paths.to_vec());
+                return std::env::split_paths(&paths)
+                    .flat_map(|directory| candidates_in(&directory, command, npm_package))
+                    .next();
             }
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
             _ => {
@@ -645,6 +652,21 @@ pub fn opencode_environment(command: &mut std::process::Command, directory: Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn login_shell_discovers_interactive_path_despite_function_and_banner() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("npm prefix 中文").join("bin");
+        std::fs::create_dir_all(&directory).unwrap();
+        let binary = directory.join("codepet_fixture_agent");
+        std::fs::write(&binary, b"fixture").unwrap();
+        std::fs::write(temp.path().join(".zshrc"),
+            "export PATH=\"$ZDOTDIR/npm prefix 中文/bin:$PATH\"\necho 'shell startup banner'\ncodepet_fixture_agent() { echo wrapper; }\n").unwrap();
+        let mut shell = crate::process::Command::new("/bin/zsh");
+        shell.env("ZDOTDIR", temp.path());
+        assert_eq!(login_shell_command_with_shell("codepet_fixture_agent", "missing", shell), Some(binary));
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn inventory_probes_each_canonical_executable_once_without_blocking_runtime() {
         use std::sync::{
