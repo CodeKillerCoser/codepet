@@ -4,7 +4,7 @@
 
 2026-09-08：用户授权 PM 撰写设计、拆成独立 Codex 任务、监督完成。每项使用独立 worktree；Host 从 v0、Remote 从 main 开始；GPT-6（gpt-6-astra）、推理 high、正常速度。禁止本机编译、构建和测试执行；只做代码、逻辑、协议检查，测试代码可以补齐。
 
-设计权威：[最近会话方案](../10-architecture/recent-conversation-feed.md)。当前状态：设计已提交为 `160b06f`，四个独立任务已启动，契约冻结与实现进行中。
+设计权威：[最近会话方案](../10-architecture/recent-conversation-feed.md)。当前状态：v1 契约已集成，Remote 已审查并集成；Host 两笔提交通过独立审查，等待 Provider 最后两项修复及复审后统一集成。所有运行验证未执行。
 
 ## 不可突破的范围
 
@@ -55,10 +55,11 @@ PM在本对话维护任务链接、阶段、依赖和提交；读取各任务的
 
 | 任务 | task ID | 工作目录 | 阶段 |
 | --- | --- | --- | --- |
-| R1 协议 | `01a07d18-9c2e-7253-b79a-f9f3a9218885` | `C:/Users/17633/.codex/worktrees/46e4/codepet`，`codex/recent-conversation-contract` | 契约冻结为 `0d5d9e7`，待 PM 完整审查 |
+| R1 协议 | `01a07d18-9c2e-7253-b79a-f9f3a9218885` | `C:/Users/17633/.codex/worktrees/46e4/codepet`，`codex/recent-conversation-contract` | 契约已集成，负责 Provider 修复定向复审 |
 | R2 Provider | `01a07d19-445c-77d0-a823-32c508bcf8fb` | `C:/Users/17633/.codex/worktrees/6ca2/codepet`，`codex/recent-provider-atoms` | 公共存储接管与原子查询实现中 |
-| R3 Host | `01a07d19-82ef-7e52-a159-beb4b9f0da2f` | `C:/Users/17633/.codex/worktrees/7b62/codepet` | 独立全局快照逻辑与接管接口协调中 |
-| R4 Remote | `01a07d1c-cc0a-7863-b8b3-cadf1fb92fc2` | `C:/Users/17633/.codex/worktrees/9cf0/codepet-remote` | 分离 Standalone 与 recent，等待正式 Dart SDK |
+| R3 Host | `01a07d19-82ef-7e52-a159-beb4b9f0da2f` | `C:/Users/17633/.codex/worktrees/7b62/codepet` | `41c0a79`、`74149f1` 均通过独立源码审查，待集成 |
+| R4 Remote | `01a07d1c-cc0a-7863-b8b3-cadf1fb92fc2` | `C:/Users/17633/.codex/worktrees/9cf0/codepet-remote` | 已审查并集成 main `7248092` |
+| R5 独立审查 | `01a07d4b-8501-7b31-8d1f-9058bf285abd` | Remote 独立 worktree，以 git show 读取目标提交 | Remote 两项修复及 Host 两笔提交均通过源码审查 |
 
 2026-09-08 PM 接管决定：R2 的公共 SDK 使用原路径、原 v1 文档，稳定锁文件保护跨进程事务；保留 global latestVersion、callerScope baseline/reads 与全部 fingerprints，首迁移留不可覆盖备份。R3 移除旧内存缓存写入器，向 Provider 注入同一存储路径。两任务直接对齐观察事件的唯一写入边界、Windows 原子替换、损坏文件 fail closed；不增加 bootstrap RPC。该决定是实现方向，尚未通过代码审查。
 
@@ -78,8 +79,17 @@ R5 正式 task ID `01a07d4b-8501-7b31-8d1f-9058bf285abd`，已只读审查 Remot
 
 R4 通过 `9ef882e` 修复两项 P2，R5 已对该追加提交定向复审，两项可关闭，未发现相关新增 P1/P2。PM 在确认 Remote main 干净、期间新增仅无关 RTC 文档提交 `4417afa` 后，保留该提交并依次集成 R4：`80f14b8→3f69bf0`、`fef0406→70f7de0`、`9ef882e→7248092`。未推送，未编译或运行测试；这仅表示 Remote 源码审查及本地集成完成，不代表 Host/Provider 或整体功能完成。
 
+Host 主 v0 已集成 R1 `0d5d9e7→8a8d0ee`、`38d1353→56da8ce`、原生 scope 审查文档 `4fdd10d→c3e798a`，保留期间其他任务的无关文档提交。原生审查确认三个 Provider 在各自 backend scope 都有可实现路径，R2 已产出 `154dd0b` 恢复 scoped 能力及后台完整摘要核对，SDK dirty 失效补丁 `ad2eb96` 是 Host 必要依赖。
+
+R3 自身 Host 提交 `41c0a7917a9e88b9aa368ef84b2a6336e64a8607` 已完成，工作区干净。只取入该自身提交，父链 R1/R2 依赖应按原作者提交单独集成。R5 已接续独立 Host 源码审查（全局分页、游标/fence、scope/generation、失效及并发）。PM 对接管薄包装/manager 路由初审无阻塞发现，完整复审未结束。
+
+R1 对 Provider `154dd0b` 及前序交叉审查发现两类 P2，已派 R2 修复，未修复前不合入主 v0：扫描旧结果与原生事实事件缺统一原子提交序列，可能用旧 Running 覆盖新 Idle；Claude/OpenCode 采集在代际检查前修改共享缓存，旧扫描跨重启后可污染新实例。要求采集返回独立结果，在共同提交边界内复核 generation/Ready/cancel/epoch 再应用和发布，不接受单次游离 atomic 检查；补源测试但不执行。R1 获授权收到修复 hash 后定向复审。`ad2eb96` dirty 失效接口通过源码复核。
+
+R5 对 Host `41c0a79` 独立源码审查完成，未发现可明确复现的新增 P1/P2；等待 Provider 修复通过后按依赖集成。R2 已提交修复至 `7596d17`，R1 正在定向复审。R2 自身提交按顺序为：`423b772`、`c0d363d`、`b904631`、`4dd5a25`、`e45d2ae`、`ad2eb96`、`154dd0b`、`15aa510`、`b1d94e2`、`e065440`、`7596d17`。其中后四笔分别为 native metadata/cache 源测试、扫描 epoch 与失败前 previous 保留、native 与扫描整批共享提交 gate/Claude 条件安装、OpenCode atomic 扫描不写 runtime cache/旧 scope 回归。不得 cherry-pick R2 整条父链重复取入 R1；R1 协议已在主 v0。
+
 ## 已完成与未验证
 
-- 已完成：阅读Host AGENTS与活文档技能；核对Provider/Host/Remote现状；明确分层、范围与分页方案；生成技术设计和本计划。
-- 未完成：协议冻结、实现、代码审查、集成。
+- 已完成：设计、v1 协议与 SDK 集成、原生 scope 审查、Remote 实现及两项修复的独立审查/本地集成；Host 实现与查询失败跨 scope 失效补强 `74149f1625c4d5e80933d90c6e2f969bcb636cc3` 的独立审查。
+- 剩余门禁：R1 已关闭 Provider native/scan 发布 gate 和跨重启缓存污染路径。`42b3130` 之后仍需修复 Claude 同代 A/B 扫描先读后装的倒序覆盖，以及 batch 投递失败后 readiness 撤销可能因状态已设 false 而跳过发布的问题。R2 实现修复，R1 定向复审，完成后集成 R2 有序自身提交及 R3 两笔自身提交。
+- 未完成：Provider 上述修复及复审、Host/Provider 本地集成、最终交付记录；未推送。
 - 未验证：所有本机编译、测试、运行时和真机行为（用户要求暂不执行）。
