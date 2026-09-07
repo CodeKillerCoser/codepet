@@ -208,6 +208,37 @@ pub enum ConversationProjectFilterStandaloneKind {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ConversationRecentChangedEvent {
+    pub provider_id: ProviderId,
+    pub revision: ConversationRecentRevision,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationRecentRequest {
+    pub provider_id: ProviderId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<Cursor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationRecentResponse {
+    pub conversations: Vec<Conversation>,
+    pub page_info: PageInfo,
+    pub revision: ConversationRecentRevision,
+    pub snapshot_cursor: EventCursor,
+}
+
+pub type ConversationRecentRevision = String;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ConversationResumeRequest {
     pub conversation: RoutedResourceId,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -309,6 +340,8 @@ pub enum GatewayCapability {
     TurnInterrupt,
     #[serde(rename = "approval.resolve")]
     ApprovalResolve,
+    #[serde(rename = "conversation.recent")]
+    ConversationRecent,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -638,6 +671,8 @@ pub enum ProtocolDispatchLane {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolMethod {
+    #[serde(rename = "conversation.recent")]
+    ConversationRecent,
     #[serde(rename = "protocol.ping")]
     ProtocolPing,
     #[serde(rename = "protocol.handshake")]
@@ -685,6 +720,7 @@ pub enum ProtocolMethod {
 impl ProtocolMethod {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ConversationRecent => "conversation.recent",
             Self::ProtocolPing => "protocol.ping",
             Self::ProtocolHandshake => "protocol.handshake",
             Self::ProtocolDescribe => "protocol.describe",
@@ -711,6 +747,7 @@ impl ProtocolMethod {
 
     pub const fn dispatch_lane(self) -> ProtocolDispatchLane {
         match self {
+            Self::ConversationRecent => ProtocolDispatchLane::Normal,
             Self::ProtocolPing => ProtocolDispatchLane::Normal,
             Self::ProtocolHandshake => ProtocolDispatchLane::Normal,
             Self::ProtocolDescribe => ProtocolDispatchLane::Normal,
@@ -737,6 +774,7 @@ impl ProtocolMethod {
 
     pub const fn capability(self) -> Option<GatewayCapability> {
         match self {
+            Self::ConversationRecent => Some(GatewayCapability::ConversationRecent),
             Self::ProtocolPing => None,
             Self::ProtocolHandshake => None,
             Self::ProtocolDescribe => None,
@@ -767,6 +805,7 @@ impl std::str::FromStr for ProtocolMethod {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
+            "conversation.recent" => Ok(Self::ConversationRecent),
             "protocol.ping" => Ok(Self::ProtocolPing),
             "protocol.handshake" => Ok(Self::ProtocolHandshake),
             "protocol.describe" => Ok(Self::ProtocolDescribe),
@@ -795,6 +834,8 @@ impl std::str::FromStr for ProtocolMethod {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolEventName {
+    #[serde(rename = "conversation.recentChanged")]
+    ConversationRecentChanged,
     #[serde(rename = "project.changed")]
     ProjectChanged,
     #[serde(rename = "provider.changed")]
@@ -818,6 +859,7 @@ pub enum ProtocolEventName {
 impl ProtocolEventName {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ConversationRecentChanged => "conversation.recentChanged",
             Self::ProjectChanged => "project.changed",
             Self::ProviderChanged => "provider.changed",
             Self::ConversationUpserted => "conversation.upserted",
@@ -836,6 +878,7 @@ impl std::str::FromStr for ProtocolEventName {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
+            "conversation.recentChanged" => Ok(Self::ConversationRecentChanged),
             "project.changed" => Ok(Self::ProjectChanged),
             "provider.changed" => Ok(Self::ProviderChanged),
             "conversation.upserted" => Ok(Self::ConversationUpserted),
@@ -860,6 +903,12 @@ pub const DEFAULT_MAX_JSON_LINE_BYTES: usize = 1024 * 1024;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum ProtocolRequest {
+    #[serde(rename = "conversation.recent")]
+    ConversationRecent {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationRecentRequest,
+    },
     #[serde(rename = "protocol.ping")]
     ProtocolPing {
         jsonrpc: String,
@@ -996,6 +1045,11 @@ impl ProtocolRequest {
     ) -> Result<Self, ProtocolError> {
         let jsonrpc = "2.0".to_string();
         match method {
+            ProtocolMethod::ConversationRecent => Ok(Self::ConversationRecent {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.recent request params", error))?,
+            }),
             ProtocolMethod::ProtocolPing => Ok(Self::ProtocolPing {
                 jsonrpc,
                 id,
@@ -1106,6 +1160,7 @@ impl ProtocolRequest {
 
     pub fn jsonrpc_version(&self) -> &str {
         match self {
+            Self::ConversationRecent { jsonrpc, .. } => jsonrpc,
             Self::ProtocolPing { jsonrpc, .. } => jsonrpc,
             Self::ProtocolHandshake { jsonrpc, .. } => jsonrpc,
             Self::ProtocolDescribe { jsonrpc, .. } => jsonrpc,
@@ -1132,6 +1187,7 @@ impl ProtocolRequest {
 
     pub fn id(&self) -> &RequestId {
         match self {
+            Self::ConversationRecent { id, .. } => id,
             Self::ProtocolPing { id, .. } => id,
             Self::ProtocolHandshake { id, .. } => id,
             Self::ProtocolDescribe { id, .. } => id,
@@ -1158,6 +1214,7 @@ impl ProtocolRequest {
 
     pub const fn method(&self) -> ProtocolMethod {
         match self {
+            Self::ConversationRecent { .. } => ProtocolMethod::ConversationRecent,
             Self::ProtocolPing { .. } => ProtocolMethod::ProtocolPing,
             Self::ProtocolHandshake { .. } => ProtocolMethod::ProtocolHandshake,
             Self::ProtocolDescribe { .. } => ProtocolMethod::ProtocolDescribe,
@@ -1195,6 +1252,11 @@ pub struct ProtocolEventParams<T> {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum ProtocolEvent {
+    #[serde(rename = "conversation.recentChanged")]
+    ConversationRecentChanged {
+        jsonrpc: String,
+        params: ProtocolEventParams<ConversationRecentChangedEvent>,
+    },
     #[serde(rename = "project.changed")]
     ProjectChanged {
         jsonrpc: String,
@@ -1245,6 +1307,7 @@ pub enum ProtocolEvent {
 impl ProtocolEvent {
     pub fn jsonrpc_version(&self) -> &str {
         match self {
+            Self::ConversationRecentChanged { jsonrpc, .. } => jsonrpc,
             Self::ProjectChanged { jsonrpc, .. } => jsonrpc,
             Self::ProviderChanged { jsonrpc, .. } => jsonrpc,
             Self::ConversationUpserted { jsonrpc, .. } => jsonrpc,
@@ -1259,6 +1322,7 @@ impl ProtocolEvent {
 
     pub fn event_cursor(&self) -> &EventCursor {
         match self {
+            Self::ConversationRecentChanged { params, .. } => &params.event_cursor,
             Self::ProjectChanged { params, .. } => &params.event_cursor,
             Self::ProviderChanged { params, .. } => &params.event_cursor,
             Self::ConversationUpserted { params, .. } => &params.event_cursor,
@@ -1273,6 +1337,10 @@ impl ProtocolEvent {
 
     pub fn set_event_cursor(&mut self, cursor: EventCursor) {
         match self {
+            Self::ConversationRecentChanged { jsonrpc, params } => {
+                *jsonrpc = "2.0".to_string();
+                params.event_cursor = cursor;
+            },
             Self::ProjectChanged { jsonrpc, params } => {
                 *jsonrpc = "2.0".to_string();
                 params.event_cursor = cursor;
@@ -1412,6 +1480,10 @@ impl std::error::Error for JsonRpcInboundError {}
 pub type ProtocolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ProtocolError>> + Send + 'a>>;
 
 pub trait ProtocolServer: Send + Sync {
+    fn conversation_recent<'a>(&'a self, _request: ConversationRecentRequest) -> ProtocolFuture<'a, ConversationRecentResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.recent")) })
+    }
+
     fn protocol_ping<'a>(&'a self, _request: PingRequest) -> ProtocolFuture<'a, PingResponse> {
         Box::pin(async { Err(method_not_implemented("protocol.ping")) })
     }
@@ -1508,6 +1580,16 @@ fn method_not_implemented(method: &str) -> ProtocolError {
 
 pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolRequest) -> JsonRpcResponse {
     match request {
+        ProtocolRequest::ConversationRecent { jsonrpc, id, params } => {
+            let response = match server.conversation_recent(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
         ProtocolRequest::ProtocolPing { jsonrpc, id, params } => {
             let response = match server.protocol_ping(params).await {
                 Ok(result) => match serde_json::to_value(result) {
@@ -1765,6 +1847,14 @@ impl<T> ProtocolClient<T> {
 }
 
 impl<T: ProtocolTransport> ProtocolClient<T> {
+    pub fn conversation_recent<'a>(&'a self, request: ConversationRecentRequest) -> ProtocolFuture<'a, ConversationRecentResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationRecent, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
     pub fn protocol_ping<'a>(&'a self, request: PingRequest) -> ProtocolFuture<'a, PingResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;

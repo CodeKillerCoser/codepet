@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-unread-list-end-response",
+  "result": {
+    "conversations": [],
+    "pageInfo": {},
+    "revision": "unread-snapshot-7"
+  }
+}

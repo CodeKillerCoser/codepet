@@ -1,0 +1,14 @@
+{
+  "route": {
+    "deviceId": "device-macbook-1",
+    "providerPluginId": "dev.codepet.codex",
+    "providerInstanceId": "codex-work"
+  },
+  "projectFilter": {
+    "kind": "all"
+  },
+  "query": {
+    "kind": "recent",
+    "updatedAfter": 0
+  }
+}

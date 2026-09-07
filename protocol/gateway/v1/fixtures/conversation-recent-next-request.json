@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-recent-next-request",
+  "method": "conversation.recent",
+  "params": {
+    "providerId": "codex-work",
+    "cursor": "recent-page-2",
+    "limit": 20
+  }
+}

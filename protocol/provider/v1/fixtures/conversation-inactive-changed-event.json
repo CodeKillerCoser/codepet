@@ -1,0 +1,16 @@
+{
+  "jsonrpc": "2.0",
+  "method": "event.conversationActiveChanged",
+  "params": {
+    "conversation": {
+      "deviceId": "device-macbook-1",
+      "providerPluginId": "dev.codepet.codex",
+      "providerInstanceId": "codex-work",
+      "nativeResourceId": "thread-01"
+    },
+    "status": "idle",
+    "activityVersion": "activity-43",
+    "active": false,
+    "revision": "active-snapshot-9"
+  }
+}

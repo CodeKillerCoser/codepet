@@ -28,6 +28,8 @@
     "field": "methods"
   },
   "methods": [
+    {"name": "conversation.recent", "direction": "clientToGateway", "idempotency": "safe", "capability": "conversation.recent", "request": {"$ref": "./schema.json#/$defs/ConversationRecentRequest"}, "response": {"$ref": "./schema.json#/$defs/ConversationRecentResponse"}},
+
     {"name": "protocol.ping", "direction": "clientToGateway", "idempotency": "safe", "request": {"$ref": "./schema.json#/$defs/PingRequest"}, "response": {"$ref": "./schema.json#/$defs/PingResponse"}},
     { "name": "protocol.handshake", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/HandshakeRequest" }, "response": { "$ref": "./schema.json#/$defs/HandshakeResponse" } },
     { "name": "protocol.describe", "direction": "clientToGateway", "idempotency": "safe", "request": { "$ref": "./schema.json#/$defs/ProtocolDescribeRequest" }, "response": { "$ref": "./schema.json#/$defs/ProtocolDescribeResponse" } },
@@ -51,6 +53,8 @@
     { "name": "approval.resolve", "direction": "clientToGateway", "idempotency": "idempotent", "capability": "approval.resolve", "request": { "$ref": "./schema.json#/$defs/ApprovalResolveRequest" }, "response": { "$ref": "./schema.json#/$defs/ApprovalResolveResponse" } }
   ],
   "events": [
+    {"name": "conversation.recentChanged", "direction": "gatewayToClient", "delivery": "replayable", "scope": "provider", "payload": {"$ref": "./schema.json#/$defs/ConversationRecentChangedEvent"}},
+
     { "name": "project.changed", "direction": "gatewayToClient", "delivery": "replayable", "scope": "project", "payload": { "$ref": "./schema.json#/$defs/ProjectChangedEvent" } },
     { "name": "provider.changed", "direction": "gatewayToClient", "delivery": "replayable", "scope": "provider", "payload": { "$ref": "./schema.json#/$defs/ProviderChangedEvent" } },
     { "name": "conversation.upserted", "direction": "gatewayToClient", "delivery": "replayable", "scope": "conversation", "payload": { "$ref": "./schema.json#/$defs/ConversationUpsertedEvent" } },

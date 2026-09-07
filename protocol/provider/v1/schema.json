@@ -243,13 +243,20 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 100
+        },
+        "query": {
+          "$ref": "#/$defs/ConversationListQuery"
+        },
+        "readerScope": {
+          "$ref": "#/$defs/ReaderScope"
         }
       },
       "required": [
         "route",
         "projectFilter"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "Without query/readerScope, preserve existing projectFilter/cursor/limit behavior. query requires its conversationListQuery capability; readerScope additionally requires conversation.unread.list capability and an authoritative read store. updatedAfter intersects projectFilter; ids requires projectFilter.kind=all. With readerScope, return authoritative Conversation.readState for every summary. Cursors bind route, query, projectFilter and readerScope; changing any is invalid_cursor."
     },
     "ConversationListResponse": {
       "type": "object",
@@ -613,7 +620,10 @@
         "turn.start",
         "turn.steer",
         "turn.interrupt",
-        "approval.resolve"
+        "approval.resolve",
+        "conversation.active.list",
+        "conversation.unread.list",
+        "conversation.markRead"
       ]
     },
     "ProviderCapabilities": {
@@ -641,6 +651,9 @@
           "items": {
             "$ref": "#/$defs/ProviderExtension"
           }
+        },
+        "conversationListQuery": {
+          "$ref": "#/$defs/ConversationListQueryCapabilities"
         }
       },
       "required": [
@@ -902,7 +915,11 @@
     },
     "RuntimeGetInstalledRequest": {
       "type": "object",
-      "properties": {"refresh": {"type": "boolean"}},
+      "properties": {
+        "refresh": {
+          "type": "boolean"
+        }
+      },
       "additionalProperties": false
     },
     "RuntimeGetInstalledResponse": {
@@ -1554,6 +1571,329 @@
         "payload"
       ],
       "additionalProperties": false
+    },
+    "ReaderScope": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque reader identity supplied only by the trusted Host from authenticated caller context. Preserve existing callerScope identity and baseline; never accept a Remote-selected scope."
+    },
+    "ConversationEnumerationRevision": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque equality-only revision of one active or reader-scoped unread snapshot within one running instance generation. Every page of that snapshot has the same revision. Not an activityVersion, Gateway eventCursor, or recent revision."
+    },
+    "ConversationListQuery": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ConversationUpdatedAfterQuery"
+        },
+        {
+          "$ref": "#/$defs/ConversationIdsQuery"
+        }
+      ]
+    },
+    "ConversationUpdatedAfterQuery": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ConversationUpdatedAfterQueryKind"
+        },
+        "updatedAfter": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "kind",
+        "updatedAfter"
+      ],
+      "additionalProperties": false,
+      "description": "Inclusive UTC epoch-millisecond updatedAt boundary. Filter the complete source before pagination, then order updatedAt descending with native ID ascending as tie breaker. Missing updatedAt does not match. No recent-feed policy belongs here."
+    },
+    "ConversationIdsQuery": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ConversationIdsQueryKind"
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "kind",
+        "ids"
+      ],
+      "additionalProperties": false,
+      "description": "Request 1..100 distinct native conversation IDs within route. Filter before pagination; enumerate the full requested set across pages in native ID ascending order. Deleted IDs may be omitted; lookup failures must fail the request, never masquerade as deletion. Larger batches are invalid_request. Requires projectFilter.kind=all; other filters are invalid_request."
+    },
+    "ConversationListQueryCapabilities": {
+      "type": "object",
+      "properties": {
+        "updatedAfter": {
+          "type": "boolean"
+        },
+        "ids": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "updatedAfter",
+        "ids"
+      ],
+      "additionalProperties": false,
+      "description": "Advertise only modes implemented with complete filtering before pagination. Absent or false means unsupported. readerScope additionally requires conversation.unread.list capability and an available authoritative read store."
+    },
+    "ConversationActiveEntry": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "status": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ConversationStatus"
+        },
+        "activityVersion": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "conversation",
+        "status",
+        "activityVersion"
+      ],
+      "additionalProperties": false,
+      "description": "One active conversation. Active includes running, waiting-approval and waiting-user-input execution; preserve existing execution semantics. activityVersion is the existing unread observation version, not this enumeration revision."
+    },
+    "ConversationUnreadEntry": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "readState": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ConversationReadState"
+        }
+      },
+      "required": [
+        "conversation",
+        "readState"
+      ],
+      "additionalProperties": false,
+      "description": "One unread conversation for the requested readerScope; readState.unread must be true."
+    },
+    "ConversationActiveListRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "cursor": {
+          "$ref": "../../core/v1/schema.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "route"
+      ],
+      "additionalProperties": false,
+      "description": "Enumerate a complete immutable snapshot, default limit 20, maximum 100. Cursor binds route/current generation and, for unread, readerScope. Invalid bindings return invalid_cursor; expired snapshots return conversation_cursor_expired. Unsupported must be an error, never an empty result."
+    },
+    "ConversationActiveListResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationActiveEntry"
+          }
+        },
+        "pageInfo": {
+          "$ref": "../../core/v1/schema.json#/$defs/PageInfo"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConversationEnumerationRevision"
+        }
+      },
+      "required": [
+        "conversations",
+        "pageInfo",
+        "revision"
+      ],
+      "additionalProperties": false,
+      "description": "All pages belong to one complete snapshot; nextCursor absence alone indicates exhaustion. No arbitrary truncation. Records are ordered by nativeResourceId ascending."
+    },
+    "ConversationUnreadListRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "readerScope": {
+          "$ref": "#/$defs/ReaderScope"
+        },
+        "cursor": {
+          "$ref": "../../core/v1/schema.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "route",
+        "readerScope"
+      ],
+      "additionalProperties": false,
+      "description": "Enumerate a complete immutable snapshot, default limit 20, maximum 100. Cursor binds route/current generation and, for unread, readerScope. Invalid bindings return invalid_cursor; expired snapshots return conversation_cursor_expired. Unsupported must be an error, never an empty result."
+    },
+    "ConversationUnreadListResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationUnreadEntry"
+          }
+        },
+        "pageInfo": {
+          "$ref": "../../core/v1/schema.json#/$defs/PageInfo"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConversationEnumerationRevision"
+        }
+      },
+      "required": [
+        "conversations",
+        "pageInfo",
+        "revision"
+      ],
+      "additionalProperties": false,
+      "description": "All pages belong to one complete snapshot; nextCursor absence alone indicates exhaustion. No arbitrary truncation. Records are ordered by nativeResourceId ascending."
+    },
+    "ConversationMarkReadRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "readerScope": {
+          "$ref": "#/$defs/ReaderScope"
+        },
+        "observedActivityVersion": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "conversation",
+        "readerScope",
+        "observedActivityVersion"
+      ],
+      "additionalProperties": false,
+      "description": "Advance this reader only up to the observed activity version, monotonically and durably. A newer activity remains unread. Preserve baseline/read progress; reject an invalid or future version as invalid_activity_version."
+    },
+    "ConversationMarkReadResponse": {
+      "type": "object",
+      "properties": {
+        "readState": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ConversationReadState"
+        }
+      },
+      "required": [
+        "readState"
+      ],
+      "additionalProperties": false
+    },
+    "ConversationActiveChangedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "status": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ConversationStatus"
+        },
+        "activityVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConversationEnumerationRevision"
+        }
+      },
+      "required": [
+        "conversation",
+        "status",
+        "activityVersion",
+        "active",
+        "revision"
+      ],
+      "additionalProperties": false,
+      "description": "Ordered active-set invalidation and current fact, including active=false on exit. revision is the resulting active enumeration revision. Events must cover externally observed execution too."
+    },
+    "ConversationUnreadChangedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "readerScope": {
+          "$ref": "#/$defs/ReaderScope"
+        },
+        "readState": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ConversationReadState"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConversationEnumerationRevision"
+        }
+      },
+      "required": [
+        "conversation",
+        "readerScope",
+        "readState",
+        "revision"
+      ],
+      "additionalProperties": false,
+      "description": "Ordered reader-scoped unread fact/invalidation, including unread=false after markRead. Host must not forward scope or read state to other readers; activity and markRead advance the corresponding unread snapshot revision."
+    },
+    "ConversationDeletedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": false,
+      "description": "Ordered authoritative deletion invalidation. Missing requested IDs are not evidence of deletion unless the Provider established absence. Invalidate affected list/active/unread snapshots."
+    },
+    "ConversationUpdatedAfterQueryKind": {
+      "type": "string",
+      "enum": [
+        "updatedAfter"
+      ]
+    },
+    "ConversationIdsQueryKind": {
+      "type": "string",
+      "enum": [
+        "ids"
+      ]
     }
   }
 }

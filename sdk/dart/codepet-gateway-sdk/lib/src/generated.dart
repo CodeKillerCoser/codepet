@@ -930,6 +930,152 @@ enum ConversationProjectFilterStandaloneKind {
   String toJson() => wireValue;
 }
 
+final class ConversationRecentChangedEvent {
+  factory ConversationRecentChangedEvent({
+    required ProviderId providerId,
+    required ConversationRecentRevision revision,
+  }) {
+    final validatedProviderId = _string(providerId, 'ConversationRecentChangedEvent.providerId', minLength: 1);
+    final validatedRevision = _string(revision, 'ConversationRecentChangedEvent.revision', minLength: 1);
+    return ConversationRecentChangedEvent._(
+      providerId: validatedProviderId,
+      revision: validatedRevision,
+    );
+  }
+
+  ConversationRecentChangedEvent._({
+    required this.providerId,
+    required this.revision,
+  });
+
+  final ProviderId providerId;
+  final ConversationRecentRevision revision;
+
+  factory ConversationRecentChangedEvent.fromJson(Object? value, {String path = 'ConversationRecentChangedEvent'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'providerId', 'revision'}, path);
+    return ConversationRecentChangedEvent(
+      providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
+      revision: _string(_required(json, 'revision', path), '$path.revision', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'providerId': providerId,
+    'revision': revision,
+  };
+
+  @override
+  String toString() => 'ConversationRecentChangedEvent(providerId: $providerId, revision: $revision)';
+}
+
+final class ConversationRecentRequest {
+  factory ConversationRecentRequest({
+    required ProviderId providerId,
+    Cursor? cursor,
+    int? limit,
+  }) {
+    final validatedProviderId = _string(providerId, 'ConversationRecentRequest.providerId', minLength: 1);
+    final validatedCursor = cursor == null ? null : _string(cursor, 'ConversationRecentRequest.cursor', minLength: 1);
+    final validatedLimit = limit == null ? null : _integer(limit, 'ConversationRecentRequest.limit', minimum: 1, maximum: 100);
+    return ConversationRecentRequest._(
+      providerId: validatedProviderId,
+      cursor: validatedCursor,
+      limit: validatedLimit,
+    );
+  }
+
+  ConversationRecentRequest._({
+    required this.providerId,
+    required this.cursor,
+    required this.limit,
+  });
+
+  final ProviderId providerId;
+  final Cursor? cursor;
+  final int? limit;
+
+  factory ConversationRecentRequest.fromJson(Object? value, {String path = 'ConversationRecentRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'providerId', 'cursor', 'limit'}, path);
+    return ConversationRecentRequest(
+      providerId: _string(_required(json, 'providerId', path), '$path.providerId', minLength: 1),
+      cursor: json.containsKey('cursor') && json['cursor'] != null ? _string(json['cursor'], '$path.cursor', minLength: 1) : null,
+      limit: json.containsKey('limit') && json['limit'] != null ? _integer(json['limit'], '$path.limit', minimum: 1, maximum: 100) : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'providerId': providerId,
+    if (cursor != null) 'cursor': cursor!,
+    if (limit != null) 'limit': limit!,
+  };
+
+  @override
+  String toString() => 'ConversationRecentRequest(providerId: $providerId, cursor: $cursor, limit: $limit)';
+}
+
+final class ConversationRecentResponse {
+  factory ConversationRecentResponse({
+    required List<Conversation> conversations,
+    required PageInfo pageInfo,
+    required ConversationRecentRevision revision,
+    required EventCursor snapshotCursor,
+  }) {
+    final validatedConversations = _freezeList<Conversation>(conversations, 'ConversationRecentResponse.conversations', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedPageInfo = pageInfo;
+    final validatedRevision = _string(revision, 'ConversationRecentResponse.revision', minLength: 1);
+    final validatedSnapshotCursor = _string(snapshotCursor, 'ConversationRecentResponse.snapshotCursor', minLength: 1);
+    return ConversationRecentResponse._(
+      conversations: validatedConversations,
+      pageInfo: validatedPageInfo,
+      revision: validatedRevision,
+      snapshotCursor: validatedSnapshotCursor,
+    );
+  }
+
+  ConversationRecentResponse._({
+    required this.conversations,
+    required this.pageInfo,
+    required this.revision,
+    required this.snapshotCursor,
+  });
+
+  final List<Conversation> conversations;
+  final PageInfo pageInfo;
+  final ConversationRecentRevision revision;
+  final EventCursor snapshotCursor;
+
+  factory ConversationRecentResponse.fromJson(Object? value, {String path = 'ConversationRecentResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'conversations', 'pageInfo', 'revision', 'snapshotCursor'}, path);
+    return ConversationRecentResponse(
+      conversations: _decodeList<Conversation>(_required(json, 'conversations', path), '$path.conversations', (item, itemPath) => Conversation.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+      pageInfo: PageInfo.fromJson(_required(json, 'pageInfo', path), path: '$path.pageInfo'),
+      revision: _string(_required(json, 'revision', path), '$path.revision', minLength: 1),
+      snapshotCursor: _string(_required(json, 'snapshotCursor', path), '$path.snapshotCursor', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'conversations': conversations.map((item) => item.toJson()).toList(growable: false),
+    'pageInfo': pageInfo.toJson(),
+    'revision': revision,
+    'snapshotCursor': snapshotCursor,
+  };
+
+  @override
+  String toString() => 'ConversationRecentResponse(conversations: $conversations, pageInfo: $pageInfo, revision: $revision, snapshotCursor: $snapshotCursor)';
+}
+
+typedef ConversationRecentRevision = String;
+
+ConversationRecentRevision decodeConversationRecentRevision(Object? value, {String path = 'ConversationRecentRevision'}) => _string(value, path, minLength: 1);
+Object? encodeConversationRecentRevision(ConversationRecentRevision value, {String path = 'ConversationRecentRevision'}) {
+  final checked = _string(value, path, minLength: 1);
+  return checked;
+}
+
 final class ConversationResumeRequest {
   factory ConversationResumeRequest({
     required RoutedResourceId conversation,
@@ -1289,7 +1435,8 @@ enum GatewayCapability {
   conversationCreate('conversation.create'),
   turnSend('turn.send'),
   turnInterrupt('turn.interrupt'),
-  approvalResolve('approval.resolve');
+  approvalResolve('approval.resolve'),
+  conversationRecent('conversation.recent');
 
   const GatewayCapability(this.wireValue);
 
@@ -1300,7 +1447,7 @@ enum GatewayCapability {
     for (final candidate in values) {
       if (candidate.wireValue == wireValue) return candidate;
     }
-    throw ProtocolCodecException(path, 'expected one of: project.list, project.get, project.create, project.update, project.delete, conversation.list, conversation.search, conversation.get, conversation.create, turn.send, turn.interrupt, approval.resolve');
+    throw ProtocolCodecException(path, 'expected one of: project.list, project.get, project.create, project.update, project.delete, conversation.list, conversation.search, conversation.get, conversation.create, turn.send, turn.interrupt, approval.resolve, conversation.recent');
   }
 
   String toJson() => wireValue;
@@ -2743,6 +2890,7 @@ enum ProtocolIdempotency {
 }
 
 enum ProtocolMethod {
+  conversationRecent('conversation.recent', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationRecent, requestType: ConversationRecentRequest, responseType: ConversationRecentResponse),
   protocolPing('protocol.ping', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: PingRequest, responseType: PingResponse),
   protocolHandshake('protocol.handshake', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: HandshakeRequest, responseType: HandshakeResponse),
   protocolDescribe('protocol.describe', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: ProtocolDescribeRequest, responseType: ProtocolDescribeResponse),
@@ -2786,6 +2934,7 @@ enum ProtocolMethod {
 }
 
 enum ProtocolEventName {
+  conversationRecentChanged('conversation.recentChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'provider', payloadType: ConversationRecentChangedEvent),
   projectChanged('project.changed', direction: 'gatewayToClient', delivery: 'replayable', scope: 'project', payloadType: ProjectChangedEvent),
   providerChanged('provider.changed', direction: 'gatewayToClient', delivery: 'replayable', scope: 'provider', payloadType: ProviderChangedEvent),
   conversationUpserted('conversation.upserted', direction: 'gatewayToClient', delivery: 'replayable', scope: 'conversation', payloadType: ConversationUpsertedEvent),
@@ -2817,6 +2966,8 @@ enum ProtocolEventName {
 
 Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
   switch (method) {
+    case ProtocolMethod.conversationRecent:
+      return ConversationRecentRequest.fromJson(value, path: path);
     case ProtocolMethod.protocolPing:
       return PingRequest.fromJson(value, path: path);
     case ProtocolMethod.protocolHandshake:
@@ -2864,6 +3015,9 @@ Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
 
 Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, String path) {
   switch (method) {
+    case ProtocolMethod.conversationRecent:
+      if (value is! ConversationRecentRequest) throw ProtocolCodecException(path, 'expected ConversationRecentRequest');
+      return value.toJson();
     case ProtocolMethod.protocolPing:
       if (value is! PingRequest) throw ProtocolCodecException(path, 'expected PingRequest');
       return value.toJson();
@@ -2932,6 +3086,8 @@ Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, S
 
 Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) {
   switch (method) {
+    case ProtocolMethod.conversationRecent:
+      return ConversationRecentResponse.fromJson(value, path: path);
     case ProtocolMethod.protocolPing:
       return PingResponse.fromJson(value, path: path);
     case ProtocolMethod.protocolHandshake:
@@ -2979,6 +3135,9 @@ Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) 
 
 Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, String path) {
   switch (method) {
+    case ProtocolMethod.conversationRecent:
+      if (value is! ConversationRecentResponse) throw ProtocolCodecException(path, 'expected ConversationRecentResponse');
+      return value.toJson();
     case ProtocolMethod.protocolPing:
       if (value is! PingResponse) throw ProtocolCodecException(path, 'expected PingResponse');
       return value.toJson();
@@ -3047,6 +3206,8 @@ Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, 
 
 Object _decodeEventPayload(ProtocolEventName event, Object? value, String path) {
   switch (event) {
+    case ProtocolEventName.conversationRecentChanged:
+      return ConversationRecentChangedEvent.fromJson(value, path: path);
     case ProtocolEventName.projectChanged:
       return ProjectChangedEvent.fromJson(value, path: path);
     case ProtocolEventName.providerChanged:
@@ -3070,6 +3231,9 @@ Object _decodeEventPayload(ProtocolEventName event, Object? value, String path) 
 
 Map<String, Object?> _encodeEventPayload(ProtocolEventName event, Object value, String path) {
   switch (event) {
+    case ProtocolEventName.conversationRecentChanged:
+      if (value is! ConversationRecentChangedEvent) throw ProtocolCodecException(path, 'expected ConversationRecentChangedEvent');
+      return value.toJson();
     case ProtocolEventName.projectChanged:
       if (value is! ProjectChangedEvent) throw ProtocolCodecException(path, 'expected ProjectChangedEvent');
       return value.toJson();
@@ -3243,6 +3407,8 @@ final class ProtocolClient {
       };
     });
   }
+
+  Future<ConversationRecentResponse> conversationRecent(ConversationRecentRequest request) => _request<ConversationRecentResponse>(ProtocolMethod.conversationRecent, request);
 
   Future<PingResponse> protocolPing(PingRequest request) => _request<PingResponse>(ProtocolMethod.protocolPing, request);
 

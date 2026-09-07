@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-mark-read-request",
+  "method": "conversation.markRead",
+  "params": {
+    "conversation": {
+      "providerId": "codex-work",
+      "nativeResourceId": "thread-01"
+    },
+    "observedActivityVersion": "activity-41"
+  }
+}

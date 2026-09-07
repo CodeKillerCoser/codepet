@@ -32,6 +32,51 @@ function allRefs(value, refs = []) {
   return refs;
 }
 
+test("recent v1 preserves list and read boundaries with capability-gated atomic queries", async () => {
+  const model = await loadProtocolModel();
+  const provider = record(model, "provider-v1");
+  const gateway = record(model, "gateway-v1");
+  assert.equal(provider.manifest.version, 1);
+  assert.equal(gateway.manifest.version, 1);
+  for (const name of ["conversation.active.list", "conversation.unread.list", "conversation.markRead"]) {
+    assert.equal(provider.manifest.methods.find((method) => method.name === name)?.capability, name);
+  }
+  assert.equal(gateway.manifest.methods.find((method) => method.name === "conversation.recent")?.capability, "conversation.recent");
+  const pd = provider.schema.$defs;
+  const gd = gateway.schema.$defs;
+  assert.deepEqual(pd.ConversationListRequest.required, ["route", "projectFilter"]);
+  assert.deepEqual(gd.ConversationListRequest.required, ["providerId", "projectFilter"]);
+  assert.equal(gd.ConversationListRequest.properties.query, undefined);
+  assert.equal(gd.ConversationRecentRequest.properties.readerScope, undefined);
+  assert.equal(gd.ConversationRecentRequest.properties.projectFilter, undefined);
+  assert.deepEqual(gd.ConversationMarkReadRequest.required, ["conversation", "observedActivityVersion"]);
+  assert.equal(gd.ConversationMarkReadRequest.properties.readerScope, undefined);
+  assert(pd.ConversationUnreadListRequest.required.includes("readerScope"));
+  assert(pd.ConversationMarkReadRequest.required.includes("readerScope"));
+  assert.deepEqual(gd.ConversationRecentResponse.required, ["conversations", "pageInfo", "revision", "snapshotCursor"]);
+  assert.notEqual(gd.ConversationRecentResponse.properties.revision.$ref, gd.ConversationRecentResponse.properties.snapshotCursor.$ref);
+  assert.deepEqual(pd.ConversationListQuery.oneOf, [
+    { $ref: "#/$defs/ConversationUpdatedAfterQuery" },
+    { $ref: "#/$defs/ConversationIdsQuery" },
+  ]);
+});
+
+test("method namespaces allow atomic submethods but reject empty or malformed segments", async () => {
+  const model = await loadProtocolModel();
+  const provider = record(model, "provider-v1");
+  const method = provider.manifest.methods.find((entry) => entry.name === "conversation.active.list");
+  const original = method.name;
+  try {
+    validateManifest(provider, model);
+    for (const name of ["conversation..list", ".conversation.list", "conversation.list.", "conversation.1list"]) {
+      method.name = name;
+      assert.throws(() => validateManifest(provider, model), /name is invalid/);
+    }
+  } finally {
+    method.name = original;
+  }
+});
+
 test("schema and method/event manifests are self-consistent", async () => {
   const model = await loadProtocolModel();
   assert.deepEqual(

@@ -305,7 +305,7 @@ export function validateManifest(record, model) {
   for (const [index, method] of manifest.methods.entries()) {
     const location = `${packageConfig.id}.methods[${index}]`;
     assert(isObject(method), `${location} must be an object`);
-    assert(/^[a-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*$/.test(method.name), `${location}.name is invalid`);
+    assert(/^[a-z][A-Za-z0-9]*(?:\.[a-z][A-Za-z0-9]*)+$/.test(method.name), `${location}.name is invalid`);
     assert(!methodNames.has(method.name), `${location}.name duplicates ${method.name}`);
     methodNames.add(method.name);
     assert(typeof method.direction === "string" && method.direction.length > 0, `${location}.direction is required`);

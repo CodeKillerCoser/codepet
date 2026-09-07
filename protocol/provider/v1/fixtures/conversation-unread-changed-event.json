@@ -1,0 +1,18 @@
+{
+  "jsonrpc": "2.0",
+  "method": "event.conversationUnreadChanged",
+  "params": {
+    "conversation": {
+      "deviceId": "device-macbook-1",
+      "providerPluginId": "dev.codepet.codex",
+      "providerInstanceId": "codex-work",
+      "nativeResourceId": "thread-01"
+    },
+    "readerScope": "remote:client-01",
+    "readState": {
+      "unread": true,
+      "activityVersion": "activity-42"
+    },
+    "revision": "unread-snapshot-8"
+  }
+}

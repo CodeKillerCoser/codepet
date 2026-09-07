@@ -1,0 +1,21 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-list-updated-after-request",
+  "method": "conversation.list",
+  "params": {
+    "route": {
+      "deviceId": "device-macbook-1",
+      "providerPluginId": "dev.codepet.codex",
+      "providerInstanceId": "codex-work"
+    },
+    "projectFilter": {
+      "kind": "all"
+    },
+    "query": {
+      "kind": "updatedAfter",
+      "updatedAfter": 1787700001000
+    },
+    "readerScope": "remote:client-01",
+    "limit": 20
+  }
+}

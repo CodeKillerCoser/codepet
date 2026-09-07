@@ -509,7 +509,8 @@
         "conversation.create",
         "turn.send",
         "turn.interrupt",
-        "approval.resolve"
+        "approval.resolve",
+        "conversation.recent"
       ]
     },
     "GatewayCapabilities": {
@@ -1131,6 +1132,77 @@
         "turn"
       ],
       "additionalProperties": false
+    },
+    "ConversationRecentRevision": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque equality-only version of the Host recent view. Scoped to provider, authenticated reader and instance generation. Not the replay eventCursor or a Provider enumeration/activity version; clients must never parse or increment it."
+    },
+    "ConversationRecentRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ProviderId"
+        },
+        "cursor": {
+          "$ref": "../../core/v1/schema.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "additionalProperties": false,
+      "description": "Final Host-sorted recent view; default limit 20, maximum 100. Reader scope comes only from authenticated context. Cursor binds scope, provider, generation, snapshot revision, time cutoff and position. Expiration returns recent_cursor_expired; tampering or binding mismatch returns invalid_cursor. Membership and pagination are independent from conversation.list."
+    },
+    "ConversationRecentResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent/v1/schema.json#/$defs/Conversation"
+          }
+        },
+        "pageInfo": {
+          "$ref": "../../core/v1/schema.json#/$defs/PageInfo"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConversationRecentRevision"
+        },
+        "snapshotCursor": {
+          "$ref": "../../core/v1/schema.json#/$defs/EventCursor"
+        }
+      },
+      "required": [
+        "conversations",
+        "pageInfo",
+        "revision",
+        "snapshotCursor"
+      ],
+      "additionalProperties": false,
+      "description": "Page of one complete globally sorted snapshot. Every summary carries authoritative reader-scoped readState. revision remains constant across pages. snapshotCursor is captured before Provider queries and is the exact replay fence to pass as event.subscribe.afterCursor."
+    },
+    "ConversationRecentChangedEvent": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ProviderId"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConversationRecentRevision"
+        }
+      },
+      "required": [
+        "providerId",
+        "revision"
+      ],
+      "additionalProperties": false,
+      "description": "Invalidate and refetch this reader's recent view, cancelling old tail pages. Contains no member IDs or readerScope. If published provider-wide for shared replay, revision is a provider-wide invalidation revision used consistently by snapshots; it must not expose another reader's private revision. Never use revision as eventCursor."
     }
   }
 }

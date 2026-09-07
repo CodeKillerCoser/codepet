@@ -1,0 +1,24 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-unread-list-response",
+  "result": {
+    "conversations": [
+      {
+        "conversation": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "readState": {
+          "unread": true,
+          "activityVersion": "activity-42"
+        }
+      }
+    ],
+    "pageInfo": {
+      "nextCursor": "unread-page-2"
+    },
+    "revision": "unread-snapshot-7"
+  }
+}

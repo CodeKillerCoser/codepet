@@ -7,8 +7,8 @@ import type { ClientId, ConnectionStatus, Cursor, DeviceDescriptor, EventCursor,
 export type { ClientId, ConnectionStatus, Cursor, DeviceDescriptor, EventCursor, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, RequestId, RoutedResourceId, RpcError, TimestampMs, TraceContext, VersionRange } from "../../codepet-core-sdk/src/generated";
 
 export const PROTOCOL_VERSION = 1 as const;
-export const PROTOCOL_METHODS = ["protocol.ping", "protocol.handshake", "protocol.describe", "event.subscribe", "provider.list", "provider.describe", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.list", "conversation.search", "conversation.get", "conversation.markRead", "conversation.acquireInteraction", "conversation.resume", "conversation.create", "turn.send", "turn.interrupt", "approval.resolve"] as const;
-export const PROTOCOL_EVENTS = ["project.changed", "provider.changed", "conversation.upserted", "conversation.itemUpserted", "conversation.activityChanged", "turn.upserted", "turn.outputDelta", "approval.requested", "approval.resolved"] as const;
+export const PROTOCOL_METHODS = ["conversation.recent", "protocol.ping", "protocol.handshake", "protocol.describe", "event.subscribe", "provider.list", "provider.describe", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.list", "conversation.search", "conversation.get", "conversation.markRead", "conversation.acquireInteraction", "conversation.resume", "conversation.create", "turn.send", "turn.interrupt", "approval.resolve"] as const;
+export const PROTOCOL_EVENTS = ["conversation.recentChanged", "project.changed", "provider.changed", "conversation.upserted", "conversation.itemUpserted", "conversation.activityChanged", "turn.upserted", "turn.outputDelta", "approval.requested", "approval.resolved"] as const;
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -118,6 +118,26 @@ export interface ConversationProjectFilterStandalone {
 
 export type ConversationProjectFilterStandaloneKind = "standalone";
 
+export interface ConversationRecentChangedEvent {
+  providerId: ProviderId;
+  revision: ConversationRecentRevision;
+}
+
+export interface ConversationRecentRequest {
+  providerId: ProviderId;
+  cursor?: Cursor;
+  limit?: number;
+}
+
+export interface ConversationRecentResponse {
+  conversations: Array<Conversation>;
+  pageInfo: PageInfo;
+  revision: ConversationRecentRevision;
+  snapshotCursor: EventCursor;
+}
+
+export type ConversationRecentRevision = string;
+
 export interface ConversationResumeRequest {
   conversation: RoutedResourceId;
   limit?: number;
@@ -163,7 +183,7 @@ export interface GatewayCapabilities {
   conversationCreate?: ConversationCreateCapabilities;
 }
 
-export type GatewayCapability = "project.list" | "project.get" | "project.create" | "project.update" | "project.delete" | "conversation.list" | "conversation.search" | "conversation.get" | "conversation.create" | "turn.send" | "turn.interrupt" | "approval.resolve";
+export type GatewayCapability = "project.list" | "project.get" | "project.create" | "project.update" | "project.delete" | "conversation.list" | "conversation.search" | "conversation.get" | "conversation.create" | "turn.send" | "turn.interrupt" | "approval.resolve" | "conversation.recent";
 
 export interface GatewayDevice {
   name: string;
@@ -353,6 +373,7 @@ export interface TurnUpsertedEvent {
 }
 
 export interface ProtocolRequestMap {
+  "conversation.recent": ConversationRecentRequest;
   "protocol.ping": PingRequest;
   "protocol.handshake": HandshakeRequest;
   "protocol.describe": ProtocolDescribeRequest;
@@ -377,6 +398,7 @@ export interface ProtocolRequestMap {
 }
 
 export interface ProtocolResponseMap {
+  "conversation.recent": ConversationRecentResponse;
   "protocol.ping": PingResponse;
   "protocol.handshake": HandshakeResponse;
   "protocol.describe": ProtocolDescribeResponse;
@@ -401,6 +423,7 @@ export interface ProtocolResponseMap {
 }
 
 export interface ProtocolEventMap {
+  "conversation.recentChanged": ConversationRecentChangedEvent;
   "project.changed": ProjectChangedEvent;
   "provider.changed": ProviderChangedEvent;
   "conversation.upserted": ConversationUpsertedEvent;

@@ -1,0 +1,15 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-list-legacy-request",
+  "method": "conversation.list",
+  "params": {
+    "route": {
+      "deviceId": "device-macbook-1",
+      "providerPluginId": "dev.codepet.codex",
+      "providerInstanceId": "codex-work"
+    },
+    "projectFilter": {
+      "kind": "all"
+    }
+  }
+}

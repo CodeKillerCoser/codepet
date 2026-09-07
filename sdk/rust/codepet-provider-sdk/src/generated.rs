@@ -60,6 +60,46 @@ pub struct ConversationAcquireInteractionResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ConversationActiveChangedEvent {
+    pub conversation: ProviderResourceId,
+    pub status: ConversationStatus,
+    pub activity_version: String,
+    pub active: bool,
+    pub revision: ConversationEnumerationRevision,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationActiveEntry {
+    pub conversation: ProviderResourceId,
+    pub status: ConversationStatus,
+    pub activity_version: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationActiveListRequest {
+    pub route: ProviderInstanceRoute,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<Cursor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationActiveListResponse {
+    pub conversations: Vec<ConversationActiveEntry>,
+    pub page_info: PageInfo,
+    pub revision: ConversationEnumerationRevision,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ConversationCreateRequest {
     pub route: ProviderInstanceRoute,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -89,6 +129,15 @@ pub struct ConversationCreateResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ConversationDeletedEvent {
+    pub conversation: ProviderResourceId,
+}
+
+pub type ConversationEnumerationRevision = String;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ConversationGetRequest {
     pub conversation: ProviderResourceId,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -110,8 +159,37 @@ pub struct ConversationGetResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ConversationIdsQuery {
+    pub kind: ConversationIdsQueryKind,
+    pub ids: Vec<NativeResourceId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConversationIdsQueryKind {
+    #[serde(rename = "ids")]
+    Ids,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ConversationItemUpsertedEvent {
     pub item: ConversationItem,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ConversationListQuery {
+    ConversationUpdatedAfterQuery(ConversationUpdatedAfterQuery),
+    ConversationIdsQuery(ConversationIdsQuery),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationListQueryCapabilities {
+    pub updated_after: bool,
+    pub ids: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -124,6 +202,10 @@ pub struct ConversationListRequest {
     pub cursor: Option<Cursor>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<ConversationListQuery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reader_scope: Option<ReaderScope>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -132,6 +214,22 @@ pub struct ConversationListRequest {
 pub struct ConversationListResponse {
     pub conversations: Vec<Conversation>,
     pub page_info: PageInfo,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationMarkReadRequest {
+    pub conversation: ProviderResourceId,
+    pub reader_scope: ReaderScope,
+    pub observed_activity_version: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationMarkReadResponse {
+    pub read_state: ConversationReadState,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -200,6 +298,59 @@ pub struct ConversationSearchRequest {
 pub struct ConversationSearchResponse {
     pub conversations: Vec<Conversation>,
     pub page_info: PageInfo,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationUnreadChangedEvent {
+    pub conversation: ProviderResourceId,
+    pub reader_scope: ReaderScope,
+    pub read_state: ConversationReadState,
+    pub revision: ConversationEnumerationRevision,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationUnreadEntry {
+    pub conversation: ProviderResourceId,
+    pub read_state: ConversationReadState,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationUnreadListRequest {
+    pub route: ProviderInstanceRoute,
+    pub reader_scope: ReaderScope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<Cursor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationUnreadListResponse {
+    pub conversations: Vec<ConversationUnreadEntry>,
+    pub page_info: PageInfo,
+    pub revision: ConversationEnumerationRevision,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationUpdatedAfterQuery {
+    pub kind: ConversationUpdatedAfterQueryKind,
+    pub updated_after: TimestampMs,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConversationUpdatedAfterQueryKind {
+    #[serde(rename = "updatedAfter")]
+    UpdatedAfter,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -452,6 +603,8 @@ pub struct ProviderCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_create: Option<ConversationCreateCapabilities>,
     pub extensions: Vec<ProviderExtension>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_list_query: Option<ConversationListQueryCapabilities>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -482,6 +635,12 @@ pub enum ProviderCapability {
     TurnInterrupt,
     #[serde(rename = "approval.resolve")]
     ApprovalResolve,
+    #[serde(rename = "conversation.active.list")]
+    ConversationActiveList,
+    #[serde(rename = "conversation.unread.list")]
+    ConversationUnreadList,
+    #[serde(rename = "conversation.markRead")]
+    ConversationMarkRead,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -654,6 +813,8 @@ pub struct ProviderTransportSelection {
     pub features: Vec<String>,
     pub receive: ProviderTransportLimits,
 }
+
+pub type ReaderScope = String;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -854,6 +1015,12 @@ pub enum ProtocolDispatchLane {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolMethod {
+    #[serde(rename = "conversation.active.list")]
+    ConversationActiveList,
+    #[serde(rename = "conversation.unread.list")]
+    ConversationUnreadList,
+    #[serde(rename = "conversation.markRead")]
+    ConversationMarkRead,
     #[serde(rename = "provider.ping")]
     ProviderPing,
     #[serde(rename = "provider.initialize")]
@@ -913,6 +1080,9 @@ pub enum ProtocolMethod {
 impl ProtocolMethod {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ConversationActiveList => "conversation.active.list",
+            Self::ConversationUnreadList => "conversation.unread.list",
+            Self::ConversationMarkRead => "conversation.markRead",
             Self::ProviderPing => "provider.ping",
             Self::ProviderInitialize => "provider.initialize",
             Self::ProviderDescribe => "provider.describe",
@@ -945,6 +1115,9 @@ impl ProtocolMethod {
 
     pub const fn dispatch_lane(self) -> ProtocolDispatchLane {
         match self {
+            Self::ConversationActiveList => ProtocolDispatchLane::Normal,
+            Self::ConversationUnreadList => ProtocolDispatchLane::Normal,
+            Self::ConversationMarkRead => ProtocolDispatchLane::Normal,
             Self::ProviderPing => ProtocolDispatchLane::Control,
             Self::ProviderInitialize => ProtocolDispatchLane::Normal,
             Self::ProviderDescribe => ProtocolDispatchLane::Normal,
@@ -977,6 +1150,9 @@ impl ProtocolMethod {
 
     pub const fn capability(self) -> Option<ProviderCapability> {
         match self {
+            Self::ConversationActiveList => Some(ProviderCapability::ConversationActiveList),
+            Self::ConversationUnreadList => Some(ProviderCapability::ConversationUnreadList),
+            Self::ConversationMarkRead => Some(ProviderCapability::ConversationMarkRead),
             Self::ProviderPing => None,
             Self::ProviderInitialize => None,
             Self::ProviderDescribe => None,
@@ -1013,6 +1189,9 @@ impl std::str::FromStr for ProtocolMethod {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
+            "conversation.active.list" => Ok(Self::ConversationActiveList),
+            "conversation.unread.list" => Ok(Self::ConversationUnreadList),
+            "conversation.markRead" => Ok(Self::ConversationMarkRead),
             "provider.ping" => Ok(Self::ProviderPing),
             "provider.initialize" => Ok(Self::ProviderInitialize),
             "provider.describe" => Ok(Self::ProviderDescribe),
@@ -1047,6 +1226,12 @@ impl std::str::FromStr for ProtocolMethod {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolEventName {
+    #[serde(rename = "event.conversationActiveChanged")]
+    EventConversationActiveChanged,
+    #[serde(rename = "event.conversationUnreadChanged")]
+    EventConversationUnreadChanged,
+    #[serde(rename = "event.conversationDeleted")]
+    EventConversationDeleted,
     #[serde(rename = "event.projectChanged")]
     EventProjectChanged,
     #[serde(rename = "event.instanceStatusChanged")]
@@ -1072,6 +1257,9 @@ pub enum ProtocolEventName {
 impl ProtocolEventName {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::EventConversationActiveChanged => "event.conversationActiveChanged",
+            Self::EventConversationUnreadChanged => "event.conversationUnreadChanged",
+            Self::EventConversationDeleted => "event.conversationDeleted",
             Self::EventProjectChanged => "event.projectChanged",
             Self::EventInstanceStatusChanged => "event.instanceStatusChanged",
             Self::EventConversationUpserted => "event.conversationUpserted",
@@ -1091,6 +1279,9 @@ impl std::str::FromStr for ProtocolEventName {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
+            "event.conversationActiveChanged" => Ok(Self::EventConversationActiveChanged),
+            "event.conversationUnreadChanged" => Ok(Self::EventConversationUnreadChanged),
+            "event.conversationDeleted" => Ok(Self::EventConversationDeleted),
             "event.projectChanged" => Ok(Self::EventProjectChanged),
             "event.instanceStatusChanged" => Ok(Self::EventInstanceStatusChanged),
             "event.conversationUpserted" => Ok(Self::EventConversationUpserted),
@@ -1116,6 +1307,24 @@ pub const DEFAULT_MAX_JSON_LINE_BYTES: usize = 1024 * 1024;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum ProtocolRequest {
+    #[serde(rename = "conversation.active.list")]
+    ConversationActiveList {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationActiveListRequest,
+    },
+    #[serde(rename = "conversation.unread.list")]
+    ConversationUnreadList {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationUnreadListRequest,
+    },
+    #[serde(rename = "conversation.markRead")]
+    ConversationMarkRead {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationMarkReadRequest,
+    },
     #[serde(rename = "provider.ping")]
     ProviderPing {
         jsonrpc: String,
@@ -1288,6 +1497,21 @@ impl ProtocolRequest {
     ) -> Result<Self, ProtocolError> {
         let jsonrpc = "2.0".to_string();
         match method {
+            ProtocolMethod::ConversationActiveList => Ok(Self::ConversationActiveList {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.active.list request params", error))?,
+            }),
+            ProtocolMethod::ConversationUnreadList => Ok(Self::ConversationUnreadList {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.unread.list request params", error))?,
+            }),
+            ProtocolMethod::ConversationMarkRead => Ok(Self::ConversationMarkRead {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.markRead request params", error))?,
+            }),
             ProtocolMethod::ProviderPing => Ok(Self::ProviderPing {
                 jsonrpc,
                 id,
@@ -1428,6 +1652,9 @@ impl ProtocolRequest {
 
     pub fn jsonrpc_version(&self) -> &str {
         match self {
+            Self::ConversationActiveList { jsonrpc, .. } => jsonrpc,
+            Self::ConversationUnreadList { jsonrpc, .. } => jsonrpc,
+            Self::ConversationMarkRead { jsonrpc, .. } => jsonrpc,
             Self::ProviderPing { jsonrpc, .. } => jsonrpc,
             Self::ProviderInitialize { jsonrpc, .. } => jsonrpc,
             Self::ProviderDescribe { jsonrpc, .. } => jsonrpc,
@@ -1460,6 +1687,9 @@ impl ProtocolRequest {
 
     pub fn id(&self) -> &RequestId {
         match self {
+            Self::ConversationActiveList { id, .. } => id,
+            Self::ConversationUnreadList { id, .. } => id,
+            Self::ConversationMarkRead { id, .. } => id,
             Self::ProviderPing { id, .. } => id,
             Self::ProviderInitialize { id, .. } => id,
             Self::ProviderDescribe { id, .. } => id,
@@ -1492,6 +1722,9 @@ impl ProtocolRequest {
 
     pub const fn method(&self) -> ProtocolMethod {
         match self {
+            Self::ConversationActiveList { .. } => ProtocolMethod::ConversationActiveList,
+            Self::ConversationUnreadList { .. } => ProtocolMethod::ConversationUnreadList,
+            Self::ConversationMarkRead { .. } => ProtocolMethod::ConversationMarkRead,
             Self::ProviderPing { .. } => ProtocolMethod::ProviderPing,
             Self::ProviderInitialize { .. } => ProtocolMethod::ProviderInitialize,
             Self::ProviderDescribe { .. } => ProtocolMethod::ProviderDescribe,
@@ -1526,6 +1759,21 @@ impl ProtocolRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum ProtocolEvent {
+    #[serde(rename = "event.conversationActiveChanged")]
+    EventConversationActiveChanged {
+        jsonrpc: String,
+        params: ConversationActiveChangedEvent,
+    },
+    #[serde(rename = "event.conversationUnreadChanged")]
+    EventConversationUnreadChanged {
+        jsonrpc: String,
+        params: ConversationUnreadChangedEvent,
+    },
+    #[serde(rename = "event.conversationDeleted")]
+    EventConversationDeleted {
+        jsonrpc: String,
+        params: ConversationDeletedEvent,
+    },
     #[serde(rename = "event.projectChanged")]
     EventProjectChanged {
         jsonrpc: String,
@@ -1581,6 +1829,9 @@ pub enum ProtocolEvent {
 impl ProtocolEvent {
     pub fn jsonrpc_version(&self) -> &str {
         match self {
+            Self::EventConversationActiveChanged { jsonrpc, .. } => jsonrpc,
+            Self::EventConversationUnreadChanged { jsonrpc, .. } => jsonrpc,
+            Self::EventConversationDeleted { jsonrpc, .. } => jsonrpc,
             Self::EventProjectChanged { jsonrpc, .. } => jsonrpc,
             Self::EventInstanceStatusChanged { jsonrpc, .. } => jsonrpc,
             Self::EventConversationUpserted { jsonrpc, .. } => jsonrpc,
@@ -1689,6 +1940,18 @@ impl std::error::Error for JsonRpcInboundError {}
 pub type ProtocolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ProtocolError>> + Send + 'a>>;
 
 pub trait ProtocolServer: Send + Sync {
+    fn conversation_active_list<'a>(&'a self, _request: ConversationActiveListRequest) -> ProtocolFuture<'a, ConversationActiveListResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.active.list")) })
+    }
+
+    fn conversation_unread_list<'a>(&'a self, _request: ConversationUnreadListRequest) -> ProtocolFuture<'a, ConversationUnreadListResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.unread.list")) })
+    }
+
+    fn conversation_mark_read<'a>(&'a self, _request: ConversationMarkReadRequest) -> ProtocolFuture<'a, ConversationMarkReadResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.markRead")) })
+    }
+
     fn provider_ping<'a>(&'a self, _request: ProviderPingRequest) -> ProtocolFuture<'a, ProviderPingResponse> {
         Box::pin(async { Err(method_not_implemented("provider.ping")) })
     }
@@ -1809,6 +2072,36 @@ fn method_not_implemented(method: &str) -> ProtocolError {
 
 pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolRequest) -> JsonRpcResponse {
     match request {
+        ProtocolRequest::ConversationActiveList { jsonrpc, id, params } => {
+            let response = match server.conversation_active_list(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationUnreadList { jsonrpc, id, params } => {
+            let response = match server.conversation_unread_list(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationMarkRead { jsonrpc, id, params } => {
+            let response = match server.conversation_mark_read(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
         ProtocolRequest::ProviderPing { jsonrpc, id, params } => {
             let response = match server.provider_ping(params).await {
                 Ok(result) => match serde_json::to_value(result) {
@@ -2126,6 +2419,30 @@ impl<T> ProtocolClient<T> {
 }
 
 impl<T: ProtocolTransport> ProtocolClient<T> {
+    pub fn conversation_active_list<'a>(&'a self, request: ConversationActiveListRequest) -> ProtocolFuture<'a, ConversationActiveListResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationActiveList, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_unread_list<'a>(&'a self, request: ConversationUnreadListRequest) -> ProtocolFuture<'a, ConversationUnreadListResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationUnreadList, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_mark_read<'a>(&'a self, request: ConversationMarkReadRequest) -> ProtocolFuture<'a, ConversationMarkReadResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationMarkRead, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
     pub fn provider_ping<'a>(&'a self, request: ProviderPingRequest) -> ProtocolFuture<'a, ProviderPingResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;

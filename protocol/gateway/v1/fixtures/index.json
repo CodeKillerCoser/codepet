@@ -9,5 +9,21 @@
   { "file": "conversation-create-project-request.json", "kind": "request", "name": "conversation.create" },
   { "file": "project-changed-event.json", "kind": "event", "name": "project.changed" },
   { "file": "conversation-upserted-event.json", "kind": "event", "name": "conversation.upserted" },
-  { "file": "conversation-item-upserted-event.json", "kind": "event", "name": "conversation.itemUpserted" }
+  { "file": "conversation-item-upserted-event.json", "kind": "event", "name": "conversation.itemUpserted" },
+  {"file": "conversation-recent-request.json", "kind": "request", "name": "conversation.recent"},
+  {"file": "conversation-recent-next-request.json", "kind": "request", "name": "conversation.recent"},
+  {"file": "conversation-recent-response.json", "kind": "response", "name": "conversation.recent"},
+  {"file": "conversation-recent-end-response.json", "kind": "response", "name": "conversation.recent"},
+  {"file": "conversation-recent-changed-event.json", "kind": "event", "name": "conversation.recentChanged"},
+  {"file": "conversation-mark-read-request.json", "kind": "request", "name": "conversation.markRead"},
+  {"file": "conversation-mark-read-response.json", "kind": "response", "name": "conversation.markRead"},
+  {"file": "conversation-recent-invalid-scope.json", "kind": "type", "name": "ConversationRecentRequest", "valid": false},
+  {"file": "conversation-recent-invalid-limit-zero.json", "kind": "type", "name": "ConversationRecentRequest", "valid": false},
+  {"file": "conversation-recent-invalid-limit-large.json", "kind": "type", "name": "ConversationRecentRequest", "valid": false},
+  {"file": "conversation-recent-invalid-list-filter.json", "kind": "type", "name": "ConversationRecentRequest", "valid": false},
+  {"file": "conversation-recent-missing-revision.json", "kind": "type", "name": "ConversationRecentResponse", "valid": false},
+  {"file": "conversation-recent-missing-fence.json", "kind": "type", "name": "ConversationRecentResponse", "valid": false},
+  {"file": "conversation-recent-expired-response.json", "kind": "response", "name": "conversation.recent"},
+  {"file": "conversation-recent-invalid-cursor-response.json", "kind": "response", "name": "conversation.recent"},
+  {"file": "conversation-recent-unsupported-response.json", "kind": "response", "name": "conversation.recent"}
 ]

@@ -23,6 +23,10 @@
     "field": "methods"
   },
   "methods": [
+    {"name": "conversation.active.list", "direction": "hostToPlugin", "idempotency": "safe", "capability": "conversation.active.list", "request": {"$ref": "./schema.json#/$defs/ConversationActiveListRequest"}, "response": {"$ref": "./schema.json#/$defs/ConversationActiveListResponse"}},
+    {"name": "conversation.unread.list", "direction": "hostToPlugin", "idempotency": "safe", "capability": "conversation.unread.list", "request": {"$ref": "./schema.json#/$defs/ConversationUnreadListRequest"}, "response": {"$ref": "./schema.json#/$defs/ConversationUnreadListResponse"}},
+    {"name": "conversation.markRead", "direction": "hostToPlugin", "idempotency": "idempotent", "capability": "conversation.markRead", "request": {"$ref": "./schema.json#/$defs/ConversationMarkReadRequest"}, "response": {"$ref": "./schema.json#/$defs/ConversationMarkReadResponse"}},
+
     {"name": "provider.ping", "direction": "hostToPlugin", "idempotency": "safe", "request": {"$ref": "./schema.json#/$defs/ProviderPingRequest"}, "response": {"$ref": "./schema.json#/$defs/ProviderPingResponse"}, "dispatchLane": "control"},
     {
       "name": "provider.initialize",
@@ -212,6 +216,10 @@
     {"name": "event.unsubscribe", "direction": "hostToPlugin", "idempotency": "idempotent", "request": {"$ref": "./schema.json#/$defs/EventUnsubscribeRequest"}, "response": {"$ref": "./schema.json#/$defs/EventUnsubscribeResponse"}}
   ],
   "events": [
+    {"name": "event.conversationActiveChanged", "direction": "pluginToHost", "delivery": "ordered", "scope": "conversation", "payload": {"$ref": "./schema.json#/$defs/ConversationActiveChangedEvent"}},
+    {"name": "event.conversationUnreadChanged", "direction": "pluginToHost", "delivery": "ordered", "scope": "conversation", "payload": {"$ref": "./schema.json#/$defs/ConversationUnreadChangedEvent"}},
+    {"name": "event.conversationDeleted", "direction": "pluginToHost", "delivery": "ordered", "scope": "conversation", "payload": {"$ref": "./schema.json#/$defs/ConversationDeletedEvent"}},
+
     {
       "name": "event.projectChanged",
       "direction": "pluginToHost",
