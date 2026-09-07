@@ -4,7 +4,7 @@
 
 2026-09-08：用户授权 PM 撰写设计、拆成独立 Codex 任务、监督完成。每项使用独立 worktree；Host 从 v0、Remote 从 main 开始；GPT-6（gpt-6-astra）、推理 high、正常速度。禁止本机编译、构建和测试执行；只做代码、逻辑、协议检查，测试代码可以补齐。
 
-设计权威：[最近会话方案](../10-architecture/recent-conversation-feed.md)。当前状态：v1 契约已集成，Remote 已审查并集成；Host 两笔提交通过独立审查，等待 Provider 最后两项修复及复审后统一集成。所有运行验证未执行。
+设计权威：[最近会话方案](../10-architecture/recent-conversation-feed.md)。当前状态：源码实现、独立审查、发现问题修复与本地集成全部完成。Host v0 代码至 `1f6618a`，Remote main 至 `7248092`；未推送，所有编译和运行验证未执行。
 
 ## 不可突破的范围
 
@@ -55,9 +55,9 @@ PM在本对话维护任务链接、阶段、依赖和提交；读取各任务的
 
 | 任务 | task ID | 工作目录 | 阶段 |
 | --- | --- | --- | --- |
-| R1 协议 | `01a07d18-9c2e-7253-b79a-f9f3a9218885` | `C:/Users/17633/.codex/worktrees/46e4/codepet`，`codex/recent-conversation-contract` | 契约已集成，负责 Provider 修复定向复审 |
-| R2 Provider | `01a07d19-445c-77d0-a823-32c508bcf8fb` | `C:/Users/17633/.codex/worktrees/6ca2/codepet`，`codex/recent-provider-atoms` | 公共存储接管与原子查询实现中 |
-| R3 Host | `01a07d19-82ef-7e52-a159-beb4b9f0da2f` | `C:/Users/17633/.codex/worktrees/7b62/codepet` | `41c0a79`、`74149f1` 均通过独立源码审查，待集成 |
+| R1 协议 | `01a07d18-9c2e-7253-b79a-f9f3a9218885` | `C:/Users/17633/.codex/worktrees/46e4/codepet`，`codex/recent-conversation-contract` | 契约及 Provider 修复独立复审完成 |
+| R2 Provider | `01a07d19-445c-77d0-a823-32c508bcf8fb` | `C:/Users/17633/.codex/worktrees/6ca2/codepet`，`codex/recent-provider-atoms` | 最终 `47d04cd` 已复审并集成为 `ab1ee0c` |
+| R3 Host | `01a07d19-82ef-7e52-a159-beb4b9f0da2f` | `C:/Users/17633/.codex/worktrees/7b62/codepet` | 两笔均通过独立源码审查，集成为 `f71a1e8`、`1f6618a` |
 | R4 Remote | `01a07d1c-cc0a-7863-b8b3-cadf1fb92fc2` | `C:/Users/17633/.codex/worktrees/9cf0/codepet-remote` | 已审查并集成 main `7248092` |
 | R5 独立审查 | `01a07d4b-8501-7b31-8d1f-9058bf285abd` | Remote 独立 worktree，以 git show 读取目标提交 | Remote 两项修复及 Host 两笔提交均通过源码审查 |
 
@@ -87,9 +87,11 @@ R1 对 Provider `154dd0b` 及前序交叉审查发现两类 P2，已派 R2 修�
 
 R5 对 Host `41c0a79` 独立源码审查完成，未发现可明确复现的新增 P1/P2；等待 Provider 修复通过后按依赖集成。R2 已提交修复至 `7596d17`，R1 正在定向复审。R2 自身提交按顺序为：`423b772`、`c0d363d`、`b904631`、`4dd5a25`、`e45d2ae`、`ad2eb96`、`154dd0b`、`15aa510`、`b1d94e2`、`e065440`、`7596d17`。其中后四笔分别为 native metadata/cache 源测试、扫描 epoch 与失败前 previous 保留、native 与扫描整批共享提交 gate/Claude 条件安装、OpenCode atomic 扫描不写 runtime cache/旧 scope 回归。不得 cherry-pick R2 整条父链重复取入 R1；R1 协议已在主 v0。
 
-## 已完成与未验证
+## 最终集成与未验证
 
 - 已完成：设计、v1 协议与 SDK 集成、原生 scope 审查、Remote 实现及两项修复的独立审查/本地集成；Host 实现与查询失败跨 scope 失效补强 `74149f1625c4d5e80933d90c6e2f969bcb636cc3` 的独立审查。
-- 剩余门禁：R1 已关闭 Provider native/scan 发布 gate 和跨重启缓存污染路径。`42b3130` 之后仍需修复 Claude 同代 A/B 扫描先读后装的倒序覆盖，以及 batch 投递失败后 readiness 撤销可能因状态已设 false 而跳过发布的问题。R2 实现修复，R1 定向复审，完成后集成 R2 有序自身提交及 R3 两笔自身提交。
-- 未完成：Provider 上述修复及复审、Host/Provider 本地集成、最终交付记录；未推送。
+- 全部审查门禁已关闭：R1 对 Provider `47d04cd` 定向复审确认 Claude 同代扫描锁覆盖采集到安装；生产 SDK/stdio/mux 链路整批事件单槽入队，状态去重在成功后提交，ready 通知位于批尾，失败撤销 pending 优先重试。跨重启及事实发布 gate 问题此前已关闭。R5 确认 Remote 两项修复及 Host 两笔提交无新增源码审查阻塞。
+- Provider 14 笔自身提交已按序集成：`423b772→96f0070`、`c0d363d→948924a`、`b904631→76de45f`、`4dd5a25→3a4132d`、`e45d2ae→2752d49`、`ad2eb96→3470a74`、`154dd0b→bd6c2e7`、`15aa510→eb22f20`、`b1d94e2→cbe4680`、`e065440→ca89260`、`7596d17→d5a3a77`、`42b3130→86dca59`、`3c46fb8→8994971`、`47d04cd→ab1ee0c`。Host `41c0a79→f71a1e8`、`74149f1→1f6618a`。
+- PM 已核对集成后的 Provider/SDK、Host、Remote 源路径与各自最终审查 hash 完全一致（git diff --exit-code），差异格式检查通过；集成时两个工作区均干净，保留其他任务的无关文档提交，未推送。
+- 运行边界：活动完整性限于各 Provider backend 实例的既有权威范围；后台摘要核对默认上一轮结束后等待5秒，实际冷启动与大集合成本未测。生产整批队列保留256MB字节预算，超预算显式失败并撤销/重试，不截断候选；自定义 sink 的默认 publish_batch 可以顺序部分成功，不能将生产链路保证自动推广到自定义实现。
 - 未验证：所有本机编译、测试、运行时和真机行为（用户要求暂不执行）。

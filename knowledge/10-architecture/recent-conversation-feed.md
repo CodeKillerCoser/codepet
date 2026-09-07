@@ -4,7 +4,7 @@
 
 2026-09-08 用户确认：首页“最近”不能依赖 Remote 已加载的 conversation.list 页面再做局部排序。很旧的运行中或未读会话可能不在这些页面中；关注会话数量也可能很大，因此最终最近列表必须分页。
 
-本方案是待实现的目标设计，不代表当前功能已交付。Host 基线为 v0（4e32b87），Remote 基线为 main（3f20065）。执行拆分见 [交付计划](../40-runbooks/recent-conversation-delivery.md)。
+本方案已完成源码实现、独立审查和本地集成，尚未编译或运行验收。Host 基线为 v0（4e32b87），Remote 基线为 main（3f20065）；集成代码分别至 Host `1f6618a`、Remote `7248092`。任务、修复与未验证边界见 [交付计划](../40-runbooks/recent-conversation-delivery.md)。
 
 ## 目标
 
