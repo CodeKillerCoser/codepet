@@ -4266,12 +4266,14 @@ impl CodexProvider {
         for id in ids {
             if rows.iter().any(|row| &row.resource.native_resource_id == id) { continue; }
             let session = runtime.ready_server()?;
-            let id = id.clone();
+            let requested = id.clone();
             // Missing list membership is not deletion (e.g. archived sessions).
             // Unknown native failures propagate; never infer deletion from them.
-            let snapshot = tokio::task::spawn_blocking(move || session.thread_read_metadata(&id))
-                .await.map_err(provider_task_error)?.map_err(CodexProtocolMapper::error)?;
-            rows.push(lock(&runtime.mapper).conversation(&snapshot));
+            match tokio::task::spawn_blocking(move || session.thread_read_metadata(&requested)).await.map_err(provider_task_error)? {
+                Ok(snapshot) => rows.push(lock(&runtime.mapper).conversation(&snapshot)),
+                Err(error) if error.is_thread_not_loaded(id) => {},
+                Err(error) => return Err(CodexProtocolMapper::error(error)),
+            }
         }
         Ok(())
     }

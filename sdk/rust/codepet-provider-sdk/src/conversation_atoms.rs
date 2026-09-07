@@ -271,31 +271,39 @@ mod tests {
 }
 
 pub struct SummaryDelta {
+    pub event_epoch: u64,
     pub upserted: Vec<Conversation>,
     pub deleted: Vec<String>,
 }
 
 /// A single cancellable discovery loop. The adapter must confirm deletion in
 /// `load`, and serialize `publish` with its native generation/lifecycle fence.
+#[derive(Clone, Copy)]
+pub enum SummaryPublication { Applied, Retry, Stop }
+
 pub fn spawn_summary_poll<L, P>(load: L, publish: P, interval: std::time::Duration) -> tokio::task::JoinHandle<()>
 where
-    L: Fn(Vec<String>) -> ProtocolFuture<'static, Vec<Conversation>> + Send + Sync + 'static,
-    P: Fn(Result<SummaryDelta, ProtocolError>) -> bool + Send + Sync + 'static,
+    L: Fn(Vec<String>) -> ProtocolFuture<'static, (Vec<Conversation>, u64)> + Send + Sync + 'static,
+    P: Fn(Result<SummaryDelta, ProtocolError>) -> SummaryPublication + Send + Sync + 'static,
 {
     tokio::spawn(async move {
         let mut previous = BTreeMap::<String, Conversation>::new();
         loop {
             match load(previous.keys().cloned().collect()).await {
-                Ok(rows) => {
+                Ok((rows, event_epoch)) => {
                     let current = rows.into_iter().map(|row| (row.resource.native_resource_id.clone(), row)).collect::<BTreeMap<_, _>>();
                     let delta = SummaryDelta {
+                        event_epoch,
                         upserted: current.iter().filter(|(id, row)| previous.get(*id) != Some(*row)).map(|(_, row)| row.clone()).collect(),
                         deleted: previous.keys().filter(|id| !current.contains_key(*id)).cloned().collect(),
                     };
-                    if !publish(Ok(delta)) { return; }
-                    previous = current;
+                    match publish(Ok(delta)) {
+                        SummaryPublication::Applied => previous = current,
+                        SummaryPublication::Retry => {},
+                        SummaryPublication::Stop => return,
+                    }
                 }
-                Err(error) => if !publish(Err(error)) { return; },
+                Err(error) => if matches!(publish(Err(error)), SummaryPublication::Stop) { return; },
             }
             tokio::time::sleep(interval).await;
         }
