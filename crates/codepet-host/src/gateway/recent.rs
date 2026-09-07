@@ -189,8 +189,18 @@ impl ProviderGatewayService {
             let collected = self.collect_recent(&runtime.route, scope, started).await;
             let (rows, boundary_at) = match collected {
                 Ok(rows) => rows,
-                Err(error) if error.code == "recent_snapshot_changed" && attempt < 2 => continue,
-                Err(error) => return Err(error),
+                Err(error) => {
+                    // A failed completeness check also disqualifies older cached views.
+                    // Do not evict a newer view already installed after an observed event.
+                    let mut snapshots = self.recent.lock().map_err(|_| gateway_state_error())?;
+                    if snapshots.epoch(&key.provider_id) == epoch {
+                        snapshots.invalidate(&key.provider_id);
+                    }
+                    if error.code == "recent_snapshot_changed" && attempt < 2 {
+                        continue;
+                    }
+                    return Err(error);
+                }
             };
             let current = self
                 .gateway_providers(None)
@@ -204,6 +214,10 @@ impl ProviderGatewayService {
                         .methods
                         .contains(&gateway::GatewayCapability::ConversationRecent)
             }) {
+                let mut snapshots = self.recent.lock().map_err(|_| gateway_state_error())?;
+                if snapshots.epoch(&key.provider_id) == epoch {
+                    snapshots.invalidate(&key.provider_id);
+                }
                 return Err(feed::error(
                     "recent_snapshot_changed",
                     "Provider generation or capabilities changed",

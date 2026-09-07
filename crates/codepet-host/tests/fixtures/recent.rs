@@ -20,7 +20,10 @@ impl RecentFixture {
         &self,
         request: sdk::ConversationActiveListRequest,
     ) -> Result<sdk::ConversationActiveListResponse, sdk::ProtocolError> {
-        if std::env::var_os("CODEPET_FAKE_RECENT_ACTIVE_FAIL").is_some() {
+        if std::env::var_os("CODEPET_FAKE_RECENT_ACTIVE_FAIL").is_some()
+            || std::env::var_os("CODEPET_FAKE_RECENT_ACTIVE_FAIL_FILE")
+                .is_some_and(|path| std::path::Path::new(&path).exists())
+        {
             return Err(protocol_error(
                 "conversation_query_incomplete",
                 "injected active enumeration failure",

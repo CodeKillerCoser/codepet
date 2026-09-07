@@ -45,6 +45,10 @@ fn setup(
     descriptor
         .env
         .insert("CODEPET_FAKE_RECENT".into(), "1".into());
+    descriptor.env.insert(
+        "CODEPET_FAKE_RECENT_ACTIVE_FAIL_FILE".into(),
+        path.with_extension("fail").to_string_lossy().into_owned(),
+    );
     if fail_active {
         descriptor
             .env
@@ -251,6 +255,30 @@ async fn memory_authority_never_advertises_recent() {
     assert_eq!(
         fetch(&service, "reader", None).await.err().unwrap(),
         "unsupported"
+    );
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn completeness_failure_invalidates_other_reader_snapshots() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("conversation-state.json");
+    let (manager, service) = setup(&path, false);
+    for (_, result) in manager.start_enabled().await {
+        result.unwrap();
+    }
+    let first = fetch(&service, "reader-a", None).await.unwrap();
+    std::fs::write(path.with_extension("fail"), "fail active query").unwrap();
+    assert_eq!(
+        fetch(&service, "reader-b", None).await.err().unwrap(),
+        "conversation_query_incomplete"
+    );
+    assert_eq!(
+        fetch(&service, "reader-a", first.page_info.next_cursor)
+            .await
+            .err()
+            .unwrap(),
+        "recent_cursor_expired"
     );
     manager.shutdown().await;
 }
