@@ -151,6 +151,7 @@ struct DiscoveredConversation {
 struct InstanceMutable {
     atomic_task: Option<tokio::task::JoinHandle<()>>,
     atomic_facts_ready: bool,
+    atomic_readiness_pending: bool,
     atomic_facts_epoch: u64,
     lifecycle_generation: u64,
     metadata_epoch: u64,
@@ -197,7 +198,7 @@ impl ClaudeInstanceRuntime {
             settings,
             capabilities: claude_capabilities(),
             mutable: Mutex::new(InstanceMutable {
-                atomic_task: None, atomic_facts_ready: false, atomic_facts_epoch: 0, lifecycle_generation: 0,
+                atomic_task: None, atomic_facts_ready: false, atomic_readiness_pending: false, atomic_facts_epoch: 0, lifecycle_generation: 0,
                 metadata_epoch: 0, metadata_task: None,
                 status: InstanceStatus::Created,
                 conversations: HashMap::new(),
@@ -493,6 +494,13 @@ impl ClaudeInstanceRuntime {
     }
 
     fn refresh_discovered_conversations_strict(&self, strict: bool, cancelled: Option<&AtomicBool>) -> Result<(), ProtocolError> {
+        self.refresh_discovered_conversations_with_hook(strict, cancelled, || {})
+    }
+
+    fn refresh_discovered_conversations_with_hook(&self, strict: bool, cancelled: Option<&AtomicBool>, after_discovery: impl FnOnce()) -> Result<(), ProtocolError> {
+        // Serialize discovery through installation, including legacy readers.
+        // A newer RPC scan cannot install between an older poll's read and write.
+        let mut history_cache = lock(&self.history_cache);
         let generation = lock(&self.mutable).lifecycle_generation;
         let event_epoch = self.atoms.event_epoch();
         let Some(config_dir) = self
@@ -504,8 +512,9 @@ impl ClaudeInstanceRuntime {
             return Ok(());
         };
         let discovered = if strict {
-            discover_claude_conversations_with_mode(&config_dir, &self.route, true, cancelled, Some(&mut *lock(&self.history_cache)))?
+            discover_claude_conversations_with_mode(&config_dir, &self.route, true, cancelled, Some(&mut *history_cache))?
         } else { discover_claude_conversations(&config_dir, &self.route)? };
+        after_discovery();
         let mut mutable = lock(&self.mutable);
         if strict && (mutable.lifecycle_generation != generation || check_discovery_cancelled(cancelled).is_err()) { return Err(conversation_atoms::generation_changed()); }
         let mut install = || -> Result<(), ProtocolError> {
@@ -3332,6 +3341,43 @@ impl ClaudeInstanceRuntime {
 #[cfg(test)]
 mod atomic_query_tests {
     use super::*;
+    #[test]
+    fn concurrent_scan_cannot_install_newer_history_before_older_scan_finishes() {
+        let directory = tempfile::tempdir().unwrap();
+        let project = directory.path().join("projects/workspace");
+        std::fs::create_dir_all(&project).unwrap();
+        let path = project.join("session.jsonl");
+        let record = |text| serde_json::to_vec(&json!({"sessionId":"session","cwd":directory.path(),"message":{"role":"assistant","content":text}})).unwrap();
+        std::fs::write(&path, record("old summary")).unwrap();
+        let route = ProviderInstanceRoute { device_id: "device".into(), provider_plugin_id: CLAUDE_PLUGIN_ID.into(), provider_instance_id: "claude".into() };
+        let runtime = Arc::new(ClaudeInstanceRuntime::new(
+            InstanceCreateRequest { route, instance_kind: CLAUDE_INSTANCE_KIND.into(), display_name: "scan fixture".into(), settings: Default::default() },
+            ClaudeInstanceSettings { claude_executable: PathBuf::from("unused"), claude_config_dir: Some(directory.path().to_path_buf()) },
+            Arc::new(|_| Ok(())),
+        ));
+        let (read_tx, read_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let first_runtime = runtime.clone();
+        let first = std::thread::spawn(move || first_runtime.refresh_discovered_conversations_with_hook(true, None, || {
+            read_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        }));
+        read_rx.recv().unwrap();
+        std::fs::write(&path, record("newer summary with changed size")).unwrap();
+        assert!(matches!(runtime.history_cache.try_lock(), Err(std::sync::TryLockError::WouldBlock)));
+        let (attempt_tx, attempt_rx) = std::sync::mpsc::channel();
+        let second_runtime = runtime.clone();
+        let second = std::thread::spawn(move || {
+            attempt_tx.send(()).unwrap();
+            second_runtime.refresh_discovered_conversations_strict(true, None)
+        });
+        attempt_rx.recv().unwrap();
+        release_tx.send(()).unwrap();
+        first.join().unwrap().unwrap();
+        second.join().unwrap().unwrap();
+        assert_eq!(lock(&runtime.mutable).conversations["session"].conversation.preview.as_deref(), Some("newer summary with changed size"));
+    }
+
     #[test]
     fn history_summary_cache_refreshes_changed_files_and_removes_confirmed_missing_paths() {
         let directory = tempfile::tempdir().unwrap();

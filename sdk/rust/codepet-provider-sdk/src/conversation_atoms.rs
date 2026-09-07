@@ -57,28 +57,39 @@ impl ProviderEventSink for TrackedEvents {
 }
 impl TrackedEvents {
     fn publish_locked(&self, event: ProtocolEvent, versions: Option<&BTreeMap<String, String>>) -> Result<(), ProtocolError> {
-        if matches!(&event, ProtocolEvent::EventConversationUpserted { .. } | ProtocolEvent::EventConversationDeleted { .. } | ProtocolEvent::EventTurnUpserted { .. } | ProtocolEvent::EventApprovalRequested { .. } | ProtocolEvent::EventApprovalResolved { .. }) {
-            self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.publish_batch_locked(vec![event], versions)
+    }
+
+    fn publish_batch_locked(&self, events: Vec<ProtocolEvent>, versions: Option<&BTreeMap<String, String>>) -> Result<(), ProtocolError> {
+        let mut states = self.statuses.lock().map_err(|_| query_error("conversation_state_unavailable", "active event lock poisoned"))?;
+        let mut next_states = states.clone();
+        let mut batch = Vec::with_capacity(events.len());
+        for event in events {
+            if matches!(&event, ProtocolEvent::EventConversationUpserted { .. } | ProtocolEvent::EventConversationDeleted { .. } | ProtocolEvent::EventTurnUpserted { .. } | ProtocolEvent::EventApprovalRequested { .. } | ProtocolEvent::EventApprovalResolved { .. }) {
+                self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            let changed = if let ProtocolEvent::EventConversationUpserted { params, .. } = &event {
+                let row = &params.conversation;
+                let previous = next_states.insert(row.resource.native_resource_id.clone(), row.status);
+                (previous != Some(row.status) && (active(row.status) || previous.is_some_and(active))).then(|| row.clone())
+            } else { None };
+            batch.push(event);
+            if let Some(row) = changed {
+                let version = if let Some(version) = versions.and_then(|values| values.get(&row.resource.native_resource_id)) {
+                    version.clone()
+                } else if shared_state_configured() {
+                    SharedConversationStateStore::from_env()?.activity_versions(&[row.resource.clone()])?.remove(0)
+                } else { format!("active:{:?}:{}", row.status, row.updated_at.unwrap_or_default()) };
+                let revision = self.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                batch.push(ProtocolEvent::EventConversationActiveChanged { jsonrpc: "2.0".into(), params: ConversationActiveChangedEvent {
+                    conversation: resource(&self.route, row.resource.native_resource_id), status: row.status,
+                    activity_version: version, active: active(row.status), revision: format!("active-{revision}"),
+                } });
+            }
         }
-        let changed = if let ProtocolEvent::EventConversationUpserted { params, .. } = &event {
-            let row = &params.conversation;
-            let mut states = self.statuses.lock().map_err(|_| query_error("conversation_state_unavailable", "active event lock poisoned"))?;
-            let previous = states.insert(row.resource.native_resource_id.clone(), row.status);
-            (previous != Some(row.status) && (active(row.status) || previous.is_some_and(active))).then(|| row.clone())
-        } else { None };
-        self.sink.publish(event)?;
-        if let Some(row) = changed {
-            let version = if let Some(version) = versions.and_then(|values| values.get(&row.resource.native_resource_id)) {
-                version.clone()
-            } else if shared_state_configured() {
-                SharedConversationStateStore::from_env()?.activity_versions(&[row.resource.clone()])?.remove(0)
-            } else { format!("active:{:?}:{}", row.status, row.updated_at.unwrap_or_default()) };
-            let revision = self.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-            self.sink.publish(ProtocolEvent::EventConversationActiveChanged { jsonrpc: "2.0".into(), params: ConversationActiveChangedEvent {
-                conversation: resource(&self.route, row.resource.native_resource_id), status: row.status,
-                activity_version: version, active: active(row.status), revision: format!("active-{revision}"),
-            } })?;
-        }
+        self.sink.publish_batch(batch)?;
+        // Failed admission must not suppress typed status changes on retry.
+        *states = next_states;
         Ok(())
     }
 }
@@ -118,7 +129,7 @@ impl ConversationAtoms {
                 let versions = SharedConversationStateStore::from_env()?.activity_versions(&resources)?;
                 resources.into_iter().zip(versions).map(|(id, version)| (id.native_resource_id, version)).collect()
             } else { BTreeMap::new() };
-            events.into_iter().try_for_each(|event| sink.publish_locked(event, Some(&versions)))
+            sink.publish_batch_locked(events, Some(&versions))
         })?.transpose().map(|result| result.is_some())
     }
 

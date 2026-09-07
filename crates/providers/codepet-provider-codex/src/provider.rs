@@ -89,6 +89,7 @@ impl ExecutionLifecycleHook for NoopExecutionLifecycleHook {}
 struct InstanceMutable {
     atomic_task: Option<tokio::task::JoinHandle<()>>,
     atomic_facts_ready: bool,
+    atomic_readiness_pending: bool,
     atomic_facts_epoch: u64,
     metadata_epoch: u64,
     metadata_task: Option<tokio::task::JoinHandle<()>>,
@@ -421,7 +422,7 @@ impl CodexInstanceRuntime {
             lifecycle_changed: Condvar::new(),
             title_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             mutable: Mutex::new(InstanceMutable {
-                atomic_task: None, atomic_facts_ready: false, atomic_facts_epoch: 0,
+                atomic_task: None, atomic_facts_ready: false, atomic_readiness_pending: false, atomic_facts_epoch: 0,
                 metadata_epoch: 0, metadata_task: None,
                 destroyed: false,
                 cleanup_in_progress: false,

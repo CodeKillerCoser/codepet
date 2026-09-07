@@ -87,6 +87,7 @@ struct ActiveTurnState {
 struct InstanceMutable {
     atomic_task: Option<tokio::task::JoinHandle<()>>,
     atomic_facts_ready: bool,
+    atomic_readiness_pending: bool,
     atomic_facts_epoch: u64,
     status: InstanceStatus,
     session: Option<OpenCodeServerSession>,
@@ -138,7 +139,7 @@ impl OpenCodeInstanceRuntime {
             capabilities: Mutex::new(OpenCodeProtocolMapper::base_capabilities()),
             boot_id,
             mutable: Mutex::new(InstanceMutable {
-                atomic_task: None, atomic_facts_ready: false, atomic_facts_epoch: 0,
+                atomic_task: None, atomic_facts_ready: false, atomic_readiness_pending: false, atomic_facts_epoch: 0,
                 status: InstanceStatus::Created,
                 session: None,
                 session_generation: None,
@@ -3039,6 +3040,12 @@ impl OpenCodeInstanceRuntime {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     continue;
                 }
+                let pending = lock(&runtime.mutable).atomic_readiness_pending;
+                if pending && !runtime.set_atomic_readiness_for(&generation, false) {
+                    drop(runtime);
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    continue;
+                }
                 let event_epoch = runtime.atoms.event_epoch();
                 let result = runtime.poll_atomic_changes(&previous).await;
                 if lock(&runtime.mutable).session_generation.as_deref() != Some(generation.as_str()) { return; }
@@ -3063,13 +3070,17 @@ impl OpenCodeInstanceRuntime {
     fn set_atomic_readiness_for(&self, generation: &str, ready: bool) -> bool {
         let mut state = lock(&self.mutable);
         if state.session_generation.as_deref() != Some(generation) || state.status != InstanceStatus::Ready { return false; }
-        if state.atomic_facts_ready == ready { return true; }
-        state.atomic_facts_ready = ready;
-        state.atomic_facts_epoch = state.atomic_facts_epoch.saturating_add(1);
-        let _ = self.events.publish(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent {
+        if state.atomic_facts_ready == ready && !state.atomic_readiness_pending { return true; }
+        if state.atomic_facts_ready != ready {
+            state.atomic_facts_ready = ready;
+            state.atomic_facts_epoch = state.atomic_facts_epoch.saturating_add(1);
+        }
+        state.atomic_readiness_pending = true;
+        let published = self.events.publish(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent {
             instance: self.snapshot_locked(&state), previous_status: Some(state.status),
-        } });
-        true
+        } }).is_ok();
+        state.atomic_readiness_pending = !published;
+        published
     }
 
     async fn poll_atomic_changes(&self, previous: &HashMap<String, Conversation>) -> Result<HashMap<String, Conversation>, ProtocolError> {
@@ -3109,11 +3120,17 @@ impl OpenCodeInstanceRuntime {
             upserted: current.iter().filter(|(id, row)| previous.get(*id) != Some(*row)).map(|(_, row)| row.clone()).collect(),
             deleted: previous.keys().filter(|id| !current.contains_key(*id)).cloned().collect(),
         };
-        events.extend(conversation_atoms::summary_delta_events(&self.route, delta));
-        match self.atoms.commit_events(epoch, events) {
+        let mut facts = conversation_atoms::summary_delta_events(&self.route, delta);
+        facts.append(&mut events);
+        match self.atoms.commit_events(epoch, facts) {
             Ok(true) => Ok(true),
             Ok(false) => { state.atomic_facts_ready = old_ready; state.atomic_facts_epoch = old_epoch; Ok(false) },
-            Err(error) => { state.atomic_facts_ready = false; Err(error) },
+            Err(error) => {
+                state.atomic_facts_ready = false;
+                state.atomic_facts_epoch = state.atomic_facts_epoch.saturating_add(1);
+                state.atomic_readiness_pending = true;
+                Err(error)
+            },
         }
     }
 }

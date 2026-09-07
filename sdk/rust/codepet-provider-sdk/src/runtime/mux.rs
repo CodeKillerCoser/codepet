@@ -7,6 +7,21 @@ use super::{ProviderEventSink, StdioServerError, StdioServerOptions};
 use std::{io::{Read, Write}, sync::{Arc, atomic::{AtomicBool, Ordering}}};
 use tokio::sync::Semaphore;
 
+struct ObservedEvents {
+    activity: Arc<super::activity::Activity>,
+    sink: Arc<dyn ProviderEventSink>,
+}
+impl ProviderEventSink for ObservedEvents {
+    fn publish(&self, event: crate::generated::ProtocolEvent) -> Result<(), ProtocolError> {
+        self.activity.event(&event);
+        self.sink.publish(event)
+    }
+    fn publish_batch(&self, events: Vec<crate::generated::ProtocolEvent>) -> Result<(), ProtocolError> {
+        for event in &events { self.activity.event(event); }
+        self.sink.publish_batch(events)
+    }
+}
+
 fn response(id: Option<String>, result: Result<serde_json::Value, ProtocolError>) -> JsonRpcResponse {
     JsonRpcResponse { jsonrpc: "2.0".into(), id, response: match result {
         Ok(result) => JsonRpcResponsePayload::Ok { result },
@@ -32,20 +47,18 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
     let output_closed = Arc::new(AtomicBool::new(false));
     let (sink, mut event_rx) = super::events::queued_events(output_closed.clone());
     let activity = Arc::new(super::activity::Activity::default());
-    let observed_activity = activity.clone();
-    let observed_sink: Arc<dyn ProviderEventSink> = Arc::new(move |event: crate::generated::ProtocolEvent| {
-        observed_activity.event(&event);
-        sink.publish(event)
-    });
+    let observed_sink: Arc<dyn ProviderEventSink> = Arc::new(ObservedEvents { activity: activity.clone(), sink });
     let provider = Arc::new(factory(observed_sink.clone()));
     let event_peer = peer.clone();
     let mut event_task = tokio::spawn(async move {
-        while let Some((event, _permit)) = event_rx.recv().await {
+        while let Some(batch) = event_rx.recv().await {
+          for (event, _permit) in batch {
             if let Err(e) = event_peer.send_event(event).await {
                 if e.code == "provider_message_encode_failed" {
                     eprintln!("Provider event rejected before body transmission: {}", e.message);
                 } else { return Err(e); }
             }
+          }
         }
         Ok::<_, ProtocolError>(())
     });
