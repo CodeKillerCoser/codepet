@@ -135,7 +135,8 @@
 .main-theme :is(.primary-action, .connection-primary-button):hover { background: var(--amber-10); }
 .main-theme .segmented button.active { background: var(--color-main-selected); color: var(--color-main-selected-text); border-color: var(--app-border-strong); }
 .main-theme button:disabled { opacity: 1; color: var(--app-muted); cursor: not-allowed; }
-.main-theme :is(input[type="text"], input[type="password"], input[type="url"], input[type="number"], input[type="time"], select, textarea, input:not([type])) {
+.main-theme :is(.primary-action, .connection-primary-button):disabled { background: var(--app-surface-soft); border-color: var(--app-border-strong); color: var(--app-muted); }
+.main-theme :is(input[type="text"], input[type="search"], input[type="password"], input[type="url"], input[type="number"], input[type="time"], select, textarea, input:not([type])) {
   min-height: 32px;
   min-width: 0;
   max-width: 100%;
@@ -153,6 +154,12 @@
 .main-theme .modal-scrim { background: var(--color-main-scrim); }
 .main-theme :is(.update-dialog, .pair-device-dialog) { background: var(--app-surface); backdrop-filter: none; border: 1px solid var(--app-border); border-radius: 10px; box-shadow: 0 12px 40px var(--app-shadow); }
 .main-theme svg.lucide { stroke-width: 1.75; }
+.main-theme .status-chip.online { background: var(--color-main-success-bg); color: var(--color-main-success-text); }
+.main-theme .status-chip.runtime-danger { background: var(--color-main-danger-bg); color: var(--color-main-danger-text); }
+.main-theme .journal { padding: 0; }
+.main-theme .journal button { min-height: 32px; padding: 6px 10px; border-radius: 6px; font-size: var(--font-size-sm-plus); }
+.main-theme .journal :is(.status, .source, time, .empty) { opacity: 1; color: var(--app-muted); }
+.main-theme .journal :is(.status, .source, .method, time, pre) { font-size: var(--font-size-sm); }
 
 @media (max-width: 1120px) {
   .main-theme .personal-grid { grid-template-columns: minmax(0, 1fr); }

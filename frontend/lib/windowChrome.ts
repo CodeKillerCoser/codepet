@@ -17,14 +17,14 @@ export function createWindowChrome() {
   return {
     platform,
     native,
-    async initialize(onMaximized: (value: boolean) => void) {
+    async initialize(onMaximized: (value: boolean) => void, onError: (error: unknown) => void) {
       if (!current) return () => {};
       // Install the controls before removing the Windows caption. macOS keeps
       // its native traffic lights in the configured overlay title bar.
       if (platform === "windows") await current.setDecorations(false);
       const sync = async () => onMaximized(await current.isMaximized());
       await sync();
-      return current.onResized(() => { void sync(); });
+      return current.onResized(() => { void sync().catch(onError); });
     },
     minimize: async () => { await current?.minimize(); },
     toggleMaximize: async () => { await current?.toggleMaximize(); },

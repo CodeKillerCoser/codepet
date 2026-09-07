@@ -121,6 +121,23 @@ UI 字体：`-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Micr
 
 ## 当前交付与未知项
 
-交付为已确认的可交互视觉稿、可编辑源稿与本规范。稿中的 Provider 数据、时间和操作均为演示，不代表新增后端能力。导出的 macOS／Windows 页面可直接在浏览器打开；图标使用预览运行时的资源，首次加载需要网络。早期 PNG 保留为历史稿。
+交付包括已确认的可交互视觉稿、可编辑源稿、本规范，以及主窗口框架实现。稿中的 Provider 数据、时间和操作均为演示，不代表新增后端能力。导出的 macOS／Windows 页面可直接在浏览器打开；图标使用预览运行时的资源，首次加载需要网络。早期 PNG 保留为历史稿。
 
-已在前轮预览验证详情打开与 Esc 焦点返回、筛选添加／校验／清空、亮暗主题、常规宽度覆盖抽屉及宽屏并排布局。本次最终版已在 1024×780 浏览器预览检查 macOS 浅色和 Windows 暗色、平台按钮位置与轻描边效果；源稿脚本通过 Node 语法解析，`git diff --check` 通过。生产 UI 未修改，未运行生产测试；原生标题栏、系统缩放、全部状态对比度及平台行为待落地验证。原先 68 组颜色检查仅属于旧映射，不覆盖最终稿。
+前轮视觉稿预览已验证详情打开与 Esc 焦点返回、筛选添加／校验／清空、亮暗主题、常规宽度覆盖抽屉及宽屏并排布局；这些是稿件交互，不是本次新增产品功能。原先 68 组颜色检查仅属于旧映射，不覆盖最终稿。
+
+### 2026-09-08 主窗口框架落地
+
+目标是更新框架、布局、配色、字体和间距；页面字段、文案、业务操作及排序保持现状。与视觉稿提交 `ca316e3` 逐字比较，`App.svelte` 的 Agent 至事件页产品模板完全一致，脚本除工具栏导入和侧栏折叠状态外完全一致。
+
+- `frontend/App.svelte`：增加全局工具栏和固定内容标题区，内容独立滚动；更新弹窗纳入主题祖先。
+- `frontend/main-window.css`、`frontend/lib/theme/main-window.css`：仅在 `.main-theme` 内覆盖共享样式，保留桌宠窗口和用户自定义气泡色。事件页取消二次内边距，搜索框、原生滚动条跟随主题；主动作禁用态采用中性色。接收／错误标签使用状态色 3 阶背景和 12 阶文字，避免旧混色小字对比度不足。
+- `frontend/lib/WindowToolbar.svelte`、`windowChrome.ts`：平台检测和窗口调用收敛于适配层，支持折叠、Windows 窗口动作、最大化状态订阅与清理；异步错误进入现有提示。
+- `src-tauri/src/platform/main_window.rs`、窗口配置：macOS 采用 Overlay 和隐藏标题，保留系统红黄绿；托盘重建主窗口沿用同样配置。`capabilities/main-window.json` 的新增权限仅属于主窗口。
+
+验证证据：生产构建通过，styles／connections／windowChrome 共 42 项测试通过。使用隔离 Tauri 数据的生产页面检查了 820×600、980×700、1440×900，覆盖五个导航页、亮暗主题、导航折叠和键盘焦点。长个性化页面滚动 3102.5px 时，标题区仍位于 y=41，高 52px；内容无横向溢出。品牌行 36px、侧栏 192px、内容圆角 16px，无面板阴影。Windows 分支按钮位于右上方；macOS 浏览器分支保留 70px 原生按钮空间且不生成 Windows 控件。测试桥接不连接真实设置或设备。
+
+最终生产页面的计算样式抽查（包含浏览器采用的 Display P3 色值，按线性亮度计算）：正文／辅助文字／导航选中／接收状态，浅色依次为 16.29／6.05／10.47／10.87:1，深色为 15.73／8.72／12.98／11.85:1，均超过小字号文字 4.5:1。此抽查不冒充全部状态穷举，也不替代历史颜色文件。
+
+命令：`npm run build`；`node node_modules/vitest/vitest.mjs run frontend/styles.test.ts frontend/connections.test.ts frontend/lib/windowChrome.test.ts --maxWorkers=1 --minWorkers=1`；`git diff --check`。普通 `cargo check --manifest-path src-tauri/Cargo.toml --offline -j 2` 因缺少未生成的 `resources/provider-sdk` 停在打包资源检查。临时设置 `TAURI_CONFIG={"bundle":{"resources":[]}}` 后同一命令通过，确认 Windows 源码及能力配置有效；这不代表完整打包通过，正式配置未修改。
+
+剩余验收：真实 Windows／macOS 窗口的拖动、最大化、关闭后托盘重开与系统缩放，以及 macOS 全屏和红黄绿命中区域；当前浏览器桥接只能证明 DOM 分支和动作路由，不能代替原生实机。正式打包需先生成 Provider SDK 资源。生产浮层的焦点／Esc 行为未作功能改动，仍需在真实配对和更新场景复核。

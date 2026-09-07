@@ -15,7 +15,7 @@
   onMount(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void chrome.initialize((value) => { if (!disposed) maximized = value; })
+    void chrome.initialize((value) => { if (!disposed) maximized = value; }, (error) => { if (!disposed) onError(String(error)); })
       .then((cleanup) => { if (disposed) cleanup(); else unlisten = cleanup; })
       .catch((error) => onError(String(error)));
     return () => { disposed = true; unlisten?.(); };

@@ -1,5 +1,6 @@
 /* Main-window semantic roles. Pet-window palettes and persisted colors stay separate. */
 .main-theme {
+  color-scheme: light;
   --font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-family-code: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --font-weight-normal: 400;
@@ -29,6 +30,10 @@
   --color-main-scrim: #00000038;
   --color-main-close-hover: #c42b1c;
   --color-main-on-close: #ffffff;
+  --color-main-success-bg: var(--grass-3);
+  --color-main-success-text: var(--grass-12);
+  --color-main-danger-bg: var(--red-3);
+  --color-main-danger-text: var(--red-12);
   --color-focus-ring: var(--amber-11);
   --color-text-primary: var(--sand-12);
   --color-text-muted: var(--sand-11);
@@ -51,6 +56,7 @@
 }
 
 .main-theme.dark {
+  color-scheme: dark;
   --color-main-chrome: #1c1e21;
   --color-main-canvas: #141516;
   --color-main-outline: #ffffff08;
