@@ -380,6 +380,9 @@ dependencies = [
 name = "codepet-provider-sdk"
 version = "0.1.0"
 dependencies = [
+ "tempfile",
+ "ring",
+ "fs2",
  "codepet-agent-sdk",
  "codepet-core-sdk",
  "dirs",
