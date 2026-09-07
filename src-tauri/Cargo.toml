@@ -1,6 +1,6 @@
 [package]
 name = "code-pet"
-version = "0.1.5"
+version = "0.3.9-beta"
 description = "Pixel desktop pet for Codex, Claude Code, and Qoder hooks"
 authors = ["Code Pet Contributors"]
 edition = "2021"
