@@ -37,8 +37,10 @@ impl Projection {
         if !self.seen.insert(key.clone()) { return; }
         self.order.push_back(key);
         if self.order.len() > 2048 { if let Some(id) = self.order.pop_front() { self.seen.remove(&id); } }
-        let raw = serde_json::to_value(&event.payload).unwrap();
-        if raw.get("codepet_gap").and_then(Value::as_bool) == Some(true) { self.source_status(provider, "error", "活动事件存在缺口，部分任务状态待确认"); }
+        let envelope = serde_json::to_value(&event.payload).unwrap();
+        let observation = envelope.get("codepet_observation");
+        let raw = observation.and_then(|value| value.get("raw")).unwrap_or(&envelope).clone();
+        if observation.and_then(|value| value.get("gap")).or_else(|| raw.get("codepet_gap")).and_then(Value::as_bool) == Some(true) { self.source_status(provider, "error", "活动事件存在缺口，部分任务状态待确认"); }
         let name = text(&raw, &["hook_event_name", "type"]).unwrap_or_default();
         if name == "codepet.source.unavailable" {
             self.source_status(provider, "error", &text(&raw, &["message"]).unwrap_or_else(|| "当前来源不支持活动订阅".into()));
@@ -105,6 +107,16 @@ mod tests {
     fn event(id: &str, name: &str, turn: &str, time: u64) -> ProviderNotificationEvent {
         ProviderNotificationEvent { subscription_id:"pet".into(), event_id:id.into(), received_at:time, payload:json!({"hook_event_name":name,"session_id":"session","turn_id":turn,"codepet_observed_at":time}).as_object().unwrap().clone().into_iter().collect() }
     }
+    #[test]
+    fn observation_envelope_keeps_existing_activity_projection() {
+        let mut projection = state();
+        let mut input = event("wrapped", "UserPromptSubmit", "turn", 10);
+        let raw = serde_json::to_value(&input.payload).unwrap();
+        input.payload = json!({"codepet_observation":{"raw": raw, "gap":false}}).as_object().unwrap().clone().into_iter().collect();
+        projection.apply("codex", input);
+        assert_eq!(projection.snapshot().tasks[0].status, Status::Running);
+    }
+
     #[test]
     fn tool_failure_subagent_and_old_turn_do_not_end_current_task() {
         let mut p=state();

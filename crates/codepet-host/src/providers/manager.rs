@@ -150,6 +150,7 @@ impl PluginEntry {
 }
 
 struct PluginManagerInner {
+    event_journal: StdMutex<Option<Arc<crate::event_journal::EventJournal>>>,
     device: Arc<DeviceRegistry>,
     instances: ProviderInstanceRegistry,
     plugins: RwLock<BTreeMap<String, PluginEntry>>,
@@ -251,6 +252,7 @@ impl PluginManager {
         let (updates, update_receiver) = mpsc::channel(config.event_capacity.max(1));
         Ok(Self {
             inner: Arc::new(PluginManagerInner {
+                event_journal: StdMutex::new(None),
                 device,
                 instances,
                 plugins: RwLock::new(plugins),
@@ -269,6 +271,10 @@ impl PluginManager {
                 config,
             }),
         })
+    }
+
+    pub fn set_event_journal(&self, journal: Arc<crate::event_journal::EventJournal>) {
+        *self.inner.event_journal.lock().unwrap() = Some(journal);
     }
 
     pub fn subscribe_runtime_changes(&self) -> tokio::sync::watch::Receiver<u64> { self.inner.runtime_changes.subscribe() }
@@ -1418,6 +1424,9 @@ impl PluginManager {
         plugin_id: &str,
         event: ProtocolEvent,
     ) -> HostResult<()> {
+        if let Some(journal) = self.inner.event_journal.lock().unwrap().as_ref() {
+            journal.provider(plugin_id, &event);
+        }
         if let ProtocolEvent::RuntimeInventoryChanged {params,..} = event {
             let (first,generation)={
                 let mut plugins=self.inner.plugins.write().await;

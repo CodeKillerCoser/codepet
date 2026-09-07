@@ -583,6 +583,10 @@ fn configured_provider_runtime(
         instances,
         provider_manager_config(&settings),
     )?);
+    match crate::app::event_journal::journal() {
+        Ok(journal) => manager.set_event_journal(journal.clone()),
+        Err(error) => crate::app_log::error("event-journal", &error),
+    }
     manager.enable_connection_heartbeats();
     let gateway = Arc::new(ProviderGatewayService::with_remote_identity_and_state_path(
         manager.clone(),
