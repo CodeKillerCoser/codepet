@@ -3046,7 +3046,7 @@ impl OpenCodeInstanceRuntime {
                     Ok(current) => match runtime.apply_atomic_snapshot(&generation, event_epoch, &previous, &current) {
                         Ok(true) => previous = current,
                         Ok(false) => {},
-                        Err(_) => { runtime.set_atomic_readiness_for(&generation, false); return; }
+                        Err(_) => { runtime.set_atomic_readiness_for(&generation, false); }
                     },
                     Err(error) => { eprintln!("OpenCode atomic discovery unavailable: {}", error.message); runtime.set_atomic_readiness_for(&generation, false); }
                 }

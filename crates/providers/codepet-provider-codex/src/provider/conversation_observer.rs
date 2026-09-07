@@ -47,7 +47,7 @@ impl CodexInstanceRuntime {
                     match runtime.atoms.commit_events(expected, events) {
                         Ok(true) => Applied,
                         Ok(false) => { state.atomic_facts_ready = old_ready; state.atomic_facts_epoch = old_epoch; Retry },
-                        Err(_) => { state.atomic_facts_ready = false; Stop },
+                        Err(_) => { state.atomic_facts_ready = false; Retry },
                     }
                 }
                 Err(error) if error.code == "conversation_snapshot_changed" => Retry,

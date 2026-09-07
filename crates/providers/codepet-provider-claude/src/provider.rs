@@ -509,6 +509,7 @@ impl ClaudeInstanceRuntime {
         let mut mutable = lock(&self.mutable);
         if strict && (mutable.lifecycle_generation != generation || check_discovery_cancelled(cancelled).is_err()) { return Err(conversation_atoms::generation_changed()); }
         let mut install = || -> Result<(), ProtocolError> {
+        if strict { check_discovery_cancelled(cancelled)?; }
         if strict {
             let mut deleted = Vec::new();
             for (id, managed) in &mutable.conversations {
