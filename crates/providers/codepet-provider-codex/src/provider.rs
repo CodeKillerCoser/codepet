@@ -3088,7 +3088,7 @@ fn bounded_runtime_version(executable: &Path, timeout: Duration, control: local_
                 let output = child.wait_with_output().map_err(|error| protocol_error(
                     "invalid_runtime_selection", format!("Read runtime version: {error}"), false))?;
                 if !status.success() {
-                    return Err(protocol_error("invalid_runtime_selection", format!("Runtime executable rejected --version: {status}"), false));
+                    return Err(protocol_error("invalid_runtime_selection", format!("Runtime executable {} rejected --version: {status}; {}", executable.display(), String::from_utf8_lossy(&output.stderr).chars().take(1024).collect::<String>().trim()), false));
                 }
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);

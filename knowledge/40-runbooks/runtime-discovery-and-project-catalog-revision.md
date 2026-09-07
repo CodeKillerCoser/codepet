@@ -53,3 +53,15 @@ Codex 后台探测路径由 `1c4e33d` 引入。Claude 的非交互 shell 限制�
 ## 未知项
 
 修复的新启动边界的安装版端到端验收结果另行补充；当前 APK 已复现不等于已验证修复后的 Host。原生返回项目数证明数据存在，不证明每个项目的会话详情均已验证。
+
+## 后续：找到 npm Codex 后版本扫描退出 127
+
+2026-09-07 用户升级后报告 `runtime-scan-failed: Runtime executable rejected --version: exit status: 127`。Mac mini 日志最新启动版本为 `0.3.9-beta+64c3178`。SSH 检查确认 `~/.npm-global/bin/codex` 指向 `../lib/node_modules/@openai/codex/bin/codex.js`，Node 位于 `/usr/local/bin/node`。以 `PATH=/usr/bin:/bin:/usr/sbin:/sbin` 直接运行该 Codex 返回 `env: node: No such file or directory`；加入 `/usr/local/bin` 后返回 `codex-cli 0.148.0`。同环境的 OpenCode 原生入口正常返回 `1.18.26`。
+
+根因：`ad13293` 读取 shell PATH 后仅用来发现文件，未将其用于扫描和启动。入口脚本的绝对路径已经正确，但 `env node` 仍继承 Provider 的精简 PATH。此前实机验证覆盖原生 Claude，未覆盖需要 Node 的 npm Codex。
+
+修复涉及 SDK `local_runtime` 和 `background_probe`：后台发现保存 shell PATH，同步 runtime 命令与异步探测统一使用该快照。重新检测会重新读取 shell；不修改进程全局 PATH，不增加每个探测的 shell 开销。Codex/OpenCode 的失败诊断同时补充具体可执行路径和最多 1024 字符的 stderr，便于区分候选安装与缺失解释器。
+
+回归测试 `discovered_shell_path_reaches_version_and_runtime_children` 在独立进程中构造空格/中文 npm 路径与 `env` 解释器入口：确认原始环境返回 127，修复入口的版本、服务启动参数和异步账号探测成功，并确认父进程 PATH 不变。Windows 分支不注入 shell PATH；跨平台风险用三个 Provider 测试验证，Windows 实际运行仍需 CI。
+
+本次验证：SDK `cargo test --manifest-path sdk/rust/codepet-provider-sdk/Cargo.toml --lib` 31 项通过，含显式子进程 PATH 不被覆盖；三个 Provider 的 `--lib --test provider_vertical -- --test-threads=4` 共 144 项通过、2 项忽略。`git diff --check` 通过。Mac mini 上旧环境失败与补足 PATH 成功均已实测；随后 SSH `30.45.179.43:22` 连续超时，未能上传修复版 native_runtime 测试程序，实机完整 Ready 验证和安装包验收仍未完成。

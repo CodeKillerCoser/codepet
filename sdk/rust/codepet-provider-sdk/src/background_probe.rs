@@ -21,6 +21,7 @@ pub async fn output(
     mut command: tokio::process::Command,
     timeout: Duration,
 ) -> io::Result<std::process::Output> {
+    crate::local_runtime::runtime_environment(command.as_std_mut());
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

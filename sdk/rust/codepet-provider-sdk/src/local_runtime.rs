@@ -4,7 +4,25 @@ use std::path::{Path, PathBuf};
 
 /// Background runtime processes retain their stdio pipes but never create a console window.
 pub fn command(program: impl AsRef<std::ffi::OsStr>) -> crate::process::Command {
-    crate::process::Command::new(program)
+    let mut command = crate::process::Command::new(program);
+    runtime_environment(&mut command);
+    command
+}
+
+#[cfg(not(windows))]
+static RUNTIME_PATH: std::sync::RwLock<Option<std::ffi::OsString>> = std::sync::RwLock::new(None);
+
+/// Reuse the PATH captured by background discovery for probes and runtime children.
+/// Never start a shell here: callers may run on the async executor.
+pub fn runtime_environment(command: &mut std::process::Command) {
+    #[cfg(not(windows))]
+    if let Some(path) = RUNTIME_PATH.read().unwrap().as_ref() {
+        if !command.get_envs().any(|(key, _)| key == "PATH") {
+            command.env("PATH", path);
+        }
+    }
+    #[cfg(windows)]
+    let _ = command;
 }
 
 /// Discover off the executor, then probe distinct executables concurrently.
@@ -585,15 +603,17 @@ fn login_shell_command(command: &str, npm_package: &str) -> Option<PathBuf> {
                 "/bin/sh"
             })
         });
-    login_shell_command_with_shell(command, npm_package, crate::process::Command::new(shell))
+    let paths = login_shell_path(crate::process::Command::new(shell));
+    *RUNTIME_PATH.write().unwrap() = paths.clone();
+    paths.and_then(|paths| std::env::split_paths(&paths)
+        .flat_map(|directory| candidates_in(&directory, command, npm_package))
+        .next())
 }
 
 #[cfg(not(windows))]
-fn login_shell_command_with_shell(
-    command: &str,
-    npm_package: &str,
+fn login_shell_path(
     mut shell: crate::process::Command,
-) -> Option<PathBuf> {
+) -> Option<std::ffi::OsString> {
     use std::{process::Stdio, time::{Duration, Instant}};
     use std::os::unix::ffi::OsStringExt;
     // Interactive startup files commonly own npm/nvm PATH entries. Read the PATH
@@ -612,10 +632,7 @@ fn login_shell_command_with_shell(
                 let output = child.wait_with_output().ok()?;
                 if !status.success() { return None; }
                 let paths = output.stdout.split(|byte| *byte == 0).nth(1)?;
-                let paths = std::ffi::OsString::from_vec(paths.to_vec());
-                return std::env::split_paths(&paths)
-                    .flat_map(|directory| candidates_in(&directory, command, npm_package))
-                    .next();
+                return Some(std::ffi::OsString::from_vec(paths.to_vec()));
             }
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
             _ => {
@@ -654,6 +671,59 @@ mod tests {
     use super::*;
     #[cfg(target_os = "macos")]
     #[test]
+    fn discovered_shell_path_reaches_version_and_runtime_children() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("npm prefix 中文").join("bin");
+        std::fs::create_dir_all(&directory).unwrap();
+        for (name, content) in [
+            ("codepet_fixture_agent", "#!/usr/bin/env codepet_fixture_node\n"),
+            ("codepet_fixture_node", "#!/bin/sh\nprintf 'fixture-runtime %s\\n' \"$2\"\n"),
+        ] {
+            let path = directory.join(name);
+            std::fs::write(&path, content).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(temp.path().join(".zshrc"),
+            "export PATH=\"$ZDOTDIR/npm prefix 中文/bin:/usr/bin:/bin\"\n").unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "local_runtime::tests::runtime_path_child", "--nocapture"])
+            .env("SHELL", "/bin/zsh")
+            .env("ZDOTDIR", temp.path())
+            .env("PATH", "/usr/bin:/bin")
+            .output().unwrap();
+        assert!(output.status.success(), "{}\n{}",
+            String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    #[ignore = "isolated process for runtime environment regression"]
+    async fn runtime_path_child() {
+        let parent_path = std::env::var_os("PATH").unwrap();
+        let candidates = tokio::task::spawn_blocking(|| discover("codepet_fixture_agent", "missing"))
+            .await.unwrap();
+        let executable = &candidates.first().expect("shell runtime discovered").executable_path;
+        let original = std::process::Command::new(executable).arg("--version").output().unwrap();
+        assert_eq!(original.status.code(), Some(127));
+        for arg in ["--version", "app-server"] {
+            let output = command(executable).arg(arg).output().unwrap();
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), format!("fixture-runtime {arg}"));
+        }
+        let mut probe = tokio::process::Command::new(executable);
+        probe.arg("auth");
+        let output = crate::background_probe::run(probe, std::time::Duration::from_secs(5)).await.unwrap();
+        assert_eq!(output.trim(), "fixture-runtime auth");
+        let mut explicit = tokio::process::Command::new(executable);
+        explicit.env("PATH", &parent_path);
+        let output = crate::background_probe::output(explicit, std::time::Duration::from_secs(5)).await.unwrap();
+        assert_eq!(output.status.code(), Some(127), "explicit child PATH must be preserved");
+        assert_eq!(std::env::var_os("PATH").unwrap(), parent_path);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn login_shell_discovers_interactive_path_despite_function_and_banner() {
         let temp = tempfile::tempdir().unwrap();
         let directory = temp.path().join("npm prefix 中文").join("bin");
@@ -664,7 +734,10 @@ mod tests {
             "export PATH=\"$ZDOTDIR/npm prefix 中文/bin:$PATH\"\necho 'shell startup banner'\ncodepet_fixture_agent() { echo wrapper; }\n").unwrap();
         let mut shell = crate::process::Command::new("/bin/zsh");
         shell.env("ZDOTDIR", temp.path());
-        assert_eq!(login_shell_command_with_shell("codepet_fixture_agent", "missing", shell), Some(binary));
+        let paths = login_shell_path(shell).unwrap();
+        assert_eq!(std::env::split_paths(&paths)
+            .flat_map(|directory| candidates_in(&directory, "codepet_fixture_agent", "missing"))
+            .next(), Some(binary));
     }
 
     #[tokio::test(flavor = "current_thread")]
