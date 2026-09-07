@@ -5,7 +5,7 @@ impl CodexInstanceRuntime {
         let generation = lock(&self.mutable).lifecycle_generation;
         let loader = Arc::downgrade(self);
         let publisher = loader.clone();
-        let task = conversation_atoms::spawn_summary_poll(move |previous| {
+        let task = conversation_atoms::spawn_summary_poll(move |previous| -> ProtocolFuture<'static, Vec<Conversation>> {
             let owner = loader.clone();
             Box::pin(async move {
                 let runtime = owner.upgrade().ok_or_else(conversation_atoms::generation_changed)?;

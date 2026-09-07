@@ -2024,6 +2024,27 @@ mod tests {
     }
 
     #[test]
+    fn loaded_list_preserves_native_pagination_and_reads_metadata_without_turns() {
+        let (session, peer_receiver, peer_sender) = mock_session();
+        let source = session.clone();
+        let operation = thread::spawn(move || {
+            let page = source.thread_loaded_list(Some("previous-id".into()), 100).unwrap();
+            assert_eq!(page, (vec!["loaded-id".into()], Some("loaded-id".into())));
+            source.thread_read_metadata("loaded-id").unwrap()
+        });
+        let list = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(list["method"], "thread/loaded/list");
+        assert_eq!(list["params"], json!({"cursor":"previous-id","limit":100}));
+        peer_sender.send(json!({"id":list["id"],"result":{"data":["loaded-id"],"nextCursor":"loaded-id"}})).unwrap();
+        let read = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(read["method"], "thread/read");
+        assert_eq!(read["params"]["includeTurns"], false);
+        peer_sender.send(json!({"id":read["id"],"result":{"thread":thread_fixture("loaded-id","/tmp/project","idle",vec![])}})).unwrap();
+        assert_eq!(operation.join().unwrap().thread.id, "loaded-id");
+        session.shutdown().unwrap();
+    }
+
+    #[test]
     fn thread_list_preserves_native_cwds_from_the_wire() {
         let worktree = "/fixture/.codex/worktrees/linked/project";
         let deleted = "/fixture/.codex/worktrees/deleted/project";

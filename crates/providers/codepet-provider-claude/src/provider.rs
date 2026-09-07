@@ -3324,6 +3324,28 @@ impl ClaudeInstanceRuntime {
 mod atomic_query_tests {
     use super::*;
     #[test]
+    fn history_summary_cache_refreshes_changed_files_and_removes_confirmed_missing_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let project = directory.path().join("projects").join("workspace");
+        std::fs::create_dir_all(&project).unwrap();
+        let path = project.join("session.jsonl");
+        let route = ProviderInstanceRoute { device_id: "device".into(), provider_plugin_id: CLAUDE_PLUGIN_ID.into(), provider_instance_id: "claude".into() };
+        let record = |text| serde_json::to_vec(&json!({"sessionId":"session","cwd":directory.path(),"message":{"role":"assistant","content":text}})).unwrap();
+        std::fs::write(&path, record("first")).unwrap();
+        let mut cache = HashMap::new();
+        let first = discover_claude_conversations_with_mode(directory.path(), &route, true, None, Some(&mut cache)).unwrap();
+        assert_eq!(first[0].conversation.preview.as_deref(), Some("first"));
+        std::fs::write(&path, record("second response with a different size")).unwrap();
+        let second = discover_claude_conversations_with_mode(directory.path(), &route, true, None, Some(&mut cache)).unwrap();
+        assert_eq!(second[0].conversation.preview.as_deref(), Some("second response with a different size"));
+        std::fs::remove_file(path).unwrap();
+        assert!(discover_claude_conversations_with_mode(directory.path(), &route, true, None, Some(&mut cache)).unwrap().is_empty());
+        assert!(cache.is_empty());
+        let cancelled = AtomicBool::new(true);
+        assert!(discover_claude_conversations_with_mode(directory.path(), &route, true, Some(&cancelled), Some(&mut cache)).is_err());
+    }
+
+    #[test]
     fn strict_history_discovery_enumerates_all_and_does_not_hide_corrupt_files() {
         let directory = tempfile::tempdir().unwrap();
         let project = directory.path().join("projects").join("workspace");
