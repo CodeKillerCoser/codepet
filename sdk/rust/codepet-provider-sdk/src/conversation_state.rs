@@ -186,6 +186,16 @@ impl SharedConversationStateStore {
         self.observe_fingerprint(&conversation.resource, FingerprintKind::Summary, fingerprint)
     }
 
+    /// Whether summary observation changed any stored fact (including a new
+    /// baseline record), independent of whether its activity version advanced.
+    pub fn observe_summary_changed(&self, conversation: &gateway::Conversation) -> StateResult<bool> {
+        let Some(value) = summary_fingerprint(conversation) else { return Ok(false); };
+        let mut document = self.lock()?;
+        let (_, dirty) = observe_in_document(&mut document, &conversation.resource, FingerprintKind::Summary, value)?;
+        if dirty { self.persist(&document)?; }
+        Ok(dirty)
+    }
+
     pub fn observe_detail(
         &self,
         conversation: &gateway::RoutedResourceId,
@@ -283,7 +293,6 @@ impl SharedConversationStateStore {
     pub fn observe_and_decorate_summaries(&self, scope: &str, rows: &mut [gateway::Conversation]) -> StateResult<bool> {
         let mut document = self.lock()?;
         let mut dirty = ensure_scope(&mut document, scope);
-        let before = document.latest_version;
         for row in rows.iter_mut() {
             if let Some(value) = summary_fingerprint(row) {
                 dirty |= observe_in_document(&mut document, &row.resource, FingerprintKind::Summary, value)?.1;
@@ -291,7 +300,7 @@ impl SharedConversationStateStore {
             decorate_from_document(&document, scope, row);
         }
         if dirty { self.persist(&document)?; }
-        Ok(document.latest_version != before)
+        Ok(dirty)
     }
 
     pub fn decorate_many(&self, scope: &str, rows: &mut [gateway::Conversation]) -> StateResult<()> {
@@ -614,6 +623,18 @@ mod tests {
         assert_eq!(store.observe_summary(&rows[0]).unwrap(), None);
         assert!(!store.observe_and_decorate_summaries("mobile", &mut rows).unwrap());
         assert_eq!(fs::read(&path).unwrap(), marker);
+    }
+
+    #[test]
+    fn new_baseline_records_invalidate_views_without_inventing_activity() {
+        let store = SharedConversationStateStore::memory();
+        let row = conversation("baseline");
+        assert!(store.observe_summary_changed(&row).unwrap());
+        assert!(!store.observe_summary_changed(&row).unwrap());
+        assert_eq!(store.activity_versions(&[row.resource.clone()]).unwrap(), ["activity-0"]);
+        let mut rows = vec![row];
+        assert!(store.observe_and_decorate_summaries("new-scope", &mut rows).unwrap());
+        assert!(!store.observe_and_decorate_summaries("new-scope", &mut rows).unwrap());
     }
 
     fn conversation(preview: &str) -> gateway::Conversation {
