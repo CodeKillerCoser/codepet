@@ -52,11 +52,11 @@ struct TrackedEvents {
 impl ProviderEventSink for TrackedEvents {
     fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError> {
         let _guard = self.gate.lock().map_err(|_| query_error("conversation_state_unavailable", "fact commit lock poisoned"))?;
-        self.publish_locked(event)
+        self.publish_locked(event, None)
     }
 }
 impl TrackedEvents {
-    fn publish_locked(&self, event: ProtocolEvent) -> Result<(), ProtocolError> {
+    fn publish_locked(&self, event: ProtocolEvent, versions: Option<&BTreeMap<String, String>>) -> Result<(), ProtocolError> {
         if matches!(&event, ProtocolEvent::EventConversationUpserted { .. } | ProtocolEvent::EventConversationDeleted { .. } | ProtocolEvent::EventTurnUpserted { .. } | ProtocolEvent::EventApprovalRequested { .. } | ProtocolEvent::EventApprovalResolved { .. }) {
             self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
@@ -68,7 +68,9 @@ impl TrackedEvents {
         } else { None };
         self.sink.publish(event)?;
         if let Some(row) = changed {
-            let version = if shared_state_configured() {
+            let version = if let Some(version) = versions.and_then(|values| values.get(&row.resource.native_resource_id)) {
+                version.clone()
+            } else if shared_state_configured() {
                 SharedConversationStateStore::from_env()?.activity_versions(&[row.resource.clone()])?.remove(0)
             } else { format!("active:{:?}:{}", row.status, row.updated_at.unwrap_or_default()) };
             let revision = self.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
@@ -110,8 +112,14 @@ impl ConversationAtoms {
     }
     pub fn commit_events(&self, expected: u64, events: Vec<ProtocolEvent>) -> Result<bool, ProtocolError> {
         let sink = self.tracked_sink.get().ok_or_else(|| query_error("conversation_state_unavailable", "event sink is not configured"))?;
-        self.with_fact_fence(expected, || events.into_iter().try_for_each(|event| sink.publish_locked(event)))?
-            .transpose().map(|result| result.is_some())
+        self.with_fact_fence(expected, || {
+            let resources = events.iter().filter_map(|event| match event { ProtocolEvent::EventConversationUpserted { params, .. } => Some(params.conversation.resource.clone()), _ => None }).collect::<Vec<_>>();
+            let versions = if shared_state_configured() && !resources.is_empty() {
+                let versions = SharedConversationStateStore::from_env()?.activity_versions(&resources)?;
+                resources.into_iter().zip(versions).map(|(id, version)| (id.native_resource_id, version)).collect()
+            } else { BTreeMap::new() };
+            events.into_iter().try_for_each(|event| sink.publish_locked(event, Some(&versions)))
+        })?.transpose().map(|result| result.is_some())
     }
 
     pub fn list_cached(&self, generation: &str, request: &ConversationListRequest) -> Result<Option<ConversationListResponse>, ProtocolError> {
@@ -303,6 +311,35 @@ mod tests {
         assert!(!atoms.commit_events(stale, vec![stale_event]).unwrap());
         assert!(atoms.with_fact_fence(stale, || panic!("stale scan must not install")).unwrap().is_none());
         assert_eq!(emitted.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn native_facts_cannot_interleave_a_committed_scan_batch() {
+        let atoms = std::sync::Arc::new(ConversationAtoms::default());
+        let records = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let output = records.clone();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let release_rx = std::sync::Mutex::new(release_rx);
+        let route = request(serde_json::json!({"kind":"ids","ids":["a"]})).route;
+        let sink = atoms.event_sink(route, std::sync::Arc::new(move |event| {
+            if let ProtocolEvent::EventConversationUpserted { params, .. } = event {
+                let id = params.conversation.resource.native_resource_id;
+                if id == "batch-1" { entered_tx.send(()).unwrap(); release_rx.lock().unwrap().recv().unwrap(); }
+                output.lock().unwrap().push(id);
+            }
+            Ok(())
+        }));
+        let event = |id| ProtocolEvent::EventConversationUpserted { jsonrpc: "2.0".into(), params: ConversationUpsertedEvent { conversation: row(id, Some(100)) } };
+        let owner = atoms.clone();
+        let batch = std::thread::spawn(move || owner.commit_events(0, vec![event("batch-1"),event("batch-2")]).unwrap());
+        entered_rx.recv().unwrap();
+        let (attempt_tx, attempt_rx) = std::sync::mpsc::channel();
+        let native = std::thread::spawn(move || { attempt_tx.send(()).unwrap(); sink.publish(event("native")).unwrap(); });
+        attempt_rx.recv().unwrap();
+        release_tx.send(()).unwrap();
+        assert!(batch.join().unwrap()); native.join().unwrap();
+        assert_eq!(*records.lock().unwrap(), ["batch-1", "batch-2", "native"]);
     }
 
     #[test]
