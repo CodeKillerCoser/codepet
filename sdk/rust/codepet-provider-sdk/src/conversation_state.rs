@@ -637,6 +637,21 @@ mod tests {
         assert!(!store.observe_and_decorate_summaries("new-scope", &mut rows).unwrap());
     }
 
+    #[test]
+    fn new_summary_can_add_unread_at_current_clock_without_advancing_it() {
+        let store = SharedConversationStateStore::memory();
+        let seed = conversation("seed");
+        for index in 0..2 { store.observe_fingerprint(&seed.resource, FingerprintKind::Event, Some(format!("event-{index}"))).unwrap(); }
+        store.ensure_client("old-scope").unwrap();
+        for index in 2..5 { store.observe_fingerprint(&seed.resource, FingerprintKind::Event, Some(format!("event-{index}"))).unwrap(); }
+        let mut newly_seen = conversation("discovered after baseline");
+        newly_seen.resource.native_resource_id = "newly-seen".into();
+        assert!(store.observe_summary_changed(&newly_seen).unwrap());
+        assert_eq!(store.activity_versions(&[newly_seen.resource.clone()]).unwrap(), ["activity-5"]);
+        assert!(store.unread("old-scope", "codex-work").unwrap().iter().any(|(resource, state)| resource == &newly_seen.resource && state.unread && state.activity_version == "activity-5"));
+        assert!(!store.observe_summary_changed(&newly_seen).unwrap());
+    }
+
     fn conversation(preview: &str) -> gateway::Conversation {
         gateway::Conversation {
             resource: gateway::RoutedResourceId {

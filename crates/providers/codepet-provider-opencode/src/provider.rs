@@ -3011,8 +3011,9 @@ impl OpenCodeInstanceRuntime {
             validate_opencode_session(&session)?;
             sessions.insert(session.id.clone(), session);
         }
-        let mut mutable = lock(&self.mutable);
-        for (id, session) in &sessions { mutable.sessions.insert(id.clone(), session.clone()); }
+        // Atomic collection is read-only. Ordinary native list/event paths own
+        // the runtime cache; a cancelled old scan cannot mutate a new generation.
+        let mutable = lock(&self.mutable);
         for id in mutable.active_turns.keys() {
             if let Some(session) = mutable.sessions.get(id) { sessions.entry(id.clone()).or_insert_with(|| session.clone()); }
         }
