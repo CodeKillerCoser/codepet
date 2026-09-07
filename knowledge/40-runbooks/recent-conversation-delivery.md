@@ -4,7 +4,7 @@
 
 2026-09-08：用户授权 PM 撰写设计、拆成独立 Codex 任务、监督完成。每项使用独立 worktree；Host 从 v0、Remote 从 main 开始；GPT-6（gpt-6-astra）、推理 high、正常速度。禁止本机编译、构建和测试执行；只做代码、逻辑、协议检查，测试代码可以补齐。
 
-设计权威：[最近会话方案](../10-architecture/recent-conversation-feed.md)。当前状态：设计完成，待任务创建和契约冻结。
+设计权威：[最近会话方案](../10-architecture/recent-conversation-feed.md)。当前状态：设计已提交为 `160b06f`，四个独立任务已启动，契约冻结与实现进行中。
 
 ## 不可突破的范围
 
@@ -51,7 +51,18 @@ PM在本对话维护任务链接、阶段、依赖和提交；读取各任务的
 
 ## 任务登记
 
-任务创建后由PM填写：task ID、worktree、实际模型/推理、代码提交、阶段、依赖和代码审查结论。
+所有任务派发参数均为 `gpt-6-astra` / `high`，要求正常速度、不启用 fast；Host 基于 `v0@160b06f`，Remote 基于 `main@3f20065`，使用各自独立 worktree。
+
+| 任务 | task ID | 工作目录 | 阶段 |
+| --- | --- | --- | --- |
+| R1 协议 | `01a07d18-9c2e-7253-b79a-f9f3a9218885` | Host 独立 worktree，路径待回报 | 已提交 wire 草案，等待源代码契约冻结 |
+| R2 Provider | `01a07d19-445c-77d0-a823-32c508bcf8fb` | Host 独立 worktree，路径待回报 | 公共存储接管与原子查询实现中 |
+| R3 Host | `01a07d19-82ef-7e52-a159-beb4b9f0da2f` | `C:/Users/17633/.codex/worktrees/7b62/codepet` | 独立全局快照逻辑与接管接口协调中 |
+| R4 Remote | `01a07d1c-cc0a-7863-b8b3-cadf1fb92fc2` | `C:/Users/17633/.codex/worktrees/9cf0/codepet-remote` | 分离 Standalone 与 recent，等待正式 Dart SDK |
+
+2026-09-08 PM 接管决定：R2 的公共 SDK 使用原路径、原 v1 文档，稳定锁文件保护跨进程事务；保留 global latestVersion、callerScope baseline/reads 与全部 fingerprints，首迁移留不可覆盖备份。R3 移除旧内存缓存写入器，向 Provider 注入同一存储路径。两任务直接对齐观察事件的唯一写入边界、Windows 原子替换、损坏文件 fail closed；不增加 bootstrap RPC。该决定是实现方向，尚未通过代码审查。
+
+R1 的契约草案与 R2/R3 的接管决定已互相转达；R4 已取得 R1 任务 ID，可直接协调正式 SDK 导出。依赖提交尚未产出，尚未集成或推送。
 
 ## 已完成与未验证
 
