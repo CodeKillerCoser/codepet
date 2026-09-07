@@ -66,6 +66,18 @@ R1 契约已冻结为 `0d5d9e70d7645ebc554a98322186167f1e2b80e4`，准确清单�
 
 后续阶段记录：R2 产出 `423b772`（共享状态接管）及 `c0d363d`（批量事务、枚举游标认证、依赖锁文件），R3 已将前者取入自己 `codex/recent-host-r3` 分支为 `693f9a5`。PM 源码初审允许第一笔依赖接入，但不代表运行验证。PM 在第二笔发现 no-op 指纹观察仍无条件 persist，可能退化到每 token 全量写盘；已要求 R2 将 dirty 与 activityVersion 分离，只在实际变更时写盘，R3 必须包含修复后才能通过审查。四个实现仍在进行中，主分支尚未集成实现提交。
 
+更新：R2 已提交 no-op 修复 `b904631`、游标验签顺序修复 `4dd5a25`；R3 已取入。R1 通过 `38d1353` 澄清枚举 revision 与事件失效标识独立，Provider 事件必须使视图失效，不能跨体系比较；wire 保持 v1。
+
+R4 已交付 `80f14b8`、`fef0406`（`codex/recent-remote`，工作区干净），正式 SDK digest 为 `sha256:c539baf1106a8ca2c838cb573b645a8c47a3b2efdb9660941457f16e80062d0d`。新增 R5 独立 Remote 源码审查任务正在启动，创建标识 `client-new-thread:9c9b510f-a482-42c4-b161-4cf6e12c516b`，GPT-6/high/正常速度，基于 main 的独立 worktree，只读审查 R4 提交，不运行验证。待拿到正式 task ID 后更新登记。
+
+新的完整性门禁：R2/R3 指出 Claude/Codex 当前无法证明完整发现独立外部进程的活动，不能将 managed 集合广告为全局 active。PM 要求 R1 独立核查原生接口/hooks 的可行支持矩阵，R2 优先完成 OpenCode 完整链路；可以在 Provider 内补全局事件或有界可取消的摘要/活动轮询，但 Host 不轮询，Provider 不加入14天/排序策略。无法保证的能力必须明确 unsupported，不能把所有最近都禁用就声称任务完成。普通聊天/项目继续可用。
+
+PM 范围澄清：上述“完整”按设计原文指 `ProviderInstanceRoute` 对应 backend 实例及原有运行状态语义，不额外要求全机所有独立进程。OpenCode `/api/session/active` 是同 native server 范围，不因此直接判不可用；必须核对摘要 namespace 与状态权威范围一致。Codex/Claude 不能仅因缺少全机 active 就禁用，R1 继续核查同实例完整性和恢复路径。
+
+R5 正式 task ID `01a07d4b-8501-7b31-8d1f-9058bf285abd`，已只读审查 Remote `fef0406`，发现两项 P2 并由 PM 派 R4 修复：尾页持续过期、首屏持续成功时跨自动恢复周期无限重试；删除顶部锚点后追找缺失 ID 可能扫完全量最近。修复要求跨周期预算，以及有序邻居锚点/有界恢复，新增源测试不执行，修复 hash 交 R5 复审。R2 adapter 主提交 `e45d2ae` 已产出，最终能力矩阵仍待同实例范围核查。
+
+R4 通过 `9ef882e` 修复两项 P2，R5 已对该追加提交定向复审，两项可关闭，未发现相关新增 P1/P2。PM 在确认 Remote main 干净、期间新增仅无关 RTC 文档提交 `4417afa` 后，保留该提交并依次集成 R4：`80f14b8→3f69bf0`、`fef0406→70f7de0`、`9ef882e→7248092`。未推送，未编译或运行测试；这仅表示 Remote 源码审查及本地集成完成，不代表 Host/Provider 或整体功能完成。
+
 ## 已完成与未验证
 
 - 已完成：阅读Host AGENTS与活文档技能；核对Provider/Host/Remote现状；明确分层、范围与分页方案；生成技术设计和本计划。
