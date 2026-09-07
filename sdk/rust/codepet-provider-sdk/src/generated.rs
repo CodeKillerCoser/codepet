@@ -65,7 +65,7 @@ pub struct ConversationActiveChangedEvent {
     pub status: ConversationStatus,
     pub activity_version: String,
     pub active: bool,
-    pub revision: ConversationEnumerationRevision,
+    pub revision: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -307,7 +307,7 @@ pub struct ConversationUnreadChangedEvent {
     pub conversation: ProviderResourceId,
     pub reader_scope: ReaderScope,
     pub read_state: ConversationReadState,
-    pub revision: ConversationEnumerationRevision,
+    pub revision: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

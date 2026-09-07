@@ -1580,7 +1580,7 @@
     "ConversationEnumerationRevision": {
       "type": "string",
       "minLength": 1,
-      "description": "Opaque equality-only revision of one active or reader-scoped unread snapshot within one running instance generation. Every page of that snapshot has the same revision. Not an activityVersion, Gateway eventCursor, or recent revision."
+      "description": "Opaque identity of one immutable active or reader-scoped unread enumeration snapshot within one running instance generation. Equal on every page of that enumeration; a new enumeration may get a different identity even when facts are unchanged. Never compare identities across enumerations, with event invalidation identities, activityVersion, Gateway eventCursor, or recent revision."
     },
     "ConversationListQuery": {
       "oneOf": [
@@ -1832,7 +1832,9 @@
           "type": "boolean"
         },
         "revision": {
-          "$ref": "#/$defs/ConversationEnumerationRevision"
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque invalidation identity in this ordered event stream, not an enumeration snapshot identity. Never compare with list response.revision or use equality/order to suppress an invalidation; every received event invalidates the affected view."
         }
       },
       "required": [
@@ -1843,7 +1845,7 @@
         "revision"
       ],
       "additionalProperties": false,
-      "description": "Ordered active-set invalidation and current fact, including active=false on exit. revision is the resulting active enumeration revision. Events must cover externally observed execution too."
+      "description": "Ordered active-set invalidation and current fact, including active=false on exit. revision identifies this invalidation, not any active enumeration snapshot. Events must cover externally observed execution too. Host tracks a local event fence during snapshot construction."
     },
     "ConversationUnreadChangedEvent": {
       "type": "object",
@@ -1858,7 +1860,9 @@
           "$ref": "../../agent/v1/schema.json#/$defs/ConversationReadState"
         },
         "revision": {
-          "$ref": "#/$defs/ConversationEnumerationRevision"
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque invalidation identity in this ordered event stream, not an enumeration snapshot identity. Never compare with list response.revision or use equality/order to suppress an invalidation; every received event invalidates the affected view."
         }
       },
       "required": [
@@ -1868,7 +1872,7 @@
         "revision"
       ],
       "additionalProperties": false,
-      "description": "Ordered reader-scoped unread fact/invalidation, including unread=false after markRead. Host must not forward scope or read state to other readers; activity and markRead advance the corresponding unread snapshot revision."
+      "description": "Ordered reader-scoped unread fact/invalidation, including unread=false after markRead. revision identifies this invalidation, not any unread enumeration snapshot. Host must not forward scope or read state to other readers; every activity or markRead event invalidates the affected reader view."
     },
     "ConversationDeletedEvent": {
       "type": "object",

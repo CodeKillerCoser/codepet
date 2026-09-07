@@ -39,7 +39,7 @@ DTO 前缀加 `Request/Response`。三个 methods 各有同名 `ProviderCapabili
 
 `ConversationActiveEntry {conversation,status:ConversationStatus,activityVersion:string}`；活动包含 running、waiting-approval、waiting-user-input 的未终结执行。`ConversationUnreadEntry {conversation,readState}` 必须满足 `readState.unread=true`。`activityVersion` 沿用已读观察版本，不是分页 revision。
 
-active/unread 枚举必须覆盖完整集合、提供 immutable snapshot；默认 20、上限 100，按 nativeResourceId 升序。分页游标绑定 route/generation，unread 还绑定 readerScope。每页 `revision: ConversationEnumerationRevision` 相同，它是非空不透明字符串；过期 `conversation_cursor_expired`，绑定错误 `invalid_cursor`。不能任意截断为 N 项；nextCursor 缺失才表示完整结束。变化事件使用同一枚举版本体系，Host 收到构建中变化须失效/重试。
+active/unread 枚举必须覆盖完整集合、提供 immutable snapshot；默认 20、上限 100，按 nativeResourceId 升序。分页游标绑定 route/generation，unread 还绑定 readerScope。每页 `revision: ConversationEnumerationRevision` 相同，它是非空不透明字符串；过期 `conversation_cursor_expired`，绑定错误 `invalid_cursor`。不能任意截断为 N 项；nextCursor 缺失才表示完整结束。这里的 revision 只标识一次枚举快照；两次新枚举即使事实不变也可以返回不同随机 revision，不能跨枚举比较其相等性或大小。它不承诺独立状态版本。
 
 `ReaderScope` 是非空不透明字符串，来自可信 Host，保持旧 callerScope 身份。markRead 单调、持久推进到 observedActivityVersion；若最新版本更高，返回仍 unread。非法或未来观察版本为 `invalid_activity_version`。
 
@@ -66,7 +66,7 @@ Provider 事件沿用 `{jsonrpc:"2.0",method,params:<payload>}`，没有 Gateway
 | `event.conversationUnreadChanged` / `ConversationUnreadChangedEvent` | `{conversation,readerScope,readState,revision}` |
 | `event.conversationDeleted` / `ConversationDeletedEvent` | `{conversation}` |
 
-active=false 表示退出活动集合；unread=false 表示读状态清除。revision 分别属于 active 或对应 scope 的 unread 枚举。既有摘要/turn/item 事件不变。删除事件是权威事实并使相关摘要/active/unread 快照失效；只因为普通请求出错或漏项不能发布删除。Host 不得把 readerScope/readState 广播给其他 reader。
+active=false 表示退出活动集合；unread=false 表示读状态清除。事件 `revision:string` 只是不透明失效标识，与 active/unread 响应的 `ConversationEnumerationRevision` 分离；不承诺等于当前或随后查询的快照 revision。Host 对每个收到的事件都须失效对应视图，不能因为事件与分页 revision 相等、不等或字面顺序而忽略更新。Provider 保持 ordered 事件；Host 用本地事件 generation/fence 检测构建中变化并失效/重试。两次完整事实集合比较可以作为额外收敛检查，但不能替代事件 fence；活动版本仍只负责既有阅读观察进度。既有摘要/turn/item 事件不变。删除事件是权威事实并使相关摘要/active/unread 快照失效；只因为普通请求出错或漏项不能发布删除。Host 不得把 readerScope/readState 广播给其他 reader。
 
 PM/R2/R3 已确认通过同路径、同 v1 文档的公共 SDK store 与进程锁接管，不新增 bootstrap RPC。全局版本、scope baseline、逐会话阅读进度与指纹全部保留；须原子、幂等、有备份。缺少共享存储或接管尚未完成时 unread/markRead 不可广告为可用，更不能返回假空/重置数据。此处是接管约束，R1 不实现存储迁移。
 
@@ -97,3 +97,14 @@ R2 适配三个 Provider mapper 的 `ProviderCapabilities` literal（旧路径 `
 后续验证路径：R2/R3 服务检查 IDs 上限与 projectFilter、分页 snapshot 一致性、false/read 事件、旧数据无损接管；R4 检查 recent 事件 wrapper 与独立游标；SDK codec/Host/Provider/Remote 测试验证实际行为。特别注意 Rust serde/TypeScript 类型不等于所有业务约束已验证，服务仍须校验批次、排序、scope 和 capability。
 
 本轮未执行 `cargo check/test/build`、`flutter build/test/analyze`、`npm build`、`protocol:test`、`protocol:check` 或任何 CI；没有编译 SDK。性能、真机、实际 Harness 完整性以及已读迁移运行结果均未验证。本文作为契约冻结记录；后续字段变更必须同时通知 PM/R2/R3/R4。
+
+
+## 2026-09-08 枚举 revision 澄清与 R2 只读审查
+
+决定：无需新增跨枚举状态版本字段。Provider 枚举 response.revision 只要求同一次 immutable snapshot 分页一致；Provider 事件 revision 是独立失效标识。wire 字段和字符串类型不变，canonical schema 不再让事件 revision 引用枚举别名。Gateway recent revision/eventCursor 契约不变。R2/R3 均已确认：R2 不跨新枚举比较 revision；R3 只在同一次分页内核对 revision，新枚举比较完整事实集合，typed event 一律本地 epoch 失效，并复核 generation、查询前 fence 与条件安装。此澄清由 R1 通知 PM/R2/R3，防止事件因错误的版本比较被忽略。
+
+审查证据来自 R2 提交 `423b772` 和 `c0d363d`，未修改这些提交的文件。`conversation_query.rs` 的 SnapshotPager 把完整 rows 固定在快照内，按窗口切页，同一次 revision 恒定；默认20/上限100、TTL120秒、错误绑定拒绝、上游 cursor 环检测均有明确代码路径。`423b772` 可改 offset 的问题已由 `c0d363d` 的 HMAC 校验修复，不列为当前未修复项。完整过滤、排序、operation/route/generation/scope 的 binding 构造由 adapter 调用方保证，不能仅凭公共 helper 断言已经满足。
+
+待 R2 处理的 P2：`c0d363d:sdk/rust/codepet-provider-sdk/src/conversation_query.rs:47` 在验签前按 revision 查 snapshot；将合法游标 revision 改成不存在的值会返回 `conversation_cursor_expired`，不符合篡改应为 `invalid_cursor` 的契约。应先验证 token 再判断快照是否过期，例如采用 pager 级签名 key；没有发现此路径能读取其他 scope 数据。验证路径是补充修改 revision/offset/signature、错 binding、合法签名但 TTL 过期的用例，后续获准时再运行。
+
+64 个活动快照的容量限制返回明确 `conversation_query_busy`，不会假装枚举完整；实际刷新负载与内存成本未验证。已知 no-op persist 问题由 PM 单独跟进，本审查不重复。所有结论均为源码审查，未运行编译、构建或测试。

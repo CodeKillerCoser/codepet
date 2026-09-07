@@ -55,6 +55,11 @@ test("recent v1 preserves list and read boundaries with capability-gated atomic 
   assert(pd.ConversationMarkReadRequest.required.includes("readerScope"));
   assert.deepEqual(gd.ConversationRecentResponse.required, ["conversations", "pageInfo", "revision", "snapshotCursor"]);
   assert.notEqual(gd.ConversationRecentResponse.properties.revision.$ref, gd.ConversationRecentResponse.properties.snapshotCursor.$ref);
+  for (const kind of ["Active", "Unread"]) {
+    assert.equal(pd[`Conversation${kind}ListResponse`].properties.revision.$ref, "#/$defs/ConversationEnumerationRevision");
+    assert.equal(pd[`Conversation${kind}ChangedEvent`].properties.revision.type, "string");
+    assert.equal(pd[`Conversation${kind}ChangedEvent`].properties.revision.$ref, undefined);
+  }
   assert.deepEqual(pd.ConversationListQuery.oneOf, [
     { $ref: "#/$defs/ConversationUpdatedAfterQuery" },
     { $ref: "#/$defs/ConversationIdsQuery" },

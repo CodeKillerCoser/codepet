@@ -43,7 +43,7 @@ export interface ConversationActiveChangedEvent {
   status: ConversationStatus;
   activityVersion: string;
   active: boolean;
-  revision: ConversationEnumerationRevision;
+  revision: string;
 }
 
 export interface ConversationActiveEntry {
@@ -177,7 +177,7 @@ export interface ConversationUnreadChangedEvent {
   conversation: ProviderResourceId;
   readerScope: ReaderScope;
   readState: ConversationReadState;
-  revision: ConversationEnumerationRevision;
+  revision: string;
 }
 
 export interface ConversationUnreadEntry {
