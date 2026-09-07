@@ -16,6 +16,8 @@ run("gh", [
   "--ref",
   ref,
   "--field",
+  "publish=true",
+  "--field",
   `version=${args.version ?? ""}`,
   "--field",
   `tag=${args.tag ?? ""}`,

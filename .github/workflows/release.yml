@@ -3,6 +3,11 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
+      publish:
+        description: Publish GitHub Release after building. Unchecked uploads build artifacts only.
+        required: false
+        type: boolean
+        default: false
       version:
         description: Base app version. CI syncs it to the branch, then builds v<version+short_commit>.
         required: false
@@ -192,6 +197,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
+    if: ${{ inputs.publish }}
     runs-on: ubuntu-latest
     needs:
       - preflight

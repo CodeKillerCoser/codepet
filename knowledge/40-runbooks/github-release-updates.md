@@ -31,6 +31,10 @@
 
 ## 发布步骤
 
+GitHub Actions 的 `Release` workflow 增加布尔输入 `publish`，默认不勾选：两个平台正常构建并上传 Actions Artifacts，跳过整个发布 job，不创建或更新 Release、tag 和 `latest.json`。正式发布时勾选 `publish`。本地 `npm run release:github` 命令显式传入 `publish=true`，保持发布语义。
+
+只构建时若填写 `version`，仍会同步并提交基础版本到所选分支；构建仍需 updater 签名 secret。验收时分别运行未勾选和勾选的 workflow：前者应有两个平台 Artifacts 且发布 job skipped，后者应生成下述 Release 资产。
+
 在本地有 GitHub CLI 且已登录时，可运行：
 
 ```powershell
