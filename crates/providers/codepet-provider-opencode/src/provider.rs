@@ -3038,26 +3038,15 @@ impl OpenCodeInstanceRuntime {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     continue;
                 }
+                let event_epoch = runtime.atoms.event_epoch();
                 let result = runtime.poll_atomic_changes(&previous).await;
                 if lock(&runtime.mutable).session_generation.as_deref() != Some(generation.as_str()) { return; }
                 match result {
-                    Ok(current) => {
-                        if !runtime.set_atomic_readiness_for(&generation, true) { return; }
-                        for (id, row) in &current {
-                            if previous.get(id) != Some(row) {
-                                if runtime.publish_atomic_event(&generation, ProtocolEvent::EventConversationUpserted { jsonrpc: "2.0".into(), params: ConversationUpsertedEvent { conversation: row.clone() } }).is_err() {
-                                    runtime.set_atomic_readiness_for(&generation, false); return;
-                                }
-                            }
-                        }
-                        for id in previous.keys().filter(|id| !current.contains_key(*id)) {
-                            let event = ProtocolEvent::EventConversationDeleted { jsonrpc: "2.0".into(), params: codepet_provider_sdk::ConversationDeletedEvent {
-                                conversation: ProviderResourceId { device_id: runtime.route.device_id.clone(), provider_plugin_id: runtime.route.provider_plugin_id.clone(), provider_instance_id: runtime.route.provider_instance_id.clone(), native_resource_id: id.clone() },
-                            } };
-                            if runtime.publish_atomic_event(&generation, event).is_err() { runtime.set_atomic_readiness_for(&generation, false); return; }
-                        }
-                        previous = current;
-                    }
+                    Ok(current) => match runtime.apply_atomic_snapshot(&generation, event_epoch, &previous, &current) {
+                        Ok(true) => previous = current,
+                        Ok(false) => {},
+                        Err(_) => { runtime.set_atomic_readiness_for(&generation, false); return; }
+                    },
                     Err(error) => { eprintln!("OpenCode atomic discovery unavailable: {}", error.message); runtime.set_atomic_readiness_for(&generation, false); }
                 }
                 drop(runtime);
@@ -3103,9 +3092,27 @@ impl OpenCodeInstanceRuntime {
 }
 
 impl OpenCodeInstanceRuntime {
-    fn publish_atomic_event(&self, generation: &str, event: ProtocolEvent) -> Result<(), ProtocolError> {
-        let state = lock(&self.mutable);
-        if state.session_generation.as_deref() != Some(generation) || state.status != InstanceStatus::Ready { return Err(conversation_atoms::generation_changed()); }
-        self.events.publish(event)
+    fn apply_atomic_snapshot(&self, generation: &str, epoch: u64, previous: &HashMap<String, Conversation>, current: &HashMap<String, Conversation>) -> Result<bool, ProtocolError> {
+        let mut state = lock(&self.mutable);
+        if state.session_generation.as_deref() != Some(generation) || state.status != InstanceStatus::Ready { return Ok(false); }
+        let old_ready = state.atomic_facts_ready;
+        let old_epoch = state.atomic_facts_epoch;
+        let mut events = Vec::new();
+        if !old_ready {
+            state.atomic_facts_ready = true;
+            state.atomic_facts_epoch = old_epoch.saturating_add(1);
+            events.push(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent { instance: self.snapshot_locked(&state), previous_status: Some(state.status) } });
+        }
+        let delta = conversation_atoms::SummaryDelta {
+            event_epoch: epoch,
+            upserted: current.iter().filter(|(id, row)| previous.get(*id) != Some(*row)).map(|(_, row)| row.clone()).collect(),
+            deleted: previous.keys().filter(|id| !current.contains_key(*id)).cloned().collect(),
+        };
+        events.extend(conversation_atoms::summary_delta_events(&self.route, delta));
+        match self.atoms.commit_events(epoch, events) {
+            Ok(true) => Ok(true),
+            Ok(false) => { state.atomic_facts_ready = old_ready; state.atomic_facts_epoch = old_epoch; Ok(false) },
+            Err(error) => { state.atomic_facts_ready = false; Err(error) },
+        }
     }
 }

@@ -8,6 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Default)]
 pub struct ConversationAtoms {
     fact_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    fact_gate: std::sync::Arc<std::sync::Mutex<()>>,
+    tracked_sink: std::sync::OnceLock<std::sync::Arc<TrackedEvents>>,
     lists: SnapshotPager<Conversation>,
     active: SnapshotPager<ConversationActiveEntry>,
     unread: SnapshotPager<ConversationUnreadEntry>,
@@ -39,32 +41,44 @@ pub fn with_capabilities(mut capabilities: ProviderCapabilities) -> ProviderCapa
 
 /// Mirror existing status facts into the optional typed active notification.
 /// The Host remains the only observer that advances shared activity versions.
-fn active_events(route: ProviderInstanceRoute, sink: std::sync::Arc<dyn ProviderEventSink>, fact_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>) -> std::sync::Arc<dyn ProviderEventSink> {
-    let statuses = std::sync::Mutex::new(BTreeMap::<String, ConversationStatus>::new());
-    let revision = std::sync::atomic::AtomicU64::new(0);
-    std::sync::Arc::new(move |event: ProtocolEvent| {
+struct TrackedEvents {
+    route: ProviderInstanceRoute,
+    sink: std::sync::Arc<dyn ProviderEventSink>,
+    epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    gate: std::sync::Arc<std::sync::Mutex<()>>,
+    statuses: std::sync::Mutex<BTreeMap<String, ConversationStatus>>,
+    revision: std::sync::atomic::AtomicU64,
+}
+impl ProviderEventSink for TrackedEvents {
+    fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError> {
+        let _guard = self.gate.lock().map_err(|_| query_error("conversation_state_unavailable", "fact commit lock poisoned"))?;
+        self.publish_locked(event)
+    }
+}
+impl TrackedEvents {
+    fn publish_locked(&self, event: ProtocolEvent) -> Result<(), ProtocolError> {
         if matches!(&event, ProtocolEvent::EventConversationUpserted { .. } | ProtocolEvent::EventConversationDeleted { .. } | ProtocolEvent::EventTurnUpserted { .. } | ProtocolEvent::EventApprovalRequested { .. } | ProtocolEvent::EventApprovalResolved { .. }) {
-            fact_epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         let changed = if let ProtocolEvent::EventConversationUpserted { params, .. } = &event {
             let row = &params.conversation;
-            let mut states = statuses.lock().map_err(|_| query_error("conversation_state_unavailable", "active event lock poisoned"))?;
+            let mut states = self.statuses.lock().map_err(|_| query_error("conversation_state_unavailable", "active event lock poisoned"))?;
             let previous = states.insert(row.resource.native_resource_id.clone(), row.status);
             (previous != Some(row.status) && (active(row.status) || previous.is_some_and(active))).then(|| row.clone())
         } else { None };
-        sink.publish(event)?;
+        self.sink.publish(event)?;
         if let Some(row) = changed {
             let version = if shared_state_configured() {
                 SharedConversationStateStore::from_env()?.activity_versions(&[row.resource.clone()])?.remove(0)
             } else { format!("active:{:?}:{}", row.status, row.updated_at.unwrap_or_default()) };
-            let revision = revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-            sink.publish(ProtocolEvent::EventConversationActiveChanged { jsonrpc: "2.0".into(), params: ConversationActiveChangedEvent {
-                conversation: resource(&route, row.resource.native_resource_id), status: row.status,
+            let revision = self.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            self.sink.publish(ProtocolEvent::EventConversationActiveChanged { jsonrpc: "2.0".into(), params: ConversationActiveChangedEvent {
+                conversation: resource(&self.route, row.resource.native_resource_id), status: row.status,
                 activity_version: version, active: active(row.status), revision: format!("active-{revision}"),
             } })?;
         }
         Ok(())
-    })
+    }
 }
 
 pub fn routed(resource: &ProviderResourceId) -> RoutedResourceId {
@@ -84,7 +98,20 @@ fn binding<T: serde::Serialize>(kind: &str, generation: &str, request: &T) -> Re
 impl ConversationAtoms {
     pub fn event_epoch(&self) -> u64 { self.fact_epoch.load(std::sync::atomic::Ordering::SeqCst) }
     pub fn event_sink(&self, route: ProviderInstanceRoute, sink: std::sync::Arc<dyn ProviderEventSink>) -> std::sync::Arc<dyn ProviderEventSink> {
-        active_events(route, sink, self.fact_epoch.clone())
+        self.tracked_sink.get_or_init(|| std::sync::Arc::new(TrackedEvents { route, sink, epoch: self.fact_epoch.clone(), gate: self.fact_gate.clone(), statuses: std::sync::Mutex::new(BTreeMap::new()), revision: std::sync::atomic::AtomicU64::new(0) })).clone()
+    }
+
+    /// Conditional application and native fact publication share this lock.
+    /// The callback must not recursively publish through the event sink.
+    pub fn with_fact_fence<T>(&self, expected: u64, apply: impl FnOnce() -> T) -> Result<Option<T>, ProtocolError> {
+        let _guard = self.fact_gate.lock().map_err(|_| query_error("conversation_state_unavailable", "fact commit lock poisoned"))?;
+        if self.event_epoch() != expected { return Ok(None); }
+        Ok(Some(apply()))
+    }
+    pub fn commit_events(&self, expected: u64, events: Vec<ProtocolEvent>) -> Result<bool, ProtocolError> {
+        let sink = self.tracked_sink.get().ok_or_else(|| query_error("conversation_state_unavailable", "event sink is not configured"))?;
+        self.with_fact_fence(expected, || events.into_iter().try_for_each(|event| sink.publish_locked(event)))?
+            .transpose().map(|result| result.is_some())
     }
 
     pub fn list_cached(&self, generation: &str, request: &ConversationListRequest) -> Result<Option<ConversationListResponse>, ProtocolError> {
@@ -264,6 +291,21 @@ mod tests {
         assert_eq!(validate_list(&request).unwrap_err().code, "invalid_request");
     }
     #[test]
+    fn a_native_fact_rejects_an_older_scan_at_the_shared_commit_gate() {
+        let atoms = ConversationAtoms::default();
+        let emitted = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let output = emitted.clone();
+        let route = request(serde_json::json!({"kind":"ids","ids":["a"]})).route;
+        let sink = atoms.event_sink(route, std::sync::Arc::new(move |event| { output.lock().unwrap().push(event); Ok(()) }));
+        let stale = atoms.event_epoch();
+        sink.publish(ProtocolEvent::EventConversationUpserted { jsonrpc: "2.0".into(), params: ConversationUpsertedEvent { conversation: row("new", Some(200)) } }).unwrap();
+        let stale_event = ProtocolEvent::EventConversationUpserted { jsonrpc: "2.0".into(), params: ConversationUpsertedEvent { conversation: row("old", Some(100)) } };
+        assert!(!atoms.commit_events(stale, vec![stale_event]).unwrap());
+        assert!(atoms.with_fact_fence(stale, || panic!("stale scan must not install")).unwrap().is_none());
+        assert_eq!(emitted.lock().unwrap().len(), 1);
+    }
+
+    #[test]
     fn waiting_statuses_remain_active_and_terminal_statuses_do_not() {
         for status in [ConversationStatus::Running, ConversationStatus::WaitingApproval, ConversationStatus::WaitingUserInput] { assert!(active(status)); }
         for status in [ConversationStatus::Idle, ConversationStatus::Error, ConversationStatus::Archived] { assert!(!active(status)); }
@@ -316,8 +358,8 @@ pub fn observed_capabilities(mut capabilities: ProviderCapabilities, ready: bool
     capabilities
 }
 
-pub fn publish_summary_delta(route: &ProviderInstanceRoute, delta: SummaryDelta, events: &dyn ProviderEventSink) -> Result<(), ProtocolError> {
-    for conversation in delta.upserted { events.publish(ProtocolEvent::EventConversationUpserted { jsonrpc: "2.0".into(), params: ConversationUpsertedEvent { conversation } })?; }
-    for id in delta.deleted { events.publish(ProtocolEvent::EventConversationDeleted { jsonrpc: "2.0".into(), params: ConversationDeletedEvent { conversation: resource(route, id) } })?; }
-    Ok(())
+pub fn summary_delta_events(route: &ProviderInstanceRoute, delta: SummaryDelta) -> Vec<ProtocolEvent> {
+    let mut events = delta.upserted.into_iter().map(|conversation| ProtocolEvent::EventConversationUpserted { jsonrpc: "2.0".into(), params: ConversationUpsertedEvent { conversation } }).collect::<Vec<_>>();
+    events.extend(delta.deleted.into_iter().map(|id| ProtocolEvent::EventConversationDeleted { jsonrpc: "2.0".into(), params: ConversationDeletedEvent { conversation: resource(route, id) } }));
+    events
 }

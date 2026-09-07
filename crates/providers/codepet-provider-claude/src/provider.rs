@@ -493,6 +493,8 @@ impl ClaudeInstanceRuntime {
     }
 
     fn refresh_discovered_conversations_strict(&self, strict: bool, cancelled: Option<&AtomicBool>) -> Result<(), ProtocolError> {
+        let generation = lock(&self.mutable).lifecycle_generation;
+        let event_epoch = self.atoms.event_epoch();
         let Some(config_dir) = self
             .settings
             .claude_config_dir
@@ -505,6 +507,8 @@ impl ClaudeInstanceRuntime {
             discover_claude_conversations_with_mode(&config_dir, &self.route, true, cancelled, Some(&mut *lock(&self.history_cache)))?
         } else { discover_claude_conversations(&config_dir, &self.route)? };
         let mut mutable = lock(&self.mutable);
+        if strict && (mutable.lifecycle_generation != generation || check_discovery_cancelled(cancelled).is_err()) { return Err(conversation_atoms::generation_changed()); }
+        let mut install = || -> Result<(), ProtocolError> {
         if strict {
             let mut deleted = Vec::new();
             for (id, managed) in &mutable.conversations {
@@ -552,6 +556,10 @@ impl ClaudeInstanceRuntime {
             }
         }
         Ok(())
+        };
+        if strict {
+            self.atoms.with_fact_fence(event_epoch, install)?.ok_or_else(conversation_atoms::generation_changed)?
+        } else { install() }
     }
 
     fn list_conversations(

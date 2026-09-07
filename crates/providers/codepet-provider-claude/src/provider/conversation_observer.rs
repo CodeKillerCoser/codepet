@@ -21,23 +21,36 @@ impl ClaudeInstanceRuntime {
             let Some(runtime) = publisher.upgrade() else { return Stop; };
             let mut state = lock(&runtime.mutable);
             if state.lifecycle_generation != generation || !matches!(state.status, InstanceStatus::Starting | InstanceStatus::Ready) { return Stop; }
-            if result.as_ref().is_ok_and(|delta| delta.event_epoch != runtime.atoms.event_epoch()) || result.as_ref().is_err_and(|error| error.code == "conversation_snapshot_changed") { return Retry; }
-            let ready = result.is_ok() && state.status == InstanceStatus::Ready;
-            if state.atomic_facts_ready != ready {
-                state.atomic_facts_ready = ready;
-                state.atomic_facts_epoch = state.atomic_facts_epoch.saturating_add(1);
-                if runtime.events.publish(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent {
-                    instance: runtime.snapshot_locked(&state), previous_status: Some(state.status),
-                } }).is_err() { return Stop; }
-            }
             match result {
-                Ok(delta) if ready => {
-                    if conversation_atoms::publish_summary_delta(&runtime.route, delta, runtime.events.as_ref()).is_err() { state.atomic_facts_ready = false; return Stop; }
+                Ok(delta) => {
+                    let old_ready = state.atomic_facts_ready;
+                    let old_epoch = state.atomic_facts_epoch;
+                    if state.status != InstanceStatus::Ready { return Retry; }
+                    let mut events = Vec::new();
+                    if !old_ready {
+                        state.atomic_facts_ready = true;
+                        state.atomic_facts_epoch = old_epoch.saturating_add(1);
+                        events.push(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent { instance: runtime.snapshot_locked(&state), previous_status: Some(state.status) } });
+                    }
+                    let expected = delta.event_epoch;
+                    events.extend(conversation_atoms::summary_delta_events(&runtime.route, delta));
+                    match runtime.atoms.commit_events(expected, events) {
+                        Ok(true) => Applied,
+                        Ok(false) => { state.atomic_facts_ready = old_ready; state.atomic_facts_epoch = old_epoch; Retry },
+                        Err(_) => { state.atomic_facts_ready = false; Stop },
+                    }
                 }
-                Err(error) => eprintln!("Claude summary reconciliation unavailable: {}", error.message),
-                _ => {}
+                Err(error) if error.code == "conversation_snapshot_changed" => Retry,
+                Err(error) => {
+                    eprintln!("Summary reconciliation unavailable: {}", error.message);
+                    if state.atomic_facts_ready {
+                        state.atomic_facts_ready = false;
+                        state.atomic_facts_epoch = state.atomic_facts_epoch.saturating_add(1);
+                        if runtime.events.publish(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent { instance: runtime.snapshot_locked(&state), previous_status: Some(state.status) } }).is_err() { return Stop; }
+                    }
+                    Retry
+                }
             }
-            Applied
         }, Duration::from_secs(5));
         let mut state = lock(&self.mutable);
         if let Some(previous) = state.atomic_task.replace(task) { previous.abort(); }
