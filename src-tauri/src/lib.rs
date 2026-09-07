@@ -489,6 +489,7 @@ pub fn run() {
             update_pet_image_pixel_size,
             cut_out_image_subject,
             recent_events,
+            app::event_journal::query_event_journal,
             token_usage_summary,
             record_perf_event,
             activate_activity,

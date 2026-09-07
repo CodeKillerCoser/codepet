@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EventJournal from "./lib/EventJournal.svelte";
   import { basename, extname, join } from "@tauri-apps/api/path";
   import PetSources from "./lib/PetSources.svelte";
   import type { PetSource } from "./lib/petGateway";
@@ -2573,30 +2574,7 @@
         </div>
       </div>
     {:else if tab === "events"}
-      <section class="event-log pixel-panel">
-        <header class="section-head">
-          <span>{events.length} total</span>
-        </header>
-        {#if recentVisibleEvents.length}
-          {#each recentVisibleEvents as event}
-            <div class="event-item">
-              <span class="event-provider">{event.provider}</span>
-              <div>
-                <strong>{event.title}</strong>
-                <p>{event.message}</p>
-              </div>
-              <span class="event-kind">{kindLabel(event.kind)}</span>
-              <span class="event-time"><Clock3 size={14} /> {shortTime(event.createdAt)}</span>
-            </div>
-          {/each}
-        {:else}
-          <div class="empty-state">
-            <Activity size={20} />
-            <strong>还没有事件</strong>
-            <p>启动 Claude Code、Qoder 或 Cursor 任务后，这里会显示最近的 hooks 消息。</p>
-          </div>
-        {/if}
-      </section>
+      <EventJournal />
     {/if}
   </section>
 

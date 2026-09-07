@@ -106,8 +106,7 @@ async fn receive(State(state): State<Intake>, headers: HeaderMap, Json(input): J
     let name = input.payload.get("hook_event_name").or_else(|| input.payload.get("type")).and_then(Value::as_str).unwrap_or("");
     if !state.events.contains(&name) || input.event_id.is_empty() || input.event_id.len() > 128 { return StatusCode::BAD_REQUEST; }
     let received_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
-    let mut payload = input.payload;
-    if state.gap.swap(false, Ordering::SeqCst) { payload.insert("codepet_gap".into(), json!(true)); }
+    let payload = json!({"codepet_observation": {"raw": input.payload, "gap": state.gap.swap(false, Ordering::SeqCst)}}).as_object().unwrap().clone();
     for subscription_id in state.subscriptions.lock().unwrap().iter() {
         let params = ProviderNotificationEvent { subscription_id: subscription_id.clone(), event_id: input.event_id.clone(),
             received_at, payload: payload.clone().into_iter().collect() };
@@ -235,6 +234,20 @@ mod tests {
         assert_eq!(fs::read(&target).unwrap(), b"{invalid");
     }
     #[tokio::test]
+    async fn observation_preserves_raw_object_when_reporting_a_gap() {
+        let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
+        let sink: Arc<dyn ProviderEventSink> = Arc::new(move |e| { sender.send(e).unwrap(); Ok(()) });
+        let intake = Intake { token: "secret".into(), sink, subscriptions: Arc::new(Mutex::new(BTreeSet::from(["host".into()]))),
+            events: &["Stop"], gap: Arc::new(AtomicBool::new(true)) };
+        let raw = json!({"hook_event_name":"Stop", "codepet_gap":"native value", "nested":{"text":"原始内容", "null":null}});
+        let mut headers = HeaderMap::new(); headers.insert("authorization", "secret".parse().unwrap());
+        assert_eq!(receive(State(intake), headers, Json(Incoming { event_id:"one".into(), payload:raw.as_object().unwrap().clone() })).await, StatusCode::NO_CONTENT);
+        let ProtocolEvent::EventNotification { params, .. } = events.recv().await.unwrap() else { panic!("wrong event") };
+        assert_eq!(params.payload["codepet_observation"]["raw"], raw);
+        assert_eq!(params.payload["codepet_observation"]["gap"], true);
+    }
+
+    #[tokio::test]
     async fn source_subscription_delivers_only_to_active_subscribers_and_releases_owner() {
         let temp = tempfile::tempdir().unwrap();
         let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
@@ -328,7 +341,7 @@ mod tests {
         for _ in 0..2 {
             let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv()).await.unwrap().unwrap();
             let ProtocolEvent::EventNotification { params, .. } = event else { panic!("wrong event") };
-            sessions.insert(params.payload["session_id"].as_str().unwrap().to_string());
+            sessions.insert(params.payload["codepet_observation"]["raw"]["session_id"].as_str().unwrap().to_string());
         }
         assert_eq!(sessions, BTreeSet::from(["one".into(), "two".into()]));
         run("noise", "Notification").await.unwrap();

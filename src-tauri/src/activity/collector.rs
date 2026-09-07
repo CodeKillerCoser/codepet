@@ -33,6 +33,9 @@ pub async fn run_collector(
     app_state: SharedState,
     app_handle: AppHandle,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if let Err(error) = crate::app::event_journal::journal() {
+        crate::app_log::error("event-journal", &error);
+    }
     let collector_state = CollectorState {
         app_state,
         app_handle,
@@ -53,6 +56,9 @@ async fn health() -> Response {
 }
 
 pub fn replay_default_spooled_events(app_state: &SharedState) -> Result<usize, std::io::Error> {
+    if let Err(error) = crate::app::event_journal::journal() {
+        crate::app_log::error("event-journal", &error);
+    }
     let spool_path = load_app_settings()
         .map(|settings| spool_path_for_settings(&settings))
         .unwrap_or_else(|_| legacy_default_spool_path());
@@ -73,6 +79,7 @@ pub fn replay_spooled_events(
         let Ok(incoming) = serde_json::from_str::<IncomingHook>(line) else {
             continue;
         };
+        crate::app::event_journal::record_hook(&incoming.agent, incoming.payload.clone());
         let Ok(agent) = AgentId::from_str(&incoming.agent) else {
             continue;
         };
@@ -120,6 +127,7 @@ async fn receive_hook(
     State(state): State<CollectorState>,
     Json(incoming): Json<IncomingHook>,
 ) -> Result<Response, (StatusCode, String)> {
+    crate::app::event_journal::record_hook(&incoming.agent, incoming.payload.clone());
     let agent = AgentId::from_str(&incoming.agent)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
     if !accepts_legacy_hook_source(agent) || !state.app_state.agent_enabled(agent) {
