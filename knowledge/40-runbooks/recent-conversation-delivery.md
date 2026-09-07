@@ -55,14 +55,16 @@ PM在本对话维护任务链接、阶段、依赖和提交；读取各任务的
 
 | 任务 | task ID | 工作目录 | 阶段 |
 | --- | --- | --- | --- |
-| R1 协议 | `01a07d18-9c2e-7253-b79a-f9f3a9218885` | Host 独立 worktree，路径待回报 | 已提交 wire 草案，等待源代码契约冻结 |
-| R2 Provider | `01a07d19-445c-77d0-a823-32c508bcf8fb` | Host 独立 worktree，路径待回报 | 公共存储接管与原子查询实现中 |
+| R1 协议 | `01a07d18-9c2e-7253-b79a-f9f3a9218885` | `C:/Users/17633/.codex/worktrees/46e4/codepet`，`codex/recent-conversation-contract` | 契约冻结为 `0d5d9e7`，待 PM 完整审查 |
+| R2 Provider | `01a07d19-445c-77d0-a823-32c508bcf8fb` | `C:/Users/17633/.codex/worktrees/6ca2/codepet`，`codex/recent-provider-atoms` | 公共存储接管与原子查询实现中 |
 | R3 Host | `01a07d19-82ef-7e52-a159-beb4b9f0da2f` | `C:/Users/17633/.codex/worktrees/7b62/codepet` | 独立全局快照逻辑与接管接口协调中 |
 | R4 Remote | `01a07d1c-cc0a-7863-b8b3-cadf1fb92fc2` | `C:/Users/17633/.codex/worktrees/9cf0/codepet-remote` | 分离 Standalone 与 recent，等待正式 Dart SDK |
 
 2026-09-08 PM 接管决定：R2 的公共 SDK 使用原路径、原 v1 文档，稳定锁文件保护跨进程事务；保留 global latestVersion、callerScope baseline/reads 与全部 fingerprints，首迁移留不可覆盖备份。R3 移除旧内存缓存写入器，向 Provider 注入同一存储路径。两任务直接对齐观察事件的唯一写入边界、Windows 原子替换、损坏文件 fail closed；不增加 bootstrap RPC。该决定是实现方向，尚未通过代码审查。
 
-R1 的契约草案与 R2/R3 的接管决定已互相转达；R4 已取得 R1 任务 ID，可直接协调正式 SDK 导出。依赖提交尚未产出，尚未集成或推送。
+R1 契约已冻结为 `0d5d9e70d7645ebc554a98322186167f1e2b80e4`，准确清单在其 worktree 的 `knowledge/40-runbooks/recent-conversation-contract.md`。PM 已授权 R2/R3 接入该依赖，并将正式 Dart 导出位置 `C:/Users/17633/.codex/worktrees/46e4/codepet/sdk/rust/target/recent-gateway-dart/` 转交 R4。生成来源为该提交的 canonical protocol，仅执行源码生成与新鲜度检查，未编译、运行测试或推送。主工作区暂未集成实现。
+
+后续阶段记录：R2 产出 `423b772`（共享状态接管）及 `c0d363d`（批量事务、枚举游标认证、依赖锁文件），R3 已将前者取入自己 `codex/recent-host-r3` 分支为 `693f9a5`。PM 源码初审允许第一笔依赖接入，但不代表运行验证。PM 在第二笔发现 no-op 指纹观察仍无条件 persist，可能退化到每 token 全量写盘；已要求 R2 将 dirty 与 activityVersion 分离，只在实际变更时写盘，R3 必须包含修复后才能通过审查。四个实现仍在进行中，主分支尚未集成实现提交。
 
 ## 已完成与未验证
 
