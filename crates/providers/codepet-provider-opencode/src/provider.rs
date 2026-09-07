@@ -1,3 +1,4 @@
+use codepet_provider_sdk::conversation_atoms::{self, ConversationAtoms};
 use codepet_provider_sdk::local_runtime;
 use crate::client::OpenCodeServerSession;
 use crate::mapper::{protocol_error, OpenCodeProtocolMapper};
@@ -10,6 +11,7 @@ use crate::protocol::{
     OPENCODE_INSTANCE_KIND, OPENCODE_PERMISSION_LEVEL, OPENCODE_PLUGIN_ID,
 };
 use codepet_provider_sdk::{
+    Conversation,
     ApprovalDecision, ApprovalResolveRequest, ApprovalResolveResponse,
     ConversationAcquireInteractionRequest, ConversationAcquireInteractionResponse,
     ConversationContentKind, ConversationCreateRequest, ConversationCreateResponse,
@@ -83,6 +85,8 @@ struct ActiveTurnState {
 }
 
 struct InstanceMutable {
+    atomic_task: Option<tokio::task::JoinHandle<()>>,
+    atomic_facts_ready: bool,
     status: InstanceStatus,
     session: Option<OpenCodeServerSession>,
     session_generation: Option<String>,
@@ -99,10 +103,11 @@ struct InstanceMutable {
 }
 
 impl Drop for InstanceMutable {
-    fn drop(&mut self) { if let Some(task) = self.metadata_task.take() { task.abort(); } }
+    fn drop(&mut self) { if let Some(task) = self.metadata_task.take() { task.abort(); } if let Some(task) = self.atomic_task.take() { task.abort(); } }
 }
 
 struct OpenCodeInstanceRuntime {
+    atoms: ConversationAtoms,
     route: ProviderInstanceRoute,
     instance_kind: String,
     display_name: String,
@@ -121,7 +126,9 @@ impl OpenCodeInstanceRuntime {
         boot_id: String,
         events: Arc<dyn ProviderEventSink>,
     ) -> Self {
+        let events = conversation_atoms::active_events(request.route.clone(), events);
         Self {
+            atoms: ConversationAtoms::default(),
             route: request.route.clone(),
             instance_kind: request.instance_kind,
             display_name: request.display_name,
@@ -129,6 +136,7 @@ impl OpenCodeInstanceRuntime {
             capabilities: Mutex::new(OpenCodeProtocolMapper::base_capabilities()),
             boot_id,
             mutable: Mutex::new(InstanceMutable {
+                atomic_task: None, atomic_facts_ready: false,
                 status: InstanceStatus::Created,
                 session: None,
                 session_generation: None,
@@ -170,7 +178,7 @@ impl OpenCodeInstanceRuntime {
                 ),
             },
             mutable.status,
-            lock(&self.capabilities).clone(),
+            self.atomic_capabilities(mutable.atomic_facts_ready),
             mutable.authentication.clone(),
             mutable.usage.clone(),
         )
@@ -1267,6 +1275,7 @@ impl Provider for OpenCodeProvider {
 
             }
             let instance = runtime.snapshot();
+            runtime.start_atomic_poll(generation.clone());
             runtime.start_event_forwarder(generation, incoming);
             runtime.refresh_metadata(false);
             Ok(InstanceStartResponse { instance })
@@ -1289,6 +1298,8 @@ impl Provider for OpenCodeProvider {
                 let mut mutable = lock(&runtime.mutable);
                 mutable.generation_counter = mutable.generation_counter.saturating_add(1);
                 mutable.session_generation = None;
+                mutable.atomic_facts_ready = false;
+                if let Some(task) = mutable.atomic_task.take() { task.abort(); }
                 mutable.active_turns.clear();
                 mutable.pending_approvals.clear();
                 mutable.session.take()
@@ -1334,10 +1345,37 @@ impl Provider for OpenCodeProvider {
     ) -> ProtocolFuture<'a, InstanceCapabilitiesResponse> {
         Box::pin(async move {
             let runtime = self.instance(&request.route)?;
-            let capabilities = lock(&runtime.capabilities).clone();
+            let capabilities = runtime.snapshot().capabilities;
             Ok(InstanceCapabilitiesResponse {
                 capabilities,
             })
+        })
+    }
+
+    fn conversation_active_list<'a>(&'a self, request: codepet_provider_sdk::ConversationActiveListRequest) -> ProtocolFuture<'a, codepet_provider_sdk::ConversationActiveListResponse> {
+        Box::pin(async move {
+            let runtime = self.instance(&request.route)?;
+            if !lock(&runtime.mutable).atomic_facts_ready { return Err(protocol_error("unsupported", "complete native activity observation is not ready".into(), true)); }
+            let generation = runtime.query_generation()?;
+            if let Some(page) = runtime.atoms.active_cached(&generation, &request)? { return Ok(page); }
+            let rows = self.complete_conversation_summaries(&request.route).await?;
+            if generation != runtime.query_generation()? { return Err(conversation_atoms::generation_changed()); }
+            runtime.atoms.active(&generation, &request, rows)
+        })
+    }
+
+    fn conversation_unread_list<'a>(&'a self, request: codepet_provider_sdk::ConversationUnreadListRequest) -> ProtocolFuture<'a, codepet_provider_sdk::ConversationUnreadListResponse> {
+        Box::pin(async move {
+            let runtime = self.instance(&request.route)?;
+            runtime.atoms.unread(&runtime.query_generation()?, &request)
+        })
+    }
+
+    fn conversation_mark_read<'a>(&'a self, request: codepet_provider_sdk::ConversationMarkReadRequest) -> ProtocolFuture<'a, codepet_provider_sdk::ConversationMarkReadResponse> {
+        Box::pin(async move {
+            let runtime = self.instance(&conversation_atoms::resource_route(&request.conversation))?;
+            runtime.query_generation()?;
+            runtime.atoms.mark_read(&request, runtime.events.as_ref())
         })
     }
 
@@ -1346,6 +1384,25 @@ impl Provider for OpenCodeProvider {
         request: ConversationListRequest,
     ) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async move {
+            if request.query.is_some() {
+                let runtime = self.instance(&request.route)?;
+                let generation = runtime.query_generation()?;
+                if let Some(page) = runtime.atoms.list_cached(&generation, &request)? { return Ok(page); }
+                let mut rows = self.complete_conversation_summaries(&request.route).await?;
+                if let Some(codepet_provider_sdk::ConversationListQuery::ConversationIdsQuery(query)) = &request.query {
+                    self.complete_requested_summaries(&request.route, &query.ids, &mut rows).await?;
+                }
+                if generation != runtime.query_generation()? { return Err(conversation_atoms::generation_changed()); }
+                return runtime.atoms.list(&generation, &request, rows);
+            }
+            if let Some(scope) = request.reader_scope.clone() {
+                let mut native_request = request;
+                native_request.reader_scope = None;
+                let mut response = self.conversation_list(native_request).await?;
+                codepet_provider_sdk::conversation_state::SharedConversationStateStore::from_env()?.decorate_many(&scope, &mut response.conversations)?;
+                return Ok(response);
+            }
+
             if request.limit == Some(0) {
                 return Err(protocol_error(
                     "invalid_request",
@@ -2115,6 +2172,8 @@ impl Provider for OpenCodeProvider {
                     mutable.status = InstanceStatus::Stopping;
                     mutable.generation_counter = mutable.generation_counter.saturating_add(1);
                     mutable.session_generation = None;
+                mutable.atomic_facts_ready = false;
+                if let Some(task) = mutable.atomic_task.take() { task.abort(); }
                     mutable.active_turns.clear();
                     mutable.pending_approvals.clear();
                     mutable.session.take()
@@ -2886,5 +2945,157 @@ mod storage_path_tests {
             "dataDirectory": "relative-storage",
         })).unwrap());
         assert!(invalid.is_err());
+    }
+}
+
+impl OpenCodeInstanceRuntime {
+    fn query_generation(&self) -> Result<String, ProtocolError> {
+        self.ready_session()?;
+        Ok(lock(&self.mutable).generation_counter.to_string())
+    }
+}
+
+impl OpenCodeProvider {
+    async fn complete_conversation_summaries(&self, route: &ProviderInstanceRoute) -> Result<Vec<Conversation>, ProtocolError> {
+        self.instance(route)?.collect_atomic_summaries().await
+    }
+}
+
+impl OpenCodeProvider {
+    async fn complete_requested_summaries(&self, route: &ProviderInstanceRoute, ids: &[String], rows: &mut Vec<Conversation>) -> Result<(), ProtocolError> {
+        let runtime = self.instance(route)?;
+        for id in ids {
+            if rows.iter().any(|row| &row.resource.native_resource_id == id) { continue; }
+            let client = runtime.ready_session()?.client();
+            let requested = id.clone();
+            let session = match tokio::task::spawn_blocking(move || client.get_session(&requested)).await.map_err(provider_task_error)? {
+                Ok(session) => session,
+                Err(OpenCodeServerError::Http { status: 404, .. }) => continue,
+                Err(error) => return Err(OpenCodeProtocolMapper::error(error)),
+            };
+            validate_opencode_session(&session)?;
+            let mutable = lock(&runtime.mutable);
+            rows.push(runtime.mapper.conversation(&session, false, mutable.active_turns.get(id).map(|run| run.turn.clone()), has_pending_approval(&mutable.pending_approvals, id)));
+        }
+        Ok(())
+    }
+}
+
+impl OpenCodeInstanceRuntime {
+    fn atomic_capabilities(&self, ready: bool) -> ProviderCapabilities {
+        let mut capabilities = lock(&self.capabilities).clone();
+        if !ready { capabilities.methods.retain(|method| *method != codepet_provider_sdk::ProviderCapability::ConversationActiveList); }
+        capabilities
+    }
+
+    async fn collect_atomic_summaries(&self) -> Result<Vec<Conversation>, ProtocolError> {
+        let client = self.ready_session()?.client();
+        let mut sessions = HashMap::new();
+        let mut cursor = None;
+        let mut progress = codepet_provider_sdk::conversation_query::EnumerationProgress::default();
+        loop {
+            let page_client = client.clone();
+            let page = tokio::task::spawn_blocking(move || page_client.list_sessions(cursor.as_deref(), Some(100)))
+                .await.map_err(provider_task_error)?.map_err(OpenCodeProtocolMapper::error)?;
+            for session in page.data { validate_opencode_session(&session)?; sessions.insert(session.id.clone(), session); }
+            cursor = progress.advance(page.cursor.next)?;
+            if cursor.is_none() { break; }
+            tokio::task::yield_now().await;
+        }
+        let active_client = client.clone();
+        let active = tokio::task::spawn_blocking(move || active_client.active_sessions()).await.map_err(provider_task_error)?.map_err(OpenCodeProtocolMapper::error)?;
+        for id in active.keys() {
+            if id.trim().is_empty() { return Err(protocol_error("opencode_protocol_error", "active session has an empty ID".into(), false)); }
+            if sessions.contains_key(id) { continue; }
+            let client = client.clone(); let id = id.clone();
+            let session = tokio::task::spawn_blocking(move || client.get_session(&id)).await.map_err(provider_task_error)?.map_err(OpenCodeProtocolMapper::error)?;
+            validate_opencode_session(&session)?;
+            sessions.insert(session.id.clone(), session);
+        }
+        let mut mutable = lock(&self.mutable);
+        for (id, session) in &sessions { mutable.sessions.insert(id.clone(), session.clone()); }
+        for id in mutable.active_turns.keys() {
+            if let Some(session) = mutable.sessions.get(id) { sessions.entry(id.clone()).or_insert_with(|| session.clone()); }
+        }
+        let mut rows = sessions.values().map(|session| self.mapper.conversation(session, active.contains_key(&session.id),
+            mutable.active_turns.get(&session.id).map(|run| run.turn.clone()), has_pending_approval(&mutable.pending_approvals, &session.id))).collect::<Vec<_>>();
+        conversation_atoms::sort_summaries(&mut rows);
+        Ok(rows)
+    }
+
+    fn start_atomic_poll(self: &Arc<Self>, generation: String) {
+        let owner = Arc::downgrade(self);
+        let task = tokio::spawn(async move {
+            let mut previous = HashMap::<String, Conversation>::new();
+            loop {
+                let Some(runtime) = owner.upgrade() else { return; };
+                let (current_generation, status) = {
+                    let state = lock(&runtime.mutable);
+                    (state.session_generation.clone(), state.status)
+                };
+                if current_generation.as_deref() != Some(generation.as_str()) { return; }
+                if status != InstanceStatus::Ready {
+                    drop(runtime);
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+                let result = runtime.poll_atomic_changes(&previous).await;
+                if lock(&runtime.mutable).session_generation.as_deref() != Some(generation.as_str()) { return; }
+                match result {
+                    Ok(current) => {
+                        runtime.set_atomic_readiness(true);
+                        for (id, row) in &current {
+                            if previous.get(id) != Some(row) {
+                                if runtime.events.publish(ProtocolEvent::EventConversationUpserted { jsonrpc: "2.0".into(), params: ConversationUpsertedEvent { conversation: row.clone() } }).is_err() {
+                                    runtime.set_atomic_readiness(false); return;
+                                }
+                            }
+                        }
+                        for id in previous.keys().filter(|id| !current.contains_key(*id)) {
+                            let event = ProtocolEvent::EventConversationDeleted { jsonrpc: "2.0".into(), params: codepet_provider_sdk::ConversationDeletedEvent {
+                                conversation: ProviderResourceId { device_id: runtime.route.device_id.clone(), provider_plugin_id: runtime.route.provider_plugin_id.clone(), provider_instance_id: runtime.route.provider_instance_id.clone(), native_resource_id: id.clone() },
+                            } };
+                            if runtime.events.publish(event).is_err() { runtime.set_atomic_readiness(false); return; }
+                        }
+                        previous = current;
+                    }
+                    Err(error) => { eprintln!("OpenCode atomic discovery unavailable: {}", error.message); runtime.set_atomic_readiness(false); }
+                }
+                drop(runtime);
+                // One scan in flight, no overlapping catch-up and no UI policy.
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
+        let mut state = lock(&self.mutable);
+        state.atomic_facts_ready = false;
+        if let Some(previous) = state.atomic_task.replace(task) { previous.abort(); }
+    }
+
+    fn set_atomic_readiness(&self, ready: bool) {
+        let mut state = lock(&self.mutable);
+        if state.atomic_facts_ready == ready { return; }
+        state.atomic_facts_ready = ready;
+        let _ = self.events.publish(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent {
+            instance: self.snapshot_locked(&state), previous_status: Some(state.status),
+        } });
+    }
+
+    async fn poll_atomic_changes(&self, previous: &HashMap<String, Conversation>) -> Result<HashMap<String, Conversation>, ProtocolError> {
+        let mut current = self.collect_atomic_summaries().await?.into_iter().map(|row| (row.resource.native_resource_id.clone(), row)).collect::<HashMap<_, _>>();
+        // List absence is not sufficient deletion evidence. Confirm every old
+        // missing identity through the summary endpoint; only HTTP 404 deletes.
+        for id in previous.keys().filter(|id| !current.contains_key(*id)).cloned().collect::<Vec<_>>() {
+            let client = self.ready_session()?.client(); let requested = id.clone();
+            match tokio::task::spawn_blocking(move || client.get_session(&requested)).await.map_err(provider_task_error)? {
+                Ok(session) => {
+                    validate_opencode_session(&session)?;
+                    let state = lock(&self.mutable);
+                    current.insert(id.clone(), self.mapper.conversation(&session, false, state.active_turns.get(&id).map(|run| run.turn.clone()), has_pending_approval(&state.pending_approvals, &id)));
+                }
+                Err(OpenCodeServerError::Http { status: 404, .. }) => {}
+                Err(error) => return Err(OpenCodeProtocolMapper::error(error)),
+            }
+        }
+        Ok(current)
     }
 }

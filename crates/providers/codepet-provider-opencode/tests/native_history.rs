@@ -50,6 +50,7 @@ async fn native_history_snapshot_is_readable() {
             .await?;
         let page = provider
             .conversation_list(ConversationListRequest {
+                query: None, reader_scope: None,
                 route: route.clone(),
                 cursor: None,
                 limit: Some(20),

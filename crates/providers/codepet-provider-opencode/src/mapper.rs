@@ -36,7 +36,8 @@ impl OpenCodeProtocolMapper {
     }
 
     pub fn base_capabilities() -> ProviderCapabilities {
-        ProviderCapabilities {
+        codepet_provider_sdk::conversation_atoms::with_capabilities(ProviderCapabilities {
+            conversation_list_query: Some(codepet_provider_sdk::ConversationListQueryCapabilities { updated_after: true, ids: true }),
             revision: "opencode-server-1.18.25-controls-v2".to_string(),
             methods: vec![
                 ProviderCapability::ConversationList,
@@ -80,7 +81,7 @@ impl OpenCodeProtocolMapper {
                 }),
             }),
             extensions: Vec::new(),
-        }
+        })
     }
 
     pub fn capabilities(

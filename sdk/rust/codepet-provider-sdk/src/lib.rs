@@ -26,3 +26,4 @@ pub use codepet_core_sdk::{ClientConnectionInfo, ConnectionStatus};
 
 pub mod conversation_state;
 pub mod conversation_query;
+pub mod conversation_atoms;

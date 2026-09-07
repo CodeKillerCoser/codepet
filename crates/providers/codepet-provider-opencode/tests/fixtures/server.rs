@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 
 struct FixtureState {
+    recent_mutated: bool,
     sessions: HashMap<String, Value>,
     active: HashSet<String>,
     subscribers: Vec<Sender<String>>,
@@ -47,11 +48,28 @@ fn main() {
         1_700_000_000_000,
     );
     let state = Arc::new(Mutex::new(FixtureState {
+        recent_mutated: false,
         sessions: [("ses_fixture".to_string(), initial)].into_iter().collect(),
         active: HashSet::new(),
         subscribers: Vec::new(),
         delayed_step_ended: None,
     }));
+    if startup["recentFixture"].as_bool() == Some(true) {
+        let mut state = lock(&state);
+        state.sessions.clear();
+        for index in 0..237 {
+            let id = format!("ses_{index:03}");
+            let mut row = session(&id, &id, &fixture_directory, 100 + index);
+            row["time"]["updated"] = json!(10);
+            state.sessions.insert(id.clone(), row);
+            if (50..171).contains(&index) { state.active.insert(id); }
+        }
+        let mut old = session("ses_old_updated", "Old creation, new activity", &fixture_directory, 1);
+        old["time"]["updated"] = json!(5000);
+        state.sessions.insert("ses_old_updated".into(), old);
+        state.sessions.insert("ses_active_hidden".into(), session("ses_active_hidden", "Active outside list", &fixture_directory, 0));
+        state.active.insert("ses_active_hidden".into());
+    }
     let listener = bind_listener(hostname, argument(&args, "--port"));
     let port = listener.local_addr().unwrap().port();
     println!("opencode server listening on http://{hostname}:{port}/");
@@ -187,11 +205,25 @@ fn route(
         }]}).to_string());
     }
     if method == "GET" && path == "/api/session" {
-        let sessions = lock(state).sessions.values().cloned().collect::<Vec<_>>();
-        return (
-            200,
-            json!({"data": sessions, "cursor": {"previous": null, "next": null}}).to_string(),
-        );
+        if startup_config()["recentMutation"].as_bool() == Some(true) {
+            let mut state = lock(state);
+            if !state.recent_mutated {
+                state.recent_mutated = true;
+                state.sessions.remove("ses_100"); state.active.remove("ses_100");
+                state.active.remove("ses_050"); state.active.insert("ses_002".into());
+                if let Some(row) = state.sessions.get_mut("ses_001") { row["time"]["updated"] = json!(10000); }
+            }
+        }
+
+        let mut sessions = lock(state).sessions.values().filter(|row| row["id"] != "ses_active_hidden").cloned().collect::<Vec<_>>();
+        sessions.sort_by(|left, right| right["time"]["created"].as_u64().cmp(&left["time"]["created"].as_u64()));
+        let query = target.split_once('?').map(|(_, query)| query).unwrap_or_default();
+        let parameter = |name: &str| query.split('&').find_map(|part| part.split_once('=').filter(|(key, _)| *key == name).map(|(_, value)| value));
+        let offset = parameter("cursor").and_then(|value| value.parse::<usize>().ok()).unwrap_or(0);
+        let limit = parameter("limit").and_then(|value| value.parse::<usize>().ok()).unwrap_or(100);
+        let end = offset.saturating_add(limit).min(sessions.len());
+        let next = (end < sessions.len()).then(|| end.to_string());
+        return (200, json!({"data": &sessions[offset..end], "cursor": {"previous": null, "next": next}}).to_string());
     }
     if method == "GET" && path == "/api/session/active" {
         let active = lock(state)

@@ -1,3 +1,4 @@
+use codepet_provider_sdk::conversation_atoms::{self, ConversationAtoms};
 use codepet_provider_sdk::local_runtime;
 use crate::client::{
     CodexAppServerSession, CodexRequestOutcome,
@@ -12,6 +13,7 @@ use crate::protocol::{
     CODEX_INSTANCE_KIND, CODEX_PLUGIN_ID,
 };
 use codepet_provider_sdk::{
+    Conversation,
     ApprovalRequestedEvent, ApprovalResolveRequest, ApprovalResolveResponse,
     ConversationAcquireInteractionRequest, ConversationAcquireInteractionResponse,
     ConversationCreateRequest, ConversationProjectFilter, ConversationUpsertedEvent,
@@ -381,6 +383,7 @@ struct ObservedApproval {
 }
 
 struct CodexInstanceRuntime {
+    atoms: ConversationAtoms,
     route: ProviderInstanceRoute,
     instance_kind: String,
     display_name: String,
@@ -402,7 +405,9 @@ impl CodexInstanceRuntime {
         lifecycle_hook: Arc<dyn ExecutionLifecycleHook>,
     ) -> Self {
         let executable_path = settings.app_server_executable.to_string_lossy().into_owned();
+        let events = conversation_atoms::active_events(request.route.clone(), events);
         Self {
+            atoms: ConversationAtoms::default(),
             route: request.route.clone(),
             instance_kind: request.instance_kind,
             display_name: request.display_name,
@@ -1904,11 +1909,49 @@ impl Provider for CodexProvider {
         })
     }
 
+    fn conversation_active_list<'a>(&'a self, _request: codepet_provider_sdk::ConversationActiveListRequest) -> ProtocolFuture<'a, codepet_provider_sdk::ConversationActiveListResponse> {
+        Box::pin(async { Err(conversation_atoms::incomplete_native_activity()) })
+    }
+
+    fn conversation_unread_list<'a>(&'a self, request: codepet_provider_sdk::ConversationUnreadListRequest) -> ProtocolFuture<'a, codepet_provider_sdk::ConversationUnreadListResponse> {
+        Box::pin(async move {
+            let runtime = self.instance(&request.route)?;
+            runtime.atoms.unread(&runtime.query_generation()?, &request)
+        })
+    }
+
+    fn conversation_mark_read<'a>(&'a self, request: codepet_provider_sdk::ConversationMarkReadRequest) -> ProtocolFuture<'a, codepet_provider_sdk::ConversationMarkReadResponse> {
+        Box::pin(async move {
+            let runtime = self.instance(&conversation_atoms::resource_route(&request.conversation))?;
+            runtime.query_generation()?;
+            runtime.atoms.mark_read(&request, runtime.events.as_ref())
+        })
+    }
+
     fn conversation_list<'a>(
         &'a self,
         request: ConversationListRequest,
     ) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async move {
+            if request.query.is_some() {
+                let runtime = self.instance(&request.route)?;
+                let generation = runtime.query_generation()?;
+                if let Some(page) = runtime.atoms.list_cached(&generation, &request)? { return Ok(page); }
+                let mut rows = self.complete_conversation_summaries(&request.route).await?;
+                if let Some(codepet_provider_sdk::ConversationListQuery::ConversationIdsQuery(query)) = &request.query {
+                    self.complete_requested_summaries(&request.route, &query.ids, &mut rows).await?;
+                }
+                if generation != runtime.query_generation()? { return Err(conversation_atoms::generation_changed()); }
+                return runtime.atoms.list(&generation, &request, rows);
+            }
+            if let Some(scope) = request.reader_scope.clone() {
+                let mut native_request = request;
+                native_request.reader_scope = None;
+                let mut response = self.conversation_list(native_request).await?;
+                codepet_provider_sdk::conversation_state::SharedConversationStateStore::from_env()?.decorate_many(&scope, &mut response.conversations)?;
+                return Ok(response);
+            }
+
             let runtime = self.instance(&request.route)?;
             let membership_filter = match request.project_filter {
                 ConversationProjectFilter::ConversationProjectFilterAll(_) => {
@@ -4118,5 +4161,57 @@ mod storage_path_tests {
             "dataDirectory": "relative-storage",
         })).unwrap());
         assert!(invalid.is_err());
+    }
+}
+
+impl CodexInstanceRuntime {
+    fn query_generation(&self) -> Result<String, ProtocolError> {
+        self.ready_server()?;
+        Ok(lock(&self.mutable).lifecycle_generation.to_string())
+    }
+}
+
+impl CodexProvider {
+    async fn complete_conversation_summaries(&self, route: &ProviderInstanceRoute) -> Result<Vec<Conversation>, ProtocolError> {
+        let mut rows = conversation_atoms::collect_summaries(self, route).await?;
+        let runtime = self.instance(route)?;
+        let (sessions, pending) = {
+            let mutable = lock(&runtime.mutable);
+            let sessions = mutable.executions.iter().filter_map(|(id, slot)| {
+                match &*lock(&slot.state) {
+                    ExecutionSlotState::Ready(execution) => Some((id.clone(), execution.session.clone())),
+                    ExecutionSlotState::Creating(Some(session)) => Some((id.clone(), session.clone())),
+                    _ => None,
+                }
+            }).collect::<Vec<_>>();
+            (sessions, mutable.pending_materialization.values().cloned().collect::<Vec<_>>())
+        };
+        rows.extend(pending.iter().map(|snapshot| lock(&runtime.mapper).conversation(snapshot)));
+        // Dedicated execution App Servers carry live state missing from a
+        // read-only list server. Read metadata only, never turns/transcripts.
+        for (id, session) in sessions {
+            let snapshot = tokio::task::spawn_blocking(move || session.thread_read_metadata(&id))
+                .await.map_err(provider_task_error)?.map_err(CodexProtocolMapper::error)?;
+            rows.push(lock(&runtime.mapper).conversation(&snapshot));
+        }
+        conversation_atoms::sort_summaries(&mut rows);
+        Ok(rows)
+    }
+}
+
+impl CodexProvider {
+    async fn complete_requested_summaries(&self, route: &ProviderInstanceRoute, ids: &[String], rows: &mut Vec<Conversation>) -> Result<(), ProtocolError> {
+        let runtime = self.instance(route)?;
+        for id in ids {
+            if rows.iter().any(|row| &row.resource.native_resource_id == id) { continue; }
+            let session = runtime.ready_server()?;
+            let id = id.clone();
+            // Missing list membership is not deletion (e.g. archived sessions).
+            // Unknown native failures propagate; never infer deletion from them.
+            let snapshot = tokio::task::spawn_blocking(move || session.thread_read_metadata(&id))
+                .await.map_err(provider_task_error)?.map_err(CodexProtocolMapper::error)?;
+            rows.push(lock(&runtime.mapper).conversation(&snapshot));
+        }
+        Ok(())
     }
 }

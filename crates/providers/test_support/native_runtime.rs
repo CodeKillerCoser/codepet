@@ -87,6 +87,7 @@ pub async fn check_native_runtime(
         println!("{kind}: ready with isolated data directory");
         provider
             .conversation_list(ConversationListRequest {
+                query: None, reader_scope: None,
                 route: route.clone(),
                 cursor: None,
                 limit: Some(10),

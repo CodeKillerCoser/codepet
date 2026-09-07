@@ -44,7 +44,8 @@ impl CodexProtocolMapper {
     }
 
     pub fn unavailable_capabilities(revision: String) -> ProviderCapabilities {
-        ProviderCapabilities {
+        codepet_provider_sdk::conversation_atoms::with_partial_activity_capabilities(ProviderCapabilities {
+            conversation_list_query: None,
             revision,
             methods: vec![
                 ProviderCapability::ConversationList,
@@ -79,7 +80,7 @@ impl CodexProtocolMapper {
                     json!(["permissions", "tool-user-input", "mcp-elicitation"]),
                 ),
             ])],
-        }
+        })
     }
 
     pub fn capabilities(
@@ -235,7 +236,8 @@ impl CodexProtocolMapper {
                 ]);
             }
         }
-        Ok(ProviderCapabilities {
+        Ok(codepet_provider_sdk::conversation_atoms::with_partial_activity_capabilities(ProviderCapabilities {
+            conversation_list_query: None,
             revision,
             methods,
             conversation_create: Some(ConversationCreateCapabilities {
@@ -251,7 +253,7 @@ impl CodexProtocolMapper {
             }),
             turn_send: Some(turn_send),
             extensions,
-        })
+        }))
     }
 
     pub fn instance(

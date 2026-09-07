@@ -176,6 +176,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
 
     let listed = provider
         .conversation_list(ConversationListRequest {
+                query: None, reader_scope: None,
             route: route.clone(),
             cursor: None,
             limit: Some(10),
@@ -680,6 +681,7 @@ async fn provider_real_opencode_server_smoke() {
         .unwrap();
     provider
         .conversation_list(ConversationListRequest {
+                query: None, reader_scope: None,
             route: route.clone(),
             cursor: None,
             limit: Some(1),
@@ -1026,4 +1028,62 @@ async fn wait_for_capabilities(
     })
     .await
     .expect("background catalog")
+}
+
+#[tokio::test]
+async fn recent_atoms_exhaust_creation_order_pages_and_recover_active_outside_list() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("opencode-fixture-startup.json"), br#"{"recentFixture":true}"#).unwrap();
+    let (sender, receiver) = mpsc::channel();
+    let provider = OpenCodeProvider::new(Arc::new(move |event| { sender.send(event).unwrap(); Ok(()) }));
+    provider.provider_initialize(ProviderInitializeRequest { host_client_id: "host-atoms".into(), host_device_id: "device-atoms".into(), host_version: "0.1.0".into(), supported_versions: VersionRange { min_version: PROTOCOL_VERSION, max_version: PROTOCOL_VERSION } }).await.unwrap();
+    let route = ProviderInstanceRoute { device_id: "device-atoms".into(), provider_plugin_id: OPENCODE_PLUGIN_ID.into(), provider_instance_id: "atoms".into() };
+    provider.instance_create(InstanceCreateRequest { route: route.clone(), instance_kind: OPENCODE_INSTANCE_KIND.into(), display_name: "Atoms".into(), settings: BTreeMap::from([
+        ("serverExecutable".into(), json!(env!("CARGO_BIN_EXE_opencode-server-fixture"))),
+        ("serverVersion".into(), json!("1.18.25")), ("serverArgs".into(), json!(["serve"])), ("workspaceRoot".into(), json!(directory.path())),
+    ]) }).await.unwrap();
+    provider.instance_start(InstanceStartRequest { route: route.clone() }).await.unwrap();
+    wait_for_capabilities(&provider, &route).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let capabilities = provider.instance_capabilities(codepet_provider_sdk::InstanceCapabilitiesRequest { route: route.clone() }).await.unwrap().capabilities;
+            if capabilities.methods.contains(&codepet_provider_sdk::ProviderCapability::ConversationActiveList) { break; }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }).await.unwrap();
+
+    let query = |value| serde_json::from_value::<ConversationListRequest>(json!({"route":route,"projectFilter":{"kind":"all"},"query":value,"limit":100})).unwrap();
+    let dated = provider.conversation_list(query(json!({"kind":"updatedAfter","updatedAfter":5000}))).await.unwrap();
+    assert_eq!(dated.conversations.len(), 1);
+    assert_eq!(dated.conversations[0].resource.native_resource_id, "ses_old_updated");
+    let first = provider.conversation_active_list(codepet_provider_sdk::ConversationActiveListRequest { route: route.clone(), cursor: None, limit: Some(100) }).await.unwrap();
+    assert_eq!(first.conversations.len(), 100);
+    let second = provider.conversation_active_list(codepet_provider_sdk::ConversationActiveListRequest { route: route.clone(), cursor: first.page_info.next_cursor, limit: Some(100) }).await.unwrap();
+    assert_eq!(first.revision, second.revision);
+    assert_eq!(second.conversations.len(), 22);
+    assert!(second.page_info.next_cursor.is_none());
+    assert!(second.conversations.iter().any(|row| row.conversation.native_resource_id == "ses_active_hidden"));
+    let ids = provider.conversation_list(query(json!({"kind":"ids","ids":["ses_old_updated","ses_active_hidden","deleted"]}))).await.unwrap();
+    assert_eq!(ids.conversations.iter().map(|row| row.resource.native_resource_id.as_str()).collect::<Vec<_>>(), ["ses_active_hidden", "ses_old_updated"]);
+    // Legacy native pagination remains separate from both query snapshots.
+    let ordinary = provider.conversation_list(ConversationListRequest { route: route.clone(), project_filter: all_project_filter(), query: None, reader_scope: None, cursor: None, limit: Some(20) }).await.unwrap();
+    assert_eq!(ordinary.conversations.len(), 20);
+    assert!(ordinary.page_info.next_cursor.is_some());
+    receiver.try_iter().for_each(drop);
+    std::fs::write(directory.path().join("opencode-fixture-startup.json"), br#"{"recentFixture":true,"recentMutation":true}"#).unwrap();
+    let mut saw_summary = false; let mut saw_deleted = false; let mut saw_active = false;
+    tokio::time::timeout(Duration::from_secs(12), async {
+        while !(saw_summary && saw_deleted && saw_active) {
+            for event in receiver.try_iter() {
+                match event {
+                    ProtocolEvent::EventConversationUpserted { params, .. } if params.conversation.resource.native_resource_id == "ses_001" && params.conversation.updated_at == Some(10000) => saw_summary = true,
+                    ProtocolEvent::EventConversationDeleted { params, .. } if params.conversation.native_resource_id == "ses_100" => saw_deleted = true,
+                    ProtocolEvent::EventConversationActiveChanged { params, .. } if params.conversation.native_resource_id == "ses_002" && params.active => saw_active = true,
+                    _ => {}
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }).await.unwrap();
+    provider.instance_stop(InstanceStopRequest { route }).await.unwrap();
 }

@@ -365,6 +365,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     let listed = ProviderProtocolServer::conversation_list(
         provider.as_ref(),
         ConversationListRequest {
+                query: None, reader_scope: None,
             route: route.clone(),
             cursor: None,
             limit: None,

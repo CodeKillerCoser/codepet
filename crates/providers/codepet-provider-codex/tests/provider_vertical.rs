@@ -524,6 +524,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let listed = ProviderProtocolServer::conversation_list(
         &provider,
         ConversationListRequest {
+                query: None, reader_scope: None,
             route: route.clone(),
             cursor: None,
             limit: Some(20),
@@ -541,9 +542,24 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
         "thread-listed"
     );
     assert_eq!(listed.conversations[0].project.as_ref(), Some(&fixture_project));
+    let updated_boundary = listed.conversations[0].updated_at.unwrap();
+    let date_query: ConversationListRequest = serde_json::from_value(json!({
+        "route": route, "projectFilter": {"kind":"all"}, "limit":20,
+        "query":{"kind":"updatedAfter","updatedAfter":updated_boundary}
+    })).unwrap();
+    let dated = ProviderProtocolServer::conversation_list(&provider, date_query).await.unwrap();
+    assert!(dated.conversations.iter().any(|row| row.resource.native_resource_id == "thread-listed"));
+    let ids_query: ConversationListRequest = serde_json::from_value(json!({
+        "route":route,"projectFilter":{"kind":"all"},"limit":20,
+        "query":{"kind":"ids","ids":["thread-listed"]}
+    })).unwrap();
+    let selected = ProviderProtocolServer::conversation_list(&provider, ids_query).await.unwrap();
+    assert_eq!(selected.conversations.len(), 1);
+    assert_eq!(selected.conversations[0].resource.native_resource_id, "thread-listed");
     let project_conversations = ProviderProtocolServer::conversation_list(
         &provider,
         ConversationListRequest {
+                query: None, reader_scope: None,
             route: route.clone(),
             cursor: None,
             limit: Some(20),
@@ -567,6 +583,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let standalone_conversations = ProviderProtocolServer::conversation_list(
         &provider,
         ConversationListRequest {
+                query: None, reader_scope: None,
             route: route.clone(),
             cursor: None,
             limit: Some(20),

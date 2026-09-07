@@ -71,7 +71,7 @@ impl<T: Clone> SnapshotPager<T> {
         snapshots.retain(|_, value| value.created.elapsed() < SNAPSHOT_TTL);
         // Bound retained snapshots, never the number of rows in an enumeration.
         if snapshots.len() >= 64 {
-            return Err(query_error("conversation_query_busy", "too many live enumeration snapshots"));
+            if let Some(oldest) = snapshots.iter().min_by_key(|(_, snapshot)| snapshot.created).map(|(id, _)| id.clone()) { snapshots.remove(&oldest); }
         }
         if page.next_cursor.is_some() { snapshots.insert(revision, snapshot); }
         Ok(page)
@@ -119,6 +119,15 @@ mod tests {
         assert_eq!(pager.page("instance/generation/scope", &cursor, Some(20)).unwrap_err().code, "conversation_cursor_expired");
         pager.snapshots.lock().unwrap().clear();
         assert_eq!(pager.page("instance/generation/scope", &cursor, Some(20)).unwrap_err().code, "conversation_cursor_expired");
+    }
+
+    #[test]
+    fn capacity_reclaims_old_snapshots_without_blocking_new_complete_enumerations() {
+        let pager = SnapshotPager::default();
+        let first = pager.start("scope".into(), (0..237).collect(), Some(100)).unwrap();
+        let cursor = first.next_cursor.unwrap();
+        for index in 0..64 { pager.start(format!("scope-{index}"), (0..237).collect(), Some(100)).unwrap(); }
+        assert_eq!(pager.page("scope", &cursor, Some(100)).unwrap_err().code, "conversation_cursor_expired");
     }
 
     #[test]
