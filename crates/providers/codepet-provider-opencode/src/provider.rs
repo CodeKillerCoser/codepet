@@ -87,6 +87,7 @@ struct ActiveTurnState {
 struct InstanceMutable {
     atomic_task: Option<tokio::task::JoinHandle<()>>,
     atomic_facts_ready: bool,
+    atomic_facts_epoch: u64,
     status: InstanceStatus,
     session: Option<OpenCodeServerSession>,
     session_generation: Option<String>,
@@ -126,9 +127,10 @@ impl OpenCodeInstanceRuntime {
         boot_id: String,
         events: Arc<dyn ProviderEventSink>,
     ) -> Self {
-        let events = conversation_atoms::active_events(request.route.clone(), events);
+        let atoms = ConversationAtoms::default();
+        let events = atoms.event_sink(request.route.clone(), events);
         Self {
-            atoms: ConversationAtoms::default(),
+            atoms,
             route: request.route.clone(),
             instance_kind: request.instance_kind,
             display_name: request.display_name,
@@ -136,7 +138,7 @@ impl OpenCodeInstanceRuntime {
             capabilities: Mutex::new(OpenCodeProtocolMapper::base_capabilities()),
             boot_id,
             mutable: Mutex::new(InstanceMutable {
-                atomic_task: None, atomic_facts_ready: false,
+                atomic_task: None, atomic_facts_ready: false, atomic_facts_epoch: 0,
                 status: InstanceStatus::Created,
                 session: None,
                 session_generation: None,
@@ -178,7 +180,7 @@ impl OpenCodeInstanceRuntime {
                 ),
             },
             mutable.status,
-            self.atomic_capabilities(mutable.atomic_facts_ready),
+            conversation_atoms::observed_capabilities(lock(&self.capabilities).clone(), mutable.atomic_facts_ready, mutable.atomic_facts_epoch),
             mutable.authentication.clone(),
             mutable.usage.clone(),
         )
@@ -1358,8 +1360,9 @@ impl Provider for OpenCodeProvider {
             if !lock(&runtime.mutable).atomic_facts_ready { return Err(protocol_error("unsupported", "complete native activity observation is not ready".into(), true)); }
             let generation = runtime.query_generation()?;
             if let Some(page) = runtime.atoms.active_cached(&generation, &request)? { return Ok(page); }
+            let event_epoch = runtime.atoms.event_epoch();
             let rows = self.complete_conversation_summaries(&request.route).await?;
-            if generation != runtime.query_generation()? { return Err(conversation_atoms::generation_changed()); }
+            if generation != runtime.query_generation()? || event_epoch != runtime.atoms.event_epoch() { return Err(conversation_atoms::generation_changed()); }
             runtime.atoms.active(&generation, &request, rows)
         })
     }
@@ -1388,11 +1391,12 @@ impl Provider for OpenCodeProvider {
                 let runtime = self.instance(&request.route)?;
                 let generation = runtime.query_generation()?;
                 if let Some(page) = runtime.atoms.list_cached(&generation, &request)? { return Ok(page); }
+                let event_epoch = runtime.atoms.event_epoch();
                 let mut rows = self.complete_conversation_summaries(&request.route).await?;
                 if let Some(codepet_provider_sdk::ConversationListQuery::ConversationIdsQuery(query)) = &request.query {
                     self.complete_requested_summaries(&request.route, &query.ids, &mut rows).await?;
                 }
-                if generation != runtime.query_generation()? { return Err(conversation_atoms::generation_changed()); }
+                if generation != runtime.query_generation()? || event_epoch != runtime.atoms.event_epoch() { return Err(conversation_atoms::generation_changed()); }
                 return runtime.atoms.list(&generation, &request, rows);
             }
             if let Some(scope) = request.reader_scope.clone() {
@@ -1631,7 +1635,8 @@ impl Provider for OpenCodeProvider {
                 ));
             }
             let runtime = self.resource_instance(&request.conversation)?;
-            if request.capability_revision != lock(&runtime.capabilities).revision {
+            let base_revision = lock(&runtime.capabilities).revision.clone();
+            if request.capability_revision != base_revision && request.capability_revision != runtime.snapshot().capabilities.revision {
                 return Err(protocol_error(
                     "stale_capability_revision",
                     "turn.start capabilityRevision no longer matches the Provider instance"
@@ -2982,12 +2987,6 @@ impl OpenCodeProvider {
 }
 
 impl OpenCodeInstanceRuntime {
-    fn atomic_capabilities(&self, ready: bool) -> ProviderCapabilities {
-        let mut capabilities = lock(&self.capabilities).clone();
-        if !ready { capabilities.methods.retain(|method| *method != codepet_provider_sdk::ProviderCapability::ConversationActiveList); }
-        capabilities
-    }
-
     async fn collect_atomic_summaries(&self) -> Result<Vec<Conversation>, ProtocolError> {
         let client = self.ready_session()?.client();
         let mut sessions = HashMap::new();
@@ -3043,11 +3042,11 @@ impl OpenCodeInstanceRuntime {
                 if lock(&runtime.mutable).session_generation.as_deref() != Some(generation.as_str()) { return; }
                 match result {
                     Ok(current) => {
-                        runtime.set_atomic_readiness(true);
+                        if !runtime.set_atomic_readiness_for(&generation, true) { return; }
                         for (id, row) in &current {
                             if previous.get(id) != Some(row) {
-                                if runtime.events.publish(ProtocolEvent::EventConversationUpserted { jsonrpc: "2.0".into(), params: ConversationUpsertedEvent { conversation: row.clone() } }).is_err() {
-                                    runtime.set_atomic_readiness(false); return;
+                                if runtime.publish_atomic_event(&generation, ProtocolEvent::EventConversationUpserted { jsonrpc: "2.0".into(), params: ConversationUpsertedEvent { conversation: row.clone() } }).is_err() {
+                                    runtime.set_atomic_readiness_for(&generation, false); return;
                                 }
                             }
                         }
@@ -3055,11 +3054,11 @@ impl OpenCodeInstanceRuntime {
                             let event = ProtocolEvent::EventConversationDeleted { jsonrpc: "2.0".into(), params: codepet_provider_sdk::ConversationDeletedEvent {
                                 conversation: ProviderResourceId { device_id: runtime.route.device_id.clone(), provider_plugin_id: runtime.route.provider_plugin_id.clone(), provider_instance_id: runtime.route.provider_instance_id.clone(), native_resource_id: id.clone() },
                             } };
-                            if runtime.events.publish(event).is_err() { runtime.set_atomic_readiness(false); return; }
+                            if runtime.publish_atomic_event(&generation, event).is_err() { runtime.set_atomic_readiness_for(&generation, false); return; }
                         }
                         previous = current;
                     }
-                    Err(error) => { eprintln!("OpenCode atomic discovery unavailable: {}", error.message); runtime.set_atomic_readiness(false); }
+                    Err(error) => { eprintln!("OpenCode atomic discovery unavailable: {}", error.message); runtime.set_atomic_readiness_for(&generation, false); }
                 }
                 drop(runtime);
                 // One scan in flight, no overlapping catch-up and no UI policy.
@@ -3071,13 +3070,16 @@ impl OpenCodeInstanceRuntime {
         if let Some(previous) = state.atomic_task.replace(task) { previous.abort(); }
     }
 
-    fn set_atomic_readiness(&self, ready: bool) {
+    fn set_atomic_readiness_for(&self, generation: &str, ready: bool) -> bool {
         let mut state = lock(&self.mutable);
-        if state.atomic_facts_ready == ready { return; }
+        if state.session_generation.as_deref() != Some(generation) || state.status != InstanceStatus::Ready { return false; }
+        if state.atomic_facts_ready == ready { return true; }
         state.atomic_facts_ready = ready;
+        state.atomic_facts_epoch = state.atomic_facts_epoch.saturating_add(1);
         let _ = self.events.publish(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent {
             instance: self.snapshot_locked(&state), previous_status: Some(state.status),
         } });
+        true
     }
 
     async fn poll_atomic_changes(&self, previous: &HashMap<String, Conversation>) -> Result<HashMap<String, Conversation>, ProtocolError> {
@@ -3097,5 +3099,13 @@ impl OpenCodeInstanceRuntime {
             }
         }
         Ok(current)
+    }
+}
+
+impl OpenCodeInstanceRuntime {
+    fn publish_atomic_event(&self, generation: &str, event: ProtocolEvent) -> Result<(), ProtocolError> {
+        let state = lock(&self.mutable);
+        if state.session_generation.as_deref() != Some(generation) || state.status != InstanceStatus::Ready { return Err(conversation_atoms::generation_changed()); }
+        self.events.publish(event)
     }
 }

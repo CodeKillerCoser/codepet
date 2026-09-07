@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default)]
 pub struct ConversationAtoms {
+    fact_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
     lists: SnapshotPager<Conversation>,
     active: SnapshotPager<ConversationActiveEntry>,
     unread: SnapshotPager<ConversationUnreadEntry>,
@@ -38,10 +39,13 @@ pub fn with_capabilities(mut capabilities: ProviderCapabilities) -> ProviderCapa
 
 /// Mirror existing status facts into the optional typed active notification.
 /// The Host remains the only observer that advances shared activity versions.
-pub fn active_events(route: ProviderInstanceRoute, sink: std::sync::Arc<dyn ProviderEventSink>) -> std::sync::Arc<dyn ProviderEventSink> {
+fn active_events(route: ProviderInstanceRoute, sink: std::sync::Arc<dyn ProviderEventSink>, fact_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>) -> std::sync::Arc<dyn ProviderEventSink> {
     let statuses = std::sync::Mutex::new(BTreeMap::<String, ConversationStatus>::new());
     let revision = std::sync::atomic::AtomicU64::new(0);
     std::sync::Arc::new(move |event: ProtocolEvent| {
+        if matches!(&event, ProtocolEvent::EventConversationUpserted { .. } | ProtocolEvent::EventConversationDeleted { .. } | ProtocolEvent::EventTurnUpserted { .. } | ProtocolEvent::EventApprovalRequested { .. } | ProtocolEvent::EventApprovalResolved { .. }) {
+            fact_epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
         let changed = if let ProtocolEvent::EventConversationUpserted { params, .. } = &event {
             let row = &params.conversation;
             let mut states = statuses.lock().map_err(|_| query_error("conversation_state_unavailable", "active event lock poisoned"))?;
@@ -78,6 +82,11 @@ fn binding<T: serde::Serialize>(kind: &str, generation: &str, request: &T) -> Re
 }
 
 impl ConversationAtoms {
+    pub fn event_epoch(&self) -> u64 { self.fact_epoch.load(std::sync::atomic::Ordering::SeqCst) }
+    pub fn event_sink(&self, route: ProviderInstanceRoute, sink: std::sync::Arc<dyn ProviderEventSink>) -> std::sync::Arc<dyn ProviderEventSink> {
+        active_events(route, sink, self.fact_epoch.clone())
+    }
+
     pub fn list_cached(&self, generation: &str, request: &ConversationListRequest) -> Result<Option<ConversationListResponse>, ProtocolError> {
         validate_list(request)?;
         request.cursor.as_deref().map(|cursor| {
@@ -261,11 +270,46 @@ mod tests {
     }
 }
 
-pub fn with_partial_activity_capabilities(capabilities: ProviderCapabilities) -> ProviderCapabilities {
-    let mut capabilities = with_capabilities(capabilities);
-    capabilities.methods.retain(|method| *method != ProviderCapability::ConversationActiveList);
+pub struct SummaryDelta {
+    pub upserted: Vec<Conversation>,
+    pub deleted: Vec<String>,
+}
+
+/// A single cancellable discovery loop. The adapter must confirm deletion in
+/// `load`, and serialize `publish` with its native generation/lifecycle fence.
+pub fn spawn_summary_poll<L, P>(load: L, publish: P, interval: std::time::Duration) -> tokio::task::JoinHandle<()>
+where
+    L: Fn(Vec<String>) -> ProtocolFuture<'static, Vec<Conversation>> + Send + Sync + 'static,
+    P: Fn(Result<SummaryDelta, ProtocolError>) -> bool + Send + Sync + 'static,
+{
+    tokio::spawn(async move {
+        let mut previous = BTreeMap::<String, Conversation>::new();
+        loop {
+            match load(previous.keys().cloned().collect()).await {
+                Ok(rows) => {
+                    let current = rows.into_iter().map(|row| (row.resource.native_resource_id.clone(), row)).collect::<BTreeMap<_, _>>();
+                    let delta = SummaryDelta {
+                        upserted: current.iter().filter(|(id, row)| previous.get(*id) != Some(*row)).map(|(_, row)| row.clone()).collect(),
+                        deleted: previous.keys().filter(|id| !current.contains_key(*id)).cloned().collect(),
+                    };
+                    if !publish(Ok(delta)) { return; }
+                    previous = current;
+                }
+                Err(error) => if !publish(Err(error)) { return; },
+            }
+            tokio::time::sleep(interval).await;
+        }
+    })
+}
+
+pub fn observed_capabilities(mut capabilities: ProviderCapabilities, ready: bool, epoch: u64) -> ProviderCapabilities {
+    if !ready { capabilities.methods.retain(|method| *method != ProviderCapability::ConversationActiveList); }
+    if epoch != 0 { capabilities.revision = format!("{}:observations-{epoch}", capabilities.revision); }
     capabilities
 }
-pub fn incomplete_native_activity() -> ProtocolError {
-    query_error("unsupported", "native activity cannot be completely enumerated across independent harness processes")
+
+pub fn publish_summary_delta(route: &ProviderInstanceRoute, delta: SummaryDelta, events: &dyn ProviderEventSink) -> Result<(), ProtocolError> {
+    for conversation in delta.upserted { events.publish(ProtocolEvent::EventConversationUpserted { jsonrpc: "2.0".into(), params: ConversationUpsertedEvent { conversation } })?; }
+    for id in delta.deleted { events.publish(ProtocolEvent::EventConversationDeleted { jsonrpc: "2.0".into(), params: ConversationDeletedEvent { conversation: resource(route, id) } })?; }
+    Ok(())
 }

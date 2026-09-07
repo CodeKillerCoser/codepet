@@ -297,6 +297,7 @@ fn main() {
                 );
             }
             "project/delete" => respond(&mut writer, id, json!({})),
+            "thread/loaded/list" => { respond(&mut writer, id, json!({"data": [], "nextCursor": null})); }
             "thread/list" => {
                 if params["sortKey"] != "updated_at"
                     || params["sortDirection"] != "desc"

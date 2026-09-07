@@ -533,6 +533,15 @@ impl CodexAppServerSession {
         control_result
     }
 
+    /// Enumerate the complete in-memory namespace of this AppServer only.
+    pub fn thread_loaded_list(&self, cursor: Option<String>, limit: u32) -> Result<(Vec<String>, Option<String>), CodexAppServerError> {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Page { data: Vec<String>, next_cursor: Option<String> }
+        let page: Page = self.request("thread/loaded/list", json!({"cursor":cursor,"limit":limit}))?;
+        Ok((page.data, page.next_cursor))
+    }
+
     pub fn thread_list(
         &self,
         request: CodexThreadListRequest,

@@ -1,3 +1,4 @@
+mod conversation_observer;
 use codepet_provider_sdk::conversation_atoms::{self, ConversationAtoms};
 use codepet_provider_sdk::local_runtime;
 use crate::client::{
@@ -86,6 +87,9 @@ struct NoopExecutionLifecycleHook;
 impl ExecutionLifecycleHook for NoopExecutionLifecycleHook {}
 
 struct InstanceMutable {
+    atomic_task: Option<tokio::task::JoinHandle<()>>,
+    atomic_facts_ready: bool,
+    atomic_facts_epoch: u64,
     metadata_epoch: u64,
     metadata_task: Option<tokio::task::JoinHandle<()>>,
     destroyed: bool,
@@ -107,7 +111,7 @@ struct InstanceMutable {
 }
 
 impl Drop for InstanceMutable {
-    fn drop(&mut self) { if let Some(task) = self.metadata_task.take() { task.abort(); } }
+    fn drop(&mut self) { if let Some(task) = self.metadata_task.take() { task.abort(); } if let Some(task) = self.atomic_task.take() { task.abort(); } }
 }
 
 enum InstanceSessionState {
@@ -405,9 +409,10 @@ impl CodexInstanceRuntime {
         lifecycle_hook: Arc<dyn ExecutionLifecycleHook>,
     ) -> Self {
         let executable_path = settings.app_server_executable.to_string_lossy().into_owned();
-        let events = conversation_atoms::active_events(request.route.clone(), events);
+        let atoms = ConversationAtoms::default();
+        let events = atoms.event_sink(request.route.clone(), events);
         Self {
-            atoms: ConversationAtoms::default(),
+            atoms,
             route: request.route.clone(),
             instance_kind: request.instance_kind,
             display_name: request.display_name,
@@ -416,6 +421,7 @@ impl CodexInstanceRuntime {
             lifecycle_changed: Condvar::new(),
             title_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             mutable: Mutex::new(InstanceMutable {
+                atomic_task: None, atomic_facts_ready: false, atomic_facts_epoch: 0,
                 metadata_epoch: 0, metadata_task: None,
                 destroyed: false,
                 cleanup_in_progress: false,
@@ -449,6 +455,10 @@ impl CodexInstanceRuntime {
 
     fn snapshot(&self) -> ProviderInstance {
         let mutable = lock(&self.mutable);
+        self.snapshot_locked(&mutable)
+    }
+
+    fn snapshot_locked(&self, mutable: &InstanceMutable) -> ProviderInstance {
         lock(&self.mapper).instance(
             CODEX_PLUGIN_ID.to_string(),
             self.instance_kind.clone(),
@@ -457,7 +467,7 @@ impl CodexInstanceRuntime {
             mutable.status,
             mutable.authentication.clone(),
             mutable.usage.clone(),
-            mutable.capabilities.clone(),
+            conversation_atoms::observed_capabilities(mutable.capabilities.clone(), mutable.atomic_facts_ready, mutable.atomic_facts_epoch),
         )
     }
 
@@ -648,6 +658,8 @@ impl CodexInstanceRuntime {
                     let previous = mutable.status;
                     Self::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
+            mutable.atomic_facts_ready = false;
+            if let Some(task) = mutable.atomic_task.take() { task.abort(); }
                     mutable.status = InstanceStatus::Stopped;
                     self.lifecycle_changed.notify_all();
                     drop(mutable);
@@ -657,6 +669,8 @@ impl CodexInstanceRuntime {
                     let previous = mutable.status;
                     Self::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
+            mutable.atomic_facts_ready = false;
+            if let Some(task) = mutable.atomic_task.take() { task.abort(); }
                     let lifecycle_generation = mutable.lifecycle_generation;
                     mutable.status = InstanceStatus::Stopping;
                     mutable.server_session_id = None;
@@ -1186,6 +1200,8 @@ impl CodexInstanceRuntime {
             let previous = mutable.status;
             Self::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
+            mutable.atomic_facts_ready = false;
+            if let Some(task) = mutable.atomic_task.take() { task.abort(); }
             let failure_generation = mutable.lifecycle_generation;
             mutable.cleanup_in_progress = true;
             mutable.status = InstanceStatus::Error;
@@ -1563,6 +1579,8 @@ impl Provider for CodexProvider {
                 let previous = mutable.status;
                 CodexInstanceRuntime::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
+            mutable.atomic_facts_ready = false;
+            if let Some(task) = mutable.atomic_task.take() { task.abort(); }
                 mutable.status = InstanceStatus::Starting;
                 mutable.server_session_id = None;
                 mutable.server_generation = None;
@@ -1683,6 +1701,7 @@ impl Provider for CodexProvider {
             runtime.start_server_forwarder(server_generation, server, incoming);
             let instance = runtime.snapshot();
             runtime.refresh_metadata();
+            runtime.start_atomic_poll();
             Ok(InstanceStartResponse { instance })
         })
     }
@@ -1728,6 +1747,8 @@ impl Provider for CodexProvider {
                 mutable.destroyed = true;
                 CodexInstanceRuntime::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
+            mutable.atomic_facts_ready = false;
+            if let Some(task) = mutable.atomic_task.take() { task.abort(); }
                 mutable.server_session_id = None;
                 mutable.server_generation = None;
                 runtime.lifecycle_changed.notify_all();
@@ -1750,7 +1771,7 @@ impl Provider for CodexProvider {
     ) -> ProtocolFuture<'a, InstanceCapabilitiesResponse> {
         Box::pin(async move {
             let runtime = self.instance(&request.route)?;
-            let capabilities = lock(&runtime.mutable).capabilities.clone();
+            let capabilities = runtime.snapshot().capabilities;
             Ok(InstanceCapabilitiesResponse {
                 capabilities,
             })
@@ -1909,8 +1930,17 @@ impl Provider for CodexProvider {
         })
     }
 
-    fn conversation_active_list<'a>(&'a self, _request: codepet_provider_sdk::ConversationActiveListRequest) -> ProtocolFuture<'a, codepet_provider_sdk::ConversationActiveListResponse> {
-        Box::pin(async { Err(conversation_atoms::incomplete_native_activity()) })
+    fn conversation_active_list<'a>(&'a self, request: codepet_provider_sdk::ConversationActiveListRequest) -> ProtocolFuture<'a, codepet_provider_sdk::ConversationActiveListResponse> {
+        Box::pin(async move {
+            let runtime = self.instance(&request.route)?;
+            if !lock(&runtime.mutable).atomic_facts_ready { return Err(protocol_error("unsupported", "complete native observation is not ready".into(), true)); }
+            let generation = runtime.query_generation()?;
+            if let Some(page) = runtime.atoms.active_cached(&generation, &request)? { return Ok(page); }
+            let epoch = runtime.atoms.event_epoch();
+            let rows = runtime.collect_atomic_summaries().await?;
+            if generation != runtime.query_generation()? || epoch != runtime.atoms.event_epoch() { return Err(conversation_atoms::generation_changed()); }
+            runtime.atoms.active(&generation, &request, rows)
+        })
     }
 
     fn conversation_unread_list<'a>(&'a self, request: codepet_provider_sdk::ConversationUnreadListRequest) -> ProtocolFuture<'a, codepet_provider_sdk::ConversationUnreadListResponse> {
@@ -1937,11 +1967,12 @@ impl Provider for CodexProvider {
                 let runtime = self.instance(&request.route)?;
                 let generation = runtime.query_generation()?;
                 if let Some(page) = runtime.atoms.list_cached(&generation, &request)? { return Ok(page); }
+                let event_epoch = runtime.atoms.event_epoch();
                 let mut rows = self.complete_conversation_summaries(&request.route).await?;
                 if let Some(codepet_provider_sdk::ConversationListQuery::ConversationIdsQuery(query)) = &request.query {
                     self.complete_requested_summaries(&request.route, &query.ids, &mut rows).await?;
                 }
-                if generation != runtime.query_generation()? { return Err(conversation_atoms::generation_changed()); }
+                if generation != runtime.query_generation()? || event_epoch != runtime.atoms.event_epoch() { return Err(conversation_atoms::generation_changed()); }
                 return runtime.atoms.list(&generation, &request, rows);
             }
             if let Some(scope) = request.reader_scope.clone() {
@@ -2290,7 +2321,7 @@ impl Provider for CodexProvider {
             let runtime = self.resource_instance(&request.conversation)?;
             let conversation_id = request.conversation.native_resource_id;
             let capabilities = lock(&runtime.mutable).capabilities.clone();
-            if request.capability_revision != capabilities.revision {
+            if request.capability_revision != capabilities.revision && request.capability_revision != runtime.snapshot().capabilities.revision {
                 return Err(protocol_error(
                     "stale_capability_revision",
                     "turn.start capabilityRevision no longer matches the Provider instance"
@@ -4173,28 +4204,58 @@ impl CodexInstanceRuntime {
 
 impl CodexProvider {
     async fn complete_conversation_summaries(&self, route: &ProviderInstanceRoute) -> Result<Vec<Conversation>, ProtocolError> {
-        let mut rows = conversation_atoms::collect_summaries(self, route).await?;
-        let runtime = self.instance(route)?;
-        let (sessions, pending) = {
-            let mutable = lock(&runtime.mutable);
-            let sessions = mutable.executions.iter().filter_map(|(id, slot)| {
-                match &*lock(&slot.state) {
-                    ExecutionSlotState::Ready(execution) => Some((id.clone(), execution.session.clone())),
-                    ExecutionSlotState::Creating(Some(session)) => Some((id.clone(), session.clone())),
-                    _ => None,
-                }
-            }).collect::<Vec<_>>();
-            (sessions, mutable.pending_materialization.values().cloned().collect::<Vec<_>>())
-        };
-        rows.extend(pending.iter().map(|snapshot| lock(&runtime.mapper).conversation(snapshot)));
-        // Dedicated execution App Servers carry live state missing from a
-        // read-only list server. Read metadata only, never turns/transcripts.
-        for (id, session) in sessions {
-            let snapshot = tokio::task::spawn_blocking(move || session.thread_read_metadata(&id))
+        self.instance(route)?.collect_atomic_summaries().await
+    }
+}
+
+impl CodexInstanceRuntime {
+    async fn collect_atomic_summaries(&self) -> Result<Vec<Conversation>, ProtocolError> {
+        let registry = self.atomic_server_registry()?;
+        let assignments = Arc::new(load_codex_desktop_project_assignments(self.settings.data_directory.as_deref())?);
+        let mut rows = Vec::new();
+        let mut cursor = None;
+        let mut progress = codepet_provider_sdk::conversation_query::EnumerationProgress::default();
+        loop {
+            let server = self.ready_server()?;
+            let page = tokio::task::spawn_blocking(move || server.thread_list(CodexThreadListRequest { cursor, limit: Some(100), project_id: None, workspace_root: None, search_term: None }))
                 .await.map_err(provider_task_error)?.map_err(CodexProtocolMapper::error)?;
-            rows.push(lock(&runtime.mapper).conversation(&snapshot));
+            for mut snapshot in page.data { assignments.decorate(&mut snapshot); rows.push(lock(&self.mapper).conversation(&snapshot)); }
+            cursor = progress.advance(page.next_cursor)?;
+            if cursor.is_none() { break; }
+            tokio::task::yield_now().await;
+        }
+        let pending = lock(&self.mutable).pending_materialization.values().cloned().collect::<Vec<_>>();
+        rows.extend(pending.iter().map(|snapshot| lock(&self.mapper).conversation(snapshot)));
+        let mut live_active = HashMap::new();
+        for (_, server) in &registry {
+            let mut cursor = None;
+            let mut progress = codepet_provider_sdk::conversation_query::EnumerationProgress::default();
+            loop {
+                let source = server.clone();
+                let (ids, next) = tokio::task::spawn_blocking(move || source.thread_loaded_list(cursor, 100)).await.map_err(provider_task_error)?.map_err(CodexProtocolMapper::error)?;
+                for id in ids {
+                    if server.is_ephemeral_thread(&id) { continue; }
+                    let source = server.clone();
+                    // A loaded/read race is an incomplete snapshot, never deletion.
+                    let mut snapshot = tokio::task::spawn_blocking(move || source.thread_read_metadata(&id)).await.map_err(provider_task_error)?.map_err(CodexProtocolMapper::error)?;
+                    assignments.decorate(&mut snapshot);
+                    let row = lock(&self.mapper).conversation(&snapshot);
+                    if conversation_atoms::active(row.status) { live_active.insert(row.resource.native_resource_id.clone(), row.clone()); }
+                    rows.push(row);
+                }
+                cursor = progress.advance(next)?;
+                if cursor.is_none() { break; }
+                tokio::task::yield_now().await;
+            }
+        }
+        let after = self.atomic_server_registry()?;
+        if registry.iter().map(|(id, server)| (*id, server.generation())).collect::<Vec<_>>() != after.iter().map(|(id, server)| (*id, server.generation())).collect::<Vec<_>>() {
+            return Err(conversation_atoms::generation_changed());
         }
         conversation_atoms::sort_summaries(&mut rows);
+        for row in &mut rows {
+            if let Some(active) = live_active.get(&row.resource.native_resource_id) { row.status = active.status; row.active_turn = active.active_turn.clone(); }
+        }
         Ok(rows)
     }
 }
@@ -4213,5 +4274,21 @@ impl CodexProvider {
             rows.push(lock(&runtime.mapper).conversation(&snapshot));
         }
         Ok(())
+    }
+}
+
+impl CodexInstanceRuntime {
+    fn atomic_server_registry(&self) -> Result<Vec<(u64, CodexAppServerSession)>, ProtocolError> {
+        let mutable = lock(&self.mutable);
+        let mut registry = Vec::new();
+        for (id, slot) in &mutable.sessions {
+            match &*lock(&slot.state) {
+                InstanceSessionState::Spawned(server) => registry.push((*id, server.clone())),
+                InstanceSessionState::Pending | InstanceSessionState::Spawning => return Err(conversation_atoms::generation_changed()),
+                InstanceSessionState::Finished => {}
+            }
+        }
+        registry.sort_by_key(|(id, _)| *id);
+        Ok(registry)
     }
 }

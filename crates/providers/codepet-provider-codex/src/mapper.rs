@@ -44,7 +44,7 @@ impl CodexProtocolMapper {
     }
 
     pub fn unavailable_capabilities(revision: String) -> ProviderCapabilities {
-        codepet_provider_sdk::conversation_atoms::with_partial_activity_capabilities(ProviderCapabilities {
+        codepet_provider_sdk::conversation_atoms::with_capabilities(ProviderCapabilities {
             conversation_list_query: None,
             revision,
             methods: vec![
@@ -236,7 +236,7 @@ impl CodexProtocolMapper {
                 ]);
             }
         }
-        Ok(codepet_provider_sdk::conversation_atoms::with_partial_activity_capabilities(ProviderCapabilities {
+        Ok(codepet_provider_sdk::conversation_atoms::with_capabilities(ProviderCapabilities {
             conversation_list_query: None,
             revision,
             methods,

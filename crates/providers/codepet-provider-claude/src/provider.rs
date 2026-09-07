@@ -1,3 +1,4 @@
+mod conversation_observer;
 use codepet_provider_sdk::conversation_atoms::{self, ConversationAtoms};
 use codepet_provider_sdk::local_runtime;
 use crate::client::{
@@ -138,6 +139,7 @@ struct ManagedConversation {
     active_turn: Option<ManagedTurn>,
 }
 
+#[derive(Clone)]
 struct DiscoveredConversation {
     conversation: Conversation,
     workspace_root: PathBuf,
@@ -147,6 +149,10 @@ struct DiscoveredConversation {
 }
 
 struct InstanceMutable {
+    atomic_task: Option<tokio::task::JoinHandle<()>>,
+    atomic_facts_ready: bool,
+    atomic_facts_epoch: u64,
+    lifecycle_generation: u64,
     metadata_epoch: u64,
     metadata_task: Option<tokio::task::JoinHandle<()>>,
     status: InstanceStatus,
@@ -157,10 +163,13 @@ struct InstanceMutable {
 }
 
 impl Drop for InstanceMutable {
-    fn drop(&mut self) { if let Some(task) = self.metadata_task.take() { task.abort(); } }
+    fn drop(&mut self) { if let Some(task) = self.metadata_task.take() { task.abort(); } if let Some(task) = self.atomic_task.take() { task.abort(); } }
 }
 
+type HistorySummaryCache = HashMap<PathBuf, (SystemTime, u64, DiscoveredConversation)>;
+
 struct ClaudeInstanceRuntime {
+    history_cache: Mutex<HistorySummaryCache>,
     atoms: ConversationAtoms,
     route: ProviderInstanceRoute,
     instance_kind: String,
@@ -177,15 +186,18 @@ impl ClaudeInstanceRuntime {
         settings: ClaudeInstanceSettings,
         events: Arc<dyn ProviderEventSink>,
     ) -> Self {
-        let events = conversation_atoms::active_events(request.route.clone(), events);
+        let atoms = ConversationAtoms::default();
+        let events = atoms.event_sink(request.route.clone(), events);
         Self {
-            atoms: ConversationAtoms::default(),
+            atoms,
+            history_cache: Mutex::new(HashMap::new()),
             route: request.route,
             instance_kind: request.instance_kind,
             display_name: request.display_name,
             settings,
             capabilities: claude_capabilities(),
             mutable: Mutex::new(InstanceMutable {
+                atomic_task: None, atomic_facts_ready: false, atomic_facts_epoch: 0, lifecycle_generation: 0,
                 metadata_epoch: 0, metadata_task: None,
                 status: InstanceStatus::Created,
                 conversations: HashMap::new(),
@@ -222,7 +234,7 @@ impl ClaudeInstanceRuntime {
             status: mutable.status,
             authentication: mutable.authentication.clone(),
             usage: mutable.usage.clone(),
-            capabilities: self.capabilities.clone(),
+            capabilities: conversation_atoms::observed_capabilities(self.capabilities.clone(), mutable.atomic_facts_ready, mutable.atomic_facts_epoch),
         }
     }
 
@@ -273,6 +285,7 @@ impl ClaudeInstanceRuntime {
         // There is no persistent Claude daemon. Publish this local transition
         // atomically with respect to stop; no CLI query belongs in this section.
         let previous = mutable.status;
+        mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
         mutable.status = InstanceStatus::Starting;
         self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
             jsonrpc: "2.0".into(),
@@ -488,8 +501,24 @@ impl ClaudeInstanceRuntime {
         else {
             return Ok(());
         };
-        let discovered = discover_claude_conversations_with_mode(&config_dir, &self.route, strict, cancelled)?;
+        let discovered = if strict {
+            discover_claude_conversations_with_mode(&config_dir, &self.route, true, cancelled, Some(&mut *lock(&self.history_cache)))?
+        } else { discover_claude_conversations(&config_dir, &self.route)? };
         let mut mutable = lock(&self.mutable);
+        if strict {
+            let mut deleted = Vec::new();
+            for (id, managed) in &mutable.conversations {
+                if managed.active_turn.is_some() || !managed.materialized { continue; }
+                if let Some(path) = &managed.history_path {
+                    match std::fs::metadata(path) {
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => deleted.push(id.clone()),
+                        Err(error) => return Err(discovery_error(path, error)),
+                        Ok(_) => {}
+                    }
+                }
+            }
+            for id in deleted { mutable.conversations.remove(&id); }
+        }
         for discovered in discovered {
             let conversation_id = discovered
                 .conversation
@@ -639,7 +668,7 @@ impl ClaudeInstanceRuntime {
         }
         let conversation_id = request.conversation.native_resource_id.clone();
         let turn_id = Uuid::new_v4().to_string();
-        if request.capability_revision != "claude-cli-stream-json-controls-v1" {
+        if request.capability_revision != "claude-cli-stream-json-controls-v1" && request.capability_revision != self.snapshot().capabilities.revision {
             return Err(protocol_error(
                 "stale_capability_revision",
                 "turn.start capabilityRevision no longer matches the Provider instance"
@@ -1284,6 +1313,9 @@ impl ClaudeInstanceRuntime {
         let mut first_error = self.set_status(InstanceStatus::Stopping).err();
         let active_turns = {
             let mut mutable = lock(&self.mutable);
+            mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
+            mutable.atomic_facts_ready = false;
+            if let Some(task) = mutable.atomic_task.take() { task.abort(); }
             let mut active_turns = Vec::new();
             for managed in mutable.conversations.values_mut() {
                 if let Some(active) = managed.active_turn.as_mut() {
@@ -1674,6 +1706,7 @@ impl Provider for ClaudeProvider {
             }
             let instance = runtime.start()?;
             runtime.refresh_metadata();
+            runtime.start_atomic_poll();
             Ok(InstanceStartResponse { instance })
         })
     }
@@ -1713,13 +1746,22 @@ impl Provider for ClaudeProvider {
         Box::pin(async move {
             let runtime = self.instance(&request.route)?;
             Ok(InstanceCapabilitiesResponse {
-                capabilities: runtime.capabilities.clone(),
+                capabilities: runtime.snapshot().capabilities,
             })
         })
     }
 
-    fn conversation_active_list<'a>(&'a self, _request: codepet_provider_sdk::ConversationActiveListRequest) -> ProtocolFuture<'a, codepet_provider_sdk::ConversationActiveListResponse> {
-        Box::pin(async { Err(conversation_atoms::incomplete_native_activity()) })
+    fn conversation_active_list<'a>(&'a self, request: codepet_provider_sdk::ConversationActiveListRequest) -> ProtocolFuture<'a, codepet_provider_sdk::ConversationActiveListResponse> {
+        Box::pin(async move {
+            let runtime = self.instance(&request.route)?;
+            if !lock(&runtime.mutable).atomic_facts_ready { return Err(protocol_error("unsupported", "complete native observation is not ready".into(), true)); }
+            let generation = runtime.query_generation()?;
+            if let Some(page) = runtime.atoms.active_cached(&generation, &request)? { return Ok(page); }
+            let epoch = runtime.atoms.event_epoch();
+            let rows = runtime.collect_atomic_summaries().await?;
+            if generation != runtime.query_generation()? || epoch != runtime.atoms.event_epoch() { return Err(conversation_atoms::generation_changed()); }
+            runtime.atoms.active(&generation, &request, rows)
+        })
     }
 
     fn conversation_unread_list<'a>(&'a self, request: codepet_provider_sdk::ConversationUnreadListRequest) -> ProtocolFuture<'a, codepet_provider_sdk::ConversationUnreadListResponse> {
@@ -1746,8 +1788,9 @@ impl Provider for ClaudeProvider {
                 let runtime = self.instance(&request.route)?;
                 let generation = runtime.query_generation()?;
                 if let Some(page) = runtime.atoms.list_cached(&generation, &request)? { return Ok(page); }
-                let rows = self.complete_conversation_summaries(&request.route).await?;
-                if generation != runtime.query_generation()? { return Err(conversation_atoms::generation_changed()); }
+                let event_epoch = runtime.atoms.event_epoch();
+            let rows = self.complete_conversation_summaries(&request.route).await?;
+                if generation != runtime.query_generation()? || event_epoch != runtime.atoms.event_epoch() { return Err(conversation_atoms::generation_changed()); }
                 return runtime.atoms.list(&generation, &request, rows);
             }
             if let Some(scope) = request.reader_scope.clone() {
@@ -1959,7 +2002,7 @@ fn claude_capabilities() -> ProviderCapabilities {
         reasoning_effort: turn_send.reasoning_effort.clone(),
         model_catalog: turn_send.model_catalog.clone(),
     };
-    codepet_provider_sdk::conversation_atoms::with_partial_activity_capabilities(ProviderCapabilities {
+    codepet_provider_sdk::conversation_atoms::with_capabilities(ProviderCapabilities {
             conversation_list_query: Some(codepet_provider_sdk::ConversationListQueryCapabilities { updated_after: true, ids: true }),
             revision: "claude-cli-stream-json-controls-v1".to_string(),
         methods,
@@ -2416,7 +2459,7 @@ fn ensure_claude_workspace(path: &str) -> Result<PathBuf, ProtocolError> {
 fn discover_claude_conversations(
     config_dir: &Path, route: &ProviderInstanceRoute,
 ) -> Result<Vec<DiscoveredConversation>, ProtocolError> {
-    discover_claude_conversations_with_mode(config_dir, route, false, None)
+    discover_claude_conversations_with_mode(config_dir, route, false, None, None)
 }
 
 fn discovery_error(path: &Path, error: impl std::fmt::Display) -> ProtocolError {
@@ -2424,7 +2467,7 @@ fn discovery_error(path: &Path, error: impl std::fmt::Display) -> ProtocolError 
 }
 
 fn discover_claude_conversations_with_mode(
-    config_dir: &Path, route: &ProviderInstanceRoute, strict: bool, cancelled: Option<&AtomicBool>,
+    config_dir: &Path, route: &ProviderInstanceRoute, strict: bool, cancelled: Option<&AtomicBool>, mut cache: Option<&mut HistorySummaryCache>,
 ) -> Result<Vec<DiscoveredConversation>, ProtocolError> {
     let projects_dir = config_dir.join("projects");
     let projects = match std::fs::read_dir(&projects_dir) {
@@ -2433,6 +2476,7 @@ fn discover_claude_conversations_with_mode(
         Err(error) => return Err(discovery_error(&projects_dir, error)),
     };
     let mut discovered = Vec::new();
+    let mut seen_paths = HashSet::new();
     for project in projects {
         check_discovery_cancelled(cancelled)?;
         let project = match project { Ok(project) => project, Err(error) if strict => return Err(discovery_error(&projects_dir, error)), Err(_) => continue };
@@ -2444,9 +2488,20 @@ fn discover_claude_conversations_with_mode(
             let history = match history { Ok(history) => history, Err(error) if strict => return Err(discovery_error(&project.path(), error)), Err(_) => continue };
             let path = history.path();
             if path.extension().and_then(|value| value.to_str()) != Some("jsonl") { continue; }
-            if let Some(conversation) = summarize_claude_history_with_mode(&path, route, strict, cancelled)? { discovered.push(conversation); }
+            seen_paths.insert(path.clone());
+            if let Some(cache) = cache.as_deref_mut() {
+                let metadata = std::fs::metadata(&path).map_err(|error| discovery_error(&path, error))?;
+                let modified = metadata.modified().map_err(|error| discovery_error(&path, error))?;
+                if let Some((cached_time, cached_size, row)) = cache.get(&path) {
+                    if *cached_time == modified && *cached_size == metadata.len() { discovered.push(row.clone()); continue; }
+                }
+                if let Some(row) = summarize_claude_history_with_mode(&path, route, strict, cancelled)? {
+                    cache.insert(path, (modified, metadata.len(), row.clone())); discovered.push(row);
+                }
+            } else if let Some(row) = summarize_claude_history_with_mode(&path, route, strict, cancelled)? { discovered.push(row); }
         }
     }
+    if let Some(cache) = cache { cache.retain(|path, _| seen_paths.contains(path)); }
     Ok(discovered)
 }
 
@@ -3242,15 +3297,19 @@ mod storage_path_tests {
 impl ClaudeInstanceRuntime {
     fn query_generation(&self) -> Result<String, ProtocolError> {
         if self.status() != InstanceStatus::Ready { return Err(provider_unavailable(&self.route)); }
-        Ok(lock(&self.mutable).metadata_epoch.to_string())
+        Ok(lock(&self.mutable).lifecycle_generation.to_string())
     }
 }
 
 impl ClaudeProvider {
     async fn complete_conversation_summaries(&self, route: &ProviderInstanceRoute) -> Result<Vec<Conversation>, ProtocolError> {
-        let runtime = self.instance(route)?;
-        // Cancellation checks each file/record while the scan is off the async
-        // executor, so aborting a recent request cannot leave a full disk scan.
+        self.instance(route)?.collect_atomic_summaries().await
+    }
+}
+impl ClaudeInstanceRuntime {
+    async fn collect_atomic_summaries(self: &Arc<Self>) -> Result<Vec<Conversation>, ProtocolError> {
+        if self.status() != InstanceStatus::Ready { return Err(provider_unavailable(&self.route)); }
+        let runtime = self.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
         let _cancel_on_drop = CancelDiscovery(cancelled.clone());
         tokio::task::spawn_blocking(move || {
@@ -3273,9 +3332,9 @@ mod atomic_query_tests {
         for index in 0..237 {
             std::fs::write(project.join(format!("session-{index}.jsonl")), serde_json::to_vec(&json!({"sessionId":format!("session-{index}"),"cwd":directory.path(),"message":{"role":"assistant","content":"answer"}})).unwrap()).unwrap();
         }
-        assert_eq!(discover_claude_conversations_with_mode(directory.path(), &route, true, None).unwrap().len(), 237);
+        assert_eq!(discover_claude_conversations_with_mode(directory.path(), &route, true, None, None).unwrap().len(), 237);
         std::fs::write(project.join("broken.jsonl"), "{partial").unwrap();
-        assert!(discover_claude_conversations_with_mode(directory.path(), &route, true, None).is_err());
+        assert!(discover_claude_conversations_with_mode(directory.path(), &route, true, None, None).is_err());
         assert_eq!(discover_claude_conversations(directory.path(), &route).unwrap().len(), 237);
     }
 }
