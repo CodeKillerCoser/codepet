@@ -30,6 +30,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[path = "manager_gateway/recent.rs"]
+mod recent;
+
 fn plugin(plugin_id: &str, instances: &[&str]) -> PluginDescriptor {
     PluginDescriptor {
         plugin_id: plugin_id.to_string(),

@@ -3,6 +3,7 @@ use crate::providers::manager::{
     ProviderInstanceRuntimeSnapshot,
 };
 use crate::conversation_state::ConversationStateStore;
+use crate::recent_conversations::RecentSnapshots;
 use crate::{HostError, HostResult};
 use codepet_gateway_sdk as gateway;
 use codepet_gateway_sdk::ProtocolServer;
@@ -20,6 +21,8 @@ const MAX_USAGE_DETAILS: usize = 8;
 const MAX_USAGE_DETAIL_BYTES: usize = 16 * 1024;
 const MAX_USAGE_DETAILS_BYTES: usize = 32 * 1024;
 
+mod recent;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemoteHostIdentity {
     pub device_id: String,
@@ -31,6 +34,7 @@ struct GatewayProviderRuntime {
     route: provider::ProviderInstanceRoute,
     summary: gateway::ProviderSummary,
     capabilities: gateway::GatewayCapabilities,
+    provider_mark_read: bool,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -234,6 +238,9 @@ pub struct ProviderGatewayService {
     remote_host_identity: Option<RemoteHostIdentity>,
     turn_sends: AsyncMutex<TurnSendCache>,
     conversation_state: Arc<ConversationStateStore>,
+    recent: Arc<Mutex<RecentSnapshots>>,
+    recent_concurrency: tokio::sync::Semaphore,
+    recent_builds: AsyncMutex<BTreeMap<crate::recent_conversations::ViewKey, std::sync::Weak<AsyncMutex<()>>>>,
 }
 
 impl ProviderGatewayService {
@@ -272,6 +279,9 @@ impl ProviderGatewayService {
         conversation_state: Arc<ConversationStateStore>,
     ) -> HostResult<Self> {
         let event_capacity = manager.event_capacity().max(1);
+        if let Some(path) = conversation_state.path() {
+            manager.set_conversation_state_path(path)?;
+        }
         let updates = manager.take_updates()?;
         Ok(Self {
             manager,
@@ -283,6 +293,9 @@ impl ProviderGatewayService {
             remote_host_identity,
             turn_sends: AsyncMutex::new(TurnSendCache::new()),
             conversation_state,
+            recent: Arc::new(Mutex::new(RecentSnapshots::default())),
+            recent_concurrency: tokio::sync::Semaphore::new(4),
+            recent_builds: AsyncMutex::new(BTreeMap::new()),
         })
     }
 
@@ -302,6 +315,14 @@ impl ProviderGatewayService {
 
     pub fn current_event_cursor(&self) -> gateway::EventCursor {
         self.events.current_cursor()
+    }
+
+    fn observe_conversation_summary(&self, conversation: &gateway::Conversation) -> Result<(), gateway::ProtocolError> {
+        // First discovery can add unread members without advancing the legacy activity clock.
+        if self.conversation_state.observe_summary(conversation).map_err(gateway_error)? {
+            self.invalidate_recent(&conversation.resource.provider_id)?;
+        }
+        Ok(())
     }
 
     pub async fn resolve_provider_route(
@@ -397,6 +418,10 @@ impl ProviderGatewayService {
         request: gateway::ProtocolRequest,
     ) -> gateway::JsonRpcResponse {
         match request {
+            gateway::ProtocolRequest::ConversationRecent { jsonrpc, id, params } => {
+                let result = self.conversation_recent_for_scope(caller_scope, params).await;
+                json_rpc_response(jsonrpc, id, result)
+            }
             gateway::ProtocolRequest::TurnSend {
                 jsonrpc,
                 id,
@@ -437,16 +462,7 @@ impl ProviderGatewayService {
                 json_rpc_response(jsonrpc, id, result)
             }
             gateway::ProtocolRequest::ConversationMarkRead { jsonrpc, id, params } => {
-                let result = validate_gateway_resource(&params.conversation).and_then(|()| {
-                    self.conversation_state
-                        .mark_read(
-                            caller_scope,
-                            &params.conversation,
-                            &params.observed_activity_version,
-                        )
-                        .map(|read_state| gateway::ConversationMarkReadResponse { read_state })
-                        .map_err(gateway_error)
-                });
+                let result = self.mark_read_for_scope(caller_scope, params).await;
                 json_rpc_response(jsonrpc, id, result)
             }
             request => gateway::dispatch(self, request).await,
@@ -500,11 +516,20 @@ impl ProviderGatewayService {
         };
         let service = Arc::downgrade(self);
         tokio::spawn(async move {
-            while let Some(update) = updates.recv().await {
+            let mut tick = tokio::time::interval(std::time::Duration::from_millis(250));
+            loop {
+                let update = tokio::select! {
+                    update = updates.recv() => match update { Some(update) => Some(update), None => return },
+                    _ = tick.tick() => None,
+                };
                 let Some(service) = service.upgrade() else {
                     return;
                 };
-                if let Err(error) = service.forward_host_update(update) {
+                let result = match update {
+                    Some(update) => service.forward_host_update(update),
+                    None => service.publish_recent_invalidations(),
+                };
+                if let Err(error) = result {
                     eprintln!("Provider Gateway failed to forward Host update: {error:?}");
                 }
             }
@@ -518,12 +543,35 @@ impl ProviderGatewayService {
     ) -> Result<(), gateway::ProtocolError> {
         match update {
             HostUpdate::ProviderEvent(event) => {
+                match &event {
+                    provider::ProtocolEvent::EventConversationActiveChanged { params, .. } => {
+                        self.invalidate_recent(&params.conversation.provider_instance_id)?;
+                        return Ok(());
+                    }
+                    provider::ProtocolEvent::EventConversationUnreadChanged { params, .. } => {
+                        // Shared replay is broad: never forward another scope's read state or ID.
+                        self.invalidate_recent(&params.conversation.provider_instance_id)?;
+                        return Ok(());
+                    }
+                    provider::ProtocolEvent::EventConversationDeleted { params, .. } => {
+                        self.invalidate_recent(&params.conversation.provider_instance_id)?;
+                        return Ok(());
+                    }
+                    provider::ProtocolEvent::EventConversationUpserted { params, .. } => {
+                        self.invalidate_recent(&params.conversation.resource.provider_id)?;
+                    }
+                    provider::ProtocolEvent::EventTurnUpserted { params, .. } => {
+                        self.invalidate_recent(&params.turn.conversation.provider_id)?;
+                    }
+                    _ => {}
+                }
                 let activity = self
                     .conversation_state
                     .observe_provider_event(&event)
                     .map_err(gateway_error)?;
                 self.events.publish(self.map_provider_event(event))?;
                 if let Some((conversation, version)) = activity {
+                    self.invalidate_recent(&conversation.provider_id)?;
                     self.events.publish(gateway::ProtocolEvent::ConversationActivityChanged {
                         jsonrpc: "2.0".to_string(),
                         params: gateway::ProtocolEventParams {
@@ -543,6 +591,7 @@ impl ProviderGatewayService {
                 let _ = previous_state;
                 for instance in &snapshot.instances {
                     let provider = gateway_provider(&snapshot, instance).summary;
+                    self.invalidate_recent(&provider.id)?;
                     self.events.publish(gateway::ProtocolEvent::ProviderChanged {
                         jsonrpc: "2.0".to_string(),
                         params: gateway::ProtocolEventParams {
@@ -558,6 +607,7 @@ impl ProviderGatewayService {
                 previous_status,
             } => {
                 let _ = previous_status;
+                self.invalidate_recent(&instance_id)?;
                 let runtime = snapshot
                     .instances
                     .iter()
@@ -586,6 +636,9 @@ impl ProviderGatewayService {
 
     fn map_provider_event(&self, event: provider::ProtocolEvent) -> gateway::ProtocolEvent {
         match event {
+            provider::ProtocolEvent::EventConversationActiveChanged { .. }
+            | provider::ProtocolEvent::EventConversationUnreadChanged { .. }
+            | provider::ProtocolEvent::EventConversationDeleted { .. } => unreachable!("recent facts become broad invalidations"),
             provider::ProtocolEvent::EventNotification { .. } | provider::ProtocolEvent::RuntimeInventoryChanged { .. } => unreachable!("subscription notifications are delivered only to their subscriber"),
             provider::ProtocolEvent::EventInstanceStatusChanged { .. } => {
                 unreachable!("instance status events are converted to one Host state update")
@@ -692,7 +745,11 @@ impl ProviderGatewayService {
         let mut providers = Vec::new();
         for snapshot in self.manager.snapshots().await {
             for instance in &snapshot.instances {
-                providers.push(gateway_provider(&snapshot, instance));
+                let mut runtime = gateway_provider(&snapshot, instance);
+                if self.conversation_state.path().is_none() {
+                    runtime.capabilities.methods.retain(|method| *method != gateway::GatewayCapability::ConversationRecent);
+                }
+                providers.push(runtime);
             }
         }
         providers.sort_by(|left, right| {
@@ -836,6 +893,11 @@ impl ProviderGatewayService {
 }
 
 impl ProtocolServer for ProviderGatewayService {
+    fn conversation_recent<'a>(
+        &'a self, request: gateway::ConversationRecentRequest,
+    ) -> gateway::ProtocolFuture<'a, gateway::ConversationRecentResponse> {
+        Box::pin(self.conversation_recent_for_scope(DEFAULT_TURN_SEND_CALLER_SCOPE, request))
+    }
     fn protocol_describe<'a>(
         &'a self,
         _request: gateway::ProtocolDescribeRequest,
@@ -1100,15 +1162,15 @@ impl ProtocolServer for ProviderGatewayService {
                     cursor: request.cursor,
                     limit: request.limit,
                     project_filter,
+                    query: None,
+                    reader_scope: None,
                 })
                 .await
                 .map_err(gateway_error)?;
             let mut conversations = Vec::with_capacity(response.conversations.len());
             for conversation in response.conversations {
                 let mut conversation = sanitize_provider_conversation(conversation);
-                self.conversation_state
-                    .observe_summary(&conversation)
-                    .map_err(gateway_error)?;
+                self.observe_conversation_summary(&conversation)?;
                 self.conversation_state
                     .decorate(DEFAULT_TURN_SEND_CALLER_SCOPE, &mut conversation)
                     .map_err(gateway_error)?;
@@ -1152,9 +1214,7 @@ impl ProtocolServer for ProviderGatewayService {
             let mut conversations = Vec::with_capacity(response.conversations.len());
             for conversation in response.conversations {
                 let mut conversation = sanitize_provider_conversation(conversation);
-                self.conversation_state
-                    .observe_summary(&conversation)
-                    .map_err(gateway_error)?;
+                self.observe_conversation_summary(&conversation)?;
                 self.conversation_state
                     .decorate(DEFAULT_TURN_SEND_CALLER_SCOPE, &mut conversation)
                     .map_err(gateway_error)?;
@@ -1188,12 +1248,12 @@ impl ProtocolServer for ProviderGatewayService {
                 .map_err(gateway_error)?;
             let mut conversation = sanitize_provider_conversation(response.conversation);
             let items = response.items;
-            self.conversation_state
-                .observe_summary(&conversation)
-                .map_err(gateway_error)?;
-            self.conversation_state
+            self.observe_conversation_summary(&conversation)?;
+            if self.conversation_state
                 .observe_detail(&conversation.resource, &items)
-                .map_err(gateway_error)?;
+                .map_err(gateway_error)?.is_some() {
+                self.invalidate_recent(&conversation.resource.provider_id)?;
+            }
             self.conversation_state
                 .decorate(DEFAULT_TURN_SEND_CALLER_SCOPE, &mut conversation)
                 .map_err(gateway_error)?;
@@ -1286,17 +1346,7 @@ impl ProtocolServer for ProviderGatewayService {
         &'a self,
         request: gateway::ConversationMarkReadRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ConversationMarkReadResponse> {
-        Box::pin(async move {
-            validate_gateway_resource(&request.conversation)?;
-            self.conversation_state
-                .mark_read(
-                    DEFAULT_TURN_SEND_CALLER_SCOPE,
-                    &request.conversation,
-                    &request.observed_activity_version,
-                )
-                .map(|read_state| gateway::ConversationMarkReadResponse { read_state })
-                .map_err(gateway_error)
-        })
+        Box::pin(self.mark_read_for_scope(DEFAULT_TURN_SEND_CALLER_SCOPE, request))
     }
 
     fn conversation_create<'a>(
@@ -1404,6 +1454,8 @@ fn gateway_provider(
         .and_then(|instance| instance.harness.executable_path.clone())
         .or_else(|| configured_executable_path(&runtime.record.settings));
     GatewayProviderRuntime {
+        provider_mark_read: runtime.instance.as_ref().is_some_and(|instance|
+            instance.capabilities.methods.contains(&provider::ProviderCapability::ConversationMarkRead)),
         route: provider::ProviderInstanceRoute {
             device_id: runtime.record.device_id.clone(),
             provider_plugin_id: plugin.catalog.plugin_id.clone(),
@@ -1577,6 +1629,9 @@ fn map_capabilities(capabilities: &provider::ProviderCapabilities) -> gateway::G
                 Some(gateway::GatewayCapability::TurnSend)
             }
             provider::ProviderCapability::TurnSteer => None,
+            provider::ProviderCapability::ConversationActiveList
+            | provider::ProviderCapability::ConversationUnreadList
+            | provider::ProviderCapability::ConversationMarkRead => None,
             provider::ProviderCapability::TurnInterrupt => {
                 Some(gateway::GatewayCapability::TurnInterrupt)
             }
@@ -1589,6 +1644,12 @@ fn map_capabilities(capabilities: &provider::ProviderCapabilities) -> gateway::G
                 methods.push(mapped);
             }
         }
+    }
+    if capabilities.conversation_list_query.as_ref().is_some_and(|query| query.updated_after && query.ids)
+        && [provider::ProviderCapability::ConversationList, provider::ProviderCapability::ConversationActiveList,
+            provider::ProviderCapability::ConversationUnreadList, provider::ProviderCapability::ConversationMarkRead]
+            .iter().all(|required| capabilities.methods.contains(required)) {
+        methods.push(gateway::GatewayCapability::ConversationRecent);
     }
     gateway::GatewayCapabilities {
         revision: capabilities.revision.clone(),

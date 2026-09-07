@@ -32,7 +32,10 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+mod recent;
+
 struct FakeProvider {
+    recent: recent::RecentFixture,
     events: Option<Arc<dyn codepet_provider_sdk::ProviderEventSink>>,
     plugin_id: String,
     observation: Mutex<Option<(String, Arc<std::sync::atomic::AtomicBool>)>>,
@@ -68,6 +71,22 @@ impl FakeProvider {
 }
 
 impl ProtocolServer for FakeProvider {
+    fn conversation_active_list<'a>(&'a self, request: codepet_provider_sdk::ConversationActiveListRequest)
+        -> ProtocolFuture<'a, codepet_provider_sdk::ConversationActiveListResponse> {
+        Box::pin(async move { self.recent.active(request) })
+    }
+    fn conversation_unread_list<'a>(&'a self, request: codepet_provider_sdk::ConversationUnreadListRequest)
+        -> ProtocolFuture<'a, codepet_provider_sdk::ConversationUnreadListResponse> {
+        Box::pin(async move { self.recent.unread(request) })
+    }
+    fn conversation_mark_read<'a>(&'a self, request: codepet_provider_sdk::ConversationMarkReadRequest)
+        -> ProtocolFuture<'a, codepet_provider_sdk::ConversationMarkReadResponse> {
+        Box::pin(async move {
+            let read_state = codepet_provider_sdk::conversation_state::SharedConversationStateStore::from_env()?
+                .mark_read(&request.reader_scope, &resource(&route_from_resource(&request.conversation), &request.conversation.native_resource_id), &request.observed_activity_version)?;
+            Ok(codepet_provider_sdk::ConversationMarkReadResponse { read_state })
+        })
+    }
     fn provider_initialize<'a>(
         &'a self,
         _request: ProviderInitializeRequest,
@@ -347,6 +366,7 @@ impl ProtocolServer for FakeProvider {
     ) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async move {
             self.instance(&request.route)?;
+            if request.query.is_some() && recent::enabled() { return self.recent.summaries(request); }
             if std::env::var("CODEPET_FAKE_CONVERSATION_LIST_SNAPSHOT_RACE").as_deref() == Ok("1") {
                 self.publish_conversation(&request.route, "conversation-list-event-first")?;
                 wait_for_snapshot_release().await;
@@ -670,6 +690,7 @@ async fn main() {
     let plugin_id = std::env::var("CODEPET_FAKE_PLUGIN_ID")
         .unwrap_or_else(|_| "dev.codepet.fake".to_string());
     codepet_provider_sdk::serve_stdio(codepet_provider_sdk::StdioServerOptions::default(), |events| FakeProvider {
+        recent: recent::RecentFixture::default(),
         events: Some(events), plugin_id, observation: Mutex::new(None), instances: Mutex::new(BTreeMap::new()), instance_settings: Mutex::new(BTreeMap::new()),
     }).await.unwrap();
     close_stdout_pipe();
@@ -730,7 +751,8 @@ async fn wait_for_snapshot_release() {
 }
 
 fn capabilities() -> ProviderCapabilities {
-    ProviderCapabilities {
+    let mut capabilities = ProviderCapabilities {
+        conversation_list_query: recent::enabled().then_some(codepet_provider_sdk::ConversationListQueryCapabilities { updated_after: true, ids: true }),
         revision: "fake-capabilities-v1".to_string(),
         methods: vec![
             ProviderCapability::ProjectList,
@@ -774,7 +796,11 @@ fn capabilities() -> ProviderCapabilities {
             }),
         }),
         extensions: Vec::new(),
+    };
+    if recent::enabled() {
+        capabilities.methods.extend([ProviderCapability::ConversationActiveList, ProviderCapability::ConversationUnreadList, ProviderCapability::ConversationMarkRead]);
     }
+    capabilities
 }
 
 fn choice(id: &str, display_name: &str) -> ChoiceOption {

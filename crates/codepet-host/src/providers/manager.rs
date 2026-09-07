@@ -150,6 +150,7 @@ impl PluginEntry {
 }
 
 struct PluginManagerInner {
+    conversation_state_path: StdMutex<Option<std::path::PathBuf>>,
     event_journal: StdMutex<Option<Arc<crate::event_journal::EventJournal>>>,
     device: Arc<DeviceRegistry>,
     instances: ProviderInstanceRegistry,
@@ -252,6 +253,7 @@ impl PluginManager {
         let (updates, update_receiver) = mpsc::channel(config.event_capacity.max(1));
         Ok(Self {
             inner: Arc::new(PluginManagerInner {
+                conversation_state_path: StdMutex::new(None),
                 event_journal: StdMutex::new(None),
                 device,
                 instances,
@@ -275,6 +277,26 @@ impl PluginManager {
 
     pub fn set_event_journal(&self, journal: Arc<crate::event_journal::EventJournal>) {
         *self.inner.event_journal.lock().unwrap() = Some(journal);
+    }
+
+    /// Called while constructing the Gateway, before starting Provider processes.
+    /// Every participant uses one locked document; a late path switch is rejected.
+    pub(crate) fn set_conversation_state_path(&self, path: &std::path::Path) -> HostResult<()> {
+        if !path.is_absolute() {
+            return Err(HostError::new("conversation_state_unavailable", "Shared state path must be absolute"));
+        }
+        let plugins = self.inner.plugins.try_read().map_err(|_| HostError::new(
+            "conversation_state_unavailable", "Configure shared state before starting Providers"))?;
+        if plugins.values().any(|plugin| plugin.generation != 0) {
+            return Err(HostError::new("conversation_state_unavailable", "Cannot change shared state after Provider startup"));
+        }
+        let mut configured = self.inner.conversation_state_path.lock().map_err(|_| HostError::new(
+            "conversation_state_unavailable", "Shared state configuration lock is poisoned"))?;
+        if configured.as_deref().is_some_and(|old| old != path) {
+            return Err(HostError::new("conversation_state_unavailable", "Shared state path was already configured"));
+        }
+        *configured = Some(path.to_owned());
+        Ok(())
     }
 
     pub fn subscribe_runtime_changes(&self) -> tokio::sync::watch::Receiver<u64> { self.inner.runtime_changes.subscribe() }
@@ -510,6 +532,13 @@ impl PluginManager {
                 instance.instance = None;
             }
             let mut descriptor = entry.catalog.clone();
+            if let Some(path) = self.inner.conversation_state_path.lock().map_err(|_| {
+                HostError::new("conversation_state_unavailable", "Shared state configuration lock is poisoned")
+            })?.as_ref() {
+                let path = path.to_str().ok_or_else(|| HostError::new(
+                    "conversation_state_unavailable", "Shared state path must be UTF-8"))?;
+                descriptor.env.insert("CODEPET_CONVERSATION_STATE_PATH".into(), path.to_owned());
+            }
             if let Some(candidate) = saved_candidate {
                 descriptor.env.insert("CODEPET_RUNTIME_EXECUTABLE".into(), candidate.executable_path);
             }
@@ -1108,6 +1137,31 @@ impl PluginManager {
         self.ensure_historical_route_ready(&route).await?;
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::ConversationList)?;
+        if request.reader_scope.is_some() {
+            ensure_capability(&instance, ProtocolMethod::ConversationUnreadList)?;
+            if request.reader_scope.as_deref().is_some_and(|scope| scope.trim().is_empty()) {
+                return Err(HostError::new("invalid_request", "Reader scope must not be empty"));
+            }
+        }
+        if request.query.is_some() {
+            let modes = instance.capabilities.conversation_list_query.as_ref().ok_or_else(|| {
+                HostError::new("unsupported", "Provider does not support scoped summary queries")
+            })?;
+            let allowed = match &request.query {
+                Some(codepet_provider_sdk::ConversationListQuery::ConversationUpdatedAfterQuery(_)) => modes.updated_after,
+                Some(codepet_provider_sdk::ConversationListQuery::ConversationIdsQuery(_)) => modes.ids,
+                None => modes.updated_after || modes.ids,
+            };
+            if !allowed { return Err(HostError::new("unsupported", "Provider does not support this summary query")); }
+            if let Some(codepet_provider_sdk::ConversationListQuery::ConversationIdsQuery(query)) = &request.query {
+                if query.ids.is_empty() || query.ids.len() > 100
+                    || query.ids.iter().any(|id| id.trim().is_empty())
+                    || query.ids.iter().collect::<BTreeSet<_>>().len() != query.ids.len()
+                    || !matches!(request.project_filter, codepet_provider_sdk::ConversationProjectFilter::ConversationProjectFilterAll(_)) {
+                    return Err(HostError::new("invalid_request", "IDs query requires 1..100 distinct IDs and all project scope"));
+                }
+            }
+        }
         if matches!(
             &request.project_filter,
             codepet_provider_sdk::ConversationProjectFilter::ConversationProjectFilterProject(_)
@@ -1123,6 +1177,50 @@ impl PluginManager {
             validate_conversation_routes(conversation, &route)?;
         }
         Ok(response)
+    }
+
+    pub async fn conversation_active_list(&self, request: codepet_provider_sdk::ConversationActiveListRequest)
+        -> HostResult<codepet_provider_sdk::ConversationActiveListResponse> {
+        let route = request.route.clone();
+        self.ensure_historical_route_ready(&route).await?;
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::ConversationActiveList)?;
+        let response = process.client().conversation_active_list(request).await.map_err(HostError::from)?;
+        for row in &response.conversations {
+            validate_provider_resource_identity(&row.conversation)?;
+            validate_provider_resource_route(&row.conversation, &route)?;
+            if row.activity_version.trim().is_empty() {
+                return Err(HostError::new("provider_response_invalid", "Active entry requires an activity version"));
+            }
+        }
+        Ok(response)
+    }
+
+    pub async fn conversation_unread_list(&self, request: codepet_provider_sdk::ConversationUnreadListRequest)
+        -> HostResult<codepet_provider_sdk::ConversationUnreadListResponse> {
+        let route = request.route.clone();
+        self.ensure_historical_route_ready(&route).await?;
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::ConversationUnreadList)?;
+        let response = process.client().conversation_unread_list(request).await.map_err(HostError::from)?;
+        for row in &response.conversations {
+            validate_provider_resource_identity(&row.conversation)?;
+            validate_provider_resource_route(&row.conversation, &route)?;
+            if row.read_state.activity_version.trim().is_empty() || !row.read_state.unread {
+                return Err(HostError::new("provider_response_invalid", "Unread entry requires unread state and an activity version"));
+            }
+        }
+        Ok(response)
+    }
+
+    pub async fn conversation_mark_read(&self, request: codepet_provider_sdk::ConversationMarkReadRequest)
+        -> HostResult<codepet_provider_sdk::ConversationMarkReadResponse> {
+        validate_provider_resource_identity(&request.conversation)?;
+        let route = route_from_provider_resource(&request.conversation);
+        self.ensure_historical_route_ready(&route).await?;
+        let (_, process, instance) = self.routing_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::ConversationMarkRead)?;
+        process.client().conversation_mark_read(request).await.map_err(HostError::from)
     }
 
     pub async fn project_list(&self, request: ProjectListRequest) -> HostResult<ProjectListResponse> {
@@ -2029,6 +2127,9 @@ fn ensure_capability(instance: &ProviderInstance, method: ProtocolMethod) -> Hos
 
 fn event_provider_id(event: &ProtocolEvent) -> HostResult<&str> {
     let provider_id = match event {
+        ProtocolEvent::EventConversationActiveChanged { params, .. } => params.conversation.provider_instance_id.as_str(),
+        ProtocolEvent::EventConversationUnreadChanged { params, .. } => params.conversation.provider_instance_id.as_str(),
+        ProtocolEvent::EventConversationDeleted { params, .. } => params.conversation.provider_instance_id.as_str(),
         ProtocolEvent::EventNotification { .. } | ProtocolEvent::RuntimeInventoryChanged { .. } => return Err(HostError::new("invalid_provider_event", "Notification uses a subscription")),
         ProtocolEvent::EventInstanceStatusChanged { .. } => {
             return Err(HostError::new(
@@ -2067,6 +2168,18 @@ fn validate_event_routes(
     record: &ProviderInstanceRecord,
 ) -> HostResult<()> {
     match event {
+        ProtocolEvent::EventConversationActiveChanged { params, .. } => {
+            validate_provider_resource_route(&params.conversation, route)
+        }
+        ProtocolEvent::EventConversationUnreadChanged { params, .. } => {
+            if params.reader_scope.trim().is_empty() {
+                return Err(HostError::new("invalid_provider_event", "Unread event requires a reader scope"));
+            }
+            validate_provider_resource_route(&params.conversation, route)
+        }
+        ProtocolEvent::EventConversationDeleted { params, .. } => {
+            validate_provider_resource_route(&params.conversation, route)
+        }
         ProtocolEvent::EventNotification { .. } | ProtocolEvent::RuntimeInventoryChanged { .. } => Err(HostError::new("invalid_provider_event", "Notification uses a subscription")),
         ProtocolEvent::EventInstanceStatusChanged { params, .. } => {
             validate_instance_response(record, &params.instance)

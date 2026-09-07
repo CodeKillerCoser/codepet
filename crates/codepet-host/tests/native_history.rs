@@ -79,6 +79,8 @@ async fn installed_opencode_history_through_host_transport() {
                 cursor: None,
                 limit: Some(20),
                 project_filter: serde_json::from_value(json!({"kind":"all"})).unwrap(),
+                query: None,
+                reader_scope: None,
             })
             .await?;
         assert!(

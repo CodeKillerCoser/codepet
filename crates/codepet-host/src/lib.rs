@@ -6,6 +6,7 @@ pub use codepet_provider_sdk as provider_sdk;
 
 pub mod event_journal;
 mod conversation_state;
+mod recent_conversations;
 mod device;
 mod error;
 mod gateway;
