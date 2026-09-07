@@ -15,6 +15,8 @@
         "label": "main",
         "title": "Code Pet",
         "url": "index.html",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
         "width": 980,
         "height": 700,
         "minWidth": 820,

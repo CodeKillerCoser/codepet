@@ -56,7 +56,7 @@ use runtime_gateway::remote_access::{
 };
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager};
 
 const TRAY_MENU_OPEN: &str = "open-main";
 const TRAY_MENU_QUIT: &str = "quit";
@@ -336,12 +336,7 @@ fn open_main_window(app: AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    let window = WebviewWindowBuilder::new(&app, "main", WebviewUrl::App("index.html".into()))
-        .title("Code Pet")
-        .inner_size(980.0, 700.0)
-        .min_inner_size(820.0, 600.0)
-        .resizable(true)
-        .build()
+    let window = platform::main_window::create(&app)
         .map_err(|error| error.to_string())?;
     window.show().map_err(|error| error.to_string())?;
     window.set_focus().map_err(|error| error.to_string())

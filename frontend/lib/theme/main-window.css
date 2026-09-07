@@ -1,0 +1,59 @@
+/* Main-window semantic roles. Pet-window palettes and persisted colors stay separate. */
+.main-theme {
+  --font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-family-code: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-medium-strong: 500;
+  --font-weight-semibold: 600;
+  --font-weight-semibold-strong: 600;
+  --font-weight-semibold-heavy: 600;
+  --font-weight-bold: 600;
+  --font-weight-heavy: 600;
+  --letter-spacing-caps: 0;
+  --letter-spacing-caps-wide: 0;
+  --line-height-body: 1.5714286;
+  --line-height-label: 1.5384615;
+  --line-height-section: 1.5714286;
+  --line-height-page: 1.5;
+  --color-main-chrome: #f0f3f6;
+  --color-main-canvas: #ffffff;
+  --color-main-outline: #21201c08;
+  --color-main-divider: #21201c0a;
+  --color-main-control: var(--sand-9);
+  --color-main-hover: var(--sand-4);
+  --color-main-selected: var(--amber-3);
+  --color-main-selected-text: var(--amber-12);
+  --color-main-accent-solid: var(--amber-9);
+  --color-main-on-accent: #21201c;
+  --color-main-scrim: #00000038;
+  --color-main-close-hover: #c42b1c;
+  --color-main-on-close: #ffffff;
+  --color-focus-ring: var(--amber-11);
+  --color-text-primary: var(--sand-12);
+  --color-text-muted: var(--sand-11);
+  --color-text-subtle: var(--sand-11);
+  --app-bg: var(--color-main-chrome);
+  --app-surface: var(--color-main-canvas);
+  --app-surface-strong: var(--color-main-canvas);
+  --app-surface-soft: var(--sand-2);
+  --app-border: var(--sand-6);
+  --app-border-strong: var(--sand-9);
+  --app-text: var(--color-text-primary);
+  --app-muted: var(--color-text-muted);
+  --app-subtle: var(--color-text-subtle);
+  --app-accent: var(--amber-11);
+  --app-accent-strong: var(--amber-12);
+  --app-good: var(--grass-11);
+  --app-danger: var(--red-11);
+  --app-shadow: color-mix(in srgb, var(--sand-12) 8%, transparent);
+  --pixel-grid: transparent;
+}
+
+.main-theme.dark {
+  --color-main-chrome: #1c1e21;
+  --color-main-canvas: #141516;
+  --color-main-outline: #ffffff08;
+  --color-main-divider: #ffffff0a;
+  --app-shadow: #00000040;
+}
