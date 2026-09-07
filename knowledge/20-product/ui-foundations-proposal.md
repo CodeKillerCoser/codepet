@@ -138,6 +138,10 @@ UI 字体：`-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Micr
 
 最终生产页面的计算样式抽查（包含浏览器采用的 Display P3 色值，按线性亮度计算）：正文／辅助文字／导航选中／接收状态，浅色依次为 16.29／6.05／10.47／10.87:1，深色为 15.73／8.72／12.98／11.85:1，均超过小字号文字 4.5:1。此抽查不冒充全部状态穷举，也不替代历史颜色文件。
 
-命令：`npm run build`；`node node_modules/vitest/vitest.mjs run frontend/styles.test.ts frontend/connections.test.ts frontend/lib/windowChrome.test.ts --maxWorkers=1 --minWorkers=1`；`git diff --check`。普通 `cargo check --manifest-path src-tauri/Cargo.toml --offline -j 2` 因缺少未生成的 `resources/provider-sdk` 停在打包资源检查。临时设置 `TAURI_CONFIG={"bundle":{"resources":[]}}` 后同一命令通过，确认 Windows 源码及能力配置有效；这不代表完整打包通过，正式配置未修改。
+命令：`npm run build`；`node node_modules/vitest/vitest.mjs run frontend/styles.test.ts frontend/connections.test.ts frontend/lib/windowChrome.test.ts --maxWorkers=1 --minWorkers=1`；`git diff --check`。初次 Rust 检查因缺少未生成的 `resources/provider-sdk` 停在资源检查，临时排除资源后源码检查通过；随后执行 `npm run providers:stage:dev` 正常生成三个 Provider 插件、SDK 协议资源和 `cp-sdk-gen.exe`，再以正式配置执行 `cargo check --manifest-path src-tauri/Cargo.toml --offline -j 2` 通过，无需资源排除。资源准备脚本 3 项测试通过，`node tools/protocol-codegen/generate.mjs --check` 通过。完整安装包构建不属于本次 UI 验收。
 
-剩余验收：真实 Windows／macOS 窗口的拖动、最大化、关闭后托盘重开与系统缩放，以及 macOS 全屏和红黄绿命中区域；当前浏览器桥接只能证明 DOM 分支和动作路由，不能代替原生实机。正式打包需先生成 Provider SDK 资源。生产浮层的焦点／Esc 行为未作功能改动，仍需在真实配对和更新场景复核。
+Windows 原生补充验证：通过临时 Tauri 测试程序复用生产 `main_window.rs` 和已构建前端，使用独立应用标识，不启动真实设置／Provider Runtime。自定义最大化按钮使窗口填充屏幕且文案变为“还原窗口”；还原后恢复普通尺寸且文案回到“最大化”。自定义最小化后原生工具明确报告窗口已最小化；自定义关闭后，刷新原生窗口列表确认主窗口消失。共享背景和圆角内容区在真实 WebView2 中正常显示。该程序未提供业务命令，页面中的 command-not-found 提示不作为业务验收结果。临时程序、测试源文件和预览服务已清理，不随代码提交。
+
+测试程序首次编译耗时约 17 分 38 秒；Cargo example 未自动链接正式 binary 的公共控件清单，启动时报 `TaskDialogIndirect` 入口缺失。使用 Windows SDK 的 `mt.exe` 将 Tauri 自带 Common Controls v6 清单写入测试 EXE 后启动成功；这只修复临时程序封装，生产代码未因此修改。
+
+剩余验收：Windows 精确拖动落点、关闭后托盘重开与多种系统缩放，以及真实 macOS 全屏和红黄绿命中区域。自动化拖动中观察到窗口位置变化，但落点存在异步输入不确定性，未计作完整通过。macOS 浏览器分支和单元测试不能代替 macOS 实机。生产浮层的焦点／Esc 行为未作功能改动，仍需在真实配对和更新场景复核。
