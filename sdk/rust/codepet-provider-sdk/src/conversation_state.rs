@@ -273,8 +273,8 @@ impl SharedConversationStateStore {
     ) -> StateResult<Option<u64>> {
         let Some(fingerprint) = fingerprint else { return Ok(None); };
         let mut document = self.lock()?;
-        let version = observe_in_document(&mut document, resource, kind, fingerprint)?;
-        self.persist(&document)?;
+        let (version, dirty) = observe_in_document(&mut document, resource, kind, fingerprint)?;
+        if dirty { self.persist(&document)?; }
         Ok(version)
     }
 
@@ -282,15 +282,15 @@ impl SharedConversationStateStore {
     /// Establish the reader baseline before observations, matching the old Host.
     pub fn observe_and_decorate_summaries(&self, scope: &str, rows: &mut [gateway::Conversation]) -> StateResult<bool> {
         let mut document = self.lock()?;
-        ensure_scope(&mut document, scope);
+        let mut dirty = ensure_scope(&mut document, scope);
         let before = document.latest_version;
         for row in rows.iter_mut() {
             if let Some(value) = summary_fingerprint(row) {
-                observe_in_document(&mut document, &row.resource, FingerprintKind::Summary, value)?;
+                dirty |= observe_in_document(&mut document, &row.resource, FingerprintKind::Summary, value)?.1;
             }
             decorate_from_document(&document, scope, row);
         }
-        self.persist(&document)?;
+        if dirty { self.persist(&document)?; }
         Ok(document.latest_version != before)
     }
 
@@ -600,6 +600,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn identical_fingerprints_and_batches_do_not_replace_the_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.json");
+        let store = SharedConversationStateStore::open(&path).unwrap();
+        let mut rows = vec![conversation("baseline")];
+        store.observe_and_decorate_summaries("mobile", &mut rows).unwrap();
+        // Legal whitespace is retained only if a no-op avoids serialization.
+        let original = fs::read(&path).unwrap();
+        let marker = [original.as_slice(), b"\n\n"].concat();
+        fs::write(&path, &marker).unwrap();
+        assert_eq!(store.observe_summary(&rows[0]).unwrap(), None);
+        assert!(!store.observe_and_decorate_summaries("mobile", &mut rows).unwrap());
+        assert_eq!(fs::read(&path).unwrap(), marker);
+    }
+
     fn conversation(preview: &str) -> gateway::Conversation {
         gateway::Conversation {
             resource: gateway::RoutedResourceId {
@@ -692,11 +708,11 @@ fn decorate_from_document(document: &ConversationStateDocument, scope: &str, row
     let read = client.reads.get(&key).copied().unwrap_or(client.baseline_version);
     row.read_state = Some(gateway::ConversationReadState { unread: latest > read, activity_version: activity_version(latest) });
 }
-fn observe_in_document(document: &mut ConversationStateDocument, resource: &gateway::RoutedResourceId, kind: FingerprintKind, fingerprint: String) -> StateResult<Option<u64>> {
+fn observe_in_document(document: &mut ConversationStateDocument, resource: &gateway::RoutedResourceId, kind: FingerprintKind, fingerprint: String) -> StateResult<(Option<u64>, bool)> {
         let key = resource_key(resource);
         if let Some(record) = document.conversations.get(&key) {
             if kind.value(record).as_ref() == Some(&fingerprint) {
-                return Ok(None);
+                return Ok((None, false));
             }
             if kind != FingerprintKind::Event && kind.value(record).is_none() {
                 let record = document
@@ -704,7 +720,7 @@ fn observe_in_document(document: &mut ConversationStateDocument, resource: &gate
                     .get_mut(&key)
                     .expect("conversation record checked");
                 *kind.slot(record) = Some(fingerprint);
-                return Ok(None);
+                return Ok((None, true));
             }
             document.latest_version = document.latest_version.saturating_add(1);
             let version = document.latest_version;
@@ -714,7 +730,7 @@ fn observe_in_document(document: &mut ConversationStateDocument, resource: &gate
                 .expect("conversation record checked");
             *kind.slot(record) = Some(fingerprint);
             record.latest_version = version;
-            return Ok(Some(version));
+            return Ok((Some(version), true));
         }
         let version = if kind == FingerprintKind::Event {
             document.latest_version = document.latest_version.saturating_add(1);
@@ -731,5 +747,5 @@ fn observe_in_document(document: &mut ConversationStateDocument, resource: &gate
         };
         *kind.slot(&mut record) = Some(fingerprint);
         document.conversations.insert(key, record);
-        Ok((kind == FingerprintKind::Event).then_some(version))
+        Ok(((kind == FingerprintKind::Event).then_some(version), true))
 }
