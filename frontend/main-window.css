@@ -1,0 +1,181 @@
+@import "./lib/theme/main-window.css";
+
+/* Shared shell: product content retains its own DOM, controls and ordering. */
+.main-theme.app-shell {
+  grid-template-columns: 192px minmax(0, 1fr);
+  grid-template-rows: 40px minmax(0, 1fr);
+  gap: 0;
+  padding: 0 8px 8px 0;
+  background: var(--app-bg);
+  font-family: var(--font-family-ui);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-body);
+}
+
+.main-theme .window-toolbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  margin-right: -8px;
+  padding-left: 10px;
+  background: var(--app-bg);
+  color: var(--app-muted);
+  user-select: none;
+}
+.main-theme .native-traffic-light-space { width: 70px; flex-shrink: 0; }
+.main-theme .window-drag-space { align-self: stretch; flex: 1; }
+.main-theme .window-controls { display: flex; height: 40px; }
+.main-theme .window-controls button,
+.main-theme .window-toolbar-button {
+  display: grid;
+  place-items: center;
+  min-height: 32px;
+  width: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+}
+.main-theme .window-controls button { width: 46px; border-radius: 0; }
+.main-theme .window-controls button:hover,
+.main-theme .window-toolbar-button:hover { background: var(--color-main-hover); }
+.main-theme .window-controls .window-close:hover { background: var(--color-main-close-hover); color: var(--color-main-on-close); }
+.main-theme .window-controls button:focus-visible { outline-offset: -3px; }
+
+.main-theme .sidebar {
+  grid-column: 1;
+  grid-row: 2;
+  gap: 0;
+  padding: 0 12px;
+  border: 0;
+  background: var(--app-bg);
+  box-shadow: none;
+}
+.main-theme .brand { display: flex; gap: 0; height: 36px; min-height: 36px; padding: 6px 8px; }
+.main-theme .brand h1 { font-size: var(--font-size-xl); line-height: var(--line-height-page); font-weight: var(--font-weight-semibold); }
+.main-theme .tabs { gap: 4px; }
+.main-theme .tabs button {
+  justify-content: flex-start;
+  min-height: 36px;
+  padding: 6px 10px;
+  gap: 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--app-muted);
+  font-size: var(--font-size-sm-plus);
+  font-weight: var(--font-weight-medium);
+}
+.main-theme .tabs button.active { background: var(--color-main-selected); color: var(--color-main-selected-text); }
+.main-theme .tabs button:hover { transform: none; background: var(--color-main-hover); }
+.main-theme .tabs button.active:hover { background: var(--color-main-selected); }
+.main-theme.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr); padding-left: 8px; }
+.main-theme.sidebar-collapsed .sidebar { visibility: hidden; padding: 0; overflow: hidden; }
+
+.main-theme .content-pane {
+  grid-column: 2;
+  grid-row: 2;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-main-outline);
+  border-radius: 16px;
+  background: var(--app-surface);
+  box-shadow: none;
+}
+.main-theme .topbar {
+  min-height: 52px;
+  padding: 12px 24px;
+  align-items: center;
+  border-bottom: 1px solid var(--color-main-divider);
+  background: var(--app-surface);
+}
+.main-theme .topbar > div { min-width: 0; width: 100%; }
+.main-theme .topbar h2 { margin: 0; font-size: var(--font-size-lg); line-height: var(--line-height-page); font-weight: var(--font-weight-semibold); }
+.main-theme .topbar .error { font-size: var(--font-size-sm); max-height: 64px; overflow-y: auto; overflow-wrap: anywhere; }
+.main-theme .content {
+  display: block;
+  min-width: 0;
+  min-height: 0;
+  padding: 24px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.main-theme .content > * { min-width: 0; }
+.main-theme .content .pixel-panel { background: transparent; border: 0; box-shadow: none; backdrop-filter: none; }
+.main-theme :is(.agent-workspace, .connection-workspace, .usage-workspace, .personal-grid, .personal-side) { gap: 24px; }
+.main-theme :is(.agent-section, .device-section, .runtime-section, .usage-panel, .usage-table, .pet-editor, .appearance-editor, .bubble-editor, .sound-editor, .robot-editor, .event-log) { padding: 0; gap: 16px; }
+.main-theme .overview-grid { gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.main-theme .overview-card { min-height: 96px; padding: 12px 0; gap: 8px; align-content: start; }
+.main-theme .overview-card strong { font-size: var(--font-size-5xl); line-height: var(--line-height-page); font-variant-numeric: tabular-nums; }
+.main-theme .overview-card p { white-space: normal; overflow: visible; }
+.main-theme :is(.section-head, .panel-head) { align-items: center; gap: 12px; flex-wrap: wrap; }
+.main-theme :is(.section-head, .panel-head) h3 { font-size: var(--font-size-md); line-height: var(--line-height-section); }
+.main-theme :is(.agent-card, .runtime-card) h3 { font-size: var(--font-size-md); line-height: var(--line-height-section); }
+.main-theme :is(.eyebrow, .agent-kicker) { font-size: var(--font-size-sm); color: var(--app-muted); font-weight: var(--font-weight-regular); }
+.main-theme :is(.agent-card, .runtime-card, .robot-channel-card) { background: var(--app-surface); border-color: var(--app-border); padding: 16px; box-shadow: none; }
+.main-theme :is(.agent-description, .section-head p, .runtime-card-head p) { font-size: var(--font-size-sm-plus); line-height: var(--line-height-body); }
+.main-theme .personal-grid { grid-template-columns: minmax(0, 1.18fr) minmax(0, .82fr); }
+.main-theme .personal-grid > *, .main-theme .personal-side > * { min-width: 0; }
+.main-theme :is(.icon-button, .row-actions button, .segmented button, .data-directory button, .runtime-refresh-button, .connection-primary-button, .robot-channel-actions button) {
+  min-height: 32px;
+  border-radius: 6px;
+  font-size: var(--font-size-sm-plus);
+  font-weight: var(--font-weight-medium);
+}
+.main-theme .panel-head .icon-button { width: 32px; height: 32px; }
+.main-theme :is(.icon-button, .row-actions button, .segmented button, .power-button, .data-directory button):hover { transform: none; }
+.main-theme :is(.primary-action, .connection-primary-button) { background: var(--color-main-accent-solid); border-color: var(--color-main-accent-solid); color: var(--color-main-on-accent); }
+.main-theme :is(.primary-action, .connection-primary-button):hover { background: var(--amber-10); }
+.main-theme .segmented button.active { background: var(--color-main-selected); color: var(--color-main-selected-text); border-color: var(--app-border-strong); }
+.main-theme button:disabled { opacity: 1; color: var(--app-muted); cursor: not-allowed; }
+.main-theme :is(.primary-action, .connection-primary-button):disabled { background: var(--app-surface-soft); border-color: var(--app-border-strong); color: var(--app-muted); }
+.main-theme :is(input[type="text"], input[type="search"], input[type="password"], input[type="url"], input[type="number"], input[type="time"], select, textarea, input:not([type])) {
+  min-height: 32px;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--color-main-control);
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  font-size: var(--font-size-sm-plus);
+  line-height: var(--line-height-label);
+}
+.main-theme :is(input, select, textarea) { accent-color: var(--color-main-accent-solid); }
+.main-theme :is(code, pre, .path) { font-family: var(--font-family-code); font-size: var(--font-size-sm); }
+.main-theme :is(.modal-scrim, .pair-device-dialog)::backdrop { background: var(--color-main-scrim); }
+.main-theme .modal-scrim { background: var(--color-main-scrim); }
+.main-theme :is(.update-dialog, .pair-device-dialog) { background: var(--app-surface); backdrop-filter: none; border: 1px solid var(--app-border); border-radius: 10px; box-shadow: 0 12px 40px var(--app-shadow); }
+.main-theme svg.lucide { stroke-width: 1.75; }
+.main-theme .status-chip.online { background: var(--color-main-success-bg); color: var(--color-main-success-text); }
+.main-theme .status-chip.runtime-danger { background: var(--color-main-danger-bg); color: var(--color-main-danger-text); }
+.main-theme .journal { padding: 0; }
+.main-theme .journal button { min-height: 32px; padding: 6px 10px; border-radius: 6px; font-size: var(--font-size-sm-plus); }
+.main-theme .journal :is(.status, .source, time, .empty) { opacity: 1; color: var(--app-muted); }
+.main-theme .journal :is(.status, .source, .method, time, pre) { font-size: var(--font-size-sm); }
+
+@media (max-width: 1120px) {
+  .main-theme .personal-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 840px) {
+  .main-theme .content, .main-theme .topbar { padding-left: 20px; padding-right: 20px; }
+  .main-theme .overview-grid, .main-theme .usage-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .main-theme.app-shell { grid-template-columns: 132px minmax(0, 1fr); }
+  .main-theme.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr); }
+  .main-theme .sidebar { padding: 0 8px; }
+  .main-theme .brand { padding-left: 4px; }
+  .main-theme .content, .main-theme .topbar { padding-left: 12px; padding-right: 12px; }
+  .main-theme .overview-grid, .main-theme .usage-summary-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .main-theme button { transition: none; }
+}

@@ -1,5 +1,6 @@
 <script lang="ts">
   import EventJournal from "./lib/EventJournal.svelte";
+  import WindowToolbar from "./lib/WindowToolbar.svelte";
   import { basename, extname, join } from "@tauri-apps/api/path";
   import PetSources from "./lib/PetSources.svelte";
   import type { PetSource } from "./lib/petGateway";
@@ -57,6 +58,7 @@
   type ActivityFilterKind = keyof ActivityKeywordFilterSettings;
 
   let tab: "agents" | "connections" | "usage" | "personalize" | "events" = "agents";
+  let sidebarCollapsed = false;
   let petSources: PetSource[] = [];
   let agentRuntimes: AgentRuntime[] = [];
   let providerConnections: ProviderConnectionState[] = [];
@@ -1742,8 +1744,10 @@
   $: appTheme = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
 </script>
 
-<main class={`app-shell pixel-shell ${appTheme}`}>
-  <aside class="sidebar pixel-panel">
+<main class={`app-shell main-theme ${appTheme}`} class:sidebar-collapsed={sidebarCollapsed}>
+  <WindowToolbar bind:collapsed={sidebarCollapsed} onError={(message) => error = message} />
+  <aside id="main-sidebar" class="sidebar" inert={sidebarCollapsed}>
+    <div class="brand"><h1>Code Pet</h1></div>
     <nav class="tabs" aria-label="Code Pet settings">
       <button class:active={tab === "agents"} on:click={() => (tab = "agents")} aria-label="Agent 列表">
         <Bot size={18} /> Agent
@@ -1763,7 +1767,7 @@
     </nav>
   </aside>
 
-  <section class="content">
+  <section class="content-pane">
     <header class="topbar">
       <div>
         <h2>{pageTitle}</h2>
@@ -1771,6 +1775,7 @@
       </div>
     </header>
 
+    <div class="content">
     {#if tab === "agents"}
       <div class="agent-workspace">
         <section class="overview-grid" aria-label="运行概览">
@@ -2576,6 +2581,7 @@
     {:else if tab === "events"}
       <EventJournal />
     {/if}
+    </div>
   </section>
 
   <PairDeviceDialog
@@ -2588,8 +2594,6 @@
     onClose={closePairDeviceDialog}
     onRetry={retryRemotePairing}
   />
-</main>
-
 {#if availableUpdate}
   <div class="modal-scrim">
     <div class="update-dialog pixel-panel" role="dialog" aria-modal="true" aria-labelledby="update-dialog-title">
@@ -2614,3 +2618,4 @@
     </div>
   </div>
 {/if}
+</main>
