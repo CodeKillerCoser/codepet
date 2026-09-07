@@ -90,4 +90,45 @@ Mapper 覆盖同消息多工具、跨消息复用原生工具 ID、成功及失�
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-opencode --test native_history -- --ignored --nocapture`：本机隔离副本通过。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-host --test native_history -- --ignored --nocapture`：默认 10 秒在 instance.start 超时；设置 `CODEPET_HISTORY_DIAGNOSTIC_TIMEOUT_SECONDS=60` 后通过。
 
-60 秒只用于诊断对照，没有改生产默认超时，也未重打包、安装、升级 OpenCode 或迁移用户数据。排查暴露出的后续设计约束是启动可用性不能等待非必需的账号/用量统计；其修复仍需单独实现和回归。
+60 秒只用于诊断对照，没有改生产默认超时，也未重打包、安装、升级 OpenCode 或迁移用户数据。排查暴露出的后续设计约束是启动可用性不能等待非必需的账号/用量统计；其修复与回归见下方的启动握手拆分记录。
+
+
+### 启动分段计时补证（2026-09-07）
+
+在同一隔离副本上临时为实际 `instance_start` 各阶段添加单调时钟计时，运行原生 history 测试后撤回计时代码。单次观测如下，不能当作固定性能保证：
+
+| 阶段 | 耗时 |
+| --- | ---: |
+| 子进程启动、监听地址报告、health 成功及存活确认 | 4.630 秒 |
+| model API（有结果，未走 `opencode models` 回退） | 2.720 秒 |
+| agent API | 0.158 秒 |
+| provider API | 0.035 秒 |
+| `opencode auth list` | 4.243 秒 |
+| `opencode stats --days 30` | 2.750 秒 |
+| 启动至账号/用量探测结束 | 14.540 秒 |
+
+因此这次 Server 本身在 10 秒内就绪；Host 的 10 秒整个 RPC 预算在账号探测阶段耗尽。账号和用量两个非必需 CLI 串行增加约 7 秒。此前约 20 秒的实测与本次差异说明启动耗时会变化，不能把阈值简单贴着单次结果调整。
+
+代码还暴露两项边界缺口：`probe_opencode_account_metadata` 在 async 启动任务里直接阻塞执行 `Command.output`，两个命令没有执行 deadline；`discover_cli_models` 的可选 CLI 回退也没有执行 deadline，且输出上限在收集结束后检查。本次 model API 非空，未执行该回退，不能把回退计入本次耗时。
+
+超时层次需分开：Host 全 RPC 默认 10 秒；Server 启动阶段另有 10 秒；每个普通 HTTP 请求允许 30 秒；CLI output 无 deadline。Server 阶段的 10 秒不是整个 instance.start 的总预算。这份分段计时是修改前证据；现已将详细探测整体移出 Ready 路径，处理方式见下节。
+
+
+### 启动握手拆分（2026-09-07）
+
+三个 Provider 统一采用握手成功即 Ready、后台详细探测通知的边界。OpenCode 的模型目录、账号、用量和版本在 Ready 后并行执行；Claude 的版本与账号并行；Codex 的模型、项目、账号、额度和用量 RPC 并行。具体进程和跨代约束见 [后台信息规约](../60-rules/provider-background-details.md)。Host 同时防止初始启动响应覆盖已经收到的详细信息通知。
+
+本机原生 Windows 验证不发送模型请求、使用隔离数据目录：Claude 2.1.209 握手约 0.23 毫秒（无持久 Harness 进程），Codex 0.153.4 约 0.50 秒，OpenCode 1.18.29 约 2.80 秒。历史副本通过真实 Host mux、默认 10 秒预算时握手约 4.87 秒，随后消息数仍为 0/3/0。不同数据目录的耗时不能直接视作同等基准；没有升级 Harness 或修改原数据库。
+
+验证命令：`cargo test --offline --manifest-path crates/Cargo.toml -p codepet-provider-claude -p codepet-provider-codex -p codepet-provider-opencode --test native_runtime installed_ -- --ignored --nocapture --test-threads=1`，以及上述 Host native_history 命令。macOS 原生行为和更新后的 release 安装包尚未验证；本次没有重新打包安装。旧历史空页是原生存储/API 的独立问题，本次没有实现历史兼容迁移。
+
+
+#### 自动化回归与剩余边界
+
+握手拆分后的检查：Claude 单元及纵向测试通过（4+10），OpenCode 单元及纵向测试通过（17+3，1 个原生发送测试默认忽略），Codex 单元测试 56 项通过，纵向测试 44 项通过、1 个原生发送测试默认忽略；SDK 单元测试 30 项通过，4 个子进程 fixture 默认忽略；Host 单元测试 37 项通过。
+
+Codex 的 `provider_binary_keeps_eof_visible_after_at_least_forty_nine_saturated_frames` 在本机仍超过测试的 2 秒退出预算。将 `CODEPET_TEST_PROVIDER_EXE` 指向已安装的旧版 `D:/Software/Code Pet/provider-plugins/codex/codepet-provider-codex.exe` 后，同一测试也失败；因此不能将此现象认定为握手拆分引入。本次未放宽这项测试，也没有确认其最终根因。检查中另外发现版本扫描只 abort 外层任务而未取消阻塞进程，已用 RuntimeProbeControl 修复并通过早/晚登记的取消测试；它不是上述 EOF 问题已经解决的证据。
+
+20 MiB 历史测试在 Windows debug 实测约 7.76 秒，超过旧测试的 5 秒等待。仅这些多 MiB 数据测试改用 30 秒等待；生产 Host 的默认 10 秒预算保持原值。后台失败通知测试按 CLI 的 30 秒执行上限等待，与握手预算分开。
+
+Host/Gateway 端到端检查通过：`cargo test --offline --manifest-path crates/Cargo.toml -p codepet-host --test builtin_provider_integration --test manager_gateway -- --test-threads=1`（1+24 项）。最终原生 CLI 复测三项通过，Codex 约 0.53 秒、OpenCode 约 2.83 秒。本机这轮原始日志保存在 `C:/Users/17633/AppData/Local/Temp/codepet-provider-probes-20260907-4ea0d01a`，包含旧版 EOF 对照；临时日志不提交仓库。

@@ -4,7 +4,7 @@
 
 远程 Codex 能力已经从 Tauri 进程内直连实现迁到独立二进制 `crates/providers/codepet-provider-codex`。二进制只依赖 `codepet-provider-sdk`，通过 Provider Protocol v1 的 JSON-RPC 2.0 业务 payload 与 `codepet-host` 通信；stdin/stdout 物理通道使用 SDK Runtime 的 CodePet Provider Frame V1。它不依赖 `codepet-host`、Tauri、Pet SDK 或 Desktop 私有 IPC。Provider 入口只构造 `CodexProvider` 并调用 SDK 的 `serve_stdio`；JSON 序列化、raw/zstd、reader、writer、dispatcher、event sink、普通/控制双通路、过载、frame limit 与 terminal cleanup 全部属于公共 SDK runtime，Codex crate 不再复制或感知 transport server。
 
-每个 Provider instance 只持有一个共享 App Server。instance.start 完成 initialize、model/list 与 Project API 探测，所有 conversation 的 create/resume/read/turn/approval 复用该进程；会话槽不再拥有独立子进程。公共 SDK 接收 Host 心跳携带的客户端集合：有连接时协调实例启动并保持所有已 resume 会话，最后连接离开或 Host 心跳过期时停止 Server，包括 active turn。页面退出不释放会话，不存在续租 timer 或 reaper。Provider 插件本身保持在线。完整模块和心跳设计见 [连接架构](remote-and-provider-connections.md)。
+每个 Provider instance 只持有一个共享 App Server。instance.start 完成 initialize 与事件订阅后返回 Ready；model/list、Project API 与账号详情随后并行探测并通知更新，所有 conversation 的 create/resume/read/turn/approval 复用该进程；会话槽不再拥有独立子进程。公共 SDK 接收 Host 心跳携带的客户端集合：有连接时协调实例启动并保持所有已 resume 会话，最后连接离开或 Host 心跳过期时停止 Server，包括 active turn。页面退出不释放会话，不存在续租 timer 或 reaper。Provider 插件本身保持在线。完整模块和心跳设计见 [连接架构](remote-and-provider-connections.md)。
 
 Server 从 spawn 前占位开始进入 generation/cancellation registry；stop/shutdown 等待占位收敛、进程退出才发布 stopped。SDK 普通请求保持 16 active/32 pending，生命周期 control 保留 2 active/4 pending，过载按原 id 返回 provider_overloaded。provider.ping 在 reader 中直接确认，实例启动/停止由独立协调任务完成。
 
@@ -87,7 +87,7 @@ Codex Desktop 私有 IPC
 | `provider.initialize` | 校验版本与 Host identity，绑定单一 device/client | 支持；同一进程不能改绑另一 Host。 |
 | `provider.describe` | 返回 `dev.codepet.codex`、版本与 `codex` instance kind | 支持。 |
 | `instance.create` | 解码 Host 注入的 settings，建立实例状态 | 支持；executable 必须是绝对路径，未知字段失败。 |
-| `instance.start` | 启动唯一共享 Server、initialize、model/list、Project API 探测和 reader | 支持且幂等；spawn 前登记，只有当前 generation 可发布 Ready。 |
+| `instance.start` | 启动唯一共享 Server、initialize 和 reader；详细能力在 Ready 后后台探测 | 支持且幂等；spawn 前登记，只有当前 generation 可发布 Ready。 |
 | `instance.stop` | 关闭该实例 Server，取消全部会话槽与审批 | 支持且幂等；等待 PID 退出后返回 stopped。 |
 | `instance.capabilities` | 实例缓存的真实能力与模型目录 | 只广告实际支持的能力，revision 随实例配置和目录变化。 |
 | `project.list/get/create/update/delete` | 共享 Server 的实验 Project API | project/list 探测成功才整组支持；-32601 不广告，不把 Section 映射为 Project。 |

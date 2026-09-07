@@ -7,6 +7,7 @@ mod runtime;
 mod content;
 pub mod local_runtime;
 pub mod process;
+pub mod background_probe;
 
 pub use generated::*;
 pub use generated::ProtocolServer as Provider;

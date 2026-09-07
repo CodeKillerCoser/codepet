@@ -144,7 +144,7 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
         .identity
         .default_workspace_root
         .as_deref()
-        .is_some_and(|path| path.ends_with("/.codepet/remote_workspace/codex")));
+        .is_some_and(|path| Path::new(path).ends_with(Path::new(".codepet").join("remote_workspace").join("codex"))));
     assert_eq!(
         claude.identity.icon.as_deref(),
         Some("https://cdn.prod.website-files.com/6889473510b50328dbb70ae6/68c33859cc6cd903686c66a2_apple-touch-icon.png")
@@ -153,7 +153,7 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
         .identity
         .default_workspace_root
         .as_deref()
-        .is_some_and(|path| path.ends_with("/.codepet/remote_workspace/claude")));
+        .is_some_and(|path| Path::new(path).ends_with(Path::new(".codepet").join("remote_workspace").join("claude"))));
     assert_eq!(
         opencode.identity.icon.as_deref(),
         Some("https://opencode.ai/favicon-96x96-v3.png")
@@ -162,7 +162,7 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
         .identity
         .default_workspace_root
         .as_deref()
-        .is_some_and(|path| path.ends_with("/.codepet/remote_workspace/opencode")));
+        .is_some_and(|path| Path::new(path).ends_with(Path::new(".codepet").join("remote_workspace").join("opencode"))));
 
     let codex_conversations = conversation_list(gateway.as_ref(), codex, &device_id, CODEX_PLUGIN_ID).await;
     assert_eq!(codex_conversations.len(), 1);
@@ -182,9 +182,14 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
         conversation:opencode_conversations[0].resource.clone(), cursor:None, limit:Some(100),
     }).await.unwrap();
     assert_eq!(history.items.len(), 5); // Includes two tool results; Host must accept both identities.
-    let description = ProtocolServer::provider_describe(gateway.as_ref(), codepet_gateway_sdk::ProviderDescribeRequest {
-        provider_id:opencode.id.clone(),
-    }).await.unwrap();
+    // Ready precedes discovery. Verify the notified catalog reaches Gateway.
+    let description = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let description = ProtocolServer::provider_describe(gateway.as_ref(), codepet_gateway_sdk::ProviderDescribeRequest {provider_id:opencode.id.clone()}).await.unwrap();
+            if description.capabilities.conversation_create.as_ref().and_then(|c| c.selection.as_ref()).is_some_and(|c| c.model_catalog.is_some()) {break description;}
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("background model catalog did not reach Gateway");
     let controls = description.capabilities.conversation_create.unwrap().selection.unwrap();
     assert_eq!(controls.access_mode.unwrap().options.len(), 2);
     assert!(controls.model_catalog.is_some());

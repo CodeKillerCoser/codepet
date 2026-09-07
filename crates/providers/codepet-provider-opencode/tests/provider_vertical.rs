@@ -86,6 +86,8 @@ async fn cancelling_start_before_health_or_during_discovery_cannot_orphan_server
             }
         }).await.unwrap();
         let pid = read_pid(&pid_file);
+        // Discovery now starts after Ready. Only events after stop are forbidden.
+        if discovery { let _ = events.try_iter().collect::<Vec<_>>(); }
         start.abort(); // Same cancellation performed by the SDK presence worker.
         let _ = start.await;
         provider.instance_stop(InstanceStopRequest { route }).await.unwrap();
@@ -162,11 +164,12 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         .unwrap();
     std::env::remove_var("OPENCODE_FIXTURE_PID_FILE");
     assert_eq!(started.instance.status, InstanceStatus::Ready);
-    let controls = started.instance.capabilities.turn_send.as_ref().unwrap();
+    let capabilities = wait_for_capabilities(&provider, &route).await;
+    let controls = capabilities.turn_send.as_ref().unwrap();
     assert_eq!(controls.access_mode.as_ref().unwrap().options.len(), 2);
     assert_eq!(controls.reasoning_effort.as_ref().unwrap().options.len(), 2);
     assert!(controls.model_catalog.is_some());
-    let create_controls = started.instance.capabilities.conversation_create.as_ref().unwrap().selection.as_ref().unwrap();
+    let create_controls = capabilities.conversation_create.as_ref().unwrap().selection.as_ref().unwrap();
     assert_eq!(create_controls.access_mode.as_ref().unwrap().options.len(), 2);
     assert!(create_controls.model_catalog.is_some());
     let first_server_pid = read_pid(&first_pid_file);
@@ -575,6 +578,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         .await
         .unwrap();
     std::env::remove_var("OPENCODE_FIXTURE_PID_FILE");
+    wait_for_capabilities(&provider, &route).await;
     let second_server_pid = read_pid(&second_pid_file);
     attacker.assert_never_contacted();
 
@@ -861,4 +865,164 @@ fn assert_no_duplicate_turn_status(
             );
         }
     }
+}
+
+
+#[tokio::test]
+async fn account_probes_are_parallel_notify_later_and_cancel_on_stop() {
+    let directory = tempfile::tempdir().unwrap();
+    let (sender, events) = mpsc::channel();
+    let provider = OpenCodeProvider::new(Arc::new(move |event| {
+        let _ = sender.send(event);
+        Ok(())
+    }));
+    provider
+        .provider_initialize(ProviderInitializeRequest {
+            host_client_id: "background".into(),
+            host_device_id: "background".into(),
+            host_version: "test".into(),
+            supported_versions: VersionRange {
+                min_version: PROTOCOL_VERSION,
+                max_version: PROTOCOL_VERSION,
+            },
+        })
+        .await
+        .unwrap();
+    let route = ProviderInstanceRoute {
+        device_id: "background".into(),
+        provider_plugin_id: OPENCODE_PLUGIN_ID.into(),
+        provider_instance_id: "background".into(),
+    };
+    std::fs::write(
+        directory.path().join("opencode-fixture-startup.json"),
+        serde_json::to_vec(&json!({"probeDirectory":directory.path()})).unwrap(),
+    )
+    .unwrap();
+    provider
+        .instance_create(InstanceCreateRequest {
+            route: route.clone(),
+            instance_kind: OPENCODE_INSTANCE_KIND.into(),
+            display_name: "Background".into(),
+            settings: [
+                (
+                    "serverExecutable".into(),
+                    json!(env!("CARGO_BIN_EXE_opencode-server-fixture")),
+                ),
+                ("serverArgs".into(), json!(["serve"])),
+                ("workspaceRoot".into(), json!(directory.path())),
+            ]
+            .into(),
+        })
+        .await
+        .unwrap();
+    let started = tokio::time::timeout(
+        Duration::from_secs(3),
+        provider.instance_start(InstanceStartRequest {
+            route: route.clone(),
+        }),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(started.instance.status, InstanceStatus::Ready);
+    assert!(started.instance.authentication.is_none());
+    assert!(started.instance.usage.is_none());
+    // Both commands must have started while neither can finish: proves parallelism without timing ratios.
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while [
+            "auth.pid",
+            "stats.pid",
+            "model.requested",
+            "agent.requested",
+            "provider.requested",
+        ]
+        .iter()
+        .any(|file| !directory.path().join(file).exists())
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    std::fs::write(directory.path().join("release"), "").unwrap();
+    tokio::time::timeout(Duration::from_secs(3),async {
+        loop {
+            if events.try_iter().any(|event| matches!(event,ProtocolEvent::EventInstanceStatusChanged{params,..} if params.instance.status==InstanceStatus::Ready && params.instance.authentication.is_some() && params.instance.usage.is_some())) {break;}
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.unwrap();
+    provider
+        .instance_stop(InstanceStopRequest {
+            route: route.clone(),
+        })
+        .await
+        .unwrap();
+    for name in ["auth.pid", "stats.pid", "release"] {
+        std::fs::remove_file(directory.path().join(name)).unwrap();
+    }
+    provider
+        .instance_start(InstanceStartRequest {
+            route: route.clone(),
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while [
+            "auth.pid",
+            "stats.pid",
+            "model.requested",
+            "agent.requested",
+            "provider.requested",
+        ]
+        .iter()
+        .any(|file| !directory.path().join(file).exists())
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let auth = read_pid(&directory.path().join("auth.pid"));
+    let stats = read_pid(&directory.path().join("stats.pid"));
+    provider
+        .instance_stop(InstanceStopRequest { route })
+        .await
+        .unwrap();
+    assert_process_exited(auth);
+    assert_process_exited(stats);
+    let _ = events.try_iter().collect::<Vec<_>>();
+    std::fs::write(directory.path().join("release"), "").unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(events.try_iter().all(|event| !matches!(event,ProtocolEvent::EventInstanceStatusChanged{params,..} if params.instance.status==InstanceStatus::Ready)));
+    provider
+        .provider_shutdown(codepet_provider_sdk::ProviderShutdownRequest {})
+        .await
+        .unwrap();
+}
+
+async fn wait_for_capabilities(
+    provider: &OpenCodeProvider,
+    route: &ProviderInstanceRoute,
+) -> codepet_provider_sdk::ProviderCapabilities {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let capabilities = provider
+                .instance_capabilities(codepet_provider_sdk::InstanceCapabilitiesRequest {
+                    route: route.clone(),
+                })
+                .await
+                .unwrap()
+                .capabilities;
+            if capabilities
+                .turn_send
+                .as_ref()
+                .is_some_and(|c| c.model_catalog.is_some())
+            {
+                return capabilities;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("background catalog")
 }

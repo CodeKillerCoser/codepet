@@ -16,7 +16,7 @@ Provider instance 生命周期、SDK 心跳协调、stdio EOF/fatal、App Server
 
 - instance session 槽按 Pending→Spawning→Spawned→Finished 推进；cancel 遇到 Spawning 等待 spawn 明确结束，失败也唤醒等待者。
 - 注销同时校验 slot ID、instance generation 和槽 identity；旧 reader/future 不能删除新代。
-- initialize、model discovery、subscribe 完成且 generation 当前，才发布 Ready；stop 先线性化时，旧 start 返回错误而不能晚到 Ready。
+- initialize、subscribe 完成且 generation 当前，才发布 Ready；模型、项目与账号信息随后后台并行探测，参见 [后台信息规约](provider-background-details.md)；stop 先线性化时，旧 start 返回错误而不能晚到 Ready。
 - create/resume 复用已登记的共享 Server，最终 request 写入与 cancel 共用短 send gate；门内只做复核和 frame 写入，不等待 response 或回收进程。
 - stop/fail/shutdown drain 唯一 Server 并取消全部会话槽、pending approval、未物化缓存；正常 stop 不按会话重复创建或关闭子进程。
 - SDK 先停止心跳协调，再做全局 shutdown/drain。stdout event 写失败必须发送唯一 terminal 信号唤醒 stdio 主循环，不能只在后台打印错误。

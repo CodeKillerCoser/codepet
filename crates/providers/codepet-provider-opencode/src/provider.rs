@@ -91,8 +91,15 @@ struct InstanceMutable {
     sessions: HashMap<String, OpenCodeSession>,
     active_turns: HashMap<String, ActiveTurnState>,
     pending_approvals: HashMap<String, PendingApproval>,
+    metadata_epoch: u64,
+    metadata_task: Option<tokio::task::JoinHandle<()>>,
+    version: Option<String>,
     authentication: Option<ProviderAuthentication>,
     usage: Option<ProviderUsage>,
+}
+
+impl Drop for InstanceMutable {
+    fn drop(&mut self) { if let Some(task) = self.metadata_task.take() { task.abort(); } }
 }
 
 struct OpenCodeInstanceRuntime {
@@ -118,7 +125,7 @@ impl OpenCodeInstanceRuntime {
             route: request.route.clone(),
             instance_kind: request.instance_kind,
             display_name: request.display_name,
-            settings,
+            settings: settings.clone(),
             capabilities: Mutex::new(OpenCodeProtocolMapper::base_capabilities()),
             boot_id,
             mutable: Mutex::new(InstanceMutable {
@@ -130,6 +137,9 @@ impl OpenCodeInstanceRuntime {
                 sessions: HashMap::new(),
                 active_turns: HashMap::new(),
                 pending_approvals: HashMap::new(),
+                metadata_epoch: 0,
+                metadata_task: None,
+                version: (!settings.server_version.is_empty()).then(|| settings.server_version.clone()),
                 authentication: None,
                 usage: None,
             }),
@@ -140,6 +150,10 @@ impl OpenCodeInstanceRuntime {
 
     fn snapshot(&self) -> ProviderInstance {
         let mutable = lock(&self.mutable);
+        self.snapshot_locked(&mutable)
+    }
+
+    fn snapshot_locked(&self, mutable: &InstanceMutable) -> ProviderInstance {
         self.mapper.instance(
             OPENCODE_PLUGIN_ID.to_string(),
             self.instance_kind.clone(),
@@ -147,8 +161,13 @@ impl OpenCodeInstanceRuntime {
             HarnessDescriptor {
                 id: self.instance_kind.clone(),
                 display_name: "OpenCode".to_string(),
-                version: Some(self.settings.server_version.clone()),
-                executable_path: Some(self.settings.server_executable.to_string_lossy().into_owned()),
+                version: mutable.version.clone(),
+                executable_path: Some(
+                    self.settings
+                        .server_executable
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
             },
             mutable.status,
             lock(&self.capabilities).clone(),
@@ -157,52 +176,227 @@ impl OpenCodeInstanceRuntime {
         )
     }
 
+    fn cancel_metadata(mutable: &mut InstanceMutable) {
+        mutable.metadata_epoch = mutable.metadata_epoch.saturating_add(1);
+        if let Some(task) = mutable.metadata_task.take() {
+            task.abort();
+        }
+    }
+
+    fn refresh_metadata(self: &Arc<Self>, force: bool) {
+        let mut mutable = lock(&self.mutable);
+        if !matches!(mutable.status, InstanceStatus::Ready) {
+            return;
+        }
+        if !force && mutable.metadata_task.is_some() {
+            return;
+        }
+        Self::cancel_metadata(&mut mutable);
+        let epoch = mutable.metadata_epoch;
+        let owner = Arc::downgrade(self);
+        let settings = self.settings.clone();
+        let session = mutable.session.clone();
+        mutable.metadata_task = Some(tokio::spawn(async move {
+            let cwd = settings
+                .workspace_root
+                .clone()
+                .or_else(default_server_working_directory);
+            let probe = |args| {
+                crate::background_probe::run(
+                    &settings.server_executable,
+                    args,
+                    cwd.as_deref(),
+                    settings.data_directory.as_deref(),
+                    Duration::from_secs(30),
+                )
+            };
+            let auth = async {
+                let result = probe(&["auth", "list"]).await.ok();
+                if let Some(owner) = owner.upgrade() {
+                    owner.apply_metadata(
+                        epoch,
+                        Some(authentication_from_output(result.as_deref())),
+                        None,
+                    );
+                }
+            };
+            let usage = async {
+                let result = probe(&["stats", "--days", "30"]).await.ok();
+                if let Some(owner) = owner.upgrade() {
+                    owner.apply_metadata(epoch, None, Some(usage_from_output(result.as_deref())));
+                }
+            };
+            let catalog = async {
+                let Some(session) = session else {
+                    return;
+                };
+                let client = session.client();
+                let discovered = tokio::task::spawn_blocking(move || {
+                    std::thread::scope(|scope| {
+                        let models = scope.spawn(|| client.list_models());
+                        let agents = scope.spawn(|| client.list_agents());
+                        let providers = scope.spawn(|| client.list_providers());
+                        Some((
+                            agents.join().ok()?.ok()?,
+                            models.join().ok()?.ok()?,
+                            providers.join().ok()?.ok()?,
+                        ))
+                    })
+                })
+                .await;
+                let Ok(Some((agents, mut models, providers))) = discovered else {
+                    return;
+                };
+                if models.is_empty() {
+                    let Ok(found) = discover_cli_models(
+                        &settings.server_executable,
+                        cwd.as_deref(),
+                        settings.data_directory.as_deref(),
+                    )
+                    .await
+                    else {
+                        return;
+                    };
+                    models = found;
+                }
+                if let Ok(capabilities) =
+                    OpenCodeProtocolMapper::capabilities(&agents, &models, &providers)
+                {
+                    if let Some(owner) = owner.upgrade() {
+                        let mutable = lock(&owner.mutable);
+                        if mutable.metadata_epoch != epoch
+                            || mutable.status != InstanceStatus::Ready
+                        {
+                            return;
+                        }
+                        *lock(&owner.capabilities) = capabilities;
+                        let _ = owner
+                            .events
+                            .publish(ProtocolEvent::EventInstanceStatusChanged {
+                                jsonrpc: "2.0".into(),
+                                params: InstanceStatusChangedEvent {
+                                    instance: owner.snapshot_locked(&mutable),
+                                    previous_status: Some(mutable.status),
+                                },
+                            });
+                    }
+                }
+            };
+            let version = async {
+                if let Ok(output) = probe(&["--version"]).await {
+                    if let Some(version) = output.split_whitespace().find(|part| {
+                        part.trim_start_matches('v')
+                            .chars()
+                            .next()
+                            .is_some_and(|c| c.is_ascii_digit())
+                    }) {
+                        if let Some(owner) = owner.upgrade() {
+                            let mut mutable = lock(&owner.mutable);
+                            if mutable.metadata_epoch != epoch
+                                || mutable.status != InstanceStatus::Ready
+                            {
+                                return;
+                            }
+                            mutable.version = Some(version.trim_start_matches('v').to_string());
+                            let _ =
+                                owner
+                                    .events
+                                    .publish(ProtocolEvent::EventInstanceStatusChanged {
+                                        jsonrpc: "2.0".into(),
+                                        params: InstanceStatusChangedEvent {
+                                            instance: owner.snapshot_locked(&mutable),
+                                            previous_status: Some(mutable.status),
+                                        },
+                                    });
+                        }
+                    }
+                }
+            };
+            tokio::join!(auth, usage, catalog, version);
+        }));
+    }
+
+    fn apply_metadata(
+        &self,
+        epoch: u64,
+        authentication: Option<ProviderAuthentication>,
+        usage: Option<ProviderUsage>,
+    ) {
+        let mut mutable = lock(&self.mutable);
+        if mutable.metadata_epoch != epoch || !matches!(mutable.status, InstanceStatus::Ready) {
+            return;
+        }
+        if let Some(authentication) = authentication {
+            mutable.authentication = Some(authentication);
+        }
+        if let Some(usage) = usage {
+            mutable.usage = Some(usage);
+        }
+        // Serialize publication with stop/refresh so an old scan cannot overwrite a new generation.
+        let _ = self
+            .events
+            .publish(ProtocolEvent::EventInstanceStatusChanged {
+                jsonrpc: "2.0".into(),
+                params: InstanceStatusChangedEvent {
+                    instance: self.snapshot_locked(&mutable),
+                    previous_status: Some(mutable.status),
+                },
+            });
+    }
+
     fn starting_is_current(&self, attempt: u64) -> bool {
         let mutable = lock(&self.mutable);
         mutable.status == InstanceStatus::Starting && mutable.generation_counter == attempt
     }
 
-    fn set_start_status(&self, attempt: u64, status: InstanceStatus) -> Result<ProviderInstance, ProtocolError> {
-        {
-            let mut mutable = lock(&self.mutable);
-            if mutable.status != InstanceStatus::Starting || mutable.generation_counter != attempt {
-                return Err(protocol_error("provider_start_cancelled", "Server startup cancelled".into(), true));
-            }
-            mutable.status = status;
+    fn set_start_status(
+        &self,
+        attempt: u64,
+        status: InstanceStatus,
+    ) -> Result<ProviderInstance, ProtocolError> {
+        let mut mutable = lock(&self.mutable);
+        if mutable.status != InstanceStatus::Starting || mutable.generation_counter != attempt {
+            return Err(protocol_error(
+                "provider_start_cancelled",
+                "Server startup cancelled".into(),
+                true,
+            ));
         }
-        let instance = self.snapshot();
-        self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
-            jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent {
-                instance: instance.clone(), previous_status: Some(InstanceStatus::Starting),
-            },
-        })?;
+        if !matches!(status, InstanceStatus::Ready) {
+            Self::cancel_metadata(&mut mutable);
+        }
+        mutable.status = status;
+        let instance = self.snapshot_locked(&mutable);
+        self.events
+            .publish(ProtocolEvent::EventInstanceStatusChanged {
+                jsonrpc: "2.0".into(),
+                params: InstanceStatusChangedEvent {
+                    instance: instance.clone(),
+                    previous_status: Some(InstanceStatus::Starting),
+                },
+            })?;
         Ok(instance)
     }
 
-    fn status(&self) -> InstanceStatus {
-        lock(&self.mutable).status
-    }
+    fn status(&self) -> InstanceStatus { lock(&self.mutable).status }
 
     fn set_status(&self, status: InstanceStatus) -> Result<ProviderInstance, ProtocolError> {
-        let previous_status = {
-            let mut mutable = lock(&self.mutable);
-            if mutable.status == status {
-                None
-            } else {
-                let previous = mutable.status;
-                mutable.status = status;
-                Some(previous)
-            }
-        };
-        let instance = self.snapshot();
-        if let Some(previous_status) = previous_status {
-            self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
-                jsonrpc: "2.0".to_string(),
-                params: InstanceStatusChangedEvent {
-                    instance: instance.clone(),
-                    previous_status: Some(previous_status),
-                },
-            })?;
+        let mut mutable = lock(&self.mutable);
+        let previous = mutable.status;
+        if !matches!(status, InstanceStatus::Ready) {
+            Self::cancel_metadata(&mut mutable);
+        }
+        mutable.status = status;
+        let instance = self.snapshot_locked(&mutable);
+        if previous != status {
+            self.events
+                .publish(ProtocolEvent::EventInstanceStatusChanged {
+                    jsonrpc: "2.0".into(),
+                    params: InstanceStatusChangedEvent {
+                        instance: instance.clone(),
+                        previous_status: Some(previous),
+                    },
+                })?;
         }
         Ok(instance)
     }
@@ -711,6 +905,7 @@ impl OpenCodeInstanceRuntime {
                 return;
             }
             let previous_status = mutable.status;
+            Self::cancel_metadata(&mut mutable);
             mutable.status = InstanceStatus::Error;
             mutable.session_generation = None;
             let session = mutable.session.take();
@@ -921,7 +1116,7 @@ impl Provider for OpenCodeProvider {
                 state.initialized_client_id = Some(request.host_client_id);
             }
             drop(state);
-            self.scanner.start("opencode", "opencode-ai", || discover_path_candidates("opencode"), inspect_runtime_candidate);
+            self.scanner.start_cancellable("opencode", "opencode-ai", || discover_path_candidates("opencode"), inspect_runtime_candidate);
             Ok(ProviderInitializeResponse {
                 selected_version: PROTOCOL_VERSION,
                 plugin: Self::descriptor(),
@@ -944,7 +1139,11 @@ impl Provider for OpenCodeProvider {
         Box::pin(async move {
             if request.refresh == Some(true) && self.scanner.snapshot().scanning != Some(true) {
                 self.scanner.stop();
-                self.scanner.start("opencode", "opencode-ai", || discover_path_candidates("opencode"), inspect_runtime_candidate);
+                self.scanner.start_cancellable("opencode", "opencode-ai", || discover_path_candidates("opencode"), inspect_runtime_candidate);
+            }
+            if request.refresh == Some(true) {
+                let instances = lock(&self.state).instances.values().cloned().collect::<Vec<_>>();
+                for instance in instances { instance.refresh_metadata(true); }
             }
             Ok(self.scanner.snapshot())
         })
@@ -1032,7 +1231,7 @@ impl Provider for OpenCodeProvider {
             let instance = runtime.snapshot();
             state
                 .instances
-                .insert(runtime.route.provider_instance_id.clone(), runtime);
+                .insert(runtime.route.provider_instance_id.clone(), runtime.clone());
             Ok(InstanceCreateResponse { instance })
         })
     }
@@ -1070,10 +1269,6 @@ impl Provider for OpenCodeProvider {
                 .workspace_root
                 .clone()
                 .or_else(default_server_working_directory);
-            let capability_data_directory = runtime.settings.data_directory.clone();
-            let capability_executable = executable.clone();
-            let capability_working_directory = working_directory.clone();
-            let account_working_directory = working_directory.clone();
             let generation = format!("{}:{attempt}", runtime.boot_id);
             let session_generation = generation.clone();
             let owner = runtime.clone();
@@ -1108,49 +1303,6 @@ impl Provider for OpenCodeProvider {
                     return Err(OpenCodeProtocolMapper::error(error));
                 }
             };
-            let discovery_client = session.client();
-            let discovered = tokio::task::spawn_blocking(move || {
-                let mut models = discovery_client.list_models()?;
-                if models.is_empty() {
-                    models = discover_cli_models(
-                        &capability_executable,
-                        capability_working_directory.as_deref(),
-                        capability_data_directory.as_deref(),
-                    )?;
-                }
-                Ok::<_, OpenCodeServerError>((
-                    discovery_client.list_agents()?,
-                    models,
-                    discovery_client.list_providers()?,
-                ))
-            })
-            .await
-            .map_err(provider_task_error)?;
-            let (agents, models, providers) = match discovered {
-                Ok(discovered) => discovered,
-                Err(error) => {
-                    let _ = session.shutdown();
-                    let _ = runtime.set_start_status(attempt, InstanceStatus::Error);
-                    return Err(OpenCodeProtocolMapper::error(error));
-                }
-            };
-            let account_metadata = probe_opencode_account_metadata(
-                &runtime.settings.server_executable,
-                account_working_directory.as_deref(),
-                runtime.settings.data_directory.as_deref(),
-            );
-            let capabilities = match OpenCodeProtocolMapper::capabilities(
-                &agents,
-                &models,
-                &providers,
-            ) {
-                Ok(capabilities) => capabilities,
-                Err(error) => {
-                    let _ = session.shutdown();
-                    let _ = runtime.set_start_status(attempt, InstanceStatus::Error);
-                    return Err(error);
-                }
-            };
             let incoming = match session.subscribe() {
                 Ok(incoming) => incoming,
                 Err(error) => {
@@ -1167,14 +1319,13 @@ impl Provider for OpenCodeProvider {
                     let _ = session.shutdown();
                     return Err(protocol_error("provider_start_cancelled", "Server startup cancelled".into(), true));
                 }
-                *lock(&runtime.capabilities) = capabilities;
+                *lock(&runtime.capabilities) = OpenCodeProtocolMapper::base_capabilities();
                 mutable.session = Some(session.clone());
                 mutable.session_generation = Some(generation.clone());
                 mutable.sessions.clear();
                 mutable.active_turns.clear();
                 mutable.pending_approvals.clear();
-                mutable.authentication = Some(account_metadata.0);
-                mutable.usage = Some(account_metadata.1);
+
             }
             let instance = match runtime.set_start_status(attempt, InstanceStatus::Ready) {
                 Ok(instance) => instance,
@@ -1184,6 +1335,7 @@ impl Provider for OpenCodeProvider {
                 }
             };
             runtime.start_event_forwarder(generation, incoming);
+            runtime.refresh_metadata(false);
             Ok(InstanceStartResponse { instance })
         })
     }
@@ -2026,6 +2178,7 @@ impl Provider for OpenCodeProvider {
             for runtime in instances {
                 let session = {
                     let mut mutable = lock(&runtime.mutable);
+                    OpenCodeInstanceRuntime::cancel_metadata(&mut mutable);
                     mutable.status = InstanceStatus::Stopping;
                     mutable.generation_counter = mutable.generation_counter.saturating_add(1);
                     mutable.session_generation = None;
@@ -2133,22 +2286,8 @@ fn ensure_opencode_workspace(workspace: PathBuf) -> Result<PathBuf, ProtocolErro
     Ok(workspace)
 }
 
-fn probe_opencode_account_metadata(
-    executable: &std::path::Path,
-    working_directory: Option<&std::path::Path>,
-    data_directory: Option<&std::path::Path>,
-) -> (ProviderAuthentication, ProviderUsage) {
-    let run = |arguments: &[&str]| {
-        let mut command = codepet_provider_sdk::local_runtime::command(executable);
-        local_runtime::opencode_environment(&mut command, data_directory);
-        command.args(arguments).stdin(Stdio::null());
-        if let Some(directory) = working_directory {
-            command.current_dir(directory);
-        }
-        command.output().ok().filter(|output| output.status.success())
-            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
-    };
-    let credential_count = run(&["auth", "list"]).as_deref().and_then(parse_credential_count);
+fn authentication_from_output(output: Option<&str>) -> ProviderAuthentication {
+    let credential_count = output.and_then(parse_credential_count);
     let authentication = ProviderAuthentication {
         status: match credential_count {
             Some(0) => ProviderAuthenticationStatus::SignedOut,
@@ -2162,7 +2301,10 @@ fn probe_opencode_account_metadata(
             None => "Authentication status unavailable".to_string(),
         }),
     };
-    let stats = run(&["stats", "--days", "30"]);
+    authentication
+}
+
+fn usage_from_output(stats: Option<&str>) -> ProviderUsage {
     let total_cost = stats.as_deref().and_then(|text| statistic_value(text, "Total Cost"));
     let input = stats.as_deref().and_then(|text| statistic_value(text, "Input"));
     let output = stats.as_deref().and_then(|text| statistic_value(text, "Output"));
@@ -2180,7 +2322,7 @@ fn probe_opencode_account_metadata(
             data,
         }]),
     };
-    (authentication, usage)
+    usage
 }
 
 fn parse_credential_count(text: &str) -> Option<u64> {
@@ -2210,17 +2352,18 @@ fn discover_path_candidates(command: &str) -> Vec<RuntimeCandidate> {
     candidates
 }
 
-fn inspect_runtime_candidate(candidate: RuntimeCandidate, timeout: Duration) -> Result<RuntimeInstallation, ProtocolError> {
+fn inspect_runtime_candidate(candidate: RuntimeCandidate, timeout: Duration, control: local_runtime::RuntimeProbeControl) -> Result<RuntimeInstallation, ProtocolError> {
     let canonical = local_runtime::resolve_executable(Path::new(&candidate.executable_path), "opencode", "opencode-ai")
         .map_err(|error| protocol_error("invalid_runtime_selection", error, false))?;
-    let version = bounded_opencode_version(&canonical, timeout)?;
+    let version = bounded_opencode_version(&canonical, timeout, control)?;
     Ok(RuntimeInstallation { executable_path: canonical.to_string_lossy().into_owned(), version, source: candidate.source })
 }
 
-fn bounded_opencode_version(executable: &std::path::Path, timeout: Duration) -> Result<String, ProtocolError> {
+fn bounded_opencode_version(executable: &std::path::Path, timeout: Duration, control: local_runtime::RuntimeProbeControl) -> Result<String, ProtocolError> {
     let mut child = codepet_provider_sdk::local_runtime::command(executable).arg("--version")
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()
         .map_err(|error| protocol_error("invalid_runtime_selection", format!("Run runtime executable {}: {error}", executable.display()), false))?;
+    control.track(child.control()).map_err(|error| protocol_error("runtime_scan_cancelled", error.to_string(), true))?;
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
@@ -2247,42 +2390,33 @@ fn bounded_opencode_version(executable: &std::path::Path, timeout: Duration) -> 
     }
 }
 
-fn discover_cli_models(
+async fn discover_cli_models(
     executable: &std::path::Path,
     working_directory: Option<&std::path::Path>,
     data_directory: Option<&std::path::Path>,
 ) -> Result<Vec<OpenCodeModel>, OpenCodeServerError> {
-    const MAX_CATALOG_OUTPUT_BYTES: usize = 1024 * 1024;
-    let mut command = codepet_provider_sdk::local_runtime::command(executable);
-        local_runtime::opencode_environment(&mut command, data_directory);
-    command
-        .arg("models")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if let Some(working_directory) = working_directory {
-        command.current_dir(working_directory);
-    }
-    let output = command
-        .output()
-        .map_err(|error| OpenCodeServerError::Spawn(format!("run `opencode models`: {error}")))?;
-    if !output.status.success() {
-        return Err(OpenCodeServerError::ProcessExited(format!(
-            "`opencode models` exited with {}",
-            output.status
-        )));
-    }
-    if output.stdout.len() > MAX_CATALOG_OUTPUT_BYTES {
-        return Err(OpenCodeServerError::Protocol(
-            "`opencode models` output exceeded 1 MiB".to_string(),
-        ));
-    }
-    let output = String::from_utf8(output.stdout).map_err(|error| {
-        OpenCodeServerError::Protocol(format!("`opencode models` returned non-UTF-8 output: {error}"))
+    let output = crate::background_probe::run(
+        executable,
+        &["models"],
+        working_directory,
+        data_directory,
+        Duration::from_secs(30),
+    )
+    .await
+    .map_err(|error| {
+        if error.kind() == std::io::ErrorKind::TimedOut {
+            OpenCodeServerError::Timeout(error.to_string())
+        } else {
+            OpenCodeServerError::Protocol(format!("probe models: {error}"))
+        }
     })?;
     let mut models = Vec::new();
     let mut seen = HashSet::new();
-    for line in output.lines().map(str::trim).filter(|line| !line.is_empty()) {
+    for line in output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
         let Some((provider_id, model_id)) = line.split_once('/') else {
             continue;
         };

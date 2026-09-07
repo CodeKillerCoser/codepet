@@ -81,6 +81,11 @@ fn main() {
             notify(&mut writer, "thread/name/updated", json!({"threadId": params["threadId"], "threadName": generated_title}));
             continue;
         }
+        if options.approval_mode == "metadata-error" && matches!(method, "model/list" | "project/list" | "account/read" | "account/rateLimits/read" | "account/usage/read") {
+            write_json(&mut writer, json!({"id":id,"error":{"code":-32000,"message":"fixture metadata unavailable"}}));
+            continue;
+        }
+        if options.approval_mode == "metadata-no-response" && matches!(method, "model/list" | "project/list" | "account/read" | "account/rateLimits/read" | "account/usage/read") { continue; }
         match method {
             "initialize" => {
                 if options.approval_mode == "observer-initialize-no-response" {

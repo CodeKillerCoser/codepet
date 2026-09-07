@@ -84,6 +84,8 @@ struct NoopExecutionLifecycleHook;
 impl ExecutionLifecycleHook for NoopExecutionLifecycleHook {}
 
 struct InstanceMutable {
+    metadata_epoch: u64,
+    metadata_task: Option<tokio::task::JoinHandle<()>>,
     destroyed: bool,
     cleanup_in_progress: bool,
     status: InstanceStatus,
@@ -100,6 +102,10 @@ struct InstanceMutable {
     approval_history: Vec<ObservedApproval>,
     pending_materialization: HashMap<String, CodexConversationSnapshot>,
     auto_title_attempted: HashSet<String>,
+}
+
+impl Drop for InstanceMutable {
+    fn drop(&mut self) { if let Some(task) = self.metadata_task.take() { task.abort(); } }
 }
 
 enum InstanceSessionState {
@@ -405,6 +411,7 @@ impl CodexInstanceRuntime {
             lifecycle_changed: Condvar::new(),
             title_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             mutable: Mutex::new(InstanceMutable {
+                metadata_epoch: 0, metadata_task: None,
                 destroyed: false,
                 cleanup_in_progress: false,
                 status: InstanceStatus::Created,
@@ -462,6 +469,91 @@ impl CodexInstanceRuntime {
             },
         })?;
         Ok(instance)
+    }
+
+    fn cancel_metadata(mutable: &mut InstanceMutable) {
+        mutable.metadata_epoch = mutable.metadata_epoch.wrapping_add(1);
+        if let Some(task) = mutable.metadata_task.take() {
+            task.abort();
+        }
+    }
+
+    fn refresh_metadata(self: &Arc<Self>) {
+        let _transition = lock(&self.lifecycle_transition);
+        let Ok(server) = self.ready_server() else {
+            return;
+        };
+        let mut mutable = lock(&self.mutable);
+        Self::cancel_metadata(&mut mutable);
+        let epoch = mutable.metadata_epoch;
+        let owner = Arc::downgrade(self);
+        mutable.metadata_task = Some(tokio::spawn(async move {
+            // The client multiplexes independent request IDs. Never hold a lifecycle lock
+            // while waiting; each RPC is bounded and closing the session wakes all waiters.
+            let model_server = server.clone();
+            let project_server = server.clone();
+            let account_server = server.clone();
+            let limits_server = server.clone();
+            let usage_server = server.clone();
+            let models = tokio::task::spawn_blocking(move || model_server.model_list());
+            let projects =
+                tokio::task::spawn_blocking(move || project_server.project_list(None, Some(1)));
+            let account = tokio::task::spawn_blocking(move || account_server.account_read());
+            let limits =
+                tokio::task::spawn_blocking(move || limits_server.account_rate_limits_read());
+            let usage = tokio::task::spawn_blocking(move || usage_server.account_usage_read());
+            let catalog = async {
+                let (models, projects) = tokio::join!(models, projects);
+                let Ok(Ok(models)) = models else {
+                    return;
+                };
+                let supported = match projects {
+                    Ok(Ok(_)) => true,
+                    Ok(Err(error)) if error.is_method_not_found() => false,
+                    _ => return, // Failure is unknown, not evidence of an unsupported API.
+                };
+                if let Ok(capabilities) = CodexProtocolMapper::capabilities(
+                    server.generation().to_string(),
+                    models,
+                    supported,
+                ) {
+                    if let Some(owner) = owner.upgrade() {
+                        owner.apply_metadata(epoch, |state| state.capabilities = capabilities);
+                    }
+                }
+            };
+            let authentication = async {
+                if let Ok(Ok(account)) = account.await {
+                    if let Some(owner) = owner.upgrade() {
+                        owner.apply_metadata(epoch, |state| {
+                            state.authentication = codex_authentication(&account)
+                        });
+                    }
+                }
+            };
+            let consumption = async {
+                let (limits, usage) = tokio::join!(limits, usage);
+                let limits = limits.ok().and_then(Result::ok);
+                let usage = usage.ok().and_then(Result::ok);
+                if let Some(owner) = owner.upgrade() {
+                    owner.apply_metadata(epoch, |state| {
+                        state.usage = codex_usage(limits.as_ref(), usage.as_ref())
+                    });
+                }
+            };
+            tokio::join!(catalog, authentication, consumption);
+        }));
+    }
+
+    fn apply_metadata(&self, epoch: u64, update: impl FnOnce(&mut InstanceMutable)) {
+        let _transition = lock(&self.lifecycle_transition);
+        let mut mutable = lock(&self.mutable);
+        if mutable.status != InstanceStatus::Ready || mutable.metadata_epoch != epoch {
+            return;
+        }
+        update(&mut mutable);
+        drop(mutable);
+        let _ = self.publish_status_change(InstanceStatus::Ready);
     }
 
     fn session_is_current(&self, slot: &Arc<InstanceSessionSlot>) -> bool {
@@ -558,6 +650,7 @@ impl CodexInstanceRuntime {
                 InstanceStatus::Stopping => StopAction::Wait,
                 InstanceStatus::Created => {
                     let previous = mutable.status;
+                    Self::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
                     mutable.status = InstanceStatus::Stopped;
                     self.lifecycle_changed.notify_all();
@@ -566,6 +659,7 @@ impl CodexInstanceRuntime {
                 }
                 _ => {
                     let previous = mutable.status;
+                    Self::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
                     let lifecycle_generation = mutable.lifecycle_generation;
                     mutable.status = InstanceStatus::Stopping;
@@ -1094,7 +1188,8 @@ impl CodexInstanceRuntime {
                 return;
             }
             let previous = mutable.status;
-            mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
+            Self::cancel_metadata(&mut mutable);
+                    mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
             let failure_generation = mutable.lifecycle_generation;
             mutable.cleanup_in_progress = true;
             mutable.status = InstanceStatus::Error;
@@ -1303,7 +1398,7 @@ impl Provider for CodexProvider {
                 state.initialized_client_id = Some(request.host_client_id);
             }
             drop(state);
-            self.scanner.start("codex", "@openai/codex", discover_codex_candidates, |candidate, timeout| inspect_runtime_candidate(candidate, "codex", timeout));
+            self.scanner.start_cancellable("codex", "@openai/codex", discover_codex_candidates, |candidate, timeout, control| inspect_runtime_candidate(candidate, "codex", timeout, control));
             Ok(ProviderInitializeResponse {
                 selected_version: PROTOCOL_VERSION,
                 plugin: Self::descriptor(),
@@ -1326,7 +1421,11 @@ impl Provider for CodexProvider {
         Box::pin(async move {
             if request.refresh == Some(true) && self.scanner.snapshot().scanning != Some(true) {
                 self.scanner.stop();
-                self.scanner.start("codex", "@openai/codex", discover_codex_candidates, |candidate, timeout| inspect_runtime_candidate(candidate, "codex", timeout));
+                self.scanner.start_cancellable("codex", "@openai/codex", discover_codex_candidates, |candidate, timeout, control| inspect_runtime_candidate(candidate, "codex", timeout, control));
+            }
+            if request.refresh == Some(true) {
+                let instances = lock(&self.state).instances.values().cloned().collect::<Vec<_>>();
+                for instance in instances { instance.refresh_metadata(); }
             }
             Ok(self.scanner.snapshot())
         })
@@ -1469,7 +1568,8 @@ impl Provider for CodexProvider {
                     _ => {}
                 }
                 let previous = mutable.status;
-                mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
+                CodexInstanceRuntime::cancel_metadata(&mut mutable);
+                    mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
                 mutable.status = InstanceStatus::Starting;
                 mutable.server_session_id = None;
                 mutable.server_generation = None;
@@ -1535,83 +1635,6 @@ impl Provider for CodexProvider {
                 }
                 return Err(instance_session_cancelled_error("server session"));
             }
-            let discovery_session = server.clone();
-            let models = match tokio::task::spawn_blocking(move || discovery_session.model_list())
-                .await
-                .map_err(provider_task_error)?
-            {
-                Ok(models) => models,
-                Err(error) => {
-                    let mapped = CodexProtocolMapper::error(error);
-                    let _ = server.shutdown();
-                    if runtime.mark_start_failed(&slot)? {
-                        return Err(mapped);
-                    }
-                    return Err(instance_session_cancelled_error("server session"));
-                }
-            };
-            let project_discovery_session = server.clone();
-            let project_api_supported = match tokio::task::spawn_blocking(move || {
-                project_discovery_session.project_list(None, Some(1))
-            })
-            .await
-            .map_err(provider_task_error)?
-            {
-                Ok(_) => true,
-                Err(error) if error.is_method_not_found() => false,
-                Err(error) => {
-                    let mapped = CodexProtocolMapper::error(error);
-                    let _ = server.shutdown();
-                    if runtime.mark_start_failed(&slot)? {
-                        return Err(mapped);
-                    }
-                    return Err(instance_session_cancelled_error("server session"));
-                }
-            };
-            let metadata_session = server.clone();
-            let (account, rate_limits, token_usage) = tokio::task::spawn_blocking(move || {
-                (
-                    metadata_session.account_read(),
-                    metadata_session.account_rate_limits_read(),
-                    metadata_session.account_usage_read(),
-                )
-            })
-            .await
-            .map_err(provider_task_error)?;
-            for (method, result) in [
-                ("account/read", account.as_ref().map(|_| ())),
-                (
-                    "account/rateLimits/read",
-                    rate_limits.as_ref().map(|_| ()),
-                ),
-                ("account/usage/read", token_usage.as_ref().map(|_| ())),
-            ] {
-                if let Err(error) = result {
-                    eprintln!("Codex {method} metadata probe failed: {error}");
-                }
-            }
-            let authentication = account
-                .as_ref()
-                .ok()
-                .and_then(codex_authentication);
-            let usage = codex_usage(
-                rate_limits.as_ref().ok(),
-                token_usage.as_ref().ok(),
-            );
-            let capabilities = match CodexProtocolMapper::capabilities(
-                server.generation().to_string(),
-                models,
-                project_api_supported,
-            ) {
-                Ok(capabilities) => capabilities,
-                Err(error) => {
-                    let _ = server.shutdown();
-                    if runtime.mark_start_failed(&slot)? {
-                        return Err(error);
-                    }
-                    return Err(instance_session_cancelled_error("server session"));
-                }
-            };
             let harness = HarnessDescriptor {
                 id: CODEX_INSTANCE_KIND.to_string(),
                 display_name: "Codex".to_string(),
@@ -1645,10 +1668,10 @@ impl Provider for CodexProvider {
                 if !current {
                     (false, None)
                 } else {
-                    mutable.capabilities = capabilities;
+                    mutable.capabilities = CodexProtocolMapper::unavailable_capabilities(server_generation.clone());
                     mutable.harness = harness;
-                    mutable.authentication = authentication;
-                    mutable.usage = usage;
+                    mutable.authentication = None;
+                    mutable.usage = None;
                     mutable.server_session_id = Some(slot.id);
                     mutable.server_generation = Some(server_generation.clone());
                     mutable.pending_approvals.clear();
@@ -1672,6 +1695,7 @@ impl Provider for CodexProvider {
             }
             runtime.start_server_forwarder(server_generation, server, incoming);
             let instance = runtime.snapshot();
+            runtime.refresh_metadata();
             Ok(InstanceStartResponse { instance })
         })
     }
@@ -1715,7 +1739,8 @@ impl Provider for CodexProvider {
                     ));
                 }
                 mutable.destroyed = true;
-                mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
+                CodexInstanceRuntime::cancel_metadata(&mut mutable);
+                    mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
                 mutable.server_session_id = None;
                 mutable.server_generation = None;
                 runtime.lifecycle_changed.notify_all();
@@ -3039,10 +3064,11 @@ fn inspect_runtime_candidate(
     candidate: RuntimeCandidate,
     product: &str,
     timeout: Duration,
+    control: local_runtime::RuntimeProbeControl,
 ) -> Result<RuntimeInstallation, ProtocolError> {
     let canonical = local_runtime::resolve_executable(Path::new(&candidate.executable_path), "codex", "@openai/codex")
         .map_err(|error| protocol_error("invalid_runtime_selection", error, false))?;
-    let line = bounded_runtime_version(&canonical, timeout)?;
+    let line = bounded_runtime_version(&canonical, timeout, control)?;
     if line.is_empty() || !line.to_ascii_lowercase().contains(product) {
         return Err(protocol_error(
             "invalid_runtime_selection",
@@ -3063,7 +3089,7 @@ fn inspect_runtime_candidate(
     })
 }
 
-fn bounded_runtime_version(executable: &Path, timeout: Duration) -> Result<String, ProtocolError> {
+fn bounded_runtime_version(executable: &Path, timeout: Duration, control: local_runtime::RuntimeProbeControl) -> Result<String, ProtocolError> {
     let mut child = codepet_provider_sdk::local_runtime::command(executable).arg("--version")
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| {
         protocol_error(
@@ -3072,6 +3098,7 @@ fn bounded_runtime_version(executable: &Path, timeout: Duration) -> Result<Strin
             false,
         )
     })?;
+    control.track(child.control()).map_err(|error| protocol_error("runtime_scan_cancelled", error.to_string(), true))?;
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {

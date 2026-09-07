@@ -969,7 +969,7 @@ impl PluginManager {
         &self,
         route: &ProviderInstanceRoute,
     ) -> HostResult<ProviderInstance> {
-        let (record, process, _) = self.instance_context(route).await?;
+        let (record, process, before) = self.instance_context(route).await?;
         let result: HostResult<ProviderInstance> = async {
             let response = process
                 .client()
@@ -979,9 +979,7 @@ impl PluginManager {
                 .await
                 .map_err(HostError::from)?;
             validate_instance_response(&record, &response.instance)?;
-            self.set_runtime_instance(&record.plugin_id, response.instance.clone())
-                .await?;
-            Ok(response.instance)
+            self.apply_start_response(&record, &before, response.instance).await
         }
         .await;
         if let Err(error) = result.as_ref() {
@@ -1542,6 +1540,47 @@ impl PluginManager {
             )
             .retryable(true)
         })
+    }
+
+    async fn apply_start_response(
+        &self,
+        record: &ProviderInstanceRecord,
+        before: &ProviderInstance,
+        response: ProviderInstance,
+    ) -> HostResult<ProviderInstance> {
+        let (snapshot, previous_status) = {
+            let mut plugins = self.inner.plugins.write().await;
+            let entry = plugins
+                .get_mut(&record.plugin_id)
+                .ok_or_else(|| unknown_plugin(&record.plugin_id))?;
+            let runtime = entry
+                .instances
+                .get_mut(&record.instance_id)
+                .ok_or_else(|| {
+                    HostError::new(
+                        "unknown_provider_instance",
+                        "Provider instance is not configured",
+                    )
+                })?;
+            // A Ready metadata event (or a later stop/error) may beat the RPC response
+            // on another mux stream. Preserve that newer observed state atomically.
+            if let Some(current) = runtime.instance.as_ref() {
+                if preserve_observed_start(before, current) || current == &response {
+                    return Ok(current.clone());
+                }
+            }
+            let previous_status = runtime.instance.as_ref().map(|instance| instance.status);
+            runtime.instance = Some(response.clone());
+            runtime.diagnostic = None;
+            (entry.snapshot(), previous_status)
+        };
+        self.send_update(HostUpdate::InstanceChanged {
+            snapshot,
+            instance_id: record.instance_id.clone(),
+            previous_status,
+        })
+        .await?;
+        Ok(response)
     }
 
     async fn set_runtime_instance(
@@ -2530,5 +2569,34 @@ mod conversation_item_validation_tests {
             validate_conversation_items(&items, &conversation, &expected_route).unwrap_err().code,
             "invalid_conversation_content"
         );
+    }
+}
+
+// Starting is an intermediate notification; any different terminal/Ready snapshot
+// observed during this RPC is more recent than its initial response snapshot.
+fn preserve_observed_start(before: &ProviderInstance, current: &ProviderInstance) -> bool {
+    before != current && current.status != InstanceStatus::Starting
+}
+
+#[cfg(test)]
+mod startup_snapshot_tests {
+    use super::*;
+    #[test]
+    fn late_start_response_preserves_observed_metadata_and_stop() {
+        let before: ProviderInstance = serde_json::from_value(serde_json::json!({
+            "route":{"deviceId":"device","providerPluginId":"plugin","providerInstanceId":"instance"},
+            "pluginId":"plugin","instanceKind":"fixture","displayName":"Fixture",
+            "harness":{"id":"fixture","displayName":"Fixture"},"status":"created",
+            "capabilities":{"revision":"pending","methods":[],"extensions":[]}
+        })).unwrap();
+        let mut current = before.clone();
+        assert!(!preserve_observed_start(&before, &current));
+        current.status = InstanceStatus::Starting;
+        assert!(!preserve_observed_start(&before, &current));
+        current.status = InstanceStatus::Ready;
+        current.harness.version = Some("discovered".into());
+        assert!(preserve_observed_start(&before, &current));
+        current.status = InstanceStatus::Stopped;
+        assert!(preserve_observed_start(&before, &current));
     }
 }

@@ -15,6 +15,18 @@ struct FixtureState {
 
 fn main() {
     let args = std::env::args().collect::<Vec<_>>();
+    if args.get(1).map(String::as_str) == Some("--version") {println!("1.18.25"); return;}
+    if matches!(args.get(1).map(String::as_str), Some("auth" | "stats")) {
+        let config = startup_config();
+        let name = &args[1];
+        if let Some(root) = config["probeDirectory"].as_str() {
+            let root = std::path::Path::new(root);
+            std::fs::write(root.join(format!("{name}.pid")), std::process::id().to_string()).unwrap();
+            while !root.join("release").exists() { thread::sleep(std::time::Duration::from_millis(10)); }
+        }
+        if name == "auth" { println!("2 credentials"); } else { println!("Total Cost $3.00\nInput 100\nOutput 200"); }
+        return;
+    }
     let hostname = argument(&args, "--hostname").unwrap_or("127.0.0.1");
     assert_eq!(args.get(1).map(String::as_str), Some("serve"));
     let startup = startup_config();
@@ -124,6 +136,14 @@ fn handle_connection(stream: TcpStream, state: Arc<Mutex<FixtureState>>) {
     if method == "GET" && path == "/api/event" {
         serve_events(reader.into_inner(), state);
         return;
+    }
+    if matches!(path, "/api/model" | "/api/agent" | "/api/provider") {
+        if let Some(root) = startup_config()["probeDirectory"].as_str() {
+            let root = std::path::Path::new(root);
+            let name = path.rsplit('/').next().unwrap();
+            std::fs::write(root.join(format!("{name}.requested")), "").unwrap();
+            while !root.join("release").exists() {thread::sleep(std::time::Duration::from_millis(10));}
+        }
     }
     let response = route(&method, path, &target, &body, &state);
     let mut stream = reader.into_inner();

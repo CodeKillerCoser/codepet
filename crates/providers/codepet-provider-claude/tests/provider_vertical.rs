@@ -1498,3 +1498,65 @@ fn write_oversized_provider_header(writer: &mut impl Write) {
         .write_all(&(codepet_provider_sdk::MAX_PROVIDER_FRAME_BYTES as u32).to_be_bytes())
         .unwrap();
 }
+
+#[tokio::test]
+async fn startup_precedes_parallel_probes_and_refresh_failure_keeps_ready() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = directory.path().join(".claude-test");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("block-probes"), "").unwrap();
+    let (provider, events, route, _) =
+        tokio::time::timeout(Duration::from_secs(3), ready_provider(directory.path()))
+            .await
+            .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !config.join("version.pid").exists() || !config.join("auth.pid").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    std::fs::write(config.join("release"), "").unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if events.try_iter().any(|event| matches!(event, ProtocolEvent::EventInstanceStatusChanged {params,..} if params.instance.harness.version.is_some() && params.instance.authentication.as_ref().is_some_and(|a| a.status == codepet_provider_sdk::ProviderAuthenticationStatus::SignedIn))) {break;}
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.unwrap();
+    std::fs::write(config.join("fail-probes"), "").unwrap();
+    ProviderProtocolServer::runtime_get_installed(
+        provider.as_ref(),
+        codepet_provider_sdk::RuntimeGetInstalledRequest {
+            refresh: Some(true),
+        },
+    )
+    .await
+    .unwrap();
+    // Failure is reported within the production probe deadline (30s), independently of startup.
+    let notification = tokio::time::timeout(Duration::from_secs(35), async {
+        loop {
+            if events.try_iter().any(|event| matches!(event, ProtocolEvent::EventInstanceStatusChanged {params,..} if params.instance.status == codepet_provider_sdk::InstanceStatus::Ready && params.instance.authentication.as_ref().is_some_and(|a| a.status == codepet_provider_sdk::ProviderAuthenticationStatus::Unknown))) {break;}
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await;
+    assert!(notification.is_ok(), "refresh notification absent; snapshot={:?}; auth pid={:?}", ProviderProtocolServer::instance_start(provider.as_ref(), InstanceStartRequest{route:route.clone()}).await, std::fs::read_to_string(config.join("auth.pid")));
+    std::fs::remove_file(config.join("release")).unwrap();
+    ProviderProtocolServer::runtime_get_installed(
+        provider.as_ref(),
+        codepet_provider_sdk::RuntimeGetInstalledRequest {
+            refresh: Some(true),
+        },
+    )
+    .await
+    .unwrap();
+    ProviderProtocolServer::instance_stop(provider.as_ref(), InstanceStopRequest { route })
+        .await
+        .unwrap();
+    let _ = events.try_iter().collect::<Vec<_>>();
+    std::fs::write(config.join("release"), "").unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!events.try_iter().any(|event| matches!(event, ProtocolEvent::EventInstanceStatusChanged {params,..} if params.instance.status == codepet_provider_sdk::InstanceStatus::Ready)));
+    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {})
+        .await
+        .unwrap();
+}

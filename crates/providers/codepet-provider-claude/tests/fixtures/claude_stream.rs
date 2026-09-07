@@ -12,6 +12,18 @@ struct Options {
 }
 
 fn main() {
+    let probe_name = match std::env::args().nth(1).as_deref() { Some("--version") => Some("version"), Some("auth") => Some("auth"), _ => None };
+    if let Some(name) = probe_name {
+        if let Some(root) = std::env::var_os("CLAUDE_CONFIG_DIR") {
+            let root = std::path::PathBuf::from(root);
+            if root.join("block-probes").exists() {
+                fs::write(root.join(format!("{name}.pid")), std::process::id().to_string()).unwrap();
+                while !root.join("release").exists() {thread::sleep(Duration::from_millis(10));}
+            }
+            if root.join("fail-probes").exists() {std::process::exit(1);}
+        }
+        if name == "auth" {println!("{}", json!({"loggedIn":true,"subscriptionType":"fixture"}));return;}
+    }
     if std::env::args().nth(1).as_deref() == Some("--version") {
         println!("2.1.251 (Claude Code fixture)");
         return;

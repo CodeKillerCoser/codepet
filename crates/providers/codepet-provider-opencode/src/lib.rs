@@ -1,3 +1,4 @@
+mod background_probe;
 mod client;
 mod mapper;
 mod protocol;

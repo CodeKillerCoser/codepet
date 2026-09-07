@@ -194,6 +194,7 @@ async fn configured_direct_provider_with_events_and_hook(
     )
     .await
     .unwrap();
+    if !approval_mode.starts_with("metadata-") { wait_for_capabilities(provider.as_ref(), &route).await; }
     (
         provider,
         route,
@@ -250,6 +251,7 @@ async fn project_methods_and_project_owned_conversation_fail_closed_when_probe_i
     let marker = tempfile::NamedTempFile::new().unwrap();
     let (provider, route, _) =
         configured_direct_provider("project-unsupported", marker.path()).await;
+    wait_for_capabilities(&provider, &route).await;
     let capabilities = ProviderProtocolServer::instance_capabilities(
         provider.as_ref(),
         InstanceCapabilitiesRequest {
@@ -412,6 +414,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     .await
     .unwrap();
     assert_eq!(started.instance.status, codepet_provider_sdk::InstanceStatus::Ready);
+    wait_for_capabilities(&provider, &route).await;
     let capabilities = ProviderProtocolServer::instance_capabilities(
         &provider,
         InstanceCapabilitiesRequest {
@@ -770,11 +773,12 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let mut approval = None;
     let mut saw_delta = false;
     let mut saw_title_update = false;
-    for _ in 0..8 {
-        let event = event_receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while approval.is_none() || !saw_delta || !saw_title_update {
+        let event = event_receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap();
         match event {
             ProtocolEvent::EventConversationUpserted { params, .. } => {
-                saw_title_update = params.conversation.title == "Renamed by Codex";
+                saw_title_update |= params.conversation.title == "Renamed by Codex";
             }
             ProtocolEvent::EventTurnOutputDelta { params, .. } => {
                 saw_delta = params.delta == "fixture output"
@@ -783,7 +787,6 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
             }
             ProtocolEvent::EventApprovalRequested { params, .. } => {
                 approval = Some(params.approval);
-                break;
             }
             _ => {}
         }
@@ -1246,23 +1249,12 @@ fn provider_binary_returns_empty_history_for_unmaterialized_new_conversation() {
         Some(&Vec::new())
     );
     assert!(fetched.pointer("/result/conversation/activeTurn").is_none());
-    assert_eq!(
-        std::fs::read_to_string(&request_log)
-            .unwrap()
-            .lines()
-            .collect::<Vec<_>>(),
-        vec![
-            "initialize",
-            "model/list",
-            "project/list",
-            "account/read",
-            "account/rateLimits/read",
-            "account/usage/read",
-            "thread/start",
-            "thread/read\tthread-created",
-            "thread/turns/list\tthread-created"
-        ]
-    );
+    let log = std::fs::read_to_string(&request_log).unwrap();
+    let lines = log.lines().collect::<Vec<_>>();
+    assert_eq!(lines[0], "initialize");
+    let probes = ["model/list", "project/list", "account/read", "account/rateLimits/read", "account/usage/read"];
+    for probe in probes { assert_eq!(lines.iter().filter(|line| **line == probe).count(), 1); }
+    assert_eq!(lines.into_iter().filter(|line| !probes.contains(line)).collect::<Vec<_>>(), vec!["initialize", "thread/start", "thread/read\tthread-created", "thread/turns/list\tthread-created"]);
 
     provider.request("unmaterialized-stop", "instance.stop", json!({ "route": route_value() }));
     provider.request("unmaterialized-shutdown", "provider.shutdown", json!({}));
@@ -1332,6 +1324,14 @@ fn provider_binary_exposes_codex_authentication_usage_and_projects() {
         "instance.start",
         json!({ "route": route_value() }),
     );
+    assert_eq!(started.pointer("/result/instance/status"), Some(&json!("ready")));
+    let event = provider.receive(Duration::from_secs(3), |event| {
+        event.get("method").and_then(Value::as_str) == Some("event.instanceStatusChanged")
+            && event.pointer("/params/instance/authentication").is_some()
+            && event.pointer("/params/instance/usage").is_some()
+            && event.pointer("/params/instance/capabilities/turnSend").is_some()
+    });
+    let started = json!({"result":{"instance":event["params"]["instance"]}});
     assert_eq!(
         started
             .pointer("/result/instance/authentication/status")
@@ -1664,13 +1664,13 @@ fn provider_binary_read_errors_preserve_shared_server_and_other_conversations() 
         ("thread-invalid-envelope", "provider_protocol_error"),
         ("thread-rpc-error", "provider_error"),
     ] {
-        let response = provider.request(conversation, "conversation.get", json!({
+        let response = provider.request_with_timeout(conversation, "conversation.get", json!({
             "conversation": conversation_resource_value(conversation), "limit": 20,
-        }));
+        }), Duration::from_secs(30));
         assert_eq!(response.pointer("/error/data/code").and_then(Value::as_str), Some(error_code), "{response}");
-        let healthy = provider.request("healthy-after-error", "conversation.get", json!({
+        let healthy = provider.request_with_timeout("healthy-after-error", "conversation.get", json!({
             "conversation": conversation_resource_value("thread-other"), "limit": 20,
-        }));
+        }), Duration::from_secs(30));
         assert!(healthy.get("error").is_none(), "{healthy}");
         assert_eq!(session_pids(&marker, "process/start", ""), original_pids);
     }
@@ -1692,9 +1692,11 @@ fn provider_binary_forwards_turn_limit_and_truncates_only_tool_text_with_item_me
     provider.configure_with_request_log("app-server-code-pet-history", &marker, Some(&requests));
     let pids = session_pids(&marker, "process/start", "");
     std::fs::write(&requests, "").unwrap();
-    let response = provider.request("tool-text-policy", "conversation.get", json!({
+    let timer = Instant::now();
+    let response = provider.request_with_timeout("tool-text-policy", "conversation.get", json!({
         "conversation": conversation_resource_value("thread-tool-text-policy"), "limit": 20,
-    }));
+    }), Duration::from_secs(30));
+    eprintln!("20 MiB history diagnostic: {:?}", timer.elapsed());
     assert!(response.get("error").is_none(), "{response}");
     assert_eq!(response.pointer("/result/pageInfo/nextCursor"), Some(&json!("native-next-page")));
     let items = response.pointer("/result/items").unwrap().as_array().unwrap();
@@ -3490,13 +3492,12 @@ fn provider_binary_pages_large_turns_without_transport_budgeting() {
     let mut provider = ProviderBinary::spawn();
     provider.configure("none", &marker);
 
-    let fetched = provider.request(
+    let fetched = provider.request_with_timeout(
         "oversized-history",
         "conversation.get",
         json!({
             "conversation": conversation_resource_value("thread-output-too-large")
-        }),
-    );
+        }), Duration::from_secs(30));
     assert_eq!(fetched["id"], "oversized-history");
     assert!(fetched.get("error").is_none(), "{fetched}");
     assert_eq!(
@@ -3516,14 +3517,13 @@ fn provider_binary_pages_large_turns_without_transport_budgeting() {
         .pointer("/result/items/0/contents/0/truncation")
         .is_none());
 
-    let reduced = provider.request(
+    let reduced = provider.request_with_timeout(
         "reduced-history",
         "conversation.get",
         json!({
             "conversation": conversation_resource_value("thread-output-too-large"),
             "limit": 2
-        }),
-    );
+        }), Duration::from_secs(30));
     assert!(reduced.get("error").is_none(), "{reduced}");
     assert_eq!(
         reduced
@@ -3545,15 +3545,14 @@ fn provider_binary_pages_large_turns_without_transport_budgeting() {
         Some("large-page-three")
     );
 
-    let remainder = provider.request(
+    let remainder = provider.request_with_timeout(
         "remaining-history",
         "conversation.get",
         json!({
             "conversation": conversation_resource_value("thread-output-too-large"),
             "cursor": "large-page-three",
             "limit": 2
-        }),
-    );
+        }), Duration::from_secs(30));
     assert!(remainder.get("error").is_none(), "{remainder}");
     assert_eq!(
         remainder
@@ -3985,6 +3984,13 @@ impl ProviderBinary {
     }
 
     fn create_conversation(&mut self, id: &str) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let caps = self.request("wait-catalog", "instance.capabilities", json!({"route":route_value()}));
+            if caps.pointer("/result/capabilities/turnSend").is_some() {break;}
+            assert!(Instant::now() < deadline, "background catalog unavailable: {caps}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let workspace = std::env::temp_dir().join(format!("codepet-codex-provider-{}-{id}", self.child.id()));
         std::fs::create_dir_all(&workspace).unwrap();
         self.request(
@@ -4004,8 +4010,12 @@ impl ProviderBinary {
     }
 
     fn request(&mut self, id: &str, method: &str, params: Value) -> Value {
+        self.request_with_timeout(id, method, params, Duration::from_secs(5))
+    }
+
+    fn request_with_timeout(&mut self, id: &str, method: &str, params: Value, timeout: Duration) -> Value {
         self.send_request(id, method, provider_request_params(method, params));
-        self.receive(Duration::from_secs(5), |message| {
+        self.receive(timeout, |message| {
             message.get("id").and_then(Value::as_str) == Some(id)
         })
     }
@@ -4335,4 +4345,88 @@ async fn wait_for_file(path: &Path) {
     })
     .await
     .unwrap();
+}
+
+async fn wait_for_capabilities(provider: &CodexProvider, route: &ProviderInstanceRoute) {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let caps = ProviderProtocolServer::instance_capabilities(
+                provider,
+                InstanceCapabilitiesRequest {
+                    route: route.clone(),
+                },
+            )
+            .await
+            .unwrap()
+            .capabilities;
+            if caps.turn_send.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("background capabilities");
+}
+
+#[tokio::test]
+async fn handshake_does_not_wait_for_metadata_and_stop_discards_pending_probes() {
+    for mode in ["metadata-no-response", "metadata-error"] {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("metadata.txt");
+        let (sender, events) = mpsc::channel();
+        let sink: Arc<dyn ProviderEventSink> = Arc::new(move |event| {
+            let _ = sender.send(event);
+            Ok(())
+        });
+        let (provider, route, _) = tokio::time::timeout(
+            Duration::from_secs(3),
+            configured_direct_provider_with_events(mode, &marker, sink),
+        )
+        .await
+        .unwrap();
+        // The fixture records all requests but answers none of the five probes.
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if [
+                    "model/list",
+                    "project/list",
+                    "account/read",
+                    "account/rateLimits/read",
+                    "account/usage/read",
+                ]
+                .iter()
+                .all(|method| !session_pids(&marker, method, "").is_empty())
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let snapshot = ProviderProtocolServer::instance_start(
+            provider.as_ref(),
+            InstanceStartRequest {
+                route: route.clone(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            snapshot.instance.status,
+            codepet_provider_sdk::InstanceStatus::Ready
+        );
+        assert!(snapshot.instance.authentication.is_none());
+        assert!(snapshot.instance.capabilities.turn_send.is_none());
+        ProviderProtocolServer::instance_stop(provider.as_ref(), InstanceStopRequest { route })
+            .await
+            .unwrap();
+        let _ = events.try_iter().collect::<Vec<_>>();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!events.try_iter().any(|event| matches!(event, ProtocolEvent::EventInstanceStatusChanged {params,..} if params.instance.status == codepet_provider_sdk::InstanceStatus::Ready)));
+        ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {})
+            .await
+            .unwrap();
+    }
 }

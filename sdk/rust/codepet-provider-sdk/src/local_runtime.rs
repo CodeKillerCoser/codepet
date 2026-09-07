@@ -25,6 +25,35 @@ where
         + Sync
         + 'static,
 {
+    runtime_inventory_controlled(
+        name,
+        npm_package,
+        selected,
+        discover,
+        move |candidate, timeout, _| probe(candidate, timeout),
+        RuntimeProbeControl::default(),
+    )
+    .await
+}
+async fn runtime_inventory_controlled<D, P>(
+    name: &'static str,
+    npm_package: &'static str,
+    selected: Option<crate::RuntimeInstallation>,
+    discover: D,
+    probe: P,
+    control: RuntimeProbeControl,
+) -> Result<crate::RuntimeGetInstalledResponse, crate::ProtocolError>
+where
+    D: FnOnce() -> Vec<RuntimeCandidate> + Send + 'static,
+    P: Fn(
+            RuntimeCandidate,
+            std::time::Duration,
+            RuntimeProbeControl,
+        ) -> Result<crate::RuntimeInstallation, crate::ProtocolError>
+        + Send
+        + Sync
+        + 'static,
+{
     use futures::{stream, StreamExt};
     let selected_candidate = selected.clone();
     let candidates = tokio::task::spawn_blocking(move || {
@@ -66,9 +95,10 @@ where
             .enumerate()
             .map(|(index, candidate)| {
                 let probe = probe.clone();
+                let control = control.clone();
                 async move {
                     let result = tokio::task::spawn_blocking(move || {
-                        probe(candidate, std::time::Duration::from_secs(120))
+                        probe(candidate, std::time::Duration::from_secs(120), control)
                     })
                     .await;
                     (index, result)
@@ -112,15 +142,51 @@ fn scan_error(message: String) -> crate::ProtocolError {
     }
 }
 
+/// Owns all subprocesses launched by one blocking runtime scan.
+#[derive(Clone, Default)]
+pub struct RuntimeProbeControl(std::sync::Arc<std::sync::Mutex<ProbeProcesses>>);
+#[derive(Default)]
+struct ProbeProcesses {
+    cancelled: bool,
+    children: Vec<crate::process::ProcessControl>,
+}
+impl RuntimeProbeControl {
+    pub fn track(&self, child: crate::process::ProcessControl) -> std::io::Result<()> {
+        let mut state = self.0.lock().unwrap();
+        if state.cancelled {
+            drop(state);
+            let _ = child.kill();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "runtime scan cancelled",
+            ));
+        }
+        state.children.push(child);
+        Ok(())
+    }
+    fn cancel(&self) {
+        let children = {
+            let mut state = self.0.lock().unwrap();
+            state.cancelled = true;
+            std::mem::take(&mut state.children)
+        };
+        for child in children {
+            let _ = child.kill();
+        }
+    }
+}
+
 type RuntimeProbe = dyn Fn(
         RuntimeCandidate,
         std::time::Duration,
+        RuntimeProbeControl,
     ) -> Result<crate::RuntimeInstallation, crate::ProtocolError>
     + Send
     + Sync;
 
 /// The RPC reads a snapshot. Only initialization starts the owned background scan.
 pub struct RuntimeScanner {
+    control: std::sync::Mutex<RuntimeProbeControl>,
     snapshot: std::sync::Arc<std::sync::Mutex<crate::RuntimeGetInstalledResponse>>,
     task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     events: std::sync::Arc<dyn crate::ProviderEventSink>,
@@ -129,6 +195,7 @@ pub struct RuntimeScanner {
 impl RuntimeScanner {
     pub fn new(events: std::sync::Arc<dyn crate::ProviderEventSink>) -> Self {
         Self {
+            control: std::sync::Mutex::new(RuntimeProbeControl::default()),
             snapshot: std::sync::Arc::new(std::sync::Mutex::new(
                 crate::RuntimeGetInstalledResponse {
                     installed: vec![],
@@ -156,10 +223,34 @@ impl RuntimeScanner {
             + Sync
             + 'static,
     {
+        self.start_cancellable(name, package, discover, move |candidate, timeout, _| {
+            probe(candidate, timeout)
+        });
+    }
+
+    pub fn start_cancellable<D, P>(
+        &self,
+        name: &'static str,
+        package: &'static str,
+        discover: D,
+        probe: P,
+    ) where
+        D: FnOnce() -> Vec<RuntimeCandidate> + Send + 'static,
+        P: Fn(
+                RuntimeCandidate,
+                std::time::Duration,
+                RuntimeProbeControl,
+            ) -> Result<crate::RuntimeInstallation, crate::ProtocolError>
+            + Send
+            + Sync
+            + 'static,
+    {
         let mut task = self.task.lock().unwrap();
         if task.is_some() {
             return;
         }
+        let control = RuntimeProbeControl::default();
+        *self.control.lock().unwrap() = control.clone();
         self.snapshot.lock().unwrap().scanning = Some(true);
         let probe = std::sync::Arc::new(probe);
         *self.probe.lock().unwrap() = Some(probe.clone());
@@ -167,11 +258,15 @@ impl RuntimeScanner {
         let events = self.events.clone();
         let selected = self.snapshot().selected;
         *task = Some(tokio::spawn(async move {
-            let result =
-                runtime_inventory(name, package, selected, discover, move |candidate, timeout| {
-                    probe(candidate, timeout)
-                })
-                .await;
+            let result = runtime_inventory_controlled(
+                name,
+                package,
+                selected,
+                discover,
+                move |candidate, timeout, control| probe(candidate, timeout, control),
+                control,
+            )
+            .await;
             let params = {
                 let mut current = snapshot.lock().unwrap();
                 match result {
@@ -253,12 +348,14 @@ impl RuntimeScanner {
                 current.scan_error = None;
                 let (ready, started) = tokio::sync::oneshot::channel::<()>();
                 release = Some(ready);
+                let control = RuntimeProbeControl::default();
+                *self.control.lock().unwrap() = control.clone();
                 selection_task = Some(tokio::spawn(async move {
                     if started.await.is_err() {
                         return;
                     }
                     let result = tokio::task::spawn_blocking(move || {
-                        probe(candidate, std::time::Duration::from_secs(120))
+                        probe(candidate, std::time::Duration::from_secs(120), control)
                     })
                     .await;
                     let params =
@@ -299,7 +396,9 @@ impl RuntimeScanner {
             current.selected = Some(selected.clone());
             (selected, current.clone())
         };
-        if let Some(task) = selection_task { *self.task.lock().unwrap() = Some(task); }
+        if let Some(task) = selection_task {
+            *self.task.lock().unwrap() = Some(task);
+        }
         let _ = self
             .events
             .publish(crate::ProtocolEvent::RuntimeInventoryChanged {
@@ -312,6 +411,7 @@ impl RuntimeScanner {
         Ok(selected)
     }
     pub fn stop(&self) {
+        self.control.lock().unwrap().cancel();
         if let Some(task) = self.task.lock().unwrap().take() {
             task.abort();
         }
@@ -674,7 +774,13 @@ mod tests {
         assert_eq!(params.scanning, Some(false));
         assert_eq!(params.selected.unwrap().version, "detected");
         scanner.stop();
-        scanner.start("agent", "missing", Vec::new, |candidate, _| Ok(crate::RuntimeInstallation { executable_path: candidate.executable_path, source: candidate.source, version: "rescanned".into() }));
+        scanner.start("agent", "missing", Vec::new, |candidate, _| {
+            Ok(crate::RuntimeInstallation {
+                executable_path: candidate.executable_path,
+                source: candidate.source,
+                version: "rescanned".into(),
+            })
+        });
         assert_eq!(scanner.snapshot().scanning, Some(true));
         received.recv().await.unwrap();
         assert_eq!(scanner.snapshot().selected.unwrap().version, "rescanned");
@@ -779,5 +885,67 @@ mod tests {
             resolve_executable(&shim, "agent", "agent-package").unwrap(),
             binary.canonicalize().unwrap()
         );
+    }
+}
+
+#[cfg(test)]
+mod probe_cancellation_tests {
+    use super::*;
+    use std::{
+        sync::{mpsc, Arc, Mutex},
+        time::Duration,
+    };
+    #[tokio::test]
+    async fn stopping_scan_kills_blocking_probe_even_when_registration_is_late() {
+        for late_registration in [false, true] {
+            let executable = std::env::current_exe().unwrap();
+            let candidate = candidate(executable, RuntimeCandidateSource::Configured);
+            let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+            let entered = Arc::new(Mutex::new(Some(entered_tx)));
+            let (release_tx, release_rx) = mpsc::channel();
+            let release = Arc::new(Mutex::new(release_rx));
+            let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+            let done = Arc::new(Mutex::new(Some(done_tx)));
+            let scanner = RuntimeScanner::new(Arc::new(|_| Ok(())));
+            scanner.start_cancellable(
+                "agent",
+                "missing",
+                move || vec![candidate],
+                move |candidate, _, control| {
+                    let mut child = command(&candidate.executable_path)
+                        .args([
+                            "--ignored",
+                            "--exact",
+                            "background_probe::tests::slow_child",
+                        ])
+                        .stdout(std::process::Stdio::null())
+                        .spawn()
+                        .unwrap();
+                    if !late_registration {
+                        control.track(child.control()).unwrap();
+                    }
+                    entered.lock().unwrap().take().unwrap().send(()).unwrap();
+                    if late_registration {
+                        release.lock().unwrap().recv().unwrap();
+                        assert!(control.track(child.control()).is_err());
+                    }
+                    let _ = child.wait();
+                    done.lock().unwrap().take().unwrap().send(()).unwrap();
+                    Err(scan_error("cancelled fixture".into()))
+                },
+            );
+            tokio::time::timeout(Duration::from_secs(3), entered_rx)
+                .await
+                .unwrap()
+                .unwrap();
+            scanner.stop();
+            if late_registration {
+                release_tx.send(()).unwrap();
+            }
+            tokio::time::timeout(Duration::from_secs(2), done_rx)
+                .await
+                .expect("blocking version probe survived scanner.stop")
+                .unwrap();
+        }
     }
 }

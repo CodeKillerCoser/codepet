@@ -41,7 +41,7 @@ Provider crate 的生产依赖只包含生成的 Provider SDK 和 Server adapter
 
 实例继续只持有一个 OpenCode Server，多会话共享。公共 Provider SDK 现按 Host 心跳的客户端集合协调幂等 start/stop：任一客户端在线时保持 Server，最后连接离线或 Host 心跳过期则停止，包括 active turn；插件仍继续服务。页面退出不控制该生命周期。两段心跳、状态归属及 Host 目录分组见 [连接架构](remote-and-provider-connections.md)。三个内置 Provider 的 Host 集成测试覆盖此路径。
 
-Server startup 带当前 attempt/generation 的取消检查；stop/shutdown 使 attempt 失效，健康检查轮询会停止并回收尚未登记的 child。spawn blocking task 在返回前登记 session，模型发现期间取消等待也能由 stop 找到并关闭它；旧 future 不得覆盖新代状态。`cancelling_start_before_health_or_during_discovery_cannot_orphan_server` 覆盖这两个窗口，断言 PID 退出且无晚到 Ready。
+Server startup 带当前 attempt/generation 的取消检查；stop/shutdown 使 attempt 失效，健康检查轮询会停止并回收尚未登记的 child。spawn blocking task 在返回前登记 session，模型发现已在 Ready 后后台执行，stop 仍能找到并关闭 Server，并使旧探测 epoch 失效；旧 future 不得覆盖新代状态。`cancelling_start_before_health_or_during_discovery_cannot_orphan_server` 覆盖这两个窗口，断言 PID 退出且无晚到 Ready。
 
 Server startup 使用总计 10 秒 deadline；每次 health probe 的 timeout 是剩余预算与 250ms 的较小值，成功后只做至多 100ms 的 child 存活确认。startup 失败会在同一有界路径回收 child。
 
