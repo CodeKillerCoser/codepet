@@ -21,6 +21,7 @@ fn main() {
     let mut created_thread_read_failures_remaining = 2usize;
     let mut thread_renamed = false;
     let mut generated_title: Option<String> = None;
+    let mut directory_event_sent = false;
     while reader.read_line(&mut line).unwrap_or(0) > 0 {
         let message: Value = match serde_json::from_str(line.trim()) {
             Ok(message) => message,
@@ -301,8 +302,41 @@ fn main() {
                 );
             }
             "project/delete" => respond(&mut writer, id, json!({})),
-            "thread/loaded/list" => { respond(&mut writer, id, json!({"data": [], "nextCursor": null})); }
+            "thread/loaded/list" => {
+                if options.approval_mode == "union-directory" {
+                    let value: Value = serde_json::from_slice(&std::fs::read(options.marker.as_ref().unwrap().with_extension("directory.json")).unwrap()).unwrap();
+                    if value["loadedUnsupported"] == true {
+                        write_json(&mut writer, json!({"id":id,"error":{"code":-32600,"message":"Invalid request: unknown variant `thread/loaded/list`, expected one of `thread/list`, `thread/read`"}}));
+                        continue;
+                    }
+                }
+                respond(&mut writer, id, json!({"data": [], "nextCursor": null}));
+            }
             "thread/list" => {
+                if options.approval_mode == "union-directory" {
+                    let value: Value = serde_json::from_slice(&std::fs::read(options.marker.as_ref().unwrap().with_extension("directory.json")).unwrap()).unwrap();
+                    if value["error"] == true {
+                        write_json(&mut writer, json!({"id":id,"error":{"code":-32603,"message":"directory unavailable"}}));
+                        continue;
+                    }
+                    let source = value["rows"].as_array().unwrap();
+                    let offset = params["cursor"].as_str().and_then(|value| value.parse::<usize>().ok()).unwrap_or(0);
+                    let end = (offset + params["limit"].as_u64().unwrap_or(100) as usize).min(source.len());
+                    let rows = source[offset..end].iter().map(|row| {
+                        let mut value = thread(row["id"].as_str().unwrap(), "idle", Vec::new());
+                        for (key, item) in row.as_object().unwrap() { value[key] = item.clone(); }
+                        value
+                    }).collect::<Vec<_>>();
+                    let next = (end < source.len()).then(|| if value["cycle"] == true { "0".to_string() } else { end.to_string() });
+                    respond(&mut writer, id, json!({"data":rows,"nextCursor":next}));
+                    if !directory_event_sent {
+                        if let Some(event_id) = value["eventId"].as_str() {
+                            notify(&mut writer, "thread/started", json!({"thread":thread(event_id,"idle",Vec::new())}));
+                            directory_event_sent = true;
+                        }
+                    }
+                    continue;
+                }
                 if params["sortKey"] != "updated_at"
                     || params["sortDirection"] != "desc"
                     || params["useStateDbOnly"] != true
@@ -448,6 +482,18 @@ fn main() {
                             }
                         }),
                     );
+                    continue;
+                }
+                if options.approval_mode == "union-directory" {
+                    if thread_id == "broken" {
+                        write_json(&mut writer, json!({"id":id,"error":{"code":-32603,"message":"unreadable rollout"}}));
+                        continue;
+                    }
+                    let mut value = thread(thread_id, "idle", Vec::new());
+                    value["updatedAt"] = json!(10);
+                    value["name"] = Value::Null;
+                    value["preview"] = json!("");
+                    respond(&mut writer, id, json!({"thread":value}));
                     continue;
                 }
                 let turn_state = read_turn_status(&options, thread_id);

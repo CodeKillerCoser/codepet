@@ -6,6 +6,8 @@ Provider 不维护写冲突会话 ID，也不根据控制权筛选 Hook。Hook �
 
 活动成员关系只由 Hook start/stop 决定。`conversation.active.list` 有现存消费者，因此保留派生投影；原生 loaded threads、resume 成败、Provider 启停和摘要状态都不能成为第二个活动事实来源。
 
+loaded threads 仍可参与主分支既有的会话并集发现，只提供候选 ID 和元数据，不决定活动成员关系。
+
 Hook 按尽力投递处理，不保证必达。允许漏事件导致活动投影暂时不准确，不为此增加重试、补偿、恢复或对账机制。
 
 ## 适用场景
@@ -49,6 +51,7 @@ Hook 按尽力投递处理，不保证必达。允许漏事件导致活动投影
 - `cargo check --manifest-path crates/Cargo.toml -p codepet-provider-codex -p codepet-host --tests`：通过。
 - `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --test provider_vertical start_returns_starting_and_stop_discards_pending_probes -- --exact --test-threads=1`：通过，使用隔离的临时 CODEX_HOME。
 - 同级 Remote 仓库 `flutter test --no-pub test/conversations/conversation_message_cache_test.dart`：7 项通过。
+- 整合主工作区的并集发现变更后：Provider/Host `cargo check --tests` 通过；Codex `--lib` 64 项、`--test provider_vertical union_directory -- --test-threads=1` 3 项通过；Remote 消息缓存与 Gateway mapper 测试共 11 项通过。
 - 此前同一功能的协议检查 20 项、SDK conversation_state 测试 8 项、Remote conversations/gateway/device_session 测试 195 项通过。Host lib 测试 57 项通过，既有日志轮转测试在 Windows 遭遇拒绝访问（OS error 5），未修改该模块。
 
 按用户确认的范围，订阅之前或中断期间漏掉的 Hook 不做恢复或补偿，活动只按实际收到的 start/stop 更新，也不使用 loaded threads 补造事实。真实 Codex 双进程抢锁与 Hook 投递仍待实机验证。SessionStart 表示生命周期开始，不证明正在生成 token。
