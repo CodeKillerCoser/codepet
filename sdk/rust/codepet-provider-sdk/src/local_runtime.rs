@@ -25,6 +25,12 @@ pub fn runtime_environment(command: &mut std::process::Command) {
     let _ = command;
 }
 
+thread_local! {
+    // Discovery runs on one blocking worker. Keep its diagnostics with that scan,
+    // rather than leaking a failed shell lookup into another scanner's result.
+    static DISCOVERY_ERRORS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Discover off the executor, then probe distinct executables concurrently.
 pub async fn runtime_inventory<D, P>(
     name: &'static str,
@@ -74,7 +80,8 @@ where
 {
     use futures::{stream, StreamExt};
     let selected_candidate = selected.clone();
-    let candidates = tokio::task::spawn_blocking(move || {
+    let (candidates, mut errors) = tokio::task::spawn_blocking(move || {
+        DISCOVERY_ERRORS.with(|errors| errors.borrow_mut().clear());
         let mut candidates = discover();
         if let Some(path) = std::env::var_os("CODEPET_RUNTIME_EXECUTABLE") {
             candidates.insert(
@@ -92,17 +99,22 @@ where
             );
         }
         let mut seen = std::collections::HashSet::new();
-        candidates
-            .into_iter()
-            .filter_map(|mut candidate| {
-                let path =
-                    resolve_executable(Path::new(&candidate.executable_path), name, npm_package)
-                        .ok()?;
-                candidate.executable_path = path.to_string_lossy().into_owned();
-                seen.insert(executable_key(&candidate.executable_path))
-                    .then_some(candidate)
-            })
-            .collect::<Vec<_>>()
+        let mut resolved = Vec::new();
+        let mut errors = DISCOVERY_ERRORS.with(|errors| std::mem::take(&mut *errors.borrow_mut()));
+        for mut candidate in candidates {
+            match resolve_executable(Path::new(&candidate.executable_path), name, npm_package) {
+                Ok(path) => {
+                    candidate.executable_path = path.to_string_lossy().into_owned();
+                    if seen.insert(executable_key(&candidate.executable_path)) { resolved.push(candidate); }
+                }
+                Err(error) if matches!(candidate.source, RuntimeCandidateSource::Configured | RuntimeCandidateSource::Environment)
+                    || Path::new(&candidate.executable_path).exists() => {
+                    errors.push(format!("{}: {error}", candidate.executable_path));
+                }
+                Err(_) => {}
+            }
+        }
+        (resolved, errors)
     })
     .await
     .map_err(|e| scan_error(e.to_string()))?;
@@ -114,23 +126,23 @@ where
             .map(|(index, candidate)| {
                 let probe = probe.clone();
                 let control = control.clone();
+                let path = candidate.executable_path.clone();
                 async move {
                     let result = tokio::task::spawn_blocking(move || {
                         probe(candidate, std::time::Duration::from_secs(120), control)
                     })
                     .await;
-                    (index, result)
+                    (index, path, result)
                 }
             }),
     )
     .buffer_unordered(4);
     let mut installed = Vec::new();
-    let mut errors = Vec::new();
-    while let Some((index, result)) = results.next().await {
+    while let Some((index, path, result)) = results.next().await {
         match result {
-            Ok(Ok(runtime)) => installed.push((index, runtime)),
-            Ok(Err(e)) => errors.push(e.message),
-            Err(e) => errors.push(e.to_string()),
+            Ok(Ok(runtime)) => installed.push((index, apply_runtime_requirement(runtime))),
+            Ok(Err(e)) => errors.push(format!("{path}: {}", e.message)),
+            Err(e) => errors.push(format!("{path}: {e}")),
         }
     }
     installed.sort_by_key(|(index, _)| *index);
@@ -139,7 +151,7 @@ where
         installed
             .iter()
             .find(|runtime| {
-                executable_key(&runtime.executable_path)
+                runtime.incompatibility_reason.is_none() && executable_key(&runtime.executable_path)
                     == executable_key(&selected.executable_path)
             })
             .cloned()
@@ -151,6 +163,32 @@ where
         scan_error: (!errors.is_empty()).then(|| errors.join("; ")),
     })
 }
+/// Preserve detected versions even when a Provider's configured version floor rejects them.
+pub fn apply_runtime_requirement(mut runtime: crate::RuntimeInstallation) -> crate::RuntimeInstallation {
+    let minimum = std::env::var("CODEPET_RUNTIME_MIN_VERSION").ok().filter(|value| !value.is_empty());
+    apply_minimum_version(&mut runtime, minimum.as_deref());
+    runtime
+}
+
+fn apply_minimum_version(runtime: &mut crate::RuntimeInstallation, minimum: Option<&str>) {
+    runtime.minimum_version = minimum.map(str::to_string);
+    runtime.incompatibility_reason = minimum.and_then(|minimum| {
+        match (semver::Version::parse(&runtime.version), semver::Version::parse(minimum)) {
+            (Ok(version), Ok(required)) if version >= required => None,
+            (Ok(_), Ok(_)) => Some(format!("Detected version {} is below Provider minimum {minimum}", runtime.version)),
+            (_, Err(_)) => Some(format!("Invalid Provider minimum version: {minimum}")),
+            (Err(_), _) => Some(format!("Cannot compare detected version {} with Provider minimum {minimum}", runtime.version)),
+        }
+    });
+}
+
+pub fn require_compatible_runtime(runtime: &crate::RuntimeInstallation) -> Result<(), crate::ProtocolError> {
+    match runtime.incompatibility_reason.as_ref() {
+        None => Ok(()),
+        Some(reason) => Err(scan_error(format!("{}: {reason}", runtime.executable_path))),
+    }
+}
+
 fn scan_error(message: String) -> crate::ProtocolError {
     crate::ProtocolError {
         code: "runtime_scan_failed".into(),
@@ -294,7 +332,7 @@ impl RuntimeScanner {
                                 .installed
                                 .iter()
                                 .find(|runtime| {
-                                    executable_key(&runtime.executable_path)
+                                    runtime.incompatibility_reason.is_none() && executable_key(&runtime.executable_path)
                                         == executable_key(&selected.executable_path)
                                 })
                                 .cloned()
@@ -332,6 +370,7 @@ impl RuntimeScanner {
                 })
                 .cloned();
             let selected = if let Some(selected) = cached {
+                require_compatible_runtime(&selected)?;
                 selected
             } else {
                 if current.scanning == Some(true) {
@@ -350,7 +389,7 @@ impl RuntimeScanner {
                     .clone()
                     .ok_or_else(|| scan_error("Provider is not initialized".into()))?;
                 // Selection records configuration immediately; an empty version is pending detection.
-                let selected = crate::RuntimeInstallation {
+                let selected = crate::RuntimeInstallation { minimum_version: None, incompatibility_reason: None,
                     executable_path: path.to_string_lossy().into_owned(),
                     source: candidate.source,
                     version: String::new(),
@@ -382,6 +421,11 @@ impl RuntimeScanner {
                             current.scanning = Some(false);
                             match result {
                                 Ok(Ok(runtime)) => {
+                                    let runtime = apply_runtime_requirement(runtime);
+                                    if runtime.incompatibility_reason.is_some() {
+                                        current.selected = None;
+                                        current.scan_error = runtime.incompatibility_reason.clone();
+                                    }
                                     if current.selected.as_ref().is_some_and(|r| {
                                         r.executable_path == runtime.executable_path
                                     }) {
@@ -539,9 +583,8 @@ pub fn discover(command: &str, npm_package: &str) -> Vec<RuntimeCandidate> {
                 .map(|path| candidate(path, RuntimeCandidateSource::WindowsApplication)),
         );
     }
-    if let Some(path) = login_shell_command(command, npm_package) {
-        candidates.push(candidate(path, RuntimeCandidateSource::LoginShell));
-    }
+    candidates.extend(login_shell_candidates(command, npm_package).into_iter()
+        .map(|path| candidate(path, RuntimeCandidateSource::LoginShell)));
     candidates
 }
 
@@ -587,12 +630,12 @@ pub fn resolve_executable(
 }
 
 #[cfg(windows)]
-fn login_shell_command(_command: &str, _npm_package: &str) -> Option<PathBuf> {
-    None
+fn login_shell_candidates(_command: &str, _npm_package: &str) -> Vec<PathBuf> {
+    Vec::new()
 }
 
 #[cfg(not(windows))]
-fn login_shell_command(command: &str, npm_package: &str) -> Option<PathBuf> {
+fn login_shell_candidates(command: &str, npm_package: &str) -> Vec<PathBuf> {
     let shell = std::env::var_os("SHELL")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
@@ -604,10 +647,19 @@ fn login_shell_command(command: &str, npm_package: &str) -> Option<PathBuf> {
             })
         });
     let paths = login_shell_path(crate::process::Command::new(shell));
+    if paths.is_none() {
+        DISCOVERY_ERRORS.with(|errors| errors.borrow_mut().push(
+            "Login shell PATH discovery failed: shell startup, output, or 5-second timeout; runtime inventory may be incomplete".into()));
+    }
     *RUNTIME_PATH.write().unwrap() = paths.clone();
-    paths.and_then(|paths| std::env::split_paths(&paths)
+    paths.map(|paths| candidates_from_path(&paths, command, npm_package)).unwrap_or_default()
+}
+
+#[cfg(not(windows))]
+fn candidates_from_path(paths: &std::ffi::OsStr, command: &str, npm_package: &str) -> Vec<PathBuf> {
+    std::env::split_paths(paths)
         .flat_map(|directory| candidates_in(&directory, command, npm_package))
-        .next())
+        .collect()
 }
 
 #[cfg(not(windows))]
@@ -625,19 +677,29 @@ fn login_shell_path(
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
+    // Drain while the shell runs. Even PATH output can fill a platform pipe;
+    // waiting for exit before reading misreports a healthy shell as a timeout.
+    let stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        stdout.take(1024 * 1024).read_to_end(&mut bytes).map(|_| bytes)
+    });
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let output = child.wait_with_output().ok()?;
+                let _ = child.wait();
+                let output = reader.join().ok()?.ok()?;
                 if !status.success() { return None; }
-                let paths = output.stdout.split(|byte| *byte == 0).nth(1)?;
+                let paths = output.split(|byte| *byte == 0).nth(1)?;
                 return Some(std::ffi::OsString::from_vec(paths.to_vec()));
             }
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = reader.join();
                 return None;
             }
         }
@@ -722,6 +784,39 @@ mod tests {
         assert_eq!(std::env::var_os("PATH").unwrap(), parent_path);
     }
 
+    #[test]
+    fn minimum_version_keeps_old_installations_visible_but_rejects_selection() {
+        let mut runtime = crate::RuntimeInstallation {
+            executable_path: "/test/codex".into(), version: "0.148.0".into(),
+            source: RuntimeCandidateSource::CurrentPath,
+            minimum_version: None, incompatibility_reason: None,
+        };
+        apply_minimum_version(&mut runtime, Some("0.151.0"));
+        assert_eq!(runtime.version, "0.148.0");
+        assert_eq!(runtime.minimum_version.as_deref(), Some("0.151.0"));
+        assert!(require_compatible_runtime(&runtime).is_err());
+        let file = tempfile::NamedTempFile::new().unwrap();
+        runtime.executable_path = std::fs::canonicalize(file.path()).unwrap().to_string_lossy().into_owned();
+        let scanner = RuntimeScanner::new(std::sync::Arc::new(|_| Ok(())));
+        scanner.snapshot.lock().unwrap().installed.push(runtime.clone());
+        assert!(scanner.select(&RuntimeCandidate {
+            executable_path: runtime.executable_path.clone(), source: runtime.source,
+        }).is_err());
+        assert!(scanner.snapshot().selected.is_none());
+        for version in ["0.151.0", "0.153.4"] {
+            runtime.version = version.into();
+            apply_minimum_version(&mut runtime, Some("0.151.0"));
+            assert!(require_compatible_runtime(&runtime).is_ok());
+        }
+        runtime.version = "0.151.0-beta.1".into();
+        apply_minimum_version(&mut runtime, Some("0.151.0"));
+        assert!(require_compatible_runtime(&runtime).is_err());
+        apply_minimum_version(&mut runtime, Some("bad-version"));
+        assert!(require_compatible_runtime(&runtime).is_err());
+        apply_minimum_version(&mut runtime, None);
+        assert!(require_compatible_runtime(&runtime).is_ok());
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn login_shell_discovers_interactive_path_despite_function_and_banner() {
@@ -731,10 +826,16 @@ mod tests {
         let binary = directory.join("codepet_fixture_agent");
         std::fs::write(&binary, b"fixture").unwrap();
         std::fs::write(temp.path().join(".zshrc"),
-            "export PATH=\"$ZDOTDIR/npm prefix 中文/bin:$PATH\"\necho 'shell startup banner'\ncodepet_fixture_agent() { echo wrapper; }\n").unwrap();
+            "export PATH=\"$ZDOTDIR/npm prefix 中文/bin:$PATH\"\ncommand printf '%131072s\\n' 'shell startup banner'\ncodepet_fixture_agent() { echo wrapper; }\n").unwrap();
         let mut shell = crate::process::Command::new("/bin/zsh");
         shell.env("ZDOTDIR", temp.path());
         let paths = login_shell_path(shell).unwrap();
+        let second = temp.path().join("second install");
+        std::fs::create_dir_all(&second).unwrap();
+        let second_binary = second.join("codepet_fixture_agent");
+        std::fs::write(&second_binary, b"fixture").unwrap();
+        let combined = std::env::join_paths(std::env::split_paths(&paths).chain([second])).unwrap();
+        assert_eq!(candidates_from_path(&combined, "codepet_fixture_agent", "missing"), vec![binary.clone(), second_binary]);
         assert_eq!(std::env::split_paths(&paths)
             .flat_map(|directory| candidates_in(&directory, "codepet_fixture_agent", "missing"))
             .next(), Some(binary));
@@ -767,7 +868,7 @@ mod tests {
                     .unwrap()
                     .recv_timeout(std::time::Duration::from_secs(2))
                     .expect("probe blocked executor");
-                Ok(crate::RuntimeInstallation {
+                Ok(crate::RuntimeInstallation { minimum_version: None, incompatibility_reason: None,
                     executable_path: candidate.executable_path,
                     source: candidate.source,
                     version: "fixture".into(),
@@ -805,7 +906,7 @@ mod tests {
             move || candidates.to_vec(),
             move |candidate, _| {
                 probes.wait();
-                Ok(crate::RuntimeInstallation {
+                Ok(crate::RuntimeInstallation { minimum_version: None, incompatibility_reason: None,
                     executable_path: candidate.executable_path,
                     source: candidate.source,
                     version: "test".into(),
@@ -844,7 +945,7 @@ mod tests {
             Ok(())
         }));
         scanner.start("agent", "missing", Vec::new, |candidate, _| {
-            Ok(crate::RuntimeInstallation {
+            Ok(crate::RuntimeInstallation { minimum_version: None, incompatibility_reason: None,
                 executable_path: candidate.executable_path,
                 source: candidate.source,
                 version: "detected".into(),
@@ -870,7 +971,7 @@ mod tests {
         assert_eq!(params.selected.unwrap().version, "detected");
         scanner.stop();
         scanner.start("agent", "missing", Vec::new, |candidate, _| {
-            Ok(crate::RuntimeInstallation {
+            Ok(crate::RuntimeInstallation { minimum_version: None, incompatibility_reason: None,
                 executable_path: candidate.executable_path,
                 source: candidate.source,
                 version: "rescanned".into(),

@@ -894,6 +894,8 @@
     "RuntimeInstallation": {
       "type": "object",
       "properties": {
+        "minimumVersion": { "type": "string", "minLength": 1 },
+        "incompatibilityReason": { "type": "string", "minLength": 1 },
         "executablePath": {
           "type": "string",
           "minLength": 1

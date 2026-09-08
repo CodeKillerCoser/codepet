@@ -526,7 +526,7 @@ impl CodexInstanceRuntime {
                 let Ok(Ok(models)) = models else { return None; };
                 let supported = match projects {
                     Ok(Ok(_)) => true,
-                    Ok(Err(error)) if error.is_method_not_found() => false,
+                    Ok(Err(error)) if error.is_method_not_found("project/list") => false,
                     _ => return None,
                 };
                 CodexProtocolMapper::capabilities(server.generation().to_string(), models, supported).ok()
@@ -1468,6 +1468,18 @@ impl Provider for CodexProvider {
                     false,
                 ));
             }
+            if std::env::var("CODEPET_RUNTIME_MIN_VERSION").is_ok_and(|value| !value.is_empty()) {
+                if let Some(path) = request.settings.get("appServerExecutable").and_then(Value::as_str) {
+                    let runtime = self.scanner.select(&RuntimeCandidate {
+                        executable_path: path.to_string(),
+                        source: codepet_provider_sdk::RuntimeCandidateSource::Configured,
+                    })?;
+                    if runtime.version.is_empty() {
+                        return Err(protocol_error("runtime_scanning", "Runtime version validation is still in progress".into(), true));
+                    }
+                    local_runtime::require_compatible_runtime(&local_runtime::apply_runtime_requirement(runtime))?;
+                }
+            }
             let selected = if request.settings.contains_key("appServerExecutable") { None } else {
                 let current = { lock(&self.state).selected_runtime.clone() };
                 let installation = match current {
@@ -1475,12 +1487,16 @@ impl Provider for CodexProvider {
                     None => {
                         let inventory=self.scanner.snapshot();
                         if inventory.scanning==Some(true) {return Err(protocol_error("runtime_scanning", "Runtime discovery is still in progress".into(), true));}
-                        inventory.installed.into_iter().next()
+                        inventory.installed.into_iter().find(|runtime| runtime.incompatibility_reason.is_none())
                     },
                 };
                 Some(installation.ok_or_else(|| protocol_error("provider_unavailable", "Codex Provider did not find a local runtime".to_string(), true))?)
             };
             if let Some(selected) = selected.as_ref() {
+                if selected.version.is_empty() {
+                    return Err(protocol_error("runtime_scanning", "Runtime version validation is still in progress".into(), true));
+                }
+                local_runtime::require_compatible_runtime(&local_runtime::apply_runtime_requirement(selected.clone()))?;
                 request.settings.insert("appServerExecutable".to_string(), json!(selected.executable_path.clone()));
             }
             let settings = decode_settings(request.settings.clone())?;
@@ -3139,7 +3155,7 @@ fn inspect_runtime_candidate(
         .unwrap_or(&line)
         .trim_start_matches('v')
         .to_string();
-    Ok(RuntimeInstallation {
+    Ok(RuntimeInstallation { minimum_version: None, incompatibility_reason: None,
         executable_path: canonical.to_string_lossy().into_owned(),
         version,
         source: candidate.source,

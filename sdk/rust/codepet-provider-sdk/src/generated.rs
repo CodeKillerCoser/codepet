@@ -865,6 +865,10 @@ pub struct RuntimeGetInstalledResponse {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeInstallation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimum_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub incompatibility_reason: Option<String>,
     pub executable_path: String,
     pub version: String,
     pub source: RuntimeCandidateSource,

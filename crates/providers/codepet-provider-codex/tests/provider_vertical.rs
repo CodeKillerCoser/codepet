@@ -247,9 +247,18 @@ impl ExecutionLifecycleHook for BlockResumeUntilCancelledHook {
 
 #[tokio::test]
 async fn project_methods_and_project_owned_conversation_fail_closed_when_probe_is_unsupported() {
+    verify_unsupported_project("project-unsupported").await;
+}
+
+#[tokio::test]
+async fn legacy_unknown_project_method_preserves_chat_capabilities() {
+    verify_unsupported_project("project-unsupported-legacy").await;
+}
+
+async fn verify_unsupported_project(mode: &str) {
     let marker = tempfile::NamedTempFile::new().unwrap();
     let (provider, route, _) =
-        configured_direct_provider("project-unsupported", marker.path()).await;
+        configured_direct_provider(mode, marker.path()).await;
     wait_for_capabilities(&provider, &route).await;
     let capabilities = ProviderProtocolServer::instance_capabilities(
         provider.as_ref(),
@@ -263,6 +272,18 @@ async fn project_methods_and_project_owned_conversation_fail_closed_when_probe_i
         .capabilities
         .methods
         .contains(&codepet_provider_sdk::ProviderCapability::ProjectList));
+
+    assert!(capabilities.capabilities.turn_send.is_some());
+    assert!(capabilities.capabilities.methods.contains(&codepet_provider_sdk::ProviderCapability::TurnStart));
+    let listed = ProviderProtocolServer::conversation_list(
+        provider.as_ref(),
+        ConversationListRequest {
+            query: None, reader_scope: None,
+            route: route.clone(), cursor: None, limit: Some(20),
+            project_filter: all_project_filter(),
+        },
+    ).await.unwrap();
+    assert!(!listed.conversations.is_empty());
 
     let project = ProviderResourceId {
         device_id: route.device_id.clone(),

@@ -47,6 +47,8 @@ export interface AgentRuntimeInstallation {
   executablePath: string;
   version: string;
   source: AgentRuntimeSource;
+  minimumVersion?: string | null;
+  incompatibilityReason?: string | null;
 }
 
 export interface AgentRuntime {

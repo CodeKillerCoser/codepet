@@ -244,12 +244,16 @@ fn main() {
                 }),
             ),
             "project/list" => {
-                if options.approval_mode == "project-unsupported" {
+                if options.approval_mode.starts_with("project-unsupported") {
                     write_json(
                         &mut writer,
                         json!({
                             "id": id,
-                            "error": { "code": -32601, "message": "method not found" }
+                            "error": if options.approval_mode == "project-unsupported-legacy" {
+                                json!({ "code": -32600, "message": "Invalid request: unknown variant `project/list`, expected one of `initialize`, `thread/list`" })
+                            } else {
+                                json!({ "code": -32601, "message": "method not found" })
+                            }
                         }),
                     );
                     continue;

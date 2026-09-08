@@ -80,8 +80,15 @@ impl fmt::Display for CodexAppServerError {
 impl std::error::Error for CodexAppServerError {}
 
 impl CodexAppServerError {
-    pub(crate) fn is_method_not_found(&self) -> bool {
-        matches!(self, Self::Rpc { code: -32601, .. })
+    pub(crate) fn is_method_not_found(&self, method: &str) -> bool {
+        match self {
+            Self::Rpc { code: -32601, .. } => true,
+            // Older app-servers reject an unknown request enum variant as Invalid Request.
+            Self::Rpc { code: -32600, message, .. } => message.starts_with(
+                &format!("Invalid request: unknown variant `{method}`, expected "),
+            ),
+            _ => false,
+        }
     }
 
     pub(crate) fn is_thread_not_loaded(&self, thread_id: &str) -> bool {
@@ -1080,6 +1087,20 @@ pub(crate) fn permission_from_sandbox(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recognizes_unknown_methods_without_hiding_other_invalid_requests() {
+        for (code, message, expected) in [
+            (-32601, "method not found", true),
+            (-32600, "Invalid request: unknown variant `project/list`, expected one of `initialize`, `thread/list`", true),
+            (-32600, "Invalid request: unknown variant `other/list`, expected `initialize`", false),
+            (-32600, "Invalid request: missing field `limit`", false),
+            (-32603, "Invalid request: unknown variant `project/list`, expected `initialize`", false),
+        ] {
+            let error = CodexAppServerError::Rpc { code, message: message.to_string(), data: None };
+            assert_eq!(error.is_method_not_found("project/list"), expected, "{message}");
+        }
+    }
 
     #[test]
     fn classifies_only_the_exact_unmaterialized_thread_turns_error() {
