@@ -676,7 +676,7 @@ impl FakeProvider {
             contents: vec![ContentBlock::TextContentBlock(TextContentBlock { content_id: content_id.clone(), kind: TextContentBlockKind::Text,
                 text: "fixture assistant message".into(), truncation: None })],
         });
-        sink.publish(ProtocolEvent::EventConversationItemUpserted { jsonrpc: "2.0".into(), params: ConversationItemUpsertedEvent { item } })?;
+        sink.publish(ProtocolEvent::EventConversationItemUpserted { jsonrpc: "2.0".into(), params: ConversationItemUpsertedEvent { conversation: None, update_id: None, item: Some(item) } })?;
         sink.publish(ProtocolEvent::EventTurnOutputDelta { jsonrpc: "2.0".into(), params: TurnOutputDeltaEvent {
             turn: provider_resource(route, &format!("{id}-turn")), conversation: provider_resource(route, id), item_id, content_id,
             kind: ConversationContentKind::Text, delta: "hello".into(), extension: None,

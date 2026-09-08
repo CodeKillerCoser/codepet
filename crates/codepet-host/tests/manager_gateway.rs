@@ -524,7 +524,7 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
                 );
             }
             GatewayEvent::ConversationItemUpserted { params, .. } => {
-                let codepet_gateway_sdk::ConversationItem::MessageConversationItem(item) = &params.payload.item else {
+                let Some(codepet_gateway_sdk::ConversationItem::MessageConversationItem(item)) = &params.payload.item else {
                     panic!("expected assistant message upsert");
                 };
                 let codepet_gateway_sdk::ContentBlock::TextContentBlock(content) = &item.contents[0] else {

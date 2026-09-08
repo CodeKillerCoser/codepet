@@ -141,6 +141,11 @@
     "name": "conversation.recent"
   },
   {
+    "file": "conversation-item-invalidated-event.json",
+    "kind": "event",
+    "name": "conversation.itemUpserted"
+  },
+  {
     "file": "usage-query-request.json",
     "kind": "request",
     "name": "codepet.usage.query"

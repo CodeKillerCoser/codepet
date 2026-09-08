@@ -465,13 +465,15 @@
     "ConversationItemUpsertedEvent": {
       "type": "object",
       "properties": {
+        "updateId": {"type": "string", "minLength": 1, "description": "Stable source event identity for deduplicating content invalidations."},
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
         "item": {
           "$ref": "../../agent/v1/schema.json#/$defs/ConversationItem"
         }
       },
-      "required": [
-        "item"
-      ],
+      "description": "Canonical item update, or a content invalidation with conversation and no item. Fetch the latest page only without interaction control. When both exist their conversation routes must agree.",
       "additionalProperties": false
     },
     "ConversationActivityChangedEvent": {

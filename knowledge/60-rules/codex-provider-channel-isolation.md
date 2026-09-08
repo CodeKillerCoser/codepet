@@ -6,6 +6,8 @@
 
 Provider 只知道 Host 订阅，不识别 Pet/Remote。Host 登记表只按订阅投递，不解析活动内容来推断目标 Gateway。桌宠不以 Provider 启动的 App Server 作为全局活动证据。旧 Desktop Companion 已从应用启动断开，不作为异常回退来源。
 
+2026-09-09 起，Codex Provider 在实例启动时建立内部观察订阅，将 Hook 适配为现有活动和内容更新事件，不记录 writer 冲突会话，也不按控制权筛选 Hook。Remote 自行判断是否补拉；活动列表只消费 Hook start/stop 的派生投影。原始通知仍按订阅独立投递，Host 登记表不解析 Hook；业务投影失败不能抑制 Pet 的原始通知。详见 [Hook 活动与内容更新](codex-hook-activity-and-content-updates.md)。
+
 ## 适用场景
 
 - 修改 Provider 观察、Host 订阅、Gateway、PetApp 或 Tauri bridge。

@@ -267,6 +267,11 @@
     "name": "conversation.active.list"
   },
   {
+    "file": "conversation-item-invalidated-event.json",
+    "kind": "event",
+    "name": "event.conversationItemUpserted"
+  },
+  {
     "file": "usage-query-request.json",
     "kind": "request",
     "name": "usage.query"

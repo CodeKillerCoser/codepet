@@ -100,7 +100,7 @@ impl ConversationStateStore {
     ) -> HostResult<Option<(gateway::RoutedResourceId, u64)>> {
         let id=match event {
             provider::ProtocolEvent::EventConversationUpserted{params,..}=>Some(&params.conversation.resource.provider_id),
-            provider::ProtocolEvent::EventConversationItemUpserted{params,..}=>Some(&codepet_provider_data::conversation_state::item_conversation(&params.item).provider_id),
+            provider::ProtocolEvent::EventConversationItemUpserted{params,..}=>params.conversation.as_ref().or_else(|| params.item.as_ref().map(codepet_provider_data::conversation_state::item_conversation)).map(|conversation| &conversation.provider_id),
             provider::ProtocolEvent::EventTurnUpserted{params,..}=>Some(&params.turn.conversation.provider_id),
             provider::ProtocolEvent::EventApprovalRequested{params,..}=>Some(&params.approval.conversation.provider_id),
             provider::ProtocolEvent::EventApprovalResolved{params,..}=>Some(&params.approval.conversation.provider_id),

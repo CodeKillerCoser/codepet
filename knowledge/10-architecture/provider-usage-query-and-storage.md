@@ -129,3 +129,11 @@ Codex 原生每日数据保留范围、日期的上游时区及不同客户端�
 本次清理未改列、未迁移旧统计文件。前端查询/API/样式 49 项测试、Host manager_gateway 29 项、采集和查询 13 项、协议生成器 20 项通过，前端生产构建通过。预览使用模拟 Gateway 响应，验证 1280px 与 390px 布局、键盘焦点、空结果和 Codex 能力限制；尚未代替真实账户验收。全量 tsc 暴露原有 Node 类型缺失及 activity、sound 等测试类型错误，新查询模块无报错。
 
 清理后补充验证：OpenCode account_probes_are_parallel_notify_later_and_cancel_on_stop 通过，确认移除 stats 后初始化与 stop 取消行为正常；git diff --check 通过。
+
+## 合并主工作区验证（2026-09-09）
+
+合并 v0 的 Hook 活动投影、会话联合发现和可选 item 更新协议。Provider 业务层承接 conversation_atoms 的显式活动事件模式；Host 未读数据库路由从事件 conversation 或 item 所属会话解析 provider，兼容无 item 的内容失效通知。`content_invalidations_advance_unread_once_per_source_update` 验证同一来源更新只推进一次未读版本。
+
+合并后执行 `cargo check --manifest-path crates/Cargo.toml --workspace --tests --quiet`、Tauri lib/runtime_gateway_core_tests 编译检查、Provider 数据层 27 项测试、Host manager_gateway 29 项测试、前端 usageQuery/codepetGateway 4 项测试、`npm run protocol:check`（20 项）和 `npm run build`，均通过。扩展 Host lib 测试初次 57/58 通过，日志轮转测试在 Windows 遇到一次文件访问拒绝；单独复测通过，该模块本次没有改动。项目未定义 npm test，前端测试使用 `npx vitest run`。
+
+Codex Provider lib 67 项测试通过，覆盖合并后的 Provider 行为。

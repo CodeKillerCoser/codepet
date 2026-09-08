@@ -33,6 +33,8 @@ macOS Host 的可见名称必须读取系统 ComputerName，Windows Host 必须�
 - 名称解析单元测试覆盖可注入的原生值、空值与 fallback。
 - Windows 原生测试确认系统名称非空、不含 NUL，并与本机 `COMPUTERNAME` 一致。可独立运行 `rustc --edition 2021 --test src-tauri/src/platform/host_identity.rs -o <临时测试程序>` 后执行测试程序。
 - 真机验收需运行重新构建的 Windows Host，再让手机重连，核对设备详情与电脑系统名称一致，且原配对仍可使用。
+- 若修复提交后仍显示旧名，先核对实际安装/运行的可执行文件是否包含修复，不能用安装时间或相同版本号代替源码版本验证。2026-09-08 本机安装程序仍含 `This Device`，不含新 fallback `CodePet Host` 和 `GetComputerNameW` 导入；本地设备记录也仍为旧名。此时应构建并运行新版 Host，验证记录自动刷新且 `deviceId/createdAt` 不变，不要手工清除配对数据。
+- 本次运行 `npm run tauri -- build --no-bundle` 成功（协议检查 20 项通过）；新产物包含 `GetComputerNameW` 导入，备份并替换安装目录中的程序、重启后，设备记录自动更新为本机计算机名，`deviceId/createdAt` 均保持不变。手机端重连后的显示仍需真机确认。
 - `device_catalog` 测试验证名称刷新后 `deviceId/createdAt` 不变且文件已更新。
 - 真实 loopback listener 测试验证 pairing exchange 与 handshake 返回完整相同的 Host identity，且 descriptor 的名称、OS、系统版本保持一致；mDNS 单元测试继续核对 TXT `name`。
 - QR copy 测试验证只复制当前 active payload，普通 Tauri view、UI 文本和日志不出现 pairing secret。

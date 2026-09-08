@@ -3,8 +3,8 @@
 
 import type { Approval, ApprovalDecision, Conversation, ConversationContentKind, ConversationCreateCapabilities, ConversationItem, ConversationReadState, ConversationStatus, Project, ProjectChangeType, ProjectRoot, ProviderAuthentication, TurnInput, TurnSelection, TurnSendCapabilities, TurnTask, UsageDataset, UsageQuery, UsageQueryResult } from "../../codepet-agent-sdk/src/generated";
 export type * from "../../codepet-agent-sdk/src/generated";
-import type { ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RpcError, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
-export type { ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RpcError, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
+import type { ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RoutedResourceId, RpcError, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
+export type { ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RoutedResourceId, RpcError, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
 
 export const PROTOCOL_VERSION = 1 as const;
 export const PROTOCOL_METHODS = ["conversation.active.list", "conversation.unread.list", "conversation.markRead", "provider.ping", "provider.initialize", "provider.describe", "runtime.getInstalled", "runtime.select", "instance.create", "instance.start", "instance.stop", "instance.destroy", "instance.capabilities", "conversation.list", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.search", "conversation.get", "conversation.acquireInteraction", "conversation.create", "turn.start", "turn.steer", "turn.interrupt", "approval.resolve", "provider.shutdown", "event.subscribe", "event.unsubscribe", "usage.query"] as const;
@@ -106,7 +106,9 @@ export interface ConversationIdsQuery {
 export type ConversationIdsQueryKind = "ids";
 
 export interface ConversationItemUpsertedEvent {
-  item: ConversationItem;
+  updateId?: string;
+  conversation?: RoutedResourceId;
+  item?: ConversationItem;
 }
 
 export type ConversationListQuery = ConversationUpdatedAfterQuery | ConversationIdsQuery;

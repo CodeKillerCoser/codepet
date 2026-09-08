@@ -4,6 +4,8 @@
 
 会话消息是持续扩充的数据源：首次加载最近一页，上翻由用户手动请求旧页并前插；实时事件追加或原位更新。任务完成、失败、停止通知只更新状态，不能触发完整历史查询或替换消息列表。
 
+Codex Hook 通过无 item 的现有更新事件提示内容变化，不由 Provider 按控制权筛选。Remote 必须仅在 `item == null && !interactionAcquired` 时请求最新一页并合并到数据源；不能替换列表或重设分页、实时 fence。详见 [Hook 活动与内容更新](codex-hook-activity-and-content-updates.md)。
+
 ## 适用场景
 
 Remote Gateway adapter 的 get/resume、详情 controller、消息模型、设备会话缓存和详情滚动布局。

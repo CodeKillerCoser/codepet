@@ -257,6 +257,11 @@ impl SharedConversationStateStore {
         event: &provider::ProtocolEvent,
     ) -> StateResult<Option<(gateway::RoutedResourceId, u64)>> {
         let observed = match event {
+            provider::ProtocolEvent::EventConversationItemUpserted { params, .. }
+                if params.item.is_none() && params.conversation.is_some() && params.update_id.is_some() => Some((
+                    params.conversation.clone().expect("guarded conversation"),
+                    format!("content-invalidation:{}", params.update_id.as_deref().expect("guarded update id")),
+                )),
             provider::ProtocolEvent::EventTurnOutputDelta { params, .. }
                 if params.kind == provider::ConversationContentKind::Text
                     && !params.delta.is_empty() =>
@@ -274,22 +279,19 @@ impl SharedConversationStateStore {
                 format!("approval:{}", params.approval.resource.native_resource_id),
             )),
             provider::ProtocolEvent::EventConversationItemUpserted { params, .. }
-                if matches!(
-                    item_status(&params.item),
+                if params.item.as_ref().is_some_and(|item| matches!(
+                    item_status(item),
                     provider::ConversationItemStatus::Completed
                         | provider::ConversationItemStatus::Failed
                         | provider::ConversationItemStatus::Interrupted
-                ) =>
-            {
-                Some((
-                    item_conversation(&params.item).clone(),
+                )) => Some((
+                    item_conversation(params.item.as_ref().expect("guarded item")).clone(),
                     format!(
                         "item-terminal:{}:{:?}",
-                        item_resource(&params.item).native_resource_id,
-                        item_status(&params.item)
+                        item_resource(params.item.as_ref().expect("guarded item")).native_resource_id,
+                        item_status(params.item.as_ref().expect("guarded item"))
                     ),
-                ))
-            }
+                )),
             provider::ProtocolEvent::EventTurnUpserted { params, .. }
                 if matches!(
                     params.turn.status,
@@ -612,6 +614,25 @@ fn parse_activity_version(value: &str) -> StateResult<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_invalidations_advance_unread_once_per_source_update() {
+        let store = SharedConversationStateStore::memory();
+        store.ensure_client("mobile").unwrap();
+        let mut summary = conversation("existing output");
+        store.observe_summary(&summary).unwrap();
+        let event = |id: &str| provider::ProtocolEvent::EventConversationItemUpserted {
+            jsonrpc: "2.0".into(),
+            params: provider::ConversationItemUpsertedEvent {
+                conversation: Some(summary.resource.clone()), item: None, update_id: Some(id.into()),
+            },
+        };
+        assert!(store.observe_provider_event(&event("hook-1")).unwrap().is_some());
+        assert!(store.observe_provider_event(&event("hook-1")).unwrap().is_none());
+        assert!(store.observe_provider_event(&event("hook-2")).unwrap().is_some());
+        store.decorate("mobile", &mut summary).unwrap();
+        assert!(summary.read_state.unwrap().unread);
+    }
 
     #[test]
     fn mark_read_only_advances_to_the_observed_activity() {

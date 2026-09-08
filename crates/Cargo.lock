@@ -402,6 +402,7 @@ dependencies = [
  "codepet-observation",
  "codepet-provider-data",
  "codepet-provider-sdk",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

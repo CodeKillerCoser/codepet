@@ -72,7 +72,9 @@ export interface ConversationGetResponse {
 }
 
 export interface ConversationItemUpsertedEvent {
-  item: ConversationItem;
+  updateId?: string;
+  conversation?: RoutedResourceId;
+  item?: ConversationItem;
 }
 
 export interface ConversationListRequest {
