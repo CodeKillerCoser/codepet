@@ -18,7 +18,11 @@ impl CodexInstanceRuntime {
                     if rows.iter().any(|row| row.resource.native_resource_id == id) { continue; }
                     let server = runtime.ready_server()?; let requested = id.clone();
                     match tokio::task::spawn_blocking(move || server.thread_read_metadata(&requested)).await.map_err(provider_task_error)? {
-                        Ok(snapshot) => rows.push(lock(&runtime.mapper).conversation(&snapshot)),
+                        Ok(snapshot) => {
+                            let mut row = lock(&runtime.mapper).conversation(&snapshot);
+                            runtime.project_conversation(&mut row);
+                            rows.push(row);
+                        },
                         Err(error) if error.is_thread_not_loaded(&id) => {},
                         Err(error) => return Err(CodexProtocolMapper::error(error)),
                     }

@@ -118,7 +118,12 @@ pub struct ConversationGetResponse {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ConversationItemUpsertedEvent {
-    pub item: ConversationItem,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<RoutedResourceId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item: Option<ConversationItem>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

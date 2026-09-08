@@ -2142,7 +2142,7 @@ fn event_provider_id(event: &ProtocolEvent) -> HostResult<&str> {
             params.conversation.resource.provider_id.as_str()
         }
         ProtocolEvent::EventConversationItemUpserted { params, .. } => {
-            conversation_item_resource(&params.item).provider_id.as_str()
+            params.item.as_ref().map(conversation_item_resource).or(params.conversation.as_ref()).ok_or_else(|| HostError::new("invalid_provider_event", "Item invalidation requires a conversation route"))?.provider_id.as_str()
         }
         ProtocolEvent::EventTurnUpserted { params, .. } => params.turn.resource.provider_id.as_str(),
         ProtocolEvent::EventTurnOutputDelta { params, .. } => params.turn.provider_instance_id.as_str(),
@@ -2160,6 +2160,22 @@ fn event_provider_id(event: &ProtocolEvent) -> HostResult<&str> {
         ));
     }
     Ok(provider_id)
+}
+
+fn validate_item_update(params: &codepet_provider_sdk::ConversationItemUpsertedEvent, route: &ProviderInstanceRoute) -> HostResult<()> {
+    if params.update_id.as_ref().is_some_and(|id| id.trim().is_empty()) {
+        return Err(HostError::new("invalid_provider_event", "Content update identity must not be empty"));
+    }
+    if let Some(conversation) = &params.conversation {
+        validate_resource_route(conversation, route)?;
+    }
+    if let Some(item) = &params.item {
+        if params.conversation.as_ref().is_some_and(|conversation| conversation != conversation_item_conversation(item)) {
+            return Err(HostError::new("invalid_provider_event", "Item and invalidation conversation routes differ"));
+        }
+        validate_conversation_items(std::slice::from_ref(item), conversation_item_conversation(item), route)
+    } else if params.conversation.is_some() { Ok(()) }
+    else { Err(HostError::new("invalid_provider_event", "Item invalidation requires a conversation route")) }
 }
 
 fn validate_event_routes(
@@ -2191,11 +2207,7 @@ fn validate_event_routes(
             validate_conversation_routes(&params.conversation, route)
         }
         ProtocolEvent::EventConversationItemUpserted { params, .. } => {
-            validate_conversation_items(
-                std::slice::from_ref(&params.item),
-                conversation_item_conversation(&params.item),
-                route,
-            )
+            validate_item_update(params, route)
         }
         ProtocolEvent::EventTurnUpserted { params, .. } => {
             validate_turn_routes(&params.turn, route)
@@ -2653,6 +2665,24 @@ mod conversation_item_validation_tests {
             json!({"resource": resource("approval"), "turn": resource("turn"), "conversation": resource("conversation"), "kind": "approval", "status": "pending", "approval": {"resource": resource("approval"), "turn": resource("turn"), "conversation": resource("conversation"), "kind": "command", "title": "approve", "status": "pending", "decisions": ["approve", "deny"]}}),
             json!({"resource": resource("unknown"), "turn": resource("turn"), "conversation": resource("conversation"), "kind": "unknown", "status": "unknown"}),
         ]
+    }
+
+    #[test]
+    fn item_invalidations_require_routing_and_reject_conflicting_ownership() {
+        let expected = route();
+        let mut event = codepet_provider_sdk::ConversationItemUpsertedEvent {
+            item: None, conversation: None, update_id: Some("hook-1".into()),
+        };
+        assert!(validate_item_update(&event, &expected).is_err());
+        event.conversation = Some(serde_json::from_value(resource("conversation")).unwrap());
+        assert!(validate_item_update(&event, &expected).is_ok());
+        event.item = Some(serde_json::from_value(item_values().remove(0)).unwrap());
+        assert!(validate_item_update(&event, &expected).is_ok());
+        event.conversation.as_mut().unwrap().native_resource_id = "another-thread".into();
+        assert!(validate_item_update(&event, &expected).is_err());
+        event.item = None;
+        event.conversation.as_mut().unwrap().provider_id = "foreign-provider".into();
+        assert!(validate_item_update(&event, &expected).is_err());
     }
 
     #[test]

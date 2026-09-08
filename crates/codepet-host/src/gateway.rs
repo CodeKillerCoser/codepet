@@ -672,6 +672,8 @@ impl ProviderGatewayService {
                     params: gateway::ProtocolEventParams {
                         event_cursor: event_cursor(0),
                         payload: gateway::ConversationItemUpsertedEvent {
+                            conversation: params.conversation,
+                            update_id: params.update_id,
                             item: params.item,
                         },
                     },

@@ -1,4 +1,5 @@
 mod conversation_observer;
+mod hook_observation;
 use codepet_provider_sdk::conversation_atoms::{self, ConversationAtoms};
 use codepet_provider_sdk::local_runtime;
 use crate::client::{
@@ -9,7 +10,7 @@ use crate::protocol::{
     approval_generation, approval_resource_id, CodexAppServerError, CodexApprovalRequest,
     CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexProjectCreateRequest,
     CodexProjectRoot, CodexProjectUpdateRequest, CodexThreadListRequest, CodexThreadStartRequest,
-    CodexThreadItem, CodexTurn, CodexTurnItemsView, CodexTurnStartRequest, CodexTurnStatus,
+    CodexTurn, CodexTurnItemsView, CodexTurnStartRequest, CodexTurnStatus,
     CodexTurnSteerRequest,
     CODEX_INSTANCE_KIND, CODEX_PLUGIN_ID,
 };
@@ -388,6 +389,8 @@ struct ObservedApproval {
 }
 
 struct CodexInstanceRuntime {
+    hook_activity: Arc<Mutex<hook_observation::ActivityProjection>>,
+    hook_ready: AtomicBool,
     atoms: ConversationAtoms,
     route: ProviderInstanceRoute,
     instance_kind: String,
@@ -411,8 +414,14 @@ impl CodexInstanceRuntime {
     ) -> Self {
         let executable_path = settings.app_server_executable.to_string_lossy().into_owned();
         let atoms = ConversationAtoms::default();
-        let events = atoms.event_sink(request.route.clone(), events);
+        let hook_activity = Arc::new(Mutex::new(hook_observation::ActivityProjection::default()));
+        let events = Arc::new(hook_observation::SummaryEvents {
+            projection: hook_activity.clone(),
+            sink: atoms.explicit_activity_event_sink(request.route.clone(), events),
+        });
         Self {
+            hook_activity,
+            hook_ready: AtomicBool::new(false),
             atoms,
             route: request.route.clone(),
             instance_kind: request.instance_kind,
@@ -460,6 +469,10 @@ impl CodexInstanceRuntime {
     }
 
     fn snapshot_locked(&self, mutable: &InstanceMutable) -> ProviderInstance {
+        let mut capabilities = conversation_atoms::observed_capabilities(mutable.capabilities.clone(), mutable.atomic_facts_ready, mutable.atomic_facts_epoch);
+        if !self.hook_ready.load(Ordering::SeqCst) {
+            capabilities.methods.retain(|method| *method != ProviderCapability::ConversationActiveList);
+        }
         lock(&self.mapper).instance(
             CODEX_PLUGIN_ID.to_string(),
             self.instance_kind.clone(),
@@ -468,7 +481,7 @@ impl CodexInstanceRuntime {
             mutable.status,
             mutable.authentication.clone(),
             mutable.usage.clone(),
-            conversation_atoms::observed_capabilities(mutable.capabilities.clone(), mutable.atomic_facts_ready, mutable.atomic_facts_epoch),
+            capabilities,
         )
     }
 
@@ -1250,7 +1263,7 @@ struct ProviderState {
 pub struct CodexProvider {
     observation: codepet_observation::Observation,
     scanner: local_runtime::RuntimeScanner,
-    state: Mutex<ProviderState>,
+    state: Arc<Mutex<ProviderState>>,
     events: Arc<dyn ProviderEventSink>,
     lifecycle_hook: Arc<dyn ExecutionLifecycleHook>,
     shutdown: AtomicBool,
@@ -1271,18 +1284,18 @@ impl CodexProvider {
         events: Arc<dyn ProviderEventSink>,
         lifecycle_hook: Arc<dyn ExecutionLifecycleHook>,
     ) -> Self {
+        let state = Arc::new(Mutex::new(ProviderState {
+            host_device_id: None, initialized_client_id: None,
+            instances: HashMap::new(), selected_runtime: None,
+        }));
+        let hook_events = Arc::new(hook_observation::HookEvents { state: Arc::downgrade(&state), sink: events.clone() });
         Self {
             scanner: local_runtime::RuntimeScanner::new(events.clone()),
             observation: codepet_observation::Observation::new(codepet_observation::Definition {
                 windows_command_override: true,
                 name: "codex", config: codepet_observation::config_home("CODEX_HOME", codepet_observation::home().join(".codex")).join("hooks.json"), events: &["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Stop", "SubagentStart", "SubagentStop", "Interrupt"], plugin: None,
-            }, events.clone()),
-            state: Mutex::new(ProviderState {
-                host_device_id: None,
-                initialized_client_id: None,
-                instances: HashMap::new(),
-                selected_runtime: None,
-            }),
+            }, hook_events),
+            state,
             events,
             lifecycle_hook,
             shutdown: AtomicBool::new(false),
@@ -1614,6 +1627,19 @@ impl Provider for CodexProvider {
             if let Some(error) = starting_event_error {
                 let _ = runtime.mark_start_failed(&slot);
                 return Err(error);
+            }
+            // Reserve the cancellable instance slot before installing the
+            // independent Hook source; stop must win while installation awaits.
+            let hook_result = self.observation.subscribe(hook_observation::INTERNAL_SUBSCRIPTION.into()).await;
+            let hooks_ready = hook_result.is_ok();
+            if let Err(error) = hook_result { eprintln!("Codex activity observation unavailable: {}", error.message); }
+            if runtime.hook_ready.swap(hooks_ready, Ordering::SeqCst) != hooks_ready {
+                let status = {
+                    let mut state = lock(&runtime.mutable);
+                    state.atomic_facts_epoch = state.atomic_facts_epoch.saturating_add(1);
+                    state.status
+                };
+                if status == InstanceStatus::Ready { let _ = runtime.publish_status_change(status); }
             }
             if !slot.begin_spawn() {
                 runtime.unregister_session(&slot);
@@ -1950,11 +1976,11 @@ impl Provider for CodexProvider {
     fn conversation_active_list<'a>(&'a self, request: codepet_provider_sdk::ConversationActiveListRequest) -> ProtocolFuture<'a, codepet_provider_sdk::ConversationActiveListResponse> {
         Box::pin(async move {
             let runtime = self.instance(&request.route)?;
-            if !lock(&runtime.mutable).atomic_facts_ready { return Err(protocol_error("unsupported", "complete native observation is not ready".into(), true)); }
+            if !runtime.hook_ready.load(Ordering::SeqCst) { return Err(protocol_error("unsupported", "Hook activity observation is not ready".into(), true)); }
             let generation = runtime.query_generation()?;
             if let Some(page) = runtime.atoms.active_cached(&generation, &request)? { return Ok(page); }
             let epoch = runtime.atoms.event_epoch();
-            let rows = runtime.collect_atomic_summaries().await?;
+            let rows = lock(&runtime.hook_activity).active_rows(&runtime.route);
             if generation != runtime.query_generation()? || epoch != runtime.atoms.event_epoch() { return Err(conversation_atoms::generation_changed()); }
             runtime.atoms.active(&generation, &request, rows)
         })
@@ -2047,7 +2073,11 @@ impl Provider for CodexProvider {
                 let mapper = lock(&runtime.mapper);
                 page.data
                     .iter()
-                    .map(|snapshot| mapper.conversation(snapshot))
+                    .map(|snapshot| {
+                        let mut row = mapper.conversation(snapshot);
+                        runtime.project_conversation(&mut row);
+                        row
+                    })
                     .collect::<Vec<_>>()
             };
             Ok(ConversationListResponse {
@@ -2096,7 +2126,11 @@ impl Provider for CodexProvider {
                 let mapper = lock(&runtime.mapper);
                 page.data
                     .iter()
-                    .map(|snapshot| mapper.conversation(snapshot))
+                    .map(|snapshot| {
+                        let mut row = mapper.conversation(snapshot);
+                        runtime.project_conversation(&mut row);
+                        row
+                    })
                     .collect::<Vec<_>>()
             };
             Ok(ConversationSearchResponse {
@@ -2188,9 +2222,10 @@ impl Provider for CodexProvider {
                         &mut items,
                     );
                 }
-                let conversation =
+                let mut conversation =
                     mapper.conversation_with_active_turn(&snapshot, active_turn);
                 drop(mapper);
+                runtime.project_conversation(&mut conversation);
                 if history_materialized {
                     lock(&runtime.mutable)
                         .pending_materialization
@@ -2325,7 +2360,8 @@ impl Provider for CodexProvider {
                     outcome => Err(execution_outcome_error("thread/start", None, outcome)),
                 }
             }).await.map_err(provider_task_error)??;
-            let conversation = lock(&runtime.mapper).conversation(&snapshot);
+            let mut conversation = lock(&runtime.mapper).conversation(&snapshot);
+            runtime.project_conversation(&mut conversation);
             Ok(ConversationCreateResponse { conversation })
         })
     }
@@ -4243,36 +4279,12 @@ impl CodexInstanceRuntime {
         }
         let pending = lock(&self.mutable).pending_materialization.values().cloned().collect::<Vec<_>>();
         rows.extend(pending.iter().map(|snapshot| lock(&self.mapper).conversation(snapshot)));
-        let mut live_active = HashMap::new();
-        for (_, server) in &registry {
-            let mut cursor = None;
-            let mut progress = codepet_provider_sdk::conversation_query::EnumerationProgress::default();
-            loop {
-                let source = server.clone();
-                let (ids, next) = tokio::task::spawn_blocking(move || source.thread_loaded_list(cursor, 100)).await.map_err(provider_task_error)?.map_err(CodexProtocolMapper::error)?;
-                for id in ids {
-                    if server.is_ephemeral_thread(&id) { continue; }
-                    let source = server.clone();
-                    // A loaded/read race is an incomplete snapshot, never deletion.
-                    let mut snapshot = tokio::task::spawn_blocking(move || source.thread_read_metadata(&id)).await.map_err(provider_task_error)?.map_err(CodexProtocolMapper::error)?;
-                    assignments.decorate(&mut snapshot);
-                    let row = lock(&self.mapper).conversation(&snapshot);
-                    if conversation_atoms::active(row.status) { live_active.insert(row.resource.native_resource_id.clone(), row.clone()); }
-                    rows.push(row);
-                }
-                cursor = progress.advance(next)?;
-                if cursor.is_none() { break; }
-                tokio::task::yield_now().await;
-            }
-        }
         let after = self.atomic_server_registry()?;
         if registry.iter().map(|(id, server)| (*id, server.generation())).collect::<Vec<_>>() != after.iter().map(|(id, server)| (*id, server.generation())).collect::<Vec<_>>() {
             return Err(conversation_atoms::generation_changed());
         }
         conversation_atoms::sort_summaries(&mut rows);
-        for row in &mut rows {
-            if let Some(active) = live_active.get(&row.resource.native_resource_id) { row.status = active.status; row.active_turn = active.active_turn.clone(); }
-        }
+        for row in &mut rows { self.project_conversation(row); }
         Ok(rows)
     }
 }
@@ -4287,7 +4299,11 @@ impl CodexProvider {
             // Missing list membership is not deletion (e.g. archived sessions).
             // Unknown native failures propagate; never infer deletion from them.
             match tokio::task::spawn_blocking(move || session.thread_read_metadata(&requested)).await.map_err(provider_task_error)? {
-                Ok(snapshot) => rows.push(lock(&runtime.mapper).conversation(&snapshot)),
+                Ok(snapshot) => {
+                    let mut row = lock(&runtime.mapper).conversation(&snapshot);
+                    runtime.project_conversation(&mut row);
+                    rows.push(row);
+                },
                 Err(error) if error.is_thread_not_loaded(id) => {},
                 Err(error) => return Err(CodexProtocolMapper::error(error)),
             }

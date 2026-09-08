@@ -25,5 +25,6 @@
   {"file": "conversation-recent-missing-fence.json", "kind": "type", "name": "ConversationRecentResponse", "valid": false},
   {"file": "conversation-recent-expired-response.json", "kind": "response", "name": "conversation.recent"},
   {"file": "conversation-recent-invalid-cursor-response.json", "kind": "response", "name": "conversation.recent"},
-  {"file": "conversation-recent-unsupported-response.json", "kind": "response", "name": "conversation.recent"}
+  {"file": "conversation-recent-unsupported-response.json", "kind": "response", "name": "conversation.recent"},
+  {"file": "conversation-item-invalidated-event.json", "kind": "event", "name": "conversation.itemUpserted"}
 ]

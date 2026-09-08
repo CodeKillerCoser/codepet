@@ -872,7 +872,8 @@ impl CodexProtocolMapper {
                 ProtocolEvent::EventConversationItemUpserted {
                     jsonrpc: "2.0".to_string(),
                     params: ConversationItemUpsertedEvent {
-                        item: self.conversation_item(&turn, &item, &self.resource(thread_id)),
+                        conversation: None, update_id: None,
+                        item: Some(self.conversation_item(&turn, &item, &self.resource(thread_id))),
                     },
                 }
             }
