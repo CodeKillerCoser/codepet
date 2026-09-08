@@ -63,6 +63,7 @@ impl CompatProviderGateway {
     ) -> Result<Option<compat::ProtocolEvent>, compat::ProtocolError> {
         let mapped = match event {
             gateway::ProtocolEvent::ProjectChanged { .. }
+            | gateway::ProtocolEvent::ConversationRecentChanged { .. }
             | gateway::ProtocolEvent::ProviderChanged { .. }
             | gateway::ProtocolEvent::ConversationActivityChanged { .. }
             | gateway::ProtocolEvent::ConversationItemUpserted { .. } => return Ok(None),
@@ -479,7 +480,8 @@ fn map_provider(
             | gateway::GatewayCapability::ProjectUpdate
             | gateway::GatewayCapability::ProjectDelete => None,
             gateway::GatewayCapability::ConversationList => Some("conversation.list"),
-            gateway::GatewayCapability::ConversationSearch => None,
+            gateway::GatewayCapability::ConversationSearch
+            | gateway::GatewayCapability::ConversationRecent => None,
             gateway::GatewayCapability::ConversationGet => Some("conversation.get"),
             gateway::GatewayCapability::ConversationCreate => Some("conversation.create"),
             gateway::GatewayCapability::TurnSend => Some("turn.send"),
@@ -839,6 +841,59 @@ mod tests {
                 },
             },
         }
+    }
+
+    #[test]
+    fn provider_capabilities_exclude_recent_from_desktop_v0() {
+        let provider = serde_json::from_value(json!({
+            "id": "instance-test",
+            "identity": { "displayName": "Test" },
+            "runtime": { "status": "ready" },
+            "capabilities": { "revision": "cap-1" }
+        })).unwrap();
+        let mapped = map_provider(
+            provider,
+            ProviderInstanceRoute {
+                device_id: "device-test".to_string(),
+                provider_plugin_id: "plugin-test".to_string(),
+                provider_instance_id: "instance-test".to_string(),
+            },
+            gateway::GatewayCapabilities {
+                revision: "cap-1".to_string(),
+                methods: vec![
+                    gateway::GatewayCapability::ConversationList,
+                    gateway::GatewayCapability::ConversationRecent,
+                    gateway::GatewayCapability::ConversationGet,
+                ],
+                turn_send: None,
+                conversation_create: None,
+            },
+        );
+        assert_eq!(mapped.capabilities.methods, vec!["conversation.list", "conversation.get"]);
+    }
+
+    #[test]
+    fn subscription_skips_recent_invalidation_and_maps_the_following_event() {
+        let mapper = CompatProviderGateway::new(None);
+        let event = gateway::ProtocolEvent::ConversationRecentChanged {
+            jsonrpc: "2.0".to_string(),
+            params: gateway::ProtocolEventParams {
+                event_cursor: "event-00000000000000000001".to_string(),
+                payload: gateway::ConversationRecentChangedEvent {
+                    provider_id: "instance-test".to_string(),
+                    revision: "recent-2".to_string(),
+                },
+            },
+        };
+        assert!(mapper.map_event(event.clone()).unwrap().is_none());
+        assert!(map_subscription_event(&mapper, event).unwrap().is_none());
+        let mapped = map_subscription_event(
+            &mapper,
+            turn_event("event-00000000000000000002", Some(20)),
+        ).unwrap().unwrap();
+        assert!(matches!(mapped, compat::ProtocolEvent::TurnUpserted {
+            event_sequence: 2, ..
+        }));
     }
 
     #[test]
