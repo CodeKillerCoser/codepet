@@ -11,7 +11,7 @@ Code Pet 是以远程控制和 Provider 插件扩展为核心的 AI Agent 平台
 - 突出需要注意的状态，例如权限请求、失败和任务完成。
 - 当后端具备可靠 provider 能力时，在任务卡片上提供轻量操作。
 - 允许用户个性化宠物外观、任务气泡样式、声音和桌宠窗口透明度。
-- collector 流量保持本机内闭环；collector 只绑定 `127.0.0.1`。
+- 活动 Hook 接收器只绑定本机回环地址，观察订阅与 Remote 受控会话生命周期分开。
 
 ## 非目标
 
@@ -25,7 +25,7 @@ Code Pet 是以远程控制和 Provider 插件扩展为核心的 AI Agent 平台
 - `README.md` 面向使用者介绍远程控制、插件扩展、技术选型和多进程架构；技术细节留在领域文档。
 - [双端架构](../10-architecture/host-remote-platform.md) 记录 Host / Remote 文档核对来源、进程边界与当前限制。
 - `tools/cp-sdk-gen/README.md` 提供独立 Provider 的 SDK 导出、接口实现、manifest 安装与验证说明。
-- `src-tauri/src/activity/collector.rs` 将 collector 绑定到 `127.0.0.1:47621`。
+- [Provider 活动订阅](../10-architecture/provider-hook-observation-proposal.md) 是当前本地活动感知依据；旧 collector 和 Desktop Companion 已停用。
 - `frontend/PetApp.svelte` 渲染透明桌宠窗口和任务卡片操作。
 - `frontend/App.svelte` 渲染主配置界面。
 

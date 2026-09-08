@@ -47,6 +47,8 @@ Code Pet 将这些共性集中起来：**Remote 提供统一操作入口，Host 
 
 具体操作由 Provider 的能力声明和当前任务状态决定，不同 Agent 的历史范围、审批、停止和运行中调整能力可能不同。断线恢复不等于 Host 重启恢复，也不保证电脑睡眠后继续执行。
 
+**继续 Codex 对话前，请留意会话锁。** Codex 对同一会话实行单一写入者机制：如果 Codex Desktop、CLI 或另一个 App Server 仍持有该会话，Remote 获取交互权时会遇到写锁冲突，不能直接接管。能看到历史不代表可以发送消息；需要让原持有方释放会话，再重试。任务完成、关闭 Remote 详情页或取消订阅都不保证立即释放锁。具体说明见 [Codex 会话锁与继续对话](knowledge/20-product/remote-control-and-plugins.md#codex-会话锁与继续对话)。
+
 ## 两个项目，一条完整链路
 
 | 项目 | 安装在哪里 | 负责什么 |
@@ -122,9 +124,9 @@ Code Pet 采用**多进程架构**：Svelte 前端通过 Tauri IPC 调用 Rust �
 
 ## 电脑旁，也有一点陪伴
 
-桌宠提供本地任务感知、授权与完成提醒、宠物图片、任务气泡和自定义音效。Claude Code、Qoder、Cursor 通过 Hook 接入；Codex Desktop 使用独立伴随通道，依赖本机私有 IPC，当前 Windows 不支持该伴随能力。
+桌宠保留宠物图片、任务气泡和个性化设置，当前活动感知由 Provider 安装的 **Hook／原生插件**提供：Codex、Claude Code 使用 Hook，OpenCode 使用原生插件。任务状态经 Host 订阅分发到 Pet Gateway，展示执行、等待授权／输入和本轮结束等状态。
 
-这套本地活动链路与远程 Provider 通道独立，启用桌宠不是远程控制的前提。详细设置见 [本地体验、数据与诊断](knowledge/20-product/usage-and-data.md)。
+这套本地观察订阅与 Remote 控制链路独立，启用桌宠不会启动远程受控 runtime，也不会取得 Codex 会话写锁。当前桌宠列表只读，回复、停止和审批操作仍在 Remote 中按能力提供。旧私有 IPC 伴随方案已停用；接入说明见 [活动感知参考](knowledge/10-architecture/agent-integration-reference.md)。
 
 ## 参与建设
 
