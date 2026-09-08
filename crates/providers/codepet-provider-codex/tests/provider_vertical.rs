@@ -115,6 +115,7 @@ fn all_project_filter() -> ConversationProjectFilter {
 
 fn instance_settings(app_server: &Path, approval_mode: &str, marker: &Path) -> JsonObject {
     [
+        ("dataDirectory".to_string(), json!(marker.parent().unwrap().join("codex-home"))),
         (
             "appServerExecutable".to_string(),
             json!(app_server.to_string_lossy()),
@@ -1746,7 +1747,11 @@ fn provider_binary_forwards_turn_limit_and_truncates_only_tool_text_with_item_me
     assert_eq!(items[1].pointer("/contents/0/text").unwrap().as_str().unwrap().len(), 300_000);
     assert_eq!(items[2].pointer("/tool/outcome/content/0/text").unwrap().as_str().unwrap().len(), 300_000);
     assert!(items[1].get("_meta").is_none() && items[2].get("_meta").is_none());
-    assert_eq!(std::fs::read_to_string(&requests).unwrap().lines().collect::<Vec<_>>(), vec![
+    // A large response can overlap the independent summary poll. Assert the
+    // requested thread's operations rather than timing the global request log.
+    assert_eq!(std::fs::read_to_string(&requests).unwrap().lines()
+        .filter(|line| line.split('\t').nth(1) == Some("thread-tool-text-policy"))
+        .collect::<Vec<_>>(), vec![
         "thread/read\tthread-tool-text-policy", "thread/turns/list\tthread-tool-text-policy",
     ]);
     assert_eq!(session_pids(&marker, "process/start", ""), pids);
@@ -3941,6 +3946,7 @@ struct ProviderBinary {
     stdin: Option<mux_stdio::Writer>,
     stdout: mux_stdio::Reader,
     buffered: VecDeque<Value>,
+    data_directory: tempfile::TempDir,
 }
 
 impl ProviderBinary {
@@ -3962,11 +3968,11 @@ impl ProviderBinary {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(if std::env::var_os("CODEPET_TEST_PROVIDER_STDERR").is_some() { Stdio::inherit() } else { Stdio::null() })
             .spawn()
             .unwrap();
         let (stdin, stdout) = mux_stdio::connect(child.stdin.take().unwrap(), child.stdout.take().unwrap());
-        Self { child, stdin: Some(stdin), stdout, buffered: VecDeque::new() }
+        Self { child, stdin: Some(stdin), stdout, buffered: VecDeque::new(), data_directory: tempfile::tempdir().unwrap() }
     }
 
     fn configure(&mut self, approval_mode: &str, marker: &Path) -> (Value, String) {
@@ -4024,6 +4030,7 @@ impl ProviderBinary {
                 "displayName": "Codex Binary Fixture",
                 "settings": {
                     "appServerExecutable": executable,
+                    "dataDirectory": self.data_directory.path(),
                     "appServerArgs": app_server_args
                 }
             }),
@@ -4452,14 +4459,18 @@ async fn start_returns_starting_and_stop_discards_pending_probes() {
         })
         .await
         .unwrap();
-        let snapshot = ProviderProtocolServer::instance_start(
-            provider.as_ref(),
-            InstanceStartRequest {
-                route: route.clone(),
-            },
-        )
-        .await
-        .unwrap();
+        // Receiving probe requests does not mean their replies have been
+        // applied. Only the error mode completes startup; no-response stays pending.
+        let snapshot = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let snapshot = ProviderProtocolServer::instance_start(provider.as_ref(),
+                    InstanceStartRequest { route: route.clone() }).await.unwrap();
+                if mode == "metadata-no-response" || snapshot.instance.status == codepet_provider_sdk::InstanceStatus::Ready {
+                    break snapshot;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
         assert_eq!(
             snapshot.instance.status,
             if mode == "metadata-no-response" { codepet_provider_sdk::InstanceStatus::Starting }
@@ -4513,4 +4524,126 @@ async fn startup_publishes_one_complete_ready_snapshot() {
     assert!(!discovered.revision.contains(":catalog:"), "keep the existing revision scheme");
     ProviderProtocolServer::instance_stop(provider.as_ref(), InstanceStopRequest { route }).await.unwrap();
     ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {}).await.unwrap();
+}
+
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn union_directory_refreshes_first_page_but_freezes_cursor_membership_and_fields() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("union-marker");
+    let home = temp.path().join("codex-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let source = marker.with_extension("directory.json");
+    let native = (0..205).map(|i| json!({"id":format!("native-{i:03}")})).collect::<Vec<_>>();
+    std::fs::write(&source, json!({"rows":native}).to_string()).unwrap();
+    let db = rusqlite::Connection::open(home.join("state_5.sqlite")).unwrap();
+    db.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE threads(id TEXT PRIMARY KEY, archived INTEGER, updated_at INTEGER, history_mode TEXT);
+        INSERT INTO threads VALUES ('native-000',0,20,'paginated'),('native-204',1,20,'paginated');").unwrap();
+    for i in 0..5 { db.execute("INSERT INTO threads VALUES (?1,0,30,'legacy')", [format!("db-{i:03}")]).unwrap(); }
+    let (provider, route, _) = configured_direct_provider("union-directory", &marker).await;
+    let request = ConversationListRequest { route: route.clone(), project_filter: all_project_filter(), cursor: None, limit: Some(100), query: None, reader_scope: None };
+    let first = provider.conversation_list(request.clone()).await.unwrap();
+    assert_eq!(first.conversations.len(), 100);
+    assert_eq!(first.conversations[0].resource.native_resource_id, "db-000");
+    assert_eq!(first.conversations[0].updated_at, Some(30_000));
+    let cursor = first.page_info.next_cursor.clone().unwrap();
+    let mut continuation = request.clone();
+    continuation.cursor = Some(cursor.clone());
+    let second = provider.conversation_list(continuation.clone()).await.unwrap();
+    // A new first page must observe committed DB changes. Old cursors must not.
+    db.execute_batch("INSERT INTO threads VALUES ('db-new',0,90,'legacy'); UPDATE threads SET archived=1 WHERE id='db-004';").unwrap();
+    let mut changed = native.clone();
+    for row in &mut changed { row["name"] = json!("changed after first page"); }
+    std::fs::write(&source, json!({"rows":changed}).to_string()).unwrap();
+    let fresh = provider.conversation_list(request.clone()).await.unwrap();
+    assert_eq!(fresh.conversations[0].resource.native_resource_id, "db-new");
+    assert_eq!(fresh.conversations[0].updated_at, Some(90_000));
+    let replay = provider.conversation_list(continuation.clone()).await.unwrap();
+    assert_eq!(serde_json::to_value(&second).unwrap(), serde_json::to_value(&replay).unwrap());
+    let mut old_rows = first.conversations;
+    old_rows.extend(second.conversations);
+    continuation.cursor = second.page_info.next_cursor;
+    let last = provider.conversation_list(continuation.clone()).await.unwrap();
+    assert!(last.page_info.next_cursor.is_none());
+    old_rows.extend(last.conversations);
+    let ids = old_rows.iter().map(|row| row.resource.native_resource_id.as_str()).collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(old_rows.len(), 209);
+    assert_eq!(ids.len(), 209);
+    assert!(ids.contains("db-004"));
+    assert!(!ids.contains("db-new"));
+    assert!(!ids.contains("native-204"));
+    assert!(old_rows.iter().filter(|row| row.resource.native_resource_id.starts_with("native-")).all(|row| row.title.starts_with("Fixture")));
+    // Changing the query or tampering with an offset cannot reuse this cursor.
+    continuation.cursor = Some(cursor.clone());
+    continuation.query = Some(serde_json::from_value(json!({"kind":"updatedAfter","updatedAfter":30000})).unwrap());
+    assert_eq!(provider.conversation_list(continuation.clone()).await.unwrap_err().code, "invalid_cursor");
+    continuation.cursor = None;
+    let dated = provider.conversation_list(continuation).await.unwrap();
+    assert_eq!(dated.conversations.len(), 5);
+    assert!(dated.conversations.iter().all(|row| row.updated_at.unwrap() >= 30000));
+    // Existing snapshot pages do not contact failed sources; new queries do.
+    std::fs::write(&source, json!({"error":true}).to_string()).unwrap();
+    let mut replay_request = request.clone();
+    replay_request.cursor = Some(cursor);
+    assert!(provider.conversation_list(replay_request).await.is_ok());
+    assert!(provider.conversation_list(request.clone()).await.is_err());
+    std::fs::write(&source, json!({"rows":native,"cycle":true}).to_string()).unwrap();
+    assert_eq!(provider.conversation_list(request.clone()).await.unwrap_err().code, "conversation_query_incomplete");
+    std::fs::write(&source, json!({"rows":native}).to_string()).unwrap();
+    db.execute("INSERT INTO threads VALUES ('broken',0,100,'legacy')", []).unwrap();
+    assert!(provider.conversation_list(request).await.is_err(), "unreadable candidate cannot silently disappear");
+    provider.instance_stop(InstanceStopRequest {route}).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn union_directory_applies_desktop_membership_before_project_and_standalone_paging() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("membership-marker");
+    let home = temp.path().join("codex-home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(marker.with_extension("directory.json"), json!({"rows":[]}).to_string()).unwrap();
+    let db = rusqlite::Connection::open(home.join("state_5.sqlite")).unwrap();
+    db.execute_batch("CREATE TABLE threads(id TEXT, archived INTEGER, updated_at INTEGER, history_mode TEXT);
+        INSERT INTO threads VALUES ('mapped',0,30,'legacy'),('unmapped',0,30,'legacy'),('standalone',0,30,'legacy');").unwrap();
+    std::fs::write(home.join(".codex-global-state.json"), json!({
+        "app-server-project-id-by-legacy-project-id-by-host":{format!("local:{}",home.display()):{"legacy":"project-fixture"}},
+        "thread-project-assignments":{
+            "mapped":{"projectKind":"local","projectId":"legacy"},
+            "unmapped":{"projectKind":"local","projectId":"missing"}
+        }
+    }).to_string()).unwrap();
+    let (provider, route, _) = configured_direct_provider("union-directory", &marker).await;
+    let mut request: ConversationListRequest = serde_json::from_value(json!({"route":route,"projectFilter":{"kind":"standalone"},"limit":1})).unwrap();
+    let standalone = provider.conversation_list(request.clone()).await.unwrap();
+    assert_eq!(standalone.conversations.len(), 1);
+    assert_eq!(standalone.conversations[0].resource.native_resource_id, "standalone");
+    assert!(standalone.page_info.next_cursor.is_none());
+    request.project_filter = serde_json::from_value(json!({"kind":"project","project":conversation_resource(&route,"project-fixture")})).unwrap();
+    let mapped = provider.conversation_list(request).await.unwrap();
+    assert_eq!(mapped.conversations.len(), 1);
+    assert_eq!(mapped.conversations[0].resource.native_resource_id, "mapped");
+    assert!(mapped.page_info.next_cursor.is_none());
+    provider.instance_stop(InstanceStopRequest {route}).await.unwrap();
+}
+
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn union_directory_discovers_event_only_ids_without_requiring_loaded_list_support() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("event-marker");
+    std::fs::write(marker.with_extension("directory.json"), json!({"rows":[],"eventId":"event-only","loadedUnsupported":true}).to_string()).unwrap();
+    let (provider, route, _) = configured_direct_provider("union-directory", &marker).await;
+    let request = ConversationListRequest {route:route.clone(),project_filter:all_project_filter(),cursor:None,limit:Some(20),query:None,reader_scope:None};
+    let page = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let page = provider.conversation_list(request.clone()).await.unwrap();
+            if !page.conversations.is_empty() { break page; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.unwrap();
+    assert_eq!(page.conversations.len(), 1);
+    assert_eq!(page.conversations[0].resource.native_resource_id, "event-only");
+    // The summary comes from metadata read (not the thread/started title).
+    assert_eq!(page.conversations[0].title, "event-only");
+    provider.instance_stop(InstanceStopRequest {route}).await.unwrap();
 }

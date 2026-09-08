@@ -1,4 +1,5 @@
 mod client;
+mod directory;
 mod mapper;
 mod protocol;
 mod provider;
