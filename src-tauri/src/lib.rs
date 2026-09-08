@@ -463,6 +463,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            platform::main_window::main_window_toolbar_anchor,
             list_agent_runtimes,
             detect_agent_runtime,
             refresh_agent_runtimes,

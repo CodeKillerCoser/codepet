@@ -7,6 +7,7 @@
   export let onError: (message: string) => void;
   const chrome = createWindowChrome();
   let maximized = false;
+  let anchor = { left: 88, centerY: 20 };
 
   async function perform(action: () => Promise<void>) {
     try { await action(); } catch (error) { onError(String(error)); }
@@ -15,15 +16,14 @@
   onMount(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void chrome.initialize((value) => { if (!disposed) maximized = value; }, (error) => { if (!disposed) onError(String(error)); })
+    void chrome.initialize((value) => { if (!disposed) maximized = value; }, (error) => { if (!disposed) onError(String(error)); }, (value) => { if (!disposed) anchor = value; })
       .then((cleanup) => { if (disposed) cleanup(); else unlisten = cleanup; })
       .catch((error) => onError(String(error)));
     return () => { disposed = true; unlisten?.(); };
   });
 </script>
 
-<div class="window-toolbar" class:macos={chrome.platform === "macos"} data-tauri-drag-region>
-  {#if chrome.platform === "macos"}<span class="native-traffic-light-space" aria-hidden="true"></span>{/if}
+<div class="window-toolbar" class:macos={chrome.platform === "macos"} style:--toolbar-anchor-left={`${anchor.left}px`} style:--toolbar-anchor-y={`${anchor.centerY}px`} data-tauri-drag-region>
   <button class="window-toolbar-button" type="button" aria-label={collapsed ? "展开导航栏" : "收起导航栏"} aria-expanded={!collapsed} aria-controls="main-sidebar" on:click={() => collapsed = !collapsed}>
     <PanelLeft size={16} strokeWidth={1.75} />
   </button>
