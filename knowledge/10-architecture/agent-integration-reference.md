@@ -1,40 +1,37 @@
-# Agent 接入参考
+# Agent 活动感知接入参考
 
-桌宠活动感知和远程会话控制是不同能力。当前完整边界见 [运行拓扑](runtime-topology.md)。
+## 当前方案
 
-## 支持的 Agent
+当前本地活动感知由 Provider 安装 Hook／原生插件，通知经过 Host 订阅分发到 Pet Gateway。生产启动链路已断开旧 collector、spool 回放和 Codex Desktop Companion；保留的旧代码与历史文档不是当前接入方式。
 
-| Agent | 配置文件 | 事件覆盖 |
+| 来源 | 配置入口 | 方式 |
 | --- | --- | --- |
-| Codex Desktop | `~/.codex/ipc/ipc.sock` | 独立 Desktop Companion，依赖本机 Desktop IPC 可用；不通过 Hook 接入 |
-| Claude Code | `~/.claude/settings.json` | `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`PermissionRequest`、`Stop` |
-| Qoder | `~/.qoder/settings.json` | `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`PermissionRequest`、`Notification`、`Stop` |
-| Cursor | `~/.cursor/hooks.json` | `sessionStart`、`beforeSubmitPrompt`、`preToolUse`、`postToolUse`、`beforeShellExecution`、`afterShellExecution`、`beforeMCPExecution`、`afterMCPExecution`、`afterFileEdit`、`stop` |
+| Codex | 用户配置目录的 `hooks.json` | Provider 安装固定 Hook，观察会话、提示提交、工具、权限、Stop/Interrupt 等事件 |
+| Claude Code | 用户配置目录的 `settings.json` | Provider 安装固定 Hook，观察任务与输入/授权状态 |
+| OpenCode | 全局配置目录的 `plugins/codepet-observation.ts` | 原生插件投递 session、permission、question 等事件 |
 
-启用 Claude Code、Qoder 或 Cursor 时，应用会把托管的 `code-pet-hook.mjs` 写入对应配置。关闭时会移除托管项，并清理该 Agent 的当前事件。托管命令使用 `node <script> --agent <id>` 形式传递 Agent 信息，并保留对旧版 `CODE_PET_AGENT=...` 托管项的识别和升级能力。应用启动时会移除 `~/.codex/hooks.json` 中由 Code Pet 管理的遗留 Codex Hook，且 collector 不接收 Codex Hook 或 spool 事件。
+当前 Pet 来源为上述三项，不将旧 Qoder / Cursor Hook 配置表当作新的来源支持列表。Codex / Claude Hook 使用探测到的 Node 绝对路径，原生 Hook 不输出权限决定。
 
-## Collector
+## 数据链路与边界
 
-应用内置一个本地 collector：
+Hook／原生插件 → Provider `event.notification` → Host 订阅登记表 → Pet Gateway → 只读桌宠任务列表。
 
-```text
-http://127.0.0.1:47621/hook
-```
+Provider 负责工具适配，不构造 PetTask，也不判断消费者属于哪个 Gateway。Host 管理共享上游订阅和各消费者的有界队列，Pet Gateway 归并任务；观察通知不混入 Remote 业务事件的 cursor/replay。
 
-hook 脚本会把 Agent 事件转发到这个地址。前端在浏览器预览无法使用 Tauri IPC 时，也会尝试读取：
+开启活动来源不启动受控 Harness，不获取 Codex 会话写锁。任务列表展示等待授权／输入等状态，但当前不提供桌宠回复、停止或审批动作。Remote 继续对话走独立控制链路，需满足 [会话锁与交互权](../20-product/remote-control-and-plugins.md#codex-会话锁与继续对话) 约束。
 
-```text
-http://127.0.0.1:47621/events
-```
+## 接收与设置
 
-collector 只绑定 `127.0.0.1`。
+接收器只监听 `127.0.0.1` 的随机端口，令牌保存在私有 endpoint 文件。最后退订或退出关闭接收器并删除 endpoint；托管入口保留。不要再用旧固定 `47621/hook` 地址或 Desktop socket 验证当前来源。
 
-## 独立 Provider 通道
-
-Codex、Claude 与 OpenCode 的远程能力经 Provider Host / Gateway 调用本机 runtime。Provider 事件不会直接进入桌宠活动列表；Claude runtime 继承的用户 Hook 可独立形成桌宠事件。
-
-Codex Companion 仅观察已发现的 Desktop 任务，不提供完整任务目录。当前 transport 使用 Unix socket，Windows 不支持；私有 IPC 不兼容时显示不可用，不回退到 audit 或 Hook。详见 [Desktop Companion](../30-domains/agent-control/codex-desktop-companion.md)。
+来源状态与启停在主窗口 Agent 页管理，偏好保存在应用数据目录的 `pet-sources.json`。安装托管项会保留用户自定义 handlers；原应用所需的 Hook／插件信任仍由用户在原应用处理。
 
 ## 维护依据与验证
 
-Hook 声明以 `src-tauri/src/agent/registry.rs` 为准，配置写入与 collector 测试位于 `src-tauri/tests/`。修改接入说明时同时核对 `frontend/lib/PetSources.svelte` 的状态展示、Companion transport 与 Provider 通道隔离测试；不可把远程会话能力写成桌宠支持。
+- [Provider 活动订阅与 Remote / Pet 双 Gateway](provider-hook-observation-proposal.md)：当前实现及验证记录。
+- `crates/providers/codepet-observation`：共享安装、接收、互斥与投递。
+- `crates/codepet-host/src/providers/manager/subscriptions.rs`：Host 订阅隔离。
+- `crates/codepet-host/src/pet_gateway`：任务投影与来源状态。
+- `frontend/PetApp.svelte`、`PetSources.svelte`、`petGateway.ts`：只读任务与 Pet 协议入口。
+
+检查安装后“等待首次活动”到“正在接收”的变化，并在真实工具中运行一次任务；确认工具失败和子代理结束不会错误结束父任务。首次安装成功不能替代实际投递验证。本次为文档修正，未执行真实工具联调。

@@ -1,5 +1,7 @@
 # Codex Desktop Companion 私有 IPC
 
+> 历史方案，已退出生产链路。当前活动感知使用 [Provider Hook／原生插件订阅](../../10-architecture/provider-hook-observation-proposal.md)，本文保留旧设计与排查背景，不作为当前接入指南。Remote 继续对话遵循 [Codex 会话锁](../../20-product/remote-control-and-plugins.md#codex-会话锁与继续对话)。
+
 > 当前状态（2026-08-30）：桌宠通过本机 `~/.codex/ipc/ipc.sock` 跟随 Codex Desktop Owner/Follower。该通道只负责本地任务投影和面向 Desktop owner 的动作，不是远程 Provider，也不提供任务目录或创建能力。
 
 ## 背景

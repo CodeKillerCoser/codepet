@@ -15,6 +15,16 @@ Code Pet 是运行在电脑上的 AI Agent Host，与 [CodePet Remote](https://g
 
 Remote 下载与构建入口以其 README 为准，不假设总有 Release APK。当前主要工程为 Android；跨局域网中继、WebRTC、文件传输和网页预览不属于当前已交付上手流程。
 
+## Codex 会话锁与继续对话
+
+Codex 原生会话使用单一 active writer。Remote 进入可写会话时，经 Gateway 获取交互权，由 Provider 调用 `thread/resume`；若另一个 runtime（例如 Desktop、CLI 或另一个 App Server）仍持有该会话，会返回写锁冲突。当前适配器把精确的原生冲突响应映射为 `conversation_write_conflict`，不会强制抢占，也不会通过 Hook 绕过锁。历史可读与交互权获取是独立结果。
+
+遇到冲突时，先在原持有方妥善处理正在执行的任务和待审批，再让其释放会话；必要时正常退出持锁的客户端/runtime，然后在 Remote 重试。不要把“任务已完成”“离开详情页”或 `thread/unsubscribe` 当作立即释放锁的保证，实际卸载时机取决于 Codex 版本和 runtime 生命周期。
+
+Code Pet 每个 Provider 实例共享一个 App Server。只要仍有 Remote 客户端在线，就保留已 resume 的会话；最后客户端离线后，也要等进行中请求、未结束任务和待审批全部结束才回收 Server。多台手机经同一 Host、同一 Provider 实例共用此 Server，而不是每台手机争夺一个独立 writer。停止整个实例会影响其中其他会话，不能为了释放单个会话而无差别结束进程。
+
+依据：`crates/providers/codepet-provider-codex/src/provider.rs` 的 `execution_outcome_error` / `is_active_writer_conflict`；`tests/provider_vertical.rs` 的写锁冲突及近似错误负例；[共享 Server 生命周期](../60-rules/codex-provider-turn-writer-lifecycle.md) 和 [原生 unsubscribe 排查](../40-runbooks/codex-detail-size-and-capability-loading.md)。本次按已有源码与验证记录修正文案，未新执行真实双 runtime 抢锁实验。
+
 ## 开发自己的 Provider
 
 Provider 作者负责原生工具适配，Remote 负责标准交互。先按 [SDK 接入指南](../../tools/cp-sdk-gen/README.md) 导出匹配版本的 Rust Provider server SDK，实现初始化、描述、实例生命周期和需要的业务方法，并发布标准事件。

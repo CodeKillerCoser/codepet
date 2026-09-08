@@ -20,7 +20,7 @@ Remote 以 [f8328b0](https://github.com/CodeKillerCoser/codepet-remote/tree/f832
 | Provider Host | 插件发现、独立进程、实例生命周期和请求路由 | Host `providers/`；Tauri 组合并管理退出，Host 是桌面主进程内的模块，不是额外的网络服务进程 |
 | Provider 插件 | 原生协议适配、能力声明、标准事件 | `crates/providers/` 和第三方插件；隔离 Codex、Claude、OpenCode 等工具实现差异 |
 | Agent runtime | 在电脑上执行实际任务 | Provider 管理的本机 App Server、CLI 或 Server 子进程；底层工具由用户安装配置 |
-| 本地桌宠 | 本地观察与提醒 | Pet/Hook/Companion 链路独立；Provider 事件不直接流入桌宠列表 |
+| 本地桌宠 | 本地观察与状态展示 | Provider 安装 Hook／原生插件，经 Host 订阅分发到 Pet Gateway；观察通知与 Remote 业务事件分流，旧 Companion 已停用 |
 
 ## 多进程模型
 
@@ -54,6 +54,9 @@ Provider 再管理底层 Agent runtime 子进程。请求按身份和实例路�
 新增协议尚未表达的业务仍需更新 schema/manifest、生成 SDK、实现 Host 映射与 Remote 展示。协议输入可以面向多语言，当前生成器的 Provider server target 是 Rust；不要声称已有任意语言 Provider SDK。具体安装、SDK 导出和纵向验证见 [Provider 指南](../../tools/cp-sdk-gen/README.md)。
 
 ## 文档差异与当前边界
+
+- 当前本地活动源以 [Provider 活动订阅与双 Gateway](provider-hook-observation-proposal.md) 为准：Codex/Claude Hook、OpenCode 原生插件 → Provider 通知 → Host 订阅 → Pet Gateway。旧 collector、spool 和 Desktop 私有 IPC 已从生产启动链路断开；保留的旧源码和历史测试不代表仍在使用。
+- Hook 观察不获取会话写锁，也不提供接管能力。Remote 继续 Codex 对话必须先获取原生交互权；单一 writer 冲突及释放边界见 [会话锁说明](../20-product/remote-control-and-plugins.md#codex-会话锁与继续对话)。
 
 - Remote 阅读快照的架构说明仍写最后客户端断开会终止活动任务；当前 Host 的 [离线执行](host-awake-and-offline-execution.md) 已改为保留未结束 turn、待审批与执行中请求，空闲后才回收。必须区分部署版本；不据此承诺 Host 重启或系统睡眠恢复。
 - 部分旧资料仍描述四段 Gateway wire 身份；当前 [协议分层](protocol-layers-and-device-routing.md) 区分 Gateway 的两段 opaque 身份与 Provider 的四段实例路由。README 不固化底层字段数量。

@@ -2,6 +2,8 @@
 
 产品入口见 [README](../../README.md)，远程控制与插件上手见 [远程控制指南](remote-control-and-plugins.md)，构建步骤见 [本地开发、测试与构建](../00-project/development.md)。本页保留本地桌宠设置、数据与问题排查入口。
 
+> 当前本地活动列表已切换为 Provider Hook／原生插件订阅，见 [活动感知参考](../10-architecture/agent-integration-reference.md)。本页音效与旧事件页说明保留既有设置背景，不代表新的只读任务列表已接通全部旧通知或动作。
+
 ## 使用方式
 
 1. 启动应用。
@@ -82,7 +84,7 @@ Token 用量统计会读取本机 Agent 审计和 transcript 信息，并生成�
 
 ## 排查入口与边界
 
-- 活动没有出现：先检查 Agent 页的活动感知状态，再参照 [Hook 排查](../40-runbooks/hook-not-working.md) 或 [Codex Desktop IPC 排查](../40-runbooks/codex-desktop-ipc-unavailable.md)。
+- 活动没有出现：先检查 Agent 页的来源状态，再参照 [Provider 活动订阅](../10-architecture/provider-hook-observation-proposal.md) 核对 Hook／原生插件安装、原应用信任与首次活动；不再排查旧 Desktop IPC socket 或固定端口 collector。
 - 用量来自本机可读记录，不是服务商账单；缺失记录或不兼容格式会影响覆盖范围。
 - 启动变慢：参照 [性能监控基线](../40-runbooks/performance-monitoring.md)，用日志区分启动、事件和用量读取耗时。
 - 更换数据目录前先备份；核对目标目录内容，并在重启后验证日志、宠物和用量缓存位置。
