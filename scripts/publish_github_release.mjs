@@ -3,6 +3,10 @@ import { fileURLToPath } from "node:url";
 import { prepareReleaseMetadata } from "./release_version.mjs";
 
 const args = parseArgs(process.argv.slice(2));
+const platform = args.platform ?? "all";
+if (!["all", "mac", "win"].includes(platform)) {
+  fail("--platform must be all, mac, or win.");
+}
 const root = fileURLToPath(new URL("..", import.meta.url));
 const metadata = prepareReleaseMetadata({
   version: args.version,
@@ -17,6 +21,8 @@ run("gh", [
   ref,
   "--field",
   "publish=true",
+  "--field",
+  `platform=${platform}`,
   "--field",
   `version=${args.version ?? ""}`,
   "--field",

@@ -31,9 +31,13 @@
 
 ## 发布步骤
 
-GitHub Actions 的 `Release` workflow 增加布尔输入 `publish`，默认不勾选：两个平台正常构建并上传 Actions Artifacts，跳过整个发布 job，不创建或更新 Release、tag 和 `latest.json`。正式发布时勾选 `publish`。本地 `npm run release:github` 命令显式传入 `publish=true`，保持发布语义。
+`platform` 可选 `all`（默认）、`mac`、`win`，分别构建全部平台、macOS universal、Windows x86_64。单平台发布只包含该平台资产与 `latest.json` 平台键；不会沿用另一平台旧版本的资产。发布仍要求所选构建成功，失败或取消不能发布。若要让两个平台都能从 latest 入口获取本次更新，选择 `all`。
 
-只构建时若填写 `version`，仍会同步并提交基础版本到所选分支；构建仍需 updater 签名 secret。验收时分别运行未勾选和勾选的 workflow：前者应有两个平台 Artifacts 且发布 job skipped，后者应生成下述 Release 资产。
+本地发布命令也支持 `--platform mac` 或 `--platform win`，省略时为 `all`，例如 `npm run release:github -- --ref v0 --platform mac`。
+
+GitHub Actions 的 `Release` workflow 增加布尔输入 `publish`，默认不勾选：所选平台正常构建并上传 Actions Artifacts，跳过整个发布 job，不创建或更新 Release、tag 和 `latest.json`。正式发布时勾选 `publish`。本地 `npm run release:github` 命令显式传入 `publish=true`，保持发布语义。
+
+只构建时若填写 `version`，仍会同步并提交基础版本到所选分支；构建仍需 updater 签名 secret。验收时分别运行未勾选和勾选的 workflow：前者应有所选平台 Artifacts 且发布 job skipped，后者应生成下述 Release 资产。
 
 在本地有 GitHub CLI 且已登录时，可运行：
 
@@ -51,7 +55,7 @@ npm run version:sync -- 0.1.4
 npm run version:check
 ```
 
-workflow 完成后，Release 应包含：
+选择 `all` 并发布后，Release 应包含以下全部文件；单平台时只包含对应平台文件及 `latest.json`：
 
 - macOS `.dmg`。
 - macOS `.app.tar.gz` 与 `.app.tar.gz.sig`。
