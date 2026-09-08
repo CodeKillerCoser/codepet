@@ -183,7 +183,7 @@ pub enum CodexTurnItemsView {
 pub enum CodexThreadItem {
     UserMessage {
         id: String,
-        text_inputs: Vec<Option<String>>,
+        inputs: Vec<crate::user_message::CodexUserInput>,
     },
     AgentMessage {
         id: String,
@@ -277,23 +277,8 @@ fn parse_thread_item(value: &Value) -> Result<CodexThreadItem, String> {
                 .get("content")
                 .and_then(Value::as_array)
                 .ok_or_else(|| "userMessage item is missing content".to_string())?;
-            let mut text_inputs = Vec::with_capacity(content.len());
-            for input in content {
-                let text = match input.get("type").and_then(Value::as_str) {
-                    Some("text") => Some(
-                        input
-                            .get("text")
-                            .and_then(Value::as_str)
-                            .ok_or_else(|| {
-                                "userMessage text input is missing text".to_string()
-                            })?
-                            .to_string(),
-                    ),
-                    _ => None,
-                };
-                text_inputs.push(text);
-            }
-            Ok(CodexThreadItem::UserMessage { id, text_inputs })
+            let inputs = content.iter().map(crate::user_message::CodexUserInput::parse).collect::<Result<Vec<_>, _>>()?;
+            Ok(CodexThreadItem::UserMessage { id, inputs })
         }
         "agentMessage" => Ok(CodexThreadItem::AgentMessage {
             id,
@@ -1206,7 +1191,7 @@ mod tests {
             turn.items[0],
             CodexThreadItem::UserMessage {
                 id: "user-one".to_string(),
-                text_inputs: vec![Some("hello".to_string()), None]
+                inputs: vec![crate::user_message::CodexUserInput::Text("hello".to_string()), crate::user_message::CodexUserInput::Image("private".to_string())]
             }
         );
         assert_eq!(

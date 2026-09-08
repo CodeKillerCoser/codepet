@@ -1,6 +1,6 @@
 use crate::protocol::{
     activity_summary_content_id, output_content_id,
-    reasoning_summary_content_id, text_content_id, user_input_content_id,
+    reasoning_summary_content_id, text_content_id,
     CodexAppServerError, CodexApprovalRequest, CodexContentKind, CodexConversationSnapshot,
     CodexIncoming, CodexModel, CodexNotification, CodexPermissionLevel, CodexProject,
     CodexProjectChangeType, CodexThreadActiveFlag,
@@ -507,7 +507,7 @@ impl CodexProtocolMapper {
         let turn_resource = self.resource(turn.id.clone());
         let mutable_text = turn.status == CodexTurnStatus::InProgress;
         let mut mapped = match item {
-            CodexThreadItem::UserMessage { id, text_inputs } => ConversationItem::MessageConversationItem(MessageConversationItem {
+            CodexThreadItem::UserMessage { id, inputs } => ConversationItem::MessageConversationItem(MessageConversationItem {
                 meta: None,
                 resource,
                 turn: turn_resource,
@@ -515,18 +515,7 @@ impl CodexProtocolMapper {
                 kind: MessageConversationItemKind::Message,
                 status: ConversationItemStatus::Completed,
                 role: ConversationItemRole::User,
-                contents: text_inputs
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, text)| {
-                        text.as_ref().map(|text| ContentBlock::TextContentBlock(TextContentBlock {
-                            content_id: user_input_content_id(id, index),
-                            kind: TextContentBlockKind::Text,
-                            text: text.clone(),
-                            truncation: None,
-                        }))
-                    })
-                    .collect(),
+                contents: crate::user_message::contents(id, inputs),
             }),
             CodexThreadItem::AgentMessage { id, text } => ConversationItem::MessageConversationItem(MessageConversationItem {
                 meta: None,
@@ -1462,7 +1451,7 @@ mod tests {
             vec![
                 CodexThreadItem::UserMessage {
                     id: "user-one".to_string(),
-                    text_inputs: vec![Some("hello".to_string()), None],
+                    inputs: vec![crate::user_message::CodexUserInput::Text("hello".to_string()), crate::user_message::CodexUserInput::Unknown],
                 },
                 CodexThreadItem::AgentMessage {
                     id: "agent-one".to_string(),

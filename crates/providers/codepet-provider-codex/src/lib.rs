@@ -2,6 +2,7 @@ mod client;
 mod directory;
 mod mapper;
 mod protocol;
+mod user_message;
 mod provider;
 
 pub use codepet_provider_sdk::ProviderEventSink;
