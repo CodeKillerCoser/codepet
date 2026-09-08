@@ -33,6 +33,42 @@ use std::time::Duration;
 #[path = "manager_gateway/recent.rs"]
 mod recent;
 
+#[tokio::test]
+async fn codepet_usage_routes_to_provider_and_host_assigns_private_storage_and_logs() {
+    let directory=tempfile::tempdir().unwrap();
+    let device=DeviceRegistry::open(directory.path().join("device.json"),"Usage test").unwrap();
+    let device_id=device.identity().device_id.clone();
+    let mut descriptor=plugin("dev.codepet.usage-fixture",&["usage-instance"]);
+    descriptor.env.insert("CODEPET_FAKE_USAGE".into(),"1".into());
+    let marker=directory.path().join("directories.json");
+    descriptor.env.insert("CODEPET_FAKE_DIRECTORIES_MARKER".into(),marker.to_string_lossy().into_owned());
+    let catalog_dir=directory.path().join("plugins");std::fs::create_dir_all(catalog_dir.join("fixture")).unwrap();
+    let mut manifest=serde_json::to_value(&descriptor).unwrap();manifest["manifestVersion"]=serde_json::json!(1);
+    std::fs::write(catalog_dir.join("fixture/codepet-provider.json"),serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let catalog=PluginCatalog::discover(PluginCatalogConfig::default().with_directory(catalog_dir));
+    let registry=ProviderInstanceRegistry::open(directory.path().join("instances.json"),device_id).unwrap();
+    let data_root=directory.path().join("providers");
+    let manager=Arc::new(PluginManager::new(device,catalog,registry,PluginManagerConfig{provider_data_root:Some(data_root.clone()),..PluginManagerConfig::default()}).unwrap());
+    let gateway=Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());gateway.start_event_forwarding();
+    assert!(manager.start_enabled().await[0].1.is_ok());
+    let request=serde_json::from_value(serde_json::json!({"jsonrpc":"2.0","id":"usage","method":"codepet.usage.query","params":{"providerId":"usage-instance","query":{"datasetId":"observed-model-tokens","filter":{"time":{"kind":"all"}},"aggregation":{"timeBucket":"halfHour","timeZone":"UTC","groupBy":["model"]},"metrics":["totalTokens"],"summaries":["totals"]}}})).unwrap();
+    let response=gateway.dispatch_for_caller_scope("client",request).await;
+    let JsonRpcResponsePayload::Ok{result}=response.response else{panic!("usage query failed: {response:?}")};
+    assert_eq!(result["result"]["summaries"]["totals"]["totalTokens"]["value"],20);
+    assert_eq!(result["result"]["rows"][0]["modelId"],"fixture-model");
+    let empty_request=serde_json::from_value(serde_json::json!({"jsonrpc":"2.0","id":"empty-usage","method":"codepet.usage.query","params":{"providerId":"usage-instance","query":{"datasetId":"observed-model-tokens","filter":{"time":{"kind":"all"},"modelIds":["missing-model"]},"aggregation":{"timeBucket":"halfHour","timeZone":"UTC","groupBy":["model"]},"metrics":["totalTokens"],"summaries":["peakDaily"]}}})).unwrap();
+    let empty=gateway.dispatch_for_caller_scope("client",empty_request).await;
+    let JsonRpcResponsePayload::Ok{result:empty}=empty.response else{panic!("empty usage failed")};
+    assert_eq!(empty["result"]["summaries"].get("peakDaily"),Some(&serde_json::Value::Null));
+    let assigned:codepet_provider_sdk::ProviderDirectories=serde_json::from_slice(&std::fs::read(marker).unwrap()).unwrap();
+    assert_eq!(std::path::Path::new(&assigned.database_path),data_root.join("dev.codepet.usage-fixture/data/provider.sqlite"));
+    assert!(std::fs::read(&assigned.database_path).unwrap().starts_with(b"SQLite format 3"));
+    assert!(!result.to_string().contains(&assigned.data));
+    manager.shutdown().await;
+    let log=std::fs::read_to_string(std::path::Path::new(&assigned.logs).join("provider.log")).unwrap();
+    assert!(log.contains("fixture Provider directories initialized"));
+}
+
 fn plugin(plugin_id: &str, instances: &[&str]) -> PluginDescriptor {
     PluginDescriptor {
         plugin_id: plugin_id.to_string(),
@@ -1257,13 +1293,6 @@ async fn gateway_turn_send_validates_controls_and_deduplicates_client_requests()
         provider.runtime.authentication.as_ref().unwrap().status,
         codepet_gateway_sdk::ProviderAuthenticationStatus::SignedIn
     );
-    let usage = provider.runtime.usage.as_ref().unwrap();
-    assert_eq!(usage.display_text, "Fixture usage 42%");
-    let details = usage.details.as_ref().unwrap();
-    assert_eq!(details.len(), 1);
-    assert_eq!(details[0].data.get("usedPercent"), Some(&serde_json::json!(42)));
-    assert!(!details[0].data.contains_key("accessToken"));
-    assert_eq!(details[0].data["nested"], serde_json::json!({"safe": true}));
     assert_eq!(provider.capabilities.revision, "fake-capabilities-v1");
     let described = gateway
         .provider_describe(ProviderDescribeRequest { provider_id: provider.id.clone() })

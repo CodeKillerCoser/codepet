@@ -118,22 +118,42 @@
     "ConversationResumeRequest": {
       "type": "object",
       "properties": {
-        "conversation": { "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId" },
-        "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
       },
-      "required": ["conversation"],
+      "required": [
+        "conversation"
+      ],
       "additionalProperties": false
     },
     "ConversationResumeResponse": {
       "type": "object",
       "properties": {
-        "interactionAcquired": { "type": "boolean" },
-        "interaction": { "$ref": "#/$defs/ConversationAcquireInteractionResponse" },
-        "interactionError": { "$ref": "../../core/v1/schema.json#/$defs/ProtocolError" },
-        "history": { "$ref": "#/$defs/ConversationGetResponse" },
-        "historyError": { "$ref": "../../core/v1/schema.json#/$defs/ProtocolError" }
+        "interactionAcquired": {
+          "type": "boolean"
+        },
+        "interaction": {
+          "$ref": "#/$defs/ConversationAcquireInteractionResponse"
+        },
+        "interactionError": {
+          "$ref": "../../core/v1/schema.json#/$defs/ProtocolError"
+        },
+        "history": {
+          "$ref": "#/$defs/ConversationGetResponse"
+        },
+        "historyError": {
+          "$ref": "../../core/v1/schema.json#/$defs/ProtocolError"
+        }
       },
-      "required": ["interactionAcquired"],
+      "required": [
+        "interactionAcquired"
+      ],
       "additionalProperties": false
     },
     "ConversationCreateRequest": {
@@ -510,7 +530,8 @@
         "turn.send",
         "turn.interrupt",
         "approval.resolve",
-        "conversation.recent"
+        "conversation.recent",
+        "codepet.usage.query"
       ]
     },
     "GatewayCapabilities": {
@@ -532,6 +553,12 @@
         },
         "conversationCreate": {
           "$ref": "../../agent/v1/schema.json#/$defs/ConversationCreateCapabilities"
+        },
+        "usageDatasets": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent/v1/schema.json#/$defs/UsageDataset"
+          }
         }
       },
       "required": [
@@ -881,8 +908,13 @@
     "ProviderRuntime": {
       "type": "object",
       "properties": {
-        "connectionStatus": { "$ref": "../../core/v1/schema.json#/$defs/ConnectionStatus" },
-        "generation": { "type": "integer", "minimum": 0 },
+        "connectionStatus": {
+          "$ref": "../../core/v1/schema.json#/$defs/ConnectionStatus"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
         "status": {
           "$ref": "#/$defs/ProviderStatus"
         },
@@ -896,9 +928,6 @@
         },
         "authentication": {
           "$ref": "../../agent/v1/schema.json#/$defs/ProviderAuthentication"
-        },
-        "usage": {
-          "$ref": "../../agent/v1/schema.json#/$defs/ProviderUsage"
         }
       },
       "required": [
@@ -1203,6 +1232,34 @@
       ],
       "additionalProperties": false,
       "description": "Invalidate and refetch this reader's recent view, cancelling old tail pages. Contains no member IDs or readerScope. If published provider-wide for shared replay, revision is a provider-wide invalidation revision used consistently by snapshots; it must not expose another reader's private revision. Never use revision as eventCursor."
+    },
+    "UsageQueryRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "$ref": "../../core/v1/schema.json#/$defs/ProviderInstanceId"
+        },
+        "query": {
+          "$ref": "../../agent/v1/schema.json#/$defs/UsageQuery"
+        }
+      },
+      "required": [
+        "providerId",
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "UsageQueryResponse": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "$ref": "../../agent/v1/schema.json#/$defs/UsageQueryResult"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
     }
   }
 }

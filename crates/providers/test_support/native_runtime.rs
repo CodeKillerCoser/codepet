@@ -18,7 +18,7 @@ pub async fn check_native_runtime(
         settings.insert("workspaceRoot".into(), json!(workspace));
     }
     provider
-        .provider_initialize(ProviderInitializeRequest {
+        .provider_initialize(ProviderInitializeRequest { directories: None,
             host_client_id: "runtime-smoke".into(),
             host_device_id: "runtime-smoke-device".into(),
             host_version: "test".into(),

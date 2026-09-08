@@ -128,6 +128,8 @@ python3 scripts/test_codex_provider_stdio.py --provider crates/target/debug/code
 
 ## Current limits
 
+Usage is a Provider-owned query: Provider `usage.query` is exposed as Gateway `codepet.usage.query` with `providerId` plus the shared Agent `UsageQuery`. Inspect `usageDatasets` before requesting metrics, model filters or bucket sizes. `halfHour` means clock-aligned 30-minute buckets, not a polling interval. Query summaries apply before pagination; native account summaries remain unfiltered. Host supplies private Provider storage directories during initialization. See [Provider usage and storage](../knowledge/10-architecture/provider-usage-query-and-storage.md) for collection, SQLite ownership, coverage and cursor semantics.
+
 - A reusable Plugin Manager and process supervisor exists in `crates/codepet-host`, and Codex remote operations run through the standalone Provider binary. Signature, marketplace, sandbox, and automatic restart policy remain deliberately out of scope.
 - LAN admission v1 defines identity, QR, pairing REST bodies and credential revocation; `codepet-host` owns the TLS/HTTP/WSS listener and mDNS lifecycle. The production Remote business session uses Gateway v1 JSON-RPC after admission. A persistent cross-process event-cursor store remains absent.
 - The v0 compatibility profile remains in use only by the desktop process until a separate Pet-protocol migration; it is not the Remote network protocol.

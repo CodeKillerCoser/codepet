@@ -21,7 +21,7 @@ use codepet_provider_sdk::{
     ProviderDescribeResponse, ProviderInitializeRequest, ProviderInitializeResponse,
     ProviderAuthentication, ProviderAuthenticationStatus, ProviderInstance, ProviderInstanceRoute,
     ProviderPluginDescriptor, ProviderResourceId, ProviderShutdownRequest, ProviderShutdownResponse,
-    TurnTask, ProviderUsage, ProviderUsageDetail, RoutedResourceId,
+    TurnTask, RoutedResourceId,
     MessageConversationItem, MessageConversationItemKind, TextContentBlock, TextContentBlockKind,
     TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent, TurnSendCapabilities,
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
@@ -35,6 +35,7 @@ use std::time::Duration;
 mod recent;
 
 struct FakeProvider {
+    data: codepet_provider_data::ProviderData,
     recent: recent::RecentFixture,
     events: Option<Arc<dyn codepet_provider_sdk::ProviderEventSink>>,
     plugin_id: String,
@@ -82,7 +83,7 @@ impl ProtocolServer for FakeProvider {
     fn conversation_mark_read<'a>(&'a self, request: codepet_provider_sdk::ConversationMarkReadRequest)
         -> ProtocolFuture<'a, codepet_provider_sdk::ConversationMarkReadResponse> {
         Box::pin(async move {
-            let read_state = codepet_provider_sdk::conversation_state::SharedConversationStateStore::from_env()?
+            let read_state = codepet_provider_data::conversation_state::SharedConversationStateStore::from_env()?
                 .mark_read(&request.reader_scope, &resource(&route_from_resource(&request.conversation), &request.conversation.native_resource_id), &request.observed_activity_version)?;
             Ok(codepet_provider_sdk::ConversationMarkReadResponse { read_state })
         })
@@ -95,6 +96,12 @@ impl ProtocolServer for FakeProvider {
         let delay = env_u64("CODEPET_FAKE_INITIALIZE_DELAY_MS", 0);
         let marker = std::env::var("CODEPET_FAKE_INITIALIZE_MARKER").ok();
         Box::pin(async move {
+            self.data.initialize(_request.directories.as_ref())?;
+            if let Ok(marker)=std::env::var("CODEPET_FAKE_DIRECTORIES_MARKER") {
+                std::fs::write(marker,serde_json::to_vec(&_request.directories).unwrap()).unwrap();
+                eprintln!("fixture Provider directories initialized");
+            }
+
             if let Some(marker) = marker {
                 let _ = std::fs::write(marker, b"initialize received\n");
             }
@@ -105,6 +112,14 @@ impl ProtocolServer for FakeProvider {
                 selected_version: env_u32("CODEPET_FAKE_SELECTED_VERSION", 1),
                 plugin: descriptor,
             })
+        })
+    }
+
+    fn usage_query<'a>(&'a self,request:codepet_provider_sdk::UsageQueryRequest)->ProtocolFuture<'a,codepet_provider_sdk::UsageQueryResponse>{
+        Box::pin(async move {
+            self.instance(&request.route)?;
+            self.data.record(&request.route.provider_instance_id,codepet_provider_data::HOOK_DATASET,"fixture-record",1800,1800,Some("fixture-model"),[Some(20),Some(15),Some(5),Some(3),Some(2)])?;
+            Ok(codepet_provider_sdk::UsageQueryResponse{result:self.data.query(&request.route.provider_instance_id,request.query,false)?})
         })
     }
 
@@ -181,19 +196,6 @@ impl ProtocolServer for FakeProvider {
                 authentication: Some(ProviderAuthentication {
                     status: ProviderAuthenticationStatus::SignedIn,
                     display_text: Some("Signed in to fixture".to_string()),
-                }),
-                usage: Some(ProviderUsage {
-                    display_text: "Fixture usage 42%".to_string(),
-                    observed_at: Some(1_788_450_000_000),
-                    details: Some(vec![ProviderUsageDetail {
-                        namespace: "dev.codepet.fixture.usage".to_string(),
-                        schema_version: "1".to_string(),
-                        data: BTreeMap::from([
-                            ("usedPercent".to_string(), serde_json::json!(42)),
-                            ("accessToken".to_string(), serde_json::json!("must-not-leak")),
-                            ("nested".to_string(), serde_json::json!({"cookie": "must-not-leak", "safe": true})),
-                        ]),
-                    }]),
                 }),
                 capabilities: capabilities(),
             };
@@ -690,6 +692,7 @@ async fn main() {
     let plugin_id = std::env::var("CODEPET_FAKE_PLUGIN_ID")
         .unwrap_or_else(|_| "dev.codepet.fake".to_string());
     codepet_provider_sdk::serve_stdio(codepet_provider_sdk::StdioServerOptions::default(), |events| FakeProvider {
+        data: codepet_provider_data::ProviderData::default(),
         recent: recent::RecentFixture::default(),
         events: Some(events), plugin_id, observation: Mutex::new(None), instances: Mutex::new(BTreeMap::new()), instance_settings: Mutex::new(BTreeMap::new()),
     }).await.unwrap();
@@ -751,7 +754,7 @@ async fn wait_for_snapshot_release() {
 }
 
 fn capabilities() -> ProviderCapabilities {
-    let mut capabilities = ProviderCapabilities {
+    let mut capabilities = ProviderCapabilities { usage_datasets: None,
         conversation_list_query: recent::enabled().then_some(codepet_provider_sdk::ConversationListQueryCapabilities { updated_after: true, ids: true }),
         revision: "fake-capabilities-v1".to_string(),
         methods: vec![
@@ -797,6 +800,10 @@ fn capabilities() -> ProviderCapabilities {
         }),
         extensions: Vec::new(),
     };
+    if std::env::var_os("CODEPET_FAKE_USAGE").is_some(){
+        capabilities.methods.push(ProviderCapability::UsageQuery);
+        capabilities.usage_datasets=Some(codepet_provider_data::datasets(false));
+    }
     if recent::enabled() {
         capabilities.methods.extend([ProviderCapability::ConversationActiveList, ProviderCapability::ConversationUnreadList, ProviderCapability::ConversationMarkRead]);
     }

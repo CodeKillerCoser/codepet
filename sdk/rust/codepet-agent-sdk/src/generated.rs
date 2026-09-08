@@ -603,26 +603,6 @@ pub type ProviderId = String;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct ProviderUsage {
-    pub display_text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub observed_at: Option<TimestampMs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<Vec<ProviderUsageDetail>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ProviderUsageDetail {
-    pub namespace: String,
-    pub schema_version: String,
-    pub data: JsonObject,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
 pub struct ReasoningConversationItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "_meta")]
@@ -1026,4 +1006,345 @@ pub struct UnknownConversationItem {
 pub enum UnknownConversationItemKind {
     #[serde(rename = "unknown")]
     Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageAggregation {
+    pub time_bucket: UsageTimeBucket,
+    pub time_zone: String,
+    pub group_by: Vec<UsageAggregationGroupByItems>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UsageAggregationGroupByItems {
+    #[serde(rename = "model")]
+    Model,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageAllTime {
+    pub kind: UsageAllTimeKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UsageAllTimeKind {
+    #[serde(rename = "all")]
+    All,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageBoundedTime {
+    pub kind: UsageBoundedTimeKind,
+    pub range: UsageTimeRange,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UsageBoundedTimeKind {
+    #[serde(rename = "range")]
+    Range,
+}
+
+pub type UsageBucketMinutes = u64;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UsageCompleteness {
+    #[serde(rename = "complete")]
+    Complete,
+    #[serde(rename = "partial")]
+    Partial,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageCoverage {
+    pub scope: UsageCoverageScope,
+    pub available_from: Option<UsageText>,
+    pub complete_through: Option<UsageText>,
+    pub status: UsageCoverageStatus,
+    pub gaps: Vec<UsageTimeRange>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UsageCoverageScope {
+    #[serde(rename = "account")]
+    Account,
+    #[serde(rename = "local")]
+    Local,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UsageCoverageStatus {
+    #[serde(rename = "complete")]
+    Complete,
+    #[serde(rename = "partial")]
+    Partial,
+    #[serde(rename = "backfilling")]
+    Backfilling,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageDailyPeak {
+    pub date: String,
+    pub total_tokens: u64,
+    pub completeness: UsageCompleteness,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageDataset {
+    pub id: String,
+    pub display_name: String,
+    pub scope: UsageDatasetScope,
+    pub metrics: Vec<UsageMetric>,
+    pub time_buckets: Vec<UsageTimeBucket>,
+    pub model_filter: bool,
+    pub model_grouping: bool,
+    pub time_zones: Vec<String>,
+    pub base_bucket_minutes: Option<UsageBucketMinutes>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UsageDatasetScope {
+    #[serde(rename = "account")]
+    Account,
+    #[serde(rename = "local")]
+    Local,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageFilter {
+    pub time: UsageTimeFilter,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_unknown_model: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageGroupPeak {
+    pub model_id: Option<UsageText>,
+    pub peak: Option<UsageDailyPeak>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageGroupTotal {
+    pub model_id: Option<UsageText>,
+    pub values: UsageValues,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UsageMetric {
+    #[serde(rename = "totalTokens")]
+    TotalTokens,
+    #[serde(rename = "inputTokens")]
+    InputTokens,
+    #[serde(rename = "outputTokens")]
+    OutputTokens,
+    #[serde(rename = "cacheReadTokens")]
+    CacheReadTokens,
+    #[serde(rename = "cacheWriteTokens")]
+    CacheWriteTokens,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageMetricValue {
+    pub value: Option<UsageTokenCount>,
+    pub completeness: UsageCompleteness,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageNativeAccountSummary {
+    pub lifetime_tokens: Option<UsageTokenCount>,
+    pub peak_daily_tokens: Option<UsageTokenCount>,
+    pub longest_running_turn_sec: Option<UsageTokenCount>,
+    pub current_streak_days: Option<UsageTokenCount>,
+    pub longest_streak_days: Option<UsageTokenCount>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageOrder {
+    pub field: UsageOrderField,
+    pub direction: UsageOrderDirection,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UsageOrderDirection {
+    #[serde(rename = "asc")]
+    Asc,
+    #[serde(rename = "desc")]
+    Desc,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UsageOrderField {
+    #[serde(rename = "bucketStart")]
+    BucketStart,
+    #[serde(rename = "modelId")]
+    ModelId,
+    #[serde(rename = "totalTokens")]
+    TotalTokens,
+    #[serde(rename = "inputTokens")]
+    InputTokens,
+    #[serde(rename = "outputTokens")]
+    OutputTokens,
+    #[serde(rename = "cacheReadTokens")]
+    CacheReadTokens,
+    #[serde(rename = "cacheWriteTokens")]
+    CacheWriteTokens,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsagePage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageQuery {
+    pub dataset_id: String,
+    pub filter: UsageFilter,
+    pub aggregation: UsageAggregation,
+    pub metrics: Vec<UsageMetric>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summaries: Option<Vec<UsageQuerySummariesItems>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order_by: Option<Vec<UsageOrder>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<UsagePage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageQueryResult {
+    pub dataset_id: String,
+    pub revision: String,
+    pub generated_at: String,
+    pub updated_at: Option<UsageText>,
+    pub coverage: UsageCoverage,
+    pub rows: Vec<UsageRow>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summaries: Option<UsageSummaries>,
+    pub next_cursor: Option<UsageText>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_account_summary: Option<UsageNativeAccountSummary>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UsageQuerySummariesItems {
+    #[serde(rename = "totals")]
+    Totals,
+    #[serde(rename = "peakDaily")]
+    PeakDaily,
+    #[serde(rename = "totalsByGroup")]
+    TotalsByGroup,
+    #[serde(rename = "peakDailyByGroup")]
+    PeakDailyByGroup,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageRow {
+    pub bucket: Option<UsageTimeRange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<Option<UsageText>>,
+    pub values: UsageValues,
+    pub completeness: UsageCompleteness,
+    pub provisional: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageSummaries {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub totals: Option<UsageValues>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_daily: Option<Option<UsageDailyPeak>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub totals_by_group: Option<Vec<UsageGroupTotal>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_daily_by_group: Option<Vec<UsageGroupPeak>>,
+}
+
+pub type UsageText = String;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UsageTimeBucket {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "halfHour")]
+    HalfHour,
+    #[serde(rename = "hour")]
+    Hour,
+    #[serde(rename = "day")]
+    Day,
+    #[serde(rename = "month")]
+    Month,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum UsageTimeFilter {
+    UsageAllTime(UsageAllTime),
+    UsageBoundedTime(UsageBoundedTime),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageTimeRange {
+    pub from: String,
+    pub to: String,
+}
+
+pub type UsageTokenCount = u64;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageValues {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<UsageMetricValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<UsageMetricValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<UsageMetricValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_read_tokens: Option<UsageMetricValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_write_tokens: Option<UsageMetricValue>,
 }

@@ -474,6 +474,7 @@ fn map_provider(
         .methods
         .iter()
         .filter_map(|method| match method {
+            gateway::GatewayCapability::CodepetUsageQuery => None,
             gateway::GatewayCapability::ProjectList
             | gateway::GatewayCapability::ProjectGet
             | gateway::GatewayCapability::ProjectCreate
@@ -858,7 +859,7 @@ mod tests {
                 provider_plugin_id: "plugin-test".to_string(),
                 provider_instance_id: "instance-test".to_string(),
             },
-            gateway::GatewayCapabilities {
+            gateway::GatewayCapabilities { usage_datasets: None,
                 revision: "cap-1".to_string(),
                 methods: vec![
                     gateway::GatewayCapability::ConversationList,

@@ -49,8 +49,8 @@ test("cp-sdk-gen compiles protocol input into a complete Rust SDK", async () => 
     /zstd = "0\.13"/,
   );
   assert.equal(
-    await readFile(path.join(output, "codepet-core-sdk", "src", "generated.rs"), "utf8"),
-    await readFile(path.join(repositoryRoot, "sdk", "rust", "codepet-core-sdk", "src", "generated.rs"), "utf8"),
+    (await readFile(path.join(output, "codepet-core-sdk", "src", "generated.rs"), "utf8")).replaceAll("\r\n", "\n"),
+    (await readFile(path.join(repositoryRoot, "sdk", "rust", "codepet-core-sdk", "src", "generated.rs"), "utf8")).replaceAll("\r\n", "\n"),
   );
   assert.match(await readFile(path.join(output, "README.md"), "utf8"), /安装并让 Code Pet 发现/);
   await runCpSdkGen([

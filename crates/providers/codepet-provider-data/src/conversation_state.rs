@@ -4,10 +4,10 @@ use crate as gateway;
 use crate as provider;
 use crate::ProtocolError;
 use fs2::FileExt;
-use std::io::Write;
+
 use std::ops::{Deref, DerefMut};
 type StateResult<T> = Result<T, ProtocolError>;
-pub const CONVERSATION_STATE_PATH_ENV: &str = "CODEPET_CONVERSATION_STATE_PATH";
+pub const CONVERSATION_STATE_PATH_ENV: &str = "CODEPET_CONVERSATION_STATE_DATABASE";
 use ring::digest::{digest, SHA256};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -70,34 +70,58 @@ impl SharedConversationStateStore {
 
     pub fn open(path: impl AsRef<Path>) -> StateResult<Self> {
         let path = path.as_ref().to_path_buf();
-        let store = Self { path: Some(path), document: Mutex::new(ConversationStateDocument::default()) };
+        let store = Self {
+            path: Some(path),
+            document: Mutex::new(ConversationStateDocument::default()),
+        };
         // Acquire the stable sidecar lock before validating or backing up v1.
-        { let _guard = store.lock()?; }
+        {
+            let _guard = store.lock()?;
+        }
         Ok(store)
     }
 
     /// No default home-directory store: it would silently discard Host scopes.
     /// Standalone providers retain ordinary methods and report unread unsupported.
     pub fn from_env() -> StateResult<Self> {
-        let path = std::env::var_os(CONVERSATION_STATE_PATH_ENV).filter(|p| !p.is_empty())
+        let path = std::env::var_os(CONVERSATION_STATE_PATH_ENV)
+            .filter(|p| !p.is_empty())
             .ok_or_else(|| state_error("unsupported", "shared reader state is not configured"))?;
         Self::open(PathBuf::from(path))
     }
 
     /// Enumerates all known unread identities for exactly one instance and scope.
     /// Call ensure_client before observing a first snapshot, as the old Host did.
-    pub fn unread(&self, caller_scope: &str, provider_id: &str) -> StateResult<Vec<(gateway::RoutedResourceId, gateway::ConversationReadState)>> {
+    pub fn unread(
+        &self,
+        caller_scope: &str,
+        provider_id: &str,
+    ) -> StateResult<Vec<(gateway::RoutedResourceId, gateway::ConversationReadState)>> {
         self.ensure_client(caller_scope)?;
         let document = self.lock()?;
         let client = document.clients.get(caller_scope).expect("client ensured");
-        Ok(document.conversations.iter().filter_map(|(key, record)| {
-            let read = client.reads.get(key).copied().unwrap_or(client.baseline_version);
-            (record.resource.provider_id == provider_id && record.latest_version > read).then(|| (
-                record.resource.clone(), gateway::ConversationReadState {
-                    unread: true, activity_version: activity_version(record.latest_version),
-                }
-            ))
-        }).collect())
+        Ok(document
+            .conversations
+            .iter()
+            .filter_map(|(key, record)| {
+                let read = client
+                    .reads
+                    .get(key)
+                    .copied()
+                    .unwrap_or(client.baseline_version);
+                (record.resource.provider_id == provider_id && record.latest_version > read).then(
+                    || {
+                        (
+                            record.resource.clone(),
+                            gateway::ConversationReadState {
+                                unread: true,
+                                activity_version: activity_version(record.latest_version),
+                            },
+                        )
+                    },
+                )
+            })
+            .collect())
     }
 
     pub fn ensure_client(&self, caller_scope: &str) -> StateResult<()> {
@@ -130,9 +154,16 @@ impl SharedConversationStateStore {
             .map(|record| record.latest_version)
             .unwrap_or(document.latest_version);
         let client = document.clients.get(caller_scope).ok_or_else(|| {
-            state_error("conversation_state_unavailable", "client read state is unavailable")
+            state_error(
+                "conversation_state_unavailable",
+                "client read state is unavailable",
+            )
         })?;
-        let read = client.reads.get(&key).copied().unwrap_or(client.baseline_version);
+        let read = client
+            .reads
+            .get(&key)
+            .copied()
+            .unwrap_or(client.baseline_version);
         conversation.read_state = Some(gateway::ConversationReadState {
             unread: latest > read,
             activity_version: activity_version(latest),
@@ -183,16 +214,32 @@ impl SharedConversationStateStore {
         conversation: &gateway::Conversation,
     ) -> StateResult<Option<u64>> {
         let fingerprint = summary_fingerprint(conversation);
-        self.observe_fingerprint(&conversation.resource, FingerprintKind::Summary, fingerprint)
+        self.observe_fingerprint(
+            &conversation.resource,
+            FingerprintKind::Summary,
+            fingerprint,
+        )
     }
 
     /// Whether summary observation changed any stored fact (including a new
     /// baseline record), independent of whether its activity version advanced.
-    pub fn observe_summary_changed(&self, conversation: &gateway::Conversation) -> StateResult<bool> {
-        let Some(value) = summary_fingerprint(conversation) else { return Ok(false); };
+    pub fn observe_summary_changed(
+        &self,
+        conversation: &gateway::Conversation,
+    ) -> StateResult<bool> {
+        let Some(value) = summary_fingerprint(conversation) else {
+            return Ok(false);
+        };
         let mut document = self.lock()?;
-        let (_, dirty) = observe_in_document(&mut document, &conversation.resource, FingerprintKind::Summary, value)?;
-        if dirty { self.persist(&document)?; }
+        let (_, dirty) = observe_in_document(
+            &mut document,
+            &conversation.resource,
+            FingerprintKind::Summary,
+            value,
+        )?;
+        if dirty {
+            self.persist(&document)?;
+        }
         Ok(dirty)
     }
 
@@ -212,13 +259,16 @@ impl SharedConversationStateStore {
         let observed = match event {
             provider::ProtocolEvent::EventTurnOutputDelta { params, .. }
                 if params.kind == provider::ConversationContentKind::Text
-                    && !params.delta.is_empty() => Some((
-                        gateway_resource(params.conversation.clone()),
-                        format!(
-                            "output:{}:{}",
-                            params.turn.native_resource_id, params.content_id
-                        ),
-                    )),
+                    && !params.delta.is_empty() =>
+            {
+                Some((
+                    gateway_resource(params.conversation.clone()),
+                    format!(
+                        "output:{}:{}",
+                        params.turn.native_resource_id, params.content_id
+                    ),
+                ))
+            }
             provider::ProtocolEvent::EventApprovalRequested { params, .. } => Some((
                 params.approval.conversation.clone(),
                 format!("approval:{}", params.approval.resource.native_resource_id),
@@ -229,113 +279,175 @@ impl SharedConversationStateStore {
                     provider::ConversationItemStatus::Completed
                         | provider::ConversationItemStatus::Failed
                         | provider::ConversationItemStatus::Interrupted
-                ) => Some((
+                ) =>
+            {
+                Some((
                     item_conversation(&params.item).clone(),
                     format!(
                         "item-terminal:{}:{:?}",
                         item_resource(&params.item).native_resource_id,
                         item_status(&params.item)
                     ),
-                )),
+                ))
+            }
             provider::ProtocolEvent::EventTurnUpserted { params, .. }
                 if matches!(
                     params.turn.status,
                     provider::TurnStatus::Completed | provider::TurnStatus::Failed
-                ) => Some((
+                ) =>
+            {
+                Some((
                     params.turn.conversation.clone(),
                     format!(
                         "turn-terminal:{}:{:?}",
                         params.turn.resource.native_resource_id, params.turn.status
                     ),
-                )),
+                ))
+            }
             provider::ProtocolEvent::EventConversationUpserted { params, .. }
-                if params.conversation.status == provider::ConversationStatus::WaitingUserInput => {
-                    Some((
-                        params.conversation.resource.clone(),
-                        format!(
-                            "waiting-input:{}",
-                            params
-                                .conversation
-                                .active_turn
-                                .as_ref()
-                                .map(|turn| turn.resource.native_resource_id.as_str())
-                                .unwrap_or("conversation")
-                        ),
-                    ))
-                }
+                if params.conversation.status == provider::ConversationStatus::WaitingUserInput =>
+            {
+                Some((
+                    params.conversation.resource.clone(),
+                    format!(
+                        "waiting-input:{}",
+                        params
+                            .conversation
+                            .active_turn
+                            .as_ref()
+                            .map(|turn| turn.resource.native_resource_id.as_str())
+                            .unwrap_or("conversation")
+                    ),
+                ))
+            }
             _ => None,
         };
         let Some((resource, fingerprint)) = observed else {
             return Ok(None);
         };
-        let Some(version) = self.observe_fingerprint(
-            &resource,
-            FingerprintKind::Event,
-            Some(fingerprint),
-        )? else {
+        let Some(version) =
+            self.observe_fingerprint(&resource, FingerprintKind::Event, Some(fingerprint))?
+        else {
             return Ok(None);
         };
         Ok(Some((resource, version)))
     }
 
     fn observe_fingerprint(
-        &self, resource: &gateway::RoutedResourceId, kind: FingerprintKind, fingerprint: Option<String>,
+        &self,
+        resource: &gateway::RoutedResourceId,
+        kind: FingerprintKind,
+        fingerprint: Option<String>,
     ) -> StateResult<Option<u64>> {
-        let Some(fingerprint) = fingerprint else { return Ok(None); };
+        let Some(fingerprint) = fingerprint else {
+            return Ok(None);
+        };
         let mut document = self.lock()?;
         let (version, dirty) = observe_in_document(&mut document, resource, kind, fingerprint)?;
-        if dirty { self.persist(&document)?; }
+        if dirty {
+            self.persist(&document)?;
+        }
         Ok(version)
     }
 
     /// One locked read and at most one write for an entire summary batch.
     /// Establish the reader baseline before observations, matching the old Host.
-    pub fn observe_and_decorate_summaries(&self, scope: &str, rows: &mut [gateway::Conversation]) -> StateResult<bool> {
+    pub fn observe_and_decorate_summaries(
+        &self,
+        scope: &str,
+        rows: &mut [gateway::Conversation],
+    ) -> StateResult<bool> {
         let mut document = self.lock()?;
         let mut dirty = ensure_scope(&mut document, scope);
         for row in rows.iter_mut() {
             if let Some(value) = summary_fingerprint(row) {
-                dirty |= observe_in_document(&mut document, &row.resource, FingerprintKind::Summary, value)?.1;
+                dirty |= observe_in_document(
+                    &mut document,
+                    &row.resource,
+                    FingerprintKind::Summary,
+                    value,
+                )?
+                .1;
             }
             decorate_from_document(&document, scope, row);
         }
-        if dirty { self.persist(&document)?; }
+        if dirty {
+            self.persist(&document)?;
+        }
         Ok(dirty)
     }
 
-    pub fn decorate_many(&self, scope: &str, rows: &mut [gateway::Conversation]) -> StateResult<()> {
+    pub fn decorate_many(
+        &self,
+        scope: &str,
+        rows: &mut [gateway::Conversation],
+    ) -> StateResult<()> {
         let mut document = self.lock()?;
         let added = ensure_scope(&mut document, scope);
-        for row in rows { decorate_from_document(&document, scope, row); }
-        if added { self.persist(&document)?; }
+        for row in rows {
+            decorate_from_document(&document, scope, row);
+        }
+        if added {
+            self.persist(&document)?;
+        }
         Ok(())
     }
 
-    pub fn activity_versions(&self, resources: &[gateway::RoutedResourceId]) -> StateResult<Vec<String>> {
+    pub fn activity_versions(
+        &self,
+        resources: &[gateway::RoutedResourceId],
+    ) -> StateResult<Vec<String>> {
         let document = self.lock()?;
-        Ok(resources.iter().map(|resource| activity_version(document.conversations.get(&resource_key(resource))
-            .map(|record| record.latest_version).unwrap_or(document.latest_version))).collect())
+        Ok(resources
+            .iter()
+            .map(|resource| {
+                activity_version(
+                    document
+                        .conversations
+                        .get(&resource_key(resource))
+                        .map(|record| record.latest_version)
+                        .unwrap_or(document.latest_version),
+                )
+            })
+            .collect())
     }
 
     fn lock(&self) -> StateResult<StateGuard<'_>> {
-        let mut document = self.document.lock().map_err(|_| state_error("conversation_state_unavailable", "conversation state lock is poisoned"))?;
+        let mut document = self.document.lock().map_err(|_| {
+            state_error(
+                "conversation_state_unavailable",
+                "conversation state lock is poisoned",
+            )
+        })?;
         let file = if let Some(path) = &self.path {
-            let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+            let parent = path
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
             fs::create_dir_all(parent).map_err(|e| persistence_io("create parent", path, e))?;
             let mut lock_path = path.as_os_str().to_os_string();
             lock_path.push(".lock");
-            let file = fs::OpenOptions::new().read(true).write(true).create(true).open(PathBuf::from(lock_path))
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(PathBuf::from(lock_path))
                 .map_err(|e| persistence_io("open state lock", path, e))?;
             FileExt::lock_exclusive(&file).map_err(|e| persistence_io("lock state", path, e))?;
             *document = read_document(path)?;
             Some(file)
-        } else { None };
-        Ok(StateGuard { document, _file: file })
+        } else {
+            None
+        };
+        Ok(StateGuard {
+            document,
+            _file: file,
+        })
     }
 
     fn persist(&self, document: &ConversationStateDocument) -> StateResult<()> {
         match self.path.as_deref() {
-            Some(path) => write_json_atomically(path, document),
+            Some(path) => write_state_document(path, document),
             None => Ok(()),
         }
     }
@@ -385,9 +497,8 @@ pub fn summary_fingerprint(conversation: &gateway::Conversation) -> Option<Strin
 pub fn detail_fingerprint(items: &[gateway::ConversationItem]) -> Option<String> {
     let item = items.iter().rev().find(|item| {
         item_role(item) == Some(gateway::ConversationItemRole::Assistant)
-            || item_approval(item).is_some_and(|approval| {
-                approval.status == gateway::ApprovalStatus::Pending
-            })
+            || item_approval(item)
+                .is_some_and(|approval| approval.status == gateway::ApprovalStatus::Pending)
     })?;
     Some(fingerprint([
         "detail",
@@ -420,7 +531,7 @@ fn item_resource(item: &gateway::ConversationItem) -> &gateway::RoutedResourceId
     }
 }
 
-fn item_conversation(item: &gateway::ConversationItem) -> &gateway::RoutedResourceId {
+pub fn item_conversation(item: &gateway::ConversationItem) -> &gateway::RoutedResourceId {
     match item {
         gateway::ConversationItem::MessageConversationItem(item) => &item.conversation,
         gateway::ConversationItem::ReasoningConversationItem(item) => &item.conversation,
@@ -465,11 +576,18 @@ fn fingerprint<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
         input.push(0);
     }
     let value = digest(&SHA256, &input);
-    value.as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
+    value
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn resource_key(resource: &gateway::RoutedResourceId) -> String {
-    format!("{}\u{1f}{}", resource.provider_id, resource.native_resource_id)
+    format!(
+        "{}\u{1f}{}",
+        resource.provider_id, resource.native_resource_id
+    )
 }
 
 fn gateway_resource(resource: provider::ProviderResourceId) -> gateway::RoutedResourceId {
@@ -574,9 +692,9 @@ mod tests {
     }
 
     #[test]
-    fn shared_handles_preserve_scopes_versions_fingerprints_and_original_backup() {
+    fn shared_database_handles_preserve_scopes_versions_and_fingerprints() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("conversation-state.json");
+        let path = directory.path().join("conversation-state.sqlite");
         let first = SharedConversationStateStore::open(&path).unwrap();
         first.ensure_client("mobile").unwrap();
         first.ensure_client("desktop").unwrap();
@@ -586,23 +704,31 @@ mod tests {
         row.preview = Some("new response".into());
         assert_eq!(second.observe_summary(&row).unwrap(), Some(1));
         assert_eq!(first.observe_summary(&row).unwrap(), None);
-        first.mark_read("mobile", &row.resource, "activity-1").unwrap();
+        first
+            .mark_read("mobile", &row.resource, "activity-1")
+            .unwrap();
         assert!(second.unread("mobile", "codex-work").unwrap().is_empty());
         assert_eq!(second.unread("desktop", "codex-work").unwrap().len(), 1);
         drop(first);
         let reopened = SharedConversationStateStore::open(&path).unwrap();
         assert!(reopened.unread("mobile", "codex-work").unwrap().is_empty());
-        assert_eq!(reopened.unread("desktop", "codex-work").unwrap()[0].1.activity_version, "activity-1");
-        let backup = directory.path().join("conversation-state.json.pre-sdk-v1.bak");
-        let original: serde_json::Value = serde_json::from_slice(&fs::read(backup).unwrap()).unwrap();
-        assert_eq!(original["latestVersion"], 0);
+        assert_eq!(
+            reopened.unread("desktop", "codex-work").unwrap()[0]
+                .1
+                .activity_version,
+            "activity-1"
+        );
+        assert!(fs::read(&path).unwrap().starts_with(b"SQLite format 3"));
     }
 
     #[test]
     fn rejects_unknown_or_corrupt_storage_without_resetting_it() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("conversation-state.json");
-        for bytes in [b"{broken".as_slice(), br#"{"version":2,"latestVersion":0,"conversations":{},"clients":{}}"#.as_slice()] {
+        let path = directory.path().join("conversation-state.sqlite");
+        for bytes in [
+            b"{broken".as_slice(),
+            br#"{"version":2,"latestVersion":0,"conversations":{},"clients":{}}"#.as_slice(),
+        ] {
             fs::write(&path, bytes).unwrap();
             assert!(SharedConversationStateStore::open(&path).is_err());
             assert_eq!(fs::read(&path).unwrap(), bytes);
@@ -615,14 +741,30 @@ mod tests {
         let path = directory.path().join("state.json");
         let store = SharedConversationStateStore::open(&path).unwrap();
         let mut rows = vec![conversation("baseline")];
-        store.observe_and_decorate_summaries("mobile", &mut rows).unwrap();
-        // Legal whitespace is retained only if a no-op avoids serialization.
-        let original = fs::read(&path).unwrap();
-        let marker = [original.as_slice(), b"\n\n"].concat();
-        fs::write(&path, &marker).unwrap();
+        store
+            .observe_and_decorate_summaries("mobile", &mut rows)
+            .unwrap();
+        let before: String = state_database(&path)
+            .unwrap()
+            .query_row(
+                "SELECT document FROM conversation_state WHERE id=1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(store.observe_summary(&rows[0]).unwrap(), None);
-        assert!(!store.observe_and_decorate_summaries("mobile", &mut rows).unwrap());
-        assert_eq!(fs::read(&path).unwrap(), marker);
+        assert!(!store
+            .observe_and_decorate_summaries("mobile", &mut rows)
+            .unwrap());
+        let after: String = state_database(&path)
+            .unwrap()
+            .query_row(
+                "SELECT document FROM conversation_state WHERE id=1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(before, after);
     }
 
     #[test]
@@ -631,24 +773,56 @@ mod tests {
         let row = conversation("baseline");
         assert!(store.observe_summary_changed(&row).unwrap());
         assert!(!store.observe_summary_changed(&row).unwrap());
-        assert_eq!(store.activity_versions(&[row.resource.clone()]).unwrap(), ["activity-0"]);
+        assert_eq!(
+            store.activity_versions(&[row.resource.clone()]).unwrap(),
+            ["activity-0"]
+        );
         let mut rows = vec![row];
-        assert!(store.observe_and_decorate_summaries("new-scope", &mut rows).unwrap());
-        assert!(!store.observe_and_decorate_summaries("new-scope", &mut rows).unwrap());
+        assert!(store
+            .observe_and_decorate_summaries("new-scope", &mut rows)
+            .unwrap());
+        assert!(!store
+            .observe_and_decorate_summaries("new-scope", &mut rows)
+            .unwrap());
     }
 
     #[test]
     fn new_summary_can_add_unread_at_current_clock_without_advancing_it() {
         let store = SharedConversationStateStore::memory();
         let seed = conversation("seed");
-        for index in 0..2 { store.observe_fingerprint(&seed.resource, FingerprintKind::Event, Some(format!("event-{index}"))).unwrap(); }
+        for index in 0..2 {
+            store
+                .observe_fingerprint(
+                    &seed.resource,
+                    FingerprintKind::Event,
+                    Some(format!("event-{index}")),
+                )
+                .unwrap();
+        }
         store.ensure_client("old-scope").unwrap();
-        for index in 2..5 { store.observe_fingerprint(&seed.resource, FingerprintKind::Event, Some(format!("event-{index}"))).unwrap(); }
+        for index in 2..5 {
+            store
+                .observe_fingerprint(
+                    &seed.resource,
+                    FingerprintKind::Event,
+                    Some(format!("event-{index}")),
+                )
+                .unwrap();
+        }
         let mut newly_seen = conversation("discovered after baseline");
         newly_seen.resource.native_resource_id = "newly-seen".into();
         assert!(store.observe_summary_changed(&newly_seen).unwrap());
-        assert_eq!(store.activity_versions(&[newly_seen.resource.clone()]).unwrap(), ["activity-5"]);
-        assert!(store.unread("old-scope", "codex-work").unwrap().iter().any(|(resource, state)| resource == &newly_seen.resource && state.unread && state.activity_version == "activity-5"));
+        assert_eq!(
+            store
+                .activity_versions(&[newly_seen.resource.clone()])
+                .unwrap(),
+            ["activity-5"]
+        );
+        assert!(store.unread("old-scope", "codex-work").unwrap().iter().any(
+            |(resource, state)| resource == &newly_seen.resource
+                && state.unread
+                && state.activity_version == "activity-5"
+        ));
         assert!(!store.observe_summary_changed(&newly_seen).unwrap());
     }
 
@@ -683,105 +857,143 @@ struct StateGuard<'a> {
 }
 impl Deref for StateGuard<'_> {
     type Target = ConversationStateDocument;
-    fn deref(&self) -> &Self::Target { &self.document }
+    fn deref(&self) -> &Self::Target {
+        &self.document
+    }
 }
 impl DerefMut for StateGuard<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.document }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.document
+    }
 }
 fn state_error(code: &str, message: impl Into<String>) -> ProtocolError {
-    ProtocolError { code: code.into(), message: message.into(), retryable: false, details: None }
+    ProtocolError {
+        code: code.into(),
+        message: message.into(),
+        retryable: false,
+        details: None,
+    }
 }
 fn persistence_io(action: &str, path: &Path, error: std::io::Error) -> ProtocolError {
-    let mut error = state_error("conversation_state_unavailable", format!("{action} {}: {error}", path.display()));
+    let mut error = state_error(
+        "conversation_state_unavailable",
+        format!("{action} {}: {error}", path.display()),
+    );
     error.retryable = true;
     error
 }
+fn state_database(path: &Path) -> StateResult<rusqlite::Connection> {
+    let db = crate::open(path)?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS conversation_state (id INTEGER PRIMARY KEY CHECK(id=1), document TEXT NOT NULL)").map_err(crate::db_error)?;
+    Ok(db)
+}
 fn read_document(path: &Path) -> StateResult<ConversationStateDocument> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(ConversationStateDocument::default()),
-        Err(error) => return Err(persistence_io("read state", path, error)),
+    use rusqlite::OptionalExtension;
+    let db = state_database(path)?;
+    let value: Option<String> = db
+        .query_row(
+            "SELECT document FROM conversation_state WHERE id=1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(crate::db_error)?;
+    let document: ConversationStateDocument = match value {
+        Some(value) => serde_json::from_str(&value).map_err(crate::db_error)?,
+        None => ConversationStateDocument::default(),
     };
-    let document: ConversationStateDocument = serde_json::from_slice(&bytes)
-        .map_err(|e| state_error("conversation_state_invalid", e.to_string()))?;
     if document.version != DOCUMENT_VERSION {
-        return Err(state_error("conversation_state_invalid", "unsupported state document version"));
-    }
-    let mut backup = path.as_os_str().to_os_string();
-    backup.push(".pre-sdk-v1.bak");
-    let backup = PathBuf::from(backup);
-    if !backup.try_exists().map_err(|e| persistence_io("inspect backup", &backup, e))? {
-        write_bytes_atomically(&backup, &bytes, false)?;
+        return Err(state_error(
+            "conversation_state_invalid",
+            "Unsupported database state version",
+        ));
     }
     Ok(document)
 }
-fn write_json_atomically(path: &Path, document: &ConversationStateDocument) -> StateResult<()> {
-    let bytes = serde_json::to_vec_pretty(document).map_err(|e| state_error("conversation_state_invalid", e.to_string()))?;
-    write_bytes_atomically(path, &bytes, true)
-}
-fn write_bytes_atomically(path: &Path, bytes: &[u8], replace: bool) -> StateResult<()> {
-    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| persistence_io("create temporary", path, e))?;
-    temporary.write_all(bytes).map_err(|e| persistence_io("write temporary", path, e))?;
-    temporary.as_file().sync_all().map_err(|e| persistence_io("sync temporary", path, e))?;
-    let file = if replace { temporary.persist(path) } else { temporary.persist_noclobber(path) }
-        .map_err(|e| persistence_io("persist state", path, e.error))?;
-    file.sync_all().map_err(|e| persistence_io("sync state", path, e))?;
-    #[cfg(unix)]
-    fs::File::open(parent).and_then(|f| f.sync_all()).map_err(|e| persistence_io("sync directory", path, e))?;
+fn write_state_document(path: &Path, document: &ConversationStateDocument) -> StateResult<()> {
+    let db = state_database(path)?;
+    db.execute("INSERT INTO conversation_state VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET document=excluded.document",[serde_json::to_string(document).map_err(crate::db_error)?]).map_err(crate::db_error)?;
     Ok(())
 }
 
 fn ensure_scope(document: &mut ConversationStateDocument, scope: &str) -> bool {
-    if document.clients.contains_key(scope) { return false; }
-    document.clients.insert(scope.into(), ClientReadRecord { baseline_version: document.latest_version, reads: BTreeMap::new() });
+    if document.clients.contains_key(scope) {
+        return false;
+    }
+    document.clients.insert(
+        scope.into(),
+        ClientReadRecord {
+            baseline_version: document.latest_version,
+            reads: BTreeMap::new(),
+        },
+    );
     true
 }
-fn decorate_from_document(document: &ConversationStateDocument, scope: &str, row: &mut gateway::Conversation) {
+fn decorate_from_document(
+    document: &ConversationStateDocument,
+    scope: &str,
+    row: &mut gateway::Conversation,
+) {
     let key = resource_key(&row.resource);
-    let latest = document.conversations.get(&key).map(|record| record.latest_version).unwrap_or(document.latest_version);
+    let latest = document
+        .conversations
+        .get(&key)
+        .map(|record| record.latest_version)
+        .unwrap_or(document.latest_version);
     let client = document.clients.get(scope).expect("scope ensured");
-    let read = client.reads.get(&key).copied().unwrap_or(client.baseline_version);
-    row.read_state = Some(gateway::ConversationReadState { unread: latest > read, activity_version: activity_version(latest) });
+    let read = client
+        .reads
+        .get(&key)
+        .copied()
+        .unwrap_or(client.baseline_version);
+    row.read_state = Some(gateway::ConversationReadState {
+        unread: latest > read,
+        activity_version: activity_version(latest),
+    });
 }
-fn observe_in_document(document: &mut ConversationStateDocument, resource: &gateway::RoutedResourceId, kind: FingerprintKind, fingerprint: String) -> StateResult<(Option<u64>, bool)> {
-        let key = resource_key(resource);
-        if let Some(record) = document.conversations.get(&key) {
-            if kind.value(record).as_ref() == Some(&fingerprint) {
-                return Ok((None, false));
-            }
-            if kind != FingerprintKind::Event && kind.value(record).is_none() {
-                let record = document
-                    .conversations
-                    .get_mut(&key)
-                    .expect("conversation record checked");
-                *kind.slot(record) = Some(fingerprint);
-                return Ok((None, true));
-            }
-            document.latest_version = document.latest_version.saturating_add(1);
-            let version = document.latest_version;
+fn observe_in_document(
+    document: &mut ConversationStateDocument,
+    resource: &gateway::RoutedResourceId,
+    kind: FingerprintKind,
+    fingerprint: String,
+) -> StateResult<(Option<u64>, bool)> {
+    let key = resource_key(resource);
+    if let Some(record) = document.conversations.get(&key) {
+        if kind.value(record).as_ref() == Some(&fingerprint) {
+            return Ok((None, false));
+        }
+        if kind != FingerprintKind::Event && kind.value(record).is_none() {
             let record = document
                 .conversations
                 .get_mut(&key)
                 .expect("conversation record checked");
             *kind.slot(record) = Some(fingerprint);
-            record.latest_version = version;
-            return Ok((Some(version), true));
+            return Ok((None, true));
         }
-        let version = if kind == FingerprintKind::Event {
-            document.latest_version = document.latest_version.saturating_add(1);
-            document.latest_version
-        } else {
-            document.latest_version
-        };
-        let mut record = ConversationActivityRecord {
-            resource: resource.clone(),
-            latest_version: version,
-            summary_fingerprint: None,
-            detail_fingerprint: None,
-            event_fingerprint: None,
-        };
-        *kind.slot(&mut record) = Some(fingerprint);
-        document.conversations.insert(key, record);
-        Ok(((kind == FingerprintKind::Event).then_some(version), true))
+        document.latest_version = document.latest_version.saturating_add(1);
+        let version = document.latest_version;
+        let record = document
+            .conversations
+            .get_mut(&key)
+            .expect("conversation record checked");
+        *kind.slot(record) = Some(fingerprint);
+        record.latest_version = version;
+        return Ok((Some(version), true));
+    }
+    let version = if kind == FingerprintKind::Event {
+        document.latest_version = document.latest_version.saturating_add(1);
+        document.latest_version
+    } else {
+        document.latest_version
+    };
+    let mut record = ConversationActivityRecord {
+        resource: resource.clone(),
+        latest_version: version,
+        summary_fingerprint: None,
+        detail_fingerprint: None,
+        event_fingerprint: None,
+    };
+    *kind.slot(&mut record) = Some(fingerprint);
+    document.conversations.insert(key, record);
+    Ok(((kind == FingerprintKind::Event).then_some(version), true))
 }

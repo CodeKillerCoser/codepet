@@ -39,6 +39,19 @@ async function fixture(t, get = async () => ({ data: { title: 'Existing task', d
 }
 const event = (id, type, properties = {}) => ({ event: { id, type, properties: { sessionID: 'session', ...properties } } });
 
+test('usage forwards only completed assistant messages without message content', async t => {
+  const f = await fixture(t);
+  const info = { id: 'message', sessionID: 'session', role: 'assistant', modelID: 'model', providerID: 'vendor', time: { created: 1 }, tokens: { input: 2, output: 3 }, content: 'private message' };
+  await f.hooks.event(event('unfinished', 'message.updated', { info }));
+  await f.hooks.event(event('user', 'message.updated', { info: { ...info, role: 'user', time: { completed: 2 } } }));
+  await f.hooks.event(event('complete', 'message.updated', { info: { ...info, time: { completed: 2 } } }));
+  const received = await f.waitFor(1);
+  assert.equal(received.eventId, 'complete');
+  assert.equal(received.payload.properties.info.sessionID, 'session');
+  assert.deepEqual(received.payload.properties.info.tokens, { input: 2, output: 3 });
+  assert.equal('content' in received.payload.properties.info, false);
+});
+
 test('stable hooks preserve native IDs and metadata, filter noise, and stop on dispose', async t => {
   let lookups = 0;
   const f = await fixture(t, async () => { lookups++; throw Error('cached metadata should be used'); });

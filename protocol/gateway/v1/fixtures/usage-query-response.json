@@ -1,0 +1,21 @@
+{
+  "jsonrpc": "2.0",
+  "id": "usage-1",
+  "result": {
+    "result": {
+      "datasetId": "observed-model-tokens",
+      "revision": "usage-snapshot-1",
+      "generatedAt": "2026-09-02T00:00:00Z",
+      "updatedAt": null,
+      "coverage": {
+        "scope": "local",
+        "availableFrom": null,
+        "completeThrough": null,
+        "status": "partial",
+        "gaps": []
+      },
+      "rows": [],
+      "nextCursor": null
+    }
+  }
+}

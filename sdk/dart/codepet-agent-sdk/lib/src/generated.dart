@@ -2235,98 +2235,6 @@ Object? encodeProviderId(ProviderId value, {String path = 'ProviderId'}) {
   return checked;
 }
 
-final class ProviderUsage {
-  factory ProviderUsage({
-    required String displayText,
-    TimestampMs? observedAt,
-    List<ProviderUsageDetail>? details,
-  }) {
-    final validatedDisplayText = _string(displayText, 'ProviderUsage.displayText', minLength: 1);
-    final validatedObservedAt = observedAt == null ? null : _integer(observedAt, 'ProviderUsage.observedAt', minimum: 0, maximum: 9007199254740991);
-    final validatedDetails = details == null ? null : _freezeList<ProviderUsageDetail>(details, 'ProviderUsage.details', (item, itemPath) => item, encodeItem: (item) => item.toJson());
-    return ProviderUsage._(
-      displayText: validatedDisplayText,
-      observedAt: validatedObservedAt,
-      details: validatedDetails,
-    );
-  }
-
-  ProviderUsage._({
-    required this.displayText,
-    required this.observedAt,
-    required this.details,
-  });
-
-  final String displayText;
-  final TimestampMs? observedAt;
-  final List<ProviderUsageDetail>? details;
-
-  factory ProviderUsage.fromJson(Object? value, {String path = 'ProviderUsage'}) {
-    final json = _object(value, path);
-    _expectKeys(json, const {'displayText', 'observedAt', 'details'}, path);
-    return ProviderUsage(
-      displayText: _string(_required(json, 'displayText', path), '$path.displayText', minLength: 1),
-      observedAt: json.containsKey('observedAt') && json['observedAt'] != null ? _integer(json['observedAt'], '$path.observedAt', minimum: 0, maximum: 9007199254740991) : null,
-      details: json.containsKey('details') && json['details'] != null ? _decodeList<ProviderUsageDetail>(json['details'], '$path.details', (item, itemPath) => ProviderUsageDetail.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()) : null,
-    );
-  }
-
-  Map<String, Object?> toJson() => {
-    'displayText': displayText,
-    if (observedAt != null) 'observedAt': observedAt!,
-    if (details != null) 'details': details!.map((item) => item.toJson()).toList(growable: false),
-  };
-
-  @override
-  String toString() => 'ProviderUsage(displayText: $displayText, observedAt: $observedAt, details: $details)';
-}
-
-final class ProviderUsageDetail {
-  factory ProviderUsageDetail({
-    required String namespace,
-    required String schemaVersion,
-    required JsonObject data,
-  }) {
-    final validatedNamespace = _string(namespace, 'ProviderUsageDetail.namespace', minLength: 1);
-    final validatedSchemaVersion = _string(schemaVersion, 'ProviderUsageDetail.schemaVersion', minLength: 1);
-    final validatedData = _jsonObject(data, 'ProviderUsageDetail.data');
-    return ProviderUsageDetail._(
-      namespace: validatedNamespace,
-      schemaVersion: validatedSchemaVersion,
-      data: validatedData,
-    );
-  }
-
-  ProviderUsageDetail._({
-    required this.namespace,
-    required this.schemaVersion,
-    required this.data,
-  });
-
-  final String namespace;
-  final String schemaVersion;
-  final JsonObject data;
-
-  factory ProviderUsageDetail.fromJson(Object? value, {String path = 'ProviderUsageDetail'}) {
-    final json = _object(value, path);
-    _expectKeys(json, const {'namespace', 'schemaVersion', 'data'}, path);
-    return ProviderUsageDetail(
-      namespace: _string(_required(json, 'namespace', path), '$path.namespace', minLength: 1),
-      schemaVersion: _string(_required(json, 'schemaVersion', path), '$path.schemaVersion', minLength: 1),
-      data: _jsonObject(_required(json, 'data', path), '$path.data'),
-    );
-  }
-
-  Map<String, Object?> toJson() => {
-    'namespace': namespace,
-    'schemaVersion': schemaVersion,
-    'data': _encodeJsonObject(data, 'ProviderUsageDetail.data'),
-  };
-
-  @override
-  String toString() => 'ProviderUsageDetail(namespace: $namespace, schemaVersion: $schemaVersion, data: $data)';
-}
-
 final class ReasoningConversationItem extends ConversationItem {
   factory ReasoningConversationItem({
     JsonObject? meta,
@@ -3818,4 +3726,1276 @@ enum UnknownConversationItemKind {
   }
 
   String toJson() => wireValue;
+}
+
+final class UsageAggregation {
+  factory UsageAggregation({
+    required UsageTimeBucket timeBucket,
+    required String timeZone,
+    required List<UsageAggregationGroupByItems> groupBy,
+  }) {
+    final validatedTimeBucket = timeBucket;
+    final validatedTimeZone = _string(timeZone, 'UsageAggregation.timeZone', minLength: 1);
+    final validatedGroupBy = _freezeList<UsageAggregationGroupByItems>(groupBy, 'UsageAggregation.groupBy', (item, itemPath) => item, uniqueItems: true, encodeItem: (item) => item.toJson());
+    return UsageAggregation._(
+      timeBucket: validatedTimeBucket,
+      timeZone: validatedTimeZone,
+      groupBy: validatedGroupBy,
+    );
+  }
+
+  UsageAggregation._({
+    required this.timeBucket,
+    required this.timeZone,
+    required this.groupBy,
+  });
+
+  final UsageTimeBucket timeBucket;
+  final String timeZone;
+  final List<UsageAggregationGroupByItems> groupBy;
+
+  factory UsageAggregation.fromJson(Object? value, {String path = 'UsageAggregation'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'timeBucket', 'timeZone', 'groupBy'}, path);
+    return UsageAggregation(
+      timeBucket: UsageTimeBucket.fromJson(_required(json, 'timeBucket', path), path: '$path.timeBucket'),
+      timeZone: _string(_required(json, 'timeZone', path), '$path.timeZone', minLength: 1),
+      groupBy: _decodeList<UsageAggregationGroupByItems>(_required(json, 'groupBy', path), '$path.groupBy', (item, itemPath) => UsageAggregationGroupByItems.fromJson(item, path: itemPath), uniqueItems: true, encodeItem: (item) => item.toJson()),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'timeBucket': timeBucket.toJson(),
+    'timeZone': timeZone,
+    'groupBy': groupBy.map((item) => item.toJson()).toList(growable: false),
+  };
+
+  @override
+  String toString() => 'UsageAggregation(timeBucket: $timeBucket, timeZone: $timeZone, groupBy: $groupBy)';
+}
+
+enum UsageAggregationGroupByItems {
+  model('model');
+
+  const UsageAggregationGroupByItems(this.wireValue);
+
+  final String wireValue;
+
+  static UsageAggregationGroupByItems fromJson(Object? value, {String path = 'UsageAggregationGroupByItems'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: model');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class UsageAllTime extends UsageTimeFilter {
+  factory UsageAllTime({
+    required UsageAllTimeKind kind,
+  }) {
+    final validatedKind = kind;
+    return UsageAllTime._(
+      kind: validatedKind,
+    );
+  }
+
+  UsageAllTime._({
+    required this.kind,
+  });
+
+  final UsageAllTimeKind kind;
+
+  factory UsageAllTime.fromJson(Object? value, {String path = 'UsageAllTime'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'kind'}, path);
+    return UsageAllTime(
+      kind: UsageAllTimeKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+  };
+
+  @override
+  String toString() => 'UsageAllTime(kind: $kind)';
+}
+
+enum UsageAllTimeKind {
+  all('all');
+
+  const UsageAllTimeKind(this.wireValue);
+
+  final String wireValue;
+
+  static UsageAllTimeKind fromJson(Object? value, {String path = 'UsageAllTimeKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: all');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class UsageBoundedTime extends UsageTimeFilter {
+  factory UsageBoundedTime({
+    required UsageBoundedTimeKind kind,
+    required UsageTimeRange range,
+  }) {
+    final validatedKind = kind;
+    final validatedRange = range;
+    return UsageBoundedTime._(
+      kind: validatedKind,
+      range: validatedRange,
+    );
+  }
+
+  UsageBoundedTime._({
+    required this.kind,
+    required this.range,
+  });
+
+  final UsageBoundedTimeKind kind;
+  final UsageTimeRange range;
+
+  factory UsageBoundedTime.fromJson(Object? value, {String path = 'UsageBoundedTime'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'kind', 'range'}, path);
+    return UsageBoundedTime(
+      kind: UsageBoundedTimeKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      range: UsageTimeRange.fromJson(_required(json, 'range', path), path: '$path.range'),
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+    'range': range.toJson(),
+  };
+
+  @override
+  String toString() => 'UsageBoundedTime(kind: $kind, range: $range)';
+}
+
+enum UsageBoundedTimeKind {
+  range('range');
+
+  const UsageBoundedTimeKind(this.wireValue);
+
+  final String wireValue;
+
+  static UsageBoundedTimeKind fromJson(Object? value, {String path = 'UsageBoundedTimeKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: range');
+  }
+
+  String toJson() => wireValue;
+}
+
+typedef UsageBucketMinutes = int;
+
+UsageBucketMinutes decodeUsageBucketMinutes(Object? value, {String path = 'UsageBucketMinutes'}) => _integer(value, path, minimum: 1);
+Object? encodeUsageBucketMinutes(UsageBucketMinutes value, {String path = 'UsageBucketMinutes'}) {
+  final checked = _integer(value, path, minimum: 1);
+  return checked;
+}
+
+enum UsageCompleteness {
+  complete('complete'),
+  partial('partial'),
+  unknown('unknown');
+
+  const UsageCompleteness(this.wireValue);
+
+  final String wireValue;
+
+  static UsageCompleteness fromJson(Object? value, {String path = 'UsageCompleteness'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: complete, partial, unknown');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class UsageCoverage {
+  factory UsageCoverage({
+    required UsageCoverageScope scope,
+    required UsageText? availableFrom,
+    required UsageText? completeThrough,
+    required UsageCoverageStatus status,
+    required List<UsageTimeRange> gaps,
+  }) {
+    final validatedScope = scope;
+    final validatedAvailableFrom = availableFrom == null ? null : _string(availableFrom, 'UsageCoverage.availableFrom');
+    final validatedCompleteThrough = completeThrough == null ? null : _string(completeThrough, 'UsageCoverage.completeThrough');
+    final validatedStatus = status;
+    final validatedGaps = _freezeList<UsageTimeRange>(gaps, 'UsageCoverage.gaps', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    return UsageCoverage._(
+      scope: validatedScope,
+      availableFrom: validatedAvailableFrom,
+      completeThrough: validatedCompleteThrough,
+      status: validatedStatus,
+      gaps: validatedGaps,
+    );
+  }
+
+  UsageCoverage._({
+    required this.scope,
+    required this.availableFrom,
+    required this.completeThrough,
+    required this.status,
+    required this.gaps,
+  });
+
+  final UsageCoverageScope scope;
+  final UsageText? availableFrom;
+  final UsageText? completeThrough;
+  final UsageCoverageStatus status;
+  final List<UsageTimeRange> gaps;
+
+  factory UsageCoverage.fromJson(Object? value, {String path = 'UsageCoverage'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'scope', 'availableFrom', 'completeThrough', 'status', 'gaps'}, path);
+    return UsageCoverage(
+      scope: UsageCoverageScope.fromJson(_required(json, 'scope', path), path: '$path.scope'),
+      availableFrom: _required(json, 'availableFrom', path) == null ? null : _string(_required(json, 'availableFrom', path), '$path.availableFrom'),
+      completeThrough: _required(json, 'completeThrough', path) == null ? null : _string(_required(json, 'completeThrough', path), '$path.completeThrough'),
+      status: UsageCoverageStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
+      gaps: _decodeList<UsageTimeRange>(_required(json, 'gaps', path), '$path.gaps', (item, itemPath) => UsageTimeRange.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'scope': scope.toJson(),
+    'availableFrom': availableFrom == null ? null : availableFrom!,
+    'completeThrough': completeThrough == null ? null : completeThrough!,
+    'status': status.toJson(),
+    'gaps': gaps.map((item) => item.toJson()).toList(growable: false),
+  };
+
+  @override
+  String toString() => 'UsageCoverage(scope: $scope, availableFrom: $availableFrom, completeThrough: $completeThrough, status: $status, gaps: $gaps)';
+}
+
+enum UsageCoverageScope {
+  account('account'),
+  local('local');
+
+  const UsageCoverageScope(this.wireValue);
+
+  final String wireValue;
+
+  static UsageCoverageScope fromJson(Object? value, {String path = 'UsageCoverageScope'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: account, local');
+  }
+
+  String toJson() => wireValue;
+}
+
+enum UsageCoverageStatus {
+  complete('complete'),
+  partial('partial'),
+  backfilling('backfilling'),
+  unknown('unknown');
+
+  const UsageCoverageStatus(this.wireValue);
+
+  final String wireValue;
+
+  static UsageCoverageStatus fromJson(Object? value, {String path = 'UsageCoverageStatus'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: complete, partial, backfilling, unknown');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class UsageDailyPeak {
+  factory UsageDailyPeak({
+    required String date,
+    required int totalTokens,
+    required UsageCompleteness completeness,
+  }) {
+    final validatedDate = _string(date, 'UsageDailyPeak.date', pattern: '^\\d{4}-\\d{2}-\\d{2}\$');
+    final validatedTotalTokens = _integer(totalTokens, 'UsageDailyPeak.totalTokens', minimum: 0, maximum: 9007199254740991);
+    final validatedCompleteness = completeness;
+    return UsageDailyPeak._(
+      date: validatedDate,
+      totalTokens: validatedTotalTokens,
+      completeness: validatedCompleteness,
+    );
+  }
+
+  UsageDailyPeak._({
+    required this.date,
+    required this.totalTokens,
+    required this.completeness,
+  });
+
+  final String date;
+  final int totalTokens;
+  final UsageCompleteness completeness;
+
+  factory UsageDailyPeak.fromJson(Object? value, {String path = 'UsageDailyPeak'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'date', 'totalTokens', 'completeness'}, path);
+    return UsageDailyPeak(
+      date: _string(_required(json, 'date', path), '$path.date', pattern: '^\\d{4}-\\d{2}-\\d{2}\$'),
+      totalTokens: _integer(_required(json, 'totalTokens', path), '$path.totalTokens', minimum: 0, maximum: 9007199254740991),
+      completeness: UsageCompleteness.fromJson(_required(json, 'completeness', path), path: '$path.completeness'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'date': date,
+    'totalTokens': totalTokens,
+    'completeness': completeness.toJson(),
+  };
+
+  @override
+  String toString() => 'UsageDailyPeak(date: $date, totalTokens: $totalTokens, completeness: $completeness)';
+}
+
+final class UsageDataset {
+  factory UsageDataset({
+    required String id,
+    required String displayName,
+    required UsageDatasetScope scope,
+    required List<UsageMetric> metrics,
+    required List<UsageTimeBucket> timeBuckets,
+    required bool modelFilter,
+    required bool modelGrouping,
+    required List<String> timeZones,
+    required UsageBucketMinutes? baseBucketMinutes,
+  }) {
+    final validatedId = _string(id, 'UsageDataset.id', minLength: 1);
+    final validatedDisplayName = _string(displayName, 'UsageDataset.displayName', minLength: 1);
+    final validatedScope = scope;
+    final validatedMetrics = _freezeList<UsageMetric>(metrics, 'UsageDataset.metrics', (item, itemPath) => item, uniqueItems: true, encodeItem: (item) => item.toJson());
+    final validatedTimeBuckets = _freezeList<UsageTimeBucket>(timeBuckets, 'UsageDataset.timeBuckets', (item, itemPath) => item, uniqueItems: true, encodeItem: (item) => item.toJson());
+    final validatedModelFilter = modelFilter;
+    final validatedModelGrouping = modelGrouping;
+    final validatedTimeZones = _freezeList<String>(timeZones, 'UsageDataset.timeZones', (item, itemPath) => _string(item, itemPath, minLength: 1), uniqueItems: true, encodeItem: (item) => item);
+    final validatedBaseBucketMinutes = baseBucketMinutes == null ? null : _integer(baseBucketMinutes, 'UsageDataset.baseBucketMinutes', minimum: 1);
+    return UsageDataset._(
+      id: validatedId,
+      displayName: validatedDisplayName,
+      scope: validatedScope,
+      metrics: validatedMetrics,
+      timeBuckets: validatedTimeBuckets,
+      modelFilter: validatedModelFilter,
+      modelGrouping: validatedModelGrouping,
+      timeZones: validatedTimeZones,
+      baseBucketMinutes: validatedBaseBucketMinutes,
+    );
+  }
+
+  UsageDataset._({
+    required this.id,
+    required this.displayName,
+    required this.scope,
+    required this.metrics,
+    required this.timeBuckets,
+    required this.modelFilter,
+    required this.modelGrouping,
+    required this.timeZones,
+    required this.baseBucketMinutes,
+  });
+
+  final String id;
+  final String displayName;
+  final UsageDatasetScope scope;
+  final List<UsageMetric> metrics;
+  final List<UsageTimeBucket> timeBuckets;
+  final bool modelFilter;
+  final bool modelGrouping;
+  final List<String> timeZones;
+  final UsageBucketMinutes? baseBucketMinutes;
+
+  factory UsageDataset.fromJson(Object? value, {String path = 'UsageDataset'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'id', 'displayName', 'scope', 'metrics', 'timeBuckets', 'modelFilter', 'modelGrouping', 'timeZones', 'baseBucketMinutes'}, path);
+    return UsageDataset(
+      id: _string(_required(json, 'id', path), '$path.id', minLength: 1),
+      displayName: _string(_required(json, 'displayName', path), '$path.displayName', minLength: 1),
+      scope: UsageDatasetScope.fromJson(_required(json, 'scope', path), path: '$path.scope'),
+      metrics: _decodeList<UsageMetric>(_required(json, 'metrics', path), '$path.metrics', (item, itemPath) => UsageMetric.fromJson(item, path: itemPath), uniqueItems: true, encodeItem: (item) => item.toJson()),
+      timeBuckets: _decodeList<UsageTimeBucket>(_required(json, 'timeBuckets', path), '$path.timeBuckets', (item, itemPath) => UsageTimeBucket.fromJson(item, path: itemPath), uniqueItems: true, encodeItem: (item) => item.toJson()),
+      modelFilter: _boolean(_required(json, 'modelFilter', path), '$path.modelFilter'),
+      modelGrouping: _boolean(_required(json, 'modelGrouping', path), '$path.modelGrouping'),
+      timeZones: _decodeList<String>(_required(json, 'timeZones', path), '$path.timeZones', (item, itemPath) => _string(item, itemPath, minLength: 1), uniqueItems: true, encodeItem: (item) => item),
+      baseBucketMinutes: _required(json, 'baseBucketMinutes', path) == null ? null : _integer(_required(json, 'baseBucketMinutes', path), '$path.baseBucketMinutes', minimum: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'displayName': displayName,
+    'scope': scope.toJson(),
+    'metrics': metrics.map((item) => item.toJson()).toList(growable: false),
+    'timeBuckets': timeBuckets.map((item) => item.toJson()).toList(growable: false),
+    'modelFilter': modelFilter,
+    'modelGrouping': modelGrouping,
+    'timeZones': timeZones.map((item) => item).toList(growable: false),
+    'baseBucketMinutes': baseBucketMinutes == null ? null : baseBucketMinutes!,
+  };
+
+  @override
+  String toString() => 'UsageDataset(id: $id, displayName: $displayName, scope: $scope, metrics: $metrics, timeBuckets: $timeBuckets, modelFilter: $modelFilter, modelGrouping: $modelGrouping, timeZones: $timeZones, baseBucketMinutes: $baseBucketMinutes)';
+}
+
+enum UsageDatasetScope {
+  account('account'),
+  local('local');
+
+  const UsageDatasetScope(this.wireValue);
+
+  final String wireValue;
+
+  static UsageDatasetScope fromJson(Object? value, {String path = 'UsageDatasetScope'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: account, local');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class UsageFilter {
+  factory UsageFilter({
+    required UsageTimeFilter time,
+    List<String>? modelIds,
+    bool? includeUnknownModel,
+  }) {
+    final validatedTime = time;
+    final validatedModelIds = modelIds == null ? null : _freezeList<String>(modelIds, 'UsageFilter.modelIds', (item, itemPath) => _string(item, itemPath, minLength: 1), uniqueItems: true, encodeItem: (item) => item);
+    final validatedIncludeUnknownModel = includeUnknownModel == null ? null : includeUnknownModel;
+    return UsageFilter._(
+      time: validatedTime,
+      modelIds: validatedModelIds,
+      includeUnknownModel: validatedIncludeUnknownModel,
+    );
+  }
+
+  UsageFilter._({
+    required this.time,
+    required this.modelIds,
+    required this.includeUnknownModel,
+  });
+
+  final UsageTimeFilter time;
+  final List<String>? modelIds;
+  final bool? includeUnknownModel;
+
+  factory UsageFilter.fromJson(Object? value, {String path = 'UsageFilter'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'time', 'modelIds', 'includeUnknownModel'}, path);
+    return UsageFilter(
+      time: UsageTimeFilter.fromJson(_required(json, 'time', path), path: '$path.time'),
+      modelIds: json.containsKey('modelIds') && json['modelIds'] != null ? _decodeList<String>(json['modelIds'], '$path.modelIds', (item, itemPath) => _string(item, itemPath, minLength: 1), uniqueItems: true, encodeItem: (item) => item) : null,
+      includeUnknownModel: json.containsKey('includeUnknownModel') && json['includeUnknownModel'] != null ? _boolean(json['includeUnknownModel'], '$path.includeUnknownModel') : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'time': time.toJson(),
+    if (modelIds != null) 'modelIds': modelIds!.map((item) => item).toList(growable: false),
+    if (includeUnknownModel != null) 'includeUnknownModel': includeUnknownModel!,
+  };
+
+  @override
+  String toString() => 'UsageFilter(time: $time, modelIds: $modelIds, includeUnknownModel: $includeUnknownModel)';
+}
+
+final class UsageGroupPeak {
+  factory UsageGroupPeak({
+    required UsageText? modelId,
+    required UsageDailyPeak? peak,
+  }) {
+    final validatedModelId = modelId == null ? null : _string(modelId, 'UsageGroupPeak.modelId');
+    final validatedPeak = peak == null ? null : peak;
+    return UsageGroupPeak._(
+      modelId: validatedModelId,
+      peak: validatedPeak,
+    );
+  }
+
+  UsageGroupPeak._({
+    required this.modelId,
+    required this.peak,
+  });
+
+  final UsageText? modelId;
+  final UsageDailyPeak? peak;
+
+  factory UsageGroupPeak.fromJson(Object? value, {String path = 'UsageGroupPeak'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'modelId', 'peak'}, path);
+    return UsageGroupPeak(
+      modelId: _required(json, 'modelId', path) == null ? null : _string(_required(json, 'modelId', path), '$path.modelId'),
+      peak: _required(json, 'peak', path) == null ? null : UsageDailyPeak.fromJson(_required(json, 'peak', path), path: '$path.peak'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'modelId': modelId == null ? null : modelId!,
+    'peak': peak == null ? null : peak!.toJson(),
+  };
+
+  @override
+  String toString() => 'UsageGroupPeak(modelId: $modelId, peak: $peak)';
+}
+
+final class UsageGroupTotal {
+  factory UsageGroupTotal({
+    required UsageText? modelId,
+    required UsageValues values,
+  }) {
+    final validatedModelId = modelId == null ? null : _string(modelId, 'UsageGroupTotal.modelId');
+    final validatedValues = values;
+    return UsageGroupTotal._(
+      modelId: validatedModelId,
+      values: validatedValues,
+    );
+  }
+
+  UsageGroupTotal._({
+    required this.modelId,
+    required this.values,
+  });
+
+  final UsageText? modelId;
+  final UsageValues values;
+
+  factory UsageGroupTotal.fromJson(Object? value, {String path = 'UsageGroupTotal'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'modelId', 'values'}, path);
+    return UsageGroupTotal(
+      modelId: _required(json, 'modelId', path) == null ? null : _string(_required(json, 'modelId', path), '$path.modelId'),
+      values: UsageValues.fromJson(_required(json, 'values', path), path: '$path.values'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'modelId': modelId == null ? null : modelId!,
+    'values': values.toJson(),
+  };
+
+  @override
+  String toString() => 'UsageGroupTotal(modelId: $modelId, values: $values)';
+}
+
+enum UsageMetric {
+  totalTokens('totalTokens'),
+  inputTokens('inputTokens'),
+  outputTokens('outputTokens'),
+  cacheReadTokens('cacheReadTokens'),
+  cacheWriteTokens('cacheWriteTokens');
+
+  const UsageMetric(this.wireValue);
+
+  final String wireValue;
+
+  static UsageMetric fromJson(Object? value, {String path = 'UsageMetric'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: totalTokens, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class UsageMetricValue {
+  factory UsageMetricValue({
+    required UsageTokenCount? value,
+    required UsageCompleteness completeness,
+  }) {
+    final validatedValue = value == null ? null : _integer(value, 'UsageMetricValue.value', minimum: 0, maximum: 9007199254740991);
+    final validatedCompleteness = completeness;
+    return UsageMetricValue._(
+      value: validatedValue,
+      completeness: validatedCompleteness,
+    );
+  }
+
+  UsageMetricValue._({
+    required this.value,
+    required this.completeness,
+  });
+
+  final UsageTokenCount? value;
+  final UsageCompleteness completeness;
+
+  factory UsageMetricValue.fromJson(Object? value, {String path = 'UsageMetricValue'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'value', 'completeness'}, path);
+    return UsageMetricValue(
+      value: _required(json, 'value', path) == null ? null : _integer(_required(json, 'value', path), '$path.value', minimum: 0, maximum: 9007199254740991),
+      completeness: UsageCompleteness.fromJson(_required(json, 'completeness', path), path: '$path.completeness'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'value': value == null ? null : value!,
+    'completeness': completeness.toJson(),
+  };
+
+  @override
+  String toString() => 'UsageMetricValue(value: $value, completeness: $completeness)';
+}
+
+final class UsageNativeAccountSummary {
+  factory UsageNativeAccountSummary({
+    required UsageTokenCount? lifetimeTokens,
+    required UsageTokenCount? peakDailyTokens,
+    required UsageTokenCount? longestRunningTurnSec,
+    required UsageTokenCount? currentStreakDays,
+    required UsageTokenCount? longestStreakDays,
+  }) {
+    final validatedLifetimeTokens = lifetimeTokens == null ? null : _integer(lifetimeTokens, 'UsageNativeAccountSummary.lifetimeTokens', minimum: 0, maximum: 9007199254740991);
+    final validatedPeakDailyTokens = peakDailyTokens == null ? null : _integer(peakDailyTokens, 'UsageNativeAccountSummary.peakDailyTokens', minimum: 0, maximum: 9007199254740991);
+    final validatedLongestRunningTurnSec = longestRunningTurnSec == null ? null : _integer(longestRunningTurnSec, 'UsageNativeAccountSummary.longestRunningTurnSec', minimum: 0, maximum: 9007199254740991);
+    final validatedCurrentStreakDays = currentStreakDays == null ? null : _integer(currentStreakDays, 'UsageNativeAccountSummary.currentStreakDays', minimum: 0, maximum: 9007199254740991);
+    final validatedLongestStreakDays = longestStreakDays == null ? null : _integer(longestStreakDays, 'UsageNativeAccountSummary.longestStreakDays', minimum: 0, maximum: 9007199254740991);
+    return UsageNativeAccountSummary._(
+      lifetimeTokens: validatedLifetimeTokens,
+      peakDailyTokens: validatedPeakDailyTokens,
+      longestRunningTurnSec: validatedLongestRunningTurnSec,
+      currentStreakDays: validatedCurrentStreakDays,
+      longestStreakDays: validatedLongestStreakDays,
+    );
+  }
+
+  UsageNativeAccountSummary._({
+    required this.lifetimeTokens,
+    required this.peakDailyTokens,
+    required this.longestRunningTurnSec,
+    required this.currentStreakDays,
+    required this.longestStreakDays,
+  });
+
+  final UsageTokenCount? lifetimeTokens;
+  final UsageTokenCount? peakDailyTokens;
+  final UsageTokenCount? longestRunningTurnSec;
+  final UsageTokenCount? currentStreakDays;
+  final UsageTokenCount? longestStreakDays;
+
+  factory UsageNativeAccountSummary.fromJson(Object? value, {String path = 'UsageNativeAccountSummary'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'lifetimeTokens', 'peakDailyTokens', 'longestRunningTurnSec', 'currentStreakDays', 'longestStreakDays'}, path);
+    return UsageNativeAccountSummary(
+      lifetimeTokens: _required(json, 'lifetimeTokens', path) == null ? null : _integer(_required(json, 'lifetimeTokens', path), '$path.lifetimeTokens', minimum: 0, maximum: 9007199254740991),
+      peakDailyTokens: _required(json, 'peakDailyTokens', path) == null ? null : _integer(_required(json, 'peakDailyTokens', path), '$path.peakDailyTokens', minimum: 0, maximum: 9007199254740991),
+      longestRunningTurnSec: _required(json, 'longestRunningTurnSec', path) == null ? null : _integer(_required(json, 'longestRunningTurnSec', path), '$path.longestRunningTurnSec', minimum: 0, maximum: 9007199254740991),
+      currentStreakDays: _required(json, 'currentStreakDays', path) == null ? null : _integer(_required(json, 'currentStreakDays', path), '$path.currentStreakDays', minimum: 0, maximum: 9007199254740991),
+      longestStreakDays: _required(json, 'longestStreakDays', path) == null ? null : _integer(_required(json, 'longestStreakDays', path), '$path.longestStreakDays', minimum: 0, maximum: 9007199254740991),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'lifetimeTokens': lifetimeTokens == null ? null : lifetimeTokens!,
+    'peakDailyTokens': peakDailyTokens == null ? null : peakDailyTokens!,
+    'longestRunningTurnSec': longestRunningTurnSec == null ? null : longestRunningTurnSec!,
+    'currentStreakDays': currentStreakDays == null ? null : currentStreakDays!,
+    'longestStreakDays': longestStreakDays == null ? null : longestStreakDays!,
+  };
+
+  @override
+  String toString() => 'UsageNativeAccountSummary(lifetimeTokens: $lifetimeTokens, peakDailyTokens: $peakDailyTokens, longestRunningTurnSec: $longestRunningTurnSec, currentStreakDays: $currentStreakDays, longestStreakDays: $longestStreakDays)';
+}
+
+final class UsageOrder {
+  factory UsageOrder({
+    required UsageOrderField field,
+    required UsageOrderDirection direction,
+  }) {
+    final validatedField = field;
+    final validatedDirection = direction;
+    return UsageOrder._(
+      field: validatedField,
+      direction: validatedDirection,
+    );
+  }
+
+  UsageOrder._({
+    required this.field,
+    required this.direction,
+  });
+
+  final UsageOrderField field;
+  final UsageOrderDirection direction;
+
+  factory UsageOrder.fromJson(Object? value, {String path = 'UsageOrder'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'field', 'direction'}, path);
+    return UsageOrder(
+      field: UsageOrderField.fromJson(_required(json, 'field', path), path: '$path.field'),
+      direction: UsageOrderDirection.fromJson(_required(json, 'direction', path), path: '$path.direction'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'field': field.toJson(),
+    'direction': direction.toJson(),
+  };
+
+  @override
+  String toString() => 'UsageOrder(field: $field, direction: $direction)';
+}
+
+enum UsageOrderDirection {
+  asc('asc'),
+  desc('desc');
+
+  const UsageOrderDirection(this.wireValue);
+
+  final String wireValue;
+
+  static UsageOrderDirection fromJson(Object? value, {String path = 'UsageOrderDirection'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: asc, desc');
+  }
+
+  String toJson() => wireValue;
+}
+
+enum UsageOrderField {
+  bucketStart('bucketStart'),
+  modelId('modelId'),
+  totalTokens('totalTokens'),
+  inputTokens('inputTokens'),
+  outputTokens('outputTokens'),
+  cacheReadTokens('cacheReadTokens'),
+  cacheWriteTokens('cacheWriteTokens');
+
+  const UsageOrderField(this.wireValue);
+
+  final String wireValue;
+
+  static UsageOrderField fromJson(Object? value, {String path = 'UsageOrderField'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: bucketStart, modelId, totalTokens, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class UsagePage {
+  factory UsagePage({
+    int? limit,
+    String? cursor,
+  }) {
+    final validatedLimit = limit == null ? null : _integer(limit, 'UsagePage.limit', minimum: 1, maximum: 1000);
+    final validatedCursor = cursor == null ? null : _string(cursor, 'UsagePage.cursor', minLength: 1);
+    return UsagePage._(
+      limit: validatedLimit,
+      cursor: validatedCursor,
+    );
+  }
+
+  UsagePage._({
+    required this.limit,
+    required this.cursor,
+  });
+
+  final int? limit;
+  final String? cursor;
+
+  factory UsagePage.fromJson(Object? value, {String path = 'UsagePage'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'limit', 'cursor'}, path);
+    return UsagePage(
+      limit: json.containsKey('limit') && json['limit'] != null ? _integer(json['limit'], '$path.limit', minimum: 1, maximum: 1000) : null,
+      cursor: json.containsKey('cursor') && json['cursor'] != null ? _string(json['cursor'], '$path.cursor', minLength: 1) : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    if (limit != null) 'limit': limit!,
+    if (cursor != null) 'cursor': cursor!,
+  };
+
+  @override
+  String toString() => 'UsagePage(limit: $limit, cursor: $cursor)';
+}
+
+final class UsageQuery {
+  factory UsageQuery({
+    required String datasetId,
+    required UsageFilter filter,
+    required UsageAggregation aggregation,
+    required List<UsageMetric> metrics,
+    List<UsageQuerySummariesItems>? summaries,
+    List<UsageOrder>? orderBy,
+    UsagePage? page,
+  }) {
+    final validatedDatasetId = _string(datasetId, 'UsageQuery.datasetId', minLength: 1);
+    final validatedFilter = filter;
+    final validatedAggregation = aggregation;
+    final validatedMetrics = _freezeList<UsageMetric>(metrics, 'UsageQuery.metrics', (item, itemPath) => item, minItems: 1, uniqueItems: true, encodeItem: (item) => item.toJson());
+    final validatedSummaries = summaries == null ? null : _freezeList<UsageQuerySummariesItems>(summaries, 'UsageQuery.summaries', (item, itemPath) => item, uniqueItems: true, encodeItem: (item) => item.toJson());
+    final validatedOrderBy = orderBy == null ? null : _freezeList<UsageOrder>(orderBy, 'UsageQuery.orderBy', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedPage = page == null ? null : page;
+    return UsageQuery._(
+      datasetId: validatedDatasetId,
+      filter: validatedFilter,
+      aggregation: validatedAggregation,
+      metrics: validatedMetrics,
+      summaries: validatedSummaries,
+      orderBy: validatedOrderBy,
+      page: validatedPage,
+    );
+  }
+
+  UsageQuery._({
+    required this.datasetId,
+    required this.filter,
+    required this.aggregation,
+    required this.metrics,
+    required this.summaries,
+    required this.orderBy,
+    required this.page,
+  });
+
+  final String datasetId;
+  final UsageFilter filter;
+  final UsageAggregation aggregation;
+  final List<UsageMetric> metrics;
+  final List<UsageQuerySummariesItems>? summaries;
+  final List<UsageOrder>? orderBy;
+  final UsagePage? page;
+
+  factory UsageQuery.fromJson(Object? value, {String path = 'UsageQuery'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'datasetId', 'filter', 'aggregation', 'metrics', 'summaries', 'orderBy', 'page'}, path);
+    return UsageQuery(
+      datasetId: _string(_required(json, 'datasetId', path), '$path.datasetId', minLength: 1),
+      filter: UsageFilter.fromJson(_required(json, 'filter', path), path: '$path.filter'),
+      aggregation: UsageAggregation.fromJson(_required(json, 'aggregation', path), path: '$path.aggregation'),
+      metrics: _decodeList<UsageMetric>(_required(json, 'metrics', path), '$path.metrics', (item, itemPath) => UsageMetric.fromJson(item, path: itemPath), minItems: 1, uniqueItems: true, encodeItem: (item) => item.toJson()),
+      summaries: json.containsKey('summaries') && json['summaries'] != null ? _decodeList<UsageQuerySummariesItems>(json['summaries'], '$path.summaries', (item, itemPath) => UsageQuerySummariesItems.fromJson(item, path: itemPath), uniqueItems: true, encodeItem: (item) => item.toJson()) : null,
+      orderBy: json.containsKey('orderBy') && json['orderBy'] != null ? _decodeList<UsageOrder>(json['orderBy'], '$path.orderBy', (item, itemPath) => UsageOrder.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()) : null,
+      page: json.containsKey('page') && json['page'] != null ? UsagePage.fromJson(json['page'], path: '$path.page') : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'datasetId': datasetId,
+    'filter': filter.toJson(),
+    'aggregation': aggregation.toJson(),
+    'metrics': metrics.map((item) => item.toJson()).toList(growable: false),
+    if (summaries != null) 'summaries': summaries!.map((item) => item.toJson()).toList(growable: false),
+    if (orderBy != null) 'orderBy': orderBy!.map((item) => item.toJson()).toList(growable: false),
+    if (page != null) 'page': page!.toJson(),
+  };
+
+  @override
+  String toString() => 'UsageQuery(datasetId: $datasetId, filter: $filter, aggregation: $aggregation, metrics: $metrics, summaries: $summaries, orderBy: $orderBy, page: $page)';
+}
+
+final class UsageQueryResult {
+  factory UsageQueryResult({
+    required String datasetId,
+    required String revision,
+    required String generatedAt,
+    required UsageText? updatedAt,
+    required UsageCoverage coverage,
+    required List<UsageRow> rows,
+    UsageSummaries? summaries,
+    required UsageText? nextCursor,
+    UsageNativeAccountSummary? nativeAccountSummary,
+  }) {
+    final validatedDatasetId = _string(datasetId, 'UsageQueryResult.datasetId', minLength: 1);
+    final validatedRevision = _string(revision, 'UsageQueryResult.revision', minLength: 1);
+    final validatedGeneratedAt = _string(generatedAt, 'UsageQueryResult.generatedAt', pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})\$');
+    final validatedUpdatedAt = updatedAt == null ? null : _string(updatedAt, 'UsageQueryResult.updatedAt');
+    final validatedCoverage = coverage;
+    final validatedRows = _freezeList<UsageRow>(rows, 'UsageQueryResult.rows', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedSummaries = summaries == null ? null : summaries;
+    final validatedNextCursor = nextCursor == null ? null : _string(nextCursor, 'UsageQueryResult.nextCursor');
+    final validatedNativeAccountSummary = nativeAccountSummary == null ? null : nativeAccountSummary;
+    return UsageQueryResult._(
+      datasetId: validatedDatasetId,
+      revision: validatedRevision,
+      generatedAt: validatedGeneratedAt,
+      updatedAt: validatedUpdatedAt,
+      coverage: validatedCoverage,
+      rows: validatedRows,
+      summaries: validatedSummaries,
+      nextCursor: validatedNextCursor,
+      nativeAccountSummary: validatedNativeAccountSummary,
+    );
+  }
+
+  UsageQueryResult._({
+    required this.datasetId,
+    required this.revision,
+    required this.generatedAt,
+    required this.updatedAt,
+    required this.coverage,
+    required this.rows,
+    required this.summaries,
+    required this.nextCursor,
+    required this.nativeAccountSummary,
+  });
+
+  final String datasetId;
+  final String revision;
+  final String generatedAt;
+  final UsageText? updatedAt;
+  final UsageCoverage coverage;
+  final List<UsageRow> rows;
+  final UsageSummaries? summaries;
+  final UsageText? nextCursor;
+  final UsageNativeAccountSummary? nativeAccountSummary;
+
+  factory UsageQueryResult.fromJson(Object? value, {String path = 'UsageQueryResult'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'datasetId', 'revision', 'generatedAt', 'updatedAt', 'coverage', 'rows', 'summaries', 'nextCursor', 'nativeAccountSummary'}, path);
+    return UsageQueryResult(
+      datasetId: _string(_required(json, 'datasetId', path), '$path.datasetId', minLength: 1),
+      revision: _string(_required(json, 'revision', path), '$path.revision', minLength: 1),
+      generatedAt: _string(_required(json, 'generatedAt', path), '$path.generatedAt', pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})\$'),
+      updatedAt: _required(json, 'updatedAt', path) == null ? null : _string(_required(json, 'updatedAt', path), '$path.updatedAt'),
+      coverage: UsageCoverage.fromJson(_required(json, 'coverage', path), path: '$path.coverage'),
+      rows: _decodeList<UsageRow>(_required(json, 'rows', path), '$path.rows', (item, itemPath) => UsageRow.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+      summaries: json.containsKey('summaries') && json['summaries'] != null ? UsageSummaries.fromJson(json['summaries'], path: '$path.summaries') : null,
+      nextCursor: _required(json, 'nextCursor', path) == null ? null : _string(_required(json, 'nextCursor', path), '$path.nextCursor'),
+      nativeAccountSummary: json.containsKey('nativeAccountSummary') && json['nativeAccountSummary'] != null ? UsageNativeAccountSummary.fromJson(json['nativeAccountSummary'], path: '$path.nativeAccountSummary') : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'datasetId': datasetId,
+    'revision': revision,
+    'generatedAt': generatedAt,
+    'updatedAt': updatedAt == null ? null : updatedAt!,
+    'coverage': coverage.toJson(),
+    'rows': rows.map((item) => item.toJson()).toList(growable: false),
+    if (summaries != null) 'summaries': summaries!.toJson(),
+    'nextCursor': nextCursor == null ? null : nextCursor!,
+    if (nativeAccountSummary != null) 'nativeAccountSummary': nativeAccountSummary!.toJson(),
+  };
+
+  @override
+  String toString() => 'UsageQueryResult(datasetId: $datasetId, revision: $revision, generatedAt: $generatedAt, updatedAt: $updatedAt, coverage: $coverage, rows: $rows, summaries: $summaries, nextCursor: $nextCursor, nativeAccountSummary: $nativeAccountSummary)';
+}
+
+enum UsageQuerySummariesItems {
+  totals('totals'),
+  peakDaily('peakDaily'),
+  totalsByGroup('totalsByGroup'),
+  peakDailyByGroup('peakDailyByGroup');
+
+  const UsageQuerySummariesItems(this.wireValue);
+
+  final String wireValue;
+
+  static UsageQuerySummariesItems fromJson(Object? value, {String path = 'UsageQuerySummariesItems'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: totals, peakDaily, totalsByGroup, peakDailyByGroup');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class UsageRow {
+  factory UsageRow({
+    required UsageTimeRange? bucket,
+    UsageText? modelId,
+    required UsageValues values,
+    required UsageCompleteness completeness,
+    required bool provisional,
+  }) {
+    final validatedBucket = bucket == null ? null : bucket;
+    final validatedModelId = modelId == null ? null : modelId == null ? null : _string(modelId, 'UsageRow.modelId');
+    final validatedValues = values;
+    final validatedCompleteness = completeness;
+    final validatedProvisional = provisional;
+    return UsageRow._(
+      bucket: validatedBucket,
+      modelId: validatedModelId,
+      values: validatedValues,
+      completeness: validatedCompleteness,
+      provisional: validatedProvisional,
+    );
+  }
+
+  UsageRow._({
+    required this.bucket,
+    required this.modelId,
+    required this.values,
+    required this.completeness,
+    required this.provisional,
+  });
+
+  final UsageTimeRange? bucket;
+  final UsageText? modelId;
+  final UsageValues values;
+  final UsageCompleteness completeness;
+  final bool provisional;
+
+  factory UsageRow.fromJson(Object? value, {String path = 'UsageRow'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'bucket', 'modelId', 'values', 'completeness', 'provisional'}, path);
+    return UsageRow(
+      bucket: _required(json, 'bucket', path) == null ? null : UsageTimeRange.fromJson(_required(json, 'bucket', path), path: '$path.bucket'),
+      modelId: json.containsKey('modelId') && json['modelId'] != null ? json['modelId'] == null ? null : _string(json['modelId'], '$path.modelId') : null,
+      values: UsageValues.fromJson(_required(json, 'values', path), path: '$path.values'),
+      completeness: UsageCompleteness.fromJson(_required(json, 'completeness', path), path: '$path.completeness'),
+      provisional: _boolean(_required(json, 'provisional', path), '$path.provisional'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'bucket': bucket == null ? null : bucket!.toJson(),
+    if (modelId != null) 'modelId': modelId! == null ? null : modelId!!,
+    'values': values.toJson(),
+    'completeness': completeness.toJson(),
+    'provisional': provisional,
+  };
+
+  @override
+  String toString() => 'UsageRow(bucket: $bucket, modelId: $modelId, values: $values, completeness: $completeness, provisional: $provisional)';
+}
+
+final class UsageSummaries {
+  factory UsageSummaries({
+    UsageValues? totals,
+    UsageDailyPeak? peakDaily,
+    List<UsageGroupTotal>? totalsByGroup,
+    List<UsageGroupPeak>? peakDailyByGroup,
+  }) {
+    final validatedTotals = totals == null ? null : totals;
+    final validatedPeakDaily = peakDaily == null ? null : peakDaily == null ? null : peakDaily;
+    final validatedTotalsByGroup = totalsByGroup == null ? null : _freezeList<UsageGroupTotal>(totalsByGroup, 'UsageSummaries.totalsByGroup', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedPeakDailyByGroup = peakDailyByGroup == null ? null : _freezeList<UsageGroupPeak>(peakDailyByGroup, 'UsageSummaries.peakDailyByGroup', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    return UsageSummaries._(
+      totals: validatedTotals,
+      peakDaily: validatedPeakDaily,
+      totalsByGroup: validatedTotalsByGroup,
+      peakDailyByGroup: validatedPeakDailyByGroup,
+    );
+  }
+
+  UsageSummaries._({
+    required this.totals,
+    required this.peakDaily,
+    required this.totalsByGroup,
+    required this.peakDailyByGroup,
+  });
+
+  final UsageValues? totals;
+  final UsageDailyPeak? peakDaily;
+  final List<UsageGroupTotal>? totalsByGroup;
+  final List<UsageGroupPeak>? peakDailyByGroup;
+
+  factory UsageSummaries.fromJson(Object? value, {String path = 'UsageSummaries'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'totals', 'peakDaily', 'totalsByGroup', 'peakDailyByGroup'}, path);
+    return UsageSummaries(
+      totals: json.containsKey('totals') && json['totals'] != null ? UsageValues.fromJson(json['totals'], path: '$path.totals') : null,
+      peakDaily: json.containsKey('peakDaily') && json['peakDaily'] != null ? json['peakDaily'] == null ? null : UsageDailyPeak.fromJson(json['peakDaily'], path: '$path.peakDaily') : null,
+      totalsByGroup: json.containsKey('totalsByGroup') && json['totalsByGroup'] != null ? _decodeList<UsageGroupTotal>(json['totalsByGroup'], '$path.totalsByGroup', (item, itemPath) => UsageGroupTotal.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()) : null,
+      peakDailyByGroup: json.containsKey('peakDailyByGroup') && json['peakDailyByGroup'] != null ? _decodeList<UsageGroupPeak>(json['peakDailyByGroup'], '$path.peakDailyByGroup', (item, itemPath) => UsageGroupPeak.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()) : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    if (totals != null) 'totals': totals!.toJson(),
+    if (peakDaily != null) 'peakDaily': peakDaily! == null ? null : peakDaily!!.toJson(),
+    if (totalsByGroup != null) 'totalsByGroup': totalsByGroup!.map((item) => item.toJson()).toList(growable: false),
+    if (peakDailyByGroup != null) 'peakDailyByGroup': peakDailyByGroup!.map((item) => item.toJson()).toList(growable: false),
+  };
+
+  @override
+  String toString() => 'UsageSummaries(totals: $totals, peakDaily: $peakDaily, totalsByGroup: $totalsByGroup, peakDailyByGroup: $peakDailyByGroup)';
+}
+
+typedef UsageText = String;
+
+UsageText decodeUsageText(Object? value, {String path = 'UsageText'}) => _string(value, path);
+Object? encodeUsageText(UsageText value, {String path = 'UsageText'}) {
+  final checked = _string(value, path);
+  return checked;
+}
+
+enum UsageTimeBucket {
+  none('none'),
+  halfHour('halfHour'),
+  hour('hour'),
+  day('day'),
+  month('month');
+
+  const UsageTimeBucket(this.wireValue);
+
+  final String wireValue;
+
+  static UsageTimeBucket fromJson(Object? value, {String path = 'UsageTimeBucket'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: none, halfHour, hour, day, month');
+  }
+
+  String toJson() => wireValue;
+}
+
+sealed class UsageTimeFilter {
+  const UsageTimeFilter();
+
+  factory UsageTimeFilter.fromJson(Object? value, {String path = 'UsageTimeFilter'}) {
+    final json = _object(value, path);
+    final discriminator = _required(json, 'kind', path);
+    switch (discriminator) {
+      case 'all':
+        return UsageAllTime.fromJson(json, path: path);
+      case 'range':
+        return UsageBoundedTime.fromJson(json, path: path);
+      default:
+        throw ProtocolCodecException('$path.kind', 'unknown UsageTimeFilter discriminator: $discriminator');
+    }
+  }
+
+  Map<String, Object?> toJson();
+}
+
+final class UsageTimeRange {
+  factory UsageTimeRange({
+    required String from,
+    required String to,
+  }) {
+    final validatedFrom = _string(from, 'UsageTimeRange.from', pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})\$');
+    final validatedTo = _string(to, 'UsageTimeRange.to', pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})\$');
+    return UsageTimeRange._(
+      from: validatedFrom,
+      to: validatedTo,
+    );
+  }
+
+  UsageTimeRange._({
+    required this.from,
+    required this.to,
+  });
+
+  final String from;
+  final String to;
+
+  factory UsageTimeRange.fromJson(Object? value, {String path = 'UsageTimeRange'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'from', 'to'}, path);
+    return UsageTimeRange(
+      from: _string(_required(json, 'from', path), '$path.from', pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})\$'),
+      to: _string(_required(json, 'to', path), '$path.to', pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})\$'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'from': from,
+    'to': to,
+  };
+
+  @override
+  String toString() => 'UsageTimeRange(from: $from, to: $to)';
+}
+
+typedef UsageTokenCount = int;
+
+UsageTokenCount decodeUsageTokenCount(Object? value, {String path = 'UsageTokenCount'}) => _integer(value, path, minimum: 0, maximum: 9007199254740991);
+Object? encodeUsageTokenCount(UsageTokenCount value, {String path = 'UsageTokenCount'}) {
+  final checked = _integer(value, path, minimum: 0, maximum: 9007199254740991);
+  return checked;
+}
+
+final class UsageValues {
+  factory UsageValues({
+    UsageMetricValue? totalTokens,
+    UsageMetricValue? inputTokens,
+    UsageMetricValue? outputTokens,
+    UsageMetricValue? cacheReadTokens,
+    UsageMetricValue? cacheWriteTokens,
+  }) {
+    final validatedTotalTokens = totalTokens == null ? null : totalTokens;
+    final validatedInputTokens = inputTokens == null ? null : inputTokens;
+    final validatedOutputTokens = outputTokens == null ? null : outputTokens;
+    final validatedCacheReadTokens = cacheReadTokens == null ? null : cacheReadTokens;
+    final validatedCacheWriteTokens = cacheWriteTokens == null ? null : cacheWriteTokens;
+    return UsageValues._(
+      totalTokens: validatedTotalTokens,
+      inputTokens: validatedInputTokens,
+      outputTokens: validatedOutputTokens,
+      cacheReadTokens: validatedCacheReadTokens,
+      cacheWriteTokens: validatedCacheWriteTokens,
+    );
+  }
+
+  UsageValues._({
+    required this.totalTokens,
+    required this.inputTokens,
+    required this.outputTokens,
+    required this.cacheReadTokens,
+    required this.cacheWriteTokens,
+  });
+
+  final UsageMetricValue? totalTokens;
+  final UsageMetricValue? inputTokens;
+  final UsageMetricValue? outputTokens;
+  final UsageMetricValue? cacheReadTokens;
+  final UsageMetricValue? cacheWriteTokens;
+
+  factory UsageValues.fromJson(Object? value, {String path = 'UsageValues'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'totalTokens', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'}, path);
+    return UsageValues(
+      totalTokens: json.containsKey('totalTokens') && json['totalTokens'] != null ? UsageMetricValue.fromJson(json['totalTokens'], path: '$path.totalTokens') : null,
+      inputTokens: json.containsKey('inputTokens') && json['inputTokens'] != null ? UsageMetricValue.fromJson(json['inputTokens'], path: '$path.inputTokens') : null,
+      outputTokens: json.containsKey('outputTokens') && json['outputTokens'] != null ? UsageMetricValue.fromJson(json['outputTokens'], path: '$path.outputTokens') : null,
+      cacheReadTokens: json.containsKey('cacheReadTokens') && json['cacheReadTokens'] != null ? UsageMetricValue.fromJson(json['cacheReadTokens'], path: '$path.cacheReadTokens') : null,
+      cacheWriteTokens: json.containsKey('cacheWriteTokens') && json['cacheWriteTokens'] != null ? UsageMetricValue.fromJson(json['cacheWriteTokens'], path: '$path.cacheWriteTokens') : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    if (totalTokens != null) 'totalTokens': totalTokens!.toJson(),
+    if (inputTokens != null) 'inputTokens': inputTokens!.toJson(),
+    if (outputTokens != null) 'outputTokens': outputTokens!.toJson(),
+    if (cacheReadTokens != null) 'cacheReadTokens': cacheReadTokens!.toJson(),
+    if (cacheWriteTokens != null) 'cacheWriteTokens': cacheWriteTokens!.toJson(),
+  };
+
+  @override
+  String toString() => 'UsageValues(totalTokens: $totalTokens, inputTokens: $inputTokens, outputTokens: $outputTokens, cacheReadTokens: $cacheReadTokens, cacheWriteTokens: $cacheWriteTokens)';
 }

@@ -11,7 +11,7 @@ async fn native_history_snapshot_is_readable() {
     let data = std::env::var("CODEPET_OPENCODE_HISTORY_SNAPSHOT").unwrap();
     let provider = OpenCodeProvider::new(Arc::new(|_| Ok(())));
     provider
-        .provider_initialize(ProviderInitializeRequest {
+        .provider_initialize(ProviderInitializeRequest { directories: None,
             host_client_id: "history-diagnostic".into(),
             host_device_id: "history-diagnostic".into(),
             host_version: "test".into(),

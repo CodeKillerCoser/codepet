@@ -66,7 +66,7 @@ impl ProtocolServer for Fixture {
     }
 }
 fn init(text: String) -> ProviderInitializeRequest {
-    ProviderInitializeRequest { host_client_id: "bench".into(), host_device_id: "bench".into(), host_version: text,
+    ProviderInitializeRequest { directories: None, host_client_id: "bench".into(), host_device_id: "bench".into(), host_version: text,
         supported_versions: VersionRange { min_version: 1, max_version: 1 } }
 }
 async fn provider() {

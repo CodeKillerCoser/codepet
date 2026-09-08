@@ -1,5 +1,5 @@
 use super::*;
-use codepet_provider_sdk::conversation_atoms::SummaryPublication::{Applied, Retry, Stop};
+use codepet_provider_data::conversation_atoms::SummaryPublication::{Applied, Retry, Stop};
 
 impl ClaudeInstanceRuntime {
     pub(super) fn start_atomic_poll(self: &Arc<Self>) {

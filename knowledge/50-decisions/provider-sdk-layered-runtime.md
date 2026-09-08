@@ -76,3 +76,7 @@ cargo test --offline --manifest-path exported-sdk/Cargo.toml -p codepet-provider
 ## 后续观察
 
 当前实现仍使用 Rust、Tokio、Yamux 与 CodePet 传输 DTO；模块解耦不等于已完成独立 crate、FFI 或 Python/TS SDK。若出现第二个生产 codec、另一种底层 I/O 或原生语言绑定需求，再依据实际使用验证并抽取公共包。平台验证仍限于本次 macOS 环境，不据此声称 Windows/Linux 原生 pipe 已完成验证。
+
+## Provider 业务持久化补充
+
+用量与未读 SQL 实现在 `crates/providers/codepet-provider-data`，不进入 SDK runtime。Host 为每个插件注入独立数据库路径，业务表由该库维护；参见 [Provider 用量查询与业务存储](../10-architecture/provider-usage-query-and-storage.md)。

@@ -2,7 +2,7 @@
 
 ## 规则
 
-Claude Provider 的上游只能是 Host resolver 注入的 Claude executable 与官方非交互机器接口。当前允许的最小接口是 `claude --version`、`claude auth status --json`、`claude --print` 的双向 `stream-json`、`--permission-prompt-tool stdio` 的 `control_request`/`control_response`、Provider 自建 UUID 的 `--session-id`/`--resume` 和 Unix 信号。握手版本与认证状态来自前两个命令；用量只使用官方 result 事件的 `usage` / `total_cost_usd`，未完成 Provider turn 前明确显示为本次会话尚无记录。不得通过 Hook、transcript 扫描、窗口控制、Claude Desktop/IDE 私有状态或猜测字段补能力。
+Claude Provider 的上游只能是 Host resolver 注入的 Claude executable 与官方非交互机器接口。当前允许的最小接口是 `claude --version`、`claude auth status --json`、`claude --print` 的双向 `stream-json`、`--permission-prompt-tool stdio` 的 `control_request`/`control_response`、Provider 自建 UUID 的 `--session-id`/`--resume` 和 Unix 信号。握手版本与认证状态来自前两个命令；用量统一通过 `usage.query` 提供，runtime 不再携带独立摘要。`usage.query` 允许由结束 Hook 注册来源并增量只读对应 transcript 的计量字段，按消息 ID 去重；不得全目录扫描或用于恢复会话控制，详见 [Provider 用量查询与业务存储](../10-architecture/provider-usage-query-and-storage.md)。不得通过窗口控制、Claude Desktop/IDE 私有状态或猜测字段补能力。
 
 Claude Provider 的 `runtime.getInstalled` 负责搜索当前 PATH 与登录 Shell，并以 `--version` 验证结果；不得扫描 Claude Desktop、IDE 私有目录或 transcript。选择结果缺失、非绝对、不可执行或版本验证失败时，instance lifecycle 必须 fail closed。
 

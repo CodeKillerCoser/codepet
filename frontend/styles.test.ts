@@ -270,12 +270,3 @@ describe("pet message bubble activity", () => {
     expect(keyframes).not.toContain("border-color");
   });
 });
-
-describe("usage chart tooltip", () => {
-  test("keeps tooltip inside the chart viewport", () => {
-    const tooltip = blockFor(".usage-tooltip");
-    expect(tooltip).toContain("top: 10px");
-    expect(tooltip).toContain("width: max-content");
-    expect(tooltip).not.toContain("bottom: calc(100% + 10px)");
-  });
-});

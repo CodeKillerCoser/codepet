@@ -1,54 +1,297 @@
 [
-  { "file": "initialize-request.json", "kind": "request", "name": "provider.initialize" },
-  { "file": "initialize-response.json", "kind": "response", "name": "provider.initialize" },
-  { "file": "runtime-get-installed-request.json", "kind": "request", "name": "runtime.getInstalled" },
-  { "file": "runtime-get-installed-response.json", "kind": "response", "name": "runtime.getInstalled" },
-  { "file": "runtime-select-request.json", "kind": "request", "name": "runtime.select" },
-  { "file": "runtime-select-response.json", "kind": "response", "name": "runtime.select" },
-  { "file": "instance-create-request.json", "kind": "request", "name": "instance.create" },
-  { "file": "instance-create-response.json", "kind": "response", "name": "instance.create" },
-  { "file": "project-list-request.json", "kind": "request", "name": "project.list" },
-  { "file": "project-list-response.json", "kind": "response", "name": "project.list" },
-  { "file": "project-changed-event.json", "kind": "event", "name": "event.projectChanged" },
-  { "file": "conversation-get-request.json", "kind": "request", "name": "conversation.get" },
-  { "file": "conversation-get-response.json", "kind": "response", "name": "conversation.get" },
-  { "file": "conversation-upserted-event.json", "kind": "event", "name": "event.conversationUpserted" },
-  { "file": "conversation-item-upserted-event.json", "kind": "event", "name": "event.conversationItemUpserted" },
-  { "file": "turn-output-delta-event.json", "kind": "event", "name": "event.turnOutputDelta" },
-  { "file": "turn-start-request.json", "kind": "request", "name": "turn.start" },
-  { "file": "turn-start-response.json", "kind": "response", "name": "turn.start" },
-  {"file": "event-subscribe-request.json", "kind": "request", "name": "event.subscribe"},
-  {"file": "event-subscribe-response.json", "kind": "response", "name": "event.subscribe"},
-  {"file": "notification-event.json", "kind": "event", "name": "event.notification"},
-  {"file": "conversation-list-legacy-request.json", "kind": "request", "name": "conversation.list"},
-  {"file": "conversation-list-updated-after-request.json", "kind": "request", "name": "conversation.list"},
-  {"file": "conversation-list-ids-request.json", "kind": "request", "name": "conversation.list"},
-  {"file": "conversation-list-ids-response.json", "kind": "response", "name": "conversation.list"},
-  {"file": "conversation-list-updated-after-response.json", "kind": "response", "name": "conversation.list"},
-  {"file": "conversation-active-list-request.json", "kind": "request", "name": "conversation.active.list"},
-  {"file": "conversation-active-list-next-request.json", "kind": "request", "name": "conversation.active.list"},
-  {"file": "conversation-active-list-response.json", "kind": "response", "name": "conversation.active.list"},
-  {"file": "conversation-active-list-end-response.json", "kind": "response", "name": "conversation.active.list"},
-  {"file": "conversation-unread-list-request.json", "kind": "request", "name": "conversation.unread.list"},
-  {"file": "conversation-unread-list-next-request.json", "kind": "request", "name": "conversation.unread.list"},
-  {"file": "conversation-unread-list-response.json", "kind": "response", "name": "conversation.unread.list"},
-  {"file": "conversation-unread-list-end-response.json", "kind": "response", "name": "conversation.unread.list"},
-  {"file": "conversation-mark-read-request.json", "kind": "request", "name": "conversation.markRead"},
-  {"file": "conversation-mark-read-response.json", "kind": "response", "name": "conversation.markRead"},
-  {"file": "conversation-active-changed-event.json", "kind": "event", "name": "event.conversationActiveChanged"},
-  {"file": "conversation-inactive-changed-event.json", "kind": "event", "name": "event.conversationActiveChanged"},
-  {"file": "conversation-unread-changed-event.json", "kind": "event", "name": "event.conversationUnreadChanged"},
-  {"file": "conversation-read-changed-event.json", "kind": "event", "name": "event.conversationUnreadChanged"},
-  {"file": "conversation-deleted-event.json", "kind": "event", "name": "event.conversationDeleted"},
-  {"file": "conversation-query-capabilities.json", "kind": "type", "name": "ProviderCapabilities"},
-  {"file": "conversation-list-invalid-both.json", "kind": "type", "name": "ConversationListRequest", "valid": false},
-  {"file": "conversation-list-invalid-empty-ids.json", "kind": "type", "name": "ConversationListRequest", "valid": false},
-  {"file": "conversation-list-invalid-duplicate-ids.json", "kind": "type", "name": "ConversationListRequest", "valid": false},
-  {"file": "conversation-list-invalid-unknown-kind.json", "kind": "type", "name": "ConversationListRequest", "valid": false},
-  {"file": "conversation-list-invalid-negative-date.json", "kind": "type", "name": "ConversationListRequest", "valid": false},
-  {"file": "conversation-unread-missing-scope.json", "kind": "type", "name": "ConversationUnreadListRequest", "valid": false},
-  {"file": "conversation-unread-missing-revision.json", "kind": "type", "name": "ConversationUnreadListResponse", "valid": false},
-  {"file": "conversation-active-list-expired-response.json", "kind": "response", "name": "conversation.active.list"},
-  {"file": "conversation-active-list-invalid-cursor-response.json", "kind": "response", "name": "conversation.active.list"},
-  {"file": "conversation-active-list-unsupported-response.json", "kind": "response", "name": "conversation.active.list"}
+  {
+    "file": "initialize-request.json",
+    "kind": "request",
+    "name": "provider.initialize"
+  },
+  {
+    "file": "initialize-response.json",
+    "kind": "response",
+    "name": "provider.initialize"
+  },
+  {
+    "file": "runtime-get-installed-request.json",
+    "kind": "request",
+    "name": "runtime.getInstalled"
+  },
+  {
+    "file": "runtime-get-installed-response.json",
+    "kind": "response",
+    "name": "runtime.getInstalled"
+  },
+  {
+    "file": "runtime-select-request.json",
+    "kind": "request",
+    "name": "runtime.select"
+  },
+  {
+    "file": "runtime-select-response.json",
+    "kind": "response",
+    "name": "runtime.select"
+  },
+  {
+    "file": "instance-create-request.json",
+    "kind": "request",
+    "name": "instance.create"
+  },
+  {
+    "file": "instance-create-response.json",
+    "kind": "response",
+    "name": "instance.create"
+  },
+  {
+    "file": "project-list-request.json",
+    "kind": "request",
+    "name": "project.list"
+  },
+  {
+    "file": "project-list-response.json",
+    "kind": "response",
+    "name": "project.list"
+  },
+  {
+    "file": "project-changed-event.json",
+    "kind": "event",
+    "name": "event.projectChanged"
+  },
+  {
+    "file": "conversation-get-request.json",
+    "kind": "request",
+    "name": "conversation.get"
+  },
+  {
+    "file": "conversation-get-response.json",
+    "kind": "response",
+    "name": "conversation.get"
+  },
+  {
+    "file": "conversation-upserted-event.json",
+    "kind": "event",
+    "name": "event.conversationUpserted"
+  },
+  {
+    "file": "conversation-item-upserted-event.json",
+    "kind": "event",
+    "name": "event.conversationItemUpserted"
+  },
+  {
+    "file": "turn-output-delta-event.json",
+    "kind": "event",
+    "name": "event.turnOutputDelta"
+  },
+  {
+    "file": "turn-start-request.json",
+    "kind": "request",
+    "name": "turn.start"
+  },
+  {
+    "file": "turn-start-response.json",
+    "kind": "response",
+    "name": "turn.start"
+  },
+  {
+    "file": "event-subscribe-request.json",
+    "kind": "request",
+    "name": "event.subscribe"
+  },
+  {
+    "file": "event-subscribe-response.json",
+    "kind": "response",
+    "name": "event.subscribe"
+  },
+  {
+    "file": "notification-event.json",
+    "kind": "event",
+    "name": "event.notification"
+  },
+  {
+    "file": "conversation-list-legacy-request.json",
+    "kind": "request",
+    "name": "conversation.list"
+  },
+  {
+    "file": "conversation-list-updated-after-request.json",
+    "kind": "request",
+    "name": "conversation.list"
+  },
+  {
+    "file": "conversation-list-ids-request.json",
+    "kind": "request",
+    "name": "conversation.list"
+  },
+  {
+    "file": "conversation-list-ids-response.json",
+    "kind": "response",
+    "name": "conversation.list"
+  },
+  {
+    "file": "conversation-list-updated-after-response.json",
+    "kind": "response",
+    "name": "conversation.list"
+  },
+  {
+    "file": "conversation-active-list-request.json",
+    "kind": "request",
+    "name": "conversation.active.list"
+  },
+  {
+    "file": "conversation-active-list-next-request.json",
+    "kind": "request",
+    "name": "conversation.active.list"
+  },
+  {
+    "file": "conversation-active-list-response.json",
+    "kind": "response",
+    "name": "conversation.active.list"
+  },
+  {
+    "file": "conversation-active-list-end-response.json",
+    "kind": "response",
+    "name": "conversation.active.list"
+  },
+  {
+    "file": "conversation-unread-list-request.json",
+    "kind": "request",
+    "name": "conversation.unread.list"
+  },
+  {
+    "file": "conversation-unread-list-next-request.json",
+    "kind": "request",
+    "name": "conversation.unread.list"
+  },
+  {
+    "file": "conversation-unread-list-response.json",
+    "kind": "response",
+    "name": "conversation.unread.list"
+  },
+  {
+    "file": "conversation-unread-list-end-response.json",
+    "kind": "response",
+    "name": "conversation.unread.list"
+  },
+  {
+    "file": "conversation-mark-read-request.json",
+    "kind": "request",
+    "name": "conversation.markRead"
+  },
+  {
+    "file": "conversation-mark-read-response.json",
+    "kind": "response",
+    "name": "conversation.markRead"
+  },
+  {
+    "file": "conversation-active-changed-event.json",
+    "kind": "event",
+    "name": "event.conversationActiveChanged"
+  },
+  {
+    "file": "conversation-inactive-changed-event.json",
+    "kind": "event",
+    "name": "event.conversationActiveChanged"
+  },
+  {
+    "file": "conversation-unread-changed-event.json",
+    "kind": "event",
+    "name": "event.conversationUnreadChanged"
+  },
+  {
+    "file": "conversation-read-changed-event.json",
+    "kind": "event",
+    "name": "event.conversationUnreadChanged"
+  },
+  {
+    "file": "conversation-deleted-event.json",
+    "kind": "event",
+    "name": "event.conversationDeleted"
+  },
+  {
+    "file": "conversation-query-capabilities.json",
+    "kind": "type",
+    "name": "ProviderCapabilities"
+  },
+  {
+    "file": "conversation-list-invalid-both.json",
+    "kind": "type",
+    "name": "ConversationListRequest",
+    "valid": false
+  },
+  {
+    "file": "conversation-list-invalid-empty-ids.json",
+    "kind": "type",
+    "name": "ConversationListRequest",
+    "valid": false
+  },
+  {
+    "file": "conversation-list-invalid-duplicate-ids.json",
+    "kind": "type",
+    "name": "ConversationListRequest",
+    "valid": false
+  },
+  {
+    "file": "conversation-list-invalid-unknown-kind.json",
+    "kind": "type",
+    "name": "ConversationListRequest",
+    "valid": false
+  },
+  {
+    "file": "conversation-list-invalid-negative-date.json",
+    "kind": "type",
+    "name": "ConversationListRequest",
+    "valid": false
+  },
+  {
+    "file": "conversation-unread-missing-scope.json",
+    "kind": "type",
+    "name": "ConversationUnreadListRequest",
+    "valid": false
+  },
+  {
+    "file": "conversation-unread-missing-revision.json",
+    "kind": "type",
+    "name": "ConversationUnreadListResponse",
+    "valid": false
+  },
+  {
+    "file": "conversation-active-list-expired-response.json",
+    "kind": "response",
+    "name": "conversation.active.list"
+  },
+  {
+    "file": "conversation-active-list-invalid-cursor-response.json",
+    "kind": "response",
+    "name": "conversation.active.list"
+  },
+  {
+    "file": "conversation-active-list-unsupported-response.json",
+    "kind": "response",
+    "name": "conversation.active.list"
+  },
+  {
+    "file": "usage-query-request.json",
+    "kind": "request",
+    "name": "usage.query"
+  },
+  {
+    "file": "usage-query-response.json",
+    "kind": "response",
+    "name": "usage.query"
+  },
+  {
+    "file": "usage-query-empty-metrics.json",
+    "kind": "type",
+    "name": "UsageQueryRequest",
+    "valid": false
+  },
+  {
+    "file": "usage-query-invalid-bucket.json",
+    "kind": "type",
+    "name": "UsageQueryRequest",
+    "valid": false
+  },
+  {
+    "file": "usage-query-unknown-filter.json",
+    "kind": "type",
+    "name": "UsageQueryRequest",
+    "valid": false
+  }
 ]

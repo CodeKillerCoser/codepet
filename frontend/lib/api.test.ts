@@ -19,7 +19,6 @@ import {
   setAgentRuntimeExecutable,
   setAppDataDirectory,
   setLaunchAtLoginEnabled,
-  tokenUsageSummary,
   updatePetImagePixelSize,
 } from "./api";
 import type { PetEvent } from "./types";
@@ -286,27 +285,6 @@ describe("updatePetImagePixelSize", () => {
     await updatePetImagePixelSize(64);
 
     expect(invoke).toHaveBeenCalledWith("update_pet_image_pixel_size", { pixelSize: 64 });
-  });
-});
-
-describe("tokenUsageSummary", () => {
-  afterEach(() => {
-    vi.mocked(invoke).mockReset();
-  });
-
-  it("invokes the desktop token usage summary command", async () => {
-    const summary = {
-      total: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 2, reasoningOutputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, totalTokens: 12 },
-      byProvider: [],
-      byDay: [],
-      byBucket: [],
-      sessions: [],
-    };
-    vi.mocked(invoke).mockResolvedValue(summary);
-
-    await expect(tokenUsageSummary()).resolves.toEqual(summary);
-
-    expect(invoke).toHaveBeenCalledWith("token_usage_summary");
   });
 });
 

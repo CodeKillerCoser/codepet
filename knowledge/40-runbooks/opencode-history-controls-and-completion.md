@@ -132,3 +132,5 @@ Codex 的 `provider_binary_keeps_eof_visible_after_at_least_forty_nine_saturated
 20 MiB 历史测试在 Windows debug 实测约 7.76 秒，超过旧测试的 5 秒等待。仅这些多 MiB 数据测试改用 30 秒等待；生产 Host 的默认 10 秒预算保持原值。后台失败通知测试按 CLI 的 30 秒执行上限等待，与握手预算分开。
 
 Host/Gateway 端到端检查通过：`cargo test --offline --manifest-path crates/Cargo.toml -p codepet-host --test builtin_provider_integration --test manager_gateway -- --test-threads=1`（1+24 项）。最终原生 CLI 复测三项通过，Codex 约 0.53 秒、OpenCode 约 2.83 秒。本机这轮原始日志保存在 `C:/Users/17633/AppData/Local/Temp/codepet-provider-probes-20260907-4ea0d01a`，包含旧版 EOF 对照；临时日志不提交仓库。
+
+当前补充：上述 stats 时延属于历史测量。独立 runtime usage 与 `stats --days 30` 调用已移除，用量统一由 Provider usage.query 读取业务数据库。

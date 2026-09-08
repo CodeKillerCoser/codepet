@@ -605,6 +605,8 @@ pub struct ProviderCapabilities {
     pub extensions: Vec<ProviderExtension>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_list_query: Option<ConversationListQueryCapabilities>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_datasets: Option<Vec<UsageDataset>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -641,6 +643,8 @@ pub enum ProviderCapability {
     ConversationUnreadList,
     #[serde(rename = "conversation.markRead")]
     ConversationMarkRead,
+    #[serde(rename = "usage.query")]
+    UsageQuery,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -660,6 +664,15 @@ pub struct ProviderDescribeResponse {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ProviderDirectories {
+    pub data: String,
+    pub logs: String,
+    pub database_path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ProviderExtension {
     pub namespace: String,
     pub data: JsonObject,
@@ -673,6 +686,8 @@ pub struct ProviderInitializeRequest {
     pub host_device_id: DeviceId,
     pub host_version: String,
     pub supported_versions: VersionRange,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub directories: Option<ProviderDirectories>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -695,8 +710,6 @@ pub struct ProviderInstance {
     pub status: InstanceStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authentication: Option<ProviderAuthentication>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub usage: Option<ProviderUsage>,
     pub capabilities: ProviderCapabilities,
 }
 
@@ -962,6 +975,21 @@ pub struct TurnUpsertedEvent {
     pub turn: TurnTask,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageQueryRequest {
+    pub route: ProviderInstanceRoute,
+    pub query: UsageQuery,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageQueryResponse {
+    pub result: UsageQueryResult,
+}
+
 impl ProviderPluginDescriptor {
     pub fn validate_instance_kinds(&self) -> Result<(), ProtocolError> {
         if self.instance_kinds.is_empty() {
@@ -1079,6 +1107,8 @@ pub enum ProtocolMethod {
     EventSubscribe,
     #[serde(rename = "event.unsubscribe")]
     EventUnsubscribe,
+    #[serde(rename = "usage.query")]
+    UsageQuery,
 }
 
 impl ProtocolMethod {
@@ -1114,6 +1144,7 @@ impl ProtocolMethod {
             Self::ProviderShutdown => "provider.shutdown",
             Self::EventSubscribe => "event.subscribe",
             Self::EventUnsubscribe => "event.unsubscribe",
+            Self::UsageQuery => "usage.query",
         }
     }
 
@@ -1149,6 +1180,7 @@ impl ProtocolMethod {
             Self::ProviderShutdown => ProtocolDispatchLane::Control,
             Self::EventSubscribe => ProtocolDispatchLane::Normal,
             Self::EventUnsubscribe => ProtocolDispatchLane::Normal,
+            Self::UsageQuery => ProtocolDispatchLane::Normal,
         }
     }
 
@@ -1184,6 +1216,7 @@ impl ProtocolMethod {
             Self::ProviderShutdown => None,
             Self::EventSubscribe => None,
             Self::EventUnsubscribe => None,
+            Self::UsageQuery => Some(ProviderCapability::UsageQuery),
         }
     }
 }
@@ -1223,6 +1256,7 @@ impl std::str::FromStr for ProtocolMethod {
             "provider.shutdown" => Ok(Self::ProviderShutdown),
             "event.subscribe" => Ok(Self::EventSubscribe),
             "event.unsubscribe" => Ok(Self::EventUnsubscribe),
+            "usage.query" => Ok(Self::UsageQuery),
             _ => Err(()),
         }
     }
@@ -1491,6 +1525,12 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: EventUnsubscribeRequest,
     },
+    #[serde(rename = "usage.query")]
+    UsageQuery {
+        jsonrpc: String,
+        id: RequestId,
+        params: UsageQueryRequest,
+    },
 }
 
 impl ProtocolRequest {
@@ -1651,6 +1691,11 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode event.unsubscribe request params", error))?,
             }),
+            ProtocolMethod::UsageQuery => Ok(Self::UsageQuery {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode usage.query request params", error))?,
+            }),
         }
     }
 
@@ -1686,6 +1731,7 @@ impl ProtocolRequest {
             Self::ProviderShutdown { jsonrpc, .. } => jsonrpc,
             Self::EventSubscribe { jsonrpc, .. } => jsonrpc,
             Self::EventUnsubscribe { jsonrpc, .. } => jsonrpc,
+            Self::UsageQuery { jsonrpc, .. } => jsonrpc,
         }
     }
 
@@ -1721,6 +1767,7 @@ impl ProtocolRequest {
             Self::ProviderShutdown { id, .. } => id,
             Self::EventSubscribe { id, .. } => id,
             Self::EventUnsubscribe { id, .. } => id,
+            Self::UsageQuery { id, .. } => id,
         }
     }
 
@@ -1756,6 +1803,7 @@ impl ProtocolRequest {
             Self::ProviderShutdown { .. } => ProtocolMethod::ProviderShutdown,
             Self::EventSubscribe { .. } => ProtocolMethod::EventSubscribe,
             Self::EventUnsubscribe { .. } => ProtocolMethod::EventUnsubscribe,
+            Self::UsageQuery { .. } => ProtocolMethod::UsageQuery,
         }
     }
 }
@@ -2062,6 +2110,10 @@ pub trait ProtocolServer: Send + Sync {
 
     fn event_unsubscribe<'a>(&'a self, _request: EventUnsubscribeRequest) -> ProtocolFuture<'a, EventUnsubscribeResponse> {
         Box::pin(async { Err(method_not_implemented("event.unsubscribe")) })
+    }
+
+    fn usage_query<'a>(&'a self, _request: UsageQueryRequest) -> ProtocolFuture<'a, UsageQueryResponse> {
+        Box::pin(async { Err(method_not_implemented("usage.query")) })
     }
 }
 
@@ -2375,6 +2427,16 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
             JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::UsageQuery { jsonrpc, id, params } => {
+            let response = match server.usage_query(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         }
     }
 }
@@ -2659,6 +2721,14 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             let result = self.transport.request(ProtocolMethod::EventUnsubscribe, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn usage_query<'a>(&'a self, request: UsageQueryRequest) -> ProtocolFuture<'a, UsageQueryResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::UsageQuery, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

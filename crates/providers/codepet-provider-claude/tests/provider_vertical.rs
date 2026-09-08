@@ -139,7 +139,7 @@ async fn configured_provider(
     let route = route(device_id);
     let initialized = ProviderProtocolServer::provider_initialize(
         provider.as_ref(),
-        ProviderInitializeRequest {
+        ProviderInitializeRequest { directories: None,
             host_client_id: "client-claude-fixture".to_string(),
             host_device_id: device_id.to_string(),
             host_version: "test".to_string(),
@@ -1518,7 +1518,7 @@ async fn starting_waits_for_parallel_probes_and_refresh_failure_keeps_ready() {
     let (sender, events) = mpsc::channel();
     let provider = Arc::new(ClaudeProvider::new(Arc::new(move |event| { let _ = sender.send(event); Ok(()) })));
     let route = route("startup-probes");
-    ProviderProtocolServer::provider_initialize(provider.as_ref(), ProviderInitializeRequest {
+    ProviderProtocolServer::provider_initialize(provider.as_ref(), ProviderInitializeRequest { directories: None,
         host_client_id: "startup".into(), host_device_id: route.device_id.clone(), host_version: "test".into(),
         supported_versions: VersionRange { min_version: PROTOCOL_VERSION, max_version: PROTOCOL_VERSION },
     }).await.unwrap();

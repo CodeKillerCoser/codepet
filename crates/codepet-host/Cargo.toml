@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+codepet-provider-data = { path = "../providers/codepet-provider-data" }
 codepet-pet-sdk = { path = "../../sdk/rust/codepet-pet-sdk" }
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio"] }
 axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }

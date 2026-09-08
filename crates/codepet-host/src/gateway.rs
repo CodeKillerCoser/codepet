@@ -17,9 +17,6 @@ use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex};
 const EVENT_CURSOR_PREFIX: &str = "event-";
 const TURN_SEND_CACHE_CAPACITY: usize = 1_024;
 const DEFAULT_TURN_SEND_CALLER_SCOPE: &str = "provider-gateway-protocol-default";
-const MAX_USAGE_DETAILS: usize = 8;
-const MAX_USAGE_DETAIL_BYTES: usize = 16 * 1024;
-const MAX_USAGE_DETAILS_BYTES: usize = 32 * 1024;
 
 mod recent;
 
@@ -282,6 +279,7 @@ impl ProviderGatewayService {
         if let Some(path) = conversation_state.path() {
             manager.set_conversation_state_path(path)?;
         }
+        conversation_state.configure(manager.provider_state_paths()?)?;
         let updates = manager.take_updates()?;
         Ok(Self {
             manager,
@@ -607,6 +605,7 @@ impl ProviderGatewayService {
                 previous_status,
             } => {
                 let _ = previous_status;
+                self.conversation_state.configure(self.manager.provider_state_paths().map_err(gateway_error)?).map_err(gateway_error)?;
                 self.invalidate_recent(&instance_id)?;
                 let runtime = snapshot
                     .instances
@@ -1342,6 +1341,20 @@ impl ProtocolServer for ProviderGatewayService {
         })
     }
 
+    fn codepet_usage_query<'a>(&'a self, request: gateway::UsageQueryRequest) -> gateway::ProtocolFuture<'a, gateway::UsageQueryResponse> {
+        Box::pin(async move {
+            let route=self.resolve_provider_route(&request.provider_id).await?;
+            let grouped=!request.query.aggregation.group_by.is_empty();
+            let peak_requested=request.query.summaries.as_ref().is_some_and(|v|v.contains(&gateway::UsageQuerySummariesItems::PeakDaily));
+            let mut response=self.manager.usage_query(provider::UsageQueryRequest { route, query:request.query }).await.map_err(gateway_error)?;
+            // The generated Rust nested Option collapses explicit null on Provider decoding.
+            // Restore requested nullable fields before forwarding the Gateway wire response.
+            if grouped {for row in &mut response.result.rows {row.model_id.get_or_insert(None);}}
+            if peak_requested {if let Some(summary)=&mut response.result.summaries {summary.peak_daily.get_or_insert(None);}}
+            Ok(gateway::UsageQueryResponse { result:response.result })
+        })
+    }
+
     fn conversation_mark_read<'a>(
         &'a self,
         request: gateway::ConversationMarkReadRequest,
@@ -1486,11 +1499,6 @@ fn gateway_provider(
                     .as_ref()
                     .and_then(|instance| instance.authentication.as_ref())
                     .cloned(),
-                usage: runtime
-                    .instance
-                    .as_ref()
-                    .and_then(|instance| instance.usage.as_ref())
-                    .map(map_usage),
             },
             capabilities: gateway::ProviderCapabilitiesSummary {
                 revision: capabilities.revision.clone(),
@@ -1506,66 +1514,6 @@ fn configured_executable_path(settings: &provider::JsonObject) -> Option<String>
         .find_map(|key| settings.get(key).and_then(|value| value.as_str()))
         .filter(|path| !path.trim().is_empty())
         .map(ToOwned::to_owned)
-}
-
-fn map_usage(usage: &provider::ProviderUsage) -> gateway::ProviderUsage {
-    let mut total_bytes = 0usize;
-    let details = usage.details.as_ref().map(|details| {
-        details
-            .iter()
-            .take(MAX_USAGE_DETAILS)
-            .filter_map(|detail| {
-                let data = redact_usage_data(&detail.data);
-                let serialized_bytes = serde_json::to_vec(&data).ok()?.len();
-                if serialized_bytes > MAX_USAGE_DETAIL_BYTES
-                    || total_bytes.saturating_add(serialized_bytes) > MAX_USAGE_DETAILS_BYTES
-                {
-                    return None;
-                }
-                total_bytes = total_bytes.saturating_add(serialized_bytes);
-                Some(gateway::ProviderUsageDetail {
-                    namespace: detail.namespace.clone(),
-                    schema_version: detail.schema_version.clone(),
-                    data,
-                })
-            })
-            .collect()
-    });
-    gateway::ProviderUsage {
-        display_text: usage.display_text.clone(),
-        observed_at: usage.observed_at,
-        details,
-    }
-}
-
-fn redact_usage_data(data: &provider::JsonObject) -> gateway::JsonObject {
-    data.iter()
-        .filter(|(key, _)| !usage_key_is_sensitive(key))
-        .map(|(key, value)| (key.clone(), redact_usage_value(value)))
-        .collect()
-}
-
-fn redact_usage_value(value: &serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(object) => serde_json::Value::Object(
-            object
-                .iter()
-                .filter(|(key, _)| !usage_key_is_sensitive(key))
-                .map(|(key, value)| (key.clone(), redact_usage_value(value)))
-                .collect(),
-        ),
-        serde_json::Value::Array(values) => {
-            serde_json::Value::Array(values.iter().map(redact_usage_value).collect())
-        }
-        _ => value.clone(),
-    }
-}
-
-fn usage_key_is_sensitive(key: &str) -> bool {
-    let normalized = key.to_ascii_lowercase().replace(['-', '_'], "");
-    ["authorization", "accesstoken", "refreshtoken", "password", "secret", "cookie", "email", "accountid"]
-        .iter()
-        .any(|sensitive| normalized.contains(sensitive))
 }
 
 fn provider_runtime_status(
@@ -1628,6 +1576,7 @@ fn map_capabilities(capabilities: &provider::ProviderCapabilities) -> gateway::G
             provider::ProviderCapability::TurnStart => {
                 Some(gateway::GatewayCapability::TurnSend)
             }
+            provider::ProviderCapability::UsageQuery => Some(gateway::GatewayCapability::CodepetUsageQuery),
             provider::ProviderCapability::TurnSteer => None,
             provider::ProviderCapability::ConversationActiveList
             | provider::ProviderCapability::ConversationUnreadList
@@ -1651,7 +1600,7 @@ fn map_capabilities(capabilities: &provider::ProviderCapabilities) -> gateway::G
             .iter().all(|required| capabilities.methods.contains(required)) {
         methods.push(gateway::GatewayCapability::ConversationRecent);
     }
-    gateway::GatewayCapabilities {
+    gateway::GatewayCapabilities { usage_datasets: capabilities.usage_datasets.clone(),
         revision: capabilities.revision.clone(),
         methods,
         turn_send: capabilities.turn_send.clone(),
@@ -1660,7 +1609,7 @@ fn map_capabilities(capabilities: &provider::ProviderCapabilities) -> gateway::G
 }
 
 fn empty_gateway_capabilities(revision: String) -> gateway::GatewayCapabilities {
-    gateway::GatewayCapabilities {
+    gateway::GatewayCapabilities { usage_datasets: None,
         revision,
         methods: Vec::new(),
         turn_send: None,

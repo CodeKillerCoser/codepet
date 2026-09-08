@@ -332,8 +332,6 @@ test("provider descriptors and turn controls are explicit discriminated protocol
   assert.deepEqual(gatewayDefinitions.ProviderCapabilitiesSummary.required, ["revision"]);
   assert.equal(gatewayDefinitions.ProviderRuntime.properties.version.type, "string");
   assert.equal(gatewayDefinitions.ProviderRuntime.properties.executablePath.type, "string");
-  assert.equal(agentDefinitions.ProviderUsage.properties.displayText.type, "string");
-  assert.equal(agentDefinitions.ProviderUsageDetail.properties.schemaVersion.type, "string");
 
   const gatewayRust = await readFile("sdk/rust/codepet-gateway-sdk/src/generated.rs", "utf8");
   const providerRust = await readFile("sdk/rust/codepet-provider-sdk/src/generated.rs", "utf8");

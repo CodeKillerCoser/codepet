@@ -623,7 +623,8 @@
         "approval.resolve",
         "conversation.active.list",
         "conversation.unread.list",
-        "conversation.markRead"
+        "conversation.markRead",
+        "usage.query"
       ]
     },
     "ProviderCapabilities": {
@@ -654,6 +655,12 @@
         },
         "conversationListQuery": {
           "$ref": "#/$defs/ConversationListQueryCapabilities"
+        },
+        "usageDatasets": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent/v1/schema.json#/$defs/UsageDataset"
+          }
         }
       },
       "required": [
@@ -894,8 +901,14 @@
     "RuntimeInstallation": {
       "type": "object",
       "properties": {
-        "minimumVersion": { "type": "string", "minLength": 1 },
-        "incompatibilityReason": { "type": "string", "minLength": 1 },
+        "minimumVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "incompatibilityReason": {
+          "type": "string",
+          "minLength": 1
+        },
         "executablePath": {
           "type": "string",
           "minLength": 1
@@ -1004,6 +1017,9 @@
         },
         "supportedVersions": {
           "$ref": "../../core/v1/schema.json#/$defs/VersionRange"
+        },
+        "directories": {
+          "$ref": "#/$defs/ProviderDirectories"
         }
       },
       "required": [
@@ -1054,9 +1070,6 @@
         },
         "authentication": {
           "$ref": "../../agent/v1/schema.json#/$defs/ProviderAuthentication"
-        },
-        "usage": {
-          "$ref": "../../agent/v1/schema.json#/$defs/ProviderUsage"
         },
         "capabilities": {
           "$ref": "#/$defs/ProviderCapabilities"
@@ -1900,6 +1913,58 @@
       "enum": [
         "ids"
       ]
+    },
+    "UsageQueryRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "query": {
+          "$ref": "../../agent/v1/schema.json#/$defs/UsageQuery"
+        }
+      },
+      "required": [
+        "route",
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "UsageQueryResponse": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "$ref": "../../agent/v1/schema.json#/$defs/UsageQueryResult"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "ProviderDirectories": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logs": {
+          "type": "string",
+          "minLength": 1
+        },
+        "databasePath": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "data",
+        "logs",
+        "databasePath"
+      ],
+      "additionalProperties": false,
+      "description": "Host-assigned absolute Provider-owned paths, independent of harness storage. Database file must reside directly in data. Provider owns schema and transactions. Never exposed remotely."
     }
   }
 }

@@ -50,7 +50,8 @@
     { "name": "conversation.create", "direction": "clientToGateway", "idempotency": "nonIdempotent", "capability": "conversation.create", "request": { "$ref": "./schema.json#/$defs/ConversationCreateRequest" }, "response": { "$ref": "./schema.json#/$defs/ConversationCreateResponse" } },
     { "name": "turn.send", "direction": "clientToGateway", "idempotency": "nonIdempotent", "capability": "turn.send", "request": { "$ref": "./schema.json#/$defs/TurnSendRequest" }, "response": { "$ref": "./schema.json#/$defs/TurnSendResponse" } },
     { "name": "turn.interrupt", "direction": "clientToGateway", "idempotency": "idempotent", "capability": "turn.interrupt", "request": { "$ref": "./schema.json#/$defs/TurnInterruptRequest" }, "response": { "$ref": "./schema.json#/$defs/TurnInterruptResponse" } },
-    { "name": "approval.resolve", "direction": "clientToGateway", "idempotency": "idempotent", "capability": "approval.resolve", "request": { "$ref": "./schema.json#/$defs/ApprovalResolveRequest" }, "response": { "$ref": "./schema.json#/$defs/ApprovalResolveResponse" } }
+    { "name": "approval.resolve", "direction": "clientToGateway", "idempotency": "idempotent", "capability": "approval.resolve", "request": { "$ref": "./schema.json#/$defs/ApprovalResolveRequest" }, "response": { "$ref": "./schema.json#/$defs/ApprovalResolveResponse" } },
+    {"name": "codepet.usage.query", "direction": "clientToGateway", "idempotency": "safe", "capability": "codepet.usage.query", "request": {"$ref": "./schema.json#/$defs/UsageQueryRequest"}, "response": {"$ref": "./schema.json#/$defs/UsageQueryResponse"}}
   ],
   "events": [
     {"name": "conversation.recentChanged", "direction": "gatewayToClient", "delivery": "replayable", "scope": "provider", "payload": {"$ref": "./schema.json#/$defs/ConversationRecentChangedEvent"}},

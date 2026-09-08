@@ -37,7 +37,7 @@ async fn installed_opencode_history_through_host_transport() {
     let client = process.client();
     let result = async {
         client
-            .provider_initialize(ProviderInitializeRequest {
+            .provider_initialize(ProviderInitializeRequest { directories: None,
                 host_client_id: "history-check".into(),
                 host_device_id: "history-check".into(),
                 host_version: "test".into(),

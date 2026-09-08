@@ -71,6 +71,7 @@ pub(crate) enum HostUpdate {
 
 #[derive(Clone, Debug)]
 pub struct PluginManagerConfig {
+    pub provider_data_root: Option<std::path::PathBuf>,
     pub host_client_id: ClientId,
     pub host_version: String,
     pub supported_versions: VersionRange,
@@ -82,6 +83,7 @@ pub struct PluginManagerConfig {
 impl Default for PluginManagerConfig {
     fn default() -> Self {
         Self {
+            provider_data_root: None,
             host_client_id: format!("client-host-{}", Uuid::new_v4()),
             host_version: env!("CARGO_PKG_VERSION").to_string(),
             supported_versions: VersionRange {
@@ -492,6 +494,7 @@ impl PluginManager {
     }
 
     pub async fn start_plugin(&self, plugin_id: &str) -> HostResult<()> {
+        let provider_directories = self.provider_directories(plugin_id)?;
         let saved_candidate = self.inner.runtime_selections.read().await.get(plugin_id).cloned();
         let preparation = {
             let mut plugins = self.inner.plugins.write().await;
@@ -532,12 +535,18 @@ impl PluginManager {
                 instance.instance = None;
             }
             let mut descriptor = entry.catalog.clone();
+            if let Some(dirs) = &provider_directories {
+                descriptor.env.insert("CODEPET_PROVIDER_LOG_DIRECTORY".into(), dirs.logs.clone());
+            }
             if let Some(path) = self.inner.conversation_state_path.lock().map_err(|_| {
                 HostError::new("conversation_state_unavailable", "Shared state configuration lock is poisoned")
             })?.as_ref() {
                 let path = path.to_str().ok_or_else(|| HostError::new(
                     "conversation_state_unavailable", "Shared state path must be UTF-8"))?;
-                descriptor.env.insert("CODEPET_CONVERSATION_STATE_PATH".into(), path.to_owned());
+                descriptor.env.insert("CODEPET_CONVERSATION_STATE_DATABASE".into(), path.to_owned());
+            }
+            if let Some(dirs) = &provider_directories {
+                descriptor.env.insert("CODEPET_CONVERSATION_STATE_DATABASE".into(), dirs.database_path.clone());
             }
             if let Some(candidate) = saved_candidate {
                 descriptor.env.insert("CODEPET_RUNTIME_EXECUTABLE".into(), candidate.executable_path);
@@ -586,7 +595,7 @@ impl PluginManager {
 
         let initialization = process
             .client()
-            .provider_initialize(ProviderInitializeRequest {
+            .provider_initialize(ProviderInitializeRequest { directories: provider_directories,
                 host_client_id: self.inner.config.host_client_id.clone(),
                 host_device_id: self.inner.device.identity().device_id.clone(),
                 host_version: self.inner.config.host_version.clone(),
@@ -1121,6 +1130,31 @@ impl PluginManager {
         }
         self.inner.runtime_selections.write().await.insert(plugin_id.to_string(), candidate);
         Ok(())
+    }
+
+    pub async fn usage_query(&self, request: codepet_provider_sdk::UsageQueryRequest) -> HostResult<codepet_provider_sdk::UsageQueryResponse> {
+        self.ensure_historical_route_ready(&request.route).await?;
+        let (_, process, instance) = self.routing_context(&request.route).await?;
+        ensure_capability(&instance, ProtocolMethod::UsageQuery)?;
+        process.client().usage_query(request).await.map_err(HostError::from)
+    }
+
+    pub(crate) fn provider_state_paths(&self) -> HostResult<Vec<(String,std::path::PathBuf)>> {
+        let mut paths=Vec::new();
+        for record in self.inner.instances.list()? {
+            if let Some(dirs)=self.provider_directories(&record.plugin_id)? {paths.push((record.instance_id,std::path::PathBuf::from(dirs.database_path)));}
+        }
+        Ok(paths)
+    }
+
+    fn provider_directories(&self, plugin_id: &str) -> HostResult<Option<codepet_provider_sdk::ProviderDirectories>> {
+        let Some(root) = &self.inner.config.provider_data_root else { return Ok(None) };
+        if !root.is_absolute() || plugin_id.is_empty() || !plugin_id.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)) || plugin_id=="." || plugin_id==".." {
+            return Err(HostError::new("invalid_provider_directories", "Invalid Provider root or plugin ID"));
+        }
+        let base=root.join(plugin_id); let data=base.join("data"); let logs=base.join("logs");
+        std::fs::create_dir_all(&data)?; std::fs::create_dir_all(&logs)?;
+        Ok(Some(codepet_provider_sdk::ProviderDirectories { data:data.to_string_lossy().into_owned(), logs:logs.to_string_lossy().into_owned(), database_path:data.join("provider.sqlite").to_string_lossy().into_owned() }))
     }
 
     pub async fn conversation_list(

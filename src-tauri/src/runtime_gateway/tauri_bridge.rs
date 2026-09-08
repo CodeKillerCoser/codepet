@@ -32,6 +32,12 @@ use tokio::sync::Notify;
 
 pub const RUNTIME_GATEWAY_EVENT: &str = "runtime-gateway-event";
 pub const CODEX_DESKTOP_COMPANION_EVENT: &str = "codex-desktop-companion-event";
+
+#[tauri::command]
+pub(crate) async fn codepet_gateway_request(state: tauri::State<'_, ProviderHostState>, request: codepet_gateway_sdk::ProtocolRequest) -> Result<codepet_gateway_sdk::JsonRpcResponse, String> {
+    let gateway = state.gateway.as_ref().ok_or("Provider Gateway is unavailable")?;
+    Ok(gateway.dispatch_for_caller_scope("desktop-main", request).await)
+}
 pub const BUNDLED_PROVIDER_PLUGINS_DIRECTORY_ENV: &str =
     "CODEPET_BUNDLED_PROVIDER_PLUGINS_DIR";
 
@@ -485,6 +491,7 @@ fn provider_catalog_config(
 
 fn provider_manager_config(settings: &crate::settings::AppSettings) -> PluginManagerConfig {
     let mut config = PluginManagerConfig::default();
+    config.provider_data_root = Some(configured_app_data_dir(settings).join("providers"));
     config.process.max_frame_bytes = codepet_host::provider_sdk::MAX_PROVIDER_FRAME_BYTES;
     config.process.stderr_observer = Some(record_provider_transport_diagnostic);
     for (provider_id, preference) in &settings.agent_runtimes.by_provider {
@@ -603,7 +610,7 @@ fn configured_provider_runtime(
                 descriptor: identity.descriptor,
             }
         },
-        provider_host_directory.join("conversation-state.json"),
+        provider_host_directory.join("conversation-state.sqlite"),
     )?);
     Ok((manager, gateway, remote_access))
 }
@@ -1258,6 +1265,7 @@ mod tests {
             PluginCatalogConfig::default().with_directory(directory.path().join("providers")),
         );
         let mut config = PluginManagerConfig::default();
+    config.provider_data_root = Some(configured_app_data_dir(settings).join("providers"));
         config.process.request_timeout = Duration::from_secs(2);
         config.process.shutdown_timeout = Duration::from_millis(100);
         let manager = Arc::new(

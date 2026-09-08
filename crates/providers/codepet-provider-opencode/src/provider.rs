@@ -1,4 +1,4 @@
-use codepet_provider_sdk::conversation_atoms::{self, ConversationAtoms};
+use codepet_provider_data::conversation_atoms::{self, ConversationAtoms};
 use codepet_provider_sdk::local_runtime;
 use crate::client::OpenCodeServerSession;
 use crate::mapper::{protocol_error, OpenCodeProtocolMapper};
@@ -27,7 +27,7 @@ use codepet_provider_sdk::{
     ProviderDescribeRequest, ProviderDescribeResponse, ProviderInitializeRequest,
     ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute, ProviderResourceId,
     ProviderPluginDescriptor, ProviderShutdownRequest, ProviderShutdownResponse,
-    TurnTask, ProviderUsage, ProviderUsageDetail, RuntimeCandidate, RuntimeGetInstalledRequest,
+    TurnTask,   RuntimeCandidate, RuntimeGetInstalledRequest,
     RuntimeGetInstalledResponse, RuntimeInstallation, RuntimeSelectRequest, RuntimeSelectResponse,
     TurnInterruptRequest, TurnInterruptResponse, TurnSelection,
     TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest, TurnSteerResponse,
@@ -101,7 +101,6 @@ struct InstanceMutable {
     metadata_task: Option<tokio::task::JoinHandle<()>>,
     version: Option<String>,
     authentication: Option<ProviderAuthentication>,
-    usage: Option<ProviderUsage>,
 }
 
 impl Drop for InstanceMutable {
@@ -152,7 +151,7 @@ impl OpenCodeInstanceRuntime {
                 metadata_task: None,
                 version: (!settings.server_version.is_empty()).then(|| settings.server_version.clone()),
                 authentication: None,
-                usage: None,
+
             }),
             mapper: OpenCodeProtocolMapper::new(request.route),
             events,
@@ -183,7 +182,7 @@ impl OpenCodeInstanceRuntime {
             mutable.status,
             conversation_atoms::observed_capabilities(lock(&self.capabilities).clone(), mutable.atomic_facts_ready, mutable.atomic_facts_epoch),
             mutable.authentication.clone(),
-            mutable.usage.clone(),
+
         )
     }
 
@@ -225,10 +224,6 @@ impl OpenCodeInstanceRuntime {
                 let result = probe(&["auth", "list"]).await.ok();
                 authentication_from_output(result.as_deref())
             };
-            let usage = async {
-                let result = probe(&["stats", "--days", "30"]).await.ok();
-                usage_from_output(result.as_deref())
-            };
             let catalog = async {
                 let session = session?;
                 let client = session.client();
@@ -253,9 +248,9 @@ impl OpenCodeInstanceRuntime {
                     .next().is_some_and(|c| c.is_ascii_digit()))
                     .map(|version| version.trim_start_matches('v').to_string())
             };
-            let (authentication, usage, capabilities, version) = tokio::join!(auth, usage, catalog, version);
+            let (authentication, capabilities, version) = tokio::join!(auth, catalog, version);
             if let Some(owner) = owner.upgrade() {
-                owner.apply_metadata(epoch, Some(authentication), Some(usage), capabilities, version);
+                owner.apply_metadata(epoch, Some(authentication), capabilities, version);
             }
         }));
     }
@@ -264,7 +259,6 @@ impl OpenCodeInstanceRuntime {
         &self,
         epoch: u64,
         authentication: Option<ProviderAuthentication>,
-        usage: Option<ProviderUsage>,
         capabilities: Option<ProviderCapabilities>,
         version: Option<String>,
     ) {
@@ -274,9 +268,6 @@ impl OpenCodeInstanceRuntime {
         }
         if let Some(authentication) = authentication {
             mutable.authentication = Some(authentication);
-        }
-        if let Some(usage) = usage {
-            mutable.usage = Some(usage);
         }
         if let Some(capabilities) = capabilities { *lock(&self.capabilities) = capabilities; }
         if let Some(version) = version { mutable.version = Some(version); }
@@ -905,6 +896,7 @@ struct ProviderState {
 }
 
 pub struct OpenCodeProvider {
+    data: Arc<codepet_provider_data::ProviderData>,
     observation: codepet_observation::Observation,
     scanner: local_runtime::RuntimeScanner,
     state: Mutex<ProviderState>,
@@ -915,11 +907,14 @@ pub struct OpenCodeProvider {
 
 impl OpenCodeProvider {
     pub fn new(events: Arc<dyn ProviderEventSink>) -> Self {
+        let data=Arc::new(codepet_provider_data::ProviderData::default());
+        let events: Arc<dyn ProviderEventSink>=Arc::new(codepet_provider_data::UsageSink { data:data.clone(), downstream:events, provider:"opencode" });
         Self {
+            data,
             scanner: local_runtime::RuntimeScanner::new(events.clone()),
             observation: codepet_observation::Observation::new(codepet_observation::Definition {
                 windows_command_override: false,
-                name: "opencode", config: codepet_observation::config_home("XDG_CONFIG_HOME", codepet_observation::home().join(".config")).join("opencode/opencode.json"), events: &["session.created", "session.updated", "session.deleted", "session.status", "session.idle", "session.error", "permission.asked", "permission.replied", "question.asked", "question.replied", "question.rejected"], plugin: Some(include_str!("observation-plugin.ts")),
+                name: "opencode", config: codepet_observation::config_home("XDG_CONFIG_HOME", codepet_observation::home().join(".config")).join("opencode/opencode.json"), events: &["session.created", "session.updated", "session.deleted", "session.status", "session.idle", "session.error", "permission.asked", "permission.replied", "question.asked", "question.replied", "question.rejected", "message.updated"], plugin: Some(include_str!("observation-plugin.ts")),
             }, events.clone()),
             state: Mutex::new(ProviderState {
                 host_device_id: None,
@@ -1066,11 +1061,23 @@ impl Provider for OpenCodeProvider {
                 state.initialized_client_id = Some(request.host_client_id);
             }
             drop(state);
+            self.data.initialize(request.directories.as_ref())?;
+            self.data.start_collection()?;
+            eprintln!("provider.initialize completed; business storage configured={}", self.data.configured());
             self.scanner.start_cancellable("opencode", "opencode-ai", || discover_path_candidates("opencode"), inspect_runtime_candidate);
             Ok(ProviderInitializeResponse {
                 selected_version: PROTOCOL_VERSION,
                 plugin: Self::descriptor(),
             })
+        })
+    }
+
+    fn usage_query<'a>(&'a self, request: codepet_provider_sdk::UsageQueryRequest) -> ProtocolFuture<'a, codepet_provider_sdk::UsageQueryResponse> {
+        Box::pin(async move {
+            let _runtime = self.instance(&request.route)?;
+            let data=self.data.clone();
+            let result=tokio::task::spawn_blocking(move || data.query_observed(&request.route.provider_instance_id, request.query)).await.map_err(|e|codepet_provider_data::error("usage_query_failed",e))??;
+            Ok(codepet_provider_sdk::UsageQueryResponse { result })
         })
     }
 
@@ -1420,7 +1427,7 @@ impl Provider for OpenCodeProvider {
                 let mut native_request = request;
                 native_request.reader_scope = None;
                 let mut response = self.conversation_list(native_request).await?;
-                codepet_provider_sdk::conversation_state::SharedConversationStateStore::from_env()?.decorate_many(&scope, &mut response.conversations)?;
+                codepet_provider_data::conversation_state::SharedConversationStateStore::from_env()?.decorate_many(&scope, &mut response.conversations)?;
                 return Ok(response);
             }
 
@@ -2318,39 +2325,10 @@ fn authentication_from_output(output: Option<&str>) -> ProviderAuthentication {
     authentication
 }
 
-fn usage_from_output(stats: Option<&str>) -> ProviderUsage {
-    let total_cost = stats.as_deref().and_then(|text| statistic_value(text, "Total Cost"));
-    let input = stats.as_deref().and_then(|text| statistic_value(text, "Input"));
-    let output = stats.as_deref().and_then(|text| statistic_value(text, "Output"));
-    let mut data = codepet_provider_sdk::JsonObject::new();
-    if let Some(value) = total_cost.as_ref() { data.insert("totalCost".to_string(), json!(value)); }
-    if let Some(value) = input.as_ref() { data.insert("inputTokens".to_string(), json!(value)); }
-    if let Some(value) = output.as_ref() { data.insert("outputTokens".to_string(), json!(value)); }
-    let usage = ProviderUsage {
-        display_text: total_cost.map(|cost| format!("Last 30 days · {cost}"))
-            .unwrap_or_else(|| "Local usage statistics unavailable".to_string()),
-        observed_at: Some(now_ms()),
-        details: (!data.is_empty()).then_some(vec![ProviderUsageDetail {
-            namespace: "opencode.local-stats".to_string(),
-            schema_version: "1".to_string(),
-            data,
-        }]),
-    };
-    usage
-}
-
 fn parse_credential_count(text: &str) -> Option<u64> {
     text.lines().find(|line| line.contains("credential"))
         .and_then(|line| line.split(|character: char| !character.is_ascii_digit()).find(|part| !part.is_empty()))
         .and_then(|value| value.parse().ok())
-}
-
-fn statistic_value(text: &str, label: &str) -> Option<String> {
-    text.lines().find(|line| line.contains(label)).and_then(|line| {
-        let index = line.find(label)? + label.len();
-        let value = line[index..].trim().trim_end_matches('│').trim();
-        (!value.is_empty()).then(|| value.to_string())
-    })
 }
 
 fn discover_path_candidates(command: &str) -> Vec<RuntimeCandidate> {

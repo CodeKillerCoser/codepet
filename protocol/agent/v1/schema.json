@@ -1631,50 +1631,6 @@
       ],
       "additionalProperties": false
     },
-    "ProviderUsage": {
-      "type": "object",
-      "properties": {
-        "displayText": {
-          "type": "string",
-          "minLength": 1
-        },
-        "observedAt": {
-          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
-        },
-        "details": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ProviderUsageDetail"
-          }
-        }
-      },
-      "required": [
-        "displayText"
-      ],
-      "additionalProperties": false
-    },
-    "ProviderUsageDetail": {
-      "type": "object",
-      "properties": {
-        "namespace": {
-          "type": "string",
-          "minLength": 1
-        },
-        "schemaVersion": {
-          "type": "string",
-          "minLength": 1
-        },
-        "data": {
-          "$ref": "../../core/v1/schema.json#/$defs/JsonObject"
-        }
-      },
-      "required": [
-        "namespace",
-        "schemaVersion",
-        "data"
-      ],
-      "additionalProperties": false
-    },
     "ProviderId": {
       "type": "string",
       "minLength": 1,
@@ -1722,6 +1678,736 @@
         "status"
       ],
       "additionalProperties": false
+    },
+    "UsageMetric": {
+      "type": "string",
+      "enum": [
+        "totalTokens",
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens"
+      ]
+    },
+    "UsageCompleteness": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "unknown"
+      ]
+    },
+    "UsageTimeBucket": {
+      "type": "string",
+      "enum": [
+        "none",
+        "halfHour",
+        "hour",
+        "day",
+        "month"
+      ]
+    },
+    "UsageTimeRange": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+        },
+        "to": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "additionalProperties": false,
+      "description": "Half-open [from,to), from < to. Calendar validity and supported bucket alignment are validated by Provider."
+    },
+    "UsageAllTime": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/UsageAllTimeKind"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "UsageBoundedTime": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/UsageBoundedTimeKind"
+        },
+        "range": {
+          "$ref": "#/$defs/UsageTimeRange"
+        }
+      },
+      "required": [
+        "kind",
+        "range"
+      ],
+      "additionalProperties": false
+    },
+    "UsageTimeFilter": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UsageAllTime"
+        },
+        {
+          "$ref": "#/$defs/UsageBoundedTime"
+        }
+      ]
+    },
+    "UsageFilter": {
+      "type": "object",
+      "properties": {
+        "time": {
+          "$ref": "#/$defs/UsageTimeFilter"
+        },
+        "modelIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "includeUnknownModel": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "time"
+      ],
+      "additionalProperties": false,
+      "description": "Absent modelIds selects all; empty modelIds is invalid. Unknown models are included by default only without a model filter."
+    },
+    "UsageAggregation": {
+      "type": "object",
+      "properties": {
+        "timeBucket": {
+          "$ref": "#/$defs/UsageTimeBucket"
+        },
+        "timeZone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "groupBy": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageAggregationGroupByItems"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "timeBucket",
+        "timeZone",
+        "groupBy"
+      ],
+      "additionalProperties": false,
+      "description": "IANA timezone; sum additive metrics. Unsupported grouping, precision or timezone must return unsupported_usage_query, never silently coarsen or prorate."
+    },
+    "UsageOrder": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/UsageOrderField"
+        },
+        "direction": {
+          "$ref": "#/$defs/UsageOrderDirection"
+        }
+      },
+      "required": [
+        "field",
+        "direction"
+      ],
+      "additionalProperties": false
+    },
+    "UsagePage": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "cursor": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "description": "Default limit 100. Cursor binds exact query, source scope and immutable revision. Expired revisions return usage_cursor_expired."
+    },
+    "UsageQuery": {
+      "type": "object",
+      "properties": {
+        "datasetId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "filter": {
+          "$ref": "#/$defs/UsageFilter"
+        },
+        "aggregation": {
+          "$ref": "#/$defs/UsageAggregation"
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageMetric"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "summaries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageQuerySummariesItems"
+          },
+          "uniqueItems": true
+        },
+        "orderBy": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageOrder"
+          }
+        },
+        "page": {
+          "$ref": "#/$defs/UsagePage"
+        }
+      },
+      "required": [
+        "datasetId",
+        "filter",
+        "aggregation",
+        "metrics"
+      ],
+      "additionalProperties": false,
+      "description": "Filter before aggregation and pagination. Summaries cover every filtered record, never just a page. Defaults sort bucketStart then modelId ascending, unknown model first. Metric sorts require that metric. Group summaries require model grouping. PeakDaily uses totalTokens per calendar day, ties select earliest date; all-time means available dataset history, not account lifetime."
+    },
+    "UsageMetricValue": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageTokenCount"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completeness": {
+          "$ref": "#/$defs/UsageCompleteness"
+        }
+      },
+      "required": [
+        "value",
+        "completeness"
+      ],
+      "additionalProperties": false
+    },
+    "UsageValues": {
+      "type": "object",
+      "properties": {
+        "totalTokens": {
+          "$ref": "#/$defs/UsageMetricValue"
+        },
+        "inputTokens": {
+          "$ref": "#/$defs/UsageMetricValue"
+        },
+        "outputTokens": {
+          "$ref": "#/$defs/UsageMetricValue"
+        },
+        "cacheReadTokens": {
+          "$ref": "#/$defs/UsageMetricValue"
+        },
+        "cacheWriteTokens": {
+          "$ref": "#/$defs/UsageMetricValue"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "description": "Return exactly requested metrics. Input includes cache read/write; total = input + output. Cache is not added twice. Missing metrics are null/unknown; incomplete sums are partial."
+    },
+    "UsageCoverage": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/UsageCoverageScope"
+        },
+        "availableFrom": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageText"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completeThrough": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageText"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/UsageCoverageStatus"
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageTimeRange"
+          }
+        }
+      },
+      "required": [
+        "scope",
+        "availableFrom",
+        "completeThrough",
+        "status",
+        "gaps"
+      ],
+      "additionalProperties": false,
+      "description": "Completeness is relative to dataset scope. Missing buckets are not zero unless coverage establishes completeness."
+    },
+    "UsageRow": {
+      "type": "object",
+      "properties": {
+        "bucket": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageTimeRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modelId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageText"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "values": {
+          "$ref": "#/$defs/UsageValues"
+        },
+        "completeness": {
+          "$ref": "#/$defs/UsageCompleteness"
+        },
+        "provisional": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "bucket",
+        "values",
+        "completeness",
+        "provisional"
+      ],
+      "additionalProperties": false
+    },
+    "UsageDailyPeak": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "totalTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "completeness": {
+          "$ref": "#/$defs/UsageCompleteness"
+        }
+      },
+      "required": [
+        "date",
+        "totalTokens",
+        "completeness"
+      ],
+      "additionalProperties": false
+    },
+    "UsageGroupTotal": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageText"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "values": {
+          "$ref": "#/$defs/UsageValues"
+        }
+      },
+      "required": [
+        "modelId",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "UsageGroupPeak": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageText"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "peak": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageDailyPeak"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "modelId",
+        "peak"
+      ],
+      "additionalProperties": false
+    },
+    "UsageSummaries": {
+      "type": "object",
+      "properties": {
+        "totals": {
+          "$ref": "#/$defs/UsageValues"
+        },
+        "peakDaily": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageDailyPeak"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "totalsByGroup": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageGroupTotal"
+          }
+        },
+        "peakDailyByGroup": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageGroupPeak"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "UsageQueryResult": {
+      "type": "object",
+      "properties": {
+        "datasetId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generatedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+        },
+        "updatedAt": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageText"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coverage": {
+          "$ref": "#/$defs/UsageCoverage"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageRow"
+          }
+        },
+        "summaries": {
+          "$ref": "#/$defs/UsageSummaries"
+        },
+        "nextCursor": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageText"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nativeAccountSummary": {
+          "$ref": "#/$defs/UsageNativeAccountSummary"
+        }
+      },
+      "required": [
+        "datasetId",
+        "revision",
+        "generatedAt",
+        "updatedAt",
+        "coverage",
+        "rows",
+        "nextCursor"
+      ],
+      "additionalProperties": false
+    },
+    "UsageDataset": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "$ref": "#/$defs/UsageDatasetScope"
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageMetric"
+          },
+          "uniqueItems": true
+        },
+        "timeBuckets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageTimeBucket"
+          },
+          "uniqueItems": true
+        },
+        "modelFilter": {
+          "type": "boolean"
+        },
+        "modelGrouping": {
+          "type": "boolean"
+        },
+        "timeZones": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "baseBucketMinutes": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageBucketMinutes"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "displayName",
+        "scope",
+        "metrics",
+        "timeBuckets",
+        "modelFilter",
+        "modelGrouping",
+        "timeZones",
+        "baseBucketMinutes"
+      ],
+      "additionalProperties": false,
+      "description": "timeZones empty means any supported IANA timezone; otherwise only listed zones. Capability is about available source data, not UI preferences."
+    },
+    "UsageText": {
+      "type": "string"
+    },
+    "UsageTokenCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "UsageBucketMinutes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "UsageAllTimeKind": {
+      "type": "string",
+      "enum": [
+        "all"
+      ]
+    },
+    "UsageBoundedTimeKind": {
+      "type": "string",
+      "enum": [
+        "range"
+      ]
+    },
+    "UsageAggregationGroupByItems": {
+      "type": "string",
+      "enum": [
+        "model"
+      ]
+    },
+    "UsageOrderField": {
+      "type": "string",
+      "enum": [
+        "bucketStart",
+        "modelId",
+        "totalTokens",
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens"
+      ]
+    },
+    "UsageOrderDirection": {
+      "type": "string",
+      "enum": [
+        "asc",
+        "desc"
+      ]
+    },
+    "UsageQuerySummariesItems": {
+      "type": "string",
+      "enum": [
+        "totals",
+        "peakDaily",
+        "totalsByGroup",
+        "peakDailyByGroup"
+      ]
+    },
+    "UsageCoverageScope": {
+      "type": "string",
+      "enum": [
+        "account",
+        "local"
+      ]
+    },
+    "UsageCoverageStatus": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "backfilling",
+        "unknown"
+      ]
+    },
+    "UsageDatasetScope": {
+      "type": "string",
+      "enum": [
+        "account",
+        "local"
+      ]
+    },
+    "UsageNativeAccountSummary": {
+      "type": "object",
+      "properties": {
+        "lifetimeTokens": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageTokenCount"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "peakDailyTokens": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageTokenCount"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "longestRunningTurnSec": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageTokenCount"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "currentStreakDays": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageTokenCount"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "longestStreakDays": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageTokenCount"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "lifetimeTokens",
+        "peakDailyTokens",
+        "longestRunningTurnSec",
+        "currentStreakDays",
+        "longestStreakDays"
+      ],
+      "additionalProperties": false,
+      "description": "Unfiltered native account facts, independent of query filters and daily bucket retention. Never combine with local observed totals."
     }
   }
 }

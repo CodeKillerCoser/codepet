@@ -1,5 +1,5 @@
 mod conversation_observer;
-use codepet_provider_sdk::conversation_atoms::{self, ConversationAtoms};
+use codepet_provider_data::conversation_atoms::{self, ConversationAtoms};
 use codepet_provider_sdk::local_runtime;
 use crate::client::{
     CodexAppServerSession, CodexRequestOutcome,
@@ -29,8 +29,8 @@ use codepet_provider_sdk::{
     ProjectListRequest, ProjectListResponse, ProjectUpdateRequest, ProjectUpdateResponse,
     ProtocolError, ProtocolEvent, ProtocolFuture, Provider, ProviderCapabilities,
     ProviderAuthentication, ProviderAuthenticationStatus, ProviderCapability,
-    ProviderDescribeRequest, ProviderDescribeResponse, ProviderEventSink, ProviderUsage,
-    ProviderUsageDetail,
+    ProviderDescribeRequest, ProviderDescribeResponse, ProviderEventSink,
+
     FlatModelCatalogKind, FlatModelSelection, HarnessDescriptor, ModelCatalog, ModelSelection, Approval,
     ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance,
     ProviderInstanceRoute, ProviderPluginDescriptor, ProviderResourceId, ProviderShutdownRequest,
@@ -99,7 +99,6 @@ struct InstanceMutable {
     capabilities: ProviderCapabilities,
     harness: HarnessDescriptor,
     authentication: Option<ProviderAuthentication>,
-    usage: Option<ProviderUsage>,
     lifecycle_generation: u64,
     sessions: HashMap<u64, Arc<InstanceSessionSlot>>,
     server_session_id: Option<u64>,
@@ -437,7 +436,7 @@ impl CodexInstanceRuntime {
                     executable_path: Some(executable_path),
                 },
                 authentication: None,
-                usage: None,
+
                 lifecycle_generation: 0,
                 sessions: HashMap::new(),
                 server_session_id: None,
@@ -467,7 +466,7 @@ impl CodexInstanceRuntime {
             mutable.harness.clone(),
             mutable.status,
             mutable.authentication.clone(),
-            mutable.usage.clone(),
+
             conversation_atoms::observed_capabilities(mutable.capabilities.clone(), mutable.atomic_facts_ready, mutable.atomic_facts_epoch),
         )
     }
@@ -512,15 +511,10 @@ impl CodexInstanceRuntime {
             let model_server = server.clone();
             let project_server = server.clone();
             let account_server = server.clone();
-            let limits_server = server.clone();
-            let usage_server = server.clone();
             let models = tokio::task::spawn_blocking(move || model_server.model_list());
             let projects =
                 tokio::task::spawn_blocking(move || project_server.project_list(None, Some(1)));
             let account = tokio::task::spawn_blocking(move || account_server.account_read());
-            let limits =
-                tokio::task::spawn_blocking(move || limits_server.account_rate_limits_read());
-            let usage = tokio::task::spawn_blocking(move || usage_server.account_usage_read());
             let catalog = async {
                 let (models, projects) = tokio::join!(models, projects);
                 let Ok(Ok(models)) = models else { return None; };
@@ -534,16 +528,12 @@ impl CodexInstanceRuntime {
             let authentication = async {
                 account.await.ok().and_then(Result::ok).map(|account| codex_authentication(&account))
             };
-            let consumption = async {
-                let (limits, usage) = tokio::join!(limits, usage);
-                codex_usage(limits.ok().and_then(Result::ok).as_ref(), usage.ok().and_then(Result::ok).as_ref())
-            };
-            let (capabilities, authentication, usage) = tokio::join!(catalog, authentication, consumption);
+            let (capabilities, authentication) = tokio::join!(catalog, authentication);
             if let Some(owner) = owner.upgrade() {
                 owner.apply_metadata(epoch, |state| {
                     if let Some(capabilities) = capabilities { state.capabilities = capabilities; }
                     state.authentication = authentication.flatten();
-                    state.usage = usage;
+
                 });
             }
         }));
@@ -1248,6 +1238,7 @@ struct ProviderState {
 }
 
 pub struct CodexProvider {
+    data: Arc<codepet_provider_data::ProviderData>,
     observation: codepet_observation::Observation,
     scanner: local_runtime::RuntimeScanner,
     state: Mutex<ProviderState>,
@@ -1271,7 +1262,10 @@ impl CodexProvider {
         events: Arc<dyn ProviderEventSink>,
         lifecycle_hook: Arc<dyn ExecutionLifecycleHook>,
     ) -> Self {
+        let data=Arc::new(codepet_provider_data::ProviderData::default());
+        let events: Arc<dyn ProviderEventSink>=Arc::new(codepet_provider_data::UsageSink { data:data.clone(), downstream:events, provider:"codex" });
         Self {
+            data,
             scanner: local_runtime::RuntimeScanner::new(events.clone()),
             observation: codepet_observation::Observation::new(codepet_observation::Definition {
                 windows_command_override: true,
@@ -1411,11 +1405,29 @@ impl Provider for CodexProvider {
                 state.initialized_client_id = Some(request.host_client_id);
             }
             drop(state);
+            self.data.initialize(request.directories.as_ref())?;
+            eprintln!("provider.initialize completed; business storage configured={}", self.data.configured());
             self.scanner.start_cancellable("codex", "@openai/codex", discover_codex_candidates, |candidate, timeout, control| inspect_runtime_candidate(candidate, "codex", timeout, control));
             Ok(ProviderInitializeResponse {
                 selected_version: PROTOCOL_VERSION,
                 plugin: Self::descriptor(),
             })
+        })
+    }
+
+    fn usage_query<'a>(&'a self, request: codepet_provider_sdk::UsageQueryRequest) -> ProtocolFuture<'a, codepet_provider_sdk::UsageQueryResponse> {
+        Box::pin(async move {
+            let runtime = self.instance(&request.route)?;
+            let data=self.data.clone();
+            let result=tokio::task::spawn_blocking(move || {
+                let instance=request.route.provider_instance_id;
+                if request.query.page.as_ref().and_then(|p|p.cursor.as_ref()).is_none() {
+                    let response=runtime.ready_server()?.account_usage_read().map_err(|e|codepet_provider_data::error("usage_unavailable",e))?;
+                    data.import_codex_daily(&instance,&response)?;
+                }
+                data.query(&instance, request.query, true)
+            }).await.map_err(|e|codepet_provider_data::error("usage_query_failed",e))??;
+            Ok(codepet_provider_sdk::UsageQueryResponse { result })
         })
     }
 
@@ -1699,7 +1711,7 @@ impl Provider for CodexProvider {
                     mutable.capabilities = CodexProtocolMapper::unavailable_capabilities(server_generation.clone());
                     mutable.harness = harness;
                     mutable.authentication = None;
-                    mutable.usage = None;
+
                     mutable.server_session_id = Some(slot.id);
                     mutable.server_generation = Some(server_generation.clone());
                     mutable.pending_approvals.clear();
@@ -1996,7 +2008,7 @@ impl Provider for CodexProvider {
                 let mut native_request = request;
                 native_request.reader_scope = None;
                 let mut response = self.conversation_list(native_request).await?;
-                codepet_provider_sdk::conversation_state::SharedConversationStateStore::from_env()?.decorate_many(&scope, &mut response.conversations)?;
+                codepet_provider_data::conversation_state::SharedConversationStateStore::from_env()?.decorate_many(&scope, &mut response.conversations)?;
                 return Ok(response);
             }
 
@@ -4061,106 +4073,6 @@ fn display_plan_name(plan: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-fn codex_usage(
-    rate_limits: Option<&Value>,
-    token_usage: Option<&Value>,
-) -> Option<ProviderUsage> {
-    let mut details = Vec::new();
-    let mut display_parts = Vec::new();
-    if let Some(rate_limits) = rate_limits {
-        let mut data = codepet_provider_sdk::JsonObject::new();
-        for key in ["rateLimits", "rateLimitsByLimitId", "rateLimitResetCredits"] {
-            if let Some(value) = rate_limits.get(key).filter(|value| !value.is_null()) {
-                data.insert(key.to_string(), value.clone());
-            }
-        }
-        if !data.is_empty() {
-            details.push(ProviderUsageDetail {
-                namespace: "openai.codex.rate-limits".to_string(),
-                schema_version: "1".to_string(),
-                data,
-            });
-        }
-        if let Some(snapshot) = preferred_rate_limit_snapshot(rate_limits) {
-            for key in ["primary", "secondary"] {
-                if let Some(window) = snapshot.get(key).filter(|value| !value.is_null()) {
-                    if let Some(label) = rate_limit_window_label(window) {
-                        display_parts.push(label);
-                    }
-                }
-            }
-        }
-    }
-    if let Some(summary) = token_usage
-        .and_then(|usage| usage.get("summary"))
-        .filter(|value| value.is_object())
-    {
-        details.push(ProviderUsageDetail {
-            namespace: "openai.codex.token-usage".to_string(),
-            schema_version: "1".to_string(),
-            data: [("summary".to_string(), summary.clone())]
-                .into_iter()
-                .collect(),
-        });
-        if display_parts.is_empty() {
-            if let Some(tokens) = summary.get("lifetimeTokens").and_then(Value::as_u64) {
-                display_parts.push(format!("{} lifetime tokens", compact_number(tokens)));
-            }
-        }
-    }
-    if details.is_empty() {
-        return None;
-    }
-    Some(ProviderUsage {
-        display_text: if display_parts.is_empty() {
-            "Usage data available".to_string()
-        } else {
-            display_parts.join(" · ")
-        },
-        observed_at: Some(now_ms()),
-        details: Some(details),
-    })
-}
-
-fn preferred_rate_limit_snapshot(response: &Value) -> Option<&Value> {
-    response
-        .pointer("/rateLimitsByLimitId/codex")
-        .or_else(|| response.get("rateLimits"))
-}
-
-fn rate_limit_window_label(window: &Value) -> Option<String> {
-    let used = window.get("usedPercent")?.as_u64()?.min(100);
-    let remaining = 100_u64.saturating_sub(used);
-    let duration = window
-        .get("windowDurationMins")
-        .and_then(Value::as_u64)
-        .map(format_window_duration)
-        .unwrap_or_else(|| "Quota".to_string());
-    Some(format!("{duration} {remaining}% remaining"))
-}
-
-fn format_window_duration(minutes: u64) -> String {
-    if minutes > 0 && minutes % (24 * 60) == 0 {
-        format!("{}d", minutes / (24 * 60))
-    } else if minutes > 0 && minutes % 60 == 0 {
-        format!("{}h", minutes / 60)
-    } else {
-        format!("{minutes}m")
-    }
-}
-
-fn compact_number(value: u64) -> String {
-    if value >= 1_000_000_000 {
-        format!("{:.1}B", value as f64 / 1_000_000_000.0)
-    } else if value >= 1_000_000 {
-        format!("{:.1}M", value as f64 / 1_000_000.0)
-    } else if value >= 1_000 {
-        format!("{:.1}K", value as f64 / 1_000.0)
-    } else {
-        value.to_string()
-    }
 }
 
 fn provider_task_error(error: tokio::task::JoinError) -> ProtocolError {

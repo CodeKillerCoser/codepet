@@ -1,7 +1,8 @@
+use codepet_provider_data::conversation_state::SharedConversationStateStore;
 use super::*;
 use codepet_provider_sdk::{
     self as sdk, conversation_query::SnapshotPager,
-    conversation_state::SharedConversationStateStore,
+
 };
 
 #[derive(Default)]

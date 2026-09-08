@@ -1,5 +1,11 @@
 // Handwritten Provider SDK sources embedded by Bun into the standalone generator.
 // Keep paths explicit for static bundling; the export test checks this list against src/.
+import providerBackgroundProbe from "../../sdk/rust/codepet-provider-sdk/src/background_probe.rs" with { type: "text" };
+import providerConversationQuery from "../../sdk/rust/codepet-provider-sdk/src/conversation_query.rs" with { type: "text" };
+import providerLocalRuntime from "../../sdk/rust/codepet-provider-sdk/src/local_runtime.rs" with { type: "text" };
+import providerProcess from "../../sdk/rust/codepet-provider-sdk/src/process.rs" with { type: "text" };
+import providerProcessUnix from "../../sdk/rust/codepet-provider-sdk/src/process/unix.rs" with { type: "text" };
+import providerProcessWindows from "../../sdk/rust/codepet-provider-sdk/src/process/windows.rs" with { type: "text" };
 import providerContentItemText from "../../sdk/rust/codepet-provider-sdk/src/content/item_text.rs" with { type: "text" };
 import providerContentMod from "../../sdk/rust/codepet-provider-sdk/src/content/mod.rs" with { type: "text" };
 import providerLib from "../../sdk/rust/codepet-provider-sdk/src/lib.rs" with { type: "text" };
@@ -26,6 +32,12 @@ import providerTransportMuxTests from "../../sdk/rust/codepet-provider-sdk/src/t
 import providerRuntimeActivity from "../../sdk/rust/codepet-provider-sdk/src/runtime/activity.rs" with { type: "text" };
 
 export const providerRuntimeFiles = new Map([
+  ["background_probe.rs", providerBackgroundProbe],
+  ["conversation_query.rs", providerConversationQuery],
+  ["local_runtime.rs", providerLocalRuntime],
+  ["process.rs", providerProcess],
+  ["process/unix.rs", providerProcessUnix],
+  ["process/windows.rs", providerProcessWindows],
   ["content/item_text.rs", providerContentItemText],
   ["content/mod.rs", providerContentMod],
   ["lib.rs", providerLib],

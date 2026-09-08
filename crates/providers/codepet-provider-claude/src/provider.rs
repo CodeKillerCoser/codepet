@@ -1,5 +1,5 @@
 mod conversation_observer;
-use codepet_provider_sdk::conversation_atoms::{self, ConversationAtoms};
+use codepet_provider_data::conversation_atoms::{self, ConversationAtoms};
 use codepet_provider_sdk::local_runtime;
 use crate::client::{
     ClaudeCliError, ClaudeProcessControl, ClaudeTurnLaunch, SpawnedClaudeTurn,
@@ -24,8 +24,8 @@ use codepet_provider_sdk::{
     Conversation, ProviderDescribeRequest, ProviderDescribeResponse, ProviderExtension,
     ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute, ProviderResourceId,
     Approval, ProviderAuthentication, ProviderAuthenticationStatus, ProviderPluginDescriptor,
-    ProviderShutdownRequest, ProviderShutdownResponse, TurnTask, ProviderUsage,
-    ProviderUsageDetail,
+    ProviderShutdownRequest, ProviderShutdownResponse, TurnTask,
+
     MessageConversationItem, MessageConversationItemKind, OpaqueToolInput, OpaqueToolInputKind,
     OutputContentBlock, OutputContentBlockKind, RoutedResourceId, RuntimeCandidate, RuntimeGetInstalledRequest, RuntimeGetInstalledResponse,
     RuntimeInstallation, RuntimeSelectRequest, RuntimeSelectResponse, ToolCategory,
@@ -160,7 +160,6 @@ struct InstanceMutable {
     conversations: HashMap<String, ManagedConversation>,
     version: Option<String>,
     authentication: Option<ProviderAuthentication>,
-    usage: Option<ProviderUsage>,
 }
 
 impl Drop for InstanceMutable {
@@ -204,7 +203,7 @@ impl ClaudeInstanceRuntime {
                 conversations: HashMap::new(),
                 version: None,
                 authentication: None,
-                usage: None,
+
             }),
             events,
         }
@@ -234,7 +233,7 @@ impl ClaudeInstanceRuntime {
             },
             status: mutable.status,
             authentication: mutable.authentication.clone(),
-            usage: mutable.usage.clone(),
+
             capabilities: conversation_atoms::observed_capabilities(self.capabilities.clone(), mutable.atomic_facts_ready, mutable.atomic_facts_epoch),
         }
     }
@@ -971,11 +970,10 @@ impl ClaudeInstanceRuntime {
                 result,
                 stop_reason: _,
                 terminal_reason,
-                usage,
-                total_cost_usd,
+                usage: _,
+                total_cost_usd: _,
             } => {
                 validate_claude_session(conversation_id, session_id.as_deref())?;
-                self.update_usage(usage, total_cost_usd);
                 let status = result_status(&subtype, is_error, terminal_reason.as_deref());
                 self.set_pending_completion(
                     conversation_id,
@@ -989,36 +987,6 @@ impl ClaudeInstanceRuntime {
             }
             _ => Ok(()),
         }
-    }
-
-    fn update_usage(&self, usage: Option<Value>, total_cost_usd: Option<f64>) {
-        let Some(usage) = usage else { return };
-        let mut data = usage.as_object().map(|value| value.iter()
-            .map(|(key, value)| (key.clone(), value.clone())).collect::<BTreeMap<_, _>>())
-            .unwrap_or_default();
-        if let Some(cost) = total_cost_usd {
-            data.insert("totalCostUsd".to_string(), json!(cost));
-        }
-        let tokens = ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
-            .into_iter()
-            .filter_map(|key| data.get(key).and_then(Value::as_u64))
-            .sum::<u64>();
-        lock(&self.mutable).usage = Some(ProviderUsage {
-            display_text: match total_cost_usd {
-                Some(cost) => format!("Last turn: {tokens} tokens · ${cost:.4}"),
-                None => format!("Last turn: {tokens} tokens"),
-            },
-            observed_at: Some(now_ms()),
-            details: Some(vec![ProviderUsageDetail {
-                namespace: "anthropic.claude.turn-usage".to_string(),
-                schema_version: "1".to_string(),
-                data,
-            }]),
-        });
-        let _ = self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
-            jsonrpc: "2.0".to_string(),
-            params: InstanceStatusChangedEvent { instance: self.snapshot(), previous_status: None },
-        });
     }
 
     fn set_pending_completion(
@@ -1436,6 +1404,7 @@ struct ProviderState {
 }
 
 pub struct ClaudeProvider {
+    data: Arc<codepet_provider_data::ProviderData>,
     observation: codepet_observation::Observation,
     scanner: local_runtime::RuntimeScanner,
     state: Mutex<ProviderState>,
@@ -1445,7 +1414,10 @@ pub struct ClaudeProvider {
 
 impl ClaudeProvider {
     pub fn new(events: Arc<dyn ProviderEventSink>) -> Self {
+        let data=Arc::new(codepet_provider_data::ProviderData::default());
+        let events: Arc<dyn ProviderEventSink>=Arc::new(codepet_provider_data::UsageSink { data:data.clone(), downstream:events, provider:"claude" });
         Self {
+            data,
             scanner: local_runtime::RuntimeScanner::new(events.clone()),
             observation: codepet_observation::Observation::new(codepet_observation::Definition {
                 windows_command_override: false,
@@ -1597,11 +1569,23 @@ impl Provider for ClaudeProvider {
                 state.initialized_client_id = Some(request.host_client_id);
             }
             drop(state);
+            self.data.initialize(request.directories.as_ref())?;
+            self.data.start_collection()?;
+            eprintln!("provider.initialize completed; business storage configured={}", self.data.configured());
             self.scanner.start_cancellable("claude", "@anthropic-ai/claude-code", || discover_path_candidates("claude"), |candidate, timeout, control| inspect_runtime_candidate(candidate, "claude", timeout, control));
             Ok(ProviderInitializeResponse {
                 selected_version: PROTOCOL_VERSION,
                 plugin: Self::descriptor(),
             })
+        })
+    }
+
+    fn usage_query<'a>(&'a self, request: codepet_provider_sdk::UsageQueryRequest) -> ProtocolFuture<'a, codepet_provider_sdk::UsageQueryResponse> {
+        Box::pin(async move {
+            let _runtime = self.instance(&request.route)?;
+            let data=self.data.clone();
+            let result=tokio::task::spawn_blocking(move || data.query_observed(&request.route.provider_instance_id, request.query)).await.map_err(|e|codepet_provider_data::error("usage_query_failed",e))??;
+            Ok(codepet_provider_sdk::UsageQueryResponse { result })
         })
     }
 
@@ -1831,7 +1815,7 @@ impl Provider for ClaudeProvider {
                 let mut native_request = request;
                 native_request.reader_scope = None;
                 let mut response = self.conversation_list(native_request).await?;
-                codepet_provider_sdk::conversation_state::SharedConversationStateStore::from_env()?.decorate_many(&scope, &mut response.conversations)?;
+                codepet_provider_data::conversation_state::SharedConversationStateStore::from_env()?.decorate_many(&scope, &mut response.conversations)?;
                 return Ok(response);
             }
 
@@ -2036,7 +2020,7 @@ fn claude_capabilities() -> ProviderCapabilities {
         reasoning_effort: turn_send.reasoning_effort.clone(),
         model_catalog: turn_send.model_catalog.clone(),
     };
-    codepet_provider_sdk::conversation_atoms::with_capabilities(ProviderCapabilities {
+    codepet_provider_data::with_usage_capabilities(ProviderCapabilities { usage_datasets: Some(codepet_provider_data::datasets(false)),
             conversation_list_query: Some(codepet_provider_sdk::ConversationListQueryCapabilities { updated_after: true, ids: true }),
             revision: "claude-cli-stream-json-controls-v1".to_string(),
         methods,

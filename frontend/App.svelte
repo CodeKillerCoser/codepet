@@ -39,7 +39,7 @@
   import { onMount, tick } from "svelte";
   import ProviderConnectionStatus from "./lib/ProviderConnectionStatus.svelte";
   import { observeProviderRuntimes, type ProviderConnectionState } from "./lib/providerRuntimes";
-  import { appDataDirectory, appDataDirectoryTargetStatus, checkAppUpdate, clearAgentRuntimeExecutable, cutOutImageSubject, deletePet, detectAgentRuntime, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentRuntimeExecutable, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, tokenUsageSummary, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { appDataDirectory, appDataDirectoryTargetStatus, checkAppUpdate, clearAgentRuntimeExecutable, cutOutImageSubject, deletePet, detectAgentRuntime, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentRuntimeExecutable, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
   import { agentRuntimeSourceLabel, agentRuntimeStatusMeta, canRestoreAutomaticDetection } from "./lib/agentRuntime";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
@@ -52,8 +52,8 @@
   import { playNotificationSound, playWhipReactionSound } from "./lib/sound";
   import { defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
   import { ignoredUpdateSettings, shouldPromptForUpdate, type UpdateCheckMode } from "./lib/updates";
-  import { buildUsageChartData, yAxisTicks, type UsageBucketSize, type UsageRange } from "./lib/usageChart";
-  import type { ActivityKeywordFilterSettings, AgentId, AgentRuntime, AgentRuntimeProviderId, AgentView, AppSettings, AppUpdate, DingTalkRobotChannel, PetEvent, PetLibraryView, RobotNotificationChannel, TokenUsageSummary } from "./lib/types";
+  import UsagePanel from "./lib/UsagePanel.svelte";
+  import type { ActivityKeywordFilterSettings, AgentId, AgentRuntime, AgentRuntimeProviderId, AgentView, AppSettings, AppUpdate, DingTalkRobotChannel, PetEvent, PetLibraryView, RobotNotificationChannel } from "./lib/types";
 
   type ActivityFilterKind = keyof ActivityKeywordFilterSettings;
 
@@ -97,7 +97,6 @@
   let pairingCountdownTimer: number | null = null;
   let settings: AppSettings | null = null;
   let petLibrary: PetLibraryView | null = null;
-  let usage: TokenUsageSummary | null = null;
   let events: PetEvent[] = [];
   let appDataDir = "";
   let busyRuntime: string | null = null;
@@ -129,24 +128,8 @@
     backgroundColor: 0,
     borderColor: 0,
   };
-  let usageRange: UsageRange = "7d";
-  let usageBucketSize: UsageBucketSize = "30m";
   const agentOrder: AgentId[] = ["codex", "claude", "qoder", "cursor"];
   let filterDrafts: Record<AgentId, Record<ActivityFilterKind, string>> = createFilterDrafts();
-  const usageRanges: Array<{ value: UsageRange; label: string }> = [
-    { value: "24h", label: "24小时" },
-    { value: "7d", label: "7天" },
-    { value: "30d", label: "30天" },
-    { value: "90d", label: "90天" },
-    { value: "1y", label: "近一年" },
-  ];
-  const usageBucketSizes: Array<{ value: UsageBucketSize; label: string }> = [
-    { value: "30m", label: "30分钟" },
-    { value: "1h", label: "1小时" },
-    { value: "5h", label: "5小时" },
-    { value: "12h", label: "12小时" },
-    { value: "24h", label: "24小时" },
-  ];
   const whipReactionSounds: Array<{ value: AppSettings["pet"]["whipReactionSound"]; label: string }> = [
     { value: "none", label: "无" },
     { value: "pa", label: "啪" },
@@ -237,16 +220,12 @@
 
     let disposed = false;
     let unlistenPetEvent: (() => void) | null = null;
-    let unlistenTokenUsage: (() => void) | null = null;
     let unlistenAgentDisabled: (() => void) | null = null;
     let unlistenSettings: (() => void) | null = null;
     void (async () => {
       await keepWindowVisible();
       unlistenPetEvent = await listen<PetEvent>("pet-event", (event) => {
         events = mergeEventFeed(events, [event.payload]);
-      });
-      unlistenTokenUsage = await listen<TokenUsageSummary>("token-usage-updated", (event) => {
-        usage = event.payload;
       });
       unlistenAgentDisabled = await listen<string>("agent-disabled", (event) => {
         events = events.filter((activity) => activity.provider !== event.payload);
@@ -256,7 +235,6 @@
       });
       if (disposed) {
         unlistenPetEvent();
-        unlistenTokenUsage();
         unlistenAgentDisabled();
         unlistenSettings();
         return;
@@ -277,7 +255,6 @@
       runtimeObserver.dispose();
       media.removeEventListener("change", syncTheme);
       unlistenPetEvent?.();
-      unlistenTokenUsage?.();
       unlistenAgentDisabled?.();
       unlistenSettings?.();
       clearEventPoll();
@@ -304,18 +281,16 @@
     error = "";
     const startedAt = performance.now();
     try {
-      const [_runtimeSubscription, nextEvents, nextAppDataDir, nextPetLibrary, nextUsage, nextLaunchAtLogin] = await Promise.all([
+      const [_runtimeSubscription, nextEvents, nextAppDataDir, nextPetLibrary, nextLaunchAtLogin] = await Promise.all([
         measureFrontendPerf("frontend.main.list_agent_runtimes", () => runtimeObserver.start()),
         measureFrontendPerf("frontend.main.recent_events", () => recentEvents()),
         measureFrontendPerf("frontend.main.app_data_directory", () => appDataDirectory()),
         measureFrontendPerf("frontend.main.list_pets", () => listPets()),
-        measureFrontendPerf("frontend.main.token_usage_summary", () => tokenUsageSummary()),
         measureFrontendPerf("frontend.main.get_launch_at_login", () => getLaunchAtLoginEnabled()),
       ]);
       events = mergeEventFeed(events, nextEvents);
       appDataDir = nextAppDataDir;
       petLibrary = nextPetLibrary;
-      usage = nextUsage;
       launchAtLogin = nextLaunchAtLogin;
       settings = normalizeSettings(await measureFrontendPerf("frontend.main.get_settings", () => getAppSettings()));
       void recordPerfEvent({
@@ -1088,7 +1063,6 @@
       settings = normalizeSettings(await setAppDataDirectory(path, clearTarget));
       appDataDir = await appDataDirectory();
       petLibrary = await listPets();
-      usage = await tokenUsageSummary();
       appDataRestartPending = true;
     } catch (currentError) {
       error = String(currentError);
@@ -1700,10 +1674,6 @@
     return whipReactionSounds.find((option) => option.value === sound)?.label ?? "无";
   }
 
-  function compactNumber(value: number | undefined) {
-    return Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 }).format(value ?? 0);
-  }
-
   function agentLabel(agentId: AgentView["id"]) {
     return {
       codex: "Codex",
@@ -1713,33 +1683,10 @@
     }[agentId];
   }
 
-  function formatBucketLabel(value: string) {
-    const date = new Date(value);
-    if (Number.isNaN(date.valueOf())) return value;
-    return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-  }
-
-  function agentSegmentHeight(tokens: number | undefined, maxTokens: number) {
-    if (!tokens || !maxTokens) return "0%";
-    return `${Math.max(4, (tokens / maxTokens) * 100)}%`;
-  }
-
-  function usageFilterLabel(value: UsageRange | UsageBucketSize) {
-    return [...usageRanges, ...usageBucketSizes].find((option) => option.value === value)?.label ?? value;
-  }
-
-  function usageProviderTotal(agentId: AgentView["id"]) {
-    return usageData.byProvider.find((provider) => provider.provider === agentId);
-  }
-
   $: latest = events.at(-1);
   $: recentVisibleEvents = events.slice(-5).reverse();
   $: enabledSources = petSources.filter(source => source.enabled);
   $: receivingSources = petSources.filter(source => source.status === "receiving");
-  $: usageData = buildUsageChartData(usage, { range: usageRange, bucketSize: usageBucketSize });
-  $: usageBuckets = usageData.buckets;
-  $: usageMaxTokens = usageData.maxTokens;
-  $: usageTickLabels = yAxisTicks(usageMaxTokens);
   $: pageTitle = tab === "agents" ? "Agent" : tab === "connections" ? "连接" : tab === "usage" ? "用量" : tab === "personalize" ? "个性化" : "最新事件";
   $: appTheme = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
 </script>
@@ -1962,118 +1909,7 @@
         </section>
       </div>
     {:else if tab === "usage"}
-      <div class="usage-workspace">
-        <section class="usage-summary-grid" aria-label="Token 用量概览">
-          <article class="overview-card pixel-panel">
-            <span><BarChart3 size={17} /> 总量</span>
-            <strong>{compactNumber(usageData.total.totalTokens)}</strong>
-            <p>{usageFilterLabel(usageRange)} · 输入 {compactNumber(usageData.total.inputTokens)} · 输出 {compactNumber(usageData.total.outputTokens)}</p>
-          </article>
-          {#each agentOrder as agentId}
-            {@const provider = usageProviderTotal(agentId)}
-            <article class="overview-card pixel-panel">
-              <span>{agentLabel(agentId)}</span>
-              <strong>{compactNumber(provider?.total.totalTokens)}</strong>
-              <p>输入 {compactNumber(provider?.total.inputTokens)} · 输出 {compactNumber(provider?.total.outputTokens)}</p>
-            </article>
-          {/each}
-        </section>
-
-        <section class="usage-panel pixel-panel">
-          <header class="section-head">
-            <div>
-              <span class="agent-kicker">{usageFilterLabel(usageBucketSize)} / {usageFilterLabel(usageRange)}</span>
-              <h3>Token 用量</h3>
-            </div>
-            <div class="usage-controls" aria-label="用量统计设置">
-              <label>
-                范围
-                <select bind:value={usageRange}>
-                  {#each usageRanges as range}
-                    <option value={range.value}>{range.label}</option>
-                  {/each}
-                </select>
-              </label>
-              <label>
-                单位
-                <select bind:value={usageBucketSize}>
-                  {#each usageBucketSizes as bucketSize}
-                    <option value={bucketSize.value}>{bucketSize.label}</option>
-                  {/each}
-                </select>
-              </label>
-            </div>
-          </header>
-
-          {#if usageBuckets.length}
-            <div class="usage-chart-frame" aria-label="按 Agent 和时间单位聚合的 token 用量柱状图">
-              <div class="usage-y-axis" aria-hidden="true">
-                {#each usageTickLabels as tick}
-                  <span>{compactNumber(tick)}</span>
-                {/each}
-              </div>
-              <div class="usage-chart">
-                {#each usageBuckets as bucket}
-                  <div class="usage-column">
-                    <button class="usage-bar" type="button" aria-label={`${formatBucketLabel(bucket.bucketStart)} ${compactNumber(bucket.total.totalTokens)} tokens`}>
-                      {#each agentOrder as agentId}
-                        {@const agentUsage = bucket.agents[agentId]}
-                        {#if agentUsage && agentUsage.totalTokens > 0}
-                          <span
-                            class={`usage-segment ${agentId}`}
-                            style={`height: ${agentSegmentHeight(agentUsage.totalTokens, usageMaxTokens)}`}
-                            aria-label={`${agentLabel(agentId)} ${compactNumber(agentUsage.totalTokens)} tokens`}
-                          ></span>
-                        {/if}
-                      {/each}
-                      <span class="usage-tooltip">
-                        <strong>{formatBucketLabel(bucket.bucketStart)}</strong>
-                        <em>总量 {compactNumber(bucket.total.totalTokens)} · 输入 {compactNumber(bucket.total.inputTokens)} · 输出 {compactNumber(bucket.total.outputTokens)}</em>
-                        {#each agentOrder as agentId}
-                          {@const agentUsage = bucket.agents[agentId]}
-                          {#if agentUsage && agentUsage.totalTokens > 0}
-                            <span><i class={`usage-dot ${agentId}`}></i>{agentLabel(agentId)} {compactNumber(agentUsage.totalTokens)} · 输入 {compactNumber(agentUsage.inputTokens)} · 输出 {compactNumber(agentUsage.outputTokens)}</span>
-                          {/if}
-                        {/each}
-                      </span>
-                    </button>
-                    <span class="usage-axis-label">{formatBucketLabel(bucket.bucketStart)}</span>
-                  </div>
-                {/each}
-              </div>
-            </div>
-            <div class="usage-legend" aria-label="Agent 图例">
-              <span><i class="usage-dot codex"></i> Codex</span>
-              <span><i class="usage-dot claude"></i> Claude Code</span>
-              <span><i class="usage-dot qoder"></i> Qoder</span>
-              <span><i class="usage-dot cursor"></i> Cursor</span>
-            </div>
-          {:else}
-            <div class="empty-state">
-              <BarChart3 size={20} />
-              <strong>还没有用量数据</strong>
-              <p>收到 Codex、Claude Code、Qoder 或 Cursor 的 transcript 后，这里会按选择的时间范围展示 token 用量。</p>
-            </div>
-          {/if}
-        </section>
-
-        {#if usageBuckets.length}
-          <section class="usage-table pixel-panel">
-            <header class="section-head">
-              <div>
-                <h3>明细</h3>
-              </div>
-            </header>
-            {#each usageBuckets.slice().reverse() as bucket}
-              <div class="usage-row">
-                <span>{formatBucketLabel(bucket.bucketStart)}</span>
-                <strong>{compactNumber(bucket.total.totalTokens)}</strong>
-                <em>Codex {compactNumber(bucket.agents.codex?.totalTokens)} · Claude {compactNumber(bucket.agents.claude?.totalTokens)} · Qoder {compactNumber(bucket.agents.qoder?.totalTokens)} · Cursor {compactNumber(bucket.agents.cursor?.totalTokens)}</em>
-              </div>
-            {/each}
-          </section>
-        {/if}
-      </div>
+      <UsagePanel />
     {:else if tab === "personalize" && settings}
       <div class="personal-grid">
         <section class="pet-editor pixel-panel">

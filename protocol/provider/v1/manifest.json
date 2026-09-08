@@ -213,7 +213,8 @@
       "response": { "$ref": "./schema.json#/$defs/ProviderShutdownResponse" }
     },
     {"name": "event.subscribe", "direction": "hostToPlugin", "idempotency": "idempotent", "request": {"$ref": "./schema.json#/$defs/EventSubscribeRequest"}, "response": {"$ref": "./schema.json#/$defs/EventSubscribeResponse"}},
-    {"name": "event.unsubscribe", "direction": "hostToPlugin", "idempotency": "idempotent", "request": {"$ref": "./schema.json#/$defs/EventUnsubscribeRequest"}, "response": {"$ref": "./schema.json#/$defs/EventUnsubscribeResponse"}}
+    {"name": "event.unsubscribe", "direction": "hostToPlugin", "idempotency": "idempotent", "request": {"$ref": "./schema.json#/$defs/EventUnsubscribeRequest"}, "response": {"$ref": "./schema.json#/$defs/EventUnsubscribeResponse"}},
+    {"name": "usage.query", "direction": "hostToProvider", "idempotency": "safe", "capability": "usage.query", "request": {"$ref": "./schema.json#/$defs/UsageQueryRequest"}, "response": {"$ref": "./schema.json#/$defs/UsageQueryResponse"}}
   ],
   "events": [
     {"name": "event.conversationActiveChanged", "direction": "pluginToHost", "delivery": "ordered", "scope": "conversation", "payload": {"$ref": "./schema.json#/$defs/ConversationActiveChangedEvent"}},

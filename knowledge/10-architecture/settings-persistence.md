@@ -33,7 +33,9 @@
 ```text
 <Code Pet data>/
 ├── logs/code-pet.log
-├── token-usage.json
+├── providers/<pluginId>/
+│   ├── data/provider.sqlite
+│   └── logs/provider.log
 ├── pets/
 ├── provider-plugins/
 ├── provider-host/

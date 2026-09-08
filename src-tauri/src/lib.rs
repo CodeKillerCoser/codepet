@@ -8,7 +8,6 @@ pub mod runtime_gateway;
 pub use activity::collector;
 pub use activity::events;
 pub use activity::title_resolver;
-pub use activity::token_usage;
 pub use agent::actions as activity_actions;
 pub use agent::claude_transcript;
 pub use agent::codex_desktop_ipc;
@@ -42,10 +41,9 @@ use settings::{
 };
 use state::{ApprovalBehavior, ApprovalDecision, SharedState};
 use subject_cutout::SubjectCutoutResult;
-use token_usage::TokenUsageSummary;
 use updates::PendingAppUpdate;
 use runtime_gateway::tauri_bridge::{
-    runtime_gateway_replay, runtime_gateway_request, provider_connection_status,
+    runtime_gateway_replay, runtime_gateway_request, codepet_gateway_request, provider_connection_status,
     start_runtime_gateway_event_bridge,
     ProviderHostState, RuntimeGatewayState,
 };
@@ -278,11 +276,6 @@ fn recent_events(state: tauri::State<'_, SharedState>) -> Vec<PetEvent> {
 }
 
 #[tauri::command]
-fn token_usage_summary() -> Result<TokenUsageSummary, String> {
-    token_usage::load_default_usage_summary().map_err(|error| error.to_string())
-}
-
-#[tauri::command]
 fn record_perf_event(event: app_log::PerfEvent) {
     app_log::record_perf_event(event);
 }
@@ -486,7 +479,6 @@ pub fn run() {
             cut_out_image_subject,
             recent_events,
             app::event_journal::query_event_journal,
-            token_usage_summary,
             record_perf_event,
             activate_activity,
             send_activity_reply,
@@ -496,6 +488,7 @@ pub fn run() {
             pet_asset_data_url,
             provider_connection_status,
             runtime_gateway_request,
+            codepet_gateway_request,
             runtime_gateway_replay,
             remote_access_status,
             retry_remote_access,

@@ -19,7 +19,7 @@ use codepet_provider_sdk::{
     ProjectChangeType, ProjectChangedEvent, ProjectRoot, ProtocolError,
     ProtocolEvent, Approval, ProviderCapabilities, ProviderCapability,
     Conversation, ProviderExtension, ProviderInstance, ProviderInstanceRoute, ProviderResourceId,
-    ProviderAuthentication, TurnTask, ProviderUsage, RoutedResourceId, ToolCategory,
+    ProviderAuthentication, TurnTask,  RoutedResourceId, ToolCategory,
     FileChangeConversationItem, FileChangeConversationItemKind, MessageConversationItem,
     MessageConversationItemKind, OpaqueToolInput, OpaqueToolInputKind, OutputContentBlock,
     OutputContentBlockKind, ReasoningConversationItem, ReasoningConversationItemKind,
@@ -44,7 +44,7 @@ impl CodexProtocolMapper {
     }
 
     pub fn unavailable_capabilities(revision: String) -> ProviderCapabilities {
-        codepet_provider_sdk::conversation_atoms::with_capabilities(ProviderCapabilities {
+        codepet_provider_data::with_usage_capabilities(ProviderCapabilities { usage_datasets: Some(codepet_provider_data::datasets(true)),
             conversation_list_query: None,
             revision,
             methods: vec![
@@ -236,7 +236,7 @@ impl CodexProtocolMapper {
                 ]);
             }
         }
-        Ok(codepet_provider_sdk::conversation_atoms::with_capabilities(ProviderCapabilities {
+        Ok(codepet_provider_data::with_usage_capabilities(ProviderCapabilities { usage_datasets: Some(codepet_provider_data::datasets(true)),
             conversation_list_query: None,
             revision,
             methods,
@@ -264,7 +264,6 @@ impl CodexProtocolMapper {
         harness: HarnessDescriptor,
         status: InstanceStatus,
         authentication: Option<ProviderAuthentication>,
-        usage: Option<ProviderUsage>,
         capabilities: ProviderCapabilities,
     ) -> ProviderInstance {
         ProviderInstance {
@@ -275,7 +274,7 @@ impl CodexProtocolMapper {
             harness,
             status,
             authentication,
-            usage,
+
             capabilities,
         }
     }

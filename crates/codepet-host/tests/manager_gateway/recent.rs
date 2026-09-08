@@ -1,6 +1,6 @@
 use super::*;
 use codepet_gateway_sdk as gateway;
-use codepet_provider_sdk::conversation_state::SharedConversationStateStore;
+use codepet_provider_data::conversation_state::SharedConversationStateStore;
 
 async fn fetch(
     service: &ProviderGatewayService,
@@ -8,7 +8,7 @@ async fn fetch(
     cursor: Option<String>,
 ) -> Result<gateway::ConversationRecentResponse, String> {
     let request = serde_json::from_value(serde_json::json!({
-        "jsonrpc":"2.0", "id": 1, "method":"conversation.recent",
+        "jsonrpc":"2.0", "id": "1", "method":"conversation.recent",
         "params": {"providerId":"recent-instance", "limit":20, "cursor":cursor},
     }))
     .unwrap();
@@ -70,10 +70,10 @@ fn setup(
 #[tokio::test]
 async fn complete_global_recent_pages_preserve_scope_and_ordinary_list() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("conversation-state.json");
+    let path = directory.path().join("conversation-state.sqlite");
     let store = SharedConversationStateStore::open(&path).unwrap();
     store.ensure_client("reader-a").unwrap();
-    // Existing read records predate the one unread change, as in a migrated document.
+    // Existing read records predate the one unread change, as in an existing database.
     for id in (0..125)
         .map(|n| format!("active-{n:03}"))
         .chain(std::iter::once("recent".into()))
@@ -187,7 +187,7 @@ async fn complete_global_recent_pages_preserve_scope_and_ordinary_list() {
     })).unwrap();
     store.observe_provider_event(&event).unwrap();
     let request = serde_json::from_value(serde_json::json!({
-        "jsonrpc":"2.0", "id":2, "method":"conversation.markRead", "params": {
+        "jsonrpc":"2.0", "id":"2", "method":"conversation.markRead", "params": {
             "conversation":rows[125].resource,
             "observedActivityVersion":rows[125].read_state.as_ref().unwrap().activity_version,
         },
@@ -218,7 +218,7 @@ async fn complete_global_recent_pages_preserve_scope_and_ordinary_list() {
 #[tokio::test]
 async fn atomic_failure_is_not_a_partial_recent_page() {
     let directory = tempfile::tempdir().unwrap();
-    let (manager, service) = setup(&directory.path().join("conversation-state.json"), true);
+    let (manager, service) = setup(&directory.path().join("conversation-state.sqlite"), true);
     for (_, result) in manager.start_enabled().await {
         result.unwrap();
     }
@@ -262,7 +262,7 @@ async fn memory_authority_never_advertises_recent() {
 #[tokio::test]
 async fn completeness_failure_invalidates_other_reader_snapshots() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("conversation-state.json");
+    let path = directory.path().join("conversation-state.sqlite");
     let (manager, service) = setup(&path, false);
     for (_, result) in manager.start_enabled().await {
         result.unwrap();

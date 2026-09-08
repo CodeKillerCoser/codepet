@@ -1,29 +1,171 @@
 [
-  { "file": "handshake-request.json", "kind": "request", "name": "protocol.handshake" },
-  { "file": "handshake-response.json", "kind": "response", "name": "protocol.handshake" },
-  { "file": "turn-send-request.json", "kind": "request", "name": "turn.send" },
-  { "file": "turn-send-response.json", "kind": "response", "name": "turn.send" },
-  { "file": "project-list-request.json", "kind": "request", "name": "project.list" },
-  { "file": "project-list-response.json", "kind": "response", "name": "project.list" },
-  { "file": "project-create-request.json", "kind": "request", "name": "project.create" },
-  { "file": "conversation-create-project-request.json", "kind": "request", "name": "conversation.create" },
-  { "file": "project-changed-event.json", "kind": "event", "name": "project.changed" },
-  { "file": "conversation-upserted-event.json", "kind": "event", "name": "conversation.upserted" },
-  { "file": "conversation-item-upserted-event.json", "kind": "event", "name": "conversation.itemUpserted" },
-  {"file": "conversation-recent-request.json", "kind": "request", "name": "conversation.recent"},
-  {"file": "conversation-recent-next-request.json", "kind": "request", "name": "conversation.recent"},
-  {"file": "conversation-recent-response.json", "kind": "response", "name": "conversation.recent"},
-  {"file": "conversation-recent-end-response.json", "kind": "response", "name": "conversation.recent"},
-  {"file": "conversation-recent-changed-event.json", "kind": "event", "name": "conversation.recentChanged"},
-  {"file": "conversation-mark-read-request.json", "kind": "request", "name": "conversation.markRead"},
-  {"file": "conversation-mark-read-response.json", "kind": "response", "name": "conversation.markRead"},
-  {"file": "conversation-recent-invalid-scope.json", "kind": "type", "name": "ConversationRecentRequest", "valid": false},
-  {"file": "conversation-recent-invalid-limit-zero.json", "kind": "type", "name": "ConversationRecentRequest", "valid": false},
-  {"file": "conversation-recent-invalid-limit-large.json", "kind": "type", "name": "ConversationRecentRequest", "valid": false},
-  {"file": "conversation-recent-invalid-list-filter.json", "kind": "type", "name": "ConversationRecentRequest", "valid": false},
-  {"file": "conversation-recent-missing-revision.json", "kind": "type", "name": "ConversationRecentResponse", "valid": false},
-  {"file": "conversation-recent-missing-fence.json", "kind": "type", "name": "ConversationRecentResponse", "valid": false},
-  {"file": "conversation-recent-expired-response.json", "kind": "response", "name": "conversation.recent"},
-  {"file": "conversation-recent-invalid-cursor-response.json", "kind": "response", "name": "conversation.recent"},
-  {"file": "conversation-recent-unsupported-response.json", "kind": "response", "name": "conversation.recent"}
+  {
+    "file": "handshake-request.json",
+    "kind": "request",
+    "name": "protocol.handshake"
+  },
+  {
+    "file": "handshake-response.json",
+    "kind": "response",
+    "name": "protocol.handshake"
+  },
+  {
+    "file": "turn-send-request.json",
+    "kind": "request",
+    "name": "turn.send"
+  },
+  {
+    "file": "turn-send-response.json",
+    "kind": "response",
+    "name": "turn.send"
+  },
+  {
+    "file": "project-list-request.json",
+    "kind": "request",
+    "name": "project.list"
+  },
+  {
+    "file": "project-list-response.json",
+    "kind": "response",
+    "name": "project.list"
+  },
+  {
+    "file": "project-create-request.json",
+    "kind": "request",
+    "name": "project.create"
+  },
+  {
+    "file": "conversation-create-project-request.json",
+    "kind": "request",
+    "name": "conversation.create"
+  },
+  {
+    "file": "project-changed-event.json",
+    "kind": "event",
+    "name": "project.changed"
+  },
+  {
+    "file": "conversation-upserted-event.json",
+    "kind": "event",
+    "name": "conversation.upserted"
+  },
+  {
+    "file": "conversation-item-upserted-event.json",
+    "kind": "event",
+    "name": "conversation.itemUpserted"
+  },
+  {
+    "file": "conversation-recent-request.json",
+    "kind": "request",
+    "name": "conversation.recent"
+  },
+  {
+    "file": "conversation-recent-next-request.json",
+    "kind": "request",
+    "name": "conversation.recent"
+  },
+  {
+    "file": "conversation-recent-response.json",
+    "kind": "response",
+    "name": "conversation.recent"
+  },
+  {
+    "file": "conversation-recent-end-response.json",
+    "kind": "response",
+    "name": "conversation.recent"
+  },
+  {
+    "file": "conversation-recent-changed-event.json",
+    "kind": "event",
+    "name": "conversation.recentChanged"
+  },
+  {
+    "file": "conversation-mark-read-request.json",
+    "kind": "request",
+    "name": "conversation.markRead"
+  },
+  {
+    "file": "conversation-mark-read-response.json",
+    "kind": "response",
+    "name": "conversation.markRead"
+  },
+  {
+    "file": "conversation-recent-invalid-scope.json",
+    "kind": "type",
+    "name": "ConversationRecentRequest",
+    "valid": false
+  },
+  {
+    "file": "conversation-recent-invalid-limit-zero.json",
+    "kind": "type",
+    "name": "ConversationRecentRequest",
+    "valid": false
+  },
+  {
+    "file": "conversation-recent-invalid-limit-large.json",
+    "kind": "type",
+    "name": "ConversationRecentRequest",
+    "valid": false
+  },
+  {
+    "file": "conversation-recent-invalid-list-filter.json",
+    "kind": "type",
+    "name": "ConversationRecentRequest",
+    "valid": false
+  },
+  {
+    "file": "conversation-recent-missing-revision.json",
+    "kind": "type",
+    "name": "ConversationRecentResponse",
+    "valid": false
+  },
+  {
+    "file": "conversation-recent-missing-fence.json",
+    "kind": "type",
+    "name": "ConversationRecentResponse",
+    "valid": false
+  },
+  {
+    "file": "conversation-recent-expired-response.json",
+    "kind": "response",
+    "name": "conversation.recent"
+  },
+  {
+    "file": "conversation-recent-invalid-cursor-response.json",
+    "kind": "response",
+    "name": "conversation.recent"
+  },
+  {
+    "file": "conversation-recent-unsupported-response.json",
+    "kind": "response",
+    "name": "conversation.recent"
+  },
+  {
+    "file": "usage-query-request.json",
+    "kind": "request",
+    "name": "codepet.usage.query"
+  },
+  {
+    "file": "usage-query-response.json",
+    "kind": "response",
+    "name": "codepet.usage.query"
+  },
+  {
+    "file": "usage-query-empty-metrics.json",
+    "kind": "type",
+    "name": "UsageQueryRequest",
+    "valid": false
+  },
+  {
+    "file": "usage-query-invalid-bucket.json",
+    "kind": "type",
+    "name": "UsageQueryRequest",
+    "valid": false
+  },
+  {
+    "file": "usage-query-unknown-filter.json",
+    "kind": "type",
+    "name": "UsageQueryRequest",
+    "valid": false
+  }
 ]

@@ -372,6 +372,7 @@ impl PluginProcess {
             options.stderr_line_bytes.max(1),
             options.stderr_history_lines.max(1),
             options.stderr_observer,
+            descriptor.env.get("CODEPET_PROVIDER_LOG_DIRECTORY").map(|p| std::path::PathBuf::from(p).join("provider.log")),
         ));
         spawn_tracked(process_monitor(
             child,
@@ -574,6 +575,7 @@ async fn stderr_loop(
     line_limit: usize,
     history_limit: usize,
     observer: Option<fn(&StderrDiagnostic)>,
+    log_path: Option<std::path::PathBuf>,
 ) {
     let mut reader = BufReader::new(stderr);
     while let Ok(Some((line, truncated))) = read_diagnostic_line(&mut reader, line_limit).await {
@@ -582,6 +584,21 @@ async fn stderr_loop(
                 line,
                 truncated,
             };
+        if let Some(path) = &log_path {
+            // The Host captures stderr before initialize, including startup failures.
+            use tokio::io::AsyncWriteExt;
+            let line = serde_json::json!({"timestampMs":diagnostic.timestamp_ms,"message":diagnostic.line,"truncated":diagnostic.truncated}).to_string()+"\n";
+            let result = async {
+                if tokio::fs::metadata(path).await.is_ok_and(|m|m.len()>5*1024*1024) {
+                    let previous=path.with_extension("log.1");
+                    if tokio::fs::try_exists(&previous).await? { tokio::fs::remove_file(&previous).await?; }
+                    tokio::fs::rename(path,&previous).await?;
+                }
+                let mut file=tokio::fs::OpenOptions::new().create(true).append(true).open(path).await?;
+                file.write_all(line.as_bytes()).await
+            }.await;
+            if let Err(error)=result { eprintln!("Provider log write failed: {error}"); }
+        }
         if let Some(observer) = observer {
             observer(&diagnostic);
         }

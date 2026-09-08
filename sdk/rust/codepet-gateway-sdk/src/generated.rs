@@ -8,7 +8,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 pub use codepet_agent_sdk::*;
-pub use codepet_core_sdk::{ClientId, ConnectionStatus, Cursor, DeviceDescriptor, EventCursor, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, RequestId, RoutedResourceId, RpcError, TimestampMs, TraceContext, VersionRange};
+pub use codepet_core_sdk::{ClientId, ConnectionStatus, Cursor, DeviceDescriptor, EventCursor, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, RequestId, RoutedResourceId, RpcError, TimestampMs, TraceContext, VersionRange};
 
 pub const PROTOCOL_VERSION: ProtocolVersion = 1;
 
@@ -312,6 +312,8 @@ pub struct GatewayCapabilities {
     pub turn_send: Option<TurnSendCapabilities>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_create: Option<ConversationCreateCapabilities>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_datasets: Option<Vec<UsageDataset>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -342,6 +344,8 @@ pub enum GatewayCapability {
     ApprovalResolve,
     #[serde(rename = "conversation.recent")]
     ConversationRecent,
+    #[serde(rename = "codepet.usage.query")]
+    CodepetUsageQuery,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -580,8 +584,6 @@ pub struct ProviderRuntime {
     pub executable_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authentication: Option<ProviderAuthentication>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub usage: Option<ProviderUsage>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -663,6 +665,21 @@ pub struct TurnUpsertedEvent {
     pub turn: TurnTask,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageQueryRequest {
+    pub provider_id: ProviderInstanceId,
+    pub query: UsageQuery,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UsageQueryResponse {
+    pub result: UsageQueryResult,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolDispatchLane {
     Normal,
@@ -715,6 +732,8 @@ pub enum ProtocolMethod {
     TurnInterrupt,
     #[serde(rename = "approval.resolve")]
     ApprovalResolve,
+    #[serde(rename = "codepet.usage.query")]
+    CodepetUsageQuery,
 }
 
 impl ProtocolMethod {
@@ -742,6 +761,7 @@ impl ProtocolMethod {
             Self::TurnSend => "turn.send",
             Self::TurnInterrupt => "turn.interrupt",
             Self::ApprovalResolve => "approval.resolve",
+            Self::CodepetUsageQuery => "codepet.usage.query",
         }
     }
 
@@ -769,6 +789,7 @@ impl ProtocolMethod {
             Self::TurnSend => ProtocolDispatchLane::Normal,
             Self::TurnInterrupt => ProtocolDispatchLane::Normal,
             Self::ApprovalResolve => ProtocolDispatchLane::Normal,
+            Self::CodepetUsageQuery => ProtocolDispatchLane::Normal,
         }
     }
 
@@ -796,6 +817,7 @@ impl ProtocolMethod {
             Self::TurnSend => Some(GatewayCapability::TurnSend),
             Self::TurnInterrupt => Some(GatewayCapability::TurnInterrupt),
             Self::ApprovalResolve => Some(GatewayCapability::ApprovalResolve),
+            Self::CodepetUsageQuery => Some(GatewayCapability::CodepetUsageQuery),
         }
     }
 }
@@ -827,6 +849,7 @@ impl std::str::FromStr for ProtocolMethod {
             "turn.send" => Ok(Self::TurnSend),
             "turn.interrupt" => Ok(Self::TurnInterrupt),
             "approval.resolve" => Ok(Self::ApprovalResolve),
+            "codepet.usage.query" => Ok(Self::CodepetUsageQuery),
             _ => Err(()),
         }
     }
@@ -1035,6 +1058,12 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: ApprovalResolveRequest,
     },
+    #[serde(rename = "codepet.usage.query")]
+    CodepetUsageQuery {
+        jsonrpc: String,
+        id: RequestId,
+        params: UsageQueryRequest,
+    },
 }
 
 impl ProtocolRequest {
@@ -1155,6 +1184,11 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode approval.resolve request params", error))?,
             }),
+            ProtocolMethod::CodepetUsageQuery => Ok(Self::CodepetUsageQuery {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode codepet.usage.query request params", error))?,
+            }),
         }
     }
 
@@ -1182,6 +1216,7 @@ impl ProtocolRequest {
             Self::TurnSend { jsonrpc, .. } => jsonrpc,
             Self::TurnInterrupt { jsonrpc, .. } => jsonrpc,
             Self::ApprovalResolve { jsonrpc, .. } => jsonrpc,
+            Self::CodepetUsageQuery { jsonrpc, .. } => jsonrpc,
         }
     }
 
@@ -1209,6 +1244,7 @@ impl ProtocolRequest {
             Self::TurnSend { id, .. } => id,
             Self::TurnInterrupt { id, .. } => id,
             Self::ApprovalResolve { id, .. } => id,
+            Self::CodepetUsageQuery { id, .. } => id,
         }
     }
 
@@ -1236,6 +1272,7 @@ impl ProtocolRequest {
             Self::TurnSend { .. } => ProtocolMethod::TurnSend,
             Self::TurnInterrupt { .. } => ProtocolMethod::TurnInterrupt,
             Self::ApprovalResolve { .. } => ProtocolMethod::ApprovalResolve,
+            Self::CodepetUsageQuery { .. } => ProtocolMethod::CodepetUsageQuery,
         }
     }
 }
@@ -1567,6 +1604,10 @@ pub trait ProtocolServer: Send + Sync {
     fn approval_resolve<'a>(&'a self, _request: ApprovalResolveRequest) -> ProtocolFuture<'a, ApprovalResolveResponse> {
         Box::pin(async { Err(method_not_implemented("approval.resolve")) })
     }
+
+    fn codepet_usage_query<'a>(&'a self, _request: UsageQueryRequest) -> ProtocolFuture<'a, UsageQueryResponse> {
+        Box::pin(async { Err(method_not_implemented("codepet.usage.query")) })
+    }
 }
 
 fn method_not_implemented(method: &str) -> ProtocolError {
@@ -1799,6 +1840,16 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
                 Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
             };
             JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::CodepetUsageQuery { jsonrpc, id, params } => {
+            let response = match server.codepet_usage_query(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
         }
     }
 }
@@ -2019,6 +2070,14 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             let result = self.transport.request(ProtocolMethod::ApprovalResolve, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn codepet_usage_query<'a>(&'a self, request: UsageQueryRequest) -> ProtocolFuture<'a, UsageQueryResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::CodepetUsageQuery, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

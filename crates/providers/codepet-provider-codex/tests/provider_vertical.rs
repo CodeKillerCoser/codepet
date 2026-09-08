@@ -163,7 +163,7 @@ async fn configured_direct_provider_with_events_and_hook(
     let route = route("device-provider-direct");
     ProviderProtocolServer::provider_initialize(
         provider.as_ref(),
-        ProviderInitializeRequest {
+        ProviderInitializeRequest { directories: None,
             host_client_id: "client-provider-direct".to_string(),
             host_device_id: route.device_id.clone(),
             host_version: "test".to_string(),
@@ -398,7 +398,7 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
 
     let initialized = ProviderProtocolServer::provider_initialize(
         &provider,
-        ProviderInitializeRequest {
+        ProviderInitializeRequest { directories: None,
             host_client_id: "client-provider-fixture".to_string(),
             host_device_id: device_id.to_string(),
             host_version: "test".to_string(),

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AgentRuntime, AppSettings, AppUpdate, PetEvent, PetLibraryView, SubjectCutoutResult, TokenUsageSummary } from "./types";
+import type { AgentRuntime, AppSettings, AppUpdate, PetEvent, PetLibraryView, SubjectCutoutResult } from "./types";
 
 export interface PerfEventPayload {
   name: string;
@@ -121,9 +121,6 @@ export async function recentEvents(): Promise<PetEvent[]> {
   return [];
 }
 
-export async function tokenUsageSummary(): Promise<TokenUsageSummary> {
-  return invoke<TokenUsageSummary>("token_usage_summary");
-}
 
 export async function recordPerfEvent(event: PerfEventPayload): Promise<void> {
   return invoke<void>("record_perf_event", { event });

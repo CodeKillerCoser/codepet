@@ -1,0 +1,36 @@
+{
+  "providerId": "claude-work",
+  "query": {
+    "datasetId": "observed-model-tokens",
+    "filter": {
+      "time": {
+        "kind": "range",
+        "range": {
+          "from": "2026-09-01T00:00:00Z",
+          "to": "2026-09-02T00:00:00Z"
+        }
+      }
+    },
+    "aggregation": {
+      "timeBucket": "minute",
+      "timeZone": "UTC",
+      "groupBy": [
+        "model"
+      ]
+    },
+    "metrics": [
+      "totalTokens",
+      "inputTokens",
+      "outputTokens",
+      "cacheReadTokens",
+      "cacheWriteTokens"
+    ],
+    "summaries": [
+      "totals",
+      "peakDaily"
+    ],
+    "page": {
+      "limit": 100
+    }
+  }
+}

@@ -36,7 +36,7 @@ impl OpenCodeProtocolMapper {
     }
 
     pub fn base_capabilities() -> ProviderCapabilities {
-        codepet_provider_sdk::conversation_atoms::with_capabilities(ProviderCapabilities {
+        codepet_provider_data::with_usage_capabilities(ProviderCapabilities { usage_datasets: Some(codepet_provider_data::datasets(false)),
             conversation_list_query: Some(codepet_provider_sdk::ConversationListQueryCapabilities { updated_after: true, ids: true }),
             revision: "opencode-server-1.18.25-controls-v2".to_string(),
             methods: vec![
@@ -253,7 +253,6 @@ impl OpenCodeProtocolMapper {
         status: InstanceStatus,
         capabilities: ProviderCapabilities,
         authentication: Option<codepet_provider_sdk::ProviderAuthentication>,
-        usage: Option<codepet_provider_sdk::ProviderUsage>,
     ) -> ProviderInstance {
         ProviderInstance {
             route: self.route.clone(),
@@ -263,7 +262,7 @@ impl OpenCodeProtocolMapper {
             harness,
             status,
             authentication,
-            usage,
+
             capabilities,
         }
     }

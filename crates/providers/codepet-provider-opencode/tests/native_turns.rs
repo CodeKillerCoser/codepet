@@ -12,7 +12,7 @@ async fn native_remote_turns_keep_the_instance_ready() {
     let workspace = std::env::var("CODEPET_OPENCODE_TEST_WORKSPACE").expect("isolated workspace required");
     let (sender, receiver) = mpsc::channel();
     let provider = OpenCodeProvider::new(Arc::new(move |event| { let _ = sender.send(event); Ok(()) }));
-    provider.provider_initialize(ProviderInitializeRequest {
+    provider.provider_initialize(ProviderInitializeRequest { directories: None,
         host_client_id:"native-smoke".into(), host_device_id:"native-smoke-device".into(), host_version:"0.1.0".into(),
         supported_versions:VersionRange { min_version:PROTOCOL_VERSION, max_version:PROTOCOL_VERSION },
     }).await.unwrap();

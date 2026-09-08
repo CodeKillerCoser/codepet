@@ -272,18 +272,6 @@ export type ProviderAuthenticationStatus = "unknown" | "signed-in" | "signed-out
 
 export type ProviderId = string;
 
-export interface ProviderUsage {
-  displayText: string;
-  observedAt?: TimestampMs;
-  details?: Array<ProviderUsageDetail>;
-}
-
-export interface ProviderUsageDetail {
-  namespace: string;
-  schemaVersion: string;
-  data: JsonObject;
-}
-
 export interface ReasoningConversationItem {
   _meta?: JsonObject;
   resource: RoutedResourceId;
@@ -470,3 +458,165 @@ export interface UnknownConversationItem {
 }
 
 export type UnknownConversationItemKind = "unknown";
+
+export interface UsageAggregation {
+  timeBucket: UsageTimeBucket;
+  timeZone: string;
+  groupBy: Array<UsageAggregationGroupByItems>;
+}
+
+export type UsageAggregationGroupByItems = "model";
+
+export interface UsageAllTime {
+  kind: UsageAllTimeKind;
+}
+
+export type UsageAllTimeKind = "all";
+
+export interface UsageBoundedTime {
+  kind: UsageBoundedTimeKind;
+  range: UsageTimeRange;
+}
+
+export type UsageBoundedTimeKind = "range";
+
+export type UsageBucketMinutes = number;
+
+export type UsageCompleteness = "complete" | "partial" | "unknown";
+
+export interface UsageCoverage {
+  scope: UsageCoverageScope;
+  availableFrom: UsageText | null;
+  completeThrough: UsageText | null;
+  status: UsageCoverageStatus;
+  gaps: Array<UsageTimeRange>;
+}
+
+export type UsageCoverageScope = "account" | "local";
+
+export type UsageCoverageStatus = "complete" | "partial" | "backfilling" | "unknown";
+
+export interface UsageDailyPeak {
+  date: string;
+  totalTokens: number;
+  completeness: UsageCompleteness;
+}
+
+export interface UsageDataset {
+  id: string;
+  displayName: string;
+  scope: UsageDatasetScope;
+  metrics: Array<UsageMetric>;
+  timeBuckets: Array<UsageTimeBucket>;
+  modelFilter: boolean;
+  modelGrouping: boolean;
+  timeZones: Array<string>;
+  baseBucketMinutes: UsageBucketMinutes | null;
+}
+
+export type UsageDatasetScope = "account" | "local";
+
+export interface UsageFilter {
+  time: UsageTimeFilter;
+  modelIds?: Array<string>;
+  includeUnknownModel?: boolean;
+}
+
+export interface UsageGroupPeak {
+  modelId: UsageText | null;
+  peak: UsageDailyPeak | null;
+}
+
+export interface UsageGroupTotal {
+  modelId: UsageText | null;
+  values: UsageValues;
+}
+
+export type UsageMetric = "totalTokens" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens";
+
+export interface UsageMetricValue {
+  value: UsageTokenCount | null;
+  completeness: UsageCompleteness;
+}
+
+export interface UsageNativeAccountSummary {
+  lifetimeTokens: UsageTokenCount | null;
+  peakDailyTokens: UsageTokenCount | null;
+  longestRunningTurnSec: UsageTokenCount | null;
+  currentStreakDays: UsageTokenCount | null;
+  longestStreakDays: UsageTokenCount | null;
+}
+
+export interface UsageOrder {
+  field: UsageOrderField;
+  direction: UsageOrderDirection;
+}
+
+export type UsageOrderDirection = "asc" | "desc";
+
+export type UsageOrderField = "bucketStart" | "modelId" | "totalTokens" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens";
+
+export interface UsagePage {
+  limit?: number;
+  cursor?: string;
+}
+
+export interface UsageQuery {
+  datasetId: string;
+  filter: UsageFilter;
+  aggregation: UsageAggregation;
+  metrics: Array<UsageMetric>;
+  summaries?: Array<UsageQuerySummariesItems>;
+  orderBy?: Array<UsageOrder>;
+  page?: UsagePage;
+}
+
+export interface UsageQueryResult {
+  datasetId: string;
+  revision: string;
+  generatedAt: string;
+  updatedAt: UsageText | null;
+  coverage: UsageCoverage;
+  rows: Array<UsageRow>;
+  summaries?: UsageSummaries;
+  nextCursor: UsageText | null;
+  nativeAccountSummary?: UsageNativeAccountSummary;
+}
+
+export type UsageQuerySummariesItems = "totals" | "peakDaily" | "totalsByGroup" | "peakDailyByGroup";
+
+export interface UsageRow {
+  bucket: UsageTimeRange | null;
+  modelId?: UsageText | null;
+  values: UsageValues;
+  completeness: UsageCompleteness;
+  provisional: boolean;
+}
+
+export interface UsageSummaries {
+  totals?: UsageValues;
+  peakDaily?: UsageDailyPeak | null;
+  totalsByGroup?: Array<UsageGroupTotal>;
+  peakDailyByGroup?: Array<UsageGroupPeak>;
+}
+
+export type UsageText = string;
+
+export type UsageTimeBucket = "none" | "halfHour" | "hour" | "day" | "month";
+
+export type UsageTimeFilter = UsageAllTime | UsageBoundedTime;
+
+export interface UsageTimeRange {
+  from: string;
+  to: string;
+}
+
+export type UsageTokenCount = number;
+
+export interface UsageValues {
+  totalTokens?: UsageMetricValue;
+  inputTokens?: UsageMetricValue;
+  outputTokens?: UsageMetricValue;
+  cacheReadTokens?: UsageMetricValue;
+  cacheWriteTokens?: UsageMetricValue;
+}

@@ -108,7 +108,7 @@ npm run tauri dev
 
 - 应用设置入口：系统 local data 目录下的 `code-pet/settings.json`。这个入口保持固定，用于保存自定义数据目录配置。
 - 数据目录：可以在 `个性化 -> 系统 -> 数据目录` 修改；未配置时默认仍是系统 local data 目录下的 `code-pet/`。选定的自定义目录必须为空；如果目录已有内容，应用会先弹窗确认，确认后清空该目录再复制原数据目录内容。保存完成后需要重启，日志等运行期资源才会完全切到新目录。
-- Token 用量缓存：默认位于数据目录下的 `token-usage.json`。
+- Token 用量：由 Provider 独立 SQLite 保存，前端调用 Gateway `codepet.usage.query`；详见 [用量与存储](knowledge/10-architecture/provider-usage-query-and-storage.md)。
 - 应用日志：默认位于数据目录下的 `logs/code-pet.log`。
 - 宠物库：默认位于数据目录下的 `pets`，也可以单独在设置页修改。
 - 离线事件暂存：未配置数据目录时仍是 `~/.code-pet/spool/events.jsonl`；配置后使用数据目录下的 `spool/events.jsonl`。
@@ -265,7 +265,7 @@ npm run package:signed
 - `src-tauri/src/app/state.rs`：近期事件、授权决策和 collector 共享状态。
 - `src-tauri/src/app/settings.rs`：应用设置读写和默认值。
 - `src-tauri/src/pet/library.rs`：宠物库、图片导入、像素化和宠物选择。
-- `src-tauri/src/activity/token_usage.rs`：Token 用量解析和聚合。
+- `crates/providers/codepet-provider-data`：Provider 用量采集、聚合与 SQLite 业务存储。
 - `src-tauri/src/app/log.rs`：应用日志、启动 banner 和性能事件记录。
 - `src-tauri/src/app/autostart.rs`：基于 Tauri autostart 插件的登录启动控制。
 - `src-tauri/src/agent/actions.rs`：任务卡片激活、回复和审批能力边界。

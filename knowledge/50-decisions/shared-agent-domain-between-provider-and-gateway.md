@@ -17,7 +17,7 @@
 - Project、Conversation、TurnTask、Approval；
 - ConversationItem 的封闭联合及 Tool、Content、Truncation 子树；
 - Choice、ModelCatalog、TurnSelection 与 turn/create controls；
-- ProviderAuthentication 与 ProviderUsage 等客户端可见摘要。
+- ProviderAuthentication，以及 UsageQuery/UsageQueryResult 等客户端可见用量契约。
 
 共享对象使用 Core 的 `RoutedResourceId { providerId, nativeResourceId }`。`providerId` 是 Host 分配并对客户端 opaque 的实例身份；当前内置 Provider 以 `providerInstanceId` 作为该值。Provider 私有的四段对象改名为 `ProviderResourceId`，只用于 Host→Provider 请求与进程/实例路由；`ProviderInstanceRoute` 继续用于实例生命周期。Host 在边界上解析和校验这两种身份，但不转换 Agent 业务对象。
 
