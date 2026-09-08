@@ -48,6 +48,7 @@ struct TrackedEvents {
     gate: std::sync::Arc<std::sync::Mutex<()>>,
     statuses: std::sync::Mutex<BTreeMap<String, ConversationStatus>>,
     revision: std::sync::atomic::AtomicU64,
+    mirror_summary_activity: bool,
 }
 impl ProviderEventSink for TrackedEvents {
     fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError> {
@@ -65,10 +66,15 @@ impl TrackedEvents {
         let mut next_states = states.clone();
         let mut batch = Vec::with_capacity(events.len());
         for event in events {
-            if matches!(&event, ProtocolEvent::EventConversationUpserted { .. } | ProtocolEvent::EventConversationDeleted { .. } | ProtocolEvent::EventTurnUpserted { .. } | ProtocolEvent::EventApprovalRequested { .. } | ProtocolEvent::EventApprovalResolved { .. }) {
+            if matches!(&event, ProtocolEvent::EventConversationItemUpserted { params, .. } if params.item.is_none())
+                || matches!(&event, ProtocolEvent::EventConversationActiveChanged { .. } | ProtocolEvent::EventConversationUpserted { .. } | ProtocolEvent::EventConversationDeleted { .. } | ProtocolEvent::EventTurnUpserted { .. } | ProtocolEvent::EventApprovalRequested { .. } | ProtocolEvent::EventApprovalResolved { .. }) {
                 self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
+            if let ProtocolEvent::EventConversationActiveChanged { params, .. } = &event {
+                next_states.insert(params.conversation.native_resource_id.clone(), params.status);
+            }
             let changed = if let ProtocolEvent::EventConversationUpserted { params, .. } = &event {
+                if !self.mirror_summary_activity { batch.push(event); continue; }
                 let row = &params.conversation;
                 let previous = next_states.insert(row.resource.native_resource_id.clone(), row.status);
                 (previous != Some(row.status) && (active(row.status) || previous.is_some_and(active))).then(|| row.clone())
@@ -111,7 +117,18 @@ fn binding<T: serde::Serialize>(kind: &str, generation: &str, request: &T) -> Re
 impl ConversationAtoms {
     pub fn event_epoch(&self) -> u64 { self.fact_epoch.load(std::sync::atomic::Ordering::SeqCst) }
     pub fn event_sink(&self, route: ProviderInstanceRoute, sink: std::sync::Arc<dyn ProviderEventSink>) -> std::sync::Arc<dyn ProviderEventSink> {
-        self.tracked_sink.get_or_init(|| std::sync::Arc::new(TrackedEvents { route, sink, epoch: self.fact_epoch.clone(), gate: self.fact_gate.clone(), statuses: std::sync::Mutex::new(BTreeMap::new()), revision: std::sync::atomic::AtomicU64::new(0) })).clone()
+        self.configure_event_sink(route, sink, true)
+    }
+
+    /// Providers with an explicit lifecycle source publish ActiveChanged themselves.
+    /// Native summaries still pass through, but cannot become a second activity authority.
+    /// Choose the activity source once when constructing the instance.
+    pub fn explicit_activity_event_sink(&self, route: ProviderInstanceRoute, sink: std::sync::Arc<dyn ProviderEventSink>) -> std::sync::Arc<dyn ProviderEventSink> {
+        self.configure_event_sink(route, sink, false)
+    }
+
+    fn configure_event_sink(&self, route: ProviderInstanceRoute, sink: std::sync::Arc<dyn ProviderEventSink>, mirror_summary_activity: bool) -> std::sync::Arc<dyn ProviderEventSink> {
+        self.tracked_sink.get_or_init(|| std::sync::Arc::new(TrackedEvents { route, sink, epoch: self.fact_epoch.clone(), gate: self.fact_gate.clone(), statuses: std::sync::Mutex::new(BTreeMap::new()), revision: std::sync::atomic::AtomicU64::new(0), mirror_summary_activity })).clone()
     }
 
     /// Conditional application and native fact publication share this lock.
@@ -309,6 +326,26 @@ mod tests {
         request.query = Some(ConversationListQuery::ConversationIdsQuery(ConversationIdsQuery { kind: ConversationIdsQueryKind::Ids, ids: vec!["a".into(),"a".into()] }));
         assert_eq!(validate_list(&request).unwrap_err().code, "invalid_request");
     }
+    #[test]
+    fn explicit_activity_is_not_recreated_from_native_summaries() {
+        let atoms = ConversationAtoms::default();
+        let emitted = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let output = emitted.clone();
+        let route = request(serde_json::json!({"kind":"ids","ids":["a"]})).route;
+        let sink = atoms.explicit_activity_event_sink(route.clone(), std::sync::Arc::new(move |event| { output.lock().unwrap().push(event); Ok(()) }));
+        let mut running = row("a", Some(10)); running.status = ConversationStatus::Running;
+        sink.publish(ProtocolEvent::EventConversationUpserted { jsonrpc: "2.0".into(), params: ConversationUpsertedEvent { conversation: running } }).unwrap();
+        assert_eq!(emitted.lock().unwrap().len(), 1);
+        let before = atoms.event_epoch();
+        sink.publish(ProtocolEvent::EventConversationActiveChanged { jsonrpc: "2.0".into(), params: ConversationActiveChangedEvent {
+            conversation: resource(&route, "a".into()), status: ConversationStatus::Idle, active: false,
+            activity_version: "hook-stop".into(), revision: "hook-stop".into(),
+        } }).unwrap();
+        assert!(atoms.event_epoch() > before);
+        sink.publish(ProtocolEvent::EventConversationUpserted { jsonrpc: "2.0".into(), params: ConversationUpsertedEvent { conversation: row("a", Some(20)) } }).unwrap();
+        assert_eq!(emitted.lock().unwrap().iter().filter(|event| matches!(event, ProtocolEvent::EventConversationActiveChanged { .. })).count(), 1);
+    }
+
     #[test]
     fn a_native_fact_rejects_an_older_scan_at_the_shared_commit_gate() {
         let atoms = ConversationAtoms::default();

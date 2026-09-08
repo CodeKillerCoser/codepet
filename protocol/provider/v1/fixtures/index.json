@@ -50,5 +50,6 @@
   {"file": "conversation-unread-missing-revision.json", "kind": "type", "name": "ConversationUnreadListResponse", "valid": false},
   {"file": "conversation-active-list-expired-response.json", "kind": "response", "name": "conversation.active.list"},
   {"file": "conversation-active-list-invalid-cursor-response.json", "kind": "response", "name": "conversation.active.list"},
-  {"file": "conversation-active-list-unsupported-response.json", "kind": "response", "name": "conversation.active.list"}
+  {"file": "conversation-active-list-unsupported-response.json", "kind": "response", "name": "conversation.active.list"},
+  {"file": "conversation-item-invalidated-event.json", "kind": "event", "name": "event.conversationItemUpserted"}
 ]

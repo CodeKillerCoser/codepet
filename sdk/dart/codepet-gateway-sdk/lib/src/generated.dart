@@ -549,34 +549,48 @@ final class ConversationGetResponse {
 
 final class ConversationItemUpsertedEvent {
   factory ConversationItemUpsertedEvent({
-    required ConversationItem item,
+    String? updateId,
+    RoutedResourceId? conversation,
+    ConversationItem? item,
   }) {
-    final validatedItem = item;
+    final validatedUpdateId = updateId == null ? null : _string(updateId, 'ConversationItemUpsertedEvent.updateId', minLength: 1);
+    final validatedConversation = conversation == null ? null : conversation;
+    final validatedItem = item == null ? null : item;
     return ConversationItemUpsertedEvent._(
+      updateId: validatedUpdateId,
+      conversation: validatedConversation,
       item: validatedItem,
     );
   }
 
   ConversationItemUpsertedEvent._({
+    required this.updateId,
+    required this.conversation,
     required this.item,
   });
 
-  final ConversationItem item;
+  final String? updateId;
+  final RoutedResourceId? conversation;
+  final ConversationItem? item;
 
   factory ConversationItemUpsertedEvent.fromJson(Object? value, {String path = 'ConversationItemUpsertedEvent'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'item'}, path);
+    _expectKeys(json, const {'updateId', 'conversation', 'item'}, path);
     return ConversationItemUpsertedEvent(
-      item: ConversationItem.fromJson(_required(json, 'item', path), path: '$path.item'),
+      updateId: json.containsKey('updateId') && json['updateId'] != null ? _string(json['updateId'], '$path.updateId', minLength: 1) : null,
+      conversation: json.containsKey('conversation') && json['conversation'] != null ? RoutedResourceId.fromJson(json['conversation'], path: '$path.conversation') : null,
+      item: json.containsKey('item') && json['item'] != null ? ConversationItem.fromJson(json['item'], path: '$path.item') : null,
     );
   }
 
   Map<String, Object?> toJson() => {
-    'item': item.toJson(),
+    if (updateId != null) 'updateId': updateId!,
+    if (conversation != null) 'conversation': conversation!.toJson(),
+    if (item != null) 'item': item!.toJson(),
   };
 
   @override
-  String toString() => 'ConversationItemUpsertedEvent(item: $item)';
+  String toString() => 'ConversationItemUpsertedEvent(updateId: $updateId, conversation: $conversation, item: $item)';
 }
 
 final class ConversationListRequest {

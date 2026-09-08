@@ -8,7 +8,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 pub use codepet_agent_sdk::*;
-pub use codepet_core_sdk::{ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RpcError, TimestampMs, VersionRange};
+pub use codepet_core_sdk::{ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RoutedResourceId, RpcError, TimestampMs, VersionRange};
 
 pub const PROTOCOL_VERSION: ProtocolVersion = 1;
 
@@ -174,7 +174,12 @@ pub enum ConversationIdsQueryKind {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ConversationItemUpsertedEvent {
-    pub item: ConversationItem,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<RoutedResourceId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item: Option<ConversationItem>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
