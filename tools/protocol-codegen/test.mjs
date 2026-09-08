@@ -462,8 +462,14 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   const model = await loadProtocolModel();
   const gateway = record(model, "gateway-v1");
   const gatewayIr = model.protocolIr.packagesById.get("gateway-v1");
-  assert.equal(gatewayIr.service.methods.length, 21);
-  assert.equal(gatewayIr.service.events.length, 9);
+  assert.deepEqual(
+    gatewayIr.service.methods.map((method) => method.name).sort(),
+    gateway.manifest.methods.map((method) => method.name).sort(),
+  );
+  assert.deepEqual(
+    gatewayIr.service.events.map((event) => event.name).sort(),
+    gateway.manifest.events.map((event) => event.name).sort(),
+  );
   assert.equal(
     gatewayIr.service.methods.find((method) => method.name === "turn.send").idempotency,
     "nonIdempotent",
@@ -484,6 +490,8 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   assert.match(first, /import 'package:codepet_agent_sdk\/codepet_agent_sdk\.dart';/);
   assert.match(first, /required Map<String, String> metadata/);
   assert.match(first, /Future<ProjectListResponse> projectList/);
+  assert.match(first, /Future<ConversationRecentResponse> conversationRecent\(ConversationRecentRequest request\)/);
+  assert.match(first, /conversationRecentChanged\('conversation\.recentChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'provider', payloadType: ConversationRecentChangedEvent\)/);
   assert.match(first, /ProtocolIdempotency\.nonIdempotent/);
   assert.match(first, /Future<TurnSendResponse> turnSend\(TurnSendRequest request\)/);
   assert.match(first, /abstract interface class ProtocolClientInstrumentation/);

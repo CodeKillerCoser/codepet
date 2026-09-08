@@ -1,5 +1,13 @@
 # 最近会话 v1 冻结契约与 SDK 接入
 
+## 后续构建检查修复（2026-09-08）
+
+用户运行 `build:bundle` 时，`tools/protocol-codegen/test.mjs` 的 Dart IR 测试报 `22 !== 21`。证据是该测试仍写死 21 个方法、9 个事件，而 v1 manifest 已新增 `conversation.recent` 和 `conversation.recentChanged`。这是测试预期遗漏，协议版本和生成结果无需修改。
+
+修复后逐项比较 IR 与 manifest 的方法名、事件名（排序后的数组，能检查遗漏及重复），并检查 Dart 最近方法签名及事件的方向、投递、scope、payload 类型。回归约束：IR 完整性测试以 canonical manifest 为基准，不以易过期的总数代替内容检查；关键协议语义继续显式断言。
+
+本次执行 `npm.cmd run protocol:check`：生成文件新鲜度通过，20 项测试全部通过。没有执行完整 `build:bundle`、Provider 编译或 Tauri 打包，因此该结果只确认协议检查阶段已修复。用户已有的 `src-tauri/Cargo.toml` 修改未纳入本修复。
+
 ## 背景与范围
 
 2026-09-08 R1 依据 [语义设计](../10-architecture/recent-conversation-feed.md) 和 [交付计划](recent-conversation-delivery.md) 冻结 canonical wire。协议仍为 v1。本文记录准确字段和消费者接入要求；产品语义仍以设计为权威。
