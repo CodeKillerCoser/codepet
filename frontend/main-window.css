@@ -24,7 +24,18 @@
   color: var(--app-muted);
   user-select: none;
 }
-.main-theme .native-traffic-light-space { width: 70px; flex-shrink: 0; }
+.main-theme .window-toolbar.macos { position: relative; padding-left: 0; }
+.main-theme .window-toolbar.macos .window-toolbar-button {
+  position: absolute;
+  left: var(--toolbar-anchor-left);
+  top: var(--toolbar-anchor-y);
+  transform: translateY(-50%);
+  height: 28px;
+  min-height: 28px;
+}
+.main-theme .window-toolbar.macos .window-toolbar-button:focus-visible { outline-offset: -2px; }
+/* Collapsing the content grid must not move controls relative to AppKit. */
+.main-theme.sidebar-collapsed .window-toolbar.macos { margin-left: -8px; }
 .main-theme .window-drag-space { align-self: stretch; flex: 1; }
 .main-theme .window-controls { display: flex; height: 40px; }
 .main-theme .window-controls button,

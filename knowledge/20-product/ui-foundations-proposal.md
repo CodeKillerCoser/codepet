@@ -1,6 +1,6 @@
 # 全局 UI 视觉基础提案
 
-状态：视觉方向已确认（2026-09-08），尚未应用到生产界面。正式可交互视觉稿：[macOS](../../design/ui-foundations/visual-macos.html)、[Windows](../../design/ui-foundations/visual-windows.html)；可编辑源稿为 [visual-source.html](../../design/ui-foundations/visual-source.html)。用户确认导航与顶部工具栏共用背景、右侧大圆角内容面板，并要求压缩品牌区、减淡边框和阴影。旧 [visual-board.png](../../design/ui-foundations/visual-board.png) 仅保留为历史探索，不再作为实现依据。
+状态：视觉方向已确认并应用到生产界面（2026-09-08）。正式可交互视觉稿：[macOS](../../design/ui-foundations/visual-macos.html)、[Windows](../../design/ui-foundations/visual-windows.html)；可编辑源稿为 [visual-source.html](../../design/ui-foundations/visual-source.html)。用户确认导航与顶部工具栏共用背景、右侧大圆角内容面板，并要求压缩品牌区、减淡边框和阴影。旧 [visual-board.png](../../design/ui-foundations/visual-board.png) 仅保留为历史探索，不再作为实现依据。
 
 ## 现状与目标
 
