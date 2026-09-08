@@ -9,7 +9,7 @@ use crate::protocol::{
     approval_generation, approval_resource_id, CodexAppServerError, CodexApprovalRequest,
     CodexConversationSnapshot, CodexIncoming, CodexNotification, CodexProjectCreateRequest,
     CodexProjectRoot, CodexProjectUpdateRequest, CodexThreadListRequest, CodexThreadStartRequest,
-    CodexThreadItem, CodexTurn, CodexTurnItemsView, CodexTurnStartRequest, CodexTurnStatus,
+    CodexTurn, CodexTurnItemsView, CodexTurnStartRequest, CodexTurnStatus,
     CodexTurnSteerRequest,
     CODEX_INSTANCE_KIND, CODEX_PLUGIN_ID,
 };
@@ -40,7 +40,7 @@ use codepet_provider_sdk::{
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnSteerRequest, TurnSteerResponse,
     VersionRange, PROTOCOL_VERSION,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -56,9 +56,6 @@ mod server_events;
 static NEXT_EXECUTION_ATTEMPT: AtomicU64 = AtomicU64::new(1);
 static NEXT_INSTANCE_SESSION: AtomicU64 = AtomicU64::new(1);
 static NEXT_MANAGED_WORKTREE: AtomicU64 = AtomicU64::new(1);
-const MAX_FILTERED_THREAD_PAGES: usize = 10_000;
-const CODEX_LIST_PAGE_LIMIT: u32 = 100;
-const FILTERED_CONVERSATION_CURSOR_PREFIX: &str = "codepet-codex-membership-v1:";
 const DEFAULT_CONVERSATION_GET_TURN_LIMIT: u64 = 20;
 const MAX_CONVERSATION_GET_TURN_LIMIT: u64 = 100;
 
@@ -108,6 +105,7 @@ struct InstanceMutable {
     pending_approvals: HashMap<String, PendingApproval>,
     approval_history: Vec<ObservedApproval>,
     pending_materialization: HashMap<String, CodexConversationSnapshot>,
+    observed_thread_ids: HashSet<String>,
     auto_title_attempted: HashSet<String>,
 }
 
@@ -446,6 +444,7 @@ impl CodexInstanceRuntime {
                 pending_approvals: HashMap::new(),
                 approval_history: Vec::new(),
                 pending_materialization: HashMap::new(),
+                observed_thread_ids: HashSet::new(),
                 auto_title_attempted: HashSet::new(),
             }),
             mapper: Mutex::new(CodexProtocolMapper::new(request.route)),
@@ -681,6 +680,7 @@ impl CodexInstanceRuntime {
                     mutable.pending_approvals.clear();
                     mutable.approval_history.clear();
                     mutable.pending_materialization.clear();
+                    mutable.observed_thread_ids.clear();
                     mutable.auto_title_attempted.clear();
                     drop(mutable);
                     let status_event_error = self.publish_status_change(previous).err();
@@ -745,6 +745,7 @@ impl CodexInstanceRuntime {
                             mutable.pending_approvals.clear();
                             mutable.approval_history.clear();
                             mutable.pending_materialization.clear();
+                            mutable.observed_thread_ids.clear();
                             mutable.auto_title_attempted.clear();
                             self.lifecycle_changed.notify_all();
                             Some(previous)
@@ -1216,6 +1217,7 @@ impl CodexInstanceRuntime {
             mutable.pending_approvals.clear();
             mutable.approval_history.clear();
             mutable.pending_materialization.clear();
+            mutable.observed_thread_ids.clear();
             mutable.auto_title_attempted.clear();
             self.lifecycle_changed.notify_all();
             drop(mutable);
@@ -1604,6 +1606,7 @@ impl Provider for CodexProvider {
                 mutable.pending_approvals.clear();
                 mutable.approval_history.clear();
                 mutable.pending_materialization.clear();
+                mutable.observed_thread_ids.clear();
                 mutable.auto_title_attempted.clear();
                 let slot = Arc::new(InstanceSessionSlot::new(mutable.lifecycle_generation));
                 mutable.sessions.insert(slot.id, slot.clone());
@@ -1705,6 +1708,7 @@ impl Provider for CodexProvider {
                     mutable.pending_approvals.clear();
                     mutable.approval_history.clear();
                     mutable.pending_materialization.clear();
+                    mutable.observed_thread_ids.clear();
                     mutable.auto_title_attempted.clear();
                     runtime.lifecycle_changed.notify_all();
                     true
@@ -1980,82 +1984,24 @@ impl Provider for CodexProvider {
         request: ConversationListRequest,
     ) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async move {
-            if request.query.is_some() {
-                let runtime = self.instance(&request.route)?;
-                let generation = runtime.query_generation()?;
-                if let Some(page) = runtime.atoms.list_cached(&generation, &request)? { return Ok(page); }
-                let event_epoch = runtime.atoms.event_epoch();
-                let mut rows = self.complete_conversation_summaries(&request.route).await?;
-                if let Some(codepet_provider_sdk::ConversationListQuery::ConversationIdsQuery(query)) = &request.query {
-                    self.complete_requested_summaries(&request.route, &query.ids, &mut rows).await?;
-                }
-                if generation != runtime.query_generation()? || event_epoch != runtime.atoms.event_epoch() { return Err(conversation_atoms::generation_changed()); }
-                return runtime.atoms.list(&generation, &request, rows);
-            }
-            if let Some(scope) = request.reader_scope.clone() {
-                let mut native_request = request;
-                native_request.reader_scope = None;
-                let mut response = self.conversation_list(native_request).await?;
-                codepet_provider_sdk::conversation_state::SharedConversationStateStore::from_env()?.decorate_many(&scope, &mut response.conversations)?;
-                return Ok(response);
-            }
-
             let runtime = self.instance(&request.route)?;
-            let membership_filter = match request.project_filter {
-                ConversationProjectFilter::ConversationProjectFilterAll(_) => {
-                    CodexConversationMembershipFilter::All
-                }
-                ConversationProjectFilter::ConversationProjectFilterStandalone(_) => {
-                    require_capability(&runtime, ProviderCapability::ProjectList)?;
-                    CodexConversationMembershipFilter::Standalone
-                }
-                ConversationProjectFilter::ConversationProjectFilterProject(filter) => {
-                    validate_resource_route(&filter.project, &request.route)?;
-                    require_capability(&runtime, ProviderCapability::ProjectList)?;
-                    CodexConversationMembershipFilter::Project(
-                        filter.project.native_resource_id,
-                    )
-                }
-            };
-            let limit = request.limit.map(u32::try_from).transpose().map_err(|_| {
-                protocol_error(
-                    "invalid_request",
-                    "conversation list limit exceeds the Codex App Server range".to_string(),
-                    false,
-                )
-            })?;
-            let session = runtime.ready_server()?;
-            let assignments = load_codex_desktop_project_assignments(runtime.settings.data_directory.as_deref())?;
-            let page = tokio::task::spawn_blocking(move || {
-                list_codex_conversations(
-                    &session,
-                    CodexThreadListRequest {
-                        cursor: request.cursor,
-                        limit,
-                        project_id: None,
-                        workspace_root: None,
-                        search_term: None,
-                    },
-                    membership_filter,
-                    &assignments,
-                )
-            })
-            .await
-            .map_err(provider_task_error)?
-            .map_err(CodexProtocolMapper::error)?;
-            let conversations = {
-                let mapper = lock(&runtime.mapper);
-                page.data
-                    .iter()
-                    .map(|snapshot| mapper.conversation(snapshot))
-                    .collect::<Vec<_>>()
-            };
-            Ok(ConversationListResponse {
-                conversations,
-                page_info: PageInfo {
-                    next_cursor: page.next_cursor,
-                },
-            })
+            let generation = runtime.query_generation()?;
+            // This is continuation-only: no cursor always performs fresh discovery.
+            if let Some(page) = runtime.atoms.list_cached(&generation, &request)? { return Ok(page); }
+            if !matches!(request.project_filter, ConversationProjectFilter::ConversationProjectFilterAll(_)) {
+                require_capability(&runtime, ProviderCapability::ProjectList)?;
+            }
+            let mut rows = self.complete_conversation_summaries(&request.route).await?;
+            if let Some(codepet_provider_sdk::ConversationListQuery::ConversationIdsQuery(query)) = &request.query {
+                self.complete_requested_summaries(&request.route, &query.ids, &mut rows).await?;
+            }
+            if matches!(request.project_filter, ConversationProjectFilter::ConversationProjectFilterStandalone(_)) {
+                let assignments = load_codex_desktop_project_assignments(runtime.settings.data_directory.as_deref())?;
+                rows.retain(|row| assignments.membership_for(&row.resource.native_resource_id,
+                    row.project.as_ref().map(|project| project.native_resource_id.as_str())) == CodexConversationMembership::Standalone);
+            }
+            if generation != runtime.query_generation()? { return Err(conversation_atoms::generation_changed()); }
+            runtime.atoms.list(&generation, &request, rows)
         })
     }
 
@@ -2958,7 +2904,6 @@ mod workspace_mode_tests {
     use super::{create_managed_worktree, ensure_conversation_workspace, prepare_conversation_workspace};
     use std::fs;
     use std::path::Path;
-    use std::process::Command;
 
     #[test]
     fn creates_a_missing_standalone_workspace() {
@@ -3611,23 +3556,6 @@ fn validate_project_fields(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum CodexConversationMembershipFilter {
-    All,
-    Standalone,
-    Project(String),
-}
-
-impl CodexConversationMembershipFilter {
-    fn cursor_filter(&self) -> Option<String> {
-        match self {
-            Self::All => None,
-            Self::Standalone => Some("standalone".to_string()),
-            Self::Project(project_id) => Some(format!("project:{project_id}")),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 enum CodexConversationMembership {
     Project(String),
     UnmappedProject,
@@ -3669,188 +3597,6 @@ impl CodexDesktopProjectAssignments {
         }
         membership
     }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct FilteredConversationCursor {
-    version: u8,
-    filter: String,
-    upstream_cursor: String,
-}
-
-fn list_codex_conversations(
-    session: &CodexAppServerSession,
-    mut request: CodexThreadListRequest,
-    membership_filter: CodexConversationMembershipFilter,
-    assignments: &CodexDesktopProjectAssignments,
-) -> Result<crate::protocol::CodexThreadPage, CodexAppServerError> {
-    if membership_filter == CodexConversationMembershipFilter::All {
-        let mut page = session.thread_list(request)?;
-        for snapshot in &mut page.data {
-            assignments.decorate(snapshot);
-        }
-        return Ok(page);
-    }
-
-    let cursor_filter = membership_filter
-        .cursor_filter()
-        .expect("filtered conversation queries always have a cursor filter");
-    request.cursor = decode_filtered_conversation_cursor(request.cursor, &cursor_filter)?;
-    let target_limit = request.limit.unwrap_or(CODEX_LIST_PAGE_LIMIT);
-    let mut conversations = Vec::new();
-    let mut next_cursor = request.cursor.clone();
-    let mut seen_cursors = HashSet::new();
-    for _ in 0..MAX_FILTERED_THREAD_PAGES {
-        if target_limit == 0 {
-            break;
-        }
-        let cursor_key = next_cursor.clone().unwrap_or_default();
-        if !seen_cursors.insert(cursor_key) {
-            return Err(CodexAppServerError::Protocol(
-                "thread/list repeated a cursor while merging project membership".to_string(),
-            ));
-        }
-        request.cursor = next_cursor;
-        request.limit = Some(target_limit.saturating_sub(conversations.len() as u32));
-        let mut page = session.thread_list(request.clone())?;
-        next_cursor = page.next_cursor;
-        for mut snapshot in page.data.drain(..) {
-            let membership = assignments.decorate(&mut snapshot);
-            let matches = match (&membership_filter, membership) {
-                (
-                    CodexConversationMembershipFilter::Project(expected),
-                    CodexConversationMembership::Project(actual),
-                ) => expected == &actual,
-                (
-                    CodexConversationMembershipFilter::Standalone,
-                    CodexConversationMembership::Standalone,
-                ) => true,
-                _ => false,
-            };
-            if matches {
-                conversations.push(snapshot);
-            }
-        }
-        if conversations.len() >= target_limit as usize {
-            if let Some(cursor) = next_cursor.take() {
-                if filtered_conversation_exists_after(
-                    session,
-                    &request,
-                    cursor.clone(),
-                    &membership_filter,
-                    assignments,
-                )? {
-                    next_cursor = Some(cursor);
-                }
-            }
-            break;
-        }
-        if next_cursor.is_none() {
-            break;
-        }
-    }
-    if conversations.len() < target_limit as usize && next_cursor.is_some() {
-        return Err(CodexAppServerError::Protocol(
-            "thread/list exceeded the project membership pagination limit".to_string(),
-        ));
-    }
-    Ok(crate::protocol::CodexThreadPage {
-        data: conversations,
-        next_cursor: next_cursor
-            .map(|cursor| encode_filtered_conversation_cursor(&cursor_filter, cursor))
-            .transpose()?,
-    })
-}
-
-fn filtered_conversation_exists_after(
-    session: &CodexAppServerSession,
-    request: &CodexThreadListRequest,
-    mut cursor: String,
-    membership_filter: &CodexConversationMembershipFilter,
-    assignments: &CodexDesktopProjectAssignments,
-) -> Result<bool, CodexAppServerError> {
-    let mut probe = request.clone();
-    probe.limit = Some(1);
-    let mut seen_cursors = HashSet::new();
-    for _ in 0..MAX_FILTERED_THREAD_PAGES {
-        if !seen_cursors.insert(cursor.clone()) {
-            return Err(CodexAppServerError::Protocol(
-                "thread/list repeated a cursor while probing project membership".to_string(),
-            ));
-        }
-        probe.cursor = Some(cursor);
-        let page = session.thread_list(probe.clone())?;
-        for snapshot in &page.data {
-            let membership = assignments.membership(snapshot);
-            let matches = match (membership_filter, membership) {
-                (
-                    CodexConversationMembershipFilter::Project(expected),
-                    CodexConversationMembership::Project(actual),
-                ) => expected == &actual,
-                (
-                    CodexConversationMembershipFilter::Standalone,
-                    CodexConversationMembership::Standalone,
-                ) => true,
-                _ => false,
-            };
-            if matches {
-                return Ok(true);
-            }
-        }
-        let Some(next_cursor) = page.next_cursor else {
-            return Ok(false);
-        };
-        cursor = next_cursor;
-    }
-    Err(CodexAppServerError::Protocol(
-        "thread/list exceeded the project membership look-ahead limit".to_string(),
-    ))
-}
-
-fn encode_filtered_conversation_cursor(
-    filter: &str,
-    upstream_cursor: String,
-) -> Result<String, CodexAppServerError> {
-    serde_json::to_string(&FilteredConversationCursor {
-        version: 1,
-        filter: filter.to_string(),
-        upstream_cursor,
-    })
-    .map(|cursor| format!("{FILTERED_CONVERSATION_CURSOR_PREFIX}{cursor}"))
-    .map_err(|error| {
-        CodexAppServerError::Protocol(format!(
-            "failed to encode project membership cursor: {error}"
-        ))
-    })
-}
-
-fn decode_filtered_conversation_cursor(
-    cursor: Option<String>,
-    expected_filter: &str,
-) -> Result<Option<String>, CodexAppServerError> {
-    let Some(cursor) = cursor else {
-        return Ok(None);
-    };
-    let encoded = cursor
-        .strip_prefix(FILTERED_CONVERSATION_CURSOR_PREFIX)
-        .ok_or_else(|| {
-            CodexAppServerError::Protocol(
-                "conversation cursor was not issued for project membership pagination"
-                    .to_string(),
-            )
-        })?;
-    let decoded: FilteredConversationCursor = serde_json::from_str(encoded).map_err(|error| {
-        CodexAppServerError::Protocol(format!(
-            "invalid project membership conversation cursor: {error}"
-        ))
-    })?;
-    if decoded.version != 1 || decoded.filter != expected_filter {
-        return Err(CodexAppServerError::Protocol(
-            "conversation cursor does not match the requested project filter".to_string(),
-        ));
-    }
-    Ok(Some(decoded.upstream_cursor))
 }
 
 fn load_codex_desktop_project_assignments(configured: Option<&Path>
@@ -3957,26 +3703,6 @@ mod project_assignment_compat_tests {
         );
         assert_eq!(assignments.by_thread.get("unmapped-thread"), Some(&None));
         assert!(!assignments.by_thread.contains_key("remote-thread"));
-    }
-
-    #[test]
-    fn filtered_cursor_round_trips_and_rejects_a_different_project_filter() {
-        let cursor = encode_filtered_conversation_cursor(
-            "project:native-project",
-            "upstream-cursor".to_string(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            decode_filtered_conversation_cursor(
-                Some(cursor.clone()),
-                "project:native-project"
-            )
-            .unwrap()
-            .as_deref(),
-            Some("upstream-cursor")
-        );
-        assert!(decode_filtered_conversation_cursor(Some(cursor), "standalone").is_err());
     }
 
     #[test]
@@ -4221,12 +3947,16 @@ impl CodexInstanceRuntime {
 
 impl CodexProvider {
     async fn complete_conversation_summaries(&self, route: &ProviderInstanceRoute) -> Result<Vec<Conversation>, ProtocolError> {
-        self.instance(route)?.collect_atomic_summaries().await
+        self.instance(route)?.collect_directory_summaries(false).await
     }
 }
 
 impl CodexInstanceRuntime {
     async fn collect_atomic_summaries(&self) -> Result<Vec<Conversation>, ProtocolError> {
+        self.collect_directory_summaries(true).await
+    }
+
+    async fn collect_directory_summaries(&self, require_loaded_namespace: bool) -> Result<Vec<Conversation>, ProtocolError> {
         let registry = self.atomic_server_registry()?;
         let assignments = Arc::new(load_codex_desktop_project_assignments(self.settings.data_directory.as_deref())?);
         let mut rows = Vec::new();
@@ -4236,20 +3966,61 @@ impl CodexInstanceRuntime {
             let server = self.ready_server()?;
             let page = tokio::task::spawn_blocking(move || server.thread_list(CodexThreadListRequest { cursor, limit: Some(100), project_id: None, workspace_root: None, search_term: None }))
                 .await.map_err(provider_task_error)?.map_err(CodexProtocolMapper::error)?;
-            for mut snapshot in page.data { assignments.decorate(&mut snapshot); rows.push(lock(&self.mapper).conversation(&snapshot)); }
+            for mut snapshot in page.data {
+                if snapshot.thread.ephemeral { continue; }
+                assignments.decorate(&mut snapshot);
+                rows.push(lock(&self.mapper).conversation(&snapshot));
+            }
             cursor = progress.advance(page.next_cursor)?;
             if cursor.is_none() { break; }
             tokio::task::yield_now().await;
         }
+        // Query a candidate superset: filtering by native project/time here can
+        // discard legacy reads and desktop project assignments before correction.
+        let home = self.settings.data_directory.clone().or_else(codex_home)
+            .ok_or_else(|| protocol_error("conversation_query_incomplete", "cannot resolve Codex data directory".into(), true))?;
+        let evidence = tokio::task::spawn_blocking(move || crate::directory::read_evidence(&home))
+            .await.map_err(provider_task_error)??;
         let pending = lock(&self.mutable).pending_materialization.values().cloned().collect::<Vec<_>>();
-        rows.extend(pending.iter().map(|snapshot| lock(&self.mapper).conversation(snapshot)));
+        rows.extend(pending.iter().map(|snapshot| {
+            let mut snapshot = snapshot.clone();
+            assignments.decorate(&mut snapshot);
+            lock(&self.mapper).conversation(&snapshot)
+        }));
+        let known = rows.iter().map(|row| row.resource.native_resource_id.clone()).collect::<HashSet<_>>();
+        let mut candidates = evidence.keys().cloned().collect::<HashSet<_>>();
+        candidates.extend(lock(&self.mutable).observed_thread_ids.iter().cloned());
+        let mut missing = candidates.into_iter().filter(|id| !known.contains(id)
+            && !evidence.get(id).is_some_and(|fact| fact.archived)).collect::<Vec<_>>();
+        missing.sort();
+        // Bounded concurrent single-ID reads on the same App Server connection.
+        for batch in missing.chunks(4) {
+            let mut reads = tokio::task::JoinSet::new();
+            for id in batch {
+                let server = self.ready_server()?;
+                let id = id.clone();
+                reads.spawn_blocking(move || server.thread_read_metadata(&id));
+            }
+            while let Some(result) = reads.join_next().await {
+                let mut snapshot = result.map_err(provider_task_error)?.map_err(CodexProtocolMapper::error)?;
+                if snapshot.thread.ephemeral { continue; }
+                assignments.decorate(&mut snapshot);
+                rows.push(lock(&self.mapper).conversation(&snapshot));
+            }
+        }
         let mut live_active = HashMap::new();
         for (_, server) in &registry {
             let mut cursor = None;
             let mut progress = codepet_provider_sdk::conversation_query::EnumerationProgress::default();
             loop {
                 let source = server.clone();
-                let (ids, next) = tokio::task::spawn_blocking(move || source.thread_loaded_list(cursor, 100)).await.map_err(provider_task_error)?.map_err(CodexProtocolMapper::error)?;
+                let (ids, next) = match tokio::task::spawn_blocking(move || source.thread_loaded_list(cursor, 100)).await.map_err(provider_task_error)? {
+                    Ok(page) => page,
+                    // Persistent listing works on older servers without the loaded
+                    // namespace API. Never use this fallback to advertise active facts.
+                    Err(error) if !require_loaded_namespace && error.is_method_not_found("thread/loaded/list") => break,
+                    Err(error) => return Err(CodexProtocolMapper::error(error)),
+                };
                 for id in ids {
                     if server.is_ephemeral_thread(&id) { continue; }
                     let source = server.clone();
@@ -4269,6 +4040,24 @@ impl CodexInstanceRuntime {
         if registry.iter().map(|(id, server)| (*id, server.generation())).collect::<Vec<_>>() != after.iter().map(|(id, server)| (*id, server.generation())).collect::<Vec<_>>() {
             return Err(conversation_atoms::generation_changed());
         }
+        // Native list metadata and live reads are field observations, not
+        // last-response-wins replacements (legacy reads can regress timestamps).
+        let mut directory = std::collections::BTreeMap::<String, Conversation>::new();
+        for mut row in rows {
+            let id = row.resource.native_resource_id.clone();
+            if evidence.get(&id).is_some_and(|fact| fact.archived) { continue; }
+            if let Some(previous) = directory.get(&id) {
+                if row.updated_at == row.created_at && previous.updated_at > row.updated_at {
+                    row.updated_at = previous.updated_at;
+                }
+                if row.title == id && previous.title != id { row.title = previous.title.clone(); }
+                if row.preview.is_none() { row.preview = previous.preview.clone(); }
+                if row.project.is_none() { row.project = previous.project.clone(); }
+            }
+            if let Some(fact) = evidence.get(&id) { crate::directory::repair_time(&mut row, fact); }
+            directory.insert(id, row);
+        }
+        let mut rows = directory.into_values().collect::<Vec<_>>();
         conversation_atoms::sort_summaries(&mut rows);
         for row in &mut rows {
             if let Some(active) = live_active.get(&row.resource.native_resource_id) { row.status = active.status; row.active_turn = active.active_turn.clone(); }
@@ -4287,7 +4076,10 @@ impl CodexProvider {
             // Missing list membership is not deletion (e.g. archived sessions).
             // Unknown native failures propagate; never infer deletion from them.
             match tokio::task::spawn_blocking(move || session.thread_read_metadata(&requested)).await.map_err(provider_task_error)? {
-                Ok(snapshot) => rows.push(lock(&runtime.mapper).conversation(&snapshot)),
+                Ok(mut snapshot) => {
+                    load_codex_desktop_project_assignments(runtime.settings.data_directory.as_deref())?.decorate(&mut snapshot);
+                    rows.push(lock(&runtime.mapper).conversation(&snapshot));
+                }
                 Err(error) if error.is_thread_not_loaded(id) => {},
                 Err(error) => return Err(CodexProtocolMapper::error(error)),
             }

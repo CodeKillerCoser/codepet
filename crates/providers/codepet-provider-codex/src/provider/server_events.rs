@@ -15,7 +15,16 @@ impl CodexInstanceRuntime {
                 let Some(runtime) = owner.upgrade() else { return; };
                 if lock(&runtime.mutable).server_generation.as_deref() != Some(&generation) { return; }
                 match message {
-                    Ok(Ok(message)) => pending.push_back(message),
+                    Ok(Ok(message)) => {
+                        // Discovery hint only: a later first-page query still reads
+                        // the official object, even when native list omitted this ID.
+                        if let Some(id) = incoming_conversation_id(&message).filter(|id| !session.is_ephemeral_thread(id)) {
+                            let mut state = lock(&runtime.mutable);
+                            if state.server_generation.as_deref() != Some(&generation) { return; }
+                            state.observed_thread_ids.insert(id.to_owned());
+                        }
+                        pending.push_back(message);
+                    },
                     Ok(Err(error)) => { runtime.fail_server(&generation, CodexProtocolMapper::error(error)); return; }
                     Err(RecvTimeoutError::Disconnected) => {
                         runtime.fail_server(&generation, CodexProtocolMapper::error(CodexAppServerError::Shutdown)); return;
