@@ -4,7 +4,7 @@
 
 文件系统路径使用标准路径 API 构造、取父目录和取文件名，禁止拼接目录分隔符。Rust 使用 `Path` / `PathBuf`，Tauri 前端使用 `@tauri-apps/api/path`，Node 使用 `node:path`。URL、协议 ID 与文件系统路径分别处理；构造文件名不等于拼接目录。
 
-运行时可执行文件属于安装位置，配置、历史、缓存属于数据位置，两者不能互相推导。Provider 不用 Harness 版本白名单、精确版本或版本范围决定可用性；版本用于展示，启动和实际接口探测用于判断能力。CodePet wire 协议版本协商仍是独立契约。
+运行时可执行文件属于安装位置，配置、历史、缓存属于数据位置，两者不能互相推导。Provider 可以在自身配置 `env.CODEPET_RUNTIME_MIN_VERSION` 中声明最低 Harness semver；SDK 保留所有已检测安装及版本，对低于下限或无法比较的版本标注原因并拒绝选择。最低版本约束只适用于必要的基础协议，不得因缺少项目等可选能力而阻断整个连接；可选能力由实际探测决定是否广告。未配置下限时保持能力探测判断。满足最低版本仍需通过启动和实际接口探测，不能仅凭版本广告能力。CodePet wire 协议版本协商仍是独立契约。
 
 Code Pet App、内置 Provider adapter 和用户安装的 Harness 是三层独立安装：
 
@@ -55,6 +55,7 @@ OpenCode 会在 XDG root 下继续使用自己的 `opencode` 子目录。设置�
 - Windows 优先原生 `.exe` / `.com`；npm 从 package.json 的 bin 字段解析原生文件。对用户选择的已知 npm shim 做同样解析，不执行任意 shell 文本。旧式纯 JS npm 包没有原生 bin 时，不宣称已支持。
 - Unix GUI 进程的 PATH 不能代替用户交互 shell 的 PATH；npm/nvm 常只在 `.zshrc` 中初始化。后台读取交互登录 shell 的 PATH，再查找真实文件；不要将 `command -v` 的函数名或带启动提示的完整 stdout 当作可执行路径。保持 shell 超时和进程树清理。
 - 发现 CLI 所用的 shell PATH 必须同时用于版本扫描、异步信息探测和实际 Harness 子进程；绝对路径只能定位入口脚本，不能让 `#!/usr/bin/env node` 自动找到解释器。SDK 在后台发现时保存 PATH 快照，统一进程入口只向子进程注入快照，不修改 Host/Provider 全局环境，也不在异步启动路径重复运行 shell。重新检测时刷新快照，Windows 继续使用自身环境。
+- 登录 shell 的 stdout 必须在进程运行时并发读取，不能先等退出再读取；启动输出可能填满管道，造成假超时。枚举 shell PATH 的全部匹配项，再按规范化路径去重，不能只保留第一个命令。
 - 使用平台目录库解析 home；专用环境变量仍可覆盖数据目录。自定义 runtime 选择应保留在安装列表，即便不在 PATH。
 - 实例 `settings.dataDirectory` 为绝对路径；Codex 映射 CODEX_HOME，Claude 映射 CLAUDE_CONFIG_DIR，OpenCode 映射独立 XDG config/data/cache/state 子目录。未配置时沿用 Harness 原有环境和默认位置。
 - 对实例设置的目录，启动、账号/模型探测和读取历史使用同一上下文；不要修改 Host 进程全局环境来切换实例目录。
@@ -69,7 +70,7 @@ OpenCode 会在 XDG root 下继续使用自己的 `opencode` 子目录。设置�
 - [v0 Windows 审阅](../10-architecture/windows-platform-review.md)
 - [Windows Provider 验证路径](../40-runbooks/windows-provider-runtime.md)
 - [设置持久化](../10-architecture/settings-persistence.md)
-- 2026-09-06 用户明确要求取消 Provider 的 Harness 版本支持范围。
+- 2026-09-06 曾取消 Harness 版本范围；2026-09-08 用户明确要求增加 Provider 最低版本约束，本次指示取代旧限制。
 - 2026-09-08 用户要求固化 Windows/macOS 的安装目录、数据目录和工作区目录边界。
 
 ## 验证方式

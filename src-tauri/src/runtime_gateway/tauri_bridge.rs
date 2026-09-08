@@ -186,11 +186,15 @@ impl ProviderHostState {
                         executable_path: installation.executable_path,
                         version: installation.version,
                         source: agent_runtime_source(installation.source),
+                        minimum_version: installation.minimum_version,
+                        incompatibility_reason: installation.incompatibility_reason,
                     }).collect::<Vec<_>>();
                     let selected = inventory.selected.map(|installation| AgentRuntimeInstallation {
                         executable_path: installation.executable_path,
                         version: installation.version,
                         source: agent_runtime_source(installation.source),
+                        minimum_version: installation.minimum_version,
+                        incompatibility_reason: installation.incompatibility_reason,
                     });
                     let selection_unconfirmed = configured_executable.is_some() && selected.is_none();
                     views.push(AgentRuntime {
@@ -200,7 +204,7 @@ impl ProviderHostState {
                             AgentRuntimeStatus::Loading
                         } else if selection_unconfirmed {
                             AgentRuntimeStatus::InvalidConfiguredExecutable
-                        } else if installed.is_empty() {
+                        } else if !installed.iter().any(|runtime| runtime.incompatibility_reason.is_none()) {
                             AgentRuntimeStatus::Unavailable
                         } else {
                             AgentRuntimeStatus::Ready
@@ -217,7 +221,7 @@ impl ProviderHostState {
                                 message: format!("{display_name} Provider did not confirm the persisted runtime selection"),
                             })
                         } else {
-                            installed.is_empty().then(|| AgentRuntimeDiagnostic {
+                            (!installed.iter().any(|runtime| runtime.incompatibility_reason.is_none())).then(|| AgentRuntimeDiagnostic {
                                 code: "runtime-not-found".to_string(),
                                 message: format!("{display_name} Provider did not find a compatible local runtime"),
                             })
@@ -273,6 +277,8 @@ impl ProviderHostState {
             executable_path: response.selected.executable_path,
             version: response.selected.version,
             source: agent_runtime_source(response.selected.source),
+            minimum_version: response.selected.minimum_version,
+            incompatibility_reason: response.selected.incompatibility_reason,
         })
     }
 

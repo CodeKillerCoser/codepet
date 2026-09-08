@@ -14,6 +14,8 @@ Conversation 工具载荷还必须遵守 [`conversation-tool-payload-ownership.m
 
 ## 适用场景
 
+Gateway SDK 新增 event 或 capability 时，必须同步审查 `src-tauri/src/runtime_gateway/provider_host_compat.rs` 的穷尽匹配。desktop/v0 未声明的方法不得出现在兼容层 capability 中；无对应 v0 事件的通知应显式跳过，并保持后续可表示事件的订阅投递。不能用通配分支掩盖未来协议变化，也不能为编译通过把新通知伪装成旧业务事件。
+
 - 修改任一 schema、method/event manifest、generator 或 SDK 包。
 - 接入 Provider binary、Provider Host、Gateway remote transport 或 Pet Protocol adapter。
 - 修改 Runtime Gateway registry/event bus/Tauri bridge 或桌宠 projection。
@@ -82,6 +84,8 @@ Conversation 工具载荷还必须遵守 [`conversation-tool-payload-ownership.m
 - `../../crates/codepet-host/src/providers/process.rs`
 
 ## 验证方式
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib runtime_gateway::provider_host_compat::tests` 验证 v0 能力过滤、最近会话失效通知跳过和后续事件投递；同时编译实际 Tauri 消费端。仅通过 SDK/Host 测试不能证明桌面消费端已适配新增枚举。约束来源：[2026-09-08 发布构建失败](https://github.com/CodeKillerCoser/codepet/actions/runs/34179204574)，macOS/Windows 均因遗漏 `ConversationRecentChanged` 与 `ConversationRecent` 报 E0004。
 
 - `npm run protocol:check` 验证 schema/manifest 依赖方向、Pet 无 Provider ref、target fail-closed、capability metadata、fixture 与 freshness。
 - `dart analyze sdk/dart/codepet-core-sdk sdk/dart/codepet-gateway-sdk` 与 Gateway package 的 `dart test` 验证 Dart null safety、canonical fixture、约束/unknown-field、union、敏感字段和 typed client。

@@ -59,6 +59,10 @@ pub struct AgentRuntimeInstallation {
     pub executable_path: String,
     pub version: String,
     pub source: AgentRuntimeSource,
+    #[serde(default)]
+    pub minimum_version: Option<String>,
+    #[serde(default)]
+    pub incompatibility_reason: Option<String>,
 }
 
 impl AgentRuntimeDiagnostic {

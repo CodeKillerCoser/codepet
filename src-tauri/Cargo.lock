@@ -805,17 +805,18 @@ dependencies = [
 name = "codepet-provider-sdk"
 version = "0.1.0"
 dependencies = [
- "tempfile",
- "ring",
- "fs2",
  "codepet-agent-sdk",
  "codepet-core-sdk",
  "dirs 6.0.0",
+ "fs2",
  "futures",
  "libc",
  "process-wrap",
+ "ring",
+ "semver",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-util",
  "windows 0.62.2",

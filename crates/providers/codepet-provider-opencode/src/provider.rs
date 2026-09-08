@@ -1123,6 +1123,18 @@ impl Provider for OpenCodeProvider {
                     false,
                 ));
             }
+            if std::env::var("CODEPET_RUNTIME_MIN_VERSION").is_ok_and(|value| !value.is_empty()) {
+                if let Some(path) = request.settings.get("serverExecutable").and_then(Value::as_str) {
+                    let runtime = self.scanner.select(&RuntimeCandidate {
+                        executable_path: path.to_string(),
+                        source: codepet_provider_sdk::RuntimeCandidateSource::Configured,
+                    })?;
+                    if runtime.version.is_empty() {
+                        return Err(protocol_error("runtime_scanning", "Runtime version validation is still in progress".into(), true));
+                    }
+                    local_runtime::require_compatible_runtime(&local_runtime::apply_runtime_requirement(runtime))?;
+                }
+            }
             let selected = if request.settings.contains_key("serverExecutable") { None } else {
                 let current = { lock(&self.state).selected_runtime.clone() };
                 let installation = match current {
@@ -1130,12 +1142,16 @@ impl Provider for OpenCodeProvider {
                     None => {
                         let inventory=self.scanner.snapshot();
                         if inventory.scanning==Some(true) {return Err(protocol_error("runtime_scanning", "Runtime discovery is still in progress".into(), true));}
-                        inventory.installed.into_iter().next()
+                        inventory.installed.into_iter().find(|runtime| runtime.incompatibility_reason.is_none())
                     },
                 };
                 Some(installation.ok_or_else(|| protocol_error("provider_unavailable", "OpenCode Provider did not find a local runtime".to_string(), true))?)
             };
             if let Some(selected) = selected.as_ref() {
+                if selected.version.is_empty() {
+                    return Err(protocol_error("runtime_scanning", "Runtime version validation is still in progress".into(), true));
+                }
+                local_runtime::require_compatible_runtime(&local_runtime::apply_runtime_requirement(selected.clone()))?;
                 request.settings.insert("serverExecutable".to_string(), json!(selected.executable_path.clone()));
                 request.settings.insert("serverVersion".to_string(), json!(selected.version.clone()));
             }
@@ -2354,7 +2370,7 @@ fn inspect_runtime_candidate(candidate: RuntimeCandidate, timeout: Duration, con
     let canonical = local_runtime::resolve_executable(Path::new(&candidate.executable_path), "opencode", "opencode-ai")
         .map_err(|error| protocol_error("invalid_runtime_selection", error, false))?;
     let version = bounded_opencode_version(&canonical, timeout, control)?;
-    Ok(RuntimeInstallation { executable_path: canonical.to_string_lossy().into_owned(), version, source: candidate.source })
+    Ok(RuntimeInstallation { minimum_version: None, incompatibility_reason: None, executable_path: canonical.to_string_lossy().into_owned(), version, source: candidate.source })
 }
 
 fn bounded_opencode_version(executable: &std::path::Path, timeout: Duration, control: local_runtime::RuntimeProbeControl) -> Result<String, ProtocolError> {

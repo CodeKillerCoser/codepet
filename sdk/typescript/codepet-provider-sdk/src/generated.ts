@@ -487,6 +487,8 @@ export interface RuntimeGetInstalledResponse {
 }
 
 export interface RuntimeInstallation {
+  minimumVersion?: string;
+  incompatibilityReason?: string;
   executablePath: string;
   version: string;
   source: RuntimeCandidateSource;

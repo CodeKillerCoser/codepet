@@ -40,14 +40,15 @@ pub async fn check_native_runtime(
         assert!(!installed.installed.is_empty(), "No {kind} runtime found");
         for runtime in &installed.installed {
             println!(
-                "{kind}: {:?} {} ({})",
-                runtime.source, runtime.executable_path, runtime.version
+                "{kind}: {:?} {} ({}) minimum={:?} rejected={:?}",
+                runtime.source, runtime.executable_path, runtime.version, runtime.minimum_version, runtime.incompatibility_reason
             );
         }
+        let compatible = installed.installed.iter().find(|runtime| runtime.incompatibility_reason.is_none()).expect("no compatible installation");
         let selected = provider
             .runtime_select(RuntimeSelectRequest {
                 candidate: RuntimeCandidate {
-                    executable_path: installed.installed[0].executable_path.clone(),
+                    executable_path: compatible.executable_path.clone(),
                     source: RuntimeCandidateSource::Configured,
                 },
             })
@@ -60,6 +61,7 @@ pub async fn check_native_runtime(
             reread.selected.as_ref().map(|r| &r.executable_path),
             Some(&selected.executable_path)
         );
+        if std::env::var_os("CODEPET_NATIVE_INVENTORY_ONLY").is_some() { return Ok(()); }
         let route = ProviderInstanceRoute {
             device_id: "runtime-smoke-device".into(),
             provider_plugin_id: plugin.into(),

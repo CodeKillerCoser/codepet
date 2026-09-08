@@ -1911,16 +1911,18 @@
                 </dl>
 
                 <div class="runtime-installations">
-                  <strong>Provider 探测到的安装</strong>
+                  <strong>Provider 检测到的版本（{runtime.installed?.length ?? 0}）</strong>
                   {#each runtime.installed ?? [] as installation}
                     <button
                       type="button"
                       class:selected={runtime.resolvedExecutable === installation.executablePath}
-                      disabled={runtimeBusy(runtime.providerId) || runtime.status === "loading"}
+                      disabled={runtimeBusy(runtime.providerId) || runtime.status === "loading" || !!installation.incompatibilityReason}
                       on:click={() => selectInstalledRuntime(runtime, installation.executablePath)}
                     >
                       <span><b>{installation.version}</b> · {agentRuntimeSourceLabel(installation.source)}</span>
                       <code title={installation.executablePath}>{installation.executablePath}</code>
+                      {#if installation.minimumVersion}<span>最低版本：{installation.minimumVersion}</span>{/if}
+                      {#if installation.incompatibilityReason}<span>{installation.incompatibilityReason}</span>{/if}
                     </button>
                   {:else}
                     <p>{runtime.status === "loading" ? "Provider 启动后将自动检测本机安装。" : "没有通过 Provider 校验的本机安装。"}</p>

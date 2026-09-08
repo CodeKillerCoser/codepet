@@ -11,6 +11,10 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const args = parseArgs(process.argv.slice(2));
+const platform = args.platform ?? "all";
+if (!["all", "mac", "win"].includes(platform)) {
+  fail("--platform must be all, mac, or win.");
+}
 const root = fileURLToPath(new URL("..", import.meta.url));
 const tauriConfigPath = resolve(root, "src-tauri", "tauri.conf.json");
 const tauriConfig = readJson(tauriConfigPath);
@@ -36,24 +40,26 @@ if (!existsSync(artifactsDir)) {
 }
 
 const files = walkFiles(artifactsDir).sort((left, right) => left.localeCompare(right));
-const macArchive = findArtifact(files, (file) => file.endsWith(".app.tar.gz"), "macOS .app.tar.gz updater archive");
-const windowsInstaller = findArtifact(
+const platforms = {};
+if (platform === "all" || platform === "mac") {
+  platforms["macos-universal"] = releaseAsset(findArtifact(files, (file) => file.endsWith(".app.tar.gz"), "macOS .app.tar.gz updater archive"));
+}
+if (platform === "all" || platform === "win") {
+  platforms["windows-x86_64"] = releaseAsset(findArtifact(
   files,
   (file) => {
     const name = basename(file).toLowerCase();
     return name.endsWith(".exe") && name.includes("setup");
   },
   "Windows NSIS setup .exe updater artifact",
-);
+  ));
+}
 
 const latest = {
   version,
   notes,
   pub_date: pubDate,
-  platforms: {
-    "macos-universal": releaseAsset(macArchive),
-    "windows-x86_64": releaseAsset(windowsInstaller),
-  },
+  platforms,
 };
 
 mkdirSync(dirname(outputPath), { recursive: true });

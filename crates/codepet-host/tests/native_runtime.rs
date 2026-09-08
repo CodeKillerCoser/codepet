@@ -41,6 +41,7 @@ async fn native_inventory_completes_through_host_with_duplicate_path_entries() {
             println!("{name}: snapshot scanning={:?} in {:?}", snapshot.scanning, started.elapsed());
             let inventory = tokio::time::timeout(std::time::Duration::from_secs(180), inventory_rx.recv()).await.expect("missing scan notification").expect("notification stream closed");
             println!("{name}: {} native installations notified in {:?}", inventory.installed.len(), started.elapsed());
+            println!("{name}: installations={:?}; scan_error={:?}", inventory.installed, inventory.scan_error);
             assert!(!inventory.installed.is_empty(), "{name}: {inventory:?}");
             assert_eq!(inventory.scanning, Some(false));
             let rescan_started = Instant::now();
@@ -54,7 +55,7 @@ async fn native_inventory_completes_through_host_with_duplicate_path_entries() {
         }.await;
         let shutdown = process.shutdown().await;
         events.abort();
-        assert!(result.is_ok(), "{name}: {result:?}");
+        assert!(result.is_ok(), "{name}: {result:?}; stderr={:?}", process.stderr_diagnostics());
         assert!(shutdown.is_ok(), "{name}: {shutdown:?}");
     }
 }
