@@ -1,281 +1,152 @@
-# Code Pet
+<p align="center">
+  <img src="src-tauri/icons/128x128.png" width="96" height="96" alt="Code Pet 图标" />
+</p>
 
-Code Pet 是一个面向本机 AI 编程工具的桌面宠物应用。它会常驻在桌面上，监听 Claude Code、Qoder 和 Cursor 的 hook 事件，把任务开始、工具调用、等待授权、失败和完成等状态变成可见的桌宠消息，并提供通知音效、宠物外观、任务气泡、Token 用量统计等个性化能力。Codex 的旧 Hook 与 audit 活动源已停用，等待 Runtime Gateway 接管。
+<h1 align="center">Code Pet</h1>
 
-项目使用 Tauri 2、Svelte 5、Vite 和 Rust 构建。主窗口用于配置和查看数据，透明桌宠窗口用于日常悬浮展示。
+<p align="center"><strong>把电脑上的 AI Agent，带到你的手机上。</strong><br />远程控制 · 统一会话入口 · Provider 插件扩展</p>
 
-## 功能概览
+<p align="center">
+  <a href="https://github.com/CodeKillerCoser/codepet/releases"><img src="https://img.shields.io/github/v/release/CodeKillerCoser/codepet?include_prereleases&label=release" alt="GitHub 最新版本（含预发布）" /></a>
+  <a href="https://github.com/CodeKillerCoser/codepet/stargazers"><img src="https://img.shields.io/github/stars/CodeKillerCoser/codepet?style=flat" alt="GitHub Stars" /></a>
+  <a href="https://github.com/CodeKillerCoser/codepet/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/CodeKillerCoser/codepet/release.yml?label=release%20build" alt="发布构建状态" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-orange" alt="许可证：PolyForm Noncommercial 1.0.0" /></a>
+</p>
 
-- **桌面宠物悬浮窗**：透明、置顶、可自动调整高度的桌宠窗口，用于展示最近的任务活动。
-- **多 Agent 事件接入**：支持 Claude Code、Qoder 和 Cursor 的 hook 配置接入，托管 hook 命令兼容 Windows 和类 Unix shell。
-- **任务状态卡片**：展示任务标题、工具调用、状态、时间、授权等待等信息。
-- **授权提醒**：等待授权时可以响铃，并在用户处理前重复提醒；普通完成任务只提示一次。
-- **通知音效**：支持内置通知音、静音、自定义通知音频和静音时段。
-- **抽鞭子互动**：桌宠窗口提供抽鞭子按钮，点击后播放鞭子动画和鞭声；可配置被抽后的反应音，包括 `啪`、`啊啊啊` 和自定义音频。
-- **宠物个性化**：支持默认像素宠物、图片导入、抠图导入、像素化程度调整和宠物库。
-- **任务气泡样式**：支持主题、背景呼吸灯、边框跑马灯、多色渐变和动画速度设置。
-- **Token 用量统计**：读取本机审计和 transcript 数据，按 Agent、时间范围和桶大小聚合展示 Token 用量。
-- **最近事件日志**：在主窗口中查看近期收到的 hook 事件。
-- **开机自启动**：通过 Tauri autostart 插件在设置页控制登录启动，覆盖 macOS、Windows 和 Linux 桌面平台。
-- **启动性能日志**：记录后端启动阶段、Token 用量刷新和前端首屏请求耗时，便于排查启动变慢。
-- **macOS 打包签名辅助**：提供 DMG 构建、签名校验和 notarization 脚本。
+<p align="center">
+  <a href="https://github.com/CodeKillerCoser/codepet/releases">电脑端下载</a> ·
+  <a href="https://github.com/CodeKillerCoser/codepet-remote">远程客户端</a> · <a href="#快速上手">快速上手</a> ·
+  <a href="knowledge/00-project/development.md">开发文档</a> ·
+  <a href="https://github.com/CodeKillerCoser/codepet/issues">反馈问题</a>
+</p>
 
-## 支持的 Agent
+## 让 AI 在电脑上执行，让你从手机上掌控
 
-| Agent | 配置文件 | 事件覆盖 |
+Code Pet 是一个以**远程控制和插件扩展**为核心的 AI Agent 平台。电脑端托管 Agent 接入，手机端通过 [CodePet Remote](https://github.com/CodeKillerCoser/codepet-remote) 查看项目、继续会话、接收实时输出，并在需要时处理审批或停止任务。
+
+你可以从手机发起任务，让电脑上的 Agent 使用原有的项目和运行环境执行；也可以接着已有会话继续讨论，不必一直守在电脑前。当前远程连接以局域网为基础。
+
+**接入新的 Agent，也不必重做远程端。** 开发者按 Provider 协议实现插件，交给 Host 加载，Remote 就能通过统一 Gateway 发现它，并使用插件声明的标准能力。
+
+## 为什么做 Code Pet？
+
+AI 编程工具越来越多，但任务和操作分散在不同的 CLI、应用和电脑上。离开电脑后，一次简单的追问、授权或进度确认，也可能需要回到原来的窗口。为每个工具分别开发手机端，又会重复处理连接、会话、消息和权限交互。
+
+Code Pet 将这些共性集中起来：**Remote 提供统一操作入口，Host 管理连接与插件，Provider 对接具体工具。** 新工具沿用已有协议和界面，原有工具继续使用自己的 runtime。桌宠保留为本地提醒与个性化体验，是平台的一项附加能力。
+
+## 你可以做什么？
+
+| 场景 | 使用体验 |
+| --- | --- |
+| 离开工位，想继续推进任务 | 在已配对的手机上选择电脑与 Provider，创建或继续会话，发送下一条指令 |
+| 想知道 Agent 正在做什么 | 查看流式回复、工具活动和历史消息，不必反复返回终端 |
+| 任务需要你做决定 | 在 Provider 支持时处理审批、中断任务或调整当前输入 |
+| 多个项目、多个 Agent 同时使用 | 从设备、Provider、项目和最近会话入口找到对应工作上下文 |
+| 手机暂时断开连接 | 当前 Host 保留进行中的任务与待审批，待空闲后回收运行实例；电脑和 Host 仍需保持运行 |
+| 想接入自己的工具 | 实现独立 Provider 插件，复用 Remote 的标准会话与控制界面 |
+
+具体操作由 Provider 的能力声明和当前任务状态决定，不同 Agent 的历史范围、审批、停止和运行中调整能力可能不同。断线恢复不等于 Host 重启恢复，也不保证电脑睡眠后继续执行。
+
+## 两个项目，一条完整链路
+
+| 项目 | 安装在哪里 | 负责什么 |
 | --- | --- | --- |
-| Codex | — | 旧 Hook 活动源已停用；设置页保留不可启用的占位项 |
-| Claude Code | `~/.claude/settings.json` | `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`PermissionRequest`、`Stop` |
-| Qoder | `~/.qoder/settings.json` | `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`PermissionRequest`、`Notification`、`Stop` |
-| Cursor | `~/.cursor/hooks.json` | `sessionStart`、`beforeSubmitPrompt`、`preToolUse`、`postToolUse`、`beforeShellExecution`、`afterShellExecution`、`beforeMCPExecution`、`afterMCPExecution`、`afterFileEdit`、`stop` |
+| **[Code Pet](https://github.com/CodeKillerCoser/codepet)**（本仓库） | 运行 AI 工具的电脑 | 设备配对、Gateway、Provider 插件管理、本机 runtime 接入，以及本地设置与桌宠 |
+| **[CodePet Remote](https://github.com/CodeKillerCoser/codepet-remote)** | 手机，当前以 Android 为主 | 设备连接、项目与会话浏览、实时消息，以及按能力开放的任务操作 |
 
-启用 Claude Code、Qoder 或 Cursor 时，应用会把托管的 `code-pet-hook.mjs` 写入对应配置。关闭时会移除托管项，并清理该 Agent 的当前事件。托管命令使用 `node <script> --agent <id>` 形式传递 Agent 信息，并保留对旧版 `CODE_PET_AGENT=...` 托管项的识别和升级能力。应用启动时会移除 `~/.codex/hooks.json` 中由 Code Pet 管理的遗留 Codex Hook，且 collector 不接收 Codex Hook 或 spool 事件。
+Remote 使用 Flutter / Dart，电脑端使用 Tauri 2 / Svelte 5 / Rust。任务在电脑上的 Agent runtime 中执行；手机通过 Gateway 发出操作并接收结果，无需直接接入每个 Agent 的原生接口。
 
-## 环境要求
+## 插件优先：让更多 Agent 接进来
 
-- 主要开发和完整功能验证平台是 macOS。项目包含 macOS 透明悬浮窗、Vision 抠图、Terminal/iTerm 激活和 DMG notarization 相关能力。
-- Windows 已支持核心 Rust 编译检查和 Tauri 打包所需的 `.ico` 图标资源；macOS-only 能力会降级为明确的不支持提示。
-- Linux 需要 Tauri/WebKitGTK/GTK 相关系统依赖。macOS 上交叉检查 Linux target 还需要配置对应 sysroot 和 `pkg-config`。
-- Node.js 和 npm。
-- Rust stable toolchain。
-- Tauri 2 所需的本机构建依赖。
-- 如需签名和 notarization，需要 Xcode 命令行工具、Apple Developer 证书和 notary credentials。
+Provider 是可由开发者自行实现的**独立进程插件**。内置的 Codex、Claude 和 OpenCode 也走这套插件边界。
 
-## 本地开发
+- **统一业务协议**：将工具能力映射为项目、会话、消息、任务和审批等标准对象与操作。
+- **能力驱动界面**：插件声明支持什么，Remote 据此开放对应功能；不支持的操作明确不可用。
+- **独立开发与加载**：manifest 描述插件和运行实例，Host 发现、启动并路由请求；插件无需依赖 Tauri 或桌宠代码。
+- **配套 SDK**：协议 schema 与 manifest 是事实来源，随应用提供的 `cp-sdk-gen` 可生成匹配版本的 Provider SDK 和 Gateway SDK。
 
-安装依赖：
+对于现有协议已覆盖的能力，完成 Provider 实现和安装后，就能复用现有 Remote，无需为该 Agent 定制客户端。若引入协议尚未表达的新能力，仍需扩展协议、生成 SDK，并补充相应客户端体验。
 
-```bash
-npm install
-```
+想接入自己的 Agent？从 [Provider SDK 与完整接入指南](tools/cp-sdk-gen/README.md) 开始：**生成 SDK → 实现 Provider → 声明能力与事件 → 安装插件 → 在 Remote 中验证**。目前生成器提供 Rust Provider server；Remote 的 Dart Gateway client 使用另一套生成目标。
 
-启动前端开发服务器：
+## 内置接入
 
-```bash
-npm run dev
-```
+| Provider | 对接方式 | 说明 |
+| --- | --- | --- |
+| [Codex](crates/providers/codepet-provider-codex/README.md) | Codex App Server | 通过独立 Provider 提供远程会话与任务控制 |
+| [Claude](crates/providers/codepet-provider-claude/README.md) | Claude CLI stream-json | 支持 Provider 管理的会话、发送和审批等；不宣称外部会话全量发现或运行中 steer |
+| [OpenCode](crates/providers/codepet-provider-opencode/README.md) | OpenCode Server HTTP / SSE | 将原生会话、任务和事件映射到统一协议 |
+| **你的 Provider** | 你选择的工具接口 | 实现兼容协议，在 Host 加载后向 Remote 暴露标准能力 |
 
-启动 Tauri 开发应用：
+安装包包含 Code Pet 的内置 Provider adapter，**不包含底层 Agent runtime**。请在电脑上自行安装、配置并完成对应工具的登录。第三方 Provider 的能力与兼容性由其实现决定。
 
-```bash
-npm run tauri dev
-```
+## 快速上手
 
-`npm run dev` 会在 `127.0.0.1:1420` 启动 Vite。Tauri 开发模式会自动使用这个地址。
+1. **准备电脑端**：从 [Code Pet Releases](https://github.com/CodeKillerCoser/codepet/releases) 获取系统对应的安装包；安装并配置要使用的 Codex、Claude 或 OpenCode。
+2. **检查运行时**：启动 Code Pet，在 **连接 → 本机运行时** 查看 Provider 检测结果，必要时选择可执行文件，并检查连接状态。
+3. **准备手机端**：按 [CodePet Remote 的安装与构建说明](https://github.com/CodeKillerCoser/codepet-remote#readme) 获取 Android APK，让手机与电脑处于可互通的局域网。
+4. **配对设备**：在电脑端 **连接** 页添加设备，在 Remote 中发现 Host 并发起配对；核对两端显示的配对码，在电脑上确认。也可使用二维码配对入口。
+5. **开始控制**：在 Remote 中选择电脑和 Provider，进入项目或会话，发送任务并查看实时输出。审批和其他操作按实际能力显示。
 
-## 使用方式
+当前处于 **Beta** 阶段，建议搭配使用协议兼容的 Host / Remote 版本。电脑端发布流程覆盖 macOS 与 Windows，实际安装包以 Release 附件为准；Linux 需要自行构建验证，Remote 当前没有已验证的 iOS 工程。
 
-1. 启动应用。
-2. 在主窗口的 `Agent` 页启用需要接入的工具，例如 Claude Code 或 Qoder。
-3. 运行对应 Agent 的任务。
-4. 桌宠窗口会展示任务状态、工具调用、授权等待、完成或失败等活动。
-5. 在 `个性化` 页调整宠物、主题、任务气泡、通知音效和抽打反应音。
-6. 在 `用量` 页查看按 Agent 聚合的 Token 使用情况。
-7. 在 `最新事件` 页查看最近收到的 hook 事件。
+当前主链路是 LAN HTTPS / WSS，具备设备配对、证书指纹校验和凭据撤销。公网中继、WebRTC 和跨设备文件传输仍属于后续设计方向。详细流程见 [远程控制与 Provider 扩展](knowledge/20-product/remote-control-and-plugins.md)。
 
-### 抽鞭子互动
+## 简要架构
 
-桌宠窗口右侧有抽鞭子按钮。点击后：
+![Code Pet 架构：Remote 经 Gateway 协议连接 Host，Host 通过 Provider 协议加载内置或自定义插件，再由插件操作本机 Agent runtime；SDK 生成器支撑两端接入，桌宠是独立的本地体验。](assets/readme/architecture.png)
 
-1. 播放鞭子抽打动画。
-2. 播放鞭子抽打音效。
-3. 如果配置了抽打反应音，会在鞭声后继续播放桌宠反应音。
+*架构示意图；图中的手机画面用于说明交互，不是实际产品截图。*
 
-在 `个性化 -> 通知声音 -> 抽打反应` 中可以选择：
+**Remote → Gateway → Provider Host → Provider → Agent runtime** 是主要控制链路。Gateway 为客户端提供统一业务入口，Provider 隔离各工具原生协议，SDK 让客户端与插件基于同一份协议开发。网络通道与业务协议分层，未来替换传输方式时可以保留业务契约。
 
-- `无`：只播放鞭声。
-- `啪`：播放短促拍打反应。
-- `啊啊啊`：播放内置叫声。
-- `自定义`：选择本机音频文件作为桌宠被抽后的反应音。
+更多实现细节见 [双端架构与扩展边界](knowledge/10-architecture/host-remote-platform.md) 和 [Remote 架构文档](https://github.com/CodeKillerCoser/codepet-remote/blob/main/docs/architecture.md)。
 
-自定义反应音和普通通知自定义音是两套独立配置。
+## 技术选型与架构设计
 
-### 通知和重复提醒
+**跨平台是技术选型的核心因素。** 桌面端以 Tauri 和 Web 前端复用界面，Remote 以 Flutter 复用客户端业务与交互，Rust 承载共享 Host 和插件逻辑；窗口、进程、电源与网络等系统差异收敛到平台适配层。
 
-通知声音支持：
+Code Pet 采用**多进程架构**：Svelte 前端通过 Tauri IPC 调用 Rust 主进程中的 Gateway 与 Provider Host；每个 Provider 插件在独立进程中运行，再管理本机 Agent runtime 子进程。一个插件可以有多个实例，Server 模式的实例可服务多个会话。前端 WebView 由系统托管，与 Rust 主进程的职责分开。
 
-- `blip`
-- `chime`
-- `bell`
-- `custom`
-- `silent`
+| 技术选型 | 用在哪里 | 设计目的 |
+| --- | --- | --- |
+| Flutter / Dart | Remote 手机端 | 以共享代码组织跨平台客户端，将界面、用例和通信适配分层 |
+| Tauri 2 / Svelte 5 / Vite | 桌面应用与配置界面 | 复用跨桌面平台的 Web 界面，通过 Tauri 接入原生系统能力 |
+| Rust / Tokio | Host、Provider 与进程通信 | 共享跨平台核心逻辑，管理异步请求、插件生命周期、事件和有界并发 |
+| JSON Schema / manifest / SDK 生成器 | 客户端与插件的共同契约 | 统一模型、方法和能力声明，减少两端协议漂移 |
+| HTTPS / WSS + stdio IPC | Remote 网络连接与本机插件通信 | 网络接入与进程通信各自分层，共用明确的业务协议 |
 
-完成、失败、授权等待可以分别控制是否响铃。等待授权属于需要人操作的状态，在用户处理前可以重复提醒；普通任务完成只提示一次。
+**工具差异留在插件，通用能力留在协议。** Provider 独立进程便于故障隔离与生命周期管理；Gateway 隔离客户端与原生工具；Remote 按能力开放操作。插件进程隔离不等于权限沙箱，当前插件仍是受信任的本地程序。
 
-## 本地数据
+跨平台设计不代表所有平台已经完成交付或能力完全相同：当前桌面发布覆盖 macOS / Windows，Remote 以 Android 为主，其他平台与系统专属功能的验证范围见上方上手说明。
 
-应用会在本机写入少量状态和缓存：
+## 电脑旁，也有一点陪伴
 
-- 应用设置入口：系统 local data 目录下的 `code-pet/settings.json`。这个入口保持固定，用于保存自定义数据目录配置。
-- 数据目录：可以在 `个性化 -> 系统 -> 数据目录` 修改；未配置时默认仍是系统 local data 目录下的 `code-pet/`。选定的自定义目录必须为空；如果目录已有内容，应用会先弹窗确认，确认后清空该目录再复制原数据目录内容。保存完成后需要重启，日志等运行期资源才会完全切到新目录。
-- Token 用量缓存：默认位于数据目录下的 `token-usage.json`。
-- 应用日志：默认位于数据目录下的 `logs/code-pet.log`。
-- 宠物库：默认位于数据目录下的 `pets`，也可以单独在设置页修改。
-- 离线事件暂存：未配置数据目录时仍是 `~/.code-pet/spool/events.jsonl`；配置后使用数据目录下的 `spool/events.jsonl`。
+桌宠提供本地任务感知、授权与完成提醒、宠物图片、任务气泡和自定义音效。Claude Code、Qoder、Cursor 通过 Hook 接入；Codex Desktop 使用独立伴随通道，依赖本机私有 IPC，当前 Windows 不支持该伴随能力。
 
-Tauri asset protocol 允许读取 `$APPLOCALDATA`、`$DATA`、`$LOCALDATA`、`$HOME` 和 `$TEMP` 范围内的图片或音频资源，用于宠物图片和自定义音效。
+这套本地活动链路与远程 Provider 通道独立，启用桌宠不是远程控制的前提。详细设置见 [本地体验、数据与诊断](knowledge/20-product/usage-and-data.md)。
 
-## Collector
+## 参与建设
 
-应用内置一个本地 collector：
+欢迎反馈远程控制体验、报告兼容性问题，也欢迎贡献符合非商业许可的 Provider 插件。提交问题时请附 Host / Remote 版本、系统、Provider 和复现步骤。
 
-```text
-http://127.0.0.1:47621/hook
-```
+- [开发、测试与构建](knowledge/00-project/development.md)
+- [Provider SDK 与接入教程](tools/cp-sdk-gen/README.md)
+- [协议定义与生成](protocol/README.md)
+- [远程客户端源码](https://github.com/CodeKillerCoser/codepet-remote)
+- [问题反馈](https://github.com/CodeKillerCoser/codepet/issues) · [排查文档](knowledge/40-runbooks/) · [开发规约](knowledge/60-rules/)
 
-hook 脚本会把 Agent 事件转发到这个地址。前端在浏览器预览无法使用 Tauri IPC 时，也会尝试读取：
+如果你也希望从手机上掌控自己的 AI 工作流，欢迎 Star、反馈，或接入下一个 Provider。
 
-```text
-http://127.0.0.1:47621/events
-```
 
-collector 只绑定 `127.0.0.1`。
 
-## Token 用量统计
+## 许可证：允许修改，禁止商用
 
-Token 用量统计会读取本机 Agent 审计和 transcript 信息，并生成聚合摘要。当前默认关注：
+本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，定位为 **源码可用（source-available）** 项目。
 
-- `~/.codex/audit/audit.jsonl`
-- `~/.qoder/audit/audit.jsonl`
-- 审计记录中引用的 transcript 文件
+- **允许**：在许可允许的非商业用途下使用、学习、复制、修改和分发，包括修改后的版本。
+- **不授予商业使用权**：出售、付费服务或用于商业业务等用途，需要另行取得相关权利人的商业授权。
+- **分发时**：须附带许可证全文或其链接，并保留许可要求的通知；修改版本不因此自动获得商业使用权。
+- 第三方依赖及已有独立许可的内容继续遵循各自许可证。
 
-主窗口的 `用量` 页可以选择时间范围和桶大小，查看各 Agent 的用量分布。
-
-## 性能和日志
-
-应用启动时会写入可读的日志 banner，用于区分新日志文件、轮转后的日志文件和每次应用启动。性能事件以 `[perf]` 日志行记录，格式为可解析的 key-value，例如：
-
-```text
-[perf] name=startup.total status=ok duration_ms=123 agents=4
-```
-
-当前覆盖的主要性能点包括：
-
-- 后端启动总耗时、宠物悬浮窗配置、Agent 配置读取、离线事件回放。
-- Codex audit 读取、最近记录截取、transcript 解析和历史事件回放。历史回放会在启动 setup 完成后异步执行，避免阻塞窗口启动。
-- Token 用量刷新、audit 引用 transcript 数量、递归扫描 transcript 数量和文件体积。
-- 主窗口首次刷新、设置读取、Agent 列表、事件快照、宠物库、Token summary、开机自启动状态读取。
-- 桌宠窗口设置读取、ready 时间和最近事件同步耗时。
-
-## 测试
-
-前端和 TypeScript 逻辑测试：
-
-```bash
-npx vitest run
-```
-
-Rust 测试：
-
-```bash
-cargo test --manifest-path src-tauri/Cargo.toml
-```
-
-Provider/Host workspace 与 Codex Provider 生命周期垂直测试：
-
-```bash
-cargo test --manifest-path crates/Cargo.toml --workspace
-cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --test provider_vertical
-```
-
-Windows 目标编译检查：
-
-```bash
-cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
-```
-
-签名打包脚本测试：
-
-```bash
-python3 scripts/package_signed_test.py
-```
-
-项目当前没有 `npm run lint` 脚本。
-
-## 构建
-
-构建前端资源：
-
-```bash
-npm run build
-```
-
-构建 Tauri 应用：
-
-```bash
-npm run tauri build
-```
-
-Tauri bundle 会先构建并 staging Code Pet 自有的 Codex、OpenCode、Claude Provider adapter，再把 `provider-plugins/` 收录到 App Resources。它不会打包底层 Agent runtime；Codex/OpenCode/Claude 可执行文件仍来自用户本机检测或选择。仅验证 staging 可运行：
-
-macOS 本地构建使用显式 ad-hoc bundle 签名，保证运行时 code-sign identifier 与 `CFBundleIdentifier` 都是 `com.codepet.desktop`，而不是随二进制哈希变化的 linker identity。ad-hoc designated requirement 仍随构建变化；需要让 Desktop/Documents 等 TCC 授权跨版本稳定时，必须改用同一 Apple Developer ID 证书签名。
-
-```bash
-npm run providers:test
-npm run providers:stage
-```
-
-macOS universal 发布构建应设置 `CODEPET_PROVIDER_TARGET=universal-apple-darwin`；开发态可将 `CODEPET_BUNDLED_PROVIDER_PLUGINS_DIR` 设为 staging 目录的绝对路径。
-
-生成并验证 macOS 签名 DMG：
-
-```bash
-npm run package:signed
-```
-
-`package:signed` 会执行 Tauri DMG 构建、codesign 校验、notarytool 提交、stapler 固化和 Gatekeeper 校验。它需要下列任一 notarization 配置：
-
-- `CODE_PET_NOTARY_KEYCHAIN_PROFILE` 或 `APPLE_NOTARY_KEYCHAIN_PROFILE`
-- 或 `APPLE_ID`、`APPLE_PASSWORD` / `APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`
-- 兼容旧变量：`APPLE_NOTARIZE_APPLE_ID`、`APPLE_NOTARIZE_PWD`、`APPLE_NOTARIZE_TEAM_ID`
-
-签名脚本仅使用启动进程继承的环境变量，不会启动交互式 shell 或主动读取 shell 配置。请在调用前显式配置本项目使用的公证账号或 keychain profile；缺少配置时会在构建及清理旧 DMG 前退出。
-
-## 项目结构
-
-```text
-.
-├── .agents/skills/         # Codex 仓库级技能
-├── frontend/               # Svelte 前端
-│   ├── App.svelte           # 主窗口：Agent、用量、个性化、事件页
-│   ├── PetApp.svelte        # 桌宠悬浮窗
-│   └── lib/                 # API、活动归并、音效、宠物渲染、图表等
-├── src-tauri/               # Tauri/Rust 后端
-│   ├── hooks/               # 注入到各 Agent 配置里的 hook 脚本
-│   ├── src/                 # 按功能域组织的 Rust 模块
-│   │   ├── activity/        # collector、事件归一化、标题解析、Token 用量
-│   │   ├── agent/           # Agent 注册、hook、交互控制和远程能力
-│   │   ├── app/             # 设置、状态、日志、自启动和 CLI
-│   │   ├── pet/             # 宠物库、抠图、主题默认值
-│   │   └── platform/        # 平台窗口能力
-│   └── tests/               # Rust 集成测试
-├── knowledge/               # 活知识库，目录树和标题即语义索引
-├── scripts/                 # 打包签名辅助脚本
-├── AGENTS.md                # AI Agent 协作入口指令
-├── package.json             # npm 脚本和前端依赖
-└── README.md
-```
-
-## 重要模块
-
-- `src-tauri/src/agent/registry.rs`：Agent 列表、配置路径和 hook 事件声明。
-- `src-tauri/src/agent/hooks.rs`：托管 hook 写入和移除逻辑。
-- `src-tauri/src/activity/collector.rs`：本机 HTTP collector。
-- `src-tauri/src/activity/events.rs`：hook payload 到桌宠事件的归一化。
-- `src-tauri/src/app/state.rs`：近期事件、授权决策和 collector 共享状态。
-- `src-tauri/src/app/settings.rs`：应用设置读写和默认值。
-- `src-tauri/src/pet/library.rs`：宠物库、图片导入、像素化和宠物选择。
-- `src-tauri/src/activity/token_usage.rs`：Token 用量解析和聚合。
-- `src-tauri/src/app/log.rs`：应用日志、启动 banner 和性能事件记录。
-- `src-tauri/src/app/autostart.rs`：基于 Tauri autostart 插件的登录启动控制。
-- `src-tauri/src/agent/actions.rs`：任务卡片激活、回复和审批能力边界。
-- `frontend/lib/activity.ts`：任务活动归并、过滤和展示辅助逻辑。
-- `frontend/lib/agentInteractions.ts`：前端任务操作 capability 计算。
-- `frontend/lib/sound.ts`：通知音效、鞭子音效和抽打反应音。
-
-## 开发约定
-
-- 不要在没有明确要求时运行格式化工具。
-- 提交前确认 `git status`，只暂存本次相关文件。
-- 功能变更优先补必要测试，但不需要为了每一行实现都写测试。
-- README 中描述的功能应当和真实产品能力保持一致，避免写尚未实现的控件或流程。
+以上是便于阅读的摘要，具体许可目的（包括条款列明的非商业组织用途）、权利与义务以 [LICENSE](LICENSE) 英文原文为准。由于限制商业用途，本项目不属于 [OSI 定义的开源软件](https://opensource.org/osd)。
