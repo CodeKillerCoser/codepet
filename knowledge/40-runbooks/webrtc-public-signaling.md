@@ -102,3 +102,14 @@ client token；会话退出的所有清理任务共用 250 ms 预算，小于外
 
 Host 配置/私钥丢失需要可信 LAN 重新配对，不能通过信令服务悄悄替换身份。
 配置不正确时应保留 LAN 可用；当前公网服务属于单 VPS，无高可用承诺。
+
+## 后续原生后端选型状态
+
+用户已选择优先评估 Google libwebrtc，并先验证标准 TURN/TLS。尚未完成新后端构建、
+Rust 适配或互通，当前主工作区仍使用上述 webrtc-rs UDP 实现。
+
+此前 libdatachannel + libnice 的独立构建原型保存在 `codex/webrtc-native-build-prototype`
+分支（`b2281f2`），不接入主工作区的构建流程。核查 libnice 0.1.23 源码发现，
+`agent_create_tcp_turn_socket` 的 TURN_TLS 处理仅对旧 GOOGLE/OC2007 模式添加
+pseudossl，并未给标准模式建立 TLS；libdatachannel 0.24.3 仅向该接口传递枚举。
+因此不能依据 URI 参数或枚举名声称这套组合具备标准 TURN/TLS 能力。
