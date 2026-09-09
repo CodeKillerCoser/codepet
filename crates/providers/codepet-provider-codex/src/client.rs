@@ -1233,6 +1233,7 @@ impl CodexAppServerSession {
 
 fn codex_app_server_command(binary: &Path, args: &[String]) -> Command {
     let mut command = codepet_provider_sdk::local_runtime::command(binary);
+    command.env(crate::desktop_takeover::HARNESS_MARKER, std::process::id().to_string());
     command.args(args);
     command
 }
@@ -1819,6 +1820,9 @@ mod tests {
         let command = codex_app_server_command(executable, &args);
 
         assert_eq!(command.get_program(), executable.as_os_str());
+        let marker = command.get_envs().find(|(key, _)| *key == crate::desktop_takeover::HARNESS_MARKER)
+            .and_then(|(_, value)| value).unwrap();
+        assert_eq!(marker.to_str(), Some(std::process::id().to_string().as_str()));
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
             ["app-server", "--listen", "stdio://"]

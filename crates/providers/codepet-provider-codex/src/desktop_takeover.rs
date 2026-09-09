@@ -1,4 +1,5 @@
-//! Desktop shutdown is selected by executable provenance and ancestry, never by name alone.
+//! Force takeover closes unmarked Codex processes, preserving Provider harnesses.
+pub(crate) const HARNESS_MARKER: &str = "CODEPET_CODEX_HARNESS";
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 #[cfg(not(windows))]
@@ -12,6 +13,8 @@ struct ProcessIdentity {
     exe: String,
     started: u64,
     user: Option<String>,
+    // None means environment could not be read: never infer absence from this.
+    marked: Option<bool>,
 }
 
 fn normalized(path: &str) -> String {
@@ -31,6 +34,11 @@ fn desktop_root(path: &str) -> bool {
         });
     (store && matches!(parts.last(), Some(&"codex.exe") | Some(&"chatgpt.exe")))
         || path.ends_with("/codex.app/contents/macos/codex")
+}
+
+fn codex_process(path: &str) -> bool {
+    let path = normalized(path);
+    matches!(path.rsplit('/').next(), Some("codex") | Some("codex.exe")) || desktop_root(&path)
 }
 
 fn codepet_process(path: &str) -> bool {
@@ -70,7 +78,7 @@ fn plan(processes: &[ProcessIdentity], own_pid: u32) -> Result<Vec<ProcessIdenti
         .ok_or("Cannot identify the Codepet process user")?;
     let mut protected_roots: HashSet<_> = processes
         .iter()
-        .filter(|p| codepet_process(&p.exe))
+        .filter(|p| codepet_process(&p.exe) || p.marked == Some(true))
         .map(|p| p.pid)
         .collect();
     protected_roots.insert(own_pid);
@@ -88,33 +96,27 @@ fn plan(processes: &[ProcessIdentity], own_pid: u32) -> Result<Vec<ProcessIdenti
             .find(|p| p.pid == pid)
             .and_then(|p| p.parent);
     }
-    let roots: HashSet<_> = processes
+    let candidates: Vec<_> = processes
         .iter()
-        .filter(|p| p.user.as_ref() == Some(user) && desktop_root(&p.exe))
-        .map(|p| p.pid)
+        .filter(|p| {
+            p.user.as_ref() == Some(user) && codex_process(&p.exe) && !protected.contains(&p.pid)
+        })
         .collect();
-    if roots.is_empty() {
-        return Err("No supported Codex desktop process could be identified".into());
-    }
-    if roots.iter().any(|pid| protected.contains(pid)) {
+    if candidates
+        .iter()
+        .any(|p| p.marked.is_none() || p.started == 0)
+    {
         return Err(
-            "Codex desktop is an ancestor of Codepet; refusing to terminate its host".into(),
+            "Cannot read a Codex process environment or creation time; refusing takeover".into(),
         );
     }
-    let targets = descendants(processes, &roots);
-    let mut result: Vec<_> = processes
-        .iter()
-        .filter(|p| targets.contains(&p.pid) && !protected.contains(&p.pid))
+    let mut result: Vec<_> = candidates
+        .into_iter()
+        .filter(|p| p.marked == Some(false))
         .cloned()
         .collect();
-    if result
-        .iter()
-        .any(|p| p.exe.is_empty() || p.started == 0 || p.user.as_ref() != Some(user))
-    {
-        return Err("Cannot verify every desktop descendant's executable and creation time".into());
-    }
-    // Close main first to prevent it from respawning the app-server.
-    result.sort_by_key(|p| (!roots.contains(&p.pid), p.pid));
+    // Close Desktop first, then its CLI and independent unmarked Codex processes.
+    result.sort_by_key(|p| (!desktop_root(&p.exe), p.pid));
     Ok(result)
 }
 
@@ -126,6 +128,20 @@ fn snapshot() -> (System, Vec<ProcessIdentity>) {
         ProcessRefreshKind::nothing()
             .with_exe(UpdateKind::Always)
             .with_user(UpdateKind::Always),
+    );
+    let candidates: Vec<_> = system
+        .processes()
+        .values()
+        .filter(|p| {
+            p.exe()
+                .is_some_and(|exe| codex_process(&exe.to_string_lossy()))
+        })
+        .map(|p| p.pid())
+        .collect();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&candidates),
+        false,
+        ProcessRefreshKind::nothing().with_environ(UpdateKind::Always),
     );
     let rows = system
         .processes()
@@ -139,6 +155,14 @@ fn snapshot() -> (System, Vec<ProcessIdentity>) {
                 .unwrap_or_default(),
             started: p.start_time(),
             user: p.user_id().map(|user| format!("{user:?}")),
+            marked: (!p.environ().is_empty()).then(|| {
+                p.environ().iter().any(|entry| {
+                    entry
+                        .to_str()
+                        .and_then(|entry| entry.split_once('='))
+                        .is_some_and(|(key, value)| key == HARNESS_MARKER && !value.is_empty())
+                })
+            }),
         })
         .collect();
     (system, rows)
@@ -193,12 +217,10 @@ pub(crate) fn close_desktop(
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         let (_, remaining) = snapshot();
-        if !remaining.iter().any(|p| {
-            (desktop_root(&p.exe) && p.user == targets[0].user)
-                || targets
-                    .iter()
-                    .any(|t| t.pid == p.pid && t.started == p.started)
-        }) {
+        if plan(&remaining, std::process::id())
+            .map_err(failure)?
+            .is_empty()
+        {
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -218,7 +240,11 @@ fn terminate(system: &System, target: &ProcessIdentity) -> Result<(), String> {
         return Ok(());
     };
     // Unix reparents surviving children when their desktop root exits.
-    if current.exe != target.exe || current.started != target.started || current.user != target.user {
+    if current.exe != target.exe
+        || current.started != target.started
+        || current.user != target.user
+        || current.marked != Some(false)
+    {
         return Err("Desktop process changed before termination".into());
     }
     if system
@@ -295,6 +321,7 @@ mod tests {
             exe: exe.into(),
             started: 123,
             user: Some("user".into()),
+            marked: Some(false),
         }
     }
     fn fixture() -> Vec<ProcessIdentity> {
@@ -322,7 +349,7 @@ mod tests {
         ]
     }
     #[test]
-    fn selects_only_desktop_tree_preserving_shared_binary_and_standalone_cli() {
+    fn selects_unmarked_codex_including_standalone_cli() {
         let rows = fixture();
         let targets = plan(&rows, 21).unwrap();
         let mut killed = Vec::new();
@@ -331,7 +358,7 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        assert_eq!(killed, vec![10, 11]);
+        assert_eq!(killed, vec![10, 11, 30]);
     }
     #[test]
     fn preserves_codepet_subtrees_even_beneath_desktop() {
@@ -344,15 +371,17 @@ mod tests {
                 .iter()
                 .map(|p| p.pid)
                 .collect::<Vec<_>>(),
-            vec![10, 11]
+            vec![10, 11, 30]
         );
     }
     #[test]
-    fn refuses_desktop_ancestor_and_unknown_roots() {
+    fn preserves_ancestors_and_allows_no_candidates() {
         let mut rows = fixture();
         rows[3].parent = Some(10);
-        assert!(plan(&rows, 21).is_err());
-        assert!(plan(&[p(21, 0, "C:/tools/codex.exe")], 21).is_err());
+        assert!(!plan(&rows, 21).unwrap().iter().any(|p| p.pid == 10));
+        assert!(plan(&[p(21, 0, "C:/tools/codex.exe")], 21)
+            .unwrap()
+            .is_empty());
         assert!(desktop_root("/Applications/Codex.app/Contents/MacOS/Codex"));
         assert!(!desktop_root(
             "/Applications/Codex.app/Contents/Resources/codex"
@@ -370,7 +399,7 @@ mod tests {
             match mutation {
                 0 => fresh[2].started += 1,
                 1 => fresh[2].parent = Some(21),
-                _ => fresh.push(p(12, 10, "C:/child.exe")),
+                _ => fresh.push(p(12, 10, "C:/another/codex.exe")),
             }
             assert!(execute(&targets, &fresh, 21, |_| panic!("must not terminate")).is_err());
         }
@@ -389,13 +418,25 @@ mod tests {
     }
 
     #[test]
-    fn excludes_other_users_and_refuses_unverifiable_descendants() {
+    fn excludes_other_users_and_refuses_unreadable_environment() {
         let mut rows = fixture();
         let mut other = p(60, 1, "/Applications/Codex.app/Contents/MacOS/Codex");
         other.user = Some("someone-else".into());
         rows.push(other);
-        assert_eq!(plan(&rows, 21).unwrap().len(), 2);
-        rows.push(p(12, 10, ""));
+        assert_eq!(plan(&rows, 21).unwrap().len(), 3);
+        let mut unknown = p(12, 10, "C:/unknown/codex.exe");
+        unknown.marked = None;
+        rows.push(unknown);
         assert!(plan(&rows, 21).is_err());
+    }
+    #[test]
+    fn protects_marked_harness_even_when_reparented_and_rechecks_marker() {
+        let mut rows = fixture();
+        rows[5].parent = Some(1);
+        rows[5].marked = Some(true);
+        assert!(!plan(&rows, 21).unwrap().iter().any(|p| p.pid == 22));
+        let targets = plan(&rows, 21).unwrap();
+        rows[6].marked = Some(true);
+        assert!(execute(&targets, &rows, 21, |_| panic!("must not kill")).is_err());
     }
 }
