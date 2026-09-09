@@ -37,14 +37,16 @@ pub async fn check_native_runtime(
             assert!(tokio::time::Instant::now() < deadline, "scan did not complete");
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         };
-        assert!(!installed.installed.is_empty(), "No {kind} runtime found");
-        for runtime in &installed.installed {
+        assert!(!installed.harness_list.is_empty(), "No {kind} runtime found");
+        let automatic = installed.selected.as_ref().expect("Provider did not select a Harness");
+        assert!(installed.harness_list.contains(automatic));
+        for runtime in &installed.harness_list {
             println!(
                 "{kind}: {:?} {} ({}) minimum={:?} rejected={:?}",
                 runtime.source, runtime.executable_path, runtime.version, runtime.minimum_version, runtime.incompatibility_reason
             );
         }
-        let compatible = installed.installed.iter().find(|runtime| runtime.incompatibility_reason.is_none()).expect("no compatible installation");
+        let compatible = installed.harness_list.iter().find(|runtime| runtime.incompatibility_reason.is_none()).expect("no compatible installation");
         let selected = provider
             .runtime_select(RuntimeSelectRequest {
                 candidate: RuntimeCandidate {

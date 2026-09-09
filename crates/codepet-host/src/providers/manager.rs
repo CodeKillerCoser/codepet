@@ -16,7 +16,7 @@ use codepet_provider_sdk::{
     ProviderDescribeRequest, ProviderInitializeRequest, ProviderInstance, ProviderInstanceRoute,
     ProviderPluginDescriptor, ProviderResourceId, ProviderWireMessage, RoutedResourceId,
     TurnInterruptRequest,
-    RuntimeCandidate, RuntimeGetInstalledRequest, RuntimeGetInstalledResponse, RuntimeSelectRequest,
+    RuntimeGetInstalledRequest, RuntimeGetInstalledResponse, RuntimeSelectRequest,
     RuntimeSelectResponse, TurnInterruptResponse, TurnStartRequest, TurnStartResponse, TurnSteerRequest,
     TurnSteerResponse, VersionRange, PROTOCOL_VERSION,
 };
@@ -77,7 +77,6 @@ pub struct PluginManagerConfig {
     pub supported_versions: VersionRange,
     pub process: PluginProcessOptions,
     pub event_capacity: usize,
-    pub runtime_selections: BTreeMap<String, RuntimeCandidate>,
 }
 
 impl Default for PluginManagerConfig {
@@ -92,7 +91,6 @@ impl Default for PluginManagerConfig {
             },
             process: PluginProcessOptions::default(),
             event_capacity: 256,
-            runtime_selections: BTreeMap::new(),
         }
     }
 }
@@ -169,7 +167,6 @@ struct PluginManagerInner {
     heartbeat_enabled: AtomicBool,
     config: PluginManagerConfig,
     catalog_diagnostics: Vec<CatalogDiagnostic>,
-    runtime_selections: RwLock<BTreeMap<String, RuntimeCandidate>>,
 }
 
 #[derive(Clone)]
@@ -271,7 +268,6 @@ impl PluginManager {
                 runtime_changes: tokio::sync::watch::channel(0).0,
                 heartbeat_enabled: AtomicBool::new(false),
                 catalog_diagnostics: catalog.diagnostics().to_vec(),
-                runtime_selections: RwLock::new(config.runtime_selections.clone()),
                 config,
             }),
         })
@@ -495,7 +491,6 @@ impl PluginManager {
 
     pub async fn start_plugin(&self, plugin_id: &str) -> HostResult<()> {
         let provider_directories = self.provider_directories(plugin_id)?;
-        let saved_candidate = self.inner.runtime_selections.read().await.get(plugin_id).cloned();
         let preparation = {
             let mut plugins = self.inner.plugins.write().await;
             if self.inner.shutting_down.load(Ordering::SeqCst) {
@@ -526,6 +521,7 @@ impl PluginManager {
             }
             let previous_state = entry.state;
             entry.generation = entry.generation.saturating_add(1);
+            entry.runtime_inventory = None;
             entry.state = PluginRuntimeState::Starting;
             entry.connection_status = codepet_provider_sdk::ConnectionStatus::Connecting;
             entry.diagnostic = None;
@@ -547,9 +543,6 @@ impl PluginManager {
             }
             if let Some(dirs) = &provider_directories {
                 descriptor.env.insert("CODEPET_CONVERSATION_STATE_DATABASE".into(), dirs.database_path.clone());
-            }
-            if let Some(candidate) = saved_candidate {
-                descriptor.env.insert("CODEPET_RUNTIME_EXECUTABLE".into(), candidate.executable_path);
             }
             match PluginProcess::spawn(&descriptor, self.inner.config.process.clone()) {
                 Ok(process) => {
@@ -1120,18 +1113,6 @@ impl PluginManager {
             .map_err(HostError::from)
     }
 
-    pub async fn remember_runtime_selection(
-        &self,
-        plugin_id: &str,
-        candidate: RuntimeCandidate,
-    ) -> HostResult<()> {
-        if !self.inner.plugins.read().await.contains_key(plugin_id) {
-            return Err(unknown_plugin(plugin_id));
-        }
-        self.inner.runtime_selections.write().await.insert(plugin_id.to_string(), candidate);
-        Ok(())
-    }
-
     pub async fn usage_query(&self, request: codepet_provider_sdk::UsageQueryRequest) -> HostResult<codepet_provider_sdk::UsageQueryResponse> {
         self.ensure_historical_route_ready(&request.route).await?;
         let (_, process, instance) = self.routing_context(&request.route).await?;
@@ -1574,10 +1555,6 @@ impl PluginManager {
                     let _operation = operation.lock().await;
                     if manager.inner.shutting_down.load(Ordering::SeqCst) || !manager.inner.plugins.read().await.get(&plugin_id)
                         .is_some_and(|entry| entry.generation == generation && entry.state == PluginRuntimeState::Ready) { return; }
-                    let candidate = manager.inner.runtime_selections.read().await.get(&plugin_id).cloned();
-                    if let Some(candidate)=candidate {
-                        let _=manager.runtime_select(&plugin_id,RuntimeSelectRequest{candidate}).await;
-                    }
                     let _=manager.start_manifest_instances(&plugin_id).await;
                 });
             }

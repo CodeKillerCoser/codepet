@@ -40,9 +40,10 @@ async fn native_inventory_completes_through_host_with_duplicate_path_entries() {
             assert!(started.elapsed() < std::time::Duration::from_secs(2), "snapshot blocked on executable probing");
             println!("{name}: snapshot scanning={:?} in {:?}", snapshot.scanning, started.elapsed());
             let inventory = tokio::time::timeout(std::time::Duration::from_secs(180), inventory_rx.recv()).await.expect("missing scan notification").expect("notification stream closed");
-            println!("{name}: {} native installations notified in {:?}", inventory.installed.len(), started.elapsed());
-            println!("{name}: installations={:?}; scan_error={:?}", inventory.installed, inventory.scan_error);
-            assert!(!inventory.installed.is_empty(), "{name}: {inventory:?}");
+            println!("{name}: {} native installations notified in {:?}", inventory.harness_list.len(), started.elapsed());
+            println!("{name}: installations={:?}; scan_error={:?}", inventory.harness_list, inventory.scan_error);
+            assert!(!inventory.harness_list.is_empty(), "{name}: {inventory:?}");
+            assert!(inventory.harness_list.contains(inventory.selected.as_ref().expect("missing selected Harness")));
             assert_eq!(inventory.scanning, Some(false));
             let rescan_started = Instant::now();
             let refreshed = process.client().runtime_get_installed(RuntimeGetInstalledRequest { refresh: Some(true) }).await?;
@@ -50,7 +51,7 @@ async fn native_inventory_completes_through_host_with_duplicate_path_entries() {
             assert!(rescan_started.elapsed() < std::time::Duration::from_secs(2));
             let completed = tokio::time::timeout(std::time::Duration::from_secs(180), inventory_rx.recv()).await.expect("missing rescan notification").unwrap();
             assert_eq!(completed.scanning, Some(false));
-            assert!(!completed.installed.is_empty());
+            assert!(!completed.harness_list.is_empty());
             Ok::<_, codepet_provider_sdk::ProtocolError>(())
         }.await;
         let shutdown = process.shutdown().await;

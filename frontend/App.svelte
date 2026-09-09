@@ -1817,7 +1817,7 @@
             <div>
               <span class="agent-kicker">LOCAL EXECUTABLES</span>
               <h3>本机运行时</h3>
-              <p>Code Pet 会验证可执行文件和版本；手动配置始终优先于自动检测。</p>
+              <p>Provider 启动时扫描安装，优先使用上次选择；无法匹配时使用兼容的最高版本。</p>
             </div>
             <button class="runtime-refresh-button" type="button" disabled={busyRuntime !== null} on:click={refreshRuntimes}>
               <RefreshCw size={17} /> {busyRuntime === "all" ? "检测中" : "重新检测"}
@@ -1894,7 +1894,7 @@
                     <FolderOpen size={16} /> 选择路径
                   </button>
                   <button type="button" disabled={runtimeBusy(runtime.providerId) || runtime.status === "loading" || !canRestoreAutomaticDetection(runtime)} on:click={() => restoreAutomaticRuntime(runtime)}>
-                    <RotateCcw size={16} /> 恢复自动检测
+                    <RotateCcw size={16} /> 重启并重新检测
                   </button>
                 </div>
               </article>

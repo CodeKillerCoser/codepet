@@ -56,7 +56,7 @@ OpenCode 会在 XDG root 下继续使用自己的 `opencode` 子目录。设置�
 - Unix GUI 进程的 PATH 不能代替用户交互 shell 的 PATH；npm/nvm 常只在 `.zshrc` 中初始化。后台读取交互登录 shell 的 PATH，再查找真实文件；不要将 `command -v` 的函数名或带启动提示的完整 stdout 当作可执行路径。保持 shell 超时和进程树清理。
 - 发现 CLI 所用的 shell PATH 必须同时用于版本扫描、异步信息探测和实际 Harness 子进程；绝对路径只能定位入口脚本，不能让 `#!/usr/bin/env node` 自动找到解释器。SDK 在后台发现时保存 PATH 快照，统一进程入口只向子进程注入快照，不修改 Host/Provider 全局环境，也不在异步启动路径重复运行 shell。重新检测时刷新快照，Windows 继续使用自身环境。
 - 登录 shell 的 stdout 必须在进程运行时并发读取，不能先等退出再读取；启动输出可能填满管道，造成假超时。枚举 shell PATH 的全部匹配项，再按规范化路径去重，不能只保留第一个命令。
-- 使用平台目录库解析 home；专用环境变量仍可覆盖数据目录。自定义 runtime 选择应保留在安装列表，即便不在 PATH。
+- 使用平台目录库解析 home；专用环境变量仍可覆盖数据目录。每次 Provider 进程启动都自行扫描本机安装，并通过 runtime.inventoryChanged / runtime.getInstalled 将本次结果返回 Host。Host 不保存、注入或恢复上次选择的 executable，也不根据旧 agentRuntimes 配置判定本次状态。Provider 在自身数据库维护 lastSelected：扫描结果中匹配到上次路径且兼容时继续使用；未匹配到或无记录时选择兼容安装中的最高语义版本。成功自动选择与验证通过的手动选择都更新记录，失效记录不阻断回退。通过协议同时返回 harnessList 与 selected（无可用安装时为 null），实例默认启动必须使用同一 selected。
 - 实例 `settings.dataDirectory` 为绝对路径；Codex 映射 CODEX_HOME，Claude 映射 CLAUDE_CONFIG_DIR，OpenCode 映射独立 XDG config/data/cache/state 子目录。未配置时沿用 Harness 原有环境和默认位置。
 - 对实例设置的目录，启动、账号/模型探测和读取历史使用同一上下文；不要修改 Host 进程全局环境来切换实例目录。
 - 不要把 Code Pet 的 `settings.data.dataDirectory` 自动当成任一 Harness 的 `dataDirectory`。两者生命周期和内容不同，必须由调用方分别传递。
@@ -66,6 +66,8 @@ OpenCode 会在 XDG root 下继续使用自己的 `opencode` 子目录。设置�
 - 后台 Provider、Harness、登录 shell 和探测进程统一通过 SDK process 业务接口管理启动、等待、终止和清理。平台实现分别位于 process/windows.rs 与 process/unix.rs：Windows 用 CREATE_NO_WINDOW 和 Job Object，Unix 用进程组；Provider 不得直接拼 taskkill 或调用 libc::kill。
 
 ## 来源
+
+- [Provider 启动被旧安装路径干扰](../40-runbooks/provider-startup-stale-executable.md)：2026-09-09 用户明确要求 Provider 启动自主扫描、在自己的数据库维护 lastSelected，按路径匹配优先、最高版本回退，并返回 harnessList + selected。
 
 - [v0 Windows 审阅](../10-architecture/windows-platform-review.md)
 - [Windows Provider 验证路径](../40-runbooks/windows-provider-runtime.md)

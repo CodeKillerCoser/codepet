@@ -100,17 +100,14 @@ async fn refresh_agent_runtimes(
 #[tauri::command]
 async fn set_agent_runtime_executable(
     app: AppHandle,
-    service: tauri::State<'_, AgentRuntimeService>,
     provider_host: tauri::State<'_, ProviderHostState>,
     provider_id: String,
     executable: String,
 ) -> Result<AgentRuntime, String> {
-    let selected = provider_host.select_runtime(&provider_id, AgentRuntimeCandidate {
+    provider_host.select_runtime(&provider_id, AgentRuntimeCandidate {
         executable_path: executable,
         source: AgentRuntimeSource::Configured,
     }).await?;
-    service.save_provider_selection(&provider_id, &selected.executable_path)
-        .map_err(|error| error.to_string())?;
     let runtime = provider_host.runtime_view(&provider_id).await?;
     emit_runtime_settings(&app, &runtime);
     Ok(runtime)
@@ -123,13 +120,7 @@ async fn clear_agent_runtime_executable(
     provider_host: tauri::State<'_, ProviderHostState>,
     provider_id: String,
 ) -> Result<AgentRuntime, String> {
-    let current = provider_host.runtime_view(&provider_id).await?;
-    let automatic = current.installed.first().cloned()
-        .ok_or_else(|| format!("{} Provider did not find a default runtime", current.display_name))?;
-    provider_host.select_runtime(&provider_id, AgentRuntimeCandidate {
-        executable_path: automatic.executable_path,
-        source: automatic.source,
-    }).await?;
+    provider_host.reset_runtime(&provider_id).await?;
     service.clear_provider_selection(&provider_id).map_err(|error| error.to_string())?;
     let runtime = provider_host.runtime_view(&provider_id).await?;
     emit_runtime_settings(&app, &runtime);

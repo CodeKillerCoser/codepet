@@ -1432,7 +1432,6 @@ struct ProviderState {
     host_device_id: Option<String>,
     initialized_client_id: Option<String>,
     instances: HashMap<String, Arc<ClaudeInstanceRuntime>>,
-    selected_runtime: Option<RuntimeInstallation>,
 }
 
 pub struct ClaudeProvider {
@@ -1459,7 +1458,6 @@ impl ClaudeProvider {
                 host_device_id: None,
                 initialized_client_id: None,
                 instances: HashMap::new(),
-                selected_runtime: None,
             }),
             events,
             shutdown: AtomicBool::new(false),
@@ -1602,6 +1600,7 @@ impl Provider for ClaudeProvider {
             }
             drop(state);
             self.data.initialize(request.directories.as_ref())?;
+            self.scanner.set_selection_storage(self.data.clone());
             self.data.start_collection()?;
             eprintln!("provider.initialize completed; business storage configured={}", self.data.configured());
             self.scanner.start_cancellable("claude", "@anthropic-ai/claude-code", || discover_path_candidates("claude"), |candidate, timeout, control| inspect_runtime_candidate(candidate, "claude", timeout, control));
@@ -1651,7 +1650,6 @@ impl Provider for ClaudeProvider {
             candidate.executable_path = local_runtime::resolve_executable(std::path::Path::new(&candidate.executable_path), "claude", "@anthropic-ai/claude-code")
                 .map_err(|error| protocol_error("invalid_runtime_selection", error, false))?.to_string_lossy().into_owned();
             let selected=self.scanner.select(&candidate)?;
-            lock(&self.state).selected_runtime=Some(selected.clone());
             Ok(RuntimeSelectResponse {selected})
         })
     }
@@ -1672,10 +1670,10 @@ impl Provider for ClaudeProvider {
             }
             if std::env::var("CODEPET_RUNTIME_MIN_VERSION").is_ok_and(|value| !value.is_empty()) {
                 if let Some(path) = request.settings.get("claudeExecutable").and_then(Value::as_str) {
-                    let runtime = self.scanner.select(&RuntimeCandidate {
+                    let runtime = self.scanner.inspect(RuntimeCandidate {
                         executable_path: path.to_string(),
                         source: codepet_provider_sdk::RuntimeCandidateSource::Configured,
-                    })?;
+                    }).await?;
                     if runtime.version.is_empty() {
                         return Err(protocol_error("runtime_scanning", "Runtime version validation is still in progress".into(), true));
                     }
@@ -1683,15 +1681,11 @@ impl Provider for ClaudeProvider {
                 }
             }
             let selected = if request.settings.contains_key("claudeExecutable") { None } else {
-                let current = { lock(&self.state).selected_runtime.clone() };
-                let installation = match current {
-                    Some(selected) => Some(selected),
-                    None => {
-                        let inventory=self.scanner.snapshot();
-                        if inventory.scanning==Some(true) {return Err(protocol_error("runtime_scanning", "Runtime discovery is still in progress".into(), true));}
-                        inventory.installed.into_iter().find(|runtime| runtime.incompatibility_reason.is_none())
-                    },
-                };
+                let inventory = self.scanner.snapshot();
+                if inventory.scanning == Some(true) {
+                    return Err(protocol_error("runtime_scanning", "Runtime discovery is still in progress".into(), true));
+                }
+                let installation = inventory.selected;
                 Some(installation.ok_or_else(|| protocol_error("provider_unavailable", "Claude Provider did not find a local runtime".to_string(), true))?)
             };
             if let Some(selected) = selected.as_ref() {
@@ -1703,7 +1697,6 @@ impl Provider for ClaudeProvider {
             }
             let settings = decode_settings(request.settings.clone())?;
             let mut state = lock(&self.state);
-            if let Some(selected) = selected { state.selected_runtime = Some(selected); }
             let host_device = state.host_device_id.as_deref().ok_or_else(|| {
                 protocol_error(
                     "provider_not_initialized",

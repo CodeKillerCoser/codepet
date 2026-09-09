@@ -946,14 +946,17 @@
     "RuntimeGetInstalledResponse": {
       "type": "object",
       "properties": {
-        "installed": {
+        "harnessList": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/RuntimeInstallation"
           }
         },
         "selected": {
-          "$ref": "#/$defs/RuntimeInstallation"
+          "oneOf": [
+            { "$ref": "#/$defs/RuntimeInstallation" },
+            { "type": "null" }
+          ]
         },
         "scanning": {
           "type": "boolean"
@@ -963,7 +966,8 @@
         }
       },
       "required": [
-        "installed"
+        "harnessList",
+        "selected"
       ],
       "additionalProperties": false
     },
