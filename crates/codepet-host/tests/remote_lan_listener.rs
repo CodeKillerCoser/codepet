@@ -1368,7 +1368,11 @@ impl RtcClient {
     }
 
     async fn next_json(&mut self) -> serde_json::Value {
-        timeout(Duration::from_secs(5), async {
+        self.next_json_timeout(Duration::from_secs(5)).await
+    }
+
+    async fn next_json_timeout(&mut self, budget: Duration) -> serde_json::Value {
+        timeout(budget, async {
             let mut message = Vec::new();
             let mut total = None;
             loop {
@@ -1446,6 +1450,9 @@ async fn rtc_and_lan_share_rpc_admission_large_messages_and_revocation() {
 async fn rtc_android_probe_host() {
     let export = std::env::var("CODEPET_RTC_PROBE_EXPORT").expect("set CODEPET_RTC_PROBE_EXPORT");
     let host = TestHost::start().await;
+    if let Ok(config) = std::env::var("CODEPET_RTC_CLOUD_PROBE_CONFIG") {
+        std::fs::copy(config, host._directory.path().join("remote/rtc-cloud.json")).unwrap();
+    }
     let server = RemoteLanServer::start(
         RemoteLanServerConfig {
             bind_addr: "0.0.0.0:0".parse().unwrap(),
@@ -1488,4 +1495,92 @@ fn hex_sha256(value: &[u8]) -> String {
         encoded.push(HEX[(byte & 0x0f) as usize] as char);
     }
     encoded
+}
+
+#[tokio::test]
+#[ignore = "authorized live VPS probe; requires private CODEPET_RTC_CLOUD_PROBE_CONFIG"]
+async fn rtc_public_relay_probe() {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+    use ring::signature::{Ed25519KeyPair, KeyPair, UnparsedPublicKey, ED25519};
+    use serde_json::{json, Value};
+    use webrtc::{api::APIBuilder, data_channel::data_channel_init::RTCDataChannelInit, peer_connection::{configuration::RTCConfiguration, policy::ice_transport_policy::RTCIceTransportPolicy}};
+    let config = std::env::var("CODEPET_RTC_CLOUD_PROBE_CONFIG").unwrap();
+    let host = TestHost::start().await;
+    std::fs::copy(config, host._directory.path().join("remote/rtc-cloud.json")).unwrap();
+    let server=RemoteLanServer::start(RemoteLanServerConfig::loopback(),host.remote_access.clone(),host.gateway.clone()).await.unwrap();
+    let local=PinnedTlsClient::new(server.local_addr(),host.remote_access.tls_identity().certificate_der().to_vec());
+    let pairing=pair_client(&host.remote_access,&local,"cloud-rust-probe").await;
+    let key=Ed25519KeyPair::from_pkcs8(Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap().as_ref()).unwrap();
+    let (status,bootstrap)=local.json_request("POST","/remote/v1/channel-bootstrap",Some(&pairing.credential),Some(&json!({"publicKey":B64.encode(key.public_key().as_ref())}).to_string())).await;
+    assert_eq!(status,200,"bootstrap failed");
+    let http=reqwest::Client::builder().timeout(Duration::from_secs(15)).build().unwrap();
+    let token=bootstrap["token"].as_str().unwrap();
+    let base=bootstrap["serviceUrl"].as_str().unwrap();
+    let mut ice:Value=http.get(format!("{base}/v1/ice")).bearer_auth(token).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+    if let Ok(transport) = std::env::var("CODEPET_PROBE_TURN_TRANSPORT") {
+        for server in ice["iceServers"].as_array_mut().unwrap() {
+            server["urls"].as_array_mut().unwrap().retain(|url| {
+                let url=url.as_str().unwrap();
+                match transport.as_str() {
+                    "tcp" => url.starts_with("turn:") && url.ends_with("transport=tcp"),
+                    "tls" => url.starts_with("turns:"),
+                    "udp" => url.starts_with("turn:") && url.ends_with("transport=udp"),
+                    _ => panic!("unsupported probe TURN transport"),
+                }
+            });
+        }
+        ice["iceServers"].as_array_mut().unwrap().retain(|server| !server["urls"].as_array().unwrap().is_empty());
+    }
+    let peer=Arc::new(APIBuilder::new().build().new_peer_connection(RTCConfiguration {
+        ice_servers:serde_json::from_value(ice["iceServers"].clone()).unwrap(),
+        ice_transport_policy:RTCIceTransportPolicy::Relay,..Default::default()
+    }).await.unwrap());
+    let channel=peer.create_data_channel("codepet.gateway.v1",Some(RTCDataChannelInit{ordered:Some(true),negotiated:Some(0),protocol:Some("codepet.gateway.cpg1".into()),..Default::default()})).await.unwrap();
+    let (tx,incoming)=tokio::sync::mpsc::channel(128);
+    channel.on_message(Box::new(move |message|{let tx=tx.clone();Box::pin(async move {let _=tx.send(message.data).await;})}));
+    let offer=peer.create_offer(None).await.unwrap();
+    let mut gathering=peer.gathering_complete_promise().await;
+    peer.set_local_description(offer).await.unwrap();
+    timeout(Duration::from_secs(30),gathering.recv()).await.unwrap();
+    let offer=peer.local_description().await.unwrap();
+    assert!(offer.sdp.contains("typ relay"),"TURN did not yield a relay candidate");
+    let attempt=uuid::Uuid::new_v4().to_string();
+    let expires=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()+60;
+    let payload=serde_json::to_vec(&json!({"v":1,"kind":"offer","host":bootstrap["host"],"client":bootstrap["client"],"attempt":attempt,"expires":expires,"description":offer})).unwrap();
+    http.post(format!("{base}/v1/offers")).bearer_auth(token).json(&json!({"attempt":attempt,"envelope":{"payload":B64.encode(&payload),"signature":B64.encode(key.sign(&payload).as_ref())}})).send().await.unwrap().error_for_status().unwrap();
+    let envelope:Value=timeout(Duration::from_secs(45),async {
+        loop {
+            let result:Value=http.get(format!("{base}/v1/answer?attempt={attempt}")).bearer_auth(token).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+            if !result["answer"].is_null() {break result["answer"].clone();}
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }).await.unwrap();
+    let answer_bytes=B64.decode(envelope["payload"].as_str().unwrap()).unwrap();
+    UnparsedPublicKey::new(&ED25519,B64.decode(bootstrap["hostPublicKey"].as_str().unwrap()).unwrap()).verify(&answer_bytes,&B64.decode(envelope["signature"].as_str().unwrap()).unwrap()).unwrap();
+    let answer:Value=serde_json::from_slice(&answer_bytes).unwrap();
+    assert_eq!(answer["offerHash"],hex_sha256(&payload));
+    assert_eq!(answer["attempt"],attempt);
+    peer.set_remote_description(serde_json::from_value(answer["description"].clone()).unwrap()).await.unwrap();
+    timeout(Duration::from_secs(20),async {
+        while channel.ready_state()!=webrtc::data_channel::data_channel_state::RTCDataChannelState::Open {tokio::time::sleep(Duration::from_millis(20)).await;}
+    }).await.unwrap();
+    let selected=peer.sctp().transport().ice_transport().get_selected_candidate_pair().await.unwrap();
+    assert!(selected.to_string().contains("relay"),"selected ICE pair must include relay");
+    eprintln!("Relay selected; requesting Gateway handshake");
+    let mut rtc=RtcClient{peer,channel,incoming};
+    rtc.request(handshake_request("cloud-handshake","cloud-rust-probe")).await;
+    assert!(rtc.next_json().await.get("result").is_some());
+    eprintln!("Relay handshake passed; requesting large RPC");
+    let id=format!("cloud-{}","界".repeat(24000));
+    rtc.request(gateway::ProtocolRequest::ProviderList{jsonrpc:"2.0".into(),id:id.clone(),params:gateway::ProviderListRequest{}}).await;
+    // Match the production RPC deadline, rather than the LAN fixture's 5 seconds.
+    assert_eq!(rtc.next_json_timeout(Duration::from_secs(15)).await["id"],id);
+    eprintln!("Relay large RPC passed; revoking credential");
+    let credential=host.remote_access.validate_bearer(&pairing.credential).unwrap();
+    host.remote_access.revoke_credential(&credential.credential_id).unwrap();
+    assert_eq!(server.disconnect_credential(&credential.credential_id).await.unwrap(),1);
+    wait_for_active_sessions(&server,0).await;
+    rtc.peer.close().await.unwrap();
+    server.shutdown().await.unwrap();
+    eprintln!("Public signaling + selected TURN relay + Gateway handshake + large RPC + revocation passed");
 }

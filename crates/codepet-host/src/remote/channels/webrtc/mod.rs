@@ -1,4 +1,5 @@
 mod framing;
+pub(crate) mod cloud;
 
 use super::session::{
     run_gateway_channel, ChannelFuture, GatewayChannel, GatewayFrame, GatewaySink, GatewaySource,
@@ -46,8 +47,20 @@ pub(crate) async fn answer_offer(
     gateway: Arc<ProviderGatewayService>,
     access: Arc<RemoteAccessManager>,
     credential: RemoteCredential,
-    mut registration: SessionRegistration,
+    registration: SessionRegistration,
 ) -> HostResult<RTCSessionDescription> {
+    answer_offer_configured(offer, gateway, access, credential, registration, RTCConfiguration::default()).await
+}
+
+pub(crate) async fn answer_offer_configured(
+    offer: RTCSessionDescription,
+    gateway: Arc<ProviderGatewayService>,
+    access: Arc<RemoteAccessManager>,
+    credential: RemoteCredential,
+    mut registration: SessionRegistration,
+    configuration: RTCConfiguration,
+) -> HostResult<RTCSessionDescription> {
+    let negotiation_timeout = if configuration.ice_servers.is_empty() { NEGOTIATION_TIMEOUT } else { Duration::from_secs(20) };
     let media = offer
         .sdp
         .lines()
@@ -63,7 +76,7 @@ pub(crate) async fn answer_offer(
     let peer = Arc::new(
         APIBuilder::new()
             .build()
-            .new_peer_connection(RTCConfiguration::default())
+            .new_peer_connection(configuration)
             .await
             .map_err(|_| rtc_error("create RTC peer"))?,
     );
@@ -106,7 +119,7 @@ pub(crate) async fn answer_offer(
         Ok::<_, HostError>((answer, dc, channel, closed))
     };
     let (answer, dc, channel, mut closed) = tokio::select! {
-        result = timeout(NEGOTIATION_TIMEOUT, setup) => result.map_err(|_| rtc_error("RTC negotiation timed out"))??,
+        result = timeout(negotiation_timeout, setup) => result.map_err(|_| rtc_error("RTC negotiation timed out"))??,
         _ = registration.cancelled() => return Err(rtc_error("RTC admission cancelled")),
     };
     tokio::spawn(async move {

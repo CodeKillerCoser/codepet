@@ -14,6 +14,8 @@ codepet-lan-channel-sdk = { path = "../../sdk/rust/codepet-lan-channel-sdk", ver
 codepet-provider-sdk = { path = "../../sdk/rust/codepet-provider-sdk", version = "0.1.0" }
 futures-util = "0.3"
 bytes = "1"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 webrtc = "=0.14.0"
 netdev = { version = "0.46", default-features = false }
 mdns-sd = { version = "0.21", default-features = false }

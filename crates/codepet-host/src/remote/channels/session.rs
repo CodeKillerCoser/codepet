@@ -588,11 +588,14 @@ pub(crate) async fn run_gateway_channel(
     drop(presence);
     let _ = stop_tx.send(true);
     drop(request_tx);
+    // All cleanup shares one budget shorter than the caller's revocation wait.
+    // In particular, a relay ACK must not consume that entire outer deadline.
+    let cleanup_deadline = tokio::time::Instant::now() + CONNECTION_CLOSE_TIMEOUT / 2;
     if let Some(close_frame) = close_frame {
         let _ = outbound_tx.try_send(close_frame);
     }
     if let Some(mut event_task) = event_task {
-        if timeout(CONNECTION_CLOSE_TIMEOUT, &mut event_task)
+        if tokio::time::timeout_at(cleanup_deadline, &mut event_task)
             .await
             .is_err()
         {
@@ -601,7 +604,7 @@ pub(crate) async fn run_gateway_channel(
         }
     }
     let mut request_dispatcher = request_dispatcher;
-    if timeout(CONNECTION_CLOSE_TIMEOUT, &mut request_dispatcher)
+    if tokio::time::timeout_at(cleanup_deadline, &mut request_dispatcher)
         .await
         .is_err()
     {
@@ -610,7 +613,7 @@ pub(crate) async fn run_gateway_channel(
     }
     drop(outbound_tx);
     let mut writer = writer;
-    if timeout(CONNECTION_CLOSE_TIMEOUT, &mut writer)
+    if tokio::time::timeout_at(cleanup_deadline, &mut writer)
         .await
         .is_err()
     {

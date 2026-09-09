@@ -140,7 +140,11 @@ impl RemoteLanServer {
             next_transition_id: 1,
         }));
         let sessions = Arc::new(SessionRegistry::new(MAX_CONCURRENT_WEBSOCKET_SESSIONS));
+        // Invalid/absent cloud config must not prevent the existing LAN listener.
+        let cloud = super::super::webrtc::cloud::Cloud::load(remote_access.clone()).unwrap_or(None);
+        let cloud_task = cloud.as_ref().map(|cloud| cloud.start(gateway.clone(), sessions.clone()));
         let state = Arc::new(RemoteLanState {
+            cloud,
             remote_access,
             gateway,
             remote_identity: remote_identity.clone(),
@@ -154,6 +158,7 @@ impl RemoteLanServer {
             .route(PAIRING_REQUEST_STATUS_PATH, get(pairing_request_status))
             .route(GATEWAY_PATH, get(gateway_websocket))
             .route("/remote/v1/webrtc/offer", post(gateway_rtc_offer))
+            .route("/remote/v1/channel-bootstrap", post(rtc_cloud_bootstrap))
             .route(CURRENT_CREDENTIAL_PATH, delete(delete_current_credential))
             .layer(DefaultBodyLimit::max(MAX_REST_BODY_BYTES))
             .with_state(state);
@@ -168,6 +173,7 @@ impl RemoteLanServer {
         });
 
         Ok(RemoteLanServerHandle {
+            cloud_task,
             listener_id,
             local_addr,
             remote_identity,
@@ -324,6 +330,7 @@ impl Drop for RemoteLanAdvertisedEndpointTransition {
 
 /// Running listener metadata plus bounded shutdown ownership.
 pub struct RemoteLanServerHandle {
+    cloud_task: Option<JoinHandle<()>>,
     listener_id: u64,
     local_addr: SocketAddr,
     remote_identity: lan::LanHostIdentity,
@@ -458,6 +465,7 @@ impl RemoteLanServerHandle {
     }
 
     pub async fn shutdown(mut self) -> HostResult<()> {
+        if let Some(task) = self.cloud_task.take() { task.abort(); let _ = task.await; }
         self.sessions.shutdown();
         self.server_handle
             .graceful_shutdown(Some(SERVER_SHUTDOWN_TIMEOUT));
@@ -512,6 +520,7 @@ impl Debug for RemoteLanServerHandle {
 
 impl Drop for RemoteLanServerHandle {
     fn drop(&mut self) {
+        if let Some(task) = self.cloud_task.take() { task.abort(); }
         self.sessions.shutdown();
         self.server_handle.shutdown();
         if let Some(server_task) = self.server_task.take() {
@@ -521,6 +530,7 @@ impl Drop for RemoteLanServerHandle {
 }
 
 struct RemoteLanState {
+    cloud: Option<Arc<super::super::webrtc::cloud::Cloud>>,
     remote_access: Arc<RemoteAccessManager>,
     gateway: Arc<ProviderGatewayService>,
     remote_identity: lan::LanHostIdentity,
@@ -675,6 +685,20 @@ async fn gateway_websocket(
         }
     });
     Ok(response.into_response())
+}
+
+async fn rtc_cloud_bootstrap(
+    State(state): State<Arc<RemoteLanState>>,
+    headers: HeaderMap,
+    request: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, RestError> {
+    let bearer = bearer_from_headers(&headers)?;
+    let credential = state.remote_access.validate_bearer(&bearer).map_err(RestError::authorization)?;
+    let unavailable = || RestError { status: StatusCode::SERVICE_UNAVAILABLE, error: protocol_error("rtc_cloud_unavailable", "Cloud channel is not configured or reachable", true) };
+    let cloud = state.cloud.as_ref().ok_or_else(unavailable)?;
+    let Json(body) = request.map_err(|_| unavailable())?;
+    let key = body["publicKey"].as_str().ok_or_else(unavailable)?;
+    Ok(Json(cloud.bootstrap(&credential, key).await.map_err(|_| unavailable())?))
 }
 
 async fn gateway_rtc_offer(
