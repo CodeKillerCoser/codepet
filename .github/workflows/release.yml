@@ -115,6 +115,16 @@ jobs:
         with:
           bun-version: "1.4.2"
       - run: npm ci
+      - name: Native WebRTC toolchain
+        run: brew install cmake ninja
+      - uses: actions/cache@v4
+        with:
+          path: |
+            tools/webrtc/out
+            tools/webrtc/cache/binaries
+            tools/webrtc/cache/downloads
+          key: webrtc-macos-${{ runner.arch }}-${{ hashFiles('tools/webrtc/versions.json', 'tools/webrtc/build.mjs', 'tools/webrtc/smoke.c', 'tools/webrtc/vcpkg.json', 'tools/webrtc/triplets/**') }}
+          restore-keys: webrtc-macos-${{ runner.arch }}-
       - name: Apply build version
         run: node scripts/release_version.mjs --sync-version "${{ needs.preflight.outputs.version }}" --allow-build-metadata
       - name: Check updater signing key secret
@@ -169,6 +179,14 @@ jobs:
         with:
           bun-version: "1.4.2"
       - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: |
+            tools/webrtc/out
+            tools/webrtc/cache/binaries
+            tools/webrtc/cache/downloads
+          key: webrtc-windows-x64-${{ hashFiles('tools/webrtc/versions.json', 'tools/webrtc/build.mjs', 'tools/webrtc/smoke.c', 'tools/webrtc/vcpkg.json', 'tools/webrtc/triplets/**') }}
+          restore-keys: webrtc-windows-x64-
       - name: Apply build version
         shell: pwsh
         run: node scripts/release_version.mjs --sync-version "${{ needs.preflight.outputs.version }}" --allow-build-metadata

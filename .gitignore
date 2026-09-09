@@ -1,6 +1,7 @@
 node_modules/
 dist/
 src-tauri/target/
+src-tauri/native/
 sdk/rust/target/
 crates/target/
 src-tauri/resources/provider-plugins/*

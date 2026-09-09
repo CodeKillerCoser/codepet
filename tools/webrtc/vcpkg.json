@@ -1,0 +1,5 @@
+{
+  "name": "codepet-webrtc-dependencies",
+  "version-string": "1",
+  "dependencies": ["libnice", "openssl", { "name": "pkgconf", "host": true }]
+}

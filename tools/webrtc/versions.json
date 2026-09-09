@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "libdatachannel": {
+    "version": "0.24.3",
+    "repository": "https://github.com/paullouisageneau/libdatachannel.git",
+    "revision": "c6696d157b5612df2a741d9a03b192b47ab6cefb"
+  },
+  "vcpkg": {
+    "repository": "https://github.com/microsoft/vcpkg.git",
+    "revision": "f781d9387e4684783e69e136e2e124ff4660bffc"
+  },
+  "configuration": "Release",
+  "iceBackend": "libnice",
+  "features": ["datachannel", "turn-udp", "turn-tcp"],
+  "unavailableFeatures": ["turn-tls"],
+  "macosDeploymentTarget": "11.0"
+}
