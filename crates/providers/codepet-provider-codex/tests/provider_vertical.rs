@@ -2358,7 +2358,7 @@ async fn shared_server_keeps_writer_through_delayed_output_and_terminal_forwardi
     let conversation = conversation_resource(&route, "thread-delayed-user-item");
     ProviderProtocolServer::conversation_acquire_interaction(
         provider.as_ref(),
-        ConversationAcquireInteractionRequest {
+        ConversationAcquireInteractionRequest { force: None,
             conversation: conversation.clone(),
         },
     )
@@ -3318,6 +3318,65 @@ fn provider_binary_standardizes_writer_conflict_and_removes_failed_execution() {
 
     provider.request("writer-conflict-stop", "instance.stop", json!({ "route": route_value() }));
     provider.request("writer-conflict-shutdown", "provider.shutdown", json!({}));
+}
+
+struct MockDesktopShutdown {
+    marker: PathBuf,
+    calls: std::sync::atomic::AtomicUsize,
+    fail: bool,
+    activate_after_close: bool,
+}
+
+impl ExecutionLifecycleHook for MockDesktopShutdown {
+    fn close_desktop_for_takeover(&self, check: &mut dyn FnMut() -> Result<(), codepet_provider_sdk::ProtocolError>) -> Result<(), codepet_provider_sdk::ProtocolError> {
+        check()?;
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail { return Err(codepet_provider_sdk::ProtocolError { code: "force_takeover_failed".into(), message: "mock permission denied".into(), retryable: true, details: None }); }
+        std::fs::write(self.marker.with_extension("desktop-closed"), "closed").unwrap();
+        if self.activate_after_close { std::fs::write(self.marker.with_file_name("thread-active-writer.turn-state"), "inProgress").unwrap(); }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn force_takeover_releases_writer_only_after_explicit_request_and_keeps_provider_session() {
+    let directory = tempfile::tempdir().unwrap(); let marker = directory.path().join("takeover.txt");
+    let hook = Arc::new(MockDesktopShutdown { marker: marker.clone(), calls: Default::default(), fail: false, activate_after_close: false });
+    let (provider, route, _) = configured_direct_provider_with_events_and_hook("force-takeover", &marker, Arc::new(|_| Ok(())), Some(hook.clone())).await;
+    let conversation = conversation_resource(&route, "thread-active-writer");
+    for force in [None, Some(false)] {
+        let error = ProviderProtocolServer::conversation_acquire_interaction(provider.as_ref(), ConversationAcquireInteractionRequest { conversation: conversation.clone(), force }).await.unwrap_err();
+        assert_eq!(error.code, "conversation_write_conflict");
+        assert_eq!(hook.calls.load(Ordering::SeqCst), 0);
+    }
+    let response = ProviderProtocolServer::conversation_acquire_interaction(provider.as_ref(), ConversationAcquireInteractionRequest { conversation: conversation.clone(), force: Some(true) }).await.unwrap();
+    assert!(response.selection.model.is_some());
+    assert_eq!(hook.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(session_pids(&marker, "thread/resume", "thread-active-writer").len(), 1);
+    ProviderProtocolServer::conversation_acquire_interaction(provider.as_ref(), ConversationAcquireInteractionRequest { conversation, force: Some(true) }).await.unwrap();
+    assert_eq!(hook.calls.load(Ordering::SeqCst), 1);
+    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {}).await.unwrap();
+}
+
+#[tokio::test]
+async fn force_takeover_rejects_activity_failures_and_activity_after_shutdown() {
+    for (active, fail, after_close, expected, calls) in [
+        (Some("inProgress"), false, false, "conversation_active", 0),
+        (Some("waitingApproval"), false, false, "conversation_active", 0),
+        (Some("waitingUserInput"), false, false, "conversation_active", 0),
+        (None, true, false, "force_takeover_failed", 1),
+        (None, false, true, "conversation_active", 1),
+    ] {
+        let directory = tempfile::tempdir().unwrap(); let marker = directory.path().join("takeover.txt");
+        if let Some(active) = active { std::fs::write(marker.with_file_name("thread-active-writer.turn-state"), active).unwrap(); }
+        let hook = Arc::new(MockDesktopShutdown { marker: marker.clone(), calls: Default::default(), fail, activate_after_close: after_close });
+        let (provider, route, _) = configured_direct_provider_with_events_and_hook("force-takeover", &marker, Arc::new(|_| Ok(())), Some(hook.clone())).await;
+        let error = ProviderProtocolServer::conversation_acquire_interaction(provider.as_ref(), ConversationAcquireInteractionRequest { conversation: conversation_resource(&route, "thread-active-writer"), force: Some(true) }).await.unwrap_err();
+        assert_eq!(error.code, expected);
+        assert_eq!(hook.calls.load(Ordering::SeqCst), calls);
+        if calls == 0 { assert!(session_pids(&marker, "thread/resume", "thread-active-writer").is_empty()); }
+        ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {}).await.unwrap();
+    }
 }
 
 #[test]

@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 ring = "0.17"
 codepet-provider-data = { path = "../codepet-provider-data" }
 codepet-observation = { path = "../codepet-observation" }
@@ -17,6 +18,9 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "process", "net", "rt-multi-thread", "sync", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 [[bin]]
 name = "codex-app-server-fixture"

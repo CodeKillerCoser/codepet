@@ -1871,6 +1871,9 @@ impl Provider for ClaudeProvider {
         request: ConversationAcquireInteractionRequest,
     ) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
         Box::pin(async move {
+            if request.force.unwrap_or(false) {
+                return Err(protocol_error("capability_unsupported", "Forced desktop takeover is only supported by Codex".to_string(), false));
+            }
             let runtime = self.resource_instance(&request.conversation)?;
             validate_resource_for_instance(&request.conversation, &runtime.route)?;
             Ok(ConversationAcquireInteractionResponse {

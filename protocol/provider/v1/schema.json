@@ -105,6 +105,10 @@
     "ConversationAcquireInteractionRequest": {
       "type": "object",
       "properties": {
+        "force": {
+          "type": "boolean",
+          "description": "Explicit inactive-conversation desktop takeover. Omitted means false; unsupported providers must reject true."
+        },
         "conversation": {
           "$ref": "#/$defs/ProviderResourceId"
         }

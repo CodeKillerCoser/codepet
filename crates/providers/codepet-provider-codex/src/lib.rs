@@ -1,4 +1,5 @@
 mod client;
+mod desktop_takeover;
 mod directory;
 mod mapper;
 mod protocol;

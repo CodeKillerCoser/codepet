@@ -1564,6 +1564,9 @@ impl Provider for OpenCodeProvider {
         request: ConversationAcquireInteractionRequest,
     ) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
         Box::pin(async move {
+            if request.force.unwrap_or(false) {
+                return Err(protocol_error("capability_unsupported", "Forced desktop takeover is only supported by Codex".to_string(), false));
+            }
             self.resource_instance(&request.conversation)?;
             Ok(ConversationAcquireInteractionResponse {
                 selection: TurnSelection {

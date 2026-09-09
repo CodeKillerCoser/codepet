@@ -1295,6 +1295,7 @@ impl ProtocolServer for ProviderGatewayService {
                 .conversation_acquire_interaction(
                     provider::ConversationAcquireInteractionRequest {
                         conversation,
+                        force: None,
                     },
                 )
                 .await
@@ -1320,12 +1321,21 @@ impl ProtocolServer for ProviderGatewayService {
                     details: None,
                 });
             }
-            let interaction = match self
-                .conversation_acquire_interaction(gateway::ConversationAcquireInteractionRequest {
+            let interaction_result = if request.force.unwrap_or(false) {
+                async {
+                    let conversation = self.resolve_resource(request.conversation.clone()).await?;
+                    self.manager.conversation_acquire_interaction(provider::ConversationAcquireInteractionRequest {
+                        conversation, force: Some(true),
+                    }).await.map(|response| gateway::ConversationAcquireInteractionResponse {
+                        selection: response.selection, lease_expires_at: response.lease_expires_at,
+                    }).map_err(gateway_error)
+                }.await
+            } else {
+                self.conversation_acquire_interaction(gateway::ConversationAcquireInteractionRequest {
                     conversation: request.conversation.clone(),
-                })
-                .await
-            {
+                }).await
+            };
+            let interaction = match interaction_result {
                 Ok(interaction) => interaction,
                 Err(error) => {
                     return Ok(gateway::ConversationResumeResponse {

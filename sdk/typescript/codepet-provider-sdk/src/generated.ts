@@ -30,6 +30,7 @@ export interface ApprovalResolvedEvent {
 }
 
 export interface ConversationAcquireInteractionRequest {
+  force?: boolean;
   conversation: ProviderResourceId;
 }
 

@@ -634,7 +634,7 @@ async fn gateway_resume_returns_history_or_preserves_the_interaction_outcome() {
         ("resume-denied", false, false),
         ("response-wrong-native", true, false),
     ] {
-        let result = gateway.conversation_resume(codepet_gateway_sdk::ConversationResumeRequest {
+        let result = gateway.conversation_resume(codepet_gateway_sdk::ConversationResumeRequest { force: None,
             conversation: gateway_resource("device-resume", "dev.codepet.resume", "instance-resume", native_id),
             limit: Some(20),
         }).await.unwrap();
@@ -651,6 +651,20 @@ async fn gateway_resume_returns_history_or_preserves_the_interaction_outcome() {
             assert_eq!(history.conversation.resource.native_resource_id, native_id);
             assert!(!history.snapshot_cursor.is_empty());
         }
+    }
+    for (force, id, acquired, error) in [
+        (None, "resume-force", false, Some("conversation_write_conflict")),
+        (Some(false), "resume-force", false, Some("conversation_write_conflict")),
+        (Some(true), "resume-force", true, None),
+        (Some(true), "resume-force-active", false, Some("conversation_active")),
+    ] {
+        let result = gateway.conversation_resume(codepet_gateway_sdk::ConversationResumeRequest {
+            conversation: gateway_resource("device-resume", "dev.codepet.resume", "instance-resume", id),
+            force, limit: Some(20),
+        }).await.unwrap();
+        assert_eq!(result.interaction_acquired, acquired);
+        assert_eq!(result.interaction_error.as_ref().map(|e| e.code.as_str()), error);
+        assert_eq!(result.history.is_some(), acquired);
     }
     manager.shutdown().await;
 }

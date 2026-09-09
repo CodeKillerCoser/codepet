@@ -245,6 +245,8 @@ pub type ConversationRecentRevision = String;
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ConversationResumeRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub force: Option<bool>,
     pub conversation: RoutedResourceId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u64>,

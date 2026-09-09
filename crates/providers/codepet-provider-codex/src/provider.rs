@@ -55,6 +55,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod server_events;
 
 static NEXT_EXECUTION_ATTEMPT: AtomicU64 = AtomicU64::new(1);
+// A forced global desktop shutdown must not race Codepet turn operations.
+static DESKTOP_TAKEOVER_GATE: std::sync::RwLock<()> = std::sync::RwLock::new(());
 static NEXT_INSTANCE_SESSION: AtomicU64 = AtomicU64::new(1);
 static NEXT_MANAGED_WORKTREE: AtomicU64 = AtomicU64::new(1);
 const DEFAULT_CONVERSATION_GET_TURN_LIMIT: u64 = 20;
@@ -72,6 +74,9 @@ struct CodexInstanceSettings {
 
 #[doc(hidden)]
 pub trait ExecutionLifecycleHook: Send + Sync + 'static {
+    fn close_desktop_for_takeover(&self, check_inactive: &mut dyn FnMut() -> Result<(), ProtocolError>) -> Result<(), ProtocolError> {
+        crate::desktop_takeover::close_desktop(check_inactive)
+    }
     fn after_handle_acquired(&self, _conversation_id: &str, _operation: &str) {}
 
     fn before_resume_linearization(&self, _conversation_id: &str) {}
@@ -950,6 +955,54 @@ impl CodexInstanceRuntime {
         self: &Arc<Self>,
         conversation_id: &str,
         operation_name: &str,
+        operation: impl FnMut(&ExecutionHandle) -> Result<ExecutionStep<T>, ProtocolError>,
+    ) -> Result<T, ProtocolError> {
+        let _gate = DESKTOP_TAKEOVER_GATE.read().unwrap_or_else(|e| e.into_inner());
+        self.with_current_execution_inner(conversation_id, operation_name, operation)
+    }
+
+    fn check_takeover_inactive(&self, conversation_id: &str) -> Result<(), ProtocolError> {
+        // Hook facts include desktop-origin activity which a separate app-server may not load.
+        if !lock(&self.hook_activity).active_rows(&self.route).is_empty() {
+            return Err(protocol_error("conversation_active", "A Codex conversation is active; desktop takeover is unavailable".into(), true));
+        }
+        if lock(&self.mutable).executions.values().any(|slot| matches!(&*lock(&slot.state),
+            ExecutionSlotState::Ready(execution) if execution.active_turn_id.is_some())) {
+            return Err(protocol_error("conversation_active", "A Codepet Codex turn is active; desktop takeover is unavailable".into(), true));
+        }
+        let snapshot = self.ready_server()?.thread_read(conversation_id).map_err(|_| protocol_error(
+            "force_takeover_failed", "Cannot read current conversation activity".into(), true))?;
+        if matches!(snapshot.thread.status, crate::protocol::CodexThreadStatus::Active { .. })
+            || snapshot.thread.turns.iter().any(|t| t.status == CodexTurnStatus::InProgress) {
+            return Err(protocol_error("conversation_active", "Conversation has an active turn or pending interaction".into(), true));
+        }
+        if matches!(snapshot.thread.status, crate::protocol::CodexThreadStatus::SystemError) {
+            return Err(protocol_error("force_takeover_failed", "Cannot establish that the conversation is inactive".into(), true));
+        }
+        Ok(())
+    }
+
+    fn prepare_forced_takeover(self: &Arc<Self>, conversation_id: &str) -> Result<(), ProtocolError> {
+        self.check_takeover_inactive(conversation_id)?;
+        match self.acquire_execution(conversation_id) {
+            Ok(_) => return self.check_takeover_inactive(conversation_id),
+            Err(error) if error.code == "conversation_write_conflict" => {},
+            Err(error) => return Err(error),
+        }
+        self.lifecycle_hook.close_desktop_for_takeover(&mut || self.check_takeover_inactive(conversation_id))?;
+        for attempt in 0..10 {
+            self.check_takeover_inactive(conversation_id)?;
+            match self.acquire_execution(conversation_id) {
+                Ok(_) => return self.check_takeover_inactive(conversation_id),
+                Err(error) if error.code == "conversation_write_conflict" && attempt < 9 => thread::sleep(Duration::from_millis(100)),
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!()
+    }
+
+    fn with_current_execution_inner<T>(
+        self: &Arc<Self>, conversation_id: &str, operation_name: &str,
         mut operation: impl FnMut(&ExecutionHandle) -> Result<ExecutionStep<T>, ProtocolError>,
     ) -> Result<T, ProtocolError> {
         loop {
@@ -2194,7 +2247,11 @@ impl Provider for CodexProvider {
             let runtime = self.resource_instance(&request.conversation)?;
             let conversation_id = request.conversation.native_resource_id;
             tokio::task::spawn_blocking(move || {
-                runtime.with_current_execution(
+                let force = request.force.unwrap_or(false);
+                let _takeover_gate = force.then(|| DESKTOP_TAKEOVER_GATE.write().unwrap_or_else(|e| e.into_inner()));
+                let _normal_gate = (!force).then(|| DESKTOP_TAKEOVER_GATE.read().unwrap_or_else(|e| e.into_inner()));
+                if force { runtime.prepare_forced_takeover(&conversation_id)?; }
+                runtime.with_current_execution_inner(
                     &conversation_id,
                     "conversation.acquireInteraction",
                     |handle| {
@@ -3929,7 +3986,7 @@ fn provider_task_error(error: tokio::task::JoinError) -> ProtocolError {
     )
 }
 
-fn protocol_error(code: &str, message: String, retryable: bool) -> ProtocolError {
+pub(crate) fn protocol_error(code: &str, message: String, retryable: bool) -> ProtocolError {
     ProtocolError {
         code: code.to_string(),
         message,

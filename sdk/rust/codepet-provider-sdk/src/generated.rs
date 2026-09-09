@@ -45,6 +45,8 @@ pub struct ApprovalResolvedEvent {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ConversationAcquireInteractionRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub force: Option<bool>,
     pub conversation: ProviderResourceId,
 }
 

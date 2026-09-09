@@ -631,7 +631,8 @@ fn main() {
                 {
                     continue;
                 }
-                if thread_id == "thread-active-writer" {
+                if thread_id == "thread-active-writer"
+                    && !(options.approval_mode == "force-takeover" && options.marker.as_ref().is_some_and(|p| p.with_extension("desktop-closed").exists())) {
                     write_json(
                         &mut writer,
                         json!({

@@ -478,6 +478,12 @@ impl ProtocolServer for FakeProvider {
     ) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
         Box::pin(async move {
             self.instance(&route_from_resource(&request.conversation))?;
+            if request.conversation.native_resource_id == "resume-force" && request.force != Some(true) {
+                return Err(protocol_error("conversation_write_conflict", "fixture requires force"));
+            }
+            if request.conversation.native_resource_id == "resume-force-active" && request.force == Some(true) {
+                return Err(protocol_error("conversation_active", "fixture active"));
+            }
             if request.conversation.native_resource_id == "resume-denied" {
                 return Err(protocol_error("conversation_write_conflict", "fixture writer held"));
             }

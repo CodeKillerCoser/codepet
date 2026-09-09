@@ -141,6 +141,7 @@ export interface ConversationRecentResponse {
 export type ConversationRecentRevision = string;
 
 export interface ConversationResumeRequest {
+  force?: boolean;
   conversation: RoutedResourceId;
   limit?: number;
 }

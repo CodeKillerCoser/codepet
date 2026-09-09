@@ -1092,41 +1092,48 @@ Object? encodeConversationRecentRevision(ConversationRecentRevision value, {Stri
 
 final class ConversationResumeRequest {
   factory ConversationResumeRequest({
+    bool? force,
     required RoutedResourceId conversation,
     int? limit,
   }) {
+    final validatedForce = force == null ? null : force;
     final validatedConversation = conversation;
     final validatedLimit = limit == null ? null : _integer(limit, 'ConversationResumeRequest.limit', minimum: 1, maximum: 100);
     return ConversationResumeRequest._(
+      force: validatedForce,
       conversation: validatedConversation,
       limit: validatedLimit,
     );
   }
 
   ConversationResumeRequest._({
+    required this.force,
     required this.conversation,
     required this.limit,
   });
 
+  final bool? force;
   final RoutedResourceId conversation;
   final int? limit;
 
   factory ConversationResumeRequest.fromJson(Object? value, {String path = 'ConversationResumeRequest'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'conversation', 'limit'}, path);
+    _expectKeys(json, const {'force', 'conversation', 'limit'}, path);
     return ConversationResumeRequest(
+      force: json.containsKey('force') && json['force'] != null ? _boolean(json['force'], '$path.force') : null,
       conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
       limit: json.containsKey('limit') && json['limit'] != null ? _integer(json['limit'], '$path.limit', minimum: 1, maximum: 100) : null,
     );
   }
 
   Map<String, Object?> toJson() => {
+    if (force != null) 'force': force!,
     'conversation': conversation.toJson(),
     if (limit != null) 'limit': limit!,
   };
 
   @override
-  String toString() => 'ConversationResumeRequest(conversation: $conversation, limit: $limit)';
+  String toString() => 'ConversationResumeRequest(force: $force, conversation: $conversation, limit: $limit)';
 }
 
 final class ConversationResumeResponse {

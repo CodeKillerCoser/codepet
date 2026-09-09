@@ -64,7 +64,7 @@ async fn native_remote_turns_keep_the_instance_ready() {
             }
         }
         collect(&json, &mut std::collections::HashSet::new());
-        provider.conversation_acquire_interaction(ConversationAcquireInteractionRequest { conversation:resource.clone() }).await.unwrap();
+        provider.conversation_acquire_interaction(ConversationAcquireInteractionRequest { force: None, conversation:resource.clone() }).await.unwrap();
     }
     provider.instance_stop(InstanceStopRequest { route }).await.unwrap();
 }

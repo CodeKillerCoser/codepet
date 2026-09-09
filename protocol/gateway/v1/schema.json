@@ -118,6 +118,10 @@
     "ConversationResumeRequest": {
       "type": "object",
       "properties": {
+        "force": {
+          "type": "boolean",
+          "description": "Explicitly close the local Codex desktop application to acquire an inactive conversation. Omitted means false."
+        },
         "conversation": {
           "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
         },
