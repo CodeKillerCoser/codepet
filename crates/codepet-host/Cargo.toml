@@ -13,6 +13,10 @@ codepet-gateway-sdk = { path = "../../sdk/rust/codepet-gateway-sdk", version = "
 codepet-lan-channel-sdk = { path = "../../sdk/rust/codepet-lan-channel-sdk", version = "0.1.0" }
 codepet-provider-sdk = { path = "../../sdk/rust/codepet-provider-sdk", version = "0.1.0" }
 futures-util = "0.3"
+bytes = "1"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+webrtc = "=0.14.0"
 netdev = { version = "0.46", default-features = false }
 mdns-sd = { version = "0.21", default-features = false }
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }

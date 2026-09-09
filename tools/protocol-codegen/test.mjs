@@ -44,6 +44,18 @@ test("runtime inventory always returns harnessList and nullable selected", async
   ]);
 });
 
+test("RTC framing is additive to Gateway WSS and rejects unknown profiles", async () => {
+  const model = await loadProtocolModel();
+  const gateway = record(model, "gateway-v1");
+  assert.equal(gateway.manifest.transport.framing, "websocket-text");
+  assert.deepEqual(gateway.manifest.transport.additionalFramings, ["webrtc-cpg1"]);
+  validateManifest(gateway, model);
+  for (const invalid of ["webrtc-cpg1", ["unknown"], ["webrtc-cpg1", "webrtc-cpg1"]]) {
+    gateway.manifest.transport.additionalFramings = invalid;
+    assert.throws(() => validateManifest(gateway, model), /additionalFramings/);
+  }
+});
+
 test("recent v1 preserves list and read boundaries with capability-gated atomic queries", async () => {
   const model = await loadProtocolModel();
   const provider = record(model, "provider-v1");

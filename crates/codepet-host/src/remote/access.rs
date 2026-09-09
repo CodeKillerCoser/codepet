@@ -684,6 +684,10 @@ pub struct RemoteAccessManager {
 }
 
 impl RemoteAccessManager {
+    pub(crate) fn rtc_cloud_config_path(&self) -> PathBuf {
+        self.credential_store.path.with_file_name("rtc-cloud.json")
+    }
+
     pub fn open(
         config: RemoteAccessConfig,
         device: Arc<DeviceRegistry>,

@@ -897,10 +897,25 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
         .connect_websocket(&pairing_a.credential)
         .await
         .unwrap();
-    oversized
-        .send(Message::Text("x".repeat(300 * 1024)))
-        .await
-        .unwrap();
+    // The server can reject the advertised frame size before the client has
+    // flushed its payload. Windows may report that rejection from send itself.
+    match timeout(
+        Duration::from_secs(2),
+        oversized.send(Message::Text("x".repeat(300 * 1024))),
+    )
+    .await
+    .expect("oversized frame send must finish or be rejected")
+    {
+        Ok(()) | Err(WebSocketError::ConnectionClosed) => {}
+        Err(WebSocketError::Io(error))
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::BrokenPipe
+            ) => {}
+        Err(error) => panic!("unexpected oversized frame send failure: {error:?}"),
+    }
     assert_socket_ends_safely(&mut oversized).await;
 
     wait_for_active_sessions(&server, 1).await;
@@ -1290,6 +1305,187 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     host.manager.shutdown().await;
 }
 
+
+struct RtcClient {
+    peer: Arc<webrtc::peer_connection::RTCPeerConnection>,
+    channel: Arc<webrtc::data_channel::RTCDataChannel>,
+    incoming: tokio::sync::mpsc::Receiver<bytes::Bytes>,
+}
+
+impl Drop for RtcClient {
+    fn drop(&mut self) {
+        let peer = self.peer.clone();
+        tokio::spawn(async move { let _ = peer.close().await; });
+    }
+}
+
+impl RtcClient {
+    async fn connect(client: &PinnedTlsClient, credential: &str) -> Self {
+        use webrtc::api::APIBuilder;
+        use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
+        use webrtc::peer_connection::configuration::RTCConfiguration;
+        let peer = Arc::new(APIBuilder::new().build().new_peer_connection(RTCConfiguration::default()).await.unwrap());
+        let channel = peer.create_data_channel("codepet.gateway.v1", Some(RTCDataChannelInit {
+            ordered: Some(true), negotiated: Some(0),
+            protocol: Some("codepet.gateway.cpg1".into()), ..Default::default()
+        })).await.unwrap();
+        let (tx, incoming) = tokio::sync::mpsc::channel(128);
+        channel.on_message(Box::new(move |message| {
+            let tx = tx.clone();
+            Box::pin(async move {
+                assert!(!message.is_string);
+                tx.send(message.data).await.unwrap();
+            })
+        }));
+        let offer = peer.create_offer(None).await.unwrap();
+        let mut gathered = peer.gathering_complete_promise().await;
+        peer.set_local_description(offer).await.unwrap();
+        timeout(Duration::from_secs(8), gathered.recv()).await.unwrap();
+        let offer = peer.local_description().await.unwrap();
+        let (status, answer) = client.json_request(
+            "POST", "/remote/v1/webrtc/offer", Some(credential),
+            Some(&serde_json::to_string(&offer).unwrap()),
+        ).await;
+        assert_eq!(status, 200, "{answer}");
+        peer.set_remote_description(serde_json::from_value(answer).unwrap()).await.unwrap();
+        timeout(Duration::from_secs(15), async {
+            while channel.ready_state() != webrtc::data_channel::data_channel_state::RTCDataChannelState::Open {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }).await.unwrap();
+        Self { peer, channel, incoming }
+    }
+
+    async fn request(&self, request: gateway::ProtocolRequest) {
+        let bytes = serde_json::to_vec(&request).unwrap();
+        for (index, part) in bytes.chunks(16 * 1024 - 12).enumerate() {
+            let mut frame = b"CPG1".to_vec();
+            frame.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+            frame.extend_from_slice(&((index * (16 * 1024 - 12)) as u32).to_be_bytes());
+            frame.extend_from_slice(part);
+            self.channel.send(&bytes::Bytes::from(frame)).await.unwrap();
+        }
+    }
+
+    async fn next_json(&mut self) -> serde_json::Value {
+        self.next_json_timeout(Duration::from_secs(5)).await
+    }
+
+    async fn next_json_timeout(&mut self, budget: Duration) -> serde_json::Value {
+        timeout(budget, async {
+            let mut message = Vec::new();
+            let mut total = None;
+            loop {
+                let frame = self.incoming.recv().await.expect("RTC response");
+                assert_eq!(&frame[..4], b"CPG1");
+                let length = u32::from_be_bytes(frame[4..8].try_into().unwrap()) as usize;
+                let offset = u32::from_be_bytes(frame[8..12].try_into().unwrap()) as usize;
+                assert!(length > 0, "unexpected close: {frame:?}");
+                assert_eq!(*total.get_or_insert(length), length);
+                assert_eq!(offset, message.len());
+                message.extend_from_slice(&frame[12..]);
+                if message.len() == length { return serde_json::from_slice(&message).unwrap(); }
+            }
+        }).await.unwrap()
+    }
+}
+
+#[tokio::test]
+async fn rtc_and_lan_share_rpc_admission_large_messages_and_revocation() {
+    let host = TestHost::start().await;
+    let server = RemoteLanServer::start(
+        RemoteLanServerConfig::loopback(), host.remote_access.clone(), host.gateway.clone(),
+    ).await.unwrap();
+    let client = PinnedTlsClient::new(server.local_addr(), host.remote_access.tls_identity().certificate_der().to_vec());
+    let (status, _) = client.json_request("POST", "/remote/v1/webrtc/offer", None, Some(r#"{"type":"offer","sdp":""}"#)).await;
+    assert_eq!(status, 401);
+    assert_eq!(server.active_session_count(), 0);
+    let pairing = pair_client(&host.remote_access, &client, "rtc-client").await;
+    let (status, _) = client.json_request("POST", "/remote/v1/webrtc/offer", Some(&pairing.credential), Some(r#"{"type":"offer","sdp":"invalid"}"#)).await;
+    assert_eq!(status, 400);
+    wait_for_active_sessions(&server, 0).await;
+
+    let mut rtc = RtcClient::connect(&client, &pairing.credential).await;
+    rtc.request(handshake_request("rtc-handshake", "rtc-client")).await;
+    let handshake = rtc.next_json().await;
+    assert_eq!(handshake["id"], "rtc-handshake");
+    assert!(handshake.get("result").is_some(), "{handshake}");
+
+    // Both request and response cross several native message boundaries.
+    let large_id = format!("large-{}", "界".repeat(24000));
+    rtc.request(gateway::ProtocolRequest::ProviderList {
+        jsonrpc: "2.0".into(), id: large_id.clone(), params: gateway::ProviderListRequest {},
+    }).await;
+    let response = rtc.next_json().await;
+    assert_eq!(response["id"], large_id);
+    assert!(response.get("result").is_some(), "{response}");
+
+    let mut lan = client.connect_websocket(&pairing.credential).await.unwrap();
+    send_request(&mut lan, handshake_request("lan-handshake", "rtc-client")).await;
+    next_response(&mut lan, "lan-handshake").await;
+    wait_for_active_sessions(&server, 2).await;
+    let credential = host.remote_access.validate_bearer(&pairing.credential).unwrap();
+    host.remote_access.revoke_credential(&credential.credential_id).unwrap();
+    assert_eq!(server.disconnect_credential(&credential.credential_id).await.unwrap(), 2);
+    wait_for_active_sessions(&server, 0).await;
+    assert_socket_ends_safely(&mut lan).await;
+    timeout(Duration::from_secs(5), async {
+        loop {
+            match rtc.incoming.recv().await {
+                Some(frame) if frame.len() >= 14 && frame[4..8] == [0, 0, 0, 0] => {
+                    assert_eq!(u16::from_be_bytes([frame[12], frame[13]]), 1008);
+                    break;
+                }
+                _ if rtc.channel.ready_state() == webrtc::data_channel::data_channel_state::RTCDataChannelState::Closed => break,
+                _ => {}
+            }
+        }
+    }).await.unwrap();
+    server.shutdown().await.unwrap();
+}
+
+
+#[tokio::test]
+#[ignore = "manual Android native RTC probe; exports an ephemeral credential to the configured file"]
+async fn rtc_android_probe_host() {
+    let export = std::env::var("CODEPET_RTC_PROBE_EXPORT").expect("set CODEPET_RTC_PROBE_EXPORT");
+    let host = TestHost::start().await;
+    if let Ok(config) = std::env::var("CODEPET_RTC_CLOUD_PROBE_CONFIG") {
+        std::fs::copy(config, host._directory.path().join("remote/rtc-cloud.json")).unwrap();
+    }
+    let server = RemoteLanServer::start(
+        RemoteLanServerConfig {
+            bind_addr: "0.0.0.0:0".parse().unwrap(),
+            advertised_host: Some("127.0.0.1".into()),
+        },
+        host.remote_access.clone(), host.gateway.clone(),
+    ).await.unwrap();
+    let address = std::net::SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), server.local_addr().port());
+    let client = PinnedTlsClient::new(address, host.remote_access.tls_identity().certificate_der().to_vec());
+    let pairing = pair_client(&host.remote_access, &client, "rtc-android-probe").await;
+    std::fs::write(&export, serde_json::to_vec(&serde_json::json!({
+        "RTC_GATEWAY_URI": format!("wss://127.0.0.1:{}/remote/v1/gateway", address.port()),
+        "RTC_PIN": host.remote_access.tls_identity().certificate_fingerprint(),
+        "RTC_CREDENTIAL": pairing.credential,
+        "RTC_HANDSHAKE": serde_json::to_string(&handshake_request("probe-handshake", "rtc-android-probe")).unwrap(),
+        "RTC_EVENT_REQUEST": serde_json::to_string(&gateway::ProtocolRequest::ConversationGet {
+            jsonrpc: "2.0".into(), id: "probe-events".into(),
+            params: gateway::ConversationGetRequest {
+                conversation: conversation_resource("event-first"), cursor: None, limit: None,
+            },
+        }).unwrap(),
+    })).unwrap()).unwrap();
+    // A stop file allows the runner to close all peers and delete the credential.
+    let stop = format!("{export}.stop");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(600);
+    while !std::path::Path::new(&stop).exists() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    server.shutdown().await.unwrap();
+    let _ = std::fs::remove_file(export);
+    let _ = std::fs::remove_file(stop);
+}
+
 fn hex_sha256(value: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let digest = ring::digest::digest(&ring::digest::SHA256, value);
@@ -1299,4 +1495,92 @@ fn hex_sha256(value: &[u8]) -> String {
         encoded.push(HEX[(byte & 0x0f) as usize] as char);
     }
     encoded
+}
+
+#[tokio::test]
+#[ignore = "authorized live VPS probe; requires private CODEPET_RTC_CLOUD_PROBE_CONFIG"]
+async fn rtc_public_relay_probe() {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+    use ring::signature::{Ed25519KeyPair, KeyPair, UnparsedPublicKey, ED25519};
+    use serde_json::{json, Value};
+    use webrtc::{api::APIBuilder, data_channel::data_channel_init::RTCDataChannelInit, peer_connection::{configuration::RTCConfiguration, policy::ice_transport_policy::RTCIceTransportPolicy}};
+    let config = std::env::var("CODEPET_RTC_CLOUD_PROBE_CONFIG").unwrap();
+    let host = TestHost::start().await;
+    std::fs::copy(config, host._directory.path().join("remote/rtc-cloud.json")).unwrap();
+    let server=RemoteLanServer::start(RemoteLanServerConfig::loopback(),host.remote_access.clone(),host.gateway.clone()).await.unwrap();
+    let local=PinnedTlsClient::new(server.local_addr(),host.remote_access.tls_identity().certificate_der().to_vec());
+    let pairing=pair_client(&host.remote_access,&local,"cloud-rust-probe").await;
+    let key=Ed25519KeyPair::from_pkcs8(Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap().as_ref()).unwrap();
+    let (status,bootstrap)=local.json_request("POST","/remote/v1/channel-bootstrap",Some(&pairing.credential),Some(&json!({"publicKey":B64.encode(key.public_key().as_ref())}).to_string())).await;
+    assert_eq!(status,200,"bootstrap failed");
+    let http=reqwest::Client::builder().timeout(Duration::from_secs(15)).build().unwrap();
+    let token=bootstrap["token"].as_str().unwrap();
+    let base=bootstrap["serviceUrl"].as_str().unwrap();
+    let mut ice:Value=http.get(format!("{base}/v1/ice")).bearer_auth(token).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+    if let Ok(transport) = std::env::var("CODEPET_PROBE_TURN_TRANSPORT") {
+        for server in ice["iceServers"].as_array_mut().unwrap() {
+            server["urls"].as_array_mut().unwrap().retain(|url| {
+                let url=url.as_str().unwrap();
+                match transport.as_str() {
+                    "tcp" => url.starts_with("turn:") && url.ends_with("transport=tcp"),
+                    "tls" => url.starts_with("turns:"),
+                    "udp" => url.starts_with("turn:") && url.ends_with("transport=udp"),
+                    _ => panic!("unsupported probe TURN transport"),
+                }
+            });
+        }
+        ice["iceServers"].as_array_mut().unwrap().retain(|server| !server["urls"].as_array().unwrap().is_empty());
+    }
+    let peer=Arc::new(APIBuilder::new().build().new_peer_connection(RTCConfiguration {
+        ice_servers:serde_json::from_value(ice["iceServers"].clone()).unwrap(),
+        ice_transport_policy:RTCIceTransportPolicy::Relay,..Default::default()
+    }).await.unwrap());
+    let channel=peer.create_data_channel("codepet.gateway.v1",Some(RTCDataChannelInit{ordered:Some(true),negotiated:Some(0),protocol:Some("codepet.gateway.cpg1".into()),..Default::default()})).await.unwrap();
+    let (tx,incoming)=tokio::sync::mpsc::channel(128);
+    channel.on_message(Box::new(move |message|{let tx=tx.clone();Box::pin(async move {let _=tx.send(message.data).await;})}));
+    let offer=peer.create_offer(None).await.unwrap();
+    let mut gathering=peer.gathering_complete_promise().await;
+    peer.set_local_description(offer).await.unwrap();
+    timeout(Duration::from_secs(30),gathering.recv()).await.unwrap();
+    let offer=peer.local_description().await.unwrap();
+    assert!(offer.sdp.contains("typ relay"),"TURN did not yield a relay candidate");
+    let attempt=uuid::Uuid::new_v4().to_string();
+    let expires=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()+60;
+    let payload=serde_json::to_vec(&json!({"v":1,"kind":"offer","host":bootstrap["host"],"client":bootstrap["client"],"attempt":attempt,"expires":expires,"description":offer})).unwrap();
+    http.post(format!("{base}/v1/offers")).bearer_auth(token).json(&json!({"attempt":attempt,"envelope":{"payload":B64.encode(&payload),"signature":B64.encode(key.sign(&payload).as_ref())}})).send().await.unwrap().error_for_status().unwrap();
+    let envelope:Value=timeout(Duration::from_secs(45),async {
+        loop {
+            let result:Value=http.get(format!("{base}/v1/answer?attempt={attempt}")).bearer_auth(token).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+            if !result["answer"].is_null() {break result["answer"].clone();}
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }).await.unwrap();
+    let answer_bytes=B64.decode(envelope["payload"].as_str().unwrap()).unwrap();
+    UnparsedPublicKey::new(&ED25519,B64.decode(bootstrap["hostPublicKey"].as_str().unwrap()).unwrap()).verify(&answer_bytes,&B64.decode(envelope["signature"].as_str().unwrap()).unwrap()).unwrap();
+    let answer:Value=serde_json::from_slice(&answer_bytes).unwrap();
+    assert_eq!(answer["offerHash"],hex_sha256(&payload));
+    assert_eq!(answer["attempt"],attempt);
+    peer.set_remote_description(serde_json::from_value(answer["description"].clone()).unwrap()).await.unwrap();
+    timeout(Duration::from_secs(20),async {
+        while channel.ready_state()!=webrtc::data_channel::data_channel_state::RTCDataChannelState::Open {tokio::time::sleep(Duration::from_millis(20)).await;}
+    }).await.unwrap();
+    let selected=peer.sctp().transport().ice_transport().get_selected_candidate_pair().await.unwrap();
+    assert!(selected.to_string().contains("relay"),"selected ICE pair must include relay");
+    eprintln!("Relay selected; requesting Gateway handshake");
+    let mut rtc=RtcClient{peer,channel,incoming};
+    rtc.request(handshake_request("cloud-handshake","cloud-rust-probe")).await;
+    assert!(rtc.next_json().await.get("result").is_some());
+    eprintln!("Relay handshake passed; requesting large RPC");
+    let id=format!("cloud-{}","界".repeat(24000));
+    rtc.request(gateway::ProtocolRequest::ProviderList{jsonrpc:"2.0".into(),id:id.clone(),params:gateway::ProviderListRequest{}}).await;
+    // Match the production RPC deadline, rather than the LAN fixture's 5 seconds.
+    assert_eq!(rtc.next_json_timeout(Duration::from_secs(15)).await["id"],id);
+    eprintln!("Relay large RPC passed; revoking credential");
+    let credential=host.remote_access.validate_bearer(&pairing.credential).unwrap();
+    host.remote_access.revoke_credential(&credential.credential_id).unwrap();
+    assert_eq!(server.disconnect_credential(&credential.credential_id).await.unwrap(),1);
+    wait_for_active_sessions(&server,0).await;
+    rtc.peer.close().await.unwrap();
+    server.shutdown().await.unwrap();
+    eprintln!("Public signaling + selected TURN relay + Gateway handshake + large RPC + revocation passed");
 }
