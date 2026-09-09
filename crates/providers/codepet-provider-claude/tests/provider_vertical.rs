@@ -251,6 +251,13 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     let first = terminal_turn(&events, &first_turn.resource.native_resource_id);
     assert_eq!(first.status, TurnStatus::Completed);
     assert_eq!(first.output, "fixture output");
+    let snapshot = ProviderProtocolServer::instance_start(
+        provider.as_ref(), InstanceStartRequest { route: route.clone() },
+    ).await.unwrap().instance;
+    let usage = snapshot.usage.expect("completed Claude result must update runtime usage");
+    assert_eq!(usage.display_text, "Last turn: 12 tokens · $0.0010");
+    assert_eq!(usage.details.unwrap()[0].data["totalCostUsd"], json!(0.001));
+    assert!(snapshot.capabilities.methods.contains(&ProviderCapability::UsageQuery));
     assert_eq!(first.deltas.len(), 2);
     for (index, delta) in first.deltas.iter().enumerate() {
         let item_id = format!("{}:text:{index}", first_turn.resource.native_resource_id);

@@ -17,7 +17,7 @@ struct FixtureState {
 fn main() {
     let args = std::env::args().collect::<Vec<_>>();
     if args.get(1).map(String::as_str) == Some("--version") {println!("1.18.25"); return;}
-    if matches!(args.get(1).map(String::as_str), Some("auth")) {
+    if matches!(args.get(1).map(String::as_str), Some("auth" | "stats")) {
         let config = startup_config();
         let name = &args[1];
         if let Some(root) = config["probeDirectory"].as_str() {
@@ -25,7 +25,7 @@ fn main() {
             std::fs::write(root.join(format!("{name}.pid")), std::process::id().to_string()).unwrap();
             while !root.join("release").exists() { thread::sleep(std::time::Duration::from_millis(10)); }
         }
-        println!("2 credentials");
+        if name == "auth" { println!("2 credentials"); } else { println!("Total Cost $3.00\nInput 100\nOutput 200"); }
         return;
     }
     let hostname = argument(&args, "--hostname").unwrap_or("127.0.0.1");

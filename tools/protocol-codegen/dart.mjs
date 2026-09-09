@@ -324,7 +324,11 @@ function emitObject(writer, definition, parent, ir) {
         const name = camelCase(field.wireName);
         const encoded = encodeExpression(field.type, name, dartString(`${definition.name}.${field.wireName}`), ir);
         if (field.required) writer.line(`${dartString(field.wireName)}: ${encoded},`);
-        else writer.line(`if (${name} != null) ${dartString(field.wireName)}: ${encodeExpression(field.type, `${name}!`, dartString(`${definition.name}.${field.wireName}`), ir)},`);
+        else {
+          // The map entry already excludes null, including schema-nullable fields.
+          const nonNullType = field.type.kind === "nullable" ? field.type.value : field.type;
+          writer.line(`if (${name} != null) ${dartString(field.wireName)}: ${encodeExpression(nonNullType, `${name}!`, dartString(`${definition.name}.${field.wireName}`), ir)},`);
+        }
       }
     }, "};");
     writer.blank();

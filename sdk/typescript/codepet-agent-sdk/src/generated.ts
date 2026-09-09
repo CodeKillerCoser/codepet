@@ -272,6 +272,18 @@ export type ProviderAuthenticationStatus = "unknown" | "signed-in" | "signed-out
 
 export type ProviderId = string;
 
+export interface ProviderUsage {
+  displayText: string;
+  observedAt?: TimestampMs;
+  details?: Array<ProviderUsageDetail>;
+}
+
+export interface ProviderUsageDetail {
+  namespace: string;
+  schemaVersion: string;
+  data: JsonObject;
+}
+
 export interface ReasoningConversationItem {
   _meta?: JsonObject;
   resource: RoutedResourceId;

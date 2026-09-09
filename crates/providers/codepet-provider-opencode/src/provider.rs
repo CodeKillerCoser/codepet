@@ -27,7 +27,7 @@ use codepet_provider_sdk::{
     ProviderDescribeRequest, ProviderDescribeResponse, ProviderInitializeRequest,
     ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute, ProviderResourceId,
     ProviderPluginDescriptor, ProviderShutdownRequest, ProviderShutdownResponse,
-    TurnTask,   RuntimeCandidate, RuntimeGetInstalledRequest,
+    TurnTask, ProviderUsage, ProviderUsageDetail, RuntimeCandidate, RuntimeGetInstalledRequest,
     RuntimeGetInstalledResponse, RuntimeInstallation, RuntimeSelectRequest, RuntimeSelectResponse,
     TurnInterruptRequest, TurnInterruptResponse, TurnSelection,
     TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest, TurnSteerResponse,
@@ -101,6 +101,7 @@ struct InstanceMutable {
     metadata_task: Option<tokio::task::JoinHandle<()>>,
     version: Option<String>,
     authentication: Option<ProviderAuthentication>,
+    usage: Option<ProviderUsage>,
 }
 
 impl Drop for InstanceMutable {
@@ -151,7 +152,7 @@ impl OpenCodeInstanceRuntime {
                 metadata_task: None,
                 version: (!settings.server_version.is_empty()).then(|| settings.server_version.clone()),
                 authentication: None,
-
+                usage: None,
             }),
             mapper: OpenCodeProtocolMapper::new(request.route),
             events,
@@ -182,7 +183,7 @@ impl OpenCodeInstanceRuntime {
             mutable.status,
             conversation_atoms::observed_capabilities(lock(&self.capabilities).clone(), mutable.atomic_facts_ready, mutable.atomic_facts_epoch),
             mutable.authentication.clone(),
-
+            mutable.usage.clone(),
         )
     }
 
@@ -224,6 +225,10 @@ impl OpenCodeInstanceRuntime {
                 let result = probe(&["auth", "list"]).await.ok();
                 authentication_from_output(result.as_deref())
             };
+            let usage = async {
+                let result = probe(&["stats", "--days", "30"]).await.ok();
+                usage_from_output(result.as_deref())
+            };
             let catalog = async {
                 let session = session?;
                 let client = session.client();
@@ -248,9 +253,9 @@ impl OpenCodeInstanceRuntime {
                     .next().is_some_and(|c| c.is_ascii_digit()))
                     .map(|version| version.trim_start_matches('v').to_string())
             };
-            let (authentication, capabilities, version) = tokio::join!(auth, catalog, version);
+            let (authentication, usage, capabilities, version) = tokio::join!(auth, usage, catalog, version);
             if let Some(owner) = owner.upgrade() {
-                owner.apply_metadata(epoch, Some(authentication), capabilities, version);
+                owner.apply_metadata(epoch, Some(authentication), Some(usage), capabilities, version);
             }
         }));
     }
@@ -259,6 +264,7 @@ impl OpenCodeInstanceRuntime {
         &self,
         epoch: u64,
         authentication: Option<ProviderAuthentication>,
+        usage: Option<ProviderUsage>,
         capabilities: Option<ProviderCapabilities>,
         version: Option<String>,
     ) {
@@ -268,6 +274,9 @@ impl OpenCodeInstanceRuntime {
         }
         if let Some(authentication) = authentication {
             mutable.authentication = Some(authentication);
+        }
+        if let Some(usage) = usage {
+            mutable.usage = Some(usage);
         }
         if let Some(capabilities) = capabilities { *lock(&self.capabilities) = capabilities; }
         if let Some(version) = version { mutable.version = Some(version); }
@@ -2325,10 +2334,39 @@ fn authentication_from_output(output: Option<&str>) -> ProviderAuthentication {
     authentication
 }
 
+fn usage_from_output(stats: Option<&str>) -> ProviderUsage {
+    let total_cost = stats.as_deref().and_then(|text| statistic_value(text, "Total Cost"));
+    let input = stats.as_deref().and_then(|text| statistic_value(text, "Input"));
+    let output = stats.as_deref().and_then(|text| statistic_value(text, "Output"));
+    let mut data = codepet_provider_sdk::JsonObject::new();
+    if let Some(value) = total_cost.as_ref() { data.insert("totalCost".to_string(), json!(value)); }
+    if let Some(value) = input.as_ref() { data.insert("inputTokens".to_string(), json!(value)); }
+    if let Some(value) = output.as_ref() { data.insert("outputTokens".to_string(), json!(value)); }
+    let usage = ProviderUsage {
+        display_text: total_cost.map(|cost| format!("Last 30 days · {cost}"))
+            .unwrap_or_else(|| "Local usage statistics unavailable".to_string()),
+        observed_at: Some(now_ms()),
+        details: (!data.is_empty()).then_some(vec![ProviderUsageDetail {
+            namespace: "opencode.local-stats".to_string(),
+            schema_version: "1".to_string(),
+            data,
+        }]),
+    };
+    usage
+}
+
 fn parse_credential_count(text: &str) -> Option<u64> {
     text.lines().find(|line| line.contains("credential"))
         .and_then(|line| line.split(|character: char| !character.is_ascii_digit()).find(|part| !part.is_empty()))
         .and_then(|value| value.parse().ok())
+}
+
+fn statistic_value(text: &str, label: &str) -> Option<String> {
+    text.lines().find(|line| line.contains(label)).and_then(|line| {
+        let index = line.find(label)? + label.len();
+        let value = line[index..].trim().trim_end_matches('│').trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
 }
 
 fn discover_path_candidates(command: &str) -> Vec<RuntimeCandidate> {

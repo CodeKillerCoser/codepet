@@ -2235,6 +2235,98 @@ Object? encodeProviderId(ProviderId value, {String path = 'ProviderId'}) {
   return checked;
 }
 
+final class ProviderUsage {
+  factory ProviderUsage({
+    required String displayText,
+    TimestampMs? observedAt,
+    List<ProviderUsageDetail>? details,
+  }) {
+    final validatedDisplayText = _string(displayText, 'ProviderUsage.displayText', minLength: 1);
+    final validatedObservedAt = observedAt == null ? null : _integer(observedAt, 'ProviderUsage.observedAt', minimum: 0, maximum: 9007199254740991);
+    final validatedDetails = details == null ? null : _freezeList<ProviderUsageDetail>(details, 'ProviderUsage.details', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    return ProviderUsage._(
+      displayText: validatedDisplayText,
+      observedAt: validatedObservedAt,
+      details: validatedDetails,
+    );
+  }
+
+  ProviderUsage._({
+    required this.displayText,
+    required this.observedAt,
+    required this.details,
+  });
+
+  final String displayText;
+  final TimestampMs? observedAt;
+  final List<ProviderUsageDetail>? details;
+
+  factory ProviderUsage.fromJson(Object? value, {String path = 'ProviderUsage'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'displayText', 'observedAt', 'details'}, path);
+    return ProviderUsage(
+      displayText: _string(_required(json, 'displayText', path), '$path.displayText', minLength: 1),
+      observedAt: json.containsKey('observedAt') && json['observedAt'] != null ? _integer(json['observedAt'], '$path.observedAt', minimum: 0, maximum: 9007199254740991) : null,
+      details: json.containsKey('details') && json['details'] != null ? _decodeList<ProviderUsageDetail>(json['details'], '$path.details', (item, itemPath) => ProviderUsageDetail.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()) : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'displayText': displayText,
+    if (observedAt != null) 'observedAt': observedAt!,
+    if (details != null) 'details': details!.map((item) => item.toJson()).toList(growable: false),
+  };
+
+  @override
+  String toString() => 'ProviderUsage(displayText: $displayText, observedAt: $observedAt, details: $details)';
+}
+
+final class ProviderUsageDetail {
+  factory ProviderUsageDetail({
+    required String namespace,
+    required String schemaVersion,
+    required JsonObject data,
+  }) {
+    final validatedNamespace = _string(namespace, 'ProviderUsageDetail.namespace', minLength: 1);
+    final validatedSchemaVersion = _string(schemaVersion, 'ProviderUsageDetail.schemaVersion', minLength: 1);
+    final validatedData = _jsonObject(data, 'ProviderUsageDetail.data');
+    return ProviderUsageDetail._(
+      namespace: validatedNamespace,
+      schemaVersion: validatedSchemaVersion,
+      data: validatedData,
+    );
+  }
+
+  ProviderUsageDetail._({
+    required this.namespace,
+    required this.schemaVersion,
+    required this.data,
+  });
+
+  final String namespace;
+  final String schemaVersion;
+  final JsonObject data;
+
+  factory ProviderUsageDetail.fromJson(Object? value, {String path = 'ProviderUsageDetail'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'namespace', 'schemaVersion', 'data'}, path);
+    return ProviderUsageDetail(
+      namespace: _string(_required(json, 'namespace', path), '$path.namespace', minLength: 1),
+      schemaVersion: _string(_required(json, 'schemaVersion', path), '$path.schemaVersion', minLength: 1),
+      data: _jsonObject(_required(json, 'data', path), '$path.data'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'namespace': namespace,
+    'schemaVersion': schemaVersion,
+    'data': _encodeJsonObject(data, 'ProviderUsageDetail.data'),
+  };
+
+  @override
+  String toString() => 'ProviderUsageDetail(namespace: $namespace, schemaVersion: $schemaVersion, data: $data)';
+}
+
 final class ReasoningConversationItem extends ConversationItem {
   factory ReasoningConversationItem({
     JsonObject? meta,
@@ -4781,7 +4873,7 @@ final class UsageRow {
 
   Map<String, Object?> toJson() => {
     'bucket': bucket == null ? null : bucket!.toJson(),
-    if (modelId != null) 'modelId': modelId! == null ? null : modelId!!,
+    if (modelId != null) 'modelId': modelId!,
     'values': values.toJson(),
     'completeness': completeness.toJson(),
     'provisional': provisional,
@@ -4835,7 +4927,7 @@ final class UsageSummaries {
 
   Map<String, Object?> toJson() => {
     if (totals != null) 'totals': totals!.toJson(),
-    if (peakDaily != null) 'peakDaily': peakDaily! == null ? null : peakDaily!!.toJson(),
+    if (peakDaily != null) 'peakDaily': peakDaily!.toJson(),
     if (totalsByGroup != null) 'totalsByGroup': totalsByGroup!.map((item) => item.toJson()).toList(growable: false),
     if (peakDailyByGroup != null) 'peakDailyByGroup': peakDailyByGroup!.map((item) => item.toJson()).toList(growable: false),
   };

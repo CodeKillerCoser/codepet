@@ -624,6 +624,10 @@ impl CodexAppServerSession {
         self.request("account/usage/read", Value::Null)
     }
 
+    pub fn account_rate_limits_read(&self) -> Result<Value, CodexAppServerError> {
+        self.request("account/rateLimits/read", json!({}))
+    }
+
     pub fn thread_read(
         &self,
         thread_id: &str,

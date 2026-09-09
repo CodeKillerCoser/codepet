@@ -498,6 +498,8 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   const agentSource = generatorTargetRegistry.dart.render({ record: agent, model, ir: model.protocolIr });
   assert.match(agentSource, /sealed class ModelCatalog/);
   assert.match(agentSource, /final class FlatModelCatalog extends ModelCatalog/);
+  assert.match(agentSource, /if \(peakDaily != null\) 'peakDaily': peakDaily!\.toJson\(\)/);
+  assert.doesNotMatch(agentSource, /peakDaily!!/);
 
   const result = await generateProtocol({ checkMode: true, targets: ["dart"] });
   assert.deepEqual(

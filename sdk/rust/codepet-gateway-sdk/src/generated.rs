@@ -589,6 +589,8 @@ pub struct ProviderRuntime {
     pub executable_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authentication: Option<ProviderAuthentication>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<ProviderUsage>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -24,8 +24,8 @@ use codepet_provider_sdk::{
     Conversation, ProviderDescribeRequest, ProviderDescribeResponse, ProviderExtension,
     ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance, ProviderInstanceRoute, ProviderResourceId,
     Approval, ProviderAuthentication, ProviderAuthenticationStatus, ProviderPluginDescriptor,
-    ProviderShutdownRequest, ProviderShutdownResponse, TurnTask,
-
+    ProviderShutdownRequest, ProviderShutdownResponse, TurnTask, ProviderUsage,
+    ProviderUsageDetail,
     MessageConversationItem, MessageConversationItemKind, OpaqueToolInput, OpaqueToolInputKind,
     OutputContentBlock, OutputContentBlockKind, RoutedResourceId, RuntimeCandidate, RuntimeGetInstalledRequest, RuntimeGetInstalledResponse,
     RuntimeInstallation, RuntimeSelectRequest, RuntimeSelectResponse, ToolCategory,
@@ -160,6 +160,7 @@ struct InstanceMutable {
     conversations: HashMap<String, ManagedConversation>,
     version: Option<String>,
     authentication: Option<ProviderAuthentication>,
+    usage: Option<ProviderUsage>,
 }
 
 impl Drop for InstanceMutable {
@@ -203,7 +204,7 @@ impl ClaudeInstanceRuntime {
                 conversations: HashMap::new(),
                 version: None,
                 authentication: None,
-
+                usage: None,
             }),
             events,
         }
@@ -233,7 +234,7 @@ impl ClaudeInstanceRuntime {
             },
             status: mutable.status,
             authentication: mutable.authentication.clone(),
-
+            usage: mutable.usage.clone(),
             capabilities: conversation_atoms::observed_capabilities(self.capabilities.clone(), mutable.atomic_facts_ready, mutable.atomic_facts_epoch),
         }
     }
@@ -970,10 +971,11 @@ impl ClaudeInstanceRuntime {
                 result,
                 stop_reason: _,
                 terminal_reason,
-                usage: _,
-                total_cost_usd: _,
+                usage,
+                total_cost_usd,
             } => {
                 validate_claude_session(conversation_id, session_id.as_deref())?;
+                self.update_usage(usage, total_cost_usd);
                 let status = result_status(&subtype, is_error, terminal_reason.as_deref());
                 self.set_pending_completion(
                     conversation_id,
@@ -987,6 +989,36 @@ impl ClaudeInstanceRuntime {
             }
             _ => Ok(()),
         }
+    }
+
+    fn update_usage(&self, usage: Option<Value>, total_cost_usd: Option<f64>) {
+        let Some(usage) = usage else { return };
+        let mut data = usage.as_object().map(|value| value.iter()
+            .map(|(key, value)| (key.clone(), value.clone())).collect::<BTreeMap<_, _>>())
+            .unwrap_or_default();
+        if let Some(cost) = total_cost_usd {
+            data.insert("totalCostUsd".to_string(), json!(cost));
+        }
+        let tokens = ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
+            .into_iter()
+            .filter_map(|key| data.get(key).and_then(Value::as_u64))
+            .sum::<u64>();
+        lock(&self.mutable).usage = Some(ProviderUsage {
+            display_text: match total_cost_usd {
+                Some(cost) => format!("Last turn: {tokens} tokens · ${cost:.4}"),
+                None => format!("Last turn: {tokens} tokens"),
+            },
+            observed_at: Some(now_ms()),
+            details: Some(vec![ProviderUsageDetail {
+                namespace: "anthropic.claude.turn-usage".to_string(),
+                schema_version: "1".to_string(),
+                data,
+            }]),
+        });
+        let _ = self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
+            jsonrpc: "2.0".to_string(),
+            params: InstanceStatusChangedEvent { instance: self.snapshot(), previous_status: None },
+        });
     }
 
     fn set_pending_completion(

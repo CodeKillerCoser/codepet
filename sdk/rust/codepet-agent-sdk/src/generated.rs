@@ -603,6 +603,26 @@ pub type ProviderId = String;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ProviderUsage {
+    pub display_text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<TimestampMs>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Vec<ProviderUsageDetail>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ProviderUsageDetail {
+    pub namespace: String,
+    pub schema_version: String,
+    pub data: JsonObject,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ReasoningConversationItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "_meta")]

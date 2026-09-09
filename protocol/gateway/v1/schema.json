@@ -465,7 +465,11 @@
     "ConversationItemUpsertedEvent": {
       "type": "object",
       "properties": {
-        "updateId": {"type": "string", "minLength": 1, "description": "Stable source event identity for deduplicating content invalidations."},
+        "updateId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable source event identity for deduplicating content invalidations."
+        },
         "conversation": {
           "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
         },
@@ -930,6 +934,9 @@
         },
         "authentication": {
           "$ref": "../../agent/v1/schema.json#/$defs/ProviderAuthentication"
+        },
+        "usage": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ProviderUsage"
         }
       },
       "required": [

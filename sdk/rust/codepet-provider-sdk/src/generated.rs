@@ -716,6 +716,8 @@ pub struct ProviderInstance {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authentication: Option<ProviderAuthentication>,
     pub capabilities: ProviderCapabilities,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<ProviderUsage>,
 }
 
 pub type ProviderInstanceKind = String;

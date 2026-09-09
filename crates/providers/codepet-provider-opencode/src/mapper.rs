@@ -253,6 +253,7 @@ impl OpenCodeProtocolMapper {
         status: InstanceStatus,
         capabilities: ProviderCapabilities,
         authentication: Option<codepet_provider_sdk::ProviderAuthentication>,
+        usage: Option<codepet_provider_sdk::ProviderUsage>,
     ) -> ProviderInstance {
         ProviderInstance {
             route: self.route.clone(),
@@ -262,7 +263,7 @@ impl OpenCodeProtocolMapper {
             harness,
             status,
             authentication,
-
+            usage,
             capabilities,
         }
     }

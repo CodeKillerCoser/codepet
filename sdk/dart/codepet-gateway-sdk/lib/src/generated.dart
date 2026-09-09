@@ -2478,6 +2478,7 @@ final class ProviderRuntime {
     String? version,
     String? executablePath,
     ProviderAuthentication? authentication,
+    ProviderUsage? usage,
   }) {
     final validatedConnectionStatus = connectionStatus == null ? null : connectionStatus;
     final validatedGeneration = generation == null ? null : _integer(generation, 'ProviderRuntime.generation', minimum: 0);
@@ -2485,6 +2486,7 @@ final class ProviderRuntime {
     final validatedVersion = version == null ? null : _string(version, 'ProviderRuntime.version', minLength: 1);
     final validatedExecutablePath = executablePath == null ? null : _string(executablePath, 'ProviderRuntime.executablePath', minLength: 1);
     final validatedAuthentication = authentication == null ? null : authentication;
+    final validatedUsage = usage == null ? null : usage;
     return ProviderRuntime._(
       connectionStatus: validatedConnectionStatus,
       generation: validatedGeneration,
@@ -2492,6 +2494,7 @@ final class ProviderRuntime {
       version: validatedVersion,
       executablePath: validatedExecutablePath,
       authentication: validatedAuthentication,
+      usage: validatedUsage,
     );
   }
 
@@ -2502,6 +2505,7 @@ final class ProviderRuntime {
     required this.version,
     required this.executablePath,
     required this.authentication,
+    required this.usage,
   });
 
   final ConnectionStatus? connectionStatus;
@@ -2510,10 +2514,11 @@ final class ProviderRuntime {
   final String? version;
   final String? executablePath;
   final ProviderAuthentication? authentication;
+  final ProviderUsage? usage;
 
   factory ProviderRuntime.fromJson(Object? value, {String path = 'ProviderRuntime'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'connectionStatus', 'generation', 'status', 'version', 'executablePath', 'authentication'}, path);
+    _expectKeys(json, const {'connectionStatus', 'generation', 'status', 'version', 'executablePath', 'authentication', 'usage'}, path);
     return ProviderRuntime(
       connectionStatus: json.containsKey('connectionStatus') && json['connectionStatus'] != null ? ConnectionStatus.fromJson(json['connectionStatus'], path: '$path.connectionStatus') : null,
       generation: json.containsKey('generation') && json['generation'] != null ? _integer(json['generation'], '$path.generation', minimum: 0) : null,
@@ -2521,6 +2526,7 @@ final class ProviderRuntime {
       version: json.containsKey('version') && json['version'] != null ? _string(json['version'], '$path.version', minLength: 1) : null,
       executablePath: json.containsKey('executablePath') && json['executablePath'] != null ? _string(json['executablePath'], '$path.executablePath', minLength: 1) : null,
       authentication: json.containsKey('authentication') && json['authentication'] != null ? ProviderAuthentication.fromJson(json['authentication'], path: '$path.authentication') : null,
+      usage: json.containsKey('usage') && json['usage'] != null ? ProviderUsage.fromJson(json['usage'], path: '$path.usage') : null,
     );
   }
 
@@ -2531,10 +2537,11 @@ final class ProviderRuntime {
     if (version != null) 'version': version!,
     if (executablePath != null) 'executablePath': executablePath!,
     if (authentication != null) 'authentication': authentication!.toJson(),
+    if (usage != null) 'usage': usage!.toJson(),
   };
 
   @override
-  String toString() => 'ProviderRuntime(connectionStatus: $connectionStatus, generation: $generation, status: $status, version: $version, executablePath: $executablePath, authentication: $authentication)';
+  String toString() => 'ProviderRuntime(connectionStatus: $connectionStatus, generation: $generation, status: $status, version: $version, executablePath: $executablePath, authentication: $authentication, usage: $usage)';
 }
 
 enum ProviderStatus {

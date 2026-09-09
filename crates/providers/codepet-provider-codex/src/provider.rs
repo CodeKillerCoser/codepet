@@ -30,8 +30,8 @@ use codepet_provider_sdk::{
     ProjectListRequest, ProjectListResponse, ProjectUpdateRequest, ProjectUpdateResponse,
     ProtocolError, ProtocolEvent, ProtocolFuture, Provider, ProviderCapabilities,
     ProviderAuthentication, ProviderAuthenticationStatus, ProviderCapability,
-    ProviderDescribeRequest, ProviderDescribeResponse, ProviderEventSink,
-
+    ProviderDescribeRequest, ProviderDescribeResponse, ProviderEventSink, ProviderUsage,
+    ProviderUsageDetail,
     FlatModelCatalogKind, FlatModelSelection, HarnessDescriptor, ModelCatalog, ModelSelection, Approval,
     ProviderInitializeRequest, ProviderInitializeResponse, ProviderInstance,
     ProviderInstanceRoute, ProviderPluginDescriptor, ProviderResourceId, ProviderShutdownRequest,
@@ -97,6 +97,7 @@ struct InstanceMutable {
     capabilities: ProviderCapabilities,
     harness: HarnessDescriptor,
     authentication: Option<ProviderAuthentication>,
+    usage: Option<ProviderUsage>,
     lifecycle_generation: u64,
     sessions: HashMap<u64, Arc<InstanceSessionSlot>>,
     server_session_id: Option<u64>,
@@ -443,7 +444,7 @@ impl CodexInstanceRuntime {
                     executable_path: Some(executable_path),
                 },
                 authentication: None,
-
+                usage: None,
                 lifecycle_generation: 0,
                 sessions: HashMap::new(),
                 server_session_id: None,
@@ -478,6 +479,7 @@ impl CodexInstanceRuntime {
             mutable.harness.clone(),
             mutable.status,
             mutable.authentication.clone(),
+            mutable.usage.clone(),
             capabilities,
         )
     }
@@ -522,10 +524,15 @@ impl CodexInstanceRuntime {
             let model_server = server.clone();
             let project_server = server.clone();
             let account_server = server.clone();
+            let limits_server = server.clone();
+            let usage_server = server.clone();
             let models = tokio::task::spawn_blocking(move || model_server.model_list());
             let projects =
                 tokio::task::spawn_blocking(move || project_server.project_list(None, Some(1)));
             let account = tokio::task::spawn_blocking(move || account_server.account_read());
+            let limits =
+                tokio::task::spawn_blocking(move || limits_server.account_rate_limits_read());
+            let usage = tokio::task::spawn_blocking(move || usage_server.account_usage_read());
             let catalog = async {
                 let (models, projects) = tokio::join!(models, projects);
                 let Ok(Ok(models)) = models else { return None; };
@@ -539,12 +546,16 @@ impl CodexInstanceRuntime {
             let authentication = async {
                 account.await.ok().and_then(Result::ok).map(|account| codex_authentication(&account))
             };
-            let (capabilities, authentication) = tokio::join!(catalog, authentication);
+            let consumption = async {
+                let (limits, usage) = tokio::join!(limits, usage);
+                codex_usage(limits.ok().and_then(Result::ok).as_ref(), usage.ok().and_then(Result::ok).as_ref())
+            };
+            let (capabilities, authentication, usage) = tokio::join!(catalog, authentication, consumption);
             if let Some(owner) = owner.upgrade() {
                 owner.apply_metadata(epoch, |state| {
                     if let Some(capabilities) = capabilities { state.capabilities = capabilities; }
                     state.authentication = authentication.flatten();
-
+                    state.usage = usage;
                 });
             }
         }));
@@ -1739,7 +1750,7 @@ impl Provider for CodexProvider {
                     mutable.capabilities = CodexProtocolMapper::unavailable_capabilities(server_generation.clone());
                     mutable.harness = harness;
                     mutable.authentication = None;
-
+                    mutable.usage = None;
                     mutable.server_session_id = Some(slot.id);
                     mutable.server_generation = Some(server_generation.clone());
                     mutable.pending_approvals.clear();
@@ -3830,6 +3841,106 @@ fn display_plan_name(plan: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn codex_usage(
+    rate_limits: Option<&Value>,
+    token_usage: Option<&Value>,
+) -> Option<ProviderUsage> {
+    let mut details = Vec::new();
+    let mut display_parts = Vec::new();
+    if let Some(rate_limits) = rate_limits {
+        let mut data = codepet_provider_sdk::JsonObject::new();
+        for key in ["rateLimits", "rateLimitsByLimitId", "rateLimitResetCredits"] {
+            if let Some(value) = rate_limits.get(key).filter(|value| !value.is_null()) {
+                data.insert(key.to_string(), value.clone());
+            }
+        }
+        if !data.is_empty() {
+            details.push(ProviderUsageDetail {
+                namespace: "openai.codex.rate-limits".to_string(),
+                schema_version: "1".to_string(),
+                data,
+            });
+        }
+        if let Some(snapshot) = preferred_rate_limit_snapshot(rate_limits) {
+            for key in ["primary", "secondary"] {
+                if let Some(window) = snapshot.get(key).filter(|value| !value.is_null()) {
+                    if let Some(label) = rate_limit_window_label(window) {
+                        display_parts.push(label);
+                    }
+                }
+            }
+        }
+    }
+    if let Some(summary) = token_usage
+        .and_then(|usage| usage.get("summary"))
+        .filter(|value| value.is_object())
+    {
+        details.push(ProviderUsageDetail {
+            namespace: "openai.codex.token-usage".to_string(),
+            schema_version: "1".to_string(),
+            data: [("summary".to_string(), summary.clone())]
+                .into_iter()
+                .collect(),
+        });
+        if display_parts.is_empty() {
+            if let Some(tokens) = summary.get("lifetimeTokens").and_then(Value::as_u64) {
+                display_parts.push(format!("{} lifetime tokens", compact_number(tokens)));
+            }
+        }
+    }
+    if details.is_empty() {
+        return None;
+    }
+    Some(ProviderUsage {
+        display_text: if display_parts.is_empty() {
+            "Usage data available".to_string()
+        } else {
+            display_parts.join(" · ")
+        },
+        observed_at: Some(now_ms()),
+        details: Some(details),
+    })
+}
+
+fn preferred_rate_limit_snapshot(response: &Value) -> Option<&Value> {
+    response
+        .pointer("/rateLimitsByLimitId/codex")
+        .or_else(|| response.get("rateLimits"))
+}
+
+fn rate_limit_window_label(window: &Value) -> Option<String> {
+    let used = window.get("usedPercent")?.as_u64()?.min(100);
+    let remaining = 100_u64.saturating_sub(used);
+    let duration = window
+        .get("windowDurationMins")
+        .and_then(Value::as_u64)
+        .map(format_window_duration)
+        .unwrap_or_else(|| "Quota".to_string());
+    Some(format!("{duration} {remaining}% remaining"))
+}
+
+fn format_window_duration(minutes: u64) -> String {
+    if minutes > 0 && minutes % (24 * 60) == 0 {
+        format!("{}d", minutes / (24 * 60))
+    } else if minutes > 0 && minutes % 60 == 0 {
+        format!("{}h", minutes / 60)
+    } else {
+        format!("{minutes}m")
+    }
+}
+
+fn compact_number(value: u64) -> String {
+    if value >= 1_000_000_000 {
+        format!("{:.1}B", value as f64 / 1_000_000_000.0)
+    } else if value >= 1_000_000 {
+        format!("{:.1}M", value as f64 / 1_000_000.0)
+    } else if value >= 1_000 {
+        format!("{:.1}K", value as f64 / 1_000.0)
+    } else {
+        value.to_string()
+    }
 }
 
 fn provider_task_error(error: tokio::task::JoinError) -> ProtocolError {

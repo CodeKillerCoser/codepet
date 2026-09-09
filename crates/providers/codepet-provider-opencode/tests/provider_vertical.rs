@@ -927,10 +927,12 @@ async fn account_probes_are_parallel_notify_later_and_cancel_on_stop() {
     .unwrap();
     assert_eq!(started.instance.status, InstanceStatus::Starting);
     assert!(started.instance.authentication.is_none());
+    assert!(started.instance.usage.is_none());
     // Both commands must have started while neither can finish: proves parallelism without timing ratios.
     tokio::time::timeout(Duration::from_secs(3), async {
         while [
             "auth.pid",
+            "stats.pid",
             "model.requested",
             "agent.requested",
             "provider.requested",
@@ -948,7 +950,7 @@ async fn account_probes_are_parallel_notify_later_and_cancel_on_stop() {
     std::fs::write(directory.path().join("release"), "").unwrap();
     tokio::time::timeout(Duration::from_secs(3),async {
         loop {
-            if events.try_iter().any(|event| matches!(event,ProtocolEvent::EventInstanceStatusChanged{params,..} if params.instance.status==InstanceStatus::Ready && params.instance.authentication.is_some())) {break;}
+            if events.try_iter().any(|event| matches!(event,ProtocolEvent::EventInstanceStatusChanged{params,..} if params.instance.status==InstanceStatus::Ready && params.instance.authentication.is_some() && params.instance.usage.is_some())) {break;}
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.unwrap();
@@ -958,7 +960,7 @@ async fn account_probes_are_parallel_notify_later_and_cancel_on_stop() {
         })
         .await
         .unwrap();
-    for name in ["auth.pid", "release"] {
+    for name in ["auth.pid", "stats.pid", "release"] {
         std::fs::remove_file(directory.path().join(name)).unwrap();
     }
     provider
@@ -970,6 +972,7 @@ async fn account_probes_are_parallel_notify_later_and_cancel_on_stop() {
     tokio::time::timeout(Duration::from_secs(3), async {
         while [
             "auth.pid",
+            "stats.pid",
             "model.requested",
             "agent.requested",
             "provider.requested",
@@ -983,11 +986,13 @@ async fn account_probes_are_parallel_notify_later_and_cancel_on_stop() {
     .await
     .unwrap();
     let auth = read_pid(&directory.path().join("auth.pid"));
+    let stats = read_pid(&directory.path().join("stats.pid"));
     provider
         .instance_stop(InstanceStopRequest { route })
         .await
         .unwrap();
     assert_process_exited(auth);
+    assert_process_exited(stats);
     let _ = events.try_iter().collect::<Vec<_>>();
     std::fs::write(directory.path().join("release"), "").unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;

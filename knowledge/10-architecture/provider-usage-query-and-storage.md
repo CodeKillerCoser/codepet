@@ -54,7 +54,7 @@ Agent schema 是共享定义。请求指定 datasetId、filter.time（all 或 fr
 
 - `protocol/agent|provider|gateway` 及生成 SDK：定义契约、能力和严格 DTO。
 - `crates/providers/codepet-provider-data`：计量、SQLite、未读业务，不依赖 Host。
-- 三个 Provider：接入各自原生来源及 usage 方法，移除独立 runtime usage 摘要。
+- 三个 Provider：接入各自原生来源及 usage 查询方法，同时保留独立的 `ProviderInstance.usage` 摘要，由 Gateway 转发为 `runtime.usage`。摘要是 Provider 来源范围内的账户/用量概览，不是详情查询结果，不受查询时间筛选、分页影响。Codex 读取额度与账户摘要，OpenCode 保留近 30 天 CLI 统计，Claude 保留最近一轮结果用量；不可把后两者宣称为账户全历史总量。
 - `crates/codepet-host`：注入目录、日志落盘、Gateway 路由和未读存储路由。
 - `src-tauri`：配置生产 Provider 根目录及 SQLite fallback 文件名。
 
@@ -137,3 +137,11 @@ Codex 原生每日数据保留范围、日期的上游时区及不同客户端�
 合并后执行 `cargo check --manifest-path crates/Cargo.toml --workspace --tests --quiet`、Tauri lib/runtime_gateway_core_tests 编译检查、Provider 数据层 27 项测试、Host manager_gateway 29 项测试、前端 usageQuery/codepetGateway 4 项测试、`npm run protocol:check`（20 项）和 `npm run build`，均通过。扩展 Host lib 测试初次 57/58 通过，日志轮转测试在 Windows 遇到一次文件访问拒绝；单独复测通过，该模块本次没有改动。项目未定义 npm test，前端测试使用 `npx vitest run`。
 
 Codex Provider lib 67 项测试通过，覆盖合并后的 Provider 行为。
+
+## 恢复独立 Provider 用量概览（2026-09-09）
+
+提交 `06ffe4f` 的 schema 和 Provider diff 证明：新增详情查询时同时删除了 `ProviderUsage`、Provider 实例 usage 字段、Gateway runtime.usage 及原生采集。这不是详情查询所要求的变更。概览与详情是独立业务；本次恢复被误删链路，保留数据集、SQLite、筛选与分页查询。
+
+Codex 恢复 account/rateLimits/read 和 account/usage/read 的后台概览采集；OpenCode 恢复可取消的 stats --days 30；Claude 将 result usage/cost 写回快照并发布事件。Host 恢复大小限制与递归脱敏，手机保留 usageDatasets 解码兼容并恢复概览展示映射。各来源范围仍按原生含义展示，不把最近一轮或近 30 天数据当作全账户累计。
+
+验证：Host lib 58、manager_gateway 29、Claude lib 7、Codex lib 67、OpenCode lib 17 项通过；Codex 账户/项目子进程测试、Claude result 概览与查询能力共存测试、OpenCode 并行探测与停止取消测试通过。手机客户端/映射/分层测试 58 项、Flutter analyze、协议检查 20 项通过。两个主工作区的 SDK 输出以 cp-sdk-gen --check 核对。初次 OpenCode 定向测试因测试服务的 stats 分支也曾被删除而超时，恢复该分支后通过。未构建安装新包，真实账户与手机验收仍需重新部署后执行。

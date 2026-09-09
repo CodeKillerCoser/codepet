@@ -2408,6 +2408,50 @@
       ],
       "additionalProperties": false,
       "description": "Unfiltered native account facts, independent of query filters and daily bucket retention. Never combine with local observed totals."
+    },
+    "ProviderUsage": {
+      "type": "object",
+      "properties": {
+        "displayText": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observedAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderUsageDetail"
+          }
+        }
+      },
+      "required": [
+        "displayText"
+      ],
+      "additionalProperties": false
+    },
+    "ProviderUsageDetail": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schemaVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "data": {
+          "$ref": "../../core/v1/schema.json#/$defs/JsonObject"
+        }
+      },
+      "required": [
+        "namespace",
+        "schemaVersion",
+        "data"
+      ],
+      "additionalProperties": false
     }
   }
 }

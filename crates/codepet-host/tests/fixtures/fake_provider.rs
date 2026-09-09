@@ -21,7 +21,7 @@ use codepet_provider_sdk::{
     ProviderDescribeResponse, ProviderInitializeRequest, ProviderInitializeResponse,
     ProviderAuthentication, ProviderAuthenticationStatus, ProviderInstance, ProviderInstanceRoute,
     ProviderPluginDescriptor, ProviderResourceId, ProviderShutdownRequest, ProviderShutdownResponse,
-    TurnTask, RoutedResourceId,
+    TurnTask, ProviderUsage, ProviderUsageDetail, RoutedResourceId,
     MessageConversationItem, MessageConversationItemKind, TextContentBlock, TextContentBlockKind,
     TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent, TurnSendCapabilities,
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
@@ -196,6 +196,19 @@ impl ProtocolServer for FakeProvider {
                 authentication: Some(ProviderAuthentication {
                     status: ProviderAuthenticationStatus::SignedIn,
                     display_text: Some("Signed in to fixture".to_string()),
+                }),
+                usage: Some(ProviderUsage {
+                    display_text: "Fixture usage 42%".to_string(),
+                    observed_at: Some(1_788_450_000_000),
+                    details: Some(vec![ProviderUsageDetail {
+                        namespace: "dev.codepet.fixture.usage".to_string(),
+                        schema_version: "1".to_string(),
+                        data: BTreeMap::from([
+                            ("usedPercent".to_string(), serde_json::json!(42)),
+                            ("accessToken".to_string(), serde_json::json!("must-not-leak")),
+                            ("nested".to_string(), serde_json::json!({"cookie": "must-not-leak", "safe": true})),
+                        ]),
+                    }]),
                 }),
                 capabilities: capabilities(),
             };

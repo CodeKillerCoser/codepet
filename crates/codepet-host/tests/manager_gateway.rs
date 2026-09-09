@@ -60,6 +60,12 @@ async fn codepet_usage_routes_to_provider_and_host_assigns_private_storage_and_l
     let JsonRpcResponsePayload::Ok{result}=response.response else{panic!("usage query failed: {response:?}")};
     assert_eq!(result["result"]["summaries"]["totals"]["totalTokens"]["value"],20);
     assert_eq!(result["result"]["rows"][0]["modelId"],"fixture-model");
+    let describe=serde_json::from_value(serde_json::json!({"jsonrpc":"2.0","id":"usage-description","method":"provider.describe","params":{"providerId":"usage-instance"}})).unwrap();
+    let description=gateway.dispatch_for_local_client("desktop-main",describe).await;
+    let JsonRpcResponsePayload::Ok{result:description}=description.response else{panic!("provider description failed")};
+    assert_eq!(description["provider"]["runtime"]["usage"]["displayText"],"Fixture usage 42%");
+    assert!(description["capabilities"]["methods"].as_array().unwrap().contains(&serde_json::json!("codepet.usage.query")));
+    assert!(!description["provider"]["runtime"]["usage"].to_string().contains("accessToken"));
     let empty_request=serde_json::from_value(serde_json::json!({"jsonrpc":"2.0","id":"empty-usage","method":"codepet.usage.query","params":{"providerId":"usage-instance","query":{"datasetId":"observed-model-tokens","filter":{"time":{"kind":"all"},"modelIds":["missing-model"]},"aggregation":{"timeBucket":"halfHour","timeZone":"UTC","groupBy":["model"]},"metrics":["totalTokens"],"summaries":["peakDaily"]}}})).unwrap();
     let empty=gateway.dispatch_for_local_client("desktop-main",empty_request).await;
     let JsonRpcResponsePayload::Ok{result:empty}=empty.response else{panic!("empty usage failed")};
@@ -1297,6 +1303,13 @@ async fn gateway_turn_send_validates_controls_and_deduplicates_client_requests()
         provider.runtime.authentication.as_ref().unwrap().status,
         codepet_gateway_sdk::ProviderAuthenticationStatus::SignedIn
     );
+    let usage = provider.runtime.usage.as_ref().unwrap();
+    assert_eq!(usage.display_text, "Fixture usage 42%");
+    let details = usage.details.as_ref().unwrap();
+    assert_eq!(details.len(), 1);
+    assert_eq!(details[0].data.get("usedPercent"), Some(&serde_json::json!(42)));
+    assert!(!details[0].data.contains_key("accessToken"));
+    assert_eq!(details[0].data["nested"], serde_json::json!({"safe": true}));
     assert_eq!(provider.capabilities.revision, "fake-capabilities-v1");
     let described = gateway
         .provider_describe(ProviderDescribeRequest { provider_id: provider.id.clone() })

@@ -17,6 +17,9 @@ use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex};
 const EVENT_CURSOR_PREFIX: &str = "event-";
 const TURN_SEND_CACHE_CAPACITY: usize = 1_024;
 const DEFAULT_TURN_SEND_CALLER_SCOPE: &str = "provider-gateway-protocol-default";
+const MAX_USAGE_DETAILS: usize = 8;
+const MAX_USAGE_DETAIL_BYTES: usize = 16 * 1024;
+const MAX_USAGE_DETAILS_BYTES: usize = 32 * 1024;
 
 mod recent;
 
@@ -1513,6 +1516,11 @@ fn gateway_provider(
                     .as_ref()
                     .and_then(|instance| instance.authentication.as_ref())
                     .cloned(),
+                usage: runtime
+                    .instance
+                    .as_ref()
+                    .and_then(|instance| instance.usage.as_ref())
+                    .map(map_usage),
             },
             capabilities: gateway::ProviderCapabilitiesSummary {
                 revision: capabilities.revision.clone(),
@@ -1528,6 +1536,66 @@ fn configured_executable_path(settings: &provider::JsonObject) -> Option<String>
         .find_map(|key| settings.get(key).and_then(|value| value.as_str()))
         .filter(|path| !path.trim().is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn map_usage(usage: &provider::ProviderUsage) -> gateway::ProviderUsage {
+    let mut total_bytes = 0usize;
+    let details = usage.details.as_ref().map(|details| {
+        details
+            .iter()
+            .take(MAX_USAGE_DETAILS)
+            .filter_map(|detail| {
+                let data = redact_usage_data(&detail.data);
+                let serialized_bytes = serde_json::to_vec(&data).ok()?.len();
+                if serialized_bytes > MAX_USAGE_DETAIL_BYTES
+                    || total_bytes.saturating_add(serialized_bytes) > MAX_USAGE_DETAILS_BYTES
+                {
+                    return None;
+                }
+                total_bytes = total_bytes.saturating_add(serialized_bytes);
+                Some(gateway::ProviderUsageDetail {
+                    namespace: detail.namespace.clone(),
+                    schema_version: detail.schema_version.clone(),
+                    data,
+                })
+            })
+            .collect()
+    });
+    gateway::ProviderUsage {
+        display_text: usage.display_text.clone(),
+        observed_at: usage.observed_at,
+        details,
+    }
+}
+
+fn redact_usage_data(data: &provider::JsonObject) -> gateway::JsonObject {
+    data.iter()
+        .filter(|(key, _)| !usage_key_is_sensitive(key))
+        .map(|(key, value)| (key.clone(), redact_usage_value(value)))
+        .collect()
+}
+
+fn redact_usage_value(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(object) => serde_json::Value::Object(
+            object
+                .iter()
+                .filter(|(key, _)| !usage_key_is_sensitive(key))
+                .map(|(key, value)| (key.clone(), redact_usage_value(value)))
+                .collect(),
+        ),
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.iter().map(redact_usage_value).collect())
+        }
+        _ => value.clone(),
+    }
+}
+
+fn usage_key_is_sensitive(key: &str) -> bool {
+    let normalized = key.to_ascii_lowercase().replace(['-', '_'], "");
+    ["authorization", "accesstoken", "refreshtoken", "password", "secret", "cookie", "email", "accountid"]
+        .iter()
+        .any(|sensitive| normalized.contains(sensitive))
 }
 
 fn provider_runtime_status(
