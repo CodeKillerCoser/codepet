@@ -4,11 +4,20 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import sqlite3
 import time
 from aiohttp import web
+
+LOG = logging.getLogger('codepet.signal')
+
+
+def diagnostic(event, **fields):
+    LOG.info(json.dumps({'schema': 'codepet.signal.v1', 'timestampUnixMs': int(time.time() * 1000),
+                         'event': event, **fields}, separators=(',', ':')))
+
 
 ID = re.compile(r"^[a-zA-Z0-9_-]{1,100}$")
 
@@ -26,6 +35,27 @@ def create_app(db_path, turn_secret, public_ip):
     """)
     pending = {}
     rates = {}
+
+    @web.middleware
+    async def observe(request, handler):
+        started = time.monotonic()
+        status = 500
+        try:
+            response = await handler(request)
+            status = response.status
+            return response
+        except web.HTTPException as error:
+            status = error.status
+            raise
+        finally:
+            # Never log query strings, Authorization, envelopes or exception text.
+            # Successful empty polls are represented by actual mailbox stage events.
+            if request.path != '/health' and (status != 200 or request.method != 'GET' or request.path == '/v1/ice'):
+                kind, host, client = request.get('actor', (None, None, None))
+                diagnostic('http.complete', method=request.method,
+                           route=request.path if request.path in {'/v1/ice','/v1/offers','/v1/answers','/v1/answer','/v1/clients'} else 'unknown',
+                           status=status, role=kind, host=host, client=client,
+                           durationMs=round((time.monotonic()-started)*1000))
 
     @web.middleware
     async def guard(request, handler):
@@ -54,6 +84,7 @@ def create_app(db_path, turn_secret, public_ip):
         rates[key] = (start, count + 1)
         for key in list(pending):
             if pending[key]['deadline'] < now:
+                diagnostic('mailbox.expired', host=key[0], client=key[1], attempt=pending[key]['attempt'], answered=pending[key]['answer'] is not None)
                 del pending[key]
         response = await handler(request)
         response.headers['Cache-Control'] = 'no-store'
@@ -137,6 +168,7 @@ def create_app(db_path, turn_secret, public_ip):
             raise web.HTTPServiceUnavailable()
         pending[key] = {'attempt': attempt, 'envelope': envelope(value.get('envelope')),
                         'answer': None, 'delivered': False, 'deadline': time.monotonic() + 60}
+        diagnostic('offer.accepted', host=host, client=client, attempt=attempt, envelopeBytes=len(pending[key]['envelope']['payload']))
         return web.json_response({'ok': True})
 
     async def offers(request):
@@ -147,6 +179,7 @@ def create_app(db_path, turn_secret, public_ip):
             if owner == host and not value['delivered']:
                 result.append({'client': client, 'attempt': value['attempt'], 'envelope': value['envelope']})
                 value['delivered'] = True
+                diagnostic('offer.delivered', host=host, client=client, attempt=value['attempt'], ageMs=round((time.monotonic()-(value['deadline']-60))*1000))
         return web.json_response({'offers': result})
 
     async def answer(request):
@@ -157,6 +190,7 @@ def create_app(db_path, turn_secret, public_ip):
         if not entry or entry['attempt'] != value.get('attempt') or entry['answer'] is not None:
             raise web.HTTPConflict()
         entry['answer'] = envelope(value.get('envelope'))
+        diagnostic('answer.accepted', host=host, client=key[1], attempt=entry['attempt'], ageMs=round((time.monotonic()-(entry['deadline']-60))*1000))
         return web.json_response({'ok': True})
 
     async def get_answer(request):
@@ -164,9 +198,12 @@ def create_app(db_path, turn_secret, public_ip):
         entry = pending.get((host, client))
         if not entry or entry['attempt'] != request.query.get('attempt'):
             raise web.HTTPNotFound()
+        if entry['answer'] is not None and not entry.get('answerLogged'):
+            entry['answerLogged'] = True
+            diagnostic('answer.delivered', host=host, client=client, attempt=entry['attempt'], ageMs=round((time.monotonic()-(entry['deadline']-60))*1000))
         return web.json_response({'answer': entry['answer']})
 
-    app = web.Application(middlewares=[guard], client_max_size=100000)
+    app = web.Application(middlewares=[observe, guard], client_max_size=100000)
     app.router.add_get('/health', lambda _: web.json_response({'status': 'ok'}))
     app.router.add_put('/v1/clients', clients)
     app.router.add_get('/v1/ice', ice)
@@ -182,6 +219,7 @@ def create_app(db_path, turn_secret, public_ip):
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     config = json.load(open(os.environ.get('CODEPET_SIGNAL_CONFIG', '/etc/codepet-signal/config.json')))
     web.run_app(create_app(config['database'], config['turnSecret'], config['publicIp']),
                 host='127.0.0.1', port=8787, access_log=None)

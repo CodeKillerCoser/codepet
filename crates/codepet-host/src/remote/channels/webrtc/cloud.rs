@@ -294,6 +294,8 @@ impl Cloud {
             serde_json::from_value(ice["iceServers"].clone()).map_err(|_| error())?;
         let description: RTCSessionDescription =
             serde_json::from_value(body["description"].clone()).map_err(|_| error())?;
+        let diagnostic = super::diagnostics::Diagnostic::new(&description.sdp);
+        diagnostic.emit("signal.offer.accepted",json!({"attempt":attempt}));
         let answer = super::answer_offer_configured(
             description,
             gateway,
@@ -306,6 +308,7 @@ impl Cloud {
             },
         )
         .await?;
+        diagnostic.emit("signal.answer.ready",json!({"attempt":attempt}));
         let payload=serde_json::to_vec(&json!({"v":1,"kind":"answer","host":self.access.remote_host_identity().device_id,"client":client,"attempt":attempt,"expires":expires,"offerHash":hash(&bytes),"description":answer})).map_err(|_|error())?;
         self.request(reqwest::Method::POST,"/v1/answers",Some(json!({"client":client,"attempt":attempt,"envelope":{"payload":B64.encode(&payload),"signature":B64.encode(self.key.sign(&payload).as_ref())}}))).await?;
         Ok(())

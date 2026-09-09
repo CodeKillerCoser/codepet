@@ -88,6 +88,7 @@ pub fn init_app_logging() -> io::Result<PathBuf> {
         }
         let _ = LOG_FILE.set(Mutex::new(file));
     }
+    codepet_host::set_rtc_diagnostic_sink(|line| info("rtc", line));
     install_panic_hook();
     info("app", &format!("logging initialized path={}", path.display()));
     Ok(path)

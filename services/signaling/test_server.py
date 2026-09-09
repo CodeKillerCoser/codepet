@@ -43,6 +43,26 @@ class AdmissionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call('PUT', '/v1/clients', 'host-token', {'clients': []})).status, 200)
         self.assertEqual((await self.call('GET', '/v1/ice', 'client-token')).status, 401)
 
+    async def test_diagnostics_correlate_mailbox_without_logging_secrets(self):
+        import json
+        secret_payload = base64.b64encode(b'private SDP and ICE password').decode()
+        with self.assertLogs('codepet.signal', level='INFO') as captured:
+            await self.call('PUT', '/v1/clients', 'host-token', {'clients': [{'id': 'client-a', 'tokenHash': digest('client-token')}]})
+            envelope = {'payload': secret_payload, 'signature': base64.b64encode(bytes(64)).decode()}
+            await self.call('POST', '/v1/offers', 'client-token', {'attempt': 'diagnostic-attempt', 'envelope': envelope})
+            await self.call('GET', '/v1/offers', 'host-token')
+            await self.call('POST', '/v1/answers', 'host-token', {'client': 'client-a', 'attempt': 'diagnostic-attempt', 'envelope': envelope})
+            await self.call('GET', '/v1/answer?attempt=diagnostic-attempt', 'client-token')
+            await self.call('GET', '/v1/answer?attempt=secret-query', 'invalid-secret-token')
+        entries = [json.loads(record.getMessage()) for record in captured.records]
+        for stage in ['offer.accepted','offer.delivered','answer.accepted','answer.delivered']:
+            event = next(e for e in entries if e['event'] == stage)
+            self.assertEqual(event['attempt'], 'diagnostic-attempt')
+        text = str(entries)
+        for secret in [secret_payload, envelope['signature'], 'host-token','client-token','invalid-secret-token','secret-query']:
+            self.assertNotIn(secret, text)
+        self.assertTrue(any(e.get('status') == 401 for e in entries))
+
     async def test_oversized_and_turn_limits(self):
         self.assertEqual((await self.call('PUT', '/v1/clients', 'host-token', {'clients': [None]})).status, 400)
         for _ in range(12):

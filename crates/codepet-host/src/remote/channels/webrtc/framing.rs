@@ -30,6 +30,13 @@ impl Decoder {
         }
     }
 
+    pub(super) fn received_bytes(&self) -> usize {
+        self.partial.len()
+    }
+    pub(super) fn total_bytes(&self) -> usize {
+        self.total
+    }
+
     #[cfg(test)]
     pub(super) fn pending(&self) -> bool {
         self.total != 0
