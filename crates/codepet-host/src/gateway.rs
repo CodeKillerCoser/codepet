@@ -410,6 +410,18 @@ impl ProviderGatewayService {
         self.events.subscribe(after_cursor)
     }
 
+    /// Dispatch from the trusted in-process desktop channel. Presence is scoped
+    /// to the request (including cancellation), and shared with Provider pings.
+    /// Remote channels must authenticate and register their own connection.
+    pub async fn dispatch_for_local_client(
+        &self,
+        client_id: &str,
+        request: gateway::ProtocolRequest,
+    ) -> gateway::JsonRpcResponse {
+        let _connection = self.manager.remote_connections().register(client_id.to_owned());
+        self.dispatch_for_caller_scope(client_id, request).await
+    }
+
     pub async fn dispatch_for_caller_scope(
         &self,
         caller_scope: &str,

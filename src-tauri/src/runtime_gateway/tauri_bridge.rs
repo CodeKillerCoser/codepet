@@ -36,7 +36,7 @@ pub const CODEX_DESKTOP_COMPANION_EVENT: &str = "codex-desktop-companion-event";
 #[tauri::command]
 pub(crate) async fn codepet_gateway_request(state: tauri::State<'_, ProviderHostState>, request: codepet_gateway_sdk::ProtocolRequest) -> Result<codepet_gateway_sdk::JsonRpcResponse, String> {
     let gateway = state.gateway.as_ref().ok_or("Provider Gateway is unavailable")?;
-    Ok(gateway.dispatch_for_caller_scope("desktop-main", request).await)
+    Ok(gateway.dispatch_for_local_client("desktop-main", request).await)
 }
 pub const BUNDLED_PROVIDER_PLUGINS_DIRECTORY_ENV: &str =
     "CODEPET_BUNDLED_PROVIDER_PLUGINS_DIR";
