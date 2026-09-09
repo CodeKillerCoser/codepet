@@ -2,7 +2,7 @@
   "jsonrpc": "2.0",
   "id": "provider-runtime-installed-1",
   "result": {
-    "installed": [
+    "harnessList": [
       {
         "executablePath": "/opt/codepet/bin/codex",
         "version": "0.151.0",

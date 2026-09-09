@@ -901,7 +901,6 @@ struct ProviderState {
     host_device_id: Option<String>,
     initialized_client_id: Option<String>,
     instances: HashMap<String, Arc<OpenCodeInstanceRuntime>>,
-    selected_runtime: Option<RuntimeInstallation>,
 }
 
 pub struct OpenCodeProvider {
@@ -929,7 +928,6 @@ impl OpenCodeProvider {
                 host_device_id: None,
                 initialized_client_id: None,
                 instances: HashMap::new(),
-                selected_runtime: None,
             }),
             events,
             boot_id: Uuid::new_v4().to_string(),
@@ -1071,6 +1069,7 @@ impl Provider for OpenCodeProvider {
             }
             drop(state);
             self.data.initialize(request.directories.as_ref())?;
+            self.scanner.set_selection_storage(self.data.clone());
             self.data.start_collection()?;
             eprintln!("provider.initialize completed; business storage configured={}", self.data.configured());
             self.scanner.start_cancellable("opencode", "opencode-ai", || discover_path_candidates("opencode"), inspect_runtime_candidate);
@@ -1120,7 +1119,6 @@ impl Provider for OpenCodeProvider {
             candidate.executable_path = local_runtime::resolve_executable(std::path::Path::new(&candidate.executable_path), "opencode", "opencode-ai")
                 .map_err(|error| protocol_error("invalid_runtime_selection", error, false))?.to_string_lossy().into_owned();
             let selected=self.scanner.select(&candidate)?;
-            lock(&self.state).selected_runtime=Some(selected.clone());
             Ok(RuntimeSelectResponse {selected})
         })
     }
@@ -1141,10 +1139,10 @@ impl Provider for OpenCodeProvider {
             }
             if std::env::var("CODEPET_RUNTIME_MIN_VERSION").is_ok_and(|value| !value.is_empty()) {
                 if let Some(path) = request.settings.get("serverExecutable").and_then(Value::as_str) {
-                    let runtime = self.scanner.select(&RuntimeCandidate {
+                    let runtime = self.scanner.inspect(RuntimeCandidate {
                         executable_path: path.to_string(),
                         source: codepet_provider_sdk::RuntimeCandidateSource::Configured,
-                    })?;
+                    }).await?;
                     if runtime.version.is_empty() {
                         return Err(protocol_error("runtime_scanning", "Runtime version validation is still in progress".into(), true));
                     }
@@ -1152,15 +1150,11 @@ impl Provider for OpenCodeProvider {
                 }
             }
             let selected = if request.settings.contains_key("serverExecutable") { None } else {
-                let current = { lock(&self.state).selected_runtime.clone() };
-                let installation = match current {
-                    Some(selected) => Some(selected),
-                    None => {
-                        let inventory=self.scanner.snapshot();
-                        if inventory.scanning==Some(true) {return Err(protocol_error("runtime_scanning", "Runtime discovery is still in progress".into(), true));}
-                        inventory.installed.into_iter().find(|runtime| runtime.incompatibility_reason.is_none())
-                    },
-                };
+                let inventory = self.scanner.snapshot();
+                if inventory.scanning == Some(true) {
+                    return Err(protocol_error("runtime_scanning", "Runtime discovery is still in progress".into(), true));
+                }
+                let installation = inventory.selected;
                 Some(installation.ok_or_else(|| protocol_error("provider_unavailable", "OpenCode Provider did not find a local runtime".to_string(), true))?)
             };
             if let Some(selected) = selected.as_ref() {
@@ -1173,7 +1167,6 @@ impl Provider for OpenCodeProvider {
             }
             let settings = decode_settings(request.settings.clone())?;
             let mut state = lock(&self.state);
-            if let Some(selected) = selected { state.selected_runtime = Some(selected); }
             let host_device = state.host_device_id.as_deref().ok_or_else(|| {
                 protocol_error(
                     "provider_not_initialized",

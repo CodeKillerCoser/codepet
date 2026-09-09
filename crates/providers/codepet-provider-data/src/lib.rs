@@ -1,6 +1,7 @@
 //! Provider business persistence. This crate is deliberately outside the transport runtime.
 mod collection;
 mod usage;
+mod runtime_selection;
 pub use codepet_provider_sdk::*;
 pub use collection::UsageSink;
 pub use usage::*;
@@ -73,6 +74,7 @@ impl ProviderData {
         std::fs::create_dir_all(logs).map_err(db_error)?;
         let connection = open(database)?;
         usage::initialize(&connection)?;
+        runtime_selection::initialize(&connection)?;
         *path = Some(database.to_owned());
         Ok(())
     }

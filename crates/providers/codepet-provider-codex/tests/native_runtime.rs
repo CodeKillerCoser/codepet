@@ -58,10 +58,10 @@ async fn codex_windows_install_layout_without_path() {
     };
     provider.provider_shutdown(ProviderShutdownRequest {}).await.unwrap();
     assert!(installed
-        .installed
+        .harness_list
         .iter()
         .any(|runtime| runtime.source == RuntimeCandidateSource::WindowsApplication));
-    for runtime in installed.installed {
+    for runtime in installed.harness_list {
         println!(
             "Windows layout: {} ({})",
             runtime.executable_path, runtime.version

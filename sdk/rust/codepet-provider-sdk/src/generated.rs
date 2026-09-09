@@ -874,8 +874,7 @@ pub struct RuntimeGetInstalledRequest {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeGetInstalledResponse {
-    pub installed: Vec<RuntimeInstallation>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harness_list: Vec<RuntimeInstallation>,
     pub selected: Option<RuntimeInstallation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scanning: Option<bool>,

@@ -1,5 +1,7 @@
 # Windows Provider 发现与数据目录验证
 
+> 2026-09-09 启动语义更新：每次 Provider 启动自主扫描，由 Provider 数据库保存 lastSelected，匹配优先、最高兼容版本回退；Host 不再保存或恢复 executable 选择。下文 2026-09-07 的 CODEPET_RUNTIME_EXECUTABLE 注入与选择恢复是历史实现；当前行为与验证见 [Provider 启动被旧安装路径干扰](provider-startup-stale-executable.md)。
+
 ## 现象
 
 Windows 已能在终端运行 Harness，但 Provider 显示未安装，或历史数据为空。审阅基线是 v0 / ca78541；修复涉及 Provider SDK 的 local_runtime、三个 Provider 的配置/启动链，以及前端路径 API。

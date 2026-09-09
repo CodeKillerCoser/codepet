@@ -32,6 +32,18 @@ function allRefs(value, refs = []) {
   return refs;
 }
 
+test("runtime inventory always returns harnessList and nullable selected", async () => {
+  const model = await loadProtocolModel();
+  const provider = record(model, "provider-v1");
+  const inventory = provider.schema.$defs.RuntimeGetInstalledResponse;
+  assert.deepEqual(inventory.required, ["harnessList", "selected"]);
+  assert.equal(inventory.properties.harnessList.items.$ref, "#/$defs/RuntimeInstallation");
+  assert.equal(inventory.properties.installed, undefined);
+  assert.deepEqual(inventory.properties.selected.oneOf, [
+    { $ref: "#/$defs/RuntimeInstallation" }, { type: "null" },
+  ]);
+});
+
 test("recent v1 preserves list and read boundaries with capability-gated atomic queries", async () => {
   const model = await loadProtocolModel();
   const provider = record(model, "provider-v1");

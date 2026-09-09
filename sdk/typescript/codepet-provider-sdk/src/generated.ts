@@ -491,8 +491,8 @@ export interface RuntimeGetInstalledRequest {
 }
 
 export interface RuntimeGetInstalledResponse {
-  installed: Array<RuntimeInstallation>;
-  selected?: RuntimeInstallation;
+  harnessList: Array<RuntimeInstallation>;
+  selected: RuntimeInstallation | null;
   scanning?: boolean;
   scanError?: string;
 }

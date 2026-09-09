@@ -9,8 +9,7 @@ use crate::agent::codex_desktop_ipc::{
 };
 use crate::agent_runtime::{
     AgentRuntime, AgentRuntimeCandidate, AgentRuntimeDiagnostic, AgentRuntimeInstallation,
-    AgentRuntimeSource, AgentRuntimeStatus, CLAUDE_RUNTIME_PROVIDER_ID,
-    CODEX_RUNTIME_PROVIDER_ID, OPENCODE_RUNTIME_PROVIDER_ID,
+    AgentRuntimeSource, AgentRuntimeStatus,
 };
 use crate::platform::host_identity::computer_name;
 use crate::settings::{configured_app_data_dir, load_app_settings};
@@ -160,14 +159,12 @@ impl ProviderHostState {
 
     pub(crate) async fn runtime_views(&self) -> Vec<AgentRuntime> {
         let Some(manager) = self.manager.as_ref() else { return Vec::new() };
-        let settings = load_app_settings().ok();
         let mut views = Vec::new();
         for snapshot in manager.snapshots().await.into_iter().filter(|snapshot| snapshot.catalog.enabled) {
             let plugin_id = snapshot.catalog.plugin_id.clone();
             let display_name = snapshot.reported.as_ref().map(|reported| reported.display_name.clone())
                 .unwrap_or_else(|| snapshot.catalog.display_name.clone());
-            let configured_executable = settings.as_ref()
-                .and_then(|settings| configured_runtime_selection(settings, &plugin_id));
+            let configured_executable = None;
             let initializing = snapshot.state == PluginRuntimeState::Starting
                 || (snapshot.state == PluginRuntimeState::Stopped && snapshot.generation == 0
                     && !self.shutdown_started.load(Ordering::SeqCst));
@@ -188,7 +185,7 @@ impl ProviderHostState {
             let inventory = manager.runtime_get_installed(&plugin_id, RuntimeGetInstalledRequest { refresh: None }).await;
             match inventory {
                 Ok(inventory) => {
-                    let installed = inventory.installed.into_iter().map(|installation| AgentRuntimeInstallation {
+                    let installed = inventory.harness_list.into_iter().map(|installation| AgentRuntimeInstallation {
                         executable_path: installation.executable_path,
                         version: installation.version,
                         source: agent_runtime_source(installation.source),
@@ -202,15 +199,15 @@ impl ProviderHostState {
                         minimum_version: installation.minimum_version,
                         incompatibility_reason: installation.incompatibility_reason,
                     });
-                    let selection_unconfirmed = configured_executable.is_some() && selected.is_none();
+                    let configured_executable = selected.as_ref()
+                        .filter(|runtime| runtime.source == AgentRuntimeSource::Configured)
+                        .map(|runtime| runtime.executable_path.clone());
                     views.push(AgentRuntime {
                         provider_id: plugin_id,
                         display_name: display_name.clone(),
                         status: if inventory.scanning==Some(true) {
                             AgentRuntimeStatus::Loading
-                        } else if selection_unconfirmed {
-                            AgentRuntimeStatus::InvalidConfiguredExecutable
-                        } else if !installed.iter().any(|runtime| runtime.incompatibility_reason.is_none()) {
+                        } else if selected.is_none() {
                             AgentRuntimeStatus::Unavailable
                         } else {
                             AgentRuntimeStatus::Ready
@@ -221,11 +218,6 @@ impl ProviderHostState {
                         version: selected.as_ref().map(|installation| installation.version.clone()),
                         diagnostic: if inventory.scanning==Some(true) { None } else if let Some(message)=inventory.scan_error {
                             Some(AgentRuntimeDiagnostic {code:"runtime-scan-failed".into(),message})
-                        } else if selection_unconfirmed {
-                            Some(AgentRuntimeDiagnostic {
-                                code: "provider-selection-unconfirmed".to_string(),
-                                message: format!("{display_name} Provider did not confirm the persisted runtime selection"),
-                            })
                         } else {
                             (!installed.iter().any(|runtime| runtime.incompatibility_reason.is_none())).then(|| AgentRuntimeDiagnostic {
                                 code: "runtime-not-found".to_string(),
@@ -264,6 +256,11 @@ impl ProviderHostState {
             .ok_or_else(|| format!("unknown Provider plugin: {plugin_id}"))
     }
 
+    pub(crate) async fn reset_runtime(&self, provider_id: &str) -> Result<(), String> {
+        let manager = self.manager.as_ref().ok_or_else(|| "Provider Host is unavailable".to_string())?;
+        manager.restart_plugin(provider_id).await.map_err(|error| error.to_string())
+    }
+
     pub(crate) async fn select_runtime(
         &self,
         provider_id: &str,
@@ -274,11 +271,6 @@ impl ProviderHostState {
             provider_id,
             RuntimeSelectRequest { candidate: provider_runtime_candidate(candidate) },
         ).await.map_err(|error| error.to_string())?;
-        manager.remember_runtime_selection(provider_id, RuntimeCandidate {
-            executable_path: response.selected.executable_path.clone(),
-            source: response.selected.source,
-        }).await.map_err(|error| error.to_string())?;
-        manager.restart_plugin(provider_id).await.map_err(|error| error.to_string())?;
         Ok(AgentRuntimeInstallation {
             executable_path: response.selected.executable_path,
             version: response.selected.version,
@@ -494,22 +486,6 @@ fn provider_manager_config(settings: &crate::settings::AppSettings) -> PluginMan
     config.provider_data_root = Some(configured_app_data_dir(settings).join("providers"));
     config.process.max_frame_bytes = codepet_host::provider_sdk::MAX_PROVIDER_FRAME_BYTES;
     config.process.stderr_observer = Some(record_provider_transport_diagnostic);
-    for (provider_id, preference) in &settings.agent_runtimes.by_provider {
-        let Some(executable_path) = preference.configured_executable.clone() else { continue };
-        let plugin_id = match provider_id.as_str() {
-            CODEX_RUNTIME_PROVIDER_ID => "dev.codepet.codex",
-            CLAUDE_RUNTIME_PROVIDER_ID => "dev.codepet.claude",
-            OPENCODE_RUNTIME_PROVIDER_ID => "dev.codepet.opencode",
-            plugin_id => plugin_id,
-        };
-        if plugin_id != provider_id && settings.agent_runtimes.by_provider.contains_key(plugin_id) {
-            continue;
-        }
-        config.runtime_selections.insert(plugin_id.to_string(), RuntimeCandidate {
-            executable_path,
-            source: RuntimeCandidateSource::Configured,
-        });
-    }
     config
 }
 
@@ -526,24 +502,6 @@ fn record_provider_transport_diagnostic(diagnostic: &StderrDiagnostic) {
             ),
         );
     }
-}
-
-fn configured_runtime_selection(
-    settings: &crate::settings::AppSettings,
-    plugin_id: &str,
-) -> Option<String> {
-    settings.agent_runtimes.by_provider.get(plugin_id)
-        .and_then(|preference| preference.configured_executable.clone())
-        .or_else(|| {
-            let legacy_id = match plugin_id {
-                "dev.codepet.codex" => CODEX_RUNTIME_PROVIDER_ID,
-                "dev.codepet.claude" => CLAUDE_RUNTIME_PROVIDER_ID,
-                "dev.codepet.opencode" => OPENCODE_RUNTIME_PROVIDER_ID,
-                _ => return None,
-            };
-            settings.agent_runtimes.by_provider.get(legacy_id)
-                .and_then(|preference| preference.configured_executable.clone())
-        })
 }
 
 fn configured_provider_runtime(
@@ -824,9 +782,9 @@ fn start_local_event_bridge<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use crate::agent_runtime::AgentRuntimeStatus;
+    use crate::agent_runtime::{AgentRuntimeStatus, CLAUDE_RUNTIME_PROVIDER_ID, CODEX_RUNTIME_PROVIDER_ID, OPENCODE_RUNTIME_PROVIDER_ID};
     use super::{
-        configured_runtime_selection, local_device_descriptor, non_empty_system_value,
+        local_device_descriptor, non_empty_system_value,
         provider_catalog_config, provider_manager_config, spawn_provider_host_startup,
         ProviderGatewayService, ProviderHostState,
     };
@@ -837,30 +795,6 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
 
-    #[test]
-    fn runtime_selection_display_uses_persisted_plugin_value_with_legacy_fallback() {
-        let mut settings = crate::settings::AppSettings::default();
-        settings.agent_runtimes.by_provider.insert(
-            "codex".to_string(),
-            crate::settings::AgentRuntimePreferenceSettings {
-                configured_executable: Some("/legacy/codex".to_string()),
-            },
-        );
-        assert_eq!(
-            configured_runtime_selection(&settings, "dev.codepet.codex").as_deref(),
-            Some("/legacy/codex")
-        );
-        settings.agent_runtimes.by_provider.insert(
-            "dev.codepet.codex".to_string(),
-            crate::settings::AgentRuntimePreferenceSettings {
-                configured_executable: Some("/selected/codex".to_string()),
-            },
-        );
-        assert_eq!(
-            configured_runtime_selection(&settings, "dev.codepet.codex").as_deref(),
-            Some("/selected/codex")
-        );
-    }
     use std::process::Command;
     use std::sync::Arc;
     use std::time::Duration;

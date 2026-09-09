@@ -83,13 +83,7 @@ where
     let (candidates, mut errors) = tokio::task::spawn_blocking(move || {
         DISCOVERY_ERRORS.with(|errors| errors.borrow_mut().clear());
         let mut candidates = discover();
-        if let Some(path) = std::env::var_os("CODEPET_RUNTIME_EXECUTABLE") {
-            candidates.insert(
-                0,
-                candidate(PathBuf::from(path), RuntimeCandidateSource::Configured),
-            );
-        }
-        if let Some(selected) = selected_candidate {
+        if let Some(selected) = selected_candidate.filter(|runtime| Path::new(&runtime.executable_path).is_file()) {
             candidates.insert(
                 0,
                 RuntimeCandidate {
@@ -137,31 +131,52 @@ where
             }),
     )
     .buffer_unordered(4);
-    let mut installed = Vec::new();
+    let mut harness_list = Vec::new();
     while let Some((index, path, result)) = results.next().await {
         match result {
-            Ok(Ok(runtime)) => installed.push((index, apply_runtime_requirement(runtime))),
+            Ok(Ok(runtime)) => harness_list.push((index, apply_runtime_requirement(runtime))),
             Ok(Err(e)) => errors.push(format!("{path}: {}", e.message)),
             Err(e) => errors.push(format!("{path}: {e}")),
         }
     }
-    installed.sort_by_key(|(index, _)| *index);
-    let installed: Vec<_> = installed.into_iter().map(|(_, runtime)| runtime).collect();
-    let selected = selected.and_then(|selected| {
-        installed
-            .iter()
-            .find(|runtime| {
-                runtime.incompatibility_reason.is_none() && executable_key(&runtime.executable_path)
-                    == executable_key(&selected.executable_path)
-            })
-            .cloned()
-    });
+    harness_list.sort_by_key(|(index, _)| *index);
+    let harness_list: Vec<_> = harness_list.into_iter().map(|(_, runtime)| runtime).collect();
+    let selected = select_installation(&harness_list, selected.as_ref().map(|r| r.executable_path.as_str()));
     Ok(crate::RuntimeGetInstalledResponse {
-        installed,
+        harness_list,
         selected,
         scanning: Some(false),
         scan_error: (!errors.is_empty()).then(|| errors.join("; ")),
     })
+}
+
+/// Prefer the previous executable if it is still compatible; otherwise use the
+/// highest semantic version. Equal versions use the path for a stable tie-break.
+pub fn select_installation(
+    harness_list: &[crate::RuntimeInstallation],
+    last_selected: Option<&str>,
+) -> Option<crate::RuntimeInstallation> {
+    let compatible = || harness_list.iter().filter(|r| r.incompatibility_reason.is_none());
+    if let Some(path) = last_selected {
+        if let Some(runtime) = compatible().find(|r| executable_key(&r.executable_path) == executable_key(path)) {
+            return Some(runtime.clone());
+        }
+    }
+    compatible().max_by(|a, b| {
+        let a_version = semver::Version::parse(a.version.trim_start_matches('v')).ok();
+        let b_version = semver::Version::parse(b.version.trim_start_matches('v')).ok();
+        match (&a_version, &b_version) {
+            (Some(a), Some(b)) => a.cmp_precedence(b),
+            _ => a_version.cmp(&b_version),
+        }
+            .then_with(|| executable_key(&b.executable_path).cmp(&executable_key(&a.executable_path)))
+    }).cloned()
+}
+
+/// Persistence belongs to the Provider business database, not the SDK or Host.
+pub trait RuntimeSelectionStorage: Send + Sync {
+    fn load_last_selected(&self) -> Result<Option<String>, crate::ProtocolError>;
+    fn save_last_selected(&self, path: Option<&str>) -> Result<(), crate::ProtocolError>;
 }
 /// Preserve detected versions even when a Provider's configured version floor rejects them.
 pub fn apply_runtime_requirement(mut runtime: crate::RuntimeInstallation) -> crate::RuntimeInstallation {
@@ -247,6 +262,8 @@ pub struct RuntimeScanner {
     task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     events: std::sync::Arc<dyn crate::ProviderEventSink>,
     probe: std::sync::Mutex<Option<std::sync::Arc<RuntimeProbe>>>,
+    storage: std::sync::Mutex<Option<std::sync::Arc<dyn RuntimeSelectionStorage>>>,
+    generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 impl RuntimeScanner {
     pub fn new(events: std::sync::Arc<dyn crate::ProviderEventSink>) -> Self {
@@ -254,7 +271,7 @@ impl RuntimeScanner {
             control: std::sync::Mutex::new(RuntimeProbeControl::default()),
             snapshot: std::sync::Arc::new(std::sync::Mutex::new(
                 crate::RuntimeGetInstalledResponse {
-                    installed: vec![],
+                    harness_list: vec![],
                     selected: None,
                     scanning: Some(true),
                     scan_error: None,
@@ -262,11 +279,29 @@ impl RuntimeScanner {
             )),
             task: std::sync::Mutex::new(None),
             probe: std::sync::Mutex::new(None),
+            storage: std::sync::Mutex::new(None),
+            generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             events,
         }
     }
+    pub fn set_selection_storage(&self, storage: std::sync::Arc<dyn RuntimeSelectionStorage>) {
+        *self.storage.lock().unwrap() = Some(storage);
+    }
     pub fn snapshot(&self) -> crate::RuntimeGetInstalledResponse {
         self.snapshot.lock().unwrap().clone()
+    }
+    /// Validate an instance-specific executable without changing the Provider's
+    /// default selection or its persisted lastSelected record.
+    pub async fn inspect(&self, candidate: RuntimeCandidate) -> Result<crate::RuntimeInstallation, crate::ProtocolError> {
+        let probe = self.probe.lock().unwrap().clone()
+            .ok_or_else(|| scan_error("Provider is not initialized".into()))?;
+        let control = self.control.lock().unwrap().clone();
+        let runtime = tokio::task::spawn_blocking(move || {
+            probe(candidate, std::time::Duration::from_secs(120), control)
+        }).await.map_err(|e| scan_error(e.to_string()))??;
+        let runtime = apply_runtime_requirement(runtime);
+        require_compatible_runtime(&runtime)?;
+        Ok(runtime)
     }
     pub fn start<D, P>(&self, name: &'static str, package: &'static str, discover: D, probe: P)
     where
@@ -313,45 +348,55 @@ impl RuntimeScanner {
         let snapshot = self.snapshot.clone();
         let events = self.events.clone();
         let selected = self.snapshot().selected;
+        let storage = self.storage.lock().unwrap().clone();
+        let generation = self.generation.clone();
+        let epoch = generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         *task = Some(tokio::spawn(async move {
-            let result = runtime_inventory_controlled(
-                name,
-                package,
-                selected,
-                discover,
-                move |candidate, timeout, control| probe(candidate, timeout, control),
-                control,
-            )
-            .await;
-            let params = {
+            let load_storage = storage.clone();
+            let result = async {
+                let selected = tokio::task::spawn_blocking(move || {
+                    let path = match load_storage {
+                        Some(storage) => storage.load_last_selected()?,
+                        None => selected.map(|r| r.executable_path),
+                    };
+                    Ok::<_, crate::ProtocolError>(path.map(|executable_path| crate::RuntimeInstallation {
+                        executable_path, source: RuntimeCandidateSource::Configured,
+                        version: String::new(), minimum_version: None, incompatibility_reason: None,
+                    }))
+                }).await.map_err(|e| scan_error(e.to_string()))??;
+                runtime_inventory_controlled(name, package, selected, discover,
+                    move |candidate, timeout, control| probe(candidate, timeout, control), control).await
+            }.await;
+            // Database writes run off the executor and finish before publishing the
+            // snapshot. Cancelled generations cannot overwrite a newer scan.
+            let _ = tokio::task::spawn_blocking(move || {
                 let mut current = snapshot.lock().unwrap();
+                if generation.load(std::sync::atomic::Ordering::SeqCst) != epoch { return; }
                 match result {
                     Ok(mut result) => {
-                        result.selected = current.selected.as_ref().and_then(|selected| {
-                            result
-                                .installed
-                                .iter()
-                                .find(|runtime| {
-                                    runtime.incompatibility_reason.is_none() && executable_key(&runtime.executable_path)
-                                        == executable_key(&selected.executable_path)
-                                })
-                                .cloned()
-                        });
+                        if let (Some(storage), Some(selected)) = (&storage, &result.selected) {
+                            if let Err(error) = storage.save_last_selected(Some(&selected.executable_path)) {
+                                result.scan_error = Some(error.message);
+                                result.selected = None;
+                            }
+                        }
                         *current = result;
                     }
-                    Err(e) => {
+                    Err(error) => {
                         current.scanning = Some(false);
-                        current.scan_error = Some(e.message);
+                        current.selected = None;
+                        current.scan_error = Some(error.message);
                     }
                 }
-                current.clone()
-            };
-            let _ = events.publish(crate::ProtocolEvent::RuntimeInventoryChanged {
-                jsonrpc: "2.0".into(),
-                params,
-            });
+                let params = current.clone();
+                drop(current);
+                let _ = events.publish(crate::ProtocolEvent::RuntimeInventoryChanged {
+                    jsonrpc: "2.0".into(), params,
+                });
+            }).await;
         }));
     }
+
     pub fn select(
         &self,
         candidate: &RuntimeCandidate,
@@ -362,33 +407,37 @@ impl RuntimeScanner {
         let mut selection_task = None;
         let (selected, params) = {
             let mut current = self.snapshot.lock().unwrap();
+            if current.scanning == Some(true) {
+                return Err(crate::ProtocolError { code: "runtime_scanning".into(),
+                    message: "Wait for runtime discovery before selecting an executable".into(),
+                    retryable: true, details: None });
+            }
             let cached = current
-                .installed
+                .harness_list
                 .iter()
                 .find(|r| {
                     executable_key(&r.executable_path) == executable_key(&path.to_string_lossy())
                 })
                 .cloned();
-            let selected = if let Some(selected) = cached {
+            let selected = if let Some(mut selected) = cached {
                 require_compatible_runtime(&selected)?;
+                selected.source = candidate.source;
+                if let Some(storage) = self.storage.lock().unwrap().as_ref() {
+                    storage.save_last_selected(Some(&selected.executable_path))?;
+                }
+                if let Some(runtime) = current.harness_list.iter_mut().find(|r| r.executable_path == selected.executable_path) {
+                    *runtime = selected.clone();
+                }
+                current.scan_error = None;
                 selected
             } else {
-                if current.scanning == Some(true) {
-                    return Err(crate::ProtocolError {
-                        code: "runtime_scanning".into(),
-                        message: "Wait for the current scan before selecting a new executable"
-                            .into(),
-                        retryable: true,
-                        details: None,
-                    });
-                }
                 let probe = self
                     .probe
                     .lock()
                     .unwrap()
                     .clone()
                     .ok_or_else(|| scan_error("Provider is not initialized".into()))?;
-                // Selection records configuration immediately; an empty version is pending detection.
+                // Return a pending result; publish and persist selection only after validation.
                 let selected = crate::RuntimeInstallation { minimum_version: None, incompatibility_reason: None,
                     executable_path: path.to_string_lossy().into_owned(),
                     source: candidate.source,
@@ -398,9 +447,11 @@ impl RuntimeScanner {
                     executable_path: selected.executable_path.clone(),
                     source: selected.source,
                 };
-                let selected_path = selected.executable_path.clone();
                 let snapshot = self.snapshot.clone();
                 let events = self.events.clone();
+                let storage = self.storage.lock().unwrap().clone();
+                let generation = self.generation.clone();
+                let epoch = generation.load(std::sync::atomic::Ordering::SeqCst);
                 current.scanning = Some(true);
                 current.scan_error = None;
                 let (ready, started) = tokio::sync::oneshot::channel::<()>();
@@ -415,47 +466,38 @@ impl RuntimeScanner {
                         probe(candidate, std::time::Duration::from_secs(120), control)
                     })
                     .await;
-                    let params =
-                        {
-                            let mut current = snapshot.lock().unwrap();
-                            current.scanning = Some(false);
-                            match result {
-                                Ok(Ok(runtime)) => {
-                                    let runtime = apply_runtime_requirement(runtime);
-                                    if runtime.incompatibility_reason.is_some() {
-                                        current.selected = None;
-                                        current.scan_error = runtime.incompatibility_reason.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        let mut current = snapshot.lock().unwrap();
+                        if generation.load(std::sync::atomic::Ordering::SeqCst) != epoch { return; }
+                        current.scanning = Some(false);
+                        match result {
+                            Ok(Ok(runtime)) => {
+                                let runtime = apply_runtime_requirement(runtime);
+                                let accepted = require_compatible_runtime(&runtime).and_then(|()| {
+                                    match &storage {
+                                        Some(storage) => storage.save_last_selected(Some(&runtime.executable_path)),
+                                        None => Ok(()),
                                     }
-                                    if current.selected.as_ref().is_some_and(|r| {
-                                        r.executable_path == runtime.executable_path
-                                    }) {
-                                        current.selected = Some(runtime.clone());
-                                    }
-                                    current.installed.push(runtime);
+                                });
+                                match accepted {
+                                    Ok(()) => current.selected = Some(runtime.clone()),
+                                    Err(error) => current.scan_error = Some(error.message),
                                 }
-                                result => {
-                                    if current.selected.as_ref().is_some_and(|runtime| {
-                                        runtime.executable_path == selected_path
-                                    }) {
-                                        current.selected = None;
-                                    }
-                                    current.scan_error = Some(match result {
-                                        Ok(Err(error)) => error.message,
-                                        Err(error) => error.to_string(),
-                                        _ => unreachable!(),
-                                    });
-                                }
+                                current.harness_list.push(runtime);
                             }
-                            current.clone()
-                        };
-                    let _ = events.publish(crate::ProtocolEvent::RuntimeInventoryChanged {
-                        jsonrpc: "2.0".into(),
-                        params,
-                    });
+                            Ok(Err(error)) => current.scan_error = Some(error.message),
+                            Err(error) => current.scan_error = Some(error.to_string()),
+                        }
+                        let params = current.clone();
+                        drop(current);
+                        let _ = events.publish(crate::ProtocolEvent::RuntimeInventoryChanged {
+                            jsonrpc: "2.0".into(), params,
+                        });
+                    }).await;
                 }));
                 selected
             };
-            current.selected = Some(selected.clone());
+            if !selected.version.is_empty() { current.selected = Some(selected.clone()); }
             (selected, current.clone())
         };
         if let Some(task) = selection_task {
@@ -473,6 +515,10 @@ impl RuntimeScanner {
         Ok(selected)
     }
     pub fn stop(&self) {
+        {
+            let _snapshot = self.snapshot.lock().unwrap();
+            self.generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
         self.control.lock().unwrap().cancel();
         if let Some(task) = self.task.lock().unwrap().take() {
             task.abort();
@@ -730,6 +776,90 @@ pub fn opencode_environment(command: &mut std::process::Command, directory: Opti
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn selection_prefers_matching_last_selected_then_highest_semver() {
+        let runtime = |path: &str, version: &str| crate::RuntimeInstallation {
+            executable_path: path.into(), version: version.into(),
+            source: RuntimeCandidateSource::CurrentPath,
+            minimum_version: None, incompatibility_reason: None,
+        };
+        let old = runtime("/old.exe", "1.9.0");
+        let latest = runtime("/latest.exe", "1.10.0");
+        let prerelease = runtime("/preview.exe", "1.10.0-rc.1");
+        let list = vec![old.clone(), prerelease, latest.clone()];
+        assert_eq!(select_installation(&list, Some("/old.exe")), Some(old));
+        assert_eq!(select_installation(&list, None), Some(latest.clone()));
+        assert_eq!(select_installation(&list, Some("/removed.exe")), Some(latest));
+        let mut incompatible = runtime("/blocked.exe", "9.0.0");
+        incompatible.incompatibility_reason = Some("unsupported".into());
+        let list = vec![list[0].clone(), incompatible.clone()];
+        assert_eq!(select_installation(&list, Some("/blocked.exe")), Some(list[0].clone()));
+        assert!(select_installation(&[incompatible], None).is_none());
+        assert!(select_installation(&[], None).is_none());
+    }
+
+    #[tokio::test]
+    async fn new_scanner_discovers_relocated_installation_without_restoring_selection() {
+        let temp = tempfile::tempdir().unwrap();
+        let old = temp.path().join("old.exe");
+        for name in ["old.exe", "new.exe"] {
+            let path = temp.path().join(name);
+            std::fs::write(&path, b"fixture").unwrap();
+            let expected = std::fs::canonicalize(&path).unwrap().to_string_lossy().into_owned();
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let scanner = RuntimeScanner::new(std::sync::Arc::new(move |event| {
+                tx.send(event).unwrap();
+                Ok(())
+            }));
+            scanner.start("agent", "missing",
+                move || vec![candidate(path, RuntimeCandidateSource::CurrentPath)],
+                |candidate, _| Ok(crate::RuntimeInstallation {
+                    executable_path: candidate.executable_path, source: candidate.source,
+                    version: "1.0.0".into(), minimum_version: None, incompatibility_reason: None,
+                }));
+            tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
+            let inventory = scanner.snapshot();
+            assert_eq!(inventory.harness_list.len(), 1);
+            assert_eq!(inventory.harness_list[0].executable_path, expected);
+            assert_eq!(inventory.selected.as_ref().unwrap().executable_path, expected);
+            assert!(inventory.scan_error.is_none());
+            if name == "old.exe" {
+                let selected = scanner.select(&RuntimeCandidate {
+                    executable_path: expected, source: RuntimeCandidateSource::Configured,
+                }).unwrap();
+                assert_eq!(selected.source, RuntimeCandidateSource::Configured);
+                std::fs::remove_file(&old).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn startup_inventory_ignores_previous_host_executable() {
+        let output = command(std::env::current_exe().unwrap())
+            .env("CODEPET_RUNTIME_EXECUTABLE", "C:/removed-installation/codex.exe")
+            .args(["--ignored", "--exact", "local_runtime::tests::fresh_inventory_child", "--nocapture"])
+            .output().unwrap();
+        assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    }
+
+    #[tokio::test]
+    #[ignore = "isolated environment fixture for startup_inventory_ignores_previous_host_executable"]
+    async fn fresh_inventory_child() {
+        let temp = tempfile::tempdir().unwrap();
+        let binary = temp.path().join("current-install.exe");
+        std::fs::write(&binary, b"fixture").unwrap();
+        let expected = std::fs::canonicalize(&binary).unwrap().to_string_lossy().into_owned();
+        let inventory = runtime_inventory("agent", "missing", None,
+            move || vec![candidate(binary, RuntimeCandidateSource::CurrentPath)],
+            |candidate, _| Ok(crate::RuntimeInstallation {
+                executable_path: candidate.executable_path, source: candidate.source,
+                version: "1.0.0".into(), minimum_version: None, incompatibility_reason: None,
+            })).await.unwrap();
+        assert_eq!(inventory.harness_list.len(), 1);
+        assert_eq!(inventory.harness_list[0].executable_path, expected);
+        assert!(inventory.scan_error.is_none(), "{:?}", inventory.scan_error);
+        assert_eq!(inventory.selected.as_ref().unwrap().executable_path, expected);
+    }
     use super::*;
     #[cfg(target_os = "macos")]
     #[test]
@@ -798,7 +928,7 @@ mod tests {
         let file = tempfile::NamedTempFile::new().unwrap();
         runtime.executable_path = std::fs::canonicalize(file.path()).unwrap().to_string_lossy().into_owned();
         let scanner = RuntimeScanner::new(std::sync::Arc::new(|_| Ok(())));
-        scanner.snapshot.lock().unwrap().installed.push(runtime.clone());
+        scanner.snapshot.lock().unwrap().harness_list.push(runtime.clone());
         assert!(scanner.select(&RuntimeCandidate {
             executable_path: runtime.executable_path.clone(), source: runtime.source,
         }).is_err());
@@ -880,7 +1010,7 @@ mod tests {
             release.send(()).unwrap();
         };
         let (inventory, ()) = tokio::join!(inventory, heartbeat);
-        assert_eq!(inventory.unwrap().installed.len(), 1);
+        assert_eq!(inventory.unwrap().harness_list.len(), 1);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
@@ -928,9 +1058,9 @@ mod tests {
             panic!("wrong event");
         };
         assert_eq!(params.scanning, Some(false));
-        assert_eq!(params.installed.len(), 2);
-        assert!(params.installed[0].executable_path.ends_with("one.exe"));
-        assert_eq!(scanner.snapshot().installed.len(), 2);
+        assert_eq!(params.harness_list.len(), 2);
+        assert!(params.harness_list[0].executable_path.ends_with("one.exe"));
+        assert_eq!(scanner.snapshot().harness_list.len(), 2);
         scanner.stop();
     }
 
