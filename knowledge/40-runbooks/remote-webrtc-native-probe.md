@@ -84,8 +84,10 @@ Host 观察 stop 文件后关闭会话并删除临时配置/stop 文件。确认
 ## 开发模式选择
 
 普通 Remote 构建继续使用 LAN/WSS。要使用新增 RTC adapter，
-运行 `flutter run --dart-define=CODEPET_WEBRTC=true`；仍先按已有 LAN 流程配对，
+在 Remote 的 App 设置打开“开启 WebRTC”，完全退出并重新打开 App；仍先按已有 LAN 流程配对，
 沿用原证书 pin 和凭据。应用组合入口选择 transport，界面和业务 SDK 不改。
 
+设置页显示本次启动的当前通道。设置已替代原 CODEPET_WEBRTC 编译期开关，默认关闭；
+关闭并重启恢复 LAN/WSS，当前会话不随开关即时切换。
 该开关只选择 LAN 信令下的 RTC，不代表完成公网 rendezvous。当前 adapter
 没有 STUN/TURN 配置，文件挂载/传输/预览不在本轮范围。

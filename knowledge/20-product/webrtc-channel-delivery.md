@@ -53,7 +53,7 @@ RTC adapter 需要自己实现发送队列高低水位和完整消息上限；SC
 
 当前实现的精确契约见 `protocol/gateway/v1/webrtc-cpg1.md`：12 字节 CPG1 头、16 KiB 原生帧、请求 256 KiB/响应 4 MiB 上限、固定 5 秒拼装期限、64/16 KiB native 发送水位。旧长线提案中的文件分流与其他帧设计不适用于本阶段。
 
-Remote `--dart-define=CODEPET_WEBRTC=true` 在组合入口选择 RTC adapter，默认保持原 LAN/WSS。配对、preferredEndpoint、业务方法、SDK DTO 不变；Gateway manifest 仅增加 `additionalFramings`，生成器验证此元数据，生成源码无变化。
+Remote 的 App 设置“开启 WebRTC”保存下次启动的通道选择，默认保持原 LAN/WSS。完全退出重开后生效，设置页显示当前通道；原 CODEPET_WEBRTC 编译期开关已由此设置替代。配对、preferredEndpoint、业务方法、SDK DTO 不变；Gateway manifest 仅增加 `additionalFramings`，生成器验证此元数据，生成源码无变化。
 
 先使用已配对、证书 pin 的 LAN HTTPS 交换 SDP，可降低互通验证变量；信令必须是可替换接口。此验证依赖 LAN 信令可达，**不能标为公网连接完成**。信令代码不得进入 Gateway 请求 handler。
 
