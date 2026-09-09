@@ -274,6 +274,10 @@ export function validateManifest(record, model) {
   assert(["codepet-envelope", "json-rpc-2.0"].includes(manifest.transport.kind), `${packageConfig.id} has unsupported transport kind`);
   assert(manifest.transport.requestDiscriminator === "method", `${packageConfig.id} request discriminator must be method`);
   assert(typeof manifest.transport.framing === "string" && manifest.transport.framing.length > 0, `${packageConfig.id} transport framing is required`);
+  if (manifest.transport.additionalFramings !== undefined) {
+    assert(packageConfig.id === "gateway-v1" && manifest.transport.kind === "json-rpc-2.0" && manifest.transport.framing === "websocket-text", `${packageConfig.id} additional framing requires the existing Gateway WSS contract`);
+    assert(Array.isArray(manifest.transport.additionalFramings) && manifest.transport.additionalFramings.length === 1 && manifest.transport.additionalFramings[0] === "webrtc-cpg1", `${packageConfig.id} additionalFramings must contain only webrtc-cpg1`);
+  }
   const requestId = referenceTarget(manifest.transport.requestId, manifestPath, model, `${packageConfig.id}.transport.requestId`);
   assert(requestId.name === "RequestId", `${packageConfig.id} transport requestId must reference core RequestId`);
   if (manifest.transport.kind === "json-rpc-2.0") {

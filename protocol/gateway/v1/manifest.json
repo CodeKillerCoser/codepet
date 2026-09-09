@@ -6,6 +6,7 @@
   "transport": {
     "kind": "json-rpc-2.0",
     "framing": "websocket-text",
+    "additionalFramings": ["webrtc-cpg1"],
     "requestDiscriminator": "method",
     "eventDiscriminator": "method",
     "jsonRpcVersion": "2.0",
