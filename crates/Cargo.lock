@@ -402,6 +402,7 @@ dependencies = [
  "codepet-observation",
  "codepet-provider-data",
  "codepet-provider-sdk",
+ "ring",
  "rusqlite",
  "serde",
  "serde_json",

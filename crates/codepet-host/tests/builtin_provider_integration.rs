@@ -64,6 +64,11 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
             Value::String(executable(provider_package).to_string_lossy().into_owned());
         manifest["instances"][0]["settings"][executable_setting] =
             Value::String(fixture.to_string_lossy().into_owned());
+        if name == "codex" {
+            let home = directory.path().join("codex-home");
+            std::fs::create_dir_all(&home).unwrap();
+            manifest["instances"][0]["settings"]["dataDirectory"] = Value::String(home.to_string_lossy().into_owned());
+        }
         if name == "opencode" {
             manifest["instances"][0]["settings"]["serverVersion"] =
                 Value::String("1.18.25".to_string());

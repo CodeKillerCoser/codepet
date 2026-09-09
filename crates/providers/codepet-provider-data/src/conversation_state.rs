@@ -379,6 +379,27 @@ impl SharedConversationStateStore {
         Ok(dirty)
     }
 
+    /// Page discovery establishes baselines without invalidating the page being
+    /// built. Existing changed summaries or newly discovered unread members do
+    /// change the attention ranking and must still invalidate recent views.
+    pub fn observe_page_summaries(&self, scope: &str, rows: &mut [gateway::Conversation]) -> StateResult<bool> {
+        let mut document = self.lock()?;
+        let mut dirty = ensure_scope(&mut document, scope);
+        let mut changed = false;
+        for row in rows.iter_mut() {
+            let existed = document.conversations.contains_key(&resource_key(&row.resource));
+            let mut observed = false;
+            if let Some(value) = summary_fingerprint(row) {
+                observed = observe_in_document(&mut document, &row.resource, FingerprintKind::Summary, value)?.1;
+                dirty |= observed;
+            }
+            decorate_from_document(&document, scope, row);
+            changed |= observed && (existed || row.read_state.as_ref().is_some_and(|state| state.unread));
+        }
+        if dirty { self.persist(&document)?; }
+        Ok(changed)
+    }
+
     pub fn decorate_many(
         &self,
         scope: &str,
@@ -786,6 +807,17 @@ mod tests {
             )
             .unwrap();
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn page_baselines_do_not_invalidate_but_existing_activity_does() {
+        let store = SharedConversationStateStore::memory();
+        let mut rows = vec![conversation("first-page")];
+        assert!(!store.observe_page_summaries("mobile", &mut rows).unwrap());
+        assert!(!rows[0].read_state.as_ref().unwrap().unread);
+        rows[0].preview = Some("new content".into());
+        assert!(store.observe_page_summaries("mobile", &mut rows).unwrap());
+        assert!(rows[0].read_state.as_ref().unwrap().unread);
     }
 
     #[test]

@@ -49,6 +49,9 @@ fn setup(
         "CODEPET_FAKE_RECENT_ACTIVE_FAIL_FILE".into(),
         path.with_extension("fail").to_string_lossy().into_owned(),
     );
+    descriptor.env.insert("CODEPET_FAKE_RECENT_REQUESTS".into(), path.with_extension("requests").to_string_lossy().into_owned());
+    descriptor.env.insert("CODEPET_FAKE_RECENT_DATED_MODE".into(), path.with_extension("dated").to_string_lossy().into_owned());
+    descriptor.env.insert("CODEPET_FAKE_RECENT_EXPIRED".into(), path.with_extension("expired").to_string_lossy().into_owned());
     if fail_active {
         descriptor
             .env
@@ -280,5 +283,34 @@ async fn completeness_failure_invalidates_other_reader_snapshots() {
             .unwrap(),
         "recent_cursor_expired"
     );
+    manager.shutdown().await;
+}
+
+
+#[tokio::test]
+async fn recent_time_window_is_fetched_on_demand_and_replayed_without_reads() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.sqlite");
+    std::fs::write(path.with_extension("dated"), "1").unwrap();
+    let (manager, service) = setup(&path, false);
+    for (_, result) in manager.start_enabled().await { result.unwrap(); }
+    let first = fetch(&service, "reader", None).await.unwrap();
+    assert_eq!(first.conversations.len(), 20);
+    assert_eq!(first.conversations[0].resource.native_resource_id, "dated-0000");
+    let log = path.with_extension("requests");
+    let first_reads = std::fs::read_to_string(&log).unwrap().lines().count();
+    assert!(first_reads <= 2, "one page, with at most the initial read-state baseline retry");
+    let cursor = first.page_info.next_cursor.unwrap();
+    let second = fetch(&service, "reader", Some(cursor.clone())).await.unwrap();
+    assert_eq!(second.conversations[0].resource.native_resource_id, "dated-0020");
+    assert_eq!(second.conversations.len(), 20);
+    assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), first_reads + 1);
+    let replay = fetch(&service, "reader", Some(cursor)).await.unwrap();
+    assert_eq!(serde_json::to_value(second).unwrap(), serde_json::to_value(&replay).unwrap());
+    assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), first_reads + 1);
+    std::fs::write(path.with_extension("expired"), "1").unwrap();
+    assert_eq!(fetch(&service, "reader", replay.page_info.next_cursor).await.unwrap_err(), "recent_cursor_expired");
+    std::fs::remove_file(path.with_extension("expired")).unwrap();
+    assert!(fetch(&service, "reader", None).await.is_ok());
     manager.shutdown().await;
 }

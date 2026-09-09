@@ -4628,22 +4628,55 @@ async fn union_directory_applies_desktop_membership_before_project_and_standalon
 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn union_directory_discovers_event_only_ids_without_requiring_loaded_list_support() {
+async fn union_directory_resolves_hook_ids_explicitly_without_enumerating_loaded_history() {
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("event-marker");
-    std::fs::write(marker.with_extension("directory.json"), json!({"rows":[],"eventId":"event-only","loadedUnsupported":true}).to_string()).unwrap();
+    std::fs::write(marker.with_extension("directory.json"), json!({"rows":[],"loadedUnsupported":true}).to_string()).unwrap();
     let (provider, route, _) = configured_direct_provider("union-directory", &marker).await;
-    let request = ConversationListRequest {route:route.clone(),project_filter:all_project_filter(),cursor:None,limit:Some(20),query:None,reader_scope:None};
-    let page = tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            let page = provider.conversation_list(request.clone()).await.unwrap();
-            if !page.conversations.is_empty() { break page; }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }).await.unwrap();
+    let request = ConversationListRequest {route:route.clone(),project_filter:all_project_filter(),cursor:None,limit:Some(20),query:Some(serde_json::from_value(json!({"kind":"ids","ids":["event-only"]})).unwrap()),reader_scope:None};
+    let page = provider.conversation_list(request).await.unwrap();
     assert_eq!(page.conversations.len(), 1);
     assert_eq!(page.conversations[0].resource.native_resource_id, "event-only");
-    // The summary comes from metadata read (not the thread/started title).
     assert_eq!(page.conversations[0].title, "event-only");
+    assert!(!marker.with_extension("directory-requests.jsonl").exists(), "ID repair must not enumerate thread/list");
+    provider.instance_stop(InstanceStopRequest {route}).await.unwrap();
+}
+
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn union_directory_reads_only_requested_pages_and_preserves_leftovers() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("bounded-marker");
+    let home = temp.path().join("codex-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let native = (0..1000).map(|i| json!({"id":format!("native-{i:04}"),"updatedAt":10000-i*2})).collect::<Vec<_>>();
+    std::fs::write(marker.with_extension("directory.json"), json!({"rows":native}).to_string()).unwrap();
+    let db = rusqlite::Connection::open(home.join("state_5.sqlite")).unwrap();
+    db.execute_batch("CREATE TABLE threads(id TEXT PRIMARY KEY, archived INTEGER, updated_at INTEGER, updated_at_ms INTEGER, history_mode TEXT); CREATE INDEX idx_threads_updated_at_ms ON threads(updated_at_ms DESC,id DESC);").unwrap();
+    for i in 0..1000 {
+        let updated = 9999-i*2;
+        db.execute("INSERT INTO threads VALUES (?1,0,?2,?3,'legacy')", rusqlite::params![format!("db-{i:04}"), updated, updated*1000]).unwrap();
+    }
+    db.execute("INSERT INTO threads VALUES ('broken',0,1,1000,'legacy')", []).unwrap();
+    let (provider, route, _) = configured_direct_provider("union-directory", &marker).await;
+    let log = marker.with_extension("directory-requests.jsonl");
+    // Starting the provider no longer performs directory discovery.
+    assert!(!log.exists());
+    let mut request = ConversationListRequest {route:route.clone(),project_filter:all_project_filter(),cursor:None,limit:Some(20),query:None,reader_scope:None};
+    let first = provider.conversation_list(request.clone()).await.unwrap();
+    assert_eq!(first.conversations.len(), 20);
+    let expected = (0..10).flat_map(|i| [format!("native-{i:04}"),format!("db-{i:04}")]).collect::<Vec<_>>();
+    assert_eq!(first.conversations.iter().map(|row| row.resource.native_resource_id.clone()).collect::<Vec<_>>(), expected);
+    assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 1, "first page must not enumerate 1000 native rows");
+    request.cursor = first.page_info.next_cursor;
+    let second = provider.conversation_list(request.clone()).await.unwrap();
+    assert_eq!(second.conversations[0].resource.native_resource_id, "native-0010");
+    assert_eq!(second.conversations.len(), 20);
+    let before = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(serde_json::to_value(&second).unwrap(), serde_json::to_value(provider.conversation_list(request.clone()).await.unwrap()).unwrap());
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), before);
+    let token = request.cursor.as_ref().unwrap().rsplit_once(':').unwrap().0;
+    request.cursor = Some(format!("{token}:1"));
+    assert_eq!(provider.conversation_list(request).await.unwrap_err().code, "invalid_cursor");
     provider.instance_stop(InstanceStopRequest {route}).await.unwrap();
 }

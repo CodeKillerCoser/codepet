@@ -1,5 +1,8 @@
 # Codex 双源目录与固定快照分页修复
 
+> 历史方案，2026-09-09 已被用户明确要求的双源按需分页取代。以下保留引入背景，不再作为实现要求；当前约束见 [按需分页规则](../60-rules/codex-union-directory-pagination.md)。
+
+
 ## 现象
 
 原生列表遗漏空 preview 任务；legacy metadata read 又可能把 updatedAt 回退到创建时间。直接透传原生 cursor、对两源分别分页，或补读后覆盖全部字段，都不能得到完整且稳定的时间/项目列表。

@@ -314,6 +314,8 @@ fn main() {
             }
             "thread/list" => {
                 if options.approval_mode == "union-directory" {
+                    let mut log = std::fs::OpenOptions::new().create(true).append(true).open(options.marker.as_ref().unwrap().with_extension("directory-requests.jsonl")).unwrap();
+                    writeln!(log, "{}", json!({"method":"thread/list","params":params})).unwrap();
                     let value: Value = serde_json::from_slice(&std::fs::read(options.marker.as_ref().unwrap().with_extension("directory.json")).unwrap()).unwrap();
                     if value["error"] == true {
                         write_json(&mut writer, json!({"id":id,"error":{"code":-32603,"message":"directory unavailable"}}));
@@ -373,9 +375,7 @@ fn main() {
                     (vec![listed], None)
                 };
                 if let Some(project_id) = params.get("projectId") {
-                    for thread in &mut data {
-                        thread["projectId"] = project_id.clone();
-                    }
+                    data.retain(|thread| thread.get("projectId").unwrap_or(&Value::Null) == project_id);
                 }
                 respond(
                     &mut writer,

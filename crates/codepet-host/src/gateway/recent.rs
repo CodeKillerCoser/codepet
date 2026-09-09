@@ -160,7 +160,7 @@ impl ProviderGatewayService {
             .map_err(|_| gateway_state_error())?
             .page_with_fence(
                 &key,
-                None,
+                request.cursor.as_deref(),
                 request.limit,
                 now_ms(),
                 Some(self.current_event_cursor()),
@@ -176,6 +176,21 @@ impl ProviderGatewayService {
             .acquire()
             .await
             .map_err(|_| gateway_state_error())?;
+        let pending = self.recent.lock().map_err(|_| gateway_state_error())?.pending_tail(&key, request.cursor.as_deref(), request.limit)?;
+        if let Some((tail, needed)) = pending {
+            let epoch = self.recent.lock().map_err(|_| gateway_state_error())?.epoch(&key.provider_id);
+            let (rows, tail) = match self.collect_recent_tail(&runtime.route, scope, tail, needed).await {
+                Ok(page) => page,
+                Err(error) if error.code == "invalid_cursor" => {
+                    self.recent.lock().map_err(|_| gateway_state_error())?.invalidate(&key.provider_id);
+                    return Err(feed::error("recent_cursor_expired", "Provider list cursor expired; fetch a new recent first page", false));
+                }
+                Err(error) => return Err(error),
+            };
+            let mut snapshots = self.recent.lock().map_err(|_| gateway_state_error())?;
+            snapshots.append(&key, epoch, rows, tail, now_ms())?;
+            return snapshots.page_with_fence(&key, request.cursor.as_deref(), request.limit, now_ms(), Some(self.current_event_cursor()))?.map(response).ok_or_else(changed);
+        }
         // Bounded internal concurrency: one sequential enumeration per build, one build
         // per view. Dropping this future cancels the outstanding RPC and no snapshot installs.
         for attempt in 0..3 {
@@ -186,8 +201,8 @@ impl ProviderGatewayService {
                 .map_err(|_| gateway_state_error())?
                 .epoch(&key.provider_id);
             let fence = self.current_event_cursor();
-            let collected = self.collect_recent(&runtime.route, scope, started).await;
-            let (rows, boundary_at) = match collected {
+            let collected = self.collect_recent(&runtime.route, scope, started, request.limit.unwrap_or(20) as usize).await;
+            let (rows, boundary_at, tail) = match collected {
                 Ok(rows) => rows,
                 Err(error) => {
                     // A failed completeness check also disqualifies older cached views.
@@ -234,6 +249,7 @@ impl ProviderGatewayService {
                 now_ms(),
             ) {
                 Ok(()) => {
+                    snapshots.set_tail(&key, tail);
                     return snapshots
                         .page_with_fence(&key, None, request.limit, now_ms(), Some(fence))?
                         .map(response)
@@ -251,21 +267,11 @@ impl ProviderGatewayService {
         route: &provider::ProviderInstanceRoute,
         scope: &str,
         now: u64,
-    ) -> Result<(Vec<gateway::Conversation>, Option<u64>), gateway::ProtocolError> {
+        limit: usize,
+    ) -> Result<(Vec<gateway::Conversation>, Option<u64>, Option<feed::RecentTail>), gateway::ProtocolError> {
         let active = self.collect_active(route).await?;
         let unread = self.collect_unread(route, scope).await?;
-        let mut summaries = self
-            .collect_summaries(
-                route,
-                scope,
-                provider::ConversationListQuery::ConversationUpdatedAfterQuery(
-                    provider::ConversationUpdatedAfterQuery {
-                        kind: provider::ConversationUpdatedAfterQueryKind::UpdatedAfter,
-                        updated_after: now.saturating_sub(feed::RECENT_WINDOW_MS),
-                    },
-                ),
-            )
-            .await?;
+        let mut summaries = BTreeMap::new();
         let missing: BTreeSet<_> = active
             .keys()
             .chain(unread.keys())
@@ -326,9 +332,56 @@ impl ProviderGatewayService {
             }
         }
         let active_ids = active.keys().cloned().collect();
-        tokio::task::spawn_blocking(move || feed::aggregate(summaries, &active_ids, &unread, now))
-            .await
-            .map_err(|_| gateway_state_error())
+        let excluded = summaries.keys().cloned().collect();
+        let (mut rows, mut boundary) = feed::aggregate(summaries, &active_ids, &unread, now);
+        let tail = feed::RecentTail { cursor: None, cutoff: now.saturating_sub(feed::RECENT_WINDOW_MS), excluded, seen_cursors: BTreeSet::new() };
+        let (recent, tail) = self.collect_recent_tail(route, scope, tail, limit.saturating_sub(rows.len())).await?;
+        for row in &recent {
+            if let Some(expiry) = row.updated_at.and_then(|time| time.checked_add(feed::RECENT_WINDOW_MS + 1)) { boundary = Some(boundary.map_or(expiry, |old| old.min(expiry))); }
+        }
+        rows.extend(recent);
+        Ok((rows, boundary, tail))
+    }
+
+    async fn collect_recent_tail(&self, route: &provider::ProviderInstanceRoute, scope: &str, tail: feed::RecentTail, needed: usize) -> Result<(Vec<gateway::Conversation>, Option<feed::RecentTail>), gateway::ProtocolError> {
+        let (mut rows, tail) = self.read_recent_tail(route, scope, tail, needed).await?;
+        let state = self.conversation_state.clone();
+        let snapshots = self.recent.clone();
+        let scope = scope.to_owned();
+        let provider_id = route.provider_instance_id.clone();
+        let rows = tokio::task::spawn_blocking(move || -> Result<_, gateway::ProtocolError> {
+            if state.observe_page_summaries(&scope, &mut rows).map_err(gateway_error)? {
+                snapshots.lock().map_err(|_| gateway_state_error())?.invalidate(&provider_id);
+            }
+            Ok(rows)
+        }).await.map_err(|_| gateway_state_error())??;
+        Ok((rows, tail))
+    }
+
+    async fn read_recent_tail(&self, route: &provider::ProviderInstanceRoute, scope: &str, mut tail: feed::RecentTail, needed: usize) -> Result<(Vec<gateway::Conversation>, Option<feed::RecentTail>), gateway::ProtocolError> {
+        let mut rows = Vec::new();
+        // This enumerates only the requested time-window page; active and unread
+        // IDs have already been fetched separately and retain their higher rank.
+        for _ in 0..128 {
+            if rows.len() >= needed { return Ok((rows, Some(tail))); }
+            let page = self.manager.conversation_list(provider::ConversationListRequest {
+                route: route.clone(), cursor: tail.cursor.clone(), limit: Some((needed - rows.len()).clamp(1, 100) as u64),
+                project_filter: provider::ConversationProjectFilter::ConversationProjectFilterAll(provider::ConversationProjectFilterAll { kind: provider::ConversationProjectFilterAllKind::All }),
+                query: Some(provider::ConversationListQuery::ConversationUpdatedAfterQuery(provider::ConversationUpdatedAfterQuery { kind: provider::ConversationUpdatedAfterQueryKind::UpdatedAfter, updated_after: tail.cutoff })),
+                reader_scope: Some(scope.to_owned()),
+            }).await.map_err(gateway_error)?;
+            for row in page.conversations {
+                if !row.updated_at.is_some_and(|time| time >= tail.cutoff) { return Err(feed::error("conversation_query_incomplete", "Provider returned an out-of-query summary", false)); }
+                if tail.excluded.insert(feed::identity(&row)) { rows.push(row); }
+            }
+            tail.cursor = page.page_info.next_cursor;
+            match &tail.cursor {
+                None => return Ok((rows, None)),
+                Some(cursor) if !tail.seen_cursors.insert(cursor.clone()) => return Err(feed::error("conversation_query_incomplete", "Provider list cursor repeated", true)),
+                _ => {}
+            }
+        }
+        Err(feed::error("conversation_query_incomplete", "Recent page exceeded bounded source work", true))
     }
 
     async fn collect_active(

@@ -533,7 +533,8 @@ impl CodexAppServerSession {
         control_result
     }
 
-    /// Enumerate the complete in-memory namespace of this AppServer only.
+    /// Test the native loaded namespace independently of directory listing.
+    #[cfg(test)]
     pub fn thread_loaded_list(&self, cursor: Option<String>, limit: u32) -> Result<(Vec<String>, Option<String>), CodexAppServerError> {
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]

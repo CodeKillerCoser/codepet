@@ -16,6 +16,10 @@ pub(super) fn enabled() -> bool {
     std::env::var_os("CODEPET_FAKE_RECENT").is_some()
 }
 
+fn dated_mode() -> bool {
+    std::env::var_os("CODEPET_FAKE_RECENT_DATED_MODE").is_some_and(|path| std::path::Path::new(&path).exists())
+}
+
 impl RecentFixture {
     pub(super) fn active(
         &self,
@@ -34,7 +38,7 @@ impl RecentFixture {
         let page = if let Some(cursor) = request.cursor {
             self.active.page(&binding, &cursor, request.limit)?
         } else {
-            let rows = (0..125)
+            let rows = (0..if dated_mode() { 0 } else { 125 })
                 .map(|n| sdk::ConversationActiveEntry {
                     conversation: provider_resource(&request.route, &format!("active-{n:03}")),
                     status: ConversationStatus::Running,
@@ -89,6 +93,14 @@ impl RecentFixture {
         &self,
         request: ConversationListRequest,
     ) -> Result<ConversationListResponse, sdk::ProtocolError> {
+        if let Some(path) = std::env::var_os("CODEPET_FAKE_RECENT_REQUESTS") {
+            use std::io::Write;
+            let mut log = std::fs::OpenOptions::new().create(true).append(true).open(path).unwrap();
+            writeln!(log, "{}", serde_json::to_string(&request).unwrap()).unwrap();
+        }
+        if request.cursor.is_some() && std::env::var_os("CODEPET_FAKE_RECENT_EXPIRED").is_some_and(|path| std::path::Path::new(&path).exists()) {
+            return Err(protocol_error("invalid_cursor", "injected source cursor expiry"));
+        }
         let binding =
             serde_json::to_string(&(&request.route, &request.query, &request.reader_scope))
                 .unwrap();
@@ -114,6 +126,13 @@ impl RecentFixture {
             let mut dated = conversation(&request.route, "recent");
             dated.updated_at = Some(now);
             rows.push(dated);
+            if dated_mode() {
+                rows = (0..1000).map(|i| {
+                    let mut row = conversation(&request.route, &format!("dated-{i:04}"));
+                    row.updated_at = Some(now - i * 1000);
+                    row
+                }).collect();
+            }
             rows.retain(|row| match request.query.as_ref().unwrap() {
                 sdk::ConversationListQuery::ConversationUpdatedAfterQuery(query) => {
                     row.updated_at.is_some_and(|t| t >= query.updated_after)

@@ -1,4 +1,4 @@
-mod conversation_observer;
+mod directory_list;
 mod hook_observation;
 use codepet_provider_data::conversation_atoms::{self, ConversationAtoms};
 use codepet_provider_sdk::local_runtime;
@@ -85,9 +85,6 @@ struct NoopExecutionLifecycleHook;
 impl ExecutionLifecycleHook for NoopExecutionLifecycleHook {}
 
 struct InstanceMutable {
-    atomic_task: Option<tokio::task::JoinHandle<()>>,
-    atomic_facts_ready: bool,
-    atomic_readiness_pending: bool,
     atomic_facts_epoch: u64,
     metadata_epoch: u64,
     metadata_task: Option<tokio::task::JoinHandle<()>>,
@@ -111,7 +108,7 @@ struct InstanceMutable {
 }
 
 impl Drop for InstanceMutable {
-    fn drop(&mut self) { if let Some(task) = self.metadata_task.take() { task.abort(); } if let Some(task) = self.atomic_task.take() { task.abort(); } }
+    fn drop(&mut self) { if let Some(task) = self.metadata_task.take() { task.abort(); } }
 }
 
 enum InstanceSessionState {
@@ -390,6 +387,7 @@ struct CodexInstanceRuntime {
     hook_activity: Arc<Mutex<hook_observation::ActivityProjection>>,
     hook_ready: AtomicBool,
     atoms: ConversationAtoms,
+    directory_pages: directory_list::DirectoryPages,
     route: ProviderInstanceRoute,
     instance_kind: String,
     display_name: String,
@@ -421,6 +419,7 @@ impl CodexInstanceRuntime {
             hook_activity,
             hook_ready: AtomicBool::new(false),
             atoms,
+            directory_pages: Default::default(),
             route: request.route.clone(),
             instance_kind: request.instance_kind,
             display_name: request.display_name,
@@ -429,7 +428,7 @@ impl CodexInstanceRuntime {
             lifecycle_changed: Condvar::new(),
             title_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             mutable: Mutex::new(InstanceMutable {
-                atomic_task: None, atomic_facts_ready: false, atomic_readiness_pending: false, atomic_facts_epoch: 0,
+                atomic_facts_epoch: 0,
                 metadata_epoch: 0, metadata_task: None,
                 destroyed: false,
                 cleanup_in_progress: false,
@@ -468,7 +467,7 @@ impl CodexInstanceRuntime {
     }
 
     fn snapshot_locked(&self, mutable: &InstanceMutable) -> ProviderInstance {
-        let mut capabilities = conversation_atoms::observed_capabilities(mutable.capabilities.clone(), mutable.atomic_facts_ready, mutable.atomic_facts_epoch);
+        let mut capabilities = conversation_atoms::observed_capabilities(mutable.capabilities.clone(), self.hook_ready.load(Ordering::SeqCst), mutable.atomic_facts_epoch);
         if !self.hook_ready.load(Ordering::SeqCst) {
             capabilities.methods.retain(|method| *method != ProviderCapability::ConversationActiveList);
         }
@@ -671,8 +670,6 @@ impl CodexInstanceRuntime {
                     let previous = mutable.status;
                     Self::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
-            mutable.atomic_facts_ready = false;
-            if let Some(task) = mutable.atomic_task.take() { task.abort(); }
                     mutable.status = InstanceStatus::Stopped;
                     self.lifecycle_changed.notify_all();
                     drop(mutable);
@@ -682,8 +679,6 @@ impl CodexInstanceRuntime {
                     let previous = mutable.status;
                     Self::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
-            mutable.atomic_facts_ready = false;
-            if let Some(task) = mutable.atomic_task.take() { task.abort(); }
                     let lifecycle_generation = mutable.lifecycle_generation;
                     mutable.status = InstanceStatus::Stopping;
                     mutable.server_session_id = None;
@@ -1215,8 +1210,6 @@ impl CodexInstanceRuntime {
             let previous = mutable.status;
             Self::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
-            mutable.atomic_facts_ready = false;
-            if let Some(task) = mutable.atomic_task.take() { task.abort(); }
             let failure_generation = mutable.lifecycle_generation;
             mutable.cleanup_in_progress = true;
             mutable.status = InstanceStatus::Error;
@@ -1633,8 +1626,6 @@ impl Provider for CodexProvider {
                 let previous = mutable.status;
                 CodexInstanceRuntime::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
-            mutable.atomic_facts_ready = false;
-            if let Some(task) = mutable.atomic_task.take() { task.abort(); }
                 mutable.status = InstanceStatus::Starting;
                 mutable.server_session_id = None;
                 mutable.server_generation = None;
@@ -1770,7 +1761,7 @@ impl Provider for CodexProvider {
             runtime.start_server_forwarder(server_generation, server, incoming);
             let instance = runtime.snapshot();
             runtime.refresh_metadata();
-            runtime.start_atomic_poll();
+
             Ok(InstanceStartResponse { instance })
         })
     }
@@ -1816,8 +1807,6 @@ impl Provider for CodexProvider {
                 mutable.destroyed = true;
                 CodexInstanceRuntime::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
-            mutable.atomic_facts_ready = false;
-            if let Some(task) = mutable.atomic_task.take() { task.abort(); }
                 mutable.server_session_id = None;
                 mutable.server_generation = None;
                 runtime.lifecycle_changed.notify_all();
@@ -2034,22 +2023,11 @@ impl Provider for CodexProvider {
         Box::pin(async move {
             let runtime = self.instance(&request.route)?;
             let generation = runtime.query_generation()?;
-            // This is continuation-only: no cursor always performs fresh discovery.
-            if let Some(page) = runtime.atoms.list_cached(&generation, &request)? { return Ok(page); }
+            conversation_atoms::validate_list(&request)?;
             if !matches!(request.project_filter, ConversationProjectFilter::ConversationProjectFilterAll(_)) {
                 require_capability(&runtime, ProviderCapability::ProjectList)?;
             }
-            let mut rows = self.complete_conversation_summaries(&request.route).await?;
-            if let Some(codepet_provider_sdk::ConversationListQuery::ConversationIdsQuery(query)) = &request.query {
-                self.complete_requested_summaries(&request.route, &query.ids, &mut rows).await?;
-            }
-            if matches!(request.project_filter, ConversationProjectFilter::ConversationProjectFilterStandalone(_)) {
-                let assignments = load_codex_desktop_project_assignments(runtime.settings.data_directory.as_deref())?;
-                rows.retain(|row| assignments.membership_for(&row.resource.native_resource_id,
-                    row.project.as_ref().map(|project| project.native_resource_id.as_str())) == CodexConversationMembership::Standalone);
-            }
-            if generation != runtime.query_generation()? { return Err(conversation_atoms::generation_changed()); }
-            runtime.atoms.list(&generation, &request, rows)
+            runtime.list_directory_page(&generation, &request).await
         })
     }
 
@@ -3996,164 +3974,5 @@ impl CodexInstanceRuntime {
     fn query_generation(&self) -> Result<String, ProtocolError> {
         self.ready_server()?;
         Ok(lock(&self.mutable).lifecycle_generation.to_string())
-    }
-}
-
-impl CodexProvider {
-    async fn complete_conversation_summaries(&self, route: &ProviderInstanceRoute) -> Result<Vec<Conversation>, ProtocolError> {
-        self.instance(route)?.collect_directory_summaries(false).await
-    }
-}
-
-impl CodexInstanceRuntime {
-    async fn collect_atomic_summaries(&self) -> Result<Vec<Conversation>, ProtocolError> {
-        // Loaded threads supplement discovery only; Hook activity does not
-        // depend on this optional native namespace being available.
-        self.collect_directory_summaries(false).await
-    }
-
-    async fn collect_directory_summaries(&self, require_loaded_namespace: bool) -> Result<Vec<Conversation>, ProtocolError> {
-        let registry = self.atomic_server_registry()?;
-        let assignments = Arc::new(load_codex_desktop_project_assignments(self.settings.data_directory.as_deref())?);
-        let mut rows = Vec::new();
-        let mut cursor = None;
-        let mut progress = codepet_provider_sdk::conversation_query::EnumerationProgress::default();
-        loop {
-            let server = self.ready_server()?;
-            let page = tokio::task::spawn_blocking(move || server.thread_list(CodexThreadListRequest { cursor, limit: Some(100), project_id: None, workspace_root: None, search_term: None }))
-                .await.map_err(provider_task_error)?.map_err(CodexProtocolMapper::error)?;
-            for mut snapshot in page.data {
-                if snapshot.thread.ephemeral { continue; }
-                assignments.decorate(&mut snapshot);
-                rows.push(lock(&self.mapper).conversation(&snapshot));
-            }
-            cursor = progress.advance(page.next_cursor)?;
-            if cursor.is_none() { break; }
-            tokio::task::yield_now().await;
-        }
-        // Query a candidate superset: filtering by native project/time here can
-        // discard legacy reads and desktop project assignments before correction.
-        let home = self.settings.data_directory.clone().or_else(codex_home)
-            .ok_or_else(|| protocol_error("conversation_query_incomplete", "cannot resolve Codex data directory".into(), true))?;
-        let evidence = tokio::task::spawn_blocking(move || crate::directory::read_evidence(&home))
-            .await.map_err(provider_task_error)??;
-        let pending = lock(&self.mutable).pending_materialization.values().cloned().collect::<Vec<_>>();
-        rows.extend(pending.iter().map(|snapshot| {
-            let mut snapshot = snapshot.clone();
-            assignments.decorate(&mut snapshot);
-            lock(&self.mapper).conversation(&snapshot)
-        }));
-        let known = rows.iter().map(|row| row.resource.native_resource_id.clone()).collect::<HashSet<_>>();
-        let mut candidates = evidence.keys().cloned().collect::<HashSet<_>>();
-        candidates.extend(lock(&self.mutable).observed_thread_ids.iter().cloned());
-        let mut missing = candidates.into_iter().filter(|id| !known.contains(id)
-            && !evidence.get(id).is_some_and(|fact| fact.archived)).collect::<Vec<_>>();
-        missing.sort();
-        // Bounded concurrent single-ID reads on the same App Server connection.
-        for batch in missing.chunks(4) {
-            let mut reads = tokio::task::JoinSet::new();
-            for id in batch {
-                let server = self.ready_server()?;
-                let id = id.clone();
-                reads.spawn_blocking(move || server.thread_read_metadata(&id));
-            }
-            while let Some(result) = reads.join_next().await {
-                let mut snapshot = result.map_err(provider_task_error)?.map_err(CodexProtocolMapper::error)?;
-                if snapshot.thread.ephemeral { continue; }
-                assignments.decorate(&mut snapshot);
-                rows.push(lock(&self.mapper).conversation(&snapshot));
-            }
-        }
-        for (_, server) in &registry {
-            let mut cursor = None;
-            let mut progress = codepet_provider_sdk::conversation_query::EnumerationProgress::default();
-            loop {
-                let source = server.clone();
-                let (ids, next) = match tokio::task::spawn_blocking(move || source.thread_loaded_list(cursor, 100)).await.map_err(provider_task_error)? {
-                    Ok(page) => page,
-                    // Persistent listing works on older servers without the loaded
-                    // namespace API. Never use this fallback to advertise active facts.
-                    Err(error) if !require_loaded_namespace && error.is_method_not_found("thread/loaded/list") => break,
-                    Err(error) => return Err(CodexProtocolMapper::error(error)),
-                };
-                for id in ids {
-                    if server.is_ephemeral_thread(&id) { continue; }
-                    let source = server.clone();
-                    // A loaded/read race is an incomplete snapshot, never deletion.
-                    let mut snapshot = tokio::task::spawn_blocking(move || source.thread_read_metadata(&id)).await.map_err(provider_task_error)?.map_err(CodexProtocolMapper::error)?;
-                    assignments.decorate(&mut snapshot);
-                    let row = lock(&self.mapper).conversation(&snapshot);
-                    rows.push(row);
-                }
-                cursor = progress.advance(next)?;
-                if cursor.is_none() { break; }
-                tokio::task::yield_now().await;
-            }
-        }
-        let after = self.atomic_server_registry()?;
-        if registry.iter().map(|(id, server)| (*id, server.generation())).collect::<Vec<_>>() != after.iter().map(|(id, server)| (*id, server.generation())).collect::<Vec<_>>() {
-            return Err(conversation_atoms::generation_changed());
-        }
-        // Native list metadata and live reads are field observations, not
-        // last-response-wins replacements (legacy reads can regress timestamps).
-        let mut directory = std::collections::BTreeMap::<String, Conversation>::new();
-        for mut row in rows {
-            let id = row.resource.native_resource_id.clone();
-            if evidence.get(&id).is_some_and(|fact| fact.archived) { continue; }
-            if let Some(previous) = directory.get(&id) {
-                if row.updated_at == row.created_at && previous.updated_at > row.updated_at {
-                    row.updated_at = previous.updated_at;
-                }
-                if row.title == id && previous.title != id { row.title = previous.title.clone(); }
-                if row.preview.is_none() { row.preview = previous.preview.clone(); }
-                if row.project.is_none() { row.project = previous.project.clone(); }
-            }
-            if let Some(fact) = evidence.get(&id) { crate::directory::repair_time(&mut row, fact); }
-            directory.insert(id, row);
-        }
-        let mut rows = directory.into_values().collect::<Vec<_>>();
-        conversation_atoms::sort_summaries(&mut rows);
-        for row in &mut rows { self.project_conversation(row); }
-        Ok(rows)
-    }
-}
-
-impl CodexProvider {
-    async fn complete_requested_summaries(&self, route: &ProviderInstanceRoute, ids: &[String], rows: &mut Vec<Conversation>) -> Result<(), ProtocolError> {
-        let runtime = self.instance(route)?;
-        for id in ids {
-            if rows.iter().any(|row| &row.resource.native_resource_id == id) { continue; }
-            let session = runtime.ready_server()?;
-            let requested = id.clone();
-            // Missing list membership is not deletion (e.g. archived sessions).
-            // Unknown native failures propagate; never infer deletion from them.
-            match tokio::task::spawn_blocking(move || session.thread_read_metadata(&requested)).await.map_err(provider_task_error)? {
-                Ok(mut snapshot) => {
-                    load_codex_desktop_project_assignments(runtime.settings.data_directory.as_deref())?.decorate(&mut snapshot);
-                    let mut row = lock(&runtime.mapper).conversation(&snapshot);
-                    runtime.project_conversation(&mut row);
-                    rows.push(row);
-                }
-                Err(error) if error.is_thread_not_loaded(id) => {},
-                Err(error) => return Err(CodexProtocolMapper::error(error)),
-            }
-        }
-        Ok(())
-    }
-}
-
-impl CodexInstanceRuntime {
-    fn atomic_server_registry(&self) -> Result<Vec<(u64, CodexAppServerSession)>, ProtocolError> {
-        let mutable = lock(&self.mutable);
-        let mut registry = Vec::new();
-        for (id, slot) in &mutable.sessions {
-            match &*lock(&slot.state) {
-                InstanceSessionState::Spawned(server) => registry.push((*id, server.clone())),
-                InstanceSessionState::Pending | InstanceSessionState::Spawning => return Err(conversation_atoms::generation_changed()),
-                InstanceSessionState::Finished => {}
-            }
-        }
-        registry.sort_by_key(|(id, _)| *id);
-        Ok(registry)
     }
 }

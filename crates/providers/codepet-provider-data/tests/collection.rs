@@ -45,6 +45,43 @@ fn total(data: &ProviderData) -> Value {
 }
 
 #[test]
+fn usage_sink_preserves_batch_admission_and_retry() {
+    struct BatchSink {
+        reject: std::sync::atomic::AtomicBool,
+        admitted: std::sync::Mutex<Vec<String>>,
+    }
+    impl ProviderEventSink for BatchSink {
+        fn publish(&self, _: ProtocolEvent) -> Result<(), ProtocolError> {
+            panic!("batch must not be split into individual admissions");
+        }
+        fn publish_batch(&self, events: Vec<ProtocolEvent>) -> Result<(), ProtocolError> {
+            if self.reject.load(Ordering::SeqCst) {
+                return Err(ProtocolError { code: "busy".into(), message: "queue full".into(), retryable: true, details: None });
+            }
+            for event in events {
+                if let ProtocolEvent::EventNotification { params, .. } = event {
+                    self.admitted.lock().unwrap().push(params.event_id);
+                }
+            }
+            Ok(())
+        }
+    }
+    for provider in ["codex", "claude", "opencode"] {
+        let downstream = Arc::new(BatchSink {
+            reject: std::sync::atomic::AtomicBool::new(true),
+            admitted: std::sync::Mutex::new(Vec::new()),
+        });
+        let sink = UsageSink { data: Arc::new(ProviderData::default()), downstream: downstream.clone(), provider };
+        let batch = || (0..600).map(|id| event(json!({}), &id.to_string())).collect();
+        assert!(sink.publish_batch(batch()).is_err());
+        assert!(downstream.admitted.lock().unwrap().is_empty());
+        downstream.reject.store(false, Ordering::SeqCst);
+        sink.publish_batch(batch()).unwrap();
+        assert_eq!(*downstream.admitted.lock().unwrap(), (0..600).map(|id| id.to_string()).collect::<Vec<_>>());
+    }
+}
+
+#[test]
 fn stop_registers_transcript_and_incremental_reads_are_replay_safe() {
     let (dir, data) = setup();
     let path = dir.path().join("transcript.jsonl");
@@ -127,7 +164,7 @@ fn opencode_completed_message_survives_restart_and_duplicate_delivery() {
         downstream: Arc::new(Sink(AtomicUsize::new(0))),
         provider: "opencode",
     };
-    sink.publish(event(raw.clone(), "first")).unwrap();
+    sink.publish_batch(vec![event(raw.clone(), "first"), event(raw.clone(), "first")]).unwrap();
     drop(sink);
     drop(data);
     let data = Arc::new(ProviderData::default());

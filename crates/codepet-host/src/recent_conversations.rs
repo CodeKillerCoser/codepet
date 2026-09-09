@@ -76,7 +76,16 @@ pub(crate) fn aggregate(
     )
 }
 
+#[derive(Clone)]
+pub(crate) struct RecentTail {
+    pub cursor: Option<String>,
+    pub cutoff: u64,
+    pub excluded: BTreeSet<Identity>,
+    pub seen_cursors: BTreeSet<String>,
+}
+
 struct Snapshot {
+    tail: Option<RecentTail>,
     rows: Vec<gateway::Conversation>,
     revision: String,
     fence: gateway::EventCursor,
@@ -194,6 +203,7 @@ impl RecentSnapshots {
         self.snapshots.insert(
             key,
             Snapshot {
+                tail: None,
                 rows,
                 revision: revision(version.revision),
                 fence,
@@ -201,6 +211,37 @@ impl RecentSnapshots {
                 nonce: Uuid::new_v4().to_string(),
             },
         );
+        Ok(())
+    }
+
+    pub(crate) fn set_tail(&mut self, key: &ViewKey, tail: Option<RecentTail>) {
+        if let Some(snapshot) = self.snapshots.get_mut(key) { snapshot.tail = tail; }
+    }
+
+    pub(crate) fn pending_tail(&self, key: &ViewKey, cursor: Option<&str>, limit: Option<u64>) -> Result<Option<(RecentTail, usize)>, gateway::ProtocolError> {
+        let Some(snapshot) = self.snapshots.get(key) else { return Ok(None); };
+        let offset = match cursor {
+            Some(cursor) => {
+                let (nonce, offset, _) = decode_cursor(&self.cursor_key, key, cursor)?;
+                if nonce != snapshot.nonce { return Err(expired_cursor()); }
+                offset
+            }
+            None => 0,
+        };
+        Ok(snapshot.tail.clone().map(|tail| (tail, offset.saturating_add(limit.unwrap_or(20) as usize).saturating_sub(snapshot.rows.len()))))
+    }
+
+    pub(crate) fn append(&mut self, key: &ViewKey, epoch: u64, rows: Vec<gateway::Conversation>, tail: Option<RecentTail>, now: u64) -> Result<(), gateway::ProtocolError> {
+        if self.epoch(&key.provider_id) != epoch { return Err(expired_cursor()); }
+        let snapshot = self.snapshots.get_mut(key).ok_or_else(expired_cursor)?;
+        if now >= snapshot.expires_at { return Err(expired_cursor()); }
+        if let Some(boundary) = rows.iter().filter_map(|row| row.updated_at.and_then(|time| time.checked_add(RECENT_WINDOW_MS + 1))).min() {
+            if now >= boundary { return Err(expired_cursor()); }
+            let version = self.versions.entry(key.provider_id.clone()).or_default();
+            version.boundary_at = Some(version.boundary_at.map_or(boundary, |old| old.min(boundary)));
+        }
+        snapshot.rows.extend(rows);
+        snapshot.tail = tail;
         Ok(())
     }
 
@@ -263,10 +304,13 @@ impl RecentSnapshots {
         if offset > snapshot.rows.len() {
             return Err(invalid_cursor());
         }
+        if snapshot.tail.is_some() && offset.saturating_add(limit as usize) > snapshot.rows.len() {
+            return Ok(None);
+        }
         let end = offset
             .saturating_add(limit as usize)
             .min(snapshot.rows.len());
-        let next_cursor = (end < snapshot.rows.len())
+        let next_cursor = (end < snapshot.rows.len() || snapshot.tail.is_some())
             .then(|| encode_cursor(&self.cursor_key, key, &snapshot.nonce, end, &fence));
         Ok(Some(Page {
             conversations: snapshot.rows[offset..end].to_vec(),

@@ -4,7 +4,7 @@
 
 2026-09-08 用户确认：首页“最近”不能依赖 Remote 已加载的 conversation.list 页面再做局部排序。很旧的运行中或未读会话可能不在这些页面中；关注会话数量也可能很大，因此最终最近列表必须分页。
 
-本方案已完成源码实现、独立审查和本地集成，尚未编译或运行验收。Host 基线为 v0（4e32b87），Remote 基线为 main（3f20065）；集成代码分别至 Host `1f6618a`、Remote `7248092`。任务、修复与未验证边界见 [交付计划](../40-runbooks/recent-conversation-delivery.md)。
+本方案最初完成源码实现、独立审查和本地集成。2026-09-09 按用户要求调整为按页补查，当前实现与验证见 [按需分页修复](../40-runbooks/codex-demand-paged-directory.md)。历史基线：Host 基线为 v0（4e32b87），Remote 基线为 main（3f20065）；集成代码分别至 Host `1f6618a`、Remote `7248092`。任务、修复与未验证边界见 [交付计划](../40-runbooks/recent-conversation-delivery.md)。
 
 ## 目标
 
@@ -54,7 +54,7 @@ Gateway facade 接收聚合请求；真正聚合逻辑放独立应用模块，�
 
 协议仍然是 v1（用户明确要求），不创建 v2、不递增 protocolVersion。方法、事件、capability 与可选字段在既有 v1 canonical schema/manifest 内增量扩展；旧请求未提供新字段时语义不变，向旧 Provider 发新请求前必须协商能力，不能假设旧版严格decoder能接受新增字段。
 
-字段/DTO 的最终拼写、分页 wrapper、capability 名称由契约任务按照现有 codegen 风格一次冻结并写回交付计划；语义不能自行削弱。日期、IDs 模式不能退化为“只过滤上游当前一页”。若原生没有所需过滤，Provider 内部扫描完整所需范围或使用公共摘要索引；不能把全量 transcript 传给 Host。
+字段/DTO 的最终拼写、分页 wrapper、capability 名称由契约任务按照现有 codegen 风格一次冻结并写回交付计划；语义不能自行削弱。日期、IDs 模式不能退化为“只过滤上游当前一页”。若原生没有所需过滤，Provider 使用有界候选查询和排序下界停止，并用 DB 补漏；不能为了首屏扫描所有历史或把全量 transcript 传给 Host。
 
 ### 未读权威下沉与兼容
 
@@ -76,7 +76,7 @@ updatedAfter 查询（14天）───────────────┴�
 
 运行中优先、未读次之、其余近期最后；每组 updatedAt 降序；同时间按完整 routed resource identity 排序。一个会话只出现一次，同时 active/unread 归 active。
 
-必须在对 Remote 截页前建立足够完整的候选索引。第一版允许 Host 后台完整收集 active/unread 的枚举页和所需近期摘要页、构建可重建快照；不能把不完整首批伪装成完整第一页。Provider 日期索引后续可优化，不暴露额外产品语义。集合大时，内部请求与并发有界、可取消且不阻塞控制消息；不截断到任意 N 条冒充完整。
+Host 完整收集自有 active/unread ID 集合并补读这些明确 ID 的摘要，先确定高优先级排序；14 天历史只查询当前页面缺口，保存 Provider cursor 按需续取。已访问页可重放，未访问历史不提前物化。内部请求与并发有界、可取消且不阻塞控制消息；不截断到任意 N 条冒充结束。
 
 Gateway `conversation.recent` 的稳定目标形状：
 

@@ -1,5 +1,8 @@
 # 最近会话交付与监督计划
 
+> 2026-09-09：Codex 全量 summary reconciliation 已移除，Host 近期历史改为按需续页。当前行为见 [按需分页修复](codex-demand-paged-directory.md)，下文保留原交付历史。
+
+
 ## 授权与基线
 
 2026-09-08：用户授权 PM 撰写设计、拆成独立 Codex 任务、监督完成。每项使用独立 worktree；Host 从 v0、Remote 从 main 开始；GPT-6（gpt-6-astra）、推理 high、正常速度。禁止本机编译、构建和测试执行；只做代码、逻辑、协议检查，测试代码可以补齐。

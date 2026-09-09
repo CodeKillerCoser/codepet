@@ -85,6 +85,13 @@ impl ConversationStateStore {
         for conversation in conversations { changed |= self.store(&conversation.resource.provider_id)?.observe_and_decorate_summaries(scope,std::slice::from_mut(conversation)).map_err(HostError::from)?; }
         Ok(changed)
     }
+    pub(crate) fn observe_page_summaries(&self, scope: &str, conversations: &mut [gateway::Conversation]) -> HostResult<bool> {
+        let mut changed = false;
+        for conversation in conversations {
+            changed |= self.store(&conversation.resource.provider_id)?.observe_page_summaries(scope, std::slice::from_mut(conversation)).map_err(HostError::from)?;
+        }
+        Ok(changed)
+    }
     pub(crate) fn observe_detail(
         &self,
         conversation: &gateway::RoutedResourceId,

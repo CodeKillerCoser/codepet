@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::Duration;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct DbEvidence {
     pub archived: bool,
     pub updated_ms: Option<u64>,
@@ -23,10 +23,26 @@ fn unavailable(error: impl std::fmt::Display) -> ProtocolError {
 
 /// A single SELECT sees committed WAL data. The connection is dropped before RPCs.
 /// No immutable URI, migrations, checkpoints, or writes to the native database.
+#[cfg(test)]
 pub(crate) fn read_evidence(home: &Path) -> Result<BTreeMap<String, DbEvidence>, ProtocolError> {
+    Ok(read_page(home, &DbQuery::default())?.into_iter().collect())
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct DbQuery {
+    pub after: Option<(u64, String)>,
+    pub updated_after: Option<u64>,
+    pub ids: Option<Vec<String>>,
+    // None = all; Some(None) = standalone.
+    pub project: Option<Option<String>>,
+    pub assignments: BTreeMap<String, Option<String>>,
+    pub limit: Option<usize>,
+}
+
+pub(crate) fn read_page(home: &Path, query: &DbQuery) -> Result<Vec<(String, DbEvidence)>, ProtocolError> {
     let files = match std::fs::read_dir(home) {
         Ok(files) => files,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(unavailable(error)),
     };
     let mut databases = Vec::new();
@@ -44,7 +60,7 @@ pub(crate) fn read_evidence(home: &Path) -> Result<BTreeMap<String, DbEvidence>,
     }
     // Never fall back to an older database after a new schema fails validation.
     let Some((_, path)) = databases.into_iter().max_by_key(|(version, _)| *version) else {
-        return Ok(BTreeMap::new());
+        return Ok(Vec::new());
     };
     let connection = Connection::open_with_flags(
         path,
@@ -78,13 +94,56 @@ pub(crate) fn read_evidence(home: &Path) -> Result<BTreeMap<String, DbEvidence>,
     } else {
         "'legacy'"
     };
-    let mut statement = connection
-        .prepare(&format!(
-            "SELECT id, archived, {updated}, {history} FROM threads ORDER BY id"
-        ))
-        .map_err(unavailable)?;
+    let native_project = if columns.contains("project_id") { "NULLIF(project_id, '')" } else { "NULL" };
+    let mut predicates = Vec::new();
+    let mut parameters = Vec::<rusqlite::types::Value>::new();
+    if query.limit.is_some() && query.ids.is_none() { predicates.push("archived = 0".to_string()); }
+    if let Some(since) = query.updated_after {
+        predicates.push(format!("{updated} >= ?"));
+        parameters.push((since.min(i64::MAX as u64) as i64).into());
+    }
+    if let Some((time, id)) = &query.after {
+        predicates.push(format!("({updated} <= ? AND ({updated} < ? OR ({updated} = ? AND id > ?)))"));
+        parameters.extend([(*time as i64).into(), (*time as i64).into(), (*time as i64).into(), id.clone().into()]);
+    }
+    if let Some(ids) = &query.ids {
+        predicates.push("id IN (SELECT value FROM json_each(?))".into());
+        parameters.push(serde_json::to_string(ids).map_err(unavailable)?.into());
+    }
+    if let Some(project) = &query.project {
+        let assignments = serde_json::to_string(&query.assignments).map_err(unavailable)?;
+        match project {
+            None => {
+                predicates.push(format!("({native_project} IS NULL AND NOT EXISTS (SELECT 1 FROM json_each(?) a WHERE a.key = threads.id))"));
+                parameters.push(assignments.into());
+            }
+            Some(project) => {
+                predicates.push(format!("({native_project} = ? OR ({native_project} IS NULL AND EXISTS (SELECT 1 FROM json_each(?) a WHERE a.key = threads.id AND a.value = ?)))"));
+                parameters.extend([project.clone().into(), assignments.into(), project.clone().into()]);
+            }
+        }
+    }
+    let predicate = if predicates.is_empty() { String::new() } else { format!(" WHERE {}", predicates.join(" AND ")) };
+    let limit = query.limit.map(|limit| format!(" LIMIT {limit}")).unwrap_or_default();
+    let has_time_index = |name: &str| -> bool {
+        connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name=?)", [name], |row| row.get(0)).unwrap_or(false)
+    };
+    let sql = if query.limit.is_some() && query.ids.is_none() && columns.contains("updated_at_ms") {
+        // Keep the common millisecond path indexable. COALESCE in ORDER BY
+        // would sort the entire filtered table before applying LIMIT.
+        let index = if has_time_index("idx_threads_updated_at_ms") { " INDEXED BY idx_threads_updated_at_ms" } else { "" };
+        let condition = |extra: &str| if predicate.is_empty() { format!(" WHERE {extra}") } else { format!("{predicate} AND {extra}") };
+        let modern = condition("updated_at_ms IS NOT NULL").replace(updated, "updated_at_ms");
+        let legacy = condition("updated_at_ms IS NULL").replace(updated, "updated_at * 1000");
+        parameters.extend(parameters.clone());
+        format!("SELECT * FROM (SELECT id, archived, updated_at_ms AS time, {history} AS history FROM threads{index}{modern} ORDER BY updated_at_ms DESC, id ASC{limit}) UNION ALL SELECT * FROM (SELECT id, archived, updated_at * 1000 AS time, {history} AS history FROM threads{index}{legacy} ORDER BY updated_at DESC, id ASC{limit}) ORDER BY time DESC, id ASC{limit}")
+    } else {
+        let index = if query.ids.is_none() && has_time_index("idx_threads_updated_at") { " INDEXED BY idx_threads_updated_at" } else { "" };
+        format!("SELECT id, archived, {updated}, {history} FROM threads{index}{predicate} ORDER BY {updated} DESC, id ASC{limit}")
+    };
+    let mut statement = connection.prepare(&sql).map_err(unavailable)?;
     let entries = statement
-        .query_map([], |row| {
+        .query_map(rusqlite::params_from_iter(parameters), |row| {
             let updated: Option<i64> = row.get(2)?;
             Ok((
                 row.get::<_, String>(0)?,
@@ -96,15 +155,17 @@ pub(crate) fn read_evidence(home: &Path) -> Result<BTreeMap<String, DbEvidence>,
             ))
         })
         .map_err(unavailable)?
-        .collect::<Result<BTreeMap<_, _>, _>>()
+        .collect::<Result<Vec<_>, _>>()
         .map_err(unavailable)?;
     Ok(entries)
 }
 
-/// Correct only the observed legacy read-at-creation regression, not arbitrary
-/// timestamp corrections. List metadata and paginated history keep their times.
+/// Restore DB millisecond precision within the same native second, and correct
+/// the observed legacy read-at-creation regression. Do not replace unrelated
+/// native timestamp changes with older DB observations.
 pub(crate) fn repair_time(row: &mut codepet_provider_sdk::Conversation, evidence: &DbEvidence) {
-    if evidence.legacy && row.updated_at == row.created_at && evidence.updated_ms > row.updated_at {
+    if row.updated_at.zip(evidence.updated_ms).is_some_and(|(native, db)| native % 1000 == 0 && native / 1000 == db / 1000)
+        || (evidence.legacy && row.updated_at == row.created_at && evidence.updated_ms > row.updated_at) {
         row.updated_at = evidence.updated_ms;
     }
 }
@@ -141,6 +202,45 @@ mod tests {
             read_evidence(home.path()).unwrap()["omitted"].updated_ms,
             Some(999)
         );
+    }
+
+    #[test]
+    fn db_precision_preserves_subsecond_filter_boundaries() {
+        let mut row: codepet_provider_sdk::Conversation = serde_json::from_value(serde_json::json!({
+            "resource":{"providerId":"i","nativeResourceId":"t"},
+            "title":"t","status":"idle","createdAt":9000,"updatedAt":10000
+        })).unwrap();
+        let evidence = DbEvidence { archived: false, updated_ms: Some(10500), legacy: false };
+        repair_time(&mut row, &evidence);
+        assert_eq!(row.updated_at, Some(10500));
+        row.updated_at = Some(11000);
+        repair_time(&mut row, &evidence);
+        assert_eq!(row.updated_at, Some(11000));
+    }
+
+    #[test]
+    fn page_filters_and_keysets_include_empty_previews_and_legacy_null_times() {
+        let home = tempfile::tempdir().unwrap();
+        let db = Connection::open(home.path().join("state_5.sqlite")).unwrap();
+        db.execute_batch("CREATE TABLE threads(id TEXT PRIMARY KEY, archived INTEGER, updated_at INTEGER, updated_at_ms INTEGER, project_id TEXT, preview TEXT);
+            CREATE INDEX idx_threads_updated_at_ms ON threads(updated_at_ms DESC, id DESC);
+            INSERT INTO threads VALUES ('a',0,30,30001,NULL,''),('b',0,30,NULL,NULL,''),('c',0,20,20000,'p',''),('d',0,10,10000,NULL,''),('archived',1,90,90000,NULL,'');").unwrap();
+        let mut query = DbQuery { limit: Some(1), updated_after: Some(20000), project: Some(None), ..Default::default() };
+        let first = read_page(home.path(), &query).unwrap();
+        assert_eq!(first[0].0, "a");
+        query.after = Some((30001, "a".into()));
+        let second = read_page(home.path(), &query).unwrap();
+        assert_eq!(second[0].0, "b");
+        assert_eq!(second[0].1.updated_ms, Some(30000));
+        query.after = Some((30000, "b".into()));
+        assert!(read_page(home.path(), &query).unwrap().is_empty());
+        query.after = None;
+        query.project = Some(Some("p".into()));
+        query.assignments.insert("b".into(), Some("p".into()));
+        query.limit = Some(20);
+        assert_eq!(read_page(home.path(), &query).unwrap().into_iter().map(|(id,_)| id).collect::<Vec<_>>(), ["b", "c"]);
+        query.ids = Some(vec!["archived".into()]); query.project = None;
+        assert!(read_page(home.path(), &query).unwrap()[0].1.archived);
     }
 
     #[test]

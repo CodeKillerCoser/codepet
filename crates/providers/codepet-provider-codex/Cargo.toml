@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+ring = "0.17"
 codepet-provider-data = { path = "../codepet-provider-data" }
 codepet-observation = { path = "../codepet-observation" }
 codepet-provider-sdk = { path = "../../../sdk/rust/codepet-provider-sdk", version = "0.1.0" }

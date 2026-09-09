@@ -12,8 +12,22 @@ pub struct UsageSink {
 }
 impl ProviderEventSink for UsageSink {
     fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError> {
+        self.collect_event(&event);
+        self.downstream.publish(event)
+    }
+
+    fn publish_batch(&self, events: Vec<ProtocolEvent>) -> Result<(), ProtocolError> {
+        for event in &events { self.collect_event(event); }
+        // Preserve downstream all-or-none admission, including readiness events
+        // at the end of a complete summary scan. Intake is replay-safe on retry.
+        self.downstream.publish_batch(events)
+    }
+}
+
+impl UsageSink {
+    fn collect_event(&self, event: &ProtocolEvent) {
         if self.provider != "codex" && self.data.configured() {
-            if let ProtocolEvent::EventNotification { params, .. } = &event {
+            if let ProtocolEvent::EventNotification { params, .. } = event {
                 let result = (|| {
                     let db = self.data.connection()?;
                     let raw = params
@@ -53,7 +67,6 @@ impl ProviderEventSink for UsageSink {
                 }
             }
         }
-        self.downstream.publish(event)
     }
 }
 
