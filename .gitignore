@@ -9,6 +9,7 @@ src-tauri/resources/provider-sdk/
 custom-pet-data/
 .local-secrets/
 __pycache__/
+artifacts/task-lineage-qa/
 *.pyc
 .DS_Store
 npm-debug.log*

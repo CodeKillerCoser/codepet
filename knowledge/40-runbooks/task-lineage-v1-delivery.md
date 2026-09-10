@@ -1,0 +1,49 @@
+# 任务谱系第一版实施与验证
+
+## 背景与目标
+
+2026-09-10 在隔离分支 `codex/task-lineage-v1` 实现首期 Codex 任务谱系，基线 `v0` / `b39c36e`。工作树为 `D:/17633/Documents/Code/codepet-task-lineage-v1`。依据 [UI 设计](../20-product/task-lineage-management.md) 与 [技术设计](../10-architecture/task-lineage-and-extraction.md)，实现对话树、任务与执行节点、图/泳道、消息证据和人工验收。当前是分支实现，尚未合并或安装发布。
+
+## 输入边界
+
+只将滚动最近 48 小时的用户消息与 AI 正文送入任务抽取；时间戳缺失、无法解析、未来时间和更早记录均跳过。工具调用、参数、执行结果、委派工具正文和 reasoning 永不参与语义抽取。旧线程最近新增的正文仍可纳入。待处理计数、手动抽取、后台队列与执行器使用同一规则；没有近期待处理消息时不调用模型、不消耗批次。
+
+原始记录只读，本地消息浏览可以保留历史；Fork 的继承前缀只用于浏览，不重复送入抽取。任务摘要可以作为已有任务候选用于去重，不加载完整历史对话填充模型上下文。详见 [输入规约](../60-rules/task-lineage-extraction-input.md)。
+
+## 已实现模块及原因
+
+- `crates/codepet-task-lineage`：集中承载来源适配、增量字节游标、消息证据、任务抽取、本地 JSON 事务恢复、Git 核验与后台预算。来源通过统一接口隔离，进程和路径沿用 Provider SDK 平台实现。
+- `src-tauri/src/task_lineage.rs`：连接配置实例、应用数据目录与业务命令；每 15 秒处理显式开启的后台更新，关闭页面仍可继续，关闭应用停止。
+- `src-tauri/src/runtime_gateway/tauri_bridge.rs`：提供通用实例数据上下文，避免调用方猜测实例目录。
+- `frontend/lib/TaskLineage.svelte`、`LineageMessages.svelte`、`taskLineage.ts`：生产 Svelte 页面与统一消息面板，包含节点证据、当前 Git 状态、状态未知提示、人工完成与继续发消息。消息发送复用现有运行时能力与交互控制。
+- `scripts/task_lineage_probe.py`：独立只读预研和合成模型试跑；生产功能不依赖 Python。
+
+模型默认 `haiku`，使用本机 Claude CLI，每批最多 24 条正文、约 24000 字符，单条截取 12000 字符并标记，单次预算上限 $0.10、超时 90 秒。关闭模型工具、MCP、hooks、会话持久化。连续抽取最多授权 5 批，提前持久化扣减，失败停止且保留待处理输入；不会自动切换昂贵模型。
+
+本机 Claude Code 2.1.263 的 `haiku` 实际映射为 `deepseek-v4-flash`。Python 与 Rust 合成两任务试跑均返回两任务及证据；CLI 报告成本分别约 0.011705 / 0.015125 USD，不能视作最终账单。每次结果保存并显示请求模型及实际 modelUsage。
+
+持久化位于应用数据目录 `task-lineage/v1/<provider hash>`。按线程分块存储标准化消息，按任务独立存储，保留抽取输入/结果版本；使用文件锁与 prepared journal 恢复。模型等待时释放写锁，结果提交前重新核对游标和任务版本，防止覆盖期间的人工验收。
+
+## 验证记录
+
+- `cargo test -p codepet-task-lineage`（`crates/`）：17 项通过，覆盖半行重试、同长度重写、输入排除工具、48 小时精确边界、500 条旧历史后的近期追加、旧历史不耗后台预算、Fork 继承、双向线程流转、人工验收并发、事务恢复与真实 Git worktree。
+- `npx vitest run frontend/lib/taskLineage.test.ts`：3 项通过。
+- `npm run build`：生产构建通过。
+- `cargo check --lib`（`src-tauri/`）：通过，保留原有未使用项警告；使用已存在的 staged Provider SDK 资源进行本地编译。
+- `node scripts/task_lineage_ui_qa.mjs`：真实 Svelte 组件配模拟 IPC，Edge 无头浏览器验证对话、节点证据、图/泳道选择保留、键盘高亮、人工验收、消息发送及后台开关；1440、980、820、480 宽度无横向溢出，发送动作可见。截图在忽略目录 `artifacts/task-lineage-qa/`。
+- 全仓 `tsc --noEmit` 未通过：基线快照和当前工作树均为相同 27 项诊断，未新增；包括缺失 Node 类型和旧测试数据类型。没有为本任务改动这些无关问题。
+- Rust `extraction_probe` 用合成消息走原生 Claude CLI；实际 Codex 来源通过 `probe` 只读扫描。真实用户对话没有送入模型。最近一次只读扫描识别 52 个线程、8 个有证据的派生关联，近 48 小时待分析正文 718 条，诊断为空；该数量为当时快照，会随时间变化。
+
+## 风险、验证路径与限制
+
+- 原始记录未提供关系证据时显示未知；只从原生 Fork、创建/消息转交结构读取关系，工具正文不补成用户消息。完整平台来源关系覆盖仍需真实案例验证。
+- Git 展示当前 worktree、干净程度和可证明的祖先同步关系，不代表任务历史提交归属；squash/cherry-pick 保留未知，不能据此自动验收。
+- 模型摘要质量只完成合成数据验证。首次真实使用应回看 evidence，人工确认任务边界；模型不能把运行结束当人工完成。
+- Windows 来源、CLI 和构建已验证；尚未在原生应用中做真实消息发送端到端验收，macOS 未运行。应用集成验收需启动分支构建，在任务页扫描、抽取一批并回溯原文，确认发送落到选定线程。
+- 本地索引保留历史用于回溯，48 小时限制约束抽取输入而非消息浏览。后台重新加载较大索引的耗时仍需随数据规模观察。
+
+## 使用与复现
+
+启动分支应用，在“任务”页选择 Codex 来源并扫描；确认本机 Claude 运行时可用后点击“抽取关联对话”。抽取范围为选中主对话及派生线程，或选中的派生对话本身。需要连续运行时开启后台更新与连续抽取；批次耗尽后由用户补充最多 5 批。
+
+UI QA 需要 `CODEPET_QA_NODE_MODULES` 指向含 Playwright 的 Node modules，并安装 Edge；脚本会自行启动和停止本地 Vite。真实来源扫描命令为 `cargo run -p codepet-task-lineage --example probe -- <Codex home> <isolated store>`；不会运行模型。

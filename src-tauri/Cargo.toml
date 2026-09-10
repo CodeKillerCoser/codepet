@@ -25,6 +25,7 @@ codepet-desktop-sdk = { path = "../sdk/rust/codepet-desktop-sdk", version = "0.1
 codepet-gateway-sdk = { path = "../sdk/rust/codepet-gateway-sdk", version = "0.1.0" }
 codepet-lan-channel-sdk = { path = "../sdk/rust/codepet-lan-channel-sdk", version = "0.1.0" }
 codepet-host = { path = "../crates/codepet-host", version = "0.1.0" }
+codepet-task-lineage = { path = "../crates/codepet-task-lineage" }
 codepet-provider-sdk = { path = "../sdk/rust/codepet-provider-sdk", version = "0.1.0" }
 dirs = "5"
 hmac = "0.12"

@@ -854,6 +854,7 @@ dependencies = [
  "codepet-host",
  "codepet-lan-channel-sdk",
  "codepet-provider-sdk",
+ "codepet-task-lineage",
  "core-foundation",
  "core-graphics",
  "dirs 5.0.1",
@@ -1014,6 +1015,19 @@ dependencies = [
  "windows 0.62.2",
  "yamux",
  "zstd",
+]
+
+[[package]]
+name = "codepet-task-lineage"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "codepet-provider-sdk",
+ "fs2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]

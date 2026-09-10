@@ -4,6 +4,7 @@ pub mod app;
 pub mod pet;
 pub mod platform;
 pub mod runtime_gateway;
+mod task_lineage;
 
 pub use activity::collector;
 pub use activity::events;
@@ -432,6 +433,7 @@ pub fn run() {
                 );
             }
             provider_host_state.start_in_background();
+            task_lineage::start_background(handle.clone());
             provider_host_state.start_pet();
             remote_access_runtime.start_in_background();
             if let Err(error) = install_tray_icon(&handle) {
@@ -447,6 +449,14 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            task_lineage::task_lineage_options,
+            task_lineage::task_lineage_snapshot,
+            task_lineage::task_lineage_scan,
+            task_lineage::task_lineage_extract,
+            task_lineage::task_lineage_messages,
+            task_lineage::task_lineage_complete,
+            task_lineage::task_lineage_workspace,
+            task_lineage::task_lineage_watch,
             platform::main_window::main_window_toolbar_anchor,
             list_agent_runtimes,
             detect_agent_runtime,

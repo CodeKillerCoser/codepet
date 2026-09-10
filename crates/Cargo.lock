@@ -648,6 +648,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "codepet-task-lineage"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "codepet-provider-sdk",
+ "fs2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"

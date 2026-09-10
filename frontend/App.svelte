@@ -1,5 +1,6 @@
 <script lang="ts">
   import EventJournal from "./lib/EventJournal.svelte";
+  import TaskLineage from "./lib/TaskLineage.svelte";
   import WindowToolbar from "./lib/WindowToolbar.svelte";
   import { basename, extname, join } from "@tauri-apps/api/path";
   import PetSources from "./lib/PetSources.svelte";
@@ -57,7 +58,7 @@
 
   type ActivityFilterKind = keyof ActivityKeywordFilterSettings;
 
-  let tab: "agents" | "connections" | "usage" | "personalize" | "events" = "agents";
+  let tab: "agents" | "connections" | "usage" | "personalize" | "events" | "tasks" = "agents";
   let sidebarCollapsed = false;
   let petSources: PetSource[] = [];
   let agentRuntimes: AgentRuntime[] = [];
@@ -1687,7 +1688,7 @@
   $: recentVisibleEvents = events.slice(-5).reverse();
   $: enabledSources = petSources.filter(source => source.enabled);
   $: receivingSources = petSources.filter(source => source.status === "receiving");
-  $: pageTitle = tab === "agents" ? "Agent" : tab === "connections" ? "连接" : tab === "usage" ? "用量" : tab === "personalize" ? "个性化" : "最新事件";
+  $: pageTitle = tab === "tasks" ? "任务管理" : tab === "agents" ? "Agent" : tab === "connections" ? "连接" : tab === "usage" ? "用量" : tab === "personalize" ? "个性化" : "最新事件";
   $: appTheme = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
 </script>
 
@@ -1696,6 +1697,7 @@
   <aside id="main-sidebar" class="sidebar" inert={sidebarCollapsed}>
     <div class="brand"><h1>Code Pet</h1></div>
     <nav class="tabs" aria-label="Code Pet settings">
+      <button class:active={tab === "tasks"} on:click={() => (tab = "tasks")} aria-label="任务谱系管理"><Activity size={18} /> 任务</button>
       <button class:active={tab === "agents"} on:click={() => (tab = "agents")} aria-label="Agent 列表">
         <Bot size={18} /> Agent
       </button>
@@ -1723,7 +1725,9 @@
     </header>
 
     <div class="content">
-    {#if tab === "agents"}
+    {#if tab === "tasks"}
+      <TaskLineage />
+    {:else if tab === "agents"}
       <div class="agent-workspace">
         <section class="overview-grid" aria-label="运行概览">
           <article class="overview-card pixel-panel">
