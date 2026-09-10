@@ -6,7 +6,7 @@ import "../styles.css";
 import "../main-window.css";
 import type { LineageSnapshot, LineageMessage } from "../lib/taskLineage";
 let watch = { revision: 0, enabled: false, extract: false, threadId: null as string | null, model: "haiku", remainingJobs: 5, lastError: null };
-let config = { revision: 0, harness: "claude", harnessInstanceId: null, model: "haiku", skill: "extract-tasks", prompt: "", budgetUsd: 0.25, timeoutSeconds: 90, intervalSeconds: 60, debounceSeconds: 20 };
+let config = { revision: 0, harness: "claude", harnessInstanceId: null, model: "haiku", reasoningEffort: "low", automatic: false, skill: "extract-tasks", prompt: "", budgetUsd: 0.25, timeoutSeconds: 90, intervalSeconds: 60, debounceSeconds: 20 };
 let jobs: any[] = [];
 const timestamp = "2026-09-10T04:00:00Z";
 const data: LineageSnapshot = {
@@ -34,7 +34,7 @@ mockIPC((command, raw) => {
   if (command === "task_lineage_request") {
     const r = args.request;
     if (r.method === "tasks.settings.get") return structuredClone(config);
-    if (r.method === "tasks.settings.set") { config = { ...r.config, revision: config.revision + 1 }; return structuredClone(config); }
+    if (r.method === "tasks.settings.set") { config = { ...r.config, revision: config.revision + 1 }; watch = {...watch, enabled: config.automatic, extract: config.automatic}; return structuredClone(config); }
     if (r.method === "tasks.skills") return ["extract-tasks", "reconcile-tasks"];
     if (r.method === "tasks.skill.get") return { name: r.name, text: `---\nname: ${r.name}\ndescription: Task extraction\n---\n只抽取最近 48 小时用户消息与 AI 正文。` };
     if (r.method === "tasks.dirty") return [{threadId: "main", state: "clean", revision: 1, extractedRevision: 1, pendingMessages: 0, lastChangedAt: Date.now(), lastError: null}];

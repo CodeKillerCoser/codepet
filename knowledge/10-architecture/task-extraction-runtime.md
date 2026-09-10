@@ -14,7 +14,7 @@
 
 ## 现状理解
 
-`App.svelte` 的普通页面保留任务、Agent、连接、用量、个性化、事件六个导航项，设置入口放在内容区右上角。进入设置后，共享 `MainNavigation` 左侧显示设置分区，右侧由 `TaskSettingsPage` 显示配置，目前只有“任务抽取”。`TaskLineage` 专注对话/任务导航、图/泳道、原文证据、手动抽取和人工验收；设置表单不在任务页展开。`TaskExtractionSettings` 管理摘要实例、模型、Harness、Skill、补充提示词、预算、超时、扫描与静默间隔；后台开关、定时抽取范围和批次授权也集中在此分区。原有继续对话仍走 Gateway，发送前检查运行/审批状态。
+`App.svelte` 的普通页面保留任务、Agent、连接、用量、个性化、事件六个导航项，设置入口放在内容区右上角。进入设置后，共享 `MainNavigation` 左侧显示设置分区，右侧由 `TaskSettingsPage` 显示配置，目前只有“任务抽取”。`TaskLineage` 专注对话/任务导航、图/泳道、原文证据、手动抽取和人工验收；设置表单不在任务页展开。`TaskExtractionSettings` 管理运行实例、模型、Harness、推理强度、Skill、提取提示词和自动间隔；预算、超时与静默间隔收进高级选项。原有继续对话仍走 Gateway，发送前检查运行/审批状态。
 
 此前 App 仅保存单个 tab，无法从该字段还原已访问页面。现在 `navigation.ts` 的 `createNavigation()` 提供 Svelte 可订阅导航栈，状态含 entries、index、current、canGoBack、canGoForward；App 用 `$navigation` 读取，其他前端调用者可用 Svelte `get(navigation)` 获取快照。navigate 同页不重复入栈，后退后新导航截断前进分支，最多保留 100 项。工具栏按钮调用 back/forward，设置入口调用 navigate。此历史是本窗口生命周期内的页面级记录，不依赖原生窗口或浏览器 History，也不记录任务节点选择、表单草稿和关闭应用前的历史。
 
@@ -68,11 +68,15 @@ Job 保存 id、requestId、threadId、state、createdAt、finishedAt、error。
 
 ### 配置、状态与调度
 
-默认配置：harness=claude、model=haiku、skill=extract-tasks、每批 $0.25、超时 90 秒、扫描间隔 60 秒、静默 20 秒。harnessInstanceId 为空时使用唯一实例或本机默认；多个 Claude 实例要求选择绑定。配置版本冲突拒绝覆盖。实际模型名称来自 CLI 回执，不能用别名冒充实际模型。
+设置定义的是任务抽取 Agent：harness、model、reasoningEffort、prompt、skill，以及 automatic / intervalSeconds 定时配置。默认 harness=claude、model=haiku、reasoningEffort=low、skill=extract-tasks、自动关闭、间隔 60 秒。预算 $0.25、超时 90 秒和静默 20 秒收进高级选项。harnessInstanceId 为空时使用唯一实例或本机默认；多个 Claude 实例要求选择绑定。配置版本冲突拒绝覆盖，Agent 配置与定时开关在同一 JSON 事务保存。旧配置缺少新字段时采用低推理默认值；读取时以持久化调度状态反映自动开关及失败暂停。
+
+推理强度实际传给 Claude CLI 的 `--effort`，可配置 low/medium/high/xhigh/max；某个档位是否生效由选定模型和本机 Harness 决定，依据 [Claude 模型配置文档](https://code.claude.com/docs/en/model-config)。当前执行适配器仍仅支持 Claude。实际模型名称来自 CLI 回执，不能用别名冒充实际模型。用户提示词与所选 Skill 共同构成 Agent 的任务指令，固定证据校验和 48 小时边界由 Rust 强制执行。
 
 扫描新正文或文件重写时推进 dirtyRevision，工具执行不会推进。抽取捕获输入 revision/count；成功只确认该批水位。推理期间追加的正文保持 dirty，失败不推进水位。过期消息不填充上下文，长正文最多 2500 字符并带截断标记；单批最多 6 条、约 5000 字符，候选任务只向模型传摘要。父子关系仍依据结构证据计算。
 
-后台默认关闭。开启后在应用运行期间扫描，只对静默期结束的确切线程抽取，避免父会话就绪时误选仍活跃的子线程。最多预授权 5 批，运行前扣减，空闲/静默等待不消耗；失败暂停，用户可再次授权。设置和后台开关变化使下一次调度重新计算，已运行批次不会因暂停而撤销。手动及后台抽取均保存 Job，事件加页面轮询同步状态。
+后台默认关闭。用户开启 Agent 自动提取后，continuous 模式持续按间隔处理当前来源的全部近期历史，只对静默期结束的确切线程抽取，避免父会话就绪时误选仍活跃的子线程。不再每五批停机；空闲不运行模型，失败暂停并显示原因。旧 watch 接口的有界五批模式仍可读取和执行，保存新的 Agent 设置后转为连续调度。设置变化使下一次调度重新计算，关闭自动提取不会撤销已运行批次。
+
+任务页默认展示任务图，另提供“整理历史”和“手动整理历史”。手动可选全部近期历史或当前关联对话，每次处理一个有界批次，增量水位保留；手动和定时调用同一个 ManagedExtractor，使用相同 Agent 配置。整理历史显示最近 30 次 Job 的时间、手动/自动来源、处理范围、状态、耗时及错误；每次运行的配置、输入、Skill 和结果仍留在用户工作区。
 
 ## 涉及模块
 
@@ -90,7 +94,7 @@ Job 保存 id、requestId、threadId、state、createdAt、finishedAt、error。
 
 ## 测试计划与结果
 
-验证通过：crate 单元/流程测试共 23 项、Tauri `cargo check --lib`、前端定向 Vitest 3 项、Vite build 和 Edge Playwright。浏览器验证覆盖设置与 Skill、异步 Job、申请工作区、证据、图/泳道、焦点、人工验收、480/820/980 宽度。全仓 `tsc --noEmit` 仍为原有 27 项诊断，本次未增加 TypeScript 文件诊断。
+验证通过：crate 单元/流程测试共 24 项、Tauri `cargo check --lib`、前端定向 Vitest 3 项、Vite build 和 Edge Playwright。浏览器验证覆盖设置与 Skill、异步 Job、申请工作区、证据、图/泳道、焦点、人工验收、480/820/980 宽度。全仓 `tsc --noEmit` 仍为原有 27 项诊断，本次未增加 TypeScript 文件诊断。
 
 用户目录实测使用 `managed_probe`，仅合成两条正文：Rust 安装并读取真实用户 Skill，经本机 Claude `haiku` 返回一个带证据任务，实际模型 `deepseek-v4-flash`，报告费用 $0.013895。回执位于用户数据目录 `workspaces/task-extraction/run-LAB1Ef`，含五份可审计文件。
 

@@ -32,6 +32,8 @@ pub struct ExtractionSettings {
     pub harness: String,
     pub harness_instance_id: Option<String>,
     pub model: String,
+    pub reasoning_effort: String,
+    pub automatic: bool,
     pub skill: String,
     pub prompt: String,
     pub budget_usd: f64,
@@ -46,6 +48,8 @@ impl Default for ExtractionSettings {
             harness: "claude".into(),
             harness_instance_id: None,
             model: "haiku".into(),
+            reasoning_effort: "low".into(),
+            automatic: false,
             skill: "extract-tasks".into(),
             prompt: String::new(),
             budget_usd: 0.25,
@@ -56,7 +60,11 @@ impl Default for ExtractionSettings {
     }
 }
 pub fn settings(store: &Store) -> Result<ExtractionSettings> {
-    Ok(store.read("extraction-settings.json")?.unwrap_or_default())
+    let mut value: ExtractionSettings = store.read("extraction-settings.json")?.unwrap_or_default();
+    if let Some(watch) = store.read::<crate::watch::WatchConfig>("watch.json")? {
+        value.automatic = watch.enabled && watch.extract;
+    }
+    Ok(value)
 }
 pub fn save_settings(
     store: &Store,
@@ -67,6 +75,10 @@ pub fn save_settings(
         return Err("抽取配置已变更，请刷新后重试".into());
     }
     if value.harness != "claude"
+        || !matches!(
+            value.reasoning_effort.as_str(),
+            "low" | "medium" | "high" | "xhigh" | "max"
+        )
         || value.model.trim().is_empty()
         || value.model.len() > 120
         || !value.budget_usd.is_finite()
@@ -80,7 +92,18 @@ pub fn save_settings(
     }
     layout.read_skill(&value.skill)?;
     value.revision += 1;
-    store.write("extraction-settings.json", &value)?;
+    let mut watch = crate::watch::read(store)?;
+    watch.revision += 1;
+    watch.enabled = value.automatic;
+    watch.extract = value.automatic;
+    watch.continuous = true;
+    watch.thread_id = None;
+    watch.model = value.model.clone();
+    watch.last_error = None;
+    store.commit(vec![
+        ("extraction-settings.json".into(), json!(value)),
+        ("watch.json".into(), json!(watch)),
+    ])?;
     Ok(value)
 }
 
@@ -250,9 +273,12 @@ impl TaskExtractor for ManagedExtractor {
             &serde_json::to_vec(&json!({"messages":messages,"existingTasks":candidates}))
                 .map_err(|e| e.to_string())?,
         )?;
-        let outcome = self
-            .inner
-            .extract_in(messages, candidates, Some((&workspace, &prompt)));
+        let outcome = self.inner.extract_in(
+            messages,
+            candidates,
+            Some((&workspace, &prompt)),
+            &self.config.reasoning_effort,
+        );
         let receipt = match &outcome {
             Ok(result) => json!({"state":"completed","result":result}),
             Err(error) => json!({"state":"failed","error":error}),
@@ -350,6 +376,17 @@ mod tests {
         let store = Store::open(&dir.path().join("store")).unwrap();
         let config = save_settings(&store, ExtractionSettings::default(), &layout).unwrap();
         assert_eq!(config.revision, 1);
+        assert_eq!(config.reasoning_effort, "low");
+        assert!(!config.automatic);
+        assert!(save_settings(
+            &store,
+            ExtractionSettings {
+                reasoning_effort: "invalid".into(),
+                ..config.clone()
+            },
+            &layout
+        )
+        .is_err());
         assert!(save_settings(&store, ExtractionSettings::default(), &layout).is_err());
         assert!(save_settings(
             &store,

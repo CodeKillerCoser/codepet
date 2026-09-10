@@ -907,6 +907,46 @@ mod tests {
         assert!(dirty[0].revision > dirty[0].extracted_revision);
     }
     #[test]
+    fn scheduled_agent_continues_past_five_batches_and_pauses_on_failure() {
+        let (dir, store, source) = fixture();
+        let layout = crate::management::Layout::initialize(&dir.path().join("data")).unwrap();
+        crate::management::save_settings(
+            &store,
+            crate::management::ExtractionSettings {
+                automatic: true,
+                debounce_seconds: 0,
+                reasoning_effort: "medium".into(),
+                ..Default::default()
+            },
+            &layout,
+        )
+        .unwrap();
+        use std::io::Write;
+        for index in 0..7 {
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(source.home.join("sessions/a.jsonl"))
+                .unwrap();
+            writeln!(file,"{}",json!({"timestamp":chrono::Utc::now().to_rfc3339(),"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":format!("继续验证 {index}")}]}})).unwrap();
+            let result = crate::watch::tick(&store, &source, Some(&Extractor { fail: index == 6 }));
+            if index < 6 {
+                result.unwrap();
+                assert!(crate::management::settings(&store).unwrap().automatic);
+            } else {
+                assert!(result.is_err());
+            }
+        }
+        assert_eq!(crate::management::jobs(&store).unwrap().len(), 7);
+        assert!(!crate::management::settings(&store).unwrap().automatic);
+        assert!(crate::watch::read(&store).unwrap().last_error.is_some());
+        assert_eq!(
+            crate::management::settings(&store)
+                .unwrap()
+                .reasoning_effort,
+            "medium"
+        );
+    }
+    #[test]
     fn scheduled_root_does_not_extract_a_child_still_in_debounce() {
         let (_dir, store, source) = fixture();
         let rows = [

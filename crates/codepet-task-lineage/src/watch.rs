@@ -15,6 +15,8 @@ pub struct WatchConfig {
     pub thread_id: Option<String>,
     pub model: String,
     pub remaining_jobs: u32,
+    #[serde(default)]
+    pub continuous: bool,
     pub last_error: Option<String>,
 }
 impl Default for WatchConfig {
@@ -26,6 +28,7 @@ impl Default for WatchConfig {
             thread_id: None,
             model: "haiku".into(),
             remaining_jobs: 5,
+            continuous: false,
             last_error: None,
         }
     }
@@ -37,7 +40,10 @@ pub fn configure(store: &Store, mut config: WatchConfig) -> Result<WatchConfig> 
     if config.remaining_jobs > 5 || config.model.trim().is_empty() || config.model.len() > 120 {
         return Err("Invalid watch budget/model".into());
     }
-    if config.extract && config.thread_id.as_ref().is_none_or(|id| id.is_empty()) {
+    if config.extract
+        && !config.continuous
+        && config.thread_id.as_ref().is_none_or(|id| id.is_empty())
+    {
         return Err("Select a conversation before enabling extraction".into());
     }
     config.revision = read(store)?.revision + 1;
@@ -55,7 +61,7 @@ pub fn tick(
         return Ok(None);
     }
     let snapshot = service::scan(store, source)?;
-    if !config.extract || config.remaining_jobs == 0 {
+    if !config.extract || (!config.continuous && config.remaining_jobs == 0) {
         return Ok(Some(snapshot));
     }
     if service::pending_for(store, &snapshot, config.thread_id.as_deref())? == 0 {
@@ -93,7 +99,9 @@ pub fn tick(
     let (mut job, _) = crate::management::enqueue(store, &request_id, Some(ready.clone()))?;
     job.state = "running".into();
     store.write(&crate::management::job_key(&job.id), &job)?;
-    config.remaining_jobs -= 1;
+    if !config.continuous {
+        config.remaining_jobs -= 1;
+    }
     config.revision += 1;
     store.write("watch.json", &config)?;
     let result = service::extract_thread(store, extractor, &ready);
@@ -111,7 +119,7 @@ pub fn tick(
             config.last_error = Some(error.clone());
             config.extract = false;
         }
-        if config.remaining_jobs == 0 {
+        if !config.continuous && config.remaining_jobs == 0 {
             config.extract = false;
         }
         store.write("watch.json", &config)?;

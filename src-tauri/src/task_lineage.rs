@@ -372,7 +372,7 @@ pub(crate) fn start_background(app: tauri::AppHandle) {
                 let Ok(home) = codex::data_directory(&data) else {
                     continue;
                 };
-                let runtime = if watch.extract && watch.remaining_jobs > 0 {
+                let runtime = if watch.extract && (watch.continuous || watch.remaining_jobs > 0) {
                     make_extractor(&host, &id).await.map(Some)
                 } else {
                     Ok(None)

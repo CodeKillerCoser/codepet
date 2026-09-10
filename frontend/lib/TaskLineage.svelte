@@ -13,6 +13,7 @@
   let messages: LineageMessage[] = [], messageBusy = false;
   let requestGeneration = 0, disposed = false;
   let conversationAnchor = "";
+  let organizeScope = "all";
   let jobs: ExtractionJob[] = [], dirty: DirtyConversation[] = [], taskWorkspace = "";
   $: extracting = jobs.some(job => ["queued", "running"].includes(job.state));
   async function refreshManagement() {
@@ -72,7 +73,7 @@
     if (inspectorThread) await loadThread(inspectorThread.id);
   }
   async function extract() {
-    await operation("提交抽取", async () => { const job = await lineageApi.trigger(providerId, selectedThreadId || null); jobs = [job, ...jobs.filter(j => j.id !== job.id)]; await refreshManagement(); });
+    await operation("提交整理", async () => { const job = await lineageApi.trigger(providerId, organizeScope === "all" ? null : selectedThreadId || null); jobs = [job, ...jobs.filter(j => j.id !== job.id)]; await refreshManagement(); });
   }
   async function loadThread(id: string, refresh = false) {
     const generation = ++requestGeneration; if (!refresh) { messageBusy = true; messages = []; facts = null; }
@@ -150,11 +151,13 @@
     <label>Codex 来源<select bind:value={providerId} on:change={switchSource} disabled={!!busy}>{#each options?.sources ?? [] as source}<option value={source.id}>{source.name}</option>{/each}</select></label>
     <button on:click={refreshOptions} disabled={!!busy}>刷新来源</button>
     <button on:click={scan} disabled={!!busy || !providerId}>扫描记录</button>
-    <button on:click={extract} disabled={!!busy || extracting || !providerId || !options?.claudeExecutable}>{extracting ? "抽取中…" : "抽取关联对话"}</button>
+    <label>整理范围<select aria-label="整理范围" bind:value={organizeScope} disabled={!!busy || extracting}><option value="all">全部近期历史</option><option value="conversation" disabled={!selectedThreadId}>当前关联对话</option></select></label>
+    <button on:click={extract} disabled={!!busy || extracting || !providerId || !options?.claudeExecutable}>{extracting ? "整理中…" : "手动整理历史"}</button>
     <span role="status">{busy || `${data.pendingMessages} 条近 48 小时消息待分析`}</span>
   </div>
   <p class="hint">仅抽取最近 48 小时的用户消息与 AI 正文，排除工具执行及无可靠时间戳的内容。每批预算上限 ${options?.sources.find(s => s.id === providerId)?.extraction?.budgetUsd ?? options?.budgetUsd ?? 0.25}。后台更新在应用运行期间执行，连续抽取处理开启时选定的对话及派生线程。</p>
-  {#if jobs.length}<details class="diagnostics"><summary>抽取记录 · {jobLabel(jobs[0].state)} · {dirty.filter(s => s.state === "dirty").length} 个会话待抽取</summary>{#each jobs as job}<p>{new Date(job.createdAt).toLocaleString()} · {jobLabel(job.state)} · {data.threads.find(t => t.id === job.threadId)?.title ?? "全部会话"}{#if job.error} · {job.error}{/if}</p>{/each}</details>{/if}
+  <details class="diagnostics"><summary>整理历史 · {jobs.length} 次运行 · {dirty.filter(s => s.state === "dirty").length} 个会话待整理</summary>{#if !jobs.length}<p>暂无整理记录。手动与自动运行的结果会显示在这里。</p>{/if}{#each jobs as job}<p>{new Date(job.createdAt).toLocaleString()} · {job.id.startsWith("scheduled-") ? "自动" : "手动"} · {jobLabel(job.state)} · {data.threads.find(t => t.id === job.threadId)?.title ?? "全部近期历史"}{#if job.finishedAt} · 耗时 {Math.max(0, Math.round((job.finishedAt-job.createdAt)/1000))} 秒{/if}{#if job.error} · {job.error}{/if}</p>{/each}</details>
+  <p class="hint">每次整理处理一批近期正文，保留已整理进度；自动提取按设置的间隔继续处理。Agent 配置位于右上角设置。</p>
   {#if data.lastExtraction}<p class="hint">最近实际模型：{Object.keys(data.lastExtraction.modelUsage ?? {}).join("、") || "CLI 未返回"} · 仅抽取用户消息与 AI 正文，不包含工具执行。</p>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if !options?.claudeExecutable && options}<p class="hint">请先在“连接”中配置可用的 Claude 运行时。仍可扫描和查看原始记录。</p>{/if}
@@ -196,7 +199,7 @@
           <svg width={canvasWidth} height={canvasHeight} aria-hidden="true"><defs><marker id="lineage-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" /></marker></defs>{#each task.edges as edge}{#if positions[edge.from] && positions[edge.to]}<path class:highlight={path.has(edge.from) && path.has(edge.to)} d={`M${positions[edge.from].x + 214},${positions[edge.from].y + 50} C${positions[edge.from].x + 250},${positions[edge.from].y + 50} ${positions[edge.to].x - 35},${positions[edge.to].y + 50} ${positions[edge.to].x},${positions[edge.to].y + 50}`} fill="none" stroke="currentColor" stroke-width="2" marker-end="url(#lineage-arrow)" />{/if}{/each}</svg>
           {#each orderedEpisodes as node (node.id)}<button class="node" class:selected={node.id === selectedEpisodeId} class:same-thread={!!hovered && node.threadId === hoverThread} class:dim={!!hovered && !path.has(node.id) && node.threadId !== hoverThread} style:left={`${positions[node.id].x}px`} style:top={`${positions[node.id].y}px`} on:mouseenter={() => hovered = node.id} on:mouseleave={() => hovered = ""} on:focus={() => hovered = node.id} on:blur={() => hovered = ""} on:click={() => selectEpisode(node)}><strong>{node.title}</strong><small>{creationLabel(data.threads.find(t => t.id === node.threadId)?.creationKind ?? "unknown")} · {statusLabel(node.threadId, statuses)}</small><time>{node.startedAt ? new Date(node.startedAt).toLocaleString() : "时间未知"}</time><span class="node-foot">{nodeFacts[node.threadId]?.workMode === "worktree" ? "独立 worktree" : nodeFacts[node.threadId]?.workMode === "main" ? "主工作区" : "工作区未知"} · {nodeFacts[node.threadId]?.commitState === "clean" ? "干净" : nodeFacts[node.threadId]?.commitState === "uncommitted" ? "未提交" : "提交未知"} · {nodeFacts[node.threadId]?.syncState === "synced" ? "已同步" : nodeFacts[node.threadId]?.syncState === "notRequired" ? "无需同步" : "同步未知"}</span></button>{/each}
         </div></div>
-      {:else}<p class="empty">此主对话尚未抽取任务，点击“抽取关联对话”开始。</p>{/if}
+      {:else}<p class="empty">暂无任务，点击“手动整理历史”开始。</p>{/if}
     </section>
     <aside class="inspector" aria-label="事实与原始消息">
       <header class="title"><small>{view === "task" ? "节点信息" : "对话信息"}</small><h3>{view === "task" ? episode?.title ?? "选择执行节点" : selectedThread?.title ?? "可核验事实"}</h3>{#if view === "task" && episode}<button on:click={() => selectThread(episode!.threadId, episode!.evidenceIds[0])}>打开原始对话</button>{/if}</header>
