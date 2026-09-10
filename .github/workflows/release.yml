@@ -70,6 +70,8 @@ jobs:
           fi
           BASE_VERSION="$(node scripts/release_version.mjs --print-version)"
           echo "BASE_VERSION=$BASE_VERSION" >> "$GITHUB_ENV"
+      - name: Validate release manifest generation
+        run: node --test scripts/generate_latest_json.test.mjs
       - name: Commit synced source version
         shell: bash
         run: |
@@ -96,7 +98,7 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
   build-macos:
-    name: Build macOS universal
+    name: Build macOS ARM64 DMG
     if: ${{ inputs.platform == 'all' || inputs.platform == 'mac' }}
     runs-on: macos-latest
     needs: preflight
@@ -110,27 +112,18 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: aarch64-apple-darwin
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.2"
       - run: npm ci
       - name: Apply build version
         run: node scripts/release_version.mjs --sync-version "${{ needs.preflight.outputs.version }}" --allow-build-metadata
-      - name: Check updater signing key secret
-        shell: bash
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: |
-          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "TAURI_SIGNING_PRIVATE_KEY secret is required."
-            exit 1
-          fi
       - name: Build Tauri app
         shell: bash
         run: |
           for ATTEMPT in 1 2 3; do
-            if npm run tauri -- build --target universal-apple-darwin --bundles app,dmg; then
+            if npm run tauri -- build --target aarch64-apple-darwin --bundles dmg --config src-tauri/tauri.macos-dmg.conf.json; then
               exit 0
             fi
             if [ "$ATTEMPT" = "3" ]; then
@@ -139,17 +132,13 @@ jobs:
             sleep $((ATTEMPT * 20))
           done
         env:
-          CODEPET_PROVIDER_TARGET: universal-apple-darwin
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          CODEPET_PROVIDER_TARGET: aarch64-apple-darwin
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-universal
+          name: macos-arm64-dmg
           if-no-files-found: error
-          path: |
-            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
-            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+          compression-level: 0
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
 
   build-windows:
     name: Build Windows x86_64
@@ -239,6 +228,7 @@ jobs:
           --tag "$TAG"
           --version "$VERSION"
           --platform "$PLATFORM"
+          --mac-updater disabled
           --artifacts dist/release-assets
           --output dist/latest.json
           --notes "$RELEASE_NOTES"
