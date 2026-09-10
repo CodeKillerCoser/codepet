@@ -21,13 +21,31 @@ const browser = await chromium.launch({ channel: process.env.CODEPET_QA_BROWSER 
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
-  await page.goto(url);
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.getByText('任务抽取只把用户消息和 AI 正文作为对象，工具执行不要。', { exact: true }).waitFor();
   await page.screenshot({ path: resolve(output, 'conversation.png'), fullPage: true });
+  await page.getByRole('button', { name: /抽取设置/ }).click();
+  await page.getByLabel('模型', { exact: true }).fill('haiku');
+  await page.getByLabel('补充抽取提示词').fill('将实现与验证归入同一任务');
+  await page.getByLabel('抽取 Skill', { exact: true }).selectOption('reconcile-tasks');
+  await page.getByRole('button', { name: '保存抽取设置', exact: true }).click();
+  await page.getByText('已保存', { exact: true }).waitFor();
+  await page.screenshot({ path: resolve(output, 'extraction-settings.png'), fullPage: true });
+  await page.setViewportSize({ width: 480, height: 700 });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await page.getByLabel('补充抽取提示词').focus();
+  assert.equal(await page.getByLabel('补充抽取提示词').evaluate(e => e === document.activeElement), true);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole('button', { name: /抽取设置 ·/ }).click();
+  await page.getByRole('button', { name: '抽取关联对话', exact: true }).click();
+  await page.getByRole('button', { name: '抽取中…', exact: true }).waitFor();
+  await page.getByRole('button', { name: '抽取关联对话', exact: true }).waitFor();
   await page.getByRole('complementary', { name: '对话与任务导航' }).getByRole('button', { name: '任务', exact: true }).click();
   await page.getByRole('complementary', { name: '对话与任务导航' }).getByRole('button', { name: /任务谱系第一版/ }).click();
   await page.locator('.node').first().waitFor();
   assert.equal(await page.locator('.node').count(), 3);
+  await page.getByRole('button', { name: '申请任务工作区', exact: true }).click();
+  await page.getByText('任务工作区：/fixture/.codepair/workspaces/tasks/task', { exact: true }).waitFor();
   await page.locator('.node').nth(1).click();
   await page.getByText('三项来源回归测试已通过，证据位置保持稳定。', { exact: true }).waitFor();
   await page.screenshot({ path: resolve(output, 'graph.png'), fullPage: true });
@@ -54,5 +72,5 @@ try {
   await page.getByLabel('后台更新', { exact: true }).check();
   await page.getByLabel('后台更新', { exact: true }).uncheck();
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ passed: ['conversation', 'node evidence', 'diagram selection', 'keyboard highlight', 'manual acceptance', 'responsive widths'], output }));
+  console.log(JSON.stringify({ passed: ['conversation', 'settings and skill selection', 'async extraction job', 'task workspace', 'node evidence', 'diagram selection', 'keyboard highlight', 'manual acceptance', 'responsive widths'], output }));
 } finally { await browser.close(); server?.kill(); }

@@ -1,5 +1,13 @@
 # 任务谱系第一版实施与验证
 
+> 2026-09-10 桌面集成补充：已加入任务抽取设置、用户 Skill、持久化工作区、异步任务接口、脏状态与静默调度。现行默认预算已调整为 $0.25；以下早期试跑中的 $0.10 是历史配置。接口和数据结构见 [任务抽取运行时](../10-architecture/task-extraction-runtime.md)。
+
+本轮验证：`cargo test -p codepet-task-lineage`（在 `src-tauri` 执行）23 项通过；同目录 `cargo check --lib` 通过。仓库根目录 `npx vitest run frontend/lib/taskLineage.test.ts` 3 项通过、`npm run build` 通过。Edge UI QA 覆盖新增配置与 Skill、异步抽取、工作区申请及原有图/证据交互。全仓 `npx tsc --noEmit` 为原有 27 项诊断。
+
+用户目录与 CLI 验证：在 `src-tauri` 执行 `cargo run --manifest-path ../crates/codepet-task-lineage/Cargo.toml --target-dir target --example managed_probe -- <应用数据目录> <Claude 绝对路径>`。不提供 Claude 路径时仅初始化目录和 Skill；提供时使用两条合成正文验证真实调用。当前机器根目录为 `C:/Users/17633/AppData/Local/code-pet`，调用成功，实际低档模型 `deepseek-v4-flash`，报告 $0.013895。
+
+开发环境观察：Vite 监听 Rust `target` 中正在执行的 exe 曾触发 Windows EBUSY，导致早期 UI QA 超时；停止该进程后重新启动 QA 通过。并行开发验证可将 `CARGO_TARGET_DIR` 设在工作树外，避免 Vite 扫描构建输出。本轮未修改项目原有 Vite 监听配置。
+
 ## 背景与目标
 
 2026-09-10 在隔离分支 `codex/task-lineage-v1` 实现首期 Codex 任务谱系，基线 `v0` / `b39c36e`。工作树为 `D:/17633/Documents/Code/codepet-task-lineage-v1`。依据 [UI 设计](../20-product/task-lineage-management.md) 与 [技术设计](../10-architecture/task-lineage-and-extraction.md)，实现对话树、任务与执行节点、图/泳道、消息证据和人工验收。当前是分支实现，尚未合并或安装发布。
@@ -38,7 +46,7 @@
 
 - 原始记录未提供关系证据时显示未知；只从原生 Fork、创建/消息转交结构读取关系，工具正文不补成用户消息。完整平台来源关系覆盖仍需真实案例验证。
 - Git 展示当前 worktree、干净程度和可证明的祖先同步关系，不代表任务历史提交归属；squash/cherry-pick 保留未知，不能据此自动验收。
-- 模型摘要质量只完成合成数据验证。首次真实使用应回看 evidence，人工确认任务边界；模型不能把运行结束当人工完成。
+- 模型已完成合成及真实数据试跑，但真实候选任务尚未逐项人工确认。使用时应回看 evidence，确认任务边界；模型不能把运行结束当人工完成。
 - Windows 来源、CLI 和构建已验证；尚未在原生应用中做真实消息发送端到端验收，macOS 未运行。应用集成验收需启动分支构建，在任务页扫描、抽取一批并回溯原文，确认发送落到选定线程。
 - 本地索引保留历史用于回溯，48 小时限制约束抽取输入而非消息浏览。后台重新加载较大索引的耗时仍需随数据规模观察。
 

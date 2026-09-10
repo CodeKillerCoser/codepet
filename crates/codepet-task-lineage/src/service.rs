@@ -22,6 +22,12 @@ pub struct ScanState {
     pub message_count: usize,
     pub extracted_count: usize,
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub dirty_revision: u64,
+    #[serde(default)]
+    pub extracted_revision: u64,
+    #[serde(default)]
+    pub last_changed_at: i64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,6 +132,10 @@ pub fn scan(store: &Store, source: &dyn ConversationSource) -> Result<Snapshot> 
         match source.read(thread, &read_cursor) {
             Ok(mut batch) => {
                 batch.reset |= normalization_changed;
+                if batch.reset || !batch.messages.is_empty() {
+                    scan.dirty_revision += 1;
+                    scan.last_changed_at = chrono::Utc::now().timestamp_millis();
+                }
                 if !batch.reset
                     && batch.cursor == scan.cursor
                     && store
@@ -261,25 +271,113 @@ pub fn pending_for(store: &Store, view: &Snapshot, selected: Option<&str>) -> Re
     Ok(count)
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationDirty {
+    pub thread_id: String,
+    pub state: String,
+    pub revision: u64,
+    pub extracted_revision: u64,
+    pub pending_messages: usize,
+    pub last_changed_at: i64,
+    pub last_error: Option<String>,
+}
+pub fn dirty_states(store: &Store) -> Result<Vec<ConversationDirty>> {
+    let threads: Vec<Thread> = store.read("conversation-tree.json")?.unwrap_or_default();
+    let jobs = crate::management::jobs(store)?;
+    threads
+        .iter()
+        .map(|thread| {
+            let scan = state(store, &thread.id)?;
+            let pending = recent_pending(store, &thread.id, scan.extracted_count)?;
+            let active = jobs.iter().any(|job| {
+                matches!(job.state.as_str(), "queued" | "running")
+                    && job
+                        .thread_id
+                        .as_deref()
+                        .is_none_or(|id| id == thread.id || root(&thread.id, &threads) == id)
+            });
+            Ok(ConversationDirty {
+                thread_id: thread.id.clone(),
+                state: if active {
+                    "extracting"
+                } else if scan.last_error.is_some() {
+                    "error"
+                } else if pending > 0 {
+                    "dirty"
+                } else {
+                    "clean"
+                }
+                .into(),
+                revision: scan.dirty_revision,
+                extracted_revision: scan.extracted_revision,
+                pending_messages: pending,
+                last_changed_at: scan.last_changed_at,
+                last_error: scan.last_error,
+            })
+        })
+        .collect()
+}
+pub fn ready_thread(
+    store: &Store,
+    view: &Snapshot,
+    selected: Option<&str>,
+    debounce_seconds: u64,
+) -> Result<Option<String>> {
+    let now = chrono::Utc::now().timestamp_millis();
+    for thread in &view.threads {
+        if !selected.is_none_or(|id| id == thread.id || root(&thread.id, &view.threads) == id) {
+            continue;
+        }
+        let scan = state(store, &thread.id)?;
+        if now - scan.last_changed_at >= debounce_seconds as i64 * 1000
+            && recent_pending(store, &thread.id, scan.extracted_count)? > 0
+        {
+            return Ok(Some(thread.id.clone()));
+        }
+    }
+    Ok(None)
+}
+
 /// Executes one bounded job. A failure does not advance extracted_count.
 pub fn extract_next(
     store: &Store,
     extractor: &dyn TaskExtractor,
     selected_thread: Option<&str>,
 ) -> Result<Snapshot> {
+    extract_scoped(store, extractor, selected_thread, true)
+}
+pub fn extract_thread(
+    store: &Store,
+    extractor: &dyn TaskExtractor,
+    thread: &str,
+) -> Result<Snapshot> {
+    extract_scoped(store, extractor, Some(thread), false)
+}
+fn extract_scoped(
+    store: &Store,
+    extractor: &dyn TaskExtractor,
+    selected_thread: Option<&str>,
+    descendants: bool,
+) -> Result<Snapshot> {
     let _lease = store.extraction_lease()?;
     let view = snapshot(store)?;
+    if selected_thread.is_some_and(|id| !view.threads.iter().any(|thread| thread.id == id)) {
+        return Err("抽取范围对应的会话不存在，请重新扫描并选择会话".into());
+    }
     let mut ordered = view.threads.clone();
     ordered.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-    for thread in ordered
-        .iter()
-        .filter(|t| selected_thread.is_none_or(|id| id == t.id || root(&t.id, &view.threads) == id))
-    {
+    for thread in ordered.iter().filter(|t| {
+        selected_thread
+            .is_none_or(|id| id == t.id || (descendants && root(&t.id, &view.threads) == id))
+    }) {
         let mut scan = state(store, &thread.id)?;
         if scan.extracted_count >= scan.message_count {
             continue;
         }
         let all = messages(store, &thread.id)?;
+        let input_revision = scan.dirty_revision;
+        let input_message_count = scan.message_count;
         let now = chrono::Utc::now().timestamp_millis();
         let eligible: Vec<usize> = all
             .iter()
@@ -295,6 +393,7 @@ pub fn extract_next(
             .position(|index| *index >= scan.extracted_count)
         else {
             scan.extracted_count = all.len();
+            scan.extracted_revision = input_revision;
             scan.last_error = None;
             store.write(&Store::thread_key(&thread.id, "scan"), &scan)?;
             continue;
@@ -589,6 +688,9 @@ pub fn extract_next(
             .map(|t| (Store::task_key(&t.id), json!(t)))
             .collect();
         scan.extracted_count = end;
+        if end >= input_message_count {
+            scan.extracted_revision = input_revision;
+        }
         scan.last_error = None;
         writes.push((Store::thread_key(&thread.id, "scan"), json!(scan)));
         writes.push((format!("extraction-revisions/{job_id}.json"),json!({"schemaVersion":1,"jobId":job_id,"input":input,"result":result,"version":extractor.version(),"lookbackHours":LOOKBACK_HOURS,"windowEndMs":now})));
@@ -713,6 +815,135 @@ mod tests {
         let result = messages(&store, "thread-a").unwrap();
         assert_eq!(result.len(), 203);
         assert_eq!(result.last().unwrap().text, "next");
+    }
+    #[test]
+    fn tools_do_not_dirty_and_debounce_does_not_spend_budget() {
+        let (_dir, store, source) = fixture();
+        scan(&store, &source).unwrap();
+        let revision = state(&store, "thread-a").unwrap().dirty_revision;
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(source.home.join("sessions/a.jsonl"))
+            .unwrap();
+        writeln!(file,"{}",json!({"timestamp":chrono::Utc::now().to_rfc3339(),"type":"response_item","payload":{"type":"function_call","name":"exec","arguments":"do not extract"}})).unwrap();
+        scan(&store, &source).unwrap();
+        assert_eq!(state(&store, "thread-a").unwrap().dirty_revision, revision);
+        store
+            .write(
+                "extraction-settings.json",
+                &crate::management::ExtractionSettings::default(),
+            )
+            .unwrap();
+        crate::watch::configure(
+            &store,
+            crate::watch::WatchConfig {
+                enabled: true,
+                extract: true,
+                thread_id: Some("thread-a".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        crate::watch::tick(&store, &source, Some(&Extractor { fail: false })).unwrap();
+        assert_eq!(crate::watch::read(&store).unwrap().remaining_jobs, 5);
+        assert!(crate::management::jobs(&store).unwrap().is_empty());
+        let mut s = state(&store, "thread-a").unwrap();
+        s.last_changed_at -= 21000;
+        store
+            .write(&Store::thread_key("thread-a", "scan"), &s)
+            .unwrap();
+        crate::watch::tick(&store, &source, Some(&Extractor { fail: false })).unwrap();
+        assert_eq!(crate::watch::read(&store).unwrap().remaining_jobs, 4);
+        assert_eq!(
+            crate::management::jobs(&store).unwrap()[0].state,
+            "completed"
+        );
+        let dirty = dirty_states(&store).unwrap();
+        assert_eq!(dirty[0].state, "clean");
+        assert_eq!(dirty[0].revision, dirty[0].extracted_revision);
+    }
+    #[test]
+    fn messages_arriving_during_inference_remain_dirty() {
+        let (dir, store, source) = fixture();
+        scan(&store, &source).unwrap();
+        struct Append {
+            root: std::path::PathBuf,
+            home: std::path::PathBuf,
+        }
+        impl TaskExtractor for Append {
+            fn version(&self) -> String {
+                "append".into()
+            }
+            fn extract(&self, input: &[Message], tasks: &[Task]) -> Result<ExtractionResult> {
+                use std::io::Write;
+                let mut file = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(self.home.join("sessions/a.jsonl"))
+                    .unwrap();
+                writeln!(file,"{}",json!({"timestamp":chrono::Utc::now().to_rfc3339(),"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"继续修复"}]}})).unwrap();
+                let writer = Store::open(&self.root)?;
+                scan(
+                    &writer,
+                    &CodexSource {
+                        home: self.home.clone(),
+                    },
+                )?;
+                Extractor { fail: false }.extract(input, tasks)
+            }
+        }
+        extract_next(
+            &store,
+            &Append {
+                root: dir.path().join("store"),
+                home: source.home,
+            },
+            None,
+        )
+        .unwrap();
+        let dirty = dirty_states(&store).unwrap();
+        assert_eq!(dirty[0].state, "dirty");
+        assert_eq!(dirty[0].pending_messages, 1);
+        assert!(dirty[0].revision > dirty[0].extracted_revision);
+    }
+    #[test]
+    fn scheduled_root_does_not_extract_a_child_still_in_debounce() {
+        let (_dir, store, source) = fixture();
+        let rows = [
+            json!({"type":"session_meta","payload":{"id":"child","cwd":"/repo","source":{"subagent":{"thread_spawn":{"parent_thread_id":"thread-a"}}}}}),
+            json!({"timestamp":chrono::Utc::now().to_rfc3339(),"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"验证焦点修复"}]}}),
+        ];
+        std::fs::write(
+            source.home.join("sessions/child.jsonl"),
+            rows.iter().map(|r| format!("{r}\n")).collect::<String>(),
+        )
+        .unwrap();
+        scan(&store, &source).unwrap();
+        let mut tree: Vec<Thread> = store.read("conversation-tree.json").unwrap().unwrap();
+        for thread in &mut tree {
+            thread.timestamp = Some(
+                if thread.id == "child" {
+                    "2020-01-01"
+                } else {
+                    "2021-01-01"
+                }
+                .into(),
+            );
+        }
+        store.write("conversation-tree.json", &tree).unwrap();
+        let mut parent = state(&store, "thread-a").unwrap();
+        parent.last_changed_at -= 21000;
+        store
+            .write(&Store::thread_key("thread-a", "scan"), &parent)
+            .unwrap();
+        let ready = ready_thread(&store, &snapshot(&store).unwrap(), Some("thread-a"), 20)
+            .unwrap()
+            .unwrap();
+        assert_eq!(ready, "thread-a");
+        extract_thread(&store, &Extractor { fail: false }, &ready).unwrap();
+        assert_eq!(state(&store, "child").unwrap().extracted_count, 0);
+        assert_eq!(state(&store, "thread-a").unwrap().extracted_count, 1);
+        assert!(extract_thread(&store, &Extractor { fail: false }, "absent").is_err());
     }
     #[test]
     fn model_wait_does_not_lock_readers_and_stale_results_cannot_override_acceptance() {

@@ -8,8 +8,20 @@ export interface LineageTask { id: string; revision: number; rootThreadId: strin
 export interface LineageSnapshot { threads: LineageThread[]; tasks: LineageTask[]; pendingMessages: number; diagnostics: string[]; lastExtraction?: { requestedModel: string; modelUsage: Record<string, unknown>; reportedCostUsd: number | null } | null }
 export interface WorkspaceFacts { workspace: string; repository: string | null; branch: string | null; head: string | null; mainWorkspace: string | null; workMode: string; commitState: string; syncState: string; diagnostic: string | null }
 export interface LineageWatch { revision: number; enabled: boolean; extract: boolean; threadId: string | null; model: string; remainingJobs: number; lastError: string | null }
-export interface LineageOptions { sources: { id: string; name: string; directory: string | null; watch?: LineageWatch }[]; claudeExecutable: string | null; defaultModel: string; budgetUsd: number }
+export interface ExtractionSettings { revision: number; harness: string; harnessInstanceId: string | null; model: string; skill: string; prompt: string; budgetUsd: number; timeoutSeconds: number; intervalSeconds: number; debounceSeconds: number }
+export interface ExtractionJob { id: string; requestId: string; threadId: string | null; state: string; createdAt: number; finishedAt: number | null; error: string | null }
+export interface DirtyConversation { threadId: string; state: string; revision: number; extractedRevision: number; pendingMessages: number; lastChangedAt: number; lastError: string | null }
+export interface LineageOptions { sources: { id: string; name: string; directory: string | null; watch?: LineageWatch; extraction?: ExtractionSettings }[]; claudeExecutable: string | null; defaultModel: string; budgetUsd: number; instances?: { id: string; name: string; harness: string }[]; layout?: { root: string; skills: string; extractionWorkspaces: string; taskWorkspaces: string } }
+export const taskRequest = <T>(providerId: string, request: Record<string, unknown>) => invoke<T>("task_lineage_request", { providerId, request });
 export const lineageApi = {
+  settings: (providerId: string) => taskRequest<ExtractionSettings>(providerId, { method: "tasks.settings.get" }),
+  saveSettings: (providerId: string, config: ExtractionSettings) => taskRequest<ExtractionSettings>(providerId, { method: "tasks.settings.set", config }),
+  skills: (providerId: string) => taskRequest<string[]>(providerId, { method: "tasks.skills" }),
+  skill: (providerId: string, name: string) => taskRequest<{name: string; text: string}>(providerId, { method: "tasks.skill.get", name }),
+  jobs: (providerId: string) => taskRequest<ExtractionJob[]>(providerId, { method: "tasks.jobs" }),
+  dirty: (providerId: string) => taskRequest<DirtyConversation[]>(providerId, { method: "tasks.dirty" }),
+  trigger: (providerId: string, threadId: string | null) => taskRequest<ExtractionJob>(providerId, { method: "tasks.extract", requestId: crypto.randomUUID(), threadId }),
+  allocate: (providerId: string, taskId: string) => taskRequest<{path: string; taskId: string}>(providerId, { method: "tasks.workspace.request", taskId }),
   options: () => invoke<LineageOptions>("task_lineage_options"),
   watch: (providerId: string, config: LineageWatch) => invoke<LineageWatch>("task_lineage_watch", { providerId, config }),
   snapshot: (providerId: string) => invoke<LineageSnapshot>("task_lineage_snapshot", { providerId }),

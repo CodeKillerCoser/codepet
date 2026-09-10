@@ -6,6 +6,8 @@ import "../styles.css";
 import "../main-window.css";
 import type { LineageSnapshot, LineageMessage } from "../lib/taskLineage";
 let watch = { revision: 0, enabled: false, extract: false, threadId: null as string | null, model: "haiku", remainingJobs: 5, lastError: null };
+let config = { revision: 0, harness: "claude", harnessInstanceId: null, model: "haiku", skill: "extract-tasks", prompt: "", budgetUsd: 0.25, timeoutSeconds: 90, intervalSeconds: 60, debounceSeconds: 20 };
+let jobs: any[] = [];
 const timestamp = "2026-09-10T04:00:00Z";
 const data: LineageSnapshot = {
   threads: [
@@ -28,7 +30,19 @@ const history: LineageMessage[] = [
 ].map(([id, threadId, role, text], index) => ({ evidence: { eventId: id, file: `/fixture/${threadId}.jsonl`, byteOffset: index * 200, generation: 0 }, threadId, role, text, timestamp, turnId: id }));
 mockIPC((command, raw) => {
   const args = (raw ?? {}) as Record<string, any>;
-  if (command === "task_lineage_options") return { sources: [{ id: "codex-fixture", name: "Codex · QA 模拟数据", directory: "/fixture", watch }], claudeExecutable: "/fixture/claude", defaultModel: "haiku", budgetUsd: 0.1 };
+  if (command === "task_lineage_options") return { sources: [{ id: "codex-fixture", name: "Codex · QA 模拟数据", directory: "/fixture", watch, extraction: config }], claudeExecutable: "/fixture/claude", defaultModel: "haiku", budgetUsd: 0.25, instances: [{ id: "claude", name: "本机 Claude", harness: "claude" }], layout: {root: "/fixture/.codepair", skills: "/fixture/.codepair/skills", extractionWorkspaces: "/fixture/.codepair/workspaces/task-extraction", taskWorkspaces: "/fixture/.codepair/workspaces/tasks"} };
+  if (command === "task_lineage_request") {
+    const r = args.request;
+    if (r.method === "tasks.settings.get") return structuredClone(config);
+    if (r.method === "tasks.settings.set") { config = { ...r.config, revision: config.revision + 1 }; return structuredClone(config); }
+    if (r.method === "tasks.skills") return ["extract-tasks", "reconcile-tasks"];
+    if (r.method === "tasks.skill.get") return { name: r.name, text: `---\nname: ${r.name}\ndescription: Task extraction\n---\n只抽取最近 48 小时用户消息与 AI 正文。` };
+    if (r.method === "tasks.dirty") return [{threadId: "main", state: "clean", revision: 1, extractedRevision: 1, pendingMessages: 0, lastChangedAt: Date.now(), lastError: null}];
+    if (r.method === "tasks.jobs") return structuredClone(jobs);
+    if (r.method === "tasks.extract") { const job = {id: r.requestId, requestId: r.requestId, threadId: r.threadId, state: "queued", createdAt: Date.now(), finishedAt: null, error: null}; jobs = [job]; setTimeout(() => { job.state = "completed"; }, 500); return structuredClone(job); }
+    if (r.method === "tasks.workspace.request") return {taskId: r.taskId, path: "/fixture/.codepair/workspaces/tasks/task"};
+    throw new Error(`Unhandled task method: ${r.method}`);
+  }
   if (command === "task_lineage_watch") { watch = { ...args.config, revision: watch.revision + 1 }; return watch; }
   if (["task_lineage_snapshot", "task_lineage_scan", "task_lineage_extract"].includes(command)) return structuredClone(data);
   if (command === "task_lineage_messages") return history.filter(m => m.threadId === args.threadId);

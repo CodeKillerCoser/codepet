@@ -450,6 +450,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             task_lineage::task_lineage_options,
+            task_lineage::task_lineage_request,
             task_lineage::task_lineage_snapshot,
             task_lineage::task_lineage_scan,
             task_lineage::task_lineage_extract,

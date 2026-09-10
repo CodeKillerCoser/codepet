@@ -61,14 +61,51 @@ pub fn tick(
     if service::pending_for(store, &snapshot, config.thread_id.as_deref())? == 0 {
         return Ok(Some(snapshot));
     }
+    let settings = crate::management::settings(store)?;
+    // Legacy callers with no persisted settings retain their immediate first scan.
+    let debounce = if store
+        .read::<crate::management::ExtractionSettings>("extraction-settings.json")?
+        .is_some()
+    {
+        settings.debounce_seconds
+    } else {
+        0
+    };
+    let Some(ready) =
+        service::ready_thread(store, &snapshot, config.thread_id.as_deref(), debounce)?
+    else {
+        return Ok(Some(snapshot));
+    };
+    if crate::management::jobs(store)?
+        .iter()
+        .any(|job| matches!(job.state.as_str(), "queued" | "running"))
+    {
+        return Ok(Some(snapshot));
+    }
     let Some(extractor) = extractor else {
         return Err("Configured Claude runtime is unavailable".into());
     };
     // Reserve before spending; a crash cannot silently replenish the user's budget.
+    let request_id = format!(
+        "scheduled-{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    );
+    let (mut job, _) = crate::management::enqueue(store, &request_id, Some(ready.clone()))?;
+    job.state = "running".into();
+    store.write(&crate::management::job_key(&job.id), &job)?;
     config.remaining_jobs -= 1;
     config.revision += 1;
     store.write("watch.json", &config)?;
-    let result = service::extract_next(store, extractor, config.thread_id.as_deref());
+    let result = service::extract_thread(store, extractor, &ready);
+    job.state = if result.is_ok() {
+        "completed"
+    } else {
+        "failed"
+    }
+    .into();
+    job.error = result.as_ref().err().cloned();
+    job.finished_at = Some(chrono::Utc::now().timestamp_millis());
+    store.write(&crate::management::job_key(&job.id), &job)?;
     if read(store)?.revision == config.revision {
         if let Err(error) = &result {
             config.last_error = Some(error.clone());

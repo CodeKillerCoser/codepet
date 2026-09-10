@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import LineageMessages from "./LineageMessages.svelte";
+  import TaskExtractionSettings from "./TaskExtractionSettings.svelte";
+  import type { ExtractionJob, DirtyConversation, ExtractionSettings } from "./taskLineage";
   import { lineageApi, creationLabel, episodePositions, reachable, rootThread, taskStatus, type Episode, type LineageMessage, type LineageOptions, type LineageSnapshot, type LineageTask, type LineageThread, type LineageWatch, type WorkspaceFacts } from "./taskLineage";
   let options: LineageOptions | null = null;
   let providerId = "", model = "haiku", error = "", busy = "", search = "", mode: "conversation" | "task" = "conversation", view: "conversation" | "task" = "conversation", diagram: "graph" | "swimlane" = "graph";
@@ -12,6 +14,18 @@
   let messages: LineageMessage[] = [], messageBusy = false, autoScan = false, autoExtract = false, remainingJobs = 5;
   let requestGeneration = 0, disposed = false;
   let conversationAnchor = "";
+  let showSettings = false, jobs: ExtractionJob[] = [], dirty: DirtyConversation[] = [], taskWorkspace = "";
+  $: extracting = jobs.some(job => ["queued", "running"].includes(job.state));
+  function settingsSaved(config: ExtractionSettings) { model = config.model; if (options) options = { ...options, sources: options.sources.map(s => s.id === providerId ? { ...s, extraction: config } : s) }; }
+  async function refreshManagement() {
+    const provider = providerId;
+    const [nextJobs, nextDirty] = await Promise.all([lineageApi.jobs(provider), lineageApi.dirty(provider)]);
+    if (disposed || provider !== providerId) return;
+    jobs = nextJobs; dirty = nextDirty;
+  }
+  function dirtyLabel(id: string, states: DirtyConversation[]) { const state = states.find(s => s.threadId === id); return state ? ({clean: "已分析", dirty: `待抽取 ${state.pendingMessages}`, extracting: "抽取中", error: "抽取失败"})[state.state] ?? "" : ""; }
+  const jobLabel = (state: string) => ({queued: "排队中", running: "抽取中", completed: "已完成", failed: "失败", interrupted: "已中断"})[state] ?? state;
+  async function allocateWorkspace() { if (task) await operation("申请工作区", async () => { taskWorkspace = (await lineageApi.allocate(providerId, task!.id)).path; }); }
   $: selectedThread = data.threads.find(t => t.id === selectedThreadId);
   $: task = data.tasks.find(t => t.id === selectedTaskId);
   $: episode = task?.episodes.find(e => e.id === selectedEpisodeId);
@@ -50,17 +64,19 @@
     if (!data.threads.some(t => t.id === selectedThreadId)) selectedThreadId = data.threads[0]?.id ?? "";
   }
   async function switchSource() {
+    showSettings = false; jobs = []; dirty = []; taskWorkspace = "";
     ++requestGeneration; selectedThreadId = ""; selectedTaskId = ""; selectedEpisodeId = ""; messages = []; facts = null; statuses = {}; autoExtract = false;
     nodeFacts = {}; applyWatch(options?.sources.find(source => source.id === providerId)?.watch);
-    await operation("读取任务", async () => { accept(await lineageApi.snapshot(providerId)); });
+    model = options?.sources.find(source => source.id === providerId)?.extraction?.model ?? "haiku";
+    await operation("读取任务", async () => { accept(await lineageApi.snapshot(providerId)); await refreshManagement(); });
     if (selectedThreadId) await selectThread(selectedThreadId);
   }
   async function scan() {
-    await operation("扫描记录", async () => { accept(await lineageApi.scan(providerId)); });
+    await operation("扫描记录", async () => { accept(await lineageApi.scan(providerId)); await refreshManagement(); });
     if (inspectorThread) await loadThread(inspectorThread.id);
   }
   async function extract() {
-    await operation("抽取任务", async () => { accept(await lineageApi.extract(providerId, selectedThreadId || null, model)); });
+    await operation("提交抽取", async () => { const job = await lineageApi.trigger(providerId, selectedThreadId || null); jobs = [job, ...jobs.filter(j => j.id !== job.id)]; await refreshManagement(); });
   }
   async function loadThread(id: string, refresh = false) {
     const generation = ++requestGeneration; if (!refresh) { messageBusy = true; messages = []; facts = null; }
@@ -73,6 +89,7 @@
   }
   async function selectThread(id: string, anchor = "") { selectedThreadId = id; conversationAnchor = anchor; view = "conversation"; selectedEpisodeId = ""; await loadThread(id); }
   async function selectTask(selected: LineageTask) {
+    taskWorkspace = "";
     selectedTaskId = selected.id; view = "task"; selectedThreadId = selected.rootThreadId;
     const first = selected.episodes[0]; selectedEpisodeId = first?.id ?? "";
     if (first) await loadThread(first.threadId);
@@ -92,6 +109,7 @@
   async function send(text: string) {
     const id = inspectorThread?.id; if (!id) throw new Error("请先选择线程");
     if (busy) throw new Error("请等待当前操作完成");
+    if (["running", "waiting-approval"].includes(await lineageApi.status(providerId, id))) throw new Error("当前会话正在执行或等待审批，请先处理后再发送");
     const provider = providerId, currentTask = view === "task" ? task : undefined;
     busy = "发送消息";
     try { await lineageApi.send(provider, id, text); } finally { busy = ""; }
@@ -105,11 +123,18 @@
   function statusLabel(id: string, currentStatuses: Record<string, string>) { return ({ running: "运行中", "waiting-approval": "等待审批", "waiting-user-input": "等待输入", idle: "已结束", archived: "已归档", error: "执行错误", unknown: "状态待确认" })[currentStatuses[id]] ?? "状态待确认"; }
   onMount(() => {
     let unlisten: (() => void) | null = null;
-    void operation("加载配置", async () => { options = await lineageApi.options(); model = options.defaultModel; providerId = options.sources[0]?.id ?? ""; applyWatch(options.sources[0]?.watch); if (providerId) accept(await lineageApi.snapshot(providerId)); }).then(() => { if (selectedThreadId) void loadThread(selectedThreadId); });
+    void operation("加载配置", async () => { options = await lineageApi.options(); providerId = options.sources[0]?.id ?? ""; applyWatch(options.sources[0]?.watch); model = options.sources[0]?.extraction?.model ?? options.defaultModel; if (providerId) { accept(await lineageApi.snapshot(providerId)); await refreshManagement(); } }).then(() => { if (selectedThreadId) void loadThread(selectedThreadId); });
+    let polling = false;
+    const poll = setInterval(async () => {
+      if (disposed || busy || polling || !providerId) return;
+      polling = true;
+      try { const wasExtracting = extracting; await refreshManagement(); if (wasExtracting && !extracting) accept(await lineageApi.snapshot(providerId)); }
+      catch (e) { error = String(e); } finally { polling = false; }
+    }, 3000);
     void listen<{ providerId: string; error: string | null }>("task-lineage-updated", event => {
       if (disposed || busy || event.payload.providerId !== providerId) return;
       void operation("同步后台结果", async () => {
-        accept(await lineageApi.snapshot(providerId)); options = await lineageApi.options(); applyWatch(options.sources.find(s => s.id === providerId)?.watch);
+        accept(await lineageApi.snapshot(providerId)); await refreshManagement(); options = await lineageApi.options(); applyWatch(options.sources.find(s => s.id === providerId)?.watch); model = options.sources.find(s => s.id === providerId)?.extraction?.model ?? model;
         if (inspectorThread) await loadThread(inspectorThread.id, true);
         const selected = task;
         if (selected) for (const id of [...new Set(selected.episodes.map(e => e.threadId))]) {
@@ -120,23 +145,25 @@
         if (event.payload.error) error = event.payload.error;
       });
     }).then(stop => { if (disposed) stop(); else unlisten = stop; }).catch(e => error = String(e));
-    return () => { disposed = true; ++requestGeneration; unlisten?.(); };
+    return () => { disposed = true; ++requestGeneration; clearInterval(poll); unlisten?.(); };
   });
 </script>
 
 <div class="lineage">
   <div class="controls">
     <label>Codex 来源<select bind:value={providerId} on:change={switchSource} disabled={!!busy}>{#each options?.sources ?? [] as source}<option value={source.id}>{source.name}</option>{/each}</select></label>
-    <label>总结模型<input bind:value={model} disabled={!!busy || autoExtract} aria-label="总结模型" /></label>
+    <button on:click={() => showSettings = !showSettings} disabled={!providerId} aria-expanded={showSettings}>抽取设置 · {model}</button>
     <button on:click={refreshOptions} disabled={!!busy}>刷新来源</button>
     <button on:click={scan} disabled={!!busy || !providerId}>扫描记录</button>
-    <button on:click={extract} disabled={!!busy || !providerId || !options?.claudeExecutable}>抽取关联对话</button>
+    <button on:click={extract} disabled={!!busy || extracting || !providerId || !options?.claudeExecutable}>{extracting ? "抽取中…" : "抽取关联对话"}</button>
     <label class="check"><input type="checkbox" bind:checked={autoScan} on:change={saveWatch} disabled={!!busy || !providerId} />后台更新</label>
     <label class="check"><input type="checkbox" bind:checked={autoExtract} on:change={saveWatch} disabled={!!busy || !options?.claudeExecutable || !selectedThreadId || remainingJobs === 0} />连续抽取（余 {remainingJobs} 批）</label>
     {#if remainingJobs === 0}<button disabled={!!busy} on:click={() => { remainingJobs = 5; autoExtract = true; void saveWatch(); }}>允许再分析 5 批</button>{/if}
     <span role="status">{busy || `${data.pendingMessages} 条近 48 小时消息待分析`}</span>
   </div>
-  <p class="hint">仅抽取最近 48 小时的用户消息与 AI 正文，排除工具执行及无可靠时间戳的内容。通过本机 Claude CLI 抽取，每批预算上限 $0.10；模型别名遵循本机映射。后台更新在应用运行期间持续执行，连续抽取只处理开启时选定的对话及派生线程。</p>
+  <p class="hint">仅抽取最近 48 小时的用户消息与 AI 正文，排除工具执行及无可靠时间戳的内容。每批预算上限 ${options?.sources.find(s => s.id === providerId)?.extraction?.budgetUsd ?? options?.budgetUsd ?? 0.25}。后台更新在应用运行期间执行，连续抽取处理开启时选定的对话及派生线程。</p>
+  {#if showSettings && options}{#key providerId}<TaskExtractionSettings {providerId} {options} onSaved={settingsSaved} />{/key}{/if}
+  {#if jobs.length}<details class="diagnostics"><summary>抽取记录 · {jobLabel(jobs[0].state)} · {dirty.filter(s => s.state === "dirty").length} 个会话待抽取</summary>{#each jobs as job}<p>{new Date(job.createdAt).toLocaleString()} · {jobLabel(job.state)} · {data.threads.find(t => t.id === job.threadId)?.title ?? "全部会话"}{#if job.error} · {job.error}{/if}</p>{/each}</details>{/if}
   {#if data.lastExtraction}<p class="hint">最近实际模型：{Object.keys(data.lastExtraction.modelUsage ?? {}).join("、") || "CLI 未返回"} · 仅抽取用户消息与 AI 正文，不包含工具执行。</p>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if !options?.claudeExecutable && options}<p class="hint">请先在“连接”中配置可用的 Claude 运行时。仍可扫描和查看原始记录。</p>{/if}
@@ -165,10 +192,12 @@
     <section class="center" aria-label="当前工作视角">
       <div class="center-toolbar"><div class="segmented"><button class:active={view === "conversation"} on:click={() => selectedThreadId && selectThread(selectedThreadId)}>对话</button>{#if selectedThread?.createdBy === "human" && !selectedThread.parentId}<button class:active={view === "task"} on:click={() => relatedTasks[0] ? selectTask(relatedTasks[0]) : view = "task"}>任务</button>{/if}</div><span>{selectedThread?.workspace.split(/[\\/]/).pop() ?? ""}</span></div>
       {#if view === "conversation"}
-        <header class="title"><small>{creationLabel(selectedThread?.creationKind ?? "unknown")}</small><h3>{selectedThread?.title ?? "选择一个对话"}</h3>{#if selectedThread}<span>{statusLabel(selectedThread.id, statuses)}</span>{/if}</header>
+        <header class="title"><small>{creationLabel(selectedThread?.creationKind ?? "unknown")}</small><h3>{selectedThread?.title ?? "选择一个对话"}</h3>{#if selectedThread}<span>{statusLabel(selectedThread.id, statuses)} · {dirtyLabel(selectedThread.id, dirty)}</span>{/if}</header>
         <LineageMessages {messages} contextId={selectedThreadId} anchorEventId={conversationAnchor} title={selectedThread?.title ?? "对话消息"} busy={messageBusy} onSend={selectedThread ? send : null} />
       {:else if task}
         <div class="task-picker">{#each relatedTasks as item}<button class:active={item.id === task.id} on:click={() => selectTask(item)}>{item.title}</button>{/each}</div>
+        <div class="task-picker"><button disabled={!!busy} on:click={allocateWorkspace}>申请任务工作区</button></div>
+        {#if taskWorkspace}<p class="hint" role="status">任务工作区：{taskWorkspace}</p>{/if}
         <header class="title"><div class="task-heading"><h3>{task.title}</h3><button disabled={!!busy || (!task.manualCompletion && taskStatus(task, statuses) !== "待验收")} on:click={complete}>{task.manualCompletion ? "重新打开" : "标记已完成"}</button></div><span>{taskStatus(task, statuses)}</span><p>{task.detail}</p></header>
         <div class="diagram-toolbar"><div class="segmented"><button class:active={diagram === "graph"} on:click={() => diagram = "graph"}>自由图</button><button class:active={diagram === "swimlane"} on:click={() => diagram = "swimlane"}>时间泳道</button></div><small>悬停或聚焦查看路径 · 点击回溯消息</small></div>
         <div class="canvas-scroll"><div class="canvas" style:width={`${canvasWidth}px`} style:height={`${canvasHeight}px`}>

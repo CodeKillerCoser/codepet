@@ -2,6 +2,7 @@
 pub mod domain;
 pub mod extraction;
 pub mod git;
+pub mod management;
 pub mod service;
 pub mod sources;
 pub mod store;
