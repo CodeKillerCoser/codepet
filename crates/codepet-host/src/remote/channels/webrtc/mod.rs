@@ -28,7 +28,6 @@ use webrtc::peer_connection::{
 
 const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(8);
 const OPEN_TIMEOUT: Duration = Duration::from_secs(15);
-const FRAGMENT_TIMEOUT: Duration = Duration::from_secs(5);
 const BUFFER_HIGH: usize = 64 * 1024;
 const BUFFER_LOW: usize = 16 * 1024;
 
@@ -269,9 +268,7 @@ fn channel_adapter(
                 rx,
                 closed: closed.clone(),
                 decoder: Decoder::new(REQUEST_BYTES),
-                deadline: None,
                 diagnostic,
-                last_fragment: None,
                 frames: 0,
             }),
         },
@@ -355,9 +352,7 @@ struct RtcSource {
     rx: mpsc::Receiver<Bytes>,
     closed: watch::Receiver<bool>,
     decoder: Decoder,
-    deadline: Option<Instant>,
     diagnostic: Arc<Diagnostic>,
-    last_fragment: Option<Instant>,
     frames: u64,
 }
 impl GatewaySource for RtcSource {
@@ -367,20 +362,12 @@ impl GatewaySource for RtcSource {
                 if *self.closed.borrow() {
                     return None;
                 }
-                let deadline = self
-                    .deadline
-                    .unwrap_or_else(|| Instant::now() + FRAGMENT_TIMEOUT);
+                // The session heartbeat owns liveness. A bounded, incomplete
+                // message must survive RPC deadlines and slow delivery.
                 let bytes = tokio::select! {
-                    _ = tokio::time::sleep_until(deadline), if self.deadline.is_some() => {
-                        self.diagnostic.emit("message.receive.timeout",json!({"received":self.decoder.received_bytes(),
-                            "total":self.decoder.total_bytes(),"frames":self.frames,
-                            "lastFragmentAgeMs":self.last_fragment.map(|t|t.elapsed().as_millis())}));
-                        return Some(GatewayFrame::Invalid);
-                    },
                     _ = self.closed.changed() => return None,
                     bytes = self.rx.recv() => bytes?,
                 };
-                self.last_fragment = Some(Instant::now());
                 self.frames += 1;
                 match self.decoder.push(&bytes) {
                     Ok(Some(message)) => {
@@ -393,20 +380,47 @@ impl GatewaySource for RtcSource {
                             json!({"bytes":size,"frames":self.frames}),
                         );
                         self.frames = 0;
-                        self.deadline = None;
                         return Some(message);
                     }
                     Ok(None) => {
                         if self.frames == 1 || self.frames % 64 == 0 {
                             self.diagnostic.emit("message.receive.progress",json!({"received":self.decoder.received_bytes(),"total":self.decoder.total_bytes(),"frames":self.frames}));
                         }
-                        if self.deadline.is_none() {
-                            self.deadline = Some(Instant::now() + FRAGMENT_TIMEOUT);
-                        }
                     }
                     Err(()) => return Some(GatewayFrame::Invalid),
                 }
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn slow_partial_message_survives_until_completed_or_connection_closed() {
+        let (tx, rx) = mpsc::channel(4);
+        let (closed_tx, closed) = watch::channel(false);
+        let mut source = RtcSource {
+            rx,
+            closed,
+            decoder: Decoder::new(REQUEST_BYTES),
+            diagnostic: Diagnostic::new("slow-source-test"),
+            frames: 0,
+        };
+        tx.send(encode_fragment(4, 0, b"ab").into()).await.unwrap();
+        // Cancelling recv (as the session select does) must retain framing state.
+        assert!(timeout(Duration::from_millis(5100), source.recv())
+            .await
+            .is_err());
+        tx.send(encode_fragment(4, 2, b"cd").into()).await.unwrap();
+        assert!(matches!(source.recv().await, Some(GatewayFrame::Text(value)) if value == b"abcd"));
+        tx.send(encode_fragment(4, 0, b"ab").into()).await.unwrap();
+        assert!(timeout(Duration::from_millis(10), source.recv())
+            .await
+            .is_err());
+        closed_tx.send(true).unwrap();
+        assert!(source.recv().await.is_none());
     }
 }

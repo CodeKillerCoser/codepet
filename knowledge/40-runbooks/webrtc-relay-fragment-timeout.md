@@ -3,7 +3,8 @@
 ## 现象
 
 2026-09-10 手机从 Wi-Fi 切换到 4G 后，Windows 连接恢复缓慢，恢复后再次出现
-`RTC fragment timed out`。本记录与 Mac 首次公网扫码配对失败分开；本轮仅分析，未实施修复。
+`RTC fragment timed out`。本记录与 Mac 首次公网扫码配对失败分开；早期仅分析，
+后续诊断和已实施修复见“2026-09-11 新样本”一节。
 
 ## 复现路径
 
@@ -48,7 +49,58 @@ TURN 文件中的私网 peer 被拒绝不能单独解释本次故障，因实际
 - Host RTC 组包和发送背压：检查反方向期限以及发送是否持续取得进展。
 - 路由重连：4G 下每轮先等待不可达 LAN，恢复耗时需要单独优化和观测。
 
-## 当前假设
+## 2026-09-11 新样本：持续接收被固定期限截断
+
+来源：`D:/17633/Downloads/codepet-logs-2026-09-10T16-05-19-139102Z/codepet.log`
+及本机 `C:/Users/17633/AppData/Local/code-pet/logs/code-pet.log`。
+两端以 `offerId=1b7df3f5a7b6a256702cd5d6` 和相同响应长度关联，以下为北京时间。
+
+| 时间 | 证据 |
+| --- | --- |
+| 00:04:54.598 | Host 开始发送 3,264,247 字节，记录发送背压等待 |
+| 00:04:55.188 | 手机收到首帧，预期总长度 3,264,247 字节 |
+| 00:04:56.905–59.401 | 接收进度从 65,488 增至 147,348 字节 |
+| 00:05:00.189 | 手机第 23 行 `channel.abort`：`fragmentTimeout`，已收 196,464 字节、12 帧，`partialAgeMs=5002`、`lastFragmentAgeMs=39` |
+| 随后 | 手机 `conversation.get` 及 Codex snapshot 失败；Host 未记录该消息发送完成，随后通道关闭 |
+
+此次明确是 Codex 对话快照 `conversation.get`，不能泛称为 `thread/list` 超时。
+关闭前 39 毫秒仍有有效分片，证明固定 5 秒组包总期限截断了持续有进展的传输。
+这是新样本已确认的直接断开原因；先前样本缺少进度字段的证据限制仍然成立。
+同一导出中的 Claude 快照成功记录包含 2–4 条消息，与用户描述相符，但不据此推断所有
+Claude 响应大小。此次总长度低于 4 MiB 消息上限，未触发超大消息拒绝。
+
+断开前手机选中的候选对包含远端 relay，00:04:59 的检查状态为 succeeded、RTT 约
+649 ms；关闭附近另一次采样约 1,385 ms。网络确实较慢，但现有证据不足以把低吞吐量
+归因于 VPS 带宽、丢包或某个拥塞控制实现。应用主动关闭与底层吞吐原因应分别处理。
+
+此次分析后用户明确要求普通 RPC 期限为 30 秒，请求失败不得误伤连接，存活由心跳负责。
+下面的实现取代早期增加组包空闲/总期限的建议。
+
+### 修复实现与验证
+
+- Remote `webrtc_gateway_transport.dart`：默认请求期限从 15 秒改为 30 秒，超时只结束
+  对应请求并记录 `rpc.timeout`，不再广播通道错误或关闭 peer。
+- 两端 RTC 组包移除固定 5 秒期限，保留 CPG1 长度、偏移、内存上限检查。已开始的
+  消息继续完整收发，Remote 丢弃已超时请求的迟到响应并记录 `rpc.response.discarded`。
+  不能在 RPC 超时时清空解码器或中途停止发送，否则后续消息边界会损坏。
+- LAN `pinned_web_socket_transport.dart` 同步采用 30 秒普通请求期限，保留原有 LAN 行为。
+- 存活仍由现有 `protocol.ping`/pong 心跳管理；底层实际关闭、畸形协议、显式关闭和
+  凭据撤销仍可终止连接。这些不是普通业务 RPC 失败。
+
+验证：Remote 原相关测试集 69 项通过，补充后 RTC 测试 11 项通过；新增/更新用例覆盖超过 5 秒的组包、迟到响应、
+背压时请求超时以及心跳失效通知。Host RTC 单元测试 6 项通过，包含跨 5 秒接收及
+`recv` 被取消后保留组包状态。Host `remote_lan_listener` 的 RTC/LAN 共用准入、大消息和
+撤销集成测试通过，两个手动探针按声明忽略。定向 Flutter analyze 通过。
+执行命令：`flutter test` 指定 `webrtc_transport_test.dart`、`pinned_web_socket_transport_test.dart`、
+`gateway_client_test.dart`、`cloud_signaling_test.dart`、`rtc_diagnostics_test.dart`；补充后单跑
+`webrtc_transport_test.dart`；Host 执行 `cargo test --manifest-path crates/codepet-host/Cargo.toml
+--lib remote::channels::webrtc` 和同 manifest 的 `--test remote_lan_listener rtc`。
+真机 4G 大对话尚待新版验收。
+
+剩余风险：CPG1 单有序通道的大消息可能阻塞后续 pong，达到心跳失效窗口时仍会重连。
+需要真机观察心跳与发送队列日志；本修复不保证慢链路上 3.26 MB 响应可在 30 秒内完成。
+
+## 早期样本的假设与排查
 
 ### 直连未被选中的专项核查
 
@@ -96,7 +148,7 @@ Downloads 也没有较 16:55 UTC 导出更新的文件，因此当前无法据�
 - 分别测量 LAN 探测、ICE 收集、信令轮询、连通性检查耗时，验证 Wi-Fi/4G 切换及 LAN 回归。
 - 真机通过当前 VPS 重复加载会话，确认不会进入“成功—超时—长时间重连”循环。
 
-## 未知项
+## 早期样本的未知项
 
 - 分片超时前传输是否持续有进展，以及具体未完成消息的长度和类型。
 - 约一分钟恢复时间中各公网阶段的实际占比。
