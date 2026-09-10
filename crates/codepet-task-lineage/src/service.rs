@@ -306,11 +306,11 @@ pub fn extract_next(
         let mut chars = 0;
         let mut input = vec![];
         for index in eligible.into_iter().skip(start_position) {
-            let n = all[index].text.chars().count().min(12000);
+            let n = all[index].text.chars().count().min(2500);
             if index >= scan.extracted_count
                 && !input.is_empty()
                 && end > scan.extracted_count
-                && (input.len() >= 24 || chars + n > 24000)
+                && (input.len() >= 6 || chars + n > 5000)
             {
                 break;
             }
@@ -319,8 +319,8 @@ pub fn extract_next(
             input.push(all[index].clone());
         }
         for message in &mut input {
-            if message.text.chars().count() > 12000 {
-                message.text = message.text.chars().take(12000).collect::<String>()
+            if message.text.chars().count() > 2500 {
+                message.text = message.text.chars().take(2500).collect::<String>()
                     + "\n[Input excerpt ends here; remaining text was not supplied.]";
             }
         }
