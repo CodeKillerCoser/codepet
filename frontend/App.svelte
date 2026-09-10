@@ -1,6 +1,7 @@
 <script lang="ts">
   import EventJournal from "./lib/EventJournal.svelte";
   import TaskLineage from "./lib/TaskLineage.svelte";
+  import TaskSettingsPage from "./lib/TaskSettingsPage.svelte";
   import WindowToolbar from "./lib/WindowToolbar.svelte";
   import { basename, extname, join } from "@tauri-apps/api/path";
   import PetSources from "./lib/PetSources.svelte";
@@ -32,6 +33,7 @@
     RotateCcw,
     Rocket,
     ShieldAlert,
+    Settings,
     Sun,
     Trash2,
     X,
@@ -58,7 +60,7 @@
 
   type ActivityFilterKind = keyof ActivityKeywordFilterSettings;
 
-  let tab: "agents" | "connections" | "usage" | "personalize" | "events" | "tasks" = "agents";
+  let tab: "agents" | "connections" | "usage" | "personalize" | "events" | "tasks" | "settings" = "agents";
   let sidebarCollapsed = false;
   let petSources: PetSource[] = [];
   let agentRuntimes: AgentRuntime[] = [];
@@ -1688,7 +1690,7 @@
   $: recentVisibleEvents = events.slice(-5).reverse();
   $: enabledSources = petSources.filter(source => source.enabled);
   $: receivingSources = petSources.filter(source => source.status === "receiving");
-  $: pageTitle = tab === "tasks" ? "任务管理" : tab === "agents" ? "Agent" : tab === "connections" ? "连接" : tab === "usage" ? "用量" : tab === "personalize" ? "个性化" : "最新事件";
+  $: pageTitle = tab === "settings" ? "设置" : tab === "tasks" ? "任务管理" : tab === "agents" ? "Agent" : tab === "connections" ? "连接" : tab === "usage" ? "用量" : tab === "personalize" ? "个性化" : "最新事件";
   $: appTheme = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
 </script>
 
@@ -1713,6 +1715,7 @@
       <button class:active={tab === "events"} on:click={() => (tab = "events")} aria-label="最新事件">
         <Activity size={18} /> 事件
       </button>
+      <button class:active={tab === "settings"} on:click={() => (tab = "settings")} aria-label="设置"><Settings size={18} /> 设置</button>
     </nav>
   </aside>
 
@@ -1725,7 +1728,9 @@
     </header>
 
     <div class="content">
-    {#if tab === "tasks"}
+    {#if tab === "settings"}
+      <TaskSettingsPage />
+    {:else if tab === "tasks"}
       <TaskLineage />
     {:else if tab === "agents"}
       <div class="agent-workspace">

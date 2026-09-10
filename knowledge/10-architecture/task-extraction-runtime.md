@@ -14,7 +14,11 @@
 
 ## 现状理解
 
-`App.svelte` 挂载任务页面；`TaskLineage` 提供对话/任务导航、图/泳道、原文证据和人工验收。新增 `TaskExtractionSettings` 管理摘要实例、模型、Skill、补充提示词、预算、超时、扫描与静默间隔。原有继续对话仍走 Gateway，发送前检查运行/审批状态。
+`App.svelte` 的主导航分别提供“任务”和“设置”。`TaskLineage` 专注对话/任务导航、图/泳道、原文证据、手动抽取和人工验收；设置表单不在任务页展开。`TaskSettingsPage` 按 section 组织，目前只有“任务抽取”，其中 `TaskExtractionSettings` 管理摘要实例、模型、Harness、Skill、补充提示词、预算、超时、扫描与静默间隔；后台开关、定时抽取范围和批次授权也集中在此分区。原有继续对话仍走 Gateway，发送前检查运行/审批状态。
+
+导航收起/展开由共享 `main-window.css` 对网格列宽执行 220ms 过渡，配合侧栏位移与透明度。收起时立即 inert，过渡结束后隐藏；展开时恢复可见。保留侧栏纵向滚动和 toolbar 的可访问名称，系统减少动态效果时关闭过渡。UI QA 使用生产任务/设置组件与共享窗口工具栏、CSS 验证切换、保存、过渡中间宽度、inert、减少动态效果和窄屏。
+
+任务页存在任务时默认选择首项并呈现任务图；用户仍可切换对话视角。首次抽取产生任务后也会进入可视化。此次 UI 调整验证包含当前源码的 27 项布局测试、3 项任务视图测试、前端构建与浏览器交互；浏览器使用模拟 IPC，不调用真实模型或发送真实消息。
 
 ## 实现路径
 
@@ -71,7 +75,7 @@ Job 保存 id、requestId、threadId、state、createdAt、finishedAt、error。
 - `crates/codepet-task-lineage/{src/management.rs,skills}`：用户目录、模板、配置、Job、工作区和模型上下文组装。
 - `src/{service,watch,extraction}.rs`：增量水位、静默调度、统一抽取接口、CLI 进程控制与证据校验。
 - `src-tauri/src/task_lineage.rs`：组合现有 Provider Host 和应用数据目录，提供本地扩展及后台生命周期。
-- `frontend/lib/{taskLineage.ts,TaskLineage.svelte,TaskExtractionSettings.svelte}`：类型调用、交互、异步状态及设置。
+- `frontend/lib/{taskLineage.ts,TaskLineage.svelte,TaskSettingsPage.svelte,TaskExtractionSettings.svelte}`：类型调用、任务可视化、异步状态及分区设置。`App.svelte` 提供独立入口，`main-window.css` 管理共享导航动画。
 
 ## 风险
 

@@ -1,7 +1,7 @@
 // Browser-only QA fixture. This entry is excluded from production build inputs.
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { mount } from "svelte";
-import TaskLineage from "../lib/TaskLineage.svelte";
+import TaskWorkspaceQa from "./TaskWorkspaceQa.svelte";
 import "../styles.css";
 import "../main-window.css";
 import type { LineageSnapshot, LineageMessage } from "../lib/taskLineage";
@@ -60,4 +60,4 @@ mockIPC((command, raw) => {
   }
   throw new Error(`Unhandled fixture command: ${command}`);
 }, { shouldMockEvents: true });
-mount(TaskLineage, { target: document.getElementById("app")! });
+mount(TaskWorkspaceQa, { target: document.getElementById("app")! });

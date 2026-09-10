@@ -23,8 +23,10 @@ try {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.getByText('任务抽取只把用户消息和 AI 正文作为对象，工具执行不要。', { exact: true }).waitFor();
+  assert.equal(await page.locator('.node').count(), 3, 'Task tab opens the visualization by default');
   await page.screenshot({ path: resolve(output, 'conversation.png'), fullPage: true });
-  await page.getByRole('button', { name: /抽取设置/ }).click();
+  assert.equal(await page.getByLabel('模型', { exact: true }).count(), 0);
+  await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '设置', exact: true }).click();
   await page.getByLabel('模型', { exact: true }).fill('haiku');
   await page.getByLabel('补充抽取提示词').fill('将实现与验证归入同一任务');
   await page.getByLabel('抽取 Skill', { exact: true }).selectOption('reconcile-tasks');
@@ -36,7 +38,26 @@ try {
   await page.getByLabel('补充抽取提示词').focus();
   assert.equal(await page.getByLabel('补充抽取提示词').evaluate(e => e === document.activeElement), true);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.getByRole('button', { name: /抽取设置 ·/ }).click();
+  await page.getByLabel('后台更新', { exact: true }).check();
+  await page.getByLabel('定时抽取', { exact: true }).check();
+  await page.getByLabel('抽取范围', { exact: true }).selectOption('main');
+  await page.getByRole('button', { name: '保存后台设置', exact: true }).click();
+  await page.getByText('后台设置已保存', { exact: true }).waitFor();
+  await page.getByLabel('后台更新', { exact: true }).uncheck();
+  await page.getByRole('button', { name: '保存后台设置', exact: true }).click();
+  await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '任务', exact: true }).click();
+  await page.getByText('任务抽取只把用户消息和 AI 正文作为对象，工具执行不要。', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '收起导航栏', exact: true }).click();
+  const widths = await page.evaluate(async () => {
+    const values = []; for (let i = 0; i < 20; i++) { await new Promise(requestAnimationFrame); values.push(parseFloat(getComputedStyle(document.querySelector('.app-shell')).gridTemplateColumns)); } return values;
+  });
+  assert.ok(widths.some(width => width > 0 && width < 192), 'Sidebar width should animate through intermediate values');
+  assert.ok(await page.locator('#main-sidebar').evaluate(e => e.inert));
+  await page.getByRole('button', { name: '展开导航栏', exact: true }).click();
+  await page.locator('#main-sidebar').waitFor({ state: 'visible' });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  assert.equal(await page.locator('.app-shell').evaluate(e => getComputedStyle(e).transitionDuration), '0s');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.getByRole('button', { name: '抽取关联对话', exact: true }).click();
   await page.getByRole('button', { name: '抽取中…', exact: true }).waitFor();
   await page.getByRole('button', { name: '抽取关联对话', exact: true }).waitFor();
@@ -69,8 +90,7 @@ try {
   }
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
   await page.getByRole('button', { name: '标记已完成', exact: true }).waitFor();
-  await page.getByLabel('后台更新', { exact: true }).check();
-  await page.getByLabel('后台更新', { exact: true }).uncheck();
+  assert.equal(await page.getByLabel('后台更新', { exact: true }).count(), 0);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ passed: ['conversation', 'settings and skill selection', 'async extraction job', 'task workspace', 'node evidence', 'diagram selection', 'keyboard highlight', 'manual acceptance', 'responsive widths'], output }));
+  console.log(JSON.stringify({ passed: ['conversation', 'settings navigation and sections', 'settings and skill selection', 'schedule settings', 'sidebar animation and reduced motion', 'async extraction job', 'task workspace', 'node evidence', 'diagram selection', 'keyboard highlight', 'manual acceptance', 'responsive widths'], output }));
 } finally { await browser.close(); server?.kill(); }
