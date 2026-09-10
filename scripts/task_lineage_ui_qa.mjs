@@ -26,7 +26,10 @@ try {
   assert.equal(await page.locator('.node').count(), 3, 'Task tab opens the visualization by default');
   await page.screenshot({ path: resolve(output, 'conversation.png'), fullPage: true });
   assert.equal(await page.getByLabel('模型', { exact: true }).count(), 0);
-  await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '设置', exact: true }).click();
+  assert.equal(await page.getByRole('navigation', { name: '主导航' }).getByRole('button').count(), 6);
+  assert.ok(await page.getByRole('button', { name: '后退', exact: true }).isDisabled());
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('navigation', { name: '设置分区' }).getByRole('button', { name: '任务抽取', exact: true }).waitFor();
   await page.getByLabel('模型', { exact: true }).fill('haiku');
   await page.getByLabel('补充抽取提示词').fill('将实现与验证归入同一任务');
   await page.getByLabel('抽取 Skill', { exact: true }).selectOption('reconcile-tasks');
@@ -45,7 +48,12 @@ try {
   await page.getByText('后台设置已保存', { exact: true }).waitFor();
   await page.getByLabel('后台更新', { exact: true }).uncheck();
   await page.getByRole('button', { name: '保存后台设置', exact: true }).click();
-  await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '任务', exact: true }).click();
+  await page.getByRole('button', { name: '后退', exact: true }).click();
+  await page.getByRole('navigation', { name: '主导航' }).waitFor();
+  await page.getByRole('button', { name: '前进', exact: true }).click();
+  await page.getByLabel('补充抽取提示词').waitFor();
+  assert.equal(await page.getByLabel('补充抽取提示词').inputValue(), '将实现与验证归入同一任务');
+  await page.getByRole('button', { name: '后退', exact: true }).click();
   await page.getByText('任务抽取只把用户消息和 AI 正文作为对象，工具执行不要。', { exact: true }).waitFor();
   await page.getByRole('button', { name: '收起导航栏', exact: true }).click();
   const widths = await page.evaluate(async () => {
@@ -91,6 +99,18 @@ try {
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
   await page.getByRole('button', { name: '标记已完成', exact: true }).waitFor();
   assert.equal(await page.getByLabel('后台更新', { exact: true }).count(), 0);
+  const mac = await browser.newPage({ viewport: { width: 980, height: 700 }, userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36' });
+  await mac.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  const controls = mac.locator('.window-navigation-controls');
+  await controls.waitFor();
+  const before = await controls.boundingBox();
+  const buttons = await controls.locator('button').evaluateAll(items => items.map(item => { const r = item.getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width}; }));
+  assert.ok(buttons[1].x >= buttons[0].x + buttons[0].width && buttons[2].x >= buttons[1].x + buttons[1].width, 'Toolbar actions must not overlap on macOS');
+  await mac.getByRole('button', { name: '收起导航栏', exact: true }).click();
+  const anchors = await controls.evaluate(async element => { const positions = []; for (let i=0;i<20;i++) { await new Promise(requestAnimationFrame); positions.push(element.getBoundingClientRect().x); } return positions; });
+  assert.ok(anchors.every(x => Math.abs(x-before.x)<1), 'macOS anchor must stay fixed throughout collapse');
+  await mac.getByRole('button', { name: '展开导航栏', exact: true }).click();
+  await mac.close();
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ passed: ['conversation', 'settings navigation and sections', 'settings and skill selection', 'schedule settings', 'sidebar animation and reduced motion', 'async extraction job', 'task workspace', 'node evidence', 'diagram selection', 'keyboard highlight', 'manual acceptance', 'responsive widths'], output }));
 } finally { await browser.close(); server?.kill(); }

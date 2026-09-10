@@ -1,10 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Copy, Minus, PanelLeft, Square, X } from "@lucide/svelte";
+  import { ArrowLeft, ArrowRight, Copy, Minus, PanelLeft, Square, X } from "@lucide/svelte";
   import { createWindowChrome } from "./windowChrome";
 
   export let collapsed = false;
   export let onError: (message: string) => void;
+  export let canGoBack = false;
+  export let canGoForward = false;
+  export let onBack: () => void = () => {};
+  export let onForward: () => void = () => {};
   const chrome = createWindowChrome();
   let maximized = false;
   let anchor = { left: 88, centerY: 20 };
@@ -24,9 +28,13 @@
 </script>
 
 <div class="window-toolbar" class:macos={chrome.platform === "macos"} style:--toolbar-anchor-left={`${anchor.left}px`} style:--toolbar-anchor-y={`${anchor.centerY}px`} data-tauri-drag-region>
+  <div class="window-navigation-controls">
   <button class="window-toolbar-button" type="button" aria-label={collapsed ? "展开导航栏" : "收起导航栏"} aria-expanded={!collapsed} aria-controls="main-sidebar" on:click={() => collapsed = !collapsed}>
     <PanelLeft size={16} strokeWidth={1.75} />
   </button>
+  <button class="window-toolbar-button" type="button" aria-label="后退" title="后退" disabled={!canGoBack} on:click={onBack}><ArrowLeft size={16} /></button>
+  <button class="window-toolbar-button" type="button" aria-label="前进" title="前进" disabled={!canGoForward} on:click={onForward}><ArrowRight size={16} /></button>
+  </div>
   <div class="window-drag-space" data-tauri-drag-region></div>
   {#if chrome.platform === "windows" && chrome.native}
     <div class="window-controls">

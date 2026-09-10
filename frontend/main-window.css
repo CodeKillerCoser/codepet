@@ -25,8 +25,10 @@
   color: var(--app-muted);
   user-select: none;
 }
-.main-theme .window-toolbar.macos { position: relative; padding-left: 0; }
-.main-theme .window-toolbar.macos .window-toolbar-button {
+.main-theme .window-toolbar.macos { position: relative; padding-left: 0; margin-left: 0; transition: margin-left 220ms ease; }
+.main-theme .window-navigation-controls { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.main-theme .window-toolbar-button:disabled { opacity: .35; cursor: default; }
+.main-theme .window-toolbar.macos .window-navigation-controls {
   position: absolute;
   left: var(--toolbar-anchor-left);
   top: var(--toolbar-anchor-y);
@@ -72,6 +74,9 @@
   transform: translateX(0);
   transition: opacity 160ms ease, transform 220ms ease, padding 220ms ease, visibility 0s;
 }
+.main-theme .window-toolbar.macos .window-toolbar-button { height: 28px; min-height: 28px; }
+.main-theme .topbar .settings-entry { margin-left: auto; display: grid; place-items: center; width: 32px; height: 32px; min-height: 32px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--app-muted); }
+.main-theme .topbar .settings-entry:hover { background: var(--color-main-hover); }
 .main-theme .sidebar .tabs, .main-theme .sidebar .brand { white-space: nowrap; }
 .main-theme .sidebar .tabs svg { flex-shrink: 0; }
 .main-theme .brand { display: flex; gap: 0; height: 36px; min-height: 36px; padding: 6px 8px; }
@@ -95,7 +100,7 @@
 .main-theme.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr); padding-left: 8px; }
 .main-theme.sidebar-collapsed .sidebar { visibility: hidden; padding: 0; overflow: hidden; opacity: 0; transform: translateX(-12px); transition-delay: 0s, 0s, 0s, 220ms; }
 @media (prefers-reduced-motion: reduce) {
-  .main-theme.app-shell, .main-theme .sidebar, .main-theme.sidebar-collapsed .sidebar { transition: none; }
+  .main-theme.app-shell, .main-theme .sidebar, .main-theme.sidebar-collapsed .sidebar, .main-theme .window-toolbar.macos { transition: none; }
 }
 
 .main-theme .content-pane {

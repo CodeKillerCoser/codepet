@@ -2,6 +2,8 @@
   import EventJournal from "./lib/EventJournal.svelte";
   import TaskLineage from "./lib/TaskLineage.svelte";
   import TaskSettingsPage from "./lib/TaskSettingsPage.svelte";
+  import MainNavigation from "./lib/MainNavigation.svelte";
+  import { createNavigation } from "./lib/navigation";
   import WindowToolbar from "./lib/WindowToolbar.svelte";
   import { basename, extname, join } from "@tauri-apps/api/path";
   import PetSources from "./lib/PetSources.svelte";
@@ -60,7 +62,9 @@
 
   type ActivityFilterKind = keyof ActivityKeywordFilterSettings;
 
-  let tab: "agents" | "connections" | "usage" | "personalize" | "events" | "tasks" | "settings" = "agents";
+  const navigation = createNavigation();
+  $: tab = $navigation.current;
+  $: if (tab === "connections") void refreshRemoteAccess();
   let sidebarCollapsed = false;
   let petSources: PetSource[] = [];
   let agentRuntimes: AgentRuntime[] = [];
@@ -484,11 +488,6 @@
 
   function runtimeIntegrationHint(runtime: AgentRuntime) {
     return `${runtime.displayName} Provider 负责探测、校验和选择自己的本机 Runtime；Host 只转发协议结果。`;
-  }
-
-  function showConnections() {
-    tab = "connections";
-    void refreshRemoteAccess();
   }
 
   async function refreshRemoteAccess() {
@@ -1695,28 +1694,9 @@
 </script>
 
 <main class={`app-shell main-theme ${appTheme}`} class:sidebar-collapsed={sidebarCollapsed}>
-  <WindowToolbar bind:collapsed={sidebarCollapsed} onError={(message) => error = message} />
+  <WindowToolbar bind:collapsed={sidebarCollapsed} canGoBack={$navigation.canGoBack} canGoForward={$navigation.canGoForward} onBack={navigation.back} onForward={navigation.forward} onError={(message) => error = message} />
   <aside id="main-sidebar" class="sidebar" inert={sidebarCollapsed}>
-    <div class="brand"><h1>Code Pet</h1></div>
-    <nav class="tabs" aria-label="Code Pet settings">
-      <button class:active={tab === "tasks"} on:click={() => (tab = "tasks")} aria-label="任务谱系管理"><Activity size={18} /> 任务</button>
-      <button class:active={tab === "agents"} on:click={() => (tab = "agents")} aria-label="Agent 列表">
-        <Bot size={18} /> Agent
-      </button>
-      <button class:active={tab === "connections"} on:click={showConnections} aria-label="设备与本机运行时连接">
-        <Cable size={18} /> 连接
-      </button>
-      <button class:active={tab === "usage"} on:click={() => (tab = "usage")} aria-label="用量统计">
-        <BarChart3 size={18} /> 用量
-      </button>
-      <button class:active={tab === "personalize"} on:click={() => (tab = "personalize")} aria-label="个性化配置">
-        <Palette size={18} /> 个性化
-      </button>
-      <button class:active={tab === "events"} on:click={() => (tab = "events")} aria-label="最新事件">
-        <Activity size={18} /> 事件
-      </button>
-      <button class:active={tab === "settings"} on:click={() => (tab = "settings")} aria-label="设置"><Settings size={18} /> 设置</button>
-    </nav>
+    <MainNavigation current={tab} onNavigate={navigation.navigate} />
   </aside>
 
   <section class="content-pane">
@@ -1725,6 +1705,7 @@
         <h2>{pageTitle}</h2>
         {#if error}<p class="error">{error}</p>{/if}
       </div>
+      <button class="settings-entry" aria-label="设置" title="设置" aria-pressed={tab === "settings"} on:click={() => navigation.navigate("settings")}><Settings size={18} /></button>
     </header>
 
     <div class="content">

@@ -17,6 +17,7 @@ macOS 网页工具栏必须使用 AppKit 实际按钮边界作为锚点。导航
 - `src-tauri/src/platform/main_window.rs` 在 AppKit 主线程读取原生绿灯边界，转换到 content view 坐标，处理坐标轴方向并返回逻辑点。网页按钮左边缘位于绿灯右边缘外 12px，中心高度与绿灯一致；启动和重新创建窗口共用此查询，无需复制平台位置配置。
 - `frontend/lib/windowChrome.ts` 封装平台调用，在初始化及 resize 后读取锚点；`WindowToolbar.svelte` 接收锚点，避免业务页面判断平台。
 - `frontend/main-window.css` 为 macOS 单独定位按钮，抵消收起状态的 8px 外层位移，保持 32×28px 命中区域，焦点轮廓向内避免贴近窗口顶部时裁切。
+- 增加前进/后退时，以 `.window-navigation-controls` 按钮组整体定位到同一锚点，组内用 flex 排列，不能让每个按钮都 absolute 到同一点。侧栏 padding 动画与工具栏补偿 margin 必须使用相同时间和曲线，减少动态效果时同时关闭，避免过渡期间出现 8px 偏移。对应浏览器回归逐帧检查锚点和按钮互不覆盖。
 
 ## 来源
 

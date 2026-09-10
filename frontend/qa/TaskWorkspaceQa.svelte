@@ -2,13 +2,17 @@
   import TaskLineage from "../lib/TaskLineage.svelte";
   import TaskSettingsPage from "../lib/TaskSettingsPage.svelte";
   import WindowToolbar from "../lib/WindowToolbar.svelte";
-  let tab = "tasks", collapsed = false, error = "";
+  import MainNavigation from "../lib/MainNavigation.svelte";
+  import { createNavigation } from "../lib/navigation";
+  import { Settings } from "@lucide/svelte";
+  const navigation = createNavigation("tasks");
+  $: tab = $navigation.current;
+  let collapsed = false, error = "";
 </script>
 <main class="app-shell main-theme light" class:sidebar-collapsed={collapsed}>
-  <WindowToolbar bind:collapsed onError={message => error = message} />
+  <WindowToolbar bind:collapsed canGoBack={$navigation.canGoBack} canGoForward={$navigation.canGoForward} onBack={navigation.back} onForward={navigation.forward} onError={message => error = message} />
   <aside id="main-sidebar" class="sidebar" inert={collapsed}>
-    <div class="brand"><h1>Code Pet</h1></div>
-    <nav class="tabs" aria-label="主导航"><button class:active={tab === "tasks"} on:click={() => tab = "tasks"}>任务</button><button class:active={tab === "settings"} on:click={() => tab = "settings"}>设置</button></nav>
+    <MainNavigation current={tab} onNavigate={navigation.navigate} />
   </aside>
-  <section class="content-pane"><header class="topbar"><h2>{tab === "tasks" ? "任务管理" : "设置"}</h2></header><div class="content">{#if tab === "tasks"}<TaskLineage />{:else}<TaskSettingsPage />{/if}{#if error}<p role="alert">{error}</p>{/if}</div></section>
+  <section class="content-pane"><header class="topbar"><h2>{tab === "settings" ? "设置" : "任务管理"}</h2><button class="settings-entry" aria-label="设置" on:click={() => navigation.navigate("settings")}><Settings size={18} /></button></header><div class="content">{#if tab === "tasks"}<TaskLineage />{:else if tab === "settings"}<TaskSettingsPage />{:else}<p>其他页面的内容未包含在此测试场景中。</p>{/if}{#if error}<p role="alert">{error}</p>{/if}</div></section>
 </main>

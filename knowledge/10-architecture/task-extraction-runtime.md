@@ -14,9 +14,13 @@
 
 ## 现状理解
 
-`App.svelte` 的主导航分别提供“任务”和“设置”。`TaskLineage` 专注对话/任务导航、图/泳道、原文证据、手动抽取和人工验收；设置表单不在任务页展开。`TaskSettingsPage` 按 section 组织，目前只有“任务抽取”，其中 `TaskExtractionSettings` 管理摘要实例、模型、Harness、Skill、补充提示词、预算、超时、扫描与静默间隔；后台开关、定时抽取范围和批次授权也集中在此分区。原有继续对话仍走 Gateway，发送前检查运行/审批状态。
+`App.svelte` 的普通页面保留任务、Agent、连接、用量、个性化、事件六个导航项，设置入口放在内容区右上角。进入设置后，共享 `MainNavigation` 左侧显示设置分区，右侧由 `TaskSettingsPage` 显示配置，目前只有“任务抽取”。`TaskLineage` 专注对话/任务导航、图/泳道、原文证据、手动抽取和人工验收；设置表单不在任务页展开。`TaskExtractionSettings` 管理摘要实例、模型、Harness、Skill、补充提示词、预算、超时、扫描与静默间隔；后台开关、定时抽取范围和批次授权也集中在此分区。原有继续对话仍走 Gateway，发送前检查运行/审批状态。
+
+此前 App 仅保存单个 tab，无法从该字段还原已访问页面。现在 `navigation.ts` 的 `createNavigation()` 提供 Svelte 可订阅导航栈，状态含 entries、index、current、canGoBack、canGoForward；App 用 `$navigation` 读取，其他前端调用者可用 Svelte `get(navigation)` 获取快照。navigate 同页不重复入栈，后退后新导航截断前进分支，最多保留 100 项。工具栏按钮调用 back/forward，设置入口调用 navigate。此历史是本窗口生命周期内的页面级记录，不依赖原生窗口或浏览器 History，也不记录任务节点选择、表单草稿和关闭应用前的历史。
 
 导航收起/展开由共享 `main-window.css` 对网格列宽执行 220ms 过渡，配合侧栏位移与透明度。收起时立即 inert，过渡结束后隐藏；展开时恢复可见。保留侧栏纵向滚动和 toolbar 的可访问名称，系统减少动态效果时关闭过渡。UI QA 使用生产任务/设置组件与共享窗口工具栏、CSS 验证切换、保存、过渡中间宽度、inert、减少动态效果和窄屏。
+
+前进/后退与收起按钮组成一个工具栏按钮组，在 macOS 统一使用既有 AppKit 锚点。收起动画期间，toolbar 的负 margin 与外层 padding 同步过渡，防止按钮相对红绿灯短暂位移。QA 复用生产 `MainNavigation`，不再以两项简化导航代替真实导航；其他页面业务内容仍未放入此专项 fixture。导航栈、连接页和窗口 chrome 的 18 项定向测试及构建通过，浏览器验证设置入口、前后退、六项菜单与按钮几何；Mac 实机 AppKit 对齐仍需实际设备验收。
 
 任务页存在任务时默认选择首项并呈现任务图；用户仍可切换对话视角。首次抽取产生任务后也会进入可视化。此次 UI 调整验证包含当前源码的 27 项布局测试、3 项任务视图测试、前端构建与浏览器交互；浏览器使用模拟 IPC，不调用真实模型或发送真实消息。
 
