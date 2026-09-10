@@ -12,7 +12,6 @@ use tokio::time::timeout;
 const OUTBOUND_QUEUE_CAPACITY: usize = 64;
 const REQUEST_QUEUE_CAPACITY: usize = 64;
 const MAX_CONCURRENT_REQUESTS_PER_SESSION: usize = 8;
-const CHANNEL_SEND_TIMEOUT: Duration = Duration::from_secs(15);
 const OUTBOUND_ENQUEUE_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const CONNECTION_CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
 
@@ -44,6 +43,111 @@ pub(crate) trait GatewaySource: Send {
 pub(crate) struct GatewayChannel {
     pub(crate) sink: Box<dyn GatewaySink>,
     pub(crate) source: Box<dyn GatewaySource>,
+}
+
+async fn run_channel_writer(
+    mut sink: Box<dyn GatewaySink>,
+    mut outbound: mpsc::Receiver<GatewayFrame>,
+    failed: watch::Sender<bool>,
+    done: watch::Sender<bool>,
+) {
+    while let Some(message) = outbound.recv().await {
+        let closing = matches!(message, GatewayFrame::Close { .. });
+        // RPC deadlines belong to the caller. Finish an in-flight message to
+        // preserve framing, even if that caller has already stopped waiting.
+        // The session heartbeat and bounded cleanup can still stop this task.
+        if !sink.send(message).await {
+            let _ = failed.send(true);
+            break;
+        }
+        if closing {
+            break;
+        }
+    }
+    let _ = done.send(true);
+}
+
+#[cfg(test)]
+mod writer_tests {
+    use super::*;
+
+    struct BackpressuredSink {
+        release: Arc<Notify>,
+        sent: mpsc::UnboundedSender<Vec<u8>>,
+    }
+
+    impl GatewaySink for BackpressuredSink {
+        fn send(&mut self, frame: GatewayFrame) -> ChannelFuture<'_, bool> {
+            Box::pin(async move {
+                self.release.notified().await;
+                match frame {
+                    GatewayFrame::Text(bytes) => self.sent.send(bytes).is_ok(),
+                    _ => false,
+                }
+            })
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_writer_survives_rpc_deadline_and_preserves_message_order() {
+        let release = Arc::new(Notify::new());
+        let (sent_tx, mut sent_rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(4);
+        let (failed_tx, failed) = watch::channel(false);
+        let (done_tx, done) = watch::channel(false);
+        let writer = tokio::spawn(run_channel_writer(
+            Box::new(BackpressuredSink {
+                release: release.clone(),
+                sent: sent_tx,
+            }),
+            rx,
+            failed_tx,
+            done_tx,
+        ));
+        tx.send(GatewayFrame::Text(vec![1])).await.unwrap();
+        tx.send(GatewayFrame::Text(vec![2])).await.unwrap();
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(31)).await;
+        tokio::task::yield_now().await;
+        assert!(!writer.is_finished());
+        assert!(!*failed.borrow());
+        assert!(!*done.borrow());
+        release.notify_one();
+        assert_eq!(sent_rx.recv().await.unwrap(), vec![1]);
+        release.notify_one();
+        assert_eq!(sent_rx.recv().await.unwrap(), vec![2]);
+        assert!(!*failed.borrow());
+
+        // Explicit session cleanup can cancel even a permanently blocked send.
+        tx.send(GatewayFrame::Text(vec![3])).await.unwrap();
+        tokio::task::yield_now().await;
+        writer.abort();
+        assert!(writer.await.unwrap_err().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn actual_sink_failure_still_ends_writer() {
+        let release = Arc::new(Notify::new());
+        let (sent_tx, sent_rx) = mpsc::unbounded_channel();
+        drop(sent_rx);
+        let (tx, rx) = mpsc::channel(1);
+        let (failed_tx, failed) = watch::channel(false);
+        let (done_tx, done) = watch::channel(false);
+        tx.send(GatewayFrame::Text(vec![1])).await.unwrap();
+        release.notify_one();
+        run_channel_writer(
+            Box::new(BackpressuredSink {
+                release,
+                sent: sent_tx,
+            }),
+            rx,
+            failed_tx,
+            done_tx,
+        )
+        .await;
+        assert!(*failed.borrow());
+        assert!(*done.borrow());
+    }
 }
 
 struct GatewayRequestDelivery {
@@ -237,31 +341,20 @@ pub(crate) async fn run_gateway_channel(
     credential: RemoteCredential,
     mut registration: SessionRegistration,
 ) {
-    let GatewayChannel {
-        mut sink,
-        mut source,
-    } = channel;
-    let (outbound_tx, mut outbound_rx) = mpsc::channel::<GatewayFrame>(OUTBOUND_QUEUE_CAPACITY);
+    let GatewayChannel { sink, mut source } = channel;
+    let (outbound_tx, outbound_rx) = mpsc::channel::<GatewayFrame>(OUTBOUND_QUEUE_CAPACITY);
     let (request_tx, request_rx) = mpsc::channel::<GatewayRequestDelivery>(REQUEST_QUEUE_CAPACITY);
     let trace_links = Arc::new(Mutex::new(SessionTraceLinks::default()));
     let (stop_tx, _) = watch::channel(false);
     let (writer_done_tx, mut writer_done) = watch::channel(false);
     let (transport_failed_tx, mut transport_failed) = watch::channel(false);
     let writer_failed = transport_failed_tx.clone();
-    let writer = tokio::spawn(async move {
-        while let Some(message) = outbound_rx.recv().await {
-            let closing = matches!(message, GatewayFrame::Close { .. });
-            let sent = timeout(CHANNEL_SEND_TIMEOUT, sink.send(message)).await;
-            if !matches!(sent, Ok(true)) {
-                let _ = writer_failed.send(true);
-                break;
-            }
-            if closing {
-                break;
-            }
-        }
-        let _ = writer_done_tx.send(true);
-    });
+    let writer = tokio::spawn(run_channel_writer(
+        sink,
+        outbound_rx,
+        writer_failed,
+        writer_done_tx,
+    ));
     let request_dispatcher = tokio::spawn(run_gateway_requests(
         request_rx,
         gateway.clone(),

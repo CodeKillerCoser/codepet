@@ -100,6 +100,44 @@ Claude 响应大小。此次总长度低于 4 MiB 消息上限，未触发超大
 剩余风险：CPG1 单有序通道的大消息可能阻塞后续 pong，达到心跳失效窗口时仍会重连。
 需要真机观察心跳与发送队列日志；本修复不保证慢链路上 3.26 MB 响应可在 30 秒内完成。
 
+## 01:45 复测：遗漏的 Host 整条消息发送期限
+
+本机安装版本已核实为 `0.3.9-beta+0069e34`。Host 日志中的
+`offerId=cb417c85c52035c5b0afac2e` 在北京时间 01:44:47.836 开始发送 3,264,247 字节，
+01:45:02.850 主动记录 `channel.close`，相隔 15.014 秒；没有该消息的发送完成记录。
+01:45:02.518 仍有背压释放，关闭前选中候选对为 succeeded+nominated，SCTP 累计发送
+计数从 01:45:00.319 的 2,020,490 增至关闭时 2,487,428 字节。此计数不是该响应的
+手机实际接收字节数。证据表明通道仍有传输进展。
+
+源码 `crates/codepet-host/src/remote/channels/session.rs:254` 仍以
+`timeout(CHANNEL_SEND_TIMEOUT, sink.send(message))` 包裹整条消息，常量为 15 秒；
+到期通知 `transport_failed` 并退出 writer，导致会话结束。这是上一轮仅修改 RTC
+适配器而遗漏的共用发送层，意味着此前“连接仅由心跳判活”的实现尚不完整。
+日志没有独立 writer timeout 原因字段，但 15.014 秒时序、未完成发送及源码路径高度吻合。
+
+VPS 同期信令 offer/answer 成功交付（约 6.327 秒），signal/coturn/nginx 持续运行且
+NRestarts=0。Host 关闭后 coturn 收到 lifetime=0 的分配释放，随后有 client close 和
+allocation timeout 清理；不能把这些后续清理日志当成 VPS 先断开的原因。
+
+### 补充修复：固定调用期限，发送不按调用期限取消
+
+用户确认接口从发起起固定 30 秒，超时只结束该调用；已经开始的消息继续传输，迟到响应
+丢弃。共用 `session.rs` writer 移除 `CHANNEL_SEND_TIMEOUT`，直接等待 `sink.send`
+完成，仅真正发送失败才通知 transport_failed。心跳、权限撤销和显式关闭仍通过现有
+会话退出及有界任务清理终止发送，不把发送期限简单改为 30 秒。
+
+生产 writer 提取为 `run_channel_writer`，测试直接使用该函数模拟 31 秒背压后恢复，
+验证不会标记通道失败，后续消息不交错；另测实际 sink 失败和阻塞任务可取消。
+仅 dev-dependency 启用 Tokio test-util，以虚拟时间覆盖旧 15 秒期限和 30 秒调用期限。
+Remote 已有 30 秒请求隔离及迟到响应逻辑，本次不改动。
+
+执行 `cargo test --manifest-path crates/codepet-host/Cargo.toml --lib remote::channels`，
+25 项通过；同 manifest 执行 `--test remote_lan_listener`，2 项通过、2 个手动探针忽略，
+覆盖 LAN/RTC 准入、订阅隔离、大消息、凭据撤销及关闭。原接收测试和快速集成测试没有
+覆盖共用 writer 的期限，这次补充该缺口。
+仍需真机验证 4G 下大响应，特别是同通道排队对 pong 的影响；移除发送期限不改变有限
+队列的过载保护，也不保证大响应能在调用期限内完成。
+
 ## 早期样本的假设与排查
 
 ### 直连未被选中的专项核查
