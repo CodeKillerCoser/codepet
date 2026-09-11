@@ -29,6 +29,9 @@ try {
   assert.ok(await page.getByRole('button', { name: '后退', exact: true }).isDisabled());
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByRole('navigation', { name: '设置分区' }).getByRole('button', { name: '任务抽取', exact: true }).waitFor();
+  assert.equal(await page.getByLabel('本地 Agent', { exact: true }).inputValue(), 'local:codex');
+  assert.equal(await page.getByLabel('Codex 数据来源').count(), 0);
+  await page.getByText('记录目录：/fixture', { exact: true }).waitFor();
   await page.getByLabel('模型', { exact: true }).selectOption('haiku');
   await page.getByLabel('提取任务的提示词').fill('将实现与验证归入同一任务');
   await page.getByLabel('抽取 Skill', { exact: true }).selectOption('reconcile-tasks');
@@ -114,6 +117,20 @@ try {
   assert.ok(anchors.every(x => Math.abs(x-before.x)<1), 'macOS anchor must stay fixed throughout collapse');
   await mac.getByRole('button', { name: '展开导航栏', exact: true }).click();
   await mac.close();
+  const disconnected = await browser.newPage({ viewport: { width: 980, height: 700 } });
+  await disconnected.goto(url + '?disconnected=1', { waitUntil: 'domcontentloaded' });
+  await disconnected.getByText('任务抽取只把用户消息和 AI 正文作为对象，工具执行不要。', {exact:true}).waitFor();
+  assert.equal(await disconnected.getByRole('button', {name:'发送消息',exact:true}).count(), 0);
+  assert.equal(await disconnected.getByLabel('本地 Agent', {exact:true}).inputValue(), 'local:codex');
+  await disconnected.getByRole('button', {name:'扫描记录',exact:true}).click();
+  await disconnected.getByRole('button', {name:'手动整理历史',exact:true}).click();
+  await disconnected.getByRole('button', {name:'整理中…',exact:true}).waitFor();
+  await disconnected.getByRole('button', {name:'设置',exact:true}).click();
+  await disconnected.getByLabel('提取任务的提示词').fill('本地来源无需连接');
+  await disconnected.getByRole('button', {name:'保存 Agent 设置',exact:true}).click();
+  await disconnected.getByText('已保存', {exact:true}).waitFor();
+  await disconnected.screenshot({path:resolve(output,'local-agent-settings.png'),fullPage:true});
+  await disconnected.close();
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ passed: ['conversation', 'settings navigation and sections', 'settings and skill selection', 'schedule settings', 'sidebar animation and reduced motion', 'async extraction job', 'task workspace', 'node evidence', 'diagram selection', 'keyboard highlight', 'manual acceptance', 'responsive widths'], output }));
 } catch (error) {

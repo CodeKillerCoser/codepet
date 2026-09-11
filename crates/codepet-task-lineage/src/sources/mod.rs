@@ -1,5 +1,6 @@
 //! Source-specific parsing stays behind this business interface.
 pub mod codex;
+pub mod local;
 use crate::{
     domain::{Cursor, SourceBatch, Thread},
     Result,

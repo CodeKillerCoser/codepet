@@ -9,6 +9,7 @@ use codepet_task_lineage::{
     management::{self, ExtractionSettings, Job, Layout, ManagedExtractor},
     service::{self, Snapshot},
     sources::codex::{self, CodexSource},
+    sources::local,
     stable_id,
     store::Store,
     watch::{self, WatchConfig},
@@ -37,10 +38,18 @@ fn directory(provider_id: &str) -> Result<PathBuf, String> {
     if provider_id.is_empty() {
         return Err("请选择 Codex 来源".into());
     }
-    let root = layout()?
-        .root
+    let data = layout()?.root;
+    // Keep existing tasks and extraction settings when upgrading from one matching instance.
+    let legacy: Option<String> = if provider_id == local::CODEX_ID {
+        match std::fs::read(data.join("task-lineage/local-codex-store.json")) {
+            Ok(bytes) => Some(serde_json::from_slice(&bytes).map_err(|e| e.to_string())?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.to_string()),
+        }
+    } else { None };
+    let root = data
         .join("task-lineage/v1")
-        .join(stable_id(provider_id));
+        .join(stable_id(legacy.as_deref().unwrap_or(provider_id)));
     let mut seen = INITIALIZED.lock().map_err(|e| e.to_string())?;
     if !seen.contains(&root) {
         let store = Store::open(&root)?;
@@ -55,7 +64,21 @@ fn directory(provider_id: &str) -> Result<PathBuf, String> {
     }
     Ok(root)
 }
+async fn prepare_local_store(host: &ProviderHostState) -> Result<(), String> {
+    let data = layout()?.root.join("task-lineage");
+    let pointer = data.join("local-codex-store.json");
+    if pointer.exists() || data.join("v1").join(stable_id(local::CODEX_ID)).exists() {
+        return Ok(());
+    }
+    let home = local::directory(local::CODEX_ID)?;
+    let connections = host.instance_data_contexts("codex").await;
+    local::adopt_legacy_store(&data, &home, &connections)
+}
 async fn context(host: &ProviderHostState, provider_id: &str) -> Result<Value, String> {
+    if provider_id == local::CODEX_ID {
+        prepare_local_store(host).await?;
+        return Ok(json!({"dataDirectory": local::directory(provider_id)?}));
+    }
     host.instance_data_contexts("codex")
         .await
         .into_iter()
@@ -97,8 +120,22 @@ async fn make_extractor(
 pub(crate) async fn task_lineage_options(
     host: tauri::State<'_, ProviderHostState>,
 ) -> Result<Value, String> {
-    let contexts = host.instance_data_contexts("codex").await;
-    let sources=tauri::async_runtime::spawn_blocking(move||->Result<Vec<Value>,String>{contexts.into_iter().map(|(id,name,settings)|{let root=directory(&id)?;let store=Store::read_only(&root)?;Ok(json!({"id":id,"name":name,"directory":codex::data_directory(&settings).ok(),"watch":watch::read(&store)?,"extraction":management::settings(&store)?}))}).collect()}).await.map_err(|e|e.to_string())??;
+    prepare_local_store(&host).await?;
+    let connections = host.instance_data_contexts("codex").await;
+    let sources = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Value>, String> {
+        local::contexts().into_iter().map(|(id, name, _)| {
+            let root = directory(&id)?;
+            let store = Store::read_only(&root)?;
+            let home = local::directory(&id);
+            let error = match &home {
+                Ok(path) if !path.is_dir() => Some("未找到本地 Codex 记录目录，请先使用本地 Codex 后刷新".to_string()),
+                Err(error) => Some(error.clone()),
+                _ => None,
+            };
+            let connection = home.as_ref().ok().and_then(|path| local::matching_provider(path, &connections));
+            Ok(json!({"id":id,"name":name,"agent":"codex","directory":home.ok(),"error":error,"connectionProviderId":connection,"watch":watch::read(&store)?,"extraction":management::settings(&store)?}))
+        }).collect()
+    }).await.map_err(|e| e.to_string())??;
     let claude = host.runtime_view("claude").await.ok();
     let mut instances = Vec::new();
     if let Some(gateway) = host.gateway() {
@@ -346,7 +383,8 @@ pub(crate) fn start_background(app: tauri::AppHandle) {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
             let host = app.state::<ProviderHostState>().inner().clone();
-            for (id, _, data) in host.instance_data_contexts("codex").await {
+            if prepare_local_store(&host).await.is_err() { continue; }
+            for (id, _, data) in local::contexts() {
                 let Ok(root) = directory(&id) else {
                     continue;
                 };

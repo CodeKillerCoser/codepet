@@ -15,6 +15,9 @@
   let conversationAnchor = "";
   let organizeScope = "all";
   let jobs: ExtractionJob[] = [], dirty: DirtyConversation[] = [], taskWorkspace = "";
+  $: source = options?.sources.find(s => s.id === providerId);
+  $: connectionProviderId = source?.connectionProviderId ?? (source?.agent ? null : providerId);
+  async function liveStatus(id: string) { return connectionProviderId ? lineageApi.status(connectionProviderId, id) : "unknown"; }
   $: extracting = jobs.some(job => ["queued", "running"].includes(job.state));
   async function refreshManagement() {
     const provider = providerId;
@@ -77,7 +80,7 @@
   }
   async function loadThread(id: string, refresh = false) {
     const generation = ++requestGeneration; if (!refresh) { messageBusy = true; messages = []; facts = null; }
-    const results = await Promise.allSettled([lineageApi.messages(providerId, id), lineageApi.workspace(providerId, id), lineageApi.status(providerId, id)]);
+    const results = await Promise.allSettled([lineageApi.messages(providerId, id), lineageApi.workspace(providerId, id), liveStatus(id)]);
     if (disposed || generation !== requestGeneration) return;
     messageBusy = false;
     if (results[0].status === "fulfilled") messages = results[0].value; else error = String(results[0].reason);
@@ -93,7 +96,7 @@
     // Inspect only the threads of the selected task, never the entire catalog.
     for (const id of [...new Set(selected.episodes.map(e => e.threadId))]) {
       if (disposed || selectedTaskId !== selected.id) break;
-      try { statuses = { ...statuses, [id]: await lineageApi.status(providerId, id) }; } catch { statuses = { ...statuses, [id]: "unknown" }; }
+      try { statuses = { ...statuses, [id]: await liveStatus(id) }; } catch { statuses = { ...statuses, [id]: "unknown" }; }
       try { nodeFacts = { ...nodeFacts, [id]: await lineageApi.workspace(providerId, id) }; } catch { /* The node explicitly shows unknown facts. */ }
     }
   }
@@ -106,10 +109,12 @@
   async function send(text: string) {
     const id = inspectorThread?.id; if (!id) throw new Error("请先选择线程");
     if (busy) throw new Error("请等待当前操作完成");
-    if (["running", "waiting-approval"].includes(await lineageApi.status(providerId, id))) throw new Error("当前会话正在执行或等待审批，请先处理后再发送");
+    if (["running", "waiting-approval"].includes(await liveStatus(id))) throw new Error("当前会话正在执行或等待审批，请先处理后再发送");
+    if (!connectionProviderId) throw new Error("未找到对应本地记录的唯一连接，暂不能继续对话");
+    const connection = connectionProviderId;
     const provider = providerId, currentTask = view === "task" ? task : undefined;
     busy = "发送消息";
-    try { await lineageApi.send(provider, id, text); } finally { busy = ""; }
+    try { await lineageApi.send(connection, id, text); } finally { busy = ""; }
     statuses = { ...statuses, [id]: "running" };
     if (currentTask?.manualCompletion) {
       try { const saved = await lineageApi.complete(provider, currentTask, false); data = { ...data, tasks: data.tasks.map(t => t.id === saved.id ? saved : t) }; }
@@ -136,7 +141,7 @@
         const selected = task;
         if (selected) for (const id of [...new Set(selected.episodes.map(e => e.threadId))]) {
           if (disposed || selectedTaskId !== selected.id) break;
-          try { statuses = { ...statuses, [id]: await lineageApi.status(providerId, id) }; }
+          try { statuses = { ...statuses, [id]: await liveStatus(id) }; }
           catch { statuses = { ...statuses, [id]: "unknown" }; }
         }
         if (event.payload.error) error = event.payload.error;
@@ -148,13 +153,16 @@
 
 <div class="lineage">
   <div class="controls">
-    <label>Codex 来源<select bind:value={providerId} on:change={switchSource} disabled={!!busy}>{#each options?.sources ?? [] as source}<option value={source.id}>{source.name}</option>{/each}</select></label>
+    <label>本地 Agent<select aria-label="本地 Agent" bind:value={providerId} on:change={switchSource} disabled={!!busy}>{#each options?.sources ?? [] as source}<option value={source.id}>{source.name}</option>{/each}</select></label>
     <button on:click={refreshOptions} disabled={!!busy}>刷新来源</button>
     <button on:click={scan} disabled={!!busy || !providerId}>扫描记录</button>
     <label>整理范围<select aria-label="整理范围" bind:value={organizeScope} disabled={!!busy || extracting}><option value="all">全部近期历史</option><option value="conversation" disabled={!selectedThreadId}>当前关联对话</option></select></label>
     <button on:click={extract} disabled={!!busy || extracting || !providerId || !options?.instances?.some(i => i.controls && !i.error)}>{extracting ? "整理中…" : "手动整理历史"}</button>
     <span role="status">{busy || `${data.pendingMessages} 条近 48 小时消息待分析`}</span>
   </div>
+  {#if source?.directory}<p class="hint">记录目录：{source.directory}</p>{/if}
+  {#if source?.error}<p class="error" role="alert">{source.error}</p>{/if}
+  {#if source?.agent && !connectionProviderId}<p class="hint">本地记录可直接读取和整理；继续对话需要对应记录目录的唯一连接。</p>{/if}
   <p class="hint">仅抽取最近 48 小时的用户消息与 AI 正文，排除工具执行及无可靠时间戳的内容。后台更新在应用运行期间执行，自动整理当前来源的近期记录；由所选 Provider 执行，当前不提供美元硬预算。</p>
   <details class="diagnostics"><summary>整理历史 · {jobs.length} 次运行 · {dirty.filter(s => s.state === "dirty").length} 个会话待整理</summary>{#if !jobs.length}<p>暂无整理记录。手动与自动运行的结果会显示在这里。</p>{/if}{#each jobs as job}<p>{new Date(job.createdAt).toLocaleString()} · {job.id.startsWith("scheduled-") ? "自动" : "手动"} · {jobLabel(job.state)} · {data.threads.find(t => t.id === job.threadId)?.title ?? "全部近期历史"}{#if job.finishedAt} · 耗时 {Math.max(0, Math.round((job.finishedAt-job.createdAt)/1000))} 秒{/if}{#if job.error} · {job.error}{/if}</p>{/each}</details>
   <p class="hint">每次整理处理一批近期正文，保留已整理进度；自动提取按设置的间隔继续处理。Agent 配置位于右上角设置。</p>
@@ -179,7 +187,7 @@
         {:else}
           {#each visibleTasks as item (item.id)}<button class="thread" class:active={selectedTaskId === item.id} on:click={() => selectTask(item)}><strong>{item.title}</strong><small>{taskStatus(item, statuses)}</small></button>{/each}
         {/if}
-        {#if !data.threads.length}<p class="empty">选择 Codex 来源并扫描记录，开始建立对话树。</p>{/if}
+        {#if !data.threads.length}<p class="empty">选择本地 Agent 并扫描记录，开始建立对话树。</p>{/if}
       </div>
       <footer>{data.threads.length} 个线程 · {data.tasks.length} 项任务</footer>
     </aside>
@@ -187,7 +195,7 @@
       <div class="center-toolbar"><div class="segmented"><button class:active={view === "conversation"} on:click={() => selectedThreadId && selectThread(selectedThreadId)}>对话</button>{#if selectedThread?.createdBy === "human" && !selectedThread.parentId}<button class:active={view === "task"} on:click={() => relatedTasks[0] ? selectTask(relatedTasks[0]) : view = "task"}>任务</button>{/if}</div><span>{selectedThread?.workspace.split(/[\\/]/).pop() ?? ""}</span></div>
       {#if view === "conversation"}
         <header class="title"><small>{creationLabel(selectedThread?.creationKind ?? "unknown")}</small><h3>{selectedThread?.title ?? "选择一个对话"}</h3>{#if selectedThread}<span>{statusLabel(selectedThread.id, statuses)} · {dirtyLabel(selectedThread.id, dirty)}</span>{/if}</header>
-        <LineageMessages {messages} contextId={selectedThreadId} anchorEventId={conversationAnchor} title={selectedThread?.title ?? "对话消息"} busy={messageBusy} onSend={selectedThread ? send : null} />
+        <LineageMessages {messages} contextId={selectedThreadId} anchorEventId={conversationAnchor} title={selectedThread?.title ?? "对话消息"} busy={messageBusy} onSend={selectedThread && connectionProviderId ? send : null} />
       {:else if task}
         <div class="task-picker">{#each relatedTasks as item}<button class:active={item.id === task.id} on:click={() => selectTask(item)}>{item.title}</button>{/each}</div>
         <div class="task-picker"><button disabled={!!busy} on:click={allocateWorkspace}>申请任务工作区</button></div>
@@ -204,7 +212,7 @@
     <aside class="inspector" aria-label="事实与原始消息">
       <header class="title"><small>{view === "task" ? "节点信息" : "对话信息"}</small><h3>{view === "task" ? episode?.title ?? "选择执行节点" : selectedThread?.title ?? "可核验事实"}</h3>{#if view === "task" && episode}<button on:click={() => selectThread(episode!.threadId, episode!.evidenceIds[0])}>打开原始对话</button>{/if}</header>
       {#if facts}<dl><dt>当前工作区</dt><dd>{facts.workspace}</dd><dt>分支</dt><dd>{facts.branch ?? "未知 / detached HEAD"}</dd><dt>当前提交</dt><dd>{facts.head ?? "未知"}</dd><dt>工作区状态</dt><dd>{facts.commitState === "clean" ? "已提交 · 工作区干净" : facts.commitState === "uncommitted" ? "有未提交变化" : "未知"}</dd><dt>与主工作区同步</dt><dd>{facts.syncState === "synced" ? "已同步" : facts.syncState === "notRequired" ? "无需同步" : "尚未证实"}</dd></dl><p class="hint">以上为当前 Git 状态，不代表历史节点完成时的状态。</p>{#if facts.diagnostic}<p class="hint">{facts.diagnostic}</p>{/if}{/if}
-      {#if view === "task" && episode}<LineageMessages compact messages={episodeMessages} contextId={episode.threadId} title="执行节点原始消息" busy={messageBusy} onSend={send} />{:else}<div class="associated"><h4>关联任务</h4>{#each relatedTasks as item}<button on:click={() => selectTask(item)}>{item.title}<small>{taskStatus(item, statuses)}</small></button>{/each}{#if !relatedTasks.length}<p class="empty">暂无关联任务</p>{/if}</div>{/if}
+      {#if view === "task" && episode}<LineageMessages compact messages={episodeMessages} contextId={episode.threadId} title="执行节点原始消息" busy={messageBusy} onSend={connectionProviderId ? send : null} />{:else}<div class="associated"><h4>关联任务</h4>{#each relatedTasks as item}<button on:click={() => selectTask(item)}>{item.title}<small>{taskStatus(item, statuses)}</small></button>{/each}{#if !relatedTasks.length}<p class="empty">暂无关联任务</p>{/if}</div>{/if}
     </aside>
   </div>
 </div>

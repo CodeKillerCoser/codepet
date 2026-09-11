@@ -51,7 +51,7 @@ Skill 模板首次安装使用 `create_new`，后续初始化保留用户编辑�
 
 ### 扩展接口
 
-调用 `invoke("task_lineage_request", { providerId, request })`；`request` 是由 method 区分的严格类型对象，未知字段拒绝。`tasks.capabilities` 返回 version=1、支持的方法、harnesses、storage 和 lookbackHours。其余方法先验证已启用 Codex 来源。
+调用 `invoke("task_lineage_request", { providerId, request })`；`request` 是由 method 区分的严格类型对象，未知字段拒绝。`tasks.capabilities` 返回 version=1、支持的方法、harnesses、storage 和 lookbackHours。本地来源使用稳定标识 `local:codex`，不要求启用 Codex Provider；历史实例标识仍可通过原接口读取。
 
 | method | 参数 | 返回 |
 | --- | --- | --- |
@@ -66,9 +66,23 @@ Skill 模板首次安装使用 `create_new`，后续初始化保留用户编辑�
 
 Job 保存 id、requestId、threadId、state、createdAt、finishedAt、error。相同 requestId 与范围重复提交返回原 Job；改范围则拒绝。每来源只准入一个 queued/running Job，跨进程推理租约防止重叠。应用重启后遗留 Job 标记 interrupted，不自动重复付费；新 requestId 才启动重试。手动触发先扫描，再执行一批；选中主会话包含派生线程，null 表示全部来源线程。
 
+### 本地 Agent 数据来源（2026-09-11）
+
+设置页与任务页仅选择“本地 Agent”，当前选项为 Codex（本地）。Rust 复用 SDK 的目录解析：优先 CODEX_HOME，否则用户目录下的 .codex；界面展示实际目录。来源选项和后台轮询均使用同一 local::contexts，未连接、未启动 Codex Provider 也能扫描、查看、配置及整理；目录不存在显示提示，不要求配置来源连接。输入仍严格限定最近 48 小时的用户消息和 AI 正文。
+
+来源 ID 为 local:codex，接口字段 providerId 暂保留兼容命名。首次初始化若存在唯一指向同一本地目录的旧实例及任务存储，则原子创建 local-codex-store.json 指针，沿用旧任务、设置、水位和 Job；后续不再依赖该实例存在。不覆盖已创建的本地存储，不猜测多个匹配实例，未匹配的旧存储保留原位且不自动合并。后台仅调度本地来源，避免旧来源重复运行。
+
+继续对话仍需 Gateway：只在目录规范化后找到唯一对应连接时，返回独立的 connectionProviderId。前端用这个 ID 查询运行状态和发送，用来源 ID 读取证据、验收和分配工作区。未找到唯一连接时状态未知并隐藏发送入口；不得把本地来源 ID 当成 Provider ID。抽取执行的 Claude 实例、模型和推理配置保持独立。
+
+涉及模块：sources/local.rs 负责发现、连接匹配及旧存储指针；Tauri task_lineage.rs 将手动/定时入口接到本地来源；TaskSettingsPage、TaskLineage 和接口类型呈现目录并区分来源与发送路由。
+
+风险与验证：目录不匹配或多实例可能误发消息，由 Rust 唯一目录匹配测试覆盖；升级可能覆盖旧进度，由保留文件、不可覆盖绑定和已有本地库测试覆盖；缺少连接可能阻断页面，由浏览器 disconnected 场景验证查看、扫描、手动整理和设置保存，同时断言无发送入口。浏览器使用模拟 IPC，未在本次验证中重新调用真实模型；实际本地文件解析由 Rust 测试覆盖。Mac 实机目录和原生窗口尚未验证。
+
+本次验证通过：在 src-tauri 运行 `cargo test -p codepet-task-lineage`（28 项）和 `cargo check --lib`；仓库根运行 `npx vitest run frontend/lib/taskLineage.test.ts frontend/lib/navigation.test.ts`（6 项）、`npm run build`、`node scripts/task_lineage_ui_qa.mjs`（含无来源连接、响应式和焦点场景）。Rust 检查仅有既有未使用代码警告。
+
 ### Provider 执行链路（2026-09-11）
 
-桌面端的 `ManagedExtractor<ProviderExecutor>` 先准备应用数据目录下的独立运行目录，再调用现有 `ProviderGatewayService`。数据来源仍为选定 Codex 实例；执行实例单独选择 Claude Provider，两者不互相替代。
+桌面端的 `ManagedExtractor<ProviderExecutor>` 先准备应用数据目录下的独立运行目录，再调用现有 `ProviderGatewayService`。数据来源选择本地 Agent（当前支持 Codex），自动读取本地会话目录；执行实例单独选择 Claude Provider，两者不互相替代。
 
 执行顺序为 provider.describe → conversation.create（显式 workspaceRoot、模型和推理强度）→ turn.send → 收集对应 turn 的 text delta 并等待权威 terminal → 无流式正文时才尝试 conversation.get 分页回读 → Rust 证据与结构校验 → 事务写入任务。创建的是独立 Provider 会话，不续写用户原会话。桌面抽取不再解析 executable、设置 CLAUDE_CONFIG_DIR 或启动 Harness 子进程。Claude Provider 模型目录补充 haiku，防止默认低档模型被静默替换。
 
