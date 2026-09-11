@@ -1204,7 +1204,6 @@ impl ClaudeInstanceRuntime {
         Ok(())
     }
 
-    #[cfg(unix)]
     fn interrupt_turn(&self, request: TurnInterruptRequest) -> Result<TurnTask, ProtocolError> {
         validate_resource_for_instance(&request.conversation, &self.route)?;
         validate_resource_for_instance(&request.turn, &self.route)?;
@@ -1943,20 +1942,12 @@ impl Provider for ClaudeProvider {
         &'a self,
         request: TurnInterruptRequest,
     ) -> ProtocolFuture<'a, TurnInterruptResponse> {
-        #[cfg(unix)]
-        {
-            Box::pin(async move {
-                let runtime = self.resource_instance(&request.conversation)?;
-                Ok(TurnInterruptResponse {
-                    turn: runtime.interrupt_turn(request)?,
-                })
+        Box::pin(async move {
+            let runtime = self.resource_instance(&request.conversation)?;
+            Ok(TurnInterruptResponse {
+                turn: runtime.interrupt_turn(request)?,
             })
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = request;
-            Box::pin(async { Err(capability_error("Claude CLI turn interrupt requires Unix SIGINT")) })
-        }
+        })
     }
 
     fn approval_resolve<'a>(
@@ -2001,7 +1992,6 @@ fn claude_capabilities() -> ProviderCapabilities {
         ProviderCapability::ConversationCreate,
         ProviderCapability::TurnStart,
     ];
-    #[cfg(unix)]
     methods.push(ProviderCapability::TurnInterrupt);
     methods.push(ProviderCapability::ApprovalResolve);
     let turn_send = TurnSendCapabilities {
@@ -2027,6 +2017,7 @@ fn claude_capabilities() -> ProviderCapabilities {
             models: vec![
                 choice(CLAUDE_DEFAULT_MODEL, "Default", Some("Uses the model selected by Claude Code configuration.")),
                 choice("sonnet", "Sonnet", None),
+                choice("haiku", "Haiku", None),
                 choice("opus", "Opus", None),
                 choice("fable", "Fable", None),
             ],

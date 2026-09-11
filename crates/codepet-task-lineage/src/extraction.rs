@@ -131,13 +131,40 @@ pub struct ClaudeExtractor {
     pub timeout: Duration,
 }
 
-fn schema() -> Value {
+pub fn schema() -> Value {
     json!({"type":"object","additionalProperties":false,"required":["tasks"],"properties":{"tasks":{"type":"array","items":{
     "type":"object","additionalProperties":false,"required":["existingTaskId","title","detail","episodes"],"properties":{
         "existingTaskId":{"type":["string","null"]},"title":{"type":"string"},"detail":{"type":"string"},
         "episodes":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["title","evidenceIds"],"properties":{
             "title":{"type":"string"},"evidenceIds":{"type":"array","items":{"type":"string"}}}}}
     }}}}})
+}
+
+/// Compact transport shared by Provider execution and the standalone CLI probe.
+pub fn input_value(messages: &[Message], candidates: &[Task]) -> Value {
+    json!({"messages":messages.iter().enumerate().map(|(index,m)|json!({"id":format!("m{index}"),"threadId":m.thread_id,"turnId":m.turn_id,"role":m.role,"text":m.text})).collect::<Vec<_>>(),
+        "existingTasks":candidates.iter().map(|t|json!({"id":t.id,"title":t.title,"detail":t.detail,"episodes":t.episodes.iter().rev().take(3).map(|e|json!({"threadId":e.thread_id,"title":e.title})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
+}
+
+pub fn parse_result(
+    text: &str,
+    messages: &[Message],
+    candidates: &[Task],
+    model: &str,
+) -> Result<ExtractionResult> {
+    if text.len() > 2 * 1024 * 1024 {
+        return Err("Extraction output exceeds limit".into());
+    }
+    let mut extraction: Extraction =
+        serde_json::from_str(text).map_err(|e| format!("Invalid extraction schema: {e}"))?;
+    restore_evidence_ids(&mut extraction, messages)?;
+    validate(&extraction, messages, candidates)?;
+    Ok(ExtractionResult {
+        extraction,
+        requested_model: model.into(),
+        model_usage: Value::Null,
+        reported_cost_usd: None,
+    })
 }
 
 impl TaskExtractor for ClaudeExtractor {

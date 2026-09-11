@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { build, preview } from 'vite';
 const require = createRequire(import.meta.url);
 const { chromium } = require(resolve(process.env.CODEPET_QA_NODE_MODULES, 'playwright'));
 const output = resolve('artifacts/task-lineage-qa');
@@ -11,18 +11,17 @@ await mkdir(output, { recursive: true });
 const url = 'http://127.0.0.1:1427/frontend/qa/task-lineage.html';
 let server;
 if (!await fetch(url).then(response => response.ok).catch(() => false)) {
-  server = spawn(process.execPath, [resolve('node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', '1427'], { stdio: 'ignore', windowsHide: true });
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (await fetch(url).then(response => response.ok).catch(() => false)) break;
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
+  const outDir = resolve(output, 'site');
+  await build({ build: { outDir, emptyOutDir: false, rollupOptions: { input: resolve('frontend/qa/task-lineage.html') } } });
+  server = await preview({ build: { outDir }, preview: { host: '127.0.0.1', port: 1427, strictPort: true } });
 }
 const browser = await chromium.launch({ channel: process.env.CODEPET_QA_BROWSER || (process.platform === 'win32' ? 'msedge' : undefined), headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  page.on('requestfailed', request => console.error(request.url(), request.failure()?.errorText));
+  const errors = []; page.on('pageerror', error => { errors.push(error.message); console.error(error.message); });
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.getByText('任务抽取只把用户消息和 AI 正文作为对象，工具执行不要。', { exact: true }).waitFor();
+  await page.getByText('任务抽取只把用户消息和 AI 正文作为对象，工具执行不要。', { exact: true }).waitFor().catch(async error => { console.error(await page.locator('body').innerText()); throw error; });
   assert.equal(await page.locator('.node').count(), 3, 'Task tab opens the visualization by default');
   await page.screenshot({ path: resolve(output, 'conversation.png'), fullPage: true });
   assert.equal(await page.getByLabel('模型', { exact: true }).count(), 0);
@@ -30,7 +29,7 @@ try {
   assert.ok(await page.getByRole('button', { name: '后退', exact: true }).isDisabled());
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByRole('navigation', { name: '设置分区' }).getByRole('button', { name: '任务抽取', exact: true }).waitFor();
-  await page.getByLabel('模型', { exact: true }).fill('haiku');
+  await page.getByLabel('模型', { exact: true }).selectOption('haiku');
   await page.getByLabel('提取任务的提示词').fill('将实现与验证归入同一任务');
   await page.getByLabel('抽取 Skill', { exact: true }).selectOption('reconcile-tasks');
   await page.getByRole('button', { name: '保存 Agent 设置', exact: true }).click();
@@ -117,4 +116,8 @@ try {
   await mac.close();
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ passed: ['conversation', 'settings navigation and sections', 'settings and skill selection', 'schedule settings', 'sidebar animation and reduced motion', 'async extraction job', 'task workspace', 'node evidence', 'diagram selection', 'keyboard highlight', 'manual acceptance', 'responsive widths'], output }));
-} finally { await browser.close(); server?.kill(); }
+} catch (error) {
+  const page = browser.contexts()[0]?.pages()[0];
+  if (page) { console.error(await page.locator('body').innerText()); await page.screenshot({ path: resolve(output, 'failure.png'), fullPage: true }); }
+  throw error;
+} finally { await browser.close(); if (server) await new Promise(resolve => server.httpServer.close(resolve)); }

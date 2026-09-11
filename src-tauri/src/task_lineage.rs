@@ -2,9 +2,9 @@ use crate::{
     runtime_gateway::tauri_bridge::ProviderHostState,
     settings::{configured_app_data_dir, load_app_settings},
 };
+use codepet_gateway_sdk::ProtocolServer;
 use codepet_task_lineage::{
     domain::{Message, Task},
-    extraction::ClaudeExtractor,
     git::{self, WorkspaceFacts},
     management::{self, ExtractionSettings, Job, Layout, ManagedExtractor},
     service::{self, Snapshot},
@@ -22,6 +22,9 @@ use std::{
     time::Duration,
 };
 use tauri::{Emitter, Manager};
+
+mod provider_executor;
+use provider_executor::ProviderExecutor;
 
 static INITIALIZED: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
@@ -63,44 +66,28 @@ async fn context(host: &ProviderHostState, provider_id: &str) -> Result<Value, S
 async fn make_extractor(
     host: &ProviderHostState,
     provider_id: &str,
-) -> Result<ManagedExtractor, String> {
+) -> Result<ManagedExtractor<ProviderExecutor>, String> {
     let config = management::settings(&Store::read_only(&directory(provider_id)?)?)?;
     if config.harness != "claude" {
-        return Err("当前任务抽取适配器只支持 Claude harness".into());
+        return Err("当前抽取支持 Claude Provider".into());
     }
-    let runtime = host.runtime_view(&config.harness).await?;
-    let executable = runtime
-        .resolved_executable
-        .ok_or("请先在连接中选择可用的 Claude 运行时")?;
     let contexts = host.instance_data_contexts(&config.harness).await;
-    let selected = if let Some(id) = &config.harness_instance_id {
-        Some(
-            contexts
-                .iter()
-                .find(|(candidate, _, _)| candidate == id)
-                .ok_or("配置的摘要实例已不可用")?,
-        )
-    } else if contexts.len() > 1 {
-        return Err("请在抽取设置中选择摘要用的 Claude 实例".into());
+    let instance_id = if let Some(id) = &config.harness_instance_id {
+        contexts
+            .iter()
+            .find(|(candidate, _, _)| candidate == id)
+            .map(|c| c.0.clone())
+            .ok_or("配置的 Provider 实例不可用")?
+    } else if contexts.len() == 1 {
+        contexts[0].0.clone()
     } else {
-        contexts.first()
+        return Err("请在设置中选择一个已连接的 Claude Provider 实例".into());
     };
-    let data = selected
-        .and_then(|(_, _, settings)| {
-            settings
-                .get("dataDirectory")
-                .or_else(|| settings.get("claudeConfigDir"))
-        })
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from);
     Ok(ManagedExtractor {
-        inner: ClaudeExtractor {
-            executable: executable.into(),
-            config_directory: data,
-            model: config.model.clone(),
-            budget_usd: config.budget_usd,
-            timeout: Duration::from_secs(config.timeout_seconds),
+        inner: ProviderExecutor {
+            gateway: host.gateway().ok_or("Provider Gateway 不可用")?,
+            instance_id,
+            runtime: tokio::runtime::Handle::current(),
         },
         layout: layout()?,
         config,
@@ -113,12 +100,35 @@ pub(crate) async fn task_lineage_options(
     let contexts = host.instance_data_contexts("codex").await;
     let sources=tauri::async_runtime::spawn_blocking(move||->Result<Vec<Value>,String>{contexts.into_iter().map(|(id,name,settings)|{let root=directory(&id)?;let store=Store::read_only(&root)?;Ok(json!({"id":id,"name":name,"directory":codex::data_directory(&settings).ok(),"watch":watch::read(&store)?,"extraction":management::settings(&store)?}))}).collect()}).await.map_err(|e|e.to_string())??;
     let claude = host.runtime_view("claude").await.ok();
-    let instances = host
-        .instance_data_contexts("claude")
-        .await
-        .into_iter()
-        .map(|(id, name, _)| json!({"id":id,"name":name,"harness":"claude"}))
-        .collect::<Vec<_>>();
+    let mut instances = Vec::new();
+    if let Some(gateway) = host.gateway() {
+        let _connection = gateway
+            .remote_connections()
+            .register("task-extraction-options".to_string());
+        for (id, name, _) in host.instance_data_contexts("claude").await {
+            let result = gateway
+                .provider_describe(codepet_gateway_sdk::ProviderDescribeRequest {
+                    provider_id: id.clone(),
+                })
+                .await;
+            let (controls, error) = match result {
+                Ok(description) => {
+                    let error = (description.provider.runtime.status
+                        != codepet_gateway_sdk::ProviderStatus::Ready)
+                        .then(|| "Provider 尚未就绪，请在连接中检查后刷新".to_string());
+                    (
+                        serde_json::to_value(description.capabilities.turn_send)
+                            .unwrap_or(Value::Null),
+                        error,
+                    )
+                }
+                Err(e) => (Value::Null, Some(e.message)),
+            };
+            instances.push(
+                json!({"id":id,"name":name,"harness":"claude","controls":controls,"error":error}),
+            );
+        }
+    }
     Ok(
         json!({"sources":sources,"claudeExecutable":claude.and_then(|r|r.resolved_executable),"defaultModel":"haiku","budgetUsd":0.25,"instances":instances,"capabilities":management::capabilities(),"layout":layout()?}),
     )
@@ -310,7 +320,7 @@ pub(crate) async fn task_lineage_extract(
 ) -> Result<Snapshot, String> {
     context(&host, &provider_id).await?;
     let mut extractor = make_extractor(&host, &provider_id).await?;
-    extractor.inner.model = model;
+    extractor.config.model = model;
     let root = directory(&provider_id)?;
     tauri::async_runtime::spawn_blocking(move || {
         service::extract_next(&Store::open(&root)?, &extractor, thread_id.as_deref())

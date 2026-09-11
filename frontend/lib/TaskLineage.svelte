@@ -152,15 +152,15 @@
     <button on:click={refreshOptions} disabled={!!busy}>刷新来源</button>
     <button on:click={scan} disabled={!!busy || !providerId}>扫描记录</button>
     <label>整理范围<select aria-label="整理范围" bind:value={organizeScope} disabled={!!busy || extracting}><option value="all">全部近期历史</option><option value="conversation" disabled={!selectedThreadId}>当前关联对话</option></select></label>
-    <button on:click={extract} disabled={!!busy || extracting || !providerId || !options?.claudeExecutable}>{extracting ? "整理中…" : "手动整理历史"}</button>
+    <button on:click={extract} disabled={!!busy || extracting || !providerId || !options?.instances?.some(i => i.controls && !i.error)}>{extracting ? "整理中…" : "手动整理历史"}</button>
     <span role="status">{busy || `${data.pendingMessages} 条近 48 小时消息待分析`}</span>
   </div>
-  <p class="hint">仅抽取最近 48 小时的用户消息与 AI 正文，排除工具执行及无可靠时间戳的内容。每批预算上限 ${options?.sources.find(s => s.id === providerId)?.extraction?.budgetUsd ?? options?.budgetUsd ?? 0.25}。后台更新在应用运行期间执行，连续抽取处理开启时选定的对话及派生线程。</p>
+  <p class="hint">仅抽取最近 48 小时的用户消息与 AI 正文，排除工具执行及无可靠时间戳的内容。后台更新在应用运行期间执行，自动整理当前来源的近期记录；由所选 Provider 执行，当前不提供美元硬预算。</p>
   <details class="diagnostics"><summary>整理历史 · {jobs.length} 次运行 · {dirty.filter(s => s.state === "dirty").length} 个会话待整理</summary>{#if !jobs.length}<p>暂无整理记录。手动与自动运行的结果会显示在这里。</p>{/if}{#each jobs as job}<p>{new Date(job.createdAt).toLocaleString()} · {job.id.startsWith("scheduled-") ? "自动" : "手动"} · {jobLabel(job.state)} · {data.threads.find(t => t.id === job.threadId)?.title ?? "全部近期历史"}{#if job.finishedAt} · 耗时 {Math.max(0, Math.round((job.finishedAt-job.createdAt)/1000))} 秒{/if}{#if job.error} · {job.error}{/if}</p>{/each}</details>
   <p class="hint">每次整理处理一批近期正文，保留已整理进度；自动提取按设置的间隔继续处理。Agent 配置位于右上角设置。</p>
-  {#if data.lastExtraction}<p class="hint">最近实际模型：{Object.keys(data.lastExtraction.modelUsage ?? {}).join("、") || "CLI 未返回"} · 仅抽取用户消息与 AI 正文，不包含工具执行。</p>{/if}
+  {#if data.lastExtraction}<p class="hint">最近实际模型：{Object.keys(data.lastExtraction.modelUsage ?? {}).join("、") || "Provider 未返回"} · 仅抽取用户消息与 AI 正文，不包含工具执行。</p>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if !options?.claudeExecutable && options}<p class="hint">请先在“连接”中配置可用的 Claude 运行时。仍可扫描和查看原始记录。</p>{/if}
+  {#if !options?.instances?.some(i => i.controls && !i.error) && options}<p class="hint">请先在“连接”中配置可用的 Claude 运行时。仍可扫描和查看原始记录。</p>{/if}
   {#if data.diagnostics.length}<details class="diagnostics"><summary>{data.diagnostics.length} 项记录读取或抽取问题</summary>{#each data.diagnostics as diagnostic}<p>{diagnostic}</p>{/each}</details>{/if}
   <div class="workspace">
     <aside class="navigation" aria-label="对话与任务导航">

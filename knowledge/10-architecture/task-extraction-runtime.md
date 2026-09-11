@@ -66,11 +66,23 @@ Skill 模板首次安装使用 `create_new`，后续初始化保留用户编辑�
 
 Job 保存 id、requestId、threadId、state、createdAt、finishedAt、error。相同 requestId 与范围重复提交返回原 Job；改范围则拒绝。每来源只准入一个 queued/running Job，跨进程推理租约防止重叠。应用重启后遗留 Job 标记 interrupted，不自动重复付费；新 requestId 才启动重试。手动触发先扫描，再执行一批；选中主会话包含派生线程，null 表示全部来源线程。
 
+### Provider 执行链路（2026-09-11）
+
+桌面端的 `ManagedExtractor<ProviderExecutor>` 先准备应用数据目录下的独立运行目录，再调用现有 `ProviderGatewayService`。数据来源仍为选定 Codex 实例；执行实例单独选择 Claude Provider，两者不互相替代。
+
+执行顺序为 provider.describe → conversation.create（显式 workspaceRoot、模型和推理强度）→ turn.send → 收集对应 turn 的 text delta 并等待权威 terminal → 无流式正文时才尝试 conversation.get 分页回读 → Rust 证据与结构校验 → 事务写入任务。创建的是独立 Provider 会话，不续写用户原会话。桌面抽取不再解析 executable、设置 CLAUDE_CONFIG_DIR 或启动 Harness 子进程。Claude Provider 模型目录补充 haiku，防止默认低档模型被静默替换。
+
+工作区保存 SKILL.md、prompt.md、紧凑 input.json、provider-run.json（会话/turn 引用）、provider-output.txt 和 result.json。技能正文与配置提示词由 Rust 读取并显式放入 turn 输入，不依赖“切换目录即自动发现 Skill”的假设；input.json 与送入模型的证据别名保持一致。
+
+运行期间持有本地 Gateway 连接身份；先订阅事件再发起 turn，避免快速完成事件丢失。优先收集本次 turn 的 text delta（原生历史尚未落盘、或历史 turn ID 不同也可完成）；回读仅接受本次 turn 的 assistant text，拒绝截断和超过 2 MiB 的输出，支持分页并拒绝重复游标；工具和推理项不作为结果。超时、事件错误或等待审批时走 Provider interrupt，并有界等待停止确认。异常不推进抽取水位，定时抽取按既有规则暂停。
+
+Provider 继承其既有本机设置、Hook 和 MCP；工作目录是运行目录，不是安全沙箱。抽取指令要求不使用工具；如果仍请求审批，本次整理会停止，不自动同意。统一 Provider 当前不返回每次抽取的真实模型用量与美元费用，因此这些字段保留 null，不能用请求模型冒充真实回执。
+
 ### 配置、状态与调度
 
-设置定义的是任务抽取 Agent：harness、model、reasoningEffort、prompt、skill，以及 automatic / intervalSeconds 定时配置。默认 harness=claude、model=haiku、reasoningEffort=low、skill=extract-tasks、自动关闭、间隔 60 秒。预算 $0.25、超时 90 秒和静默 20 秒收进高级选项。harnessInstanceId 为空时使用唯一实例或本机默认；多个 Claude 实例要求选择绑定。配置版本冲突拒绝覆盖，Agent 配置与定时开关在同一 JSON 事务保存。旧配置缺少新字段时采用低推理默认值；读取时以持久化调度状态反映自动开关及失败暂停。
+设置定义的是任务抽取 Agent：harness、model、reasoningEffort、prompt、skill，以及 automatic / intervalSeconds 定时配置。默认 harness=claude（现有 Provider）、model=haiku、reasoningEffort=low、skill=extract-tasks、自动关闭、间隔 60 秒。高级选项提供超时 90 秒和静默 20 秒。历史 budgetUsd 字段保留以兼容已有配置及独立 CLI 研究示例；桌面 Provider 未提供单次美元预算参数，UI 不再展示可执行的美元上限。harnessInstanceId 为空时只使用唯一已启用 Provider 实例，不回退到直接启动本机 CLI；多个 Claude 实例要求选择绑定。配置版本冲突拒绝覆盖，Agent 配置与定时开关在同一 JSON 事务保存。旧配置缺少新字段时采用低推理默认值；读取时以持久化调度状态反映自动开关及失败暂停。
 
-推理强度实际传给 Claude CLI 的 `--effort`，可配置 low/medium/high/xhigh/max；某个档位是否生效由选定模型和本机 Harness 决定，依据 [Claude 模型配置文档](https://code.claude.com/docs/en/model-config)。当前执行适配器仍仅支持 Claude。实际模型名称来自 CLI 回执，不能用别名冒充实际模型。用户提示词与所选 Skill 共同构成 Agent 的任务指令，固定证据校验和 48 小时边界由 Rust 强制执行。
+模型与推理选项取自所选 Provider 的 provider.describe，发送时再次校验 capability revision、模型和推理选项。Claude Provider 将推理强度映射为 `--effort`；某个档位是否生效由选定模型和本机 Harness 决定，依据 [Claude 模型配置文档](https://code.claude.com/docs/en/model-config)。当前执行适配器仍仅支持 Claude。实际模型名称来自 CLI 回执，不能用别名冒充实际模型。用户提示词与所选 Skill 共同构成 Agent 的任务指令，固定证据校验和 48 小时边界由 Rust 强制执行。
 
 扫描新正文或文件重写时推进 dirtyRevision，工具执行不会推进。抽取捕获输入 revision/count；成功只确认该批水位。推理期间追加的正文保持 dirty，失败不推进水位。过期消息不填充上下文，长正文最多 2500 字符并带截断标记；单批最多 6 条、约 5000 字符，候选任务只向模型传摘要。父子关系仍依据结构证据计算。
 
@@ -81,22 +93,29 @@ Job 保存 id、requestId、threadId、state、createdAt、finishedAt、error。
 ## 涉及模块
 
 - `crates/codepet-task-lineage/{src/management.rs,skills}`：用户目录、模板、配置、Job、工作区和模型上下文组装。
-- `src/{service,watch,extraction}.rs`：增量水位、静默调度、统一抽取接口、CLI 进程控制与证据校验。
-- `src-tauri/src/task_lineage.rs`：组合现有 Provider Host 和应用数据目录，提供本地扩展及后台生命周期。
+- `src/{service,watch,extraction}.rs`：增量水位、静默调度、统一抽取接口、紧凑输入和证据校验。CLI 执行仅供独立研究示例使用。
+- `src-tauri/src/task_lineage.rs` 与 `task_lineage/provider_executor.rs`：组合既有 Provider Gateway 和应用数据目录，处理会话创建、流式正文、终态、中断及本地扩展。
+- `crates/providers/codepet-provider-claude/src/{provider,client}.rs`：广告 haiku 与 Windows 中断能力；每个 turn 收到 result 后关闭 stdin，由 reaper 确认退出，避免等待下一条输入。
 - `frontend/lib/{taskLineage.ts,TaskLineage.svelte,TaskSettingsPage.svelte,TaskExtractionSettings.svelte}`：类型调用、任务可视化、异步状态及分区设置。`App.svelte` 提供独立入口，`main-window.css` 管理共享导航动画。
 
 ## 风险
 
 - 抽取期间新增记录或用户验收：并发回归验证旧结果不吞新消息、不覆盖人工状态。
-- 重复收费和遗留任务：请求幂等、租约、预算先扣及重启测试；CLI 失败也可能产生费用。
+- 重复收费和遗留任务：请求幂等、租约和重启测试；Provider 失败也可能产生费用。当前没有美元硬预算，使用小批输入和执行超时。
 - 用户 Skill 修改丢失或目录逃逸：首次安装保留测试、路径校验、持久化快照。
 - UI 状态不收敛：事件加定时查询，浏览器测试验证排队到完成、配置保存和移动尺寸。
 
 ## 测试计划与结果
 
-验证通过：crate 单元/流程测试共 24 项、Tauri `cargo check --lib`、前端定向 Vitest 3 项、Vite build 和 Edge Playwright。浏览器验证覆盖设置与 Skill、异步 Job、申请工作区、证据、图/泳道、焦点、人工验收、480/820/980 宽度。全仓 `tsc --noEmit` 仍为原有 27 项诊断，本次未增加 TypeScript 文件诊断。
+首版验证记录：crate 单元/流程测试共 24 项、Tauri `cargo check --lib`、前端定向 Vitest 3 项、Vite build 和 Edge Playwright。浏览器验证覆盖设置与 Skill、异步 Job、申请工作区、证据、图/泳道、焦点、人工验收、480/820/980 宽度。全仓 `tsc --noEmit` 仍为原有 27 项诊断，本次未增加 TypeScript 文件诊断。
 
-用户目录实测使用 `managed_probe`，仅合成两条正文：Rust 安装并读取真实用户 Skill，经本机 Claude `haiku` 返回一个带证据任务，实际模型 `deepseek-v4-flash`，报告费用 $0.013895。回执位于用户数据目录 `workspaces/task-extraction/run-LAB1Ef`，含五份可审计文件。
+此前独立 CLI 用户目录实测使用 `managed_probe`，仅合成两条正文：Rust 安装并读取真实用户 Skill，经本机 Claude `haiku` 返回一个带证据任务，实际模型 `deepseek-v4-flash`，报告费用 $0.013895。回执位于用户数据目录 `workspaces/task-extraction/run-LAB1Ef`，含五份可审计文件。
+
+2026-09-11 Provider 改造验证：任务 crate 25 项测试通过；Claude Provider vertical 12 项通过（含 Windows interrupted terminal、result 后等待 EOF 的收尾回归）。Provider 执行适配器另有 2 项能力/正文过滤测试通过；前端 Vitest 6 项、生产构建和构建后页面的 Edge 交互检查通过，覆盖模型/推理/Skill 保存、定时配置、导航动画和窄屏布局。QA 改用独立构建入口与静态预览，避免开发依赖预构建阻塞，截图已检查。既有测试中两处历史问题一并修正：依赖白名单缺少现有 codepet-provider-data，Windows 路径比较需要双方 canonicalize。可控 Harness 经真实 Host 与 Provider 进程、指定工作目录返回一个任务，验证参数、Skill、输入、证据恢复和 EOF 收尾；它不是模型质量验收。
+
+真实 Windows 调用也通过：本机 Claude、haiku / low、两条合成正文返回一个登录焦点任务，证据恢复为 synthetic-0 / synthetic-1，回执位于本次工作树 artifacts/provider-extraction-probe/workspaces/task-extraction/run-za6Haq。此前 90 秒超时后中断成功；补齐 result 后关闭 stdin，并改用正文事件收集后复跑完成。该验证经过真实 Host / Provider / Harness，未操作完整原生桌面窗口，未扫描真实用户历史。
+
+复现命令：在 crates 执行 `cargo build -p codepet-provider-claude --bins`，在 src-tauri 执行 `cargo run --example task_provider_probe -- <Provider可执行文件> <Claude或claude-stream-fixture可执行文件> <独立输出目录>`。该探针只生成两条合成正文，独立目录保存 Host 状态和抽取回执；真实 Claude 模式会调用本机模型，默认 haiku / low。
 
 ## 知识沉淀
 

@@ -148,7 +148,12 @@ impl ClaudeProcessControl {
     }
 
     pub fn interrupt(&self) -> Result<(), ClaudeCliError> {
-        self.process.interrupt().map_err(|error| if error.kind() == std::io::ErrorKind::Unsupported { ClaudeCliError::InterruptUnsupported } else { ClaudeCliError::Io(error.to_string()) })?;
+        match self.process.interrupt() {
+            Ok(()) => {},
+            // Windows has no Unix SIGINT; the SDK terminates the owned process tree.
+            Err(error) if error.kind() == std::io::ErrorKind::Unsupported => return self.terminate(),
+            Err(error) => return Err(ClaudeCliError::Io(error.to_string())),
+        }
         if self.wait_for_exit(INTERRUPT_GRACE) { return Ok(()); }
         self.force_kill()?;
         if self.wait_for_exit(KILL_WAIT) { Ok(()) } else { Err(ClaudeCliError::ProcessDidNotExit) }
@@ -337,6 +342,12 @@ impl SpawnedClaudeTurn {
                     break;
                 }
                 saw_terminal_frame |= terminal;
+                if terminal {
+                    // This Provider launches one process per turn. A stream-json CLI may
+                    // wait for another input even after result; signal EOF, then let the
+                    // reaper publish terminal only after the process really exits.
+                    *lock(&reader_control.stdin) = None;
+                }
             }
             let _ = stdout_sender.send(());
         });

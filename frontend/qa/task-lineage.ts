@@ -30,7 +30,7 @@ const history: LineageMessage[] = [
 ].map(([id, threadId, role, text], index) => ({ evidence: { eventId: id, file: `/fixture/${threadId}.jsonl`, byteOffset: index * 200, generation: 0 }, threadId, role, text, timestamp, turnId: id }));
 mockIPC((command, raw) => {
   const args = (raw ?? {}) as Record<string, any>;
-  if (command === "task_lineage_options") return { sources: [{ id: "codex-fixture", name: "Codex · QA 模拟数据", directory: "/fixture", watch, extraction: config }], claudeExecutable: "/fixture/claude", defaultModel: "haiku", budgetUsd: 0.25, instances: [{ id: "claude", name: "本机 Claude", harness: "claude" }], layout: {root: "/fixture/.codepair", skills: "/fixture/.codepair/skills", extractionWorkspaces: "/fixture/.codepair/workspaces/task-extraction", taskWorkspaces: "/fixture/.codepair/workspaces/tasks"} };
+  if (command === "task_lineage_options") return { sources: [{ id: "codex-fixture", name: "Codex · QA 模拟数据", directory: "/fixture", watch, extraction: config }], claudeExecutable: "/fixture/claude", defaultModel: "haiku", budgetUsd: 0.25, instances: [{ id: "claude", name: "本机 Claude", harness: "claude", controls: {modelCatalog: {kind: "flat", models: [{id: "haiku", displayName: "Haiku"}]}, reasoningEffort: {options: ["low", "medium", "high"].map(id => ({id, displayName: id}))}}}], layout: {root: "/fixture/.codepair", skills: "/fixture/.codepair/skills", extractionWorkspaces: "/fixture/.codepair/workspaces/task-extraction", taskWorkspaces: "/fixture/.codepair/workspaces/tasks"} };
   if (command === "task_lineage_request") {
     const r = args.request;
     if (r.method === "tasks.settings.get") return structuredClone(config);

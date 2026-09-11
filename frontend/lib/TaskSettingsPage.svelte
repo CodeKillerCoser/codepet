@@ -17,7 +17,7 @@
   {#if loading}<p role="status">加载设置…</p>{:else if options && providerId}
     {#key providerId}<TaskExtractionSettings {providerId} {options} onSaved={() => { if (options) options = { ...options, sources: options.sources.map(s => s.id === providerId ? {...s, watch: s.watch ? {...s.watch, lastError: null} : undefined} : s) }; }} />{/key}
     {#if options.sources.find(s => s.id === providerId)?.watch?.lastError}<p role="alert">自动提取已暂停：{options.sources.find(s => s.id === providerId)?.watch?.lastError}</p>{/if}
-    {#if !options.claudeExecutable}<p>请在“连接”中配置可用的 Claude Harness。当前任务抽取适配器支持 Claude CLI。</p>{/if}
+    {#if !options.instances?.some(i => i.controls && !i.error)}<p>请在“连接”中配置并启动 Claude Provider，再刷新来源。</p>{/if}
     <p>仅整理最近 48 小时的用户消息与 AI 正文，工具执行与推理内容不参与抽取。任务页可以查看任务图、整理历史和手动运行。</p>
   {:else}<p>请先在“连接”中配置 Codex 来源。</p>{/if}
   {#if error}<p role="alert">{error}</p>{/if}

@@ -230,12 +230,46 @@ impl Layout {
     }
 }
 
-pub struct ManagedExtractor {
-    pub inner: ClaudeExtractor,
+pub trait WorkspaceExecutor {
+    fn version(&self) -> String;
+    fn execute(
+        &self,
+        workspace: &Path,
+        prompt: &str,
+        messages: &[Message],
+        candidates: &[Task],
+        config: &ExtractionSettings,
+    ) -> Result<ExtractionResult>;
+}
+
+// Retained only for standalone research examples. The desktop injects its Provider executor.
+impl WorkspaceExecutor for ClaudeExtractor {
+    fn version(&self) -> String {
+        TaskExtractor::version(self)
+    }
+    fn execute(
+        &self,
+        workspace: &Path,
+        prompt: &str,
+        messages: &[Message],
+        candidates: &[Task],
+        config: &ExtractionSettings,
+    ) -> Result<ExtractionResult> {
+        self.extract_in(
+            messages,
+            candidates,
+            Some((workspace, prompt)),
+            &config.reasoning_effort,
+        )
+    }
+}
+
+pub struct ManagedExtractor<R = ClaudeExtractor> {
+    pub inner: R,
     pub layout: Layout,
     pub config: ExtractionSettings,
 }
-impl TaskExtractor for ManagedExtractor {
+impl<R: WorkspaceExecutor> TaskExtractor for ManagedExtractor<R> {
     fn version(&self) -> String {
         format!(
             "{}:settings-{}:{}",
@@ -270,15 +304,12 @@ impl TaskExtractor for ManagedExtractor {
         )?;
         write_atomic(
             &workspace.join("input.json"),
-            &serde_json::to_vec(&json!({"messages":messages,"existingTasks":candidates}))
+            &serde_json::to_vec(&crate::extraction::input_value(messages, candidates))
                 .map_err(|e| e.to_string())?,
         )?;
-        let outcome = self.inner.extract_in(
-            messages,
-            candidates,
-            Some((&workspace, &prompt)),
-            &self.config.reasoning_effort,
-        );
+        let outcome = self
+            .inner
+            .execute(&workspace, &prompt, messages, candidates, &self.config);
         let receipt = match &outcome {
             Ok(result) => json!({"state":"completed","result":result}),
             Err(error) => json!({"state":"failed","error":error}),
@@ -354,12 +385,78 @@ pub fn recover_jobs(store: &Store) -> Result<()> {
 }
 
 pub fn capabilities() -> serde_json::Value {
-    json!({"namespace":"codepet.tasks","version":1,"harnesses":["claude"],"storage":"json-journal","lookbackHours":48,"methods":["tasks.capabilities","tasks.list","tasks.messages","tasks.dirty","tasks.extract","tasks.jobs","tasks.settings.get","tasks.settings.set","tasks.skills","tasks.skill.get","tasks.workspace.request"]})
+    json!({"namespace":"codepet.tasks","version":1,"harnesses":["claude"],"execution":"provider","supportsHardBudget":false,"reportsRunCost":false,"storage":"json-journal","lookbackHours":48,"methods":["tasks.capabilities","tasks.list","tasks.messages","tasks.dirty","tasks.extract","tasks.jobs","tasks.settings.get","tasks.settings.set","tasks.skills","tasks.skill.get","tasks.workspace.request"]})
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn workspace_executor_receives_snapshots_and_records_validated_result() {
+        struct Executor;
+        impl WorkspaceExecutor for Executor {
+            fn version(&self) -> String {
+                "test-provider".into()
+            }
+            fn execute(
+                &self,
+                workspace: &Path,
+                prompt: &str,
+                messages: &[Message],
+                candidates: &[Task],
+                config: &ExtractionSettings,
+            ) -> Result<ExtractionResult> {
+                assert!(workspace.is_absolute());
+                assert!(workspace.join("SKILL.md").is_file());
+                assert!(prompt.contains("custom requirement"));
+                assert_eq!(config.reasoning_effort, "medium");
+                let input: serde_json::Value =
+                    serde_json::from_slice(&fs::read(workspace.join("input.json")).unwrap())
+                        .unwrap();
+                assert_eq!(input["messages"][0]["id"], "m0");
+                crate::extraction::parse_result(
+                    r#"{"tasks":[{"existingTaskId":null,"title":"Login","detail":"Fix focus","episodes":[{"title":"Implement","evidenceIds":["m0"]}]}]}"#,
+                    messages,
+                    candidates,
+                    &config.model,
+                )
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let layout = Layout::initialize(dir.path()).unwrap();
+        let message: Message = serde_json::from_value(json!({"evidence":{"eventId":"real-id","file":"fixture","byteOffset":0,"generation":0},"threadId":"thread","role":"user","text":"Fix login focus","timestamp":chrono::Utc::now().to_rfc3339(),"turnId":null})).unwrap();
+        let extractor = ManagedExtractor {
+            inner: Executor,
+            layout: layout.clone(),
+            config: ExtractionSettings {
+                prompt: "custom requirement".into(),
+                reasoning_effort: "medium".into(),
+                ..Default::default()
+            },
+        };
+        let result = extractor.extract(&[message.clone()], &[]).unwrap();
+        assert_eq!(
+            result.extraction.tasks[0].episodes[0].evidence_ids,
+            vec!["real-id"]
+        );
+        assert_eq!(result.reported_cost_usd, None);
+        let run = fs::read_dir(&layout.extraction_workspaces)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let receipt: serde_json::Value =
+            serde_json::from_slice(&fs::read(run.join("result.json")).unwrap()).unwrap();
+        assert_eq!(receipt["state"], "completed");
+        let mut invalid = message;
+        invalid.role = "tool".into();
+        assert!(extractor.extract(&[invalid], &[]).is_err());
+        assert_eq!(
+            fs::read_dir(&layout.extraction_workspaces).unwrap().count(),
+            1
+        );
+    }
     #[test]
     fn installed_skills_preserve_edits_and_settings_reject_stale_writes() {
         let dir = tempfile::tempdir().unwrap();

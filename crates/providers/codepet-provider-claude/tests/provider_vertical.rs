@@ -229,7 +229,6 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     assert!(capabilities.methods.contains(&ProviderCapability::ConversationList));
     assert!(capabilities.methods.contains(&ProviderCapability::ConversationGet));
     assert!(capabilities.methods.contains(&ProviderCapability::TurnStart));
-    #[cfg(unix)]
     assert!(capabilities.methods.contains(&ProviderCapability::TurnInterrupt));
     assert!(!capabilities.methods.contains(&ProviderCapability::ConversationSearch));
     assert!(!capabilities.methods.contains(&ProviderCapability::TurnSteer));
@@ -238,6 +237,7 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     assert!(controls.access_mode.as_ref().is_some_and(|choices| choices.options.len() >= 4));
     assert!(controls.reasoning_effort.as_ref().is_some_and(|choices| choices.options.len() == 5));
     assert!(controls.model_catalog.is_some());
+    assert!(matches!(controls.model_catalog.as_ref(), Some(codepet_provider_sdk::ModelCatalog::FlatModelCatalog(c)) if c.models.iter().any(|m| m.id == "haiku")));
 
     let first_turn = ProviderProtocolServer::turn_start(
         provider.as_ref(),
@@ -532,9 +532,8 @@ async fn conversation_get_pages_discovered_history_by_cursor_and_limit() {
     .unwrap();
 }
 
-#[cfg(unix)]
 #[tokio::test]
-async fn provider_interrupts_an_active_claude_process_with_sigint() {
+async fn provider_interrupts_an_active_claude_process_and_waits_for_terminal() {
     let workspace = tempfile::tempdir().unwrap();
     let (provider, events, route, conversation) = ready_provider(workspace.path()).await;
     let turn = ProviderProtocolServer::turn_start(
@@ -572,6 +571,20 @@ async fn provider_interrupts_an_active_claude_process_with_sigint() {
     )
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn provider_closes_input_after_result_and_waits_for_process_exit() {
+    let workspace = tempfile::tempdir().unwrap();
+    let (provider, events, route, conversation) = ready_provider(workspace.path()).await;
+    let turn = ProviderProtocolServer::turn_start(provider.as_ref(),
+        turn_start_request(provider_resource(&route, &conversation.resource), "eof-result".into(), "result waits eof".into()))
+        .await.unwrap().turn;
+    let terminal = terminal_turn(&events, &turn.resource.native_resource_id);
+    assert_eq!(terminal.status, TurnStatus::Completed);
+    assert_eq!(terminal.output, "fixture output");
+    ProviderProtocolServer::instance_stop(provider.as_ref(), InstanceStopRequest { route }).await.unwrap();
+    ProviderProtocolServer::provider_shutdown(provider.as_ref(), ProviderShutdownRequest {}).await.unwrap();
 }
 
 #[tokio::test]
@@ -1136,6 +1149,7 @@ fn provider_runtime_dependency_boundary_excludes_host_gateway_pet_and_tauri() {
         .collect::<BTreeSet<_>>();
     let expected = [
         "codepet-observation",
+        "codepet-provider-data",
         "codepet-provider-sdk",
         "libc",
         "serde",
