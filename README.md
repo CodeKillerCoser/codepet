@@ -153,3 +153,14 @@ Code Pet 采用**多进程架构**：Svelte 前端通过 Tauri IPC 调用 Rust �
 - 第三方依赖及已有独立许可的内容继续遵循各自许可证。
 
 以上是便于阅读的摘要，具体许可目的（包括条款列明的非商业组织用途）、权利与义务以 [LICENSE](LICENSE) 英文原文为准。由于限制商业用途，本项目不属于 [OSI 定义的开源软件](https://opensource.org/osd)。
+
+## 独立更新桌面 UI
+
+正式应用优先加载当前数据目录下数值最大的 `webcontent/vN/`，没有版本目录时才使用包内资源。更新不会修改 App 包。
+
+```bash
+npm run build:webcontent
+npm run install:webcontent -- --data-dir "<应用数据目录>"
+```
+
+安装完成后重启 App；只构建 Rust 可执行文件使用 `npm run build:bin`。完整发布仍执行现有 Provider 打包流程。详见 [webcontent 分发架构](knowledge/10-architecture/webcontent-packaging.md)。

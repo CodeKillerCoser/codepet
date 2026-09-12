@@ -4,6 +4,8 @@
   import { availableMonitors, cursorPosition, getCurrentWindow, primaryMonitor, type Monitor } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
   import { getAppSettings, openMainWindow } from './lib/api';
+  import { groupActivities } from './lib/activityGroups';
+  import MarkdownMessage from './lib/MarkdownMessage.svelte';
   import { petSnapshot, petStatusLabel, type PetTask, type PetSource } from './lib/petGateway';
   import { runningBubbleStyle } from './lib/gradientColor';
   import { isOpaqueCssColor, rectFromElementBounds, shouldIgnorePetWindowCursor, type PetHitRect } from './lib/petHitTest';
@@ -33,7 +35,7 @@
   let cursorEventsIgnored = false;
   let cursorPassthroughInFlight = false;
   const petImageAlphaCache = new WeakMap<HTMLImageElement, { src: string; width: number; height: number; data: Uint8ClampedArray }>();
-  const petWindowWidth = 360;
+  const petWindowWidth = 320;
   const activityPetGap = 8;
   const activityStackMaxHeight = 368;
   const maxPetStageHeight = Math.max(104, Math.round(32 * 4 * (208 / 192)));
@@ -49,6 +51,7 @@
   $: themeClass = themeClassNames(settings?.appearance.theme === 'dark' || (settings?.appearance.theme === 'system' && systemDark) ? 'dark' : 'light');
   $: runningBubble = settings?.appearance.runningBubble ?? fallbackRunningBubble;
   $: runningBubbleStyleText = runningBubbleStyle(runningBubble);
+  $: activityGroups = groupActivities(activities);
   $: hasActivities = activities.length > 0;
   $: hasCompletedActivities = activities.some(a => a.status === 'completed');
   $: primary = activities.find(a => a.status === 'running') ?? activities[0];
@@ -181,7 +184,10 @@
   function collectPetHitRects(root: HTMLElement): PetHitRect[] {
     const rootBounds = root.getBoundingClientRect();
     const hitRects: PetHitRect[] = [];
-    for (const element of root.querySelectorAll<HTMLElement>(".status-pill, .pet-action-button")) {
+    for (const element of root.querySelectorAll<HTMLElement>(".activity-group-summary, .status-pill, .pet-action-button")) {
+      if (element.getClientRects().length === 0) continue;
+      const group = element.closest("details");
+      if (group && !group.open && !element.matches(".activity-group-summary")) continue;
       const rect = element.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
         hitRects.push(rectFromElementBounds(rect, rootBounds, petHitPadding));
@@ -519,7 +525,24 @@
           <span class="status-message">{gatewayError || sources.filter(s => s.enabled).map(s => `${s.displayName}：${s.message || "等待活动"}`).join(" · ") || "请在主窗口启用活动来源"}</span>
         </div></article>
       {/if}
-      {#each activities as activity (activity.id)}
+      {#each activityGroups as group (group.id)}
+        <details class={`activity-group group-${group.id}`}>
+          <summary class="activity-group-summary">
+            {#each group.activities.slice(1, 3).reverse() as _, index}
+              <span class="activity-stack-layer" style={`--stack-depth: ${Math.min(group.activities.length - 1, 2) - index};`} aria-hidden="true"></span>
+            {/each}
+            <span class="activity-group-face">
+              <span class="activity-group-heading">
+                <span class="activity-group-dot" aria-hidden="true"></span>
+                <span>{group.label}</span>
+                <span class="activity-group-count">{group.activities.length}</span>
+              </span>
+              <span class="activity-group-preview">{group.activities[0].title}</span>
+              <span class="activity-group-meta">{sources.find(s => s.id === group.activities[0].providerId)?.displayName || group.activities[0].providerId} · {petStatusLabel(group.activities[0].status)}</span>
+            </span>
+          </summary>
+          <div class="activity-group-cards">
+      {#each group.activities as activity (activity.id)}
         <article class="status-pill" class:active-status={activity.status === "running"}
           class:active-breath={activity.status === "running" && runningBubble.backgroundBreathing}
           class:active-marquee={activity.status === "running" && runningBubble.borderMarquee}
@@ -530,10 +553,13 @@
             <div class="status-title-row"><span class="status-title"><span title={activity.title}>{activity.title}</span></span>
               <button class="dismiss-button" type="button" aria-label={`隐藏 ${activity.title}`} on:click={(event) => dismissActivity(event, activity)}></button>
             </div>
-            <span class="status-message" title={activity.summary || activity.cwd || ""}>{activity.summary || activity.toolName || activity.cwd || ""}</span>
+            <MarkdownMessage message={activity.summary || activity.toolName || activity.cwd || ""} />
             <div class="status-footer"><span class="status-meta">{sources.find(s => s.id === activity.providerId)?.displayName || activity.providerId} · {petStatusLabel(activity.status)} · <time class="status-ended-at" datetime={new Date(activity.updatedAt).toISOString()}>{new Date(activity.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></span></div>
           </div>
         </article>
+      {/each}
+          </div>
+        </details>
       {/each}
     </section>
   {/if}
@@ -647,7 +673,7 @@
       kind={settings?.pet.kind}
       imagePath={settings?.pet.imagePath}
       status={avatarStatus}
-      scale={Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4)}
+      scale={Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4) * 0.9}
     />
     {#if actionNotice}
       <span class="pet-notice">{actionNotice}</span>

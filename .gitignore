@@ -1,5 +1,6 @@
 node_modules/
 dist/
+webcontent/
 src-tauri/target/
 sdk/rust/target/
 crates/target/

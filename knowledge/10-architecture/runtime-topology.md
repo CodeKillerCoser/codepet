@@ -5,6 +5,7 @@
 - 主窗口：`frontend/App.svelte`，由 `index.html` 加载。
 - 桌宠悬浮窗：`frontend/PetApp.svelte`，由 `pet.html` 加载。
 - Tauri 后端：`src-tauri/src/lib.rs` 注册命令、托盘行为、插件、启动工作和窗口。
+- 正式前端资源：优先使用当前数据目录下数值最大的 `webcontent/vN/`，没有版本目录时才使用包内 `webcontent/`。由 `src-tauri/src/app/webcontent.rs` 校验并通过 Tauri Assets 加载，不嵌入可执行文件。独立构建与替换流程见同目录 `webcontent-packaging.md`。
 - 本地 collector：`src-tauri/src/activity/collector.rs` 在 `127.0.0.1:47621` 暴露 HTTP 路由。
 - Hook 脚本：`src-tauri/hooks/code-pet-hook.mjs` 由 `src-tauri/src/agent/hooks.rs` 安装到本地 app data 目录。
 - Codex Remote：`ProviderHostState` / `PluginManager`、独立 `codepet-provider-codex` 进程、`ProviderGatewayService`、compat `RuntimeGatewayState` 和 `runtime-gateway-event`。

@@ -7,3 +7,4 @@ pub mod state;
 pub mod updates;
 
 pub mod event_journal;
+pub mod webcontent;

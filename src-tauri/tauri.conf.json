@@ -7,7 +7,7 @@
     "beforeDevCommand": "npm run providers:stage:dev && npm run dev",
     "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "npm run build:bundle",
-    "frontendDist": "../dist"
+    "frontendDist": []
   },
   "app": {
     "windows": [
@@ -61,9 +61,7 @@
       "nsis"
     ],
     "resources": {
-      "resources/sounds/whip-crack.wav": "resources/sounds/whip-crack.wav",
-      "resources/sounds/whip-swing.wav": "resources/sounds/whip-swing.wav",
-      "resources/sounds/whip-heavy-crack.wav": "resources/sounds/whip-heavy-crack.wav",
+      "../webcontent/": "webcontent/",
       "resources/provider-plugins/": "provider-plugins/",
       "resources/provider-sdk/": "provider-sdk/"
     },
