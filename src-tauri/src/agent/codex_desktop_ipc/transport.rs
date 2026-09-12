@@ -14,7 +14,7 @@ pub fn resolve_socket_path() -> Result<PathBuf, DesktopIpcError> {
     if let Some(codex_home) = env::var_os("CODEX_HOME").filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(codex_home).join("ipc").join("ipc.sock"));
     }
-    dirs::home_dir()
+    crate::paths::home()
         .map(|home| home.join(".codex").join("ipc").join("ipc.sock"))
         .ok_or_else(|| DesktopIpcError::SocketPath("home directory could not be resolved".to_string()))
 }

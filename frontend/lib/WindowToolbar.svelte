@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ArrowLeft, ArrowRight, Copy, Minus, PanelLeft, Square, X } from "@lucide/svelte";
+  import { ArrowLeft, ArrowRight, Copy, Minus, PanelLeft, Settings, Square, X } from "@lucide/svelte";
   import { createWindowChrome } from "./windowChrome";
 
   export let collapsed = false;
@@ -9,6 +9,8 @@
   export let canGoForward = false;
   export let onBack: () => void = () => {};
   export let onForward: () => void = () => {};
+  export let settingsActive = false;
+  export let onSettings: () => void = () => {};
   const chrome = createWindowChrome();
   let maximized = false;
   let anchor = { left: 88, centerY: 20 };
@@ -36,6 +38,7 @@
   <button class="window-toolbar-button" type="button" aria-label="前进" title="前进" disabled={!canGoForward} on:click={onForward}><ArrowRight size={16} /></button>
   </div>
   <div class="window-drag-space" data-tauri-drag-region></div>
+  <button class="window-toolbar-button settings-entry" type="button" aria-label="设置" title="设置" aria-pressed={settingsActive} on:click={onSettings}><Settings size={18} /></button>
   {#if chrome.platform === "windows" && chrome.native}
     <div class="window-controls">
       <button type="button" aria-label="最小化" on:click={() => perform(chrome.minimize)}><Minus size={14} /></button>

@@ -53,3 +53,5 @@ OpenCode 没有 Desktop companion 支路。其 session/turn/approval/SSE 数据�
 
 - 前端行为由 `frontend/lib/activity.test.ts`、`frontend/lib/sound.test.ts` 和组件测试覆盖。
 - 后端 collector 与 hook 行为由 `src-tauri/tests/` 下的测试覆盖。
+
+- 路径管理：`crates/codepet-paths` 统一 install/data/workspace，桌面入口为 `app/paths.rs`，配置与设置共用默认数据目录下的 `settings.json`。详见 `path-manager.md`。

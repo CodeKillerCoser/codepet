@@ -1,5 +1,5 @@
 use crate::settings::{
-    configured_app_data_dir, load_app_settings, save_app_settings, AppSettings, PixelPetSprite,
+    load_app_settings, save_app_settings, AppSettings, PixelPetSprite,
 };
 use crate::theme_defaults;
 use chrono::Utc;
@@ -19,18 +19,9 @@ pub struct PetLibraryView {
     pub selected_pet_id: String,
     pub pets: Vec<ConfiguredPet>,
 }
-pub fn pet_data_directory(settings: &AppSettings) -> PathBuf {
-    settings
-        .pet_library
-        .data_directory
-        .as_ref()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| configured_app_data_dir(settings).join("pets"))
-}
-
 pub fn pet_library_view(settings: &AppSettings) -> PetLibraryView {
     PetLibraryView {
-        data_directory: pet_data_directory(settings).to_string_lossy().to_string(),
+        data_directory: crate::paths::pets(settings).to_string_lossy().to_string(),
         selected_pet_id: settings.pet_library.selected_pet_id.clone(),
         pets: ensure_profiles(settings.pet_library.pets.clone()),
     }
@@ -279,16 +270,6 @@ fn titleize_pet_id(value: &str) -> String {
         .join(" ")
 }
 
-pub fn update_pet_data_directory(path: String) -> Result<PetLibraryView, String> {
-    let mut settings = load_app_settings().map_err(|error| error.to_string())?;
-    let data_dir = PathBuf::from(path);
-    fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
-    settings.pet_library.data_directory = Some(data_dir.to_string_lossy().to_string());
-    normalize_pet_selection(&mut settings)?;
-    save_app_settings(&settings).map_err(|error| error.to_string())?;
-    Ok(pet_library_view(&settings))
-}
-
 pub fn switch_pet(pet_id: String) -> Result<PetLibraryView, String> {
     let mut settings = load_app_settings().map_err(|error| error.to_string())?;
     select_pet(&mut settings, &pet_id)?;
@@ -325,7 +306,7 @@ pub fn import_pet_image(source_path: String, name: Option<String>, pixel_size: O
         return Err(format!("image not found: {source_path}"));
     }
 
-    let data_dir = pet_data_directory(&settings);
+    let data_dir = crate::paths::pets(&settings);
     fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
     let id = format!("image-{}", Uuid::new_v4().simple());
     let pet_dir = data_dir.join(&id);
@@ -427,8 +408,8 @@ fn normalize_pet_selection(settings: &mut AppSettings) -> Result<(), String> {
 }
 
 fn add_discovered_codex_pets(settings: &mut AppSettings) {
-    let mut roots = vec![pet_data_directory(settings)];
-    if let Some(codex_root) = dirs::home_dir().map(|home| home.join(".codex").join("pets")) {
+    let mut roots = vec![crate::paths::pets(settings)];
+    if let Some(codex_root) = crate::paths::home().map(|home| home.join(".codex").join("pets")) {
         if !roots.iter().any(|root| root == &codex_root) {
             roots.push(codex_root);
         }
@@ -456,7 +437,7 @@ fn managed_pet_directory(settings: &AppSettings, pet: &ConfiguredPet) -> Option<
     if pet.kind != PetKind::Image {
         return None;
     }
-    let data_dir = pet_data_directory(settings);
+    let data_dir = crate::paths::pets(settings);
     pet.image_path
         .as_deref()
         .or(pet.source_path.as_deref())

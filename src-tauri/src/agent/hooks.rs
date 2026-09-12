@@ -20,9 +20,10 @@ const LEGACY_CODEX_HOOK_EVENTS: &[&str] = &[
 ];
 
 pub fn install_hook_script() -> io::Result<PathBuf> {
-    let dir = app_support_dir().join("hooks");
+    let dir = crate::paths::current()?.hooks();
     fs::create_dir_all(&dir)?;
     let script_path = dir.join(SCRIPT_NAME);
+    fs::write(dir.join("path-manager.mjs"), include_str!("../../../crates/codepet-paths/node.mjs"))?;
     fs::write(&script_path, HOOK_SCRIPT)?;
     #[cfg(unix)]
     {
@@ -321,11 +322,4 @@ fn command_arg_quote(value: &str) -> String {
 
 fn script_path_to_str(path: &Path) -> String {
     path.to_string_lossy().to_string()
-}
-
-fn app_support_dir() -> PathBuf {
-    dirs::data_local_dir()
-        .or_else(dirs::data_dir)
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
-        .join("code-pet")
 }

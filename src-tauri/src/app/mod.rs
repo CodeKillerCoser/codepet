@@ -8,3 +8,5 @@ pub mod updates;
 
 pub mod event_journal;
 pub mod webcontent;
+
+pub mod paths;

@@ -9,11 +9,6 @@ export interface PerfEventPayload {
   error?: string;
 }
 
-export interface AppDataDirectoryTargetStatus {
-  isCurrent: boolean;
-  isEmpty: boolean;
-  requiresClear: boolean;
-}
 
 export async function listAgentRuntimes(): Promise<AgentRuntime[]> {
   return invoke<AgentRuntime[]>("list_agent_runtimes");
@@ -55,16 +50,20 @@ export async function sendTestRobotNotification(channelId?: string): Promise<str
   return invoke<string>("send_test_robot_notification", { channelId });
 }
 
-export async function appDataDirectory(): Promise<string> {
-  return invoke<string>("app_data_directory");
+export interface AppPaths {
+  install: string;
+  data: string;
+  workspace: string;
+  resources: string;
+  settingsFile: string;
 }
 
-export async function appDataDirectoryTargetStatus(path: string): Promise<AppDataDirectoryTargetStatus> {
-  return invoke<AppDataDirectoryTargetStatus>("app_data_directory_target_status", { path });
+export async function getAppPaths(): Promise<AppPaths> {
+  return invoke<AppPaths>("path_manager_get");
 }
 
-export async function setAppDataDirectory(path?: string | null, clearTarget = false): Promise<AppSettings> {
-  return invoke<AppSettings>("set_app_data_directory", { path, clearTarget });
+export async function setPathManagerData(path?: string | null): Promise<AppSettings> {
+  return invoke<AppSettings>("path_manager_set_data", { path });
 }
 
 export async function getLaunchAtLoginEnabled(): Promise<boolean> {
@@ -87,8 +86,8 @@ export async function deletePet(petId: string): Promise<PetLibraryView> {
   return invoke<PetLibraryView>("delete_pet", { petId });
 }
 
-export async function setPetDataDirectory(path: string): Promise<PetLibraryView> {
-  return invoke<PetLibraryView>("set_pet_data_directory", { path });
+export async function setPathManagerPets(path: string): Promise<PetLibraryView> {
+  return invoke<PetLibraryView>("path_manager_set_pets", { path });
 }
 
 export async function importPetImage(sourcePath: string, name?: string, pixelSize?: number): Promise<PetLibraryView> {

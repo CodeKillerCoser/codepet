@@ -143,7 +143,7 @@ pub fn agent_specs() -> Vec<AgentSpec> {
 }
 
 pub fn resolve_agent_config_path(agent_id: AgentId) -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let home = crate::paths::home().unwrap_or_else(|| PathBuf::from("."));
     match agent_id {
         AgentId::Codex => home.join(".codex").join("hooks.json"),
         AgentId::Claude => home.join(".claude").join("settings.json"),

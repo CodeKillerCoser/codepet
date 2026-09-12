@@ -1,6 +1,6 @@
 use code_pet_lib::app_log::{
     append_app_start_banner_to, append_log_file_header_to, append_log_line_to,
-    append_perf_event_to, code_pet_data_dir, log_file_path, rotate_log_file_for_date_if_needed,
+    append_perf_event_to, rotate_log_file_for_date_if_needed,
     rotate_log_file_if_needed, PerfEvent,
 };
 use chrono::NaiveDate;
@@ -9,10 +9,10 @@ use std::collections::BTreeMap;
 #[test]
 fn log_file_lives_under_code_pet_logs_directory() {
     let root = tempfile::tempdir().unwrap();
-    let data_dir = code_pet_data_dir(root.path());
+    let data_dir = root.path().join("code-pet");
 
     assert_eq!(data_dir, root.path().join("code-pet"));
-    assert_eq!(log_file_path(&data_dir), root.path().join("code-pet").join("logs").join("code-pet.log"));
+    assert_eq!(code_pet_lib::paths::log_file(&data_dir), root.path().join("code-pet").join("logs").join("code-pet.log"));
 }
 
 #[test]

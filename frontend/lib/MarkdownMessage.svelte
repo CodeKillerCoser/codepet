@@ -4,6 +4,7 @@
   import { renderMessageMarkdown } from "./markdown";
 
   export let message: string;
+  export let compact = false;
   let linkError = "";
   $: html = renderMessageMarkdown(message);
 
@@ -26,7 +27,7 @@
 
 <!-- The scroll region must be keyboard reachable. Links retain native keyboard activation. -->
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
-<div class="status-message markdown-message" on:click={openLink} tabindex="0" role="region" aria-label="任务消息">
+<div class="status-message markdown-message" class:compact on:click={openLink} tabindex={compact ? undefined : 0} role="region" aria-label="任务消息">
   {@html html}
 </div>
 {#if linkError}<span class="markdown-link-error" role="status">{linkError}</span>{/if}

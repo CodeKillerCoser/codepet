@@ -1490,7 +1490,7 @@ impl ClaudeProvider {
             plugin_id: CLAUDE_PLUGIN_ID.to_string(),
             display_name: "Claude".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            default_workspace_root: default_remote_workspace_root("claude"),
+            default_workspace_root: codepet_paths::remote_workspace_for_user("claude"),
             supported_versions: VersionRange {
                 min_version: PROTOCOL_VERSION,
                 max_version: PROTOCOL_VERSION,
@@ -2462,17 +2462,6 @@ fn claude_config_dir() -> Option<PathBuf> {
     local_runtime::data_dir("CLAUDE_CONFIG_DIR", ".claude")
 }
 
-fn default_remote_workspace_root(harness_name: &str) -> Option<String> {
-    local_runtime::home_dir()
-        .filter(|path| path.is_absolute())
-        .map(|path| {
-            path.join(".codepet")
-                .join("remote_workspace")
-                .join(harness_name)
-                .to_string_lossy()
-                .into_owned()
-        })
-}
 
 fn ensure_claude_workspace(path: &str) -> Result<PathBuf, ProtocolError> {
     let workspace = PathBuf::from(path);

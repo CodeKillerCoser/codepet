@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+codepet-paths = { path = "../../codepet-paths" }
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 ring = "0.17"
 codepet-provider-data = { path = "../codepet-provider-data" }

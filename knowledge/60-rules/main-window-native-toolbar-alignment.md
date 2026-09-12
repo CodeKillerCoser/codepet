@@ -29,3 +29,9 @@ macOS 网页工具栏必须使用 AppKit 实际按钮边界作为锚点。导航
 - `npm run build` 通过；`cargo check --manifest-path src-tauri/Cargo.toml --offline -j 2` 在 Windows 通过（既有未使用代码警告）。没有运行耗时的完整 Windows 打包。
 - 浏览器 macOS 分支在 820×600 与 980×700 下收起、键盘展开均保持相同按钮坐标，内容无横向溢出。浏览器只验证网页几何，不连接原生设置，不能代表 AppKit 验收。
 - 剩余验证：在 Mac 实机确认启动、缩放、关闭后重开和全屏进出时的原生中心线及 12px 间距。本机无法编译或运行 macOS 分支，不能宣称这些场景已通过。
+
+## 设置入口位置（2026-09-12）
+
+设置按钮属于 `WindowToolbar.svelte` 的全局工具栏，放在可拖动留白之后、Windows 窗口控制按钮之前；不放入内容页 `.topbar`。`App.svelte` 传递当前设置页状态与导航回调，QA 页面使用同一组件。按钮复用工具栏尺寸、焦点样式和主题 token，保持独立点击区域，不添加 `data-tauri-drag-region`。
+
+本次 `npx vitest run frontend/lib/windowChrome.test.ts frontend/styles.test.ts frontend/lib/navigation.test.ts` 的 37 项测试及 `npm run build:webcontent` 通过。浏览器自动验证启动/页面加载停滞，已停止，不能宣称实测布局或原生拖动通过；需在实际窗口检查按钮与最小化按钮同排、点击进入设置、Tab 聚焦及窄窗口无重叠。

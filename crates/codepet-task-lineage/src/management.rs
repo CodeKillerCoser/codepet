@@ -160,18 +160,21 @@ pub fn write_atomic(path: &Path, value: &[u8]) -> Result<()> {
 }
 impl Layout {
     pub fn initialize(root: &Path) -> Result<Self> {
+        Self::initialize_with_workspace(root, root)
+    }
+    pub fn initialize_with_workspace(root: &Path, workspace: &Path) -> Result<Self> {
         let layout = Self {
             root: root.into(),
             skills: root.join("skills"),
-            extraction_workspaces: root.join("workspaces/task-extraction"),
-            task_workspaces: root.join("workspaces/tasks"),
+            extraction_workspaces: workspace.join("workspaces/task-extraction"),
+            task_workspaces: workspace.join("workspaces/tasks"),
         };
         for path in [
             &layout.skills,
             &layout.extraction_workspaces,
             &layout.task_workspaces,
         ] {
-            bounded(root, path)?;
+            bounded(if path == &layout.skills { root } else { workspace }, path)?;
             fs::create_dir_all(path).map_err(|e| e.to_string())?;
         }
         for (name, body) in SKILLS {
@@ -219,7 +222,7 @@ impl Layout {
         let path = self
             .task_workspaces
             .join(stable_id(format!("{provider_id}:{}", task.id)));
-        bounded(&self.root, &path)?;
+        bounded(&self.task_workspaces, &path)?;
         fs::create_dir_all(&path).map_err(|e| e.to_string())?;
         write_atomic(
             &path.join("task.json"),
@@ -391,6 +394,23 @@ pub fn capabilities() -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn execution_workspaces_are_separate_from_persisted_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let workspace = dir.path().join("home/.codepet");
+        let layout = Layout::initialize_with_workspace(&data, &workspace).unwrap();
+        assert_eq!(layout.root, data);
+        assert!(layout.skills.starts_with(&data));
+        assert!(layout.extraction_workspaces.starts_with(&workspace));
+        assert!(layout.task_workspaces.starts_with(&workspace));
+        assert!(!data.join("workspaces").exists());
+        let task: Task = serde_json::from_value(json!({"schemaVersion":1,"id":"task","revision":1,"rootThreadId":"root","title":"test","detail":"","manualCompletion":false,"episodes":[],"edges":[]})).unwrap();
+        let path = layout.allocate_task("local:codex", &task).unwrap();
+        assert!(path.starts_with(&workspace));
+        assert!(path.join("task.json").is_file());
+    }
+
     #[test]
     fn workspace_executor_receives_snapshots_and_records_validated_result() {
         struct Executor;

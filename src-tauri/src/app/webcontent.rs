@@ -28,6 +28,7 @@ struct Manifest {
     schema_version: u32,
     backend_api_version: u32,
     version: String,
+    built_at: u64,
     files: BTreeMap<String, String>,
 }
 
@@ -35,49 +36,76 @@ struct Manifest {
 pub struct WebContentAssets {
     files: BTreeMap<String, Vec<u8>>,
     version: String,
+    built_at: u64,
     error_page: Option<Vec<u8>>,
 }
 
-/// Only fall back to packaged resources when there are no version directories.
-/// Do not silently skip a corrupt/incompatible newest version.
+/// Compare complete, compatible packages from both locations by SemVer then build time.
+/// Directory sequence numbers are installation slots, not UI release versions.
 pub fn resolve_directory(
     data_directory: &Path,
     packaged_directory: impl FnOnce() -> Result<PathBuf, String>,
 ) -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+    let mut errors = Vec::new();
+    match packaged_directory() {
+        Ok(path) => candidates.push((path, true, 0)),
+        Err(error) => errors.push(error),
+    }
     let versions = data_directory.join("webcontent");
-    let entries = match fs::read_dir(&versions) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return packaged_directory(),
-        Err(error) => return Err(format!("cannot read {}: {error}", versions.display())),
-    };
-    let mut newest: Option<(u64, PathBuf)> = None;
-    for entry in entries {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let name = entry.file_name();
-        let Some(number) = name.to_str().and_then(version_number) else {
-            continue;
-        };
-        let kind = entry.file_type().map_err(|error| error.to_string())?;
-        if kind.is_symlink() {
-            return Err(format!(
-                "webcontent version must not be a symlink: {}",
-                entry.path().display()
-            ));
+    match fs::read_dir(&versions) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        errors.push(error.to_string());
+                        continue;
+                    }
+                };
+                let Some(number) = entry.file_name().to_str().and_then(version_number) else {
+                    continue;
+                };
+                match entry.file_type() {
+                    Ok(kind) if kind.is_symlink() => errors.push(format!(
+                        "webcontent version must not be a symlink: {}",
+                        entry.path().display()
+                    )),
+                    Ok(kind) if kind.is_dir() => candidates.push((entry.path(), false, number)),
+                    Ok(_) => {}
+                    Err(error) => errors.push(error.to_string()),
+                }
+            }
         }
-        if kind.is_dir()
-            && newest
-                .as_ref()
-                .map_or(true, |(current, _)| number > *current)
-        {
-            newest = Some((number, entry.path()));
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => errors.push(format!("cannot read {}: {error}", versions.display())),
+    }
+    let mut newest = None;
+    for (path, packaged, slot) in candidates {
+        match WebContentAssets::load(&path) {
+            Ok(assets) => {
+                let mut version =
+                    semver::Version::parse(assets.version()).expect("validated version");
+                // SemVer build metadata does not affect release precedence.
+                version.build = semver::BuildMetadata::EMPTY;
+                let rank = (version, assets.built_at, packaged, slot);
+                if newest.as_ref().map_or(true, |(current, _)| &rank > current) {
+                    newest = Some((rank, path));
+                }
+            }
+            Err(error) => errors.push(error),
         }
     }
-    match newest {
-        Some((_, directory)) => Ok(directory),
-        None => packaged_directory(),
+    for error in &errors {
+        super::log::info("webcontent", &format!("candidate skipped: {error}"));
     }
+    newest.map(|(_, path)| path).ok_or_else(|| {
+        format!(
+            "no compatible, complete webcontent package: {}",
+            errors.join("; ")
+        )
+    })
 }
-
 fn version_number(name: &str) -> Option<u64> {
     let number = name.strip_prefix('v')?;
     if number.starts_with('0')
@@ -115,8 +143,11 @@ impl WebContentAssets {
                 contract.app_id, contract.schema_version, contract.backend_api_version
             ));
         }
-        if manifest.version.trim().is_empty() {
-            return Err("missing webcontent version".into());
+        if semver::Version::parse(&manifest.version).is_err() {
+            return Err("invalid webcontent semantic version".into());
+        }
+        if manifest.built_at == 0 || manifest.built_at > 9_007_199_254_740_991 {
+            return Err("invalid webcontent build timestamp".into());
         }
         for entry in ["index.html", "pet.html"] {
             if !manifest.files.contains_key(entry) {
@@ -144,12 +175,17 @@ impl WebContentAssets {
         Ok(Self {
             files,
             version: manifest.version,
+            built_at: manifest.built_at,
             error_page: None,
         })
     }
 
     pub fn version(&self) -> &str {
         &self.version
+    }
+
+    pub fn built_at(&self) -> u64 {
+        self.built_at
     }
 
     // Only a diagnostic page is built into Rust, never a fallback copy of the UI.
@@ -219,7 +255,7 @@ mod tests {
         fs::write(dir.path().join("index.html"), "<h1>Main</h1>").unwrap();
         fs::write(dir.path().join("pet.html"), "<h1>Pet</h1>").unwrap();
         fs::write(dir.path().join("assets/ui.js"), "const ui = 1;").unwrap();
-        write_manifest(dir.path(), "ui-v1");
+        write_manifest(dir.path(), "1.0.0");
         dir
     }
 
@@ -240,21 +276,83 @@ mod tests {
         );
     }
 
-    #[test]
-    fn newest_data_version_wins_numerically_without_resolving_bundle() {
-        let data = tempfile::tempdir().unwrap();
-        for name in ["v2", "v10", "v9"] {
-            fs::create_dir_all(data.path().join("webcontent").join(name)).unwrap();
+    fn candidate(data: &Path, name: &str, version: &str, built_at: u64) -> PathBuf {
+        let source = fixture();
+        let target = data.join("webcontent").join(name);
+        fs::create_dir_all(target.join("assets")).unwrap();
+        for name in ["index.html", "pet.html", "assets/ui.js"] {
+            fs::copy(source.path().join(name), target.join(name)).unwrap();
         }
-        let selected = resolve_directory(data.path(), || {
-            panic!("must not consult bundle when data version exists")
-        })
-        .unwrap();
-        assert_eq!(selected, data.path().join("webcontent/v10"));
-        // A corrupt newest version must produce an error, never silently load older/bundled UI.
-        assert!(WebContentAssets::load(&selected).is_err());
+        write_manifest(&target, version);
+        let path = target.join("manifest.json");
+        let mut manifest: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        manifest["builtAt"] = json!(built_at);
+        fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        target
     }
 
+    #[test]
+    fn compares_bundled_and_data_semver_before_timestamps_or_slot_numbers() {
+        let data = tempfile::tempdir().unwrap();
+        let packaged = fixture();
+        write_manifest(packaged.path(), "2.0.0");
+        candidate(data.path(), "v99", "1.9.0", 1_900_000_000_000);
+        assert_eq!(
+            resolve_directory(data.path(), || Ok(packaged.path().into())).unwrap(),
+            packaged.path()
+        );
+        let latest = candidate(data.path(), "v2", "2.10.0", 1);
+        candidate(data.path(), "v100", "2.9.0", 1_900_000_000_000);
+        assert_eq!(
+            resolve_directory(data.path(), || Ok(packaged.path().into())).unwrap(),
+            latest
+        );
+    }
+
+    #[test]
+    fn same_version_uses_build_time_and_exact_ties_prefer_bundle() {
+        let data = tempfile::tempdir().unwrap();
+        let packaged = fixture();
+        let same = candidate(data.path(), "v1", "1.0.0+local", 1_789_228_800_000);
+        assert_eq!(
+            resolve_directory(data.path(), || Ok(packaged.path().into())).unwrap(),
+            packaged.path()
+        );
+        candidate(data.path(), "v1", "1.0.0", 1_789_228_800_001);
+        assert_eq!(
+            resolve_directory(data.path(), || Ok(packaged.path().into())).unwrap(),
+            same
+        );
+    }
+
+    #[test]
+    fn skips_corrupt_incompatible_or_missing_metadata_and_honors_prereleases() {
+        let data = tempfile::tempdir().unwrap();
+        let packaged = fixture();
+        let corrupt = candidate(data.path(), "v1", "9.0.0", 1);
+        fs::write(corrupt.join("pet.html"), "damaged").unwrap();
+        let incompatible = candidate(data.path(), "v2", "8.0.0", 1);
+        let path = incompatible.join("manifest.json");
+        let mut manifest: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        manifest["backendApiVersion"] = json!(999);
+        fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        candidate(data.path(), "v3", "1.0.0-beta.10", 1_900_000_000_000);
+        assert_eq!(
+            resolve_directory(data.path(), || Ok(packaged.path().into())).unwrap(),
+            packaged.path()
+        );
+        let beta = candidate(data.path(), "v4", "2.0.0-beta.10", 1);
+        candidate(data.path(), "v5", "2.0.0-beta.2", 2);
+        assert_eq!(
+            resolve_directory(data.path(), || Err("bundle missing".into())).unwrap(),
+            beta
+        );
+        manifest.as_object_mut().unwrap().remove("builtAt");
+        fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert!(WebContentAssets::load(&incompatible).is_err());
+        let empty = tempfile::tempdir().unwrap();
+        assert!(resolve_directory(empty.path(), || Err("bundle missing".into())).is_err());
+    }
     #[test]
     fn directory_names_have_unambiguous_numeric_versions() {
         assert_eq!(version_number("v10"), Some(10));
@@ -288,6 +386,7 @@ mod tests {
             })
             .collect::<serde_json::Map<String, Value>>();
         manifest["version"] = json!(version);
+        manifest["builtAt"] = json!(1_789_228_800_000u64);
         manifest["files"] = json!(files);
         fs::write(
             root.join("manifest.json"),
@@ -316,7 +415,7 @@ mod tests {
         let dir = fixture();
         let first = WebContentAssets::load(dir.path()).unwrap();
         fs::write(dir.path().join("assets/ui.js"), "const ui = 2;").unwrap();
-        write_manifest(dir.path(), "ui-v2");
+        write_manifest(dir.path(), "1.1.0");
         let second = WebContentAssets::load(dir.path()).unwrap();
         assert_eq!(
             first.content("/assets/ui.js").unwrap().as_ref(),
@@ -326,7 +425,7 @@ mod tests {
             second.content("/assets/ui.js").unwrap().as_ref(),
             b"const ui = 2;"
         );
-        assert_eq!(second.version(), "ui-v2");
+        assert_eq!(second.version(), "1.1.0");
     }
 
     #[test]
@@ -394,7 +493,7 @@ mod tests {
             dir.path().join("assets/ui.js"),
         )
         .unwrap();
-        write_manifest(dir.path(), "ui-v1");
+        write_manifest(dir.path(), "1.0.0");
         assert!(WebContentAssets::load(dir.path())
             .err()
             .unwrap()

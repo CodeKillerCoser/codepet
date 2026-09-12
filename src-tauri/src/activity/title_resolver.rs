@@ -16,7 +16,7 @@ pub fn enrich_event_title(mut event: PetEvent) -> PetEvent {
 }
 
 pub fn resolve_external_title(provider: AgentId, session_id: &str) -> Option<String> {
-    let home = dirs::home_dir()?;
+    let home = crate::paths::home()?;
     match provider {
         AgentId::Claude => resolve_claude_title_from_projects(&home.join(".claude").join("projects"), session_id),
         AgentId::Qoder => resolve_qoder_title_from_projects(&home.join(".qoder").join("projects"), session_id),

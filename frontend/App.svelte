@@ -35,7 +35,6 @@
     RotateCcw,
     Rocket,
     ShieldAlert,
-    Settings,
     Sun,
     Trash2,
     X,
@@ -44,7 +43,7 @@
   import { onMount, tick } from "svelte";
   import ProviderConnectionStatus from "./lib/ProviderConnectionStatus.svelte";
   import { observeProviderRuntimes, type ProviderConnectionState } from "./lib/providerRuntimes";
-  import { appDataDirectory, appDataDirectoryTargetStatus, checkAppUpdate, clearAgentRuntimeExecutable, cutOutImageSubject, deletePet, detectAgentRuntime, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentRuntimeExecutable, setAppDataDirectory, setLaunchAtLoginEnabled, setPetDataDirectory, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { getAppPaths, type AppPaths, checkAppUpdate, clearAgentRuntimeExecutable, cutOutImageSubject, deletePet, detectAgentRuntime, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentRuntimeExecutable, setPathManagerData, setLaunchAtLoginEnabled, setPathManagerPets, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
   import { agentRuntimeSourceLabel, agentRuntimeStatusMeta, canRestoreAutomaticDetection } from "./lib/agentRuntime";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
@@ -106,6 +105,7 @@
   let petLibrary: PetLibraryView | null = null;
   let events: PetEvent[] = [];
   let appDataDir = "";
+  let managedPaths: AppPaths | null = null;
   let busyRuntime: string | null = null;
   let busyPet = "";
   let busyAppDataDirectory = false;
@@ -291,12 +291,13 @@
       const [_runtimeSubscription, nextEvents, nextAppDataDir, nextPetLibrary, nextLaunchAtLogin] = await Promise.all([
         measureFrontendPerf("frontend.main.list_agent_runtimes", () => runtimeObserver.start()),
         measureFrontendPerf("frontend.main.recent_events", () => recentEvents()),
-        measureFrontendPerf("frontend.main.app_data_directory", () => appDataDirectory()),
+        measureFrontendPerf("frontend.main.app_data_directory", () => getAppPaths()),
         measureFrontendPerf("frontend.main.list_pets", () => listPets()),
         measureFrontendPerf("frontend.main.get_launch_at_login", () => getLaunchAtLoginEnabled()),
       ]);
       events = mergeEventFeed(events, nextEvents);
-      appDataDir = nextAppDataDir;
+      managedPaths = nextAppDataDir;
+      appDataDir = nextAppDataDir.data;
       petLibrary = nextPetLibrary;
       launchAtLogin = nextLaunchAtLogin;
       settings = normalizeSettings(await measureFrontendPerf("frontend.main.get_settings", () => getAppSettings()));
@@ -1018,7 +1019,7 @@
     busyPet = "directory";
     error = "";
     try {
-      petLibrary = await setPetDataDirectory(selected);
+      petLibrary = await setPathManagerPets(selected);
       settings = normalizeSettings(await getAppSettings());
     } catch (currentError) {
       error = String(currentError);
@@ -1030,40 +1031,20 @@
   async function chooseAppDataDirectory() {
     const selected = await open({ directory: true, multiple: false });
     if (typeof selected !== "string") return;
-    busyAppDataDirectory = true;
-    error = "";
-    let clearTarget = false;
-    try {
-      const targetStatus = await appDataDirectoryTargetStatus(selected);
-      if (targetStatus.requiresClear) {
-        const confirmed = await confirmDialog("所选目录已有内容。继续会先清空该目录，再复制当前 Code Pet 数据。是否继续？", {
-          title: "清空数据目录",
-          kind: "warning",
-          okLabel: "清空并使用",
-          cancelLabel: "取消",
-        });
-        if (!confirmed) return;
-        clearTarget = true;
-      }
-    } catch (currentError) {
-      error = String(currentError);
-      return;
-    } finally {
-      busyAppDataDirectory = false;
-    }
-    await updateAppDataDirectory(selected, clearTarget);
+    await updateAppDataDirectory(selected);
   }
 
   async function resetAppDataDirectory() {
     await updateAppDataDirectory(null);
   }
 
-  async function updateAppDataDirectory(path: string | null, clearTarget = false) {
+  async function updateAppDataDirectory(path: string | null) {
     busyAppDataDirectory = true;
     error = "";
     try {
-      settings = normalizeSettings(await setAppDataDirectory(path, clearTarget));
-      appDataDir = await appDataDirectory();
+      settings = normalizeSettings(await setPathManagerData(path));
+      managedPaths = await getAppPaths();
+      appDataDir = managedPaths.data;
       petLibrary = await listPets();
       appDataRestartPending = true;
     } catch (currentError) {
@@ -1694,7 +1675,7 @@
 </script>
 
 <main class={`app-shell main-theme ${appTheme}`} class:sidebar-collapsed={sidebarCollapsed}>
-  <WindowToolbar bind:collapsed={sidebarCollapsed} canGoBack={$navigation.canGoBack} canGoForward={$navigation.canGoForward} onBack={navigation.back} onForward={navigation.forward} onError={(message) => error = message} />
+  <WindowToolbar bind:collapsed={sidebarCollapsed} canGoBack={$navigation.canGoBack} canGoForward={$navigation.canGoForward} onBack={navigation.back} onForward={navigation.forward} settingsActive={tab === "settings"} onSettings={() => navigation.navigate("settings")} onError={(message) => error = message} />
   <aside id="main-sidebar" class="sidebar" inert={sidebarCollapsed}>
     <MainNavigation current={tab} onNavigate={navigation.navigate} />
   </aside>
@@ -1705,7 +1686,6 @@
         <h2>{pageTitle}</h2>
         {#if error}<p class="error">{error}</p>{/if}
       </div>
-      <button class="settings-entry" aria-label="设置" title="设置" aria-pressed={tab === "settings"} on:click={() => navigation.navigate("settings")}><Settings size={18} /></button>
     </header>
 
     <div class="content">
@@ -2093,13 +2073,22 @@
             <header class="panel-head">
               <h3><Rocket size={18} /> 系统</h3>
             </header>
+            {#if managedPaths}
+              <div class="system-data-directory">
+                <div class="setting-line"><span>安装目录（install）</span></div>
+                <p class="path">{managedPaths.install}</p>
+                <div class="setting-line"><span>工作目录（workspace）</span></div>
+                <p class="path">{managedPaths.workspace}</p>
+                <p class="setting-note">任务执行目录独立保存，更换数据目录不会移动工作目录。</p>
+              </div>
+            {/if}
             <div class="system-data-directory">
               <div class="setting-line">
-                <span>数据目录</span>
+                <span>数据目录（data）</span>
                 <em>{settings.data.dataDirectory ? "自定义" : "默认"}</em>
               </div>
               <div class="data-directory">
-                <span>{appDataDir || settings.data.dataDirectory || "app data/code-pet"}</span>
+                <span>{managedPaths?.data ?? "正在读取路径…"}</span>
                 <div class="directory-actions">
                   <button disabled={busyAppDataDirectory} on:click={chooseAppDataDirectory}>
                     <FolderCog size={16} /> 修改
@@ -2110,7 +2099,7 @@
                 </div>
               </div>
               <p class="setting-note">
-                {appDataRestartPending ? "已保存并复制原数据，重启后完全生效。" : "所选目录需为空；若非空会先确认清空，再复制原数据，保存后请重启。"}
+                {appDataRestartPending ? "已保存路径配置，重启后生效。" : "更改只切换数据目录，不复制或清空已有数据，保存后请重启。"}
               </p>
             </div>
             <label class="check">

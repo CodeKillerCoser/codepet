@@ -944,7 +944,7 @@ impl OpenCodeProvider {
             plugin_id: OPENCODE_PLUGIN_ID.to_string(),
             display_name: "OpenCode".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            default_workspace_root: default_remote_workspace_root("opencode"),
+            default_workspace_root: codepet_paths::remote_workspace_for_user("opencode"),
             supported_versions: VersionRange {
                 min_version: PROTOCOL_VERSION,
                 max_version: PROTOCOL_VERSION,
@@ -2282,17 +2282,6 @@ fn default_server_working_directory() -> Option<PathBuf> {
         .filter(|path| path.is_absolute() && path.is_dir())
 }
 
-fn default_remote_workspace_root(harness_name: &str) -> Option<String> {
-    local_runtime::home_dir()
-        .filter(|path| path.is_absolute())
-        .map(|path| {
-            path.join(".codepet")
-                .join("remote_workspace")
-                .join(harness_name)
-                .to_string_lossy()
-                .into_owned()
-        })
-}
 
 fn ensure_opencode_workspace(workspace: PathBuf) -> Result<PathBuf, ProtocolError> {
     if !workspace.is_absolute() {

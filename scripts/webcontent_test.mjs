@@ -25,6 +25,7 @@ test("builds a verifiable package with both entry points and hashes", (t) => {
   const { source } = fixture(t);
   const manifest = validateWebcontent(source);
   assert.equal(manifest.version, "1.0.0");
+  assert.ok(Number.isSafeInteger(manifest.builtAt) && manifest.builtAt > 0);
   assert.equal(Object.keys(manifest.files).length, 3);
   assert.match(manifest.files["pet.html"], /^[a-f0-9]{64}$/);
 });
@@ -41,7 +42,19 @@ test("installs increasing versions without changing old UI or Rust files", (t) =
   assert.equal(second.directoryVersion, "v2");
   assert.equal(validateWebcontent(second.target).version, "1.1.0");
   assert.equal(validateWebcontent(first.target).version, "1.0.0");
+  assert.equal(validateWebcontent(second.target).builtAt, validateWebcontent(source).builtAt);
   assert.equal(readFileSync(binary, "utf8"), "unchanged Rust binary");
+});
+
+test("requires semantic release versions and a build timestamp", (t) => {
+  const { source } = fixture(t);
+  for (const version of ['v1', '1.0', '01.0.0', '1.0.0-01']) assert.throws(() => createManifest(source, version), /semantic version/);
+  for (const time of [0, -1, 1.5, Number.NaN]) assert.throws(() => createManifest(source, '1.0.0', time), /timestamp/);
+  const manifest = createManifest(source, '2.0.0-beta.10+local', 1789228800000);
+  assert.equal(validateWebcontent(source).builtAt, 1789228800000);
+  delete manifest.builtAt;
+  writeFileSync(join(source, 'manifest.json'), JSON.stringify(manifest));
+  assert.throws(() => validateWebcontent(source), /timestamp/);
 });
 
 test("rejects corrupt source without installing a new version", (t) => {

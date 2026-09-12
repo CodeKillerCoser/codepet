@@ -1,6 +1,5 @@
 use crate::{
     runtime_gateway::tauri_bridge::ProviderHostState,
-    settings::{configured_app_data_dir, load_app_settings},
 };
 use codepet_gateway_sdk::ProtocolServer;
 use codepet_task_lineage::{
@@ -30,9 +29,8 @@ use provider_executor::ProviderExecutor;
 static INITIALIZED: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 fn layout() -> Result<Layout, String> {
-    Layout::initialize(&configured_app_data_dir(
-        &load_app_settings().map_err(|e| e.to_string())?,
-    ))
+    let paths = crate::paths::current().map_err(|error| error.to_string())?;
+    Layout::initialize_with_workspace(&paths.data, &paths.workspace)
 }
 fn directory(provider_id: &str) -> Result<PathBuf, String> {
     if provider_id.is_empty() {

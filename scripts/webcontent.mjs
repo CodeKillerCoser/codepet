@@ -20,7 +20,15 @@ function assetPath(root, name) {
   return path;
 }
 
-export function createManifest(directory, version) {
+function validateBuildMetadata(manifest) {
+  const identifier = '(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)';
+  const semver = new RegExp(`^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-${identifier}(?:\\.${identifier})*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`);
+  if (typeof manifest.version !== 'string' || !semver.test(manifest.version)) throw new Error('Invalid webcontent semantic version');
+  if (!Number.isSafeInteger(manifest.builtAt) || manifest.builtAt <= 0) throw new Error('Invalid webcontent build timestamp');
+}
+
+export function createManifest(directory, version, builtAt = Date.now()) {
+  validateBuildMetadata({ version, builtAt });
   const root = realpathSync(directory);
   const files = {};
   function visit(directory, prefix = "") {
@@ -33,7 +41,7 @@ export function createManifest(directory, version) {
   }
   visit(root);
   if (!files["index.html"] || !files["pet.html"]) throw new Error("webcontent requires index.html and pet.html");
-  const manifest = { ...contract, version, files };
+  const manifest = { ...contract, version, builtAt, files };
   writeFileSync(join(root, manifestName), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
 }
@@ -44,7 +52,8 @@ export function validateWebcontent(directory) {
   for (const key of ["appId", "schemaVersion", "backendApiVersion"]) {
     if (manifest[key] !== contract[key]) throw new Error(`Incompatible webcontent ${key}: ${manifest[key]}`);
   }
-  if (!manifest.version || typeof manifest.files !== "object" || !manifest.files || Array.isArray(manifest.files)) throw new Error("Invalid webcontent manifest");
+  validateBuildMetadata(manifest);
+  if (typeof manifest.files !== "object" || !manifest.files || Array.isArray(manifest.files)) throw new Error("Invalid webcontent manifest");
   for (const entry of ["index.html", "pet.html"]) {
     if (!Object.hasOwn(manifest.files, entry)) throw new Error(`Missing entry: ${entry}`);
   }
@@ -104,7 +113,7 @@ export function installWebcontent(source, dataDirectory) {
     validateWebcontent(staging);
     if (existsSync(target)) throw new Error(`Version already exists: ${target}; retry installation`);
     renameSync(staging, target);
-    return { target, directoryVersion, version: manifest.version };
+    return { target, directoryVersion, version: manifest.version, builtAt: manifest.builtAt };
   } finally {
     // Only delete the staging folder allocated by this invocation in the named data root.
     if (dirname(staging) === parent && basename(staging).startsWith(".webcontent-stage-") && existsSync(staging)) {

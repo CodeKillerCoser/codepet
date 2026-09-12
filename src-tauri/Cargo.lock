@@ -853,11 +853,11 @@ dependencies = [
  "codepet-gateway-sdk",
  "codepet-host",
  "codepet-lan-channel-sdk",
+ "codepet-paths",
  "codepet-provider-sdk",
  "codepet-task-lineage",
  "core-foundation",
  "core-graphics",
- "dirs 5.0.1",
  "hmac",
  "image",
  "libc",
@@ -870,6 +870,7 @@ dependencies = [
  "os_info",
  "qrcode",
  "reqwest 0.12.28",
+ "semver",
  "serde",
  "serde_json",
  "sha2",
@@ -965,6 +966,15 @@ name = "codepet-lan-channel-sdk"
 version = "0.1.0"
 dependencies = [
  "codepet-core-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "codepet-paths"
+version = "0.1.0"
+dependencies = [
+ "dirs 5.0.1",
  "serde",
  "serde_json",
 ]

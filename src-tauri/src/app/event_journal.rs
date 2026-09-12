@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 static JOURNAL: OnceLock<Result<Arc<EventJournal>, String>> = OnceLock::new();
 
 pub fn journal() -> Result<&'static Arc<EventJournal>, String> {
-    JOURNAL.get_or_init(|| EventJournal::open(crate::settings::current_app_data_dir().join("logs"))
+    JOURNAL.get_or_init(|| crate::paths::current().and_then(|paths| EventJournal::open(paths.logs()))
         .map_err(|error| error.to_string())).as_ref().map_err(Clone::clone)
 }
 

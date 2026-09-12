@@ -21,6 +21,8 @@ tauri-build = { version = "2", features = [] }
 custom-protocol = ["tauri/custom-protocol"]
 
 [dependencies]
+semver = "1"
+codepet-paths = { path = "../crates/codepet-paths" }
 axum = "0.7"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
@@ -30,7 +32,6 @@ codepet-lan-channel-sdk = { path = "../sdk/rust/codepet-lan-channel-sdk", versio
 codepet-host = { path = "../crates/codepet-host", version = "0.1.0" }
 codepet-task-lineage = { path = "../crates/codepet-task-lineage" }
 codepet-provider-sdk = { path = "../sdk/rust/codepet-provider-sdk", version = "0.1.0" }
-dirs = "5"
 hmac = "0.12"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }

@@ -21,6 +21,7 @@ pub use app::cli;
 pub use app::log as app_log;
 pub use app::notifications;
 pub use app::settings;
+pub use app::paths;
 pub use app::state;
 pub use app::updates;
 pub use pet::library as pets;
@@ -36,8 +37,7 @@ use base64::Engine;
 use events::PetEvent;
 use pets::PetLibraryView;
 use settings::{
-    app_data_directory_target_status as read_app_data_directory_target_status, configured_app_data_dir,
-    load_app_settings, save_app_settings, update_app_data_directory, AppDataDirectoryTargetStatus,
+    load_app_settings, save_app_settings,
     AppSettings,
 };
 use state::{ApprovalBehavior, ApprovalDecision, SharedState};
@@ -176,23 +176,13 @@ async fn send_test_robot_notification(channel_id: Option<String>) -> Result<Stri
 }
 
 #[tauri::command]
-fn app_data_directory() -> Result<String, String> {
-    let settings = load_app_settings().map_err(|error| error.to_string())?;
-    Ok(configured_app_data_dir(&settings).to_string_lossy().to_string())
+fn path_manager_get(app: AppHandle) -> Result<paths::PathManager, String> {
+    paths::for_package(app.package_info()).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-fn app_data_directory_target_status(path: String) -> Result<AppDataDirectoryTargetStatus, String> {
-    read_app_data_directory_target_status(path).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn set_app_data_directory(
-    app: AppHandle,
-    path: Option<String>,
-    clear_target: bool,
-) -> Result<AppSettings, String> {
-    let settings = update_app_data_directory(path, clear_target).map_err(|error| error.to_string())?;
+fn path_manager_set_data(app: AppHandle, path: Option<String>) -> Result<AppSettings, String> {
+    let settings = paths::set_data_directory(path).map_err(|error| error.to_string())?;
     let _ = app.emit("settings-updated", settings.clone());
     Ok(settings)
 }
@@ -231,8 +221,9 @@ fn delete_pet(app: AppHandle, pet_id: String) -> Result<PetLibraryView, String> 
 }
 
 #[tauri::command]
-fn set_pet_data_directory(app: AppHandle, path: String) -> Result<PetLibraryView, String> {
-    let view = pets::update_pet_data_directory(path)?;
+fn path_manager_set_pets(app: AppHandle, path: String) -> Result<PetLibraryView, String> {
+    let settings = paths::set_pets_directory(path).map_err(|error| error.to_string())?;
+    let view = pets::pet_library_view(&settings);
     if let Ok(settings) = load_app_settings() {
         let _ = app.emit("settings-updated", settings);
     }
@@ -356,17 +347,15 @@ pub fn run() {
     // Distribution resources are handled separately; keep Tauri's origin and IPC.
     let mut context = tauri::generate_context!(assets = app::webcontent::WebContentAssets::default());
     if !tauri::is_dev() {
-        let assets = app::webcontent::resolve_directory(&settings::current_app_data_dir(), || {
-            tauri::utils::platform::resource_dir(context.package_info(), &tauri::Env::default())
-                .map(|root| root.join("webcontent"))
-                .map_err(|error| error.to_string())
+        let assets = paths::for_package(context.package_info()).map_err(|error| error.to_string()).and_then(|paths| {
+            app::webcontent::resolve_directory(&paths.data, || Ok(paths.packaged_webcontent()))
         }).and_then(|root| {
             app_log::info("webcontent", &format!("loading {}", root.display()));
             app::webcontent::WebContentAssets::load(&root)
         });
         let assets = match assets {
             Ok(assets) => {
-                app_log::info("webcontent", &format!("loaded external UI version={}", assets.version()));
+                app_log::info("webcontent", &format!("loaded external UI version={} builtAt={}", assets.version(), assets.built_at()));
                 assets
             }
             Err(error) => {
@@ -491,15 +480,14 @@ pub fn run() {
             get_app_settings,
             update_app_settings,
             send_test_robot_notification,
-            app_data_directory,
-            app_data_directory_target_status,
-            set_app_data_directory,
+            path_manager_get,
+            path_manager_set_data,
             get_launch_at_login_enabled,
             set_launch_at_login_enabled,
             list_pets,
             select_pet,
             delete_pet,
-            set_pet_data_directory,
+            path_manager_set_pets,
             import_pet_image,
             update_pet_image_pixel_size,
             cut_out_image_subject,

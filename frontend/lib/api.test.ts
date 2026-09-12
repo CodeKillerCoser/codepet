@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  appDataDirectory,
-  appDataDirectoryTargetStatus,
+  getAppPaths,
   checkAppUpdate,
   clearAgentRuntimeExecutable,
   cutOutImageSubject,
@@ -17,7 +16,7 @@ import {
   refreshAgentRuntimes,
   sendTestRobotNotification,
   setAgentRuntimeExecutable,
-  setAppDataDirectory,
+  setPathManagerData,
   setLaunchAtLoginEnabled,
   updatePetImagePixelSize,
 } from "./api";
@@ -167,26 +166,17 @@ describe("agentRuntimes", () => {
   });
 });
 
-describe("appDataDirectory", () => {
+describe("path manager", () => {
   afterEach(() => {
     vi.mocked(invoke).mockReset();
   });
 
   it("reads the resolved app data directory", async () => {
-    vi.mocked(invoke).mockResolvedValue("/tmp/code-pet");
+    vi.mocked(invoke).mockResolvedValue({ install: "/opt/code-pet", data: "/tmp/code-pet", workspace: "/home/user/.codepet", resources: "/opt/code-pet", settingsFile: "/home/user/.local/share/code-pet/settings.json" });
 
-    await expect(appDataDirectory()).resolves.toBe("/tmp/code-pet");
+    await expect(getAppPaths()).resolves.toMatchObject({data: "/tmp/code-pet", workspace: "/home/user/.codepet"});
 
-    expect(invoke).toHaveBeenCalledWith("app_data_directory");
-  });
-
-  it("checks whether the selected app data directory needs clearing", async () => {
-    const status = { isCurrent: false, isEmpty: false, requiresClear: true };
-    vi.mocked(invoke).mockResolvedValue(status);
-
-    await expect(appDataDirectoryTargetStatus("/tmp/code-pet")).resolves.toEqual(status);
-
-    expect(invoke).toHaveBeenCalledWith("app_data_directory_target_status", { path: "/tmp/code-pet" });
+    expect(invoke).toHaveBeenCalledWith("path_manager_get");
   });
 
   it("updates or resets the app data directory", async () => {
@@ -195,16 +185,14 @@ describe("appDataDirectory", () => {
     };
     vi.mocked(invoke).mockResolvedValue(settings);
 
-    await expect(setAppDataDirectory("/tmp/code-pet", true)).resolves.toEqual(settings);
-    await setAppDataDirectory(null);
+    await expect(setPathManagerData("/tmp/code-pet")).resolves.toEqual(settings);
+    await setPathManagerData(null);
 
-    expect(invoke).toHaveBeenNthCalledWith(1, "set_app_data_directory", {
+    expect(invoke).toHaveBeenNthCalledWith(1, "path_manager_set_data", {
       path: "/tmp/code-pet",
-      clearTarget: true,
     });
-    expect(invoke).toHaveBeenNthCalledWith(2, "set_app_data_directory", {
+    expect(invoke).toHaveBeenNthCalledWith(2, "path_manager_set_data", {
       path: null,
-      clearTarget: false,
     });
   });
 });

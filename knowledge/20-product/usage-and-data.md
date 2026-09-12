@@ -87,7 +87,7 @@ Token 用量统计会读取本机 Agent 审计和 transcript 信息，并生成�
 - 活动没有出现：先检查 Agent 页的来源状态，再参照 [Provider 活动订阅](../10-architecture/provider-hook-observation-proposal.md) 核对 Hook／原生插件安装、原应用信任与首次活动；不再排查旧 Desktop IPC socket 或固定端口 collector。
 - 用量来自本机可读记录，不是服务商账单；缺失记录或不兼容格式会影响覆盖范围。
 - 启动变慢：参照 [性能监控基线](../40-runbooks/performance-monitoring.md)，用日志区分启动、事件和用量读取耗时。
-- 更换数据目录前先备份；核对目标目录内容，并在重启后验证日志、宠物和用量缓存位置。
+- 数据目录由 Path Manager 管理；切换只保存路径，不复制、清空或迁移已有数据，重启后使用新路径。install、data、workspace 的定义见 [Path Manager](../10-architecture/path-manager.md)。
 
 ## 维护依据
 

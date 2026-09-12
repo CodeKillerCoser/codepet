@@ -1,5 +1,5 @@
 use code_pet_lib::pets::{
-    clamp_image_pixel_size, delete_pet, discover_codex_pet_packages, pet_data_directory, pixelate_image, select_pet,
+    clamp_image_pixel_size, delete_pet, discover_codex_pet_packages, pixelate_image, select_pet,
     ConfiguredPet, PetKind,
 };
 use code_pet_lib::settings::{AppSettings, PixelPetSprite};
@@ -10,7 +10,7 @@ use tempfile::tempdir;
 #[test]
 fn default_pet_data_directory_is_under_app_data_not_workspace() {
     let settings = AppSettings::default();
-    let data_dir = pet_data_directory(&settings);
+    let data_dir = code_pet_lib::paths::pets(&settings);
     let workspace = std::env::current_dir().unwrap();
 
     assert!(data_dir.ends_with("code-pet/pets"));
@@ -23,7 +23,7 @@ fn default_pet_data_directory_follows_custom_app_data_directory() {
     let mut settings = AppSettings::default();
     settings.data.data_directory = Some(temp.path().join("code-pet-data").to_string_lossy().to_string());
 
-    assert_eq!(pet_data_directory(&settings), temp.path().join("code-pet-data").join("pets"));
+    assert_eq!(code_pet_lib::paths::pets(&settings), temp.path().join("code-pet-data").join("pets"));
 }
 
 #[test]
@@ -33,7 +33,7 @@ fn pet_library_data_directory_overrides_app_data_directory() {
     settings.data.data_directory = Some(temp.path().join("code-pet-data").to_string_lossy().to_string());
     settings.pet_library.data_directory = Some(temp.path().join("pets-only").to_string_lossy().to_string());
 
-    assert_eq!(pet_data_directory(&settings), temp.path().join("pets-only"));
+    assert_eq!(code_pet_lib::paths::pets(&settings), temp.path().join("pets-only"));
 }
 
 #[test]

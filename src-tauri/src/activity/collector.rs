@@ -1,6 +1,6 @@
 use crate::agents::AgentId;
 use crate::events::{frontend_event, normalize_hook_payload, PetEvent};
-use crate::settings::{configured_app_data_dir, load_app_settings, AppSettings};
+use crate::settings::{load_app_settings};
 use crate::state::{ApprovalDecision, SharedState, COLLECTOR_PORT};
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header, HeaderValue, StatusCode};
@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::FromStr;
 use tauri::{AppHandle, Emitter};
 
@@ -59,9 +59,7 @@ pub fn replay_default_spooled_events(app_state: &SharedState) -> Result<usize, s
     if let Err(error) = crate::app::event_journal::journal() {
         crate::app_log::error("event-journal", &error);
     }
-    let spool_path = load_app_settings()
-        .map(|settings| spool_path_for_settings(&settings))
-        .unwrap_or_else(|_| legacy_default_spool_path());
+    let spool_path = crate::paths::spool(&load_app_settings()?);
     replay_spooled_events(app_state, &spool_path)
 }
 
@@ -97,26 +95,6 @@ pub fn replay_spooled_events(
     }
     fs::remove_file(spool_path)?;
     Ok(imported)
-}
-
-pub fn spool_path_for_settings(settings: &AppSettings) -> PathBuf {
-    if settings
-        .data
-        .data_directory
-        .as_deref()
-        .is_some_and(|path| !path.trim().is_empty())
-    {
-        return configured_app_data_dir(settings).join("spool").join("events.jsonl");
-    }
-    legacy_default_spool_path()
-}
-
-fn legacy_default_spool_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".code-pet")
-        .join("spool")
-        .join("events.jsonl")
 }
 
 async fn recent_events(State(state): State<CollectorState>) -> Response {

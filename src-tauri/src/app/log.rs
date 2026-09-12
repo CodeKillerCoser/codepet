@@ -1,4 +1,4 @@
-use crate::settings::current_app_data_dir;
+use crate::paths::log_file;
 use chrono::{DateTime, Local, NaiveDate, SecondsFormat};
 use serde::Deserialize;
 use serde_json::Value;
@@ -67,8 +67,8 @@ impl PerfSpan {
 }
 
 pub fn init_app_logging() -> io::Result<PathBuf> {
-    let data_dir = current_app_data_dir();
-    let path = log_file_path(&data_dir);
+    let data_dir = crate::paths::current()?.data;
+    let path = log_file(&data_dir);
     let existed_before_rotation = path.exists();
     let rotated_by_date = rotate_log_file_for_date_if_needed(&path, log_file_modified_date(&path)?, Local::now().date_naive())?;
     let rotated_by_size = rotate_log_file_if_needed(&path, MAX_LOG_BYTES)?;
@@ -96,14 +96,6 @@ pub fn init_app_logging() -> io::Result<PathBuf> {
 
 pub fn log_app_start_banner() {
     write_global_banner("CODE PET APP START", &banner_fields("app_start"));
-}
-
-pub fn code_pet_data_dir(root: &Path) -> PathBuf {
-    root.join("code-pet")
-}
-
-pub fn log_file_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("logs").join(LOG_FILE_NAME)
 }
 
 pub fn rotate_log_file_for_date_if_needed(

@@ -1,6 +1,6 @@
 use code_pet_lib::agents::AgentId;
 use code_pet_lib::settings::{
-    configured_app_data_dir, AppSettings, DingTalkRobotAuthMode, DingTalkRobotTargetType,
+    AppSettings, DingTalkRobotAuthMode, DingTalkRobotTargetType,
     RobotNotificationChannel, ThemeChoice, WhipReactionSound,
 };
 
@@ -304,7 +304,7 @@ fn settings_read_custom_app_data_directory() {
         Some("/tmp/code-pet-data")
     );
     assert_eq!(
-        configured_app_data_dir(&settings),
+        code_pet_lib::paths::data(&settings),
         std::path::PathBuf::from("/tmp/code-pet-data")
     );
 }

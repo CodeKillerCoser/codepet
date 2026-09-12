@@ -2,14 +2,13 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("Pet window behavior", () => {
-  it("keeps the Pet Gateway source while rendering compact expandable Markdown groups", () => {
+  it("keeps the Pet Gateway source while grouping the original compact bubbles", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     expect(source).toContain("petSnapshot");
     expect(source).toContain("const petWindowWidth = 320");
-    expect(source).toContain("groupActivities(activities)");
-    expect(source).toContain(".activity-group-summary, .status-pill, .pet-action-button");
-    expect(source).toContain('<summary class="activity-group-summary">');
-    expect(source).toContain('<MarkdownMessage message={activity.summary');
+    expect(source).toContain('<PetActivityGroups {activities} {sources} {runningBubble} dismiss={dismissActivity} />');
+    expect(source).toContain(".activity-group-toggle, .status-pill, .pet-action-button");
+    expect(source).toContain('element.closest("[inert]")');
     expect(source).not.toContain("recentEvents");
   });
 

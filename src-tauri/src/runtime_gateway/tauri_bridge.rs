@@ -12,7 +12,7 @@ use crate::agent_runtime::{
     AgentRuntimeSource, AgentRuntimeStatus,
 };
 use crate::platform::host_identity::computer_name;
-use crate::settings::{configured_app_data_dir, load_app_settings};
+use crate::settings::load_app_settings;
 use codepet_lan_channel_sdk::DeviceDescriptor;
 use codepet_provider_sdk::{
     RuntimeCandidate, RuntimeCandidateSource, RuntimeGetInstalledRequest, RuntimeSelectRequest,
@@ -25,7 +25,6 @@ use codepet_host::{
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::sync::Notify;
 
@@ -120,7 +119,7 @@ impl ProviderHostState {
         gateway: Arc<ProviderGatewayService>,
     ) -> Self {
         Self {
-            pet: Some(codepet_host::PetGateway::new(manager.clone(), crate::settings::configured_app_data_dir(&crate::settings::load_app_settings().unwrap_or_default()).join("pet-sources.json"))),
+            pet: Some(codepet_host::PetGateway::new(manager.clone(), crate::paths::data(&crate::settings::load_app_settings().unwrap_or_default()).join("pet-sources.json"))),
             manager: Some(manager),
             gateway: Some(gateway),
             started: Arc::new(AtomicBool::new(false)),
@@ -455,8 +454,8 @@ fn bundled_provider_plugins_directory<R: Runtime>(
         }
         return Ok(configured);
     }
-    app.path()
-        .resolve("provider-plugins", BaseDirectory::Resource)
+    crate::paths::for_package(app.package_info())
+        .map(|paths| paths.provider_plugins())
         .map_err(|error| {
             HostError::new(
                 "bundled_provider_directory_resolution_failed",
@@ -489,7 +488,7 @@ fn provider_catalog_config(
 
 fn provider_manager_config(settings: &crate::settings::AppSettings) -> PluginManagerConfig {
     let mut config = PluginManagerConfig::default();
-    config.provider_data_root = Some(configured_app_data_dir(settings).join("providers"));
+    config.provider_data_root = Some(crate::paths::data(settings).join("providers"));
     config.process.max_frame_bytes = codepet_host::provider_sdk::MAX_PROVIDER_FRAME_BYTES;
     config.process.stderr_observer = Some(record_provider_transport_diagnostic);
     config
@@ -521,7 +520,7 @@ fn configured_provider_runtime(
     HostError,
 > {
     let settings = load_app_settings().map_err(HostError::from)?;
-    let data_directory = configured_app_data_dir(&settings);
+    let data_directory = crate::paths::data(&settings);
     let provider_host_directory = data_directory.join("provider-host");
     let device = Arc::new(DeviceRegistry::open(
         provider_host_directory.join("device-identity.json"),
@@ -1205,7 +1204,7 @@ mod tests {
             PluginCatalogConfig::default().with_directory(directory.path().join("providers")),
         );
         let mut config = PluginManagerConfig::default();
-    config.provider_data_root = Some(configured_app_data_dir(settings).join("providers"));
+        config.provider_data_root = Some(directory.path().join("provider-data"));
         config.process.request_timeout = Duration::from_secs(2);
         config.process.shutdown_timeout = Duration::from_millis(100);
         let manager = Arc::new(

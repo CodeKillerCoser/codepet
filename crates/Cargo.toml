@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "codepet-paths",
     "codepet-task-lineage",
     "providers/codepet-provider-data",
     "providers/codepet-observation",

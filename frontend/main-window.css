@@ -75,8 +75,6 @@
   transition: opacity 160ms ease, transform 220ms ease, padding 220ms ease, visibility 0s;
 }
 .main-theme .window-toolbar.macos .window-toolbar-button { height: 28px; min-height: 28px; }
-.main-theme .topbar .settings-entry { margin-left: auto; display: grid; place-items: center; width: 32px; height: 32px; min-height: 32px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--app-muted); }
-.main-theme .topbar .settings-entry:hover { background: var(--color-main-hover); }
 .main-theme .sidebar .tabs, .main-theme .sidebar .brand { white-space: nowrap; }
 .main-theme .sidebar .tabs svg { flex-shrink: 0; }
 .main-theme .brand { display: flex; gap: 0; height: 36px; min-height: 36px; padding: 6px 8px; }
@@ -207,3 +205,6 @@
 @media (prefers-reduced-motion: reduce) {
   .main-theme button { transition: none; }
 }
+
+.main-theme .window-toolbar .settings-entry { flex-shrink: 0; margin-right: 8px; }
+.main-theme .window-toolbar .settings-entry[aria-pressed="true"] { background: var(--color-main-selected); color: var(--color-main-selected-text); }

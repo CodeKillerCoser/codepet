@@ -2166,77 +2166,40 @@ textarea {
 .activity-group.group-attention { --group-accent: var(--pet-status-waiting); }
 .activity-group.group-completed { --group-accent: var(--pet-status-done); }
 
-.activity-group-summary {
-  display: block;
-  position: relative;
-  padding-bottom: 12px;
-  color: var(--pet-title);
+.activity-group-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  padding: 2px 4px 5px;
+  background: transparent;
+  color: var(--pet-agent);
+  font-size: var(--font-size-xs);
   cursor: pointer;
-  list-style: none;
+}
+.activity-group-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--group-accent); }
+.activity-group-count { margin-left: auto; font-variant-numeric: tabular-nums; }
+.activity-group-chevron { width: 5px; height: 5px; margin: 0 3px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg); }
+.activity-group.expanded .activity-group-chevron { transform: rotate(225deg); }
+.activity-group-cards {
+  display: grid;
+  min-width: 0;
   perspective: 600px;
   perspective-origin: 50% 0;
-  transform-style: preserve-3d;
+  padding-bottom: calc(var(--stack-count) * 7px);
 }
-
-.activity-group-face {
-  display: grid;
-  position: relative;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px 8px;
-  min-height: 68px;
-  padding: 8px 10px;
-  border: 1px solid var(--pet-border);
-  border-radius: 12px;
-  background: var(--pet-pill-bg);
-  backdrop-filter: blur(18px);
-  box-shadow: 0 3px 9px var(--pet-shadow);
-  transform: translateZ(0);
-}
-
-.activity-stack-layer {
-  position: absolute;
-  inset: 0 0 12px;
-  border: 1px solid var(--pet-border);
-  border-radius: 12px;
-  background: var(--pet-pill-bg);
-  box-shadow: 0 2px 5px var(--pet-shadow);
+.activity-card-slot {
+  min-width: 0;
+  grid-area: 1 / 1;
   transform-origin: center top;
-  transform: translate3d(0, calc(var(--stack-depth) * 7px), calc(var(--stack-depth) * -18px)) rotateX(-3deg);
-  pointer-events: none;
+  transform: translate3d(0, calc(var(--stack-depth) * 7px), calc(var(--stack-depth) * -18px));
 }
-
-.activity-group-summary::-webkit-details-marker { display: none; }
-.activity-group-face::after {
-  content: "";
-  grid-column: 2;
-  grid-row: 1 / 4;
-  align-self: center;
-  width: 6px;
-  height: 6px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(45deg);
-}
-
-.activity-group[open] .activity-group-face::after { transform: rotate(225deg); }
-.activity-group[open] > .activity-group-summary { padding-bottom: 0; }
-.activity-group[open] .activity-stack-layer { display: none; }
-.activity-group-summary:hover .activity-group-face { background: var(--pet-pill-hover-bg); }
-.activity-group-heading {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: var(--font-size-sm-plus);
-  font-weight: var(--font-weight-semibold);
-}
-
-.activity-group-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--group-accent); }
-.activity-group-count { margin-left: auto; color: var(--group-accent); font-variant-numeric: tabular-nums; }
-.activity-group-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); color: var(--pet-title); }
-.activity-group-meta { font-size: var(--font-size-xs); color: var(--pet-agent); }
-.activity-group-cards { display: grid; gap: 6px; min-width: 0; padding-top: 6px; }
-
-.activity-group-summary:focus-visible,
+.activity-card-slot > .status-pill { height: 100%; }
+.activity-card-slot[inert] { pointer-events: none; }
+.activity-card-slot.stack-hidden { display: none; }
+.activity-group.expanded .activity-group-cards { gap: 6px; padding-bottom: 0; }
+.activity-group.expanded .activity-card-slot { grid-area: auto; transform: none; }
 .pet-window button:focus-visible,
 .markdown-message:focus-visible,
 .markdown-message a:focus-visible {
@@ -3468,3 +3431,22 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
+
+/* Group expansion reveals sibling bubbles, never the full message detail. */
+.activity-group .status-message.markdown-message.compact {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  max-height: 1lh;
+  overflow: hidden;
+  line-height: var(--line-height-message);
+  cursor: inherit;
+}
+.markdown-message.compact :is(p, ul, ol, blockquote, pre, table, h1, h2, h3, h4, h5, h6) {
+  margin: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+.markdown-message.compact :is(pre, table) { overflow: hidden; }
+.markdown-message.compact pre { padding: 0; }
+.markdown-message.compact pre code { white-space: pre-wrap; overflow-wrap: anywhere; }

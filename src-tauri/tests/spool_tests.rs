@@ -1,16 +1,16 @@
 use code_pet_lib::agents::{AgentId, AgentView};
-use code_pet_lib::collector::{replay_spooled_events, spool_path_for_settings};
+use code_pet_lib::collector::{replay_spooled_events};
 use code_pet_lib::events::TaskStatus;
 use code_pet_lib::settings::AppSettings;
 use code_pet_lib::state::SharedState;
 use serde_json::json;
 
 #[test]
-fn spool_path_keeps_legacy_default_until_app_data_directory_is_customized() {
+fn spool_path_uses_path_manager_data_root() {
     let settings = AppSettings::default();
-    let spool_path = spool_path_for_settings(&settings);
+    let spool_path = code_pet_lib::paths::spool(&settings);
 
-    assert!(spool_path.ends_with(std::path::Path::new(".code-pet").join("spool").join("events.jsonl")));
+    assert_eq!(spool_path, code_pet_lib::paths::data(&settings).join("spool/events.jsonl"));
 }
 
 #[test]
@@ -19,7 +19,7 @@ fn spool_path_follows_custom_app_data_directory() {
     let mut settings = AppSettings::default();
     settings.data.data_directory = Some(temp.path().join("code-pet-data").to_string_lossy().to_string());
 
-    assert_eq!(spool_path_for_settings(&settings), temp.path().join("code-pet-data").join("spool").join("events.jsonl"));
+    assert_eq!(code_pet_lib::paths::spool(&settings), temp.path().join("code-pet-data").join("spool").join("events.jsonl"));
 }
 
 #[test]

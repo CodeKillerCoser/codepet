@@ -1364,7 +1364,7 @@ impl CodexProvider {
             plugin_id: CODEX_PLUGIN_ID.to_string(),
             display_name: "Codex".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            default_workspace_root: default_remote_workspace_root("codex"),
+            default_workspace_root: codepet_paths::remote_workspace_for_user("codex"),
             supported_versions: VersionRange {
                 min_version: PROTOCOL_VERSION,
                 max_version: PROTOCOL_VERSION,
@@ -2843,7 +2843,7 @@ fn prepare_conversation_workspace(
             false,
         ));
     }
-    let workspace_root = default_remote_workspace_root("codex").ok_or_else(|| {
+    let workspace_root = codepet_paths::remote_workspace_for_user("codex").ok_or_else(|| {
         protocol_error(
             "worktree_create_failed",
             "cannot resolve CodePet workspace for managed worktrees".to_string(),
@@ -2857,17 +2857,6 @@ fn codex_home() -> Option<PathBuf> {
     local_runtime::data_dir("CODEX_HOME", ".codex")
 }
 
-fn default_remote_workspace_root(harness_name: &str) -> Option<String> {
-    local_runtime::home_dir()
-        .filter(|path| path.is_absolute())
-        .map(|path| {
-            path.join(".codepet")
-                .join("remote_workspace")
-                .join(harness_name)
-                .to_string_lossy()
-                .into_owned()
-        })
-}
 
 fn ensure_conversation_workspace(path: &str) -> Result<String, ProtocolError> {
     let workspace = Path::new(path);
