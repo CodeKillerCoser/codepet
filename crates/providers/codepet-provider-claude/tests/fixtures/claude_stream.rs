@@ -113,6 +113,27 @@ fn main() {
         return;
     }
 
+    if message.starts_with("You are the CodePet task extraction agent.") {
+        let input: Value = serde_json::from_slice(&fs::read("input.json").unwrap()).unwrap();
+        let config: Value = serde_json::from_slice(&fs::read("config.json").unwrap()).unwrap();
+        assert_eq!(input["messages"][0]["id"], "m0");
+        assert_eq!(config["model"], "haiku");
+        assert_eq!(config["reasoningEffort"], "low");
+        assert!(fs::read_to_string("SKILL.md").unwrap().len() > 20);
+        assert!(message.contains(&fs::read_to_string("prompt.md").unwrap()));
+        write_result(&mut writer, &options.session_id, r#"{"tasks":[{"existingTaskId":null,"title":"登录焦点","detail":"实现并验证键盘焦点","episodes":[{"title":"实现和验证","evidenceIds":["m0","m1"]}]}]}"#, false);
+        let mut after_result = String::new();
+        assert_eq!(input_reader.read_line(&mut after_result).unwrap(), 0, "one-turn Provider must close input after result");
+        return;
+    }
+
+    if message == "result waits eof" {
+        write_result(&mut writer, &options.session_id, "fixture output", false);
+        let mut next = String::new();
+        assert_eq!(input_reader.read_line(&mut next).unwrap(), 0);
+        return;
+    }
+
     if message == "fail" {
         write_json(
             &mut writer,
@@ -208,7 +229,7 @@ fn main() {
         assert!(inherited_project_mcp, "fixture project MCP config was not visible");
         let configured = std::env::var_os("CLAUDE_CONFIG_DIR").expect("configured data directory must reach the turn process");
         let configured = std::path::PathBuf::from(configured);
-        assert_eq!(configured.parent().unwrap().canonicalize().unwrap(), std::env::current_dir().unwrap());
+        assert_eq!(configured.parent().unwrap().canonicalize().unwrap(), std::env::current_dir().unwrap().canonicalize().unwrap());
         assert_eq!(configured.file_name().unwrap(), ".claude-test");
         "fixture inherited project MCP"
     } else if options.resumed {
@@ -272,8 +293,14 @@ fn parse_options() -> Options {
     assert_eq!(value_after(&args, "--permission-mode"), "manual");
     assert_eq!(value_after(&args, "--input-format"), "stream-json");
     assert_eq!(value_after(&args, "--output-format"), "stream-json");
-    assert_eq!(value_after(&args, "--model"), "sonnet");
-    assert_eq!(value_after(&args, "--effort"), "high");
+    if Path::new("input.json").is_file() && Path::new("config.json").is_file() {
+        let config: Value = serde_json::from_slice(&fs::read("config.json").unwrap()).unwrap();
+        assert_eq!(value_after(&args, "--model"), config["model"].as_str().unwrap());
+        assert_eq!(value_after(&args, "--effort"), config["reasoningEffort"].as_str().unwrap());
+    } else {
+        assert_eq!(value_after(&args, "--model"), "sonnet");
+        assert_eq!(value_after(&args, "--effort"), "high");
+    }
 
     let session = args
         .iter()
@@ -291,10 +318,8 @@ fn parse_options() -> Options {
         assert!(!args.iter().any(|arg| arg == "--name"));
     } else {
         assert!(!args.iter().any(|arg| arg == "--resume"));
-        assert_eq!(value_after(&args, "--name"), "Fixture conversation");
+        assert_eq!(value_after(&args, "--name"), if Path::new("input.json").is_file() { "CodePet 任务抽取" } else { "Fixture conversation" });
     }
-    assert_eq!(value_after(&args, "--model"), "sonnet");
-    assert_eq!(value_after(&args, "--effort"), "high");
     Options {
         session_id: session.0,
         resumed: session.1,

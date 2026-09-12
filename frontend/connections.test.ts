@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const appSource = readFileSync(resolve(__dirname, "App.svelte"), "utf8");
+const navigationSource = readFileSync(resolve(__dirname, "lib/MainNavigation.svelte"), "utf8");
 const deviceListSource = readFileSync(resolve(__dirname, "lib/RemoteDeviceList.svelte"), "utf8");
 const pairDialogSource = readFileSync(resolve(__dirname, "lib/PairDeviceDialog.svelte"), "utf8");
 
@@ -12,7 +13,7 @@ describe("connections workspace", () => {
     const usageStart = appSource.indexOf('{:else if tab === "usage"}', connectionStart);
     const connectionSource = appSource.slice(connectionStart, usageStart);
 
-    expect(appSource).toContain('<Cable size={18} /> 连接');
+    expect(navigationSource).toContain('route: "connections", label: "连接", icon: Cable');
     expect(connectionSource.indexOf('<h3>设备</h3>')).toBeGreaterThan(-1);
     expect(connectionSource.indexOf('<h3>设备</h3>')).toBeLessThan(connectionSource.indexOf('<h3>本机运行时</h3>'));
     expect(connectionSource).toContain("on:click={refreshRuntimes}");

@@ -100,6 +100,12 @@ pub(crate) async fn provider_connection_status(state: tauri::State<'_, ProviderH
 }
 
 impl ProviderHostState {
+    pub(crate) async fn instance_data_contexts(&self, plugin_id: &str) -> Vec<(String, String, serde_json::Value)> {
+        let Some(manager) = &self.manager else { return vec![]; };
+        manager.snapshots().await.into_iter().filter(|snapshot| snapshot.catalog.plugin_id == plugin_id)
+            .flat_map(|snapshot| snapshot.instances).filter(|instance| instance.record.enabled)
+            .map(|instance| (instance.record.instance_id, instance.record.display_name, serde_json::json!(instance.record.settings))).collect()
+    }
     pub(crate) fn from_app<R: Runtime>(
         app: &AppHandle<R>,
     ) -> Result<(Self, Arc<RemoteAccessManager>), HostError> {

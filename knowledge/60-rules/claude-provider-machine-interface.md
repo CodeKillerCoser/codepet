@@ -2,7 +2,7 @@
 
 ## 规则
 
-Claude Provider 的上游只能是 Host resolver 注入的 Claude executable 与官方非交互机器接口。当前允许的最小接口是 `claude --version`、`claude auth status --json`、`claude --print` 的双向 `stream-json`、`--permission-prompt-tool stdio` 的 `control_request`/`control_response`、Provider 自建 UUID 的 `--session-id`/`--resume` 和 Unix 信号。握手版本与认证状态来自前两个命令；用量统一通过 `usage.query` 提供，runtime 不再携带独立摘要。`usage.query` 允许由结束 Hook 注册来源并增量只读对应 transcript 的计量字段，按消息 ID 去重；不得全目录扫描或用于恢复会话控制，详见 [Provider 用量查询与业务存储](../10-architecture/provider-usage-query-and-storage.md)。不得通过窗口控制、Claude Desktop/IDE 私有状态或猜测字段补能力。
+Claude Provider 的上游只能是 Host resolver 注入的 Claude executable 与官方非交互机器接口。当前允许的最小接口是 `claude --version`、`claude auth status --json`、`claude --print` 的双向 `stream-json`、`--permission-prompt-tool stdio` 的 `control_request`/`control_response`、Provider 自建 UUID 的 `--session-id`/`--resume` 和 SDK 统一进程控制。握手版本与认证状态来自前两个命令；用量统一通过 `usage.query` 提供，runtime 不再携带独立摘要。`usage.query` 允许由结束 Hook 注册来源并增量只读对应 transcript 的计量字段，按消息 ID 去重；不得全目录扫描或用于恢复会话控制，详见 [Provider 用量查询与业务存储](../10-architecture/provider-usage-query-and-storage.md)。不得通过窗口控制、Claude Desktop/IDE 私有状态或猜测字段补能力。
 
 Claude Provider 的 `runtime.getInstalled` 负责搜索当前 PATH 与登录 Shell，并以 `--version` 验证结果；不得扫描 Claude Desktop、IDE 私有目录或 transcript。选择结果缺失、非绝对、不可执行或版本验证失败时，instance lifecycle 必须 fail closed。
 
@@ -13,6 +13,10 @@ Provider Protocol event 只能进入 `ProviderGatewayService` remote replay/even
 每个 turn 都必须使用 Claude 的默认配置发现：不得传 `--safe-mode`、空 `--setting-sources`、inline `--settings`、strict/empty MCP、`--restricted` 或工具白名单，也不得改写 auto-memory 环境变量。user/project/local/managed settings、MCP、Hook、plugin 与 memory 以本机 Claude 实际配置为准；CodePet 选择的 access mode 可映射为 Claude permission mode，默认 `manual`，并以 `stdio` 承接授权交互。CodePet 不提供额外 sandbox 隔离边界。
 
 继承任意本机配置时无法保证强 `read-only`，因此 capabilities 不得广告 `read-only`，conversation.create 必须拒绝它。当前只接受 `workspace-write` 作为“继承 Claude 默认权限”的 Provider Protocol 兼容入口，不将它描述为 sandbox；`full-access` 同样不广告，避免通过 bypass flag 覆盖本机策略。
+
+`turn.interrupt` 在 Unix 先发送 SIGINT，Windows 在 SDK 不支持软中断时调用既有 tree termination；平台差异留在进程控制层，业务侧使用相同接口。Windows 回归必须等待 interrupted terminal 后再确认停止，不能仅验证请求返回。
+
+每个 turn 独立启动 CLI 时，收到 result / aborted 后关闭 stdin，通知 stream-json 输入结束；不能等待进程退出后才关闭，否则 CLI 可能持续等待下一条输入。关闭输入不等于 terminal，仍由 reaper 确认真实退出。
 
 每个 turn 的后台 reaper 必须独占 `Child` 和 `wait`。运行时 control 保存 PID/process-group ID、退出通知和互斥保护的 stdin writer；result、aborted 或 interrupt 请求都不能在进程真实退出前删除 active。interrupt、stop、destroy 和 shutdown 必须有界等待，超时杀整个进程组，并在 reaper 确认退出后才发布权威 terminal。
 

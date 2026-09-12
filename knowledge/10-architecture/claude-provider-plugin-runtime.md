@@ -35,7 +35,7 @@ Claude 默认 Provider 是独立 Rust 二进制 `crates/providers/codepet-provid
 目标：
 
 - 独立 binary、显式 manifest、生成 Provider SDK、四段 route 和 Host instance lifecycle。
-- Provider-managed create/顺序 turn、主 agent 文本增量、终态和 Unix interrupt。
+- Provider-managed create/顺序 turn、主 agent 文本增量、终态和跨平台 interrupt。
 - Claude `can_use_tool` control request、Provider approval event 与同进程 stdin 决策回传。
 - Claude CLI 按其默认路径继承本机与项目配置。
 - result 只有在进程真实退出和 stdout 有界排空后才形成权威 terminal。
@@ -79,7 +79,7 @@ Provider mapper 不把 Provider event 写入 Pet Protocol/activity store、Deskt
 | conversation.create | Provider-managed | 预留 UUID 与选项；首消息前不伪造上游 session。 |
 | conversation.list/get | Provider-managed | 返回本进程管理及受支持的持久会话视图，不宣称全局 Claude Desktop 同步。 |
 | turn.start | 支持 | raw user NDJSON、首次 session ID、后续 resume。 |
-| turn.interrupt | Unix 支持 | SIGINT 750 ms grace，超时 SIGKILL process group；真实退出后才 terminal。 |
+| turn.interrupt | Unix / Windows 支持 | Unix 先 SIGINT，Windows 使用 SDK tree termination；均等待真实退出后才 terminal。 |
 | turn.steer | 不支持 | queued input 不等价于 active-turn steering。 |
 | approval.resolve | 支持 | `can_use_tool` 映射 pending approval；approve/deny 通过同一子进程 stdin 的 `control_response` 回写。 |
 | provider.shutdown | 支持 | 回收所有 instance；事件发送失败也继续进程清理。 |
@@ -127,6 +127,6 @@ Access mode：
 ## 未知项
 
 - 本机 Hook/MCP/plugin 的行为与风险由用户或组织 Claude 配置决定；CodePet 不做审计或隔离。
-- Windows 不广告 turn interrupt；stop/destroy/shutdown 使用系统 tree termination，本轮没有 Windows 实机。
+- 2026-09-11 Windows 已开放 turn.interrupt，复用系统 tree termination 并等待 reaper；provider_interrupts_an_active_claude_process_and_waits_for_terminal 在 Windows 通过。Mac 实机本轮未验收。
 - Provider process 重启后不保存 conversation registry，也不扫描 transcript。
 - 正式打包与 Catalog 默认发现由 `provider-host-device-and-plugin-runtime.md` 中的统一 staging/resources 流程负责；Claude runtime 仍来自用户本机 resolver。

@@ -12,6 +12,11 @@ import { fileURLToPath } from "node:url";
 
 const args = parseArgs(process.argv.slice(2));
 const platform = args.platform ?? "all";
+// Legacy/manual signed releases remain supported; the ARM64 DMG workflow opts out.
+const macUpdater = args.macUpdater ?? "enabled";
+if (!["enabled", "disabled"].includes(macUpdater)) {
+  fail("--mac-updater must be enabled or disabled.");
+}
 if (!["all", "mac", "win"].includes(platform)) {
   fail("--platform must be all, mac, or win.");
 }
@@ -42,7 +47,12 @@ if (!existsSync(artifactsDir)) {
 const files = walkFiles(artifactsDir).sort((left, right) => left.localeCompare(right));
 const platforms = {};
 if (platform === "all" || platform === "mac") {
-  platforms["macos-universal"] = releaseAsset(findArtifact(files, (file) => file.endsWith(".app.tar.gz"), "macOS .app.tar.gz updater archive"));
+  if (macUpdater === "enabled") {
+    platforms["macos-universal"] = releaseAsset(findArtifact(files, (file) => file.endsWith(".app.tar.gz"), "macOS .app.tar.gz updater archive"));
+  } else {
+    findArtifact(files, (file) => file.endsWith(".dmg"), "macOS DMG installer");
+    console.log("macOS is DMG-only: no macOS automatic update entry will be published.");
+  }
 }
 if (platform === "all" || platform === "win") {
   platforms["windows-x86_64"] = releaseAsset(findArtifact(
