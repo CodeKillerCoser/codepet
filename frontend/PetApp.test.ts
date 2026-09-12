@@ -115,7 +115,8 @@ describe("PetApp activity helpers", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
 
     expect(source).toContain("$: renderedActivities = showActivities ? activities : []");
-    expect(source).toContain("{#each renderedActivities as activity (activity.id)}");
+    expect(source).toContain("{#each activityGroups as group (group.id)}");
+    expect(source).toContain("{#each group.activities as activity (activityKey(activity))}");
     expect(source).not.toContain("{#each activities as activity (activity.id)}");
     expect(source).not.toContain("stackSizedActivities");
     expect(source).not.toContain("maxVisibleActivities");
@@ -263,8 +264,8 @@ describe("PetApp activity helpers", () => {
     const replyingRule = styles.slice(styles.indexOf(".status-pill.replying"), styles.indexOf(".status-content"));
     const editorRule = styles.slice(styles.indexOf(".reply-row textarea"), styles.indexOf(".reply-row textarea::placeholder"));
 
-    expect(stackRule).toContain("width: 326px");
-    expect(pillRule).toContain("width: 316px");
+    expect(stackRule).toContain("width: calc(100% - 24px)");
+    expect(pillRule).toContain("width: 100%");
     expect(replyingRule).toContain("z-index: 6");
     expect(replyingRule).toContain("min-height: 154px");
     expect(replyingRule).toContain("align-items: stretch");
@@ -284,7 +285,7 @@ describe("PetApp activity helpers", () => {
 
   it("allows dismissing activities in any status", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
-    const titleRowBlock = source.slice(source.indexOf('<div class="status-title-row">'), source.indexOf('<button class="status-open" type="button"'));
+    const titleRowBlock = source.slice(source.indexOf('<div class="status-title-row">'), source.indexOf('<MarkdownMessage'));
 
     expect(titleRowBlock).toContain('class="dismiss-button inline-dismiss"');
     expect(titleRowBlock).toContain("dismissActivity(event, activity)");

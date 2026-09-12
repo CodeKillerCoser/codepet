@@ -299,6 +299,31 @@ pub fn run() {
     app_log::log_app_start_banner();
     app_log::info("app", "tauri builder initializing");
 
+    // Supplying Assets to the macro prevents HTML/JS/CSS from being embedded.
+    // Distribution resources are handled separately; keep Tauri's origin and IPC.
+    let mut context = tauri::generate_context!(assets = app::webcontent::WebContentAssets::default());
+    if !tauri::is_dev() {
+        let assets = app::webcontent::resolve_directory(&settings::current_app_data_dir(), || {
+            tauri::utils::platform::resource_dir(context.package_info(), &tauri::Env::default())
+                .map(|root| root.join("webcontent"))
+                .map_err(|error| error.to_string())
+        }).and_then(|root| {
+            app_log::info("webcontent", &format!("loading {}", root.display()));
+            app::webcontent::WebContentAssets::load(&root)
+        });
+        let assets = match assets {
+            Ok(assets) => {
+                app_log::info("webcontent", &format!("loaded external UI version={}", assets.version()));
+                assets
+            }
+            Err(error) => {
+                app_log::error("webcontent", &error);
+                app::webcontent::WebContentAssets::unavailable(&error)
+            }
+        };
+        context.set_assets(Box::new(assets));
+    }
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             crate::app_log::info("app", &format!("single instance requested args={} cwd={}", args.len(), cwd));
@@ -437,7 +462,7 @@ pub fn run() {
             updates::check_app_update,
             updates::install_app_update
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("failed to build Code Pet")
         .run(handle_run_event);
 }

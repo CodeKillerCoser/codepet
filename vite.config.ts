@@ -22,6 +22,7 @@ export default defineConfig(({ command }) => {
       },
     },
     build: {
+      outDir: "webcontent",
       target: "es2022",
       rollupOptions: {
         input: {

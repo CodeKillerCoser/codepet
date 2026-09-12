@@ -6,6 +6,8 @@
   import { activateActivity, getAppSettings, openMainWindow, recentEvents, recordPerfEvent, resolveActivityApproval, sendActivityReply } from "./lib/api";
   import { activityCapabilities, activityKey, cardAgentLabel, cardEndTime, cardMessage, cardMeta, cardTitle, primaryActivity, statusLabel, updateActivityList } from "./lib/activity";
   import { mergeEventFeed } from "./lib/eventFeed";
+  import { groupActivities } from "./lib/activityGroups";
+  import MarkdownMessage from "./lib/MarkdownMessage.svelte";
   import { runningBubbleStyle } from "./lib/gradientColor";
   import { isOpaqueCssColor, rectFromElementBounds, shouldIgnorePetWindowCursor, type PetHitRect } from "./lib/petHitTest";
   import PetAvatar from "./lib/PetAvatar.svelte";
@@ -47,9 +49,9 @@
   let cursorPassthroughInFlight = false;
   const petImageAlphaCache = new WeakMap<HTMLImageElement, { src: string; width: number; height: number; data: Uint8ClampedArray }>();
 
-  const petWindowWidth = 360;
+  const petWindowWidth = 320;
   const activityPetGap = 8;
-  const activityStackMaxHeight = 368;
+  const activityStackMaxHeight = 320;
   const maxPetStageHeight = Math.max(104, Math.round(32 * 4 * (208 / 192)));
   const petWindowPresetHeight = 22 + maxPetStageHeight + activityPetGap + activityStackMaxHeight;
   const noticeVisibleMs = 2500;
@@ -72,8 +74,9 @@
   $: hasCompletedActivities = activities.some((activity) => activity.status === "done");
   $: showActivities = hasActivities && !tasksCollapsed;
   $: renderedActivities = showActivities ? activities : [];
+  $: activityGroups = groupActivities(renderedActivities);
   $: clearReplyIfNoLongerAvailable(activities, replyingToId);
-  $: petScale = Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4);
+  $: petScale = Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4) * 0.9;
   $: petWindowOpacity = clampPetOpacity(settings?.pet.opacity);
   $: topActivityId = showActivities ? activities[0]?.id ?? null : null;
   $: if (!hasActivities && tasksCollapsed) {
@@ -466,7 +469,8 @@
   function collectPetHitRects(root: HTMLElement): PetHitRect[] {
     const rootBounds = root.getBoundingClientRect();
     const hitRects: PetHitRect[] = [];
-    for (const element of root.querySelectorAll<HTMLElement>(".status-pill, .pet-action-button")) {
+    for (const element of root.querySelectorAll<HTMLElement>(".status-pill, .activity-group-summary, .pet-action-button")) {
+      if (!element.checkVisibility()) continue;
       const rect = element.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
         hitRects.push(rectFromElementBounds(rect, rootBounds, petHitPadding));
@@ -953,96 +957,113 @@
 >
   {#if showActivities}
     <section class="activity-stack" bind:this={activityStack} aria-live="polite" style={`--pet-activity-stack-max-height: ${activityStackMaxHeight}px`}>
-      {#each renderedActivities as activity (activity.id)}
-        {@const capabilities = activityCapabilities(activity)}
-        {@const activeActivity = isActiveActivity(activity)}
-        {@const endedAt = cardEndTime(activity)}
-        <article
-          class="status-pill"
-          class:active-status={activeActivity}
-          class:active-breath={activeActivity && runningBubble.backgroundBreathing}
-          class:active-marquee={activeActivity && runningBubble.borderMarquee}
-          class:urgent={activity.status === "waiting-approval"}
-          class:failed={activity.status === "failed"}
-          class:done={activity.status === "done"}
-          class:replying={replyingToId === activity.id}
-          style={activeActivity ? runningBubbleStyleText : undefined}
-          title={`${cardTitle(activity)}\n${cardMessage(activity)}\n${cardMeta(activity)}`}
-        >
-          <div class="status-content">
-            <div class="status-title-row">
-              <button class="status-open title-open" type="button" aria-label={`打开 ${cardTitle(activity)}`} title={cardTitle(activity)} on:click={() => activate(activity)}>
-                <span>{cardTitle(activity)}</span>
-              </button>
-              {#if activity.status === "done"}
-                <i class="inline-done-mark" aria-hidden="true"></i>
-              {/if}
-              <button class="dismiss-button inline-dismiss" type="button" aria-label="从列表移除" on:click={(event) => dismissActivity(event, activity)}></button>
-            </div>
-            <button class="status-open" type="button" aria-label={`打开 ${cardTitle(activity)}`} title={cardMessage(activity)} on:click={() => activate(activity)}>
-              <span class="status-message">{cardMessage(activity)}</span>
-            </button>
-            {#if replyingToId === activity.id}
-              <form class="reply-row" on:submit={(event) => submitReply(event, activity)}>
-                <textarea
-                  bind:this={replyTextarea}
-                  bind:value={replyText}
-                  aria-label="回复"
-                  placeholder="回复"
-                  rows="1"
-                  on:pointerdown={stopReplyEditorEvent}
-                  on:mousedown={stopReplyEditorEvent}
-                  on:input={handleReplyInput}
-                  on:click={stopReplyEditorEvent}
-                  on:focus={stopReplyEditorEvent}
-                  on:keydown={(event) => handleReplyKeydown(event, activity)}
-                ></textarea>
-                <div class="reply-controls">
-                  <button
-                    class="reply-submit"
-                    type="submit"
-                    disabled={replySubmitting || !replyText.trim()}
-                    on:mousedown={(event) => event.stopPropagation()}
-                    on:click={(event) => event.stopPropagation()}
-                  >{replySubmitting ? "发送中" : "发送"}</button>
-                  <button
-                    class="reply-cancel"
-                    type="button"
-                    disabled={replySubmitting}
-                    on:mousedown={(event) => event.stopPropagation()}
-                    on:click={cancelReply}
-                  >取消</button>
-                </div>
-              </form>
-            {/if}
-            <div class="status-footer" class:with-actions={capabilities.canApprove || (capabilities.canReply && replyingToId !== activity.id)}>
-              <span class="status-meta" title={cardMeta(activity)}>
-                <span class="status-agent">{cardAgentLabel(activity)}</span>
-                <span class="status-separator"> · </span>
-                <span class={`status-state status-${activity.status}`}>{statusLabel(activity.status)}</span>
-                {#if endedAt}
-                  <span class="status-separator"> · </span>
-                  <span class="status-ended-at">{endedAt}</span>
-                {/if}
+      {#each activityGroups as group (group.id)}
+        <details class={`activity-group group-${group.id}`}>
+          <summary class="activity-group-summary">
+            {#each group.activities.slice(1, 3).reverse() as _, index}
+              <span class="activity-stack-layer" style={`--stack-depth: ${Math.min(group.activities.length - 1, 2) - index};`} aria-hidden="true"></span>
+            {/each}
+            <span class="activity-group-face">
+              <span class="activity-group-heading">
+                <span class="activity-group-dot" aria-hidden="true"></span>
+                <span>{group.label}</span>
+                <span class="activity-group-count">{group.activities.length}</span>
               </span>
-              {#if capabilities.canApprove || (capabilities.canReply && replyingToId !== activity.id)}
-                <div class="status-actions" class:approval-mode={capabilities.canApprove} aria-label="任务操作">
-                  {#if capabilities.canApprove}
-                    <button class="approval-button allow" type="button" aria-label="同意" on:click={(event) => approve(event, activity, "allow")}>
-                      <span>同意</span>
+              <span class="activity-group-preview">{cardTitle(group.activities[0])}</span>
+              <span class="activity-group-meta">{cardAgentLabel(group.activities[0])} · {statusLabel(group.activities[0].status)}</span>
+            </span>
+          </summary>
+          <div class="activity-group-cards">
+            {#each group.activities as activity (activityKey(activity))}
+              {@const capabilities = activityCapabilities(activity)}
+              {@const activeActivity = isActiveActivity(activity)}
+              {@const endedAt = cardEndTime(activity)}
+              <article
+                class="status-pill"
+                class:active-status={activeActivity}
+                class:active-breath={activeActivity && runningBubble.backgroundBreathing}
+                class:active-marquee={activeActivity && runningBubble.borderMarquee}
+                class:urgent={activity.status === "waiting-approval"}
+                class:failed={activity.status === "failed"}
+                class:done={activity.status === "done"}
+                class:replying={replyingToId === activity.id}
+                style={activeActivity ? runningBubbleStyleText : undefined}
+              >
+                <div class="status-content">
+                  <div class="status-title-row">
+                    <button class="status-open title-open" type="button" aria-label={`打开 ${cardTitle(activity)}`} title={cardTitle(activity)} on:click={() => activate(activity)}>
+                      <span>{cardTitle(activity)}</span>
                     </button>
-                    <button class="approval-button deny" type="button" aria-label="拒绝" on:click={(event) => approve(event, activity, "deny")}>
-                      <span>拒绝</span>
-                    </button>
+                    {#if activity.status === "done"}
+                      <i class="inline-done-mark" aria-hidden="true"></i>
+                    {/if}
+                    <button class="dismiss-button inline-dismiss" type="button" aria-label="从列表移除" on:click={(event) => dismissActivity(event, activity)}></button>
+                  </div>
+                  <MarkdownMessage message={cardMessage(activity)} />
+                  {#if replyingToId === activity.id}
+                    <form class="reply-row" on:submit={(event) => submitReply(event, activity)}>
+                      <textarea
+                        bind:this={replyTextarea}
+                        bind:value={replyText}
+                        aria-label="回复"
+                        placeholder="回复"
+                        rows="1"
+                        on:pointerdown={stopReplyEditorEvent}
+                        on:mousedown={stopReplyEditorEvent}
+                        on:input={handleReplyInput}
+                        on:click={stopReplyEditorEvent}
+                        on:focus={stopReplyEditorEvent}
+                        on:keydown={(event) => handleReplyKeydown(event, activity)}
+                      ></textarea>
+                      <div class="reply-controls">
+                        <button
+                          class="reply-submit"
+                          type="submit"
+                          disabled={replySubmitting || !replyText.trim()}
+                          on:mousedown={(event) => event.stopPropagation()}
+                          on:click={(event) => event.stopPropagation()}
+                        >{replySubmitting ? "发送中" : "发送"}</button>
+                        <button
+                          class="reply-cancel"
+                          type="button"
+                          disabled={replySubmitting}
+                          on:mousedown={(event) => event.stopPropagation()}
+                          on:click={cancelReply}
+                        >取消</button>
+                      </div>
+                    </form>
                   {/if}
-                  {#if capabilities.canReply && replyingToId !== activity.id}
-                    <button class="reply-button" type="button" on:click={(event) => toggleReply(event, activity)}>回复</button>
-                  {/if}
+                  <div class="status-footer" class:with-actions={capabilities.canApprove || (capabilities.canReply && replyingToId !== activity.id)}>
+                    <span class="status-meta" title={cardMeta(activity)}>
+                      <span class="status-agent">{cardAgentLabel(activity)}</span>
+                      <span class="status-separator"> · </span>
+                      <span class={`status-state status-${activity.status}`}>{statusLabel(activity.status)}</span>
+                      {#if endedAt}
+                        <span class="status-separator"> · </span>
+                        <span class="status-ended-at">{endedAt}</span>
+                      {/if}
+                    </span>
+                    {#if capabilities.canApprove || (capabilities.canReply && replyingToId !== activity.id)}
+                      <div class="status-actions" class:approval-mode={capabilities.canApprove} aria-label="任务操作">
+                        {#if capabilities.canApprove}
+                          <button class="approval-button allow" type="button" aria-label="同意" on:click={(event) => approve(event, activity, "allow")}>
+                            <span>同意</span>
+                          </button>
+                          <button class="approval-button deny" type="button" aria-label="拒绝" on:click={(event) => approve(event, activity, "deny")}>
+                            <span>拒绝</span>
+                          </button>
+                        {/if}
+                        {#if capabilities.canReply && replyingToId !== activity.id}
+                          <button class="reply-button" type="button" on:click={(event) => toggleReply(event, activity)}>回复</button>
+                        {/if}
+                      </div>
+                    {/if}
+                  </div>
                 </div>
-              {/if}
-            </div>
+              </article>
+            {/each}
           </div>
-        </article>
+        </details>
       {/each}
     </section>
   {/if}
@@ -1157,7 +1178,7 @@
       kind={settings?.pet.kind}
       imagePath={settings?.pet.imagePath}
       status={primary?.status ?? "idle"}
-      scale={Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4)}
+      scale={petScale}
     />
     {#if actionNotice}
       <span class="pet-notice">{actionNotice}</span>

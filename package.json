@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
-    "build": "vite build",
+    "build": "vite build && node scripts/webcontent.mjs manifest",
+    "build:webcontent": "npm run build",
+    "build:bin": "tauri build --no-bundle --config src-tauri/tauri.bin.conf.json",
+    "install:webcontent": "node scripts/webcontent.mjs install",
+    "test:webcontent": "node --test scripts/webcontent_test.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "tauri",
     "package:signed": "python3 scripts/package_signed.py",
@@ -19,11 +23,15 @@
     "@radix-ui/colors": "^3.0.0",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-opener": "^2.5.5",
+    "dompurify": "^3.4.15",
+    "marked": "^18.0.12",
     "svelte": "^5.0.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tauri-apps/cli": "^2.0.0",
+    "jsdom": "^30.0.1",
     "typescript": "^5.6.0",
     "vite": "^6.0.0",
     "vitest": "^2.1.0"

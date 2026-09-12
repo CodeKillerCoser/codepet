@@ -187,17 +187,42 @@ python3 scripts/package_signed_test.py
 
 ## 构建
 
-构建前端资源：
+正式应用采用外置 `webcontent/` + Rust 可执行文件。HTML、JS、CSS 和内置鞭子音效不再嵌入 Rust 程序，主窗口与桌宠都通过原有 Tauri 协议从资源包加载，保留 IPC 能力。
+
+单独构建前端资源（不运行 Cargo）：
 
 ```bash
-npm run build
+npm run build:webcontent
 ```
 
-构建 Tauri 应用：
+产物位于仓库根目录 `webcontent/`，包含两个 HTML 入口、`assets/` 和 `manifest.json`。`npm run build` 与此等价。
+
+单独构建正式 Rust 程序（不构建前端、不生成安装包）：
+
+```bash
+npm run build:bin
+```
+
+完整构建安装包，会自动构建前端并把资源目录一起打包：
 
 ```bash
 npm run tauri build
 ```
+
+正式 App 启动时优先读取**当前应用数据目录**下 `webcontent/v1/`、`webcontent/v2/` 等版本，按数字选最新版本（`v10` 高于 `v2`）。只有没有版本目录时，才读取 App 包内的 `webcontent/`。应用数据目录沿用设置中的自定义目录，不是仓库目录。
+
+只更新 UI 时，构建后安装到 App 中显示的数据目录，例如：
+
+```powershell
+npm run build:webcontent
+npm run install:webcontent -- --data-dir "D:\CodePetData"
+```
+
+安装脚本自动创建下一个版本目录，第一次为 `D:\CodePetData\webcontent\v1`，下次为 `v2`；完整校验后才将临时目录改名为正式版本，保留所有旧版本，不改动 App 包或 Rust 程序。也可手动将完整构建产物放进新的 `vN` 目录，须包含 `manifest.json`、两个 HTML 入口及 `assets/`。
+
+安装后重启 App 才切换资源快照。仅更新 UI 且后端接口契约不变时无需编译 Rust 或重新签名 App；改变 Rust 命令、插件、权限或接口契约时仍需更新可执行文件。最高版本损坏或不兼容时会显示诊断页面，不会静默降级；移走该版本目录后重启可回到上一版本，移走全部版本则使用包内资源。
+
+包内资源只由完整安装包构建/签名流程维护：Windows 位于可执行文件旁的 `webcontent`，macOS 位于 `Code Pet.app/Contents/Resources/webcontent`。日常 UI 更新不修改这里，因此不破坏 App 签名。资源校验和用于发现损坏或不完整复制，不替代分发签名。详情见 `knowledge/10-architecture/webcontent-packaging.md`。
 
 生成并验证 macOS 签名 DMG：
 

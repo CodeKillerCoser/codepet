@@ -1,13 +1,15 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { resolveResource } from "@tauri-apps/api/path";
+import whipCrackUrl from "../../src-tauri/resources/sounds/whip-crack.wav?url";
+import whipSwingUrl from "../../src-tauri/resources/sounds/whip-swing.wav?url";
+import whipHeavyUrl from "../../src-tauri/resources/sounds/whip-heavy-crack.wav?url";
 import { activityKey } from "./activity";
 import type { AppSettings, PetEvent, WhipReactionSound } from "./types";
 
 const whipReactionDelay = 180;
 const whipSoundResources = [
-  "resources/sounds/whip-crack.wav",
-  "resources/sounds/whip-swing.wav",
-  "resources/sounds/whip-heavy-crack.wav",
+  whipCrackUrl,
+  whipSwingUrl,
+  whipHeavyUrl,
 ] as const;
 
 export function shouldRing(settings: AppSettings, event: PetEvent): boolean {
@@ -117,8 +119,7 @@ export async function playWhipReactionSound(
 
 async function playBuiltInWhipCrackSound(): Promise<void> {
   const resourcePath = whipSoundResources[Math.floor(Math.random() * whipSoundResources.length)];
-  const audioPath = await resolveResource(resourcePath);
-  const audio = new Audio(convertFileSrc(audioPath));
+  const audio = new Audio(resourcePath);
   audio.preload = "auto";
   await audio.play();
 }

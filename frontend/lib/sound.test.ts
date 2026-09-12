@@ -124,7 +124,7 @@ describe("playWhipSound", () => {
     expect(playWhipSound).toEqual(expect.any(Function));
   });
 
-  it("uses the three bundled renamed wav resources for whip cracks", () => {
+  it("bundles the three whip wav files through the frontend asset pipeline", () => {
     const root = resolve(import.meta.dirname, "../..");
     const source = readFileSync(resolve(root, "frontend/lib/sound.ts"), "utf8");
     const tauriConfig = readFileSync(resolve(root, "src-tauri/tauri.conf.json"), "utf8");
@@ -136,10 +136,10 @@ describe("playWhipSound", () => {
 
     for (const resource of resources) {
       expect(source).toContain(resource);
-      expect(tauriConfig).toContain(resource);
       expect(existsSync(resolve(root, "src-tauri", resource))).toBe(true);
     }
-    expect(source).toContain("resolveResource");
+    expect(tauriConfig).toContain('"../webcontent/": "webcontent/"');
+    expect(source).not.toContain("resolveResource");
   });
 });
 

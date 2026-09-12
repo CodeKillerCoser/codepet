@@ -1,5 +1,6 @@
 node_modules/
 dist/
+webcontent/
 src-tauri/target/
 custom-pet-data/
 .local-secrets/
