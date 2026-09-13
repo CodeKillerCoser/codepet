@@ -52,7 +52,7 @@ pub fn resolve_directory(
         Ok(path) => candidates.push((path, true, 0)),
         Err(error) => errors.push(error),
     }
-    let versions = data_directory.join("webcontent");
+    let versions = data_directory.join("versions/webcontent");
     match fs::read_dir(&versions) {
         Ok(entries) => {
             for entry in entries {
@@ -268,8 +268,8 @@ mod tests {
             resolve_directory(data.path(), || Ok(packaged_path.clone())).unwrap(),
             packaged_path
         );
-        fs::create_dir(data.path().join("webcontent")).unwrap();
-        fs::create_dir(data.path().join("webcontent/.webcontent-stage-incomplete")).unwrap();
+        fs::create_dir_all(data.path().join("versions/webcontent")).unwrap();
+        fs::create_dir(data.path().join("versions/webcontent/.webcontent-stage-incomplete")).unwrap();
         assert_eq!(
             resolve_directory(data.path(), || Ok(packaged_path.clone())).unwrap(),
             packaged_path
@@ -278,7 +278,7 @@ mod tests {
 
     fn candidate(data: &Path, name: &str, version: &str, built_at: u64) -> PathBuf {
         let source = fixture();
-        let target = data.join("webcontent").join(name);
+        let target = data.join("versions/webcontent").join(name);
         fs::create_dir_all(target.join("assets")).unwrap();
         for name in ["index.html", "pet.html", "assets/ui.js"] {
             fs::copy(source.path().join(name), target.join(name)).unwrap();

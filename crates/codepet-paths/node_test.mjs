@@ -9,8 +9,12 @@ test('Node path manager reads shared JSON and keeps workspace independent', t =>
  t.after(()=>{if(dirname(resolve(root))!==resolve(tmpdir()))throw new Error('unsafe test path');rmSync(root,{recursive:true,force:true});});
  const env={LOCALAPPDATA:root};const initial=getPaths({home:root,platform:'win32',env});
  assert.equal(initial.data,join(root,'code-pet'));assert.equal(initial.workspace,join(root,'.codepet'));
+ assert.equal(initial.settingsFile,join(root,'code-pet','config','settings.json'));
+ mkdirSync(initial.data,{recursive:true});writeFileSync(join(initial.data,'settings.json'),'invalid old settings');
+ assert.equal(getPaths({home:root,platform:'win32',env}).data,initial.data);
+ assert.equal(initial.spool,join(initial.data,'connections','spool','events.jsonl'));
  mkdirSync(dirname(initial.settingsFile),{recursive:true});writeFileSync(initial.settingsFile,JSON.stringify({data:{dataDirectory:join(root,'custom')},appearance:{theme:'dark'}}));
- const changed=getPaths({home:root,platform:'win32',env});assert.equal(changed.data,join(root,'custom'));assert.equal(changed.workspace,initial.workspace);assert.equal(changed.spool,join(root,'custom','spool','events.jsonl'));
+ const changed=getPaths({home:root,platform:'win32',env});assert.equal(changed.data,join(root,'custom'));assert.equal(changed.workspace,initial.workspace);assert.equal(changed.spool,join(root,'custom','connections','spool','events.jsonl'));
  writeFileSync(initial.settingsFile,'broken');assert.throws(()=>getPaths({home:root,platform:'win32',env}));
  const mac=getPaths({home:root,platform:'darwin',env:{}});assert.equal(mac.data,join(root,'Library','Application Support','code-pet'));
 });

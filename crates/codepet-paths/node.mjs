@@ -6,9 +6,9 @@ export function getPaths({home = homedir(), platform = process.platform, env = p
   const base = platform === "win32" ? env.LOCALAPPDATA : platform === "darwin" ? join(home, "Library", "Application Support") : env.XDG_DATA_HOME || join(home, ".local", "share");
   if (!base || !isAbsolute(base)) throw new Error("Platform data directory unavailable");
   const defaultData = join(base, "code-pet");
-  const settingsFile = env.CODE_PET_SETTINGS_PATH || join(defaultData, "settings.json");
+  const settingsFile = env.CODE_PET_SETTINGS_PATH || join(defaultData, "config", "settings.json");
   const settings = existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, "utf8")) : {};
   const data = settings.data?.dataDirectory?.trim() || defaultData;
   if (!isAbsolute(data)) throw new Error("Data directory must be absolute");
-  return { data, workspace: join(home, ".codepet"), settingsFile, spool: join(data, "spool", "events.jsonl") };
+  return { data, workspace: join(home, ".codepet"), settingsFile, spool: join(data, "connections", "spool", "events.jsonl") };
 }

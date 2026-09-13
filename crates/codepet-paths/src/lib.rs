@@ -36,7 +36,7 @@ impl PathManager {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Document::default(),
             Err(e) => return Err(e),
         };
-        self.data = data_directory(self.settings_file.parent().expect("settings parent"), &document.data);
+        self.data = data_directory(self.settings_file.parent().and_then(Path::parent).expect("bootstrap data root"), &document.data);
         if !self.data.is_absolute() { return Err(io::Error::new(io::ErrorKind::InvalidData, "data directory must be absolute")); }
         Ok(self)
     }
@@ -54,13 +54,13 @@ impl PathManager {
         let install = bundle.unwrap_or(binary_dir).to_path_buf();
         let resources = bundle.map(|p| p.join("Contents/Resources")).unwrap_or_else(|| binary_dir.to_path_buf());
         let data = platform_data.join("code-pet");
-        Ok(Self { install, resources, workspace: workspace_for_home(home), settings_file: data.join("settings.json"), data })
+        Ok(Self { install, resources, workspace: workspace_for_home(home), settings_file: data.join("config/settings.json"), data })
     }
-    pub fn webcontent(&self) -> PathBuf { self.data.join("webcontent") }
+    pub fn webcontent(&self) -> PathBuf { self.data.join("versions/webcontent") }
     pub fn packaged_webcontent(&self) -> PathBuf { self.resources.join("webcontent") }
     pub fn logs(&self) -> PathBuf { self.data.join("logs") }
     pub fn pets(&self) -> PathBuf { self.data.join("pets") }
-    pub fn hooks(&self) -> PathBuf { self.data.join("hooks") }
+    pub fn hooks(&self) -> PathBuf { self.data.join("config/hooks") }
     pub fn provider_plugins(&self) -> PathBuf { self.resources.join("provider-plugins") }
 }
 
@@ -68,7 +68,7 @@ pub fn default_data_directory() -> PathBuf {
     dirs::data_local_dir().expect("platform application data directory unavailable").join("code-pet")
 }
 pub fn home_directory() -> Option<PathBuf> { dirs::home_dir() }
-pub fn settings_file() -> PathBuf { default_data_directory().join("settings.json") }
+pub fn settings_file() -> PathBuf { default_data_directory().join("config/settings.json") }
 pub fn data_directory(default: &Path, settings: &DataSettings) -> PathBuf {
     settings.data_directory.as_deref().map(str::trim).filter(|p| !p.is_empty()).map(PathBuf::from).unwrap_or_else(|| default.to_path_buf())
 }
@@ -102,7 +102,7 @@ mod tests {
         let mut p = PathManager::from_roots(&r.join("install/code-pet.exe"), &r.join("user"), &r.join("localdata"), false).unwrap();
         p.data = data_directory(&p.data, &DataSettings { data_directory: Some(r.join("custom").display().to_string()) });
         assert_eq!(p.install, r.join("install")); assert_eq!(p.resources, p.install);
-        assert_eq!(p.data, r.join("custom")); assert_eq!(p.settings_file, r.join("localdata/code-pet/settings.json"));
+        assert_eq!(p.data, r.join("custom")); assert_eq!(p.settings_file, r.join("localdata/code-pet/config/settings.json"));
         assert_eq!(p.workspace, r.join("user/.codepet"));
     }
     #[test]
@@ -119,6 +119,20 @@ mod tests {
         assert!(p.clone().load_settings().is_err());
         fs::write(&p.settings_file, br#"{"data":{"dataDirectory":"relative"}}"#).unwrap();
         assert!(p.load_settings().is_err());
+    }
+    #[test]
+    fn bootstrap_ignores_old_settings_and_keeps_default_data_outside_config() {
+        let t = tempfile::tempdir().unwrap();
+        let r = t.path();
+        let p = PathManager::from_roots(&r.join("install/app.exe"), &r.join("home"), &r.join("local"), false).unwrap();
+        fs::create_dir_all(&p.data).unwrap();
+        fs::write(p.data.join("settings.json"), "invalid old settings").unwrap();
+        assert_eq!(p.clone().load_settings().unwrap().data, p.data);
+        fs::create_dir_all(p.settings_file.parent().unwrap()).unwrap();
+        fs::write(&p.settings_file, b"{}").unwrap();
+        assert_eq!(p.clone().load_settings().unwrap().data, p.data);
+        assert_eq!(p.webcontent(), p.data.join("versions/webcontent"));
+        assert_eq!(p.hooks(), p.data.join("config/hooks"));
     }
     #[test]
     fn provider_workspace_cannot_escape_managed_root() {

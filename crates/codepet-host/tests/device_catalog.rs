@@ -38,7 +38,7 @@ fn device_identity_persists_and_corruption_is_rebuilt_with_diagnostics() {
 #[tokio::test]
 async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stable() {
     let directory = tempfile::tempdir().unwrap();
-    let plugin_directory = directory.path().join("provider-plugins").join("fake");
+    let plugin_directory = directory.path().join("versions/providers").join("fake");
     fs::create_dir_all(&plugin_directory).unwrap();
     fs::write(plugin_directory.join("ignored-binary"), b"not executable discovery").unwrap();
     let manifest_path = plugin_directory.join("codepet-provider.json");

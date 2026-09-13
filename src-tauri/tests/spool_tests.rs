@@ -10,7 +10,7 @@ fn spool_path_uses_path_manager_data_root() {
     let settings = AppSettings::default();
     let spool_path = code_pet_lib::paths::spool(&settings);
 
-    assert_eq!(spool_path, code_pet_lib::paths::data(&settings).join("spool/events.jsonl"));
+    assert_eq!(spool_path, code_pet_lib::paths::data(&settings).join("connections/spool/events.jsonl"));
 }
 
 #[test]
@@ -19,7 +19,7 @@ fn spool_path_follows_custom_app_data_directory() {
     let mut settings = AppSettings::default();
     settings.data.data_directory = Some(temp.path().join("code-pet-data").to_string_lossy().to_string());
 
-    assert_eq!(code_pet_lib::paths::spool(&settings), temp.path().join("code-pet-data").join("spool").join("events.jsonl"));
+    assert_eq!(code_pet_lib::paths::spool(&settings), temp.path().join("code-pet-data").join("connections/spool").join("events.jsonl"));
 }
 
 #[test]

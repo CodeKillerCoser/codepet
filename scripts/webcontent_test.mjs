@@ -63,7 +63,7 @@ test("rejects corrupt source without installing a new version", (t) => {
   writeFileSync(join(source, "assets/main.js"), "incomplete copy");
   assert.throws(() => installWebcontent(source, data), /checksum/);
   assert.equal(validateWebcontent(first.target).version, "1.0.0");
-  assert.equal(existsSync(join(data, "webcontent", "v2")), false);
+  assert.equal(existsSync(join(data, "versions", "webcontent", "v2")), false);
 });
 
 test("a newer complete version can replace a corrupt version without overwriting it", (t) => {
@@ -78,11 +78,23 @@ test("a newer complete version can replace a corrupt version without overwriting
 
 test("uses numeric ordering and ignores staging directories", (t) => {
   const { source, data } = fixture(t);
-  mkdirSync(join(data, "webcontent", "v9"), { recursive: true });
-  mkdirSync(join(data, "webcontent", "v10"));
-  mkdirSync(join(data, "webcontent", ".webcontent-stage-123"));
+  mkdirSync(join(data, "webcontent", "v999"), { recursive: true });
+  mkdirSync(join(data, "versions", "webcontent", "v9"), { recursive: true });
+  mkdirSync(join(data, "versions", "webcontent", "v10"));
+  mkdirSync(join(data, "versions", "webcontent", ".webcontent-stage-123"));
   const result = installWebcontent(source, data);
   assert.equal(result.directoryVersion, "v11");
+  assert.equal(result.target, join(data, "versions", "webcontent", "v11"));
+});
+
+test("rejects a linked versions root before writing outside the data directory", (t) => {
+  const { root, source, data } = fixture(t);
+  const outside = join(root, "outside");
+  mkdirSync(outside);
+  mkdirSync(data);
+  symlinkSync(outside, join(data, "versions"), process.platform === "win32" ? "junction" : "dir");
+  assert.throws(() => installWebcontent(source, data), /symlink/);
+  assert.equal(existsSync(join(outside, "webcontent")), false);
 });
 
 test("rejects incompatible backend versions and missing entries", (t) => {
@@ -107,7 +119,7 @@ test("rejects path escapes, overlapping paths and App bundle destinations", (t) 
   manifest.files["../secret.txt"] = "a".repeat(64);
   writeFileSync(path, JSON.stringify(manifest));
   assert.throws(() => validateWebcontent(source), /Invalid webcontent path/);
-  assert.equal(existsSync(join(data, "webcontent")), false);
+  assert.equal(existsSync(join(data, "versions", "webcontent")), false);
 });
 
 test("rejects destinations aliased to the source through a directory link", (t) => {

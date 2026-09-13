@@ -172,7 +172,7 @@ describe("path manager", () => {
   });
 
   it("reads the resolved app data directory", async () => {
-    vi.mocked(invoke).mockResolvedValue({ install: "/opt/code-pet", data: "/tmp/code-pet", workspace: "/home/user/.codepet", resources: "/opt/code-pet", settingsFile: "/home/user/.local/share/code-pet/settings.json" });
+    vi.mocked(invoke).mockResolvedValue({ install: "/opt/code-pet", data: "/tmp/code-pet", workspace: "/home/user/.codepet", resources: "/opt/code-pet", settingsFile: "/home/user/.local/share/code-pet/config/settings.json" });
 
     await expect(getAppPaths()).resolves.toMatchObject({data: "/tmp/code-pet", workspace: "/home/user/.codepet"});
 

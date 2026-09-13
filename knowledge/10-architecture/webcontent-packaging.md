@@ -21,7 +21,7 @@
 
 ## 加载优先级与分发布局
 
-正式 App 通过 Path Manager 取得包内资源根与当前 data 根，收集包内 `webcontent/` 和 data 下全部 `webcontent/vN/`。目录名 vN 仅代表安装槽位，不能用来判断 UI 新旧；未完成复制的 `.webcontent-stage-*` 不参与选择，不接受版本目录符号链接。
+正式 App 通过 Path Manager 取得包内资源根与当前 data 根，收集包内 `webcontent/` 和 data 下全部 `versions/webcontent/vN/`。目录名 vN 仅代表安装槽位，不能用来判断 UI 新旧；未完成复制的 `.webcontent-stage-*` 不参与选择，不接受版本目录符号链接。
 
 每个候选先验证应用标识、后端契约、资源入口、版本/时间戳和全文件哈希。完整且兼容的候选一起排序：先比较清单 `version` 的 SemVer 优先级，再比较 `builtAt`（Unix 毫秒）；版本与时间相同优先包内，两份数据资源完全相同则取更高槽位。SemVer 的 build metadata 不影响优先级，正式版高于同版本预发布版。
 
@@ -33,7 +33,7 @@ Windows 包内目录位于可执行文件旁；macOS 为 `.app/Contents/Resource
 - `npm run build:webcontent` / `npm run build`：只构建前端并写清单，不调用 Cargo。
 - `npm run build:bin`：通过 `tauri.bin.conf.json` 关闭前端预构建与资源复制，只构建启用 `custom-protocol` 的正式 Rust 可执行文件，不生成安装包。首次运行前可以将 webcontent 安装到应用数据目录；完整安装包则自带基线资源。
 - `npm run tauri build`：完整构建并分发。Tauri build script 会复制/跟踪 bundle resources，因此修改 UI 后不要用它代替独立 UI 命令。
-- `npm run install:webcontent -- --data-dir <app-data-dir>`：验证源包，在数据目录 `webcontent/` 下复制到临时目录、再次校验，最后改名为比现有版本更大的 `vN`。不覆盖任何旧版本，不写 App 包内目录；发布前失败只清理本次临时目录。拒绝重叠目录及 App bundle 目标。
+- `npm run install:webcontent -- --data-dir <app-data-dir>`：验证源包，在数据目录 `versions/webcontent/` 下复制到临时目录、再次校验，最后改名为比现有版本更大的 `vN`。不覆盖任何旧版本，不写 App 包内目录；发布前失败只清理本次临时目录。拒绝重叠目录及 App bundle 目标。
 
 安装后重启 App 才切换资源快照。刷新现有窗口不会读取更新后的磁盘文件。可以在 App 运行期间安装新目录，正在运行的窗口仍用旧快照。不要逐个替换散列 JS/CSS，也不要只复制 HTML。回退时移走当前选中的数据资源目录，重启后从剩余数据资源和包内资源重新比较。
 
@@ -74,7 +74,7 @@ macOS 的签名、公证、安装包资源路径与原生多窗口行为需要�
 
 本轮 `npm run test:webcontent` 10 项通过；`cargo test --manifest-path src-tauri/Cargo.toml --features custom-protocol app::webcontent::tests --lib --offline -j 2` 10 项通过。测试覆盖高版本包内胜出、数据 SemVer 数值排序、同版本构建时间、完全相同优先包内、预发布版排序，以及损坏/契约不符/缺少元数据的候选。测试编译期间修正 Provider 单元测试夹具中错误引用未声明 settings 的路径设置，使用其临时 provider-data 目录。
 
-`npm run build:webcontent` 通过；11 个资源文件已安装至用户 data/webcontent/v3，清单版本为 0.3.9-beta，builtAt 为 1789227718898，安装保留了构建时间。
+`npm run build:webcontent` 通过；11 个资源文件已安装至用户 data/versions/webcontent/v3，清单版本为 0.3.9-beta，builtAt 为 1789227718898，安装保留了构建时间。
 
 正式原生构建：`npm run build:bin -- -- --offline --jobs 2` 成功，release 优化构建耗时 7m21s，产物为 `src-tauri/target/release/code-pet.exe`。未替换已安装程序，也未生成安装器；macOS 实机与原生窗口启动验收仍待执行。
 
