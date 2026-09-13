@@ -5,6 +5,7 @@
   import type { ProviderSummary } from "../../sdk/typescript/codepet-gateway-sdk/src/generated";
   import type { UsageDataset, UsageQuery, UsageQueryResult, UsageTimeBucket, UsageMetric } from "../../sdk/typescript/codepet-agent-sdk/src/generated";
 
+  export let onConnections: () => void = () => {};
   let sources: Array<{ provider: ProviderSummary; dataset: UsageDataset }> = [];
   let selected = "";
   let days = 7;
@@ -75,6 +76,7 @@
     <p class="usage-note">时间按 UTC 显示。累计与每日峰值基于整个查询范围，不受分页影响。</p>
     {#if source?.dataset.baseBucketMinutes === 1440}<p class="usage-note">该来源仅支持每日总量，不提供模型和输入、输出、缓存拆分。</p>{/if}
     {#if error}<p role="alert">{error}</p>{/if}
+    {#if error || discoveryErrors.length || (!loading && !sources.length)}<button type="button" on:click={onConnections}>配置运行时</button>{/if}
     {#each discoveryErrors as failure}<p role="status">{failure}</p>{/each}
     {#if loading}<p role="status">正在查询用量…</p>{/if}
     {#if !loading && !sources.length && !error}<div class="empty-state"><strong>没有可查询的用量来源</strong><p>请先连接支持用量查询的 Provider。</p></div>{/if}

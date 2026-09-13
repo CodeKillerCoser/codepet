@@ -3,7 +3,7 @@
   import TaskLineage from "./lib/TaskLineage.svelte";
   import TaskSettingsPage from "./lib/TaskSettingsPage.svelte";
   import MainNavigation from "./lib/MainNavigation.svelte";
-  import { createNavigation } from "./lib/navigation";
+  import { createNavigation, connectionRoutes, isConnectionRoute, isSettingsRoute, routeTitle, type AppRoute } from "./lib/navigation";
   import WindowToolbar from "./lib/WindowToolbar.svelte";
   import { basename, extname, join } from "@tauri-apps/api/path";
   import PetSources from "./lib/PetSources.svelte";
@@ -33,7 +33,6 @@
     Power,
     RefreshCw,
     RotateCcw,
-    Rocket,
     ShieldAlert,
     Sun,
     Trash2,
@@ -63,8 +62,22 @@
 
   const navigation = createNavigation();
   $: tab = $navigation.current;
-  $: if (tab === "connections") void refreshRemoteAccess();
+  $: if (tab === "devices") void refreshRemoteAccess();
   let sidebarCollapsed = false;
+  let lastWorkspace: AppRoute = "tasks";
+  let extractionVisited = false;
+  let contentElement: HTMLDivElement;
+  let pageHeading: HTMLHeadingElement;
+  let renderedRoute: AppRoute = "tasks";
+  $: if (!isSettingsRoute(tab)) lastWorkspace = tab;
+  $: if (tab === "extraction") extractionVisited = true;
+  $: if (tab !== renderedRoute) {
+    renderedRoute = tab;
+    void tick().then(() => {
+      contentElement?.scrollTo({ top: 0 });
+      pageHeading?.focus({ preventScroll: true });
+    });
+  }
   let petSources: PetSource[] = [];
   let agentRuntimes: AgentRuntime[] = [];
   let providerConnections: ProviderConnectionState[] = [];
@@ -214,7 +227,7 @@
     media.addEventListener("change", syncTheme);
     void refreshRemoteAccess();
     remoteAccessPollTimer = window.setInterval(() => {
-      if (tab === "connections") void refreshRemoteAccess();
+      if (tab === "devices") void refreshRemoteAccess();
     }, remoteAccessPollIntervalMs);
     void pollIncomingRemotePairingRequests();
     remotePairingRequestPollTimer = window.setInterval(
@@ -1670,30 +1683,40 @@
   $: recentVisibleEvents = events.slice(-5).reverse();
   $: enabledSources = petSources.filter(source => source.enabled);
   $: receivingSources = petSources.filter(source => source.status === "receiving");
-  $: pageTitle = tab === "settings" ? "设置" : tab === "tasks" ? "任务管理" : tab === "agents" ? "Agent" : tab === "connections" ? "连接" : tab === "usage" ? "用量" : tab === "personalize" ? "个性化" : "最新事件";
+  $: pageTitle = routeTitle(tab);
   $: appTheme = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
 </script>
 
 <main class={`app-shell main-theme ${appTheme}`} class:sidebar-collapsed={sidebarCollapsed}>
-  <WindowToolbar bind:collapsed={sidebarCollapsed} canGoBack={$navigation.canGoBack} canGoForward={$navigation.canGoForward} onBack={navigation.back} onForward={navigation.forward} settingsActive={tab === "settings"} onSettings={() => navigation.navigate("settings")} onError={(message) => error = message} />
+  <WindowToolbar bind:collapsed={sidebarCollapsed} canGoBack={$navigation.canGoBack} canGoForward={$navigation.canGoForward} onBack={navigation.back} onForward={navigation.forward} settingsActive={isSettingsRoute(tab)} onSettings={() => navigation.navigate("settings")} onError={(message) => error = message} />
   <aside id="main-sidebar" class="sidebar" inert={sidebarCollapsed}>
-    <MainNavigation current={tab} onNavigate={navigation.navigate} />
+    <MainNavigation current={tab} onNavigate={navigation.navigate} onReturn={() => navigation.navigate(lastWorkspace)} />
   </aside>
 
   <section class="content-pane">
     <header class="topbar">
       <div>
-        <h2>{pageTitle}</h2>
+        <h2 bind:this={pageHeading} tabindex="-1">{pageTitle}</h2>
         {#if error}<p class="error">{error}</p>{/if}
       </div>
     </header>
 
-    <div class="content">
-    {#if tab === "settings"}
-      <TaskSettingsPage />
-    {:else if tab === "tasks"}
-      <TaskLineage />
-    {:else if tab === "agents"}
+    <div class="content" bind:this={contentElement}>
+    {#if isConnectionRoute(tab)}
+      <nav class="section-navigation" aria-label="连接接入分区">
+        {#each connectionRoutes as entry}
+          <button class:active={tab === entry.route} aria-current={tab === entry.route ? "page" : undefined} on:click={() => navigation.navigate(entry.route)}>{entry.label}</button>
+        {/each}
+      </nav>
+    {/if}
+    {#if extractionVisited}
+      <div hidden={tab !== "extraction"}>
+        <TaskSettingsPage onConnections={() => navigation.navigate("runtimes")} />
+      </div>
+    {/if}
+    {#if tab === "tasks"}
+      <TaskLineage onSettings={() => navigation.navigate("extraction")} onConnections={() => navigation.navigate("runtimes")} />
+    {:else if tab === "connections"}
       <div class="agent-workspace">
         <section class="overview-grid" aria-label="运行概览">
           <article class="overview-card pixel-panel">
@@ -1725,7 +1748,7 @@
           <PetSources bind:sources={petSources} />
         </section>
       </div>
-    {:else if tab === "connections"}
+    {:else if tab === "devices"}
       <div class="connection-workspace">
         <section class="device-section pixel-panel">
           <header class="section-head connection-section-head">
@@ -1782,6 +1805,9 @@
           />
         </section>
 
+      </div>
+    {:else if tab === "runtimes"}
+      <div class="connection-workspace">
         <section class="runtime-section pixel-panel">
           <header class="section-head runtime-section-head">
             <div>
@@ -1879,9 +1905,9 @@
         </section>
       </div>
     {:else if tab === "usage"}
-      <UsagePanel />
+      <UsagePanel onConnections={() => navigation.navigate("runtimes")} />
     {:else if tab === "personalize" && settings}
-      <div class="personal-grid">
+      <div class="settings-workspace pet-creation">
         <section class="pet-editor pixel-panel">
           <header class="panel-head">
             <div>
@@ -1909,32 +1935,11 @@
               on:change={savePetImagePixelSize}
             />
           </label>
-          <label class="pet-opacity-control">
-            <span>
-              <span>窗口不透明度</span>
-              <strong>{petOpacityLabel(settings.pet.opacity)}</strong>
-            </span>
-            <input
-              type="range"
-              min={minPetOpacity}
-              max="1"
-              step="0.05"
-              bind:value={settings.pet.opacity}
-              on:input={(event) => (settings.pet.opacity = clampPetOpacity(inputNumber(event)))}
-              on:change={savePetOpacity}
-            />
-          </label>
           <section class="pet-library-panel">
             <div class="panel-head compact">
               <div>
                 <h3>宠物库</h3>
               </div>
-            </div>
-            <div class="data-directory">
-              <span>{petLibrary?.dataDirectory ?? settings.petLibrary.dataDirectory ?? "app data/code-pet/pets"}</span>
-              <button disabled={busyPet === "directory"} on:click={choosePetDataDirectory}>
-                <FolderCog size={16} /> 修改
-              </button>
             </div>
             <div class="pet-list" aria-label="已配置宠物">
               {#each petLibrary?.pets ?? settings.petLibrary.pets as pet}
@@ -1974,8 +1979,10 @@
             </div>
           </section>
         </section>
-
-        <div class="personal-side">
+        <button class="context-link" on:click={() => navigation.navigate("appearance")}>调整主题、透明度与桌宠效果</button>
+      </div>
+    {:else if tab === "appearance" && settings}
+      <div class="settings-workspace">
           <section class="appearance-editor pixel-panel">
             <header class="panel-head">
               <h3>主题</h3>
@@ -2069,9 +2076,64 @@
             </label>
           </section>
 
+
+        <section class="appearance-editor pixel-panel"><h3>窗口与互动</h3>
+          <label class="pet-opacity-control">
+            <span>
+              <span>窗口不透明度</span>
+              <strong>{petOpacityLabel(settings.pet.opacity)}</strong>
+            </span>
+            <input
+              type="range"
+              min={minPetOpacity}
+              max="1"
+              step="0.05"
+              bind:value={settings.pet.opacity}
+              on:input={(event) => (settings.pet.opacity = clampPetOpacity(inputNumber(event)))}
+              on:change={savePetOpacity}
+            />
+          </label>
+            <div class="sound-subsection">
+              <strong>抽打反应</strong>
+              <span>抽完鞭子后，桌宠继续发出的声音：{whipReactionSoundLabel(settings.pet.whipReactionSound)}</span>
+            </div>
+            <div class="segmented">
+              {#each whipReactionSounds as reaction}
+                <button
+                  class:active={settings.pet.whipReactionSound === reaction.value}
+                  on:click={async () => {
+                    settings.pet.whipReactionSound = reaction.value;
+                    await saveSettings();
+                  }}
+                >
+                  {reaction.label}
+                </button>
+              {/each}
+            </div>
+            <div class="row-actions">
+              <button on:click={() => playWhipReactionSound(settings.pet.whipReactionSound, settings.pet.customWhipReactionSoundPath)}>
+                <Volume2 size={17} /> 试听反应
+              </button>
+              <button on:click={pickCustomWhipReactionSound}>
+                <FolderOpen size={17} /> 选择反应音频
+              </button>
+            </div>
+            {#if settings.pet.customWhipReactionSoundPath}
+              <p class="path">{settings.pet.customWhipReactionSoundPath}</p>
+            {/if}
+        </section>
+      </div>
+    {:else if tab === "settings" && settings}
+      <div class="settings-workspace">
+        <section class="appearance-editor pixel-panel"><h3>启动</h3>
+            <label class="check">
+              <input type="checkbox" checked={launchAtLogin} disabled={busyLaunchAtLogin} on:change={toggleLaunchAtLogin} />
+              开机自启动
+            </label>
+        </section>
           <section class="appearance-editor pixel-panel">
             <header class="panel-head">
-              <h3><Rocket size={18} /> 系统</h3>
+              <h3><FolderCog size={18} /> 数据与存储</h3>
             </header>
             {#if managedPaths}
               <div class="system-data-directory">
@@ -2102,24 +2164,33 @@
                 {appDataRestartPending ? "已保存路径配置，重启后生效。" : "更改只切换数据目录，不复制或清空已有数据，保存后请重启。"}
               </p>
             </div>
-            <label class="check">
-              <input type="checkbox" checked={launchAtLogin} disabled={busyLaunchAtLogin} on:change={toggleLaunchAtLogin} />
-              开机自启动
-            </label>
+            <div class="system-data-directory"><h4>宠物资源目录</h4>
+            <div class="data-directory">
+              <span>{petLibrary?.dataDirectory ?? settings.petLibrary.dataDirectory ?? "app data/code-pet/pets"}</span>
+              <button disabled={busyPet === "directory"} on:click={choosePetDataDirectory}>
+                <FolderCog size={16} /> 修改
+              </button>
+            </div>
+            </div>
+          </section>
+          <section class="appearance-editor pixel-panel"><h3>关于与更新</h3>
             <div class="update-settings">
               <div class="setting-line">
-                <span>App updates</span>
-                <em>{settings.updates.ignoredVersion ? `Ignored ${settings.updates.ignoredVersion}` : "Ready"}</em>
+                <span>应用更新</span>
+                <em>{settings.updates.ignoredVersion ? `已忽略 ${settings.updates.ignoredVersion}` : "就绪"}</em>
               </div>
               <div class="update-status-row">
-                <span>{updateError || updateMessage || "Ready"}</span>
+                <span>{updateError || updateMessage || "手动检查可用更新"}</span>
                 <button disabled={!!updateCheckMode || updateInstallBusy} on:click={() => checkForUpdates("manual")}>
-                  <RefreshCw size={16} /> {updateCheckMode === "manual" ? "Checking" : "Check"}
+                  <RefreshCw size={16} /> {updateCheckMode === "manual" ? "检查中" : "检查更新"}
                 </button>
               </div>
             </div>
           </section>
 
+      </div>
+    {:else if tab === "notifications" && settings}
+      <div class="settings-workspace">
           <section class="sound-editor pixel-panel">
             <header class="panel-head">
               <div>
@@ -2153,34 +2224,6 @@
             </div>
             {#if settings.notifications.customSoundPath}
               <p class="path">{settings.notifications.customSoundPath}</p>
-            {/if}
-            <div class="sound-subsection">
-              <strong>抽打反应</strong>
-              <span>抽完鞭子后，桌宠继续发出的声音：{whipReactionSoundLabel(settings.pet.whipReactionSound)}</span>
-            </div>
-            <div class="segmented">
-              {#each whipReactionSounds as reaction}
-                <button
-                  class:active={settings.pet.whipReactionSound === reaction.value}
-                  on:click={async () => {
-                    settings.pet.whipReactionSound = reaction.value;
-                    await saveSettings();
-                  }}
-                >
-                  {reaction.label}
-                </button>
-              {/each}
-            </div>
-            <div class="row-actions">
-              <button on:click={() => playWhipReactionSound(settings.pet.whipReactionSound, settings.pet.customWhipReactionSoundPath)}>
-                <Volume2 size={17} /> 试听反应
-              </button>
-              <button on:click={pickCustomWhipReactionSound}>
-                <FolderOpen size={17} /> 选择反应音频
-              </button>
-            </div>
-            {#if settings.pet.customWhipReactionSoundPath}
-              <p class="path">{settings.pet.customWhipReactionSoundPath}</p>
             {/if}
             <label class="check">
               <input type="checkbox" bind:checked={settings.notifications.ringOnPermission} on:change={saveSettings} />
@@ -2228,7 +2271,8 @@
               {/each}
             </div>
 
-            <section class="robot-template-panel">
+            <details class="robot-template-panel">
+              <summary>自定义消息模板</summary>
               <div class="robot-template-head">
                 <strong>消息模板</strong>
                 <button type="button" on:click={resetRobotTemplate}>恢复默认</button>
@@ -2246,7 +2290,7 @@
                   </label>
                 {/each}
               </div>
-            </section>
+            </details>
 
             <div class="row-actions">
               <button on:click={() => addRobotChannel("dingtalk")}>
@@ -2393,9 +2437,9 @@
               {/if}
             </div>
           </section>
-        </div>
       </div>
     {:else if tab === "events"}
+      <p class="section-description">事件日志：查看活动来源与运行时事件，排查接入问题。</p>
       <EventJournal />
     {/if}
     </div>

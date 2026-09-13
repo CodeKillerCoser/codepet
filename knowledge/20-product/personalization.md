@@ -20,3 +20,10 @@
 
 - 运行 `npx vitest run frontend/lib/bubbleColorSettings.test.ts frontend/lib/sound.test.ts`。
 - 修改持久化默认值或宠物库行为时，运行 Rust 侧 pet/settings 测试。
+
+
+## 主窗口入口归属（2026-09-13）
+
+主导航的“宠物制作”负责预览、抠图导入、像素化与宠物库管理。主题、任务气泡、窗口不透明度、互动音效归“设置 → 外观与桌宠”；任务通知声音、静音时段与机器人归“设置 → 通知”；资源目录归“设置 → 通用 → 数据与存储”。这些移动沿用原设置字段和保存 API。
+
+完整分区与验证记录见 `settings-organization-proposal.md`。真实 App 的导航可通过浏览器 QA 入口 `frontend/qa/main-window.html` 在模拟 IPC 下复查；此入口不参与生产构建。

@@ -8,12 +8,12 @@ const deviceListSource = readFileSync(resolve(__dirname, "lib/RemoteDeviceList.s
 const pairDialogSource = readFileSync(resolve(__dirname, "lib/PairDeviceDialog.svelte"), "utf8");
 
 describe("connections workspace", () => {
-  it("renames the navigation and keeps devices before the unchanged runtime controls", () => {
+  it("groups activity, devices and runtime controls under connection navigation", () => {
     const connectionStart = appSource.indexOf('{:else if tab === "connections"}');
     const usageStart = appSource.indexOf('{:else if tab === "usage"}', connectionStart);
     const connectionSource = appSource.slice(connectionStart, usageStart);
 
-    expect(navigationSource).toContain('route: "connections", label: "连接", icon: Cable');
+    expect(navigationSource).toContain('route: "connections", label: "连接接入", icon: Cable');
     expect(connectionSource.indexOf('<h3>设备</h3>')).toBeGreaterThan(-1);
     expect(connectionSource.indexOf('<h3>设备</h3>')).toBeLessThan(connectionSource.indexOf('<h3>本机运行时</h3>'));
     expect(connectionSource).toContain("on:click={refreshRuntimes}");

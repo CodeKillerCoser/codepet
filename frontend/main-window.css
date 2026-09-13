@@ -208,3 +208,34 @@
 
 .main-theme .window-toolbar .settings-entry { flex-shrink: 0; margin-right: 8px; }
 .main-theme .window-toolbar .settings-entry[aria-pressed="true"] { background: var(--color-main-selected); color: var(--color-main-selected-text); }
+
+/* Navigation groups separate daily work from preferences without duplicating forms. */
+.main-theme .settings-workspace { display: grid; gap: 28px; max-width: 960px; width: 100%; margin-inline: auto; min-width: 0; }
+.main-theme .settings-workspace > * { min-width: 0; }
+.main-theme .section-navigation { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+.main-theme .section-navigation button, .main-theme .context-link { min-height: 36px; padding: 8px 12px; }
+.main-theme .section-navigation .active { background: var(--color-main-selected); color: var(--color-main-selected-text); }
+.main-theme .return-workspace { margin-bottom: 16px; }
+.main-theme .section-description { color: var(--app-muted); }
+.main-theme .topbar h2:focus { outline: none; }
+.main-theme .content > [hidden] { display: none; }
+.main-theme .robot-template-panel > summary { cursor: pointer; padding: 8px 0; font-weight: var(--font-weight-semibold); }
+.main-theme .pet-creation .pet-preview { min-height: 220px; }
+.main-theme .settings-workspace :is(input, textarea, select) { max-width: 100%; }
+@media (max-width: 600px) {
+  .main-theme .section-navigation { gap: 4px; }
+  .main-theme .section-navigation button { flex: 1; padding-inline: 8px; }
+  .main-theme .settings-workspace .time-row { flex-wrap: wrap; }
+}
+.main-theme .section-navigation button, .main-theme .context-link {
+  border: 1px solid var(--color-main-outline);
+  border-radius: 8px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  font: inherit;
+  cursor: pointer;
+}
+.main-theme .section-navigation button:hover, .main-theme .context-link:hover { background: var(--color-main-hover); }
+.main-theme .section-navigation button.active { background: var(--color-main-selected); color: var(--color-main-selected-text); }
+.main-theme .section-navigation button:focus-visible, .main-theme .context-link:focus-visible, .main-theme summary:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
+.main-theme .context-link { justify-self: start; }
