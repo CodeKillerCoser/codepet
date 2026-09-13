@@ -1,22 +1,26 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
+  import { extractionDraftDirty } from "./webcontent";
   import { lineageApi, type ExtractionSettings, type LineageOptions } from "./taskLineage";
   export let providerId: string;
   export let options: LineageOptions;
   export let onSaved: (config: ExtractionSettings) => void;
   let config: ExtractionSettings | null = null, skills: string[] = [], preview = "", error = "", saving = false, saved = false;
+  let savedConfig = "";
+  $: extractionDraftDirty.set(saving || (!!config && JSON.stringify(config) !== savedConfig));
+  onDestroy(() => extractionDraftDirty.set(false));
   $: instance = options.instances?.find(i => i.id === config?.harnessInstanceId) ?? (!config?.harnessInstanceId && options.instances?.length === 1 ? options.instances[0] : undefined);
   $: models = instance?.controls?.modelCatalog?.models ?? [];
   $: efforts = instance?.controls?.reasoningEffort?.options ?? [];
   $: supported = !!config && !instance?.error && models.some(m => m.id === config?.model && m.enabled !== false) && efforts.some(e => e.id === config?.reasoningEffort && e.enabled !== false);
   async function load() {
-    try { [config, skills] = await Promise.all([lineageApi.settings(providerId), lineageApi.skills(providerId)]); await showSkill(); }
+    try { [config, skills] = await Promise.all([lineageApi.settings(providerId), lineageApi.skills(providerId)]); savedConfig = JSON.stringify(config); await showSkill(); }
     catch (e) { error = String(e); }
   }
   async function showSkill() { if (!config) return; try { preview = (await lineageApi.skill(providerId, config.skill)).text; } catch (e) { error = String(e); } }
   async function save() {
     if (!config || saving) return; saving = true; error = ""; saved = false;
-    try { config = await lineageApi.saveSettings(providerId, config); onSaved(config); saved = true; }
+    try { config = await lineageApi.saveSettings(providerId, config); savedConfig = JSON.stringify(config); onSaved(config); saved = true; }
     catch (e) { error = String(e); } finally { saving = false; }
   }
   onMount(load);

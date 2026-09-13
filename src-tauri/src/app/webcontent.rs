@@ -32,9 +32,9 @@ struct Manifest {
     files: BTreeMap<String, String>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct WebContentAssets {
-    files: BTreeMap<String, Vec<u8>>,
+    pub(super) files: BTreeMap<String, Vec<u8>>,
     version: String,
     built_at: u64,
     error_page: Option<Vec<u8>>,
@@ -202,7 +202,7 @@ impl WebContentAssets {
         }
     }
 
-    fn content(&self, key: &str) -> Option<Cow<'_, [u8]>> {
+    pub(super) fn content(&self, key: &str) -> Option<Cow<'_, [u8]>> {
         if let Some(page) = &self.error_page {
             return matches!(key, "/index.html" | "/pet.html")
                 .then(|| Cow::Borrowed(page.as_slice()));

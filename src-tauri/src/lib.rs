@@ -346,6 +346,7 @@ pub fn run() {
     // Supplying Assets to the macro prevents HTML/JS/CSS from being embedded.
     // Distribution resources are handled separately; keep Tauri's origin and IPC.
     let mut context = tauri::generate_context!(assets = app::webcontent::WebContentAssets::default());
+    let mut reloadable_assets = app::webcontent_reload::ReloadableAssets::new(app::webcontent::WebContentAssets::default());
     if !tauri::is_dev() {
         let assets = paths::for_package(context.package_info()).map_err(|error| error.to_string()).and_then(|paths| {
             app::webcontent::resolve_directory(&paths.data, || Ok(paths.packaged_webcontent()))
@@ -363,7 +364,8 @@ pub fn run() {
                 app::webcontent::WebContentAssets::unavailable(&error)
             }
         };
-        context.set_assets(Box::new(assets));
+        reloadable_assets = app::webcontent_reload::ReloadableAssets::new(assets);
+        context.set_assets(Box::new(reloadable_assets.clone()));
     }
 
     let builder = tauri::Builder::default()
@@ -384,6 +386,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .manage(SharedState::default())
+        .manage(reloadable_assets)
         .manage(PendingAppUpdate::default())
         .manage(AgentRuntimeService::default())
         .setup(|app| {
@@ -462,6 +465,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            app::webcontent_reload::webcontent_info,
+            app::webcontent_reload::load_latest_webcontent,
             task_lineage::task_lineage_options,
             task_lineage::task_lineage_request,
             task_lineage::task_lineage_snapshot,

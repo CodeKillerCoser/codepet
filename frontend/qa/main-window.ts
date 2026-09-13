@@ -2,6 +2,7 @@
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { mount } from "svelte";
 import App from "../App.svelte";
+import { frontendBuild } from "../lib/webcontent";
 import { defaultPetSprite, defaultRunningBubbleSettings } from "../lib/theme";
 import "../styles.css";
 import "../main-window.css";
@@ -39,6 +40,13 @@ let appSettings: any = {
 };
 const runtime = {providerId:"dev.codepet.claude", displayName:"Claude", status:"ready", source:"configured", resolvedExecutable:"D:/Software/Claude/claude.exe", configuredExecutable:"D:/Software/Claude/claude.exe", version:"2.1.263", installed:[]};
 mockIPC((command, raw) => {
+  if (command === "webcontent_info" || command === "load_latest_webcontent") {
+    const scenario = new URLSearchParams(location.search).get("webcontentCase");
+    if (scenario === "unsupported") throw new Error("Command not found");
+    if (command === "load_latest_webcontent" && scenario === "error") throw new Error("资源校验失败，保留当前前端资源");
+    if (command === "load_latest_webcontent" && scenario === "reload" && !new URLSearchParams(location.search).has("webcontent")) return { ...frontendBuild, builtAt: frontendBuild.builtAt + 1, canReload: true };
+    return { ...frontendBuild, canReload: true };
+  }
   if (command === "plugin:app|version") return "0.3.8-qa";
   const args = (raw ?? {}) as Record<string, any>;
   if (command === "plugin:window|outer_position") return {x:0,y:0};

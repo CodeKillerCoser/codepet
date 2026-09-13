@@ -2,6 +2,7 @@
   import HorizontalTabs from "./lib/HorizontalTabs.svelte";
   import SettingsRow from "./lib/SettingsRow.svelte";
   import AboutSettings from "./lib/AboutSettings.svelte";
+  import { consumeReloadNotice, webcontentReloading } from "./lib/webcontent";
   import EventJournal from "./lib/EventJournal.svelte";
   import TaskLineage from "./lib/TaskLineage.svelte";
   import TaskSettingsPage from "./lib/TaskSettingsPage.svelte";
@@ -63,7 +64,9 @@
 
   type ActivityFilterKind = keyof ActivityKeywordFilterSettings;
 
-  const navigation = createNavigation();
+  const resourceReloaded = consumeReloadNotice();
+  const navigation = createNavigation(resourceReloaded ? "about" : "tasks");
+  let pendingSettingsSaves = 0;
   $: tab = $navigation.current;
   $: if (tab === "devices") void refreshRemoteAccess();
   let sidebarCollapsed = false;
@@ -872,14 +875,17 @@
 
   async function saveSettings() {
     if (!settings) return;
-    normalizeSettings(settings);
-    syncSelectedPetProfile();
-    settings = await updateAppSettings(settings);
-    petLibrary = {
-      dataDirectory: petLibrary?.dataDirectory ?? settings.petLibrary.dataDirectory ?? "",
-      selectedPetId: settings.petLibrary.selectedPetId,
-      pets: settings.petLibrary.pets,
-    };
+    pendingSettingsSaves += 1;
+    try {
+      normalizeSettings(settings);
+      syncSelectedPetProfile();
+      settings = await updateAppSettings(settings);
+      petLibrary = {
+        dataDirectory: petLibrary?.dataDirectory ?? settings.petLibrary.dataDirectory ?? "",
+        selectedPetId: settings.petLibrary.selectedPetId,
+        pets: settings.petLibrary.pets,
+      };
+    } finally { pendingSettingsSaves -= 1; }
   }
 
   async function setTheme(theme: AppSettings["appearance"]["theme"]) {
@@ -1688,7 +1694,7 @@
   $: appTheme = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
 </script>
 
-<main class={`app-shell main-theme ${appTheme}`} class:sidebar-collapsed={sidebarCollapsed}>
+<main class={`app-shell main-theme ${appTheme}`} class:sidebar-collapsed={sidebarCollapsed} inert={$webcontentReloading}>
   <WindowToolbar bind:collapsed={sidebarCollapsed} canGoBack={$navigation.canGoBack} canGoForward={$navigation.canGoForward} onBack={navigation.back} onForward={navigation.forward} settingsActive={isSettingsRoute(tab)} onSettings={() => navigation.navigate("settings")} onError={(message) => error = message} />
   <aside id="main-sidebar" class="sidebar" inert={sidebarCollapsed}>
     <MainNavigation current={tab} onNavigate={navigation.navigate} />
@@ -2398,7 +2404,9 @@
           </div></section>
       </div>
     {:else if tab === "about"}
-      <AboutSettings checking={!!updateCheckMode || updateInstallBusy} message={updateMessage} error={updateError} ignoredVersion={settings?.updates.ignoredVersion ?? null} onCheck={() => checkForUpdates("manual")} />
+      <AboutSettings checking={!!updateCheckMode || updateInstallBusy} message={updateMessage} error={updateError} ignoredVersion={settings?.updates.ignoredVersion ?? null} onCheck={() => checkForUpdates("manual")}
+        reloaded={resourceReloaded} onExtraction={() => navigation.navigate("extraction")}
+        reloadBlocked={!!(pendingSettingsSaves || runningBubbleSaveTimer || busyRuntime || busyPet || busyAppDataDirectory || busyLaunchAtLogin || busyRobotChannel || updateInstallBusy || availableUpdate || pairDeviceDialogOpen)} />
     {:else if tab === "events"}
       <p class="section-description">事件日志：查看活动来源与运行时事件，排查接入问题。</p>
       <EventJournal />
@@ -2442,3 +2450,4 @@
   </div>
 {/if}
 </main>
+{#if $webcontentReloading}<div class={`webcontent-reload-overlay main-theme ${appTheme}`} role="status" aria-live="polite">正在校验并加载前端资源…</div>{/if}

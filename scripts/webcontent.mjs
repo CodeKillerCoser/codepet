@@ -130,7 +130,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     const source = join(projectRoot, "webcontent");
     if (command === "manifest" && args.length === 0) {
       const { version } = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf8"));
-      const manifest = createManifest(source, version);
+      const build = JSON.parse(readFileSync(join(source, "build-info.json"), "utf8"));
+      if (build.version !== version) throw new Error("Build metadata version differs from package.json; rebuild webcontent");
+      const manifest = createManifest(source, version, build.builtAt);
       console.log(`Built webcontent ${version}: ${Object.keys(manifest.files).length} files; backend API ${manifest.backendApiVersion}`);
     } else if (command === "install" && args.length === 2 && args[0] === "--data-dir") {
       console.log(JSON.stringify(installWebcontent(source, args[1]), null, 2));
