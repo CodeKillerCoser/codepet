@@ -67,12 +67,10 @@
   $: tab = $navigation.current;
   $: if (tab === "devices") void refreshRemoteAccess();
   let sidebarCollapsed = false;
-  let lastWorkspace: AppRoute = "tasks";
   let extractionVisited = false;
   let contentElement: HTMLDivElement;
   let pageHeading: HTMLHeadingElement;
   let renderedRoute: AppRoute = "tasks";
-  $: if (!isSettingsRoute(tab)) lastWorkspace = tab;
   $: if (tab === "extraction") extractionVisited = true;
   $: if (tab !== renderedRoute) {
     renderedRoute = tab;
@@ -1693,7 +1691,7 @@
 <main class={`app-shell main-theme ${appTheme}`} class:sidebar-collapsed={sidebarCollapsed}>
   <WindowToolbar bind:collapsed={sidebarCollapsed} canGoBack={$navigation.canGoBack} canGoForward={$navigation.canGoForward} onBack={navigation.back} onForward={navigation.forward} settingsActive={isSettingsRoute(tab)} onSettings={() => navigation.navigate("settings")} onError={(message) => error = message} />
   <aside id="main-sidebar" class="sidebar" inert={sidebarCollapsed}>
-    <MainNavigation current={tab} onNavigate={navigation.navigate} onReturn={() => navigation.navigate(lastWorkspace)} />
+    <MainNavigation current={tab} onNavigate={navigation.navigate} />
   </aside>
 
   <section class="content-pane">

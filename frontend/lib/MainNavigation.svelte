@@ -1,9 +1,8 @@
 <script lang="ts">
-  import { Activity, Cable, BarChart3, Palette, ArrowLeft, Settings, Bell, ListTree, Wrench, Info } from "@lucide/svelte";
+  import { Activity, Cable, BarChart3, Palette, Settings, Bell, ListTree, Wrench, Info } from "@lucide/svelte";
   import { isConnectionRoute, isSettingsRoute, settingsRoutes, type AppRoute } from "./navigation";
   export let current: AppRoute;
   export let onNavigate: (route: AppRoute) => void;
-  export let onReturn: () => void = () => onNavigate("tasks");
   const entries = [
     { route: "tasks", label: "任务", icon: Activity },
     { route: "connections", label: "连接接入", icon: Cable },
@@ -17,7 +16,6 @@
 <div class="brand"><h1>{inSettings ? "设置" : "Code Pet"}</h1></div>
 {#if inSettings}
   <nav class="tabs" aria-label="设置分区">
-    <button class="return-workspace" on:click={onReturn}><ArrowLeft size={18} />返回主界面</button>
     {#each settingsRoutes as entry}
       <button class:active={current === entry.route} aria-current={current === entry.route ? "page" : undefined} on:click={() => onNavigate(entry.route)}><svelte:component this={settingIcons[entry.route]} size={18} />{entry.label}</button>
     {/each}

@@ -213,7 +213,6 @@
 .main-theme .settings-workspace { display: grid; gap: 28px; max-width: 960px; width: 100%; margin-inline: auto; min-width: 0; }
 .main-theme .settings-workspace > * { min-width: 0; }
 .main-theme .context-link { min-height: 36px; padding: 8px 12px; }
-.main-theme .return-workspace { margin-bottom: 16px; }
 .main-theme .section-description { color: var(--app-muted); }
 .main-theme .topbar h2:focus { outline: none; }
 .main-theme .content > [hidden] { display: none; }
