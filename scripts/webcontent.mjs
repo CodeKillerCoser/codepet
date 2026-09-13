@@ -77,13 +77,15 @@ export function installWebcontent(source, dataDirectory) {
   if ([dataRoot, physicalDataRoot].some((path) => path.split(sep).some((part) => part.toLowerCase().endsWith(".app")))) {
     throw new Error("Install into the application data directory, not a signed App bundle");
   }
-  const versions = join(dataRoot, "webcontent");
+  const versionRoot = join(dataRoot, "versions");
+  if (existsSync(versionRoot) && lstatSync(versionRoot).isSymbolicLink()) throw new Error("Version directory must not be a symlink");
+  const versions = join(dataRoot, "versions", "webcontent");
   const contains = (path) => !path || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`));
   if (contains(relative(sourceRoot, versions)) || contains(relative(versions, sourceRoot))) {
     throw new Error("Source and destination must not overlap");
   }
   if (existsSync(versions) && lstatSync(versions).isSymbolicLink()) throw new Error("Version directory must not be a symlink");
-  const physicalVersions = join(physicalDataRoot, "webcontent");
+  const physicalVersions = join(physicalDataRoot, "versions", "webcontent");
   if (contains(relative(sourceRoot, physicalVersions)) || contains(relative(physicalVersions, sourceRoot))) {
     throw new Error("Source and destination must not overlap through a symlink");
   }

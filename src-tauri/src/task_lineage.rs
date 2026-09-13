@@ -30,24 +30,14 @@ static INITIALIZED: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 fn layout() -> Result<Layout, String> {
     let paths = crate::paths::current().map_err(|error| error.to_string())?;
-    Layout::initialize_with_workspace(&paths.data, &paths.workspace)
+    Layout::initialize_with_workspace(&paths.data.join("tasks"), &paths.workspace)
 }
 fn directory(provider_id: &str) -> Result<PathBuf, String> {
     if provider_id.is_empty() {
         return Err("请选择 Codex 来源".into());
     }
     let data = layout()?.root;
-    // Keep existing tasks and extraction settings when upgrading from one matching instance.
-    let legacy: Option<String> = if provider_id == local::CODEX_ID {
-        match std::fs::read(data.join("task-lineage/local-codex-store.json")) {
-            Ok(bytes) => Some(serde_json::from_slice(&bytes).map_err(|e| e.to_string())?),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(e.to_string()),
-        }
-    } else { None };
-    let root = data
-        .join("task-lineage/v1")
-        .join(stable_id(legacy.as_deref().unwrap_or(provider_id)));
+    let root = data.join("v1").join(stable_id(provider_id));
     let mut seen = INITIALIZED.lock().map_err(|e| e.to_string())?;
     if !seen.contains(&root) {
         let store = Store::open(&root)?;
@@ -62,19 +52,8 @@ fn directory(provider_id: &str) -> Result<PathBuf, String> {
     }
     Ok(root)
 }
-async fn prepare_local_store(host: &ProviderHostState) -> Result<(), String> {
-    let data = layout()?.root.join("task-lineage");
-    let pointer = data.join("local-codex-store.json");
-    if pointer.exists() || data.join("v1").join(stable_id(local::CODEX_ID)).exists() {
-        return Ok(());
-    }
-    let home = local::directory(local::CODEX_ID)?;
-    let connections = host.instance_data_contexts("codex").await;
-    local::adopt_legacy_store(&data, &home, &connections)
-}
 async fn context(host: &ProviderHostState, provider_id: &str) -> Result<Value, String> {
     if provider_id == local::CODEX_ID {
-        prepare_local_store(host).await?;
         return Ok(json!({"dataDirectory": local::directory(provider_id)?}));
     }
     host.instance_data_contexts("codex")
@@ -118,7 +97,6 @@ async fn make_extractor(
 pub(crate) async fn task_lineage_options(
     host: tauri::State<'_, ProviderHostState>,
 ) -> Result<Value, String> {
-    prepare_local_store(&host).await?;
     let connections = host.instance_data_contexts("codex").await;
     let sources = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Value>, String> {
         local::contexts().into_iter().map(|(id, name, _)| {
@@ -381,7 +359,6 @@ pub(crate) fn start_background(app: tauri::AppHandle) {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
             let host = app.state::<ProviderHostState>().inner().clone();
-            if prepare_local_store(&host).await.is_err() { continue; }
             for (id, _, data) in local::contexts() {
                 let Ok(root) = directory(&id) else {
                     continue;

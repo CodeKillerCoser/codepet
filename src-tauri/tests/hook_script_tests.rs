@@ -79,7 +79,7 @@ fn hook_script_spools_to_custom_app_data_directory() {
         .unwrap();
 
     assert!(output.status.success());
-    assert!(custom_data.join("spool").join("events.jsonl").exists());
+    assert!(custom_data.join("connections/spool").join("events.jsonl").exists());
     assert!(!home.path().join(".code-pet").join("spool").join("events.jsonl").exists());
 }
 

@@ -48,7 +48,7 @@ async fn codepet_usage_routes_to_provider_and_host_assigns_private_storage_and_l
     let catalog=PluginCatalog::discover(PluginCatalogConfig::default().with_directory(catalog_dir));
     let registry=ProviderInstanceRegistry::open(directory.path().join("instances.json"),device_id).unwrap();
     let data_root=directory.path().join("providers");
-    let manager=Arc::new(PluginManager::new(device,catalog,registry,PluginManagerConfig{provider_data_root:Some(data_root.clone()),..PluginManagerConfig::default()}).unwrap());
+    let manager=Arc::new(PluginManager::new(device,catalog,registry,PluginManagerConfig{provider_data_root:Some(data_root.clone()),provider_logs_root:Some(directory.path().join("logs/providers")),..PluginManagerConfig::default()}).unwrap());
     manager.enable_connection_heartbeats();
     let gateway=Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());gateway.start_event_forwarding();
     assert!(manager.start_enabled().await[0].1.is_ok());
@@ -71,7 +71,8 @@ async fn codepet_usage_routes_to_provider_and_host_assigns_private_storage_and_l
     let JsonRpcResponsePayload::Ok{result:empty}=empty.response else{panic!("empty usage failed")};
     assert_eq!(empty["result"]["summaries"].get("peakDaily"),Some(&serde_json::Value::Null));
     let assigned:codepet_provider_sdk::ProviderDirectories=serde_json::from_slice(&std::fs::read(marker).unwrap()).unwrap();
-    assert_eq!(std::path::Path::new(&assigned.database_path),data_root.join("dev.codepet.usage-fixture/data/provider.sqlite"));
+    assert_eq!(std::path::Path::new(&assigned.database_path),data_root.join("dev.codepet.usage-fixture/provider.sqlite"));
+    assert_eq!(std::path::Path::new(&assigned.logs), directory.path().join("logs/providers/dev.codepet.usage-fixture"));
     assert!(std::fs::read(&assigned.database_path).unwrap().starts_with(b"SQLite format 3"));
     assert!(!result.to_string().contains(&assigned.data));
     manager.shutdown().await;

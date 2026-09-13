@@ -21,7 +21,7 @@ pub fn pets(settings: &AppSettings) -> PathBuf {
     settings.pet_library.data_directory.as_deref().map(str::trim).filter(|p| !p.is_empty())
         .map(PathBuf::from).unwrap_or_else(|| data(settings).join("pets"))
 }
-pub fn spool(settings: &AppSettings) -> PathBuf { data(settings).join("spool/events.jsonl") }
+pub fn spool(settings: &AppSettings) -> PathBuf { data(settings).join("connections/spool/events.jsonl") }
 pub fn log_file(data: &Path) -> PathBuf { data.join("logs/code-pet.log") }
 pub fn home() -> Option<PathBuf> { codepet_paths::home_directory() }
 

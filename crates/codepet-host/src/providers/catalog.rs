@@ -64,7 +64,7 @@ pub struct PluginCatalogConfig {
 impl PluginCatalogConfig {
     pub fn for_data_directory(data_directory: impl AsRef<Path>) -> Self {
         Self {
-            directories: vec![data_directory.as_ref().join("provider-plugins")],
+            directories: vec![data_directory.as_ref().join("versions/providers")],
         }
     }
 

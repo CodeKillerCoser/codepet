@@ -119,7 +119,7 @@ impl ProviderHostState {
         gateway: Arc<ProviderGatewayService>,
     ) -> Self {
         Self {
-            pet: Some(codepet_host::PetGateway::new(manager.clone(), crate::paths::data(&crate::settings::load_app_settings().unwrap_or_default()).join("pet-sources.json"))),
+            pet: Some(codepet_host::PetGateway::new(manager.clone(), crate::paths::data(&crate::settings::load_app_settings().unwrap_or_default()).join("config/pet-sources.json"))),
             manager: Some(manager),
             gateway: Some(gateway),
             started: Arc::new(AtomicBool::new(false)),
@@ -489,6 +489,7 @@ fn provider_catalog_config(
 fn provider_manager_config(settings: &crate::settings::AppSettings) -> PluginManagerConfig {
     let mut config = PluginManagerConfig::default();
     config.provider_data_root = Some(crate::paths::data(settings).join("providers"));
+    config.provider_logs_root = Some(crate::paths::data(settings).join("logs/providers"));
     config.process.max_frame_bytes = codepet_host::provider_sdk::MAX_PROVIDER_FRAME_BYTES;
     config.process.stderr_observer = Some(record_provider_transport_diagnostic);
     config
@@ -521,9 +522,10 @@ fn configured_provider_runtime(
 > {
     let settings = load_app_settings().map_err(HostError::from)?;
     let data_directory = crate::paths::data(&settings);
-    let provider_host_directory = data_directory.join("provider-host");
+    let connections_directory = data_directory.join("connections");
+    let providers_directory = data_directory.join("providers");
     let device = Arc::new(DeviceRegistry::open(
-        provider_host_directory.join("device-identity.json"),
+        connections_directory.join("device-identity.json"),
         computer_name(),
     )?);
     for diagnostic in device.diagnostics() {
@@ -544,12 +546,12 @@ fn configured_provider_runtime(
     );
     let catalog = PluginCatalog::discover(catalog_config);
     let instances = ProviderInstanceRegistry::open(
-        provider_host_directory.join("provider-instances.json"),
+        providers_directory.join("provider-instances.json"),
         device.identity().device_id.clone(),
     )?;
     let local_device_descriptor = local_device_descriptor(&device.identity().display_name);
     let remote_access = Arc::new(RemoteAccessManager::open(
-        RemoteAccessConfig::for_data_directory(data_directory.join("remote-access")),
+        RemoteAccessConfig::for_data_directory(connections_directory.clone()),
         device.clone(),
         local_device_descriptor,
     )?);
@@ -573,7 +575,7 @@ fn configured_provider_runtime(
                 descriptor: identity.descriptor,
             }
         },
-        provider_host_directory.join("conversation-state.sqlite"),
+        providers_directory.join("conversation-state.sqlite"),
     )?);
     Ok((manager, gateway, remote_access))
 }
@@ -1205,6 +1207,7 @@ mod tests {
         );
         let mut config = PluginManagerConfig::default();
         config.provider_data_root = Some(directory.path().join("provider-data"));
+        config.provider_logs_root = Some(directory.path().join("logs/providers"));
         config.process.request_timeout = Duration::from_secs(2);
         config.process.shutdown_timeout = Duration::from_millis(100);
         let manager = Arc::new(

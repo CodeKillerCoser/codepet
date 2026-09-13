@@ -72,6 +72,7 @@ pub(crate) enum HostUpdate {
 #[derive(Clone, Debug)]
 pub struct PluginManagerConfig {
     pub provider_data_root: Option<std::path::PathBuf>,
+    pub provider_logs_root: Option<std::path::PathBuf>,
     pub host_client_id: ClientId,
     pub host_version: String,
     pub supported_versions: VersionRange,
@@ -83,6 +84,7 @@ impl Default for PluginManagerConfig {
     fn default() -> Self {
         Self {
             provider_data_root: None,
+            provider_logs_root: None,
             host_client_id: format!("client-host-{}", Uuid::new_v4()),
             host_version: env!("CARGO_PKG_VERSION").to_string(),
             supported_versions: VersionRange {
@@ -1133,7 +1135,13 @@ impl PluginManager {
         if !root.is_absolute() || plugin_id.is_empty() || !plugin_id.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)) || plugin_id=="." || plugin_id==".." {
             return Err(HostError::new("invalid_provider_directories", "Invalid Provider root or plugin ID"));
         }
-        let base=root.join(plugin_id); let data=base.join("data"); let logs=base.join("logs");
+        let data = root.join(plugin_id);
+        let logs_root = self.inner.config.provider_logs_root.as_ref().ok_or_else(||
+            HostError::new("invalid_provider_directories", "Provider log root is required with data root"))?;
+        if !logs_root.is_absolute() {
+            return Err(HostError::new("invalid_provider_directories", "Provider log root must be absolute"));
+        }
+        let logs = logs_root.join(plugin_id);
         std::fs::create_dir_all(&data)?; std::fs::create_dir_all(&logs)?;
         Ok(Some(codepet_provider_sdk::ProviderDirectories { data:data.to_string_lossy().into_owned(), logs:logs.to_string_lossy().into_owned(), database_path:data.join("provider.sqlite").to_string_lossy().into_owned() }))
     }

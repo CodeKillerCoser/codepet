@@ -28,21 +28,22 @@
 
 ### 用户目录和数据结构
 
-根目录使用 `configured_app_data_dir(AppSettings)`，尊重已有应用数据目录配置。Windows 默认是 `%LOCALAPPDATA%/code-pet`；也可由用户配置为其 `.codepair`，不另建一套脱离应用设置的根目录。
+桌面通过 Path Manager 的实际数据根派生 tasks/，执行工作区独立位于 ~/.codepet。直接使用新路径，不接管旧 task-lineage 绑定。
 
 ```text
-<data>/
+<data>/tasks/
   skills/extract-tasks/SKILL.md
   skills/reconcile-tasks/SKILL.md
-  workspaces/task-extraction/run-*/
-    SKILL.md, prompt.md, config.json, input.json, result.json
-  workspaces/tasks/<hash(providerId:taskId)>/
-    task.json, workspace.json
-  task-lineage/v1/<hash(providerId)>/
+  v1/<hash(providerId)>/
     conversation-tree.json, lineage.json
     threads/*, events/*, tasks/*, jobs/*
     extraction-settings.json, watch.json, latest-extraction.json
     prepared.json, writer.lock, inference.lock
+~/.codepet/workspaces/
+  task-extraction/run-*/
+    SKILL.md, prompt.md, config.json, input.json, result.json
+  tasks/<hash(providerId:taskId)>/
+    task.json, workspace.json
 ```
 
 Skill 模板首次安装使用 `create_new`，后续初始化保留用户编辑。每批从所选用户 Skill 读取正文，连同补充要求传给模型；工作区保存该次快照便于回溯。技能名限制为安全目录名，文件上限 64 KiB。任务工作区申请按来源和任务确定性分配，重复申请返回同一目录，保存任务及共享 Skill 目录引用；这一步不会替用户创建 Git 仓库或启动任务执行。
