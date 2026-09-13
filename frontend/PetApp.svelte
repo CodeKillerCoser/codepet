@@ -517,12 +517,12 @@
   style={`--pet-window-opacity: ${petWindowOpacity};`}
   on:dblclick={preventPetWindowDoubleClick}
 >
-  {#if !tasksCollapsed}
+  {#if !tasksCollapsed && (hasActivities || gatewayError)}
     <section class="activity-stack" bind:this={activityStack} aria-live="polite" style={`--pet-activity-stack-max-height: ${activityStackMaxHeight}px`}>
-      {#if activities.length === 0}
+      {#if !hasActivities && gatewayError}
         <article class="status-pill gateway-state-pill"><div class="status-content">
-          <span class="status-title">{gatewayError ? "活动连接不可用" : "暂无任务"}</span>
-          <span class="status-message">{gatewayError || sources.filter(s => s.enabled).map(s => `${s.displayName}：${s.message || "等待活动"}`).join(" · ") || "请在主窗口启用活动来源"}</span>
+          <span class="status-title">活动连接不可用</span>
+          <span class="status-message">{gatewayError}</span>
         </div></article>
       {/if}
       <PetActivityGroups {activities} {sources} {runningBubble} dismiss={dismissActivity} />
