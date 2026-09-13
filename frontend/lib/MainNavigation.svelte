@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Activity, Cable, BarChart3, Palette, ArrowLeft, Settings, Bell, ListTree, Wrench } from "@lucide/svelte";
+  import { Activity, Cable, BarChart3, Palette, ArrowLeft, Settings, Bell, ListTree, Wrench, Info } from "@lucide/svelte";
   import { isConnectionRoute, isSettingsRoute, settingsRoutes, type AppRoute } from "./navigation";
   export let current: AppRoute;
   export let onNavigate: (route: AppRoute) => void;
@@ -10,7 +10,7 @@
     { route: "usage", label: "用量", icon: BarChart3 },
     { route: "personalize", label: "宠物制作", icon: Palette },
   ] as const;
-  const settingIcons = { settings: Settings, appearance: Palette, notifications: Bell, extraction: ListTree, events: Wrench };
+  const settingIcons = { settings: Settings, appearance: Palette, notifications: Bell, extraction: ListTree, events: Wrench, about: Info };
   $: inSettings = isSettingsRoute(current);
 </script>
 

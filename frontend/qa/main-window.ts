@@ -39,6 +39,7 @@ let appSettings: any = {
 };
 const runtime = {providerId:"dev.codepet.claude", displayName:"Claude", status:"ready", source:"configured", resolvedExecutable:"D:/Software/Claude/claude.exe", configuredExecutable:"D:/Software/Claude/claude.exe", version:"2.1.263", installed:[]};
 mockIPC((command, raw) => {
+  if (command === "plugin:app|version") return "0.3.8-qa";
   const args = (raw ?? {}) as Record<string, any>;
   if (command === "plugin:window|outer_position") return {x:0,y:0};
   if (command === "get_app_settings") return structuredClone(appSettings);

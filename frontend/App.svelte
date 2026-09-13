@@ -1,4 +1,7 @@
 <script lang="ts">
+  import HorizontalTabs from "./lib/HorizontalTabs.svelte";
+  import SettingsRow from "./lib/SettingsRow.svelte";
+  import AboutSettings from "./lib/AboutSettings.svelte";
   import EventJournal from "./lib/EventJournal.svelte";
   import TaskLineage from "./lib/TaskLineage.svelte";
   import TaskSettingsPage from "./lib/TaskSettingsPage.svelte";
@@ -75,7 +78,7 @@
     renderedRoute = tab;
     void tick().then(() => {
       contentElement?.scrollTo({ top: 0 });
-      pageHeading?.focus({ preventScroll: true });
+      if (!document.activeElement?.closest('[role="tablist"]')) pageHeading?.focus({ preventScroll: true });
     });
   }
   let petSources: PetSource[] = [];
@@ -907,21 +910,21 @@
     updateCheckMode = mode;
     updateError = "";
     if (mode === "manual") {
-      updateMessage = "Checking...";
+      updateMessage = "正在检查更新…";
     }
 
     try {
       const update = await checkAppUpdate();
       if (!shouldPromptForUpdate(update, mode, settings)) {
         if (mode === "manual") {
-          updateMessage = "Latest version installed.";
+          updateMessage = "当前已是最新版本。";
         }
         return;
       }
 
       availableUpdate = update;
       updatePromptMode = mode;
-      updateMessage = `Version ${update.version} available.`;
+      updateMessage = `发现新版本 ${update.version}。`;
     } catch (currentError) {
       if (mode === "manual") {
         updateError = String(currentError);
@@ -944,7 +947,7 @@
       updates: ignoredUpdateSettings(update.version),
     });
     settings = nextSettings;
-    updateMessage = updatePromptMode === "manual" ? `Version ${update.version} skipped.` : "";
+    updateMessage = updatePromptMode === "manual" ? `已忽略版本 ${update.version}。` : "";
     updateError = "";
     try {
       settings = normalizeSettings(await updateAppSettings(nextSettings));
@@ -960,7 +963,7 @@
 
     updateInstallBusy = true;
     updateError = "";
-    updateMessage = `Installing ${availableUpdate.version}...`;
+    updateMessage = `正在安装 ${availableUpdate.version}…`;
     try {
       await installAppUpdate();
     } catch (currentError) {
@@ -1703,12 +1706,11 @@
 
     <div class="content" bind:this={contentElement}>
     {#if isConnectionRoute(tab)}
-      <nav class="section-navigation" aria-label="连接接入分区">
-        {#each connectionRoutes as entry}
-          <button class:active={tab === entry.route} aria-current={tab === entry.route ? "page" : undefined} on:click={() => navigation.navigate(entry.route)}>{entry.label}</button>
-        {/each}
-      </nav>
+      <HorizontalTabs items={connectionRoutes} value={tab} label="连接接入分区" panelId="connection-panel" onChange={navigation.navigate} />
     {/if}
+    <!-- The panel is focusable only while it has the tabpanel role. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div id={isConnectionRoute(tab) ? "connection-panel" : undefined} role={isConnectionRoute(tab) ? "tabpanel" : undefined} aria-labelledby={isConnectionRoute(tab) ? `tab-${tab}` : undefined} tabindex={isConnectionRoute(tab) ? 0 : undefined}>
     {#if extractionVisited}
       <div hidden={tab !== "extraction"}>
         <TaskSettingsPage onConnections={() => navigation.navigate("runtimes")} />
@@ -1986,8 +1988,8 @@
           <section class="appearance-editor pixel-panel">
             <header class="panel-head">
               <h3>主题</h3>
-            </header>
-            <section class="theme-switcher" aria-label="主题模式">
+            </header><div class="settings-card">
+            <SettingsRow label="主题模式"><section class="theme-switcher" aria-label="主题模式">
               <button class:active={settings.appearance.theme === "light"} on:click={() => setTheme("light")} aria-label="浅色模式">
                 <Sun size={16} /> Light
               </button>
@@ -1997,13 +1999,13 @@
               <button class:active={settings.appearance.theme === "system"} on:click={() => setTheme("system")} aria-label="跟随系统">
                 Auto
               </button>
-            </section>
-          </section>
+            </section></SettingsRow>
+          </div></section>
 
           <section class="bubble-editor pixel-panel">
             <header class="panel-head">
               <h3>任务气泡</h3>
-            </header>
+            </header><div class="settings-card">
             <div class="bubble-toggle-grid">
               <label class="check">
                 <input type="checkbox" bind:checked={settings.appearance.runningBubble.backgroundBreathing} on:change={saveRunningBubbleSettings} />
@@ -2074,10 +2076,10 @@
                 on:change={saveRunningBubbleSettings}
               />
             </label>
-          </section>
+          </div></section>
 
 
-        <section class="appearance-editor pixel-panel"><h3>窗口与互动</h3>
+        <section class="appearance-editor pixel-panel"><h3>窗口与互动</h3><div class="settings-card">
           <label class="pet-opacity-control">
             <span>
               <span>窗口不透明度</span>
@@ -2093,10 +2095,7 @@
               on:change={savePetOpacity}
             />
           </label>
-            <div class="sound-subsection">
-              <strong>抽打反应</strong>
-              <span>抽完鞭子后，桌宠继续发出的声音：{whipReactionSoundLabel(settings.pet.whipReactionSound)}</span>
-            </div>
+            <SettingsRow label="互动反应音"><div class="settings-control-stack">
             <div class="segmented">
               {#each whipReactionSounds as reaction}
                 <button
@@ -2120,73 +2119,38 @@
             </div>
             {#if settings.pet.customWhipReactionSoundPath}
               <p class="path">{settings.pet.customWhipReactionSoundPath}</p>
-            {/if}
-        </section>
+            {/if}</div></SettingsRow>
+        </div></section>
       </div>
     {:else if tab === "settings" && settings}
       <div class="settings-workspace">
-        <section class="appearance-editor pixel-panel"><h3>启动</h3>
+        <section class="appearance-editor pixel-panel"><h3>启动</h3><div class="settings-card">
             <label class="check">
               <input type="checkbox" checked={launchAtLogin} disabled={busyLaunchAtLogin} on:change={toggleLaunchAtLogin} />
               开机自启动
             </label>
-        </section>
+        </div></section>
           <section class="appearance-editor pixel-panel">
             <header class="panel-head">
               <h3><FolderCog size={18} /> 数据与存储</h3>
-            </header>
+            </header><div class="settings-card">
             {#if managedPaths}
-              <div class="system-data-directory">
-                <div class="setting-line"><span>安装目录（install）</span></div>
-                <p class="path">{managedPaths.install}</p>
-                <div class="setting-line"><span>工作目录（workspace）</span></div>
-                <p class="path">{managedPaths.workspace}</p>
-                <p class="setting-note">任务执行目录独立保存，更换数据目录不会移动工作目录。</p>
-              </div>
+              <SettingsRow label="安装目录"><span class="path">{managedPaths.install}</span></SettingsRow>
+              <SettingsRow label="工作目录" description="任务执行目录独立保存，更换数据目录不会移动工作目录。"><span class="path">{managedPaths.workspace}</span></SettingsRow>
             {/if}
-            <div class="system-data-directory">
-              <div class="setting-line">
-                <span>数据目录（data）</span>
-                <em>{settings.data.dataDirectory ? "自定义" : "默认"}</em>
+            <SettingsRow label="数据目录" description={appDataRestartPending ? "已保存路径配置，重启后生效。" : "更改只切换数据目录，不复制或清空已有数据，保存后请重启。"}>
+              <span class="path">{managedPaths?.data ?? "正在读取路径…"}</span>
+              <div class="directory-actions">
+                <button disabled={busyAppDataDirectory} on:click={chooseAppDataDirectory}>修改</button>
+                <button disabled={busyAppDataDirectory || !settings.data.dataDirectory} on:click={resetAppDataDirectory} aria-label="恢复默认数据目录">默认</button>
               </div>
-              <div class="data-directory">
-                <span>{managedPaths?.data ?? "正在读取路径…"}</span>
-                <div class="directory-actions">
-                  <button disabled={busyAppDataDirectory} on:click={chooseAppDataDirectory}>
-                    <FolderCog size={16} /> 修改
-                  </button>
-                  <button disabled={busyAppDataDirectory || !settings.data.dataDirectory} on:click={resetAppDataDirectory} aria-label="恢复默认数据目录">
-                    <RotateCcw size={16} /> 默认
-                  </button>
-                </div>
-              </div>
-              <p class="setting-note">
-                {appDataRestartPending ? "已保存路径配置，重启后生效。" : "更改只切换数据目录，不复制或清空已有数据，保存后请重启。"}
-              </p>
-            </div>
-            <div class="system-data-directory"><h4>宠物资源目录</h4>
-            <div class="data-directory">
-              <span>{petLibrary?.dataDirectory ?? settings.petLibrary.dataDirectory ?? "app data/code-pet/pets"}</span>
-              <button disabled={busyPet === "directory"} on:click={choosePetDataDirectory}>
-                <FolderCog size={16} /> 修改
-              </button>
-            </div>
-            </div>
-          </section>
-          <section class="appearance-editor pixel-panel"><h3>关于与更新</h3>
-            <div class="update-settings">
-              <div class="setting-line">
-                <span>应用更新</span>
-                <em>{settings.updates.ignoredVersion ? `已忽略 ${settings.updates.ignoredVersion}` : "就绪"}</em>
-              </div>
-              <div class="update-status-row">
-                <span>{updateError || updateMessage || "手动检查可用更新"}</span>
-                <button disabled={!!updateCheckMode || updateInstallBusy} on:click={() => checkForUpdates("manual")}>
-                  <RefreshCw size={16} /> {updateCheckMode === "manual" ? "检查中" : "检查更新"}
-                </button>
-              </div>
-            </div>
-          </section>
+            </SettingsRow>
+            <SettingsRow label="宠物资源目录">
+              <span class="path">{petLibrary?.dataDirectory ?? settings.petLibrary.dataDirectory ?? "正在读取路径…"}</span>
+              <button disabled={busyPet === "directory"} on:click={choosePetDataDirectory}>修改</button>
+            </SettingsRow>
+          </div></section>
+
 
       </div>
     {:else if tab === "notifications" && settings}
@@ -2196,11 +2160,8 @@
               <div>
                 <h3><Bell size={18} /> 通知声音</h3>
               </div>
-            </header>
-            <div class="sound-summary">
-              <strong>{soundLabel(settings.notifications.sound)}</strong>
-              <span>{settings.notifications.ringOnPermission ? "授权时会响铃" : "授权提醒静音"} · {settings.notifications.ringOnFailure ? "失败时会响铃" : "失败提醒静音"} · {settings.notifications.ringOnDone ? "结束时会响铃" : "结束提醒静音"}</span>
-            </div>
+            </header><div class="settings-card">
+            <SettingsRow label="通知音色"><div class="settings-control-stack">
             <div class="segmented">
               {#each ["blip", "chime", "bell", "custom", "silent"] as sound}
                 <button
@@ -2224,7 +2185,7 @@
             </div>
             {#if settings.notifications.customSoundPath}
               <p class="path">{settings.notifications.customSoundPath}</p>
-            {/if}
+            {/if}</div></SettingsRow>
             <label class="check">
               <input type="checkbox" bind:checked={settings.notifications.ringOnPermission} on:change={saveSettings} />
               授权时响铃
@@ -2238,29 +2199,29 @@
               任务结束时响铃
             </label>
             <label>
-              重复提醒
+              重复提醒（秒）
               <input type="number" min="5" max="300" bind:value={settings.notifications.repeatSeconds} on:change={saveSettings} />
             </label>
             <label class="check">
               <input type="checkbox" bind:checked={settings.notifications.quietHoursEnabled} on:change={saveSettings} />
               静音时段
             </label>
-            <div class="time-row">
-              <input type="time" bind:value={settings.notifications.quietHoursStart} on:change={saveSettings} />
-              <input type="time" bind:value={settings.notifications.quietHoursEnd} on:change={saveSettings} />
-            </div>
-          </section>
+            <SettingsRow label="静音时间"><div class="time-row">
+              <input aria-label="静音开始时间" type="time" bind:value={settings.notifications.quietHoursStart} on:change={saveSettings} />
+              <input aria-label="静音结束时间" type="time" bind:value={settings.notifications.quietHoursEnd} on:change={saveSettings} />
+            </div></SettingsRow>
+          </div></section>
 
           <section class="robot-editor pixel-panel">
             <header class="panel-head">
               <div>
                 <h3><Bot size={18} /> 通知机器人</h3>
               </div>
+            </header><div class="settings-card">
               <label class="switch-check">
                 <input type="checkbox" bind:checked={settings.notifications.robot.enabled} on:change={saveSettings} />
-                启用
+                启用机器人通知
               </label>
-            </header>
 
             <div class="robot-trigger-grid" aria-label="机器人触发事件">
               {#each robotTriggerOptions as trigger}
@@ -2436,12 +2397,15 @@
                 </div>
               {/if}
             </div>
-          </section>
+          </div></section>
       </div>
+    {:else if tab === "about"}
+      <AboutSettings checking={!!updateCheckMode || updateInstallBusy} message={updateMessage} error={updateError} ignoredVersion={settings?.updates.ignoredVersion ?? null} onCheck={() => checkForUpdates("manual")} />
     {:else if tab === "events"}
       <p class="section-description">事件日志：查看活动来源与运行时事件，排查接入问题。</p>
       <EventJournal />
     {/if}
+    </div>
     </div>
   </section>
 
