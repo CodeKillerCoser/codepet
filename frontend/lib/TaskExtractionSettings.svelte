@@ -45,7 +45,7 @@
       <div class="settings-card">
       <label class="check"><input type="checkbox" bind:checked={config.automatic} />自动提取</label>
       <label>自动提取间隔（秒）<input type="number" min="15" max="86400" bind:value={config.intervalSeconds} required /></label>
-      <p>开启后，在应用运行期间按间隔持续整理当前来源最近 48 小时的新正文，失败时暂停。任务页的手动整理使用同一 Agent。</p>
+      <p>开启后，在应用运行期间按间隔持续整理当前来源最近 48 小时的新正文，失败时暂停。上方的手动整理使用同一 Agent。</p>
       </div>
       <h3 class="schedule-heading">高级设置</h3>
       <div class="settings-card">

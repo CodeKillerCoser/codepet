@@ -288,3 +288,6 @@
   .main-theme .settings-card .gradient-editor-head { grid-row: auto; }
   .main-theme .settings-card .gradient-editor > :not(.gradient-editor-head) { grid-column: 1; }
 }
+
+.main-theme .page-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.main-theme .page-heading-row button { flex-shrink: 0; }

@@ -1,9 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import TaskExtractionControls from "./TaskExtractionControls.svelte";
   import TaskExtractionSettings from "./TaskExtractionSettings.svelte";
   import { lineageApi, type LineageOptions } from "./taskLineage";
   export let onConnections: () => void = () => {};
-  let options: LineageOptions | null = null, providerId = "", error = "", loading = true;
+  export let providerId = "";
+  export let active = true;
+  let options: LineageOptions | null = null, error = "", loading = true;
   async function load() {
     loading = true; error = "";
     try { options = await lineageApi.options(); if (!options.sources.some(s => s.id === providerId)) providerId = options.sources[0]?.id ?? ""; }
@@ -14,16 +17,16 @@
 
 <section class="settings-page settings-workspace" aria-label="任务抽取">
   <p>配置负责整理对话历史的 Agent，以及它的自动运行间隔。</p>
-  <h3>数据来源</h3><div class="settings-card"><div class="source"><label>本地 Agent<select aria-label="本地 Agent" bind:value={providerId} disabled={loading}>{#each options?.sources ?? [] as source}<option value={source.id}>{source.name}</option>{/each}</select></label><button on:click={load} disabled={loading}>刷新</button></div>
+  <h3>数据来源</h3><div class="settings-card"><div class="source"><label>本地 Agent<select aria-label="本地 Agent" bind:value={providerId} disabled={loading}>{#each options?.sources ?? [] as source}<option value={source.id}>{source.name}</option>{/each}</select></label><button on:click={load} disabled={loading}>刷新来源</button></div>
   {#if options?.sources.find(s => s.id === providerId)?.directory}<p>记录目录：{options.sources.find(s => s.id === providerId)?.directory}</p>{/if}
   {#if options?.sources.find(s => s.id === providerId)?.error}<p role="alert">{options.sources.find(s => s.id === providerId)?.error}</p>{/if}
-  <p>自动读取本地 Agent 的会话记录，无需配置数据来源连接。目前支持 Codex。</p>
+  <p>自动读取本地 Agent 的会话记录，无需配置数据来源连接。目前支持 Codex。继续对话需要对应记录目录的唯一连接。</p>
   </div>
   {#if loading}<p role="status">加载设置…</p>{:else if options && providerId}
-    {#key providerId}<TaskExtractionSettings {providerId} {options} onSaved={() => { if (options) options = { ...options, sources: options.sources.map(s => s.id === providerId ? {...s, watch: s.watch ? {...s.watch, lastError: null} : undefined} : s) }; }} />{/key}
+    {#key providerId}<TaskExtractionControls {providerId} {options} {active} /><TaskExtractionSettings {providerId} {options} onSaved={() => { if (options) options = { ...options, sources: options.sources.map(s => s.id === providerId ? {...s, watch: s.watch ? {...s.watch, lastError: null} : undefined} : s) }; }} />{/key}
     {#if options.sources.find(s => s.id === providerId)?.watch?.lastError}<p role="alert">自动提取已暂停：{options.sources.find(s => s.id === providerId)?.watch?.lastError}</p>{/if}
     {#if !options.instances?.some(i => i.controls && !i.error)}<p>请在“连接接入”中配置可用的 Claude 运行时，再刷新来源。<button type="button" on:click={onConnections}>配置运行时</button></p>{/if}
-    <p>仅整理最近 48 小时的用户消息与 AI 正文，工具执行与推理内容不参与抽取。任务页可以查看任务图、整理历史和手动运行。</p>
+    <p>仅整理最近 48 小时的用户消息与 AI 正文，工具执行与推理内容不参与抽取。任务页可以查看任务图，并通过标题右侧的“抽取历史”查看运行记录。</p>
   {:else}<p>暂未发现支持的本地 Agent。</p>{/if}
   {#if error}<p role="alert">{error}</p>{/if}
 </section>

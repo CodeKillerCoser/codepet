@@ -1690,6 +1690,8 @@
   $: recentVisibleEvents = events.slice(-5).reverse();
   $: enabledSources = petSources.filter(source => source.enabled);
   $: receivingSources = petSources.filter(source => source.status === "receiving");
+  let taskProviderId = "";
+  let taskLineage: TaskLineage | undefined;
   $: pageTitle = routeTitle(tab);
   $: appTheme = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
 </script>
@@ -1703,7 +1705,7 @@
   <section class="content-pane">
     <header class="topbar">
       <div>
-        <h2 bind:this={pageHeading} tabindex="-1">{pageTitle}</h2>
+        <div class="page-heading-row"><h2 bind:this={pageHeading} tabindex="-1">{pageTitle}</h2>{#if tab === "tasks"}<button class="secondary" on:click={() => taskLineage?.openHistory()} aria-haspopup="dialog">抽取历史</button>{/if}</div>
         {#if error}<p class="error">{error}</p>{/if}
       </div>
     </header>
@@ -1717,11 +1719,11 @@
     <div id={isConnectionRoute(tab) ? "connection-panel" : undefined} role={isConnectionRoute(tab) ? "tabpanel" : undefined} aria-labelledby={isConnectionRoute(tab) ? `tab-${tab}` : undefined} tabindex={isConnectionRoute(tab) ? 0 : undefined}>
     {#if extractionVisited}
       <div hidden={tab !== "extraction"}>
-        <TaskSettingsPage onConnections={() => navigation.navigate("runtimes")} />
+        <TaskSettingsPage active={tab === "extraction"} bind:providerId={taskProviderId} onConnections={() => navigation.navigate("runtimes")} />
       </div>
     {/if}
     {#if tab === "tasks"}
-      <TaskLineage onSettings={() => navigation.navigate("extraction")} onConnections={() => navigation.navigate("runtimes")} />
+      <TaskLineage bind:this={taskLineage} bind:providerId={taskProviderId} onSettings={() => navigation.navigate("extraction")} />
     {:else if tab === "connections"}
       <div class="agent-workspace">
         <section class="overview-grid" aria-label="运行概览">

@@ -5,9 +5,11 @@
   import type { ExtractionJob, DirtyConversation } from "./taskLineage";
   import { lineageApi, creationLabel, episodePositions, reachable, rootThread, taskStatus, type Episode, type LineageMessage, type LineageOptions, type LineageSnapshot, type LineageTask, type LineageThread, type WorkspaceFacts } from "./taskLineage";
   export let onSettings: () => void = () => {};
-  export let onConnections: () => void = () => {};
+  export let providerId = "";
+  let historyDialog: HTMLDialogElement;
+  export function openHistory() { historyDialog.showModal(); void refreshManagement().catch(e => error = String(e)); }
   let options: LineageOptions | null = null;
-  let providerId = "", error = "", busy = "", search = "", mode: "conversation" | "task" = "task", view: "conversation" | "task" = "task", diagram: "graph" | "swimlane" = "graph";
+  let error = "", busy = "", search = "", mode: "conversation" | "task" = "task", view: "conversation" | "task" = "task", diagram: "graph" | "swimlane" = "graph";
   let data: LineageSnapshot = { threads: [], tasks: [], pendingMessages: 0, diagnostics: [] };
   let selectedThreadId = "", selectedTaskId = "", selectedEpisodeId = "", hovered = "";
   let expanded = new Set<string>(), statuses: Record<string, string> = {}, facts: WorkspaceFacts | null = null;
@@ -15,7 +17,6 @@
   let messages: LineageMessage[] = [], messageBusy = false;
   let requestGeneration = 0, disposed = false;
   let conversationAnchor = "";
-  let organizeScope = "all";
   let jobs: ExtractionJob[] = [], dirty: DirtyConversation[] = [], taskWorkspace = "";
   $: source = options?.sources.find(s => s.id === providerId);
   $: connectionProviderId = source?.connectionProviderId ?? (source?.agent ? null : providerId);
@@ -59,26 +60,15 @@
     busy = label; error = "";
     try { await callback(); } catch (e) { error = String(e); } finally { busy = ""; }
   }
-  async function refreshOptions() { await operation("刷新来源", async () => { options = await lineageApi.options(); if (!providerId) providerId = options.sources[0]?.id ?? ""; }); }
   function accept(snapshot: LineageSnapshot) {
     data = snapshot;
     if (selectedTaskId && !data.tasks.some(t => t.id === selectedTaskId)) selectedTaskId = "";
     if (!data.threads.some(t => t.id === selectedThreadId)) selectedThreadId = data.threads[0]?.id ?? "";
     if (view === "task" && !selectedTaskId && data.tasks.length) void selectTask(data.tasks[0]);
   }
-  async function switchSource() {
-    jobs = []; dirty = []; taskWorkspace = "";
-    ++requestGeneration; selectedThreadId = ""; selectedTaskId = ""; selectedEpisodeId = ""; messages = []; facts = null; statuses = {};
-    nodeFacts = {};
-    await operation("读取任务", async () => { accept(await lineageApi.snapshot(providerId)); await refreshManagement(); });
-    if (view === "conversation" && selectedThreadId) await selectThread(selectedThreadId);
-  }
   async function scan() {
     await operation("扫描记录", async () => { accept(await lineageApi.scan(providerId)); await refreshManagement(); });
     if (inspectorThread) await loadThread(inspectorThread.id);
-  }
-  async function extract() {
-    await operation("提交整理", async () => { const job = await lineageApi.trigger(providerId, organizeScope === "all" ? null : selectedThreadId || null); jobs = [job, ...jobs.filter(j => j.id !== job.id)]; await refreshManagement(); });
   }
   async function loadThread(id: string, refresh = false) {
     const generation = ++requestGeneration; if (!refresh) { messageBusy = true; messages = []; facts = null; }
@@ -127,7 +117,7 @@
   function statusLabel(id: string, currentStatuses: Record<string, string>) { return ({ running: "运行中", "waiting-approval": "等待审批", "waiting-user-input": "等待输入", idle: "已结束", archived: "已归档", error: "执行错误", unknown: "状态待确认" })[currentStatuses[id]] ?? "状态待确认"; }
   onMount(() => {
     let unlisten: (() => void) | null = null;
-    void operation("加载配置", async () => { options = await lineageApi.options(); providerId = options.sources[0]?.id ?? ""; if (providerId) { accept(await lineageApi.snapshot(providerId)); await refreshManagement(); } }).then(() => { if (view === "conversation" && selectedThreadId) void loadThread(selectedThreadId); });
+    void operation("加载配置", async () => { options = await lineageApi.options(); if (!options.sources.some(s => s.id === providerId)) providerId = options.sources[0]?.id ?? ""; if (providerId) { accept(await lineageApi.snapshot(providerId)); await refreshManagement(); } }).then(() => { if (view === "conversation" && selectedThreadId) void loadThread(selectedThreadId); });
     let polling = false;
     const poll = setInterval(async () => {
       if (disposed || busy || polling || !providerId) return;
@@ -154,27 +144,9 @@
 </script>
 
 <div class="lineage">
-  <div class="controls">
-    <label>本地 Agent<select aria-label="本地 Agent" bind:value={providerId} on:change={switchSource} disabled={!!busy}>{#each options?.sources ?? [] as source}<option value={source.id}>{source.name}</option>{/each}</select></label>
-    <button on:click={refreshOptions} disabled={!!busy}>刷新来源</button>
-    <button on:click={scan} disabled={!!busy || !providerId}>扫描记录</button>
-    <label>整理范围<select aria-label="整理范围" bind:value={organizeScope} disabled={!!busy || extracting}><option value="all">全部近期历史</option><option value="conversation" disabled={!selectedThreadId}>当前关联对话</option></select></label>
-    <button on:click={extract} disabled={!!busy || extracting || !providerId || !options?.instances?.some(i => i.controls && !i.error)}>{extracting ? "整理中…" : "手动整理历史"}</button>
-    <span role="status">{busy || `${data.pendingMessages} 条近 48 小时消息待分析`}</span>
-  </div>
-  {#if source?.directory}<p class="hint">记录目录：{source.directory}</p>{/if}
-  {#if source?.error}<p class="error" role="alert">{source.error}</p>{/if}
-  {#if source?.agent && !connectionProviderId}<p class="hint">本地记录可直接读取和整理；继续对话需要对应记录目录的唯一连接。</p>{/if}
-  <p class="hint">仅抽取最近 48 小时的用户消息与 AI 正文，排除工具执行及无可靠时间戳的内容。后台更新在应用运行期间执行，自动整理当前来源的近期记录；由所选 Provider 执行，当前不提供美元硬预算。</p>
-  <details class="diagnostics"><summary>整理历史 · {jobs.length} 次运行 · {dirty.filter(s => s.state === "dirty").length} 个会话待整理</summary>{#if !jobs.length}<p>暂无整理记录。手动与自动运行的结果会显示在这里。</p>{/if}{#each jobs as job}<p>{new Date(job.createdAt).toLocaleString()} · {job.id.startsWith("scheduled-") ? "自动" : "手动"} · {jobLabel(job.state)} · {data.threads.find(t => t.id === job.threadId)?.title ?? "全部近期历史"}{#if job.finishedAt} · 耗时 {Math.max(0, Math.round((job.finishedAt-job.createdAt)/1000))} 秒{/if}{#if job.error} · {job.error}{/if}</p>{/each}</details>
-  <p class="hint">每次整理处理一批近期正文，保留已整理进度；自动提取按设置的间隔继续处理。<button type="button" on:click={onSettings}>配置任务抽取</button></p>
-  {#if data.lastExtraction}<p class="hint">最近实际模型：{Object.keys(data.lastExtraction.modelUsage ?? {}).join("、") || "Provider 未返回"} · 仅抽取用户消息与 AI 正文，不包含工具执行。</p>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if !options?.instances?.some(i => i.controls && !i.error) && options}<p class="hint">请先配置可用的 Claude 运行时。仍可扫描和查看原始记录。<button type="button" on:click={onConnections}>配置运行时</button></p>{/if}
-  {#if data.diagnostics.length}<details class="diagnostics"><summary>{data.diagnostics.length} 项记录读取或抽取问题</summary>{#each data.diagnostics as diagnostic}<p>{diagnostic}</p>{/each}</details>{/if}
   <div class="workspace">
     <aside class="navigation" aria-label="对话与任务导航">
-      <h3>任务管理</h3>
       <input type="search" bind:value={search} placeholder="搜索对话或任务" aria-label="搜索对话或任务" />
       <div class="segmented"><button class:active={mode === "conversation"} on:click={() => mode = "conversation"}>对话</button><button class:active={mode === "task"} on:click={() => mode = "task"}>任务</button></div>
       <div class="nav-list">
@@ -189,7 +161,7 @@
         {:else}
           {#each visibleTasks as item (item.id)}<button class="thread" class:active={selectedTaskId === item.id} on:click={() => selectTask(item)}><strong>{item.title}</strong><small>{taskStatus(item, statuses)}</small></button>{/each}
         {/if}
-        {#if !data.threads.length}<p class="empty">选择本地 Agent 并扫描记录，开始建立对话树。</p>{/if}
+        {#if !data.threads.length}<p class="empty">暂无对话。请在设置的“任务抽取”中选择来源并扫描记录。</p>{/if}
       </div>
       <footer>{data.threads.length} 个线程 · {data.tasks.length} 项任务</footer>
     </aside>
@@ -209,7 +181,7 @@
           <svg width={canvasWidth} height={canvasHeight} aria-hidden="true"><defs><marker id="lineage-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" /></marker></defs>{#each task.edges as edge}{#if positions[edge.from] && positions[edge.to]}<path class:highlight={path.has(edge.from) && path.has(edge.to)} d={`M${positions[edge.from].x + 214},${positions[edge.from].y + 50} C${positions[edge.from].x + 250},${positions[edge.from].y + 50} ${positions[edge.to].x - 35},${positions[edge.to].y + 50} ${positions[edge.to].x},${positions[edge.to].y + 50}`} fill="none" stroke="currentColor" stroke-width="2" marker-end="url(#lineage-arrow)" />{/if}{/each}</svg>
           {#each orderedEpisodes as node (node.id)}<button class="node" class:selected={node.id === selectedEpisodeId} class:same-thread={!!hovered && node.threadId === hoverThread} class:dim={!!hovered && !path.has(node.id) && node.threadId !== hoverThread} style:left={`${positions[node.id].x}px`} style:top={`${positions[node.id].y}px`} on:mouseenter={() => hovered = node.id} on:mouseleave={() => hovered = ""} on:focus={() => hovered = node.id} on:blur={() => hovered = ""} on:click={() => selectEpisode(node)}><strong>{node.title}</strong><small>{creationLabel(data.threads.find(t => t.id === node.threadId)?.creationKind ?? "unknown")} · {statusLabel(node.threadId, statuses)}</small><time>{node.startedAt ? new Date(node.startedAt).toLocaleString() : "时间未知"}</time><span class="node-foot">{nodeFacts[node.threadId]?.workMode === "worktree" ? "独立 worktree" : nodeFacts[node.threadId]?.workMode === "main" ? "主工作区" : "工作区未知"} · {nodeFacts[node.threadId]?.commitState === "clean" ? "干净" : nodeFacts[node.threadId]?.commitState === "uncommitted" ? "未提交" : "提交未知"} · {nodeFacts[node.threadId]?.syncState === "synced" ? "已同步" : nodeFacts[node.threadId]?.syncState === "notRequired" ? "无需同步" : "同步未知"}</span></button>{/each}
         </div></div>
-      {:else}<p class="empty">暂无任务，点击“手动整理历史”开始。</p>{/if}
+      {:else}<div class="empty">暂无任务。请在设置的“任务抽取”中扫描记录并运行整理。<p><button on:click={onSettings}>前往任务抽取设置</button></p></div>{/if}
     </section>
     <aside class="inspector" aria-label="事实与原始消息">
       <header class="title"><small>{view === "task" ? "节点信息" : "对话信息"}</small><h3>{view === "task" ? episode?.title ?? "选择执行节点" : selectedThread?.title ?? "可核验事实"}</h3>{#if view === "task" && episode}<button on:click={() => selectThread(episode!.threadId, episode!.evidenceIds[0])}>打开原始对话</button>{/if}</header>
@@ -219,8 +191,18 @@
   </div>
 </div>
 
+<dialog bind:this={historyDialog} class="history-drawer" aria-labelledby="extraction-history-title">
+  <header><h3 id="extraction-history-title">抽取历史</h3><button aria-label="关闭抽取历史" on:click={() => historyDialog.close()}>关闭</button></header>
+  <div class="history-content">
+    <p class="hint">{source?.name ?? "当前来源"} · {jobs.length} 次运行 · {dirty.filter(s => s.state === "dirty").length} 个会话待整理</p>
+    {#if !jobs.length}<p class="empty">暂无抽取记录。手动与自动运行的结果会显示在这里。</p>{/if}
+    {#each jobs as job (job.id)}<article class="history-job"><div><strong>{jobLabel(job.state)}</strong><span>{job.id.startsWith("scheduled-") ? "自动" : "手动"}</span></div><p>{data.threads.find(t => t.id === job.threadId)?.title ?? (job.threadId ? "对话记录不可用" : "全部近期历史")}</p><time>{new Date(job.createdAt).toLocaleString()}</time>{#if job.finishedAt}<p>耗时 {Math.max(0, Math.round((job.finishedAt-job.createdAt)/1000))} 秒</p>{/if}{#if job.error}<p class="error">{job.error}</p>{/if}</article>{/each}
+  </div>
+</dialog>
+
 <style>
-  .lineage{container-type:inline-size;min-width:0;font-family:var(--font-family-ui);color:var(--app-text)}button{border:1px solid var(--app-border);border-radius:6px;padding:6px 10px;background:var(--app-surface);color:var(--app-text);font-size:12px}.controls{display:flex;align-items:end;gap:10px;flex-wrap:wrap;padding-bottom:6px}.controls label{font-size:11px}.controls select{display:block;max-width:180px;min-height:30px}.controls span{font-size:12px;color:var(--app-muted)}.hint{font-size:11px;color:var(--app-muted);margin:6px 0 12px;overflow-wrap:anywhere}.error{color:var(--color-main-danger-text);overflow-wrap:anywhere}.workspace{display:grid;grid-template-columns:220px minmax(0,1fr) 300px;height:calc(100vh - 215px);min-height:550px;border:1px solid var(--color-main-divider);border-radius:10px;background:var(--color-main-canvas);overflow:hidden}.navigation,.center,.inspector{min-width:0;min-height:0;display:flex;flex-direction:column}.navigation{padding:14px 8px 8px;border-right:1px solid var(--color-main-divider)}h3{font-size:15px;margin:0 0 10px;overflow-wrap:anywhere}.navigation h3{padding-left:8px}.navigation input{width:100%;min-width:0}.segmented{display:flex;gap:3px}.segmented button{flex:1;padding:5px 10px;background:transparent;border:0;font-size:12px}.active{background:var(--color-main-selected)!important;color:var(--color-main-selected-text)!important}.navigation>.segmented{margin:10px 0}.nav-list{flex:1;overflow:auto;min-height:0}.workspace-label{padding:14px 8px 5px;font-size:11px;font-weight:600;color:var(--app-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tree-row{display:flex}.thread{display:flex;flex-direction:column;gap:5px;width:100%;text-align:left;border:0;background:transparent;padding:10px 8px;min-width:0}.thread strong{font-size:12px;font-weight:500;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.thread small{font-size:10px;color:var(--app-muted)}.expand{padding:0 3px;border:0;background:transparent;min-width:20px}.child{padding-left:28px;border-left:1px solid var(--color-main-divider)}footer{font-size:11px;padding:10px 5px;color:var(--app-muted)}.center-toolbar{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--color-main-divider)}.center-toolbar span{font-size:11px}.title{padding:16px;border-bottom:1px solid var(--color-main-divider);flex:none}.title small,.title span{font-size:11px;color:var(--app-muted)}.title h3{margin:6px 0}.title p{font-size:12px;margin:7px 0 0}.task-heading{display:flex;align-items:start;gap:10px;justify-content:space-between}.task-heading button{white-space:nowrap;font-size:11px}.task-picker{display:flex;gap:6px;overflow:auto;padding:10px 12px}.task-picker button{font-size:11px;white-space:nowrap}.diagram-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px}.diagram-toolbar small{font-size:10px;color:var(--app-muted)}.canvas-scroll{overflow:auto;flex:1;min-height:220px;background:var(--app-bg);overscroll-behavior:contain}.canvas{position:relative}.canvas svg{position:absolute;inset:0;color:var(--app-muted);pointer-events:none}.canvas path.highlight{color:var(--blue-9)}.node{position:absolute;width:214px;min-height:105px;text-align:left;padding:12px;display:flex;flex-direction:column;gap:7px;background:var(--color-main-canvas);border:1px solid var(--color-main-outline);border-radius:9px;box-shadow:0 2px 6px #0000000a}.node strong{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.node small,.node time,.node-foot{font-size:10px;color:var(--app-muted)}.node-foot{border-top:1px solid var(--color-main-divider);padding-top:6px;width:100%}.node.selected{outline:2px solid var(--blue-9);outline-offset:1px}.node.same-thread{border-color:var(--purple-9)}.node.dim{opacity:.4}.lane{position:absolute;height:155px;border-bottom:1px solid var(--color-main-divider);padding:5px 10px}.lane small{font-size:10px;color:var(--app-muted);display:block;max-width:350px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.inspector{border-left:1px solid var(--color-main-divider);overflow:auto}.inspector :global(.message-panel){flex:1 0 320px;min-height:320px}.inspector>.hint{padding:0 14px}.inspector dl{padding:12px 14px;margin:0;font-size:11px}.inspector dt{color:var(--app-muted);margin-top:8px}.inspector dd{margin:3px 0;overflow-wrap:anywhere;font-family:var(--font-family-code)}.associated{padding:14px}.associated h4{font-size:12px;margin:0 0 10px}.associated button{display:flex;flex-direction:column;width:100%;text-align:left;gap:5px;font-size:12px;margin-bottom:5px}.associated small,.empty{color:var(--app-muted)}.empty{font-size:12px;padding:16px}.diagnostics{font-size:12px;margin-bottom:10px}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--color-focus-ring);outline-offset:2px}
+  .lineage{container-type:inline-size;min-width:0;font-family:var(--font-family-ui);color:var(--app-text)}button{border:1px solid var(--app-border);border-radius:6px;padding:6px 10px;background:var(--app-surface);color:var(--app-text);font-size:12px}.hint{font-size:11px;color:var(--app-muted);margin:6px 0 12px;overflow-wrap:anywhere}.error{color:var(--color-main-danger-text);overflow-wrap:anywhere}.workspace{display:grid;grid-template-columns:220px minmax(0,1fr) 300px;height:calc(100vh - 175px);min-height:480px;border:1px solid var(--color-main-divider);border-radius:10px;background:var(--color-main-canvas);overflow:hidden}.navigation,.center,.inspector{min-width:0;min-height:0;display:flex;flex-direction:column}.navigation{padding:14px 8px 8px;border-right:1px solid var(--color-main-divider)}h3{font-size:15px;margin:0 0 10px;overflow-wrap:anywhere}.navigation input{width:100%;min-width:0}.segmented{display:flex;gap:3px}.segmented button{flex:1;padding:5px 10px;background:transparent;border:0;font-size:12px}.active{background:var(--color-main-selected)!important;color:var(--color-main-selected-text)!important}.navigation>.segmented{margin:10px 0}.nav-list{flex:1;overflow:auto;min-height:0}.workspace-label{padding:14px 8px 5px;font-size:11px;font-weight:600;color:var(--app-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tree-row{display:flex}.thread{display:flex;flex-direction:column;gap:5px;width:100%;text-align:left;border:0;background:transparent;padding:10px 8px;min-width:0}.thread strong{font-size:12px;font-weight:500;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.thread small{font-size:10px;color:var(--app-muted)}.expand{padding:0 3px;border:0;background:transparent;min-width:20px}.child{padding-left:28px;border-left:1px solid var(--color-main-divider)}footer{font-size:11px;padding:10px 5px;color:var(--app-muted)}.center-toolbar{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--color-main-divider)}.center-toolbar span{font-size:11px}.title{padding:16px;border-bottom:1px solid var(--color-main-divider);flex:none}.title small,.title span{font-size:11px;color:var(--app-muted)}.title h3{margin:6px 0}.title p{font-size:12px;margin:7px 0 0}.task-heading{display:flex;align-items:start;gap:10px;justify-content:space-between}.task-heading button{white-space:nowrap;font-size:11px}.task-picker{display:flex;gap:6px;overflow:auto;padding:10px 12px}.task-picker button{font-size:11px;white-space:nowrap}.diagram-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px}.diagram-toolbar small{font-size:10px;color:var(--app-muted)}.canvas-scroll{overflow:auto;flex:1;min-height:220px;background:var(--app-bg);overscroll-behavior:contain}.canvas{position:relative}.canvas svg{position:absolute;inset:0;color:var(--app-muted);pointer-events:none}.canvas path.highlight{color:var(--blue-9)}.node{position:absolute;width:214px;min-height:105px;text-align:left;padding:12px;display:flex;flex-direction:column;gap:7px;background:var(--color-main-canvas);border:1px solid var(--color-main-outline);border-radius:9px;box-shadow:0 2px 6px #0000000a}.node strong{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.node small,.node time,.node-foot{font-size:10px;color:var(--app-muted)}.node-foot{border-top:1px solid var(--color-main-divider);padding-top:6px;width:100%}.node.selected{outline:2px solid var(--blue-9);outline-offset:1px}.node.same-thread{border-color:var(--purple-9)}.node.dim{opacity:.4}.lane{position:absolute;height:155px;border-bottom:1px solid var(--color-main-divider);padding:5px 10px}.lane small{font-size:10px;color:var(--app-muted);display:block;max-width:350px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.inspector{border-left:1px solid var(--color-main-divider);overflow:auto}.inspector :global(.message-panel){flex:1 0 320px;min-height:320px}.inspector>.hint{padding:0 14px}.inspector dl{padding:12px 14px;margin:0;font-size:11px}.inspector dt{color:var(--app-muted);margin-top:8px}.inspector dd{margin:3px 0;overflow-wrap:anywhere;font-family:var(--font-family-code)}.associated{padding:14px}.associated h4{font-size:12px;margin:0 0 10px}.associated button{display:flex;flex-direction:column;width:100%;text-align:left;gap:5px;font-size:12px;margin-bottom:5px}.associated small,.empty{color:var(--app-muted)}.empty{font-size:12px;padding:16px}button:focus-visible,input:focus-visible{outline:2px solid var(--color-focus-ring);outline-offset:2px}
   @container(max-width:1050px){.workspace{grid-template-columns:210px minmax(0,1fr);height:auto;min-height:620px}.navigation{grid-row:1 / 3;max-height:850px}.center{height:570px}.inspector{grid-column:2;max-height:420px;border-top:1px solid var(--color-main-divider);border-left:0}.diagram-toolbar small{display:none}}
-  @container(max-width:650px){.workspace{display:flex;flex-direction:column}.navigation{max-height:260px;border-bottom:1px solid var(--color-main-divider)}.center{min-height:520px}.inspector{max-height:420px}.controls{gap:6px}.controls select{max-width:135px}.title{padding:12px}}
+  @container(max-width:650px){.workspace{display:flex;flex-direction:column}.navigation{max-height:260px;border-bottom:1px solid var(--color-main-divider)}.center{min-height:520px}.inspector{max-height:420px}.title{padding:12px}}
+  .history-drawer{position:fixed;inset:0 0 0 auto;margin:0;width:min(440px,100vw);max-width:100vw;height:100dvh;max-height:100dvh;box-sizing:border-box;border:0;border-left:1px solid var(--app-border);padding:0;background:var(--app-surface);color:var(--app-text);box-shadow:-12px 0 40px #0002}.history-drawer::backdrop{background:#0004}.history-drawer[open]{display:flex;flex-direction:column}.history-drawer header{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:24px;border-bottom:1px solid var(--app-border)}.history-drawer h3{margin:0}.history-content{padding:24px;overflow:auto;min-height:0}.history-job{border:1px solid var(--app-border);border-radius:12px;padding:16px;margin-top:12px;font-size:12px;overflow-wrap:anywhere}.history-job>div{display:flex;justify-content:space-between;gap:12px}.history-job time,.history-job span{color:var(--app-muted)}
 </style>
