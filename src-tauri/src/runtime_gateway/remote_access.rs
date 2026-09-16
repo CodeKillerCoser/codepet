@@ -710,6 +710,30 @@ impl RemoteAccessRuntime {
         })
     }
 
+    pub async fn delete_revoked_client(&self, credential_id: &str) -> Result<(), RemoteCommandError> {
+        let manager = self.manager.as_ref().ok_or_else(runtime_core_unavailable)?;
+        let credentials = manager.list_credentials().map_err(RemoteCommandError::from)?;
+        let target = credentials.iter()
+            .find(|credential| credential.credential_id == credential_id)
+            .ok_or_else(remote_credential_not_found)?;
+        let client_credentials = credentials.iter()
+            .filter(|credential| credential.client_id == target.client_id)
+            .collect::<Vec<_>>();
+        if client_credentials.iter().any(|credential| credential.revoked_at.is_none()) {
+            return Err(RemoteCommandError::from(codepet_host::HostError::new(
+                "remote_client_not_revoked", "Revoke client access before deleting its records",
+            )));
+        }
+        // A prior revocation may have timed out while closing sessions.
+        let inner = self.inner.lock().await;
+        if let Some(listener) = inner.listener.as_ref() {
+            listener.disconnect_credentials(client_credentials.iter()
+                .map(|credential| credential.credential_id.as_str()))
+                .await.map_err(RemoteCommandError::from)?;
+        }
+        manager.delete_revoked_client(credential_id).map_err(RemoteCommandError::from)
+    }
+
     pub fn shutdown_completed(&self) -> bool {
         self.shutdown_completed.load(Ordering::SeqCst)
     }
@@ -1640,6 +1664,14 @@ pub async fn revoke_remote_credential(
     credential_id: String,
 ) -> Result<RemoteCredentialRevokeView, RemoteCommandError> {
     state.revoke_credential(&credential_id).await
+}
+
+#[tauri::command]
+pub async fn delete_remote_client(
+    state: State<'_, RemoteAccessRuntime>,
+    credential_id: String,
+) -> Result<(), RemoteCommandError> {
+    state.delete_revoked_client(&credential_id).await
 }
 
 #[cfg(test)]
@@ -2602,6 +2634,8 @@ mod tests {
         assert_eq!(clients[0].online_session_count, 0);
         assert_eq!(clients[0].revoked_at, None);
         assert!(!exchange.credential.is_empty());
+        assert_eq!(test.runtime.delete_revoked_client(&clients[0].credential_id)
+            .await.unwrap_err().code, "remote_client_not_revoked");
 
         let revoked = test
             .runtime
@@ -2620,6 +2654,8 @@ mod tests {
             test.runtime.list_clients().await.unwrap()[0].revoked_at,
             revoked.revoked_at
         );
+        test.runtime.delete_revoked_client(&clients[0].credential_id).await.unwrap();
+        assert!(test.runtime.list_clients().await.unwrap().is_empty());
 
         test.runtime.shutdown_once().await;
         test.provider_manager.shutdown().await;

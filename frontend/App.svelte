@@ -54,7 +54,7 @@
   import PetAvatar from "./lib/PetAvatar.svelte";
   import PairDeviceDialog from "./lib/PairDeviceDialog.svelte";
   import RemoteDeviceList from "./lib/RemoteDeviceList.svelte";
-  import { cancelRemotePairing, copyRemotePairingJson, getRemoteAccessStatus, getRemotePairingStatus, listRemoteClients, listRemotePairingRequests, remoteCommandDiagnostic, resolveRemotePairingRequest, retryRemoteAccess, revokeRemoteCredential, startRemotePairing, type RemoteAccessDiagnostic, type RemoteAccessStatus } from "./lib/remoteAccess";
+  import { cancelRemotePairing, copyRemotePairingJson, getRemoteAccessStatus, getRemotePairingStatus, listRemoteClients, listRemotePairingRequests, remoteCommandDiagnostic, resolveRemotePairingRequest, retryRemoteAccess, revokeRemoteCredential, deleteRemoteClient, startRemotePairing, type RemoteAccessDiagnostic, type RemoteAccessStatus } from "./lib/remoteAccess";
   import { pairingJsonCanBeCopied, pairingPhaseForStatus, pairingRemainingSeconds, remoteDeviceFromClient, type PairingCopyStatus, type PairingDisplayState, type RemoteDevice } from "./lib/remoteDevices";
   import { playNotificationSound, playWhipReactionSound } from "./lib/sound";
   import { defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
@@ -609,6 +609,27 @@
       remoteClientsUnavailable = false;
     } catch (currentError) {
       remoteCommandError = remoteCommandDiagnostic(currentError, "remote_credential_revoke_failed");
+    } finally {
+      revokingRemoteCredentialId = null;
+    }
+  }
+
+  async function deleteRemoteDevice(device: RemoteDevice) {
+    if (device.status !== "revoked" || revokingRemoteCredentialId) return;
+    const confirmed = await confirmDialog(`删除 ${device.deviceName} 的已撤销配对记录？删除后将不再显示在设备列表中。`, {
+      title: "删除设备记录",
+      kind: "warning",
+    });
+    if (!confirmed || revokingRemoteCredentialId) return;
+    revokingRemoteCredentialId = device.id;
+    remoteCommandError = null;
+    try {
+      await deleteRemoteClient(device.id);
+      remoteDevices = remoteDevices.filter((candidate) => candidate.id !== device.id);
+      applyRemoteClientSnapshot(await listRemoteClients());
+      remoteClientsUnavailable = false;
+    } catch (currentError) {
+      remoteCommandError = remoteCommandDiagnostic(currentError, "remote_client_delete_failed");
     } finally {
       revokingRemoteCredentialId = null;
     }
@@ -1810,6 +1831,7 @@
             unavailable={remoteClientsUnavailable}
             revokingDeviceId={revokingRemoteCredentialId}
             onRevoke={revokeRemoteDevice}
+            onDelete={deleteRemoteDevice}
           />
         </section>
 
