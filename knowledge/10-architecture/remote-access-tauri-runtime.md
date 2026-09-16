@@ -65,6 +65,7 @@ active pairing 的缓存 JSON/QR 也属于 advertised generation。地址提交�
 - `copy_remote_pairing_json`：只接受主窗口的用户显式复制；在 Host pairing mutex 内确认匹配 pairing 为 `active` 并同步写系统剪贴板，只返回成功或安全错误，终态、旧 id 和非主窗口均 fail closed。
 - `cancel_remote_pairing`：取消 active pairing；重复 cancelled 调用幂等。
 - `revoke_remote_credential`：用列表代表 credential id 解析逻辑 client，原子撤销该 client 的全部 active credential；listener 先向整组 credential 广播取消，再用一个共享期限等待并统一返回总断开数或剩余组数错误。
+- `delete_remote_client`：只删除已全部撤销的逻辑 client。先确认整组无有效 credential、等待该组残留连接关闭，再在 credential store 锁内复核并持久删除整组记录；期间重新配对会拒绝删除。前端已撤销行显示“删除记录”，成功后刷新设备列表。
 
 `start_remote_pairing` 直接构造生成 SDK 的 `PairingQrPayload`，其中 `version` 读取 LAN types SDK 从 `channel/lan/v1` manifest 生成的 `CHANNEL_LAN_SCHEMA_VERSION`，不能使用 Gateway `PROTOCOL_VERSION`。payload 只做一次 `serde_json` 编码，再让同一字符串进入 `qrcode` 并生成 base64 SVG。start 响应、状态响应、日志和 Debug 不包含 `pairingSecret`、bearer 或原始 JSON。原始 JSON 的第二个出口仅是用户点击“复制配对 JSON”后的原生命令：命令拒绝 `main` 之外的 WebView，`RemoteAccessManager::run_while_pairing_active` 在同一 pairing mutex 内完成 active 校验和同步剪贴板写入，使成功 consume、cancel 和 expire 必须在线性顺序上发生在复制之前或之后，不能插入校验与写入之间。clipboard plugin 只供 Rust extension 使用，默认 WebView capability 不授予它的直接命令。WebView 只得到成功或固定错误，JSON 不进入 JavaScript、DOM、ARIA、错误消息或持久化状态。
 

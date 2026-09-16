@@ -118,3 +118,7 @@ export function remoteCommandDiagnostic(error: unknown, fallbackCode: string): R
     retryable: true,
   };
 }
+
+export async function deleteRemoteClient(credentialId: string): Promise<void> {
+  return invoke<void>("delete_remote_client", { credentialId });
+}

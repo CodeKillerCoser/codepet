@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
   cancelRemotePairing,
+  deleteRemoteClient,
   copyRemotePairingJson,
   getRemoteAccessStatus,
   getRemotePairingStatus,
@@ -18,6 +19,14 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 describe("remote access command bridge", () => {
+  it("deletes revoked device records and propagates backend failures", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    await deleteRemoteClient("credential-one");
+    expect(invoke).toHaveBeenCalledWith("delete_remote_client", { credentialId: "credential-one" });
+    vi.mocked(invoke).mockRejectedValueOnce({ code: "remote_client_not_revoked" });
+    await expect(deleteRemoteClient("credential-one")).rejects.toEqual({ code: "remote_client_not_revoked" });
+  });
+
   afterEach(() => {
     vi.mocked(invoke).mockReset();
   });
