@@ -508,9 +508,8 @@ impl CodexAppServerSession {
     }
 
     pub fn shutdown(&self) -> Result<(), CodexAppServerError> {
-        if !self.inner.running.swap(false, Ordering::SeqCst) {
-            return Ok(());
-        }
+        // A failed kill must remain retryable even after RPC admission is closed.
+        self.inner.running.store(false, Ordering::SeqCst);
         if let Ok(mut writer) = self.inner.writer.lock() {
             writer.take();
         }
@@ -1771,6 +1770,24 @@ mod tests {
             self.terminated.store(true, Ordering::SeqCst);
             Ok(())
         }
+    }
+
+    #[test]
+    fn release_shutdown_failure_is_not_reported_as_success_on_retry() {
+        struct FailOnce(Arc<std::sync::atomic::AtomicUsize>);
+        impl SessionControl for FailOnce {
+            fn shutdown(&mut self) -> Result<(), CodexAppServerError> {
+                if self.0.fetch_add(1, Ordering::SeqCst) == 0 { Err(CodexAppServerError::Io("mock kill denied".into())) } else { Ok(()) }
+            }
+        }
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (outgoing, _receiver) = mpsc::channel(); let (_sender, incoming) = mpsc::channel();
+        let session = CodexAppServerSession::from_parts(Box::new(MockReader { receiver:incoming }),
+            Box::new(MockWriter { sender:outgoing }), Some(Box::new(FailOnce(count.clone()))));
+        assert!(session.shutdown().is_err());
+        assert!(!session.is_running());
+        assert!(session.shutdown().is_ok());
+        assert_eq!(count.load(Ordering::SeqCst), 2, "retry must invoke process control even though RPC admission is closed");
     }
 
     fn mock_session() -> (CodexAppServerSession, Receiver<Value>, Sender<Value>) {

@@ -7,7 +7,7 @@ import type { ClientId, ConnectionStatus, Cursor, DeviceDescriptor, EventCursor,
 export type { ClientId, ConnectionStatus, Cursor, DeviceDescriptor, EventCursor, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, RequestId, RoutedResourceId, RpcError, TimestampMs, TraceContext, VersionRange } from "../../codepet-core-sdk/src/generated";
 
 export const PROTOCOL_VERSION = 1 as const;
-export const PROTOCOL_METHODS = ["conversation.recent", "protocol.ping", "protocol.handshake", "protocol.describe", "event.subscribe", "provider.list", "provider.describe", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.list", "conversation.search", "conversation.get", "conversation.markRead", "conversation.acquireInteraction", "conversation.resume", "conversation.create", "turn.send", "turn.interrupt", "approval.resolve", "codepet.usage.query"] as const;
+export const PROTOCOL_METHODS = ["conversation.releaseInteraction", "conversation.recent", "protocol.ping", "protocol.handshake", "protocol.describe", "event.subscribe", "provider.list", "provider.describe", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.list", "conversation.search", "conversation.get", "conversation.markRead", "conversation.acquireInteraction", "conversation.resume", "conversation.create", "turn.send", "turn.interrupt", "approval.resolve", "codepet.usage.query"] as const;
 export const PROTOCOL_EVENTS = ["conversation.recentChanged", "project.changed", "provider.changed", "conversation.upserted", "conversation.itemUpserted", "conversation.activityChanged", "turn.upserted", "turn.outputDelta", "approval.requested", "approval.resolved"] as const;
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -140,6 +140,15 @@ export interface ConversationRecentResponse {
 
 export type ConversationRecentRevision = string;
 
+export interface ConversationReleaseInteractionRequest {
+  conversation: RoutedResourceId;
+}
+
+export interface ConversationReleaseInteractionResponse {
+  released: boolean;
+  scope: string;
+}
+
 export interface ConversationResumeRequest {
   force?: boolean;
   conversation: RoutedResourceId;
@@ -187,7 +196,7 @@ export interface GatewayCapabilities {
   usageDatasets?: Array<UsageDataset>;
 }
 
-export type GatewayCapability = "project.list" | "project.get" | "project.create" | "project.update" | "project.delete" | "conversation.list" | "conversation.search" | "conversation.get" | "conversation.create" | "turn.send" | "turn.interrupt" | "approval.resolve" | "conversation.recent" | "codepet.usage.query";
+export type GatewayCapability = "project.list" | "project.get" | "project.create" | "project.update" | "project.delete" | "conversation.list" | "conversation.search" | "conversation.get" | "conversation.releaseInteraction" | "conversation.create" | "turn.send" | "turn.interrupt" | "approval.resolve" | "conversation.recent" | "codepet.usage.query";
 
 export interface GatewayDevice {
   name: string;
@@ -386,6 +395,7 @@ export interface UsageQueryResponse {
 }
 
 export interface ProtocolRequestMap {
+  "conversation.releaseInteraction": ConversationReleaseInteractionRequest;
   "conversation.recent": ConversationRecentRequest;
   "protocol.ping": PingRequest;
   "protocol.handshake": HandshakeRequest;
@@ -412,6 +422,7 @@ export interface ProtocolRequestMap {
 }
 
 export interface ProtocolResponseMap {
+  "conversation.releaseInteraction": ConversationReleaseInteractionResponse;
   "conversation.recent": ConversationRecentResponse;
   "protocol.ping": PingResponse;
   "protocol.handshake": HandshakeResponse;

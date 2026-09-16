@@ -1510,6 +1510,93 @@ fn provider_binary_acquire_interaction_reuses_created_session_and_returns_config
 }
 
 #[test]
+fn release_interaction_stops_shared_server_and_stays_stopped_until_explicit_acquire() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("release-interaction.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (_, revision) = provider.configure("none", &marker);
+    let mut unrelated = ProviderBinary::spawn();
+    let unrelated_marker = directory.path().join("unrelated.txt");
+    unrelated.configure("none", &unrelated_marker);
+    let unrelated_server = session_pids(&unrelated_marker, "process/start", "");
+    let server = session_pids(&marker, "process/start", "");
+    for id in ["thread-release-a", "thread-release-b"] {
+        let response = provider.request(id, "turn.start", turn_start_params(
+            conversation_resource_value(id), &format!("message-{id}"), "running", &revision));
+        assert!(response.get("error").is_none(), "{response}");
+    }
+    for index in 0..2 {
+        let response = provider.request(&format!("release-{index}"), "conversation.releaseInteraction", json!({
+            "conversation": conversation_resource_value("thread-release-a")
+        }));
+        assert_eq!(response["result"], json!({"released":true,"scope":"providerInstance"}));
+    }
+    assert!(!process_is_running(server[0]), "release must wait for the owned harness to exit");
+    assert!(process_is_running(unrelated_server[0]), "release must only kill its own harness");
+    let start = provider.request("background-start", "instance.start", json!({"route":route_value()}));
+    assert_eq!(start.pointer("/result/instance/status").and_then(Value::as_str), Some("stopped"));
+    for sequence in 1..=3 {
+        provider.request(&format!("heartbeat-{sequence}"), "provider.ping", json!({
+            "sequence":sequence,"hostSessionId":"release-host", "clients":{"revision":sequence,
+                "connections":[{"clientId":"phone","connectionId":format!("connection-{sequence}")}]}, "instances":[route_value()]
+        }));
+    }
+    for id in ["thread-release-a", "thread-release-b"] {
+        let response = provider.request(&format!("read-{id}"), "conversation.get", json!({"conversation":conversation_resource_value(id)}));
+        assert_eq!(response.pointer("/error/data/code").and_then(Value::as_str), Some("interaction_released"));
+    }
+    provider.collect_for(Duration::from_millis(100));
+    assert_eq!(session_pids(&marker, "process/start", ""), server);
+    let resumed = provider.request("explicit-resume", "conversation.acquireInteraction", json!({"conversation":conversation_resource_value("thread-release-a")}));
+    assert!(resumed.get("error").is_none(), "{resumed}");
+    let servers = session_pids(&marker, "process/start", "");
+    assert_eq!(servers.len(), 2);
+    assert_eq!(session_pids(&marker, "thread/resume", "thread-release-b"), server, "B must not reacquire automatically");
+    unrelated.request("unrelated-shutdown", "provider.shutdown", json!({}));
+    provider.request("release-shutdown", "provider.shutdown", json!({}));
+    wait_for_processes_to_exit(&servers, Duration::from_secs(2));
+}
+
+#[test]
+fn release_interaction_invalidates_pending_approval_in_previous_server() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("release-approval.txt");
+    let mut provider = ProviderBinary::spawn();
+    let (_, revision) = provider.configure("complete-on-approval", &marker);
+    let started = provider.request("start-approval", "turn.start", turn_start_params(
+        conversation_resource_value("thread-created"), "approval-message", "approval", &revision));
+    assert!(started.get("error").is_none());
+    let approval = provider.event("event.approvalRequested").pointer("/params/approval/resource").cloned().unwrap();
+    let released = provider.request("release-approval", "conversation.releaseInteraction", json!({"conversation":conversation_resource_value("thread-created")}));
+    assert_eq!(released["result"]["released"], true);
+    let resumed = provider.request("resume-approval", "conversation.acquireInteraction", json!({"conversation":conversation_resource_value("thread-created")}));
+    assert!(resumed.get("error").is_none(), "{resumed}");
+    let stale = provider.request("old-approval", "approval.resolve", json!({"approval":approval,"decision":"approve"}));
+    assert!(stale.get("error").is_some(), "old approval must not resolve against a new server");
+    provider.request("approval-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn release_interaction_cancels_hung_acquire_through_control_lane() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("release-pending.txt");
+    let mut provider = ProviderBinary::spawn();
+    provider.configure("resume-no-response", &marker);
+    provider.send_request("hung-acquire", "conversation.acquireInteraction", json!({"conversation":conversation_resource_value("thread-resume-pending-release")}));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while session_method_count(&marker, "thread/resume") == 0 {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let released = provider.request("release-hung", "conversation.releaseInteraction", json!({"conversation":conversation_resource_value("thread-resume-pending-release")}));
+    assert_eq!(released.pointer("/result/released").and_then(Value::as_bool), Some(true));
+    let pending = provider.receive(Duration::from_secs(2), |v| v["id"] == "hung-acquire");
+    assert!(pending.get("error").is_some());
+    assert_eq!(session_pids(&marker, "process/start", "").len(), 1);
+    provider.request("hung-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
 fn sdk_heartbeat_retains_offline_turns_until_finished_and_restarts_once() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("client-presence.txt");

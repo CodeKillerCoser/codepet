@@ -22,7 +22,7 @@ Codex lifecycle、conversation acquire/create、turn、approval、事件分发�
 
 ## 推荐做法
 
-- instance.start 是唯一 Server 启动入口；每会话 Creating/Ready/Failed/Closed 槽合并首次 acquire，同一个 conversation 的操作持 operation lock 并复核 generation。
+- 共享 start_runtime 是唯一 Server 启动路径，instance.start 与主动释放后的显式 acquire 复用它；每会话 Creating/Ready/Failed/Closed 槽合并首次 acquire，同一个 conversation 的操作持 operation lock 并复核 generation。
 - 原生 thread/resume 固定 excludeTurns=true。Gateway conversation.resume 顺序 acquire/get，首屏结构复用 ConversationGetResponse。Remote 首屏只取一页，用户手动加载更早消息，每页初值 20；只对尺寸错误按 20→10→5→1 缩页，不重做已成功的 acquire。
 - create 使用共享 Server 的 thread/start，响应直接建立槽，首条 turn/start 复用。未 materialized 的精确官方响应只对有 create 证据的当前 generation 映射空历史，不能吞掉近似错误。
 - 一个 Server reader 按 conversation ID 分发事件。start/resume 安装槽前到达的通知暂存，不能丢弃其他会话事件；同会话终态在 operation lock 内完成映射与发布后，才允许下一操作。
@@ -45,3 +45,5 @@ Codex lifecycle、conversation acquire/create、turn、approval、事件分发�
 [单条错误隔离回归](../40-runbooks/codex-request-errors-must-not-stop-server.md)覆盖错误响应后的同 PID、并发 B 请求/事件、晚到响应和事件编码失败；[文本与分页规约](provider-item-text-and-pagination.md)覆盖超大原生响应、tool 截断与非 tool 保真；生命周期测试继续验证真实 EOF/Broken pipe 的清理。
 
 Codex vertical 覆盖 64 会话同 PID、并发首次 acquire、两端连接与最后断开、重连仅新建一个进程、A 终态保留 B、审批隔离、terminal publication barrier、resume/cancel barrier、慢输出、共享 Server crash、明确 reject 和未知结果。SDK 测试拒绝旧 sequence/revision；Host LAN 和 Provider saturation 测试证明慢 RPC 不阻塞应用 ping。Remote 测试覆盖成功后不续租、能力恢复、Provider 隔离、旧 generation 丢弃与项目补拉。
+
+用户显式 `conversation.releaseInteraction` 是连接保留规则的例外：立即关闭该实例共享 Server，允许中止活动任务；心跳不能重启，只有显式 resume 恢复。详见 [立即释放规约](codex-explicit-interaction-release.md)。

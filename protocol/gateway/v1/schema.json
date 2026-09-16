@@ -88,6 +88,37 @@
       ],
       "additionalProperties": false
     },
+    "ConversationReleaseInteractionRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": false
+    },
+    "ConversationReleaseInteractionResponse": {
+      "type": "object",
+      "properties": {
+        "released": {
+          "type": "boolean"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "providerInstance"
+          ]
+        }
+      },
+      "required": [
+        "released",
+        "scope"
+      ],
+      "additionalProperties": false
+    },
     "ConversationAcquireInteractionRequest": {
       "type": "object",
       "properties": {
@@ -536,6 +567,7 @@
         "conversation.list",
         "conversation.search",
         "conversation.get",
+        "conversation.releaseInteraction",
         "conversation.create",
         "turn.send",
         "turn.interrupt",

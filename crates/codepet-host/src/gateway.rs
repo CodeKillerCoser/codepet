@@ -1284,6 +1284,20 @@ impl ProtocolServer for ProviderGatewayService {
         })
     }
 
+    fn conversation_release_interaction<'a>(
+        &'a self, request: gateway::ConversationReleaseInteractionRequest,
+    ) -> gateway::ProtocolFuture<'a, gateway::ConversationReleaseInteractionResponse> {
+        Box::pin(async move {
+            let conversation = self.resolve_resource(request.conversation).await?;
+            let response = self.manager.conversation_release_interaction(provider::ConversationReleaseInteractionRequest { conversation })
+                .await.map_err(gateway_error)?;
+            Ok(gateway::ConversationReleaseInteractionResponse {
+                released: response.released,
+                scope: "providerInstance".into(),
+            })
+        })
+    }
+
     fn conversation_acquire_interaction<'a>(
         &'a self,
         request: gateway::ConversationAcquireInteractionRequest,
@@ -1659,6 +1673,7 @@ fn map_capabilities(capabilities: &provider::ProviderCapabilities) -> gateway::G
             provider::ProviderCapability::ConversationSearch => {
                 Some(gateway::GatewayCapability::ConversationSearch)
             }
+            provider::ProviderCapability::ConversationReleaseInteraction => Some(gateway::GatewayCapability::ConversationReleaseInteraction),
             provider::ProviderCapability::ConversationGet => {
                 Some(gateway::GatewayCapability::ConversationGet)
             }

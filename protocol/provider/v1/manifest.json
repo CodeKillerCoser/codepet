@@ -23,6 +23,7 @@
     "field": "methods"
   },
   "methods": [
+    {"name": "conversation.releaseInteraction", "direction": "hostToPlugin", "idempotency": "idempotent", "capability": "conversation.releaseInteraction", "request": {"$ref": "./schema.json#/$defs/ConversationReleaseInteractionRequest"}, "response": {"$ref": "./schema.json#/$defs/ConversationReleaseInteractionResponse"}, "dispatchLane": "control"},
     {"name": "conversation.active.list", "direction": "hostToPlugin", "idempotency": "safe", "capability": "conversation.active.list", "request": {"$ref": "./schema.json#/$defs/ConversationActiveListRequest"}, "response": {"$ref": "./schema.json#/$defs/ConversationActiveListResponse"}},
     {"name": "conversation.unread.list", "direction": "hostToPlugin", "idempotency": "safe", "capability": "conversation.unread.list", "request": {"$ref": "./schema.json#/$defs/ConversationUnreadListRequest"}, "response": {"$ref": "./schema.json#/$defs/ConversationUnreadListResponse"}},
     {"name": "conversation.markRead", "direction": "hostToPlugin", "idempotency": "idempotent", "capability": "conversation.markRead", "request": {"$ref": "./schema.json#/$defs/ConversationMarkReadRequest"}, "response": {"$ref": "./schema.json#/$defs/ConversationMarkReadResponse"}},
