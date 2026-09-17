@@ -62,3 +62,5 @@ Windows 上使用 mock/fixture 验证；本次没有 macOS 实机运行。业务
 - `node tools/protocol-codegen/generate.mjs --check`、`node --test tools/protocol-codegen/test.mjs`：通过；Remote 输出目录的 `cp-sdk-gen --check` 通过。
 
 早期 fixture 运行曾在初始 configure/instance.start 阶段超时，尚未进入 release；串行重跑通过，未确认该超时根因。未运行全部跨 Provider 集成测试或 macOS 实机测试。
+
+2026-09-17 整合配对分支时，桌面 `cargo check` 在 `provider_host_compat.rs::map_provider` 报 E0004：遗漏 `ConversationReleaseInteraction` 枚举。旧兼容协议没有该方法，显式映射为 `None` 后检查通过。以后新增 Gateway 能力需同步检查桌面兼容层；不要向旧协议广告未实现的能力。验证命令为 `cargo check --manifest-path src-tauri/Cargo.toml --locked --jobs 4`，`TAURI_CONFIG` 使用 `src-tauri/tauri.bin.conf.json` 的内容以排除打包资源要求。

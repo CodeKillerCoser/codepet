@@ -482,7 +482,8 @@ fn map_provider(
             | gateway::GatewayCapability::ProjectDelete => None,
             gateway::GatewayCapability::ConversationList => Some("conversation.list"),
             gateway::GatewayCapability::ConversationSearch
-            | gateway::GatewayCapability::ConversationRecent => None,
+            | gateway::GatewayCapability::ConversationRecent
+            | gateway::GatewayCapability::ConversationReleaseInteraction => None,
             gateway::GatewayCapability::ConversationGet => Some("conversation.get"),
             gateway::GatewayCapability::ConversationCreate => Some("conversation.create"),
             gateway::GatewayCapability::TurnSend => Some("turn.send"),
