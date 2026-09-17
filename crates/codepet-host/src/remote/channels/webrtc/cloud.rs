@@ -1,4 +1,5 @@
-//! Public rendezvous authenticated by keys bound through existing pinned LAN pairing.
+//! Public rendezvous authenticated by QR invitations or existing pinned LAN pairing.
+mod invitation;
 use super::super::session::SessionRegistry;
 use crate::{HostError, HostResult, ProviderGatewayService, RemoteAccessManager, RemoteCredential};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -40,6 +41,7 @@ struct Peer {
 }
 
 pub(crate) struct Cloud {
+    invitations: Mutex<BTreeMap<String, invitation::Invitation>>,
     path: PathBuf,
     config: Mutex<Config>,
     key: signature::Ed25519KeyPair,
@@ -98,6 +100,7 @@ impl Cloud {
             .map_err(|_| error())?;
         Ok(Some(Arc::new(Self {
             path,
+            invitations: Mutex::new(BTreeMap::new()),
             config: Mutex::new(config),
             key,
             access,
@@ -119,6 +122,13 @@ impl Cloud {
         credential: &RemoteCredential,
         public_key: &str,
     ) -> HostResult<Value> {
+        let result = self.bind_peer(credential, public_key)?;
+        self.sync_clients().await?;
+        self.active(&credential.credential_id)?;
+        Ok(result)
+    }
+
+    fn bind_peer(&self, credential: &RemoteCredential, public_key: &str) -> HostResult<Value> {
         if B64.decode(public_key).map_err(|_| error())?.len() != 32 {
             return Err(error());
         }
@@ -157,8 +167,6 @@ impl Cloud {
             json!({"serviceUrl":config.service_url,"host":self.access.remote_host_identity().device_id,
                 "client":credential.credential_id,"hostPublicKey":B64.encode(self.key.public_key().as_ref()),"token":peer.token})
         };
-        self.sync_clients().await?;
-        self.active(&credential.credential_id)?;
         Ok(result)
     }
 
@@ -237,6 +245,7 @@ impl Cloud {
             let mut seen = BTreeMap::new();
             loop {
                 seen.retain(|_, expires| *expires > now());
+                let _ = cloud.poll_invitations().await;
                 if cloud.sync_clients().await.is_ok() {
                     if let Ok(batch) = cloud
                         .request(reqwest::Method::GET, "/v1/offers", None)

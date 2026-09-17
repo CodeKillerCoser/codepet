@@ -76,6 +76,10 @@ pub struct PairingQrPayload {
     pub pairing_id: String,
     pub pairing_secret: String,
     pub expires_at: TimestampMs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_public_key: Option<String>,
 }
 
 impl std::fmt::Debug for PairingQrPayload {
@@ -90,6 +94,8 @@ impl std::fmt::Debug for PairingQrPayload {
             .field("pairing_id", &self.pairing_id)
             .field("pairing_secret", &"<redacted>")
             .field("expires_at", &self.expires_at)
+            .field("service_url", &self.service_url)
+            .field("host_public_key", &self.host_public_key)
             .finish()
     }
 }

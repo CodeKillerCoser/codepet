@@ -625,6 +625,7 @@ impl RemoteCredentialStore {
 }
 
 struct ActivePairingSession {
+    invitation_only: bool,
     pairing_id: String,
     pairing_secret_sha256: [u8; 32],
     deadline: Instant,
@@ -656,6 +657,7 @@ struct PairingRequestRecord {
     request: RemotePairingRequest,
     client_nonce: String,
     host_pairing_id: Option<String>,
+    invitation_binding: Option<String>,
     deadline: Instant,
     recorded_at: Instant,
 }
@@ -789,6 +791,7 @@ impl RemoteAccessManager {
         })?;
         let expires_at = (self.clock)().saturating_add(duration_ms(ttl));
         let active = ActivePairingSession {
+            invitation_only: false,
             pairing_id: pairing_id.clone(),
             pairing_secret_sha256: sha256_bytes(pairing_secret.as_bytes()),
             deadline,
@@ -808,6 +811,13 @@ impl RemoteAccessManager {
     }
 
     /// Atomically consumes a valid pairing session and persists one new credential.
+    pub(crate) fn require_invitation_confirmation(&self, id: &str) -> HostResult<()> {
+        let mut pairing = self.pairing.lock().map_err(|_| pairing_session_lock_error())?;
+        let active = pairing.active.as_mut().filter(|a| a.pairing_id == id).ok_or_else(invalid_pairing_session)?;
+        active.invitation_only = true;
+        Ok(())
+    }
+
     pub fn complete_pairing(
         &self,
         pairing_id: &str,
@@ -823,6 +833,10 @@ impl RemoteAccessManager {
             .pairing
             .lock()
             .map_err(|_| pairing_session_lock_error())?;
+        if pairing.requests.values().any(|r| r.host_pairing_id.as_deref() == Some(pairing_id)
+            && r.invitation_binding.is_some()) {
+            return Err(invalid_pairing_session());
+        }
         let Some(session) = pairing.active.as_ref() else {
             return Err(invalid_pairing_session());
         };
@@ -833,7 +847,7 @@ impl RemoteAccessManager {
                 "remote pairing session has expired",
             ));
         }
-        if session.pairing_id != pairing_id
+        if session.invitation_only || session.pairing_id != pairing_id
             || !constant_time_equal(
                 &session.pairing_secret_sha256,
                 &supplied_secret_hash,
@@ -876,6 +890,20 @@ impl RemoteAccessManager {
         &self,
         request: PairingRequestCreateRequest,
     ) -> HostResult<RemotePairingRequest> {
+        self.create_pairing_request_inner(request, None)
+    }
+
+    pub(crate) fn create_invitation_request(
+        &self, pairing_id: &str, secret: &str, binding: &str,
+        request: PairingRequestCreateRequest,
+    ) -> HostResult<RemotePairingRequest> {
+        self.create_pairing_request_inner(request, Some((pairing_id, secret, binding)))
+    }
+
+    fn create_pairing_request_inner(
+        &self, request: PairingRequestCreateRequest,
+        invitation: Option<(&str, &str, &str)>,
+    ) -> HostResult<RemotePairingRequest> {
         if request.host_device_id != self.device.identity().device_id {
             return Err(HostError::new(
                 "pairing_host_identity_mismatch",
@@ -901,7 +929,21 @@ impl RemoteAccessManager {
             .map_err(|_| pairing_session_lock_error())?;
         self.expire_locked(&mut pairing, now);
         self.expire_pairing_requests_locked(&mut pairing, now);
+        if let Some((id, secret, binding)) = invitation {
+            if let Some(existing) = pairing.requests.values().find(|record|
+                record.host_pairing_id.as_deref() == Some(id) && record.invitation_binding.is_some()) {
+                return if existing.invitation_binding.as_deref() == Some(binding) {
+                    Ok(existing.request.clone())
+                } else { Err(invalid_pairing_session()) };
+            }
+            let active = pairing.active.as_ref().ok_or_else(invalid_pairing_session)?;
+            if active.pairing_id != id || !constant_time_equal(
+                &active.pairing_secret_sha256, &sha256_bytes(secret.as_bytes())) {
+                return Err(invalid_pairing_session());
+            }
+        }
         if let Some(existing) = pairing.requests.values().find(|record| {
+            record.invitation_binding.is_none() && invitation.is_none() &&
             record.request.client.client_id == client.client_id
                 && record.client_nonce == request.client_nonce
         }) {
@@ -922,7 +964,7 @@ impl RemoteAccessManager {
 
         let request_id = random_prefixed_id("request")?;
         let confirmation_code = pairing_confirmation_code(
-            &request_id,
+            if invitation.is_some() { &request.client_nonce } else { &request_id },
             &request.client_nonce,
             self.tls_identity.certificate_fingerprint(),
         );
@@ -945,6 +987,7 @@ impl RemoteAccessManager {
         let host_pairing_id = pairing
             .active
             .as_ref()
+            .filter(|active| !active.invitation_only || invitation.is_some())
             .map(|active| active.pairing_id.clone());
         pairing.requests.insert(
             request_id.clone(),
@@ -952,6 +995,7 @@ impl RemoteAccessManager {
                 request: pairing_request.clone(),
                 client_nonce: request.client_nonce,
                 host_pairing_id,
+                invitation_binding: invitation.map(|(_, _, binding)| binding.to_owned()),
                 deadline,
                 recorded_at: now,
             },
@@ -1017,6 +1061,15 @@ impl RemoteAccessManager {
                 record.host_pairing_id.clone(),
             )
         };
+        // A cancelled/expired QR must never be authorized by an already open dialog.
+        if pairing.requests.get(request_id).is_some_and(|r| r.invitation_binding.is_some()) {
+            self.expire_locked(&mut pairing, now);
+            if !pairing.active.as_ref().is_some_and(|a| Some(&a.pairing_id) == host_pairing_id.as_ref()) {
+                let record = pairing.requests.get_mut(request_id).ok_or_else(pairing_request_not_found)?;
+                record.request.state = PairingRequestState::Expired;
+                return Ok(record.request.clone());
+            }
+        }
         let issued = if accept {
             Some(self.credential_store.issue(client)?)
         } else {
@@ -1899,6 +1952,44 @@ mod tests {
             device: paired_device_descriptor(client_id),
             client_nonce: nonce.to_string().repeat(SHA256_HEX_LENGTH),
         }
+    }
+
+    #[test]
+    fn invitation_routes_share_one_confirmation_and_one_credential() {
+        let directory = tempfile::tempdir().unwrap();
+        let clock = TestClock::new(1_000);
+        let (_, _, manager) = open_manager(directory.path(), &clock);
+        let invite = manager.begin_pairing().unwrap();
+        let request = pairing_request(&manager, "phone", 'a');
+        let exchange = |binding: &str| manager.create_invitation_request(
+            &invite.pairing_id, &invite.pairing_secret, binding, request.clone());
+        let pending = exchange("signed-request-hash").unwrap();
+        assert_eq!(pending, exchange("signed-request-hash").unwrap());
+        assert!(exchange("different-phone-or-request").is_err());
+        assert_eq!(manager.pending_pairing_requests().unwrap().len(), 1);
+        assert!(manager.list_credentials().unwrap().is_empty());
+        let accepted = manager.resolve_pairing_request(&pending.request_id, true).unwrap();
+        assert_eq!(accepted, exchange("signed-request-hash").unwrap());
+        assert_eq!(accepted, manager.resolve_pairing_request(&pending.request_id, true).unwrap());
+        assert_eq!(manager.list_credentials().unwrap().len(), 1);
+        assert!(exchange("different-phone-or-request").is_err());
+        assert!(manager.cancel_pairing(&invite.pairing_id).is_err());
+        assert!(manager.validate_bearer(accepted.bearer_token().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn cancelled_invitation_cannot_be_accepted_by_stale_dialog() {
+        let directory = tempfile::tempdir().unwrap();
+        let clock = TestClock::new(1_000);
+        let (_, _, manager) = open_manager(directory.path(), &clock);
+        let invite = manager.begin_pairing().unwrap();
+        let pending = manager.create_invitation_request(&invite.pairing_id, &invite.pairing_secret,
+            "binding", pairing_request(&manager, "phone", 'a')).unwrap();
+        manager.cancel_pairing(&invite.pairing_id).unwrap();
+        let result = manager.resolve_pairing_request(&pending.request_id, true).unwrap();
+        assert_eq!(result.state, PairingRequestState::Expired);
+        assert!(result.bearer_token().is_none());
+        assert!(manager.list_credentials().unwrap().is_empty());
     }
 
     #[test]

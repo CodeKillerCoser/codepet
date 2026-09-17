@@ -511,8 +511,23 @@ impl RemoteAccessRuntime {
         };
         let manager = self.manager.as_ref().ok_or_else(runtime_core_unavailable)?;
         let pairing = manager.begin_pairing().map_err(RemoteCommandError::from)?;
+        let cloud = {
+            let inner = self.inner.lock().await;
+            inner.listener.as_ref()
+                .ok_or_else(runtime_core_unavailable)
+                .and_then(|listener| listener.prepare_pairing_invitation(&pairing).map_err(RemoteCommandError::from))
+        };
+        let cloud = match cloud {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = manager.cancel_pairing(&pairing.pairing_id);
+                return Err(error);
+            }
+        };
         let payload = PairingQrPayload {
-            version: CHANNEL_LAN_SCHEMA_VERSION,
+            version: if cloud.is_some() { 2 } else { CHANNEL_LAN_SCHEMA_VERSION },
+            service_url: cloud.as_ref().map(|c| c.0.clone()),
+            host_public_key: cloud.map(|c| c.1),
             host_device_id: identity.device_id,
             display_name: identity.descriptor.device_name,
             https_base_url,

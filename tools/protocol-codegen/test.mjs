@@ -423,6 +423,8 @@ test("LAN admission DTOs remain independent from the Gateway JSON-RPC manifest",
     "pairingId",
     "pairingSecret",
     "expiresAt",
+    "serviceUrl",
+    "hostPublicKey",
   ]);
   assert.equal(definitions.PairingQrPayload.properties.certSha256.pattern, "^[0-9a-f]{64}$");
   assert.equal(definitions.PairingQrPayload.properties.pairingSecret["x-codepet-sensitive"], true);

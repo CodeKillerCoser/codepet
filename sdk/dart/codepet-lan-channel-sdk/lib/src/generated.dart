@@ -271,8 +271,10 @@ final class PairingQrPayload {
     required String pairingId,
     required String pairingSecret,
     required TimestampMs expiresAt,
+    String? serviceUrl,
+    String? hostPublicKey,
   }) {
-    final validatedVersion = _integer(version, 'PairingQrPayload.version', minimum: 1, maximum: 1);
+    final validatedVersion = _integer(version, 'PairingQrPayload.version', minimum: 1, maximum: 2);
     final validatedHostDeviceId = _string(hostDeviceId, 'PairingQrPayload.hostDeviceId', minLength: 1);
     final validatedDisplayName = _string(displayName, 'PairingQrPayload.displayName', minLength: 1);
     final validatedHttpsBaseUrl = _string(httpsBaseUrl, 'PairingQrPayload.httpsBaseUrl', minLength: 1);
@@ -280,6 +282,8 @@ final class PairingQrPayload {
     final validatedPairingId = _string(pairingId, 'PairingQrPayload.pairingId', minLength: 1);
     final validatedPairingSecret = _string(pairingSecret, 'PairingQrPayload.pairingSecret', pattern: '^[0-9a-f]{64}\$');
     final validatedExpiresAt = _integer(expiresAt, 'PairingQrPayload.expiresAt', minimum: 0, maximum: 9007199254740991);
+    final validatedServiceUrl = serviceUrl == null ? null : _string(serviceUrl, 'PairingQrPayload.serviceUrl', minLength: 1);
+    final validatedHostPublicKey = hostPublicKey == null ? null : _string(hostPublicKey, 'PairingQrPayload.hostPublicKey', minLength: 1);
     return PairingQrPayload._(
       version: validatedVersion,
       hostDeviceId: validatedHostDeviceId,
@@ -289,6 +293,8 @@ final class PairingQrPayload {
       pairingId: validatedPairingId,
       pairingSecret: validatedPairingSecret,
       expiresAt: validatedExpiresAt,
+      serviceUrl: validatedServiceUrl,
+      hostPublicKey: validatedHostPublicKey,
     );
   }
 
@@ -301,6 +307,8 @@ final class PairingQrPayload {
     required this.pairingId,
     required this.pairingSecret,
     required this.expiresAt,
+    required this.serviceUrl,
+    required this.hostPublicKey,
   });
 
   final int version;
@@ -311,12 +319,14 @@ final class PairingQrPayload {
   final String pairingId;
   final String pairingSecret;
   final TimestampMs expiresAt;
+  final String? serviceUrl;
+  final String? hostPublicKey;
 
   factory PairingQrPayload.fromJson(Object? value, {String path = 'PairingQrPayload'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'version', 'hostDeviceId', 'displayName', 'httpsBaseUrl', 'certSha256', 'pairingId', 'pairingSecret', 'expiresAt'}, path);
+    _expectKeys(json, const {'version', 'hostDeviceId', 'displayName', 'httpsBaseUrl', 'certSha256', 'pairingId', 'pairingSecret', 'expiresAt', 'serviceUrl', 'hostPublicKey'}, path);
     return PairingQrPayload(
-      version: _integer(_required(json, 'version', path), '$path.version', minimum: 1, maximum: 1),
+      version: _integer(_required(json, 'version', path), '$path.version', minimum: 1, maximum: 2),
       hostDeviceId: _string(_required(json, 'hostDeviceId', path), '$path.hostDeviceId', minLength: 1),
       displayName: _string(_required(json, 'displayName', path), '$path.displayName', minLength: 1),
       httpsBaseUrl: _string(_required(json, 'httpsBaseUrl', path), '$path.httpsBaseUrl', minLength: 1),
@@ -324,6 +334,8 @@ final class PairingQrPayload {
       pairingId: _string(_required(json, 'pairingId', path), '$path.pairingId', minLength: 1),
       pairingSecret: _string(_required(json, 'pairingSecret', path), '$path.pairingSecret', pattern: '^[0-9a-f]{64}\$'),
       expiresAt: _integer(_required(json, 'expiresAt', path), '$path.expiresAt', minimum: 0, maximum: 9007199254740991),
+      serviceUrl: json.containsKey('serviceUrl') && json['serviceUrl'] != null ? _string(json['serviceUrl'], '$path.serviceUrl', minLength: 1) : null,
+      hostPublicKey: json.containsKey('hostPublicKey') && json['hostPublicKey'] != null ? _string(json['hostPublicKey'], '$path.hostPublicKey', minLength: 1) : null,
     );
   }
 
@@ -336,10 +348,12 @@ final class PairingQrPayload {
     'pairingId': pairingId,
     'pairingSecret': pairingSecret,
     'expiresAt': expiresAt,
+    if (serviceUrl != null) 'serviceUrl': serviceUrl!,
+    if (hostPublicKey != null) 'hostPublicKey': hostPublicKey!,
   };
 
   @override
-  String toString() => 'PairingQrPayload(version: $version, hostDeviceId: $hostDeviceId, displayName: $displayName, httpsBaseUrl: $httpsBaseUrl, certSha256: $certSha256, pairingId: $pairingId, pairingSecret: <redacted>, expiresAt: $expiresAt)';
+  String toString() => 'PairingQrPayload(version: $version, hostDeviceId: $hostDeviceId, displayName: $displayName, httpsBaseUrl: $httpsBaseUrl, certSha256: $certSha256, pairingId: $pairingId, pairingSecret: <redacted>, expiresAt: $expiresAt, serviceUrl: $serviceUrl, hostPublicKey: $hostPublicKey)';
 }
 
 final class PairingRequestCreateRequest {

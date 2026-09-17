@@ -14,14 +14,16 @@ Let's Encrypt IP 证书已申请成功；Certbot 5.8.0，自动续期模拟通�
 
 不增加账号登录。管理员在 VPS 运行 `services/signaling/provision_host.py`，
 为指定 Host deviceId 签发独立信令 token，并将配置写入权限 600 的文件。
-Host 数据目录 `remote-access/rtc-cloud.json` 保存 serviceUrl、hostToken、Ed25519
+当前 Host 数据目录 `connections/rtc-cloud.json` 保存 serviceUrl、hostToken、Ed25519
 seed 与已绑定 peer。配置不得进入源码仓库、APK 或日志；普通安装包不内置管理员凭据。
 
 Remote 在原 pinned LAN HTTPS + bearer 下调用 `/remote/v1/channel-bootstrap`：
 先在安全存储持久化自己的 seed，再提交公钥；Host 首次绑定到当前 credentialId，
 之后拒绝无确认换 key。返回 Host 公钥、信令地址、独立 client token。
 客户端 token 通过已认证 LAN 直接交付（本阶段省略额外的一次性兑换券往返）。
-服务只保存 token hash。首次使用公网前需在同 LAN 成功升级一次。
+服务只保存 token hash。以上是 v1 QR 的兼容升级流程；v2 QR 已支持 LAN/VPS 同时申请、Host 一次确认并直接交付公网授权，详见 [统一二维码邀请配对](../20-product/dual-route-qr-pairing.md)。
+
+2026-09-17 实机发现旧安装的配置仍位于 `remote-access/rtc-cloud.json`，而当前身份和凭据位于 `connections/`。排查 v1 QR 时先核对实际数据目录和 Host ID，再检查 cloud 配置是否加载；旧 token 绑定旧 Host ID，不可直接搬到不同身份。当前 Windows 已独立配置并完成无法使用 LAN 邀请地址时的公网首次配对，旧配置保留。
 
 与旧长线提案的具体差别：公网 offer 的有效 Ed25519 签名证明持有新绑定的设备私钥，
 Host 将其解析为原有活跃 credentialId，进入共用 SessionRegistry/握手；不再经云端传

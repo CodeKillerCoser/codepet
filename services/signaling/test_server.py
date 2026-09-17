@@ -69,6 +69,38 @@ class AdmissionTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await self.call('GET', '/v1/ice', 'host-token')).status, 200)
         self.assertEqual((await self.call('GET', '/v1/ice', 'host-token')).status, 429)
 
+    async def test_invitation_scope_retry_and_immutable_result(self):
+        import time
+        invite = {'id': 'invite-a', 'tokenHash': digest('invite-token'), 'expires': int(time.time()) + 120}
+        self.assertEqual((await self.call('PUT', '/v1/invitations', 'host-token', invite)).status, 200)
+        self.assertEqual((await self.call('PUT', '/v1/invitations', 'host-token', invite)).status, 200)
+        self.assertEqual((await self.call('GET', '/v1/ice', 'invite-token')).status, 401)
+        self.assertEqual((await self.call('POST', '/v1/offers', 'invite-token', {})).status, 401)
+        message = {'requestId': 'request-a', 'sealed': base64.b64encode(bytes(48)).decode()}
+        for _ in range(2):
+            response = await self.call('POST', '/v1/invitation-exchange', 'invite-token', message)
+            self.assertEqual(response.status, 200)
+            self.assertIsNone((await response.json())['result'])
+        for change in [dict(message, requestId='other'), dict(message, sealed=base64.b64encode(bytes(49)).decode())]:
+            self.assertEqual((await self.call('POST', '/v1/invitation-exchange', 'invite-token', change)).status, 409)
+        for _ in range(2):
+            self.assertEqual(len((await (await self.call('GET', '/v1/invitation-requests', 'host-token')).json())['requests']), 1)
+        self.assertEqual((await (await self.call('GET', '/v1/invitation-requests', 'other-host')).json())['requests'], [])
+        result = {'id': 'invite-a', 'requestId': 'request-a', 'result': base64.b64encode(bytes(64)).decode()}
+        self.assertEqual((await self.call('POST', '/v1/invitation-results', 'other-host', result)).status, 409)
+        for _ in range(2):
+            self.assertEqual((await self.call('POST', '/v1/invitation-results', 'host-token', result)).status, 200)
+        self.assertEqual((await self.call('POST', '/v1/invitation-results', 'host-token', dict(result, result=message['sealed']))).status, 409)
+        response = await self.call('POST', '/v1/invitation-exchange', 'invite-token', message)
+        self.assertEqual((await response.json())['result'], result['result'])
+        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+
+    async def test_invitation_expiry_and_invalid_publish(self):
+        import time
+        for expires in [True, int(time.time()) - 1, int(time.time()) + 3600]:
+            self.assertEqual((await self.call('PUT', '/v1/invitations', 'host-token',
+                {'id': 'invite', 'tokenHash': digest('secret'), 'expires': expires})).status, 400)
+
 
 if __name__ == '__main__':
     unittest.main()

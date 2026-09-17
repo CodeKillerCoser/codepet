@@ -34,6 +34,7 @@ def create_app(db_path, turn_secret, public_ip):
         PRIMARY KEY(host,id));
     """)
     pending = {}
+    invitations = {}
     rates = {}
 
     @web.middleware
@@ -65,14 +66,23 @@ def create_app(db_path, turn_secret, public_ip):
         if not auth.startswith('Bearer ') or len(auth) > 256:
             raise web.HTTPUnauthorized()
         token = digest(auth[7:])
+        now = time.monotonic()
+        for key in list(invitations):
+            if invitations[key]['deadline'] <= now:
+                del invitations[key]
         row = db.execute('SELECT id FROM hosts WHERE token_hash=?', (token,)).fetchone()
         if row:
             request['actor'] = ('host', row[0], None)
         else:
             row = db.execute('SELECT host,id FROM clients WHERE token_hash=?', (token,)).fetchone()
-            if not row:
-                raise web.HTTPUnauthorized()
-            request['actor'] = ('client', *row)
+            if row:
+                request['actor'] = ('client', *row)
+            else:
+                invitation = next((key for key, entry in invitations.items()
+                                   if hmac.compare_digest(entry['tokenHash'], token)), None)
+                if invitation is None or request.path != '/v1/invitation-exchange':
+                    raise web.HTTPUnauthorized()
+                request['actor'] = ('invite', *invitation)
         now = time.monotonic()
         for key in list(rates):
             if rates[key][0] < now - 60:
@@ -144,6 +154,8 @@ def create_app(db_path, turn_secret, public_ip):
         return web.json_response({'ok': True})
 
     async def ice(request):
+        if request['actor'][0] not in ('host', 'client'):
+            raise web.HTTPForbidden()
         _, host, client = request['actor']
         # 24h credentials; client transport must refresh by reconnecting before expiry.
         expiry = int(time.time()) + 86400
@@ -203,7 +215,70 @@ def create_app(db_path, turn_secret, public_ip):
             diagnostic('answer.delivered', host=host, client=client, attempt=entry['attempt'], ageMs=round((time.monotonic()-(entry['deadline']-60))*1000))
         return web.json_response({'answer': entry['answer']})
 
+    async def publish_invitation(request):
+        host, _ = actor(request, 'host')
+        value = await body(request)
+        key = (host, identifier(value.get('id')))
+        token_hash = value.get('tokenHash')
+        expires = value.get('expires')
+        if (not isinstance(token_hash, str) or not re.fullmatch('[0-9a-f]{64}', token_hash)
+                or type(expires) is not int or not int(time.time()) < expires <= int(time.time()) + 330):
+            raise web.HTTPBadRequest()
+        previous = invitations.get(key)
+        if previous:
+            if previous['tokenHash'] != token_hash or previous['expires'] != expires:
+                raise web.HTTPConflict()
+        else:
+            if len(invitations) >= 128 or sum(k[0] == host for k in invitations) >= 4:
+                raise web.HTTPServiceUnavailable()
+            invitations[key] = {'tokenHash': token_hash, 'expires': expires,
+                                'deadline': time.monotonic() + expires - time.time(),
+                                'request': None, 'result': None}
+        return web.json_response({'ok': True})
+
+    def sealed(value):
+        if not isinstance(value, str) or not 40 <= len(value) <= 16000:
+            raise web.HTTPBadRequest()
+        try:
+            base64.b64decode(value, validate=True)
+        except ValueError:
+            raise web.HTTPBadRequest()
+        return value
+
+    async def invitation_exchange(request):
+        key = actor(request, 'invite')
+        entry = invitations[key]
+        value = await body(request)
+        message = {'requestId': identifier(value.get('requestId')), 'sealed': sealed(value.get('sealed'))}
+        if entry['request'] is not None and entry['request'] != message:
+            raise web.HTTPConflict()
+        entry['request'] = message
+        return web.json_response({'result': entry['result']})
+
+    async def invitation_requests(request):
+        host, _ = actor(request, 'host')
+        # Redeliver until terminal result: losing an HTTP response must not strand a request.
+        return web.json_response({'requests': [dict(id=key[1], **entry['request'])
+            for key, entry in invitations.items() if key[0] == host
+            and entry['request'] is not None and entry['result'] is None]})
+
+    async def invitation_result(request):
+        host, _ = actor(request, 'host')
+        value = await body(request)
+        entry = invitations.get((host, identifier(value.get('id'))))
+        if entry is None or entry['request'] is None or entry['request']['requestId'] != value.get('requestId'):
+            raise web.HTTPConflict()
+        result = sealed(value.get('result'))
+        if entry['result'] is not None and entry['result'] != result:
+            raise web.HTTPConflict()
+        entry['result'] = result
+        return web.json_response({'ok': True})
+
     app = web.Application(middlewares=[observe, guard], client_max_size=100000)
+    app.router.add_put('/v1/invitations', publish_invitation)
+    app.router.add_post('/v1/invitation-exchange', invitation_exchange)
+    app.router.add_get('/v1/invitation-requests', invitation_requests)
+    app.router.add_post('/v1/invitation-results', invitation_result)
     app.router.add_get('/health', lambda _: web.json_response({'status': 'ok'}))
     app.router.add_put('/v1/clients', clients)
     app.router.add_get('/v1/ice', ice)

@@ -144,7 +144,7 @@ impl RemoteLanServer {
         let cloud = super::super::webrtc::cloud::Cloud::load(remote_access.clone()).unwrap_or(None);
         let cloud_task = cloud.as_ref().map(|cloud| cloud.start(gateway.clone(), sessions.clone()));
         let state = Arc::new(RemoteLanState {
-            cloud,
+            cloud: cloud.clone(),
             remote_access,
             gateway,
             remote_identity: remote_identity.clone(),
@@ -154,6 +154,7 @@ impl RemoteLanServer {
         let app = Router::new()
             .route(DISCOVERY_PATH, get(discovery))
             .route(PAIRING_EXCHANGE_PATH, post(pairing_exchange))
+            .route("/remote/v2/pairings/:pairing_id/exchange", post(invitation_exchange))
             .route(PAIRING_REQUEST_CREATE_PATH, post(create_pairing_request))
             .route(PAIRING_REQUEST_STATUS_PATH, get(pairing_request_status))
             .route(GATEWAY_PATH, get(gateway_websocket))
@@ -174,6 +175,7 @@ impl RemoteLanServer {
 
         Ok(RemoteLanServerHandle {
             cloud_task,
+            cloud,
             listener_id,
             local_addr,
             remote_identity,
@@ -331,6 +333,7 @@ impl Drop for RemoteLanAdvertisedEndpointTransition {
 /// Running listener metadata plus bounded shutdown ownership.
 pub struct RemoteLanServerHandle {
     cloud_task: Option<JoinHandle<()>>,
+    cloud: Option<Arc<super::super::webrtc::cloud::Cloud>>,
     listener_id: u64,
     local_addr: SocketAddr,
     remote_identity: lan::LanHostIdentity,
@@ -341,6 +344,11 @@ pub struct RemoteLanServerHandle {
 }
 
 impl RemoteLanServerHandle {
+    pub fn prepare_pairing_invitation(&self, session: &crate::PairingSession) -> HostResult<Option<(String, String)>> {
+        self.cloud.as_ref().map(|cloud| cloud.prepare_invitation(session,
+            self.gateway_url().ok_or_else(|| HostError::new("pairing_unavailable", "LAN endpoint unavailable"))?)).transpose()
+    }
+
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
@@ -562,6 +570,18 @@ async fn discovery(State(state): State<Arc<RemoteLanState>>) -> Json<RemoteLanDi
         vmax: lan::CHANNEL_LAN_SCHEMA_VERSION,
         pair: u8::from(pairing_available),
     })
+}
+
+async fn invitation_exchange(
+    State(state): State<Arc<RemoteLanState>>, Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, RestError> {
+    let invalid = || RestError { status: StatusCode::BAD_REQUEST,
+        error: protocol_error("invalid_invitation", "Invitation exchange rejected", false) };
+    let cloud = state.cloud.as_ref().ok_or_else(invalid)?;
+    let result = cloud.exchange_invitation(&id, body["requestId"].as_str().ok_or_else(invalid)?,
+        body["sealed"].as_str().ok_or_else(invalid)?).await.map_err(|_| invalid())?;
+    Ok(Json(result))
 }
 
 async fn pairing_exchange(

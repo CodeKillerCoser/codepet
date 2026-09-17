@@ -71,14 +71,16 @@
     "PairingQrPayload": {
       "type": "object",
       "properties": {
-        "version": { "type": "integer", "minimum": 1, "maximum": 1 },
+        "version": { "type": "integer", "minimum": 1, "maximum": 2 },
         "hostDeviceId": { "$ref": "../../../core/v1/schema.json#/$defs/DeviceId" },
         "displayName": { "type": "string", "minLength": 1 },
         "httpsBaseUrl": { "type": "string", "minLength": 1 },
         "certSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "pairingId": { "type": "string", "minLength": 1 },
         "pairingSecret": { "type": "string", "pattern": "^[0-9a-f]{64}$", "x-codepet-sensitive": true },
-        "expiresAt": { "$ref": "../../../core/v1/schema.json#/$defs/TimestampMs" }
+        "expiresAt": { "$ref": "../../../core/v1/schema.json#/$defs/TimestampMs" },
+        "serviceUrl": { "type": "string", "minLength": 1 },
+        "hostPublicKey": { "type": "string", "minLength": 1 }
       },
       "required": ["version", "hostDeviceId", "displayName", "httpsBaseUrl", "certSha256", "pairingId", "pairingSecret", "expiresAt"],
       "additionalProperties": false

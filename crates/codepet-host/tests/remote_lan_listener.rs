@@ -1498,6 +1498,70 @@ fn hex_sha256(value: &[u8]) -> String {
 }
 
 #[tokio::test]
+async fn invitation_tls_retries_share_authorization_without_vps() {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+    use ring::{aead, signature::{Ed25519KeyPair, KeyPair, UnparsedPublicKey, ED25519}};
+    use serde_json::{json, Value};
+    let host = TestHost::start().await;
+    std::fs::write(host._directory.path().join("remote/rtc-cloud.json"),
+        json!({"serviceUrl":"https://127.0.0.1:9","hostToken":"test-host-token-which-is-at-least-32-bytes",
+            "seed":B64.encode([7;32]),"peers":{}}).to_string()).unwrap();
+    let server = RemoteLanServer::start(RemoteLanServerConfig::loopback(), host.remote_access.clone(), host.gateway.clone()).await.unwrap();
+    let client = PinnedTlsClient::new(server.local_addr(), host.remote_access.tls_identity().certificate_der().to_vec());
+    let invitation = host.remote_access.begin_pairing().unwrap();
+    let (_, host_key) = server.prepare_pairing_invitation(&invitation).unwrap().unwrap();
+    let request_id = "a".repeat(64);
+    let key = Ed25519KeyPair::from_seed_unchecked(&[8;32]).unwrap();
+    let payload = serde_json::to_vec(&json!({"v":2,"host":"device-lan-listener",
+        "invitationId":invitation.pairing_id,"requestId":request_id,"expires":invitation.expires_at/1000,
+        "clientId":"phone","publicKey":B64.encode(key.public_key().as_ref()),
+        "device":{"deviceName":"Phone","operatingSystem":"Android","systemVersion":"16"}})).unwrap();
+    let mut encrypted = serde_json::to_vec(&json!({"payload":B64.encode(&payload),"signature":B64.encode(key.sign(&payload).as_ref())})).unwrap();
+    let aad = format!("device-lan-listener:{}:{request_id}", invitation.pairing_id);
+    let aead_key = |direction: &str| {
+        let digest = ring::digest::digest(&ring::digest::SHA256,
+            format!("codepet-invite-v2:{direction}:{}",invitation.pairing_secret).as_bytes());
+        aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_256_GCM,digest.as_ref()).unwrap())
+    };
+    aead_key("request").seal_in_place_append_tag(aead::Nonce::assume_unique_for_key([1;12]),
+        aead::Aad::from(aad.as_bytes()), &mut encrypted).unwrap();
+    let body = json!({"requestId":request_id,"sealed":B64.encode([[1;12].to_vec(),encrypted].concat())}).to_string();
+    let path = format!("/remote/v2/pairings/{}/exchange",invitation.pairing_id);
+    let (first, second) = tokio::join!(client.json_request("POST",&path,None,Some(&body)),client.json_request("POST",&path,None,Some(&body)));
+    assert_eq!(first.0,200); assert_eq!(second.0,200);
+    assert!(first.1["result"].is_null());
+    let requests = host.remote_access.pending_pairing_requests().unwrap();
+    assert_eq!(requests.len(),1);
+    assert!(host.remote_access.list_credentials().unwrap().is_empty());
+    // A v2 invite cannot be downgraded to the auto-accepting legacy exchange.
+    let legacy = json!({"pairingSecret":invitation.pairing_secret,"clientId":"phone",
+        "device":{"deviceName":"Phone","operatingSystem":"Android","systemVersion":"16"}}).to_string();
+    assert_ne!(client.json_request("POST",&format!("/remote/v1/pairings/{}/exchange",invitation.pairing_id),None,Some(&legacy)).await.0,200);
+    host.remote_access.resolve_pairing_request(&requests[0].request_id,true).unwrap();
+    let (first, second) = tokio::join!(client.json_request("POST",&path,None,Some(&body)),client.json_request("POST",&path,None,Some(&body)));
+    assert_eq!(first.0,200); assert_eq!(second.0,200); assert_eq!(first.1,second.1);
+    let mut sealed = B64.decode(first.1["result"].as_str().unwrap()).unwrap();
+    let nonce = sealed[..12].try_into().unwrap();
+    let plain = aead_key("result").open_in_place(aead::Nonce::assume_unique_for_key(nonce),
+        aead::Aad::from(aad.as_bytes()), &mut sealed[12..]).unwrap();
+    let envelope: Value = serde_json::from_slice(plain).unwrap();
+    let bytes = B64.decode(envelope["payload"].as_str().unwrap()).unwrap();
+    UnparsedPublicKey::new(&ED25519,B64.decode(host_key).unwrap()).verify(&bytes,
+        &B64.decode(envelope["signature"].as_str().unwrap()).unwrap()).unwrap();
+    let result: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(result["requestHash"],hex_sha256(&payload));
+    assert_eq!(result["state"],"accepted");
+    assert_eq!(result["cloud"]["host"],"device-lan-listener");
+    assert!(host.remote_access.validate_bearer(result["pairing"]["credential"].as_str().unwrap()).is_ok());
+    assert_eq!(host.remote_access.list_credentials().unwrap().len(),1);
+    let credential = host.remote_access.validate_bearer(result["pairing"]["credential"].as_str().unwrap()).unwrap();
+    host.remote_access.revoke_credential(&credential.credential_id).unwrap();
+    assert_ne!(client.json_request("POST",&path,None,Some(&body)).await.0,200,
+        "cached invitation results must not bypass revocation");
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 #[ignore = "authorized live VPS probe; requires private CODEPET_RTC_CLOUD_PROBE_CONFIG"]
 async fn rtc_public_relay_probe() {
     use base64::{engine::general_purpose::STANDARD as B64, Engine};
