@@ -461,6 +461,29 @@ impl RemoteCredentialStore {
         Ok(revoked)
     }
 
+    /// Removes all records for a revoked client, checking under the store lock
+    /// that a concurrent re-pairing has not granted access again.
+    pub fn delete_revoked_client(&self, credential_id: &str) -> HostResult<()> {
+        validate_prefixed_random_id("credential", credential_id)?;
+        let mut credentials = self.credentials.lock()
+            .map_err(|_| credential_store_lock_error())?;
+        let target = credentials.get(credential_id).ok_or_else(|| HostError::new(
+            "remote_credential_not_found", "Remote credential does not exist",
+        ))?;
+        let client_id = target.client_id.clone();
+        if credentials.values().any(|credential|
+            credential.client_id == client_id && credential.revoked_at.is_none()) {
+            return Err(HostError::new(
+                "remote_client_not_revoked", "Revoke client access before deleting its records",
+            ));
+        }
+        let mut updated = credentials.clone();
+        updated.retain(|_, credential| credential.client_id != client_id);
+        persist_credentials(&self.path, &self.tls_certificate_fingerprint, &updated)?;
+        *credentials = updated;
+        Ok(())
+    }
+
     /// Revokes one credential by its public id. Repeating a successful revoke is a no-op.
     pub fn revoke_credential(&self, credential_id: &str) -> HostResult<RemoteCredential> {
         validate_prefixed_random_id("credential", credential_id)?;
@@ -1370,6 +1393,10 @@ impl RemoteAccessManager {
         bearer_token: &str,
     ) -> HostResult<RemoteCredential> {
         self.credential_store.revoke_current(bearer_token)
+    }
+
+    pub fn delete_revoked_client(&self, credential_id: &str) -> HostResult<()> {
+        self.credential_store.delete_revoked_client(credential_id)
     }
 }
 
@@ -2646,5 +2673,36 @@ mod tests {
                 .count(),
             3
         );
+    }
+
+    #[test]
+    fn delete_revoked_client_removes_all_records_and_preserves_other_clients() {
+        let directory = tempfile::tempdir().unwrap();
+        let clock = TestClock::new(1_000);
+        let (config, _device, manager) = open_manager(directory.path(), &clock);
+        let first = pair(&manager, "delete-client");
+        let second = pair(&manager, "delete-client");
+        let other = pair(&manager, "other-client");
+        let id = &first.credential.credential_id;
+        assert_eq!(manager.delete_revoked_client(id).unwrap_err().code, "remote_client_not_revoked");
+        manager.revoke_client("delete-client").unwrap();
+        // A new pairing after revocation must prevent deletion of a live client.
+        let newly_paired = pair(&manager, "delete-client");
+        assert_eq!(manager.delete_revoked_client(id).unwrap_err().code, "remote_client_not_revoked");
+        assert_eq!(manager.list_credentials().unwrap().len(), 4);
+        manager.revoke_client("delete-client").unwrap();
+        manager.delete_revoked_client(id).unwrap();
+        assert_eq!(manager.list_credentials().unwrap().len(), 1);
+        for issued in [&first, &second, &newly_paired] {
+            assert!(manager.validate_bearer(&issued.bearer_token).is_err());
+        }
+        assert!(manager.validate_bearer(&other.bearer_token).is_ok());
+        drop(manager);
+        let store = RemoteCredentialStore::open(
+            config.credential_store_path,
+            sha256_hex(&load_tls_identity(&config.tls_identity_path).unwrap().certificate_der),
+        ).unwrap();
+        assert_eq!(store.list().unwrap().len(), 1);
+        assert_eq!(store.list().unwrap()[0].client_id, "other-client");
     }
 }

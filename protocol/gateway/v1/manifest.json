@@ -29,6 +29,7 @@
     "field": "methods"
   },
   "methods": [
+    {"name": "conversation.releaseInteraction", "direction": "clientToGateway", "idempotency": "idempotent", "capability": "conversation.releaseInteraction", "request": {"$ref": "./schema.json#/$defs/ConversationReleaseInteractionRequest"}, "response": {"$ref": "./schema.json#/$defs/ConversationReleaseInteractionResponse"}},
     {"name": "conversation.recent", "direction": "clientToGateway", "idempotency": "safe", "capability": "conversation.recent", "request": {"$ref": "./schema.json#/$defs/ConversationRecentRequest"}, "response": {"$ref": "./schema.json#/$defs/ConversationRecentResponse"}},
 
     {"name": "protocol.ping", "direction": "clientToGateway", "idempotency": "safe", "request": {"$ref": "./schema.json#/$defs/PingRequest"}, "response": {"$ref": "./schema.json#/$defs/PingResponse"}},

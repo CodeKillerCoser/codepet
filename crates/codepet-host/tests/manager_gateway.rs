@@ -626,6 +626,18 @@ async fn host_manifest_launches_provider_binary_and_completes_gateway_rpc() {
 }
 
 #[tokio::test]
+async fn gateway_release_interaction_rejects_provider_without_capability() {
+    let manager = build_manager("device-release", vec![plugin("dev.codepet.release", &["instance-release"])]);
+    manager.start_enabled().await;
+    let gateway = ProviderGatewayService::new(manager.clone()).unwrap();
+    let error = gateway.conversation_release_interaction(codepet_gateway_sdk::ConversationReleaseInteractionRequest {
+        conversation: gateway_resource("device-release", "dev.codepet.release", "instance-release", "conversation"),
+    }).await.unwrap_err();
+    assert_eq!(error.code, "provider_capability_unsupported");
+    manager.shutdown().await;
+}
+
+#[tokio::test]
 async fn gateway_resume_returns_history_or_preserves_the_interaction_outcome() {
     let manager = build_manager("device-resume", vec![plugin("dev.codepet.resume", &["instance-resume"])]);
     manager.start_enabled().await;

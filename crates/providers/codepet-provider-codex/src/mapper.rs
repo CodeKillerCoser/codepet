@@ -51,6 +51,7 @@ impl CodexProtocolMapper {
                 ProviderCapability::ConversationList,
                 ProviderCapability::ConversationSearch,
                 ProviderCapability::ConversationGet,
+                ProviderCapability::ConversationReleaseInteraction,
                 ProviderCapability::ConversationCreate,
                 ProviderCapability::TurnSteer,
                 ProviderCapability::TurnInterrupt,

@@ -8,6 +8,7 @@
   export let unavailable = false;
   export let revokingDeviceId: string | null = null;
   export let onRevoke: ((device: RemoteDevice) => void | Promise<void>) | undefined = undefined;
+  export let onDelete: ((device: RemoteDevice) => void | Promise<void>) | undefined = undefined;
 
   function revoke(device: RemoteDevice) {
     if (!onRevoke || device.status === "revoked") return;
@@ -44,15 +45,27 @@
           <span class:online={status.tone === "ready"} class:runtime-danger={status.tone === "danger"} class="status-chip">
             {status.label}
           </span>
+          {#if device.status === "revoked"}
           <button
             class="remote-device-revoke"
             type="button"
-            disabled={!onRevoke || revokingDeviceId === device.id || device.status === "revoked"}
+            disabled={!onDelete || revokingDeviceId !== null}
+            on:click={() => onDelete?.(device)}
+            aria-label={`删除 ${device.deviceName} 的设备记录`}
+          >
+            <Trash2 size={15} /> {revokingDeviceId === device.id ? "删除中" : "删除记录"}
+          </button>
+          {:else}
+          <button
+            class="remote-device-revoke"
+            type="button"
+            disabled={!onRevoke || revokingDeviceId !== null}
             on:click={() => revoke(device)}
             aria-label={`撤销 ${device.deviceName} 的访问权限`}
           >
             <Trash2 size={15} /> {revokingDeviceId === device.id ? "撤销中" : "撤销访问权限"}
           </button>
+          {/if}
         </div>
       </article>
     {/each}

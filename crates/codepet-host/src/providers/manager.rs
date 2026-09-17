@@ -1381,12 +1381,26 @@ impl PluginManager {
     ) -> HostResult<ConversationAcquireInteractionResponse> {
         validate_provider_resource_identity(&request.conversation)?;
         let route = route_from_provider_resource(&request.conversation);
-        let (_, process, _) = self.routing_context(&route).await?;
+        let (_, process, instance) = self.instance_context(&route).await?;
+        if instance.status != InstanceStatus::Ready
+            && !instance.capabilities.methods.contains(&codepet_provider_sdk::ProviderCapability::ConversationReleaseInteraction) {
+            return Err(HostError::new("provider_instance_unavailable", "Provider instance is not ready").retryable(true));
+        }
         process
             .client()
             .conversation_acquire_interaction(request)
             .await
             .map_err(HostError::from)
+    }
+
+    pub async fn conversation_release_interaction(
+        &self, request: codepet_provider_sdk::ConversationReleaseInteractionRequest,
+    ) -> HostResult<codepet_provider_sdk::ConversationReleaseInteractionResponse> {
+        validate_provider_resource_identity(&request.conversation)?;
+        let route = route_from_provider_resource(&request.conversation);
+        let (_, process, instance) = self.instance_context(&route).await?;
+        ensure_capability(&instance, ProtocolMethod::ConversationReleaseInteraction)?;
+        process.client().conversation_release_interaction(request).await.map_err(HostError::from)
     }
 
     pub async fn conversation_create(

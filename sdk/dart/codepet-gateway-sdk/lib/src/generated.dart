@@ -1090,6 +1090,77 @@ Object? encodeConversationRecentRevision(ConversationRecentRevision value, {Stri
   return checked;
 }
 
+final class ConversationReleaseInteractionRequest {
+  factory ConversationReleaseInteractionRequest({
+    required RoutedResourceId conversation,
+  }) {
+    final validatedConversation = conversation;
+    return ConversationReleaseInteractionRequest._(
+      conversation: validatedConversation,
+    );
+  }
+
+  ConversationReleaseInteractionRequest._({
+    required this.conversation,
+  });
+
+  final RoutedResourceId conversation;
+
+  factory ConversationReleaseInteractionRequest.fromJson(Object? value, {String path = 'ConversationReleaseInteractionRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'conversation'}, path);
+    return ConversationReleaseInteractionRequest(
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'conversation': conversation.toJson(),
+  };
+
+  @override
+  String toString() => 'ConversationReleaseInteractionRequest(conversation: $conversation)';
+}
+
+final class ConversationReleaseInteractionResponse {
+  factory ConversationReleaseInteractionResponse({
+    required bool released,
+    required String scope,
+  }) {
+    final validatedReleased = released;
+    final validatedScope = _string(scope, 'ConversationReleaseInteractionResponse.scope');
+    return ConversationReleaseInteractionResponse._(
+      released: validatedReleased,
+      scope: validatedScope,
+    );
+  }
+
+  ConversationReleaseInteractionResponse._({
+    required this.released,
+    required this.scope,
+  });
+
+  final bool released;
+  final String scope;
+
+  factory ConversationReleaseInteractionResponse.fromJson(Object? value, {String path = 'ConversationReleaseInteractionResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'released', 'scope'}, path);
+    return ConversationReleaseInteractionResponse(
+      released: _boolean(_required(json, 'released', path), '$path.released'),
+      scope: _string(_required(json, 'scope', path), '$path.scope'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'released': released,
+    'scope': scope,
+  };
+
+  @override
+  String toString() => 'ConversationReleaseInteractionResponse(released: $released, scope: $scope)';
+}
+
 final class ConversationResumeRequest {
   factory ConversationResumeRequest({
     bool? force,
@@ -1460,6 +1531,7 @@ enum GatewayCapability {
   conversationList('conversation.list'),
   conversationSearch('conversation.search'),
   conversationGet('conversation.get'),
+  conversationReleaseInteraction('conversation.releaseInteraction'),
   conversationCreate('conversation.create'),
   turnSend('turn.send'),
   turnInterrupt('turn.interrupt'),
@@ -1476,7 +1548,7 @@ enum GatewayCapability {
     for (final candidate in values) {
       if (candidate.wireValue == wireValue) return candidate;
     }
-    throw ProtocolCodecException(path, 'expected one of: project.list, project.get, project.create, project.update, project.delete, conversation.list, conversation.search, conversation.get, conversation.create, turn.send, turn.interrupt, approval.resolve, conversation.recent, codepet.usage.query');
+    throw ProtocolCodecException(path, 'expected one of: project.list, project.get, project.create, project.update, project.delete, conversation.list, conversation.search, conversation.get, conversation.releaseInteraction, conversation.create, turn.send, turn.interrupt, approval.resolve, conversation.recent, codepet.usage.query');
   }
 
   String toJson() => wireValue;
@@ -2990,6 +3062,7 @@ enum ProtocolIdempotency {
 }
 
 enum ProtocolMethod {
+  conversationReleaseInteraction('conversation.releaseInteraction', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationReleaseInteraction, requestType: ConversationReleaseInteractionRequest, responseType: ConversationReleaseInteractionResponse),
   conversationRecent('conversation.recent', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationRecent, requestType: ConversationRecentRequest, responseType: ConversationRecentResponse),
   protocolPing('protocol.ping', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: PingRequest, responseType: PingResponse),
   protocolHandshake('protocol.handshake', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: HandshakeRequest, responseType: HandshakeResponse),
@@ -3067,6 +3140,8 @@ enum ProtocolEventName {
 
 Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
   switch (method) {
+    case ProtocolMethod.conversationReleaseInteraction:
+      return ConversationReleaseInteractionRequest.fromJson(value, path: path);
     case ProtocolMethod.conversationRecent:
       return ConversationRecentRequest.fromJson(value, path: path);
     case ProtocolMethod.protocolPing:
@@ -3118,6 +3193,9 @@ Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
 
 Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, String path) {
   switch (method) {
+    case ProtocolMethod.conversationReleaseInteraction:
+      if (value is! ConversationReleaseInteractionRequest) throw ProtocolCodecException(path, 'expected ConversationReleaseInteractionRequest');
+      return value.toJson();
     case ProtocolMethod.conversationRecent:
       if (value is! ConversationRecentRequest) throw ProtocolCodecException(path, 'expected ConversationRecentRequest');
       return value.toJson();
@@ -3192,6 +3270,8 @@ Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, S
 
 Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) {
   switch (method) {
+    case ProtocolMethod.conversationReleaseInteraction:
+      return ConversationReleaseInteractionResponse.fromJson(value, path: path);
     case ProtocolMethod.conversationRecent:
       return ConversationRecentResponse.fromJson(value, path: path);
     case ProtocolMethod.protocolPing:
@@ -3243,6 +3323,9 @@ Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) 
 
 Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, String path) {
   switch (method) {
+    case ProtocolMethod.conversationReleaseInteraction:
+      if (value is! ConversationReleaseInteractionResponse) throw ProtocolCodecException(path, 'expected ConversationReleaseInteractionResponse');
+      return value.toJson();
     case ProtocolMethod.conversationRecent:
       if (value is! ConversationRecentResponse) throw ProtocolCodecException(path, 'expected ConversationRecentResponse');
       return value.toJson();
@@ -3518,6 +3601,8 @@ final class ProtocolClient {
       };
     });
   }
+
+  Future<ConversationReleaseInteractionResponse> conversationReleaseInteraction(ConversationReleaseInteractionRequest request) => _request<ConversationReleaseInteractionResponse>(ProtocolMethod.conversationReleaseInteraction, request);
 
   Future<ConversationRecentResponse> conversationRecent(ConversationRecentRequest request) => _request<ConversationRecentResponse>(ProtocolMethod.conversationRecent, request);
 

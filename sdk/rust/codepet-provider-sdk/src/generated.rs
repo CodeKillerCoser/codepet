@@ -290,6 +290,21 @@ pub enum ConversationProjectFilterStandaloneKind {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
+pub struct ConversationReleaseInteractionRequest {
+    pub conversation: ProviderResourceId,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ConversationReleaseInteractionResponse {
+    pub released: bool,
+    pub scope: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ConversationSearchRequest {
     pub route: ProviderInstanceRoute,
     pub search_term: String,
@@ -634,6 +649,8 @@ pub enum ProviderCapability {
     ConversationSearch,
     #[serde(rename = "conversation.get")]
     ConversationGet,
+    #[serde(rename = "conversation.releaseInteraction")]
+    ConversationReleaseInteraction,
     #[serde(rename = "conversation.create")]
     ConversationCreate,
     #[serde(rename = "turn.start")]
@@ -1055,6 +1072,8 @@ pub enum ProtocolDispatchLane {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolMethod {
+    #[serde(rename = "conversation.releaseInteraction")]
+    ConversationReleaseInteraction,
     #[serde(rename = "conversation.active.list")]
     ConversationActiveList,
     #[serde(rename = "conversation.unread.list")]
@@ -1122,6 +1141,7 @@ pub enum ProtocolMethod {
 impl ProtocolMethod {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ConversationReleaseInteraction => "conversation.releaseInteraction",
             Self::ConversationActiveList => "conversation.active.list",
             Self::ConversationUnreadList => "conversation.unread.list",
             Self::ConversationMarkRead => "conversation.markRead",
@@ -1158,6 +1178,7 @@ impl ProtocolMethod {
 
     pub const fn dispatch_lane(self) -> ProtocolDispatchLane {
         match self {
+            Self::ConversationReleaseInteraction => ProtocolDispatchLane::Control,
             Self::ConversationActiveList => ProtocolDispatchLane::Normal,
             Self::ConversationUnreadList => ProtocolDispatchLane::Normal,
             Self::ConversationMarkRead => ProtocolDispatchLane::Normal,
@@ -1194,6 +1215,7 @@ impl ProtocolMethod {
 
     pub const fn capability(self) -> Option<ProviderCapability> {
         match self {
+            Self::ConversationReleaseInteraction => Some(ProviderCapability::ConversationReleaseInteraction),
             Self::ConversationActiveList => Some(ProviderCapability::ConversationActiveList),
             Self::ConversationUnreadList => Some(ProviderCapability::ConversationUnreadList),
             Self::ConversationMarkRead => Some(ProviderCapability::ConversationMarkRead),
@@ -1234,6 +1256,7 @@ impl std::str::FromStr for ProtocolMethod {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
+            "conversation.releaseInteraction" => Ok(Self::ConversationReleaseInteraction),
             "conversation.active.list" => Ok(Self::ConversationActiveList),
             "conversation.unread.list" => Ok(Self::ConversationUnreadList),
             "conversation.markRead" => Ok(Self::ConversationMarkRead),
@@ -1353,6 +1376,12 @@ pub const DEFAULT_MAX_JSON_LINE_BYTES: usize = 1024 * 1024;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum ProtocolRequest {
+    #[serde(rename = "conversation.releaseInteraction")]
+    ConversationReleaseInteraction {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationReleaseInteractionRequest,
+    },
     #[serde(rename = "conversation.active.list")]
     ConversationActiveList {
         jsonrpc: String,
@@ -1549,6 +1578,11 @@ impl ProtocolRequest {
     ) -> Result<Self, ProtocolError> {
         let jsonrpc = "2.0".to_string();
         match method {
+            ProtocolMethod::ConversationReleaseInteraction => Ok(Self::ConversationReleaseInteraction {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.releaseInteraction request params", error))?,
+            }),
             ProtocolMethod::ConversationActiveList => Ok(Self::ConversationActiveList {
                 jsonrpc,
                 id,
@@ -1709,6 +1743,7 @@ impl ProtocolRequest {
 
     pub fn jsonrpc_version(&self) -> &str {
         match self {
+            Self::ConversationReleaseInteraction { jsonrpc, .. } => jsonrpc,
             Self::ConversationActiveList { jsonrpc, .. } => jsonrpc,
             Self::ConversationUnreadList { jsonrpc, .. } => jsonrpc,
             Self::ConversationMarkRead { jsonrpc, .. } => jsonrpc,
@@ -1745,6 +1780,7 @@ impl ProtocolRequest {
 
     pub fn id(&self) -> &RequestId {
         match self {
+            Self::ConversationReleaseInteraction { id, .. } => id,
             Self::ConversationActiveList { id, .. } => id,
             Self::ConversationUnreadList { id, .. } => id,
             Self::ConversationMarkRead { id, .. } => id,
@@ -1781,6 +1817,7 @@ impl ProtocolRequest {
 
     pub const fn method(&self) -> ProtocolMethod {
         match self {
+            Self::ConversationReleaseInteraction { .. } => ProtocolMethod::ConversationReleaseInteraction,
             Self::ConversationActiveList { .. } => ProtocolMethod::ConversationActiveList,
             Self::ConversationUnreadList { .. } => ProtocolMethod::ConversationUnreadList,
             Self::ConversationMarkRead { .. } => ProtocolMethod::ConversationMarkRead,
@@ -2000,6 +2037,10 @@ impl std::error::Error for JsonRpcInboundError {}
 pub type ProtocolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ProtocolError>> + Send + 'a>>;
 
 pub trait ProtocolServer: Send + Sync {
+    fn conversation_release_interaction<'a>(&'a self, _request: ConversationReleaseInteractionRequest) -> ProtocolFuture<'a, ConversationReleaseInteractionResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.releaseInteraction")) })
+    }
+
     fn conversation_active_list<'a>(&'a self, _request: ConversationActiveListRequest) -> ProtocolFuture<'a, ConversationActiveListResponse> {
         Box::pin(async { Err(method_not_implemented("conversation.active.list")) })
     }
@@ -2136,6 +2177,16 @@ fn method_not_implemented(method: &str) -> ProtocolError {
 
 pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolRequest) -> JsonRpcResponse {
     match request {
+        ProtocolRequest::ConversationReleaseInteraction { jsonrpc, id, params } => {
+            let response = match server.conversation_release_interaction(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
         ProtocolRequest::ConversationActiveList { jsonrpc, id, params } => {
             let response = match server.conversation_active_list(params).await {
                 Ok(result) => match serde_json::to_value(result) {
@@ -2493,6 +2544,14 @@ impl<T> ProtocolClient<T> {
 }
 
 impl<T: ProtocolTransport> ProtocolClient<T> {
+    pub fn conversation_release_interaction<'a>(&'a self, request: ConversationReleaseInteractionRequest) -> ProtocolFuture<'a, ConversationReleaseInteractionResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationReleaseInteraction, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
     pub fn conversation_active_list<'a>(&'a self, request: ConversationActiveListRequest) -> ProtocolFuture<'a, ConversationActiveListResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;

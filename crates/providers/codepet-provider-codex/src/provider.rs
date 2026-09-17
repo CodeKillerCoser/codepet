@@ -94,6 +94,8 @@ struct InstanceMutable {
     metadata_epoch: u64,
     metadata_task: Option<tokio::task::JoinHandle<()>>,
     destroyed: bool,
+    interaction_released: bool,
+    failed_shutdown_sessions: Vec<CodexAppServerSession>,
     cleanup_in_progress: bool,
     status: InstanceStatus,
     capabilities: ProviderCapabilities,
@@ -398,6 +400,7 @@ struct CodexInstanceRuntime {
     display_name: String,
     settings: CodexInstanceSettings,
     lifecycle_transition: Mutex<()>,
+    interaction_transition: tokio::sync::Mutex<()>,
     lifecycle_changed: Condvar,
     title_slots: Arc<tokio::sync::Semaphore>,
     mutable: Mutex<InstanceMutable>,
@@ -430,12 +433,15 @@ impl CodexInstanceRuntime {
             display_name: request.display_name,
             settings,
             lifecycle_transition: Mutex::new(()),
+            interaction_transition: tokio::sync::Mutex::new(()),
             lifecycle_changed: Condvar::new(),
             title_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             mutable: Mutex::new(InstanceMutable {
                 atomic_facts_epoch: 0,
                 metadata_epoch: 0, metadata_task: None,
                 destroyed: false,
+                interaction_released: false,
+                failed_shutdown_sessions: Vec::new(),
                 cleanup_in_progress: false,
                 status: InstanceStatus::Created,
                 capabilities: CodexProtocolMapper::unavailable_capabilities(
@@ -738,8 +744,9 @@ impl CodexInstanceRuntime {
                     self.lifecycle_hook
                         .after_execution_cancelled(&conversation_id);
                 }
+                let cleanup_runtime = self.clone();
                 let shutdown_result = tokio::task::spawn_blocking(move || {
-                    let lifecycle_result = Self::cancel_sessions(sessions);
+                    let lifecycle_result = cleanup_runtime.shutdown_owned_sessions(sessions);
                     lifecycle_result
                 })
                 .await
@@ -784,8 +791,24 @@ impl CodexInstanceRuntime {
         }
     }
 
+    fn shutdown_owned_sessions(&self, slots: Vec<Arc<InstanceSessionSlot>>) -> Result<(), CodexAppServerError> {
+        let mut sessions = std::mem::take(&mut lock(&self.mutable).failed_shutdown_sessions);
+        sessions.extend(slots.into_iter().filter_map(|slot| slot.cancel_and_take()));
+        let mut failure = None;
+        for session in sessions {
+            if let Err(error) = session.shutdown() {
+                lock(&self.mutable).failed_shutdown_sessions.push(session);
+                failure = Some(error);
+            }
+        }
+        failure.map_or(Ok(()), Err)
+    }
+
     fn ready_server(&self) -> Result<CodexAppServerSession, ProtocolError> {
         let mutable = lock(&self.mutable);
+        if mutable.interaction_released {
+            return Err(protocol_error("interaction_released", "Interaction was explicitly released; resume to start a new harness".into(), false));
+        }
         if mutable.status != InstanceStatus::Ready {
             return Err(protocol_error(
                 "provider_unavailable",
@@ -809,13 +832,13 @@ impl CodexInstanceRuntime {
         })
     }
 
-    fn acquire_execution(
-        self: &Arc<Self>,
-        conversation_id: &str,
-    ) -> Result<ExecutionHandle, ProtocolError> {
+    fn acquire_execution_at_generation(self: &Arc<Self>, conversation_id: &str, expected: Option<u64>) -> Result<ExecutionHandle, ProtocolError> {
         loop {
             let (slot, creator) = {
                 let mut mutable = lock(&self.mutable);
+                if expected.is_some_and(|generation| generation != mutable.lifecycle_generation) || mutable.interaction_released {
+                    return Err(protocol_error("interaction_released", "Conversation interaction was released during acquire".into(), false));
+                }
                 let server_ready = mutable
                     .server_session_id
                     .and_then(|id| mutable.sessions.get(&id))
@@ -958,7 +981,7 @@ impl CodexInstanceRuntime {
         operation: impl FnMut(&ExecutionHandle) -> Result<ExecutionStep<T>, ProtocolError>,
     ) -> Result<T, ProtocolError> {
         let _gate = DESKTOP_TAKEOVER_GATE.read().unwrap_or_else(|e| e.into_inner());
-        self.with_current_execution_inner(conversation_id, operation_name, operation)
+        self.with_current_execution_inner(conversation_id, operation_name, None, operation)
     }
 
     fn check_takeover_inactive(&self, conversation_id: &str) -> Result<(), ProtocolError> {
@@ -982,9 +1005,9 @@ impl CodexInstanceRuntime {
         Ok(())
     }
 
-    fn prepare_forced_takeover(self: &Arc<Self>, conversation_id: &str) -> Result<(), ProtocolError> {
+    fn prepare_forced_takeover(self: &Arc<Self>, conversation_id: &str, expected: u64) -> Result<(), ProtocolError> {
         self.check_takeover_inactive(conversation_id)?;
-        match self.acquire_execution(conversation_id) {
+        match self.acquire_execution_at_generation(conversation_id, Some(expected)) {
             Ok(_) => return self.check_takeover_inactive(conversation_id),
             Err(error) if error.code == "conversation_write_conflict" => {},
             Err(error) => return Err(error),
@@ -992,7 +1015,7 @@ impl CodexInstanceRuntime {
         self.lifecycle_hook.close_desktop_for_takeover(&mut || self.check_takeover_inactive(conversation_id))?;
         for attempt in 0..10 {
             self.check_takeover_inactive(conversation_id)?;
-            match self.acquire_execution(conversation_id) {
+            match self.acquire_execution_at_generation(conversation_id, Some(expected)) {
                 Ok(_) => return self.check_takeover_inactive(conversation_id),
                 Err(error) if error.code == "conversation_write_conflict" && attempt < 9 => thread::sleep(Duration::from_millis(100)),
                 Err(error) => return Err(error),
@@ -1002,11 +1025,11 @@ impl CodexInstanceRuntime {
     }
 
     fn with_current_execution_inner<T>(
-        self: &Arc<Self>, conversation_id: &str, operation_name: &str,
+        self: &Arc<Self>, conversation_id: &str, operation_name: &str, expected: Option<u64>,
         mut operation: impl FnMut(&ExecutionHandle) -> Result<ExecutionStep<T>, ProtocolError>,
     ) -> Result<T, ProtocolError> {
         loop {
-            let handle = self.acquire_execution(conversation_id)?;
+            let handle = self.acquire_execution_at_generation(conversation_id, expected)?;
             self.lifecycle_hook
                 .after_handle_acquired(conversation_id, operation_name);
             let operation_guard = lock(&handle.slot.operation);
@@ -1416,6 +1439,199 @@ impl CodexProvider {
     }
 }
 
+impl CodexProvider {
+    async fn start_runtime(&self, runtime: Arc<CodexInstanceRuntime>, explicit_resume: bool) -> Result<InstanceStartResponse, ProtocolError> {
+            let (slot, starting_event_error) = {
+                let _transition = lock(&runtime.lifecycle_transition);
+                let mut mutable = lock(&runtime.mutable);
+                if mutable.destroyed {
+                    return Err(protocol_error(
+                        "unknown_provider_instance",
+                        format!(
+                            "unknown Codex Provider instance: {}",
+                            runtime.route.provider_instance_id
+                        ),
+                        false,
+                    ));
+                }
+                if mutable.cleanup_in_progress {
+                    return Err(protocol_error(
+                        "provider_instance_stopping",
+                        "Codex Provider instance is cleaning up a failed lifecycle".to_string(),
+                        true,
+                    ));
+                }
+                if mutable.interaction_released && !explicit_resume {
+                    drop(mutable);
+                    return Ok(InstanceStartResponse { instance: runtime.snapshot() });
+                }
+                if !mutable.failed_shutdown_sessions.is_empty() {
+                    return Err(protocol_error("interaction_release_failed", "Previous harness termination failed; retry release first".into(), true));
+                }
+                match mutable.status {
+                    InstanceStatus::Ready => {
+                        drop(mutable);
+                        return Ok(InstanceStartResponse {
+                            instance: runtime.snapshot(),
+                        });
+                    }
+                    InstanceStatus::Starting => {
+                        drop(mutable);
+                        return Ok(InstanceStartResponse { instance: runtime.snapshot() });
+                    }
+                    InstanceStatus::Stopping => {
+                        return Err(protocol_error(
+                            "provider_instance_stopping",
+                            "Codex Provider instance is stopping".to_string(),
+                            true,
+                        ));
+                    }
+                    _ => {}
+                }
+                if explicit_resume { mutable.interaction_released = false; }
+                let previous = mutable.status;
+                CodexInstanceRuntime::cancel_metadata(&mut mutable);
+                    mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
+                mutable.status = InstanceStatus::Starting;
+                mutable.server_session_id = None;
+                mutable.server_generation = None;
+                mutable.pending_approvals.clear();
+                mutable.approval_history.clear();
+                mutable.pending_materialization.clear();
+                mutable.observed_thread_ids.clear();
+                mutable.auto_title_attempted.clear();
+                let slot = Arc::new(InstanceSessionSlot::new(mutable.lifecycle_generation));
+                mutable.sessions.insert(slot.id, slot.clone());
+                drop(mutable);
+                let event_error = runtime.publish_status_change(previous).err();
+                (slot, event_error)
+            };
+            if let Some(error) = starting_event_error {
+                let _ = runtime.mark_start_failed(&slot);
+                return Err(error);
+            }
+            // Reserve the cancellable instance slot before installing the
+            // independent Hook source; stop must win while installation awaits.
+            let hook_result = self.observation.subscribe(hook_observation::INTERNAL_SUBSCRIPTION.into()).await;
+            let hooks_ready = hook_result.is_ok();
+            if let Err(error) = hook_result { eprintln!("Codex activity observation unavailable: {}", error.message); }
+            if runtime.hook_ready.swap(hooks_ready, Ordering::SeqCst) != hooks_ready {
+                let status = {
+                    let mut state = lock(&runtime.mutable);
+                    state.atomic_facts_epoch = state.atomic_facts_epoch.saturating_add(1);
+                    state.status
+                };
+                if status == InstanceStatus::Ready { let _ = runtime.publish_status_change(status); }
+            }
+            if !slot.begin_spawn() {
+                runtime.unregister_session(&slot);
+                return Err(instance_session_cancelled_error("server session"));
+            }
+            let executable = runtime.settings.app_server_executable.clone();
+            let args = runtime.settings.app_server_args.clone();
+            let data_directory = runtime.settings.data_directory.clone();
+            let server = match tokio::task::spawn_blocking(move || {
+                CodexAppServerSession::spawn_uninitialized(&executable, &args, data_directory.as_deref())
+            })
+            .await {
+                Ok(Ok(server)) => server,
+                Ok(Err(error)) => {
+                    let mapped = CodexProtocolMapper::error(error);
+                    if runtime.mark_start_failed(&slot)? {
+                        return Err(mapped);
+                    }
+                    return Err(instance_session_cancelled_error("server session"));
+                }
+                Err(error) => {
+                    let mapped = protocol_error(
+                    "provider_task_failed",
+                    format!("Codex App Server start task failed: {error}"),
+                    true,
+                    );
+                    if runtime.mark_start_failed(&slot)? {
+                        return Err(mapped);
+                    }
+                    return Err(instance_session_cancelled_error("server session"));
+                }
+            };
+            if !slot.register_spawned(server.clone()) || !runtime.session_is_current(&slot) {
+                let _ = server.shutdown();
+                runtime.unregister_session(&slot);
+                return Err(instance_session_cancelled_error("server session"));
+            }
+            let initialize_session = server.clone();
+            let initialize_result = tokio::task::spawn_blocking(move || initialize_session.initialize())
+                .await
+                .map_err(provider_task_error)?;
+            if let Err(error) = initialize_result {
+                let mapped = CodexProtocolMapper::error(error);
+                let _ = server.shutdown();
+                if runtime.mark_start_failed(&slot)? {
+                    return Err(mapped);
+                }
+                return Err(instance_session_cancelled_error("server session"));
+            }
+            let harness = HarnessDescriptor {
+                id: CODEX_INSTANCE_KIND.to_string(),
+                display_name: "Codex".to_string(),
+                version: server.harness_version(),
+                executable_path: Some(runtime.settings.app_server_executable.to_string_lossy().into_owned()),
+            };
+            let incoming = match server.subscribe() {
+                Ok(incoming) => incoming,
+                Err(error) => {
+                    let mapped = CodexProtocolMapper::error(error);
+                    let _ = server.shutdown();
+                    if runtime.mark_start_failed(&slot)? {
+                        return Err(mapped);
+                    }
+                    return Err(instance_session_cancelled_error("server session"));
+                }
+            };
+            let server_generation = server.generation().to_string();
+            let installed = {
+                let _transition = lock(&runtime.lifecycle_transition);
+                let mut mutable = lock(&runtime.mutable);
+                let current = mutable.status == InstanceStatus::Starting
+                    && mutable.lifecycle_generation == slot.lifecycle_generation
+                    && mutable
+                        .sessions
+                        .get(&slot.id)
+                        .is_some_and(|current| Arc::ptr_eq(current, &slot))
+                    && !slot.cancelled.load(Ordering::SeqCst)
+                    && mutable.server_session_id.is_none()
+                    && mutable.executions.is_empty();
+                if !current {
+                    false
+                } else {
+                    mutable.capabilities = CodexProtocolMapper::unavailable_capabilities(server_generation.clone());
+                    mutable.harness = harness;
+                    mutable.authentication = None;
+                    mutable.usage = None;
+                    mutable.server_session_id = Some(slot.id);
+                    mutable.server_generation = Some(server_generation.clone());
+                    mutable.pending_approvals.clear();
+                    mutable.approval_history.clear();
+                    mutable.pending_materialization.clear();
+                    mutable.observed_thread_ids.clear();
+                    mutable.auto_title_attempted.clear();
+                    runtime.lifecycle_changed.notify_all();
+                    true
+                }
+            };
+            if !installed {
+                let _ = server.shutdown();
+                runtime.unregister_session(&slot);
+                return Err(instance_session_cancelled_error("server session"));
+            }
+            runtime.start_server_forwarder(server_generation, server, incoming);
+            let instance = runtime.snapshot();
+            runtime.refresh_metadata();
+
+            Ok(InstanceStartResponse { instance })
+    }
+}
+
 impl Provider for CodexProvider {
     fn event_subscribe<'a>(&'a self, request: codepet_provider_sdk::EventSubscribeRequest) -> codepet_provider_sdk::ProtocolFuture<'a, codepet_provider_sdk::EventSubscribeResponse> {
         Box::pin(async move {
@@ -1624,193 +1840,8 @@ impl Provider for CodexProvider {
         })
     }
 
-    fn instance_start<'a>(
-        &'a self,
-        request: InstanceStartRequest,
-    ) -> ProtocolFuture<'a, InstanceStartResponse> {
-        Box::pin(async move {
-            let runtime = self.instance(&request.route)?;
-            let (slot, starting_event_error) = {
-                let _transition = lock(&runtime.lifecycle_transition);
-                let mut mutable = lock(&runtime.mutable);
-                if mutable.destroyed {
-                    return Err(protocol_error(
-                        "unknown_provider_instance",
-                        format!(
-                            "unknown Codex Provider instance: {}",
-                            runtime.route.provider_instance_id
-                        ),
-                        false,
-                    ));
-                }
-                if mutable.cleanup_in_progress {
-                    return Err(protocol_error(
-                        "provider_instance_stopping",
-                        "Codex Provider instance is cleaning up a failed lifecycle".to_string(),
-                        true,
-                    ));
-                }
-                match mutable.status {
-                    InstanceStatus::Ready => {
-                        drop(mutable);
-                        return Ok(InstanceStartResponse {
-                            instance: runtime.snapshot(),
-                        });
-                    }
-                    InstanceStatus::Starting => {
-                        drop(mutable);
-                        return Ok(InstanceStartResponse { instance: runtime.snapshot() });
-                    }
-                    InstanceStatus::Stopping => {
-                        return Err(protocol_error(
-                            "provider_instance_stopping",
-                            "Codex Provider instance is stopping".to_string(),
-                            true,
-                        ));
-                    }
-                    _ => {}
-                }
-                let previous = mutable.status;
-                CodexInstanceRuntime::cancel_metadata(&mut mutable);
-                    mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
-                mutable.status = InstanceStatus::Starting;
-                mutable.server_session_id = None;
-                mutable.server_generation = None;
-                mutable.pending_approvals.clear();
-                mutable.approval_history.clear();
-                mutable.pending_materialization.clear();
-                mutable.observed_thread_ids.clear();
-                mutable.auto_title_attempted.clear();
-                let slot = Arc::new(InstanceSessionSlot::new(mutable.lifecycle_generation));
-                mutable.sessions.insert(slot.id, slot.clone());
-                drop(mutable);
-                let event_error = runtime.publish_status_change(previous).err();
-                (slot, event_error)
-            };
-            if let Some(error) = starting_event_error {
-                let _ = runtime.mark_start_failed(&slot);
-                return Err(error);
-            }
-            // Reserve the cancellable instance slot before installing the
-            // independent Hook source; stop must win while installation awaits.
-            let hook_result = self.observation.subscribe(hook_observation::INTERNAL_SUBSCRIPTION.into()).await;
-            let hooks_ready = hook_result.is_ok();
-            if let Err(error) = hook_result { eprintln!("Codex activity observation unavailable: {}", error.message); }
-            if runtime.hook_ready.swap(hooks_ready, Ordering::SeqCst) != hooks_ready {
-                let status = {
-                    let mut state = lock(&runtime.mutable);
-                    state.atomic_facts_epoch = state.atomic_facts_epoch.saturating_add(1);
-                    state.status
-                };
-                if status == InstanceStatus::Ready { let _ = runtime.publish_status_change(status); }
-            }
-            if !slot.begin_spawn() {
-                runtime.unregister_session(&slot);
-                return Err(instance_session_cancelled_error("server session"));
-            }
-            let executable = runtime.settings.app_server_executable.clone();
-            let args = runtime.settings.app_server_args.clone();
-            let data_directory = runtime.settings.data_directory.clone();
-            let server = match tokio::task::spawn_blocking(move || {
-                CodexAppServerSession::spawn_uninitialized(&executable, &args, data_directory.as_deref())
-            })
-            .await {
-                Ok(Ok(server)) => server,
-                Ok(Err(error)) => {
-                    let mapped = CodexProtocolMapper::error(error);
-                    if runtime.mark_start_failed(&slot)? {
-                        return Err(mapped);
-                    }
-                    return Err(instance_session_cancelled_error("server session"));
-                }
-                Err(error) => {
-                    let mapped = protocol_error(
-                    "provider_task_failed",
-                    format!("Codex App Server start task failed: {error}"),
-                    true,
-                    );
-                    if runtime.mark_start_failed(&slot)? {
-                        return Err(mapped);
-                    }
-                    return Err(instance_session_cancelled_error("server session"));
-                }
-            };
-            if !slot.register_spawned(server.clone()) || !runtime.session_is_current(&slot) {
-                let _ = server.shutdown();
-                runtime.unregister_session(&slot);
-                return Err(instance_session_cancelled_error("server session"));
-            }
-            let initialize_session = server.clone();
-            let initialize_result = tokio::task::spawn_blocking(move || initialize_session.initialize())
-                .await
-                .map_err(provider_task_error)?;
-            if let Err(error) = initialize_result {
-                let mapped = CodexProtocolMapper::error(error);
-                let _ = server.shutdown();
-                if runtime.mark_start_failed(&slot)? {
-                    return Err(mapped);
-                }
-                return Err(instance_session_cancelled_error("server session"));
-            }
-            let harness = HarnessDescriptor {
-                id: CODEX_INSTANCE_KIND.to_string(),
-                display_name: "Codex".to_string(),
-                version: server.harness_version(),
-                executable_path: Some(runtime.settings.app_server_executable.to_string_lossy().into_owned()),
-            };
-            let incoming = match server.subscribe() {
-                Ok(incoming) => incoming,
-                Err(error) => {
-                    let mapped = CodexProtocolMapper::error(error);
-                    let _ = server.shutdown();
-                    if runtime.mark_start_failed(&slot)? {
-                        return Err(mapped);
-                    }
-                    return Err(instance_session_cancelled_error("server session"));
-                }
-            };
-            let server_generation = server.generation().to_string();
-            let installed = {
-                let _transition = lock(&runtime.lifecycle_transition);
-                let mut mutable = lock(&runtime.mutable);
-                let current = mutable.status == InstanceStatus::Starting
-                    && mutable.lifecycle_generation == slot.lifecycle_generation
-                    && mutable
-                        .sessions
-                        .get(&slot.id)
-                        .is_some_and(|current| Arc::ptr_eq(current, &slot))
-                    && !slot.cancelled.load(Ordering::SeqCst)
-                    && mutable.server_session_id.is_none()
-                    && mutable.executions.is_empty();
-                if !current {
-                    false
-                } else {
-                    mutable.capabilities = CodexProtocolMapper::unavailable_capabilities(server_generation.clone());
-                    mutable.harness = harness;
-                    mutable.authentication = None;
-                    mutable.usage = None;
-                    mutable.server_session_id = Some(slot.id);
-                    mutable.server_generation = Some(server_generation.clone());
-                    mutable.pending_approvals.clear();
-                    mutable.approval_history.clear();
-                    mutable.pending_materialization.clear();
-                    mutable.observed_thread_ids.clear();
-                    mutable.auto_title_attempted.clear();
-                    runtime.lifecycle_changed.notify_all();
-                    true
-                }
-            };
-            if !installed {
-                let _ = server.shutdown();
-                runtime.unregister_session(&slot);
-                return Err(instance_session_cancelled_error("server session"));
-            }
-            runtime.start_server_forwarder(server_generation, server, incoming);
-            let instance = runtime.snapshot();
-            runtime.refresh_metadata();
-
-            Ok(InstanceStartResponse { instance })
-        })
+    fn instance_start<'a>(&'a self, request: InstanceStartRequest) -> ProtocolFuture<'a, InstanceStartResponse> {
+        Box::pin(async move { self.start_runtime(self.instance(&request.route)?, false).await })
     }
 
     fn instance_stop<'a>(
@@ -2233,21 +2264,66 @@ impl Provider for CodexProvider {
         })
     }
 
+    fn conversation_release_interaction<'a>(&'a self, request: codepet_provider_sdk::ConversationReleaseInteractionRequest)
+        -> ProtocolFuture<'a, codepet_provider_sdk::ConversationReleaseInteractionResponse> {
+        Box::pin(async move {
+            let runtime = self.resource_instance(&request.conversation)?;
+            // Cleanup continues even if the requesting client disconnects.
+            tokio::spawn(async move {
+                {
+                    let _lifecycle = lock(&runtime.lifecycle_transition);
+                    lock(&runtime.mutable).interaction_released = true;
+                }
+                let release_error = |error: ProtocolError| protocol_error("interaction_release_failed", error.message, true);
+                runtime.stop().await.map_err(release_error)?;
+                let cleanup_runtime = runtime.clone();
+                tokio::task::spawn_blocking(move || cleanup_runtime.shutdown_owned_sessions(Vec::new())).await
+                    .map_err(provider_task_error)?.map_err(CodexProtocolMapper::error).map_err(release_error)?;
+                Ok(codepet_provider_sdk::ConversationReleaseInteractionResponse {
+                    released: true,
+                    scope: "providerInstance".into(),
+                })
+            }).await.map_err(provider_task_error)?
+        })
+    }
+
     fn conversation_acquire_interaction<'a>(
         &'a self,
         request: ConversationAcquireInteractionRequest,
     ) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
         Box::pin(async move {
             let runtime = self.resource_instance(&request.conversation)?;
+            let admitted_generation = lock(&runtime.mutable).lifecycle_generation;
+            let _transition = runtime.interaction_transition.lock().await;
+            if lock(&runtime.mutable).lifecycle_generation != admitted_generation {
+                return Err(protocol_error("interaction_released", "Instance lifecycle changed while acquire was queued".into(), false));
+            }
+            if lock(&runtime.mutable).interaction_released {
+                self.start_runtime(runtime.clone(), true).await?;
+                tokio::time::timeout(Duration::from_secs(30), async {
+                    loop {
+                        let status = lock(&runtime.mutable).status;
+                        match status {
+                            InstanceStatus::Ready => return Ok(()),
+                            InstanceStatus::Starting => tokio::time::sleep(Duration::from_millis(10)).await,
+                            _ => return Err(protocol_error("provider_unavailable", "Released harness could not restart".into(), true)),
+                        }
+                    }
+                }).await.map_err(|_| protocol_error("provider_unavailable", "Timed out restarting released harness".into(), true))??;
+            }
+            let expected_generation = lock(&runtime.mutable).lifecycle_generation;
+            drop(_transition);
             let conversation_id = request.conversation.native_resource_id;
+            let runtime = runtime.clone();
             tokio::task::spawn_blocking(move || {
                 let force = request.force.unwrap_or(false);
                 let _takeover_gate = force.then(|| DESKTOP_TAKEOVER_GATE.write().unwrap_or_else(|e| e.into_inner()));
                 let _normal_gate = (!force).then(|| DESKTOP_TAKEOVER_GATE.read().unwrap_or_else(|e| e.into_inner()));
-                if force { runtime.prepare_forced_takeover(&conversation_id)?; }
+                if force { runtime.prepare_forced_takeover(&conversation_id, expected_generation)?; }
                 runtime.with_current_execution_inner(
                     &conversation_id,
                     "conversation.acquireInteraction",
+                    Some(expected_generation),
                     |handle| {
                         let configuration = handle
                             .session

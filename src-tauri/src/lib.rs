@@ -51,7 +51,7 @@ use runtime_gateway::tauri_bridge::{
 use runtime_gateway::remote_access::{
     cancel_remote_pairing, copy_remote_pairing_json, get_remote_pairing_status, list_remote_clients,
     list_remote_pairing_requests, remote_access_status, resolve_remote_pairing_request,
-    retry_remote_access, revoke_remote_credential, start_remote_pairing, RemoteAccessRuntime,
+    retry_remote_access, revoke_remote_credential, delete_remote_client, start_remote_pairing, RemoteAccessRuntime,
 };
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
@@ -519,6 +519,7 @@ pub fn run() {
             list_remote_pairing_requests,
             resolve_remote_pairing_request,
             revoke_remote_credential,
+            delete_remote_client,
             updates::check_app_update,
             updates::install_app_update
         ])

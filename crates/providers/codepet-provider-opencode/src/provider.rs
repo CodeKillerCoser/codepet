@@ -1552,6 +1552,11 @@ impl Provider for OpenCodeProvider {
         })
     }
 
+    fn conversation_release_interaction<'a>(&'a self, _request: codepet_provider_sdk::ConversationReleaseInteractionRequest)
+        -> ProtocolFuture<'a, codepet_provider_sdk::ConversationReleaseInteractionResponse> {
+        Box::pin(async { Err(protocol_error("capability_unsupported", "Immediate interaction release is only supported by Codex".into(), false)) })
+    }
+
     fn conversation_acquire_interaction<'a>(
         &'a self,
         request: ConversationAcquireInteractionRequest,

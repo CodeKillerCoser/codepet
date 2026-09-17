@@ -2,7 +2,7 @@
 
 ## 规则
 
-instance.start 是 Codex 唯一 App Server 创建入口。spawn 前登记 generation 占位，spawn 后立即登记真实 session，initialize/discovery 在锁外等待；stop/fail/shutdown 先取消并取走当前代的槽，等 spawn 收敛并回收进程后再发布 stopped。
+共享 start_runtime 是 Codex 唯一 App Server 创建路径，由 instance.start 和主动释放后的显式 acquire 调用。spawn 前登记 generation 占位，spawn 后立即登记真实 session，initialize/discovery 在锁外等待；stop/fail/shutdown 先取消并取走当前代的槽，等 spawn 收敛并回收进程后再发布 stopped。
 
 ## 适用场景
 
@@ -28,3 +28,5 @@ Provider instance 生命周期、SDK 心跳协调、stdio EOF/fatal、App Server
 ## 验证方式
 
 延迟共享 Server initialize 连续五轮 start/stop，断言 stop 响应前 PID 退出、没有晚到 Ready；保留 resume/cancel barrier、16+32 饱和 stop/EOF、异步 Broken pipe 清理。连接级 binary 测试确认最后断开后运行中或待审批任务继续保留，全部终结后关闭 Server；Provider 仍可 describe、重连只启动一个新 PID。已删除只验证“每会话第二次 initialize”的测试：该创建路径已不存在，以共享初始化与进程计数断言替代。
+
+主动 `conversation.releaseInteraction` 复用 stop 清理并抑制后续心跳启动；显式 resume 重新启动的边界及验证见 [立即释放规约](codex-explicit-interaction-release.md)。
