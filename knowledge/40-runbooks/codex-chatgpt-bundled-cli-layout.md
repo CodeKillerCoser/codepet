@@ -43,4 +43,24 @@ Codex Provider 增加 macOS bundle 候选函数，Codex.app 和 ChatGPT.app 均�
 - `npm run build`：通过；`npx vitest run frontend/lib/agentRuntime.test.ts frontend/lib/providerRuntimes.test.ts frontend/connections.test.ts`：19 通过。
 - 浏览器 QA `runtimeCase=chatgpt` 只显示 Codex，Claude/OpenCode 隐藏，保留检测其他运行时入口；`runtimeCase=missing` 显示空状态和重新检测按钮。该页面使用模拟 IPC，与上述真实原生发现验证分开。
 
-未替换安装版应用，未执行完整 App Server 会话或 Windows 实机验收。
+上述回归阶段未替换安装版应用；后续安装验证见下节。未执行完整 App Server 会话或 Windows 实机验收。
+
+## 主干发布与本机安装验收
+
+2026-11-05，修复提交 `970578b` 已推送至 `origin/main`。执行以下命令完成原生 release app 构建（本机未安装 bun，通过 npm 临时提供）：
+
+```sh
+CARGO_NET_GIT_FETCH_WITH_CLI=true npm exec --yes --package=bun -- npm run tauri -- build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+```
+
+构建成功，产物为 `src-tauri/target/release/bundle/macos/Code Pet.app`，通过 `codesign --verify --deep --strict`。退出旧应用后，将旧版本备份到 `/Users/wangxin/Documents/CodePet-backups/runtime-fix-970578b/`，替换 `/Applications/Code Pet.app` 并重启。安装后 Host、Codex Provider 和 webcontent manifest 的 SHA-256 均与构建产物一致。构建工具自动修改的 Cargo feature 已恢复，未混入提交。
+
+真实安装版「连接接入 → 本机运行时」验收结果：
+
+- 自动显示 Codex，路径为 `/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`，版本 `0.166.0-alpha.5.1`。
+- Claude 和 OpenCode 未显示；Codex 显示 Provider 在线，Harness 已停止。
+- 点击「重新检测」后路径和版本仍正确，未出现 runtime-not-found。
+- 只读查询 Provider SQLite：替换前 runtime_selection 无记录，替换后自动记录上述新路径；验收未手动注入运行时配置。
+- 原生界面截图保存在 `/Users/wangxin/Documents/CodePet-backups/runtime-fix-970578b/installed-runtime.png`。
+
+本轮验证覆盖实际安装、自动发现与列表显示，不代表完整模型会话或 Windows 实机兼容性已验证。
