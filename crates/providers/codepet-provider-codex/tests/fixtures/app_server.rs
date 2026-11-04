@@ -811,7 +811,7 @@ fn main() {
                         "item": started_user_item.clone()
                     }),
                 );
-                if options.approval_mode == "delayed-output-after-user-item" {
+                if matches!(options.approval_mode.as_str(), "delayed-output-after-user-item" | "offline-natural-completion") {
                     notify(
                         &mut writer,
                         "item/completed",

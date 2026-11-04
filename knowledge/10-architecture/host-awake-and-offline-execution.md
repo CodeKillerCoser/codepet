@@ -8,7 +8,7 @@
 
 - Code Pet 在 macOS 运行期间阻止系统自动空闲休眠，允许锁屏和显示器熄灭。
 - 手机全部离线后，已开始的执行与审批继续保留；空闲后释放 Harness。
-- 保持 Host 故障、显式退出与 Provider 关闭的进程清理边界。
+- 心跳不触发回收；保持真实 IPC 断开、显式退出与 Provider 关闭的进程清理边界。
 
 ## 非目标
 
@@ -16,15 +16,15 @@
 
 ## 现状理解
 
-三个内置 Provider 共用 Rust SDK 的 mux 与心跳协调器，并发布标准 turn/approval 事件。运行实例各自管理原生 session generation，负责拒绝旧代事件。SDK 不直接访问 Codex 内部 active turn 槽。
+三个内置 Provider 共用 Rust SDK 的 mux、活动投影与空闲回收器，并发布标准 turn/approval 事件。运行实例各自管理原生 session generation，负责拒绝旧代事件。SDK 不直接访问 Codex 内部 active turn 槽。
 
 ## 实现路径
 
 `runtime/activity.rs` 是回收用途的轻量投影，以实例 ID、会话 ID、turn ID 跟踪 queued/running/waiting-approval；completed/failed/interrupted 为终态。审批单独保留，解决或对应 turn 结束后释放。不使用输出静默时长判断结束。终态标记保留到实例停止/出错，避免晚到 start 响应复活旧任务；它不是对外会话状态源。
 
-业务请求持有共享执行门，心跳的空闲 stop 必须独占该门并复核活动状态，覆盖响应尚未返回、turn ID 尚未登记的窗口。当前门覆盖同一 Provider 进程的请求，因此另一实例的慢 RPC 可能推迟空闲回收，但不会取消其任务。start/steer 已接收后由受管理的异步执行继续处理，即使客户端取消响应流也不撤销已发送操作；shutdown/EOF 关闭调度并取消这些执行。不得自动重发未知结果的 turn/start。
+业务请求持有共享执行门，自动空闲 stop 必须独占该门并复核活动状态，覆盖响应尚未返回、turn ID 尚未登记的窗口。当前门覆盖同一 Provider 进程的请求，因此另一实例的慢 RPC 可能推迟空闲回收，但不会取消其任务。start/steer 已接收后由受管理的异步执行继续处理，即使客户端取消响应流也不撤销已发送操作；shutdown/EOF 关闭调度并取消这些执行。不得自动重发未知结果的 turn/start。
 
-无客户端时，每秒复核一次：没有执行中请求、未结束 turn 和待审批，才调用幂等 instance.stop。Host 心跳过期、实例移除、stdin EOF 或 provider.shutdown 仍强制清理，不能把网络离线保留扩展成脱离 Host 的孤儿进程。
+无论客户端是否在线，每秒复核活动与连续空闲时间，默认空闲 300 秒后释放 Harness。心跳不调用 start/stop；Host 显式启动和正常历史/业务需求可启动新进程，不批量恢复旧会话。任务、审批、等待输入和未知发送结果均阻止自动释放；stdin EOF、明确停止/释放、provider.shutdown 保留原清理合同。详细实现与测试见 [Runtime 生命周期](interaction-runtime-lifecycle.md)。
 
 macOS `AwakeGuard` 使用 IOKit `PreventUserIdleSystemSleep`，setup 时申请，由 Tauri managed state 持有。应用真正 Exit 时释放；进程异常退出由系统回收进程所属断言。申请失败记录 power 错误日志，不伪报成功。不修改用户持久化电源设置、不要求屏幕常亮、不创建外部 caffeinate 子进程。
 
@@ -37,7 +37,7 @@ macOS `AwakeGuard` 使用 IOKit `PreventUserIdleSystemSleep`，setup 时申请�
 
 ## 风险
 
-- 迟到响应、其他会话终态误清理任务：SDK 测试覆盖终态不可复活，binary 测试覆盖两个会话分别终结。
+- 迟到响应、其他会话终态误清理任务：SDK 测试覆盖终态不可复活、空闲时钟边界、在线/离线一致保留运行和审批；binary 测试覆盖两个会话分别终结及手机离线后自然完成。
 - 取消响应后留存执行，在退出后晚到启动：mux 取消/关闭测试与 Codex stop/EOF 回归验证清理。
 - Provider 不发布终态可能导致持续保留：不以超时猜测完成，显式 stop/退出仍可清理；依赖 Provider 事件契约。
 - 长时间不退出的实例会保留本代终态 ID，内存随 turn 数增长；实例 stopped/error 时清空。

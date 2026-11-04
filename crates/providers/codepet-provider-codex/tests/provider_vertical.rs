@@ -1597,10 +1597,60 @@ fn release_interaction_cancels_hung_acquire_through_control_lane() {
 }
 
 #[test]
+fn idle_online_release_then_restart_does_not_resume_previous_conversations() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("online-idle.txt");
+    let mut provider = ProviderBinary::spawn_with_idle_timeout(2);
+    provider.configure("none", &marker);
+    for id in ["thread-a", "thread-b"] {
+        let acquired = provider.request(id, "conversation.acquireInteraction", json!({"conversation":conversation_resource_value(id)}));
+        assert!(acquired.get("error").is_none(), "{acquired}");
+    }
+    let old = session_pids(&marker, "process/start", "");
+    assert_eq!(old.len(), 1);
+    assert!(session_method_count(&marker, "thread/resume") >= 2);
+    let deadline = Instant::now() + Duration::from_secs(6);
+    let mut sequence = 0;
+    while process_is_running(old[0]) {
+        assert!(Instant::now() < deadline, "healthy heartbeats and reads must not keep idle locks forever");
+        sequence += 1;
+        provider.request(&format!("ping-{sequence}"), "provider.ping", json!({
+            "sequence":sequence,"hostSessionId":"online-host",
+            "clients":{"revision":1,"connections":[{"clientId":"phone","connectionId":"socket"}]},
+            "instances":[route_value()]
+        }));
+        let read = provider.request(&format!("read-{sequence}"), "conversation.get", json!({"conversation":conversation_resource_value("thread-listed"),"limit":1}));
+        // A read racing the idle transition can report unavailable, but cannot restart or resume itself.
+        if !process_is_running(old[0]) { break; }
+        assert!(read.get("error").is_none(), "{read}");
+        provider.collect_for(Duration::from_millis(100));
+    }
+    let resumed_before = session_method_count(&marker, "thread/resume");
+    provider.buffered.retain(|message| message["method"] != "event.instanceStatusChanged");
+    provider.request("restart", "instance.start", json!({"route":route_value()}));
+    provider.receive(Duration::from_secs(3), |message| message["method"] == "event.instanceStatusChanged" && message.pointer("/params/instance/status") == Some(&json!("ready")));
+    let all = session_pids(&marker, "process/start", "");
+    assert_eq!(all.len(), 2);
+    assert_ne!(all[0], all[1]);
+    assert_eq!(session_method_count(&marker, "thread/resume"), resumed_before, "fresh startup must not reload A/B");
+    let read = provider.request("fresh-history", "conversation.get", json!({"conversation":conversation_resource_value("thread-listed"),"limit":1}));
+    assert!(read.get("error").is_none(), "{read}");
+    assert_eq!(session_method_count(&marker, "thread/resume"), resumed_before, "history must not restore old writers");
+    let acquired = provider.request("new-interaction", "conversation.acquireInteraction", json!({"conversation":conversation_resource_value("thread-c")}));
+    assert!(acquired.get("error").is_none(), "{acquired}");
+    assert_eq!(session_method_count(&marker, "thread/resume"), resumed_before + 1);
+    wait_for_processes_to_exit(&all, Duration::from_secs(5));
+    let resumed = provider.request("acquire-after-idle", "conversation.acquireInteraction", json!({"conversation":conversation_resource_value("thread-c")}));
+    assert!(resumed.get("error").is_none(), "idle stop must remain recoverable: {resumed}");
+    assert_eq!(session_pids(&marker, "process/start", "").len(), 3);
+    provider.request("shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
 fn sdk_heartbeat_retains_offline_turns_until_finished_and_restarts_once() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("client-presence.txt");
-    let mut provider = ProviderBinary::spawn();
+    let mut provider = ProviderBinary::spawn_with_idle_timeout(2);
     let (_, revision) = provider.configure("none", &marker);
     let server = session_pids(&marker, "process/start", "");
     assert_eq!(server.len(), 1);
@@ -1621,7 +1671,7 @@ fn sdk_heartbeat_retains_offline_turns_until_finished_and_restarts_once() {
     assert!(process_is_running(server[0]));
     assert_eq!(session_pids(&marker, "process/start", ""), server);
     provider.request("no-clients", "provider.ping", ping(3, &[]));
-    provider.collect_for(Duration::from_millis(1200));
+    provider.collect_for(Duration::from_millis(2500));
     assert!(process_is_running(server[0]), "offline running turns must keep the Server alive");
     for id in ["thread-a", "thread-b"] {
         let interrupted = provider.request(&format!("finish-{id}"), "turn.interrupt", json!({
@@ -1630,30 +1680,65 @@ fn sdk_heartbeat_retains_offline_turns_until_finished_and_restarts_once() {
         }));
         assert!(interrupted.get("error").is_none(), "{interrupted}");
         if id == "thread-a" {
-            provider.collect_for(Duration::from_millis(1200));
+            provider.collect_for(Duration::from_millis(2500));
             assert!(process_is_running(server[0]), "another conversation is still running");
         }
     }
-    wait_for_processes_to_exit(&server, Duration::from_secs(3));
+    wait_for_processes_to_exit(&server, Duration::from_secs(5));
     let alive = provider.request("provider-still-alive", "provider.describe", json!({}));
     assert!(alive.get("error").is_none());
     provider.buffered.retain(|message| message.get("method").and_then(Value::as_str) != Some("event.instanceStatusChanged"));
     provider.request("reconnected", "provider.ping", ping(4, &["phone-a"]));
+    provider.collect_for(Duration::from_millis(100));
+    assert_eq!(session_pids(&marker, "process/start", "").len(), 1, "ping alone does not start a Server");
+    provider.request("restart-on-demand", "instance.start", json!({"route":route_value()}));
     provider.receive(Duration::from_secs(3), |message|
         message.get("method").and_then(Value::as_str) == Some("event.instanceStatusChanged")
         && message.pointer("/params/instance/status").and_then(Value::as_str) == Some("ready"));
     assert_eq!(session_pids(&marker, "process/start", "").len(), 2);
     provider.request("presence-stop", "provider.ping", ping(5, &[]));
     let all_servers = session_pids(&marker, "process/start", "");
-    wait_for_processes_to_exit(&all_servers, Duration::from_secs(2));
+    wait_for_processes_to_exit(&all_servers, Duration::from_secs(5));
     provider.request("presence-shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn sdk_heartbeat_offline_turn_finishes_naturally_without_a_phone() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("offline-natural-completion.txt");
+    let mut provider = ProviderBinary::spawn_with_idle_timeout(2);
+    let (_, revision) = provider.configure("offline-natural-completion", &marker);
+    let server = session_pids(&marker, "process/start", "");
+    assert_eq!(server.len(), 1);
+    let ping = |sequence: u64, online: bool| json!({
+        "sequence": sequence, "hostSessionId": "test-host",
+        "clients": {"revision": sequence, "connections": if online {
+            vec![json!({"clientId":"phone", "connectionId":"connection"})]
+        } else { vec![] }}, "instances":[route_value()]
+    });
+    provider.request("online", "provider.ping", ping(1, true));
+    let started = provider.request("start", "turn.start", turn_start_params(
+        conversation_resource_value("thread-created"), "offline-natural", "finish while phone is gone", &revision));
+    assert_eq!(started.pointer("/result/turn/status"), Some(&json!("running")), "{started}");
+    provider.request("phone-removed", "provider.ping", ping(2, false));
+    provider.collect_for(Duration::from_millis(100));
+    assert!(process_is_running(server[0]), "disconnect must not kill the executing Server");
+    let terminal = provider.receive(Duration::from_secs(5), |message|
+        message["method"] == "event.turnUpserted"
+        && message.pointer("/params/turn/resource/nativeResourceId") == Some(&json!("turn-started"))
+        && matches!(message.pointer("/params/turn/status").and_then(Value::as_str), Some("completed" | "failed" | "interrupted")));
+    assert_eq!(terminal.pointer("/params/turn/status"), Some(&json!("completed")), "{terminal}");
+    assert_eq!(session_method_count(&marker, "turn/interrupt"), 0);
+    wait_for_processes_to_exit(&server, Duration::from_secs(5));
+    assert_eq!(session_pids(&marker, "process/start", ""), server, "no reconnect or replacement Server was needed");
+    provider.request("shutdown", "provider.shutdown", json!({}));
 }
 
 #[test]
 fn sdk_heartbeat_retains_offline_approval_until_completion() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("offline-approval.txt");
-    let mut provider = ProviderBinary::spawn();
+    let mut provider = ProviderBinary::spawn_with_idle_timeout(2);
     let (_, revision) = provider.configure("complete-on-approval", &marker);
     let server = session_pids(&marker, "process/start", "");
     let ping = |sequence: u64, online: bool| json!({
@@ -1668,13 +1753,13 @@ fn sdk_heartbeat_retains_offline_approval_until_completion() {
     assert!(started.get("error").is_none(), "{started}");
     let approval = provider.event("event.approvalRequested").pointer("/params/approval/resource").cloned().unwrap();
     provider.request("offline", "provider.ping", ping(2, false));
-    provider.collect_for(Duration::from_millis(1200));
+    provider.collect_for(Duration::from_millis(2500));
     assert!(process_is_running(server[0]));
     // A real phone reconnects to resolve this; the binary fixture sends the decision directly
     // while presence remains empty, allowing terminal-event-driven cleanup to be verified.
     let resolved = provider.request("approve", "approval.resolve", json!({"approval":approval, "decision":"approve"}));
     assert!(resolved.get("error").is_none(), "{resolved}");
-    wait_for_processes_to_exit(&server, Duration::from_secs(3));
+    wait_for_processes_to_exit(&server, Duration::from_secs(5));
     provider.request("shutdown", "provider.shutdown", json!({}));
 }
 
@@ -3530,6 +3615,9 @@ fn provider_binary_keeps_rpc_reject_local_and_never_retries_unknown_outcome() {
             first.pointer("/error/data/code").and_then(Value::as_str),
             Some(expected_code)
         );
+        if mode == "turn-sent-unknown" {
+            assert_eq!(first.pointer("/error/data/details/outcome"), Some(&json!("unknown")));
+        }
         assert_eq!(
             session_pids(&marker, "thread/resume", "thread-created").len(),
             0
@@ -4098,6 +4186,12 @@ struct ProviderBinary {
 impl ProviderBinary {
     fn spawn() -> Self {
         let mut command = Command::new(provider_executable());
+        Self::spawn_command(&mut command)
+    }
+
+    fn spawn_with_idle_timeout(seconds: u64) -> Self {
+        let mut command = Command::new(provider_executable());
+        command.env("CODEPET_PROVIDER_IDLE_TIMEOUT_SECONDS", seconds.to_string());
         Self::spawn_command(&mut command)
     }
 

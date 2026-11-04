@@ -2298,7 +2298,11 @@ impl Provider for CodexProvider {
             if lock(&runtime.mutable).lifecycle_generation != admitted_generation {
                 return Err(protocol_error("interaction_released", "Instance lifecycle changed while acquire was queued".into(), false));
             }
-            if lock(&runtime.mutable).interaction_released {
+            let needs_start = {
+                let mutable = lock(&runtime.mutable);
+                mutable.interaction_released || mutable.status == InstanceStatus::Stopped
+            };
+            if needs_start {
                 self.start_runtime(runtime.clone(), true).await?;
                 tokio::time::timeout(Duration::from_secs(30), async {
                     loop {
@@ -3152,6 +3156,11 @@ fn execution_outcome_error<T>(
                     .collect(),
                 ),
             }
+        }
+        CodexRequestOutcome::SentOutcomeUnknown(error) if matches!(operation, "turn/start" | "turn/steer") => {
+            let mut error = CodexProtocolMapper::error(error);
+            error.details.get_or_insert_with(Default::default).insert("outcome".into(), json!("unknown"));
+            error
         }
         CodexRequestOutcome::NotSent(error)
         | CodexRequestOutcome::ExplicitRpcReject(error)

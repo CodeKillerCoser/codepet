@@ -14,6 +14,7 @@ import providerMessageFrame from "../../sdk/rust/codepet-provider-sdk/src/messag
 import providerMessageMod from "../../sdk/rust/codepet-provider-sdk/src/message/mod.rs" with { type: "text" };
 import providerMessageMux from "../../sdk/rust/codepet-provider-sdk/src/message/mux.rs" with { type: "text" };
 import providerRuntimeEvents from "../../sdk/rust/codepet-provider-sdk/src/runtime/events.rs" with { type: "text" };
+import providerRuntimeIdle from "../../sdk/rust/codepet-provider-sdk/src/runtime/idle.rs" with { type: "text" };
 import providerRuntimeHeartbeat from "../../sdk/rust/codepet-provider-sdk/src/runtime/heartbeat.rs" with { type: "text" };
 import providerRuntimeIo from "../../sdk/rust/codepet-provider-sdk/src/runtime/io.rs" with { type: "text" };
 import providerRuntimeMod from "../../sdk/rust/codepet-provider-sdk/src/runtime/mod.rs" with { type: "text" };
@@ -48,6 +49,7 @@ export const providerRuntimeFiles = new Map([
   ["runtime/events.rs", providerRuntimeEvents],
   ["runtime/activity.rs", providerRuntimeActivity],
   ["runtime/heartbeat.rs", providerRuntimeHeartbeat],
+  ["runtime/idle.rs", providerRuntimeIdle],
   ["runtime/io.rs", providerRuntimeIo],
   ["runtime/mod.rs", providerRuntimeMod],
   ["runtime/mux.rs", providerRuntimeMux],

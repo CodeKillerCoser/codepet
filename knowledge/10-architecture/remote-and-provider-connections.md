@@ -7,8 +7,8 @@
 ## 目标
 
 - 支持 Server 模式的 Harness，每个 Provider **运行实例**只有一个 Server，多会话共用。插件可以配置多个实例，实例间继续隔离。
-- 两段应用心跳传播真实在线状态；任一已认证客户端仍连接时，保留该实例 resume 过的会话和事件。
-- 最后一个客户端离线后，仅在没有执行中请求、未结束 turn 和待审批时停止 Harness；Host 心跳过期仍强制清理。Provider 插件进程继续存在并接收下一次心跳。
+- 两段应用心跳只传播真实在线状态，不管理 Harness 启停。
+- 实例内有业务活动就保留 Harness；全部活动结束并持续空闲达到窗口后释放，与客户端在线无关。Provider 插件继续服务，后续可按需启动新 Harness。
 - Host 连接页和 Remote Provider 位置同时显示连接健康与 Harness 状态。
 
 ## 非目标
@@ -38,17 +38,18 @@ Client <-- pong(sequence, ProviderSummary[]) -- Gateway 读取 Provider 状态
 
 Host Provider 管理 -- provider.ping(sequence, hostSessionId, clients, instances) --> Provider SDK
 Host Provider 管理 <-- pong(sequence, clientsRevision) -- Provider SDK
-                                                      |
-                                                      +-- 协调 instance.start/stop --> Harness Server
+
+业务请求/事件 --> SDK Activity + Idle Scheduler --> 空闲释放 Harness Server
+Host 启动/按需恢复 --> instance.start --> 新 Harness Server
 ```
 
 两段均每 20 秒交换，失联阈值 60 秒。Remote 请求超时 10 秒，持续未得到有效 pong 达阈值后进入既有重连流程；Host 的应用心跳超时关闭 socket。WebSocket 原生 Ping/Pong 保留，不能替代携带业务状态的应用心跳。连接增减或实例状态变化会唤醒 Host→Provider 的下一次交换，不等完整周期。应用 ping 绕过普通 RPC 排队，所以慢 get/resume 不阻塞其处理。
 
-Provider SDK 立即确认有效 ping，另用每实例独立协调任务调用幂等 start/stop；启动等待不延迟 pong。无客户端时通过 SDK activity 保留未结束 turn、待审批与执行中请求，空闲时才停止实例；离线实例每秒复核一次回收条件。Host 心跳过期、实例移除仍强制停止。启动过程中离线先取消心跳协调的 start 等待，再按活动状态决定是否 stop；adapter 必须用 generation/cancellation 保证不出现晚到 Ready。重复心跳重新协调 adapter 状态，故 Server 故障后，只要客户端仍在线，后续心跳可再次尝试启动；不自动重发失败的业务请求。
+Provider SDK 立即确认有效 ping，不调用生命周期方法。独立 idle 回收器默认在全部业务活动结束并连续空闲 300 秒后停止实例；请求准入门保护正在执行的操作。Host 显式启动插件时启动实例，历史读取和业务请求保留按需恢复。重启不会批量 resume 旧会话；不自动重发结果未知的业务请求。详见 [Runtime 生命周期](interaction-runtime-lifecycle.md)。
 
 `hostSessionId` 绑定当前插件进程；sequence 必须递增，client revision 不倒退，相同 revision 不得改变集合。旧包既不能改在线集合，也不能延长存活时间。Host 收到 pong 后复核插件 generation 与进程 identity；Remote 以连接 generation 和 Provider generation 丢弃旧响应。心跳摘要使用独立状态流，不伪装成有 cursor 的 replay event；同一次 ping 期间已发生的 provider.changed 优先于晚到摘要。
 
-Provider `connectionStatus` 为 connecting/online/offline，表示 Host↔插件通信；实例原有 status 表示 Harness 是否 Ready。因此“Provider 在线，Harness 已停止”是无客户端时的正常状态。摘要沿用 capability revision，完整能力仍由 describe 获取；Remote 不把摘要的空 methods 当作不支持，能力到达或实例恢复 Ready 后补拉项目。
+Provider `connectionStatus` 为 connecting/online/offline，表示 Host↔插件通信；实例原有 status 表示 Harness 是否 Ready。因此“Provider 在线，Harness 已停止”是持续空闲释放后的正常状态。摘要沿用 capability revision，完整能力仍由 describe 获取；Remote 不把摘要的空 methods 当作不支持，能力到达或实例恢复 Ready 后补拉项目。
 
 Codex 的一个 Server 负责 list/get/create/resume/turn/approval，一条 reader 按 thread ID 分发，多会话仍各有 operation lock。退出详情不 unsubscribe、不续租、不停止 Server；最后一条连接离开后，运行中或待审批任务继续执行，全部终结后才关闭 Server。stdin EOF、Provider shutdown 同样清理 Server。两部手机经同一 Host 操作同一会话共用该 Server；并发 start 仍受原生 turn 状态和每会话串行控制，不能承诺同时启动两个 turn。
 
@@ -65,7 +66,7 @@ Codex 的一个 Server 负责 list/get/create/resume/turn/approval，一条 read
 
 - 旧客户端不发送应用 ping，60 秒后会被新版 Host 断开：Host/Remote/Provider SDK 必须配套更新；当前没有旧心跳兼容协商。
 - 多端误删在线状态：以连接 ID 管理 RAII 注册，断开 A 不删除 B；由 Host presence 和 Provider binary 测试覆盖。
-- 慢请求阻塞心跳或退出：LAN pending-get 与 Provider 16 个阻塞 RPC 测试覆盖；SDK 的 EOF 清理先停止心跳协调，再关闭 adapter。
+- 慢请求阻塞心跳或退出：LAN pending-get 与 Provider 16 个阻塞 RPC 测试覆盖；SDK 的 EOF 清理先停止空闲回收器，再关闭 adapter。
 - 共享 Server 故障影响全部会话：以 instance Error 明确暴露，并使审批 generation 失效；恢复需要重新 acquire，业务请求不自动重放。
 - 窄屏状态文案挤压动作：Remote widget 测试、Host 前端构建及实际安装后的连接页检查。
 
@@ -93,4 +94,4 @@ Host Runtime 卡片通过 `frontend/lib/providerRuntimes.ts` 统一消费连接�
 
 ## 未知项
 
-未覆盖所有手机系统的后台保活策略。App 被系统挂起、应用心跳超时后按离线处理；持续后台执行到任务完成不属于当前连接生命周期承诺。
+未覆盖所有手机系统的后台保活策略。App 被系统挂起、应用心跳超时后按离线处理；手机离线不取消已经接收的任务，运行与待审批状态保留到终态；电脑关机、实际 Host/Provider 进程退出和原生运行时故障不在此保证范围。

@@ -1,11 +1,8 @@
-//! Host liveness and client-presence reconciliation, independent of Harness adapters.
-use crate::generated::{InstanceStartRequest, InstanceStopRequest, ProtocolError, ProtocolServer,
-    ProviderInstanceRoute, ProviderPingRequest, ProviderPingResponse};
-use std::collections::HashSet;
+//! Application heartbeats report liveness; they never own Harness lifecycle.
+use crate::generated::{ProtocolError, ProviderPingRequest, ProviderPingResponse};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::watch;
-use tokio::task::JoinSet;
 
 pub const PROVIDER_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 pub const PROVIDER_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -34,19 +31,15 @@ pub async fn run_provider_heartbeats<F, Fut>(
 }
 
 pub(crate) struct HostHeartbeat {
-    state: Mutex<Option<(ProviderPingRequest, Instant)>>,
-    desired: watch::Sender<Option<ProviderPingRequest>>,
+    state: Mutex<Option<ProviderPingRequest>>,
 }
 
 impl HostHeartbeat {
-    pub(crate) fn new() -> Arc<Self> {
-        let (desired, _) = watch::channel(None);
-        Arc::new(Self { state: Mutex::new(None), desired })
-    }
+    pub(crate) fn new() -> Arc<Self> { Arc::new(Self { state: Mutex::new(None) }) }
 
     pub(crate) fn ping(&self, request: ProviderPingRequest) -> Result<ProviderPingResponse, ProtocolError> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((previous, _)) = state.as_ref() {
+        if let Some(previous) = state.as_ref() {
             if request.host_session_id != previous.host_session_id
                 || request.sequence <= previous.sequence
                 || request.clients.revision < previous.clients.revision
@@ -57,46 +50,9 @@ impl HostHeartbeat {
                     retryable: false, details: None });
             }
         }
-        let response = ProviderPingResponse {
-            sequence: request.sequence, clients_revision: request.clients.revision,
-        };
-        *state = Some((request.clone(), Instant::now()));
-        self.desired.send_replace(Some(request));
+        let response = ProviderPingResponse { sequence: request.sequence, clients_revision: request.clients.revision };
+        *state = Some(request);
         Ok(response)
-    }
-
-    fn expire(&self) { self.expire_at(Instant::now()); }
-
-    fn expire_at(&self, now: Instant) {
-        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.as_ref().is_some_and(|(_, at)| now.duration_since(*at) >= PROVIDER_HEARTBEAT_TIMEOUT)
-            && self.desired.borrow().is_some()
-        {
-            self.desired.send_replace(None);
-        }
-    }
-
-    pub(crate) async fn run<P: ProtocolServer + 'static>(self: Arc<Self>, provider: Arc<P>, activity: Arc<super::activity::Activity>) {
-        let mut receiver = self.desired.subscribe();
-        let mut known = HashSet::new();
-        let mut workers = JoinSet::new();
-        let mut clock = tokio::time::interval(Duration::from_secs(1));
-        loop {
-            tokio::select! {
-                _ = clock.tick() => self.expire(),
-                result = receiver.changed() => { if result.is_err() { break; } },
-                _ = workers.join_next(), if !workers.is_empty() => {}
-            }
-            let snapshot = receiver.borrow_and_update().clone();
-            if let Some(snapshot) = snapshot {
-                for route in snapshot.instances {
-                    let key = serde_json::to_string(&route).expect("route serializes");
-                    if known.insert(key) {
-                        workers.spawn(manage_instance(provider.clone(), route, self.desired.subscribe(), activity.clone()));
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -107,123 +63,14 @@ mod tests {
         ProviderPingRequest { sequence, host_session_id: "host-run".into(),
             clients: crate::generated::ClientConnectionsSnapshot { revision, connections: vec![] }, instances: vec![] }
     }
-
     #[test]
-    fn stale_presence_cannot_replace_current_snapshot_or_refresh_deadline() {
+    fn stale_presence_cannot_replace_current_snapshot() {
         let heartbeat = HostHeartbeat::new();
         heartbeat.ping(ping(1, 4)).unwrap();
-        let at = heartbeat.state.lock().unwrap().as_ref().unwrap().1;
         assert!(heartbeat.ping(ping(2, 3)).is_err());
         assert!(heartbeat.ping(ping(1, 4)).is_err());
-        heartbeat.expire_at(at + PROVIDER_HEARTBEAT_TIMEOUT);
-        assert!(heartbeat.desired.borrow().is_none());
-        assert!(heartbeat.ping(ping(1, 4)).is_err());
+        assert_eq!(heartbeat.state.lock().unwrap().as_ref().unwrap().sequence, 1);
         heartbeat.ping(ping(3, 5)).unwrap();
-        assert!(heartbeat.desired.borrow().is_some());
-    }
-}
-
-fn wanted(receiver: &watch::Receiver<Option<ProviderPingRequest>>, route: &ProviderInstanceRoute) -> bool {
-    receiver.borrow().as_ref().is_some_and(|value|
-        !value.clients.connections.is_empty() && value.instances.contains(route))
-}
-
-async fn wait_inactive(receiver: &mut watch::Receiver<Option<ProviderPingRequest>>, route: &ProviderInstanceRoute) {
-    while wanted(receiver, route) {
-        if receiver.changed().await.is_err() { break; }
-    }
-}
-
-async fn manage_instance<P: ProtocolServer + 'static>(
-    provider: Arc<P>, route: ProviderInstanceRoute,
-    mut receiver: watch::Receiver<Option<ProviderPingRequest>>,
-    activity: Arc<super::activity::Activity>,
-) {
-    loop {
-        let desired = wanted(&receiver, &route);
-        receiver.borrow_and_update();
-        // Lifecycle methods are idempotent. Reconcile with the adapter each time,
-        // so a crash or an explicit stop cannot leave a stale local "active" flag.
-        if desired {
-            let start = provider.instance_start(InstanceStartRequest { route: route.clone() });
-            let mut changes = receiver.clone();
-            let cancelled = tokio::select! {
-                _ = start => false,
-                _ = wait_inactive(&mut changes, &route) => true,
-            };
-            if cancelled {
-                // Stop also cancels in-flight initialize; the adapter owns generation checks.
-                stop_if_idle(provider.as_ref(), &route, &receiver, &activity).await;
-            }
-        } else {
-            stop_if_idle(provider.as_ref(), &route, &receiver, &activity).await;
-        }
-        if wanted(&receiver, &route) != desired { continue; }
-        tokio::select! {
-            changed = receiver.changed() => { if changed.is_err() { break; } },
-            _ = tokio::time::sleep(Duration::from_secs(1)), if !desired => {},
-        }
-    }
-}
-
-async fn stop_if_idle<P: ProtocolServer>(provider: &P, route: &ProviderInstanceRoute,
-    receiver: &watch::Receiver<Option<ProviderPingRequest>>, activity: &super::activity::Activity) {
-    // Host loss / instance removal is still a forced cleanup, even during active execution.
-    let host_owns_instance = receiver.borrow().as_ref().is_some_and(|value| value.instances.contains(route));
-    if !host_owns_instance {
-        let _ = provider.instance_stop(InstanceStopRequest { route: route.clone() }).await;
-        return;
-    }
-    let Ok(_exclusive) = activity.gate.try_write() else { return; };
-    if !wanted(receiver, route) && !activity.busy(route) {
-        let _ = provider.instance_stop(InstanceStopRequest { route: route.clone() }).await;
-    }
-}
-
-#[cfg(test)]
-mod retention_tests {
-    use super::*;
-    use crate::generated::*;
-    use super::super::activity::Activity;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    #[derive(Default)]
-    struct Provider(AtomicUsize);
-    impl ProtocolServer for Provider {
-        fn instance_stop<'a>(&'a self, _: InstanceStopRequest) -> ProtocolFuture<'a, InstanceStopResponse> {
-            Box::pin(async move {
-                self.0.fetch_add(1, Ordering::SeqCst);
-                Err(ProtocolError { code: "fixture".into(), message: "count only".into(), retryable: false, details: None })
-            })
-        }
-    }
-
-    #[tokio::test]
-    async fn offline_retains_execution_and_startup_but_host_loss_forces_cleanup() {
-        let provider = Provider::default();
-        let activity = Activity::default();
-        let route = ProviderInstanceRoute { device_id: "d".into(), provider_plugin_id: "p".into(), provider_instance_id: "i".into() };
-        let (sender, receiver) = watch::channel(Some(ProviderPingRequest { sequence: 1, host_session_id: "h".into(),
-            clients: ClientConnectionsSnapshot { revision: 1, connections: vec![] }, instances: vec![route.clone()] }));
-        let starting = activity.gate.read().await;
-        stop_if_idle(&provider, &route, &receiver, &activity).await;
-        assert_eq!(provider.0.load(Ordering::SeqCst), 0);
-        drop(starting);
-        let mut turn: TurnTask = serde_json::from_value(serde_json::json!({
-            "resource":{"providerId":"i","nativeResourceId":"t"},
-            "conversation":{"providerId":"i","nativeResourceId":"c"},"status":"running"
-        })).unwrap();
-        activity.event(&ProtocolEvent::EventTurnUpserted { jsonrpc: "2.0".into(), params: TurnUpsertedEvent { turn: turn.clone() } });
-        stop_if_idle(&provider, &route, &receiver, &activity).await;
-        assert_eq!(provider.0.load(Ordering::SeqCst), 0);
-        sender.send_replace(None);
-        stop_if_idle(&provider, &route, &receiver, &activity).await;
-        assert_eq!(provider.0.load(Ordering::SeqCst), 1);
-        sender.send_replace(Some(ProviderPingRequest { sequence: 2, host_session_id: "h".into(),
-            clients: ClientConnectionsSnapshot { revision: 1, connections: vec![] }, instances: vec![route.clone()] }));
-        turn.status = TurnStatus::Completed;
-        activity.event(&ProtocolEvent::EventTurnUpserted { jsonrpc: "2.0".into(), params: TurnUpsertedEvent { turn } });
-        stop_if_idle(&provider, &route, &receiver, &activity).await;
-        assert_eq!(provider.0.load(Ordering::SeqCst), 2);
+        assert_eq!(heartbeat.state.lock().unwrap().as_ref().unwrap().sequence, 3);
     }
 }

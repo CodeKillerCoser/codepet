@@ -63,7 +63,7 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
         Ok::<_, ProtocolError>(())
     });
     let heartbeat = super::heartbeat::HostHeartbeat::new();
-    let monitor = tokio::spawn(heartbeat.clone().run(provider.clone(), activity.clone()));
+    let monitor = tokio::spawn(super::idle::run(provider.clone(), activity.clone(), options.idle_timeout));
     let initialized = Arc::new(AtomicBool::new(false));
     let dispatch_closed = Arc::new(AtomicBool::new(false));
     let executions = Arc::new(std::sync::Mutex::new(Vec::<tokio::task::AbortHandle>::new()));
@@ -132,8 +132,12 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
                                             dispatch_closed.store(true, Ordering::SeqCst);
                                             for execution in pending_executions.lock().unwrap_or_else(|e| e.into_inner()).drain(..) { execution.abort(); }
                                         }
+                                        let business_instance = super::activity::Activity::request_activity(&request);
+                                        let mutation = activity.mutation(&request);
                                         let reply = dispatch(provider.as_ref(), request).await;
                                         activity.response(method, &reply);
+                                        activity.mutation_response(mutation, &reply);
+                                        if let Some(instance) = business_instance { activity.touch(&instance); }
                                         Ok::<_, ProtocolError>(reply)
                                     };
                                     if detached_start {

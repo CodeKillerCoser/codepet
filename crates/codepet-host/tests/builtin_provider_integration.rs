@@ -16,6 +16,56 @@ const CODEX_PLUGIN_ID: &str = "dev.codepet.codex";
 const OPENCODE_PLUGIN_ID: &str = "dev.codepet.opencode";
 
 #[tokio::test]
+async fn gateway_idle_release_preserves_history_and_interaction_recovery() {
+    let workspace = crates_workspace();
+    let target = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().parent().unwrap().to_path_buf();
+    assert!(Command::new(cargo_executable()).args(["build", "--quiet", "-p", "codepet-provider-codex", "--bins"])
+        .arg("--manifest-path").arg(workspace.join("Cargo.toml")).arg("--target-dir").arg(&target).status().unwrap().success());
+    let executable = |name: &str| target.join("debug").join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("plugins/codex"); std::fs::create_dir_all(&root).unwrap();
+    let mut manifest: Value = serde_json::from_slice(&std::fs::read(workspace.join("providers/codepet-provider-codex/codepet-provider.json")).unwrap()).unwrap();
+    manifest["env"]["CODEPET_PROVIDER_IDLE_TIMEOUT_SECONDS"] = serde_json::json!("2");
+    manifest["executable"] = serde_json::json!(executable("codepet-provider-codex"));
+    manifest["instances"][0]["settings"]["appServerExecutable"] = serde_json::json!(executable("codex-app-server-fixture"));
+    manifest["instances"][0]["settings"]["appServerArgs"] = serde_json::json!(["--approval-mode", "none"]);
+    manifest["instances"][0]["settings"]["dataDirectory"] = serde_json::json!(directory.path().join("codex-home"));
+    std::fs::write(root.join("codepet-provider.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let device = DeviceRegistry::open(directory.path().join("device.json"), "release test").unwrap();
+    let registry = ProviderInstanceRegistry::open(directory.path().join("instances.json"), device.identity().device_id.clone()).unwrap();
+    let catalog = PluginCatalog::discover(PluginCatalogConfig::default().with_directory(root.parent().unwrap()));
+    let manager = Arc::new(PluginManager::new(device, catalog, registry, PluginManagerConfig::default()).unwrap());
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap()); gateway.start_event_forwarding();
+    manager.enable_connection_heartbeats();
+    // No phone is required to start, idle-release, or serve a later local read.
+    assert!(manager.start_enabled().await.iter().all(|(_, result)| result.is_ok()));
+    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
+    let listed = gateway.provider_list(ProviderListRequest {}).await.unwrap();
+    let id = listed.providers[0].id.clone();
+    let described = gateway.provider_describe(codepet_gateway_sdk::ProviderDescribeRequest { provider_id:id.clone() }).await.unwrap();
+    assert!(described.capabilities.methods.contains(&codepet_gateway_sdk::GatewayCapability::ConversationReleaseInteraction));
+    let conversation = codepet_gateway_sdk::RoutedResourceId { provider_id:id.clone(), native_resource_id:"thread-listed".into() };
+    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Stopped).await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let read = gateway.conversation_get(codepet_gateway_sdk::ConversationGetRequest {
+            conversation:conversation.clone(), cursor:None, limit:Some(20)
+        }).await;
+        if let Ok(read) = read { assert_eq!(read.conversation.resource, conversation); break; }
+        assert!(tokio::time::Instant::now() < deadline, "history should recover an idle Server on demand");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Stopped).await;
+    let resumed = gateway.conversation_resume(codepet_gateway_sdk::ConversationResumeRequest {
+        conversation, force:None, limit:Some(20)
+    }).await.unwrap();
+    assert!(resumed.interaction_acquired, "{:?}", resumed.interaction_error);
+    assert!(resumed.history.is_some(), "{:?}", resumed.history_error);
+    assert!(manager.remote_connections().snapshot().connections.is_empty());
+    manager.shutdown().await;
+}
+
+#[tokio::test]
 async fn gateway_release_interaction_stops_codex_and_explicit_resume_restarts_it() {
     let workspace = crates_workspace();
     let target = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().parent().unwrap().to_path_buf();
@@ -170,7 +220,7 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
         assert_eq!(snapshot.instances.len(), 1);
     }
 
-    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Stopped).await;
+    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
     let first_phone = manager.remote_connections().register("phone-a".into());
     let second_phone = manager.remote_connections().register("phone-b".into());
     wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
@@ -265,7 +315,8 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
     drop(second_phone);
-    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Stopped).await;
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
     for snapshot in manager.snapshots().await {
         assert_eq!(snapshot.state, PluginRuntimeState::Ready);
         assert_eq!(snapshot.connection_status, codepet_provider_sdk::ConnectionStatus::Online);
@@ -273,7 +324,7 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
     let reconnected = manager.remote_connections().register("phone-b".into());
     wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
     drop(reconnected);
-    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Stopped).await;
+    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
     let shutdown = manager.shutdown().await;
     assert_eq!(shutdown.len(), 3);
     for (plugin_id, outcome) in shutdown {

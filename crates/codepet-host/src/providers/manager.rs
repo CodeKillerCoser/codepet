@@ -478,14 +478,8 @@ impl PluginManager {
             .into_iter()
             .filter(|record| record.enabled)
         {
-            let result = if self.inner.heartbeat_enabled.load(Ordering::SeqCst) {
-                let created = self.inner.plugins.read().await.get(plugin_id)
-                    .and_then(|entry| entry.instances.get(&record.instance_id))
-                    .is_some_and(|runtime| runtime.instance.is_some());
-                if created { Ok(()) } else { self.create_instance_record(&record).await.map(|_| ()) }
-            } else {
-                self.recover_instance_record(&record).await
-            };
+            // Process startup is an explicit Host operation, never a heartbeat side effect.
+            let result = self.recover_instance_record(&record).await;
             if first_error.is_none() {
                 first_error = result.err().filter(|error|error.code != "runtime_scanning");
             }
@@ -849,10 +843,6 @@ impl PluginManager {
         &self,
         route: &ProviderInstanceRoute,
     ) -> HostResult<()> {
-        if self.inner.heartbeat_enabled.load(Ordering::SeqCst)
-            && self.inner.remote_connections.snapshot().connections.is_empty() {
-            return Err(HostError::new("no_connected_clients", "No authenticated client is connected").retryable(true));
-        }
         validate_route_identity(route)?;
         let record = self.inner.instances.resolve_route(route, None)?;
         if !record.enabled {
@@ -1418,6 +1408,7 @@ impl PluginManager {
             validate_provider_resource_identity(project)?;
             validate_provider_resource_route(project, &route)?;
         }
+        self.ensure_historical_route_ready(&route).await?;
         let (_, process, instance) = self.routing_context(&route).await?;
         ensure_capability(&instance, ProtocolMethod::ConversationCreate)?;
         let response = process

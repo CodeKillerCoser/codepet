@@ -42,7 +42,7 @@ Provider 插件的作者。Provider 是由 Code Pet Host 启动的独立进程�
 协商后的 `stdio-codepet-mux-v1` 通道。Provider 不需要感知分片、窗口、raw/zstd、尺寸检查，也不需要依赖
 Tauri、Code Pet Host 或 Desktop 私有 IPC。
 
-SDK runtime 还随导出分发心跳：Dart Gateway client 的 GatewayHeartbeatClient 发送 protocol.ping 并输出 Provider 摘要；Rust Gateway 的 GatewayHeartbeat 校验顺序和失联 deadline。Host→Provider 的 run_provider_heartbeats 由连接快照与实例状态 watch 唤醒。Provider serve_stdio 直接确认 provider.ping，独立协调任务根据连接集合调用幂等 instance.start/stop。Server 模式 adapter 必须每实例仅一个 Server，start/stop 支持重复调用，并保证 stop 可以取消未完成的 initialize。最后客户端离线或 Host 心跳过期会停止 Harness，包括 active turn；插件进程仍继续服务。stdio 是 Provider IPC，不属于 Remote channel。
+SDK runtime 随导出分发心跳与独立的空闲生命周期：GatewayHeartbeatClient / GatewayHeartbeat 管理连通性；Host→Provider 的 run_provider_heartbeats 传播连接快照。Provider serve_stdio 直接确认 provider.ping，不根据心跳调用 start/stop。Activity + Idle Scheduler 观察标准实例/turn/approval/会话事件，在全部活动结束并连续空闲达到 StdioServerOptions.idle_timeout（默认 300 秒）后调用 instance.stop。适配器必须发布真实生命周期与任务终态，未知 start/steer 结果可通过错误 details.outcome="unknown" 保守保留。业务请求准入与回收互斥；后台读和心跳不续期。Server 模式每实例仅一个 Server，空闲释放清掉旧锁，新进程允许按需启动但不批量 resume 旧会话。明确手动停止、stdio EOF 与 shutdown 沿用原清理合同。stdio 是 Provider IPC，不属于手机连接；手机失联不终止任务。
 
 ## 1. 分发内容
 

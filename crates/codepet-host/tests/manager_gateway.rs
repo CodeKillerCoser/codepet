@@ -55,8 +55,10 @@ async fn codepet_usage_routes_to_provider_and_host_assigns_private_storage_and_l
     let gateway=Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());gateway.start_event_forwarding();
     assert!(manager.start_enabled().await[0].1.is_ok());
     let request: GatewayRequest=serde_json::from_value(serde_json::json!({"jsonrpc":"2.0","id":"usage","method":"codepet.usage.query","params":{"providerId":"usage-instance","query":{"datasetId":"observed-model-tokens","filter":{"time":{"kind":"all"}},"aggregation":{"timeBucket":"halfHour","timeZone":"UTC","groupBy":["model"]},"metrics":["totalTokens"],"summaries":["totals"]}}})).unwrap();
-    let rejected=gateway.dispatch_for_caller_scope("client",request.clone()).await;
-    assert!(serde_json::to_string(&rejected).unwrap().contains("no_connected_clients"));
+    // Presence is liveness data, not authorization or a prerequisite for local reads.
+    // Remote channel admission still validates credentials before dispatch.
+    let without_phone=gateway.dispatch_for_caller_scope("client",request.clone()).await;
+    assert!(matches!(without_phone.response, JsonRpcResponsePayload::Ok { .. }));
     let response=gateway.dispatch_for_local_client("desktop-main",request).await;
     assert!(manager.remote_connections().snapshot().connections.is_empty());
     let JsonRpcResponsePayload::Ok{result}=response.response else{panic!("usage query failed: {response:?}")};
