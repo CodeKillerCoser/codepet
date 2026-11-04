@@ -28,4 +28,12 @@
 
 风险验证：重复导入不能影响活跃进程（generation 对比）；注册不能重置旧配置（更新设置后导入再 restart 对比）；无手机时不提前启动 Harness、已有手机时热加载可启动（现有 SDK 心跳机制及 fixture marker）；失败包不能伪报在线（loaded/diagnostic 断言）。
 
-未进行 Windows 实机导入或用户自定义包验收；浏览器模拟不等于安装版已替换。当前运行的安装版及之前 Worktree 权限现场未在此任务修改。
+未进行 Windows 实机导入或用户自定义包验收；浏览器模拟不等于安装版验收，后续原生安装结果见下节。之前 Worktree 权限问题不在本次修复范围内。
+
+## 主干提交与 Release 安装验收
+
+2026-11-05，功能提交 `b13c9e5` 已推送 `origin/main`。使用 `CARGO_NET_GIT_FETCH_WITH_CLI=true npm exec --yes --package=bun -- npm run tauri -- build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'` 构建 macOS ARM64 Release App，版本 `0.3.9-beta`，webcontent 后端契约为 3。构建成功并通过 `codesign --verify --deep --strict`；使用本机 ad-hoc 签名，未做公证。Tauri CLI 自动加入的 Cargo feature 已恢复，未混入提交。
+
+旧 App 正常退出后，备份到 `/Users/wangxin/Documents/CodePet-backups/provider-hotload-b13c9e5/`，替换 `/Applications/Code Pet.app` 并重新启动。安装后的 Host、Codex Provider 与 webcontent manifest SHA-256 分别与构建产物相同。新进程从 `/Applications/Code Pet.app` 启动。
+
+原生界面验证：Codex 显示 manifest 图标和握手名称、Provider 版本 `0.1.0`、ChatGPT 内置 CLI 路径、运行时版本 `0.166.0-alpha.5.1` 与默认工作目录；Provider 在线、Harness 可用。仅一个列表级重新检测按钮，点击后结果正常，未安装的 Claude/OpenCode 未显示。截图保存为上述备份目录中的 `installed-runtime.png`。真实用户自定义包导入及手机新建会话未在此次安装验收中执行。
