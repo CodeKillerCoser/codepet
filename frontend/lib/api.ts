@@ -158,3 +158,7 @@ export async function sendActivityReply(eventId: string, message: string): Promi
 export async function resolveActivityApproval(eventId: string, behavior: "allow" | "deny", message?: string): Promise<void> {
   return invoke<void>("resolve_activity_approval", { eventId, behavior, message });
 }
+
+export async function importProviderPlugin(manifestPath: string): Promise<{providerId: string; displayName: string; loaded: boolean; diagnostic?: string | null}> {
+  return invoke("import_provider_plugin", { manifestPath });
+}

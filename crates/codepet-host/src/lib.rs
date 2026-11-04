@@ -49,3 +49,5 @@ pub mod pet_gateway;
 pub use pet_gateway::PetGateway;
 
 pub use remote::channels::webrtc::diagnostics::set_rtc_diagnostic_sink;
+
+pub use providers::manager::ProviderImportResult;

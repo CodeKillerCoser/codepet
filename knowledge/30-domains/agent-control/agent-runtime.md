@@ -91,12 +91,12 @@ Provider 负责候选发现和版本验证，Host 通过 `runtime.select` 校验
 - 真实安装版各平台发现候选的完整布局未全部覆盖；心跳重试与实例恢复边界见连接架构文档。
 - Windows 动态布局本次未做实机验证。
 
-## 2026-11-05 运行时列表展示调整
+## 2026-11-05 Provider 信息与导入
 
-主窗口运行时列表改为无外框条目，相邻运行时之间使用分割线。名称与 Provider/Harness 状态位于顶部，路径和版本采用左标签、右值；窄窗口改为上下排列。路径下拉复用 Provider 返回的 installed 列表与既有 runtime.select 接口，不兼容候选保持禁用；旧快照只返回 resolvedExecutable 时仍显示当前路径。重新检测放在每项右下角，空列表保留全量检测入口，真实诊断继续显示。
+本机运行时按内置/自定义 Provider 展示紧凑信息区，相邻 Provider 使用分割线。名称优先使用 initialize/describe 返回的 displayName，图标沿用 Provider manifest 的 icon（与 Gateway 相同来源），加载失败回退通用插件图标。展示 Provider 版本、默认工作目录及 runtime.getInstalled 返回的路径和运行时版本；不把 Provider 版本当作 Harness 版本。路径仍可下拉切换，不兼容候选禁用，长路径可通过控件 title 查看。
 
-自定义 Provider 的加号入口通过原生文件选择器接收 codepet-provider.json，将其目录加入现有 providerPlugins.directories。此入口只保存目录，不声称 manifest 已校验或 Provider 已加载；成功后明确提示重启应用，由已有启动 catalog 流程解析和加载。当前未实现运行中的 catalog 热加载，也未解决 Codex 新安装布局识别或按本机安装情况控制 Provider 启动的问题。
+内置列表右下角只有一个「重新检测」，只向内置三个 Provider 发起 refresh，不刷新自定义 Provider，也不提供「检测其他运行时」。未安装内置项沿用 shouldShowRuntime 隐藏规则，空列表仍能重新检测。刷新 busy 状态作为组件的显式响应式输入，避免检测结束后下拉框保持禁用。
 
-涉及模块：App.svelte 负责路径选择、重新检测与目录登记；main-window.css 负责分割线、信息行与窄屏布局；connections.test.ts 更新旧控件断言。风险包括不兼容路径误选、空列表失去检测入口与窄屏动作被裁剪，分别由候选 disabled、空状态按钮和浏览器模拟 IPC 页面检查覆盖。
+添加入口选择 codepet-provider.json 后调用 import_provider_plugin；Host 将 manifest 所在的完整包复制到应用数据目录 versions/providers/<pluginId>，校验并立即注册/启动插件和实例。前端等待结果并刷新 inventory，不再保存外部目录或提示重启；连接状态、Gateway 事件和心跳沿用当前 Manager。导入的具体边界和验收见 [Provider 导入与热加载](../../40-runbooks/provider-import-and-hot-load.md)。
 
-验证：npm run build；npx vitest run frontend/connections.test.ts frontend/lib/providerRuntimes.test.ts frontend/lib/agentRuntime.test.ts frontend/styles.test.ts（44 项）。浏览器模拟 IPC 检查桌面和窄屏展示；未执行真实自定义 Provider 启动或本机安装检测验收。
+涉及模块：ProviderRuntimeInfo.svelte 负责信息展示；App.svelte 负责全局检测和导入动作；tauri_bridge.rs 投影 Provider 元信息；Host import 模块负责文件安装与生命周期。布局在 1280×720、600×800 模拟 IPC 页面检查，覆盖图标加载、长路径、焦点、刷新恢复及导入后立即出现自定义项。前后端测试结果见上述 runbook。

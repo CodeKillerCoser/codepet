@@ -1,4 +1,4 @@
-use crate::providers::catalog::{PluginCatalog, PluginInstanceConfig};
+use crate::providers::catalog::{PluginCatalog, PluginDescriptor, PluginInstanceConfig};
 use crate::persistence::{persistence_io, write_json_atomically};
 use crate::{HostError, HostResult};
 use codepet_provider_sdk::{
@@ -96,10 +96,21 @@ impl ProviderInstanceRegistry {
         &self,
         catalog: &PluginCatalog,
     ) -> HostResult<Vec<ProviderInstanceRecord>> {
+        self.synchronize(catalog, false)
+    }
+
+    pub(crate) fn register_plugin(&self, descriptor: PluginDescriptor) -> HostResult<Vec<ProviderInstanceRecord>> {
+        self.synchronize(&PluginCatalog::from_entries([descriptor])?, true)
+    }
+
+    fn synchronize(&self, catalog: &PluginCatalog, append: bool) -> HostResult<Vec<ProviderInstanceRecord>> {
         let mut state = self.state.write().map_err(|_| registry_lock_error())?;
+        if append && catalog.descriptors().any(|descriptor| state.records.values().any(|record| record.plugin_id == descriptor.plugin_id)) {
+            return Err(HostError::new("duplicate_plugin_id", "Provider instance records already exist"));
+        }
         let previous = state.identities.clone();
-        let mut identities = BTreeMap::new();
-        let mut records = BTreeMap::new();
+        let mut identities = if append { state.identities.clone() } else { BTreeMap::new() };
+        let mut records = if append { state.records.clone() } else { BTreeMap::new() };
         let mut configured_keys = BTreeSet::new();
 
         for descriptor in catalog.descriptors() {

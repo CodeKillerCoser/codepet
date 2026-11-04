@@ -5,6 +5,10 @@ import type { AgentRuntime } from "./types";
 
 export type ProviderConnectionState = {
   providerId: string;
+  displayName?: string;
+  icon?: string | null;
+  version?: string | null;
+  defaultWorkspaceRoot?: string | null;
   connectionStatus: "connecting" | "online" | "offline";
   generation: number;
   instances: { id: string; status: string }[];

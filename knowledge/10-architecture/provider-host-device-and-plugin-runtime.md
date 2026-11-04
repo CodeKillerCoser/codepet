@@ -34,7 +34,7 @@ Provider 事件进入 Gateway v1 replay，并由兼容适配发布到远程 `run
 本阶段不实现：
 
 - dylib/trait ABI、签名、沙箱、市场、下载、自动重启或 backoff；
-- 动态注册插件、动态创建生产实例或 Gateway instance lifecycle；
+- 已有插件的在线覆盖升级、任意动态实例创建或 Gateway instance lifecycle API；
 - frontend Remote UI、远程 frame/E2EE、持久 cursor 或权限模型；
 - 桌宠 UI、Pet 投影或桌宠动作接入 Provider Manager。
 
@@ -43,7 +43,7 @@ Provider 事件进入 Gateway v1 replay，并由兼容适配发布到远程 `run
 Tauri Catalog 合并以下目录来源：
 
 - App Resources 的 `provider-plugins/`：发行包内置的三个默认 Provider adapter；
-- 应用数据目录的 `provider-plugins/`：既有本地 manifest 目录；
+- 应用数据目录的 `versions/providers/`：导入的 Provider 包和既有本地 manifest 目录；
 - `settings.providerPlugins.directories`：附加显式目录，绝对路径保持不变，相对路径按应用数据目录解析；
 - `provider-host/device-identity.json`：稳定本机设备身份；
 - `provider-host/provider-instances.json`：manifest 实例的稳定身份映射。
@@ -95,7 +95,7 @@ Runtime 探测属于 Provider：插件级 `runtime.getInstalled` 不接收 Host 
 - Tauri 开发态：`beforeDevCommand` 先调用 `npm run providers:stage:dev`，确保 `tauri dev` 使用与发行包相同的 App Resources 发现链路，而不是依赖工作区中手工残留的 Provider binary。
 - 独立开发测试：可用 `--staging-dir` 写入临时目录，再以绝对路径设置 `CODEPET_BUNDLED_PROVIDER_PLUGINS_DIR`。未设置时，运行态使用 Tauri `BaseDirectory::Resource` 解析资源，不硬编码安装位置或用户目录。
 
-Catalog 仍只消费普通目录和 manifest，没有默认 Provider registry、市场、签名、沙箱、安装器或自动更新分支。Provider Protocol 事件仍只走 Host/Gateway；bundled discovery 不改变 Pet Protocol、Desktop IPC、companion 或 activity 链。
+Catalog 仍只消费普通目录和 manifest，没有默认 Provider registry、市场、签名、沙箱或自动更新分支；本地 manifest 包导入通过 `import_provider_plugin` 原子安装并追加注册到当前 Manager，详见 [导入与热加载](../40-runbooks/provider-import-and-hot-load.md)。Provider Protocol 事件仍只走 Host/Gateway；bundled discovery 不改变 Pet Protocol、Desktop IPC、companion 或 activity 链。
 
 ## 进程、Listener 与 shutdown
 

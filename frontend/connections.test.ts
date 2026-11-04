@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const appSource = readFileSync(resolve(__dirname, "App.svelte"), "utf8");
+const runtimeSource = readFileSync(resolve(__dirname, "lib/ProviderRuntimeInfo.svelte"), "utf8");
 const navigationSource = readFileSync(resolve(__dirname, "lib/MainNavigation.svelte"), "utf8");
 const deviceListSource = readFileSync(resolve(__dirname, "lib/RemoteDeviceList.svelte"), "utf8");
 const pairDialogSource = readFileSync(resolve(__dirname, "lib/PairDeviceDialog.svelte"), "utf8");
@@ -17,10 +18,13 @@ describe("connections workspace", () => {
     expect(connectionSource.indexOf('<h3>设备</h3>')).toBeGreaterThan(-1);
     expect(connectionSource.indexOf('<h3>设备</h3>')).toBeLessThan(connectionSource.indexOf('class="runtime-list"'));
     expect(connectionSource).toContain("on:click={refreshRuntimes}");
-    expect(connectionSource).toContain("on:click={() => detectRuntime(runtime.providerId)}");
-    expect(connectionSource).toContain('on:change={(event) => selectInstalledRuntime(runtime, event.currentTarget.value)}');
-    expect(connectionSource).toContain('disabled={!!installation.incompatibilityReason}');
-    expect(connectionSource).toContain('for={`runtime-path-${runtime.providerId}`}');
+    expect(connectionSource).not.toContain("检测其他运行时");
+    expect(connectionSource.match(/on:click=\{refreshRuntimes\}/g)).toHaveLength(1);
+    expect(runtimeSource).toContain("src={connection.icon}");
+    expect(runtimeSource).toContain("connection?.displayName || runtime.displayName");
+    expect(runtimeSource).toContain('on:change={(event) => onSelect(runtime, event.currentTarget.value)}');
+    expect(runtimeSource).toContain('disabled={!!installation.incompatibilityReason}');
+    expect(runtimeSource).toContain('for={`runtime-path-${runtime.providerId}`}');
     expect(connectionSource).not.toContain('<dt>用户选择</dt>');
   });
 

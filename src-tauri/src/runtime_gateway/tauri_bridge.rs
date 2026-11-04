@@ -84,6 +84,10 @@ pub(crate) struct ProviderHostState {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProviderConnectionView {
     provider_id: String,
+    display_name: String,
+    icon: Option<String>,
+    version: Option<String>,
+    default_workspace_root: Option<String>,
     connection_status: codepet_provider_sdk::ConnectionStatus,
     generation: u64,
     instances: Vec<ProviderInstanceConnectionView>,
@@ -152,6 +156,10 @@ impl ProviderHostState {
     pub(crate) async fn connection_views(&self) -> Vec<ProviderConnectionView> {
         let Some(manager) = self.manager.as_ref() else { return vec![]; };
         manager.snapshots().await.into_iter().map(|snapshot| ProviderConnectionView {
+            display_name: snapshot.reported.as_ref().map(|p| p.display_name.clone()).unwrap_or(snapshot.catalog.display_name),
+            icon: snapshot.catalog.icon,
+            version: snapshot.reported.as_ref().map(|p| p.version.clone()),
+            default_workspace_root: snapshot.reported.as_ref().and_then(|p| p.default_workspace_root.clone()),
             provider_id: snapshot.catalog.plugin_id,
             connection_status: snapshot.connection_status,
             generation: snapshot.generation,
@@ -249,6 +257,15 @@ impl ProviderHostState {
             }
         }
         views
+    }
+
+    pub(crate) async fn import_plugin(&self, manifest: PathBuf) -> Result<codepet_host::ProviderImportResult, String> {
+        let manager = self.manager.as_ref().ok_or("Provider Host is unavailable")?.clone();
+        let settings = load_app_settings().map_err(|error| error.to_string())?;
+        let root = crate::paths::data(&settings).join("versions/providers");
+        // Finish registration even if the invoking window closes during the import.
+        tokio::spawn(async move { manager.import_plugin(manifest, root).await })
+            .await.map_err(|error| error.to_string())?.map_err(|error| error.to_string())
     }
 
     pub(crate) async fn rescan_runtime(&self, plugin_id: &str) -> Result<(), String> {

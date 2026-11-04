@@ -157,7 +157,8 @@ struct PluginManagerInner {
     device: Arc<DeviceRegistry>,
     instances: ProviderInstanceRegistry,
     plugins: RwLock<BTreeMap<String, PluginEntry>>,
-    plugin_operations: BTreeMap<String, Arc<Mutex<()>>>,
+    plugin_operations: StdMutex<BTreeMap<String, Arc<Mutex<()>>>>,
+    import_operation: Mutex<()>,
     subscriptions: StdMutex<BTreeMap<String, subscriptions::SubscriptionHub>>,
     subscription_operations: tokio::sync::Mutex<()>,
     updates: mpsc::Sender<HostUpdate>,
@@ -177,6 +178,8 @@ pub struct PluginManager {
 }
 
 mod heartbeat;
+mod import;
+pub use import::ProviderImportResult;
 mod subscriptions;
 pub use subscriptions::ProviderEventSubscription;
 
@@ -259,7 +262,8 @@ impl PluginManager {
                 device,
                 instances,
                 plugins: RwLock::new(plugins),
-                plugin_operations,
+                plugin_operations: StdMutex::new(plugin_operations),
+                import_operation: Mutex::new(()),
                 subscriptions: StdMutex::new(BTreeMap::new()),
                 subscription_operations: tokio::sync::Mutex::new(()),
                 updates,
@@ -459,6 +463,7 @@ impl PluginManager {
     fn plugin_operation(&self, plugin_id: &str) -> HostResult<Arc<Mutex<()>>> {
         self.inner
             .plugin_operations
+            .lock().map_err(|_| update_channel_error())?
             .get(plugin_id)
             .cloned()
             .ok_or_else(|| unknown_plugin(plugin_id))

@@ -142,6 +142,29 @@ impl PluginCatalog {
         }
     }
 
+    pub(crate) fn from_entries(entries: impl IntoIterator<Item = PluginDescriptor>) -> HostResult<Self> {
+        let mut catalog = Self::default();
+        for descriptor in entries {
+            validate_descriptor(&descriptor)?;
+            if catalog.descriptors.insert(descriptor.plugin_id.clone(), descriptor).is_some() {
+                return Err(HostError::new("duplicate_plugin_id", "Provider ID is already installed"));
+            }
+        }
+        Ok(catalog)
+    }
+
+    pub(crate) fn read_one(path: &Path) -> HostResult<PluginDescriptor> {
+        let mut candidates = Vec::new();
+        let mut diagnostics = Vec::new();
+        read_manifest(path, &mut candidates, &mut diagnostics);
+        if let Some(error) = diagnostics.into_iter().next() {
+            return Err(HostError::new(error.code, error.message));
+        }
+        let descriptor = candidates.pop().ok_or_else(|| HostError::new("invalid_plugin_manifest", "Missing Provider manifest"))?.1;
+        validate_descriptor(&descriptor)?;
+        Ok(descriptor)
+    }
+
     pub(crate) fn descriptors(&self) -> impl Iterator<Item = &PluginDescriptor> {
         self.descriptors.values()
     }

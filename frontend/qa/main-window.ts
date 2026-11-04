@@ -1,4 +1,5 @@
 // Browser-only QA fixture. This entry is excluded from production build inputs.
+import { emit } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { mount } from "svelte";
 import App from "../App.svelte";
@@ -48,10 +49,11 @@ const missingRuntime = (providerId: string, displayName: string) => ({
 });
 const absentRuntimes = [missingRuntime("dev.codepet.claude", "Claude"), missingRuntime("dev.codepet.opencode", "OpenCode")];
 const codexPath = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
-const runtimeInventory = runtimeCase === "missing" ? [...absentRuntimes, missingRuntime("dev.codepet.codex", "Codex")]
+let runtimeInventory = runtimeCase === "missing" ? [...absentRuntimes, missingRuntime("dev.codepet.codex", "Codex")]
   : runtimeCase === "chatgpt" ? [...absentRuntimes, { ...runtime, providerId: "dev.codepet.codex", displayName: "Codex", source: "macos-application", configuredExecutable: null,
     resolvedExecutable: codexPath, version: "0.166.0-alpha.5.1", installed: [{executablePath: codexPath, version: "0.166.0-alpha.5.1", source: "macos-application"}] }]
   : [runtime];
+const runtimeConnections = () => runtimeInventory.map((item) => ({providerId:item.providerId,displayName:item.displayName,icon:"https://avatars.githubusercontent.com/u/14957082?s=200&v=4",version:"0.1.0",defaultWorkspaceRoot:"/Users/wangxin/.codepet/remote_workspace/codex",connectionStatus:"online",generation:1,instances:[{id:"qa",status:"ready"}]}));
 mockIPC((command, raw) => {
   if (command === "webcontent_info" || command === "load_latest_webcontent") {
     const scenario = new URLSearchParams(location.search).get("webcontentCase");
@@ -70,7 +72,14 @@ mockIPC((command, raw) => {
   if (command === "path_manager_get") return {install:"/fixture/install",data:"/fixture/data",workspace:"/fixture/workspace"};
   if (["recent_events", "list_remote_clients", "list_remote_pairing_requests"].includes(command)) return [];
   if (["record_perf_event", "check_app_update"].includes(command)) return null;
-  if (command === "provider_connection_status") return runtimeInventory.map((item) => ({providerId:item.providerId,connectionStatus:"online",generation:1,instances:[]}));
+  if (command === "plugin:dialog|open") return "/fixture/provider/codepet-provider.json";
+  if (command === "plugin:path|basename") return "codepet-provider.json";
+  if (command === "import_provider_plugin") {
+    runtimeInventory = [...runtimeInventory, {...runtime, version:"1.0.0", providerId:"dev.example.custom", displayName:"Custom Provider", installed:[{executablePath:"/fixture/custom", version:"1.0.0", source:"configured"}], resolvedExecutable:"/fixture/custom"}];
+    void emit("provider-connection-status", runtimeConnections());
+    return {providerId:"dev.example.custom", displayName:"Custom Provider", loaded:true};
+  }
+  if (command === "provider_connection_status") return runtimeConnections();
   if (command === "list_agent_runtimes" || command === "refresh_agent_runtimes") return runtimeInventory;
   if (command === "remote_access_status") return {phase:"available",activeSessionCount:0,pairingAvailable:true,displayName:"QA desktop",diagnostic:null};
   if (command === "query_event_journal") return {events:[],cursor:0,hasMore:false,dropped:0};

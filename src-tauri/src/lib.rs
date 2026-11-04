@@ -80,6 +80,17 @@ async fn detect_agent_runtime(
 }
 
 #[tauri::command]
+async fn import_provider_plugin(
+    app: AppHandle,
+    provider_host: tauri::State<'_, ProviderHostState>,
+    manifest_path: String,
+) -> Result<codepet_host::ProviderImportResult, String> {
+    let result = provider_host.import_plugin(manifest_path.into()).await?;
+    let _ = app.emit("provider-connection-status", provider_host.connection_views().await);
+    Ok(result)
+}
+
+#[tauri::command]
 async fn refresh_agent_runtimes(
     app: AppHandle,
     service: tauri::State<'_, AgentRuntimeService>,
@@ -88,7 +99,7 @@ async fn refresh_agent_runtimes(
     let _ = service;
     let providers = provider_host.runtime_views().await;
     let mut scans = tokio::task::JoinSet::new();
-    for runtime in providers {
+    for runtime in providers.into_iter().filter(|runtime| matches!(runtime.provider_id.as_str(), "dev.codepet.codex" | "dev.codepet.claude" | "dev.codepet.opencode")) {
         let host = provider_host.inner().clone();
         scans.spawn(async move { host.rescan_runtime(&runtime.provider_id).await });
     }
@@ -480,6 +491,7 @@ pub fn run() {
             list_agent_runtimes,
             detect_agent_runtime,
             refresh_agent_runtimes,
+            import_provider_plugin,
             set_agent_runtime_executable,
             clear_agent_runtime_executable,
             get_app_settings,

@@ -9,7 +9,7 @@
   import MainNavigation from "./lib/MainNavigation.svelte";
   import { createNavigation, connectionRoutes, isConnectionRoute, isSettingsRoute, routeTitle, type AppRoute } from "./lib/navigation";
   import WindowToolbar from "./lib/WindowToolbar.svelte";
-  import { basename, dirname, extname, join } from "@tauri-apps/api/path";
+  import { basename, extname, join } from "@tauri-apps/api/path";
   import PetSources from "./lib/PetSources.svelte";
   import type { PetSource } from "./lib/petGateway";
   import { confirm as confirmDialog, open } from "@tauri-apps/plugin-dialog";
@@ -45,9 +45,10 @@
   } from "@lucide/svelte";
   import { onMount, tick } from "svelte";
   import ProviderConnectionStatus from "./lib/ProviderConnectionStatus.svelte";
-  import { shouldShowRuntime } from "./lib/agentRuntime";
+  import ProviderRuntimeInfo from "./lib/ProviderRuntimeInfo.svelte";
+  import { shouldShowRuntime, isBuiltinProvider } from "./lib/agentRuntime";
   import { observeProviderRuntimes, type ProviderConnectionState } from "./lib/providerRuntimes";
-  import { getAppPaths, type AppPaths, checkAppUpdate, cutOutImageSubject, deletePet, detectAgentRuntime, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentRuntimeExecutable, setPathManagerData, setLaunchAtLoginEnabled, setPathManagerPets, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { getAppPaths, importProviderPlugin, type AppPaths, checkAppUpdate, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentRuntimeExecutable, setPathManagerData, setLaunchAtLoginEnabled, setPathManagerPets, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
   import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
@@ -60,7 +61,7 @@
   import { defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
   import { ignoredUpdateSettings, shouldPromptForUpdate, type UpdateCheckMode } from "./lib/updates";
   import UsagePanel from "./lib/UsagePanel.svelte";
-  import type { ActivityKeywordFilterSettings, AgentId, AgentRuntime, AgentRuntimeProviderId, AgentView, AppSettings, AppUpdate, DingTalkRobotChannel, PetEvent, PetLibraryView, RobotNotificationChannel } from "./lib/types";
+  import type { ActivityKeywordFilterSettings, AgentId, AgentRuntime, AgentView, AppSettings, AppUpdate, DingTalkRobotChannel, PetEvent, PetLibraryView, RobotNotificationChannel } from "./lib/types";
 
   type ActivityFilterKind = keyof ActivityKeywordFilterSettings;
 
@@ -426,28 +427,11 @@
     }
   }
 
-  function runtimeBusy(providerId: AgentRuntimeProviderId) {
-    return busyRuntime === "all" || busyRuntime === providerId;
-  }
-
   async function refreshRuntimes() {
     busyRuntime = "all";
     error = "";
     try {
       await runtimeObserver.refresh(refreshAgentRuntimes);
-    } catch (currentError) {
-      error = String(currentError);
-    } finally {
-      busyRuntime = null;
-    }
-  }
-
-  async function detectRuntime(providerId: AgentRuntimeProviderId) {
-    busyRuntime = providerId;
-    error = "";
-    try {
-      await detectAgentRuntime(providerId);
-      await runtimeObserver.refresh();
     } catch (currentError) {
       error = String(currentError);
     } finally {
@@ -484,14 +468,10 @@
       if (await basename(manifest) !== "codepet-provider.json") {
         throw new Error("请选择 Provider 的 codepet-provider.json 文件。");
       }
-      const directory = await dirname(manifest);
-      const current = normalizeSettings(await getAppSettings());
-      const directories = current.providerPlugins?.directories ?? [];
-      if (!directories.includes(directory)) {
-        settings = normalizeSettings(await updateAppSettings({ ...current,
-          providerPlugins: { directories: [...directories, directory] } }));
-      }
-      providerImportNotice = "Provider 目录已保存。重启应用后解析 manifest 并加载；实际状态以加载结果为准。";
+      const imported = await importProviderPlugin(manifest);
+      await runtimeObserver.refresh();
+      providerImportNotice = imported.loaded ? `${imported.displayName} 已导入并加载。`
+        : `${imported.displayName} 已导入。${imported.diagnostic ?? "此 Provider 在 manifest 中被禁用。"}`;
     } catch (currentError) {
       error = String(currentError);
     } finally {
@@ -1830,62 +1810,28 @@
     {:else if tab === "runtimes"}
       <div class="connection-workspace">
         <section class="runtime-section pixel-panel">
-          <div class="runtime-list">
-            {#each agentRuntimes.filter(shouldShowRuntime) as runtime (runtime.providerId)}
-              <article class="runtime-card">
-                <header class="runtime-card-head">
-                  <Cpu size={28} aria-hidden="true" />
-                  <div>
-                    <h3>{runtime.displayName}</h3>
-                    <ProviderConnectionStatus current={providerConnections.find((state) => state.providerId === runtime.providerId)} available={providerConnectionsLoaded} />
-                  </div>
-                </header>
-                <dl class="runtime-meta">
-                  <div>
-                    <dt><label for={`runtime-path-${runtime.providerId}`}>运行时路径</label></dt>
-                    <dd>
-                      <select id={`runtime-path-${runtime.providerId}`} value={runtime.resolvedExecutable ?? ""}
-                        disabled={runtimeBusy(runtime.providerId) || runtime.status === "loading" || !runtime.installed?.length}
-                        on:change={(event) => selectInstalledRuntime(runtime, event.currentTarget.value)}>
-                        {#if runtime.resolvedExecutable && !runtime.installed?.some((installation) => installation.executablePath === runtime.resolvedExecutable)}<option value={runtime.resolvedExecutable}>{runtime.resolvedExecutable}</option>{/if}
-                        {#if !runtime.resolvedExecutable}<option value="">{runtime.status === "loading" ? "检测中…" : "未检测到可用运行时"}</option>{/if}
-                        {#each runtime.installed ?? [] as installation}
-                          <option value={installation.executablePath} disabled={!!installation.incompatibilityReason}>
-                            {installation.executablePath}{installation.incompatibilityReason ? `（${installation.incompatibilityReason}）` : ""}
-                          </option>
-                        {/each}
-                      </select>
-                    </dd>
-                  </div>
-                  <div><dt>版本</dt><dd>{runtime.version ?? "—"}</dd></div>
-                </dl>
-
-                {#if runtime.diagnostic}
-                  <div class="runtime-diagnostic" role="status">
-                    <ShieldAlert size={17} />
-                    <div>
-                      <strong>{runtime.diagnostic.code}</strong>
-                      <p>{runtime.diagnostic.message}</p>
-                    </div>
-                  </div>
-                {/if}
-
-                <div class="runtime-actions">
-                  <button type="button" disabled={runtimeBusy(runtime.providerId) || runtime.status === "loading"} on:click={() => detectRuntime(runtime.providerId)}>
-                    <RefreshCw size={16} /> {runtimeBusy(runtime.providerId) ? "检测中" : "重新检测"}
-                  </button>
-                </div>
-              </article>
-            {:else}
-              <div class="empty-state">
-                <Cpu size={20} />
-                <strong>{agentRuntimes.length ? "未检测到已安装的运行时" : "运行时状态尚未加载"}</strong>
-                <button type="button" disabled={busyRuntime !== null} on:click={refreshRuntimes}><RefreshCw size={16} /> 重新检测</button>
-              </div>
-            {/each}
+          <div class="runtime-group">
+            <h3 class="runtime-group-title">内置 Provider</h3>
+            <div class="runtime-list">
+              {#each agentRuntimes.filter((runtime) => isBuiltinProvider(runtime.providerId) && shouldShowRuntime(runtime)) as runtime (runtime.providerId)}
+                <ProviderRuntimeInfo {runtime} connection={providerConnections.find((state) => state.providerId === runtime.providerId)} connectionsLoaded={providerConnectionsLoaded} busy={busyRuntime === "all" || busyRuntime === runtime.providerId} onSelect={selectInstalledRuntime} />
+              {:else}
+                <p class="runtime-empty">{agentRuntimes.length ? "未检测到已安装的运行时" : "运行时状态尚未加载"}</p>
+              {/each}
+            </div>
+            <div class="runtime-actions">
+              <button type="button" disabled={busyRuntime !== null || providerImportBusy} on:click={refreshRuntimes}><RefreshCw size={16} /> {busyRuntime === "all" ? "检测中…" : "重新检测"}</button>
+            </div>
           </div>
-          {#if agentRuntimes.some((runtime) => !shouldShowRuntime(runtime)) && agentRuntimes.some(shouldShowRuntime)}
-            <div class="runtime-actions"><button type="button" disabled={busyRuntime !== null} on:click={refreshRuntimes}><RefreshCw size={16} /> 检测其他运行时</button></div>
+          {#if agentRuntimes.some((runtime) => !isBuiltinProvider(runtime.providerId))}
+            <div class="runtime-group">
+              <h3 class="runtime-group-title">自定义 Provider</h3>
+              <div class="runtime-list">
+                {#each agentRuntimes.filter((runtime) => !isBuiltinProvider(runtime.providerId)) as runtime (runtime.providerId)}
+                  <ProviderRuntimeInfo {runtime} connection={providerConnections.find((state) => state.providerId === runtime.providerId)} connectionsLoaded={providerConnectionsLoaded} busy={busyRuntime === "all" || busyRuntime === runtime.providerId} onSelect={selectInstalledRuntime} />
+                {/each}
+              </div>
+            </div>
           {/if}
           <div class="runtime-custom-provider">
             <h3>添加自定义 Provider</h3>

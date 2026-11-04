@@ -9,6 +9,7 @@ import {
   detectAgentRuntime,
   getLaunchAtLoginEnabled,
   importPetImage,
+  importProviderPlugin,
   installAppUpdate,
   listAgentRuntimes,
   recentEvents,
@@ -141,6 +142,13 @@ describe("agentRuntimes", () => {
     expect(invoke).toHaveBeenNthCalledWith(1, "list_agent_runtimes");
     expect(invoke).toHaveBeenNthCalledWith(2, "detect_agent_runtime", { providerId: "codex" });
     expect(invoke).toHaveBeenNthCalledWith(3, "refresh_agent_runtimes");
+  });
+
+  it("imports a selected manifest through the native hot-load endpoint", async () => {
+    const result = {providerId: "custom", displayName: "Custom", loaded: true};
+    vi.mocked(invoke).mockResolvedValue(result);
+    await expect(importProviderPlugin("/plugins/custom/codepet-provider.json")).resolves.toEqual(result);
+    expect(invoke).toHaveBeenCalledWith("import_provider_plugin", {manifestPath: "/plugins/custom/codepet-provider.json"});
   });
 
   it("sets and clears only a selected executable path", async () => {
