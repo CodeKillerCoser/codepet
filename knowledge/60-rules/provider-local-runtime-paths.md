@@ -78,3 +78,10 @@ OpenCode 会在 XDG root 下继续使用自己的 `opencode` 子目录。设置�
 ## 验证方式
 
 SDK `local_runtime` 测试覆盖 `.exe`、npm shim、空格/中文路径、OpenCode XDG 映射和路径越界拒绝；三个 Provider 的 storage_path_tests 覆盖安装/数据分离与相对路径拒绝。Plugin Catalog 测试覆盖 bundled、应用数据目录和附加目录。`native_runtime` 忽略测试用于真实二进制、隔离数据目录验证；不要将本机 smoke 描述为所有版本和所有操作已验证。macOS App 可移动，因此发布验收应通过 Tauri resource API 结果检查 adapter，不能只检查 `/Applications` 的字面路径。
+
+
+## macOS Codex bundle 兼容
+
+新增应用目录布局时，必须保留 PATH/登录 shell/npm 发现和旧 bundle 候选。Codex.app 与 ChatGPT.app 同时兼容 `Contents/Resources/codex` 及 `Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`；布局规则由 Codex Provider 持有，复用 SDK 版本探测与规范化去重。不要用当前聊天环境的 PATH 代替 GUI 启动环境验收。回归需要旧/新目录共存、仅新目录、缺失文件、别名去重及精简 PATH 的本机扫描，详见 [ChatGPT 内置 Codex 新目录漏检](../40-runbooks/codex-chatgpt-bundled-cli-layout.md)。
+
+运行时列表只对确认缺失的内置工具隐藏条目；扫描失败、版本不兼容和自定义 Provider 不得被静默隐藏。隐藏后保留全量重新检测入口。

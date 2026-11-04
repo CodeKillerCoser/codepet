@@ -39,6 +39,19 @@ let appSettings: any = {
   providerPlugins: {directories: []}, updates: {},
 };
 const runtime = {providerId:"dev.codepet.claude", displayName:"Claude", status:"ready", source:"configured", resolvedExecutable:"D:/Software/Claude/claude.exe", configuredExecutable:"D:/Software/Claude/claude.exe", version:"2.1.263", installed:[]};
+// Inventory scenarios exercise visibility without accessing installed tools.
+const runtimeCase = new URLSearchParams(location.search).get("runtimeCase");
+const missingRuntime = (providerId: string, displayName: string) => ({
+  providerId, displayName, status: "unavailable", resolvedExecutable: null,
+  configuredExecutable: null, source: null, version: null, installed: [],
+  diagnostic: { code: "runtime-not-found", message: "No compatible local runtime" },
+});
+const absentRuntimes = [missingRuntime("dev.codepet.claude", "Claude"), missingRuntime("dev.codepet.opencode", "OpenCode")];
+const codexPath = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
+const runtimeInventory = runtimeCase === "missing" ? [...absentRuntimes, missingRuntime("dev.codepet.codex", "Codex")]
+  : runtimeCase === "chatgpt" ? [...absentRuntimes, { ...runtime, providerId: "dev.codepet.codex", displayName: "Codex", source: "macos-application", configuredExecutable: null,
+    resolvedExecutable: codexPath, version: "0.166.0-alpha.5.1", installed: [{executablePath: codexPath, version: "0.166.0-alpha.5.1", source: "macos-application"}] }]
+  : [runtime];
 mockIPC((command, raw) => {
   if (command === "webcontent_info" || command === "load_latest_webcontent") {
     const scenario = new URLSearchParams(location.search).get("webcontentCase");
@@ -57,8 +70,8 @@ mockIPC((command, raw) => {
   if (command === "path_manager_get") return {install:"/fixture/install",data:"/fixture/data",workspace:"/fixture/workspace"};
   if (["recent_events", "list_remote_clients", "list_remote_pairing_requests"].includes(command)) return [];
   if (["record_perf_event", "check_app_update"].includes(command)) return null;
-  if (command === "provider_connection_status") return [{providerId:runtime.providerId,connectionStatus:"online",generation:1,instances:[]}];
-  if (command === "list_agent_runtimes") return [runtime];
+  if (command === "provider_connection_status") return runtimeInventory.map((item) => ({providerId:item.providerId,connectionStatus:"online",generation:1,instances:[]}));
+  if (command === "list_agent_runtimes" || command === "refresh_agent_runtimes") return runtimeInventory;
   if (command === "remote_access_status") return {phase:"available",activeSessionCount:0,pairingAvailable:true,displayName:"QA desktop",diagnostic:null};
   if (command === "query_event_journal") return {events:[],cursor:0,hasMore:false,dropped:0};
   if (command === "pet_gateway_request") { const r=args.request; return {id:r.id,method:r.method,protocolVersion:r.protocolVersion,response:{status:"ok",result:{snapshot:{sources:[{id:"codex",displayName:"Codex",enabled:true,status:"receiving"},{id:"claude",displayName:"Claude Code",enabled:true,status:"installed"},{id:"opencode",displayName:"OpenCode",enabled:false,status:"disabled"}],tasks:[]}}}}; }

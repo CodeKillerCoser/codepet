@@ -90,3 +90,13 @@ Provider 负责候选发现和版本验证，Host 通过 `runtime.select` 校验
 
 - 真实安装版各平台发现候选的完整布局未全部覆盖；心跳重试与实例恢复边界见连接架构文档。
 - Windows 动态布局本次未做实机验证。
+
+## 2026-11-05 运行时列表展示调整
+
+主窗口运行时列表改为无外框条目，相邻运行时之间使用分割线。名称与 Provider/Harness 状态位于顶部，路径和版本采用左标签、右值；窄窗口改为上下排列。路径下拉复用 Provider 返回的 installed 列表与既有 runtime.select 接口，不兼容候选保持禁用；旧快照只返回 resolvedExecutable 时仍显示当前路径。重新检测放在每项右下角，空列表保留全量检测入口，真实诊断继续显示。
+
+自定义 Provider 的加号入口通过原生文件选择器接收 codepet-provider.json，将其目录加入现有 providerPlugins.directories。此入口只保存目录，不声称 manifest 已校验或 Provider 已加载；成功后明确提示重启应用，由已有启动 catalog 流程解析和加载。当前未实现运行中的 catalog 热加载，也未解决 Codex 新安装布局识别或按本机安装情况控制 Provider 启动的问题。
+
+涉及模块：App.svelte 负责路径选择、重新检测与目录登记；main-window.css 负责分割线、信息行与窄屏布局；connections.test.ts 更新旧控件断言。风险包括不兼容路径误选、空列表失去检测入口与窄屏动作被裁剪，分别由候选 disabled、空状态按钮和浏览器模拟 IPC 页面检查覆盖。
+
+验证：npm run build；npx vitest run frontend/connections.test.ts frontend/lib/providerRuntimes.test.ts frontend/lib/agentRuntime.test.ts frontend/styles.test.ts（44 项）。浏览器模拟 IPC 检查桌面和窄屏展示；未执行真实自定义 Provider 启动或本机安装检测验收。

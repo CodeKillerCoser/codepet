@@ -15,13 +15,13 @@ describe("connections workspace", () => {
 
     expect(navigationSource).toContain('route: "connections", label: "连接接入", icon: Cable');
     expect(connectionSource.indexOf('<h3>设备</h3>')).toBeGreaterThan(-1);
-    expect(connectionSource.indexOf('<h3>设备</h3>')).toBeLessThan(connectionSource.indexOf('<h3>本机运行时</h3>'));
+    expect(connectionSource.indexOf('<h3>设备</h3>')).toBeLessThan(connectionSource.indexOf('class="runtime-list"'));
     expect(connectionSource).toContain("on:click={refreshRuntimes}");
     expect(connectionSource).toContain("on:click={() => detectRuntime(runtime.providerId)}");
-    expect(connectionSource).toContain("on:click={() => chooseRuntimeExecutable(runtime)}");
-    expect(connectionSource).toContain("on:click={() => restoreAutomaticRuntime(runtime)}");
-    expect(connectionSource).toContain("<dt>用户选择</dt>");
-    expect(connectionSource).toContain('runtime.configuredExecutable ?? "自动选择"');
+    expect(connectionSource).toContain('on:change={(event) => selectInstalledRuntime(runtime, event.currentTarget.value)}');
+    expect(connectionSource).toContain('disabled={!!installation.incompatibilityReason}');
+    expect(connectionSource).toContain('for={`runtime-path-${runtime.providerId}`}');
+    expect(connectionSource).not.toContain('<dt>用户选择</dt>');
   });
 
   it("starts with bridge-owned device and pairing state empty", () => {

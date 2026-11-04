@@ -3201,9 +3201,7 @@ fn discover_codex_candidates() -> Vec<RuntimeCandidate> {
     }
     candidates.extend(local_runtime::discover("codex", "@openai/codex"));
     #[cfg(target_os = "macos")]
-    for app in ["Codex.app", "ChatGPT.app"] {
-        candidates.push(local_runtime::candidate(Path::new("/Applications").join(app).join("Contents").join("Resources").join("codex"), codepet_provider_sdk::RuntimeCandidateSource::MacosApplication));
-    }
+    candidates.extend(macos_codex_candidates(Path::new("/Applications")));
     #[cfg(windows)]
     if let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
         let mut roots = vec![local.join("OpenAI").join("Codex").join("bin")];
@@ -3224,6 +3222,97 @@ fn discover_codex_candidates() -> Vec<RuntimeCandidate> {
         }
     }
     candidates
+}
+
+// Product bundle layouts belong to the Provider; shared discovery still owns
+// PATH/npm lookup, executable validation and canonical-path deduplication.
+#[cfg(target_os = "macos")]
+fn macos_codex_candidates(applications: &Path) -> Vec<RuntimeCandidate> {
+    ["Codex.app", "ChatGPT.app"].into_iter().flat_map(|app| {
+        let resources = applications.join(app).join("Contents/Resources");
+        ["codex", "codex-cli/CodexCLI.app/Contents/MacOS/codex"].into_iter().map(move |relative| {
+            local_runtime::candidate(resources.join(relative), codepet_provider_sdk::RuntimeCandidateSource::MacosApplication)
+        })
+    }).collect()
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_runtime_layout_tests {
+    use super::*;
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    fn executable(path: &Path, version: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, format!("#!/bin/sh\nprintf 'codex-cli {version}\\n'\n")).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    async fn inventory(root: PathBuf) -> RuntimeGetInstalledResponse {
+        local_runtime::runtime_inventory("codex", "@openai/codex", None,
+            move || macos_codex_candidates(&root),
+            |candidate, timeout| inspect_runtime_candidate(candidate, "codex", timeout, local_runtime::RuntimeProbeControl::default()),
+        ).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn old_codex_old_chatgpt_and_nested_cli_coexist() {
+        let dir = tempfile::tempdir().unwrap();
+        for (relative, version) in [
+            ("Codex.app/Contents/Resources/codex", "0.150.0"),
+            ("ChatGPT.app/Contents/Resources/codex", "0.151.0"),
+            ("ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "0.166.0"),
+        ] { executable(&dir.path().join(relative), version); }
+        let result = inventory(dir.path().to_path_buf()).await;
+        assert_eq!(result.harness_list.len(), 3);
+        assert!(result.scan_error.is_none(), "{:?}", result.scan_error);
+        for version in ["0.150.0", "0.151.0", "0.166.0"] {
+            assert!(result.harness_list.iter().any(|r| r.version == version));
+        }
+    }
+
+    #[tokio::test]
+    async fn nested_cli_is_found_without_legacy_entry_and_aliases_are_deduplicated() {
+        let dir = tempfile::tempdir().unwrap();
+        let resources = dir.path().join("ChatGPT.app/Contents/Resources");
+        let native = resources.join("codex-cli/CodexCLI.app/Contents/MacOS/codex");
+        executable(&native, "0.166.0-alpha.5.1");
+        let result = inventory(dir.path().to_path_buf()).await;
+        assert_eq!(result.harness_list.len(), 1);
+        assert_eq!(result.harness_list[0].version, "0.166.0-alpha.5.1");
+        symlink(&native, resources.join("codex")).unwrap();
+        assert_eq!(inventory(dir.path().to_path_buf()).await.harness_list.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn missing_bundles_are_not_reported_as_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = inventory(dir.path().to_path_buf()).await;
+        assert!(result.harness_list.is_empty());
+        assert!(result.scan_error.is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires locally installed ChatGPT; inventory only, no settings or model requests"]
+    async fn native_chatgpt_discovery_with_minimal_path() {
+        if std::env::var_os("CODEPET_MACOS_LAYOUT_PROBE").is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--ignored", "--exact", "provider::macos_runtime_layout_tests::native_chatgpt_discovery_with_minimal_path", "--nocapture"])
+                .env("CODEPET_MACOS_LAYOUT_PROBE", "1")
+                .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+                .env_remove("CODE_PET_CODEX_BIN")
+                .output().unwrap();
+            assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            println!("{}", String::from_utf8_lossy(&output.stdout));
+            return;
+        }
+        let result = local_runtime::runtime_inventory("codex", "@openai/codex", None,
+            discover_codex_candidates,
+            |candidate, timeout| inspect_runtime_candidate(candidate, "codex", timeout, local_runtime::RuntimeProbeControl::default()),
+        ).await.unwrap();
+        let native = std::fs::canonicalize("/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex").unwrap();
+        assert!(result.harness_list.iter().any(|r| Path::new(&r.executable_path) == native));
+        for runtime in result.harness_list { println!("{} {}", runtime.executable_path, runtime.version); }
+    }
 }
 
 fn inspect_runtime_candidate(

@@ -37,3 +37,11 @@ export function replaceAgentRuntime(runtimes: AgentRuntime[], replacement: Agent
 export function canRestoreAutomaticDetection(runtime: AgentRuntime): boolean {
   return Boolean(runtime.configuredExecutable);
 }
+
+/** Hide only confirmed absence; discovery failures and custom providers remain actionable. */
+export function shouldShowRuntime(runtime: AgentRuntime): boolean {
+  const bundled = ["dev.codepet.codex", "dev.codepet.claude", "dev.codepet.opencode"].includes(runtime.providerId);
+  return !bundled || runtime.status !== "unavailable"
+    || Boolean(runtime.resolvedExecutable || runtime.configuredExecutable || runtime.installed?.length)
+    || runtime.diagnostic?.code !== "runtime-not-found";
+}

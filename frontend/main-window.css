@@ -290,3 +290,28 @@
 
 .main-theme .page-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .main-theme .page-heading-row button { flex-shrink: 0; }
+
+/* Local runtime inventory uses divided rows rather than nested cards. */
+.main-theme .runtime-section { padding: 0; border: 0; background: transparent; box-shadow: none; }
+.main-theme .runtime-list { gap: 0; }
+.main-theme .runtime-card { border: 0; border-radius: 0; padding: 24px 0; background: transparent; gap: 20px; }
+.main-theme .runtime-card + .runtime-card { border-top: 1px solid var(--app-border); }
+.main-theme .runtime-card-head { display: flex; justify-content: flex-start; align-items: center; gap: 18px; }
+.main-theme .runtime-card-head > svg { flex-shrink: 0; color: var(--app-muted); }
+.main-theme .runtime-card-head > div { min-width: 0; display: grid; gap: 8px; }
+.main-theme .runtime-meta { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.main-theme .runtime-meta > div { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 1fr); align-items: center; gap: 24px; padding: 16px 0; border: 0; border-radius: 0; background: transparent; }
+.main-theme .runtime-meta > div + div { border-top: 1px solid var(--app-border); }
+.main-theme .runtime-meta dd { text-align: right; overflow-wrap: anywhere; }
+.main-theme .runtime-meta select { width: 100%; min-width: 0; text-overflow: ellipsis; }
+.main-theme .runtime-actions { justify-content: flex-end; }
+@media (max-width: 640px) {
+  .main-theme .runtime-meta > div { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .main-theme .runtime-meta dd { text-align: left; }
+}
+
+.main-theme .runtime-custom-provider { display: grid; justify-items: center; gap: 16px; margin-top: 24px; padding: 28px 20px; border: 1px dashed var(--app-border); border-radius: 12px; }
+.main-theme .runtime-custom-provider h3 { margin: 0; font-size: var(--font-size-md); }
+.main-theme .runtime-custom-provider p { margin: 0; color: var(--app-muted); overflow-wrap: anywhere; }
+.main-theme .runtime-add-provider { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid var(--app-border); border-radius: 10px; background: transparent; color: var(--app-text); }
+.main-theme .runtime-add-provider:hover:not(:disabled) { background: var(--color-main-hover); }

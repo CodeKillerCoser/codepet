@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  shouldShowRuntime,
   agentRuntimeSourceLabel,
   agentRuntimeStatusMeta,
   canRestoreAutomaticDetection,
@@ -44,5 +45,24 @@ describe("agent runtime UI state", () => {
     expect(replaceAgentRuntime([runtime(), claude], replacement)).toEqual([replacement, claude]);
     expect(canRestoreAutomaticDetection(runtime())).toBe(false);
     expect(canRestoreAutomaticDetection(runtime({ configuredExecutable: "/manual/codex" }))).toBe(true);
+  });
+});
+
+
+describe("runtime list visibility", () => {
+  const missing = (providerId: string) => runtime({ providerId, status: "unavailable", resolvedExecutable: null, diagnostic: { code: "runtime-not-found", message: "not installed" } });
+  it("hides each bundled provider only after confirmed absence", () => {
+    for (const id of ["dev.codepet.codex", "dev.codepet.claude", "dev.codepet.opencode"]) {
+      expect(shouldShowRuntime(missing(id))).toBe(false);
+      expect(shouldShowRuntime({ ...missing(id), status: "loading" })).toBe(true);
+      expect(shouldShowRuntime({ ...missing(id), resolvedExecutable: "/tools/codex" })).toBe(true);
+    }
+  });
+  it("preserves custom providers, failures and incompatible installations", () => {
+    expect(shouldShowRuntime(missing("custom.provider"))).toBe(true);
+    for (const code of ["runtime-scan-failed", "provider-unavailable"]) {
+      expect(shouldShowRuntime({ ...missing("dev.codepet.codex"), diagnostic: { code, message: "failure" } })).toBe(true);
+    }
+    expect(shouldShowRuntime({ ...missing("dev.codepet.codex"), installed: [{ executablePath: "/old/codex", version: "0.1", source: "current-path", incompatibilityReason: "too old" }] })).toBe(true);
   });
 });
