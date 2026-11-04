@@ -207,7 +207,6 @@
 }
 
 .main-theme .window-toolbar .settings-entry { flex-shrink: 0; margin-right: 8px; }
-.main-theme .window-toolbar .settings-entry[aria-pressed="true"] { background: var(--color-main-selected); color: var(--color-main-selected-text); }
 
 /* Navigation groups separate daily work from preferences without duplicating forms. */
 .main-theme .settings-workspace { display: grid; gap: 28px; max-width: 960px; width: 100%; margin-inline: auto; min-width: 0; }

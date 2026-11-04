@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ArrowLeft, ArrowRight, Copy, Minus, PanelLeft, Settings, Square, X } from "@lucide/svelte";
+  import { ArrowLeft, ArrowRight, Copy, Home, Minus, PanelLeft, Settings, Square, X } from "@lucide/svelte";
   import { createWindowChrome } from "./windowChrome";
 
   export let collapsed = false;
   export let onError: (message: string) => void;
   export let canGoBack = false;
   export let canGoForward = false;
+  export let onHome: () => void = () => {};
   export let onBack: () => void = () => {};
   export let onForward: () => void = () => {};
   export let settingsActive = false;
@@ -34,6 +35,7 @@
   <button class="window-toolbar-button" type="button" aria-label={collapsed ? "展开导航栏" : "收起导航栏"} aria-expanded={!collapsed} aria-controls="main-sidebar" on:click={() => collapsed = !collapsed}>
     <PanelLeft size={16} strokeWidth={1.75} />
   </button>
+  <button class="window-toolbar-button" type="button" aria-label="返回主界面" title="返回主界面" on:click={onHome}><Home size={16} /></button>
   <button class="window-toolbar-button" type="button" aria-label="后退" title="后退" disabled={!canGoBack} on:click={onBack}><ArrowLeft size={16} /></button>
   <button class="window-toolbar-button" type="button" aria-label="前进" title="前进" disabled={!canGoForward} on:click={onForward}><ArrowRight size={16} /></button>
   </div>
