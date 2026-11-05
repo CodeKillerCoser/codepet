@@ -1,6 +1,8 @@
 pub(crate) mod diagnostics;
 mod framing;
+mod path_policy;
 use diagnostics::Diagnostic;
+use path_policy::PathPolicy;
 use serde_json::json;
 pub(crate) mod cloud;
 
@@ -67,9 +69,31 @@ pub(crate) async fn answer_offer_configured(
     gateway: Arc<ProviderGatewayService>,
     access: Arc<RemoteAccessManager>,
     credential: RemoteCredential,
-    mut registration: SessionRegistration,
+    registration: SessionRegistration,
     configuration: RTCConfiguration,
 ) -> HostResult<RTCSessionDescription> {
+    answer_offer_with_policy(
+        offer,
+        gateway,
+        access,
+        credential,
+        registration,
+        configuration,
+        PathPolicy::Auto,
+    )
+    .await
+}
+
+async fn answer_offer_with_policy(
+    mut offer: RTCSessionDescription,
+    gateway: Arc<ProviderGatewayService>,
+    access: Arc<RemoteAccessManager>,
+    credential: RemoteCredential,
+    mut registration: SessionRegistration,
+    mut configuration: RTCConfiguration,
+    path_policy: PathPolicy,
+) -> HostResult<RTCSessionDescription> {
+    let settings = path_policy.configure(&mut configuration);
     let diagnostic = Diagnostic::new(&offer.sdp);
     diagnostic.emit("connect.start", json!({"iceServerCount":configuration.ice_servers.len(),"policy":format!("{:?}",configuration.ice_transport_policy)}));
     diagnostic.description("remoteOffer", &offer.sdp);
@@ -90,8 +114,12 @@ pub(crate) async fn answer_offer_configured(
     {
         return Err(rtc_error("invalid RTC offer"));
     }
+    // Reparse after filtering: RTCSessionDescription also caches parsed SDP.
+    offer = RTCSessionDescription::offer(path_policy.filter_sdp(&offer.sdp)?)
+        .map_err(|_| rtc_error("invalid RTC offer SDP"))?;
     let peer = Arc::new(
         APIBuilder::new()
+            .with_setting_engine(settings)
             .build()
             .new_peer_connection(configuration)
             .await
@@ -179,13 +207,15 @@ pub(crate) async fn answer_offer_configured(
             .local_description()
             .await
             .ok_or_else(|| rtc_error("missing RTC answer"))?;
+        let answer = RTCSessionDescription::answer(path_policy.filter_sdp(&answer.sdp)?)
+            .map_err(|_| rtc_error("invalid RTC answer SDP"))?;
         diagnostic.description("localAnswer", &answer.sdp);
         Ok::<_, HostError>((answer, dc, channel, closed))
     };
     let (answer, dc, channel, mut closed) = tokio::select! {
         result = timeout(negotiation_timeout, setup) => match result {
             Ok(Ok(value)) => value,
-            Ok(Err(error)) => { diagnostic.emit("negotiation.failed",json!({"cause":"setupError"})); diagnostic.stats(&peer,"negotiationFailed").await; return Err(error); },
+            Ok(Err(error)) => { diagnostic.emit("negotiation.failed",json!({"cause":"setupError","code":error.code,"reason":error.message})); diagnostic.stats(&peer,"negotiationFailed").await; return Err(error); },
             Err(_) => { diagnostic.emit("negotiation.failed",json!({"cause":"timeout"})); diagnostic.stats(&peer,"negotiationTimeout").await; return Err(rtc_error("RTC negotiation timed out")); },
         },
         _ = registration.cancelled() => return Err(rtc_error("RTC admission cancelled")),

@@ -1,9 +1,13 @@
 use ring::digest::{digest, SHA256};
 use serde_json::{json, Value};
-use std::sync::{mpsc, Arc, OnceLock};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    mpsc, Arc, OnceLock,
+};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use webrtc::peer_connection::RTCPeerConnection;
 
+static DROPPED: AtomicU64 = AtomicU64::new(0);
 static SINK: OnceLock<mpsc::SyncSender<String>> = OnceLock::new();
 
 /// A bounded asynchronous bridge to the embedding application's rotating log.
@@ -57,7 +61,12 @@ pub(super) fn address(value: &str, salt: &str) -> Value {
         }
         Err(_) => "hostname",
     };
-    json!({"scope":scope,"addressId":id(&format!("{salt}:{value}"))})
+    let family = match value.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(_)) => "IPv4",
+        Ok(std::net::IpAddr::V6(_)) => "IPv6",
+        Err(_) => "hostname",
+    };
+    json!({"scope":scope,"family":family,"addressId":id(&format!("{salt}:{value}"))})
 }
 
 pub(super) fn candidate(line: &str, salt: &str) -> Value {
@@ -89,9 +98,11 @@ impl Diagnostic {
     pub fn emit(&self, event: &str, fields: Value) {
         let line = json!({"schema":"codepet.rtc.v1","service":"host","offerId":self.offer_id,
             "timestampUnixMs":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),
-            "elapsedMs":self.started.elapsed().as_millis(),"event":event,"fields":fields}).to_string();
+            "elapsedMs":self.started.elapsed().as_millis(),"diagnosticDroppedTotal":DROPPED.load(Ordering::Relaxed),"event":event,"fields":fields}).to_string();
         if let Some(sink) = SINK.get() {
-            let _ = sink.try_send(line);
+            if sink.try_send(line).is_err() {
+                DROPPED.fetch_add(1, Ordering::Relaxed);
+            }
         } else {
             eprintln!("{line}");
         }
@@ -205,6 +216,8 @@ mod tests {
         )
         .to_string();
         assert!(value.contains("benchmarkTun"));
+        assert_eq!(address("2001:db8::1", "test")["family"], "IPv6");
+        assert_eq!(address("192.0.2.1", "test")["family"], "IPv4");
         assert!(!value.contains("198.18.0.1") && !value.contains("secret"));
         let stats = sanitize_stat(
             &json!({"ip":"203.0.113.1","url":"turn:user:password@host","username":"secret","requestsSent":2}),

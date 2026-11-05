@@ -1,7 +1,7 @@
 """Root-only incremental diagnostics deployment; preserve identities and ICE policy.
 
 Usage on the VPS: python3 deploy_diagnostics.py /path/to/new/server.py
-Backups are kept next to each replaced file; health failure restores all three.
+Backups stay outside service include directories; health failure restores all three.
 """
 import datetime
 import os
@@ -16,6 +16,17 @@ import time
 import urllib.request
 
 
+def backup_targets(targets, directory):
+    directory.mkdir(parents=True, exist_ok=False, mode=0o700)
+    backups = {}
+    for target in targets:
+        backup = directory / target.relative_to('/')
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(target, backup)
+        backups[target] = backup
+    return backups
+
+
 def deploy(source):
     py_compile.compile(str(source), doraise=True)
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
@@ -23,11 +34,7 @@ def deploy(source):
     turn = Path('/etc/coturn/turnserver.conf')
     rotation = Path('/etc/logrotate.d/coturn')
     targets = [server, turn, rotation]
-    backups = {}
-    for target in targets:
-        backup = target.with_name(target.name + '.before-diagnostics-' + stamp)
-        shutil.copy2(target, backup)
-        backups[target] = backup
+    backups = backup_targets(targets, Path('/opt/codepet-signal/backups') / ('diagnostics-' + stamp))
     try:
         # Writing existing files retains service ownership and permissions.
         server.write_bytes(source.read_bytes())
@@ -48,7 +55,7 @@ def deploy(source):
     su coturn coturn
 }
 ''')
-        subprocess.run(['logrotate', '--debug', str(rotation)], check=True, capture_output=True)
+        subprocess.run(['logrotate', '--debug', '/etc/logrotate.conf'], check=True, capture_output=True)
         subprocess.run(['systemctl', 'restart', 'codepet-signal', 'coturn'], check=True)
         subprocess.run(['systemctl', 'is-active', '--quiet', 'codepet-signal', 'coturn'], check=True)
         for attempt in range(20):

@@ -43,6 +43,30 @@ class AdmissionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call('PUT', '/v1/clients', 'host-token', {'clients': []})).status, 200)
         self.assertEqual((await self.call('GET', '/v1/ice', 'client-token')).status, 401)
 
+    async def test_parallel_attempts_are_independent_bounded_and_cancellable(self):
+        await self.call('PUT', '/v1/clients', 'host-token', {'clients': [{'id': 'client-a', 'tokenHash': digest('client-token')}]})
+        envelope = {'payload': base64.b64encode(b'opaque').decode(), 'signature': base64.b64encode(bytes(64)).decode()}
+        for n in range(12):
+            self.assertEqual((await self.call('POST', '/v1/offers', 'client-token', {'attempt': f'path-{n}', 'envelope': envelope})).status, 200)
+        self.assertEqual((await self.call('POST', '/v1/offers', 'client-token', {'attempt': 'overflow', 'envelope': envelope})).status, 503)
+        batch = await (await self.call('GET', '/v1/offers?limit=2', 'host-token')).json()
+        self.assertEqual([v['attempt'] for v in batch['offers']], ['path-0', 'path-1'])
+        rest = await (await self.call('GET', '/v1/offers', 'host-token')).json()
+        self.assertEqual(len(rest['offers']), 10)
+        # Reverse completion order must not replace another path's answer.
+        for n in [2, 0, 1]:
+            reply = dict(envelope, payload=base64.b64encode(str(n).encode()).decode())
+            self.assertEqual((await self.call('POST', '/v1/answers', 'host-token', {'client': 'client-a', 'attempt': f'path-{n}', 'envelope': reply})).status, 200)
+            result = await (await self.call('GET', f'/v1/answer?attempt=path-{n}', 'client-token')).json()
+            self.assertEqual(result['answer'], reply)
+        self.assertEqual((await self.call('DELETE', '/v1/offers?attempt=path-0', 'host-token')).status, 403)
+        self.assertEqual((await self.call('DELETE', '/v1/offers?attempt=path-0', 'client-token')).status, 200)
+        self.assertEqual((await self.call('GET', '/v1/answer?attempt=path-0', 'client-token')).status, 404)
+        self.assertEqual((await self.call('GET', '/v1/answer?attempt=path-1', 'client-token')).status, 200)
+        self.assertEqual((await self.call('POST', '/v1/offers', 'client-token', {'attempt': 'replacement', 'envelope': envelope})).status, 200)
+        await self.call('PUT', '/v1/clients', 'host-token', {'clients': []})
+        self.assertEqual((await (await self.call('GET', '/v1/offers', 'host-token')).json())['offers'], [])
+
     async def test_diagnostics_correlate_mailbox_without_logging_secrets(self):
         import json
         secret_payload = base64.b64encode(b'private SDP and ICE password').decode()

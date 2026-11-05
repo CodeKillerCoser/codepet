@@ -172,11 +172,10 @@ def create_app(db_path, turn_secret, public_ip):
         host, client = actor(request, 'client')
         value = await body(request)
         attempt = identifier(value.get('attempt'))
-        key = (host, client)
-        previous = pending.get(key)
-        if previous and previous['attempt'] == attempt:
+        key = (host, client, attempt)
+        if key in pending:
             raise web.HTTPConflict()
-        if len(pending) >= 128 and key not in pending:
+        if len(pending) >= 128 or sum(k[:2] == key[:2] for k in pending) >= 12:
             raise web.HTTPServiceUnavailable()
         pending[key] = {'attempt': attempt, 'envelope': envelope(value.get('envelope')),
                         'answer': None, 'delivered': False, 'deadline': time.monotonic() + 60}
@@ -185,19 +184,27 @@ def create_app(db_path, turn_secret, public_ip):
 
     async def offers(request):
         host, _ = actor(request, 'host')
-        # Bounded polling, one offer per client; no unbounded tasks/mailboxes.
+        try:
+            limit = int(request.query.get('limit', '32'))
+        except ValueError:
+            raise web.HTTPBadRequest()
+        if not 1 <= limit <= 32:
+            raise web.HTTPBadRequest()
+        # Attempts coexist; polling only consumes what the Host can admit.
         result = []
-        for (owner, client), value in pending.items():
+        for (owner, client, _), value in pending.items():
             if owner == host and not value['delivered']:
                 result.append({'client': client, 'attempt': value['attempt'], 'envelope': value['envelope']})
                 value['delivered'] = True
                 diagnostic('offer.delivered', host=host, client=client, attempt=value['attempt'], ageMs=round((time.monotonic()-(value['deadline']-60))*1000))
+                if len(result) >= limit:
+                    break
         return web.json_response({'offers': result})
 
     async def answer(request):
         host, _ = actor(request, 'host')
         value = await body(request)
-        key = (host, identifier(value.get('client')))
+        key = (host, identifier(value.get('client')), identifier(value.get('attempt')))
         entry = pending.get(key)
         if not entry or entry['attempt'] != value.get('attempt') or entry['answer'] is not None:
             raise web.HTTPConflict()
@@ -207,13 +214,18 @@ def create_app(db_path, turn_secret, public_ip):
 
     async def get_answer(request):
         host, client = actor(request, 'client')
-        entry = pending.get((host, client))
+        entry = pending.get((host, client, identifier(request.query.get('attempt'))))
         if not entry or entry['attempt'] != request.query.get('attempt'):
             raise web.HTTPNotFound()
         if entry['answer'] is not None and not entry.get('answerLogged'):
             entry['answerLogged'] = True
             diagnostic('answer.delivered', host=host, client=client, attempt=entry['attempt'], ageMs=round((time.monotonic()-(entry['deadline']-60))*1000))
         return web.json_response({'answer': entry['answer']})
+
+    async def cancel_offer(request):
+        host, client = actor(request, 'client')
+        pending.pop((host, client, identifier(request.query.get('attempt'))), None)
+        return web.json_response({'ok': True})
 
     async def publish_invitation(request):
         host, _ = actor(request, 'host')
@@ -283,6 +295,7 @@ def create_app(db_path, turn_secret, public_ip):
     app.router.add_put('/v1/clients', clients)
     app.router.add_get('/v1/ice', ice)
     app.router.add_post('/v1/offers', offer)
+    app.router.add_delete('/v1/offers', cancel_offer)
     app.router.add_get('/v1/offers', offers)
     app.router.add_post('/v1/answers', answer)
     app.router.add_get('/v1/answer', get_answer)

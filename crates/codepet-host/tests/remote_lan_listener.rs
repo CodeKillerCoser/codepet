@@ -34,13 +34,17 @@ struct TestHost {
 
 impl TestHost {
     async fn start() -> Self {
+        Self::start_with_id("device-lan-listener").await
+    }
+
+    async fn start_with_id(device_id: &str) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let device_path = directory.path().join("device.json");
         std::fs::write(
             &device_path,
             serde_json::to_vec(&serde_json::json!({
                 "version": 1,
-                "deviceId": "device-lan-listener",
+                "deviceId": device_id,
                 "displayName": "LAN Listener Test Host",
                 "createdAt": 1
             }))
@@ -1569,7 +1573,8 @@ async fn rtc_public_relay_probe() {
     use serde_json::{json, Value};
     use webrtc::{api::APIBuilder, data_channel::data_channel_init::RTCDataChannelInit, peer_connection::{configuration::RTCConfiguration, policy::ice_transport_policy::RTCIceTransportPolicy}};
     let config = std::env::var("CODEPET_RTC_CLOUD_PROBE_CONFIG").unwrap();
-    let host = TestHost::start().await;
+    let host_id = std::env::var("CODEPET_RTC_PROBE_HOST_ID").unwrap_or_else(|_| "device-lan-listener".into());
+    let host = TestHost::start_with_id(&host_id).await;
     std::fs::copy(config, host._directory.path().join("remote/rtc-cloud.json")).unwrap();
     let server=RemoteLanServer::start(RemoteLanServerConfig::loopback(),host.remote_access.clone(),host.gateway.clone()).await.unwrap();
     let local=PinnedTlsClient::new(server.local_addr(),host.remote_access.tls_identity().certificate_der().to_vec());
@@ -1580,6 +1585,8 @@ async fn rtc_public_relay_probe() {
     let http=reqwest::Client::builder().timeout(Duration::from_secs(15)).build().unwrap();
     let token=bootstrap["token"].as_str().unwrap();
     let base=bootstrap["serviceUrl"].as_str().unwrap();
+    let policy = std::env::var("CODEPET_PROBE_PATH_POLICY").unwrap_or_else(|_| "relay".into());
+    assert!(["relay", "ipv4-direct", "ipv6-direct"].contains(&policy.as_str()));
     let mut ice:Value=http.get(format!("{base}/v1/ice")).bearer_auth(token).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
     if let Ok(transport) = std::env::var("CODEPET_PROBE_TURN_TRANSPORT") {
         for server in ice["iceServers"].as_array_mut().unwrap() {
@@ -1595,9 +1602,20 @@ async fn rtc_public_relay_probe() {
         }
         ice["iceServers"].as_array_mut().unwrap().retain(|server| !server["urls"].as_array().unwrap().is_empty());
     }
-    let peer=Arc::new(APIBuilder::new().build().new_peer_connection(RTCConfiguration {
+    let mut settings = webrtc::api::setting_engine::SettingEngine::default();
+    if policy == "ipv6-direct" {
+        settings.set_network_types(vec![webrtc::ice::network_type::NetworkType::Udp6]);
+        ice["iceServers"] = json!([]);
+    } else if policy == "ipv4-direct" {
+        settings.set_network_types(vec![webrtc::ice::network_type::NetworkType::Udp4]);
+        for server in ice["iceServers"].as_array_mut().unwrap() {
+            server["urls"].as_array_mut().unwrap().retain(|u| u.as_str().unwrap().starts_with("stun:"));
+        }
+        ice["iceServers"].as_array_mut().unwrap().retain(|s| !s["urls"].as_array().unwrap().is_empty());
+    }
+    let peer=Arc::new(APIBuilder::new().with_setting_engine(settings).build().new_peer_connection(RTCConfiguration {
         ice_servers:serde_json::from_value(ice["iceServers"].clone()).unwrap(),
-        ice_transport_policy:RTCIceTransportPolicy::Relay,..Default::default()
+        ice_transport_policy:if policy == "relay" {RTCIceTransportPolicy::Relay} else {RTCIceTransportPolicy::All},..Default::default()
     }).await.unwrap());
     let channel=peer.create_data_channel("codepet.gateway.v1",Some(RTCDataChannelInit{ordered:Some(true),negotiated:Some(0),protocol:Some("codepet.gateway.cpg1".into()),..Default::default()})).await.unwrap();
     let (tx,incoming)=tokio::sync::mpsc::channel(128);
@@ -1607,10 +1625,10 @@ async fn rtc_public_relay_probe() {
     peer.set_local_description(offer).await.unwrap();
     timeout(Duration::from_secs(30),gathering.recv()).await.unwrap();
     let offer=peer.local_description().await.unwrap();
-    assert!(offer.sdp.contains("typ relay"),"TURN did not yield a relay candidate");
+    if policy == "relay" { assert!(offer.sdp.contains("typ relay"),"TURN did not yield a relay candidate"); }
     let attempt=uuid::Uuid::new_v4().to_string();
     let expires=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()+60;
-    let payload=serde_json::to_vec(&json!({"v":1,"kind":"offer","host":bootstrap["host"],"client":bootstrap["client"],"attempt":attempt,"expires":expires,"description":offer})).unwrap();
+    let payload=serde_json::to_vec(&json!({"v":1,"kind":"offer","host":bootstrap["host"],"client":bootstrap["client"],"attempt":attempt,"expires":expires,"pathPolicy":policy,"description":offer})).unwrap();
     http.post(format!("{base}/v1/offers")).bearer_auth(token).json(&json!({"attempt":attempt,"envelope":{"payload":B64.encode(&payload),"signature":B64.encode(key.sign(&payload).as_ref())}})).send().await.unwrap().error_for_status().unwrap();
     let envelope:Value=timeout(Duration::from_secs(45),async {
         loop {
@@ -1624,27 +1642,40 @@ async fn rtc_public_relay_probe() {
     let answer:Value=serde_json::from_slice(&answer_bytes).unwrap();
     assert_eq!(answer["offerHash"],hex_sha256(&payload));
     assert_eq!(answer["attempt"],attempt);
+    assert_eq!(answer["pathPolicy"], policy);
     peer.set_remote_description(serde_json::from_value(answer["description"].clone()).unwrap()).await.unwrap();
     timeout(Duration::from_secs(20),async {
         while channel.ready_state()!=webrtc::data_channel::data_channel_state::RTCDataChannelState::Open {tokio::time::sleep(Duration::from_millis(20)).await;}
     }).await.unwrap();
-    let selected=peer.sctp().transport().ice_transport().get_selected_candidate_pair().await.unwrap();
-    assert!(selected.to_string().contains("relay"),"selected ICE pair must include relay");
-    eprintln!("Relay selected; requesting Gateway handshake");
+    assert!(peer.sctp().transport().ice_transport().get_selected_candidate_pair().await.is_some());
+    let stats = peer.get_stats().await;
+    let reports: Vec<Value> = stats.reports.values().map(|r| serde_json::to_value(r).unwrap()).collect();
+    let pair = reports.iter().find(|v| v["type"] == "candidate-pair" && v["nominated"] == true).expect("selected pair stats");
+    for side in ["localCandidateId", "remoteCandidateId"] {
+        let candidate = reports.iter().find(|v| v["id"] == pair[side]).expect("selected candidate stats");
+        if policy == "relay" {
+            assert_eq!(candidate["candidateType"], "relay");
+        } else {
+            assert_ne!(candidate["candidateType"], "relay");
+            let ip: std::net::IpAddr = candidate["ip"].as_str().unwrap().parse().unwrap();
+            assert_eq!(ip.is_ipv6(), policy == "ipv6-direct");
+        }
+    }
+    eprintln!("Verified selected path={policy}; requesting Gateway handshake");
     let mut rtc=RtcClient{peer,channel,incoming};
     rtc.request(handshake_request("cloud-handshake","cloud-rust-probe")).await;
     assert!(rtc.next_json().await.get("result").is_some());
-    eprintln!("Relay handshake passed; requesting large RPC");
+    eprintln!("Path handshake passed; requesting large RPC");
     let id=format!("cloud-{}","界".repeat(24000));
     rtc.request(gateway::ProtocolRequest::ProviderList{jsonrpc:"2.0".into(),id:id.clone(),params:gateway::ProviderListRequest{}}).await;
     // Match the production RPC deadline, rather than the LAN fixture's 5 seconds.
     assert_eq!(rtc.next_json_timeout(Duration::from_secs(15)).await["id"],id);
-    eprintln!("Relay large RPC passed; revoking credential");
+    eprintln!("Path large RPC passed; revoking credential");
     let credential=host.remote_access.validate_bearer(&pairing.credential).unwrap();
     host.remote_access.revoke_credential(&credential.credential_id).unwrap();
     assert_eq!(server.disconnect_credential(&credential.credential_id).await.unwrap(),1);
     wait_for_active_sessions(&server,0).await;
     rtc.peer.close().await.unwrap();
     server.shutdown().await.unwrap();
-    eprintln!("Public signaling + selected TURN relay + Gateway handshake + large RPC + revocation passed");
+    eprintln!("Public signaling + selected {policy} + Gateway handshake + large RPC + revocation passed");
 }

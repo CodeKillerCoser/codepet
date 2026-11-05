@@ -1,6 +1,7 @@
 //! Public rendezvous authenticated by QR invitations or existing pinned LAN pairing.
 mod invitation;
 use super::super::session::SessionRegistry;
+use super::path_policy::PathPolicy;
 use crate::{HostError, HostResult, ProviderGatewayService, RemoteAccessManager, RemoteCredential};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use ring::{
@@ -187,12 +188,18 @@ impl Cloud {
         if let Some(body) = body {
             request = request.json(&body);
         }
-        let mut response = request
-            .send()
-            .await
-            .map_err(|_| error())?
-            .error_for_status()
-            .map_err(|_| error())?;
+        let route = path.split('?').next().unwrap_or("unknown");
+        let response = request.send().await.map_err(|failure| {
+            super::diagnostics::Diagnostic::new("").emit("signal.http.failed", json!({"route":route,"timeout":failure.is_timeout(),"connectError":failure.is_connect()}));
+            error()
+        })?;
+        if !response.status().is_success() {
+            super::diagnostics::Diagnostic::new("").emit(
+                "signal.http.failed",
+                json!({"route":route,"status":response.status().as_u16()}),
+            );
+        }
+        let mut response = response.error_for_status().map_err(|_| error())?;
         if response.content_length().unwrap_or(0) > 4 * 1024 * 1024 {
             return Err(error());
         }
@@ -242,21 +249,40 @@ impl Cloud {
     ) -> tokio::task::JoinHandle<()> {
         let cloud = self.clone();
         tokio::spawn(async move {
-            let mut seen = BTreeMap::new();
+            let seen = Arc::new(Mutex::new(BTreeMap::new()));
+            let mut negotiations = tokio::task::JoinSet::new();
             loop {
-                seen.retain(|_, expires| *expires > now());
+                while negotiations.try_join_next().is_some() {}
+                if let Ok(mut seen) = seen.lock() {
+                    seen.retain(|_, expires| *expires > now());
+                }
                 let _ = cloud.poll_invitations().await;
-                if cloud.sync_clients().await.is_ok() {
+                if cloud.sync_clients().await.is_ok() && negotiations.len() < 32 {
                     if let Ok(batch) = cloud
-                        .request(reqwest::Method::GET, "/v1/offers", None)
+                        .request(
+                            reqwest::Method::GET,
+                            &format!("/v1/offers?limit={}", 32 - negotiations.len()),
+                            None,
+                        )
                         .await
                     {
                         if let Some(offers) = batch.get("offers").and_then(Value::as_array) {
                             for offer in offers.iter().take(32) {
-                                // Serial setup bounds CPU/ICE allocations. Registry additionally limits live peers.
-                                let _ = cloud
-                                    .accept(offer, gateway.clone(), sessions.clone(), &mut seen)
-                                    .await;
+                                // Independent paths must not queue behind another path's ICE timeout.
+                                // Bound pending setups as well as live peers in SessionRegistry.
+                                if negotiations.len() >= 32 {
+                                    break;
+                                }
+                                let (cloud, gateway, sessions, seen, offer) = (
+                                    cloud.clone(),
+                                    gateway.clone(),
+                                    sessions.clone(),
+                                    seen.clone(),
+                                    offer.clone(),
+                                );
+                                negotiations.spawn(async move {
+                                    let _ = cloud.accept(&offer, gateway, sessions, &seen).await;
+                                });
                             }
                         }
                     }
@@ -271,56 +297,91 @@ impl Cloud {
         offer: &Value,
         gateway: Arc<ProviderGatewayService>,
         sessions: Arc<SessionRegistry>,
-        seen: &mut BTreeMap<String, u64>,
+        seen: &Mutex<BTreeMap<String, u64>>,
     ) -> HostResult<()> {
-        let client = offer["client"].as_str().ok_or_else(error)?;
-        let attempt = offer["attempt"].as_str().ok_or_else(error)?;
-        let peer = {
-            self.config
-                .lock()
+        let mut stage = "verifyOffer";
+        let mut diagnostic = super::diagnostics::Diagnostic::new("");
+        let result: HostResult<()> = async {
+            let client = offer["client"].as_str().ok_or_else(error)?;
+            let attempt = offer["attempt"].as_str().ok_or_else(error)?;
+            let peer = {
+                self.config
+                    .lock()
+                    .map_err(|_| error())?
+                    .peers
+                    .get(client)
+                    .cloned()
+                    .ok_or_else(error)?
+            };
+            let (body, bytes, expires) = verify_offer(
+                &peer.public_key,
+                &self.access.remote_host_identity().device_id,
+                client,
+                attempt,
+                &offer["envelope"],
+            )?;
+            {
+                let mut seen = seen.lock().map_err(|_| error())?;
+                if seen.contains_key(attempt) || seen.len() >= 256 {
+                    return Err(error());
+                }
+                seen.insert(attempt.to_owned(), expires);
+            }
+            let policy: PathPolicy = body
+                .get("pathPolicy")
+                .map(|v| serde_json::from_value(v.clone()))
+                .transpose()
                 .map_err(|_| error())?
-                .peers
-                .get(client)
-                .cloned()
-                .ok_or_else(error)?
-        };
-        let (body, bytes, expires) = verify_offer(
-            &peer.public_key,
-            &self.access.remote_host_identity().device_id,
-            client,
-            attempt,
-            &offer["envelope"],
-        )?;
-        if seen.contains_key(attempt) || seen.len() >= 256 {
-            return Err(error());
+                .unwrap_or_default();
+            let description: RTCSessionDescription =
+                serde_json::from_value(body["description"].clone()).map_err(|_| error())?;
+            diagnostic = super::diagnostics::Diagnostic::new(&description.sdp);
+            diagnostic.emit("signal.offer.verified", json!({"attempt":attempt,"pathPolicy":policy}));
+            stage = "admission";
+            let credential = self.active(client)?;
+            let registration = sessions.register(client).map_err(|_| error())?;
+            self.active(client)?;
+            stage = "iceConfiguration";
+            let servers: Vec<RTCIceServer> = if policy == PathPolicy::Ipv6Direct {
+                Vec::new()
+            } else {
+                let ice = self.request(reqwest::Method::GET, "/v1/ice", None).await?;
+                serde_json::from_value(ice["iceServers"].clone()).map_err(|_| error())?
+            };
+            diagnostic.emit(
+                "signal.offer.accepted",
+                json!({"attempt":attempt,"pathPolicy":policy}),
+            );
+            stage = "negotiation";
+            let answer = super::answer_offer_with_policy(
+                description,
+                gateway,
+                self.access.clone(),
+                credential,
+                registration,
+                RTCConfiguration {
+                    ice_servers: servers,
+                    ..Default::default()
+                },
+                policy,
+            )
+            .await?;
+            diagnostic.emit("signal.answer.ready", json!({"attempt":attempt}));
+            let payload=serde_json::to_vec(&json!({"v":1,"kind":"answer","host":self.access.remote_host_identity().device_id,"client":client,"attempt":attempt,"expires":expires,"offerHash":hash(&bytes),"pathPolicy":policy,"description":answer})).map_err(|_|error())?;
+            stage = "answerPublication";
+            self.request(reqwest::Method::POST,"/v1/answers",Some(json!({"client":client,"attempt":attempt,"envelope":{"payload":B64.encode(&payload),"signature":B64.encode(self.key.sign(&payload).as_ref())}}))).await?;
+            diagnostic.emit("signal.answer.published", json!({"attempt":attempt,"pathPolicy":policy}));
+            Ok(())
+        }.await;
+        if let Err(failure) = &result {
+            let attempt = offer["attempt"].as_str().filter(|v| {
+                v.len() <= 100
+                    && v.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            });
+            diagnostic.emit("signal.offer.failed", json!({"attempt":attempt,"stage":stage,"code":failure.code,"retryable":failure.retryable}));
         }
-        seen.insert(attempt.to_owned(), expires);
-        let credential = self.active(client)?;
-        let registration = sessions.register(client).map_err(|_| error())?;
-        self.active(client)?;
-        let ice = self.request(reqwest::Method::GET, "/v1/ice", None).await?;
-        let servers: Vec<RTCIceServer> =
-            serde_json::from_value(ice["iceServers"].clone()).map_err(|_| error())?;
-        let description: RTCSessionDescription =
-            serde_json::from_value(body["description"].clone()).map_err(|_| error())?;
-        let diagnostic = super::diagnostics::Diagnostic::new(&description.sdp);
-        diagnostic.emit("signal.offer.accepted",json!({"attempt":attempt}));
-        let answer = super::answer_offer_configured(
-            description,
-            gateway,
-            self.access.clone(),
-            credential,
-            registration,
-            RTCConfiguration {
-                ice_servers: servers,
-                ..Default::default()
-            },
-        )
-        .await?;
-        diagnostic.emit("signal.answer.ready",json!({"attempt":attempt}));
-        let payload=serde_json::to_vec(&json!({"v":1,"kind":"answer","host":self.access.remote_host_identity().device_id,"client":client,"attempt":attempt,"expires":expires,"offerHash":hash(&bytes),"description":answer})).map_err(|_|error())?;
-        self.request(reqwest::Method::POST,"/v1/answers",Some(json!({"client":client,"attempt":attempt,"envelope":{"payload":B64.encode(&payload),"signature":B64.encode(self.key.sign(&payload).as_ref())}}))).await?;
-        Ok(())
+        result
     }
 }
 
@@ -349,6 +410,9 @@ fn verify_offer(
     .verify(&bytes, &sig)
     .map_err(|_| error())?;
     let body: Value = serde_json::from_slice(&bytes).map_err(|_| error())?;
+    if let Some(policy) = body.get("pathPolicy") {
+        serde_json::from_value::<PathPolicy>(policy.clone()).map_err(|_| error())?;
+    }
     let expires = body["expires"].as_u64().ok_or_else(error)?;
     if body["v"] != 1
         || body["kind"] != "offer"
@@ -382,6 +446,7 @@ mod tests {
             ("attempt", json!("old")),
             ("expires", json!(0)),
             ("kind", json!("answer")),
+            ("pathPolicy", json!("unknown")),
         ] {
             let mut changed = body.clone();
             changed[field] = value;

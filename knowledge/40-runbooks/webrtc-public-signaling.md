@@ -31,14 +31,17 @@ Host 将其解析为原有活跃 credentialId，进入共用 SessionRegistry/握
 既有统一断开路径继续关闭 LAN 与 RTC。云端权限最多有轮询同步延迟，不能越过 Host 撤销。
 
 签名对象是 **原始 UTF-8 JSON bytes**，信封携带 base64 payload 与 Ed25519 signature；
-验证方不重新序列化。签名覆盖 v/kind/host/client/attempt/expires/description，
+验证方不重新序列化。签名覆盖 v/kind/host/client/attempt/expires/description；新版尝试额外签名 pathPolicy，
 description 包含完整 SDP、候选及 DTLS 指纹；answer 额外绑定 offerHash。
 有效期 60 秒，Host 校验时间窗和有界重放集合；固定 Remote offer、Host answer。
 云端能看到连接元数据及 SDP，不能冒充已经由 LAN 绑定的对端。
 
-Remote RTC 路由先尝试本地 resolver（整体预算 8 秒），失败关闭本地 peer 后使用
-安全存储里的公网配置。失败不重放业务请求、不自动改为 WSS；WSS 仍由设置关闭 RTC
-后选择。云端地址不会覆盖已有 preferredEndpoint。云端中断不主动关闭健康 DataChannel。
+2026-11-06 更新：开启 WebRTC 时，并行竞速 LAN/WSS、IPv6 直连、IPv4 直连和 TURN
+中继，首个完成通道建立的尝试获胜，关闭其余尝试；不等待前一种路径失败。
+LAN resolver 整体预算 8 秒；每个 RTC 尝试独立 55 秒，预算不相加。没有公网授权时
+仍允许 LAN 成功。云端地址不覆盖 preferredEndpoint，失败不重放业务请求。
+Gateway 业务握手只在赢家执行。云端故障不主动关闭健康 DataChannel。
+关闭 WebRTC 的既有设置仍只使用 LAN/WSS。完整边界见 [并行通道竞速](../20-product/parallel-connection-paths.md)。
 
 ## 服务与端口
 
@@ -60,9 +63,12 @@ Remote RTC 路由先尝试本地 resolver（整体预算 8 秒），失败关闭
 
 `GET /health` 无认证；其他入口一律独立 bearer：Host 可 PUT `/v1/clients` 同步授权，
 GET `/v1/offers` 拉取，POST `/v1/answers` 回答；Remote 可 POST `/v1/offers`、
-GET `/v1/answer?attempt=...`。两者经 GET `/v1/ice` 领取临时 ICE 配置。
+GET `/v1/answer?attempt=...`，关闭尝试时 DELETE `/v1/offers?attempt=...`。
+Host GET `/v1/offers?limit=1..32` 只领取当前可并发处理的数量；不带 limit 默认 32。
+两者经 GET `/v1/ice` 领取临时 ICE 配置；IPv6 直连只使用本机候选，不调用该接口。
 
-每 Host 最多 32 个 Remote，全局最多 128 个待连接信箱，每 Remote 只保留一个 attempt，
+每 Host 最多 32 个 Remote，全局最多 128 个待连接信箱，每 Remote 最多 12 个 attempt，
+按 host/client/attempt 独立索引，同时允许三个路径与短暂重连重叠；
 信箱 60 秒到期；旧 answer、跨 Host 写入、匿名 TURN、超限请求均拒绝。
 服务重启使未完成协商重试，不影响已经建立的数据链路。
 

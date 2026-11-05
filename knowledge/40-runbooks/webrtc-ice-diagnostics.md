@@ -63,7 +63,7 @@ TURN 不理解 attempt，需结合时间、session 和本地 endpoint 日志辅�
 
 增量脚本 `services/signaling/deploy_diagnostics.py` 接收新版 server.py 路径，备份并更新
 信令源码、TURN 日志选项及轮转配置。失败自动恢复三个文件并重启；不覆盖身份数据库、密钥或防火墙。
-备份后缀为 `.before-diagnostics-<UTC时间>`，保存在原文件旁。
+备份保存在 `/opt/codepet-signal/backups/diagnostics-<UTC时间>/`，禁止放在配置 include 目录；校验完整 `/etc/logrotate.conf`。见 [日志轮转备份故障](logrotate-include-backups.md)。
 
 coturn 4.17.2 必须同时设置 `verbose` 和 `log-binding` 才记录 binding 方法，已核对
 [官方源码](https://github.com/coturn/coturn/blob/4.17.2/src/server/ns_turn_server.c)。不启用逐包正文输出。
@@ -86,3 +86,35 @@ logrotate 配置 daily、maxsize 10M、rotate 3、copytruncate；10M 是轮转�
 下一轮用新版桌面和手机分别复现 LAN、4G、TUN 开关后的全新连接及大列表加载，按 offerId
 收集两端日志，按 attempt 查信令，按时间查 TURN。客户端安装包本轮未构建、未安装；macOS
 编译和真实跨网新日志尚未验证。
+
+
+## 2026-11-06：并行竞速实机采证
+
+### 证据与补充
+
+此前竞速日志只有路径名称和异常类型，三个 RTC peer 与三个信令对象各有独立 connectionId，缺少统一关联；Host 的 accept 错误被调用方丢弃，尚未进入 ICE 的失败没有可靠记录。本轮补充而非宣称旧安装包已具备以下字段。
+
+- Remote 每次竞速生成 `raceId`；每条 RTC 路径的 transport 与 signaling 共享同一诊断对象，带相同 `connectionId`、`pathPolicy`，生成 offer 后追加 `offerId`。所有记录新增 `timestampUnixMs`。
+- `race.start/path.start/selected/path.result/failed/close` 记录候选、预算、耗时、赢家和结果；正常落败标记 `cancelled`、`anotherPathSelected`，不冒充网络失败。路径开始记录 `rtcConnectionId`。
+- `race.cloudLoad.*` 区分尚无公网授权、读取失败、超时和加载成功。`race.target` 仅记录目标 deviceId 的哈希。
+- `connect.stage` 依次记录 ICE 配置、native peer 创建、候选收集、信令交换、应用 answer、等待 DataChannel 打开与 connected；`connect.failed` 记录失败阶段和该阶段耗时。
+- 错误采用受控分类：timeout、socket 与 OS 错误码、TLS、HTTP status、noCandidates、签名/绑定拒绝等；不将原生异常正文、完整 URL、token 或 SDP写入这些新增字段。
+- Host 新增 `signal.offer.verified/failed`、`signal.answer.published` 和 `signal.http.failed`。错误记录 attempt、阶段、code、retryable；HTTP 错误记录不含 query 的路径、状态或超时/连接失败类别。早期验证失败没有可信 offerId，使用 attempt 与服务器记录关联。
+- Host 候选明确带 IPv4/IPv6 family；日志队列满时累计 `diagnosticDroppedTotal`，后续记录可以看出诊断是否有缺口。
+
+上述模块都影响排查边界：Remote 负责竞速与连接阶段，Host 负责签名/admission/协商与 answer 发布，现有 VPS 日志负责证明请求是否收到及何时转交。信令和 TURN 日志已开启，本轮无需重启或修改 VPS 服务。
+
+### 测试与限制
+
+新增测试真实初始化 LocalLogStore，模拟竞速并导出 ZIP，解压验证同一 raceId、赢家、耗时字段及取消原因完整进入导出的 `codepet.log`；另测异常分类不复制敏感正文。RTC/竞速/信令/诊断 25 项测试通过，Host RTC 模块 8 项通过。手机真实原生日志、不同运营商跨网与系统级网络错误仍需实机复现，不能依据模拟导出测试宣称实机已经验收。
+
+当前 flutter_webrtc 不暴露完整 ICE candidate error 回调，Host 部分 ICE 统计无真实计数；保留上文限制。日志可定位在哪一阶段、哪一路径失败，不承诺直接确定 NAT 型号或哪台中间路由器丢包。若 `diagnosticDroppedTotal` 增长，需缩短复现窗口并收集原生/服务器证据，不把缺少日志当作事件没有发生。
+
+### 用户实测时怎样采集
+
+1. 两端使用包含并行竞速和本轮诊断补充的构建；记录版本、开始时间、手机 Wi-Fi/4G/5G、电脑网络，以及 VPN/TUN 是否开启。旧安装版不会因改了源码而增加这些日志。
+2. 每个场景单独操作：同 Wi-Fi 连接；手机关闭 Wi-Fi 后新连接；切网重连；连接后创建会话和请求大列表。记录点击与报错的大致时间，避免把多次重连混成一次。
+3. 出错后尽快在手机“设置”导出日志 ZIP，再保留电脑日志。Remote 最多 5 个文件、每个约 2 MiB，另有 7 天过期；容量先达到时会提前覆盖，不能只依据 7 天判断还在。
+4. 排查从 `raceId` 找四路结果，再按 `connectionId -> offerId -> attempt` 对齐 Host 与 VPS，查 `journalctl -u codepet-signal --utc --since ... --until ...`，结合 coturn 日志。不要先重装、清空应用数据或连续重试很久后才导出。
+
+验证回归应包括：落败取消不触发业务断开；共享诊断对象不改变 SDP 签名输入；新增日志不含敏感正文；日志写盘失败不影响建连。
