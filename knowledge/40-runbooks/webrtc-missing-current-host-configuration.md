@@ -25,3 +25,9 @@
 3. 当前身份需使用匹配的服务端授权和本地 cloud 配置，不能直接搬用绑定其他 Host ID 的旧 token。本次仅诊断，未修改授权或现有配对。
 4. 修复配置后验证 Host 同步、手机在 LAN 获取授权或扫新版邀请，再测跨网；以双方 answer、选中 candidate pair 和 Gateway 握手为准。
 5. 原生 Rust 探针通过不能替代已安装 App 的配置检查；Release 验收须包含实际 Host 注册和手机公网授权状态。手机日志恢复后再核对这次请求的设备选择及精确错误。
+
+## 自动登记修复后的排查（2026-11-06）
+
+上述证据是修复前的现场记录。新版无需手工创建 `rtc-cloud.json`：在设置填写服务 IP 后，App 创建 `connections/rtc-device-key.json`、`connections/rtc-services/<地址哈希>.json`，执行自动登记。先查 `signal.configuration`，再查 `signal.registration.start/complete/failed/rejected` 及 VPS `/v1/devices/register` 的状态码；确认 hosts 表包含当前 Mac ID。只检查 ID、role、时间和计数，禁止打印 seed、token 或完整配置。失败优先核对 TLS/地址、403/404 服务版本、409 身份冲突、429 限流；不要删除身份文件强行重置。
+
+完成登记后继续检查手机配对授权和 offer/answer。已有手机可在 LAN 重连获取当前 Host 的公网授权；新设备扫当前邀请并经电脑确认。不同服务的旧凭据不能直接迁移，登记成功也不能作为跨网握手成功的证据。

@@ -1,5 +1,8 @@
 //! Public rendezvous authenticated by QR invitations or existing pinned LAN pairing.
 mod invitation;
+mod registration;
+mod service;
+pub use service::SignalingServiceController;
 use super::super::session::SessionRegistry;
 use super::path_policy::PathPolicy;
 use crate::{HostError, HostResult, ProviderGatewayService, RemoteAccessManager, RemoteCredential};
@@ -25,7 +28,7 @@ use webrtc::{
     },
 };
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Config {
     service_url: String,
@@ -33,6 +36,8 @@ struct Config {
     seed: String,
     #[serde(default)]
     peers: BTreeMap<String, Peer>,
+    #[serde(default)]
+    auto_register: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +54,7 @@ pub(crate) struct Cloud {
     access: Arc<RemoteAccessManager>,
     http: reqwest::Client,
     sync_lock: tokio::sync::Mutex<()>,
+    registered: tokio::sync::Mutex<bool>,
 }
 
 fn error() -> HostError {
@@ -74,12 +80,18 @@ pub(crate) fn hash(bytes: &[u8]) -> String {
 
 impl Cloud {
     pub(crate) fn load(access: Arc<RemoteAccessManager>) -> HostResult<Option<Arc<Self>>> {
-        let path = access.rtc_cloud_config_path();
-        if !path.exists() {
-            return Ok(None);
-        }
-        let config: Config = serde_json::from_slice(&std::fs::read(&path).map_err(|_| error())?)
-            .map_err(|_| error())?;
+        let result = Self::load_config(access);
+        let fields = match &result {
+            Ok(Some(_)) => json!({"state":"configured"}),
+            Ok(None) => json!({"state":"notConfigured"}),
+            Err(failure) => json!({"state":"unavailable","code":failure.code}),
+        };
+        super::diagnostics::Diagnostic::new("").emit("signal.configuration", fields);
+        result
+    }
+
+    fn load_config(access: Arc<RemoteAccessManager>) -> HostResult<Option<Arc<Self>>> {
+        let Some((path, config)) = registration::load_or_create_config(&access)? else { return Ok(None); };
         let url = url::Url::parse(&config.service_url).map_err(|_| error())?;
         if url.scheme() != "https"
             || !url.username().is_empty()
@@ -107,6 +119,7 @@ impl Cloud {
             access,
             http,
             sync_lock: tokio::sync::Mutex::new(()),
+            registered: tokio::sync::Mutex::new(false),
         })))
     }
 
@@ -194,6 +207,9 @@ impl Cloud {
             error()
         })?;
         if !response.status().is_success() {
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+                *self.registered.lock().await = false;
+            }
             super::diagnostics::Diagnostic::new("").emit(
                 "signal.http.failed",
                 json!({"route":route,"status":response.status().as_u16()}),
@@ -214,6 +230,7 @@ impl Cloud {
     }
 
     async fn sync_clients(&self) -> HostResult<()> {
+        self.ensure_registered().await?;
         // Snapshot after acquiring the lock: an older periodic snapshot must
         // never overwrite the bootstrap response's freshly registered client.
         let _sync = self.sync_lock.lock().await;
@@ -253,6 +270,10 @@ impl Cloud {
             let mut negotiations = tokio::task::JoinSet::new();
             loop {
                 while negotiations.try_join_next().is_some() {}
+                if cloud.ensure_registered().await.is_err() {
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    continue;
+                }
                 if let Ok(mut seen) = seen.lock() {
                     seen.retain(|_, expires| *expires > now());
                 }
@@ -385,6 +406,21 @@ impl Cloud {
     }
 }
 
+fn authorization_required() -> HostError {
+    HostError::new("rtc_cloud_authorization_required", "信令服务地址已配置，但当前设备尚未获得该服务的授权")
+}
+
+fn authorized_service_url(authorized: &str, selected: Option<&str>) -> HostResult<String> {
+    // Existing credentials remain scoped to the service which issued them.
+    let bound = crate::normalize_signaling_service(authorized)?.ok_or_else(error)?;
+    if let Some(selected) = selected {
+        let selected = crate::normalize_signaling_service(selected)?.ok_or_else(error)?;
+        if selected != bound { return Err(authorization_required()); }
+        return Ok(selected);
+    }
+    Ok(bound)
+}
+
 fn verify_offer(
     public_key: &str,
     host: &str,
@@ -430,6 +466,12 @@ fn verify_offer(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn configured_service_preserves_legacy_authorization_without_forwarding_it() {
+        assert_eq!(authorized_service_url("https://signal.example.com:443/", None).unwrap(), "https://signal.example.com");
+        assert_eq!(authorized_service_url("https://172.96.254.12:8443", Some("172.96.254.12")).unwrap(), "https://172.96.254.12:8443");
+        assert_eq!(authorized_service_url("https://old.example.com", Some("https://new.example.com")).unwrap_err().code, "rtc_cloud_authorization_required");
+    }
     #[test]
     fn signed_offers_bind_identity_attempt_and_expiry() {
         let key = signature::Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();

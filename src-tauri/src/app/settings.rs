@@ -9,6 +9,8 @@ use std::io;
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     #[serde(default)]
+    pub connection: ConnectionSettings,
+    #[serde(default)]
     pub data: DataSettings,
     #[serde(default)]
     pub appearance: AppearanceSettings,
@@ -31,6 +33,13 @@ pub struct AppSettings {
 }
 
 pub use super::paths::DataSettings;
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionSettings {
+    #[serde(default)]
+    pub signaling_service: Option<String>,
+}
 
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -477,6 +486,7 @@ impl Default for SoundChoice {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            connection: ConnectionSettings::default(),
             data: DataSettings::default(),
             appearance: AppearanceSettings::default(),
             pet: PetSettings::default(),

@@ -12,7 +12,7 @@ Let's Encrypt IP 证书已申请成功；Certbot 5.8.0，自动续期模拟通�
 
 ## 身份与连接设计
 
-不增加账号登录。管理员在 VPS 运行 `services/signaling/provision_host.py`，
+2026-11-06 新版支持在 App 设置填写 IP 后自动登记，详见 [信令服务地址设置](../20-product/signaling-service-settings.md)。不增加账号登录。以下手工方式仅用于旧版兼容：管理员在 VPS 运行 `services/signaling/provision_host.py`，
 为指定 Host deviceId 签发独立信令 token，并将配置写入权限 600 的文件。
 当前 Host 数据目录 `connections/rtc-cloud.json` 保存 serviceUrl、hostToken、Ed25519
 seed 与已绑定 peer。配置不得进入源码仓库、APK 或日志；普通安装包不内置管理员凭据。
@@ -61,7 +61,7 @@ Gateway 业务握手只在赢家执行。云端故障不主动关闭健康 DataC
 
 ## 服务协议与资源上限
 
-`GET /health` 无认证；其他入口一律独立 bearer：Host 可 PUT `/v1/clients` 同步授权，
+`GET /health` 无认证；启用后 `POST /v1/devices/register` 使用设备签名登记；其他入口一律独立 bearer：Host 可 PUT `/v1/clients` 同步授权，
 GET `/v1/offers` 拉取，POST `/v1/answers` 回答；Remote 可 POST `/v1/offers`、
 GET `/v1/answer?attempt=...`，关闭尝试时 DELETE `/v1/offers?attempt=...`。
 Host GET `/v1/offers?limit=1..32` 只领取当前可并发处理的数量；不带 limit 默认 32。
@@ -121,3 +121,9 @@ Rust 适配或互通，当前主工作区仍使用上述 webrtc-rs UDP 实现。
 `agent_create_tcp_turn_socket` 的 TURN_TLS 处理仅对旧 GOOGLE/OC2007 模式添加
 pseudossl，并未给标准模式建立 TLS；libdatachannel 0.24.3 仅向该接口传递枚举。
 因此不能依据 URI 参数或枚举名声称这套组合具备标准 TURN/TLS 能力。
+
+## 自动登记增量部署
+
+将 `services/signaling/` 中的 `server.py`、`registration.py`、`requirements.txt`、`test_server.py`、`test_registration.py`、`deploy_registration.py` 一起复制到服务器 staging 目录，再以 root 运行 `python3 deploy_registration.py <staging目录>`。脚本安装依赖（含 cryptography）、运行 13 项测试、备份配置/SQLite/原代码，启用 `deviceRegistration`，仅重启 codepet-signal 并校验 health；失败恢复原代码及配置。已有 nginx、coturn、xray 不变。后续更新必须同时携带 registration.py，不能只替换 server.py。
+
+新建部署同样需安装 requirements 并部署两个 Python 模块；配置 `deviceRegistration: true` 才接受登记。默认 `maxDevices: 1024`，登记 30 次/分钟/后端来源。当前 nginx 回源 loopback 导致共享登记限额，不能宣称按客户端公网 IP 计数；扩容时应单独设计可信代理来源和账号准入。

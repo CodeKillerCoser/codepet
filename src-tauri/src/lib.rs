@@ -164,10 +164,26 @@ fn update_app_settings(
     Ok(settings)
 }
 
+#[tauri::command]
+async fn configure_signaling_service(
+    app: AppHandle,
+    remote: tauri::State<'_, RemoteAccessRuntime>,
+    address: String,
+) -> Result<AppSettings, String> {
+    let normalized = codepet_host::normalize_signaling_service(&address).map_err(|e| e.message)?;
+    let mut settings = load_app_settings().map_err(|e| e.to_string())?;
+    settings.connection.signaling_service = normalized.clone();
+    save_app_settings(&settings).map_err(|e| e.to_string())?;
+    let _ = app.emit("settings-updated", settings.clone());
+    remote.configure_signaling_service(normalized).await?;
+    Ok(settings)
+}
+
 fn merge_app_settings_update(
     value: serde_json::Value,
     current: AppSettings,
 ) -> Result<AppSettings, String> {
+    let connection_present = value.get("connection").is_some();
     let provider_plugins_present = value
         .as_object()
         .is_some_and(|settings| settings.contains_key("providerPlugins"));
@@ -178,6 +194,12 @@ fn merge_app_settings_update(
     if !provider_plugins_present {
         settings.provider_plugins = current.provider_plugins;
     }
+    if !connection_present {
+        settings.connection = current.connection;
+    }
+    settings.connection.signaling_service = codepet_host::normalize_signaling_service(
+        settings.connection.signaling_service.as_deref().unwrap_or(""),
+    ).map_err(|error| error.message)?;
     Ok(settings)
 }
 
@@ -496,6 +518,7 @@ pub fn run() {
             clear_agent_runtime_executable,
             get_app_settings,
             update_app_settings,
+            configure_signaling_service,
             send_test_robot_notification,
             path_manager_get,
             path_manager_set_data,
@@ -691,5 +714,18 @@ mod tests {
         )
         .unwrap();
         assert!(cleared.provider_plugins.directories.is_empty());
+    }
+
+    #[test]
+    fn signaling_settings_normalize_preserve_legacy_updates_and_clear_explicitly() {
+        let mut current = AppSettings::default();
+        current.connection.signaling_service = Some("https://signal.example.com:8443".into());
+        let preserved = merge_app_settings_update(serde_json::json!({}), current.clone()).unwrap();
+        assert_eq!(preserved.connection.signaling_service, current.connection.signaling_service);
+        let changed = merge_app_settings_update(serde_json::json!({"connection":{"signalingService":"172.96.254.12"}}), current.clone()).unwrap();
+        assert_eq!(changed.connection.signaling_service.as_deref(), Some("https://172.96.254.12:8443"));
+        let cleared = merge_app_settings_update(serde_json::json!({"connection":{"signalingService":""}}), current.clone()).unwrap();
+        assert!(cleared.connection.signaling_service.is_none());
+        assert!(merge_app_settings_update(serde_json::json!({"connection":{"signalingService":"http://insecure.example"}}), current).is_err());
     }
 }

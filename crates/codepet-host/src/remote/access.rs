@@ -48,6 +48,7 @@ type Clock = Arc<dyn Fn() -> TimestampMs + Send + Sync>;
 pub struct RemoteAccessConfig {
     pub tls_identity_path: PathBuf,
     pub credential_store_path: PathBuf,
+    pub signaling_service: Option<String>,
 }
 
 impl RemoteAccessConfig {
@@ -56,6 +57,7 @@ impl RemoteAccessConfig {
         Self {
             tls_identity_path: directory.join("lan-tls-identity.json"),
             credential_store_path: directory.join("remote-credentials.json"),
+            signaling_service: None,
         }
     }
 
@@ -702,6 +704,7 @@ pub struct RemoteAccessManager {
     local_device_descriptor: DeviceDescriptor,
     tls_identity: LanTlsIdentity,
     credential_store: RemoteCredentialStore,
+    pub(crate) signaling_service: Mutex<Option<String>>,
     pairing: Mutex<PairingState>,
     pairing_watch: watch::Sender<PairingWatchState>,
     diagnostics: Vec<RemoteAccessDiagnostic>,
@@ -733,6 +736,9 @@ impl RemoteAccessManager {
         clock: Clock,
     ) -> HostResult<Self> {
         config.validate()?;
+        let signaling_service = super::signaling_service::normalize_signaling_service(
+            config.signaling_service.as_deref().unwrap_or(""),
+        )?;
         validate_device_descriptor(&local_device_descriptor)?;
         let (tls_identity, mut diagnostics) =
             open_tls_identity(&config.tls_identity_path, clock.clone())?;
@@ -748,6 +754,7 @@ impl RemoteAccessManager {
             local_device_descriptor,
             tls_identity,
             credential_store,
+            signaling_service: Mutex::new(signaling_service),
             pairing: Mutex::new(PairingState {
                 active: None,
                 outcomes: BTreeMap::new(),

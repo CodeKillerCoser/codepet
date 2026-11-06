@@ -2,9 +2,10 @@
 
 ## 当前模型
 
-`src-tauri/src/app/settings.rs` 中的 `AppSettings` 有十个顶层区域：
+`src-tauri/src/app/settings.rs` 中的 `AppSettings` 顶层区域包括：
 
 - `data`
+- `connection`
 - `appearance`
 - `pet`
 - `petLibrary`

@@ -26,3 +26,9 @@ Remote 设备列表必须以协议 `clientId` 作为逻辑设备身份。credent
 ## 验证方式
 
 Tauri 定向测试必须覆盖同 client 多 credential 聚合和 online count 求和、同名不同 client 不合并、client 级撤销使该 client 全部 bearer 失效且不影响其他 client。listener 测试还必须保留一个不退出的首组 session，并断言后续 credential 在共享期限结束前已经收到取消。
+
+## 公网登记与服务凭据（2026-11-06）
+
+设备 ID 和签名身份属于安装实例，不能因换 VPS 或请求超时重建。设备密钥、每个服务独立 token 必须先持久化再发送登记请求；相同请求重试幂等，失败不能静默覆盖既有身份。公开服务地址可以放设置，秘密放私有文件/安全存储；不同服务不能收到原服务 bearer。
+
+自动登记只证明安装身份，不证明 Remote 有权访问某台 Host。既有配对确认、credential、签名绑定及撤销必须继续检查。来源为本轮自动登记实现；验证由 Host 持久化、Remote 丢响应重试、服务器冲突/越权测试以及真实 relay 后撤销探针覆盖。

@@ -1566,17 +1566,25 @@ async fn invitation_tls_retries_share_authorization_without_vps() {
 }
 
 #[tokio::test]
-#[ignore = "authorized live VPS probe; requires private CODEPET_RTC_CLOUD_PROBE_CONFIG"]
+#[ignore = "authorized live VPS probe; requires CODEPET_SIGNAL_REGISTRATION_URL or private CODEPET_RTC_CLOUD_PROBE_CONFIG"]
 async fn rtc_public_relay_probe() {
     use base64::{engine::general_purpose::STANDARD as B64, Engine};
     use ring::signature::{Ed25519KeyPair, KeyPair, UnparsedPublicKey, ED25519};
     use serde_json::{json, Value};
     use webrtc::{api::APIBuilder, data_channel::data_channel_init::RTCDataChannelInit, peer_connection::{configuration::RTCConfiguration, policy::ice_transport_policy::RTCIceTransportPolicy}};
-    let config = std::env::var("CODEPET_RTC_CLOUD_PROBE_CONFIG").unwrap();
     let host_id = std::env::var("CODEPET_RTC_PROBE_HOST_ID").unwrap_or_else(|_| "device-lan-listener".into());
     let host = TestHost::start_with_id(&host_id).await;
-    std::fs::copy(config, host._directory.path().join("remote/rtc-cloud.json")).unwrap();
+    if let Ok(config) = std::env::var("CODEPET_RTC_CLOUD_PROBE_CONFIG") {
+        std::fs::copy(config, host._directory.path().join("remote/rtc-cloud.json")).unwrap();
+    }
     let server=RemoteLanServer::start(RemoteLanServerConfig::loopback(),host.remote_access.clone(),host.gateway.clone()).await.unwrap();
+    if let Ok(service) = std::env::var("CODEPET_SIGNAL_REGISTRATION_URL") {
+        let before = server.local_addr();
+        server.signaling_service().configure(Some(service.clone())).await.unwrap();
+        // Repeat enrollment and keep the actual LAN listener/port unchanged.
+        server.signaling_service().configure(Some(service)).await.unwrap();
+        assert_eq!(server.local_addr(), before);
+    }
     let local=PinnedTlsClient::new(server.local_addr(),host.remote_access.tls_identity().certificate_der().to_vec());
     let pairing=pair_client(&host.remote_access,&local,"cloud-rust-probe").await;
     let key=Ed25519KeyPair::from_pkcs8(Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap().as_ref()).unwrap();

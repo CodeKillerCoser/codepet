@@ -62,6 +62,8 @@
   import { ignoredUpdateSettings, shouldPromptForUpdate, type UpdateCheckMode } from "./lib/updates";
   import UsagePanel from "./lib/UsagePanel.svelte";
   import type { ActivityKeywordFilterSettings, AgentId, AgentRuntime, AgentView, AppSettings, AppUpdate, DingTalkRobotChannel, PetEvent, PetLibraryView, RobotNotificationChannel } from "./lib/types";
+  import SignalingServiceSettings from "./lib/SignalingServiceSettings.svelte";
+  import { configureSignalingService } from "./lib/api";
 
   type ActivityFilterKind = keyof ActivityKeywordFilterSettings;
 
@@ -2058,6 +2060,14 @@
       </div>
     {:else if tab === "settings" && settings}
       <div class="settings-workspace">
+        <SignalingServiceSettings value={settings.connection?.signalingService ?? null}
+          onSave={async (address) => {
+            if (!settings) throw new Error("设置尚未加载");
+            const updated = await configureSignalingService(address);
+            if (!updated.connection) throw new Error("请更新桌面 App 后再配置信令服务");
+            settings = updated;
+            return settings.connection?.signalingService ?? null;
+          }} />
         <section class="appearance-editor pixel-panel"><h3>启动</h3><div class="settings-card">
             <label class="check">
               <input type="checkbox" checked={launchAtLogin} disabled={busyLaunchAtLogin} on:change={toggleLaunchAtLogin} />

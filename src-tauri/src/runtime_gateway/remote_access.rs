@@ -362,6 +362,14 @@ impl RemoteAccessRuntime {
         }
     }
 
+    pub async fn configure_signaling_service(&self, address: Option<String>) -> Result<(), String> {
+        let controller = {
+            let inner = self.inner.lock().await;
+            inner.listener.as_ref().map(|listener| listener.signaling_service())
+        }.ok_or_else(|| "地址已保存，远程连接尚未启动，请稍后重试".to_owned())?;
+        controller.configure(address).await.map_err(|error| error.message)
+    }
+
     pub async fn retry(&self) -> Result<RemoteAccessStatusView, RemoteCommandError> {
         self.ensure_pairing_monitor();
         self.ensure_network_monitor();

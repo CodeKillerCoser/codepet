@@ -141,8 +141,7 @@ impl RemoteLanServer {
         }));
         let sessions = Arc::new(SessionRegistry::new(MAX_CONCURRENT_WEBSOCKET_SESSIONS));
         // Invalid/absent cloud config must not prevent the existing LAN listener.
-        let cloud = super::super::webrtc::cloud::Cloud::load(remote_access.clone()).unwrap_or(None);
-        let cloud_task = cloud.as_ref().map(|cloud| cloud.start(gateway.clone(), sessions.clone()));
+        let cloud = crate::SignalingServiceController::new(remote_access.clone(), gateway.clone(), sessions.clone());
         let state = Arc::new(RemoteLanState {
             cloud: cloud.clone(),
             remote_access,
@@ -174,7 +173,6 @@ impl RemoteLanServer {
         });
 
         Ok(RemoteLanServerHandle {
-            cloud_task,
             cloud,
             listener_id,
             local_addr,
@@ -332,8 +330,7 @@ impl Drop for RemoteLanAdvertisedEndpointTransition {
 
 /// Running listener metadata plus bounded shutdown ownership.
 pub struct RemoteLanServerHandle {
-    cloud_task: Option<JoinHandle<()>>,
-    cloud: Option<Arc<super::super::webrtc::cloud::Cloud>>,
+    cloud: crate::SignalingServiceController,
     listener_id: u64,
     local_addr: SocketAddr,
     remote_identity: lan::LanHostIdentity,
@@ -344,8 +341,9 @@ pub struct RemoteLanServerHandle {
 }
 
 impl RemoteLanServerHandle {
+    pub fn signaling_service(&self) -> crate::SignalingServiceController { self.cloud.clone() }
     pub fn prepare_pairing_invitation(&self, session: &crate::PairingSession) -> HostResult<Option<(String, String)>> {
-        self.cloud.as_ref().map(|cloud| cloud.prepare_invitation(session,
+        self.cloud.current()?.as_ref().map(|cloud| cloud.prepare_invitation(session,
             self.gateway_url().ok_or_else(|| HostError::new("pairing_unavailable", "LAN endpoint unavailable"))?)).transpose()
     }
 
@@ -473,7 +471,7 @@ impl RemoteLanServerHandle {
     }
 
     pub async fn shutdown(mut self) -> HostResult<()> {
-        if let Some(task) = self.cloud_task.take() { task.abort(); let _ = task.await; }
+        self.cloud.stop();
         self.sessions.shutdown();
         self.server_handle
             .graceful_shutdown(Some(SERVER_SHUTDOWN_TIMEOUT));
@@ -528,7 +526,7 @@ impl Debug for RemoteLanServerHandle {
 
 impl Drop for RemoteLanServerHandle {
     fn drop(&mut self) {
-        if let Some(task) = self.cloud_task.take() { task.abort(); }
+        self.cloud.stop();
         self.sessions.shutdown();
         self.server_handle.shutdown();
         if let Some(server_task) = self.server_task.take() {
@@ -538,7 +536,7 @@ impl Drop for RemoteLanServerHandle {
 }
 
 struct RemoteLanState {
-    cloud: Option<Arc<super::super::webrtc::cloud::Cloud>>,
+    cloud: crate::SignalingServiceController,
     remote_access: Arc<RemoteAccessManager>,
     gateway: Arc<ProviderGatewayService>,
     remote_identity: lan::LanHostIdentity,
@@ -578,7 +576,7 @@ async fn invitation_exchange(
 ) -> Result<Json<serde_json::Value>, RestError> {
     let invalid = || RestError { status: StatusCode::BAD_REQUEST,
         error: protocol_error("invalid_invitation", "Invitation exchange rejected", false) };
-    let cloud = state.cloud.as_ref().ok_or_else(invalid)?;
+    let cloud = state.cloud.current().map_err(|_| invalid())?.ok_or_else(invalid)?;
     let result = cloud.exchange_invitation(&id, body["requestId"].as_str().ok_or_else(invalid)?,
         body["sealed"].as_str().ok_or_else(invalid)?).await.map_err(|_| invalid())?;
     Ok(Json(result))
@@ -715,7 +713,7 @@ async fn rtc_cloud_bootstrap(
     let bearer = bearer_from_headers(&headers)?;
     let credential = state.remote_access.validate_bearer(&bearer).map_err(RestError::authorization)?;
     let unavailable = || RestError { status: StatusCode::SERVICE_UNAVAILABLE, error: protocol_error("rtc_cloud_unavailable", "Cloud channel is not configured or reachable", true) };
-    let cloud = state.cloud.as_ref().ok_or_else(unavailable)?;
+    let cloud = state.cloud.current().map_err(|_| unavailable())?.ok_or_else(unavailable)?;
     let Json(body) = request.map_err(|_| unavailable())?;
     let key = body["publicKey"].as_str().ok_or_else(unavailable)?;
     Ok(Json(cloud.bootstrap(&credential, key).await.map_err(|_| unavailable())?))

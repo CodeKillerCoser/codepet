@@ -10,6 +10,7 @@ import re
 import sqlite3
 import time
 from aiohttp import web
+from registration import DeviceRegistration
 
 LOG = logging.getLogger('codepet.signal')
 
@@ -26,7 +27,7 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def create_app(db_path, turn_secret, public_ip):
+def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_devices=1024):
     db = sqlite3.connect(db_path)
     db.executescript("""
       CREATE TABLE IF NOT EXISTS hosts (id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL);
@@ -36,6 +37,7 @@ def create_app(db_path, turn_secret, public_ip):
     pending = {}
     invitations = {}
     rates = {}
+    registration = DeviceRegistration(db, registration_enabled, max_devices)
 
     @web.middleware
     async def observe(request, handler):
@@ -54,14 +56,16 @@ def create_app(db_path, turn_secret, public_ip):
             if request.path != '/health' and (status != 200 or request.method != 'GET' or request.path == '/v1/ice'):
                 kind, host, client = request.get('actor', (None, None, None))
                 diagnostic('http.complete', method=request.method,
-                           route=request.path if request.path in {'/v1/ice','/v1/offers','/v1/answers','/v1/answer','/v1/clients'} else 'unknown',
+                           route=request.path if request.path in {'/v1/ice','/v1/offers','/v1/answers','/v1/answer','/v1/clients','/v1/devices/register'} else 'unknown',
                            status=status, role=kind, host=host, client=client,
                            durationMs=round((time.monotonic()-started)*1000))
 
     @web.middleware
     async def guard(request, handler):
         if request.path == '/health':
-            return web.json_response({'status': 'ok', 'protocol': 'codepet-signal-v1'})
+            return web.json_response({'status': 'ok', 'protocol': 'codepet-signal-v1', 'deviceRegistration': registration_enabled})
+        if request.path == '/v1/devices/register' and request.method == 'POST':
+            return await handler(request)
         auth = request.headers.get('Authorization', '')
         if not auth.startswith('Bearer ') or len(auth) > 256:
             raise web.HTTPUnauthorized()
@@ -287,6 +291,7 @@ def create_app(db_path, turn_secret, public_ip):
         return web.json_response({'ok': True})
 
     app = web.Application(middlewares=[observe, guard], client_max_size=100000)
+    app.router.add_post('/v1/devices/register', registration.register)
     app.router.add_put('/v1/invitations', publish_invitation)
     app.router.add_post('/v1/invitation-exchange', invitation_exchange)
     app.router.add_get('/v1/invitation-requests', invitation_requests)
@@ -309,5 +314,6 @@ def create_app(db_path, turn_secret, public_ip):
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     config = json.load(open(os.environ.get('CODEPET_SIGNAL_CONFIG', '/etc/codepet-signal/config.json')))
-    web.run_app(create_app(config['database'], config['turnSecret'], config['publicIp']),
+    web.run_app(create_app(config['database'], config['turnSecret'], config['publicIp'],
+                           config.get('deviceRegistration', False), config.get('maxDevices', 1024)),
                 host='127.0.0.1', port=8787, access_log=None)

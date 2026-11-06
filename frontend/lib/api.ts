@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AgentRuntime, AppSettings, AppUpdate, PetEvent, PetLibraryView, SubjectCutoutResult } from "./types";
 
+export function configureSignalingService(address: string): Promise<AppSettings> {
+  return invoke<AppSettings>("configure_signaling_service", { address });
+}
+
 export interface PerfEventPayload {
   name: string;
   durationMs: number;

@@ -5,6 +5,7 @@
 `src-tauri/src/app/settings.rs` 定义 `AppSettings`，顶层区域包括：
 
 - `data`：应用数据目录覆盖项。
+- `connection.signalingService`：可选的公网信令服务地址，只保存地址，不保存设备密钥或授权。
 - `appearance`：主题和运行中气泡设置。
 - `pet`：当前宠物、sprite/图片设置、透明度、置顶和抽打反应音。
 - `petLibrary`：宠物列表和数据目录。
@@ -37,6 +38,4 @@
 
 ## 验证
 
-- 运行 `cargo test --manifest-path src-tauri/Cargo.toml settings`。
-- 运行 `cargo test --manifest-path src-tauri/Cargo.toml --lib settings_update_preserves_missing_provider_plugins_and_clears_explicit_empty`。
-- 运行会构造设置默认值的前端测试，尤其是声音和气泡颜色相关测试。
+信令服务输入支持 IP、域名和显式 HTTPS URL。无协议默认 HTTPS/8443；完整 HTTPS URL 按其端口或默认 443 处理。拒绝 HTTP、账号、查询参数、片段和业务路径。旧 caller 不发送 `connection` 时保留现值，空地址恢复旧配置。专用 `configure_signaling_service` 命令先保存地址，再热切换信令任务并等待自动登记结果；已有 listener/session 不重启。App 自行生成、保存设备密钥及按服务隔离的 token，失败可重试，启动自动恢复。Google OAuth 尚未接入；登记成功不等于完成配对。详见 [信令服务地址与自动登记](../20-product/signaling-service-settings.md)。

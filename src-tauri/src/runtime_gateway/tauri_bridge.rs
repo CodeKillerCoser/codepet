@@ -567,8 +567,10 @@ fn configured_provider_runtime(
         device.identity().device_id.clone(),
     )?;
     let local_device_descriptor = local_device_descriptor(&device.identity().display_name);
+    let mut remote_config = RemoteAccessConfig::for_data_directory(connections_directory.clone());
+    remote_config.signaling_service = settings.connection.signaling_service.clone();
     let remote_access = Arc::new(RemoteAccessManager::open(
-        RemoteAccessConfig::for_data_directory(connections_directory.clone()),
+        remote_config,
         device.clone(),
         local_device_descriptor,
     )?);

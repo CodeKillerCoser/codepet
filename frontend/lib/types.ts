@@ -97,6 +97,9 @@ export interface SubjectCutoutResult {
 }
 
 export interface AppSettings {
+  connection?: {
+    signalingService?: string | null;
+  };
   data: {
     dataDirectory?: string | null;
   };
