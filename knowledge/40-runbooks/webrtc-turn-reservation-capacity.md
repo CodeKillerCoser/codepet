@@ -12,7 +12,7 @@
 - 21:10:22 原 LAN WebSocket 关闭，之后 LAN 8 秒超时。用户本次未明确说明切网操作，不能仅凭此证明关闭原因。
 - 当前 Mac 的公网尝试：IPv6 在约 129 ms 后 `noCandidates`，只有私有 IPv4 和回环候选；这段记录不支持声称手机具备可用 IPv6。
 - 21:10:24 发起的当前 Mac relay 路径，在 40,764 ms 后没有中继候选。coturn 在 21:11:12 对同一 Mac/credential 的 UDP/TCP/TLS 申请反复返回 `486 Allocation Bandwidth Quota Reached`。
-- 21:11:08 VPS 收到当前 Mac 的 IPv4 offer，21:11:09.403 电脑完成签名校验，21:11:09.922 VPS 收到 answer。手机 21:11:11 主动取消/替换该尝试，未取得 answer；其后记录成 answerTimeout，不能据此断言电脑没回复。
+- 21:11:08 VPS 收到当前 Mac 的 IPv4 offer，21:11:09.403 电脑完成签名校验，21:11:09.922 VPS 收到 answer。手机 21:11:11.216 重新扫码配对成功，随即替换旧 session，因此取消了该尝试，未取得 answer；其后记录成 answerTimeout，不能据此断言电脑没回复或配对失败。
 - 下一次当前 Mac offer 在 21:11:54.758 到 VPS，21:11:58.306 answer 已交给手机；Host 最终仍未打开 DataChannel。该段晚于手机导出截止，只能用服务端/电脑证据补充，不能虚构手机侧状态。
 - 手机同时自动重试另一个 Host（device-544a159c…）。此 Host 在窗口内无应答。它在 21:09:14 已占用 5 条 TURN 分配，后续重试持续竞争配额；不能把这些 offer 当作当前 Mac 的请求。
 
@@ -38,7 +38,7 @@
 
 VPS 已于 21:17:39 更新，备份 `/opt/codepet-signal/backups/turn-capacity-20261106T131739Z`，仅重启 coturn。12 条同时认证分配（两个用户）通过并全部释放；真实 Rust relay 探针完成自动登记、信令、选中 relay、Gateway 握手、72 KB RPC、撤销关闭。该结果不能替代用户手机的实际网络复测。
 
-Python `unittest discover -s services/signaling -p 'test_*.py'` 16 项通过；Remote `flutter test --no-pub test/diagnostics test/gateway test/settings test/app test/pairing` 164 项通过，涵盖旧日志解码、排序、取消与失败分离、导出内容及日志分享入口；相关 Dart 分析通过。当前用户日志已通过生产转换器生成可读时间线/摘要，原目录未修改。
+Python `unittest discover -s services/signaling -p 'test_*.py'` 16 项通过；Remote `flutter test --no-pub test/diagnostics test/gateway test/settings test/app test/pairing` 164 项通过，涵盖旧日志解码、排序、取消与失败分离、导出内容及日志分享入口；相关 Dart 分析通过。当前用户日志已通过生产转换器生成可读时间线/摘要，原目录未修改。转换验收还发现历史消息含 NUL/控制字符，已统一替换以避免文本被识别成二进制；相关新增回归及导出测试 7 项通过，原始 JSONL 仍完整保留。
 
 ## 回归防线与未知项
 
