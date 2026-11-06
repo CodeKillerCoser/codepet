@@ -92,8 +92,8 @@ no-dtls
 no-tcp-relay
 stale-nonce=600
 user-quota=8
-total-quota=64
-max-bps=2000000
+total-quota=20
+max-bps=500000
 bps-capacity=10000000
 no-rfc5780
 no-software-attribute

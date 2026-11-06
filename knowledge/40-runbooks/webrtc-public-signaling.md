@@ -51,7 +51,7 @@ Gateway 业务握手只在赢家执行。云端故障不主动关闭健康 DataC
 | 信令 | Python 3.12 / aiohttp 3.14.3；独立 codepet-signal 用户，SQLite，systemd MemoryMax=192M |
 | coturn | 4.17.2；3478 UDP/TCP、5349 TCP TLS；UDP relay 49160–49259 |
 | 凭据 | TURN REST HMAC 临时凭据 24 小时，secret 只在服务器；客户端到期前 5 分钟受控重连 |
-| 配额 | 每个 TURN 用户 8 allocations，全局 64；每用户/总带宽限制；拒绝私网和回环 relay 目标 |
+| 配额 | 每个 TURN 用户 8 allocations，全局 20；单分配 500,000 B/s，总预留容量 10,000,000 B/s；拒绝私网和回环 relay 目标 |
 | 证书 | IP SAN，约 6 天有效；systemd 每日两次检查；deploy hook 重载 Nginx/coturn |
 | 保留服务 | SSH 22、既有 xray 443 不改动 |
 
@@ -127,3 +127,7 @@ pseudossl，并未给标准模式建立 TLS；libdatachannel 0.24.3 仅向该接
 将 `services/signaling/` 中的 `server.py`、`registration.py`、`requirements.txt`、`test_server.py`、`test_registration.py`、`deploy_registration.py` 一起复制到服务器 staging 目录，再以 root 运行 `python3 deploy_registration.py <staging目录>`。脚本安装依赖（含 cryptography）、运行 13 项测试、备份配置/SQLite/原代码，启用 `deviceRegistration`，仅重启 codepet-signal 并校验 health；失败恢复原代码及配置。已有 nginx、coturn、xray 不变。后续更新必须同时携带 registration.py，不能只替换 server.py。
 
 新建部署同样需安装 requirements 并部署两个 Python 模块；配置 `deviceRegistration: true` 才接受登记。默认 `maxDevices: 1024`，登记 30 次/分钟/后端来源。当前 nginx 回源 loopback 导致共享登记限额，不能宣称按客户端公网 IP 计数；扩容时应单独设计可信代理来源和账号准入。
+
+## 2026-11-06 TURN 预留容量修复
+
+原单分配 2,000,000 B/s / 总容量 10,000,000 B/s 仅容纳约 5 条分配，与声明的 64 条不一致，现场出现 486。执行 `deploy_turn_capacity.py` 增量修复，仅备份配置并重启 coturn；随后在 VPS 运行 `probe_turn_capacity.py` 验证 12 条并发分配及释放，再跑真实 relay Gateway 探针。详见 [本次证据与修复](webrtc-turn-reservation-capacity.md)。不要用关闭配额来掩盖预算不一致。

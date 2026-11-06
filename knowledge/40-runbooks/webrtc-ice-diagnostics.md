@@ -118,3 +118,7 @@ logrotate 配置 daily、maxsize 10M、rotate 3、copytruncate；10M 是轮转�
 4. 排查从 `raceId` 找四路结果，再按 `connectionId -> offerId -> attempt` 对齐 Host 与 VPS，查 `journalctl -u codepet-signal --utc --since ... --until ...`，结合 coturn 日志。不要先重装、清空应用数据或连续重试很久后才导出。
 
 验证回归应包括：落败取消不触发业务断开；共享诊断对象不改变 SDP 签名输入；新增日志不含敏感正文；日志写盘失败不影响建连。
+
+## 2026-11-06 用户可读导出
+
+Remote 新导出首先阅读 `connection-summary.txt` 和 `codepet.log`（UTC 文本时间线），机器解析读取 `raw/*.jsonl`。RTC 新记录不再将 JSON 嵌入 message 字符串；历史导出仍由报告转换器兼容读取。周期 ICE 快照保留在 raw，避免淹没主要流程；取消与网络失败分开记录。新 Android CI 注入 `CODEPET_BUILD_REVISION`，启动日志记录 SHA/模式/平台；旧日志缺失则明确写未知，不猜版本。VPS coturn 的 486 须结合服务器日志确认，不能由手机 noCandidates 自动推断。参见 [TURN 配额故障](webrtc-turn-reservation-capacity.md)。
