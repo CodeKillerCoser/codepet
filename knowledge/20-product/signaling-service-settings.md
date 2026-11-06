@@ -53,4 +53,4 @@ Host 保留当前 DeviceRegistry ID，新增全局设备签名 seed 文件及按
 
 ## 未知项
 
-用户真实手机的移动网络配对/连接仍需新 Release 实测；原生探针不能替代已安装 Mac 的登记检查。电脑已构建并替换 Release，使用实际设置 UI 输入 `172.96.254.12` 后在 638 ms 内登记成功；VPS 登记表确认当前 Mac 的真实 Host ID，截图保存在本地交付目录。手机正式签名 Release 由 GitHub workflow 构建。
+用户真实手机的移动网络配对/连接仍需新 Release 实测。电脑已构建并替换 Release，使用实际设置 UI 输入 `172.96.254.12` 后在 638 ms 内登记成功，重启后 819 ms 内恢复；VPS 登记表确认当前 Mac 的真实 Host ID 仅一条记录。Remote 使用真实 `SignalingDeviceRegistration` 的网络探针也完成首次及重复登记（仅安全存储使用测试替身，HTTP/签名/响应验证均为生产代码）。两种探针身份已从 VPS 清理。手机正式签名 Release 构建运行号为 42221630424，实际手机验收尚未执行。
