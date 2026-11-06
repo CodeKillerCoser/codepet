@@ -13,6 +13,8 @@ mod gateway;
 mod providers;
 mod remote;
 mod persistence;
+mod log_origin;
+pub use log_origin::{LogOrigin, format_text_log, format_rtc_log};
 
 pub use providers::catalog::{
     CatalogDiagnostic, PluginCatalog, PluginCatalogConfig, PluginDescriptor,

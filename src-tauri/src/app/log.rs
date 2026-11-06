@@ -44,14 +44,17 @@ impl PerfSpan {
         }
     }
 
+    #[track_caller]
     pub fn finish_ok(self, fields: &[(&str, String)]) {
         self.finish("ok", None, fields);
     }
 
+    #[track_caller]
     pub fn finish_error(self, error: &str, fields: &[(&str, String)]) {
         self.finish("error", Some(error.to_string()), fields);
     }
 
+    #[track_caller]
     fn finish(self, status: &str, error: Option<String>, fields: &[(&str, String)]) {
         record_perf_event(PerfEvent {
             name: self.name.to_string(),
@@ -88,12 +91,17 @@ pub fn init_app_logging() -> io::Result<PathBuf> {
         }
         let _ = LOG_FILE.set(Mutex::new(file));
     }
-    codepet_host::set_rtc_diagnostic_sink(|line| info("rtc", line));
+    codepet_host::set_rtc_diagnostic_sink(|envelope| {
+        if let Some(line) = codepet_host::format_rtc_log(envelope) {
+            write_formatted(&line);
+        }
+    });
     install_panic_hook();
     info("app", &format!("logging initialized path={}", path.display()));
     Ok(path)
 }
 
+#[track_caller]
 pub fn log_app_start_banner() {
     write_global_banner("CODE PET APP START", &banner_fields("app_start"));
 }
@@ -127,38 +135,46 @@ pub fn rotate_log_file_if_needed(path: &Path, max_bytes: u64) -> io::Result<bool
     Ok(true)
 }
 
+#[track_caller]
 pub fn append_log_line_to(path: &Path, level: &str, target: &str, message: &str) -> io::Result<()> {
     let mut file = open_log_file(path)?;
     writeln!(file, "{}", format_log_line(level, target, message))?;
     file.flush()
 }
 
+#[track_caller]
 pub fn append_app_start_banner_to(path: &Path) -> io::Result<()> {
     let mut file = open_log_file(path)?;
     write_banner(&mut file, "CODE PET APP START", &banner_fields("app_start"))
 }
 
+#[track_caller]
 pub fn append_log_file_header_to(path: &Path, reason: &str) -> io::Result<()> {
     let mut file = open_log_file(path)?;
     write_banner(&mut file, "CODE PET LOG FILE OPENED", &banner_fields(reason))
 }
 
+#[track_caller]
 pub fn append_perf_event_to(path: &Path, event: &PerfEvent) -> io::Result<()> {
     append_log_line_to(path, "INFO", "perf", &format_perf_event(event))
 }
 
+#[track_caller]
 pub fn record_perf_event(event: PerfEvent) {
     write_global("INFO", "perf", &format_perf_event(&event));
 }
 
+#[track_caller]
 pub fn info(target: &str, message: &str) {
     write_global("INFO", target, message);
 }
 
+#[track_caller]
 pub fn warn(target: &str, message: &str) {
     write_global("WARN", target, message);
 }
 
+#[track_caller]
 pub fn error(target: &str, message: &str) {
     write_global("ERROR", target, message);
 }
@@ -196,17 +212,23 @@ fn open_log_file(path: &Path) -> io::Result<File> {
     OpenOptions::new().create(true).append(true).open(path)
 }
 
+#[track_caller]
 fn write_global(level: &str, target: &str, message: &str) {
+    write_formatted(&format_log_line(level, target, message));
+}
+
+fn write_formatted(line: &str) {
     let Some(file) = LOG_FILE.get() else {
         return;
     };
     let Ok(mut file) = file.lock() else {
         return;
     };
-    let _ = writeln!(file, "{}", format_log_line(level, target, message));
+    let _ = writeln!(file, "{line}");
     let _ = file.flush();
 }
 
+#[track_caller]
 fn write_global_banner(title: &str, fields: &[(&str, String)]) {
     let Some(file) = LOG_FILE.get() else {
         return;
@@ -217,13 +239,13 @@ fn write_global_banner(title: &str, fields: &[(&str, String)]) {
     let _ = write_banner(&mut file, title, fields);
 }
 
+#[track_caller]
 fn write_banner(file: &mut File, title: &str, fields: &[(&str, String)]) -> io::Result<()> {
-    writeln!(file)?;
-    writeln!(file, "==================== {title} ====================")?;
+    let mut message = format!("==================== {title} ====================");
     for (key, value) in fields {
-        writeln!(file, "{key}={value}")?;
+        message.push_str(&format!(" | {key}={value}"));
     }
-    writeln!(file, "==================================================")?;
+    writeln!(file, "{}", format_log_line("INFO", "app", &message))?;
     file.flush()
 }
 
@@ -237,12 +259,9 @@ fn banner_fields(reason: &str) -> Vec<(&'static str, String)> {
     ]
 }
 
+#[track_caller]
 fn format_log_line(level: &str, target: &str, message: &str) -> String {
-    let timestamp = Local::now().to_rfc3339_opts(SecondsFormat::Millis, true);
-    format!(
-        "{timestamp} {level:<5} [{target}] {}",
-        message.replace('\n', "\\n")
-    )
+    codepet_host::format_text_log(&codepet_host::LogOrigin::capture(), level, target, message)
 }
 
 fn format_perf_event(event: &PerfEvent) -> String {

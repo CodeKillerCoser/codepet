@@ -20,12 +20,17 @@ fn appends_structured_log_lines_to_file() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("logs").join("code-pet.log");
 
+    let source_line = line!() + 1;
     append_log_line_to(&path, "INFO", "test", "hello logging").unwrap();
 
     let text = std::fs::read_to_string(path).unwrap();
     assert!(text.contains("INFO"));
     assert!(text.contains("[test]"));
     assert!(text.contains("hello logging"));
+    assert!(text.contains(&format!("pid={} thread=", std::process::id())));
+    assert!(text.contains(&format!("app_log_tests.rs:{source_line}")));
+    assert!(text.contains("+00:00"));
+    assert!(!text.contains("thread=-"));
 }
 
 #[test]

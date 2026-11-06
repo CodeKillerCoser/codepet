@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 codepet-provider-data = { path = "../providers/codepet-provider-data" }
 codepet-pet-sdk = { path = "../../sdk/rust/codepet-pet-sdk" }
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio"] }

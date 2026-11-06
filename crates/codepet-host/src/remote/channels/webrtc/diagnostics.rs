@@ -4,7 +4,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     mpsc, Arc, OnceLock,
 };
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 use webrtc::peer_connection::RTCPeerConnection;
 
 static DROPPED: AtomicU64 = AtomicU64::new(0);
@@ -95,18 +95,23 @@ impl Diagnostic {
             started: Instant::now(),
         })
     }
+    #[track_caller]
     pub fn emit(&self, event: &str, fields: Value) {
+        let origin = crate::LogOrigin::capture();
         let line = json!({"schema":"codepet.rtc.v1","service":"host","offerId":self.offer_id,
-            "timestampUnixMs":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),
+            "timestampUnixMs":origin.timestamp_unix_ms,"origin":origin,
             "elapsedMs":self.started.elapsed().as_millis(),"diagnosticDroppedTotal":DROPPED.load(Ordering::Relaxed),"event":event,"fields":fields}).to_string();
         if let Some(sink) = SINK.get() {
             if sink.try_send(line).is_err() {
                 DROPPED.fetch_add(1, Ordering::Relaxed);
             }
         } else {
-            eprintln!("{line}");
+            if let Some(text) = crate::format_rtc_log(&line) {
+                eprintln!("{text}");
+            }
         }
     }
+    #[track_caller]
     pub fn description(&self, side: &str, sdp: &str) {
         let lines: Vec<_> = sdp
             .lines()

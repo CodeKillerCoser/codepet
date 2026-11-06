@@ -119,6 +119,12 @@ logrotate 配置 daily、maxsize 10M、rotate 3、copytruncate；10M 是轮转�
 
 验证回归应包括：落败取消不触发业务断开；共享诊断对象不改变 SDP 签名输入；新增日志不含敏感正文；日志写盘失败不影响建连。
 
-## 2026-11-06 用户可读导出
+## 2026-11-06 统一文本日志（取代 JSON/JSONL 导出）
 
-Remote 新导出首先阅读 `connection-summary.txt` 和 `codepet.log`（UTC 文本时间线），机器解析读取 `raw/*.jsonl`。RTC 新记录不再将 JSON 嵌入 message 字符串；历史导出仍由报告转换器兼容读取。周期 ICE 快照保留在 raw，避免淹没主要流程；取消与网络失败分开记录。新 Android CI 注入 `CODEPET_BUILD_REVISION`，启动日志记录 SHA/模式/平台；旧日志缺失则明确写未知，不猜版本。VPS coturn 的 486 须结合服务器日志确认，不能由手机 noCandidates 自动推断。参见 [TURN 配额故障](webrtc-turn-reservation-capacity.md)。
+用户明确要求仅保留一种格式：`年月日 时分秒.毫秒+时区 pid thread 级别 文件:行号 [模块] 内容`。当前源码已将 Remote 落盘和 ZIP 导出统一为 UTF-8 `.log`，不再生成 JSONL、副本或连接摘要。ICE 统计、trace 和关联 ID 以键值文本保留；嵌套信息展开为 `stats[0].state=...`。旧版本 `.log` 中的 JSON 在打开时原子转换为文本，保留修改时间以维持过期策略，缺失来源标为 `-`。上文 JSON 入口描述对应旧版本。
+
+Remote `log_context.dart` 在生产日志时同步读取 PID、系统线程 ID、Dart isolate 和调用栈来源；FFI 封装在诊断适配器内，不能通过 MethodChannel 取 handler 线程充当调用线程。Rust `LogOrigin` 同样在事件发生时记录时间和来源，RTC 后台写盘保留生产线程的元数据。两端均为 UTC `+00:00`，Rust `#[track_caller]` 透传调用位置。第三方库无源码符号或未来启用拆分符号时，位置不可获取则明确缺失。
+
+验证：Remote diagnostics/gateway/settings 144 项测试通过，相关 analyze 通过；Host 来源跨线程/RTC 格式 2 项通过，Tauri app_log 9 项通过。Tauri 检查需沿用本仓库测试设置 `TAURI_CONFIG='{"app":{"macOSPrivateApi":false}}'`，裸命令被已有配置/feature 检查拦截。独立 Dart AOT 可执行探针确认真实线程 ID 与文件行号；这不等同于 Android 新安装包实机验收。本轮尚未构建/替换桌面和手机 Release。
+
+规约见 [文本日志格式与来源上下文](../60-rules/text-log-origin.md)。VPS 自有信令与第三方 coturn 的既有日志配置未在此客户端格式修改中部署更新；排查 486 仍须结合 coturn 证据。
