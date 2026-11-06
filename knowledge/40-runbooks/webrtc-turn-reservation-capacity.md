@@ -40,6 +40,8 @@ VPS 已于 21:17:39 更新，备份 `/opt/codepet-signal/backups/turn-capacity-2
 
 Python `unittest discover -s services/signaling -p 'test_*.py'` 16 项通过；Remote `flutter test --no-pub test/diagnostics test/gateway test/settings test/app test/pairing` 164 项通过，涵盖旧日志解码、排序、取消与失败分离、导出内容及日志分享入口；相关 Dart 分析通过。当前用户日志已通过生产转换器生成可读时间线/摘要，原目录未修改。转换验收还发现历史消息含 NUL/控制字符，已统一替换以避免文本被识别成二进制；相关新增回归及导出测试 7 项通过，原始 JSONL 仍完整保留。
 
+交付：Remote `5947136` 已由 GitHub Actions run `42226855471` 构建正式签名 Release，包内构建 SHA 与提交一致，无 debuggable 标记。安装包已部署 VPS 下载入口，完整下载后 SHA-256 与构建产物一致：`e8166c71c12fbb599ebc21cc6871c3e05170e1bd17ce2f7b0203cd7b6a55c854`。本次服务器修复无需更新手机即可复测；新版手机用于改进日志导出和取消状态记录，未改桌面二进制。
+
 ## 回归防线与未知项
 
 容量配置必须满足 `total-quota × max-bps <= bps-capacity`；验收至少包含两个用户并发分配，不能仅跑一个中继连接。后续诊断先按目标身份/race/offer 对齐，再读全量 ICE 明细。缺少候选不能直接推断服务端 486，必须有 coturn 证据。
