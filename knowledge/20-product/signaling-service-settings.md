@@ -54,3 +54,9 @@ Host 保留当前 DeviceRegistry ID，新增全局设备签名 seed 文件及按
 ## 未知项
 
 用户真实手机的移动网络配对/连接仍需新 Release 实测。电脑已构建并替换 Release，使用实际设置 UI 输入 `172.96.254.12` 后在 638 ms 内登记成功，重启后 819 ms 内恢复；VPS 登记表确认当前 Mac 的真实 Host ID 仅一条记录。Remote 使用真实 `SignalingDeviceRegistration` 的网络探针也完成首次及重复登记（仅安全存储使用测试替身，HTTP/签名/响应验证均为生产代码）。两种探针身份已从 VPS 清理。手机正式签名 Release 构建运行号为 42221630424，实际手机验收尚未执行。
+
+## Release 交付验收
+
+桌面代码提交 `42524e6`，本机 `/Applications/Code Pet.app` 已替换；Remote 代码提交 `ca9e4ca`，GitHub Release 构建 42221630424 成功。APK 为 `com.codepet.remote` 0.1.1/code 2，无 debuggable 标志，正式证书 SHA-256 与上一版一致（`cee49b08…e2665`），可覆盖安装。
+
+[手机 Release APK](https://172.96.254.12:8443/downloads/codepet-remote/389886e1f079c8440ee2fdc7/codepet-remote-release-ca9e4ca.apk) 已从最终 URL 完整下载并校验，SHA-256 为 `ce330d276ec75951acaaabb6f6602c81a50171e43e8d16ee0088458c99e2825d`；同路径 `.zip` 返回 200 并支持 Range。nginx 配置测试通过，信令/coturn/nginx/xray 均 active。默认 LAN listener 集成测试另有 3 项通过（2 项需要授权的现场探针默认跳过，其中 relay 探针已单独运行）。用户手机的 4G 验收仍需安装此版本后执行，不能由这些结果推断所有网络均可穿透。
