@@ -1,0 +1,4 @@
+name: codepet_channel_control_sdk
+version: 0.1.0
+environment:
+  sdk: ^3.3.0

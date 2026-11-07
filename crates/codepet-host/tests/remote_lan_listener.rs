@@ -251,6 +251,10 @@ impl PinnedTlsClient {
         &self,
         bearer: &str,
     ) -> Result<TestWebSocket, WebSocketError> {
+        self.connect_websocket_control(bearer, false).await
+    }
+
+    async fn connect_websocket_control(&self, bearer: &str, control: bool) -> Result<TestWebSocket, WebSocketError> {
         let tls = self.connect_tls().await;
         let mut request = format!(
             "wss://localhost:{}/remote/v1/gateway",
@@ -262,7 +266,11 @@ impl PinnedTlsClient {
             "Authorization",
             HeaderValue::from_str(&format!("Bearer {bearer}")).unwrap(),
         );
-        client_async(request, tls).await.map(|(socket, _)| socket)
+        if control { request.headers_mut().insert("Sec-WebSocket-Protocol", HeaderValue::from_static("codepet-control-v1")); }
+        client_async(request, tls).await.map(|(socket, response)| {
+            if control { assert_eq!(response.headers()["sec-websocket-protocol"], "codepet-control-v1"); }
+            socket
+        })
     }
 
     async fn websocket_upgrade_headers(
@@ -1328,6 +1336,9 @@ impl Drop for RtcClient {
 
 impl RtcClient {
     async fn connect(client: &PinnedTlsClient, credential: &str) -> Self {
+        Self::connect_control(client, credential, false).await
+    }
+    async fn connect_control(client: &PinnedTlsClient, credential: &str, control: bool) -> Self {
         use webrtc::api::APIBuilder;
         use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
         use webrtc::peer_connection::configuration::RTCConfiguration;
@@ -1348,12 +1359,14 @@ impl RtcClient {
         let mut gathered = peer.gathering_complete_promise().await;
         peer.set_local_description(offer).await.unwrap();
         timeout(Duration::from_secs(8), gathered.recv()).await.unwrap();
-        let offer = peer.local_description().await.unwrap();
+        let mut offer = peer.local_description().await.unwrap();
+        if control { offer.sdp.push_str("a=x-codepet-channel-control:1\r\n"); }
         let (status, answer) = client.json_request(
             "POST", "/remote/v1/webrtc/offer", Some(credential),
             Some(&serde_json::to_string(&offer).unwrap()),
         ).await;
         assert_eq!(status, 200, "{answer}");
+        if control { assert!(answer["sdp"].as_str().unwrap().contains("a=x-codepet-channel-control:1")); }
         peer.set_remote_description(serde_json::from_value(answer).unwrap()).await.unwrap();
         timeout(Duration::from_secs(15), async {
             while channel.ready_state() != webrtc::data_channel::data_channel_state::RTCDataChannelState::Open {
@@ -1364,6 +1377,9 @@ impl RtcClient {
     }
 
     async fn request(&self, request: gateway::ProtocolRequest) {
+        self.request_value(serde_json::to_value(request).unwrap()).await;
+    }
+    async fn request_value(&self, request: serde_json::Value) {
         let bytes = serde_json::to_vec(&request).unwrap();
         for (index, part) in bytes.chunks(16 * 1024 - 12).enumerate() {
             let mut frame = b"CPG1".to_vec();
@@ -1695,4 +1711,65 @@ async fn rtc_public_relay_probe() {
     rtc.peer.close().await.unwrap();
     server.shutdown().await.unwrap();
     eprintln!("Public signaling + selected {policy} + Gateway handshake + large RPC + revocation passed");
+}
+
+#[tokio::test]
+async fn negotiated_channel_handover_fences_old_requests_and_projects_one_active_connection() {
+    let host = TestHost::start().await;
+    let server = RemoteLanServer::start(RemoteLanServerConfig::loopback(), host.remote_access.clone(), host.gateway.clone()).await.unwrap();
+    let client = PinnedTlsClient::new(server.local_addr(), host.remote_access.tls_identity().certificate_der().to_vec());
+    let pairing = pair_client(&host.remote_access, &client, "control-client").await;
+    async fn control(socket: &mut TestWebSocket, id: &str, operation: &str, params: serde_json::Value) -> serde_json::Value {
+        let frame = serde_json::json!({"channelControl":1,"jsonrpc":"2.0","id":id,"operation":operation,"params":params});
+        socket.send(Message::Text(serde_json::to_string(&frame).unwrap())).await.unwrap();
+        next_value(socket).await
+    }
+    let mut old = client.connect_websocket_control(&pairing.credential, true).await.unwrap();
+    let prepared = control(&mut old, "prepare-old", "prepare", serde_json::json!({"sessionId":"logical-session"})).await;
+    let old_id = prepared["result"]["connectionId"].as_str().unwrap().to_string();
+    send_request(&mut old, handshake_request("handshake-old", "control-client")).await;
+    next_response(&mut old, "handshake-old").await;
+    assert!(host.gateway.remote_connections().snapshot().connections.is_empty());
+    let active = control(&mut old, "activate-old", "activate", serde_json::json!({"switchId":"s1"})).await;
+    assert_eq!(active["result"]["activeConnectionId"], old_id);
+    assert_eq!(host.gateway.remote_connections().snapshot().connections.len(), 1);
+
+    let mut new = client.connect_websocket_control(&pairing.credential, true).await.unwrap();
+    let prepared = control(&mut new, "prepare-new", "prepare", serde_json::json!({"sessionId":"logical-session"})).await;
+    let new_id = prepared["result"]["connectionId"].as_str().unwrap().to_string();
+    send_request(&mut new, handshake_request("handshake-new", "control-client")).await;
+    next_response(&mut new, "handshake-new").await;
+    let provider_list = |id: &str| gateway::ProtocolRequest::ProviderList { jsonrpc:"2.0".into(), id:id.into(), params:gateway::ProviderListRequest {} };
+    send_request(&mut new, provider_list("not-active")).await;
+    assert!(matches!(next_response(&mut new, "not-active").await.response, gateway::JsonRpcResponsePayload::Error { .. }));
+    let params = serde_json::json!({"expectedActive":old_id,"switchId":"s2"});
+    let active = control(&mut new, "activate-new", "activate", params.clone()).await;
+    assert_eq!(active["result"]["activeConnectionId"], new_id);
+    // Lost confirmation can retry exactly the same switch, without another owner.
+    let replay = control(&mut new, "retry-new", "activate", params).await;
+    assert_eq!(replay["result"]["activeConnectionId"], new_id);
+    assert_eq!(host.gateway.remote_connections().snapshot().connections.len(), 1);
+    assert_eq!(host.gateway.remote_connections().traffic_for_client("control-client").len(), 1);
+    send_request(&mut old, provider_list("old-after-switch")).await;
+    assert!(matches!(next_response(&mut old, "old-after-switch").await.response, gateway::JsonRpcResponsePayload::Error { .. }));
+    send_request(&mut new, provider_list("new-after-switch")).await;
+    assert!(matches!(next_response(&mut new, "new-after-switch").await.response, gateway::JsonRpcResponsePayload::Ok { .. }));
+    // The same ownership contract crosses the native RTC data channel too.
+    let mut rtc = RtcClient::connect_control(&client, &pairing.credential, true).await;
+    rtc.request_value(serde_json::json!({"channelControl":1,"jsonrpc":"2.0","id":"rtc-prepare","operation":"prepare","params":{"sessionId":"logical-session"}})).await;
+    let prepared = rtc.next_json().await;
+    let rtc_id = prepared["result"]["connectionId"].as_str().unwrap().to_owned();
+    rtc.request(handshake_request("rtc-control-handshake", "control-client")).await;
+    assert!(rtc.next_json().await.get("result").is_some());
+    rtc.request_value(serde_json::json!({"channelControl":1,"jsonrpc":"2.0","id":"rtc-activate","operation":"activate","params":{"expectedActive":new_id,"switchId":"s3"}})).await;
+    assert_eq!(rtc.next_json().await["result"]["activeConnectionId"], rtc_id);
+    assert_eq!(host.gateway.remote_connections().traffic_for_client("control-client").len(), 1);
+    send_request(&mut new, provider_list("lan-after-rtc")).await;
+    assert!(matches!(next_response(&mut new, "lan-after-rtc").await.response, gateway::JsonRpcResponsePayload::Error { .. }));
+    rtc.request(provider_list("rtc-active")).await;
+    assert!(rtc.next_json().await.get("result").is_some());
+    rtc.peer.close().await.unwrap();
+    old.close(None).await.unwrap(); new.close(None).await.unwrap();
+    server.shutdown().await.unwrap();
+    host.manager.shutdown().await;
 }

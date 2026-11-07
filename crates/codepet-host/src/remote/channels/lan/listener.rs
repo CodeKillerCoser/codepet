@@ -687,9 +687,14 @@ async fn gateway_websocket(
         .map_err(RestError::authorization)?;
     let gateway = state.gateway.clone();
     let remote_access = state.remote_access.clone();
-    let (response, upgrade) = websocket
+    let supports_control = headers.get("sec-websocket-protocol").and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|p| p.trim() == "codepet-control-v1"));
+    let (mut response, upgrade) = websocket
         .upgrade(gateway_websocket_options())
         .map_err(RestError::websocket_upgrade)?;
+    if supports_control {
+        response.headers_mut().insert("sec-websocket-protocol", "codepet-control-v1".parse().unwrap());
+    }
     tokio::spawn(async move {
         if let Ok(socket) = upgrade.await {
             run_gateway_channel(
@@ -698,6 +703,7 @@ async fn gateway_websocket(
                 remote_access,
                 credential,
                 registration,
+                supports_control,
             )
             .await;
         }

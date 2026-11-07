@@ -64,7 +64,9 @@
       "version": 1,
       "schema": "pet/v1/schema.json",
       "manifest": "pet/v1/manifest.json",
-      "dependencies": ["core-v1"],
+      "dependencies": [
+        "core-v1"
+      ],
       "outputs": {
         "rust": "sdk/rust/codepet-pet-sdk/src/generated.rs",
         "typescript": "sdk/typescript/codepet-pet-sdk/src/generated.ts"
@@ -76,7 +78,9 @@
       "version": 1,
       "schema": "agent/v1/schema.json",
       "manifest": "agent/v1/manifest.json",
-      "dependencies": ["core-v1"],
+      "dependencies": [
+        "core-v1"
+      ],
       "publicTypes": [
         "Approval",
         "ChoiceSet",
@@ -108,7 +112,10 @@
       "version": 1,
       "schema": "provider/v1/schema.json",
       "manifest": "provider/v1/manifest.json",
-      "dependencies": ["core-v1", "agent-v1"],
+      "dependencies": [
+        "core-v1",
+        "agent-v1"
+      ],
       "outputs": {
         "rust": "sdk/rust/codepet-provider-sdk/src/generated.rs",
         "typescript": "sdk/typescript/codepet-provider-sdk/src/generated.ts"
@@ -120,7 +127,10 @@
       "version": 1,
       "schema": "gateway/v1/schema.json",
       "manifest": "gateway/v1/manifest.json",
-      "dependencies": ["core-v1", "agent-v1"],
+      "dependencies": [
+        "core-v1",
+        "agent-v1"
+      ],
       "outputs": {
         "rust": "sdk/rust/codepet-gateway-sdk/src/generated.rs",
         "typescript": "sdk/typescript/codepet-gateway-sdk/src/generated.ts",
@@ -133,7 +143,9 @@
       "version": 1,
       "schema": "channel/lan/v1/schema.json",
       "manifest": "channel/lan/v1/manifest.json",
-      "dependencies": ["core-v1"],
+      "dependencies": [
+        "core-v1"
+      ],
       "publicTypes": [
         "CurrentCredentialDeleteResponse",
         "LanHostIdentity",
@@ -155,10 +167,29 @@
       "version": 0,
       "schema": "desktop/v0/schema.json",
       "manifest": "desktop/v0/manifest.json",
-      "dependencies": ["core-v1"],
+      "dependencies": [
+        "core-v1"
+      ],
       "outputs": {
         "rust": "sdk/rust/codepet-desktop-sdk/src/generated.rs",
         "typescript": "sdk/typescript/codepet-desktop-sdk/src/generated.ts"
+      }
+    },
+    {
+      "id": "channel-control-v1",
+      "layer": "channel",
+      "version": 1,
+      "schema": "channel/control/v1/schema.json",
+      "manifest": "channel/control/v1/manifest.json",
+      "dependencies": [],
+      "publicTypes": [
+        "ControlPrepare",
+        "ControlActivate",
+        "ControlStatus"
+      ],
+      "outputs": {
+        "rust": "sdk/rust/codepet-channel-control-sdk/src/generated.rs",
+        "dart": "sdk/dart/codepet-channel-control-sdk/lib/src/generated.dart"
       }
     }
   ]

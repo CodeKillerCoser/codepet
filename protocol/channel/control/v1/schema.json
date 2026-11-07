@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/channel/control/v1/schema.json",
+  "title": "CodePet Transport Control v1",
+  "$defs": {
+    "ControlPrepare": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "ControlActivate": {
+      "type": "object",
+      "properties": {
+        "expectedActive": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "switchId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "switchId"
+      ],
+      "additionalProperties": false
+    },
+    "ControlStatus": {
+      "type": "object",
+      "properties": {
+        "connectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "activeConnectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "lastSwitchId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "connectionId"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

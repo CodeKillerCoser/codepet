@@ -118,6 +118,7 @@ test("schema and method/event manifests are self-consistent", async () => {
       "gateway-v1",
       "channel-lan-v1",
       "desktop-runtime-v0",
+      "channel-control-v1",
     ],
   );
 });
@@ -530,7 +531,7 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   const result = await generateProtocol({ checkMode: true, targets: ["dart"] });
   assert.deepEqual(
     result.generated.map(({ packageId, targetId }) => [packageId, targetId]),
-    [["core-v1", "dart"], ["agent-v1", "dart"], ["gateway-v1", "dart"], ["channel-lan-v1", "dart"]],
+    [["core-v1", "dart"], ["agent-v1", "dart"], ["gateway-v1", "dart"], ["channel-lan-v1", "dart"], ["channel-control-v1", "dart"]],
   );
 });
 

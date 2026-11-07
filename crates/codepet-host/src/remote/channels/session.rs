@@ -1,5 +1,8 @@
 use crate::{ProviderGatewayService, RemoteAccessManager, RemoteCredential};
 use codepet_gateway_sdk as gateway;
+use codepet_channel_control_sdk::{ControlPrepare, ControlActivate};
+use super::ownership::OwnershipLease;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::pin::Pin;
@@ -341,6 +344,7 @@ pub(crate) async fn run_gateway_channel(
     remote_access: Arc<RemoteAccessManager>,
     credential: RemoteCredential,
     mut registration: SessionRegistration,
+    supports_control: bool,
 ) {
     let GatewayChannel { sink, mut source, traffic } = channel;
     let (outbound_tx, outbound_rx) = mpsc::channel::<GatewayFrame>(OUTBOUND_QUEUE_CAPACITY);
@@ -356,6 +360,9 @@ pub(crate) async fn run_gateway_channel(
         writer_failed,
         writer_done_tx,
     ));
+    let admission = Arc::new(Mutex::new(Arc::new(AtomicBool::new(!supports_control))));
+    let mut ownership: Option<OwnershipLease> = None;
+    let control_diagnostic = super::webrtc::diagnostics::Diagnostic::new(&uuid::Uuid::new_v4().to_string());
     let request_dispatcher = tokio::spawn(run_gateway_requests(
         request_rx,
         gateway.clone(),
@@ -364,6 +371,7 @@ pub(crate) async fn run_gateway_channel(
         transport_failed_tx.clone(),
         stop_tx.subscribe(),
         trace_links.clone(),
+        admission.clone(),
     ));
 
     let mut presence = None;
@@ -411,6 +419,59 @@ pub(crate) async fn run_gateway_channel(
                 break;
             }
         };
+        // The canonical channel prefix is separate from Gateway JSON-RPC. Do not
+        // parse large business payloads twice to recognize tiny control frames.
+        if text.starts_with(b"{\"channelControl\":1,") {
+            if !supports_control || text.len() > 2048 {
+                close_frame = Some(close_message(1008, "channel_control_not_negotiated"));
+                break;
+            }
+            let frame: serde_json::Value = match serde_json::from_slice(&text) {
+                Ok(value) => value, Err(_) => break,
+            };
+            if frame["jsonrpc"] != "2.0" { break; }
+            let id = frame["id"].as_str().filter(|v| !v.is_empty() && v.len() <= 128);
+            let Some(id) = id else { break; };
+            let operation = frame["operation"].as_str().unwrap_or("");
+            let mut accepted = false;
+            match operation {
+                "prepare" if !handshaken && ownership.is_none() => {
+                    if let Ok(params) = serde_json::from_value::<ControlPrepare>(frame["params"].clone()) {
+                        if !params.session_id.is_empty() && params.session_id.len() <= 128 {
+                            ownership = Some(gateway.remote_connections().ownership.prepare(&credential.credential_id, &params.session_id));
+                            *admission.lock().unwrap() = ownership.as_ref().unwrap().active.clone();
+                            accepted = true;
+                        }
+                    }
+                }
+                "status" if ownership.is_some() => accepted = true,
+                "activate" if handshaken && ownership.is_some() => {
+                    if let Ok(params) = serde_json::from_value::<ControlActivate>(frame["params"].clone()) {
+                        if !params.switch_id.is_empty() && params.switch_id.len() <= 128 {
+                            let lease = ownership.as_ref().unwrap();
+                            accepted = lease.activate(params.expected_active.as_deref(), &params.switch_id);
+                            gateway.remote_connections().refresh();
+                        }
+                    }
+                }
+                _ => {}
+            }
+            if operation != "status" {
+                control_diagnostic.emit("channel.control", serde_json::json!({
+                    "clientId": credential.client_id, "operation":operation, "accepted":accepted,
+                    "switchId":frame["params"]["switchId"].as_str(),
+                    "connectionId":ownership.as_ref().map(|v| v.status().connection_id),
+                    "activeConnectionId":ownership.as_ref().and_then(|v| v.status().active_connection_id),
+                }));
+            }
+            let response = if accepted {
+                serde_json::json!({"channelControl":1,"jsonrpc":"2.0","id":id,"result":ownership.as_ref().unwrap().status()})
+            } else {
+                serde_json::json!({"channelControl":1,"jsonrpc":"2.0","id":id,"error":{"code":"channel_control_conflict"}})
+            };
+            if !queue_json(&outbound_tx, &response, &mut registration).await { break; }
+            continue;
+        }
         let observed = match gateway::decode_observed_wire_message(&text) {
             Ok(observed) => observed,
             Err(error) => {
@@ -456,6 +517,10 @@ pub(crate) async fn run_gateway_channel(
         );
 
         if !handshaken {
+            if supports_control && ownership.is_none() {
+                close_frame = Some(close_message(1008, "channel_prepare_required"));
+                break;
+            }
             let gateway::ProtocolRequest::ProtocolHandshake {
                 jsonrpc,
                 id,
@@ -524,11 +589,11 @@ pub(crate) async fn run_gateway_channel(
                 }
                 break;
             }
-            presence = Some(
-                gateway
-                    .remote_connections()
-                    .register_with_traffic(credential.client_id.clone(), traffic.clone()),
-            );
+            presence = Some(if let Some(lease) = ownership.as_ref() {
+                gateway.remote_connections().register_controlled(credential.client_id.clone(), traffic.clone(), lease.active.clone())
+            } else {
+                gateway.remote_connections().register_with_traffic(credential.client_id.clone(), traffic.clone())
+            });
             heartbeat = gateway::GatewayHeartbeat::default();
             handshaken = true;
             continue;
@@ -561,6 +626,13 @@ pub(crate) async fn run_gateway_channel(
             if !queue_json(&outbound_tx, &response, &mut registration).await {
                 break;
             }
+            continue;
+        }
+
+        if !admission.lock().unwrap().load(Ordering::SeqCst) {
+            let response = json_rpc_error_response("2.0".into(), Some(request.id().clone()),
+                protocol_error("channel_not_active", "Channel is not the active owner", true));
+            if !queue_json(&outbound_tx, &response, &mut registration).await { break; }
             continue;
         }
 
@@ -724,6 +796,7 @@ async fn run_gateway_requests(
     transport_failed: watch::Sender<bool>,
     mut stop: watch::Receiver<bool>,
     trace_links: Arc<Mutex<SessionTraceLinks>>,
+    admission: Arc<Mutex<Arc<AtomicBool>>>,
 ) {
     let mut tasks = JoinSet::new();
     loop {
@@ -744,6 +817,7 @@ async fn run_gateway_requests(
                 let Some(delivery) = request else {
                     break;
                 };
+                let request_admission = admission.clone();
                 let request_gateway = gateway.clone();
                 let request_scope = caller_scope.clone();
                 let request_outbound = outbound.clone();
@@ -756,6 +830,15 @@ async fn run_gateway_requests(
                         trace_context,
                         received_at,
                     } = delivery;
+                    // Queue admission is checked again immediately before dispatch.
+                    if !request_admission.lock().unwrap().load(Ordering::SeqCst) {
+                        let response = json_rpc_error_response("2.0".into(), Some(request.id().clone()),
+                            protocol_error("channel_not_active", "Queued request belongs to an inactive channel", true));
+                        if let Ok(text) = serde_json::to_string(&response) {
+                            let _ = enqueue_outbound(&request_outbound, GatewayFrame::text(text)).await;
+                        }
+                        return;
+                    }
                     if let Ok(mut links) = request_trace_links.lock() {
                         links.begin_request(&request, trace_context.as_ref());
                     }

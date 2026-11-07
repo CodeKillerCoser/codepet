@@ -99,6 +99,7 @@ async fn answer_offer_with_policy(
 ) -> HostResult<RTCSessionDescription> {
     let settings = path_policy.configure(&mut configuration);
     let compression = framing::supports_compression(&offer.sdp);
+    let supports_control = offer.sdp.lines().any(|line| line.trim() == "a=x-codepet-channel-control:1");
     // Early SDP starts this phase earlier than legacy full gathering. Preserve
     // the race's 55s budget so a genuinely late useful candidate is not lost.
     let trickle_deadline = updates
@@ -225,6 +226,7 @@ async fn answer_offer_with_policy(
             answer_sdp.push_str(framing::COMPRESSION_SDP);
             answer_sdp.push_str("\r\n");
         }
+        if supports_control { answer_sdp.push_str("a=x-codepet-channel-control:1\r\n"); }
         let answer = RTCSessionDescription::answer(answer_sdp)
             .map_err(|_| rtc_error("invalid RTC answer SDP"))?;
         diagnostic.description("localAnswer", &answer.sdp);
@@ -254,7 +256,7 @@ async fn answer_offer_with_policy(
         diagnostic.emit("channel.openResult", json!({"opened":opened}));
         diagnostic.stats(&_lease.0, "openResult").await;
         if opened {
-            run_gateway_channel(channel, gateway, access, credential, registration).await;
+            run_gateway_channel(channel, gateway, access, credential, registration, supports_control).await;
         }
         diagnostic.stats(&_lease.0, "closing").await;
         diagnostic.emit("channel.close", json!({}));

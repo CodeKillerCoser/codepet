@@ -472,6 +472,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "codepet-channel-control-sdk"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "codepet-core-sdk"
 version = "0.1.0"
 dependencies = [
@@ -498,6 +506,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
+ "codepet-channel-control-sdk",
  "codepet-gateway-sdk",
  "codepet-lan-channel-sdk",
  "codepet-pet-sdk",

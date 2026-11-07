@@ -1,20 +1,22 @@
 //! Authenticated client presence. LAN discovery and Provider processes do not own this state.
 use codepet_provider_sdk::{ClientConnectionInfo, ClientConnectionsSnapshot};
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use tokio::sync::watch;
 use super::traffic::{ConnectionTraffic, ConnectionTrafficSnapshot};
 
 pub struct RemoteConnections {
     connections: Mutex<BTreeMap<String, String>>,
     traffic: Mutex<BTreeMap<String, (String, Arc<ConnectionTraffic>)>>,
+    pub(crate) ownership: Arc<super::channels::ownership::Ownership>,
+    visibility: Mutex<BTreeMap<String, Arc<AtomicBool>>>,
     snapshots: watch::Sender<ClientConnectionsSnapshot>,
 }
 
 impl Default for RemoteConnections {
     fn default() -> Self {
         let (snapshots, _) = watch::channel(ClientConnectionsSnapshot { revision: 0, connections: vec![] });
-        Self { connections: Mutex::new(BTreeMap::new()), traffic: Mutex::new(BTreeMap::new()), snapshots }
+        Self { ownership: Arc::default(), visibility: Mutex::default(), connections: Mutex::new(BTreeMap::new()), traffic: Mutex::new(BTreeMap::new()), snapshots }
     }
 }
 
@@ -35,15 +37,28 @@ impl RemoteConnections {
         self.traffic.lock().unwrap().insert(connection.id.clone(), (client_id, traffic));
         connection
     }
+    pub(crate) fn register_controlled(self: &Arc<Self>, client_id: String, traffic: Arc<ConnectionTraffic>, visible: Arc<AtomicBool>) -> RemoteConnection {
+        let id = uuid::Uuid::new_v4().to_string();
+        let mut entries = self.connections.lock().unwrap();
+        self.visibility.lock().unwrap().insert(id.clone(), visible);
+        entries.insert(id.clone(), client_id.clone());
+        self.traffic.lock().unwrap().insert(id.clone(), (client_id, traffic));
+        self.publish(&entries);
+        RemoteConnection { owner: self.clone(), id }
+    }
+    pub(crate) fn refresh(&self) { self.publish(&self.connections.lock().unwrap()); }
+    fn visible(&self, id: &str) -> bool {
+        self.visibility.lock().unwrap().get(id).is_none_or(|active| active.load(Ordering::SeqCst))
+    }
     pub fn traffic_for_client(&self, client_id: &str) -> Vec<ConnectionTrafficSnapshot> {
-        self.traffic.lock().unwrap().values().filter(|(id, _)| id == client_id)
-            .map(|(_, traffic)| traffic.snapshot()).collect()
+        self.traffic.lock().unwrap().iter().filter(|(key, (id, _))| id == client_id && self.visible(key))
+            .map(|(_, (_, traffic))| traffic.snapshot()).collect()
     }
 
     fn publish(&self, entries: &BTreeMap<String, String>) {
         let revision = self.snapshots.borrow().revision.saturating_add(1);
         self.snapshots.send_replace(ClientConnectionsSnapshot { revision,
-            connections: entries.iter().map(|(id, client)| ClientConnectionInfo {
+            connections: entries.iter().filter(|(id, _)| self.visible(id)).map(|(id, client)| ClientConnectionInfo {
                 connection_id: id.clone(), client_id: client.clone(),
             }).collect() });
     }
@@ -56,6 +71,7 @@ impl Drop for RemoteConnection {
         let mut entries = self.owner.connections.lock().unwrap_or_else(|e| e.into_inner());
         entries.remove(&self.id);
         self.owner.traffic.lock().unwrap().remove(&self.id);
+        self.owner.visibility.lock().unwrap().remove(&self.id);
         self.owner.publish(&entries);
     }
 }

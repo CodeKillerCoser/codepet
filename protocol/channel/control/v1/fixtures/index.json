@@ -1,0 +1,17 @@
+[
+  {
+    "file": "prepare.json",
+    "kind": "type",
+    "name": "ControlPrepare"
+  },
+  {
+    "file": "activate.json",
+    "kind": "type",
+    "name": "ControlActivate"
+  },
+  {
+    "file": "status.json",
+    "kind": "type",
+    "name": "ControlStatus"
+  }
+]
