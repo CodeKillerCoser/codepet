@@ -1,0 +1,22 @@
+{
+  "publicIp": "172.96.254.12",
+  "httpsPort": 8443,
+  "nginx": {
+    "requestsPerSecond": 200,
+    "burst": 400
+  },
+  "turn": {
+    "listening-port": 3478,
+    "tls-listening-port": 5349,
+    "min-port": 49160,
+    "max-port": 51199,
+    "user-quota": 32,
+    "total-quota": 1024,
+    "max-bps": 500000,
+    "bps-capacity": 0
+  },
+  "egress": {
+    "bytesPerSecond": 10000000,
+    "burstBytes": 2000000
+  }
+}

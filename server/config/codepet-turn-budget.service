@@ -1,0 +1,12 @@
+[Unit]
+Description=Code Pet TURN actual egress budget
+After=firewalld.service
+Before=coturn.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/codepet-signal/turn-budget.nft
+ExecReload=/usr/sbin/nft -f /etc/codepet-signal/turn-budget.nft
+ExecStop=/usr/sbin/nft delete table inet codepet_turn_budget
+[Install]
+WantedBy=multi-user.target

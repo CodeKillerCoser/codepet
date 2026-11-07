@@ -45,7 +45,7 @@ class AdmissionTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.directory = tempfile.TemporaryDirectory()
         path = self.directory.name + '/state.db'
-        app = create_app(path, 'test-turn-secret', '192.0.2.1')
+        app = create_app(path, 'test-turn-secret', '192.0.2.1', limits={'turn_per_minute': 12})
         with sqlite3.connect(path) as db:
             db.executemany('INSERT INTO hosts VALUES (?,?)', [('host-a', digest('host-token')), ('host-b', digest('other-host'))])
         self.client = TestClient(TestServer(app))

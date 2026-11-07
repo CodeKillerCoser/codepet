@@ -1,0 +1,19 @@
+[Unit]
+Description=CodePet authenticated WebRTC signaling
+After=network-online.target
+[Service]
+User=codepet-signal
+Group=codepet-signal
+ExecStart=/opt/codepet-venv/bin/python /opt/codepet-signal/server.py
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/codepet-signal
+MemoryMax=192M
+TasksMax=64
+[Install]
+WantedBy=multi-user.target

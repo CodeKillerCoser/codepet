@@ -17,7 +17,7 @@ class RegistrationTest(unittest.IsolatedAsyncioTestCase):
         await self.start()
 
     async def start(self, enabled=True, capacity=1024):
-        self.client = TestClient(TestServer(create_app(self.path, 'test-turn', '192.0.2.1', enabled, capacity)))
+        self.client = TestClient(TestServer(create_app(self.path, 'test-turn', '192.0.2.1', enabled, capacity, limits={'registration_per_ip_minute': 30})))
         await self.client.start_server()
 
     async def asyncTearDown(self):

@@ -29,7 +29,7 @@ LAN 使用 pinned WSS、bearer 与发现解析；云端使用配对后的独立 
 ## 涉及模块
 
 - Host `remote/channels/webrtc/{mod,path_policy,cloud}.rs`：落实策略、签名绑定、并发协商及资源回收。
-- `services/signaling/server.py`：避免同设备多路径 offer 相互覆盖，提供有界批量读取与取消。
+- `server/server.py`：避免同设备多路径 offer 相互覆盖，提供有界批量读取与取消。
 - Remote `gateway/webrtc/{routed_rtc_transport,path_policy,cloud_signaling,webrtc_gateway_transport}.dart`：竞速、候选隔离和赢家生命周期。
 - `remote_lan_listener.rs`：原生探针增加策略、随机测试 Host 身份与实际候选对校验。
 

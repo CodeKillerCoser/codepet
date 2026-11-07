@@ -8,14 +8,17 @@ import sqlite3
 import time
 
 from aiohttp import web
+from policy import Limits, RateLimiter, client_source, unavailable
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 
 class DeviceRegistration:
-    def __init__(self, db, enabled=False, max_devices=1024):
+    def __init__(self, db, enabled=False, max_devices=1024, limits=None, trusted_proxies=()):
         self.db, self.enabled, self.max_devices = db, enabled, max_devices
-        self.rates = {}
+        self.limits = limits or Limits()
+        self.rates = RateLimiter(self.limits.rate_buckets)
+        self.trusted_proxies = trusted_proxies
         db.execute('''CREATE TABLE IF NOT EXISTS device_registrations (
             id TEXT PRIMARY KEY, role TEXT NOT NULL, public_key TEXT NOT NULL,
             token_hash TEXT UNIQUE NOT NULL, created_at INTEGER NOT NULL)''')
@@ -23,13 +26,7 @@ class DeviceRegistration:
     async def register(self, request):
         if not self.enabled:
             raise web.HTTPForbidden(text='device_registration_disabled')
-        now = time.monotonic()
-        self.rates = {k: v for k, v in self.rates.items() if v[0] > now - 60}
-        source = request.remote or 'unknown'
-        start, count = self.rates.get(source, (now, 0))
-        if count >= 30 or (source not in self.rates and len(self.rates) >= 1024):
-            raise web.HTTPTooManyRequests()
-        self.rates[source] = (start, count + 1)
+        self.rates.check(client_source(request, self.trusted_proxies), self.limits.registration_per_ip_minute)
         try:
             envelope = await request.json()
             if not isinstance(envelope, dict) or set(envelope) != {'payload', 'signature', 'publicKey'}:
@@ -71,7 +68,7 @@ class DeviceRegistration:
                 if role != 'host' or not hmac.compare_digest(legacy[0], supplied) or legacy[0] != token_hash:
                     raise web.HTTPConflict(text='device_identity_conflict')
             if self.db.execute('SELECT count(*) FROM device_registrations').fetchone()[0] >= self.max_devices:
-                raise web.HTTPServiceUnavailable(text='device_registration_capacity')
+                raise unavailable('device_registration_capacity')
             try:
                 with self.db:
                     self.db.execute('INSERT INTO device_registrations VALUES (?,?,?,?,?)',

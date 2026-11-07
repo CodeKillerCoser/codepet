@@ -1,5 +1,6 @@
 """On-server authenticated UDP allocation probe; all reservations are released."""
 import base64
+import argparse
 import hashlib
 import hmac
 import json
@@ -31,13 +32,19 @@ def request(sock, target, kind, attributes, key=None):
     return struct.unpack('!H', response[:2])[0], attrs
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--allocations', type=int, default=12)
+    parser.add_argument('--per-identity', type=int, default=8)
+    args = parser.parse_args()
+    if not 1 <= args.allocations <= 128 or not 1 <= args.per_identity <= 32:
+        parser.error('Bounded probe: allocations 1..128, per-identity 1..32')
     config = json.loads(Path('/etc/codepet-signal/config.json').read_text())
     target = (config['publicIp'], 3478)
     reservations = []
     transport = attribute(0x19, b'\x11\0\0\0')
     try:
-        for index in range(12):
-            username = f'{int(time.time())+3600}:capacity-probe-{os.getpid()}-{index//8}'.encode()
+        for index in range(args.allocations):
+            username = f'{int(time.time())+3600}:capacity-probe-{os.getpid()}-{index//args.per_identity}'.encode()
             password = base64.b64encode(hmac.new(config['turnSecret'].encode(), username, hashlib.sha1).digest())
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.settimeout(3)
@@ -55,13 +62,20 @@ def main():
             except Exception:
                 sock.close()
                 raise
-        print('PASS: 12 simultaneous authenticated TURN allocations across two users')
+        print(f'PASS: {args.allocations} simultaneous authenticated TURN allocations; {args.per_identity} per identity')
     finally:
+        release_errors = []
         for sock, auth, key in reservations:
             try:
-                request(sock, target, 4, [attribute(0x0d, struct.pack('!I', 0))]+auth, key)
+                code, _ = request(sock, target, 4, [attribute(0x0d, struct.pack('!I', 0))]+auth, key)
+                if code != 0x104:
+                    raise RuntimeError('TURN allocation release was not acknowledged')
+            except Exception as error:
+                release_errors.append(type(error).__name__)
             finally:
                 sock.close()
+        if release_errors:
+            raise RuntimeError(f'Failed to acknowledge {len(release_errors)} allocation releases')
         print(f'Released {len(reservations)} temporary allocations')
 
 if __name__ == '__main__': main()

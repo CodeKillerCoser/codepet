@@ -1,5 +1,7 @@
 """Private CodePet rendezvous. Only opaque signed SDP, never Gateway payloads."""
 import asyncio
+import contextlib
+import ipaddress
 import base64
 import hashlib
 import hmac
@@ -12,6 +14,7 @@ import time
 import threading
 from aiohttp import web
 from registration import DeviceRegistration
+from policy import Limits, RateLimiter, Mailboxes, ByteBudget
 
 LOG = logging.getLogger('codepet.signal')
 
@@ -29,18 +32,42 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_devices=1024):
+def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_devices=1024,
+               limits=None, trusted_proxies=()):
+    limits = Limits.parse(limits)
+    trusted_proxies = tuple(ipaddress.ip_network(v) for v in trusted_proxies)
     db = sqlite3.connect(db_path)
     db.executescript("""
       CREATE TABLE IF NOT EXISTS hosts (id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL);
       CREATE TABLE IF NOT EXISTS clients (host TEXT, id TEXT, token_hash TEXT UNIQUE NOT NULL,
         PRIMARY KEY(host,id));
     """)
-    pending = {}
+    budget = ByteBudget(limits.mailbox_bytes)
+    pending = Mailboxes(limits.pending_total, limits.pending_per_pair, lambda key: key[:2], budget)
+    invitations = Mailboxes(limits.invitations_total, limits.invitations_per_host, lambda key: key[0], budget)
     trickle_hosts = set()
-    invitations = {}
-    rates = {}
-    registration = DeviceRegistration(db, registration_enabled, max_devices)
+    rates = RateLimiter(limits.rate_buckets)
+    registration = DeviceRegistration(db, registration_enabled, max_devices, limits, trusted_proxies)
+
+    def expire_pending(key, value):
+        diagnostic('mailbox.expired', host=key[0], client=key[1], attempt=value['attempt'], answered=value['answer'] is not None)
+
+    async def maintain(_):
+        async def sweep():
+            while True:
+                await asyncio.sleep(limits.cleanup_interval_seconds)
+                pending.expire(expire_pending)
+                invitations.expire()
+                rates.expire()
+                registration.rates.expire()
+        task = asyncio.create_task(sweep())
+        try:
+            yield
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
 
     @web.middleware
     async def observe(request, handler):
@@ -75,10 +102,6 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
         if not auth.startswith('Bearer ') or len(auth) > 256:
             raise web.HTTPUnauthorized()
         token = digest(auth[7:])
-        now = time.monotonic()
-        for key in list(invitations):
-            if invitations[key]['deadline'] <= now:
-                del invitations[key]
         row = db.execute('SELECT id FROM hosts WHERE token_hash=?', (token,)).fetchone()
         if row:
             request['actor'] = ('host', row[0], None)
@@ -88,24 +111,12 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
                 request['actor'] = ('client', *row)
             else:
                 invitation = next((key for key, entry in invitations.items()
-                                   if hmac.compare_digest(entry['tokenHash'], token)), None)
+                                   if entry['deadline'] > time.monotonic() and hmac.compare_digest(entry['tokenHash'], token)), None)
                 if invitation is None or request.path != '/v1/invitation-exchange':
                     raise web.HTTPUnauthorized()
                 request['actor'] = ('invite', *invitation)
-        now = time.monotonic()
-        for key in list(rates):
-            if rates[key][0] < now - 60:
-                del rates[key]
         category = 'trickle' if request.path == '/v1/ice-updates' else 'turn' if request.path == '/v1/ice' else 'signal'
-        key = (token, category)
-        start, count = rates.get(key, (now, 0))
-        if count >= (12 if key[1] == 'turn' else 600 if key[1] == 'trickle' else 180):
-            raise web.HTTPTooManyRequests()
-        rates[key] = (start, count + 1)
-        for key in list(pending):
-            if pending[key]['deadline'] < now:
-                diagnostic('mailbox.expired', host=key[0], client=key[1], attempt=pending[key]['attempt'], answered=pending[key]['answer'] is not None)
-                del pending[key]
+        rates.check((token, category), getattr(limits, category + '_per_minute'))
         response = await handler(request)
         response.headers['Cache-Control'] = 'no-store'
         return response
@@ -153,11 +164,13 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
                 raise web.HTTPBadRequest()
             checked.append((host, client, hashed))
         previous = db.execute('SELECT host,id,token_hash FROM clients WHERE host=?', (host,)).fetchall()
-        changed = sorted(previous) != sorted(checked) or (host in trickle_hosts) != (value.get('trickleIce') is True)
+        clients_changed = sorted(previous) != sorted(checked)
+        changed = clients_changed or (host in trickle_hosts) != (value.get('trickleIce') is True)
         try:
-            with db:
-                db.execute('DELETE FROM clients WHERE host=?', (host,))
-                db.executemany('INSERT INTO clients VALUES (?,?,?)', checked)
+            if clients_changed:
+                with db:
+                    db.execute('DELETE FROM clients WHERE host=?', (host,))
+                    db.executemany('INSERT INTO clients VALUES (?,?,?)', checked)
         except sqlite3.IntegrityError:
             raise web.HTTPConflict()
         valid = {entry[1] for entry in checked}
@@ -192,12 +205,10 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
         value = await body(request)
         attempt = identifier(value.get('attempt'))
         key = (host, client, attempt)
-        if key in pending:
+        if pending.get(key) is not None:
             raise web.HTTPConflict()
-        if len(pending) >= 128 or sum(k[:2] == key[:2] for k in pending) >= 12:
-            raise web.HTTPServiceUnavailable()
         pending[key] = {'attempt': attempt, 'envelope': envelope(value.get('envelope')),
-                        'answer': None, 'delivered': False, 'updates': [], 'deadline': time.monotonic() + 60}
+                        'answer': None, 'delivered': False, 'updates': [], 'deadline': time.monotonic() + limits.pending_ttl_seconds}
         diagnostic('offer.accepted', host=host, client=client, attempt=attempt, envelopeBytes=len(pending[key]['envelope']['payload']))
         return web.json_response({'ok': True})
 
@@ -212,10 +223,10 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
         # Attempts coexist; polling only consumes what the Host can admit.
         result = []
         for (owner, client, _), value in pending.items():
-            if owner == host and not value['delivered']:
+            if owner == host and value['deadline'] > time.monotonic() and not value['delivered']:
                 result.append({'client': client, 'attempt': value['attempt'], 'envelope': value['envelope']})
                 value['delivered'] = True
-                diagnostic('offer.delivered', host=host, client=client, attempt=value['attempt'], ageMs=round((time.monotonic()-(value['deadline']-60))*1000))
+                diagnostic('offer.delivered', host=host, client=client, attempt=value['attempt'], ageMs=round((time.monotonic()-(value['deadline']-limits.pending_ttl_seconds))*1000))
                 if len(result) >= limit:
                     break
         return web.json_response({'offers': result})
@@ -227,8 +238,9 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
         entry = pending.get(key)
         if not entry or entry['attempt'] != value.get('attempt') or entry['answer'] is not None:
             raise web.HTTPConflict()
-        entry['answer'] = envelope(value.get('envelope'))
-        diagnostic('answer.accepted', host=host, client=key[1], attempt=entry['attempt'], ageMs=round((time.monotonic()-(entry['deadline']-60))*1000))
+        pending.update_entry(key, answer=envelope(value.get('envelope')))
+        entry = pending[key]
+        diagnostic('answer.accepted', host=host, client=key[1], attempt=entry['attempt'], ageMs=round((time.monotonic()-(entry['deadline']-limits.pending_ttl_seconds))*1000))
         return web.json_response({'ok': True})
 
     async def get_answer(request):
@@ -238,7 +250,7 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
             raise web.HTTPNotFound()
         if entry['answer'] is not None and not entry.get('answerLogged'):
             entry['answerLogged'] = True
-            diagnostic('answer.delivered', host=host, client=client, attempt=entry['attempt'], ageMs=round((time.monotonic()-(entry['deadline']-60))*1000))
+            diagnostic('answer.delivered', host=host, client=client, attempt=entry['attempt'], ageMs=round((time.monotonic()-(entry['deadline']-limits.pending_ttl_seconds))*1000))
         return web.json_response({'answer': entry['answer']})
 
     async def cancel_offer(request):
@@ -267,7 +279,7 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
         elif sequence == len(updates):
             if sum(len(v['payload']) for v in updates) + len(sealed['payload']) > 128 * 1024:
                 raise web.HTTPRequestEntityTooLarge(max_size=128 * 1024, actual_size=128 * 1024 + 1)
-            updates.append(sealed)
+            pending.update_entry(key, updates=updates + [sealed])
         else:
             raise web.HTTPConflict()
         return web.json_response({'ok': True})
@@ -300,8 +312,6 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
             if previous['tokenHash'] != token_hash or previous['expires'] != expires:
                 raise web.HTTPConflict()
         else:
-            if len(invitations) >= 128 or sum(k[0] == host for k in invitations) >= 4:
-                raise web.HTTPServiceUnavailable()
             invitations[key] = {'tokenHash': token_hash, 'expires': expires,
                                 'deadline': time.monotonic() + expires - time.time(),
                                 'request': None, 'result': None}
@@ -318,12 +328,14 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
 
     async def invitation_exchange(request):
         key = actor(request, 'invite')
-        entry = invitations[key]
         value = await body(request)
+        entry = invitations.get(key)
+        if entry is None:
+            raise web.HTTPNotFound()
         message = {'requestId': identifier(value.get('requestId')), 'sealed': sealed(value.get('sealed'))}
         if entry['request'] is not None and entry['request'] != message:
             raise web.HTTPConflict()
-        entry['request'] = message
+        invitations.update_entry(key, request=message)
         return web.json_response({'result': entry['result']})
 
     async def invitation_requests(request):
@@ -331,7 +343,7 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
         # Redeliver until terminal result: losing an HTTP response must not strand a request.
         return web.json_response({'requests': [dict(id=key[1], **entry['request'])
             for key, entry in invitations.items() if key[0] == host
-            and entry['request'] is not None and entry['result'] is None]})
+            and entry['deadline'] > time.monotonic() and entry['request'] is not None and entry['result'] is None]})
 
     async def invitation_result(request):
         host, _ = actor(request, 'host')
@@ -342,7 +354,7 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
         result = sealed(value.get('result'))
         if entry['result'] is not None and entry['result'] != result:
             raise web.HTTPConflict()
-        entry['result'] = result
+        invitations.update_entry((host, value['id']), result=result)
         return web.json_response({'ok': True})
 
     app = web.Application(middlewares=[observe, guard], client_max_size=100000)
@@ -364,6 +376,7 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
 
     async def cleanup(_):
         db.close()
+    app.cleanup_ctx.append(maintain)
     app.on_cleanup.append(cleanup)
     return app
 
@@ -381,5 +394,6 @@ if __name__ == '__main__':
         datefmt='%Y-%m-%d %H:%M:%S')
     config = json.load(open(os.environ.get('CODEPET_SIGNAL_CONFIG', '/etc/codepet-signal/config.json')))
     web.run_app(create_app(config['database'], config['turnSecret'], config['publicIp'],
-                           config.get('deviceRegistration', False), config.get('maxDevices', 1024)),
+                           config.get('deviceRegistration', False), config.get('maxDevices', 1024),
+                           config.get('limits'), config.get('trustedProxies', [])),
                 host='127.0.0.1', port=8787, access_log=None)

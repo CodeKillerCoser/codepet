@@ -17,7 +17,7 @@
 
 日志膨胀来自把周期全量 ICE stats、成功空轮询、单帧发送/接收生命周期全部持久化；降低日志级别并无效，因为 `AppLog` 持久化 Level.ALL。
 
-代理与 IPv6 的根因仍待实机采证。此前开 VPN 的 IPv6 分支在本机无候选、尚未发信令就失败；关闭后可直连。信令 `services/signaling/server.py` 只保存并转发签名信封，没有把 HTTP 来源 IP 改写为 ICE 候选地址。系统看到接口 IPv6 不代表应用有权限从该网络发送。
+代理与 IPv6 的根因仍待实机采证。此前开 VPN 的 IPv6 分支在本机无候选、尚未发信令就失败；关闭后可直连。信令 `server/server.py` 只保存并转发签名信封，没有把 HTTP 来源 IP 改写为 ICE 候选地址。系统看到接口 IPv6 不代表应用有权限从该网络发送。
 
 约 40 秒的建连等待已定位到完整 ICE gathering 后才交换 SDP，见 [重连等待诊断](webrtc-reconnect-ice-gathering-delay.md)。本记录的诊断阶段未修改该流程；后续已按用户要求实现增量候选与协商压缩，验证结果及仍有限制见 [性能修复](webrtc-incremental-ice-and-compression.md)。
 

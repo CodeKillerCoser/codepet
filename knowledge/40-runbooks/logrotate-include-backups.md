@@ -9,7 +9,7 @@ VPS 的 logrotate 任务失败，coturn 日志无法按正常计划轮转。
 2026-11-06 排查发现 `/etc/logrotate.d/` 同时存在 `coturn` 和两份旧备份：
 `coturn.before-diagnostics-20260909T174612Z`、`coturn.before-diagnostics-20260909T174951Z`。
 全局 logrotate 校验报告 `/var/log/coturn/turnserver.log` 重复配置。
-仓库 `services/signaling/deploy_diagnostics.py` 将备份放在原配置旁，且只校验单个新文件，未检查 include 后的配置全集。
+仓库 `server/deploy_diagnostics.py` 将备份放在原配置旁，且只校验单个新文件，未检查 include 后的配置全集。
 
 ## 根因
 
