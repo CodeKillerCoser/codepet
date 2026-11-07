@@ -26,6 +26,16 @@
 
 `providerPlugins.directories` 保存额外 Provider plugin manifest 目录。缺失时默认空数组；Host 另有应用数据目录下的固定 `provider-plugins/` 默认目录。该字段只配置 Plugin Catalog，不改变 `agentRuntimes` 的 executable 探测，也不授权桌宠动作调用 Plugin Manager。
 
+## 系统权限入口
+
+设置导航的“权限”页通过 `frontend/lib/permissions.ts` 调用统一的原生权限接口，`src-tauri/src/platform/permissions.rs` 负责 macOS 设置跳转与其他平台的不可用反馈，不向 `AppSettings` 写入授权状态。
+
+macOS 页面包含完全磁盘访问的用途、授权步骤、“前往授权”和“在访达中显示 App”。后者定位当前运行的 `.app`，不硬编码 `/Applications`；开发态未打包时显示安装提示。两个操作仅允许主窗口调用，目标由原生代码固定，不接受任意路径或 URL。
+
+打开系统设置不代表权限获批，界面始终以 macOS 系统设置为权威；不读取 TCC 数据库、不探测用户的敏感文件、不自行修改权限。用户应在系统设置开启 Code Pet，退出重启后重试。非 macOS 平台显示不适用说明；旧后端或跳转失败显示可恢复错误。
+
+验证路径：原生单测覆盖实际 bundle 路径解析和能力返回；前端构建及导航回归；通过 `frontend/qa/main-window.html` 检查布局、键盘焦点和按钮反馈，附加 `permissionUnsupported` / `permissionLoadError` / `permissionOpenError` query 验证平台与错误分支。真实 App 验证系统页面跳转及访达选中，不自动开启权限。
+
 ## 前端归一化
 
 `frontend/App.svelte` 会在使用加载到的设置前做归一化：

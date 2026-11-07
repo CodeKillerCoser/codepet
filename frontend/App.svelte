@@ -2,6 +2,7 @@
   import HorizontalTabs from "./lib/HorizontalTabs.svelte";
   import SettingsRow from "./lib/SettingsRow.svelte";
   import AboutSettings from "./lib/AboutSettings.svelte";
+  import PermissionSettings from "./lib/PermissionSettings.svelte";
   import { consumeReloadNotice, webcontentReloading } from "./lib/webcontent";
   import EventJournal from "./lib/EventJournal.svelte";
   import TaskLineage from "./lib/TaskLineage.svelte";
@@ -2343,6 +2344,8 @@
             </div>
           </div></section>
       </div>
+    {:else if tab === "permissions"}
+      <PermissionSettings />
     {:else if tab === "about"}
       <AboutSettings checking={!!updateCheckMode || updateInstallBusy} message={updateMessage} error={updateError} ignoredVersion={settings?.updates.ignoredVersion ?? null} onCheck={() => checkForUpdates("manual")}
         reloaded={resourceReloaded} onExtraction={() => navigation.navigate("extraction")}

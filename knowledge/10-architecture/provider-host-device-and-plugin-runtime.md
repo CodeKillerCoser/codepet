@@ -193,7 +193,7 @@ git diff --check
 
 ## 剩余风险
 
-- macOS 把 App 直接 `posix_spawn` 的 Provider/runtime 后代归因给 Code Pet responsible process，因此受保护目录的 TCC 弹窗显示 Code Pet；进程/协议隔离不等于 TCC 身份隔离。真正拆分权限主体需要 XPC Service 或 `SMAppService` Launch Agent。普通本地 bundle 构建显式 ad-hoc 签名并固定 code-sign identifier 为 `com.codepet.desktop`，但跨构建保留 TCC 决策仍需稳定的 Apple Developer ID 签名。
+- macOS 把 App 直接 `posix_spawn` 的 Provider/runtime 后代归因给 Code Pet responsible process，因此受保护目录的 TCC 弹窗显示 Code Pet；进程/协议隔离不等于 TCC 身份隔离。真正拆分权限主体需要 XPC Service 或 `SMAppService` Launch Agent。默认 bundle 构建使用 ad-hoc 签名，固定 code-sign identifier 为 `com.codepet.desktop` 仍不能保证跨构建保留 TCC 决策；固定自签名证书可建立稳定身份，Developer ID 并非身份稳定的唯一方案。TCC 是否保留须验证 designated requirement 和升级后的实际访问，见 [macOS 文件授权排查](../40-runbooks/macos-file-access-authorization.md)。
 - Gateway event replay 和 device last-seen 仍为进程内状态，重启恢复未定义。
 - Host listener 与 Tauri 后端生命周期已完成真实 loopback TLS/WSS、mDNS 状态同步、连接关闭联动和证书 pin 测试；pairing UI 与真实移动设备跨 LAN pinning 尚待后续阶段。
 - manifest 的 executable、args 和 env 是受信任本地配置；签名、权限隔离与资源配额尚未实现。
