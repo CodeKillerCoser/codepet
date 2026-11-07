@@ -162,3 +162,5 @@ Remote 原生清理已补齐：关闭等待创建中的 Peer/Channel；逐步记
 本地 Remote `flutter analyze`、465 项全量测试、独立引擎测试通过；10,000 轮 / 16 设备模拟压力结束时 liveConnections、permits、waiting 均为 0。100 次模拟原生创建/关闭以及失败隔离回归通过。这些结果不替代 Android 原生、真实切网或实际 TURN 吞吐测试；Android 专项脚本位于 Remote `integration_test/rtc_cleanup_test.dart`，手机验收关注取消释放、VPN/Wi-Fi 切换后连接恢复与 429/486/503，不把配置上限当成并发用户承诺。
 
 随后在本机 ARM64 Android 模拟器运行原生专项：40 个 Peer 并行创建/取消/关闭收到 40 个 cleanup.completed，没有 cleanup.failed，集成测试通过。使用 Debug 测试包；交付另由 GitHub 正式签名构建 Release。模拟器原生测试不替代用户手机 VPN/蜂窝网验收。
+
+Remote 修复已以 `ee7aaea` 推送 main，[Quality #42411878400](https://github.com/CodeKillerCoser/codepet-remote/actions/runs/42411878400)（分析、全量测试、引擎压测及 Debug 编译）与 [Android Release #42411879013](https://github.com/CodeKillerCoser/codepet-remote/actions/runs/42411879013) 均通过。下载正式产物后，apksigner 验证通过，签名与上一版 `18f03e0` 相同；aapt2 确认 `com.codepet.remote`、`0.1.1 (2)` 且非 debuggable，ARM64 AOT 包含完整修复提交号。APK SHA-256 为 `f1931cb30bc8818e099f3f115764f2d98ca926037e6b011dae37a2eac00dd587`。模拟器测试结束后已覆盖回同提交的正常 Debug 应用，未删除应用数据。
