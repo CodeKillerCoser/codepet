@@ -13,6 +13,8 @@
   export let interactive = false;
   export let animated = true;
   export let startled = false;
+  export let dragging = false;
+  export let portrait = false;
   export let onDrag: (() => Promise<void>) | undefined = undefined;
 
   let asset = { url: builtInPet(petId).url, atlas: true };
@@ -29,8 +31,9 @@
   let press: { x: number; y: number; id: number; element: HTMLElement } | null = null;
   let dragged = false;
 
-  $: size = petSize(scale);
-  $: action = actionFor(status, interaction, startled);
+  $: size = petSize(portrait ? 1.5 : scale);
+  $: if (dragging && press) { dragged = true; releasePress(); }
+  $: action = actionFor(status, dragging ? 'drag-right' : interaction, startled);
   $: emotion = startled || status === "failed" ? "!" : status === "waiting-approval" ? "?" : interaction === "pet" ? "♡" : status === "done" ? "✓" : "";
   $: assetKey = JSON.stringify([petId, kind, imagePath]);
   $: if (mounted && assetKey !== loadedKey) void refreshAsset(assetKey, petId, kind, imagePath);
@@ -135,7 +138,8 @@
   role={interactive ? undefined : "img"}
   class="pet-avatar"
   class:interactive
-  class:dragging={interaction === "drag-left" || interaction === "drag-right"}
+  class:portrait
+  class:dragging={dragging || interaction === "drag-left" || interaction === "drag-right"}
   data-action={action}
   data-asset-error={assetError || undefined}
   aria-label={interactive ? `${label}，点击抚摸，拖动移动` : label}
@@ -164,6 +168,9 @@
 
 <style>
   .pet-avatar { position: relative; display: block; flex: none; width: var(--pet-width); height: var(--pet-height); padding: 0; border: 0; background: transparent; color: var(--pet-message); isolation: isolate; }
+  .portrait { width: 48px; height: 32px; overflow: hidden; }
+  .portrait .pet-frame { width: var(--pet-width); height: var(--pet-height); left: 0; top: 0; filter: none; }
+  .portrait .pet-emotion { display: none; }
   .interactive { cursor: grab; pointer-events: auto; touch-action: none; }
   .interactive.dragging { cursor: grabbing; }
   .interactive:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 4px; border-radius: 16px; }

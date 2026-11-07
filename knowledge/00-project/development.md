@@ -152,8 +152,8 @@ npm run package:signed
 - `src-tauri/src/app/log.rs`：应用日志、启动 banner 和性能事件记录。
 - `src-tauri/src/app/autostart.rs`：基于 Tauri autostart 插件的登录启动控制。
 - `src-tauri/src/agent/actions.rs`：任务卡片激活、回复和审批能力边界。
-- `frontend/lib/activity.ts`：任务活动归并、过滤和展示辅助逻辑。
-- `frontend/lib/agentInteractions.ts`：前端任务操作 capability 计算。
+- `frontend/lib/pet/model.ts`：Pet Gateway 快照、任务排序和关闭历史。
+- `frontend/lib/pet/presentation.ts`：顶部/桌面共用展示状态机；旧卡片操作 capability 模块已移除。
 - `frontend/lib/sound.ts`：通知音效、鞭子音效和抽打反应音。
 
 ## 开发约定

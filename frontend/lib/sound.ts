@@ -2,8 +2,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import whipCrackUrl from "../../src-tauri/resources/sounds/whip-crack.wav?url";
 import whipSwingUrl from "../../src-tauri/resources/sounds/whip-swing.wav?url";
 import whipHeavyUrl from "../../src-tauri/resources/sounds/whip-heavy-crack.wav?url";
-import { activityKey } from "./activity";
-import type { AppSettings, PetEvent, WhipReactionSound } from "./types";
+import type { AppSettings, WhipReactionSound } from "./types";
 
 const whipReactionDelay = 180;
 const whipSoundResources = [
@@ -11,39 +10,6 @@ const whipSoundResources = [
   whipSwingUrl,
   whipHeavyUrl,
 ] as const;
-
-export function shouldRing(settings: AppSettings, event: PetEvent): boolean {
-  if (!event.shouldRing || settings.notifications.sound === "silent") {
-    return false;
-  }
-  if (settings.notifications.quietHoursEnabled && isQuietNow(settings)) {
-    return false;
-  }
-  if (event.kind === "permission-requested" && event.status === "waiting-approval") {
-    return settings.notifications.ringOnPermission;
-  }
-  if (event.kind === "task-failed" && event.status === "failed") {
-    return settings.notifications.ringOnFailure;
-  }
-  if (event.kind === "task-completed" && event.status === "done") {
-    return settings.notifications.ringOnDone;
-  }
-  return false;
-}
-
-export function shouldRepeatNotification(
-  settings: AppSettings,
-  repeatEvent: PetEvent | null,
-  currentActivities: PetEvent[],
-  nowMs: number,
-  repeatExpiresAt: number,
-): boolean {
-  if (!repeatEvent || nowMs >= repeatExpiresAt || !shouldRing(settings, repeatEvent)) {
-    return false;
-  }
-  const repeatKey = activityKey(repeatEvent);
-  return currentActivities.some((activity) => activityKey(activity) === repeatKey && activity.status === "waiting-approval");
-}
 
 export async function playNotificationSound(settings: AppSettings): Promise<void> {
   const sound = settings.notifications.sound;
@@ -210,20 +176,4 @@ function frequencyFor(sound: AppSettings["notifications"]["sound"]): number {
     return 660;
   }
   return 520;
-}
-
-function isQuietNow(settings: AppSettings): boolean {
-  const now = new Date();
-  const minutes = now.getHours() * 60 + now.getMinutes();
-  const start = parseTime(settings.notifications.quietHoursStart);
-  const end = parseTime(settings.notifications.quietHoursEnd);
-  if (start <= end) {
-    return minutes >= start && minutes < end;
-  }
-  return minutes >= start || minutes < end;
-}
-
-function parseTime(value: string): number {
-  const [hour, minute] = value.split(":").map((part) => Number(part));
-  return hour * 60 + minute;
 }

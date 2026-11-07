@@ -4,9 +4,10 @@ import { describe, expect, it } from "vitest";
 describe("Pet window behavior", () => {
   it("keeps the Pet Gateway source while grouping the original compact bubbles", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
-    expect(source).toContain("petSnapshot");
-    expect(source).toContain("const petWindowWidth = 320");
-    expect(source).toContain('<PetActivityGroups {activities} {sources} {runningBubble} dismiss={dismissActivity} />');
+    const data = readFileSync(new URL('./lib/pet/model.ts', import.meta.url), 'utf8');
+    const desktop = readFileSync(new URL('./lib/pet/DesktopPet.svelte', import.meta.url), 'utf8');
+    expect(data).toContain("petSnapshot");
+    expect(desktop).toContain('bind:expanded={expandedGroups} dismiss={dismissActivity}');
     expect(source).toContain(".activity-group-toggle, .status-pill, .pet-action-button");
     expect(source).toContain('element.closest("[inert]")');
     expect(source).not.toContain("recentEvents");
@@ -38,7 +39,7 @@ describe("Pet window behavior", () => {
   });
 
   it("shows a whip action button that replays the braided demo whip and sound", () => {
-    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const source = readFileSync(new URL("./lib/pet/DesktopPet.svelte", import.meta.url), "utf8");
 
     expect(source).toContain("playWhipSound");
     expect(source).toContain("playWhipSound(settings)");
@@ -63,7 +64,7 @@ describe("Pet window behavior", () => {
   });
 
   it("groups pet-side actions in one compact rail", () => {
-    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const source = readFileSync(new URL("./lib/pet/DesktopPet.svelte", import.meta.url), "utf8");
     const stageBlock = source.slice(source.indexOf('<section class="pet-stage"'), source.indexOf("{#key whipAnimationKey}"));
 
     expect(stageBlock).toContain('<div class="pet-action-rail"');
@@ -74,18 +75,10 @@ describe("Pet window behavior", () => {
     expect(stageBlock.indexOf('class="pet-action-button main-window-button"')).toBeLessThan(stageBlock.indexOf('class="pet-action-button whip-button"'));
   });
 
-  it("fits the native frame to observed content while preserving the pet anchor", () => {
-    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
-    expect(source).toContain("new ResizeObserver");
-    expect(source).toContain("contentObserver.disconnect()");
-    expect(source).toContain("petContentElement.getBoundingClientRect().height");
-    expect(source).toContain("bottomAnchoredPosition(position, currentSize, nextSize)");
-    expect(source).toContain("new LogicalSize(petWindowWidth, targetHeight)");
-    expect(source).not.toContain("petWindowPresetHeight");
-  });
+
 
   it("lets CSS size the activity stack naturally up to a max height", () => {
-    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
+    const source = readFileSync(new URL("./lib/pet/DesktopPet.svelte", import.meta.url), "utf8");
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
     const stackRule = styles.slice(styles.indexOf(".activity-stack"), styles.indexOf(".activity-stack::-webkit-scrollbar"));
 
@@ -99,13 +92,13 @@ describe("Pet window behavior", () => {
   it("passes cursor events through transparent pet-window regions", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
 
-    expect(source).toContain("cursorPosition");
+    expect(source).toContain("pet_surface_pointer");
     expect(source).toContain("setIgnoreCursorEvents");
     expect(source).toContain("collectPetHitRects");
     expect(source).toContain("isPointOnOpaquePetImage");
     expect(source).toContain("shouldIgnorePetWindowCursor");
     expect(source).toContain("clearCursorPassthroughTimer");
-    expect(source).toContain("onDrag={dragWindow}");
+    expect(source).toContain("{dragWindow}");
     expect(source).not.toContain('<button class="drag-layer"');
   });
 
@@ -115,26 +108,8 @@ describe("Pet window behavior", () => {
     expect(source).toContain("$: petWindowOpacity = clampPetOpacity(settings?.pet.opacity)");
     expect(source).toContain("const minPetOpacity = 0.25");
     expect(source).toContain("Math.min(defaultPetOpacity, Math.max(minPetOpacity, numericValue))");
-    expect(source).toContain('style={`--pet-window-opacity: ${petWindowOpacity};`}');
+    expect(source).toContain('--pet-window-opacity: ${petWindowOpacity};');
   });
 
-  it("keeps the pet window frame and bounds stable after monitor moves or resizes", () => {
-    const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
-    const ensureBlock = source.slice(source.indexOf("async function ensureWindowFrameAndBounds"), source.indexOf("function withTimeout"));
 
-    expect(source).toContain("onMoved");
-    expect(source).toContain("onResized");
-    expect(source).toContain("setResizable(false)");
-    expect(source).toContain("scheduleEnsureWindowFrameAndBounds");
-    expect(source).toContain("clearEnsureWindowFrameTimer");
-    expect(ensureBlock).toContain("ensureWindowSize");
-    expect(ensureBlock).toContain("constrainWindowToScreen");
-    expect(ensureBlock).toContain("outerPosition()");
-    expect(ensureBlock).toContain("outerSize()");
-    expect(ensureBlock).toContain("monitorForWindow");
-    expect(ensureBlock).toContain("clampWindowPositionToMonitor");
-    expect(ensureBlock).toContain("monitor.workArea");
-    expect(ensureBlock).toContain("currentSize.toLogical(scaleFactor)");
-    expect(source).not.toContain("workArea.position.y >= 0");
-  });
 });

@@ -848,6 +848,7 @@ version = "0.3.9-beta"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "block2",
  "chrono",
  "codepet-desktop-sdk",
  "codepet-gateway-sdk",

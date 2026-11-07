@@ -2201,11 +2201,6 @@ textarea {
   min-height: 86px;
 }
 
-.status-pill:has(.reply-button) {
-  grid-template-columns: minmax(0, 1fr);
-  min-height: 86px;
-}
-
 .status-pill:hover {
   background: var(--pet-pill-hover-bg);
 }
@@ -2215,26 +2210,6 @@ textarea {
   cursor: default;
 }
 
-.gateway-state-pill.unavailable {
-  border-color: var(--color-state-error-border);
-  background: var(--pet-failed-bg);
-}
-
-.gateway-state-pill.partial {
-  border-color: var(--color-state-danger-border);
-  background: var(--pet-urgent-bg);
-}
-
-.gateway-state-message {
-  -webkit-line-clamp: 2;
-}
-
-.status-pill.replying {
-  z-index: 6;
-  min-height: 154px;
-  align-items: stretch;
-}
-
 .status-content {
   position: relative;
   z-index: 1;
@@ -2242,24 +2217,6 @@ textarea {
   min-width: 0;
   align-self: stretch;
   gap: 3px;
-}
-
-.status-pill.replying .status-content {
-  align-self: stretch;
-}
-
-.status-open {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  text-align: left;
-}
-
-.status-open:disabled {
-  cursor: default;
 }
 
 .status-title-row,
@@ -2322,20 +2279,6 @@ textarea {
   gap: 9px;
 }
 
-.title-open {
-  color: var(--pet-title);
-  font-size: var(--font-size-sm-plus);
-  font-weight: var(--font-weight-semibold);
-  line-height: var(--line-height-tight);
-}
-
-.title-open span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .status-title {
   color: var(--pet-title);
   font-size: var(--font-size-pet-title);
@@ -2376,117 +2319,8 @@ textarea {
   align-items: center;
 }
 
-.status-footer.with-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-}
-
-.status-footer.with-actions .status-meta { flex: 1 1 145px; }
-.status-footer.with-actions .status-actions { margin-left: auto; }
-
-.status-agent,
-.status-separator,
 .status-ended-at {
   color: var(--pet-agent);
-}
-
-.status-state {
-  color: var(--pet-status-running);
-}
-
-.status-thinking {
-  color: var(--pet-status-thinking);
-}
-
-.status-running {
-  color: var(--pet-status-running);
-}
-
-.status-waiting-approval {
-  color: var(--pet-status-waiting);
-}
-
-.status-failed {
-  color: var(--pet-status-failed);
-}
-
-.status-done {
-  color: var(--pet-status-done);
-}
-
-.status-actions {
-  display: grid;
-  min-width: 0;
-  justify-items: center;
-  align-content: center;
-  gap: 5px;
-}
-
-.status-actions.approval-mode {
-  grid-template-columns: repeat(2, 52px);
-  gap: 8px;
-  justify-items: stretch;
-}
-
-.status-actions.interrupt-mode {
-  grid-auto-flow: column;
-  align-items: center;
-}
-
-.status-actions.approval-mode.interrupt-mode {
-  grid-template-columns: repeat(2, 52px) 34px;
-  gap: 5px;
-}
-
-.reply-button,
-.interrupt-button,
-.approval-button {
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--pet-border);
-  background: var(--pet-button-bg);
-  color: var(--pet-agent);
-  box-shadow: 0 2px 7px var(--pet-shadow);
-}
-
-.reply-button,
-.interrupt-button {
-  width: 34px;
-  height: 19px;
-  border-radius: 10px;
-  padding: 0;
-  font-size: var(--font-size-2xs);
-  font-weight: var(--font-weight-medium);
-  line-height: var(--line-height-none);
-}
-
-.interrupt-button {
-  border-color: var(--color-state-danger-border);
-  color: var(--pet-status-waiting);
-}
-
-.approval-button {
-  position: relative;
-  width: 52px;
-  height: 22px;
-  border-radius: 999px;
-  padding: 0;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold-heavy);
-  line-height: var(--line-height-none);
-}
-
-.approval-button.allow {
-  border-color: var(--color-state-success-border);
-  background: var(--color-state-success-surface);
-  color: var(--pet-status-done);
-}
-
-.approval-button.deny {
-  border-color: var(--color-state-danger-border);
-  background: var(--color-state-danger-surface);
-  color: var(--pet-status-waiting);
 }
 
 .dismiss-button {
@@ -2498,12 +2332,6 @@ textarea {
   background: transparent;
   box-shadow: none;
   cursor: pointer;
-}
-
-.inline-dismiss {
-  grid-column: 3;
-  width: 17px;
-  height: 17px;
 }
 
 .dismiss-button::before,
@@ -2522,89 +2350,6 @@ textarea {
 
 .dismiss-button::after {
   transform: rotate(-45deg);
-}
-
-.reply-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 6px;
-  align-items: stretch;
-  padding: 3px 0;
-}
-
-.quick-reply-options {
-  display: flex;
-  min-width: 0;
-  gap: 5px;
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-
-.reply-row .quick-reply-option {
-  flex: 0 0 auto;
-  max-width: 132px;
-  padding: 0 8px;
-  overflow: hidden;
-  color: var(--pet-agent);
-  background: var(--pet-button-bg);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.reply-row textarea {
-  width: 100%;
-  min-width: 0;
-  min-height: 30px;
-  max-height: 92px;
-  border: 1px solid var(--pet-border);
-  border-radius: 8px;
-  padding: 6px 7px;
-  color: var(--pet-title);
-  background: var(--pet-input-bg);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-normal);
-  line-height: var(--line-height-message);
-  resize: none;
-  scrollbar-width: thin;
-  overscroll-behavior: contain;
-  cursor: text;
-  user-select: text;
-}
-
-.reply-row textarea::placeholder {
-  color: var(--pet-agent);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-normal);
-}
-
-.reply-controls {
-  display: grid;
-  grid-template-columns: repeat(2, 36px);
-  gap: 5px;
-  justify-self: end;
-}
-
-.reply-row button {
-  height: 24px;
-  border: 1px solid var(--color-approval-border);
-  border-radius: 8px;
-  padding: 0;
-  color: var(--color-approval-text);
-  background: var(--color-approval-surface);
-  font-size: var(--font-size-2xs-plus);
-  font-weight: var(--font-weight-semibold);
-  line-height: var(--line-height-none);
-}
-
-.reply-row button:disabled {
-  opacity: 0.52;
-  cursor: default;
-}
-
-.reply-row .reply-cancel {
-  border-color: var(--pet-border);
-  color: var(--pet-agent);
-  background: var(--pet-button-bg);
 }
 
 .pet-stage {
@@ -3015,10 +2760,6 @@ textarea {
   transform: translateY(2px) rotate(225deg);
 }
 
-.status-pill.idle {
-  opacity: 0.92;
-}
-
 .status-pill.urgent {
   border-color: var(--color-state-danger-border);
   background: var(--pet-urgent-bg);
@@ -3251,7 +2992,6 @@ textarea {
     grid-template-columns: 1fr;
     align-items: start;
   }
-
 
   .robot-trigger-grid,
   .robot-field-grid,

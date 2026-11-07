@@ -1,114 +1,100 @@
 <script lang="ts">
   import { listen } from '@tauri-apps/api/event';
-  import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
-  import { availableMonitors, cursorPosition, getCurrentWindow, primaryMonitor, type Monitor } from '@tauri-apps/api/window';
-  import { onMount, tick } from 'svelte';
+  import { invoke } from '@tauri-apps/api/core';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { onMount } from 'svelte';
   import { getAppSettings, openMainWindow } from './lib/api';
-  import PetActivityGroups from './lib/PetActivityGroups.svelte';
+  import DesktopPet from './lib/pet/DesktopPet.svelte';
+  import NotchPet from './lib/pet/NotchPet.svelte';
+  import type { ProviderConnectionState } from './lib/providerRuntimes';
+  import { createPetData } from './lib/pet/model';
+  import { initialPresentation, present, type PresentationEvent } from './lib/pet/presentation';
+  import type { ActivityGroupId } from './lib/activityGroups';
 
-  import { petSnapshot, type PetTask, type PetSource } from './lib/petGateway';
+  import { type PetTask } from './lib/petGateway';
 
   import { rectFromElementBounds, shouldIgnorePetWindowCursor, type PetHitRect } from './lib/petHitTest';
-  import PetAvatar from './lib/pet/PetAvatar.svelte';
   import { isPointOnOpaquePetImage } from './lib/pet/hitTest';
   import { taskStatusForPet } from './lib/pet/animation';
-  import { bottomAnchoredPosition } from './lib/pet/windowFrame';
-  import { playWhipSound } from './lib/sound';
-  import { defaultRunningBubbleSettings, themeClassNames } from './lib/theme';
+  import { PetSurfaceController } from './lib/pet/surface';
+  import { themeClassNames } from './lib/theme';
   import type { AppSettings } from './lib/types';
   let settings: AppSettings | null = null;
-  let activities: PetTask[] = [];
-  let sources: PetSource[] = [];
-  let dismissed = new Map<string, number>();
-  let gatewayError = '';
+  let presentation = initialPresentation;
+  const petData = createPetData(() => dispatch({ type: 'new-task' }));
+  let expandedGroups = new Set<ActivityGroupId>();
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
   let systemDark = false;
-  let tasksCollapsed = false;
-  let activityStack: HTMLElement | null = null;
-  let lastTopActivityId: string | null = null;
   let ready = false;
   let actionNotice = '';
   let noticeTimer: number | null = null;
-  let whipAnimating = false;
-  let whipAnimationKey = 0;
-  let whipTimer: number | null = null;
-  let ensureWindowFrameTimer: number | null = null;
-  let ensuringWindowFrame = false;
+  $: surface = presentation.surface;
+  let surfaceController: PetSurfaceController | null = null;
   let petWindowElement: HTMLElement | null = null;
   let petContentElement: HTMLElement | null = null;
-  let petStageElement: HTMLElement | null = null;
-  let activityStackHeightLimit = 368;
   let cursorPassthroughTimer: number | null = null;
   let cursorEventsIgnored = false;
   let petDragging = false;
   let cursorPassthroughInFlight = false;
-  const petWindowWidth = 320;
-  const activityStackMaxHeight = 368;
   const noticeVisibleMs = 2500;
-  const whipVisibleMs = 760;
   const cursorPassthroughPollMs = 60;
   const petHitPadding = 2;
   const devMode = import.meta.env.DEV;
-  const fallbackRunningBubble = defaultRunningBubbleSettings;
   const defaultPetOpacity = 1;
   const minPetOpacity = 0.25;
   $: themeClass = themeClassNames(settings?.appearance.theme === 'dark' || (settings?.appearance.theme === 'system' && systemDark) ? 'dark' : 'light');
-  $: runningBubble = settings?.appearance.runningBubble ?? fallbackRunningBubble;
-
-
-  $: hasActivities = activities.length > 0;
-  $: hasCompletedActivities = activities.some(a => a.status === 'completed');
+  $: activities = $petData.tasks;
   $: avatarStatus = taskStatusForPet(activities);
   $: petWindowOpacity = clampPetOpacity(settings?.pet.opacity);
-  $: topActivityId = activities[0]?.id ?? null;
-  $: if (ready) scheduleEnsureWindowFrameAndBounds();
-  $: if (activityStack && topActivityId !== lastTopActivityId) { lastTopActivityId = topActivityId; void tick().then(() => { if (activityStack) activityStack.scrollTop = 0; }); }
+  $: petDragging = surface.dragging;
+  $: railHeight = (2 + Number(activities.length > 0) + Number(activities.some(a => a.status === 'completed')) + Number(surface.canDock)) * 28;
+  $: if (ready) surfaceController?.schedule();
+  function dispatch(event: PresentationEvent) {
+    presentation = present(presentation, event);
+    if (event.type === 'enter' || event.type === 'focus' || event.type === 'surface') clearTimeout(closeTimer);
+    if (event.type === 'leave' || event.type === 'blur') {
+      clearTimeout(closeTimer);
+      closeTimer = setTimeout(() => dispatch({ type: 'close-delay' }), 240);
+    }
+  }
   onMount(() => {
     let disposed = false;
-    let busy = false;
     const cleanup: (() => void)[] = [];
     const register = (promise: Promise<() => void>) => void promise.then(fn => { if (disposed) fn(); else cleanup.push(fn); }).catch(error => console.error("Pet window listener failed", error));
     const media = window.matchMedia('(prefers-color-scheme: dark)');
     const syncTheme = () => { systemDark = media.matches; };
     syncTheme(); media.addEventListener('change', syncTheme);
+    let providerRevision = 0;
+    register(listen<ProviderConnectionState[]>('provider-connection-status', event => {
+      providerRevision++;
+      if (!disposed) petData.setProviders(event.payload);
+    }).then(async unlisten => {
+      const revision = providerRevision;
+      try {
+        const providers = await invoke<ProviderConnectionState[]>('provider_connection_status');
+        if (!disposed && revision === providerRevision) petData.setProviders(providers);
+      } catch (error) { console.warn('Pet provider identities unavailable', error); }
+      return unlisten;
+    }));
     register(listen<AppSettings>('settings-updated', event => { settings = event.payload; }));
     const windowHandle = getCurrentWindow();
     void windowHandle.setResizable(false);
-    register(windowHandle.onMoved(() => scheduleEnsureWindowFrameAndBounds()));
-    register(windowHandle.onResized(() => scheduleEnsureWindowFrameAndBounds()));
-    const contentObserver = new ResizeObserver(() => scheduleEnsureWindowFrameAndBounds());
-    if (petContentElement) contentObserver.observe(petContentElement);
-    cleanup.push(() => contentObserver.disconnect());
+    if (petContentElement) {
+      surfaceController = new PetSurfaceController(petContentElement, value => { dispatch({ type: 'surface', surface: value }); }, error => showNotice(String(error)));
+      void surfaceController.start().catch(error => showNotice(String(error)));
+      cleanup.push(() => surfaceController?.dispose());
+    }
     cursorPassthroughTimer = window.setInterval(() => void syncCursorPassthrough(), cursorPassthroughPollMs);
-    const refresh = async () => {
-      if (busy || disposed) return;
-      busy = true;
-      try {
-        const snapshot = await petSnapshot();
-        if (disposed) return;
-        sources = snapshot.sources ?? [];
-        const previousLive = new Set(activities.filter(a => ["running", "waiting-approval", "waiting-input"].includes(a.status)).map(a => a.id));
-        const hasNewLive = snapshot.tasks.some(a => ["running", "waiting-approval", "waiting-input"].includes(a.status) && !previousLive.has(a.id) && (dismissed.get(a.id) ?? -1) < a.updatedAt);
-        if (hasNewLive) tasksCollapsed = false;
-        activities = snapshot.tasks.filter(a => (dismissed.get(a.id) ?? -1) < a.updatedAt);
-        gatewayError = '';
-      } catch (error) { if (!disposed) { gatewayError = String(error); activities = activities.map(a => ["running", "waiting-approval", "waiting-input"].includes(a.status) ? { ...a, status: "unknown" } : a); } }
-      finally { busy = false; }
-    };
-    void getAppSettings().then(value => { if (!disposed) { settings = value; ready = true; void dockToLowerRight(); } }).catch(error => { if (!disposed) showNotice(String(error)); });
-    void refresh();
-    const poll = window.setInterval(() => void refresh(), 1000);
+    void getAppSettings().then(value => { if (!disposed) { settings = value; ready = true; surfaceController?.schedule(); } }).catch(error => { if (!disposed) showNotice(String(error)); });
+    void petData.refresh();
+    const poll = window.setInterval(() => void petData.refresh(), 1000);
     return () => {
       disposed = true; window.clearInterval(poll); cleanup.forEach(fn => fn()); media.removeEventListener('change', syncTheme);
-      clearNoticeTimer(); clearWhipTimer(); clearEnsureWindowFrameTimer(); clearCursorPassthroughTimer(); void setPetWindowCursorEventsIgnored(false);
+      petData.dispose(); clearTimeout(closeTimer); clearNoticeTimer(); clearCursorPassthroughTimer(); void setPetWindowCursorEventsIgnored(false);
     };
   });
-  function dismissActivity(event: MouseEvent, task: PetTask) {
-    event.stopPropagation(); dismissed.set(task.id, task.updatedAt); activities = activities.filter(a => a.id !== task.id);
-  }
-  function clearCompletedActivities(event: MouseEvent) {
-    event.stopPropagation(); activities.filter(a => a.status === 'completed').forEach(a => dismissed.set(a.id, a.updatedAt));
-    activities = activities.filter(a => a.status !== 'completed');
-  }
+  function dismissActivity(event: MouseEvent, task: PetTask) { event.stopPropagation(); petData.dismiss(task); }
+  function clearCompletedActivities(event: MouseEvent) { event.stopPropagation(); petData.clearCompleted(); }
   function showNotice(message: string) {
     actionNotice = message;
     clearNoticeTimer();
@@ -122,20 +108,6 @@
     if (noticeTimer) {
       window.clearTimeout(noticeTimer);
       noticeTimer = null;
-    }
-  }
-
-  function clearWhipTimer() {
-    if (whipTimer) {
-      window.clearTimeout(whipTimer);
-      whipTimer = null;
-    }
-  }
-
-  function clearEnsureWindowFrameTimer() {
-    if (ensureWindowFrameTimer) {
-      window.clearTimeout(ensureWindowFrameTimer);
-      ensureWindowFrameTimer = null;
     }
   }
 
@@ -153,16 +125,7 @@
 
     cursorPassthroughInFlight = true;
     try {
-      const appWindow = getCurrentWindow();
-      const [cursor, windowPosition, scaleFactor] = await Promise.all([
-        cursorPosition(),
-        appWindow.outerPosition(),
-        appWindow.scaleFactor(),
-      ]);
-      const point = {
-        x: (cursor.x - windowPosition.x) / scaleFactor,
-        y: (cursor.y - windowPosition.y) / scaleFactor,
-      };
+      const point = await invoke<{ x: number; y: number }>('pet_surface_pointer');
       const ignoreCursor = !petDragging && shouldIgnorePetWindowCursor(point, collectPetHitRects(petWindowElement)) && !isPointOnOpaquePetImage(petWindowElement, point);
       await setPetWindowCursorEventsIgnored(ignoreCursor);
     } catch (error) {
@@ -189,7 +152,7 @@
   function collectPetHitRects(root: HTMLElement): PetHitRect[] {
     const rootBounds = root.getBoundingClientRect();
     const hitRects: PetHitRect[] = [];
-    for (const element of root.querySelectorAll<HTMLElement>(".activity-group-toggle, .status-pill, .pet-action-button")) {
+    for (const element of root.querySelectorAll<HTMLElement>(".activity-group-toggle, .status-pill, .pet-action-button, .notch-panel")) {
       if (element.getClientRects().length === 0) continue;
       if (element.closest("[inert]")) continue;
 
@@ -202,168 +165,19 @@
     return hitRects;
   }
 
-  function scheduleEnsureWindowFrameAndBounds() {
-    if (!ready) return;
-    clearEnsureWindowFrameTimer();
-    ensureWindowFrameTimer = window.setTimeout(() => {
-      ensureWindowFrameTimer = null;
-      void ensureWindowFrameAndBounds().catch((error) => {
-        console.error("failed to ensure pet window frame", error);
-      });
-    }, 120);
-  }
-
-  async function dockToLowerRight() {
-    const appWindow = getCurrentWindow();
-    await ensureWindowSize();
-    const [monitors, fallbackMonitor, position, size] = await Promise.all([availableMonitors(), primaryMonitor(), appWindow.outerPosition(), appWindow.outerSize()]);
-    const monitor = monitorForWindow(position, size, monitors, fallbackMonitor);
-    if (!monitor) {
-      return;
-    }
-
-    const margin = 42;
-    const x = monitor.workArea.position.x + monitor.workArea.size.width - size.width - margin;
-    const y = monitor.workArea.position.y + monitor.workArea.size.height - size.height - margin;
-    const clamped = clampWindowPositionToMonitor({ x, y }, size, monitor);
-    await appWindow.setPosition(new PhysicalPosition(clamped.x, clamped.y));
-
-    await ensureWindowFrameAndBounds();
-  }
-
-  async function ensureWindowFrameAndBounds() {
-    if (ensuringWindowFrame || petDragging) {
-      scheduleEnsureWindowFrameAndBounds();
-      return;
-    }
-
-    ensuringWindowFrame = true;
-    try {
-      await ensureWindowSize();
-      await constrainWindowToScreen();
-    } finally {
-      ensuringWindowFrame = false;
-    }
-  }
-
-  async function ensureWindowSize() {
-    if (!petContentElement || !petStageElement) return;
-    const appWindow = getCurrentWindow();
-    const [currentSize, scaleFactor, position, monitors, fallbackMonitor] = await Promise.all([
-      withTimeout(appWindow.innerSize(), 700).catch(() => null),
-      withTimeout(appWindow.scaleFactor(), 700).catch(() => 1),
-      appWindow.outerPosition(), availableMonitors(), primaryMonitor(),
-    ]);
-    if (!currentSize) return;
-    const monitor = monitorForWindow(position, currentSize, monitors, fallbackMonitor);
-    // Keep the task list scrollable when the work area is shorter than its usual cap.
-    const availableHeight = monitor ? monitor.workArea.size.height / scaleFactor : Infinity;
-    activityStackHeightLimit = Math.max(0, Math.min(activityStackMaxHeight,
-      availableHeight - petStageElement.getBoundingClientRect().height - 22 - 8));
-    await tick();
-    const targetHeight = Math.ceil(petContentElement.getBoundingClientRect().height);
-    if (targetHeight <= 0) return;
-    const currentLogicalSize = currentSize.toLogical(scaleFactor);
-    if (Math.abs(currentLogicalSize.width - petWindowWidth) > 1 || Math.abs(currentLogicalSize.height - targetHeight) > 1) {
-      const nextSize = { width: Math.round(petWindowWidth * scaleFactor), height: Math.round(targetHeight * scaleFactor) };
-      const anchored = bottomAnchoredPosition(position, currentSize, nextSize);
-      const nextPosition = monitor ? clampWindowPositionToMonitor(anchored, nextSize, monitor) : anchored;
-      await appWindow.setSize(new LogicalSize(petWindowWidth, targetHeight));
-      await appWindow.setPosition(new PhysicalPosition(nextPosition.x, nextPosition.y));
-    }
-  }
-
-  async function constrainWindowToScreen() {
-    const appWindow = getCurrentWindow();
-    const [monitors, fallbackMonitor, position, size] = await Promise.all([availableMonitors(), primaryMonitor(), appWindow.outerPosition(), appWindow.outerSize()]);
-    const monitor = monitorForWindow(position, size, monitors, fallbackMonitor);
-    if (!monitor) {
-      return;
-    }
-
-    const clamped = clampWindowPositionToMonitor(position, size, monitor);
-    if (Math.round(clamped.x) !== Math.round(position.x) || Math.round(clamped.y) !== Math.round(position.y)) {
-      await appWindow.setPosition(new PhysicalPosition(clamped.x, clamped.y));
-    }
-  }
-
-  function monitorForWindow(
-    position: { x: number; y: number },
-    size: { width: number; height: number },
-    monitors: Monitor[],
-    fallbackMonitor: Monitor | null,
-  ) {
-    const windowRight = position.x + size.width;
-    const windowBottom = position.y + size.height;
-    let bestMonitor: Monitor | null = null;
-    let bestIntersection = 0;
-
-    for (const monitor of monitors) {
-      const area = monitor.workArea;
-      const intersectionWidth = Math.max(0, Math.min(windowRight, area.position.x + area.size.width) - Math.max(position.x, area.position.x));
-      const intersectionHeight = Math.max(0, Math.min(windowBottom, area.position.y + area.size.height) - Math.max(position.y, area.position.y));
-      const intersection = intersectionWidth * intersectionHeight;
-      if (intersection > bestIntersection) {
-        bestIntersection = intersection;
-        bestMonitor = monitor;
-      }
-    }
-
-    if (bestMonitor) {
-      return bestMonitor;
-    }
-
-    const center = { x: position.x + size.width / 2, y: position.y + size.height / 2 };
-    return monitors
-      .slice()
-      .sort((first, second) => distanceToMonitorCenter(center, first) - distanceToMonitorCenter(center, second))
-      .at(0) ?? fallbackMonitor;
-  }
-
-  function distanceToMonitorCenter(point: { x: number; y: number }, monitor: Monitor) {
-    const area = monitor.workArea;
-    const centerX = area.position.x + area.size.width / 2;
-    const centerY = area.position.y + area.size.height / 2;
-    return (point.x - centerX) ** 2 + (point.y - centerY) ** 2;
-  }
-
-  function clampWindowPositionToMonitor(
-    position: { x: number; y: number },
-    size: { width: number; height: number },
-    monitor: Monitor,
-  ) {
-    const area = monitor.workArea;
-    const minX = area.position.x;
-    const minY = area.position.y;
-    const maxX = area.position.x + Math.max(0, area.size.width - size.width);
-    const maxY = area.position.y + Math.max(0, area.size.height - size.height);
-    return {
-      x: Math.min(Math.max(position.x, minX), maxX),
-      y: Math.min(Math.max(position.y, minY), maxY),
-    };
-  }
-
-  function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-    return new Promise((resolve, reject) => {
-      const timeout = window.setTimeout(() => reject(new Error(`operation timed out after ${timeoutMs}ms`)), timeoutMs);
-      promise.then(
-        (value) => {
-          window.clearTimeout(timeout);
-          resolve(value);
-        },
-        (error) => {
-          window.clearTimeout(timeout);
-          reject(error);
-        },
-      );
-    });
-  }
-
   async function dragWindow() {
-    petDragging = true;
-    try { await getCurrentWindow().startDragging(); }
+    try { await surfaceController?.drag(); }
     catch (error) { showNotice(`无法移动桌宠：${String(error)}`); }
-    finally { petDragging = false; scheduleEnsureWindowFrameAndBounds(); }
+  }
+
+  async function toggleSurface(event: MouseEvent) {
+    event.stopPropagation();
+    try { await surfaceController?.setMode(surface.mode === 'docked' ? 'floating' : 'docked'); }
+    catch (error) { showNotice(String(error)); }
+  }
+
+  function handleKey(event: KeyboardEvent) {
+    if (event.key === 'Escape' && surface.dragging) void surfaceController?.cancelDrag().catch(error => showNotice(String(error)));
   }
 
   function preventPetWindowDoubleClick(event: MouseEvent) {
@@ -373,7 +187,7 @@
 
   function toggleTasks(event: MouseEvent) {
     event.stopPropagation();
-    tasksCollapsed = !tasksCollapsed;
+    dispatch({ type: 'toggle-tasks' });
   }
 
   async function openMain(event: MouseEvent) {
@@ -386,20 +200,6 @@
     }
   }
 
-  function whipPet(event: MouseEvent) {
-    event.stopPropagation();
-    whipAnimationKey += 1;
-    whipAnimating = true;
-    clearWhipTimer();
-    void playWhipSound(settings).catch((error) => {
-      console.error("failed to play whip sound", error);
-    });
-    whipTimer = window.setTimeout(() => {
-      whipAnimating = false;
-      whipTimer = null;
-    }, whipVisibleMs);
-  }
-
   function clampPetOpacity(value: number | null | undefined) {
     const numericValue = Number(value);
     if (!Number.isFinite(numericValue)) {
@@ -410,148 +210,29 @@
 
 </script>
 
-<main
-  bind:this={petWindowElement}
+<svelte:window on:keydown={handleKey} />
+
+<main bind:this={petWindowElement}
   class={`pet-window ${themeClass}${devMode ? " dev-mode" : ""}`}
-  style={`--pet-window-opacity: ${petWindowOpacity};`}
-  on:dblclick={preventPetWindowDoubleClick}
->
+  class:docked={surface.mode === 'docked'} class:snap-candidate={surface.snapCandidate}
+  style={`--pet-window-opacity: ${petWindowOpacity}; --pet-rail-height: ${railHeight}px; --notch-width: ${Math.min(presentation.expanded ? 640 : 280, surface.availableWidth ?? 640)}px;`}
+  on:dblclick={preventPetWindowDoubleClick}>
   <div class="pet-content" bind:this={petContentElement}>
-  {#if !tasksCollapsed && (hasActivities || gatewayError)}
-    <section class="activity-stack" bind:this={activityStack} aria-live="polite" style={`--pet-activity-stack-max-height: ${activityStackHeightLimit}px`}>
-      {#if !hasActivities && gatewayError}
-        <article class="status-pill gateway-state-pill"><div class="status-content">
-          <span class="status-title">活动连接不可用</span>
-          <span class="status-message">{gatewayError}</span>
-        </div></article>
-      {/if}
-      <PetActivityGroups {activities} {sources} {runningBubble} dismiss={dismissActivity} />
-    </section>
-  {/if}
-  <section class="pet-stage" bind:this={petStageElement} aria-label="拖动移动桌宠">
-    <div class="pet-action-rail">
-      {#if hasActivities}
-        <button
-          class="pet-action-button fold-button"
-          class:collapsed={tasksCollapsed}
-          type="button"
-          aria-label={tasksCollapsed ? "展开任务列表" : "收起任务列表"}
-          on:mousedown={(event) => event.stopPropagation()}
-          on:click={toggleTasks}
-        >
-          <span aria-hidden="true"></span>
-        </button>
-      {/if}
-      <button
-        class="pet-action-button main-window-button"
-        type="button"
-        aria-label="打开主窗口"
-        on:mousedown={(event) => event.stopPropagation()}
-        on:click={openMain}
-      >
-        <span aria-hidden="true"></span>
-      </button>
-      <button
-        class="pet-action-button whip-button"
-        type="button"
-        aria-label="抽鞭子"
-        title="抽鞭子"
-        on:mousedown={(event) => event.stopPropagation()}
-        on:click={whipPet}
-      >
-        <span aria-hidden="true"></span>
-      </button>
-      {#if hasCompletedActivities}
-        <button
-          class="pet-action-button clear-completed-button"
-          type="button"
-          aria-label="移除全部已完成任务"
-          title="移除全部已完成任务"
-          on:mousedown={(event) => event.stopPropagation()}
-          on:click={clearCompletedActivities}
-        >
-          <span aria-hidden="true"></span>
-        </button>
-      {/if}
-    </div>
-    {#key whipAnimationKey}
-      <svg class="whip-animation whip-svg" class:active={whipAnimating} viewBox="0 0 460 340" aria-hidden="true">
-        <defs>
-          <linearGradient id="whipHandleGradient" x1="30" y1="296" x2="68" y2="263" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stop-color="var(--asset-whip-handle-gradient-start)" />
-            <stop offset="0.45" stop-color="var(--asset-whip-handle-gradient-mid)" />
-            <stop offset="1" stop-color="var(--asset-whip-handle-gradient-end)" />
-          </linearGradient>
-          <linearGradient id="whipFerruleGradient" x1="56" y1="255" x2="75" y2="274" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stop-color="var(--asset-whip-ferrule-gradient-start)" />
-            <stop offset="0.45" stop-color="var(--asset-whip-ferrule-gradient-mid)" />
-            <stop offset="1" stop-color="var(--asset-whip-ferrule-gradient-end)" />
-          </linearGradient>
-          <filter id="whipRopeTexture" x="-8%" y="-8%" width="116%" height="116%">
-            <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="1" seed="8" result="grain" />
-            <feColorMatrix in="grain" type="matrix" values="0 0 0 0 0.28 0 0 0 0 0.18 0 0 0 0 0.11 0 0 0 0.16 0" result="grainColor" />
-            <feBlend in="SourceGraphic" in2="grainColor" mode="multiply" />
-          </filter>
-        </defs>
-        <g class="whip-rig">
-          <path class="motion-ghost" d="M 36 291 L 66 264 C 101 234, 132 207, 163 137 S 235 84, 286 96 C 306 101, 320 111, 332 126" pathLength="1" />
-          <path class="handle-shadow" d="M 30 296 L 63 267" />
-          <path class="handle-core" d="M 30 296 L 63 267" />
-          <path class="handle-highlight" d="M 34 292 L 57 272" />
-          <path class="handle-ring" d="M 35 289 L 43 298" />
-          <path class="handle-ring" d="M 48 277 L 56 286" />
-          <ellipse class="ferrule" cx="66" cy="263" rx="10" ry="7" transform="rotate(-43 66 263)" />
-          <g class="join-knot">
-            <ellipse class="knot-lobe" cx="76" cy="257" rx="12" ry="9" transform="rotate(-35 76 257)" />
-            <ellipse class="knot-lobe" cx="84" cy="251" rx="8" ry="11" transform="rotate(32 84 251)" />
-            <path class="knot-band" d="M 66 258 C 74 249, 82 247, 91 251" />
-            <path class="knot-band" d="M 70 265 C 78 255, 87 254, 95 259" />
-          </g>
-          <path class="rope-shadow" d="M 86 254 C 112 230, 139 202, 164 138 S 238 85, 286 96 C 306 101, 320 111, 332 126" />
-          <path class="rope-core rope-thick" d="M 86 254 C 112 230, 139 202, 164 138" />
-          <path class="rope-core rope-mid" d="M 164 138 C 196 96, 241 85, 286 96" />
-          <path class="rope-core rope-thin" d="M 286 96 C 306 101, 320 111, 332 126" />
-          <path class="rope-strand strand-thick" d="M 86 254 C 112 230, 139 202, 164 138" />
-          <path class="rope-strand light strand-thick" d="M 86 254 C 112 230, 139 202, 164 138" />
-          <path class="rope-strand strand-mid" d="M 164 138 C 196 96, 241 85, 286 96" />
-          <path class="rope-strand light strand-mid" d="M 164 138 C 196 96, 241 85, 286 96" />
-          <path class="rope-strand strand-thin" d="M 286 96 C 306 101, 320 111, 332 126" />
-          <path class="rope-strand light strand-thin" d="M 286 96 C 306 101, 320 111, 332 126" />
-          <path class="tail-line" d="M 288 97 C 312 96, 336 104, 354 118" />
-          <path class="tail-line" d="M 288 97 C 314 110, 333 128, 346 150" />
-          <path class="tail-line" d="M 288 97 C 306 121, 316 143, 326 165" />
-          <circle class="tail-knot" cx="354" cy="118" r="5" />
-          <circle class="tail-knot" cx="346" cy="150" r="5" />
-          <circle class="tail-knot" cx="326" cy="165" r="5" />
-        </g>
-        <g class="crack">
-          <path d="M 332 126 L 302 111" />
-          <path d="M 332 126 L 306 150" />
-          <path d="M 332 126 L 369 118" />
-          <path d="M 332 126 L 337 90" />
-        </g>
-      </svg>
-    {/key}
-    <PetAvatar
-      petId={settings?.pet.selectedPetId ?? "default"}
-      interactive
-      onDrag={dragWindow}
-      startled={whipAnimating}
-      kind={settings?.pet.kind}
-      imagePath={settings?.pet.imagePath}
-      status={avatarStatus}
-      scale={Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4) * 0.9}
-    />
-    {#if actionNotice}
-      <span class="pet-notice">{actionNotice}</span>
+    {#if surface.mode === 'docked'}
+      <NotchPet data={$petData} {settings} {avatarStatus} {surface} expanded={presentation.expanded}
+        {dispatch} {dragWindow} {toggleSurface} {openMain} {dismissActivity} {actionNotice} />
+    {:else}
+      <DesktopPet {activities} sources={$petData.sources} gatewayError={$petData.error} {settings} {avatarStatus} {surface}
+        tasksCollapsed={presentation.tasksCollapsed} bind:expandedGroups {actionNotice}
+        {dismissActivity} {clearCompletedActivities} {dragWindow} {toggleSurface} {toggleTasks} {openMain} />
     {/if}
-  </section>
   </div>
 </main>
 
 <style>
-  .status-pill { cursor: default; }
-  .status-title-row { grid-template-columns: minmax(0, 1fr) auto; }
-  .status-title { min-width: 0; display: grid; }
-  .dismiss-button::before, .dismiss-button::after { left: 5px; top: 8px; }
+  .pet-window { justify-content: flex-start; -webkit-user-select: none; }
+  .pet-window.docked { width: max-content; max-width: var(--notch-width); opacity: 1; cursor: default; }
+  .docked .pet-content { width: max-content; max-width: var(--notch-width); padding: 0 16px; }
+  .docked:has(:global(.notch-panel.expanded)) .pet-content { width: var(--notch-width); }
+  .snap-candidate :global(.pet-stage) { filter: drop-shadow(0 0 6px var(--color-focus-ring)); }
 </style>

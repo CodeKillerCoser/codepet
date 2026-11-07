@@ -14,5 +14,5 @@
 
 - `frontend/App.svelte`：设置 UI。
 - `frontend/PetApp.svelte`：桌宠窗口行为。
-- `frontend/lib/activity.ts` 及测试：任务卡片规则。
+- `frontend/lib/pet/model.ts`、`frontend/lib/activityGroups.ts` 及测试：任务数据与分组规则。
 - `frontend/lib/sound.ts` 及测试：通知行为。

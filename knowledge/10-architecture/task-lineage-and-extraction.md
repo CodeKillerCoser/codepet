@@ -1639,7 +1639,7 @@ flowchart LR
 
 ## 27. 现状理解
 
-当前仓库已经具备 Provider、Conversation 和 Turn 的统一协议及运行时投影：`protocol/provider/` 定义 Provider 领域协议，`crates/providers/` 包装不同 AI 工具，`frontend/lib/runtimeGateway.ts` 提供对话查询入口，`frontend/lib/runtimeGatewayActivity.ts` 将 Provider 会话和 Turn 映射到当前活动视图。应用设置和部分本地状态已使用 JSON 文件持久化，相关约束记录在 `knowledge/10-architecture/settings-persistence.md`。
+当前仓库已经具备 Provider、Conversation 和 Turn 的统一协议及运行时投影：`protocol/provider/` 定义 Provider 领域协议，`crates/providers/` 包装不同 AI 工具，当前查询使用 `frontend/lib/codepetGateway.ts` 与 `frontend/lib/taskLineage.ts`，桌宠投影由 Pet Gateway 提供；旧 runtimeGateway/runtimeGatewayActivity 前端模块已移除。应用设置和部分本地状态已使用 JSON 文件持久化，相关约束记录在 `knowledge/10-architecture/settings-persistence.md`。
 
 本方案中的 Task、Execution Episode、增量抽取调度器和任务谱系查询模型仍是目标能力，仓库当前实现不能被视为已经支持这些对象。
 

@@ -422,6 +422,7 @@ pub fn run() {
         .manage(reloadable_assets)
         .manage(PendingAppUpdate::default())
         .manage(AgentRuntimeService::default())
+        .manage(pet::surface::SurfaceState::default())
         .setup(|app| {
             let setup_span = app_log::PerfSpan::start("startup.total");
             app_log::info("startup", "setup started");
@@ -491,6 +492,7 @@ pub fn run() {
             }
             let overlay_span = app_log::PerfSpan::start("startup.configure_pet_overlay_window");
             configure_pet_overlay_window(&handle);
+            pet::surface::start(handle.clone());
             overlay_span.finish_ok(&[]);
             app_log::info("startup", "pet overlay window configured");
             app_log::info("startup", "setup finished");
@@ -543,6 +545,11 @@ pub fn run() {
             runtime_gateway::tauri_bridge::pet_gateway_request,
             open_main_window,
             pet_asset_data_url,
+            pet::surface::pet_surface_state,
+            pet::surface::pet_surface_layout,
+            pet::surface::pet_surface_mode,
+            pet::surface::pet_surface_drag,
+            pet::surface::pet_surface_pointer,
             provider_connection_status,
             runtime_gateway_request,
             codepet_gateway_request,

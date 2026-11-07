@@ -145,22 +145,8 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   });
 }
 
-
-
-export async function activateActivity(eventId: string): Promise<void> {
-  return invoke<void>("activate_activity", { eventId });
-}
-
 export async function openMainWindow(): Promise<void> {
   return invoke<void>("open_main_window");
-}
-
-export async function sendActivityReply(eventId: string, message: string): Promise<void> {
-  return invoke<void>("send_activity_reply", { eventId, message });
-}
-
-export async function resolveActivityApproval(eventId: string, behavior: "allow" | "deny", message?: string): Promise<void> {
-  return invoke<void>("resolve_activity_approval", { eventId, behavior, message });
 }
 
 export async function importProviderPlugin(manifestPath: string): Promise<{providerId: string; displayName: string; loaded: boolean; diagnostic?: string | null}> {

@@ -14,11 +14,11 @@
 
 ## 推荐做法
 
-使用 `cursorPosition()` 轮询全局鼠标位置，将其换算到桌宠窗口坐标；只在任务卡、操作按钮、宠物不透明像素等命中区域内恢复 `setIgnoreCursorEvents(false)`，其余区域设置 `setIgnoreCursorEvents(true)`。新增或调整 Tauri JS window API 时同步检查 `src-tauri/capabilities/default.json`。
+通过统一 Surface 平台接口读取窗口内逻辑鼠标坐标；macOS 的 AppKit 点坐标不能与 Tauri 物理像素混算。只在任务卡、操作按钮、宠物不透明像素和顶部可见面板等命中区域内恢复 `setIgnoreCursorEvents(false)`，其余区域设置 `setIgnoreCursorEvents(true)`。新增或调整 Tauri JS window API 时同步检查 `src-tauri/capabilities/default.json`。
 
 图集命中必须读取渲染组件公布的当前行、列和帧边界，不能将整张图或第一帧当命中区域。静态图片 `object-fit: contain` 产生的留白必须扣除；装饰性情绪叠层不应扩大鼠标拦截区。实现统一放在 `frontend/lib/pet/hitTest.ts`，不再从旧像素 DOM 或 CSS 变换猜测位置。
 
-透明事件透传与拖动边界必须分别验证。原生窗口应贴合实际布局并保留有限装饰边距；不能用透明区域可透传来证明大窗口没有问题，因为整窗工作区限位仍会让透明留白提前触顶。调整内容高度应保持桌宠底部锚点，并在低高度工作区缩小任务滚动区。
+透明事件透传与拖动边界必须分别验证。原生窗口应贴合实际布局并保留有限装饰边距；不能用透明区域可透传来证明大窗口没有问题，因为整窗工作区限位仍会让透明留白提前触顶。调整内容高度应保持桌宠角色锚点（停靠时保持停靠区下缘），并在低高度工作区缩小任务滚动区。
 
 ## 来源
 
@@ -31,3 +31,14 @@
 图集和图片留白另运行 `npx vitest run frontend/lib/pet/hitTest.test.ts`；`scripts/pet_module_ui_qa.mjs` 使用真实素材验证 alpha 和原生调用边界，但不能替代操作系统实测。
 
 内容高度和拖动边界另运行 `scripts/pet_window_frame_ui_qa.mjs`，覆盖单卡/无任务、展开收起、顶部边界和不同 DPI；原因与证据见 [透明留白阻止上移](../40-runbooks/pet-window-transparent-frame-blocks-drag.md)。
+
+
+## 刘海与拖动补充
+
+原生拖动事务期间禁止工作区强制限位，也不能切回鼠标透传，否则无法进入吸附带或丢失松手。前端 CSS 布局改变后必须测量角色锚点，原生根据 revision 接受新布局；不得再由前端和原生分别 setPosition/setSize。拖动结束或取消后恢复透传检查。
+
+新增回归：Surface 几何/状态测试、前端旧布局回复测试，以及顶部→悬浮→顶部的原生拖动验收。实现与证据见[接入实施记录](../30-domains/pet-window/notch-docking-design.md)。
+
+顶部状态条与下拉内容是一个完整命中区域，不能只命中里面的按钮，否则 hover 会穿过列表空隙。头像裁切后 alpha 检测必须同时受头像外框限制，不能让裁掉的身体扩大命中区。`scripts/pet_notch_ui_qa.mjs` 覆盖两套 UI 的展开、焦点与尺寸。
+
+展开宽度与收起宽度可以不同，但展开后的当前活动栏必须与列表共用容器；只允许任务区滚动。外侧圆角需要有计入内容测量的有限边距，不能超出原生 frame 被裁掉。头像视口不要小于渲染帧宽度，以免左右耳朵被切掉；固定上部裁切仍不等同于任意图片的头部识别。

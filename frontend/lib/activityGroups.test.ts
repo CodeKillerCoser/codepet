@@ -1,42 +1,38 @@
-import { describe, expect, it } from "vitest";
-import { groupActivities } from "./activityGroups";
-import { updateActivityList } from "./activity";
-import type { PetEvent, TaskStatus } from "./types";
+import { describe, expect, it } from 'vitest';
+import { groupActivities } from './activityGroups';
+import type { PetTask } from './petGateway';
 
-function event(id: string, status: TaskStatus): PetEvent {
-  return { id, sessionId: id, provider: "codex", kind: "task-updated", status, title: id, message: "", shouldRing: false, createdAt: new Date().toISOString(), raw: null };
+function task(id: string, status: PetTask['status']): PetTask {
+  return { id, status, title: id, updatedAt: 1 };
 }
 
-describe("activity groups", () => {
-  it("prioritizes attention, preserves order within groups and omits idle activities", () => {
-    const input = [event("done", "done"), event("run", "running"), event("fail", "failed"), event("wait", "waiting-approval"), event("think", "thinking"), event("idle", "idle")];
-    const groups = groupActivities(input);
-    expect(groups.map((group) => [group.id, group.activities.map((item) => item.id)])).toEqual([
-      ["attention", ["fail", "wait"]], ["active", ["run", "think"]], ["completed", ["done"]],
+describe('activity groups', () => {
+  it('prioritizes attention, preserves order within groups and omits idle tasks', () => {
+    const input = [task('done', 'completed'), task('run', 'running'), task('fail', 'failed'), task('wait', 'waiting-approval'), task('idle', 'idle')];
+    expect(groupActivities(input).map(group => [group.id, group.activities.map(item => item.id)])).toEqual([
+      ['attention', ['fail', 'wait']], ['active', ['run']], ['completed', ['done']],
     ]);
-    expect(input.map((item) => item.id)).toEqual(["done", "run", "fail", "wait", "think", "idle"]);
+    expect(input.map(item => item.id)).toEqual(['done', 'run', 'fail', 'wait', 'idle']);
   });
 
-  it("moves the same session between groups without duplicates as its status changes", () => {
-    let activities = updateActivityList([], [event("task", "running")]);
-    for (const status of ["waiting-approval", "running", "done"] as const) {
-      activities = updateActivityList(activities, [{ ...event("task", status), id: `update-${status}` }]);
-      const groups = groupActivities(activities);
+  it('moves the current task between groups when its snapshot status changes', () => {
+    for (const status of ['waiting-approval', 'running', 'completed'] as const) {
+      const groups = groupActivities([task('task', status)]);
       expect(groups).toHaveLength(1);
-      expect(groups[0].id).toBe(status === "done" ? "completed" : status === "running" ? "active" : "attention");
-      expect(groups[0].activities).toHaveLength(1);
+      expect(groups[0].id).toBe(status === 'completed' ? 'completed' : status === 'running' ? 'active' : 'attention');
+      expect(groups[0].activities.map(item => item.id)).toEqual(['task']);
     }
   });
 
-  it("groups Pet Gateway waiting-input, completed and interrupted statuses", () => {
-    const tasks = [{ id: "input", status: "waiting-input" }, { id: "done", status: "completed" }, { id: "cancel", status: "interrupted" }, { id: "unknown", status: "unknown" }];
-    expect(groupActivities(tasks).map(group => [group.id, group.activities.map(task => task.id)])).toEqual([
-      ["attention", ["input", "unknown"]], ["completed", ["done", "cancel"]],
+  it('groups waiting-input, completed, interrupted and unknown snapshots', () => {
+    const tasks = [task('input', 'waiting-input'), task('done', 'completed'), task('cancel', 'interrupted'), task('unknown', 'unknown')];
+    expect(groupActivities(tasks).map(group => [group.id, group.activities.map(item => item.id)])).toEqual([
+      ['attention', ['input', 'unknown']], ['completed', ['done', 'cancel']],
     ]);
   });
 
-  it("omits empty groups", () => {
+  it('omits empty groups', () => {
     expect(groupActivities([])).toEqual([]);
-    expect(groupActivities([event("done", "done")]).map((group) => group.id)).toEqual(["completed"]);
+    expect(groupActivities([task('done', 'completed')]).map(group => group.id)).toEqual(['completed']);
   });
 });

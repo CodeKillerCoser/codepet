@@ -42,6 +42,8 @@ const alphaCache = new WeakMap<HTMLImageElement, { src: string; width: number; h
 export function isPointOnOpaquePetImage(root: HTMLElement, point: PetWindowPoint): boolean {
   const rootBounds = root.getBoundingClientRect();
   for (const frame of root.querySelectorAll<HTMLElement>("[data-pet-frame]")) {
+    const avatar = frame.closest('.pet-avatar')?.getBoundingClientRect();
+    if (avatar && !containsPoint({ left: avatar.left - rootBounds.left, top: avatar.top - rootBounds.top, right: avatar.right - rootBounds.left, bottom: avatar.bottom - rootBounds.top }, point)) continue;
     const rect = frame.getBoundingClientRect();
     const bounds = { left: rect.left - rootBounds.left, top: rect.top - rootBounds.top, right: rect.right - rootBounds.left, bottom: rect.bottom - rootBounds.top };
     if (!containsPoint(bounds, point)) continue;

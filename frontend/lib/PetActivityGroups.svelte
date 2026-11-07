@@ -9,7 +9,7 @@
   export let sources: PetSource[];
   export let runningBubble: AppSettings['appearance']['runningBubble'];
   export let dismiss: (event: MouseEvent, task: PetTask) => void;
-  let expanded = new Set<ActivityGroupId>();
+  export let expanded = new Set<ActivityGroupId>();
   $: groups = groupActivities(activities);
   $: bubbleStyle = runningBubbleStyle(runningBubble);
 

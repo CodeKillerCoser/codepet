@@ -1,28 +1,7 @@
-# 回复编辑器
+# 回复编辑器（历史功能）
 
-## 当前行为
+旧桌宠曾在气泡中提供回复 textarea、审批与打断按钮。当前 Pet Gateway 只向桌宠提供任务快照与来源配置，不提供发送回复或审批控制；两套 UI 均未渲染这些入口。
 
-回复模式由 `frontend/PetApp.svelte` 中的 `replyingToId` 和 `replyText` 控制。
+2026-11-08 清理已无调用方的前端动作能力模块、IPC wrapper、回复/审批样式和专用主题变量。此举不删除后端 Agent/远程控制协议，也不改变已有自定义角色导入。
 
-打开后，textarea 会获得焦点，光标会移动到末尾，编辑器高度根据 `scrollHeight` 调整。最大高度为五行，计算依据包括 computed line height、padding 和 border。回复态气泡需要保留显式最小高度和 stretch 对齐，让 textarea、发送/取消按钮与 footer 都被气泡包住。
-
-在 macOS 上，桌宠悬浮 panel 只有在需要时才允许成为 key window，使回复 textarea 可以接收键盘焦点。
-
-回复模式可以通过取消按钮退出；提交成功后会清空；目标 activity 消失或失去回复能力时也会清空。
-
-## 能力依赖
-
-只有当 `activityCapabilities(activity).canReply` 为 true，且卡片尚未处于回复模式时，才显示回复按钮。
-
-## 风险
-
-- 条件渲染可能让 textarea 在点击处理之后才挂载；focus 必须发生在 DOM 更新之后。
-- 列表中复用一个 `replyTextarea` binding 只有在同一时间只有一个卡片进入回复模式时才安全。
-- 自动调整 textarea 高度时，不能只依赖内容自然撑开气泡；回复态卡片必须有覆盖初始编辑器和按钮的最小高度。
-
-## 验证
-
-- 人工点击回复，确认光标出现在编辑器里。
-- 人工点击回复，确认气泡高度包住 textarea、发送/取消按钮和 footer。
-- 输入超过五行，确认编辑器内部滚动。
-- 取消回复，确认 footer 操作恢复。
+今后若恢复回复能力，需要先由协议明确提供可靠控制路径，再实现 UI 和行为测试；不能仅恢复旧 CSS 或旧 Provider 名称分支。条件挂载元素的焦点约束仍见 [条件渲染焦点规约](../../60-rules/conditional-render-focus.md)。

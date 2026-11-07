@@ -29,7 +29,8 @@ try {
   const geometry = () => page.evaluate(() => {
     const n = window.__petQa.native;
     const content = document.querySelector('.pet-content').getBoundingClientRect();
-    return { height: innerHeight, top: content.top, bottom: n.position.y + n.size.height, right: n.position.x + n.size.width, y: n.position.y, count: n.resizeCount };
+    const pet = document.querySelector('.pet-avatar').getBoundingClientRect();
+    return { anchorX: n.position.x + (pet.x + pet.width / 2) * n.scale, anchorY: n.position.y + (pet.y + pet.height / 2) * n.scale, height: innerHeight, top: content.top, bottom: n.position.y + n.size.height, right: n.position.x + n.size.width, y: n.position.y, count: n.resizeCount };
   });
   await settled();
   const idle = await geometry();
@@ -40,12 +41,12 @@ try {
   const single = await geometry();
   assert.ok(single.height > idle.height && single.height < 310, 'single task retains the 584px preset');
   assert.ok(Math.abs(single.top) <= 1, 'transparent space above content');
-  assert.equal(single.bottom, idle.bottom, 'task arrival moves the pet');
+  assert.equal(single.anchorY, idle.anchorY, 'task arrival moves the pet');
   assert.equal(single.right, idle.right);
   await page.screenshot({ path: resolve(output, 'window-single-task.png') });
   await page.getByRole('button', { name: '收起任务列表', exact: true }).click(); await settled();
-  assert.equal((await geometry()).height, idle.height);
-  assert.equal((await geometry()).bottom, idle.bottom);
+  assert.ok((await geometry()).height <= 170);
+  assert.equal((await geometry()).anchorY, idle.anchorY);
   await page.getByRole('button', { name: '展开任务列表', exact: true }).click(); await settled();
   assert.equal((await geometry()).height, single.height);
   // Content changes beyond explicit fold buttons must also resize the native frame.
@@ -57,7 +58,7 @@ try {
   await settled();
   const largerPet = await geometry();
   assert.ok(largerPet.height > single.height, 'pet scale change does not resize the frame');
-  assert.equal(largerPet.bottom, single.bottom);
+  assert.equal(largerPet.anchorY, single.anchorY);
   await page.evaluate(() => {
     window.__petQa.settings.pet.scale = 3;
     window.__petQa.updateSettings();
@@ -68,7 +69,7 @@ try {
   await page.getByRole('button', { name: '隐藏 正在处理任务', exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('.activity-stack')); await settled();
   assert.equal((await geometry()).height, idle.height, 'dismissing the last task leaves reserved space');
-  assert.equal((await geometry()).bottom, idle.bottom);
+  assert.equal((await geometry()).anchorY, idle.anchorY);
   await page.evaluate(() => { window.__petQa.tasks = [{ id: 'next', title: '新任务', status: 'running', providerId: 'codex', updatedAt: Date.now() }]; });
   await page.waitForSelector('.activity-group'); await settled();
   assert.equal((await geometry()).height, single.height);
@@ -86,6 +87,20 @@ try {
   assert.ok(expanded.height > single.height);
   assert.equal(expanded.y, 40);
   assert.ok(await page.locator('.activity-stack').evaluate(el => el.scrollHeight > el.clientHeight));
+  // The separate top view starts as a one-line bar and expands on hover.
+  const taskCount = await page.locator('.status-pill').count();
+  await page.getByRole('button', { name: '吸附到刘海', exact: true }).click();
+  await page.waitForSelector('.notch-panel');
+  await page.mouse.move(-20, -20); await page.waitForTimeout(350); await settled();
+  assert.equal((await geometry()).height, 44);
+  assert.equal(await page.locator('.pet-stage').count(), 0);
+  await page.locator('.notch-header').hover(); await page.waitForSelector('.notch-task'); await settled();
+  assert.equal(await page.locator('.notch-task').count(), taskCount);
+  assert.ok(await page.locator('.notch-task-list').evaluate(el => el.scrollHeight > el.clientHeight));
+  await page.getByRole('button', { name: '切换为悬浮', exact: true }).focus();
+  await page.screenshot({ path: resolve(output, 'window-docked-tasks.png') });
+  await page.keyboard.press('Enter'); await settled();
+  assert.equal(await page.locator('.status-pill').count(), taskCount);
   // Smaller work area on a negative-coordinate display, with a different DPI.
   await page.evaluate(() => {
     const q = window.__petQa;
@@ -94,7 +109,7 @@ try {
     q.native.monitors = [{ name: 'Left', scaleFactor: 1.25, position: { x: -1600, y: -400 }, size: { width: 1600, height: 500 }, workArea: { position: { x: -1600, y: -400 }, size: { width: 1600, height: 500 } } }];
     q.move(-1400, -500);
   });
-  await page.waitForFunction(() => window.__petQa.native.size.height <= 500 && window.__petQa.native.position.y === -400);
+  await page.waitForFunction(() => window.__petQa.native.size.height <= 500 && window.__petQa.native.position.y >= -400 && window.__petQa.native.position.y + window.__petQa.native.size.height <= 101);
   await settled();
   assert.ok((await geometry()).height <= 400);
   assert.ok(await page.locator('.activity-stack').evaluate(el => el.scrollHeight > el.clientHeight));
@@ -102,10 +117,10 @@ try {
   assert.equal((await geometry()).count, before.count, 'resize/move events cause a feedback loop');
   await page.getByRole('button', { name: '收起任务列表', exact: true }).focus();
   await page.keyboard.press('Enter'); await settled();
-  assert.equal((await geometry()).height, idle.height);
-  assert.ok(Math.abs((await geometry()).bottom - before.bottom) <= 1, "fractional DPI moves the pet by more than one physical pixel");
+  assert.ok((await geometry()).height <= 170);
+  assert.ok(Math.abs((await geometry()).anchorY - before.anchorY) <= 1, "fractional DPI moves the pet by more than one physical pixel");
   assert.deepEqual(errors, []);
-  console.log(`Pet frame QA passed: idle ${idle.height}px, single task ${single.height}px; content fitting, pet scaling, last-task dismissal, bottom anchor, collapse/expand, top edge, capped scrolling, negative monitor/DPI, focus and stable resize events.`);
+  console.log(`Pet frame QA passed: idle ${idle.height}px, single task ${single.height}px; content fitting, pet scaling, last-task dismissal, character anchor, collapse/expand, top edge, capped scrolling, negative monitor/DPI, focus and stable resize events.`);
 } finally {
   await browser?.close();
   await new Promise(resolve => server.httpServer.close(resolve));

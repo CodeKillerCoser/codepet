@@ -1,5 +1,3 @@
-import type { Approval, Provider, TurnTask } from "./generated/runtimeGateway";
-
 export type AgentId = "codex" | "claude" | "qoder" | "cursor";
 export type AgentRuntimeProviderId = string;
 export type AgentRuntimeStatus = "loading" | "ready" | "unavailable" | "invalid-configured-executable";
@@ -243,14 +241,6 @@ export interface PetEvent {
   endedAt?: string | null;
   raw: unknown;
   source?: ActivitySource | null;
-  runtimeGateway?: RuntimeGatewayActivityContext | null;
-}
-
-export interface RuntimeGatewayActivityContext {
-  provider: Provider;
-  conversationId: string;
-  turn?: TurnTask | null;
-  approval?: Approval | null;
 }
 
 export interface ActivitySource {

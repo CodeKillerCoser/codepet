@@ -8,7 +8,7 @@
 - `src-tauri/src/agent/hooks.rs`：写入托管 hook 项。
 - `src-tauri/src/activity/collector.rs`：接收 hook payload。
 - `src-tauri/src/activity/events.rs`：将 payload 归一化为 `PetEvent`。
-- `frontend/lib/activity.ts`：归并和过滤用户可见活动。
+- `crates/codepet-host/src/pet_gateway/projection.rs`、`frontend/lib/pet/model.ts`：当前桌宠任务投影与显示数据；旧前端活动归并已移除。
 
 ## 测试
 

@@ -6,7 +6,7 @@ Codex 任务卡片的可见标题应优先使用 `.codex/session_index.jsonl` �
 
 ## 适用场景
 
-修改 `src-tauri/src/activity/title_resolver.rs`、`src-tauri/src/agent/codex_audit.rs`、`frontend/lib/activity.ts`、Codex hook payload 解析、audit replay 或桌宠卡片标题逻辑时适用。
+修改 `src-tauri/src/activity/title_resolver.rs`、`src-tauri/src/agent/codex_audit.rs`、`crates/codepet-host/src/pet_gateway/projection.rs`、Codex hook payload 解析、audit replay 或桌宠卡片标题逻辑时适用。
 
 ## 反例
 

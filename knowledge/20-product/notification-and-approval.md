@@ -2,21 +2,21 @@
 
 ## 通知行为
 
-通知由 `settings.notifications` 控制。权限、失败和完成状态可以分别控制是否响铃。等待审批状态可以重复提醒，直到被处理或达到重复限制。
+设置保留 `settings.notifications` 与声音试听。当前桌宠通过 Pet Gateway 读取任务，并未接入事件响铃或重复审批提醒；这些是旧事件驱动桌宠的行为。
 
-`frontend/lib/sound.ts` 决定新事件是否响铃，以及重复通知是否继续。
+`frontend/lib/sound.ts` 保留主窗口使用的声音试听和桌面抽打音效。未被调用的旧事件响铃判断与重复通知函数已在桌宠清理中删除。
 
 ## 审批行为
 
 权限请求事件会在 `src-tauri/src/activity/events.rs` 中变成 `TaskStatus::WaitingApproval`。`src-tauri/src/app/state.rs` 保存待审批项，并提供异步等待路径。
 
-collector 暴露 `/approvals/:event_id/wait`；桌宠 UI 通过 `resolve_activity_approval` 处理待审批决策。
+collector 暴露 `/approvals/:event_id/wait`；后端保留 `resolve_activity_approval`。当前桌宠不提供审批入口，旧前端调用封装已删除；不能把后端接口存在视为 UI 已接入。
 
 ## 用户可见规则
 
-审批控件只应在任务等待审批时出现。回复控件不应在审批阶段出现，除非 UI 明确通过审批流程发送审批消息。
+桌宠可以展示等待审批状态，但不展示未经当前协议支持的审批或回复控件。
 
 ## 验证
 
 - 运行 `cargo test --manifest-path src-tauri/Cargo.toml activity_actions_tests`。
-- 运行 `npx vitest run frontend/lib/activity.test.ts frontend/lib/sound.test.ts`。
+- 运行 `npx vitest run frontend/lib/pet/model.test.ts frontend/lib/sound.test.ts`。

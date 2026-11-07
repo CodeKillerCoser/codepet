@@ -836,7 +836,7 @@ Graph 和 Swimlane 必须消费同一个 `TaskFlowViewModel`，不可各自拼�
 ## 22. 涉及模块
 
 - `frontend/`：未来生产 UI、路由、状态管理和复用消息组件的落点。
-- `frontend/lib/runtimeGateway.ts`：现有对话读取和创建能力入口，后续需要接入任务谱系查询。
+- `frontend/lib/codepetGateway.ts`、`frontend/lib/taskLineage.ts`：当前 Gateway 与任务谱系查询入口；旧 runtimeGateway 前端 wrapper 已移除。
 - `protocol/provider/`：决定“打开原始对话”和“继续发送消息”在不同 Provider 上是否可用。
 - `src-tauri/src/`：为界面提供任务查询、人工完成和 Git 状态 command。
 - `prototypes/task-lineage-management/`：本设计稿的视觉和交互证据。
