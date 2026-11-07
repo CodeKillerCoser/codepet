@@ -152,3 +152,13 @@ VPS 套餐真实上下行带宽、共享带宽政策、用户同时在线比例�
 新增回归覆盖 nginx 原生变量保留、模板秘密注入、初始/增量策略一致、现有服务器身份与数据库路径保留、无效端口及限额拒绝。密钥、设备 token、数据库及含密钥渲染结果均未归档进仓库。常用非敏感管理参数以仓库配置为准；已有安装的地址/密钥/数据库路径仍以服务器原值为准，避免配置整理造成身份替换或数据库迁移。
 
 用户随后明确：保留多个 Python 模块，将 `server/` 当作独立项目，减少目录层级。现将应用/维护模块放在项目根，配置统一平铺到 `config/`，测试统一放在 `tests/`；nginx 的三个片段收敛为一份模板。增加项目 Makefile 和独立忽略规则，同步 CI 与部署测试入口，不合并业务模块、不修改线上运行位置。将项目完整复制到仓库外的临时目录后，使用 `make test VENV_PYTHON=<已有虚拟环境解释器>` 运行 **34 项测试通过**；同时通过 `git diff --check`。本次目录整理未部署或重启 VPS。
+
+### 提交与客户端资源边界补齐
+
+服务端已以 `c07e048` 推送 main，[Server quality #42411103073](https://github.com/CodeKillerCoser/codepet/actions/runs/42411103073) 通过。再次本地运行 34 项服务端测试通过；线上五个相关 unit（含独立 xray）均 active，最近半小时信令 journal 无 ERROR/Traceback。此轮只归档代码，不重复重启线上服务。
+
+Remote 原生清理已补齐：关闭等待创建中的 Peer/Channel；逐步记录关闭失败并继续 dispose，最终成功释放可恢复前面关闭错误；无法确认释放时向连接引擎传播错误并隔离名额。共享 ICE 凭据按设备控制器和授权隔离，仅内存保存，最长 60 秒，提前 60 秒到期；IPv4/relay 并行请求合并，HTTP 生命周期不归属某个候选，避免取消一条连带取消其他分支。401/403 失效，失败不缓存。未变更轮询和心跳业务协议。
+
+本地 Remote `flutter analyze`、465 项全量测试、独立引擎测试通过；10,000 轮 / 16 设备模拟压力结束时 liveConnections、permits、waiting 均为 0。100 次模拟原生创建/关闭以及失败隔离回归通过。这些结果不替代 Android 原生、真实切网或实际 TURN 吞吐测试；Android 专项脚本位于 Remote `integration_test/rtc_cleanup_test.dart`，手机验收关注取消释放、VPN/Wi-Fi 切换后连接恢复与 429/486/503，不把配置上限当成并发用户承诺。
+
+随后在本机 ARM64 Android 模拟器运行原生专项：40 个 Peer 并行创建/取消/关闭收到 40 个 cleanup.completed，没有 cleanup.failed，集成测试通过。使用 Debug 测试包；交付另由 GitHub 正式签名构建 Release。模拟器原生测试不替代用户手机 VPN/蜂窝网验收。
