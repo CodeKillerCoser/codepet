@@ -100,7 +100,8 @@ async fn cancelling_start_before_health_or_during_discovery_cannot_orphan_server
 async fn official_v2_shapes_map_through_the_provider_protocol() {
     let process_directory = tempfile::tempdir().unwrap();
     let first_pid_file = process_directory.path().join("opencode-first.pid");
-    std::env::set_var("OPENCODE_FIXTURE_PID_FILE", &first_pid_file);
+    let startup_file = process_directory.path().join("opencode-fixture-startup.json");
+    std::fs::write(&startup_file, json!({"pidFile":first_pid_file,"emptyModelResponses":2}).to_string()).unwrap();
     let (event_sender, event_receiver) = mpsc::channel();
     let provider = OpenCodeProvider::new(Arc::new(move |event| {
         event_sender.send(event).map_err(|error| codepet_provider_sdk::ProtocolError {
@@ -129,6 +130,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         provider_instance_id: "opencode".to_string(),
     };
     let settings = BTreeMap::from([
+        ("workspaceRoot".to_string(), json!(process_directory.path())),
         (
             "serverExecutable".to_string(),
             json!(env!("CARGO_BIN_EXE_opencode-server-fixture")),
@@ -161,7 +163,6 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         })
         .await
         .unwrap();
-    std::env::remove_var("OPENCODE_FIXTURE_PID_FILE");
     assert_eq!(started.instance.status, InstanceStatus::Starting);
     let capabilities = wait_for_capabilities(&provider, &route).await;
     let controls = capabilities.turn_send.as_ref().unwrap();
@@ -570,14 +571,13 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
 
     let attacker = TcpAttackFixture::start();
     let second_pid_file = process_directory.path().join("opencode-second.pid");
-    std::env::set_var("OPENCODE_FIXTURE_PID_FILE", &second_pid_file);
+    std::fs::write(&startup_file, json!({"pidFile":second_pid_file}).to_string()).unwrap();
     provider
         .instance_start(InstanceStartRequest {
             route: route.clone(),
         })
         .await
         .unwrap();
-    std::env::remove_var("OPENCODE_FIXTURE_PID_FILE");
     wait_for_capabilities(&provider, &route).await;
     let second_server_pid = read_pid(&second_pid_file);
     attacker.assert_never_contacted();

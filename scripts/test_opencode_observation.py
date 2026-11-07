@@ -33,9 +33,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--executable', default='opencode')
     parser.add_argument('--remote-turns', action='store_true', help='Exercise Provider remote sends instead of observation checks')
+    parser.add_argument('--test-deny', action='store_true', help='Also exercise denial on older releases (automatic on OpenCode 2)')
     args = parser.parse_args()
     version = subprocess.check_output([args.executable, '--version'], text=True).strip()
-    assert version == '1.18.25', 'This release fixture is verified for 1.18.25, got ' + version
+    print('Testing installed OpenCode:', version)
     received = []
     model_calls = []
 
@@ -54,11 +55,13 @@ def main():
             permission = 'permission-smoke' in json.dumps(messages) and not any(m['role'] == 'tool' for m in messages)
             remote = 'remote-smoke' in json.dumps(messages)
             permission = permission or (remote and messages[-1]['role'] == 'user')
+            tool_names = [t.get('function', {}).get('name') for t in body.get('tools', [])]
+            shell_tool = 'shell' if 'shell' in tool_names else 'bash'
             delta = {'role': 'assistant', 'content': 'Smoke complete'}
             finish = 'stop'
             if permission:
                 delta = {'role': 'assistant', 'tool_calls': [{'index': 0, 'id': 'call_smoke', 'type': 'function',
-                    'function': {'name': 'bash', 'arguments': json.dumps({'command': 'echo codepet-smoke', 'description': 'Smoke test'})}}]}
+                    'function': {'name': shell_tool, 'arguments': json.dumps({'command': 'echo codepet-smoke; echo executed > codepet-smoke-executed', 'description': 'Smoke test'})}}]}
                 finish = 'tool_calls'
             self.send_response(200)
             if body.get('stream'):
@@ -90,7 +93,8 @@ def main():
             (config / 'plugins').mkdir(parents=True)
             (config / 'codepet-observation').mkdir()
             source = Path(__file__).resolve().parents[1] / 'crates/providers/codepet-provider-opencode/src/observation-plugin.ts'
-            (config / 'plugins/codepet-observation.ts').write_bytes(source.read_bytes())
+            if not args.remote_turns:
+                (config / 'plugins/codepet-observation.ts').write_bytes(source.read_bytes())
             (config / 'codepet-observation/endpoint.json').write_text(json.dumps({
                 'url': 'http://127.0.0.1:%d/event' % server.server_port, 'token': 'smoke-only'}))
             (config / 'opencode.json').write_text(json.dumps({
@@ -98,13 +102,13 @@ def main():
                 'permission': {'bash': 'ask'},
                 'provider': {'codepet-smoke': {'npm': '@ai-sdk/openai-compatible', 'name': 'Local fixture',
                     'options': {'baseURL': 'http://127.0.0.1:%d/v1' % server.server_port, 'apiKey': 'smoke-only'},
-                    'models': {'smoke': {'name': 'Smoke', 'limit': {'context': 8192, 'output': 128}}}}}}))
+                    'models': {'smoke': {'name': 'Smoke', 'tool_call': True, 'limit': {'context': 8192, 'output': 128}}}}}}))
             env = dict(os.environ)
             for key in ['OPENCODE_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_CONFIG_DIR']:
                 env.pop(key, None)
             for kind in ['CONFIG', 'DATA', 'CACHE', 'STATE']:
                 env['XDG_%s_HOME' % kind] = str(root / kind.lower())
-            env.update(OPENCODE_SERVER_PASSWORD='smoke-only', OPENCODE_DISABLE_AUTOUPDATE='true')
+            env.update(OPENCODE_SERVER_PASSWORD='smoke-only', OPENCODE_PASSWORD='smoke-only', OPENCODE_DISABLE_AUTOUPDATE='true')
 
             def start(index):
                 workspace = root / ('workspace-%d' % index)
@@ -145,11 +149,22 @@ def main():
             if args.remote_turns:
                 workspace = root / 'remote-workspace'
                 workspace.mkdir()
+                env.pop('CODEPET_OPENCODE_TEST_DENY', None)
+                if re.search(r'(?:^|\s)v?2\.', version) or args.test_deny:
+                    env['CODEPET_OPENCODE_TEST_DENY'] = '1'
+                env['CODEPET_OPENCODE_TEST_VERSION'] = version
                 env['CODEPET_OPENCODE_EXECUTABLE'] = str(Path(shutil.which(args.executable) or args.executable).resolve())
                 env['CODEPET_OPENCODE_TEST_WORKSPACE'] = str(workspace)
-                subprocess.run(['cargo', 'test', '--manifest-path', str(source.parents[3] / 'Cargo.toml'),
+                runner = subprocess.Popen(['cargo', 'test', '--manifest-path', str(source.parents[3] / 'Cargo.toml'),
                     '-p', 'codepet-provider-opencode', '--test', 'native_turns', '--', '--ignored', '--nocapture'],
-                    cwd=source.parents[4], env=env, check=True)
+                    cwd=source.parents[4], env=env, start_new_session=True)
+                try:
+                    code = runner.wait(timeout=150)
+                    if code: raise RuntimeError('Native remote test failed: %s' % code)
+                finally:
+                    try: os.killpg(runner.pid, signal.SIGKILL)
+                    except ProcessLookupError: pass
+                    runner.wait()
                 print('Native remote sends passed; local model requests:', len(model_calls))
                 return
 
