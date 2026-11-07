@@ -173,7 +173,17 @@ impl ProviderHostState {
     pub(crate) async fn runtime_views(&self) -> Vec<AgentRuntime> {
         let Some(manager) = self.manager.as_ref() else { return Vec::new() };
         let mut views = Vec::new();
-        for snapshot in manager.snapshots().await.into_iter().filter(|snapshot| snapshot.catalog.enabled) {
+        // Start reads together; one missing or slow Provider must not serialize its peers.
+        let reads: Vec<_> = manager.snapshots().await.into_iter().filter(|snapshot| snapshot.catalog.enabled)
+            .map(|snapshot| {
+                let manager = manager.clone();
+                let plugin_id = snapshot.catalog.plugin_id.clone();
+                let read = tokio::spawn(async move {
+                    manager.runtime_get_installed(&plugin_id, RuntimeGetInstalledRequest { refresh: None }).await
+                });
+                (snapshot, read)
+            }).collect();
+        for (snapshot, read) in reads {
             let plugin_id = snapshot.catalog.plugin_id.clone();
             let display_name = snapshot.reported.as_ref().map(|reported| reported.display_name.clone())
                 .unwrap_or_else(|| snapshot.catalog.display_name.clone());
@@ -195,7 +205,11 @@ impl ProviderHostState {
                 });
                 continue;
             }
-            let inventory = manager.runtime_get_installed(&plugin_id, RuntimeGetInstalledRequest { refresh: None }).await;
+            let inventory = read.await.unwrap_or_else(|error| Err(HostError::new(
+                "runtime_scan_task_failed", format!("Runtime inventory read failed: {error}"),
+            )));
+            let scan_diagnostic = manager.snapshot(&plugin_id).await.ok()
+                .and_then(|current| current.runtime_inventory_diagnostic);
             match inventory {
                 Ok(inventory) => {
                     let installed = inventory.harness_list.into_iter().map(|installation| AgentRuntimeInstallation {
@@ -229,7 +243,9 @@ impl ProviderHostState {
                         source: selected.as_ref().map(|installation| installation.source),
                         configured_executable,
                         version: selected.as_ref().map(|installation| installation.version.clone()),
-                        diagnostic: if inventory.scanning==Some(true) { None } else if let Some(message)=inventory.scan_error {
+                        diagnostic: if let Some(error) = scan_diagnostic {
+                            Some(AgentRuntimeDiagnostic { code: "runtime-scan-failed".into(), message: error.to_string() })
+                        } else if inventory.scanning==Some(true) { None } else if let Some(message)=inventory.scan_error {
                             Some(AgentRuntimeDiagnostic {code:"runtime-scan-failed".into(),message})
                         } else {
                             (!installed.iter().any(|runtime| runtime.incompatibility_reason.is_none())).then(|| AgentRuntimeDiagnostic {
@@ -271,6 +287,28 @@ impl ProviderHostState {
     pub(crate) async fn rescan_runtime(&self, plugin_id: &str) -> Result<(), String> {
         self.manager.as_ref().ok_or_else(|| "Provider Host is unavailable".to_string())?
             .runtime_get_installed(plugin_id, RuntimeGetInstalledRequest { refresh: Some(true) }).await.map(|_| ()).map_err(|error| error.to_string())
+    }
+
+    pub(crate) async fn rescan_builtin_runtimes(&self) -> Result<Vec<AgentRuntime>, String> {
+        let manager = self.manager.as_ref().ok_or("Provider Host is unavailable")?;
+        // Enumerate the catalog, not runtime_views: a probe must not wait for a
+        // different plugin's initial read before it can even begin.
+        let ids = manager.snapshots().await.into_iter()
+            .filter(|snapshot| snapshot.catalog.enabled && matches!(snapshot.catalog.plugin_id.as_str(),
+                "dev.codepet.codex" | "dev.codepet.claude" | "dev.codepet.opencode"))
+            .map(|snapshot| snapshot.catalog.plugin_id).collect();
+        let outcomes = manager.refresh_runtime_inventories(ids).await;
+        let mut views = self.runtime_views().await;
+        for (id, result) in outcomes {
+            if let Err(error) = result {
+                if let Some(view) = views.iter_mut().find(|view| view.provider_id == id) {
+                    view.diagnostic = Some(AgentRuntimeDiagnostic {
+                        code: "runtime-scan-failed".into(), message: error.to_string(),
+                    });
+                }
+            }
+        }
+        Ok(views)
     }
 
     pub(crate) async fn runtime_view(&self, plugin_id: &str) -> Result<AgentRuntime, String> {
@@ -1147,6 +1185,60 @@ mod tests {
         assert_eq!(codex.settings["preserved"], serde_json::json!(true));
         assert_eq!(opencode.settings["preserved"], serde_json::json!(true));
         assert_eq!(claude.settings["preserved"], serde_json::json!(true));
+    }
+
+    #[tokio::test]
+    async fn builtin_rescan_returns_healthy_views_and_scopes_errors_to_the_failed_provider() {
+        let directory = tempfile::tempdir().unwrap();
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("crates/Cargo.toml");
+        let executable = fake_provider_executable(&manifest);
+        let control = directory.path().join("inventory-control.json");
+        std::fs::write(&control, "{}").unwrap();
+        for name in ["claude", "codex", "opencode"] {
+            let root = directory.path().join("plugins").join(name);
+            std::fs::create_dir_all(&root).unwrap();
+            let id = format!("dev.codepet.{name}");
+            let binary = if name == "claude" { directory.path().join("missing") } else { executable.clone() };
+            std::fs::write(root.join("codepet-provider.json"), serde_json::to_vec(&serde_json::json!({
+                "manifestVersion":1, "pluginId":id, "displayName":name, "executable":binary,
+                "env":{"CODEPET_FAKE_PLUGIN_ID":id,"CODEPET_FAKE_RUNTIME_CONTROL":control},
+                "instances":[{"instanceId":name,"instanceKind":"fake","displayName":name,"settings":{}}]
+            })).unwrap()).unwrap();
+        }
+        let device = DeviceRegistry::open(directory.path().join("device.json"), "Parallel probe test").unwrap();
+        let registry = ProviderInstanceRegistry::open(directory.path().join("instances.json"), device.identity().device_id.clone()).unwrap();
+        let catalog = PluginCatalog::discover(PluginCatalogConfig::default().with_directory(directory.path().join("plugins")));
+        let manager = Arc::new(PluginManager::new(device, catalog, registry, PluginManagerConfig::default()).unwrap());
+        let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap()); gateway.start_event_forwarding();
+        let host = ProviderHostState::new(manager.clone(), gateway);
+        let _ = manager.start_enabled().await;
+        let views = host.rescan_builtin_runtimes().await.expect("a failed Claude plugin must not fail the whole command");
+        assert_eq!(views.len(), 3);
+        for view in &views {
+            if view.provider_id == "dev.codepet.claude" {
+                assert_eq!(view.status, AgentRuntimeStatus::Unavailable);
+                assert!(view.diagnostic.as_ref().unwrap().message.contains("dev.codepet.claude"));
+            } else {
+                assert_eq!(view.status, AgentRuntimeStatus::Ready, "{view:?}");
+                assert_eq!(view.version.as_deref(), Some("1.0.0"));
+                assert!(view.diagnostic.is_none());
+            }
+        }
+        std::fs::write(&control, r#"{"error":true}"#).unwrap();
+        let views = host.rescan_builtin_runtimes().await.unwrap();
+        for view in views.iter().filter(|view| view.provider_id != "dev.codepet.claude") {
+            assert_eq!(view.version.as_deref(), Some("1.0.0"), "a failed refresh keeps the last good inventory");
+            assert!(view.diagnostic.is_some());
+        }
+        let views = host.runtime_views().await;
+        assert!(views.iter().all(|view| view.diagnostic.is_some()), "ordinary snapshot reads must retain scan diagnostics");
+        std::fs::write(&control, r#"{"version":"2.0.0"}"#).unwrap();
+        let views = host.rescan_builtin_runtimes().await.unwrap();
+        for view in views.iter().filter(|view| view.provider_id != "dev.codepet.claude") {
+            assert_eq!(view.version.as_deref(), Some("2.0.0"));
+            assert!(view.diagnostic.is_none());
+        }
+        manager.shutdown().await;
     }
 
     #[tokio::test]

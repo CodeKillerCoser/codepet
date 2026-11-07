@@ -2105,6 +2105,7 @@ mod visibility_tests {
     #[test]
     fn builtin_visibility_uses_inventory_not_process_or_instance_liveness() {
         let mut plugin = PluginRuntimeSnapshot {
+            runtime_inventory_diagnostic: None,
             catalog: serde_json::from_value(serde_json::json!({
                 "pluginId":"dev.codepet.codex", "displayName":"Codex", "executable":"provider"
             })).unwrap(),

@@ -33,6 +33,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod recent;
+mod runtime_inventory;
 
 struct FakeProvider {
     data: codepet_provider_data::ProviderData,
@@ -72,6 +73,10 @@ impl FakeProvider {
 }
 
 impl ProtocolServer for FakeProvider {
+    fn runtime_get_installed<'a>(&'a self, request: codepet_provider_sdk::RuntimeGetInstalledRequest)
+        -> ProtocolFuture<'a, codepet_provider_sdk::RuntimeGetInstalledResponse> {
+        Box::pin(async move { self.runtime_inventory(request).await })
+    }
     fn conversation_active_list<'a>(&'a self, request: codepet_provider_sdk::ConversationActiveListRequest)
         -> ProtocolFuture<'a, codepet_provider_sdk::ConversationActiveListResponse> {
         Box::pin(async move { self.recent.active(request) })
