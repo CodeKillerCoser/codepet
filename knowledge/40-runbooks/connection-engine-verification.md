@@ -46,6 +46,19 @@ TAURI_CONFIG='{"app":{"macOSPrivateApi":false},"bundle":{"resources":[]}}' cargo
 
 这只验证实际桌面调用方/公开 re-export 能编译，不等于 macOS Release 打包、资源 staging 或真实窗口运行验收。
 
+## 2026-11-07 主干构建交付
+
+实现已分别推送到两个仓库的 `main`：Host `4bda6b36b42ec4760875c6034318cda20ce9e8e3`，Remote `bc33884a587ecda9e5de5fd4053c2b25bb0fbb29`。本节后续更新只记录验收证据，不改变构建源码。
+
+- [桌面 Release 42360671815](https://github.com/CodeKillerCoser/codepet/actions/runs/42360671815) 成功，产物为 macOS ARM64 `Code Pet_0.3.9-beta+4bda6b3_aarch64.dmg`。本次仅构建 Actions artifact，未发布 GitHub Release 或更新自动更新入口。
+- [Android Release 42360672720](https://github.com/CodeKillerCoser/codepet-remote/actions/runs/42360672720) 成功，使用仓库 Release 签名。下载后 `apksigner verify --verbose --print-certs` 通过，证书与上一版 Release run `42350760375` 一致；manifest 未启用 debuggable，三个 ABI 的 `libapp.so` 都包含本次 Remote commit。包名 `com.codepet.remote`，现有基础版本 `0.1.1+2` 不变，日志构建 revision 区分本次实现。
+- [Remote Quality 42360661979](https://github.com/CodeKillerCoser/codepet-remote/actions/runs/42360661979) 的 `verify` 和 `connection-engine` 均成功：静态分析、450 项 App 测试、21 项核心测试、10,000 轮模拟压测及 Android Debug 编译通过。Debug 仅用于质量检查，交付包为上述独立 Release 产物。
+- CI 压测为 16 个设备、3,334 次恢复、2,500 次升级，最终 liveConnections/permits/waiting 均为 0；模拟 IO 的 ready p95 为 1,281μs、恢复 p95 为 1,031μs，不能解读为真实网络重连时间。
+- Android APK 为 113,311,342 字节，SHA-256 `4de5dd161953bea34a31f5ac293bfbf751db84d4e0723c6603d1b8b9b09c2777`。两端产物和校验记录保存到本机 `~/Downloads/codepet-release-20261107/`。
+- DMG 为 62,675,683 字节，SHA-256 `6d69335a50df7f8974b4ea70f5b848fb1a5dfbaf1eeb6a6594e676557f99a0b1`；`hdiutil verify` 校验通过，只读挂载检查 `Info.plist` 版本与提交对应，主程序、三个 Provider adapter 及 SDK 生成器架构均为 ARM64。此轮交付未替换本机已安装 App。
+
+新通道交接验收需要两端同时更新；与旧版本连接走兼容流程，不启用健康连接的主动升级。安装后的真实 Wi-Fi/4G/VPN 切换仍按下一节验收，不用 CI 成功替代实机结果。
+
 ## 排查与仍需实机验证
 
 - 关联 Remote `connection.engine` 的 target/epoch/connectionId 与 Host `channel.control` 的 connectionId/activeConnectionId；关注 prepare、activate、CAS 冲突和清理隔离。日志沿用年月日、时分秒、PID、线程、文件行号和文本字段，不存新的 JSON 日志文件。
