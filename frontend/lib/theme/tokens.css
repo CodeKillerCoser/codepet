@@ -120,15 +120,6 @@
   --color-running-border-hot: var(--crimson-9);
   --color-running-border-warm: var(--amber-9);
 
-  --asset-pet-sprite-soft-white: var(--gray-1);
-  --asset-pet-sprite-white: var(--color-white);
-  --asset-pet-sprite-foot: var(--brown-12);
-  --asset-pet-sprite-idle: var(--gray-9);
-  --asset-pet-sprite-thinking: var(--violet-9);
-  --asset-pet-sprite-running: var(--amber-9);
-  --asset-pet-sprite-waiting: var(--crimson-9);
-  --asset-pet-sprite-failed: var(--red-9);
-  --asset-pet-sprite-done: var(--cyan-9);
 
   --asset-whip-shadow: color-mix(in srgb, var(--gray-12) 18%, var(--color-transparent));
   --asset-whip-cord-highlight: color-mix(in srgb, var(--amber-5) 62%, var(--color-transparent));
@@ -241,15 +232,6 @@
   --color-running-border-hot: var(--crimson-9);
   --color-running-border-warm: var(--amber-9);
 
-  --asset-pet-sprite-soft-white: var(--gray-2);
-  --asset-pet-sprite-white: var(--gray-1);
-  --asset-pet-sprite-foot: var(--brown-12);
-  --asset-pet-sprite-idle: var(--gray-9);
-  --asset-pet-sprite-thinking: var(--violet-9);
-  --asset-pet-sprite-running: var(--amber-9);
-  --asset-pet-sprite-waiting: var(--crimson-9);
-  --asset-pet-sprite-failed: var(--red-9);
-  --asset-pet-sprite-done: var(--cyan-9);
 
   --asset-whip-shadow: color-mix(in srgb, var(--color-black) 24%, var(--color-transparent));
   --asset-whip-cord-highlight: color-mix(in srgb, var(--amber-5) 62%, var(--color-transparent));

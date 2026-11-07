@@ -231,8 +231,12 @@ fn set_launch_at_login_enabled(app: AppHandle, enabled: bool) -> Result<bool, St
 }
 
 #[tauri::command]
-fn list_pets() -> Result<PetLibraryView, String> {
-    pets::list_pet_library()
+fn list_pets(app: AppHandle) -> Result<PetLibraryView, String> {
+    let view = pets::list_pet_library()?;
+    if let Ok(settings) = load_app_settings() {
+        let _ = app.emit("settings-updated", settings);
+    }
+    Ok(view)
 }
 
 #[tauri::command]
@@ -255,8 +259,8 @@ fn delete_pet(app: AppHandle, pet_id: String) -> Result<PetLibraryView, String> 
 
 #[tauri::command]
 fn path_manager_set_pets(app: AppHandle, path: String) -> Result<PetLibraryView, String> {
-    let settings = paths::set_pets_directory(path).map_err(|error| error.to_string())?;
-    let view = pets::pet_library_view(&settings);
+    paths::set_pets_directory(path).map_err(|error| error.to_string())?;
+    let view = pets::list_pet_library()?;
     if let Ok(settings) = load_app_settings() {
         let _ = app.emit("settings-updated", settings);
     }
@@ -264,8 +268,8 @@ fn path_manager_set_pets(app: AppHandle, path: String) -> Result<PetLibraryView,
 }
 
 #[tauri::command]
-fn import_pet_image(app: AppHandle, source_path: String, name: Option<String>, pixel_size: Option<u32>) -> Result<PetLibraryView, String> {
-    let view = pets::import_pet_image(source_path, name, pixel_size)?;
+fn import_pet_image(app: AppHandle, source_path: String, name: Option<String>) -> Result<PetLibraryView, String> {
+    let view = pets::import_pet_image(source_path, name)?;
     if let Ok(settings) = load_app_settings() {
         let _ = app.emit("settings-updated", settings);
     }
@@ -273,8 +277,8 @@ fn import_pet_image(app: AppHandle, source_path: String, name: Option<String>, p
 }
 
 #[tauri::command]
-fn update_pet_image_pixel_size(app: AppHandle, pixel_size: u32) -> Result<PetLibraryView, String> {
-    let view = pets::update_active_image_pet_pixel_size(pixel_size)?;
+fn import_pet_package(app: AppHandle, source_path: String) -> Result<PetLibraryView, String> {
+    let view = pets::import_pet_package(source_path)?;
     if let Ok(settings) = load_app_settings() {
         let _ = app.emit("settings-updated", settings);
     }
@@ -353,6 +357,9 @@ fn open_main_window(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn pet_asset_data_url(path: String) -> Result<String, String> {
+    if std::fs::metadata(&path).map_err(|error| error.to_string())?.len() > 16 * 1024 * 1024 {
+        return Err("pet asset exceeds 16 MiB".into());
+    }
     let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
     let mime = match std::path::Path::new(&path)
         .extension()
@@ -532,7 +539,7 @@ pub fn run() {
             delete_pet,
             path_manager_set_pets,
             import_pet_image,
-            update_pet_image_pixel_size,
+            import_pet_package,
             cut_out_image_subject,
             recent_events,
             app::event_journal::query_event_journal,

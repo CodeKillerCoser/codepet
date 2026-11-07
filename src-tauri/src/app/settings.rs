@@ -83,14 +83,10 @@ pub struct PetSettings {
     pub selected_pet_id: String,
     #[serde(default)]
     pub kind: PetKind,
-    #[serde(default = "default_sprite")]
-    pub sprite: PixelPetSprite,
     #[serde(default)]
     pub image_path: Option<String>,
     #[serde(default = "default_scale")]
     pub scale: u8,
-    #[serde(default = "default_image_pixel_size")]
-    pub image_pixel_size: u32,
     #[serde(default = "default_pet_opacity")]
     pub opacity: f32,
     #[serde(default = "default_always_on_top")]
@@ -99,14 +95,6 @@ pub struct PetSettings {
     pub whip_reaction_sound: WhipReactionSound,
     #[serde(default)]
     pub custom_whip_reaction_sound_path: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PixelPetSprite {
-    pub body: String,
-    pub accent: String,
-    pub eyes: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -129,8 +117,6 @@ pub struct ConfiguredPet {
     pub name: String,
     pub kind: PetKind,
     #[serde(default)]
-    pub sprite: Option<PixelPetSprite>,
-    #[serde(default)]
     pub image_path: Option<String>,
     #[serde(default)]
     pub source_path: Option<String>,
@@ -140,9 +126,10 @@ pub struct ConfiguredPet {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PetKind {
-    Palette,
     Image,
     CodexAtlas,
+    #[serde(other)]
+    Builtin,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -156,7 +143,7 @@ pub enum WhipReactionSound {
 
 impl Default for PetKind {
     fn default() -> Self {
-        Self::Palette
+        Self::Builtin
     }
 }
 
@@ -402,11 +389,9 @@ impl Default for PetSettings {
     fn default() -> Self {
         Self {
             selected_pet_id: default_pet_id(),
-            kind: PetKind::Palette,
-            sprite: default_sprite(),
+            kind: PetKind::Builtin,
             image_path: None,
             scale: default_scale(),
-            image_pixel_size: default_image_pixel_size(),
             opacity: default_pet_opacity(),
             always_on_top: default_always_on_top(),
             whip_reaction_sound: WhipReactionSound::default(),
@@ -501,36 +486,19 @@ impl Default for AppSettings {
     }
 }
 
-pub fn default_sprite() -> PixelPetSprite {
-    PixelPetSprite {
-        body: theme_defaults::DEFAULT_PET_BODY.to_string(),
-        accent: theme_defaults::DEFAULT_PET_ACCENT.to_string(),
-        eyes: theme_defaults::DEFAULT_PET_EYES.to_string(),
-    }
-}
-
 fn default_pet_id() -> String {
     "default".to_string()
 }
 
-fn default_pet_profiles() -> Vec<ConfiguredPet> {
-    vec![ConfiguredPet {
-        id: default_pet_id(),
-        name: "Classic Pixel".to_string(),
-        kind: PetKind::Palette,
-        sprite: Some(default_sprite()),
-        image_path: None,
-        source_path: None,
-        created_at: "2026-05-26T00:00:00Z".to_string(),
-    }]
+pub fn default_pet_profiles() -> Vec<ConfiguredPet> {
+    [("default", "橘猫"), ("builtin:panda", "熊猫")].into_iter().map(|(id, name)| ConfiguredPet {
+        id: id.into(), name: name.into(), kind: PetKind::Builtin,
+        image_path: None, source_path: None, created_at: "2026-11-07T00:00:00Z".into(),
+    }).collect()
 }
 
 fn default_scale() -> u8 {
     3
-}
-
-fn default_image_pixel_size() -> u32 {
-    48
 }
 
 fn default_pet_opacity() -> f32 {
@@ -602,7 +570,9 @@ pub fn load_app_settings() -> io::Result<AppSettings> {
     }
 
     let text = fs::read_to_string(path)?;
-    serde_json::from_str(&text).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    let mut settings = serde_json::from_str(&text).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    crate::pet::library::normalize_active_pet(&mut settings);
+    Ok(settings)
 }
 
 pub fn save_app_settings(settings: &AppSettings) -> io::Result<()> {

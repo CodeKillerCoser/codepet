@@ -216,7 +216,6 @@
 .main-theme .topbar h2:focus { outline: none; }
 .main-theme .content > [hidden] { display: none; }
 .main-theme .robot-template-panel > summary { cursor: pointer; padding: 8px 0; font-weight: var(--font-weight-semibold); }
-.main-theme .pet-creation .pet-preview { min-height: 220px; }
 .main-theme .settings-workspace :is(input, textarea, select) { max-width: 100%; }
 @media (max-width: 600px) {
   .main-theme .settings-workspace .time-row { flex-wrap: wrap; }

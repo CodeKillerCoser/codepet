@@ -63,20 +63,13 @@ export interface AgentRuntime {
   installed: AgentRuntimeInstallation[];
 }
 
-export interface PixelPetSprite {
-  body: string;
-  accent: string;
-  eyes: string;
-}
-
-export type PetKind = "palette" | "image" | "codex-atlas";
+export type PetKind = "builtin" | "image" | "codex-atlas";
 export type WhipReactionSound = "none" | "pa" | "scream" | "custom";
 
 export interface ConfiguredPet {
   id: string;
   name: string;
   kind: PetKind;
-  sprite?: PixelPetSprite | null;
   imagePath?: string | null;
   sourcePath?: string | null;
   createdAt: string;
@@ -117,10 +110,8 @@ export interface AppSettings {
   pet: {
     selectedPetId: string;
     kind: PetKind;
-    sprite: PixelPetSprite;
     imagePath?: string | null;
     scale: number;
-    imagePixelSize: number;
     opacity: number;
     alwaysOnTop: boolean;
     whipReactionSound: WhipReactionSound;

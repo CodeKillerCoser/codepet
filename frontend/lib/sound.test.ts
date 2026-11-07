@@ -10,10 +10,8 @@ function settings(overrides: Partial<AppSettings["notifications"]> = {}): AppSet
     appearance: { theme: "system" },
     pet: {
       selectedPetId: "default",
-      kind: "palette",
-      sprite: { body: "#111111", accent: "#222222", eyes: "#333333" },
+      kind: "builtin",
       scale: 3,
-      imagePixelSize: 48,
       opacity: 1,
       alwaysOnTop: true,
       whipReactionSound: "none",

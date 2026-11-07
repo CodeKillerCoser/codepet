@@ -4,7 +4,7 @@ import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { mount } from "svelte";
 import App from "../App.svelte";
 import { frontendBuild } from "../lib/webcontent";
-import { defaultPetSprite, defaultRunningBubbleSettings } from "../lib/theme";
+import { defaultRunningBubbleSettings } from "../lib/theme";
 import "../styles.css";
 import "../main-window.css";
 import type { LineageSnapshot, LineageMessage } from "../lib/taskLineage";
@@ -34,8 +34,8 @@ const history: LineageMessage[] = [
 mockWindows("main");
 let appSettings: any = {
   data: {}, appearance: {theme: "light", runningBubble: {...defaultRunningBubbleSettings}},
-  pet: {selectedPetId: "default", kind: "palette", sprite: defaultPetSprite, scale: 3, imagePixelSize: 48, opacity: 1, whipReactionSound: "none"},
-  petLibrary: {selectedPetId: "default", dataDirectory: "/fixture/pets", pets: [{id:"default", name:"Classic Pixel", kind:"palette", sprite:defaultPetSprite}]},
+  pet: {selectedPetId: "default", kind: "builtin", scale: 3, opacity: 1, whipReactionSound: "none"},
+  petLibrary: {selectedPetId: "default", dataDirectory: "/fixture/pets", pets: [{id:"default", name:"橘猫", kind:"builtin"}]},
   notifications: {sound:"blip", ringOnPermission:true, ringOnFailure:true, ringOnDone:true, repeatSeconds:30, quietHoursEnabled:false, quietHoursStart:"22:00", quietHoursEnd:"08:00"},
   providerPlugins: {directories: []}, updates: {},
 };

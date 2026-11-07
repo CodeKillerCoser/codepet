@@ -2,9 +2,11 @@
 
 ## 当前尺寸模型
 
-桌宠窗口在 `frontend/PetApp.svelte` 中使用预设逻辑宽高。用户手动缩放被禁用，但应用仍会调用 `setSize()`，确保窗口 frame 可预测。
+桌宠窗口宽度为 320px，高度跟随实际内容。用户手动缩放被禁用，应用通过 `setSize()` 调整原生 frame。不要再按最大角色和完整任务区预留固定窗口高度；2026-11-08 的 584px 预设曾使单任务上方保留大块透明区域，整个窗口触顶后桌宠无法继续上移。
 
-当前逻辑宽度为 320px（原为 360px），任务区最高 368px。CSS 宽度随容器收缩，卡片使用组容器的完整宽度；宠物传入的显示 scale 为用户设置值的 90%，仍受头像组件最小尺寸保护。保持预设窗口 frame，不以折叠内容高度反复调整原生窗口。
+`frontend/PetApp.svelte` 的 `.pet-content` 使用独立于视口的自然高度，`ResizeObserver` 观察任务增加、分组展开/收起及角色大小变化。内容包含顶部 10px、底部 12px 的装饰余量；任务区仍有 8px 底边距。去抖 120ms 后读取实际高度，向上取整设置原生逻辑尺寸。调整时用物理坐标保持窗口右下角，再限制到屏幕工作区；空间不足时允许整体移动以保证内容可见。原生拖动期间推迟调整，resize/move 事件幂等，不能形成循环。
+
+任务区通常最高 368px，屏幕工作区更矮时扣除角色与边距后进一步收缩，内容溢出在任务区内部滚动。角色区域随头像变化，右侧保留 36px 操作栏空间。默认 scale 的浏览器实测：无任务 126px，单任务 235px；这些是当前内容的验证结果，不是新预设值。
 
 `PetActivityGroups.svelte` 按等待交互、进行中、已完成分组。收起时最前方直接显示真实任务气泡，最多露出两张后层气泡；使用 `perspective: 600px`，每层垂直错位 7px、深度递减 18px，并预留底部空间。点击顶层气泡或组按钮只展开本组，组按钮可再次收起。各组展开状态独立。
 
@@ -27,6 +29,7 @@
 - 人工检查单卡、多卡、回复模式、审批模式和收起任务列表。
 - 自动化：`npx vitest run frontend/PetApp.test.ts frontend/lib/activityGroups.test.ts frontend/lib/markdown.test.ts frontend/lib/gradientColor.test.ts frontend/lib/petHitTest.test.ts`，31 项通过。
 - 浏览器：配置 `CODEPET_QA_NODE_MODULES` 后运行 `node scripts/pet_groups_ui_qa.mjs`，验证独立展开、一行预览、颜色和动画、关闭动作、键盘焦点及 280/320/360px 宽度，通过。截图位于 `artifacts/task-lineage-qa/pet-groups/`。
+- `CODEPET_QA_NODE_MODULES=/tmp/codepet-pet-qa/node_modules node scripts/pet_window_frame_ui_qa.mjs`：真实布局配合模拟原生几何，覆盖内容贴合、底部锚点、收起/展开、顶部边界、滚动上限、负坐标屏幕、125% DPI 和 resize 事件稳定性。
 - 原生桌面上的透明区域透传和屏幕边界仍需实机验收；浏览器检查不能代替窗口系统验证。
 
 ## 当前轮回复预览（2026-09-13）

@@ -19,7 +19,7 @@ import {
   setAgentRuntimeExecutable,
   setPathManagerData,
   setLaunchAtLoginEnabled,
-  updatePetImagePixelSize,
+  importPetPackage,
 } from "./api";
 import type { PetEvent } from "./types";
 
@@ -257,20 +257,19 @@ describe("importPetImage", () => {
     vi.mocked(invoke).mockReset();
   });
 
-  it("passes the requested pixel size to the desktop import command", async () => {
+  it("imports the source image without requesting pixelation", async () => {
     vi.mocked(invoke).mockResolvedValue({ dataDirectory: "/tmp/pets", selectedPetId: "custom", pets: [] });
 
-    await importPetImage("/tmp/photo.png", "Photo", 72);
+    await importPetImage("/tmp/photo.png", "Photo");
 
     expect(invoke).toHaveBeenCalledWith("import_pet_image", {
       sourcePath: "/tmp/photo.png",
       name: "Photo",
-      pixelSize: 72,
     });
   });
 });
 
-describe("updatePetImagePixelSize", () => {
+describe("importPetPackage", () => {
   afterEach(() => {
     vi.mocked(invoke).mockReset();
   });
@@ -278,9 +277,9 @@ describe("updatePetImagePixelSize", () => {
   it("invokes the desktop command for the active image pet", async () => {
     vi.mocked(invoke).mockResolvedValue({ dataDirectory: "/tmp/pets", selectedPetId: "custom", pets: [] });
 
-    await updatePetImagePixelSize(64);
+    await importPetPackage("/tmp/cat/pet.json");
 
-    expect(invoke).toHaveBeenCalledWith("update_pet_image_pixel_size", { pixelSize: 64 });
+    expect(invoke).toHaveBeenCalledWith("import_pet_package", { sourcePath: "/tmp/cat/pet.json" });
   });
 });
 

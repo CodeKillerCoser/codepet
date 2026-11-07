@@ -8,10 +8,13 @@
 
   import { petSnapshot, type PetTask, type PetSource } from './lib/petGateway';
 
-  import { isOpaqueCssColor, rectFromElementBounds, shouldIgnorePetWindowCursor, type PetHitRect } from './lib/petHitTest';
-  import PetAvatar from './lib/PetAvatar.svelte';
+  import { rectFromElementBounds, shouldIgnorePetWindowCursor, type PetHitRect } from './lib/petHitTest';
+  import PetAvatar from './lib/pet/PetAvatar.svelte';
+  import { isPointOnOpaquePetImage } from './lib/pet/hitTest';
+  import { taskStatusForPet } from './lib/pet/animation';
+  import { bottomAnchoredPosition } from './lib/pet/windowFrame';
   import { playWhipSound } from './lib/sound';
-  import { defaultPetSprite, defaultRunningBubbleSettings, themeClassNames } from './lib/theme';
+  import { defaultRunningBubbleSettings, themeClassNames } from './lib/theme';
   import type { AppSettings } from './lib/types';
   let settings: AppSettings | null = null;
   let activities: PetTask[] = [];
@@ -31,15 +34,15 @@
   let ensureWindowFrameTimer: number | null = null;
   let ensuringWindowFrame = false;
   let petWindowElement: HTMLElement | null = null;
+  let petContentElement: HTMLElement | null = null;
+  let petStageElement: HTMLElement | null = null;
+  let activityStackHeightLimit = 368;
   let cursorPassthroughTimer: number | null = null;
   let cursorEventsIgnored = false;
+  let petDragging = false;
   let cursorPassthroughInFlight = false;
-  const petImageAlphaCache = new WeakMap<HTMLImageElement, { src: string; width: number; height: number; data: Uint8ClampedArray }>();
   const petWindowWidth = 320;
-  const activityPetGap = 8;
   const activityStackMaxHeight = 368;
-  const maxPetStageHeight = Math.max(104, Math.round(32 * 4 * (208 / 192)));
-  const petWindowPresetHeight = 22 + maxPetStageHeight + activityPetGap + activityStackMaxHeight;
   const noticeVisibleMs = 2500;
   const whipVisibleMs = 760;
   const cursorPassthroughPollMs = 60;
@@ -54,8 +57,7 @@
 
   $: hasActivities = activities.length > 0;
   $: hasCompletedActivities = activities.some(a => a.status === 'completed');
-  $: primary = activities.find(a => a.status === 'running') ?? activities[0];
-  $: avatarStatus = primary?.status === 'running' ? 'running' : primary?.status === 'failed' ? 'failed' : primary?.status === 'completed' ? 'done' : primary?.status === 'waiting-approval' ? 'waiting-approval' : 'idle';
+  $: avatarStatus = taskStatusForPet(activities);
   $: petWindowOpacity = clampPetOpacity(settings?.pet.opacity);
   $: topActivityId = activities[0]?.id ?? null;
   $: if (ready) scheduleEnsureWindowFrameAndBounds();
@@ -73,6 +75,9 @@
     void windowHandle.setResizable(false);
     register(windowHandle.onMoved(() => scheduleEnsureWindowFrameAndBounds()));
     register(windowHandle.onResized(() => scheduleEnsureWindowFrameAndBounds()));
+    const contentObserver = new ResizeObserver(() => scheduleEnsureWindowFrameAndBounds());
+    if (petContentElement) contentObserver.observe(petContentElement);
+    cleanup.push(() => contentObserver.disconnect());
     cursorPassthroughTimer = window.setInterval(() => void syncCursorPassthrough(), cursorPassthroughPollMs);
     const refresh = async () => {
       if (busy || disposed) return;
@@ -158,7 +163,7 @@
         x: (cursor.x - windowPosition.x) / scaleFactor,
         y: (cursor.y - windowPosition.y) / scaleFactor,
       };
-      const ignoreCursor = shouldIgnorePetWindowCursor(point, collectPetHitRects(petWindowElement)) && !isPointOnOpaquePetImage(petWindowElement, point);
+      const ignoreCursor = !petDragging && shouldIgnorePetWindowCursor(point, collectPetHitRects(petWindowElement)) && !isPointOnOpaquePetImage(petWindowElement, point);
       await setPetWindowCursorEventsIgnored(ignoreCursor);
     } catch (error) {
       console.error("failed to update pet cursor passthrough", error);
@@ -194,124 +199,11 @@
       }
     }
 
-    for (const pixel of root.querySelectorAll<HTMLElement>(".pet-sprite span")) {
-      if (!isOpaqueCssColor(window.getComputedStyle(pixel).backgroundColor || pixel.style.backgroundColor || pixel.style.background)) {
-        continue;
-      }
-      const rect = pixel.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        hitRects.push(rectFromElementBounds(rect, rootBounds));
-      }
-    }
-
     return hitRects;
   }
 
-  function isPointOnOpaquePetImage(root: HTMLElement, point: { x: number; y: number }) {
-    const rootBounds = root.getBoundingClientRect();
-    for (const wrapper of root.querySelectorAll<HTMLElement>(".pet-image, .pet-atlas")) {
-      const wrapperRect = rectFromElementBounds(wrapper.getBoundingClientRect(), rootBounds, petHitPadding);
-      if (shouldIgnorePetWindowCursor(point, [wrapperRect])) {
-        continue;
-      }
-
-      const image = wrapper instanceof HTMLImageElement ? wrapper : wrapper.querySelector("img");
-      if (!image || !image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) {
-        return true;
-      }
-
-      const alpha = petImageAlphaAtPoint(wrapper, image, point, rootBounds);
-      if (alpha === null) {
-        return true;
-      }
-      if (alpha > 12) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  function petImageAlphaAtPoint(wrapper: HTMLElement, image: HTMLImageElement, point: { x: number; y: number }, rootBounds: DOMRect) {
-    const pixel = petImagePixelCoordinates(wrapper, image, point, rootBounds);
-    if (!pixel) {
-      return null;
-    }
-
-    const data = petImageAlphaData(image);
-    if (!data) {
-      return null;
-    }
-
-    const x = Math.floor(pixel.x);
-    const y = Math.floor(pixel.y);
-    if (x < 0 || y < 0 || x >= data.width || y >= data.height) {
-      return 0;
-    }
-
-    return data.data[(y * data.width + x) * 4 + 3];
-  }
-
-  function petImagePixelCoordinates(wrapper: HTMLElement, image: HTMLImageElement, point: { x: number; y: number }, rootBounds: DOMRect) {
-    const wrapperRect = rectFromElementBounds(wrapper.getBoundingClientRect(), rootBounds);
-    const relativeX = point.x - wrapperRect.left;
-    const relativeY = point.y - wrapperRect.top;
-    const wrapperWidth = wrapperRect.right - wrapperRect.left;
-    const wrapperHeight = wrapperRect.bottom - wrapperRect.top;
-    if (wrapperWidth <= 0 || wrapperHeight <= 0) {
-      return null;
-    }
-    if (wrapper instanceof HTMLImageElement) {
-      return {
-        x: relativeX * (image.naturalWidth / wrapperWidth),
-        y: relativeY * (image.naturalHeight / wrapperHeight),
-      };
-    }
-
-    const transform = getComputedStyle(image).transform;
-    const matrix = transform && transform !== "none" ? new DOMMatrixReadOnly(transform) : new DOMMatrixReadOnly();
-    const imageWidth = image.offsetWidth || image.getBoundingClientRect().width;
-    const imageHeight = image.offsetHeight || image.getBoundingClientRect().height;
-    if (imageWidth <= 0 || imageHeight <= 0) {
-      return null;
-    }
-
-    return {
-      x: (relativeX - matrix.m41) * (image.naturalWidth / imageWidth),
-      y: (relativeY - matrix.m42) * (image.naturalHeight / imageHeight),
-    };
-  }
-
-  function petImageAlphaData(image: HTMLImageElement) {
-    const cached = petImageAlphaCache.get(image);
-    if (cached && cached.src === image.currentSrc && cached.width === image.naturalWidth && cached.height === image.naturalHeight) {
-      return cached;
-    }
-
-    const canvas = document.createElement("canvas");
-    canvas.width = image.naturalWidth;
-    canvas.height = image.naturalHeight;
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) {
-      return null;
-    }
-
-    try {
-      context.drawImage(image, 0, 0);
-      const next = {
-        src: image.currentSrc,
-        width: image.naturalWidth,
-        height: image.naturalHeight,
-        data: context.getImageData(0, 0, image.naturalWidth, image.naturalHeight).data,
-      };
-      petImageAlphaCache.set(image, next);
-      return next;
-    } catch {
-      return null;
-    }
-  }
-
   function scheduleEnsureWindowFrameAndBounds() {
+    if (!ready) return;
     clearEnsureWindowFrameTimer();
     ensureWindowFrameTimer = window.setTimeout(() => {
       ensureWindowFrameTimer = null;
@@ -340,7 +232,8 @@
   }
 
   async function ensureWindowFrameAndBounds() {
-    if (ensuringWindowFrame) {
+    if (ensuringWindowFrame || petDragging) {
+      scheduleEnsureWindowFrameAndBounds();
       return;
     }
 
@@ -354,23 +247,29 @@
   }
 
   async function ensureWindowSize() {
-    const targetHeight = petWindowPresetHeight;
-    if (targetHeight <= 0) {
-      return;
-    }
-
+    if (!petContentElement || !petStageElement) return;
     const appWindow = getCurrentWindow();
-    const [currentSize, scaleFactor] = await Promise.all([
+    const [currentSize, scaleFactor, position, monitors, fallbackMonitor] = await Promise.all([
       withTimeout(appWindow.innerSize(), 700).catch(() => null),
       withTimeout(appWindow.scaleFactor(), 700).catch(() => 1),
+      appWindow.outerPosition(), availableMonitors(), primaryMonitor(),
     ]);
-    if (!currentSize) {
-      return;
-    }
-
+    if (!currentSize) return;
+    const monitor = monitorForWindow(position, currentSize, monitors, fallbackMonitor);
+    // Keep the task list scrollable when the work area is shorter than its usual cap.
+    const availableHeight = monitor ? monitor.workArea.size.height / scaleFactor : Infinity;
+    activityStackHeightLimit = Math.max(0, Math.min(activityStackMaxHeight,
+      availableHeight - petStageElement.getBoundingClientRect().height - 22 - 8));
+    await tick();
+    const targetHeight = Math.ceil(petContentElement.getBoundingClientRect().height);
+    if (targetHeight <= 0) return;
     const currentLogicalSize = currentSize.toLogical(scaleFactor);
     if (Math.abs(currentLogicalSize.width - petWindowWidth) > 1 || Math.abs(currentLogicalSize.height - targetHeight) > 1) {
+      const nextSize = { width: Math.round(petWindowWidth * scaleFactor), height: Math.round(targetHeight * scaleFactor) };
+      const anchored = bottomAnchoredPosition(position, currentSize, nextSize);
+      const nextPosition = monitor ? clampWindowPositionToMonitor(anchored, nextSize, monitor) : anchored;
       await appWindow.setSize(new LogicalSize(petWindowWidth, targetHeight));
+      await appWindow.setPosition(new PhysicalPosition(nextPosition.x, nextPosition.y));
     }
   }
 
@@ -460,11 +359,11 @@
     });
   }
 
-  async function dragWindow(event: MouseEvent) {
-    if (event.button !== 0) {
-      return;
-    }
-    await getCurrentWindow().startDragging();
+  async function dragWindow() {
+    petDragging = true;
+    try { await getCurrentWindow().startDragging(); }
+    catch (error) { showNotice(`无法移动桌宠：${String(error)}`); }
+    finally { petDragging = false; scheduleEnsureWindowFrameAndBounds(); }
   }
 
   function preventPetWindowDoubleClick(event: MouseEvent) {
@@ -517,8 +416,9 @@
   style={`--pet-window-opacity: ${petWindowOpacity};`}
   on:dblclick={preventPetWindowDoubleClick}
 >
+  <div class="pet-content" bind:this={petContentElement}>
   {#if !tasksCollapsed && (hasActivities || gatewayError)}
-    <section class="activity-stack" bind:this={activityStack} aria-live="polite" style={`--pet-activity-stack-max-height: ${activityStackMaxHeight}px`}>
+    <section class="activity-stack" bind:this={activityStack} aria-live="polite" style={`--pet-activity-stack-max-height: ${activityStackHeightLimit}px`}>
       {#if !hasActivities && gatewayError}
         <article class="status-pill gateway-state-pill"><div class="status-content">
           <span class="status-title">活动连接不可用</span>
@@ -528,8 +428,7 @@
       <PetActivityGroups {activities} {sources} {runningBubble} dismiss={dismissActivity} />
     </section>
   {/if}
-  <section class="pet-stage" aria-label="拖动移动桌宠">
-    <button class="pet-drag-target" data-pet-hit-target="stage" type="button" tabindex="-1" aria-label="拖动移动桌宠" on:mousedown={dragWindow}></button>
+  <section class="pet-stage" bind:this={petStageElement} aria-label="拖动移动桌宠">
     <div class="pet-action-rail">
       {#if hasActivities}
         <button
@@ -634,7 +533,10 @@
       </svg>
     {/key}
     <PetAvatar
-      sprite={settings?.pet.sprite ?? defaultPetSprite}
+      petId={settings?.pet.selectedPetId ?? "default"}
+      interactive
+      onDrag={dragWindow}
+      startled={whipAnimating}
       kind={settings?.pet.kind}
       imagePath={settings?.pet.imagePath}
       status={avatarStatus}
@@ -644,6 +546,7 @@
       <span class="pet-notice">{actionNotice}</span>
     {/if}
   </section>
+  </div>
 </main>
 
 <style>

@@ -94,12 +94,12 @@ export async function setPathManagerPets(path: string): Promise<PetLibraryView> 
   return invoke<PetLibraryView>("path_manager_set_pets", { path });
 }
 
-export async function importPetImage(sourcePath: string, name?: string, pixelSize?: number): Promise<PetLibraryView> {
-  return invoke<PetLibraryView>("import_pet_image", { sourcePath, name, pixelSize });
+export async function importPetImage(sourcePath: string, name?: string): Promise<PetLibraryView> {
+  return invoke<PetLibraryView>("import_pet_image", { sourcePath, name });
 }
 
-export async function updatePetImagePixelSize(pixelSize: number): Promise<PetLibraryView> {
-  return invoke<PetLibraryView>("update_pet_image_pixel_size", { pixelSize });
+export async function importPetPackage(sourcePath: string): Promise<PetLibraryView> {
+  return invoke<PetLibraryView>("import_pet_package", { sourcePath });
 }
 
 export async function cutOutImageSubject(sourcePath: string, outputPath?: string): Promise<SubjectCutoutResult> {

@@ -74,16 +74,14 @@ describe("Pet window behavior", () => {
     expect(stageBlock.indexOf('class="pet-action-button main-window-button"')).toBeLessThan(stageBlock.indexOf('class="pet-action-button whip-button"'));
   });
 
-  it("uses a fixed preset maximum pet window size", () => {
+  it("fits the native frame to observed content while preserving the pet anchor", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
-
-    expect(source).toContain("const activityStackMaxHeight");
-    expect(source).toContain("const maxPetStageHeight");
-    expect(source).toContain("const petWindowPresetHeight");
-    expect(source).toContain("const targetHeight = petWindowPresetHeight");
+    expect(source).toContain("new ResizeObserver");
+    expect(source).toContain("contentObserver.disconnect()");
+    expect(source).toContain("petContentElement.getBoundingClientRect().height");
+    expect(source).toContain("bottomAnchoredPosition(position, currentSize, nextSize)");
     expect(source).toContain("new LogicalSize(petWindowWidth, targetHeight)");
-    expect(source).not.toContain("async function syncWindowFrame");
-    expect(source).not.toContain("async function applyWindowFrame");
+    expect(source).not.toContain("petWindowPresetHeight");
   });
 
   it("lets CSS size the activity stack naturally up to a max height", () => {
@@ -91,8 +89,7 @@ describe("Pet window behavior", () => {
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
     const stackRule = styles.slice(styles.indexOf(".activity-stack"), styles.indexOf(".activity-stack::-webkit-scrollbar"));
 
-    expect(source).toContain("const petWindowPresetHeight");
-    expect(source).toContain('style={`--pet-activity-stack-max-height: ${activityStackMaxHeight}px`}');
+    expect(source).toContain('style={`--pet-activity-stack-max-height: ${activityStackHeightLimit}px`}');
     expect(source).not.toContain("activityStackHeightFor");
     expect(source).not.toContain("activityCardHeight");
     expect(stackRule).toContain("height: auto");
@@ -108,7 +105,7 @@ describe("Pet window behavior", () => {
     expect(source).toContain("isPointOnOpaquePetImage");
     expect(source).toContain("shouldIgnorePetWindowCursor");
     expect(source).toContain("clearCursorPassthroughTimer");
-    expect(source).toContain('data-pet-hit-target="stage"');
+    expect(source).toContain("onDrag={dragWindow}");
     expect(source).not.toContain('<button class="drag-layer"');
   });
 

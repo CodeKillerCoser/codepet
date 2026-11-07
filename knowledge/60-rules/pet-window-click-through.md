@@ -16,6 +16,10 @@
 
 使用 `cursorPosition()` 轮询全局鼠标位置，将其换算到桌宠窗口坐标；只在任务卡、操作按钮、宠物不透明像素等命中区域内恢复 `setIgnoreCursorEvents(false)`，其余区域设置 `setIgnoreCursorEvents(true)`。新增或调整 Tauri JS window API 时同步检查 `src-tauri/capabilities/default.json`。
 
+图集命中必须读取渲染组件公布的当前行、列和帧边界，不能将整张图或第一帧当命中区域。静态图片 `object-fit: contain` 产生的留白必须扣除；装饰性情绪叠层不应扩大鼠标拦截区。实现统一放在 `frontend/lib/pet/hitTest.ts`，不再从旧像素 DOM 或 CSS 变换猜测位置。
+
+透明事件透传与拖动边界必须分别验证。原生窗口应贴合实际布局并保留有限装饰边距；不能用透明区域可透传来证明大窗口没有问题，因为整窗工作区限位仍会让透明留白提前触顶。调整内容高度应保持桌宠底部锚点，并在低高度工作区缩小任务滚动区。
+
 ## 来源
 
 用户反馈：透明区域在 app 内不响应，但事件不会透给其他窗口；需要的不是禁止拖拽响应，而是真正透传。历史提交 `754581a fix(pet): 让透明区域鼠标事件穿透` 也说明该行为曾作为 Bug 修复出现过。
@@ -23,3 +27,7 @@
 ## 验证方式
 
 运行 `npx vitest run frontend/PetApp.test.ts frontend/lib/petHitTest.test.ts`。人工验证时在 Windows 和 macOS 上检查：透明区域可点击下方窗口，任务卡/按钮可点击，宠物不透明像素可拖动，宠物透明像素尽量不拦截下方窗口。
+
+图集和图片留白另运行 `npx vitest run frontend/lib/pet/hitTest.test.ts`；`scripts/pet_module_ui_qa.mjs` 使用真实素材验证 alpha 和原生调用边界，但不能替代操作系统实测。
+
+内容高度和拖动边界另运行 `scripts/pet_window_frame_ui_qa.mjs`，覆盖单卡/无任务、展开收起、顶部边界和不同 DPI；原因与证据见 [透明留白阻止上移](../40-runbooks/pet-window-transparent-frame-blocks-drag.md)。

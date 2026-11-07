@@ -1172,47 +1172,6 @@ select:focus-visible {
   background-size: 7px 7px;
 }
 
-.pet-preview {
-  display: grid;
-  min-height: 300px;
-  place-items: center;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  background:
-    linear-gradient(90deg, var(--pixel-grid) 1px, transparent 1px),
-    linear-gradient(var(--pixel-grid) 1px, transparent 1px),
-    var(--app-surface-soft);
-  background-size: 14px 14px;
-}
-
-.codex-preview {
-  position: relative;
-  grid-template-columns: 1fr;
-  padding: 24px;
-}
-
-.preview-import-button {
-  position: absolute;
-  right: 18px;
-  bottom: 18px;
-  display: grid;
-  width: 52px;
-  height: 52px;
-  place-items: center;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  color: var(--app-text);
-  background: var(--app-surface-strong);
-  box-shadow: 0 8px 18px var(--app-shadow);
-  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
-}
-
-.preview-import-button:hover {
-  transform: translateY(-1px);
-  border-color: var(--app-border-strong);
-}
-
-.image-pixel-control,
 .pet-opacity-control {
   display: grid;
   gap: 8px;
@@ -1222,7 +1181,6 @@ select:focus-visible {
   background: var(--app-surface-soft);
 }
 
-.image-pixel-control > span,
 .pet-opacity-control > span {
   display: flex;
   align-items: center;
@@ -1230,7 +1188,6 @@ select:focus-visible {
   gap: 12px;
 }
 
-.image-pixel-control strong,
 .pet-opacity-control strong {
   color: var(--app-text);
   font-size: var(--font-size-sm-plus);
@@ -2109,11 +2066,21 @@ textarea {
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-end;
-  padding: 10px 0 12px;
+  padding: 0;
   background: transparent;
   cursor: grab;
   opacity: var(--pet-window-opacity, 1);
   user-select: none;
+}
+
+/* Measure content independently of the native viewport, including shadow/rail room. */
+.pet-content {
+  display: flex;
+  flex: 0 0 auto;
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 10px 0 12px;
 }
 
 .pet-window.dev-mode {
@@ -2644,28 +2611,12 @@ textarea {
   position: relative;
   z-index: 2;
   display: grid;
-  width: 104px;
+  width: max-content;
   min-height: 104px;
-  margin-left: max(12px, calc(100% - 166px));
+  margin-left: auto;
+  margin-right: 36px;
   place-items: center;
   pointer-events: none;
-}
-
-.pet-drag-target {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  display: block;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  cursor: grab;
-  pointer-events: auto;
-  appearance: none;
-}
-
-.pet-drag-target:active {
-  cursor: grabbing;
 }
 
 .pet-action-rail {
@@ -3164,103 +3115,6 @@ textarea {
   pointer-events: none;
 }
 
-.pet-sprite {
-  display: grid;
-  grid-template-columns: repeat(24, var(--pixel));
-  grid-auto-rows: var(--pixel);
-  image-rendering: pixelated;
-  filter: var(--pet-image-shadow-filter);
-}
-
-.pet-image {
-  display: block;
-  width: var(--pet-image-size);
-  height: var(--pet-image-size);
-  object-fit: contain;
-  image-rendering: pixelated;
-  filter: var(--pet-image-shadow-filter);
-  pointer-events: none;
-}
-
-.pet-atlas {
-  display: block;
-  position: relative;
-  overflow: hidden;
-  image-rendering: auto;
-  filter: var(--pet-image-shadow-filter);
-  pointer-events: none;
-}
-
-.pet-atlas img {
-  position: absolute;
-  top: 0;
-  left: 0;
-  display: block;
-  max-width: none;
-  max-height: none;
-  object-fit: fill;
-  pointer-events: none;
-}
-
-.pet-atlas.thinking {
-  animation: pet-bob 1200ms steps(2, end) infinite;
-}
-
-.pet-atlas.running {
-  animation: pet-wiggle 560ms steps(2, end) infinite;
-}
-
-.pet-atlas.alerting {
-  animation: pet-alert 520ms steps(2, end) infinite;
-}
-
-.pet-image.thinking {
-  animation: pet-bob 1200ms steps(2, end) infinite;
-}
-
-.pet-image.running {
-  animation: pet-wiggle 560ms steps(2, end) infinite;
-}
-
-.pet-image.alerting {
-  animation: pet-alert 520ms steps(2, end) infinite;
-}
-
-.pet-sprite span {
-  width: var(--pixel);
-  height: var(--pixel);
-}
-
-.pet-sprite.thinking {
-  animation: pet-bob 1200ms steps(2, end) infinite;
-}
-
-.pet-sprite.running {
-  animation: pet-wiggle 560ms steps(2, end) infinite;
-}
-
-.pet-sprite.alerting {
-  animation: pet-alert 520ms steps(2, end) infinite;
-}
-
-@keyframes pet-bob {
-  50% {
-    transform: translateY(-7px);
-  }
-}
-
-@keyframes pet-wiggle {
-  50% {
-    transform: translateX(5px);
-  }
-}
-
-@keyframes pet-alert {
-  50% {
-    transform: translateY(-5px) rotate(-2deg);
-  }
-}
-
 @keyframes pet-pill-breathe {
   0%,
   100% {
@@ -3281,12 +3135,6 @@ textarea {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pet-sprite.thinking,
-  .pet-sprite.running,
-  .pet-sprite.alerting,
-  .pet-image.thinking,
-  .pet-image.running,
-  .pet-image.alerting,
   .status-pill.active-status,
   .status-pill.active-breath,
   .status-pill.active-marquee,
@@ -3427,9 +3275,6 @@ textarea {
     grid-template-columns: 1fr;
   }
 
-  .codex-preview {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* Group expansion reveals sibling bubbles, never the full message detail. */
