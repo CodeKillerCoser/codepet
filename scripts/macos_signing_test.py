@@ -93,7 +93,7 @@ class SigningTest(unittest.TestCase):
     def test_verification_extracts_the_leaf_and_rejects_hash_only_requirements(self):
         certificate = b"fixture DER certificate"
         identity = signing.hashlib.sha1(certificate).hexdigest().upper()
-        requirement = 'designated => identifier "com.codepet.desktop" and anchor H"123"'
+        requirement = f'designated => identifier "com.codepet.desktop" and certificate leaf = H"{identity.lower()}"'
         def execute(args, **kwargs):
             for argument in args:
                 if argument.startswith("--extract-certificates="):
@@ -103,8 +103,13 @@ class SigningTest(unittest.TestCase):
             return b""
         with patch.object(signing, "run", side_effect=execute), redirect_stdout(StringIO()):
             self.assertEqual(signing.verify(Path("fixture.app"), identity, "com.codepet.desktop"), requirement)
+            requirement = f'designated => identifier "com.codepet.desktop" and anchor = H"{identity}"'
+            self.assertEqual(signing.verify(Path("fixture.app"), identity, "com.codepet.desktop"), requirement)
             with self.assertRaisesRegex(ValueError, "pinned certificate"):
                 signing.verify(Path("fixture.app"), "B" * 40, "com.codepet.desktop")
+            requirement = 'designated => identifier "com.codepet.desktop" and certificate leaf = H"' + "B" * 40 + '"'
+            with self.assertRaisesRegex(ValueError, "stable certificate"):
+                signing.verify(Path("fixture.app"), identity, "com.codepet.desktop")
             requirement = 'designated => cdhash H"123"'
             with self.assertRaisesRegex(ValueError, "stable certificate"):
                 signing.verify(Path("fixture.app"), identity, "com.codepet.desktop")

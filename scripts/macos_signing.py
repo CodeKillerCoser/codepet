@@ -148,9 +148,14 @@ def verify(app, identity, identifier):
             raise ValueError("Built app is not signed with the pinned certificate")
     details = run(["codesign", "-d", "-r-", str(app)], include_stderr=True).decode()
     requirement = next((line for line in details.splitlines() if line.startswith("designated => ")), "")
-    if not requirement or "cdhash" in requirement or f'identifier "{identifier}"' not in requirement or "anchor" not in requirement:
+    print(requirement or "No designated requirement returned by codesign", flush=True)
+    # codesign normally expresses a self-signed identity as `certificate leaf`,
+    # not `anchor`. Both refer to the same certificate in this one-cert chain.
+    certificate_constraint = rf'(?:anchor|certificate (?:leaf|root|0|-1))\s*=\s*H"{identity}"'
+    if (not requirement or "cdhash" in requirement or " or " in requirement
+            or f'identifier "{identifier}"' not in requirement
+            or not re.search(certificate_constraint, requirement, re.IGNORECASE)):
         raise ValueError("Built app lacks a stable certificate-based designated requirement")
-    print(requirement, flush=True)
     return requirement
 
 
