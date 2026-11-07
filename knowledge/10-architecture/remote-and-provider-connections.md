@@ -50,7 +50,7 @@ Provider SDK 立即确认有效 ping，不调用生命周期方法。独立 idle
 
 `hostSessionId` 绑定当前插件进程；sequence 必须递增，client revision 不倒退，相同 revision 不得改变集合。旧包既不能改在线集合，也不能延长存活时间。Host 收到 pong 后复核插件 generation 与进程 identity；Remote 以连接 generation 和 Provider generation 丢弃旧响应。心跳摘要使用独立状态流，不伪装成有 cursor 的 replay event；同一次 ping 期间已发生的 provider.changed 优先于晚到摘要。
 
-Provider `connectionStatus` 为 connecting/online/offline，表示 Host↔插件通信；实例原有 status 表示 Harness 是否 Ready。“Provider 在线，Harness 已停止”可出现在主动释放或未启用自动重启的 adapter；Codex 自动空闲回收后应继续 Starting→Ready，不能长期停在 Stopped。摘要沿用 capability revision，完整能力仍由 describe 获取；Remote 不把摘要的空 methods 当作不支持，能力到达或实例恢复 Ready 后补拉项目。
+Provider `connectionStatus` 为 connecting/online/offline，表示 Host↔插件通信；实例原有 status 表示 Harness 是否 Ready。“Provider 在线，Harness 已停止”可出现在显式 instance.stop 或未启用自动重启的 adapter；Codex 自动空闲回收和手动释放会话后均应继续 Starting→Ready，不能把会话暂停接管误作长期停止运行时。摘要沿用 capability revision，完整能力仍由 describe 获取；Remote 不把摘要的空 methods 当作不支持，能力到达或实例恢复 Ready 后补拉项目。
 
 Codex 的一个 Server 负责 list/get/create/resume/turn/approval，一条 reader 按 thread ID 分发，多会话仍各有 operation lock。退出详情不 unsubscribe、不续租、不停止 Server；最后一条连接离开后，运行中或待审批任务继续执行，全部终结并持续空闲后才回收并重启 Server。stdin EOF、Provider shutdown 同样清理 Server。两部手机经同一 Host 操作同一会话共用该 Server；并发 start 仍受原生 turn 状态和每会话串行控制，不能承诺同时启动两个 turn。
 

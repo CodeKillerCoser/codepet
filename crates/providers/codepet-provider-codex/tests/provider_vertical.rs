@@ -1510,7 +1510,7 @@ fn provider_binary_acquire_interaction_reuses_created_session_and_returns_config
 }
 
 #[test]
-fn release_interaction_stops_shared_server_and_stays_stopped_until_explicit_acquire() {
+fn release_interaction_restarts_clean_server_without_reacquiring_old_conversations() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("release-interaction.txt");
     let mut provider = ProviderBinary::spawn();
@@ -1525,6 +1525,8 @@ fn release_interaction_stops_shared_server_and_stays_stopped_until_explicit_acqu
             conversation_resource_value(id), &format!("message-{id}"), "running", &revision));
         assert!(response.get("error").is_none(), "{response}");
     }
+    provider.buffered.retain(|message| message["method"] != "event.instanceStatusChanged");
+    let resumed_before = session_method_count(&marker, "thread/resume");
     for index in 0..2 {
         let response = provider.request(&format!("release-{index}"), "conversation.releaseInteraction", json!({
             "conversation": conversation_resource_value("thread-release-a")
@@ -1533,8 +1535,13 @@ fn release_interaction_stops_shared_server_and_stays_stopped_until_explicit_acqu
     }
     assert!(!process_is_running(server[0]), "release must wait for the owned harness to exit");
     assert!(process_is_running(unrelated_server[0]), "release must only kill its own harness");
+    wait_for_replacement_server(&marker, 2);
+    provider.receive(Duration::from_secs(3), |message| message["method"] == "event.instanceStatusChanged"
+        && message.pointer("/params/instance/status") == Some(&json!("ready")));
+    assert_eq!(session_pids(&marker, "process/start", "").len(), 2, "duplicate release must not restart twice");
+    assert_eq!(session_method_count(&marker, "thread/resume"), resumed_before);
     let start = provider.request("background-start", "instance.start", json!({"route":route_value()}));
-    assert_eq!(start.pointer("/result/instance/status").and_then(Value::as_str), Some("stopped"));
+    assert_eq!(start.pointer("/result/instance/status").and_then(Value::as_str), Some("ready"));
     for sequence in 1..=3 {
         provider.request(&format!("heartbeat-{sequence}"), "provider.ping", json!({
             "sequence":sequence,"hostSessionId":"release-host", "clients":{"revision":sequence,
@@ -1543,10 +1550,11 @@ fn release_interaction_stops_shared_server_and_stays_stopped_until_explicit_acqu
     }
     for id in ["thread-release-a", "thread-release-b"] {
         let response = provider.request(&format!("read-{id}"), "conversation.get", json!({"conversation":conversation_resource_value(id)}));
-        assert_eq!(response.pointer("/error/data/code").and_then(Value::as_str), Some("interaction_released"));
+        assert!(response.get("error").is_none(), "history must be available without taking control: {response}");
     }
     provider.collect_for(Duration::from_millis(100));
-    assert_eq!(session_pids(&marker, "process/start", ""), server);
+    assert_eq!(session_pids(&marker, "process/start", "").len(), 2);
+    assert_eq!(session_method_count(&marker, "thread/resume"), resumed_before, "history must not reacquire writers");
     let resumed = provider.request("explicit-resume", "conversation.acquireInteraction", json!({"conversation":conversation_resource_value("thread-release-a")}));
     assert!(resumed.get("error").is_none(), "{resumed}");
     let servers = session_pids(&marker, "process/start", "");
@@ -1555,6 +1563,63 @@ fn release_interaction_stops_shared_server_and_stays_stopped_until_explicit_acqu
     unrelated.request("unrelated-shutdown", "provider.shutdown", json!({}));
     provider.request("release-shutdown", "provider.shutdown", json!({}));
     wait_for_processes_to_exit(&servers, Duration::from_secs(2));
+}
+
+#[test]
+fn release_interaction_keeps_idle_restart_enabled_for_the_clean_runtime() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("release-then-idle.txt");
+    let mut provider = ProviderBinary::spawn_with_idle_timeout(2);
+    provider.configure("none", &marker);
+    let released = provider.request("release", "conversation.releaseInteraction", json!({
+        "conversation": conversation_resource_value("thread-created")
+    }));
+    assert_eq!(released["result"]["released"], true);
+    wait_for_replacement_server(&marker, 2);
+    let after_release = session_pids(&marker, "process/start", "");
+    assert_eq!(after_release.len(), 2);
+    wait_for_replacement_server(&marker, 3);
+    wait_for_processes_to_exit(&after_release, Duration::from_secs(2));
+    assert_eq!(session_method_count(&marker, "thread/resume"), 0);
+    provider.request("shutdown", "provider.shutdown", json!({}));
+    wait_for_processes_to_exit(&session_pids(&marker, "process/start", ""), Duration::from_secs(2));
+}
+
+#[test]
+fn release_interaction_reports_restart_failure_after_terminating_the_old_server() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("release-restart-failure.txt");
+    let mut provider = ProviderBinary::spawn();
+    provider.configure("execution-initialize-reject", &marker);
+    let released = provider.request("release", "conversation.releaseInteraction", json!({
+        "conversation": conversation_resource_value("thread-created")
+    }));
+    assert_eq!(released.pointer("/error/data/code").and_then(Value::as_str), Some("interaction_restart_failed"));
+    let pids = session_pids(&marker, "process/start", "");
+    assert_eq!(pids.len(), 2);
+    wait_for_processes_to_exit(&pids, Duration::from_secs(2));
+    provider.collect_for(Duration::from_millis(100));
+    assert_eq!(session_pids(&marker, "process/start", ""), pids, "failure must not loop restart");
+    provider.request("shutdown", "provider.shutdown", json!({}));
+}
+
+#[test]
+fn release_interaction_restart_is_cancelled_by_provider_shutdown() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("release-restart-shutdown.txt");
+    let mut provider = ProviderBinary::spawn();
+    provider.configure("execution-initialize-no-response", &marker);
+    provider.send_request("release", "conversation.releaseInteraction", json!({
+        "conversation": conversation_resource_value("thread-created")
+    }));
+    wait_for_session_count(&marker, "initialize", 2, Duration::from_secs(3));
+    let shutdown = provider.request("shutdown", "provider.shutdown", json!({}));
+    assert_eq!(shutdown["result"]["accepted"], true);
+    let pids = session_pids(&marker, "process/start", "");
+    assert_eq!(pids.len(), 2);
+    wait_for_processes_to_exit(&pids, Duration::from_secs(2));
+    provider.collect_for(Duration::from_millis(100));
+    assert_eq!(session_pids(&marker, "process/start", ""), pids);
 }
 
 #[test]
@@ -1592,7 +1657,7 @@ fn release_interaction_cancels_hung_acquire_through_control_lane() {
     assert_eq!(released.pointer("/result/released").and_then(Value::as_bool), Some(true));
     let pending = provider.receive(Duration::from_secs(2), |v| v["id"] == "hung-acquire");
     assert!(pending.get("error").is_some());
-    assert_eq!(session_pids(&marker, "process/start", "").len(), 1);
+    assert_eq!(session_pids(&marker, "process/start", "").len(), 2);
     provider.request("hung-shutdown", "provider.shutdown", json!({}));
 }
 

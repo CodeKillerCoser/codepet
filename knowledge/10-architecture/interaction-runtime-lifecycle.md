@@ -19,7 +19,7 @@ App Server 可能自行打开并持有会话，缺少可靠的逐会话释放接
 - `runtime/idle.rs` 每秒复核，只有 Ready 且持续空闲达到窗口才调用已有 instance.stop；启用 restart_after_idle 的 adapter 紧接着调用 instance.start。回收与 mux 请求准入共用执行门，保护尚未返回或排队中的请求。此门目前是 Provider 进程级，其他实例的慢 RPC 可能保守推迟释放，但不会取消其任务。
 - `runtime/options.rs` 的 idle_timeout 默认 300 秒，必须大于零，与 20/60 秒心跳参数无关。Codex 可通过进程环境 `CODEPET_PROVIDER_IDLE_TIMEOUT_SECONDS` 调整正整数秒数；其他 SDK 集成可设置 StdioServerOptions.idle_timeout。restart_after_idle 默认 false，Codex 显式启用，不由心跳或客户端数量决定。
 - Host manager 在显式启动插件时启动已启用实例，不再把启动责任交给心跳。历史读取与新建会话保留按需恢复，是否有 Remote 在线不再是本地业务读取的前置条件；远程认证仍由原接入层执行。
-- Codex 自动回收复用既有 stop/start 和 generation 隔离，不设置手动 release 的持久暂停标志。自动停止后通过同一个 start_runtime 启动；Stopped→Starting→Ready 是短暂过渡，新请求仍需等待 Ready。原有手动 release→保持暂停→显式 resume 行为保留。
+- Codex 自动回收复用既有 stop/start 和 generation 隔离，不设置手动 release 的会话暂停标志。自动停止后通过同一个 start_runtime 启动；Stopped→Starting→Ready 是短暂过渡，新请求仍需等待 Ready。2026-11-08 起手动 release 也自动重启运行时，但手机会话保持暂停，只有显式 resume 才重新接管旧会话，详见 [立即释放规约](../60-rules/codex-explicit-interaction-release.md)。
 
 ## 活动与计时规则
 

@@ -401,6 +401,7 @@ struct CodexInstanceRuntime {
     settings: CodexInstanceSettings,
     lifecycle_transition: Mutex<()>,
     interaction_transition: tokio::sync::Mutex<()>,
+    release_transition: tokio::sync::Mutex<()>,
     lifecycle_changed: Condvar,
     title_slots: Arc<tokio::sync::Semaphore>,
     mutable: Mutex<InstanceMutable>,
@@ -434,6 +435,7 @@ impl CodexInstanceRuntime {
             settings,
             lifecycle_transition: Mutex::new(()),
             interaction_transition: tokio::sync::Mutex::new(()),
+            release_transition: tokio::sync::Mutex::new(()),
             lifecycle_changed: Condvar::new(),
             title_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             mutable: Mutex::new(InstanceMutable {
@@ -806,9 +808,6 @@ impl CodexInstanceRuntime {
 
     fn ready_server(&self) -> Result<CodexAppServerSession, ProtocolError> {
         let mutable = lock(&self.mutable);
-        if mutable.interaction_released {
-            return Err(protocol_error("interaction_released", "Interaction was explicitly released; resume to start a new harness".into(), false));
-        }
         if mutable.status != InstanceStatus::Ready {
             return Err(protocol_error(
                 "provider_unavailable",
@@ -1332,12 +1331,12 @@ struct ProviderState {
 
 pub struct CodexProvider {
     data: Arc<codepet_provider_data::ProviderData>,
-    observation: codepet_observation::Observation,
+    observation: Arc<codepet_observation::Observation>,
     scanner: local_runtime::RuntimeScanner,
     state: Arc<Mutex<ProviderState>>,
     events: Arc<dyn ProviderEventSink>,
     lifecycle_hook: Arc<dyn ExecutionLifecycleHook>,
-    shutdown: AtomicBool,
+    shutdown: Arc<AtomicBool>,
     shutdown_complete: AtomicBool,
     shutdown_changed: tokio::sync::Notify,
 }
@@ -1365,14 +1364,14 @@ impl CodexProvider {
         Self {
             data,
             scanner: local_runtime::RuntimeScanner::new(events.clone()),
-            observation: codepet_observation::Observation::new(codepet_observation::Definition {
+            observation: Arc::new(codepet_observation::Observation::new(codepet_observation::Definition {
                 windows_command_override: true,
                 name: "codex", config: codepet_observation::config_home("CODEX_HOME", codepet_observation::home().join(".codex")).join("hooks.json"), events: &["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Stop", "SubagentStart", "SubagentStop", "Interrupt"], plugin: None,
-            }, hook_events),
+            }, hook_events)),
             state,
             events,
             lifecycle_hook,
-            shutdown: AtomicBool::new(false),
+            shutdown: Arc::new(AtomicBool::new(false)),
             shutdown_complete: AtomicBool::new(false),
             shutdown_changed: tokio::sync::Notify::new(),
         }
@@ -1441,9 +1440,20 @@ impl CodexProvider {
 
 impl CodexProvider {
     async fn start_runtime(&self, runtime: Arc<CodexInstanceRuntime>, explicit_resume: bool) -> Result<InstanceStartResponse, ProtocolError> {
+        Self::start_runtime_owned(runtime, explicit_resume, self.observation.clone(), self.shutdown.clone()).await
+    }
+
+    // The release task owns this context so disconnecting its caller cannot
+    // cancel cleanup or strand the instance between stop and restart.
+    async fn start_runtime_owned(runtime: Arc<CodexInstanceRuntime>, explicit_resume: bool,
+        observation: Arc<codepet_observation::Observation>, shutdown: Arc<AtomicBool>,
+    ) -> Result<InstanceStartResponse, ProtocolError> {
             let (slot, starting_event_error) = {
                 let _transition = lock(&runtime.lifecycle_transition);
                 let mut mutable = lock(&runtime.mutable);
+                if shutdown.load(Ordering::SeqCst) {
+                    return Err(protocol_error("provider_shutdown", "Provider is shutting down".into(), false));
+                }
                 if mutable.destroyed {
                     return Err(protocol_error(
                         "unknown_provider_instance",
@@ -1461,21 +1471,19 @@ impl CodexProvider {
                         true,
                     ));
                 }
-                if mutable.interaction_released && !explicit_resume {
-                    drop(mutable);
-                    return Ok(InstanceStartResponse { instance: runtime.snapshot() });
-                }
                 if !mutable.failed_shutdown_sessions.is_empty() {
                     return Err(protocol_error("interaction_release_failed", "Previous harness termination failed; retry release first".into(), true));
                 }
                 match mutable.status {
                     InstanceStatus::Ready => {
+                        if explicit_resume { mutable.interaction_released = false; }
                         drop(mutable);
                         return Ok(InstanceStartResponse {
                             instance: runtime.snapshot(),
                         });
                     }
                     InstanceStatus::Starting => {
+                        if explicit_resume { mutable.interaction_released = false; }
                         drop(mutable);
                         return Ok(InstanceStartResponse { instance: runtime.snapshot() });
                     }
@@ -1512,7 +1520,7 @@ impl CodexProvider {
             }
             // Reserve the cancellable instance slot before installing the
             // independent Hook source; stop must win while installation awaits.
-            let hook_result = self.observation.subscribe(hook_observation::INTERNAL_SUBSCRIPTION.into()).await;
+            let hook_result = observation.subscribe(hook_observation::INTERNAL_SUBSCRIPTION.into()).await;
             let hooks_ready = hook_result.is_ok();
             if let Err(error) = hook_result { eprintln!("Codex activity observation unavailable: {}", error.message); }
             if runtime.hook_ready.swap(hooks_ready, Ordering::SeqCst) != hooks_ready {
@@ -2268,8 +2276,21 @@ impl Provider for CodexProvider {
         -> ProtocolFuture<'a, codepet_provider_sdk::ConversationReleaseInteractionResponse> {
         Box::pin(async move {
             let runtime = self.resource_instance(&request.conversation)?;
+            let observation = self.observation.clone();
+            let shutdown = self.shutdown.clone();
             // Cleanup continues even if the requesting client disconnects.
             tokio::spawn(async move {
+                let _release = runtime.release_transition.lock().await;
+                // Retrying a completed release must not recycle the clean server again.
+                if {
+                    let state = lock(&runtime.mutable);
+                    state.interaction_released && matches!(state.status, InstanceStatus::Ready | InstanceStatus::Starting)
+                        && state.executions.is_empty() && state.failed_shutdown_sessions.is_empty()
+                } {
+                    return Ok(codepet_provider_sdk::ConversationReleaseInteractionResponse {
+                        released: true, scope: "providerInstance".into(),
+                    });
+                }
                 {
                     let _lifecycle = lock(&runtime.lifecycle_transition);
                     lock(&runtime.mutable).interaction_released = true;
@@ -2279,6 +2300,11 @@ impl Provider for CodexProvider {
                 let cleanup_runtime = runtime.clone();
                 tokio::task::spawn_blocking(move || cleanup_runtime.shutdown_owned_sessions(Vec::new())).await
                     .map_err(provider_task_error)?.map_err(CodexProtocolMapper::error).map_err(release_error)?;
+                // Keep interactions paused, but restore a fresh, usable runtime.
+                // Starting a server never resumes any of the released conversations.
+                Self::start_runtime_owned(runtime.clone(), false, observation, shutdown).await
+                    .map_err(|error| protocol_error("interaction_restart_failed",
+                        format!("Interaction released, but the clean harness could not restart: {}", error.message), true))?;
                 Ok(codepet_provider_sdk::ConversationReleaseInteractionResponse {
                     released: true,
                     scope: "providerInstance".into(),
@@ -2427,6 +2453,7 @@ impl Provider for CodexProvider {
                         slot.set_starting_session(session.clone());
                         slot.set_ready(ExecutionSession { session: session.clone(), generation: session.generation().to_string(), active_turn_id: None });
                         mutable.executions.insert(snapshot.thread.id.clone(), slot);
+                        mutable.interaction_released = false;
                         mutable.pending_materialization.insert(snapshot.thread.id.clone(), snapshot.clone());
                         Ok(snapshot)
                     }
@@ -2859,7 +2886,6 @@ impl Provider for CodexProvider {
     ) -> ProtocolFuture<'a, ProviderShutdownResponse> {
         Box::pin(async move {
             self.scanner.stop();
-            self.observation.shutdown().await;
             if self.shutdown.swap(true, Ordering::SeqCst) {
                 loop {
                     let notified = self.shutdown_changed.notified();
@@ -2870,6 +2896,7 @@ impl Provider for CodexProvider {
                 }
                 return Ok(ProviderShutdownResponse { accepted: true });
             }
+            self.observation.shutdown().await;
             let instances = lock(&self.state)
                 .instances
                 .values()

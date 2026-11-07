@@ -67,7 +67,7 @@ async fn gateway_idle_restart_keeps_provider_visible_and_ready_without_phone() {
 }
 
 #[tokio::test]
-async fn gateway_release_interaction_stops_codex_and_explicit_resume_restarts_it() {
+async fn gateway_release_interaction_restarts_codex_and_keeps_history_available() {
     let workspace = crates_workspace();
     let target = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().parent().unwrap().to_path_buf();
     assert!(Command::new(cargo_executable()).args(["build", "--quiet", "-p", "codepet-provider-codex", "--bins"])
@@ -99,10 +99,17 @@ async fn gateway_release_interaction_stops_codex_and_explicit_resume_restarts_it
     assert!(gateway.conversation_resume(codepet_gateway_sdk::ConversationResumeRequest { conversation:conversation.clone(), force:None, limit:Some(20) }).await.unwrap().interaction_acquired);
     let release = gateway.conversation_release_interaction(codepet_gateway_sdk::ConversationReleaseInteractionRequest { conversation:conversation.clone() }).await.unwrap();
     assert!(release.released); assert_eq!(release.scope, "providerInstance");
-    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Stopped).await;
-    assert!(gateway.conversation_get(codepet_gateway_sdk::ConversationGetRequest { conversation:conversation.clone(), cursor:None, limit:Some(20) }).await.is_err());
-    let stopped = gateway.provider_list(ProviderListRequest {}).await.unwrap();
-    assert_eq!(stopped.providers[0].runtime.status, ProviderStatus::Stopped);
+    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
+    assert!(gateway.conversation_get(codepet_gateway_sdk::ConversationGetRequest { conversation:conversation.clone(), cursor:None, limit:Some(20) }).await.is_ok());
+    let restarted = gateway.provider_list(ProviderListRequest {}).await.unwrap();
+    assert_eq!(restarted.providers[0].runtime.status, ProviderStatus::Ready);
+    let created = gateway.conversation_create(ConversationCreateRequest {
+        provider_id: id.clone(), project: None, title: None,
+        permission_level: "workspace-write".into(), model: Some("gpt-fixture".into()),
+        reasoning_effort: Some("high".into()), workspace_root: Some(directory.path().to_string_lossy().into_owned()),
+        workspace_mode: None,
+    }).await.unwrap();
+    assert_eq!(created.conversation.resource.provider_id, id, "a fresh conversation must work without resuming a released one");
     let resumed = gateway.conversation_resume(codepet_gateway_sdk::ConversationResumeRequest { conversation, force:None, limit:Some(20) }).await.unwrap();
     assert!(resumed.interaction_acquired, "{:?}", resumed.interaction_error);
     assert!(resumed.history.is_some(), "{:?}", resumed.history_error);
