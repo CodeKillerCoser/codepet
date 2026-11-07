@@ -22,7 +22,11 @@ PREFIX = "CODEPET_MACOS_"
 
 def run(args, *, env=None):
     # Never include argv in errors: security takes passwords as command arguments.
-    result = subprocess.run(args, env=env, capture_output=True)
+    print(f"Signing helper: {Path(args[0]).name} {args[1]}", flush=True)
+    try:
+        result = subprocess.run(args, env=env, capture_output=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"{Path(args[0]).name} exceeded the 120-second signing command deadline") from None
     if result.returncode:
         raise RuntimeError(f"{Path(args[0]).name} failed (exit {result.returncode}); command output suppressed to protect credentials")
     return result.stdout

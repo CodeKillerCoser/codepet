@@ -96,6 +96,12 @@ class SigningTest(unittest.TestCase):
                 signing.run(["security", "import", "file.p12", "-P", "secret"])
             self.assertNotIn("secret", str(error.exception))
 
+    def test_command_timeout_does_not_expose_secret_arguments(self):
+        with patch.object(signing.subprocess, "run", side_effect=subprocess.TimeoutExpired(["security", "-P", "secret"], 120)):
+            with self.assertRaisesRegex(RuntimeError, "120-second") as error:
+                signing.run(["security", "import", "file.p12", "-P", "secret"])
+            self.assertNotIn("secret", str(error.exception))
+
     def test_generated_archive_roundtrip_and_existing_identity_preserved(self):
         with tempfile.TemporaryDirectory() as temporary, redirect_stdout(StringIO()):
             directory = Path(temporary) / "identity"
