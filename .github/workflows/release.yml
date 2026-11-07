@@ -130,6 +130,7 @@ jobs:
           CODEPET_MACOS_CERTIFICATE_PASSWORD: ${{ secrets.CODEPET_MACOS_CERTIFICATE_PASSWORD }}
           CODEPET_MACOS_CERTIFICATE_SHA1: ${{ secrets.CODEPET_MACOS_CERTIFICATE_SHA1 }}
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: macos-arm64-dmg
           if-no-files-found: error

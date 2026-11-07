@@ -20,7 +20,7 @@ APP = ROOT / "src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Code Pe
 PREFIX = "CODEPET_MACOS_"
 
 
-def run(args, *, env=None, include_stderr=False):
+def run(args, *, env=None, include_stderr=False, public_errors=False):
     # Never include argv in errors: security takes passwords as command arguments.
     print(f"Signing helper: {Path(args[0]).name} {args[1]}", flush=True)
     try:
@@ -28,7 +28,10 @@ def run(args, *, env=None, include_stderr=False):
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"{Path(args[0]).name} exceeded the 120-second signing command deadline") from None
     if result.returncode:
-        raise RuntimeError(f"{Path(args[0]).name} failed (exit {result.returncode}); command output suppressed to protect credentials")
+        if public_errors:
+            print((result.stdout + result.stderr).decode(errors="replace"), file=sys.stderr, flush=True)
+        detail = "see public verification output above" if public_errors else "command output suppressed to protect credentials"
+        raise RuntimeError(f"{Path(args[0]).name} failed (exit {result.returncode}); {detail}")
     return result.stdout + result.stderr if include_stderr else result.stdout
 
 
@@ -140,13 +143,14 @@ def signing_environment(source):
 
 
 def verify(app, identity, identifier):
-    run(["codesign", "--verify", "--deep", "--strict", str(app)])
+    # Verification arguments/output contain only public bundle and signature metadata.
+    run(["codesign", "--verify", "--deep", "--strict", "--verbose=4", str(app)], public_errors=True)
     with tempfile.TemporaryDirectory(prefix="codepet-certificate-check-") as temporary:
         prefix = str(Path(temporary) / "cert")
-        run(["codesign", "-d", f"--extract-certificates={prefix}", str(app)])
+        run(["codesign", "-d", f"--extract-certificates={prefix}", str(app)], public_errors=True)
         if hashlib.sha1(Path(prefix + "0").read_bytes()).hexdigest().upper() != identity:
             raise ValueError("Built app is not signed with the pinned certificate")
-    details = run(["codesign", "-d", "-r-", str(app)], include_stderr=True).decode()
+    details = run(["codesign", "-d", "-r-", str(app)], include_stderr=True, public_errors=True).decode()
     requirement = next((line for line in details.splitlines() if line.startswith("designated => ")), "")
     print(requirement or "No designated requirement returned by codesign", flush=True)
     # codesign normally expresses a self-signed identity as `certificate leaf`,
