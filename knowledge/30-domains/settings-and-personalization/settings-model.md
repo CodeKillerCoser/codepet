@@ -36,6 +36,10 @@ macOS 页面包含完全磁盘访问的用途、授权步骤、“前往授权�
 
 验证路径：原生单测覆盖实际 bundle 路径解析和能力返回；前端构建及导航回归；通过 `frontend/qa/main-window.html` 检查布局、键盘焦点和按钮反馈，附加 `permissionUnsupported` / `permissionLoadError` / `permissionOpenError` query 验证平台与错误分支。真实 App 验证系统页面跳转及访达选中，不自动开启权限。
 
+2026-11-07 已运行 `npm run build`；`npx vitest run frontend` 通过 207 项，随后新增旧后端错误恢复场景，权限组件 4 项测试单独通过（包含焦点保持、防重复请求、失败重试、非 macOS 分支）。`vite.config.ts` 仅在 Vitest 中选择浏览器条件，确保 jsdom 执行 Svelte 客户端生命周期；开发和生产构建沿用原解析行为。
+
+原生验证使用仓库既定的 `TAURI_CONFIG='{"app":{"macOSPrivateApi":false},"bundle":{"resources":[]}}' cargo test --manifest-path src-tauri/Cargo.toml --lib`，88 项通过，其中权限模块 2 项。裸 Cargo 命令触发已有的 macOS private API 配置/feature 校验冲突，未为此次测试修改产品配置。电脑控制工具返回 `cgWindowNotFound`，浏览器 host 不可用，因此真实布局、窗口尺寸及系统跳转尚待桌面可访问后验收；组件测试不替代视觉验证。
+
 ## 前端归一化
 
 `frontend/App.svelte` 会在使用加载到的设置前做归一化：
